@@ -13,6 +13,8 @@
 import type { z } from "zod";
 import {
   ActionContractsZ,
+  type WorkspacePaneCreateMutationRequest,
+  type WorkspacePaneCreateMutationResult,
   type ActionInput,
   type ActionName,
   type ActionResult,
@@ -34,6 +36,15 @@ import {
 } from "./handlers/config-actions.ts";
 import { appSetRemoteAccessHandler } from "./handlers/app-set-remote-access.ts";
 import { daemonShutdownHandler } from "./handlers/daemon-shutdown.ts";
+import { workspacePaneCreateHandler } from "./handlers/workspace-pane-create.ts";
+
+export interface ActionExecutionContext {
+  readonly operationId?: string;
+  readonly daemonInstanceId?: string;
+  readonly workspacePaneCreationBackend?: {
+    create(input: WorkspacePaneCreateMutationRequest): Promise<WorkspacePaneCreateMutationResult>;
+  };
+}
 
 export type ActionHandler<N extends ActionName> = (
   input: ActionInput<N>,
@@ -43,6 +54,10 @@ export interface ActionRegistryEntry<N extends ActionName> {
   inputSchema: (typeof ActionContractsZ)[N]["input"];
   resultSchema: (typeof ActionContractsZ)[N]["result"];
   handler: ActionHandler<N>;
+  handlerWithContext?: (
+    input: ActionInput<N>,
+    context: ActionExecutionContext,
+  ) => Promise<ActionResult<N>> | ActionResult<N>;
 }
 
 type RegistryShape = {
@@ -125,6 +140,12 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["daemon.shutdown"].result,
     handler: daemonShutdownHandler,
   },
+  "workspace.pane.create": {
+    inputSchema: ActionContractsZ["workspace.pane.create"].input,
+    resultSchema: ActionContractsZ["workspace.pane.create"].result,
+    handler: (input) => workspacePaneCreateHandler(input),
+    handlerWithContext: workspacePaneCreateHandler,
+  },
 };
 
 /**
@@ -141,7 +162,11 @@ export function getActionEntry<N extends ActionName>(name: N): ActionRegistryEnt
 export type LooseActionEntry = ActionRegistryEntry<ActionName> & {
   inputSchema: z.ZodTypeAny;
   resultSchema: z.ZodTypeAny;
-  handler: (input: unknown) => Promise<unknown> | unknown;
+  handler: (input: unknown, context?: ActionExecutionContext) => Promise<unknown> | unknown;
+  handlerWithContext?: (
+    input: unknown,
+    context: ActionExecutionContext,
+  ) => Promise<unknown> | unknown;
 };
 
 export function getLooseActionEntry(name: ActionName): LooseActionEntry {

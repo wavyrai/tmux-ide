@@ -24,6 +24,7 @@ import { setRemoteAccessRestartBackend } from "../command-center/actions/handler
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
 import { readAppSettings } from "./app-settings.ts";
 import { getDefaultWorkspaceRegistry } from "./workspace-registry.ts";
+import { WorkspacePaneCreationAuthority } from "./workspace-pane-creation.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import {
   canonicalDaemonUrl,
@@ -581,6 +582,7 @@ async function startHttpServer({
   silent,
   readProjectAuth,
   daemonIdentity,
+  workspacePaneCreationBackend,
 }: {
   sessionName: string;
   requestedPort: number;
@@ -595,6 +597,7 @@ async function startHttpServer({
     instanceId: string;
     startedAt: string;
   };
+  workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
 }): Promise<{
   server: Server;
   sockets: Set<Socket>;
@@ -626,8 +629,10 @@ async function startHttpServer({
       bindHostname,
       token: authToken ?? null,
       localBypassToken: localBypassToken ?? null,
+      ownerToken: localBypassToken ?? null,
     },
     daemonIdentity,
+    workspacePaneCreationBackend,
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({ ok: true, session: sessionName });
@@ -797,18 +802,31 @@ export async function startEmbeddedDaemon(
         // Already added or persistence failed; non-fatal.
       }
     }
-    const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
-      sessionName,
-      requestedPort: port,
-      bindHostname,
-      dir,
-      authToken,
-      localBypassToken,
-      silent: opts.silent,
-      readProjectAuth: !sessionless,
-      daemonIdentity: { productVersion, instanceId, startedAt },
+    const workspacePaneCreation = new WorkspacePaneCreationAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
     });
+    let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
+    try {
+      startedServer = await startHttpServer({
+        sessionName,
+        requestedPort: port,
+        bindHostname,
+        dir,
+        authToken,
+        localBypassToken,
+        silent: opts.silent,
+        readProjectAuth: !sessionless,
+        daemonIdentity: { productVersion, instanceId, startedAt },
+        workspacePaneCreationBackend: workspacePaneCreation,
+      });
+    } catch (error) {
+      await workspacePaneCreation.dispose();
+      throw error;
+    }
+    const { server, sockets, closeClients, closeWsServers } = startedServer;
     const abortStartedServer = async (): Promise<void> => {
+      await workspacePaneCreation.dispose();
       closeClients();
       const closePromise = waitForServerClose(server).catch(() => undefined);
       for (const socket of sockets) socket.destroy();
@@ -825,7 +843,7 @@ export async function startEmbeddedDaemon(
           instanceId,
           startedAt,
           bindHostname,
-          authToken,
+          authToken: localBypassToken,
         },
         claim,
       );
@@ -947,6 +965,7 @@ export async function startEmbeddedDaemon(
           try {
             stopped = true;
             setActivationBackend(null);
+            await workspacePaneCreation.dispose();
             clearInterval(monitorInterval);
 
             const closePromise = waitForServerClose(server);

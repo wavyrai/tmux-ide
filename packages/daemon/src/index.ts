@@ -127,6 +127,14 @@ export {
   type ReadinessPathKind,
 } from "./lib/project-readiness-probe.ts";
 export {
+  WorkspacePaneCreationAuthority,
+  WorkspacePaneCreationError,
+  resolveWorkspacePaneTmuxAuthority,
+  type WorkspacePaneCreationErrorCode,
+  type WorkspacePaneCreationIo,
+  type WorkspacePaneTmuxAuthority,
+} from "./lib/workspace-pane-creation.ts";
+export {
   SemanticPaneCatalog,
   SemanticPaneCatalogError,
   TrustedSemanticPaneSnapshotSchemaZ,

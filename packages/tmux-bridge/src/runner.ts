@@ -3,7 +3,12 @@ import { TmuxError } from "./errors.ts";
 
 const DEBUG = process.env.TMUX_IDE_DEBUG === "1";
 
-const SESSION_NOT_FOUND_PATTERNS = ["can't find session", "can't find window", "unknown target"];
+const SESSION_NOT_FOUND_PATTERNS = [
+  "can't find session",
+  "can't find window",
+  "can't find pane",
+  "unknown target",
+];
 const ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS = ["unknown variable:"];
 
 const TMUX_UNAVAILABLE_PATTERNS = [
@@ -48,6 +53,15 @@ export function _getSpawner(): Spawner {
 }
 
 export function runTmux(args: string[], options: ExecFileSyncOptions = {}): string | Buffer {
+  return runTmuxBinary("tmux", args, options);
+}
+
+/** Execute a daemon-pinned tmux binary without consulting PATH at mutation time. */
+export function runTmuxBinary(
+  executable: string,
+  args: string[],
+  options: ExecFileSyncOptions = {},
+): string | Buffer {
   if (DEBUG || globalThis.__tmuxIdeVerbose) {
     console.error(`  [tmux] ${args.join(" ")}`);
   }
@@ -58,7 +72,7 @@ export function runTmux(args: string[], options: ExecFileSyncOptions = {}): stri
   };
 
   try {
-    return _executor("tmux", args, execOptions);
+    return _executor(executable, args, execOptions);
   } catch (error) {
     throw classifyTmuxError(error);
   }

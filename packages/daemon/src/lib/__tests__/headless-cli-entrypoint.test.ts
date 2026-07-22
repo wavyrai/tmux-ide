@@ -239,7 +239,7 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     const owner = spawnCli(["--headless", "--json"]);
     const info = await waitForDaemonInfo((candidate) => candidate.pid === owner.pid);
     expect(info.pid).toBe(owner.pid);
-    expect(info.authToken).toBeNull();
+    expect(info.authToken).toEqual(expect.any(String));
     expect(info.productVersion).toBe(packageVersion);
     expect(info.instanceId).toMatch(/^[0-9a-f-]{36}$/u);
 

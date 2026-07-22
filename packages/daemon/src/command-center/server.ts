@@ -28,6 +28,7 @@ import { resolveProjectConfigContext } from "../lib/config-context.ts";
 import { IdeConfigSchema } from "../schemas/ide-config.ts";
 import { getLogBuffer, subscribeLogs, type LogEntry } from "../lib/log.ts";
 import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
 import {
   getDefaultWorkspaceRegistry,
   WorkspaceAlreadyExistsError,
@@ -115,12 +116,15 @@ export interface CreateAppOptions {
     bindHostname?: string;
     token?: string | null;
     localBypassToken?: string | null;
+    /** Private owner-only capability. This is never the remote access token. */
+    ownerToken?: string | null;
   };
   daemonIdentity?: {
     productVersion: string;
     instanceId: string;
     startedAt: string;
   };
+  workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
 }
 
 let projectStreamConnections = 0;
@@ -140,6 +144,23 @@ function requireAuth(token: string | null, localBypassToken: string | null): Mid
       return next();
     }
     return c.json({ error: "Remote access token required" }, 401);
+  };
+}
+
+function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
+  return async (c, next) => {
+    if (c.req.param("name") !== "workspace.pane.create") return next();
+    if (!ownerToken) {
+      return c.json({ error: "Host mutation capability is unavailable" }, 503);
+    }
+    const supplied = bearerToken(c.req.header("Authorization"));
+    if (!supplied || supplied !== ownerToken) {
+      return c.json({ error: "Host mutation capability required" }, 401);
+    }
+    if (!z.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+      return c.json({ error: "A stable host operation id is required" }, 400);
+    }
+    return next();
   };
 }
 
@@ -331,7 +352,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // --- v2 action dispatcher (single typed entry-point for state-changing
   //     project / terminal operations — see src/command-center/actions/) ---
 
-  app.post("/api/v2/action/:name", createActionDispatcher());
+  app.post(
+    "/api/v2/action/:name",
+    requireHostCapability(options.remoteAccess?.ownerToken ?? null),
+    createActionDispatcher({
+      daemonInstanceId: daemonIdentity.instanceId,
+      workspacePaneCreationBackend: options.workspacePaneCreationBackend,
+    }),
+  );
 
   app.get("/api/widget/:name/spawn", async (c) => {
     const { resolveWidgetSpawn, WIDGET_TYPES } = await import("../widgets/resolve.ts");

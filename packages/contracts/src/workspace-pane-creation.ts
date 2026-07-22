@@ -15,7 +15,7 @@ export const WORKSPACE_PANE_CREATE_COMMAND_ID = "workspace.pane.create" as const
 function hasControlCharacters(value: string): boolean {
   return [...value].some((character) => {
     const code = character.codePointAt(0) ?? 0;
-    return code <= 31 || code === 127;
+    return code <= 31 || (code >= 127 && code <= 159);
   });
 }
 
@@ -99,6 +99,57 @@ export const WorkspacePaneCreateInvocationSchemaZ = z
 export type WorkspacePaneCreateArguments = z.infer<typeof WorkspacePaneCreateArgumentsSchemaZ>;
 export type WorkspacePaneCreateInvocation = z.infer<typeof WorkspacePaneCreateInvocationSchemaZ>;
 
+/**
+ * Host-to-daemon mutation envelope. The renderer authors only `intent`; a
+ * trusted host transport supplies retry and daemon-generation metadata.
+ */
+export const WorkspacePaneCreateMutationRequestSchemaZ = z
+  .object({
+    operationId: z.uuid(),
+    expectedDaemonInstanceId: z.uuid(),
+    intent: WorkspacePaneCreateArgumentsSchemaZ,
+  })
+  .strict();
+export type WorkspacePaneCreateMutationRequest = z.infer<
+  typeof WorkspacePaneCreateMutationRequestSchemaZ
+>;
+
+const WorkspacePaneCreatedResourceBaseSchemaZ = z.object({
+  resourceVersion: z.literal(1),
+  workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ,
+  semanticPaneId: WorkspacePaneCreationReferenceSchemaZ,
+  displayTitle: WorkspacePaneDisplayTitleSchemaZ,
+});
+
+export const WorkspacePaneCreatedResourceSchemaZ = z.discriminatedUnion("kind", [
+  WorkspacePaneCreatedResourceBaseSchemaZ.extend({
+    kind: z.literal("terminal"),
+    harnessProfileId: z.null(),
+    role: z.null(),
+    missionId: z.null(),
+  }).strict(),
+  WorkspacePaneCreatedResourceBaseSchemaZ.extend({
+    kind: z.literal("agent"),
+    harnessProfileId: WorkspacePaneCreationReferenceSchemaZ,
+    role: WorkspaceAgentRoleSchemaZ,
+    missionId: WorkspacePaneCreationReferenceSchemaZ.nullable(),
+  }).strict(),
+]);
+export type WorkspacePaneCreatedResource = z.infer<typeof WorkspacePaneCreatedResourceSchemaZ>;
+
+/** Stable semantic result. Live tmux ids, cwd, argv, and environment stay daemon-private. */
+export const WorkspacePaneCreateMutationResultSchemaZ = z
+  .object({
+    operationId: z.uuid(),
+    daemonInstanceId: z.uuid(),
+    outcome: z.enum(["created", "replayed"]),
+    resource: WorkspacePaneCreatedResourceSchemaZ,
+  })
+  .strict();
+export type WorkspacePaneCreateMutationResult = z.infer<
+  typeof WorkspacePaneCreateMutationResultSchemaZ
+>;
+
 function deepFreeze<Value>(value: Value): Value {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -116,7 +167,10 @@ export const WORKSPACE_PANE_CREATE_COMMAND_DESCRIPTOR: CommandDescriptor = deepF
     description:
       "Ask the daemon to create a tmux-backed terminal or harness-backed agent from semantic workspace resources.",
     category: "workspace",
-    schemas: { input: "workspace.pane.create.input.v1" },
+    schemas: {
+      input: "workspace.pane.create.input.v1",
+      result: "workspace.pane.create.result.v1",
+    },
     dangerous: false,
     confirmation: "none",
   }),

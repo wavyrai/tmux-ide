@@ -18,6 +18,10 @@
 
 import { z } from "zod";
 import { IdeConfigSchema, PaneSchema } from "./ide-config.ts";
+import {
+  WorkspacePaneCreateArgumentsSchemaZ,
+  WorkspacePaneCreateMutationResultSchemaZ,
+} from "./workspace-pane-creation.ts";
 
 // ---------------------------------------------------------------------------
 // project.openTerminal
@@ -193,6 +197,13 @@ export const DaemonShutdownResultZ = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// workspace.pane.create
+// ---------------------------------------------------------------------------
+
+export const WorkspacePaneCreateInputZ = WorkspacePaneCreateArgumentsSchemaZ;
+export const WorkspacePaneCreateResultZ = WorkspacePaneCreateMutationResultSchemaZ;
+
+// ---------------------------------------------------------------------------
 // Registry of action contracts (name → input/output schemas)
 // ---------------------------------------------------------------------------
 
@@ -256,6 +267,10 @@ export const ActionContractsZ = {
   "daemon.shutdown": {
     input: DaemonShutdownInputZ,
     result: DaemonShutdownResultZ,
+  },
+  "workspace.pane.create": {
+    input: WorkspacePaneCreateInputZ,
+    result: WorkspacePaneCreateResultZ,
   },
 } as const;
 

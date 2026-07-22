@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   ActionContractsZ,
@@ -109,6 +110,7 @@ function expectedDaemonVersion(): string {
 
 async function resolveCanonicalDaemon(): Promise<{
   baseUrl: string;
+  ownerToken: string | null;
   transientHandle: EmbeddedDaemonHandle | null;
   restoreCwd: string | null;
 } | null> {
@@ -116,7 +118,12 @@ async function resolveCanonicalDaemon(): Promise<{
   if (existing) {
     if (await deps.isCanonicalDaemonAlive(existing)) {
       warnOnDaemonVersionSkew(existing, expectedDaemonVersion());
-      return { baseUrl: daemonBaseUrl(existing), transientHandle: null, restoreCwd: null };
+      return {
+        baseUrl: daemonBaseUrl(existing),
+        ownerToken: existing.authToken,
+        transientHandle: null,
+        restoreCwd: null,
+      };
     }
     // Stale canonical state is removed only after startEmbeddedDaemon wins the
     // atomic process-lifetime claim.
@@ -145,7 +152,12 @@ async function resolveCanonicalDaemon(): Promise<{
       process.chdir(previousCwd);
       return null;
     }
-    return { baseUrl: handle.apiBaseUrl, transientHandle: handle, restoreCwd: previousCwd };
+    return {
+      baseUrl: handle.apiBaseUrl,
+      ownerToken: handle.localBypassToken,
+      transientHandle: handle,
+      restoreCwd: previousCwd,
+    };
   } catch {
     process.chdir(previousCwd);
     return null;
@@ -163,7 +175,7 @@ async function stopTransientDaemon(daemon: {
 export async function tryDispatchAction<Name extends ActionName>(
   name: Name,
   input: ActionInput<Name>,
-  options: { cwd?: string } = {},
+  options: { cwd?: string; operationId?: string } = {},
 ): Promise<ActionResult<Name> | null> {
   const dir = options.cwd ?? deps.cwd();
   const previousDeps = deps;
@@ -174,38 +186,52 @@ export async function tryDispatchAction<Name extends ActionName>(
 
   const contract = ActionContractsZ[name];
   const parsedInput = contract.input.parse(input);
-  let response: Response;
-  try {
-    response = await deps.fetch(`${daemon.baseUrl}/api/v2/action/${encodeURIComponent(name)}`, {
+  const operationId =
+    name === "workspace.pane.create" ? (options.operationId ?? randomUUID()) : null;
+  if (operationId && !daemon.ownerToken) {
+    await stopTransientDaemon(daemon);
+    return null;
+  }
+  const request = (): Promise<Response> =>
+    deps.fetch(`${daemon.baseUrl}/api/v2/action/${encodeURIComponent(name)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(daemon.ownerToken ? { Authorization: `Bearer ${daemon.ownerToken}` } : {}),
+        ...(operationId ? { "X-Tmux-Ide-Operation-Id": operationId } : {}),
+      },
       body: JSON.stringify(parsedInput),
       signal: timeoutSignal(2000),
     });
-  } catch {
-    await stopTransientDaemon(daemon);
-    return null;
-  }
-
-  let body: unknown;
   try {
-    body = await response.json();
-  } catch {
-    await stopTransientDaemon(daemon);
+    const maximumAttempts = operationId ? 2 : 1;
+    for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+      let body: unknown;
+      try {
+        const response = await request();
+        body = await response.json();
+      } catch {
+        // A timeout or truncated body may occur after the daemon committed.
+        // The next attempt retains the exact same host operation id.
+        continue;
+      }
+
+      const failure = FailureEnvelopeZ.safeParse(body);
+      if (failure.success) {
+        throw new CliActionInvocationError({
+          code: failure.data.error.code as ActionErrorCode,
+          message: failure.data.error.message,
+          details: failure.data.error.details,
+        });
+      }
+
+      const success = z.object({ ok: z.literal(true), result: contract.result }).safeParse(body);
+      if (success.success) return success.data.result as ActionResult<Name>;
+      // A JSON body that does not satisfy either strict envelope may be a
+      // truncated proxy response. Retry only the idempotent semantic mutation.
+    }
     return null;
+  } finally {
+    await stopTransientDaemon(daemon);
   }
-  await stopTransientDaemon(daemon);
-
-  const failure = FailureEnvelopeZ.safeParse(body);
-  if (failure.success) {
-    throw new CliActionInvocationError({
-      code: failure.data.error.code as ActionErrorCode,
-      message: failure.data.error.message,
-      details: failure.data.error.details,
-    });
-  }
-
-  const success = z.object({ ok: z.literal(true), result: contract.result }).safeParse(body);
-  if (!success.success) return null;
-  return success.data.result as ActionResult<Name>;
 }

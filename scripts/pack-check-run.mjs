@@ -105,8 +105,8 @@ try {
   if (!owner) {
     throw new Error(`daemon.json PID ${info.pid} is not one of the installed CLI contenders`);
   }
-  if (info.authToken !== null) {
-    throw new Error("Headless loopback daemon unexpectedly inherited an auth token");
+  if (typeof info.authToken !== "string" || info.authToken.length < 32) {
+    throw new Error("Headless loopback daemon did not publish a strong owner auth token");
   }
   if (!Number.isInteger(info.protocolVersion) || info.protocolVersion < 1) {
     throw new Error(`daemon.json has invalid protocolVersion: ${info.protocolVersion}`);

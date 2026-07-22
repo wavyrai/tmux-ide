@@ -1967,451 +1967,19 @@ var init_workspace_config = __esm({
   }
 });
 
-// packages/contracts/src/actions-contract.ts
-import { z as z11 } from "zod";
-function isActionName(name) {
-  return name in ActionContractsZ;
-}
-var ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, ActionContractsZ, ACTION_NAMES;
-var init_actions_contract = __esm({
-  "packages/contracts/src/actions-contract.ts"() {
-    "use strict";
-    init_ide_config();
-    ProjectOpenTerminalInputZ = z11.object({
-      name: z11.string().min(1)
-    });
-    ProjectOpenTerminalResultZ = z11.object({
-      sessionName: z11.string(),
-      cwd: z11.string().min(1),
-      terminalTabId: z11.string(),
-      /**
-       * `true` when the dispatcher had to launch the tmux session as part of
-       * resolving the terminal. `false` when the session was already running.
-       */
-      launched: z11.boolean()
-    });
-    ProjectLaunchInputZ = z11.object({
-      name: z11.string().min(1)
-    });
-    ProjectLaunchResultZ = z11.object({
-      sessionName: z11.string(),
-      /**
-       * `false` when the session was already running (idempotent no-op),
-       * `true` when this call started a fresh session.
-       */
-      started: z11.boolean()
-    });
-    ProjectStopInputZ = z11.object({
-      name: z11.string().min(1)
-    });
-    ProjectStopResultZ = z11.object({
-      sessionName: z11.string(),
-      /**
-       * `false` when no session was running (idempotent no-op),
-       * `true` when this call killed a session.
-       */
-      stopped: z11.boolean()
-    });
-    ProjectRestartInputZ = z11.object({
-      name: z11.string().min(1)
-    });
-    ProjectRestartResultZ = z11.object({
-      sessionName: z11.string(),
-      restarted: z11.literal(true)
-    });
-    ProjectActivateInputZ = z11.object({
-      name: z11.string().min(1)
-    });
-    ProjectActivateResultZ = z11.object({
-      active: z11.boolean(),
-      projectName: z11.string()
-    });
-    TerminalRespawnInputZ = z11.object({
-      sessionName: z11.string().min(1),
-      terminalId: z11.string().min(1),
-      /**
-       * Optional cwd override. Omit to respawn at the bridge's current cwd
-       * (re-using the `lastCwd` recorded by the PTY bridge).
-       */
-      cwd: z11.string().min(1).optional()
-    });
-    TerminalRespawnResultZ = z11.object({
-      respawned: z11.literal(true),
-      cwd: z11.string().min(1)
-    });
-    TerminalStopInputZ = z11.object({
-      sessionName: z11.string().min(1),
-      terminalId: z11.string().min(1)
-    });
-    TerminalStopResultZ = z11.object({
-      stopped: z11.literal(true)
-    });
-    ConfigSetInputZ = z11.object({
-      projectName: z11.string().min(1).optional(),
-      path: z11.string().min(1),
-      value: z11.unknown()
-    });
-    ConfigResultZ = z11.object({
-      config: IdeConfigSchema
-    });
-    ConfigAddPaneInputZ = PaneSchema.partial().extend({
-      projectName: z11.string().min(1).optional(),
-      rowIndex: z11.number().int().min(0)
-    });
-    ConfigAddPaneResultZ = ConfigResultZ;
-    ConfigRemovePaneInputZ = z11.object({
-      projectName: z11.string().min(1).optional(),
-      rowIndex: z11.number().int().min(0),
-      paneIndex: z11.number().int().min(0)
-    });
-    ConfigRemovePaneResultZ = ConfigResultZ;
-    ConfigAddRowInputZ = z11.object({
-      projectName: z11.string().min(1).optional(),
-      size: z11.string().optional()
-    });
-    ConfigAddRowResultZ = ConfigResultZ;
-    ConfigEnableTeamInputZ = z11.object({
-      projectName: z11.string().min(1).optional(),
-      name: z11.string().min(1).optional()
-    });
-    ConfigEnableTeamResultZ = ConfigResultZ;
-    ConfigDisableTeamInputZ = z11.object({
-      projectName: z11.string().min(1).optional()
-    });
-    ConfigDisableTeamResultZ = ConfigResultZ;
-    AppSetRemoteAccessInputZ = z11.object({
-      enabled: z11.boolean()
-    });
-    AppSetRemoteAccessResultZ = z11.object({
-      enabled: z11.boolean(),
-      url: z11.string().nullable(),
-      token: z11.string().nullable(),
-      qrPayload: z11.string().nullable()
-    });
-    DaemonShutdownInputZ = z11.object({
-      reason: z11.string().optional(),
-      expectedInstanceId: z11.uuid().optional()
-    });
-    DaemonShutdownResultZ = z11.object({
-      stopping: z11.literal(true)
-    });
-    ActionContractsZ = {
-      "project.openTerminal": {
-        input: ProjectOpenTerminalInputZ,
-        result: ProjectOpenTerminalResultZ
-      },
-      "project.launch": {
-        input: ProjectLaunchInputZ,
-        result: ProjectLaunchResultZ
-      },
-      "project.stop": {
-        input: ProjectStopInputZ,
-        result: ProjectStopResultZ
-      },
-      "project.restart": {
-        input: ProjectRestartInputZ,
-        result: ProjectRestartResultZ
-      },
-      "project.activate": {
-        input: ProjectActivateInputZ,
-        result: ProjectActivateResultZ
-      },
-      "terminal.respawn": {
-        input: TerminalRespawnInputZ,
-        result: TerminalRespawnResultZ
-      },
-      "terminal.stop": {
-        input: TerminalStopInputZ,
-        result: TerminalStopResultZ
-      },
-      "config.set": {
-        input: ConfigSetInputZ,
-        result: ConfigResultZ
-      },
-      "config.addPane": {
-        input: ConfigAddPaneInputZ,
-        result: ConfigAddPaneResultZ
-      },
-      "config.removePane": {
-        input: ConfigRemovePaneInputZ,
-        result: ConfigRemovePaneResultZ
-      },
-      "config.addRow": {
-        input: ConfigAddRowInputZ,
-        result: ConfigAddRowResultZ
-      },
-      "config.enableTeam": {
-        input: ConfigEnableTeamInputZ,
-        result: ConfigEnableTeamResultZ
-      },
-      "config.disableTeam": {
-        input: ConfigDisableTeamInputZ,
-        result: ConfigDisableTeamResultZ
-      },
-      "app.setRemoteAccess": {
-        input: AppSetRemoteAccessInputZ,
-        result: AppSetRemoteAccessResultZ
-      },
-      "daemon.shutdown": {
-        input: DaemonShutdownInputZ,
-        result: DaemonShutdownResultZ
-      }
-    };
-    ACTION_NAMES = Object.keys(ActionContractsZ);
-  }
-});
-
-// packages/contracts/src/actions-errors.ts
-var init_actions_errors = __esm({
-  "packages/contracts/src/actions-errors.ts"() {
-    "use strict";
-  }
-});
-
-// packages/contracts/src/terminals.ts
-import { z as z12 } from "zod";
-async function createScriptTerminalId(args) {
-  const scope = args.scopeId ?? args.taskId;
-  if (!scope) {
-    throw new Error("createScriptTerminalId: scopeId (or taskId) is required");
-  }
-  const key = `${args.projectId}::${scope}::${args.kind}::${args.script}`;
-  const data = new TextEncoder().encode(key);
-  const digest2 = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest2)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
-}
-var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema;
-var init_terminals = __esm({
-  "packages/contracts/src/terminals.ts"() {
-    "use strict";
-    terminalKindSchema = z12.enum(["shell", "setup", "run", "teardown"]);
-    terminalCreateRequestSchema = z12.object({
-      scopeId: z12.string().trim().min(1).max(256),
-      name: z12.string().trim().min(1).max(120),
-      kind: terminalKindSchema.optional(),
-      /** Provide for script tabs to opt into deterministic id collapse. */
-      script: z12.string().max(2048).optional(),
-      /** Explicit id wins. Used by the dashboard to reserve a known id
-       *  (e.g. the default shell tab derived from session.dir). */
-      id: z12.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
-    }).refine((v) => v.kind !== void 0 || v.script === void 0, {
-      message: "script requires kind",
-      path: ["script"]
-    });
-    terminalRenameRequestSchema = z12.object({
-      name: z12.string().trim().min(1).max(120)
-    });
-  }
-});
-
-// packages/contracts/src/terminal-attachments.ts
-import { z as z13 } from "zod";
-var TERMINAL_ATTACHMENT_PROTOCOL_VERSION, TERMINAL_ATTACHMENT_MIN_COLS, TERMINAL_ATTACHMENT_MAX_COLS, TERMINAL_ATTACHMENT_MIN_ROWS, TERMINAL_ATTACHMENT_MAX_ROWS, TerminalAttachmentSemanticTargetSchemaZ, TerminalAttachmentViewerModeSchemaZ, TerminalAttachmentViewportSchemaZ, TerminalAttachRequestSchemaZ, TerminalAttachmentDescriptorSchemaZ, TerminalAttachmentPlanHandleSchemaZ, TerminalAttachmentErrorSchemaZ, TerminalAttachmentPlanResponseSchemaZ;
-var init_terminal_attachments = __esm({
-  "packages/contracts/src/terminal-attachments.ts"() {
-    "use strict";
-    init_workspace_state();
-    TERMINAL_ATTACHMENT_PROTOCOL_VERSION = 1;
-    TERMINAL_ATTACHMENT_MIN_COLS = 20;
-    TERMINAL_ATTACHMENT_MAX_COLS = 500;
-    TERMINAL_ATTACHMENT_MIN_ROWS = 5;
-    TERMINAL_ATTACHMENT_MAX_ROWS = 200;
-    TerminalAttachmentSemanticTargetSchemaZ = z13.object({
-      workspaceName: WorkspaceIdSchemaZ,
-      semanticPaneId: WorkspaceIdSchemaZ
-    }).strict();
-    TerminalAttachmentViewerModeSchemaZ = z13.enum(["interactive", "read-only"]);
-    TerminalAttachmentViewportSchemaZ = z13.object({
-      cols: z13.number().int().min(TERMINAL_ATTACHMENT_MIN_COLS).max(TERMINAL_ATTACHMENT_MAX_COLS),
-      rows: z13.number().int().min(TERMINAL_ATTACHMENT_MIN_ROWS).max(TERMINAL_ATTACHMENT_MAX_ROWS)
-    }).strict();
-    TerminalAttachRequestSchemaZ = z13.object({
-      protocolVersion: z13.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      target: TerminalAttachmentSemanticTargetSchemaZ,
-      viewerMode: TerminalAttachmentViewerModeSchemaZ,
-      viewport: TerminalAttachmentViewportSchemaZ
-    }).strict();
-    TerminalAttachmentDescriptorSchemaZ = z13.object({
-      attachmentId: z13.uuid(),
-      target: TerminalAttachmentSemanticTargetSchemaZ,
-      viewerMode: TerminalAttachmentViewerModeSchemaZ,
-      viewport: TerminalAttachmentViewportSchemaZ,
-      status: z13.literal("planned")
-    }).strict();
-    TerminalAttachmentPlanHandleSchemaZ = z13.object({
-      requestId: z13.uuid()
-    }).strict();
-    TerminalAttachmentErrorSchemaZ = z13.discriminatedUnion("code", [
-      z13.object({
-        code: z13.literal("protocol-version-unsupported"),
-        message: z13.string().min(1).max(500),
-        receivedVersion: z13.number().int().positive(),
-        supportedVersions: z13.tuple([z13.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION)]),
-        retryable: z13.literal(false)
-      }).strict(),
-      z13.object({
-        code: z13.literal("workspace-not-found"),
-        message: z13.string().min(1).max(500),
-        target: TerminalAttachmentSemanticTargetSchemaZ,
-        retryable: z13.literal(false)
-      }).strict(),
-      z13.object({
-        code: z13.literal("pane-not-found"),
-        message: z13.string().min(1).max(500),
-        target: TerminalAttachmentSemanticTargetSchemaZ,
-        retryable: z13.literal(false)
-      }).strict(),
-      z13.object({
-        code: z13.literal("pane-not-attachable"),
-        message: z13.string().min(1).max(500),
-        target: TerminalAttachmentSemanticTargetSchemaZ,
-        reason: z13.enum(["not-terminal", "not-single-pane-window", "runtime-unavailable"]),
-        retryable: z13.boolean()
-      }).strict(),
-      z13.object({
-        code: z13.literal("interactive-viewer-conflict"),
-        message: z13.string().min(1).max(500),
-        target: TerminalAttachmentSemanticTargetSchemaZ,
-        retryable: z13.literal(true)
-      }).strict(),
-      z13.object({
-        code: z13.literal("attachment-unavailable"),
-        message: z13.string().min(1).max(500),
-        retryable: z13.boolean()
-      }).strict()
-    ]);
-    TerminalAttachmentPlanResponseSchemaZ = z13.discriminatedUnion("ok", [
-      z13.object({
-        ok: z13.literal(true),
-        protocolVersion: z13.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-        descriptor: TerminalAttachmentDescriptorSchemaZ,
-        handle: TerminalAttachmentPlanHandleSchemaZ
-      }).strict(),
-      z13.object({
-        ok: z13.literal(false),
-        protocolVersion: z13.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-        error: TerminalAttachmentErrorSchemaZ
-      }).strict()
-    ]);
-  }
-});
-
-// packages/contracts/src/control.ts
-import { z as z14 } from "zod";
-var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
-var init_control = __esm({
-  "packages/contracts/src/control.ts"() {
-    "use strict";
-    CONTROL_PROTOCOL_VERSION = 1;
-    controlIdSchema = z14.union([z14.string(), z14.number()]);
-    agentStatusSchema = z14.enum(["blocked", "working", "done", "idle", "unknown"]);
-    controlRequestSchema = z14.object({
-      v: z14.literal(CONTROL_PROTOCOL_VERSION),
-      id: controlIdSchema,
-      verb: z14.string().min(1),
-      params: z14.record(z14.string(), z14.unknown()).optional()
-    });
-    controlErrorSchema = z14.object({
-      code: z14.string(),
-      message: z14.string()
-    });
-    controlResponseSchema = z14.discriminatedUnion("ok", [
-      z14.object({
-        v: z14.literal(CONTROL_PROTOCOL_VERSION),
-        id: controlIdSchema.nullable(),
-        ok: z14.literal(true),
-        data: z14.unknown()
-      }),
-      z14.object({
-        v: z14.literal(CONTROL_PROTOCOL_VERSION),
-        id: controlIdSchema.nullable(),
-        ok: z14.literal(false),
-        error: controlErrorSchema
-      })
-    ]);
-    controlEventSchema = z14.object({
-      v: z14.literal(CONTROL_PROTOCOL_VERSION),
-      event: z14.string().min(1),
-      data: z14.unknown()
-    });
-    agentStatusEventSchema = z14.object({
-      ts: z14.string(),
-      session: z14.string(),
-      from: agentStatusSchema.nullable(),
-      to: agentStatusSchema
-    });
-    agentsParamsSchema = z14.object({
-      session: z14.string().optional()
-    });
-    sendParamsSchema = z14.object({
-      session: z14.string().min(1),
-      target: z14.string().min(1),
-      message: z14.string().min(1),
-      noEnter: z14.boolean().optional(),
-      dir: z14.string().optional()
-    });
-    CONTROL_WAIT_MAX_TIMEOUT_MS = 6e5;
-    waitTimeoutSchema = z14.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
-    waitParamsSchema = z14.discriminatedUnion("kind", [
-      z14.object({
-        kind: z14.literal("agent-status"),
-        session: z14.string().min(1),
-        status: agentStatusSchema,
-        timeoutMs: waitTimeoutSchema
-      }),
-      z14.object({
-        kind: z14.literal("output"),
-        target: z14.string().min(1),
-        match: z14.string().min(1),
-        timeoutMs: waitTimeoutSchema
-      })
-    ]);
-    spawnPlacementSchema = z14.enum(["window", "split-h", "split-v"]);
-    spawnParamsSchema = z14.object({
-      kind: z14.string().min(1).optional(),
-      command: z14.string().min(1).optional(),
-      session: z14.string().min(1).optional(),
-      sessionName: z14.string().min(1).optional(),
-      dir: z14.string().optional(),
-      placement: spawnPlacementSchema.optional(),
-      paneId: z14.string().optional()
-    }).refine((p) => Boolean(p.kind) !== Boolean(p.command), {
-      message: "exactly one of `kind` or `command` is required"
-    }).refine((p) => Boolean(p.session) || Boolean(p.sessionName), {
-      message: "`session` (spawn into it) or `sessionName` (create it) is required"
-    }).refine((p) => !(p.placement && p.placement !== "window") || Boolean(p.paneId), {
-      message: "split placements need `paneId`"
-    });
-    restartAgentParamsSchema = z14.object({
-      paneId: z14.string().min(1),
-      kind: z14.string().min(1).optional(),
-      command: z14.string().min(1).optional()
-    }).refine((p) => Boolean(p.kind) || Boolean(p.command), {
-      message: "`kind` or `command` is required"
-    });
-    stopAgentParamsSchema = z14.object({
-      paneId: z14.string().min(1)
-    });
-    explainParamsSchema = z14.object({
-      target: z14.string().min(1)
-    });
-    subscribeParamsSchema = z14.object({}).loose();
-  }
-});
-
 // packages/contracts/src/commands.ts
-import { z as z15 } from "zod";
+import { z as z11 } from "zod";
 var COMMAND_PROTOCOL_VERSION, CommandIdSchemaZ, CommandOwnerSchemaZ, CommandSourceKindSchemaZ, CommandSourceSchemaZ, CommandSchemaReferencesSchemaZ, CommandConfirmationSchemaZ, CommandDescriptorSchemaZ, CommandArgumentsSchemaZ, CommandInvocationSchemaZ, CommandAvailabilitySchemaZ, CommandResolutionErrorCodeSchemaZ, CommandResolutionErrorSchemaZ, APPLICATION_SHELL_COMMAND_IDS, ApplicationShellCommandIdSchemaZ;
 var init_commands = __esm({
   "packages/contracts/src/commands.ts"() {
     "use strict";
     COMMAND_PROTOCOL_VERSION = 1;
-    CommandIdSchemaZ = z15.string().min(3).max(160).regex(
+    CommandIdSchemaZ = z11.string().min(3).max(160).regex(
       /^[a-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/,
       "command id must be a dot-namespaced identifier"
     );
-    CommandOwnerSchemaZ = z15.enum(["daemon", "renderer"]);
-    CommandSourceKindSchemaZ = z15.enum([
+    CommandOwnerSchemaZ = z11.enum(["daemon", "renderer"]);
+    CommandSourceKindSchemaZ = z11.enum([
       "cli",
       "http",
       "local-control",
@@ -2422,51 +1990,51 @@ var init_commands = __esm({
       "wheel",
       "program"
     ]);
-    CommandSourceSchemaZ = z15.object({
+    CommandSourceSchemaZ = z11.object({
       kind: CommandSourceKindSchemaZ,
-      surface: z15.string().min(1).max(80).optional()
+      surface: z11.string().min(1).max(80).optional()
     }).strict();
-    CommandSchemaReferencesSchemaZ = z15.object({
-      input: z15.string().min(1).max(160),
-      result: z15.string().min(1).max(160).optional()
+    CommandSchemaReferencesSchemaZ = z11.object({
+      input: z11.string().min(1).max(160),
+      result: z11.string().min(1).max(160).optional()
     }).strict();
-    CommandConfirmationSchemaZ = z15.enum(["none", "inline", "dialog"]);
-    CommandDescriptorSchemaZ = z15.object({
-      version: z15.literal(COMMAND_PROTOCOL_VERSION),
+    CommandConfirmationSchemaZ = z11.enum(["none", "inline", "dialog"]);
+    CommandDescriptorSchemaZ = z11.object({
+      version: z11.literal(COMMAND_PROTOCOL_VERSION),
       id: CommandIdSchemaZ,
       owner: CommandOwnerSchemaZ,
-      label: z15.string().min(1).max(160),
-      description: z15.string().min(1).max(500).optional(),
-      category: z15.string().min(1).max(80),
+      label: z11.string().min(1).max(160),
+      description: z11.string().min(1).max(500).optional(),
+      category: z11.string().min(1).max(80),
       schemas: CommandSchemaReferencesSchemaZ,
-      dangerous: z15.boolean(),
+      dangerous: z11.boolean(),
       confirmation: CommandConfirmationSchemaZ
     }).strict();
-    CommandArgumentsSchemaZ = z15.record(z15.string(), z15.json());
-    CommandInvocationSchemaZ = z15.object({
-      version: z15.literal(COMMAND_PROTOCOL_VERSION),
+    CommandArgumentsSchemaZ = z11.record(z11.string(), z11.json());
+    CommandInvocationSchemaZ = z11.object({
+      version: z11.literal(COMMAND_PROTOCOL_VERSION),
       id: CommandIdSchemaZ,
       source: CommandSourceSchemaZ,
       args: CommandArgumentsSchemaZ
     }).strict();
-    CommandAvailabilitySchemaZ = z15.discriminatedUnion("available", [
-      z15.object({ available: z15.literal(true) }).strict(),
-      z15.object({
-        available: z15.literal(false),
-        reason: z15.string().min(1).max(500)
+    CommandAvailabilitySchemaZ = z11.discriminatedUnion("available", [
+      z11.object({ available: z11.literal(true) }).strict(),
+      z11.object({
+        available: z11.literal(false),
+        reason: z11.string().min(1).max(500)
       }).strict()
     ]);
-    CommandResolutionErrorCodeSchemaZ = z15.enum([
+    CommandResolutionErrorCodeSchemaZ = z11.enum([
       "unknown-command",
       "invalid-invocation",
       "invalid-input",
       "unavailable"
     ]);
-    CommandResolutionErrorSchemaZ = z15.object({
+    CommandResolutionErrorSchemaZ = z11.object({
       code: CommandResolutionErrorCodeSchemaZ,
-      message: z15.string().min(1),
+      message: z11.string().min(1),
       commandId: CommandIdSchemaZ.optional(),
-      details: z15.json().optional()
+      details: z11.json().optional()
     }).strict();
     APPLICATION_SHELL_COMMAND_IDS = Object.freeze({
       activateMode: "application.shell.mode.activate",
@@ -2477,14 +2045,14 @@ var init_commands = __esm({
       closePalette: "application.shell.palette.close",
       selectResource: "application.shell.resource.select"
     });
-    ApplicationShellCommandIdSchemaZ = z15.enum(
+    ApplicationShellCommandIdSchemaZ = z11.enum(
       Object.values(APPLICATION_SHELL_COMMAND_IDS)
     );
   }
 });
 
 // packages/contracts/src/experience-identifiers.ts
-import { z as z16 } from "zod";
+import { z as z12 } from "zod";
 var SEMANTIC_ICON_IDS, SemanticIconIdSchemaZ, PANE_ROLE_IDS, PaneRoleIdSchemaZ;
 var init_experience_identifiers = __esm({
   "packages/contracts/src/experience-identifiers.ts"() {
@@ -2515,7 +2083,7 @@ var init_experience_identifiers = __esm({
       "refresh",
       "command"
     ];
-    SemanticIconIdSchemaZ = z16.enum(SEMANTIC_ICON_IDS);
+    SemanticIconIdSchemaZ = z12.enum(SEMANTIC_ICON_IDS);
     PANE_ROLE_IDS = [
       "home",
       "terminal",
@@ -2526,19 +2094,19 @@ var init_experience_identifiers = __esm({
       "preview",
       "native"
     ];
-    PaneRoleIdSchemaZ = z16.enum(PANE_ROLE_IDS);
+    PaneRoleIdSchemaZ = z12.enum(PANE_ROLE_IDS);
   }
 });
 
 // packages/contracts/src/pane-appearance.ts
-import { z as z17 } from "zod";
+import { z as z13 } from "zod";
 var SemanticProductIdSchemaZ, PANE_STRUCTURE_IDS, PaneStructureSchemaZ, AGENT_ACTIVITY_IDS, AgentActivitySchemaZ, CANONICAL_DOMAIN_STATUS_IDS, CanonicalDomainStatusSchemaZ, PANE_ATTENTION_IDS, PaneAttentionSchemaZ, PaneVisualStateV1SchemaZ, DOMAIN_STATUS_TONES;
 var init_pane_appearance = __esm({
   "packages/contracts/src/pane-appearance.ts"() {
     "use strict";
-    SemanticProductIdSchemaZ = z17.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "semantic id contains a transport-only character");
+    SemanticProductIdSchemaZ = z13.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "semantic id contains a transport-only character");
     PANE_STRUCTURE_IDS = ["docked", "floating", "maximized"];
-    PaneStructureSchemaZ = z17.enum(PANE_STRUCTURE_IDS);
+    PaneStructureSchemaZ = z13.enum(PANE_STRUCTURE_IDS);
     AGENT_ACTIVITY_IDS = [
       "idle",
       "running",
@@ -2547,7 +2115,7 @@ var init_pane_appearance = __esm({
       "failed",
       "disconnected"
     ];
-    AgentActivitySchemaZ = z17.enum(AGENT_ACTIVITY_IDS);
+    AgentActivitySchemaZ = z13.enum(AGENT_ACTIVITY_IDS);
     CANONICAL_DOMAIN_STATUS_IDS = [
       "idle",
       "running",
@@ -2557,7 +2125,7 @@ var init_pane_appearance = __esm({
       "disconnected",
       "recovering"
     ];
-    CanonicalDomainStatusSchemaZ = z17.enum(CANONICAL_DOMAIN_STATUS_IDS);
+    CanonicalDomainStatusSchemaZ = z13.enum(CANONICAL_DOMAIN_STATUS_IDS);
     PANE_ATTENTION_IDS = [
       "none",
       "unread",
@@ -2566,26 +2134,26 @@ var init_pane_appearance = __esm({
       "destructive",
       "recovery"
     ];
-    PaneAttentionSchemaZ = z17.enum(PANE_ATTENTION_IDS);
-    PaneVisualStateV1SchemaZ = z17.object({
+    PaneAttentionSchemaZ = z13.enum(PANE_ATTENTION_IDS);
+    PaneVisualStateV1SchemaZ = z13.object({
       structure: PaneStructureSchemaZ,
-      applicationFocus: z17.object({ pane: z17.boolean(), terminalInput: z17.boolean(), windowActive: z17.boolean() }).strict(),
+      applicationFocus: z13.object({ pane: z13.boolean(), terminalInput: z13.boolean(), windowActive: z13.boolean() }).strict(),
       agentActivity: AgentActivitySchemaZ,
       domainStatus: CanonicalDomainStatusSchemaZ,
       attention: PaneAttentionSchemaZ,
-      layoutInteraction: z17.object({
-        editable: z17.boolean(),
-        selected: z17.boolean(),
-        dragging: z17.boolean(),
-        resizing: z17.boolean(),
-        previewing: z17.boolean()
+      layoutInteraction: z13.object({
+        editable: z13.boolean(),
+        selected: z13.boolean(),
+        dragging: z13.boolean(),
+        resizing: z13.boolean(),
+        previewing: z13.boolean()
       }).strict(),
-      controlInteraction: z17.object({
-        hover: z17.boolean(),
-        focusVisible: z17.boolean(),
-        pressed: z17.boolean(),
-        disabled: z17.boolean(),
-        loading: z17.boolean()
+      controlInteraction: z13.object({
+        hover: z13.boolean(),
+        focusVisible: z13.boolean(),
+        pressed: z13.boolean(),
+        disabled: z13.boolean(),
+        loading: z13.boolean()
       }).strict()
     }).strict();
     DOMAIN_STATUS_TONES = Object.freeze({
@@ -2601,7 +2169,7 @@ var init_pane_appearance = __esm({
 });
 
 // packages/contracts/src/experience-shell.ts
-import { z as z18 } from "zod";
+import { z as z14 } from "zod";
 function deepFreezeData(value) {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) deepFreezeData(child);
@@ -2614,7 +2182,7 @@ var init_experience_shell = __esm({
     init_commands();
     init_experience_identifiers();
     init_pane_appearance();
-    ShellAreaIdSchemaZ = z18.enum([
+    ShellAreaIdSchemaZ = z14.enum([
       "application-bar",
       "sidebar",
       "primary-navigation",
@@ -2624,14 +2192,14 @@ var init_experience_shell = __esm({
       "status-strip"
     ]);
     PRIMARY_WORKSPACE_MODE_IDS = Object.freeze(["home", "terminals"]);
-    PrimaryWorkspaceModeIdSchemaZ = z18.enum(PRIMARY_WORKSPACE_MODE_IDS);
+    PrimaryWorkspaceModeIdSchemaZ = z14.enum(PRIMARY_WORKSPACE_MODE_IDS);
     DOCK_TOOL_IDS = Object.freeze(["files", "changes", "missions", "activity"]);
-    DockToolIdSchemaZ = z18.enum(DOCK_TOOL_IDS);
+    DockToolIdSchemaZ = z14.enum(DOCK_TOOL_IDS);
     PRODUCT_SURFACE_IDS = Object.freeze([
       ...PRIMARY_WORKSPACE_MODE_IDS,
       ...DOCK_TOOL_IDS
     ]);
-    ProductSurfaceIdSchemaZ = z18.enum(PRODUCT_SURFACE_IDS);
+    ProductSurfaceIdSchemaZ = z14.enum(PRODUCT_SURFACE_IDS);
     CANONICAL_SHELL_AREAS = deepFreezeData([
       { id: "application-bar", label: "Application bar", order: 0 },
       { id: "sidebar", label: "Workspace sidebar", order: 1 },
@@ -2641,35 +2209,35 @@ var init_experience_shell = __esm({
       { id: "bottom-dock", label: "Bottom dock", order: 5 },
       { id: "status-strip", label: "Status and recovery", order: 6 }
     ]);
-    SurfaceKindSchemaZ = z18.enum(["primary-mode", "dock-tool"]);
-    ApplicationShellDockModeSchemaZ = z18.enum(["collapsed", "open", "maximized"]);
-    SurfaceCommandTemplateSchemaZ = z18.discriminatedUnion("id", [
-      z18.object({
-        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.activateMode),
-        args: z18.object({ mode: PrimaryWorkspaceModeIdSchemaZ }).strict()
+    SurfaceKindSchemaZ = z14.enum(["primary-mode", "dock-tool"]);
+    ApplicationShellDockModeSchemaZ = z14.enum(["collapsed", "open", "maximized"]);
+    SurfaceCommandTemplateSchemaZ = z14.discriminatedUnion("id", [
+      z14.object({
+        id: z14.literal(APPLICATION_SHELL_COMMAND_IDS.activateMode),
+        args: z14.object({ mode: PrimaryWorkspaceModeIdSchemaZ }).strict()
       }).strict(),
-      z18.object({
-        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.activateDockTool),
-        args: z18.object({ tool: DockToolIdSchemaZ }).strict()
+      z14.object({
+        id: z14.literal(APPLICATION_SHELL_COMMAND_IDS.activateDockTool),
+        args: z14.object({ tool: DockToolIdSchemaZ }).strict()
       }).strict(),
-      z18.object({
-        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.setDockMode),
-        args: z18.object({ mode: ApplicationShellDockModeSchemaZ }).strict()
+      z14.object({
+        id: z14.literal(APPLICATION_SHELL_COMMAND_IDS.setDockMode),
+        args: z14.object({ mode: ApplicationShellDockModeSchemaZ }).strict()
       }).strict(),
-      z18.object({
-        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.selectResource),
-        args: z18.object({ surface: ProductSurfaceIdSchemaZ, resourceId: SemanticProductIdSchemaZ }).strict()
+      z14.object({
+        id: z14.literal(APPLICATION_SHELL_COMMAND_IDS.selectResource),
+        args: z14.object({ surface: ProductSurfaceIdSchemaZ, resourceId: SemanticProductIdSchemaZ }).strict()
       }).strict()
     ]);
-    ProductSurfaceDefinitionSchemaZ = z18.object({
+    ProductSurfaceDefinitionSchemaZ = z14.object({
       id: ProductSurfaceIdSchemaZ,
       icon: SemanticIconIdSchemaZ,
-      label: z18.string().min(1).max(160),
+      label: z14.string().min(1).max(160),
       kind: SurfaceKindSchemaZ,
-      area: z18.enum(["workspace-canvas", "bottom-dock"]),
-      order: z18.number().int().nonnegative(),
+      area: z14.enum(["workspace-canvas", "bottom-dock"]),
+      order: z14.number().int().nonnegative(),
       owningMode: PrimaryWorkspaceModeIdSchemaZ,
-      shortcut: z18.string().min(1).max(32),
+      shortcut: z14.string().min(1).max(32),
       activation: SurfaceCommandTemplateSchemaZ
     }).strict().superRefine((surface, ctx) => {
       if (surface.kind === "primary-mode" && surface.activation.id !== APPLICATION_SHELL_COMMAND_IDS.activateMode) {
@@ -2773,7 +2341,7 @@ var init_experience_shell = __esm({
 });
 
 // packages/contracts/src/focus-overlay.ts
-import { z as z19 } from "zod";
+import { z as z15 } from "zod";
 function resolveSemanticInputLayer(state) {
   const parsed = FocusOverlayStateV1SchemaZ.parse(state);
   let winner = null;
@@ -2792,7 +2360,7 @@ var init_focus_overlay = __esm({
     "use strict";
     init_experience_shell();
     init_pane_appearance();
-    FocusZoneSchemaZ = z19.enum([
+    FocusZoneSchemaZ = z15.enum([
       "application-bar",
       "sidebar",
       "primary-navigation",
@@ -2802,45 +2370,45 @@ var init_focus_overlay = __esm({
       "status-strip",
       "terminal"
     ]);
-    SemanticFocusTargetSchemaZ = z19.discriminatedUnion("kind", [
-      z19.object({ kind: z19.literal("zone"), zone: FocusZoneSchemaZ }).strict(),
-      z19.object({
-        kind: z19.literal("pane"),
+    SemanticFocusTargetSchemaZ = z15.discriminatedUnion("kind", [
+      z15.object({ kind: z15.literal("zone"), zone: FocusZoneSchemaZ }).strict(),
+      z15.object({
+        kind: z15.literal("pane"),
         paneId: SemanticProductIdSchemaZ,
-        input: z19.enum(["chrome", "terminal"])
+        input: z15.enum(["chrome", "terminal"])
       }).strict(),
-      z19.object({ kind: z19.literal("dock-tool"), tool: DockToolIdSchemaZ }).strict(),
-      z19.object({
-        kind: z19.literal("control"),
+      z15.object({ kind: z15.literal("dock-tool"), tool: DockToolIdSchemaZ }).strict(),
+      z15.object({
+        kind: z15.literal("control"),
         controlId: SemanticProductIdSchemaZ,
         zone: FocusZoneSchemaZ
       }).strict()
     ]);
-    OverlayKindSchemaZ = z19.enum(["modal-dialog", "command-palette", "context-menu"]);
-    SemanticOverlaySchemaZ = z19.object({
+    OverlayKindSchemaZ = z15.enum(["modal-dialog", "command-palette", "context-menu"]);
+    SemanticOverlaySchemaZ = z15.object({
       id: SemanticProductIdSchemaZ,
       kind: OverlayKindSchemaZ,
       focusReturnTarget: SemanticFocusTargetSchemaZ
     }).strict();
-    FocusOverlayStateV1SchemaZ = z19.object({
-      windowActivity: z19.enum(["active", "inactive"]),
+    FocusOverlayStateV1SchemaZ = z15.object({
+      windowActivity: z15.enum(["active", "inactive"]),
       focusZone: FocusZoneSchemaZ,
       appFocusedPaneId: SemanticProductIdSchemaZ.nullable(),
       terminalInputPaneId: SemanticProductIdSchemaZ.nullable(),
       layoutSelectedPaneId: SemanticProductIdSchemaZ.nullable(),
-      overlays: z19.array(SemanticOverlaySchemaZ).max(16)
+      overlays: z15.array(SemanticOverlaySchemaZ).max(16)
     }).strict().superRefine((state, ctx) => {
       const ids = state.overlays.map((overlay) => overlay.id);
       if (new Set(ids).size !== ids.length) {
         ctx.addIssue({
-          code: z19.ZodIssueCode.custom,
+          code: z15.ZodIssueCode.custom,
           message: "overlay ids must be unique",
           path: ["overlays"]
         });
       }
       if (state.terminalInputPaneId !== null && state.appFocusedPaneId !== state.terminalInputPaneId) {
         ctx.addIssue({
-          code: z19.ZodIssueCode.custom,
+          code: z15.ZodIssueCode.custom,
           message: "terminal input owner must also be the app-focused pane",
           path: ["terminalInputPaneId"]
         });
@@ -2855,7 +2423,7 @@ var init_focus_overlay = __esm({
 });
 
 // packages/contracts/src/visual-tokens.ts
-import { z as z20 } from "zod";
+import { z as z16 } from "zod";
 function color(hex) {
   const normalized = hex.replace(/^#/u, "");
   return {
@@ -3017,32 +2585,32 @@ var init_visual_tokens = __esm({
     MOTION_DURATION_ROLES = ["instant", "fast", "standard", "emphasized"];
     TYPOGRAPHY_TOKEN_ROLES = ["workspace", "label", "title", "metadata", "code"];
     WINDOW_ACTIVITY_TOKEN_ROLES = ["active", "inactive"];
-    RendererNeutralColorSchemaZ = z20.object({
-      space: z20.literal("srgb"),
-      red: z20.number().int().min(0).max(255),
-      green: z20.number().int().min(0).max(255),
-      blue: z20.number().int().min(0).max(255),
-      alpha: z20.number().int().min(0).max(255)
+    RendererNeutralColorSchemaZ = z16.object({
+      space: z16.literal("srgb"),
+      red: z16.number().int().min(0).max(255),
+      green: z16.number().int().min(0).max(255),
+      blue: z16.number().int().min(0).max(255),
+      alpha: z16.number().int().min(0).max(255)
     }).strict();
-    RhythmValueSchemaZ = z20.object({ unit: z20.literal("rhythm"), value: z20.number().finite().min(0).max(16) }).strict();
-    RatioValueSchemaZ = z20.object({ unit: z20.literal("ratio"), value: z20.number().finite().min(0).max(20) }).strict();
-    DurationValueSchemaZ = z20.object({ unit: z20.literal("ms"), value: z20.number().finite().min(0).max(1e4) }).strict();
-    ElevationValueSchemaZ = z20.object({
-      level: z20.number().int().min(0).max(4),
-      intent: z20.enum(["flat", "raised", "overlay"])
+    RhythmValueSchemaZ = z16.object({ unit: z16.literal("rhythm"), value: z16.number().finite().min(0).max(16) }).strict();
+    RatioValueSchemaZ = z16.object({ unit: z16.literal("ratio"), value: z16.number().finite().min(0).max(20) }).strict();
+    DurationValueSchemaZ = z16.object({ unit: z16.literal("ms"), value: z16.number().finite().min(0).max(1e4) }).strict();
+    ElevationValueSchemaZ = z16.object({
+      level: z16.number().int().min(0).max(4),
+      intent: z16.enum(["flat", "raised", "overlay"])
     }).strict();
-    TypographyValueSchemaZ = z20.object({
-      family: z20.enum(["monospace", "system"]),
-      weight: z20.enum(["regular", "medium", "semibold", "bold"]),
+    TypographyValueSchemaZ = z16.object({
+      family: z16.enum(["monospace", "system"]),
+      weight: z16.enum(["regular", "medium", "semibold", "bold"]),
       lineHeight: RatioValueSchemaZ,
-      truncation: z20.enum(["ellipsis", "clip", "wrap"])
+      truncation: z16.enum(["ellipsis", "clip", "wrap"])
     }).strict();
-    MotionEasingSchemaZ = z20.object({
-      standard: z20.enum(["linear", "standard", "decelerate"]),
-      emphasized: z20.enum(["linear", "standard", "decelerate"])
+    MotionEasingSchemaZ = z16.object({
+      standard: z16.enum(["linear", "standard", "decelerate"]),
+      emphasized: z16.enum(["linear", "standard", "decelerate"])
     }).strict();
-    WindowActivityValueSchemaZ = z20.object({ opacity: RatioValueSchemaZ, contrast: RatioValueSchemaZ }).strict();
-    SurfacesSchemaZ = z20.object({
+    WindowActivityValueSchemaZ = z16.object({ opacity: RatioValueSchemaZ, contrast: RatioValueSchemaZ }).strict();
+    SurfacesSchemaZ = z16.object({
       canvas: RendererNeutralColorSchemaZ,
       panel: RendererNeutralColorSchemaZ,
       panelRaised: RendererNeutralColorSchemaZ,
@@ -3051,7 +2619,7 @@ var init_visual_tokens = __esm({
       headerActive: RendererNeutralColorSchemaZ,
       command: RendererNeutralColorSchemaZ
     }).strict();
-    TextSchemaZ = z20.object({
+    TextSchemaZ = z16.object({
       primary: RendererNeutralColorSchemaZ,
       secondary: RendererNeutralColorSchemaZ,
       muted: RendererNeutralColorSchemaZ,
@@ -3059,7 +2627,7 @@ var init_visual_tokens = __esm({
       inverse: RendererNeutralColorSchemaZ,
       link: RendererNeutralColorSchemaZ
     }).strict();
-    BordersSchemaZ = z20.object({
+    BordersSchemaZ = z16.object({
       subtle: RendererNeutralColorSchemaZ,
       default: RendererNeutralColorSchemaZ,
       focused: RendererNeutralColorSchemaZ,
@@ -3067,21 +2635,21 @@ var init_visual_tokens = __esm({
       attention: RendererNeutralColorSchemaZ,
       danger: RendererNeutralColorSchemaZ
     }).strict();
-    StatusToneSchemaZ = z20.object({
+    StatusToneSchemaZ = z16.object({
       neutral: RendererNeutralColorSchemaZ,
       info: RendererNeutralColorSchemaZ,
       warning: RendererNeutralColorSchemaZ,
       danger: RendererNeutralColorSchemaZ,
       success: RendererNeutralColorSchemaZ
     }).strict();
-    SelectionSchemaZ = z20.object({
+    SelectionSchemaZ = z16.object({
       selection: RendererNeutralColorSchemaZ,
       selectionText: RendererNeutralColorSchemaZ,
       hover: RendererNeutralColorSchemaZ,
       pressed: RendererNeutralColorSchemaZ,
       disabled: RendererNeutralColorSchemaZ
     }).strict();
-    DensitySchemaZ = z20.object({
+    DensitySchemaZ = z16.object({
       cellHeight: RhythmValueSchemaZ,
       headerHeight: RhythmValueSchemaZ,
       statusHeight: RhythmValueSchemaZ,
@@ -3089,39 +2657,39 @@ var init_visual_tokens = __esm({
       sectionGap: RhythmValueSchemaZ,
       controlPadding: RhythmValueSchemaZ
     }).strict();
-    ShapeSchemaZ = z20.object({
+    ShapeSchemaZ = z16.object({
       dockedRadius: RhythmValueSchemaZ,
       floatingRadius: RhythmValueSchemaZ,
       controlRadius: RhythmValueSchemaZ,
       statusRadius: RhythmValueSchemaZ
     }).strict();
-    ElevationSchemaZ = z20.object({
+    ElevationSchemaZ = z16.object({
       floating: ElevationValueSchemaZ,
       palette: ElevationValueSchemaZ,
       windowMode: ElevationValueSchemaZ
     }).strict();
-    MotionSchemaZ = z20.object({
+    MotionSchemaZ = z16.object({
       instant: DurationValueSchemaZ,
       fast: DurationValueSchemaZ,
       standard: DurationValueSchemaZ,
       emphasized: DurationValueSchemaZ,
       easing: MotionEasingSchemaZ
     }).strict();
-    TypographySchemaZ = z20.object({
+    TypographySchemaZ = z16.object({
       workspace: TypographyValueSchemaZ,
       label: TypographyValueSchemaZ,
       title: TypographyValueSchemaZ,
       metadata: TypographyValueSchemaZ,
       code: TypographyValueSchemaZ
     }).strict();
-    FocusSchemaZ = z20.object({
+    FocusSchemaZ = z16.object({
       outline: RhythmValueSchemaZ,
       outlineOffset: RhythmValueSchemaZ,
       focusContrast: RatioValueSchemaZ,
       highContrastOutline: RendererNeutralColorSchemaZ
     }).strict();
-    WindowActivitySchemaZ = z20.object({ active: WindowActivityValueSchemaZ, inactive: WindowActivityValueSchemaZ }).strict();
-    VisualTokensV1SchemaZ = z20.object({
+    WindowActivitySchemaZ = z16.object({ active: WindowActivityValueSchemaZ, inactive: WindowActivityValueSchemaZ }).strict();
+    VisualTokensV1SchemaZ = z16.object({
       surfaces: SurfacesSchemaZ,
       text: TextSchemaZ,
       borders: BordersSchemaZ,
@@ -3135,7 +2703,7 @@ var init_visual_tokens = __esm({
       focus: FocusSchemaZ,
       windowActivity: WindowActivitySchemaZ
     }).strict();
-    VisualTokenOverridesV1SchemaZ = z20.object({
+    VisualTokenOverridesV1SchemaZ = z16.object({
       surfaces: SurfacesSchemaZ.partial().optional(),
       text: TextSchemaZ.partial().optional(),
       borders: BordersSchemaZ.partial().optional(),
@@ -3149,24 +2717,24 @@ var init_visual_tokens = __esm({
       focus: FocusSchemaZ.partial().optional(),
       windowActivity: WindowActivitySchemaZ.partial().optional()
     }).strict();
-    ThemeIdSchemaZ = z20.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/u);
-    ThemeNameSchemaZ = z20.string().min(1).max(120);
-    ThemeAppearanceSchemaZ = z20.enum(["dark", "light"]);
-    VisualThemeDocumentV1SchemaZ = z20.object({
-      version: z20.literal(VISUAL_THEME_VERSION),
+    ThemeIdSchemaZ = z16.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/u);
+    ThemeNameSchemaZ = z16.string().min(1).max(120);
+    ThemeAppearanceSchemaZ = z16.enum(["dark", "light"]);
+    VisualThemeDocumentV1SchemaZ = z16.object({
+      version: z16.literal(VISUAL_THEME_VERSION),
       id: ThemeIdSchemaZ,
       name: ThemeNameSchemaZ,
       appearance: ThemeAppearanceSchemaZ.optional(),
       overrides: VisualTokenOverridesV1SchemaZ
     }).strict();
-    VisualThemeDocumentV0SchemaZ = z20.object({
-      version: z20.literal(0),
+    VisualThemeDocumentV0SchemaZ = z16.object({
+      version: z16.literal(0),
       id: ThemeIdSchemaZ,
       name: ThemeNameSchemaZ,
       appearance: ThemeAppearanceSchemaZ.optional(),
       tokens: VisualTokenOverridesV1SchemaZ
     }).strict();
-    ThemeAccessibilityPreferencesSchemaZ = z20.object({ reducedMotion: z20.boolean(), increasedContrast: z20.boolean() }).strict();
+    ThemeAccessibilityPreferencesSchemaZ = z16.object({ reducedMotion: z16.boolean(), increasedContrast: z16.boolean() }).strict();
     groupSchemas = {
       surfaces: {
         canvas: RendererNeutralColorSchemaZ,
@@ -3235,7 +2803,7 @@ var init_visual_tokens = __esm({
 });
 
 // packages/contracts/src/cohesion-fixture.ts
-import { z as z21 } from "zod";
+import { z as z17 } from "zod";
 function deepFreeze(value) {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) deepFreeze(child);
@@ -3252,29 +2820,29 @@ var init_cohesion_fixture = __esm({
     init_pane_appearance();
     init_visual_tokens();
     COHESION_FIXTURE_VERSION = 1;
-    LabelSchemaZ = z21.string().min(1).max(160);
-    OptionalLabelSchemaZ = z21.string().min(1).max(240).nullable();
-    ReadinessSchemaZ = z21.object({
-      state: z21.enum(["ready", "warning", "blocked"]),
-      facts: z21.array(LabelSchemaZ).max(24),
-      warnings: z21.array(LabelSchemaZ).max(24)
+    LabelSchemaZ = z17.string().min(1).max(160);
+    OptionalLabelSchemaZ = z17.string().min(1).max(240).nullable();
+    ReadinessSchemaZ = z17.object({
+      state: z17.enum(["ready", "warning", "blocked"]),
+      facts: z17.array(LabelSchemaZ).max(24),
+      warnings: z17.array(LabelSchemaZ).max(24)
     }).strict();
-    SessionSidebarItemSchemaZ = z21.object({
+    SessionSidebarItemSchemaZ = z17.object({
       id: SemanticProductIdSchemaZ,
       label: LabelSchemaZ,
-      state: z21.enum(["connected", "reconnecting", "disconnected"]),
-      active: z21.boolean()
+      state: z17.enum(["connected", "reconnecting", "disconnected"]),
+      active: z17.boolean()
     }).strict();
-    AgentSidebarItemSchemaZ = z21.object({
+    AgentSidebarItemSchemaZ = z17.object({
       id: SemanticProductIdSchemaZ,
       name: LabelSchemaZ,
-      harness: z21.enum(["codex", "claude-code", "custom"]),
+      harness: z17.enum(["codex", "claude-code", "custom"]),
       activity: AgentActivitySchemaZ,
       paneId: SemanticProductIdSchemaZ.nullable(),
-      attention: z21.boolean()
+      attention: z17.boolean()
     }).strict();
-    PaneActionSchemaZ = z21.object({
-      id: z21.enum([
+    PaneActionSchemaZ = z17.object({
+      id: z17.enum([
         "focus-terminal",
         "split",
         "duplicate",
@@ -3285,13 +2853,13 @@ var init_cohesion_fixture = __esm({
       icon: SemanticIconIdSchemaZ,
       label: LabelSchemaZ,
       commandId: CommandIdSchemaZ,
-      available: z21.boolean(),
+      available: z17.boolean(),
       disabledReason: OptionalLabelSchemaZ
     }).strict().refine((action) => action.available === (action.disabledReason === null), {
       message: "available actions must not have a disabled reason and unavailable actions must",
       path: ["disabledReason"]
     });
-    PaneFixtureSchemaZ = z21.object({
+    PaneFixtureSchemaZ = z17.object({
       id: SemanticProductIdSchemaZ,
       role: PaneRoleIdSchemaZ,
       title: LabelSchemaZ,
@@ -3299,7 +2867,7 @@ var init_cohesion_fixture = __esm({
       terminalSourceId: SemanticProductIdSchemaZ.nullable(),
       agentId: SemanticProductIdSchemaZ.nullable(),
       state: PaneVisualStateV1SchemaZ,
-      actions: z21.array(PaneActionSchemaZ).min(1).max(6)
+      actions: z17.array(PaneActionSchemaZ).min(1).max(6)
     }).strict().superRefine((pane, ctx) => {
       const expectedOrder = [
         "focus-terminal",
@@ -3314,7 +2882,7 @@ var init_cohesion_fixture = __esm({
         const order = expectedOrder.indexOf(action.id);
         if (order <= last) {
           ctx.addIssue({
-            code: z21.ZodIssueCode.custom,
+            code: z17.ZodIssueCode.custom,
             message: "pane actions must follow canonical action order",
             path: ["actions", index, "id"]
           });
@@ -3322,74 +2890,74 @@ var init_cohesion_fixture = __esm({
         last = order;
       }
     });
-    DockToolDataSchemaZ = z21.discriminatedUnion("kind", [
-      z21.object({
-        kind: z21.literal("files"),
+    DockToolDataSchemaZ = z17.discriminatedUnion("kind", [
+      z17.object({
+        kind: z17.literal("files"),
         selectedResourceId: SemanticProductIdSchemaZ.nullable(),
-        fileCount: z21.number().int().nonnegative()
+        fileCount: z17.number().int().nonnegative()
       }).strict(),
-      z21.object({
-        kind: z21.literal("changes"),
+      z17.object({
+        kind: z17.literal("changes"),
         selectedResourceId: SemanticProductIdSchemaZ.nullable(),
-        changeCount: z21.number().int().nonnegative()
+        changeCount: z17.number().int().nonnegative()
       }).strict(),
-      z21.object({
-        kind: z21.literal("missions"),
+      z17.object({
+        kind: z17.literal("missions"),
         missionId: SemanticProductIdSchemaZ,
         title: LabelSchemaZ,
         status: CanonicalDomainStatusSchemaZ,
-        goalCount: z21.number().int().nonnegative(),
-        taskCount: z21.number().int().nonnegative()
+        goalCount: z17.number().int().nonnegative(),
+        taskCount: z17.number().int().nonnegative()
       }).strict(),
-      z21.object({
-        kind: z21.literal("activity"),
-        eventCount: z21.number().int().nonnegative(),
+      z17.object({
+        kind: z17.literal("activity"),
+        eventCount: z17.number().int().nonnegative(),
         latestEventLabel: OptionalLabelSchemaZ
       }).strict()
     ]);
-    DockToolFixtureSchemaZ = z21.object({
+    DockToolFixtureSchemaZ = z17.object({
       id: DockToolIdSchemaZ,
       label: LabelSchemaZ,
       shortcut: LabelSchemaZ,
-      unreadCount: z21.number().int().nonnegative(),
+      unreadCount: z17.number().int().nonnegative(),
       disabledReason: OptionalLabelSchemaZ,
       data: DockToolDataSchemaZ
     }).strict().refine((tool) => tool.id === tool.data.kind, {
       message: "dock tool data kind must match its canonical tool id",
       path: ["data", "kind"]
     });
-    ConnectionRecoverySchemaZ = z21.object({
-      state: z21.enum(["connected", "reconnecting", "disconnected", "recovering"]),
+    ConnectionRecoverySchemaZ = z17.object({
+      state: z17.enum(["connected", "reconnecting", "disconnected", "recovering"]),
       message: LabelSchemaZ,
       safeState: LabelSchemaZ,
       nextAction: LabelSchemaZ
     }).strict();
-    CohesionFixtureV1SchemaZ = z21.object({
-      version: z21.literal(COHESION_FIXTURE_VERSION),
-      project: z21.object({
+    CohesionFixtureV1SchemaZ = z17.object({
+      version: z17.literal(COHESION_FIXTURE_VERSION),
+      project: z17.object({
         id: SemanticProductIdSchemaZ,
         name: LabelSchemaZ,
         rootLabel: LabelSchemaZ,
         readiness: ReadinessSchemaZ
       }).strict(),
-      workspace: z21.object({
+      workspace: z17.object({
         id: SemanticProductIdSchemaZ,
         name: LabelSchemaZ,
         activeMode: PrimaryWorkspaceModeIdSchemaZ,
         session: SessionSidebarItemSchemaZ,
-        sidebar: z21.object({
-          sessions: z21.array(SessionSidebarItemSchemaZ).min(1).max(32),
-          agents: z21.array(AgentSidebarItemSchemaZ).max(64)
+        sidebar: z17.object({
+          sessions: z17.array(SessionSidebarItemSchemaZ).min(1).max(32),
+          agents: z17.array(AgentSidebarItemSchemaZ).max(64)
         }).strict()
       }).strict(),
-      panes: z21.array(PaneFixtureSchemaZ).min(1).max(32),
-      dock: z21.object({
-        mode: z21.enum(["collapsed", "open", "maximized"]),
+      panes: z17.array(PaneFixtureSchemaZ).min(1).max(32),
+      dock: z17.object({
+        mode: z17.enum(["collapsed", "open", "maximized"]),
         activeTool: DockToolIdSchemaZ,
-        tools: z21.array(DockToolFixtureSchemaZ).length(4)
+        tools: z17.array(DockToolFixtureSchemaZ).length(4)
       }).strict(),
       focus: FocusOverlayStateV1SchemaZ,
-      theme: z21.object({
+      theme: z17.object({
         user: VisualThemeDocumentV1SchemaZ.nullable(),
         project: VisualThemeDocumentV1SchemaZ.nullable(),
         accessibility: ThemeAccessibilityPreferencesSchemaZ
@@ -3400,7 +2968,7 @@ var init_cohesion_fixture = __esm({
       const paneIdSet = new Set(paneIds);
       if (paneIdSet.size !== paneIds.length) {
         ctx.addIssue({
-          code: z21.ZodIssueCode.custom,
+          code: z17.ZodIssueCode.custom,
           message: "pane ids must be unique",
           path: ["panes"]
         });
@@ -3408,7 +2976,7 @@ var init_cohesion_fixture = __esm({
       const agentIds = fixture.workspace.sidebar.agents.map((agent) => agent.id);
       if (new Set(agentIds).size !== agentIds.length) {
         ctx.addIssue({
-          code: z21.ZodIssueCode.custom,
+          code: z17.ZodIssueCode.custom,
           message: "agent ids must be unique",
           path: ["workspace", "sidebar", "agents"]
         });
@@ -3416,7 +2984,7 @@ var init_cohesion_fixture = __esm({
       const sessionIds = fixture.workspace.sidebar.sessions.map((session) => session.id);
       if (new Set(sessionIds).size !== sessionIds.length) {
         ctx.addIssue({
-          code: z21.ZodIssueCode.custom,
+          code: z17.ZodIssueCode.custom,
           message: "session ids must be unique",
           path: ["workspace", "sidebar", "sessions"]
         });
@@ -3425,7 +2993,7 @@ var init_cohesion_fixture = __esm({
         (session) => session.id === fixture.workspace.session.id
       )) {
         ctx.addIssue({
-          code: z21.ZodIssueCode.custom,
+          code: z17.ZodIssueCode.custom,
           message: "active session must be present in the sidebar",
           path: ["workspace", "session", "id"]
         });
@@ -3433,7 +3001,7 @@ var init_cohesion_fixture = __esm({
       for (const [index, agent] of fixture.workspace.sidebar.agents.entries()) {
         if (agent.paneId !== null && !paneIdSet.has(agent.paneId)) {
           ctx.addIssue({
-            code: z21.ZodIssueCode.custom,
+            code: z17.ZodIssueCode.custom,
             message: "agent pane must exist in fixture panes",
             path: ["workspace", "sidebar", "agents", index, "paneId"]
           });
@@ -3447,7 +3015,7 @@ var init_cohesion_fixture = __esm({
       for (const paneId of focusReferences) {
         if (paneId !== null && !paneIdSet.has(paneId)) {
           ctx.addIssue({
-            code: z21.ZodIssueCode.custom,
+            code: z17.ZodIssueCode.custom,
             message: "focus state references an unknown pane",
             path: ["focus"]
           });
@@ -3459,28 +3027,28 @@ var init_cohesion_fixture = __esm({
         const shouldBeSelected = pane.id === fixture.focus.layoutSelectedPaneId;
         if (pane.state.applicationFocus.pane !== shouldBeFocused) {
           ctx.addIssue({
-            code: z21.ZodIssueCode.custom,
+            code: z17.ZodIssueCode.custom,
             message: "pane focus channel must match canonical focus state",
             path: ["panes", index, "state", "applicationFocus", "pane"]
           });
         }
         if (pane.state.applicationFocus.terminalInput !== shouldOwnTerminal) {
           ctx.addIssue({
-            code: z21.ZodIssueCode.custom,
+            code: z17.ZodIssueCode.custom,
             message: "terminal input channel must match canonical focus state",
             path: ["panes", index, "state", "applicationFocus", "terminalInput"]
           });
         }
         if (pane.state.layoutInteraction.selected !== shouldBeSelected) {
           ctx.addIssue({
-            code: z21.ZodIssueCode.custom,
+            code: z17.ZodIssueCode.custom,
             message: "layout selection channel must match canonical focus state",
             path: ["panes", index, "state", "layoutInteraction", "selected"]
           });
         }
         if (pane.state.applicationFocus.windowActive !== (fixture.focus.windowActivity === "active")) {
           ctx.addIssue({
-            code: z21.ZodIssueCode.custom,
+            code: z17.ZodIssueCode.custom,
             message: "pane window activity must match canonical focus state",
             path: ["panes", index, "state", "applicationFocus", "windowActive"]
           });
@@ -3492,7 +3060,7 @@ var init_cohesion_fixture = __esm({
       const actualDockOrder = fixture.dock.tools.map((tool) => tool.id);
       if (actualDockOrder.some((tool, index) => tool !== expectedDockOrder[index])) {
         ctx.addIssue({
-          code: z21.ZodIssueCode.custom,
+          code: z17.ZodIssueCode.custom,
           message: "dock tools must use canonical identity and order",
           path: ["dock", "tools"]
         });
@@ -3814,7 +3382,7 @@ var init_cohesion_fixture = __esm({
 });
 
 // packages/contracts/src/application-shell.ts
-import { z as z22 } from "zod";
+import { z as z18 } from "zod";
 function deepFreeze2(value) {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) deepFreeze2(child);
@@ -4000,7 +3568,7 @@ var init_application_shell = __esm({
     init_pane_appearance();
     APPLICATION_SHELL_PROJECTION_VERSION = 1;
     APPLICATION_SHELL_TRACE_VERSION = 1;
-    ApplicationShellProjectionInputV1SchemaZ = z22.object({
+    ApplicationShellProjectionInputV1SchemaZ = z18.object({
       project: CohesionFixtureV1SchemaZ.shape.project,
       workspace: CohesionFixtureV1SchemaZ.shape.workspace,
       dock: CohesionFixtureV1SchemaZ.shape.dock,
@@ -4008,67 +3576,67 @@ var init_application_shell = __esm({
       connection: CohesionFixtureV1SchemaZ.shape.connection
     }).strict();
     WorkspaceFixtureSchemaZ = CohesionFixtureV1SchemaZ.shape.workspace;
-    ApplicationShellSurfaceProjectionSchemaZ = z22.object({
+    ApplicationShellSurfaceProjectionSchemaZ = z18.object({
       id: ProductSurfaceIdSchemaZ,
       icon: SemanticIconIdSchemaZ,
-      label: z22.string().min(1).max(160),
-      kind: z22.enum(["primary-mode", "dock-tool"]),
-      area: z22.enum(["workspace-canvas", "bottom-dock"]),
-      order: z22.number().int().nonnegative(),
+      label: z18.string().min(1).max(160),
+      kind: z18.enum(["primary-mode", "dock-tool"]),
+      area: z18.enum(["workspace-canvas", "bottom-dock"]),
+      order: z18.number().int().nonnegative(),
       owningMode: PrimaryWorkspaceModeIdSchemaZ,
-      shortcut: z22.string().min(1).max(32),
+      shortcut: z18.string().min(1).max(32),
       activation: SurfaceCommandTemplateSchemaZ,
-      active: z22.boolean(),
-      attention: z22.boolean(),
-      disabledReason: z22.string().min(1).max(240).nullable()
+      active: z18.boolean(),
+      attention: z18.boolean(),
+      disabledReason: z18.string().min(1).max(240).nullable()
     }).strict();
-    ApplicationShellProjectionV1SchemaZ = z22.object({
-      version: z22.literal(APPLICATION_SHELL_PROJECTION_VERSION),
+    ApplicationShellProjectionV1SchemaZ = z18.object({
+      version: z18.literal(APPLICATION_SHELL_PROJECTION_VERSION),
       project: CohesionFixtureV1SchemaZ.shape.project,
-      workspace: z22.object({
+      workspace: z18.object({
         id: SemanticProductIdSchemaZ,
-        name: z22.string().min(1).max(160)
+        name: z18.string().min(1).max(160)
       }).strict(),
-      sidebar: z22.object({
+      sidebar: z18.object({
         activeSessionId: SemanticProductIdSchemaZ,
         sessions: WorkspaceFixtureSchemaZ.shape.sidebar.shape.sessions,
         agents: WorkspaceFixtureSchemaZ.shape.sidebar.shape.agents
       }).strict(),
-      primaryNavigation: z22.object({
+      primaryNavigation: z18.object({
         activeMode: PrimaryWorkspaceModeIdSchemaZ,
-        items: z22.array(ApplicationShellSurfaceProjectionSchemaZ)
+        items: z18.array(ApplicationShellSurfaceProjectionSchemaZ)
       }).strict(),
-      workspaceCanvas: z22.object({ activeMode: PrimaryWorkspaceModeIdSchemaZ }).strict(),
-      bottomDock: z22.object({
+      workspaceCanvas: z18.object({ activeMode: PrimaryWorkspaceModeIdSchemaZ }).strict(),
+      bottomDock: z18.object({
         mode: ApplicationShellDockModeSchemaZ,
         activeTool: DockToolIdSchemaZ,
-        tools: z22.array(ApplicationShellSurfaceProjectionSchemaZ)
+        tools: z18.array(ApplicationShellSurfaceProjectionSchemaZ)
       }).strict(),
       statusStrip: CohesionFixtureV1SchemaZ.shape.connection,
-      focus: z22.object({
-        windowActivity: z22.enum(["active", "inactive"]),
+      focus: z18.object({
+        windowActivity: z18.enum(["active", "inactive"]),
         zone: FocusZoneSchemaZ,
         appFocusedPaneId: SemanticProductIdSchemaZ.nullable(),
         terminalInputPaneId: SemanticProductIdSchemaZ.nullable(),
         layoutSelectedPaneId: SemanticProductIdSchemaZ.nullable(),
-        overlays: z22.array(SemanticOverlaySchemaZ).max(16),
-        palette: z22.object({
-          open: z22.boolean(),
+        overlays: z18.array(SemanticOverlaySchemaZ).max(16),
+        palette: z18.object({
+          open: z18.boolean(),
           overlayId: SemanticProductIdSchemaZ.nullable(),
           focusReturnTarget: SemanticFocusTargetSchemaZ.nullable()
         }).strict()
       }).strict()
     }).strict();
-    ApplicationShellActivateModeArgumentsSchemaZ = z22.object({ mode: PrimaryWorkspaceModeIdSchemaZ }).strict();
-    ApplicationShellActivateDockToolArgumentsSchemaZ = z22.object({ tool: DockToolIdSchemaZ }).strict();
-    ApplicationShellSetDockModeArgumentsSchemaZ = z22.object({ mode: ApplicationShellDockModeSchemaZ }).strict();
-    ApplicationShellMoveFocusArgumentsSchemaZ = z22.object({ target: SemanticFocusTargetSchemaZ }).strict();
-    ApplicationShellOpenPaletteArgumentsSchemaZ = z22.object({
+    ApplicationShellActivateModeArgumentsSchemaZ = z18.object({ mode: PrimaryWorkspaceModeIdSchemaZ }).strict();
+    ApplicationShellActivateDockToolArgumentsSchemaZ = z18.object({ tool: DockToolIdSchemaZ }).strict();
+    ApplicationShellSetDockModeArgumentsSchemaZ = z18.object({ mode: ApplicationShellDockModeSchemaZ }).strict();
+    ApplicationShellMoveFocusArgumentsSchemaZ = z18.object({ target: SemanticFocusTargetSchemaZ }).strict();
+    ApplicationShellOpenPaletteArgumentsSchemaZ = z18.object({
       overlayId: SemanticProductIdSchemaZ,
       focusReturnTarget: SemanticFocusTargetSchemaZ
     }).strict();
-    ApplicationShellClosePaletteArgumentsSchemaZ = z22.object({ overlayId: SemanticProductIdSchemaZ }).strict();
-    ApplicationShellSelectResourceArgumentsSchemaZ = z22.object({
+    ApplicationShellClosePaletteArgumentsSchemaZ = z18.object({ overlayId: SemanticProductIdSchemaZ }).strict();
+    ApplicationShellSelectResourceArgumentsSchemaZ = z18.object({
       surface: ProductSurfaceIdSchemaZ,
       resourceId: SemanticProductIdSchemaZ
     }).strict();
@@ -4081,46 +3649,46 @@ var init_application_shell = __esm({
       [APPLICATION_SHELL_COMMAND_IDS.closePalette]: ApplicationShellClosePaletteArgumentsSchemaZ,
       [APPLICATION_SHELL_COMMAND_IDS.selectResource]: ApplicationShellSelectResourceArgumentsSchemaZ
     });
-    ApplicationShellCommandInvocationSchemaZ = z22.discriminatedUnion("id", [
-      z22.object({
-        version: z22.literal(COMMAND_PROTOCOL_VERSION),
-        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.activateMode),
+    ApplicationShellCommandInvocationSchemaZ = z18.discriminatedUnion("id", [
+      z18.object({
+        version: z18.literal(COMMAND_PROTOCOL_VERSION),
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.activateMode),
         source: CommandSourceSchemaZ,
         args: ApplicationShellActivateModeArgumentsSchemaZ
       }).strict(),
-      z22.object({
-        version: z22.literal(COMMAND_PROTOCOL_VERSION),
-        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.activateDockTool),
+      z18.object({
+        version: z18.literal(COMMAND_PROTOCOL_VERSION),
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.activateDockTool),
         source: CommandSourceSchemaZ,
         args: ApplicationShellActivateDockToolArgumentsSchemaZ
       }).strict(),
-      z22.object({
-        version: z22.literal(COMMAND_PROTOCOL_VERSION),
-        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.setDockMode),
+      z18.object({
+        version: z18.literal(COMMAND_PROTOCOL_VERSION),
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.setDockMode),
         source: CommandSourceSchemaZ,
         args: ApplicationShellSetDockModeArgumentsSchemaZ
       }).strict(),
-      z22.object({
-        version: z22.literal(COMMAND_PROTOCOL_VERSION),
-        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.moveFocus),
+      z18.object({
+        version: z18.literal(COMMAND_PROTOCOL_VERSION),
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.moveFocus),
         source: CommandSourceSchemaZ,
         args: ApplicationShellMoveFocusArgumentsSchemaZ
       }).strict(),
-      z22.object({
-        version: z22.literal(COMMAND_PROTOCOL_VERSION),
-        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.openPalette),
+      z18.object({
+        version: z18.literal(COMMAND_PROTOCOL_VERSION),
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.openPalette),
         source: CommandSourceSchemaZ,
         args: ApplicationShellOpenPaletteArgumentsSchemaZ
       }).strict(),
-      z22.object({
-        version: z22.literal(COMMAND_PROTOCOL_VERSION),
-        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.closePalette),
+      z18.object({
+        version: z18.literal(COMMAND_PROTOCOL_VERSION),
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.closePalette),
         source: CommandSourceSchemaZ,
         args: ApplicationShellClosePaletteArgumentsSchemaZ
       }).strict(),
-      z22.object({
-        version: z22.literal(COMMAND_PROTOCOL_VERSION),
-        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.selectResource),
+      z18.object({
+        version: z18.literal(COMMAND_PROTOCOL_VERSION),
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.selectResource),
         source: CommandSourceSchemaZ,
         args: ApplicationShellSelectResourceArgumentsSchemaZ
       }).strict()
@@ -4161,13 +3729,13 @@ var init_application_shell = __esm({
         })
       )
     );
-    ApplicationShellResourceSelectionSchemaZ = z22.object({ surface: ProductSurfaceIdSchemaZ, resourceId: SemanticProductIdSchemaZ }).strict();
-    ApplicationShellReplayStateV1SchemaZ = z22.object({
+    ApplicationShellResourceSelectionSchemaZ = z18.object({ surface: ProductSurfaceIdSchemaZ, resourceId: SemanticProductIdSchemaZ }).strict();
+    ApplicationShellReplayStateV1SchemaZ = z18.object({
       activeMode: PrimaryWorkspaceModeIdSchemaZ,
       dockMode: ApplicationShellDockModeSchemaZ,
       activeDockTool: DockToolIdSchemaZ,
       focus: FocusOverlayStateV1SchemaZ,
-      selectedResources: z22.array(ApplicationShellResourceSelectionSchemaZ)
+      selectedResources: z18.array(ApplicationShellResourceSelectionSchemaZ)
     }).strict().superRefine((state, ctx) => {
       const surfaces = state.selectedResources.map(({ surface }) => surface);
       if (new Set(surfaces).size !== surfaces.length) {
@@ -4178,10 +3746,10 @@ var init_application_shell = __esm({
         });
       }
     });
-    ApplicationShellActionTraceV1BaseSchemaZ = z22.object({
-      version: z22.literal(APPLICATION_SHELL_TRACE_VERSION),
+    ApplicationShellActionTraceV1BaseSchemaZ = z18.object({
+      version: z18.literal(APPLICATION_SHELL_TRACE_VERSION),
       initialState: ApplicationShellReplayStateV1SchemaZ,
-      invocations: z22.array(ApplicationShellCommandInvocationSchemaZ),
+      invocations: z18.array(ApplicationShellCommandInvocationSchemaZ),
       finalState: ApplicationShellReplayStateV1SchemaZ
     }).strict();
     ApplicationShellActionTraceV1SchemaZ = ApplicationShellActionTraceV1BaseSchemaZ.superRefine((trace, ctx) => {
@@ -4206,7 +3774,7 @@ var init_application_shell = __esm({
 });
 
 // packages/contracts/src/daemon-wire.ts
-import { z as z23 } from "zod";
+import { z as z19 } from "zod";
 function isDaemonWireProtocolCompatible(protocolVersion) {
   return protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION;
 }
@@ -4215,49 +3783,49 @@ var init_daemon_wire = __esm({
   "packages/contracts/src/daemon-wire.ts"() {
     "use strict";
     DAEMON_WIRE_PROTOCOL_VERSION = 1;
-    DaemonWireProtocolVersionSchema = z23.number().int().positive();
-    DaemonInstanceIdSchema = z23.uuid();
-    DaemonInstanceIdentitySchemaZ = z23.object({
+    DaemonWireProtocolVersionSchema = z19.number().int().positive();
+    DaemonInstanceIdSchema = z19.uuid();
+    DaemonInstanceIdentitySchemaZ = z19.object({
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z23.string().trim().min(1),
+      productVersion: z19.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
-      startedAt: z23.iso.datetime({ offset: true })
+      startedAt: z19.iso.datetime({ offset: true })
     }).strict();
-    CanonicalDaemonInfoSchema = z23.object({
-      pid: z23.number().int().positive(),
-      port: z23.number().int().min(1).max(65535),
+    CanonicalDaemonInfoSchema = z19.object({
+      pid: z19.number().int().positive(),
+      port: z19.number().int().min(1).max(65535),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z23.string().trim().min(1),
+      productVersion: z19.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
-      startedAt: z23.iso.datetime({ offset: true }),
-      bindHostname: z23.string().trim().min(1),
-      authToken: z23.string().min(1).nullable()
+      startedAt: z19.iso.datetime({ offset: true }),
+      bindHostname: z19.string().trim().min(1),
+      authToken: z19.string().min(1).nullable()
     });
-    DaemonHealthSchema = z23.object({
-      ok: z23.literal(true),
+    DaemonHealthSchema = z19.object({
+      ok: z19.literal(true),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z23.string().trim().min(1),
-      uptime: z23.number().nonnegative()
+      productVersion: z19.string().trim().min(1),
+      uptime: z19.number().nonnegative()
     });
-    DaemonHealthzSchema = z23.object({
-      ok: z23.literal(true),
+    DaemonHealthzSchema = z19.object({
+      ok: z19.literal(true),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z23.string().trim().min(1),
-      uptimeMs: z23.number().nonnegative()
+      productVersion: z19.string().trim().min(1),
+      uptimeMs: z19.number().nonnegative()
     });
-    DaemonIdentitySchema = z23.object({
-      ok: z23.literal(true),
-      pid: z23.number().int().positive(),
+    DaemonIdentitySchema = z19.object({
+      ok: z19.literal(true),
+      pid: z19.number().int().positive(),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z23.string().trim().min(1),
+      productVersion: z19.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
-      startedAt: z23.iso.datetime({ offset: true })
+      startedAt: z19.iso.datetime({ offset: true })
     });
   }
 });
 
 // packages/contracts/src/application-shell-resource.ts
-import { z as z24 } from "zod";
+import { z as z20 } from "zod";
 var APPLICATION_SHELL_RESOURCE_VERSION, ApplicationShellResourceV1SchemaZ;
 var init_application_shell_resource = __esm({
   "packages/contracts/src/application-shell-resource.ts"() {
@@ -4265,8 +3833,8 @@ var init_application_shell_resource = __esm({
     init_application_shell();
     init_daemon_wire();
     APPLICATION_SHELL_RESOURCE_VERSION = 1;
-    ApplicationShellResourceV1SchemaZ = z24.object({
-      version: z24.literal(APPLICATION_SHELL_RESOURCE_VERSION),
+    ApplicationShellResourceV1SchemaZ = z20.object({
+      version: z20.literal(APPLICATION_SHELL_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: ApplicationShellProjectionInputV1SchemaZ
     }).strict();
@@ -4274,39 +3842,39 @@ var init_application_shell_resource = __esm({
 });
 
 // packages/contracts/src/desktop-host.ts
-import { z as z25 } from "zod";
-var DESKTOP_HOST_API_VERSION, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonLoopbackUrlSchemaZ, DesktopDaemonHostDescriptorSchemaZ, DesktopDaemonHostIssueCodeSchemaZ, DesktopDaemonHostIssueSchemaFields, DesktopDaemonCapabilityIssueSchemaFields, DesktopDaemonHostStateSchemaZ, DesktopDaemonCapabilityStateSchemaZ, DesktopWorkspaceNameSchemaZ, DesktopDaemonCapabilityErrorCodeSchemaZ, DesktopDaemonCapabilityErrorSchemaZ, DesktopDaemonWorkspaceSummarySchemaZ, DesktopDaemonListWorkspacesResultSchemaZ, DesktopDaemonFetchApplicationShellRequestSchemaZ, DesktopApplicationShellTargetSchemaZ, DesktopDaemonFetchApplicationShellResultSchemaZ, DesktopDaemonEventSubscriptionRequestSchemaZ, DesktopDaemonSubscriptionIdSchemaZ, DesktopDaemonEventSchemaZ, DesktopDaemonSubscribeWireResultSchemaZ, DesktopDaemonEventWireEnvelopeSchemaZ, DesktopHostBootstrapSchemaZ, DesktopMenuResultSchemaZ, DesktopDirectorySelectionSchemaZ;
+import { z as z21 } from "zod";
+var DESKTOP_HOST_API_VERSION, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonLoopbackUrlSchemaZ, DesktopDaemonHostDescriptorSchemaZ, DesktopDaemonHostIssueCodeSchemaZ, DesktopDaemonHostIssueSchemaFields, DesktopDaemonCapabilityIssueSchemaFields, DesktopDaemonHostStateSchemaZ, DesktopDaemonCapabilityStateSchemaZ, DesktopWorkspaceNameSchemaZ, DesktopDaemonCapabilityErrorCodeSchemaZ, DesktopDaemonCapabilityErrorSchemaZ, DesktopDaemonWorkspaceSummarySchemaZ, DesktopDaemonListWorkspacesResultSchemaZ, DesktopDaemonFetchApplicationShellRequestSchemaZ, DesktopApplicationShellTargetSchemaZ, DesktopDaemonFetchApplicationShellResultSchemaZ, DesktopDaemonEventSubscriptionRequestSchemaZ, DesktopDaemonSubscriptionIdSchemaZ, DesktopDaemonEventSchemaZ, DesktopDaemonDisconnectedCapabilityStateSchemaZ, DesktopDaemonConnectedCapabilityStateSchemaZ, DesktopDaemonRefreshConnectionResultSchemaZ, DesktopDaemonSubscribeWireResultSchemaZ, DesktopDaemonEventWireEnvelopeSchemaZ, DesktopHostBootstrapSchemaZ, DesktopMenuResultSchemaZ, DesktopDirectorySelectionSchemaZ;
 var init_desktop_host = __esm({
   "packages/contracts/src/desktop-host.ts"() {
     "use strict";
     init_application_shell_resource();
     init_daemon_wire();
-    DESKTOP_HOST_API_VERSION = 3;
-    DesktopRuntimeKindSchemaZ = z25.enum(["browser", "electron"]);
-    DesktopPlatformSchemaZ = z25.enum(["darwin", "linux", "win32", "unknown"]);
-    DesktopThemeModeSchemaZ = z25.enum(["light", "dark"]);
-    DesktopThemeStateSchemaZ = z25.object({
+    DESKTOP_HOST_API_VERSION = 4;
+    DesktopRuntimeKindSchemaZ = z21.enum(["browser", "electron"]);
+    DesktopPlatformSchemaZ = z21.enum(["darwin", "linux", "win32", "unknown"]);
+    DesktopThemeModeSchemaZ = z21.enum(["light", "dark"]);
+    DesktopThemeStateSchemaZ = z21.object({
       mode: DesktopThemeModeSchemaZ,
-      highContrast: z25.boolean(),
-      reducedMotion: z25.boolean()
+      highContrast: z21.boolean(),
+      reducedMotion: z21.boolean()
     }).strict();
-    DesktopWindowStateSchemaZ = z25.object({
-      maximized: z25.boolean(),
-      fullscreen: z25.boolean(),
-      focused: z25.boolean()
+    DesktopWindowStateSchemaZ = z21.object({
+      maximized: z21.boolean(),
+      fullscreen: z21.boolean(),
+      focused: z21.boolean()
     }).strict();
-    DesktopDaemonLoopbackUrlSchemaZ = z25.url().refine((value) => {
+    DesktopDaemonLoopbackUrlSchemaZ = z21.url().refine((value) => {
       const url = new URL(value);
       return url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]") && url.username.length === 0 && url.password.length === 0 && url.pathname === "/" && url.search.length === 0 && url.hash.length === 0;
     }, "daemon URL must be an uncredentialed loopback HTTP origin");
-    DesktopDaemonHostDescriptorSchemaZ = z25.object({
+    DesktopDaemonHostDescriptorSchemaZ = z21.object({
       apiBaseUrl: DesktopDaemonLoopbackUrlSchemaZ,
-      protocolVersion: z25.number().int().positive(),
-      productVersion: z25.string().trim().min(1),
-      instanceId: z25.uuid(),
-      startedAt: z25.iso.datetime({ offset: true })
+      protocolVersion: z21.number().int().positive(),
+      productVersion: z21.string().trim().min(1),
+      instanceId: z21.uuid(),
+      startedAt: z21.iso.datetime({ offset: true })
     }).strict();
-    DesktopDaemonHostIssueCodeSchemaZ = z25.enum([
+    DesktopDaemonHostIssueCodeSchemaZ = z21.enum([
       "record-missing",
       "record-invalid",
       "endpoint-not-loopback",
@@ -4318,37 +3886,38 @@ var init_desktop_host = __esm({
       "health-mismatch",
       "probe-failed",
       "probe-timeout",
+      "resource-broker-failed",
       "preview-only"
     ]);
     DesktopDaemonHostIssueSchemaFields = {
       code: DesktopDaemonHostIssueCodeSchemaZ,
-      reason: z25.string().min(1)
+      reason: z21.string().min(1)
     };
     DesktopDaemonCapabilityIssueSchemaFields = {
       code: DesktopDaemonHostIssueCodeSchemaZ,
-      reason: z25.string().min(1).max(240)
+      reason: z21.string().min(1).max(240)
     };
-    DesktopDaemonHostStateSchemaZ = z25.discriminatedUnion("status", [
-      z25.object({
-        status: z25.literal("connected"),
+    DesktopDaemonHostStateSchemaZ = z21.discriminatedUnion("status", [
+      z21.object({
+        status: z21.literal("connected"),
         descriptor: DesktopDaemonHostDescriptorSchemaZ
       }).strict(),
-      z25.object({ status: z25.literal("unavailable"), ...DesktopDaemonHostIssueSchemaFields }).strict(),
-      z25.object({ status: z25.literal("degraded"), ...DesktopDaemonHostIssueSchemaFields }).strict()
+      z21.object({ status: z21.literal("unavailable"), ...DesktopDaemonHostIssueSchemaFields }).strict(),
+      z21.object({ status: z21.literal("degraded"), ...DesktopDaemonHostIssueSchemaFields }).strict()
     ]);
-    DesktopDaemonCapabilityStateSchemaZ = z25.discriminatedUnion("status", [
-      z25.object({ status: z25.literal("connected"), identity: DaemonInstanceIdentitySchemaZ }).strict(),
-      z25.object({ status: z25.literal("unavailable"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict(),
-      z25.object({ status: z25.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict()
+    DesktopDaemonCapabilityStateSchemaZ = z21.discriminatedUnion("status", [
+      z21.object({ status: z21.literal("connected"), identity: DaemonInstanceIdentitySchemaZ }).strict(),
+      z21.object({ status: z21.literal("unavailable"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict(),
+      z21.object({ status: z21.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict()
     ]);
-    DesktopWorkspaceNameSchemaZ = z25.string().trim().min(1).max(160).refine(
+    DesktopWorkspaceNameSchemaZ = z21.string().trim().min(1).max(160).refine(
       (value) => [...value].every((character) => {
         const code = character.charCodeAt(0);
         return code >= 32 && code !== 127;
       }),
       "workspace name contains control characters"
     );
-    DesktopDaemonCapabilityErrorCodeSchemaZ = z25.enum([
+    DesktopDaemonCapabilityErrorCodeSchemaZ = z21.enum([
       "preview-only",
       "daemon-unavailable",
       "daemon-degraded",
@@ -4363,90 +3932,677 @@ var init_desktop_host = __esm({
       "protocol-error",
       "disposed"
     ]);
-    DesktopDaemonCapabilityErrorSchemaZ = z25.object({
+    DesktopDaemonCapabilityErrorSchemaZ = z21.object({
       code: DesktopDaemonCapabilityErrorCodeSchemaZ,
-      reason: z25.string().min(1).max(240)
+      reason: z21.string().min(1).max(240)
     }).strict();
-    DesktopDaemonWorkspaceSummarySchemaZ = z25.object({ workspaceName: DesktopWorkspaceNameSchemaZ }).strict();
-    DesktopDaemonListWorkspacesResultSchemaZ = z25.discriminatedUnion("status", [
-      z25.object({
-        status: z25.literal("ok"),
+    DesktopDaemonWorkspaceSummarySchemaZ = z21.object({ workspaceName: DesktopWorkspaceNameSchemaZ }).strict();
+    DesktopDaemonListWorkspacesResultSchemaZ = z21.discriminatedUnion("status", [
+      z21.object({
+        status: z21.literal("ok"),
         daemon: DaemonInstanceIdentitySchemaZ,
-        workspaces: z25.array(DesktopDaemonWorkspaceSummarySchemaZ)
+        workspaces: z21.array(DesktopDaemonWorkspaceSummarySchemaZ)
       }).strict(),
-      z25.object({ status: z25.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+      z21.object({ status: z21.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonFetchApplicationShellRequestSchemaZ = z25.object({ workspaceName: DesktopWorkspaceNameSchemaZ }).strict();
-    DesktopApplicationShellTargetSchemaZ = z25.object({
+    DesktopDaemonFetchApplicationShellRequestSchemaZ = z21.object({ workspaceName: DesktopWorkspaceNameSchemaZ }).strict();
+    DesktopApplicationShellTargetSchemaZ = z21.object({
       daemon: DaemonInstanceIdentitySchemaZ,
       workspaceName: DesktopWorkspaceNameSchemaZ
     }).strict();
-    DesktopDaemonFetchApplicationShellResultSchemaZ = z25.discriminatedUnion("status", [
-      z25.object({ status: z25.literal("ok"), envelope: ApplicationShellResourceV1SchemaZ }).strict(),
-      z25.object({ status: z25.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonFetchApplicationShellResultSchemaZ = z21.discriminatedUnion("status", [
+      z21.object({ status: z21.literal("ok"), envelope: ApplicationShellResourceV1SchemaZ }).strict(),
+      z21.object({ status: z21.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonEventSubscriptionRequestSchemaZ = z25.object({
+    DesktopDaemonEventSubscriptionRequestSchemaZ = z21.object({
       /**
        * Empty subscribes to catalog/connection invalidations only. Non-empty
        * subscriptions additionally receive events for the named workspaces.
        */
-      workspaceNames: z25.array(DesktopWorkspaceNameSchemaZ).max(64)
+      workspaceNames: z21.array(DesktopWorkspaceNameSchemaZ).max(64)
     }).strict().superRefine(({ workspaceNames }, ctx) => {
       if (new Set(workspaceNames).size !== workspaceNames.length) {
         ctx.addIssue({ code: "custom", message: "workspace names must be unique" });
       }
     });
-    DesktopDaemonSubscriptionIdSchemaZ = z25.string().regex(/^desktop-subscription-[1-9][0-9]{0,9}$/u);
-    DesktopDaemonEventSchemaZ = z25.discriminatedUnion("type", [
-      z25.object({ type: z25.literal("workspaces.changed") }).strict(),
-      z25.object({
-        type: z25.literal("application-shell.changed"),
+    DesktopDaemonSubscriptionIdSchemaZ = z21.string().regex(/^desktop-subscription-[1-9][0-9]{0,9}$/u);
+    DesktopDaemonEventSchemaZ = z21.discriminatedUnion("type", [
+      z21.object({ type: z21.literal("workspaces.changed") }).strict(),
+      z21.object({
+        type: z21.literal("application-shell.changed"),
         workspaceName: DesktopWorkspaceNameSchemaZ
       }).strict(),
-      z25.object({
-        type: z25.literal("connection.changed"),
-        state: z25.enum(["live", "degraded"]),
+      z21.object({
+        type: z21.literal("connection.changed"),
+        state: z21.enum(["live", "degraded"]),
         error: DesktopDaemonCapabilityErrorSchemaZ.nullable()
+      }).strict(),
+      z21.object({
+        type: z21.literal("daemon-generation.changed"),
+        previousIdentity: DaemonInstanceIdentitySchemaZ.nullable(),
+        daemon: DesktopDaemonCapabilityStateSchemaZ
       }).strict()
     ]);
-    DesktopDaemonSubscribeWireResultSchemaZ = z25.discriminatedUnion("status", [
-      z25.object({ status: z25.literal("subscribed"), subscriptionId: DesktopDaemonSubscriptionIdSchemaZ }).strict(),
-      z25.object({ status: z25.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonDisconnectedCapabilityStateSchemaZ = z21.discriminatedUnion("status", [
+      z21.object({
+        status: z21.literal("unavailable"),
+        ...DesktopDaemonCapabilityIssueSchemaFields
+      }).strict(),
+      z21.object({ status: z21.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict()
     ]);
-    DesktopDaemonEventWireEnvelopeSchemaZ = z25.object({
+    DesktopDaemonConnectedCapabilityStateSchemaZ = z21.object({ status: z21.literal("connected"), identity: DaemonInstanceIdentitySchemaZ }).strict();
+    DesktopDaemonRefreshConnectionResultSchemaZ = z21.discriminatedUnion("outcome", [
+      z21.object({
+        outcome: z21.literal("unchanged"),
+        daemon: DesktopDaemonCapabilityStateSchemaZ
+      }).strict(),
+      z21.object({
+        outcome: z21.literal("generation-replaced"),
+        previousIdentity: DaemonInstanceIdentitySchemaZ.nullable(),
+        daemon: DesktopDaemonConnectedCapabilityStateSchemaZ
+      }).strict(),
+      z21.object({
+        outcome: z21.literal("authority-retired"),
+        previousIdentity: DaemonInstanceIdentitySchemaZ,
+        daemon: DesktopDaemonDisconnectedCapabilityStateSchemaZ
+      }).strict(),
+      z21.object({
+        outcome: z21.literal("state-changed"),
+        daemon: DesktopDaemonDisconnectedCapabilityStateSchemaZ
+      }).strict(),
+      z21.object({
+        outcome: z21.literal("superseded"),
+        daemon: DesktopDaemonCapabilityStateSchemaZ
+      }).strict()
+    ]);
+    DesktopDaemonSubscribeWireResultSchemaZ = z21.discriminatedUnion("status", [
+      z21.object({ status: z21.literal("subscribed"), subscriptionId: DesktopDaemonSubscriptionIdSchemaZ }).strict(),
+      z21.object({ status: z21.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    ]);
+    DesktopDaemonEventWireEnvelopeSchemaZ = z21.object({
       subscriptionId: DesktopDaemonSubscriptionIdSchemaZ,
       event: DesktopDaemonEventSchemaZ
     }).strict();
-    DesktopHostBootstrapSchemaZ = z25.object({
-      apiVersion: z25.literal(DESKTOP_HOST_API_VERSION),
+    DesktopHostBootstrapSchemaZ = z21.object({
+      apiVersion: z21.literal(DESKTOP_HOST_API_VERSION),
       runtime: DesktopRuntimeKindSchemaZ,
       platform: DesktopPlatformSchemaZ,
-      appVersion: z25.string().min(1),
+      appVersion: z21.string().min(1),
       theme: DesktopThemeStateSchemaZ,
       window: DesktopWindowStateSchemaZ,
       daemon: DesktopDaemonCapabilityStateSchemaZ
     }).strict();
-    DesktopMenuResultSchemaZ = z25.object({ status: z25.literal("unavailable") }).strict();
-    DesktopDirectorySelectionSchemaZ = z25.object({ path: z25.string().min(1) }).strict();
+    DesktopMenuResultSchemaZ = z21.object({ status: z21.literal("unavailable") }).strict();
+    DesktopDirectorySelectionSchemaZ = z21.object({ path: z21.string().min(1) }).strict();
+  }
+});
+
+// packages/contracts/src/workspace-pane-creation.ts
+import { z as z22 } from "zod";
+function hasControlCharacters(value) {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 31 || code >= 127 && code <= 159;
+  });
+}
+function deepFreeze3(value) {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const nested of Object.values(value)) deepFreeze3(nested);
+  }
+  return value;
+}
+var WORKSPACE_PANE_CREATE_COMMAND_ID, WorkspacePaneCreationReferenceSchemaZ, WorkspacePaneCreationWorkspaceNameSchemaZ, WorkspacePaneDisplayTitleSchemaZ, WorkspacePaneCreationBaseArgumentsSchemaZ, WorkspaceTerminalCreateArgumentsSchemaZ, WorkspaceAgentCreateArgumentsSchemaZ, WorkspacePaneCreateArgumentsSchemaZ, WorkspacePaneCreateInvocationSchemaZ, WorkspacePaneCreateMutationRequestSchemaZ, WorkspacePaneCreatedResourceBaseSchemaZ, WorkspacePaneCreatedResourceSchemaZ, WorkspacePaneCreateMutationResultSchemaZ, WORKSPACE_PANE_CREATE_COMMAND_DESCRIPTOR;
+var init_workspace_pane_creation = __esm({
+  "packages/contracts/src/workspace-pane-creation.ts"() {
+    "use strict";
+    init_commands();
+    init_desktop_host();
+    init_workspace_config();
+    WORKSPACE_PANE_CREATE_COMMAND_ID = "workspace.pane.create";
+    WorkspacePaneCreationReferenceSchemaZ = z22.string().min(1).max(160).refine((value) => value === value.trim(), "reference must not have outer whitespace").refine((value) => !hasControlCharacters(value), "reference must not contain controls").refine((value) => !/[\\/]/u.test(value), "reference must not be a filesystem path").refine((value) => !/^[%$@]/u.test(value), "reference must not use tmux target syntax");
+    WorkspacePaneCreationWorkspaceNameSchemaZ = z22.string().superRefine((raw, context) => {
+      const parsed = DesktopWorkspaceNameSchemaZ.safeParse(raw);
+      if (!parsed.success) {
+        context.addIssue({ code: "custom", message: "invalid desktop workspace name" });
+        return;
+      }
+      if (parsed.data !== raw) {
+        context.addIssue({
+          code: "custom",
+          message: "workspace name must already be in canonical form"
+        });
+      }
+    }).pipe(DesktopWorkspaceNameSchemaZ);
+    WorkspacePaneDisplayTitleSchemaZ = z22.string().min(1).max(80).refine((value) => value === value.trim(), "display title must not have outer whitespace").refine((value) => !hasControlCharacters(value), "display title must not contain controls");
+    WorkspacePaneCreationBaseArgumentsSchemaZ = z22.object({
+      workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ,
+      displayTitle: WorkspacePaneDisplayTitleSchemaZ.optional()
+    });
+    WorkspaceTerminalCreateArgumentsSchemaZ = WorkspacePaneCreationBaseArgumentsSchemaZ.extend({
+      kind: z22.literal("terminal")
+    }).strict();
+    WorkspaceAgentCreateArgumentsSchemaZ = WorkspacePaneCreationBaseArgumentsSchemaZ.extend({
+      kind: z22.literal("agent"),
+      harnessProfileId: WorkspacePaneCreationReferenceSchemaZ,
+      role: WorkspaceAgentRoleSchemaZ,
+      missionId: WorkspacePaneCreationReferenceSchemaZ.optional()
+    }).strict();
+    WorkspacePaneCreateArgumentsSchemaZ = z22.discriminatedUnion("kind", [
+      WorkspaceTerminalCreateArgumentsSchemaZ,
+      WorkspaceAgentCreateArgumentsSchemaZ
+    ]);
+    WorkspacePaneCreateInvocationSchemaZ = z22.object({
+      version: z22.literal(COMMAND_PROTOCOL_VERSION),
+      id: z22.literal(WORKSPACE_PANE_CREATE_COMMAND_ID),
+      source: CommandSourceSchemaZ,
+      args: WorkspacePaneCreateArgumentsSchemaZ
+    }).strict();
+    WorkspacePaneCreateMutationRequestSchemaZ = z22.object({
+      operationId: z22.uuid(),
+      expectedDaemonInstanceId: z22.uuid(),
+      intent: WorkspacePaneCreateArgumentsSchemaZ
+    }).strict();
+    WorkspacePaneCreatedResourceBaseSchemaZ = z22.object({
+      resourceVersion: z22.literal(1),
+      workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ,
+      semanticPaneId: WorkspacePaneCreationReferenceSchemaZ,
+      displayTitle: WorkspacePaneDisplayTitleSchemaZ
+    });
+    WorkspacePaneCreatedResourceSchemaZ = z22.discriminatedUnion("kind", [
+      WorkspacePaneCreatedResourceBaseSchemaZ.extend({
+        kind: z22.literal("terminal"),
+        harnessProfileId: z22.null(),
+        role: z22.null(),
+        missionId: z22.null()
+      }).strict(),
+      WorkspacePaneCreatedResourceBaseSchemaZ.extend({
+        kind: z22.literal("agent"),
+        harnessProfileId: WorkspacePaneCreationReferenceSchemaZ,
+        role: WorkspaceAgentRoleSchemaZ,
+        missionId: WorkspacePaneCreationReferenceSchemaZ.nullable()
+      }).strict()
+    ]);
+    WorkspacePaneCreateMutationResultSchemaZ = z22.object({
+      operationId: z22.uuid(),
+      daemonInstanceId: z22.uuid(),
+      outcome: z22.enum(["created", "replayed"]),
+      resource: WorkspacePaneCreatedResourceSchemaZ
+    }).strict();
+    WORKSPACE_PANE_CREATE_COMMAND_DESCRIPTOR = deepFreeze3(
+      CommandDescriptorSchemaZ.parse({
+        version: COMMAND_PROTOCOL_VERSION,
+        id: WORKSPACE_PANE_CREATE_COMMAND_ID,
+        owner: "daemon",
+        label: "Create terminal or agent",
+        description: "Ask the daemon to create a tmux-backed terminal or harness-backed agent from semantic workspace resources.",
+        category: "workspace",
+        schemas: {
+          input: "workspace.pane.create.input.v1",
+          result: "workspace.pane.create.result.v1"
+        },
+        dangerous: false,
+        confirmation: "none"
+      })
+    );
+  }
+});
+
+// packages/contracts/src/actions-contract.ts
+import { z as z23 } from "zod";
+function isActionName(name) {
+  return name in ActionContractsZ;
+}
+var ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, WorkspacePaneCreateInputZ, WorkspacePaneCreateResultZ, ActionContractsZ, ACTION_NAMES;
+var init_actions_contract = __esm({
+  "packages/contracts/src/actions-contract.ts"() {
+    "use strict";
+    init_ide_config();
+    init_workspace_pane_creation();
+    ProjectOpenTerminalInputZ = z23.object({
+      name: z23.string().min(1)
+    });
+    ProjectOpenTerminalResultZ = z23.object({
+      sessionName: z23.string(),
+      cwd: z23.string().min(1),
+      terminalTabId: z23.string(),
+      /**
+       * `true` when the dispatcher had to launch the tmux session as part of
+       * resolving the terminal. `false` when the session was already running.
+       */
+      launched: z23.boolean()
+    });
+    ProjectLaunchInputZ = z23.object({
+      name: z23.string().min(1)
+    });
+    ProjectLaunchResultZ = z23.object({
+      sessionName: z23.string(),
+      /**
+       * `false` when the session was already running (idempotent no-op),
+       * `true` when this call started a fresh session.
+       */
+      started: z23.boolean()
+    });
+    ProjectStopInputZ = z23.object({
+      name: z23.string().min(1)
+    });
+    ProjectStopResultZ = z23.object({
+      sessionName: z23.string(),
+      /**
+       * `false` when no session was running (idempotent no-op),
+       * `true` when this call killed a session.
+       */
+      stopped: z23.boolean()
+    });
+    ProjectRestartInputZ = z23.object({
+      name: z23.string().min(1)
+    });
+    ProjectRestartResultZ = z23.object({
+      sessionName: z23.string(),
+      restarted: z23.literal(true)
+    });
+    ProjectActivateInputZ = z23.object({
+      name: z23.string().min(1)
+    });
+    ProjectActivateResultZ = z23.object({
+      active: z23.boolean(),
+      projectName: z23.string()
+    });
+    TerminalRespawnInputZ = z23.object({
+      sessionName: z23.string().min(1),
+      terminalId: z23.string().min(1),
+      /**
+       * Optional cwd override. Omit to respawn at the bridge's current cwd
+       * (re-using the `lastCwd` recorded by the PTY bridge).
+       */
+      cwd: z23.string().min(1).optional()
+    });
+    TerminalRespawnResultZ = z23.object({
+      respawned: z23.literal(true),
+      cwd: z23.string().min(1)
+    });
+    TerminalStopInputZ = z23.object({
+      sessionName: z23.string().min(1),
+      terminalId: z23.string().min(1)
+    });
+    TerminalStopResultZ = z23.object({
+      stopped: z23.literal(true)
+    });
+    ConfigSetInputZ = z23.object({
+      projectName: z23.string().min(1).optional(),
+      path: z23.string().min(1),
+      value: z23.unknown()
+    });
+    ConfigResultZ = z23.object({
+      config: IdeConfigSchema
+    });
+    ConfigAddPaneInputZ = PaneSchema.partial().extend({
+      projectName: z23.string().min(1).optional(),
+      rowIndex: z23.number().int().min(0)
+    });
+    ConfigAddPaneResultZ = ConfigResultZ;
+    ConfigRemovePaneInputZ = z23.object({
+      projectName: z23.string().min(1).optional(),
+      rowIndex: z23.number().int().min(0),
+      paneIndex: z23.number().int().min(0)
+    });
+    ConfigRemovePaneResultZ = ConfigResultZ;
+    ConfigAddRowInputZ = z23.object({
+      projectName: z23.string().min(1).optional(),
+      size: z23.string().optional()
+    });
+    ConfigAddRowResultZ = ConfigResultZ;
+    ConfigEnableTeamInputZ = z23.object({
+      projectName: z23.string().min(1).optional(),
+      name: z23.string().min(1).optional()
+    });
+    ConfigEnableTeamResultZ = ConfigResultZ;
+    ConfigDisableTeamInputZ = z23.object({
+      projectName: z23.string().min(1).optional()
+    });
+    ConfigDisableTeamResultZ = ConfigResultZ;
+    AppSetRemoteAccessInputZ = z23.object({
+      enabled: z23.boolean()
+    });
+    AppSetRemoteAccessResultZ = z23.object({
+      enabled: z23.boolean(),
+      url: z23.string().nullable(),
+      token: z23.string().nullable(),
+      qrPayload: z23.string().nullable()
+    });
+    DaemonShutdownInputZ = z23.object({
+      reason: z23.string().optional(),
+      expectedInstanceId: z23.uuid().optional()
+    });
+    DaemonShutdownResultZ = z23.object({
+      stopping: z23.literal(true)
+    });
+    WorkspacePaneCreateInputZ = WorkspacePaneCreateArgumentsSchemaZ;
+    WorkspacePaneCreateResultZ = WorkspacePaneCreateMutationResultSchemaZ;
+    ActionContractsZ = {
+      "project.openTerminal": {
+        input: ProjectOpenTerminalInputZ,
+        result: ProjectOpenTerminalResultZ
+      },
+      "project.launch": {
+        input: ProjectLaunchInputZ,
+        result: ProjectLaunchResultZ
+      },
+      "project.stop": {
+        input: ProjectStopInputZ,
+        result: ProjectStopResultZ
+      },
+      "project.restart": {
+        input: ProjectRestartInputZ,
+        result: ProjectRestartResultZ
+      },
+      "project.activate": {
+        input: ProjectActivateInputZ,
+        result: ProjectActivateResultZ
+      },
+      "terminal.respawn": {
+        input: TerminalRespawnInputZ,
+        result: TerminalRespawnResultZ
+      },
+      "terminal.stop": {
+        input: TerminalStopInputZ,
+        result: TerminalStopResultZ
+      },
+      "config.set": {
+        input: ConfigSetInputZ,
+        result: ConfigResultZ
+      },
+      "config.addPane": {
+        input: ConfigAddPaneInputZ,
+        result: ConfigAddPaneResultZ
+      },
+      "config.removePane": {
+        input: ConfigRemovePaneInputZ,
+        result: ConfigRemovePaneResultZ
+      },
+      "config.addRow": {
+        input: ConfigAddRowInputZ,
+        result: ConfigAddRowResultZ
+      },
+      "config.enableTeam": {
+        input: ConfigEnableTeamInputZ,
+        result: ConfigEnableTeamResultZ
+      },
+      "config.disableTeam": {
+        input: ConfigDisableTeamInputZ,
+        result: ConfigDisableTeamResultZ
+      },
+      "app.setRemoteAccess": {
+        input: AppSetRemoteAccessInputZ,
+        result: AppSetRemoteAccessResultZ
+      },
+      "daemon.shutdown": {
+        input: DaemonShutdownInputZ,
+        result: DaemonShutdownResultZ
+      },
+      "workspace.pane.create": {
+        input: WorkspacePaneCreateInputZ,
+        result: WorkspacePaneCreateResultZ
+      }
+    };
+    ACTION_NAMES = Object.keys(ActionContractsZ);
+  }
+});
+
+// packages/contracts/src/actions-errors.ts
+var init_actions_errors = __esm({
+  "packages/contracts/src/actions-errors.ts"() {
+    "use strict";
+  }
+});
+
+// packages/contracts/src/terminals.ts
+import { z as z24 } from "zod";
+async function createScriptTerminalId(args) {
+  const scope = args.scopeId ?? args.taskId;
+  if (!scope) {
+    throw new Error("createScriptTerminalId: scopeId (or taskId) is required");
+  }
+  const key = `${args.projectId}::${scope}::${args.kind}::${args.script}`;
+  const data = new TextEncoder().encode(key);
+  const digest2 = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest2)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+}
+var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema;
+var init_terminals = __esm({
+  "packages/contracts/src/terminals.ts"() {
+    "use strict";
+    terminalKindSchema = z24.enum(["shell", "setup", "run", "teardown"]);
+    terminalCreateRequestSchema = z24.object({
+      scopeId: z24.string().trim().min(1).max(256),
+      name: z24.string().trim().min(1).max(120),
+      kind: terminalKindSchema.optional(),
+      /** Provide for script tabs to opt into deterministic id collapse. */
+      script: z24.string().max(2048).optional(),
+      /** Explicit id wins. Used by the dashboard to reserve a known id
+       *  (e.g. the default shell tab derived from session.dir). */
+      id: z24.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
+    }).refine((v) => v.kind !== void 0 || v.script === void 0, {
+      message: "script requires kind",
+      path: ["script"]
+    });
+    terminalRenameRequestSchema = z24.object({
+      name: z24.string().trim().min(1).max(120)
+    });
+  }
+});
+
+// packages/contracts/src/terminal-attachments.ts
+import { z as z25 } from "zod";
+var TERMINAL_ATTACHMENT_PROTOCOL_VERSION, TERMINAL_ATTACHMENT_MIN_COLS, TERMINAL_ATTACHMENT_MAX_COLS, TERMINAL_ATTACHMENT_MIN_ROWS, TERMINAL_ATTACHMENT_MAX_ROWS, TerminalAttachmentSemanticTargetSchemaZ, TerminalAttachmentViewerModeSchemaZ, TerminalAttachmentViewportSchemaZ, TerminalAttachRequestSchemaZ, TerminalAttachmentDescriptorSchemaZ, TerminalAttachmentPlanHandleSchemaZ, TerminalAttachmentErrorSchemaZ, TerminalAttachmentPlanResponseSchemaZ;
+var init_terminal_attachments = __esm({
+  "packages/contracts/src/terminal-attachments.ts"() {
+    "use strict";
+    init_workspace_state();
+    TERMINAL_ATTACHMENT_PROTOCOL_VERSION = 1;
+    TERMINAL_ATTACHMENT_MIN_COLS = 20;
+    TERMINAL_ATTACHMENT_MAX_COLS = 500;
+    TERMINAL_ATTACHMENT_MIN_ROWS = 5;
+    TERMINAL_ATTACHMENT_MAX_ROWS = 200;
+    TerminalAttachmentSemanticTargetSchemaZ = z25.object({
+      workspaceName: WorkspaceIdSchemaZ,
+      semanticPaneId: WorkspaceIdSchemaZ
+    }).strict();
+    TerminalAttachmentViewerModeSchemaZ = z25.enum(["interactive", "read-only"]);
+    TerminalAttachmentViewportSchemaZ = z25.object({
+      cols: z25.number().int().min(TERMINAL_ATTACHMENT_MIN_COLS).max(TERMINAL_ATTACHMENT_MAX_COLS),
+      rows: z25.number().int().min(TERMINAL_ATTACHMENT_MIN_ROWS).max(TERMINAL_ATTACHMENT_MAX_ROWS)
+    }).strict();
+    TerminalAttachRequestSchemaZ = z25.object({
+      protocolVersion: z25.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      target: TerminalAttachmentSemanticTargetSchemaZ,
+      viewerMode: TerminalAttachmentViewerModeSchemaZ,
+      viewport: TerminalAttachmentViewportSchemaZ
+    }).strict();
+    TerminalAttachmentDescriptorSchemaZ = z25.object({
+      attachmentId: z25.uuid(),
+      target: TerminalAttachmentSemanticTargetSchemaZ,
+      viewerMode: TerminalAttachmentViewerModeSchemaZ,
+      viewport: TerminalAttachmentViewportSchemaZ,
+      status: z25.literal("planned")
+    }).strict();
+    TerminalAttachmentPlanHandleSchemaZ = z25.object({
+      requestId: z25.uuid()
+    }).strict();
+    TerminalAttachmentErrorSchemaZ = z25.discriminatedUnion("code", [
+      z25.object({
+        code: z25.literal("protocol-version-unsupported"),
+        message: z25.string().min(1).max(500),
+        receivedVersion: z25.number().int().positive(),
+        supportedVersions: z25.tuple([z25.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION)]),
+        retryable: z25.literal(false)
+      }).strict(),
+      z25.object({
+        code: z25.literal("workspace-not-found"),
+        message: z25.string().min(1).max(500),
+        target: TerminalAttachmentSemanticTargetSchemaZ,
+        retryable: z25.literal(false)
+      }).strict(),
+      z25.object({
+        code: z25.literal("pane-not-found"),
+        message: z25.string().min(1).max(500),
+        target: TerminalAttachmentSemanticTargetSchemaZ,
+        retryable: z25.literal(false)
+      }).strict(),
+      z25.object({
+        code: z25.literal("pane-not-attachable"),
+        message: z25.string().min(1).max(500),
+        target: TerminalAttachmentSemanticTargetSchemaZ,
+        reason: z25.enum(["not-terminal", "not-single-pane-window", "runtime-unavailable"]),
+        retryable: z25.boolean()
+      }).strict(),
+      z25.object({
+        code: z25.literal("interactive-viewer-conflict"),
+        message: z25.string().min(1).max(500),
+        target: TerminalAttachmentSemanticTargetSchemaZ,
+        retryable: z25.literal(true)
+      }).strict(),
+      z25.object({
+        code: z25.literal("attachment-unavailable"),
+        message: z25.string().min(1).max(500),
+        retryable: z25.boolean()
+      }).strict()
+    ]);
+    TerminalAttachmentPlanResponseSchemaZ = z25.discriminatedUnion("ok", [
+      z25.object({
+        ok: z25.literal(true),
+        protocolVersion: z25.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+        descriptor: TerminalAttachmentDescriptorSchemaZ,
+        handle: TerminalAttachmentPlanHandleSchemaZ
+      }).strict(),
+      z25.object({
+        ok: z25.literal(false),
+        protocolVersion: z25.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+        error: TerminalAttachmentErrorSchemaZ
+      }).strict()
+    ]);
+  }
+});
+
+// packages/contracts/src/control.ts
+import { z as z26 } from "zod";
+var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
+var init_control = __esm({
+  "packages/contracts/src/control.ts"() {
+    "use strict";
+    CONTROL_PROTOCOL_VERSION = 1;
+    controlIdSchema = z26.union([z26.string(), z26.number()]);
+    agentStatusSchema = z26.enum(["blocked", "working", "done", "idle", "unknown"]);
+    controlRequestSchema = z26.object({
+      v: z26.literal(CONTROL_PROTOCOL_VERSION),
+      id: controlIdSchema,
+      verb: z26.string().min(1),
+      params: z26.record(z26.string(), z26.unknown()).optional()
+    });
+    controlErrorSchema = z26.object({
+      code: z26.string(),
+      message: z26.string()
+    });
+    controlResponseSchema = z26.discriminatedUnion("ok", [
+      z26.object({
+        v: z26.literal(CONTROL_PROTOCOL_VERSION),
+        id: controlIdSchema.nullable(),
+        ok: z26.literal(true),
+        data: z26.unknown()
+      }),
+      z26.object({
+        v: z26.literal(CONTROL_PROTOCOL_VERSION),
+        id: controlIdSchema.nullable(),
+        ok: z26.literal(false),
+        error: controlErrorSchema
+      })
+    ]);
+    controlEventSchema = z26.object({
+      v: z26.literal(CONTROL_PROTOCOL_VERSION),
+      event: z26.string().min(1),
+      data: z26.unknown()
+    });
+    agentStatusEventSchema = z26.object({
+      ts: z26.string(),
+      session: z26.string(),
+      from: agentStatusSchema.nullable(),
+      to: agentStatusSchema
+    });
+    agentsParamsSchema = z26.object({
+      session: z26.string().optional()
+    });
+    sendParamsSchema = z26.object({
+      session: z26.string().min(1),
+      target: z26.string().min(1),
+      message: z26.string().min(1),
+      noEnter: z26.boolean().optional(),
+      dir: z26.string().optional()
+    });
+    CONTROL_WAIT_MAX_TIMEOUT_MS = 6e5;
+    waitTimeoutSchema = z26.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
+    waitParamsSchema = z26.discriminatedUnion("kind", [
+      z26.object({
+        kind: z26.literal("agent-status"),
+        session: z26.string().min(1),
+        status: agentStatusSchema,
+        timeoutMs: waitTimeoutSchema
+      }),
+      z26.object({
+        kind: z26.literal("output"),
+        target: z26.string().min(1),
+        match: z26.string().min(1),
+        timeoutMs: waitTimeoutSchema
+      })
+    ]);
+    spawnPlacementSchema = z26.enum(["window", "split-h", "split-v"]);
+    spawnParamsSchema = z26.object({
+      kind: z26.string().min(1).optional(),
+      command: z26.string().min(1).optional(),
+      session: z26.string().min(1).optional(),
+      sessionName: z26.string().min(1).optional(),
+      dir: z26.string().optional(),
+      placement: spawnPlacementSchema.optional(),
+      paneId: z26.string().optional()
+    }).refine((p) => Boolean(p.kind) !== Boolean(p.command), {
+      message: "exactly one of `kind` or `command` is required"
+    }).refine((p) => Boolean(p.session) || Boolean(p.sessionName), {
+      message: "`session` (spawn into it) or `sessionName` (create it) is required"
+    }).refine((p) => !(p.placement && p.placement !== "window") || Boolean(p.paneId), {
+      message: "split placements need `paneId`"
+    });
+    restartAgentParamsSchema = z26.object({
+      paneId: z26.string().min(1),
+      kind: z26.string().min(1).optional(),
+      command: z26.string().min(1).optional()
+    }).refine((p) => Boolean(p.kind) || Boolean(p.command), {
+      message: "`kind` or `command` is required"
+    });
+    stopAgentParamsSchema = z26.object({
+      paneId: z26.string().min(1)
+    });
+    explainParamsSchema = z26.object({
+      target: z26.string().min(1)
+    });
+    subscribeParamsSchema = z26.object({}).loose();
   }
 });
 
 // packages/contracts/src/workspace-catalog-resource.ts
-import { z as z26 } from "zod";
+import { z as z27 } from "zod";
 var WORKSPACE_CATALOG_RESOURCE_VERSION, WorkspaceCatalogEntryV1SchemaZ, WorkspaceCatalogResourceV1SchemaZ;
 var init_workspace_catalog_resource = __esm({
   "packages/contracts/src/workspace-catalog-resource.ts"() {
     "use strict";
     init_daemon_wire();
     WORKSPACE_CATALOG_RESOURCE_VERSION = 1;
-    WorkspaceCatalogEntryV1SchemaZ = z26.object({
-      workspaceName: z26.string().min(1),
-      sessionName: z26.string().min(1)
+    WorkspaceCatalogEntryV1SchemaZ = z27.object({
+      workspaceName: z27.string().min(1),
+      sessionName: z27.string().min(1)
     }).strict();
-    WorkspaceCatalogResourceV1SchemaZ = z26.object({
-      version: z26.literal(WORKSPACE_CATALOG_RESOURCE_VERSION),
+    WorkspaceCatalogResourceV1SchemaZ = z27.object({
+      version: z27.literal(WORKSPACE_CATALOG_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
-      workspaces: z26.array(WorkspaceCatalogEntryV1SchemaZ)
+      workspaces: z27.array(WorkspaceCatalogEntryV1SchemaZ)
     }).strict();
   }
 });
@@ -4554,7 +4710,7 @@ var init_visual_recipes = __esm({
 });
 
 // packages/contracts/src/daemon-resources.ts
-import { z as z27 } from "zod";
+import { z as z28 } from "zod";
 var DaemonSessionOverviewSchemaZ, DaemonPaneInfoSchemaZ, DaemonSessionsResponseSchemaZ, DaemonProjectResponseSchemaZ, DaemonPanesResponseSchemaZ, DaemonWorkspaceSchemaZ, DaemonWorkspacesResponseSchemaZ, DaemonWorkspaceResponseSchemaZ, DaemonRegisteredProjectSchemaZ, DaemonProjectsResponseSchemaZ, DaemonRegisteredProjectResponseSchemaZ, DaemonProjectTemplateSchemaZ, DaemonProjectTemplatesResponseSchemaZ;
 var init_daemon_resources = __esm({
   "packages/contracts/src/daemon-resources.ts"() {
@@ -4563,131 +4719,131 @@ var init_daemon_resources = __esm({
     init_workspace();
     DaemonSessionOverviewSchemaZ = SessionOverviewSchemaZ.strict();
     DaemonPaneInfoSchemaZ = PaneInfoSchemaZ.strict();
-    DaemonSessionsResponseSchemaZ = z27.object({
-      sessions: z27.array(DaemonSessionOverviewSchemaZ)
+    DaemonSessionsResponseSchemaZ = z28.object({
+      sessions: z28.array(DaemonSessionOverviewSchemaZ)
     }).strict();
-    DaemonProjectResponseSchemaZ = z27.object({
-      session: z27.string(),
-      dir: z27.string(),
-      panes: z27.array(DaemonPaneInfoSchemaZ)
+    DaemonProjectResponseSchemaZ = z28.object({
+      session: z28.string(),
+      dir: z28.string(),
+      panes: z28.array(DaemonPaneInfoSchemaZ)
     }).strict();
-    DaemonPanesResponseSchemaZ = z27.object({
-      panes: z27.array(DaemonPaneInfoSchemaZ)
+    DaemonPanesResponseSchemaZ = z28.object({
+      panes: z28.array(DaemonPaneInfoSchemaZ)
     }).strict();
     DaemonWorkspaceSchemaZ = WorkspaceSchemaZ.strict();
-    DaemonWorkspacesResponseSchemaZ = z27.object({
-      workspaces: z27.array(DaemonWorkspaceSchemaZ)
+    DaemonWorkspacesResponseSchemaZ = z28.object({
+      workspaces: z28.array(DaemonWorkspaceSchemaZ)
     }).strict();
-    DaemonWorkspaceResponseSchemaZ = z27.object({
+    DaemonWorkspaceResponseSchemaZ = z28.object({
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonRegisteredProjectSchemaZ = z27.object({
-      name: z27.string(),
-      dir: z27.string(),
-      hasIdeYml: z27.boolean(),
-      hasWorkspaceConfig: z27.boolean().optional(),
-      configKind: z27.enum(["workspace", "legacy", "none"]).optional(),
-      configPath: z27.string().nullable().optional(),
-      ideConfigPath: z27.string().nullable().optional(),
-      gitOrigin: z27.string().nullable(),
-      gitBranch: z27.string().nullable(),
-      registeredAt: z27.string()
+    DaemonRegisteredProjectSchemaZ = z28.object({
+      name: z28.string(),
+      dir: z28.string(),
+      hasIdeYml: z28.boolean(),
+      hasWorkspaceConfig: z28.boolean().optional(),
+      configKind: z28.enum(["workspace", "legacy", "none"]).optional(),
+      configPath: z28.string().nullable().optional(),
+      ideConfigPath: z28.string().nullable().optional(),
+      gitOrigin: z28.string().nullable(),
+      gitBranch: z28.string().nullable(),
+      registeredAt: z28.string()
     }).strict();
-    DaemonProjectsResponseSchemaZ = z27.object({
-      projects: z27.array(DaemonRegisteredProjectSchemaZ)
+    DaemonProjectsResponseSchemaZ = z28.object({
+      projects: z28.array(DaemonRegisteredProjectSchemaZ)
     }).strict();
-    DaemonRegisteredProjectResponseSchemaZ = z27.object({
+    DaemonRegisteredProjectResponseSchemaZ = z28.object({
       project: DaemonRegisteredProjectSchemaZ
     }).strict();
-    DaemonProjectTemplateSchemaZ = z27.object({
-      id: z27.string(),
-      label: z27.string(),
-      description: z27.string()
+    DaemonProjectTemplateSchemaZ = z28.object({
+      id: z28.string(),
+      label: z28.string(),
+      description: z28.string()
     }).strict();
-    DaemonProjectTemplatesResponseSchemaZ = z27.object({
-      templates: z27.array(DaemonProjectTemplateSchemaZ)
+    DaemonProjectTemplatesResponseSchemaZ = z28.object({
+      templates: z28.array(DaemonProjectTemplateSchemaZ)
     }).strict();
   }
 });
 
 // packages/contracts/src/daemon-events.ts
-import { z as z28 } from "zod";
+import { z as z29 } from "zod";
 var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
 var init_daemon_events = __esm({
   "packages/contracts/src/daemon-events.ts"() {
     "use strict";
     init_daemon_resources();
     init_daemon_wire();
-    SessionNamesSchemaZ = z28.array(z28.string());
-    DaemonEventSubscribeFrameSchemaZ = z28.object({
-      type: z28.literal("subscribe"),
+    SessionNamesSchemaZ = z29.array(z29.string());
+    DaemonEventSubscribeFrameSchemaZ = z29.object({
+      type: z29.literal("subscribe"),
       sessions: SessionNamesSchemaZ
     }).strict();
-    DaemonEventUnsubscribeFrameSchemaZ = z28.object({
-      type: z28.literal("unsubscribe"),
+    DaemonEventUnsubscribeFrameSchemaZ = z29.object({
+      type: z29.literal("unsubscribe"),
       sessions: SessionNamesSchemaZ
     }).strict();
-    DaemonEventPingFrameSchemaZ = z28.object({ type: z28.literal("ping") }).strict();
-    DaemonEventClientFrameSchemaZ = z28.discriminatedUnion("type", [
+    DaemonEventPingFrameSchemaZ = z29.object({ type: z29.literal("ping") }).strict();
+    DaemonEventClientFrameSchemaZ = z29.discriminatedUnion("type", [
       DaemonEventSubscribeFrameSchemaZ,
       DaemonEventUnsubscribeFrameSchemaZ,
       DaemonEventPingFrameSchemaZ
     ]);
-    DaemonSessionSnapshotSchemaZ = z28.object({
+    DaemonSessionSnapshotSchemaZ = z29.object({
       project: DaemonProjectResponseSchemaZ
     }).strict();
-    DaemonEventHelloFrameSchemaZ = z28.object({
-      type: z28.literal("hello"),
+    DaemonEventHelloFrameSchemaZ = z29.object({
+      type: z29.literal("hello"),
       daemon: DaemonInstanceIdentitySchemaZ,
-      sessions: z28.array(DaemonSessionOverviewSchemaZ)
+      sessions: z29.array(DaemonSessionOverviewSchemaZ)
     }).strict();
-    DaemonEventSnapshotFrameSchemaZ = z28.object({
-      type: z28.literal("snapshot"),
-      sessionName: z28.string(),
+    DaemonEventSnapshotFrameSchemaZ = z29.object({
+      type: z29.literal("snapshot"),
+      sessionName: z29.string(),
       data: DaemonSessionSnapshotSchemaZ
     }).strict();
-    DaemonEventSessionsChangedFrameSchemaZ = z28.object({ type: z28.literal("sessions.changed") }).strict();
-    DaemonEventProjectsChangedFrameSchemaZ = z28.object({ type: z28.literal("projects.changed") }).strict();
-    DaemonEventInitOutputFrameSchemaZ = z28.object({
-      type: z28.literal("init.output"),
-      jobId: z28.string(),
-      chunk: z28.string(),
-      done: z28.boolean().optional()
+    DaemonEventSessionsChangedFrameSchemaZ = z29.object({ type: z29.literal("sessions.changed") }).strict();
+    DaemonEventProjectsChangedFrameSchemaZ = z29.object({ type: z29.literal("projects.changed") }).strict();
+    DaemonEventInitOutputFrameSchemaZ = z29.object({
+      type: z29.literal("init.output"),
+      jobId: z29.string(),
+      chunk: z29.string(),
+      done: z29.boolean().optional()
     }).strict();
-    DaemonEventInitErrorFrameSchemaZ = z28.object({
-      type: z28.literal("init.error"),
-      jobId: z28.string(),
-      message: z28.string()
+    DaemonEventInitErrorFrameSchemaZ = z29.object({
+      type: z29.literal("init.error"),
+      jobId: z29.string(),
+      message: z29.string()
     }).strict();
-    DaemonEventPongFrameSchemaZ = z28.object({ type: z28.literal("pong") }).strict();
-    DaemonEventActionCompleteFrameSchemaZ = z28.object({
-      type: z28.literal("action.complete"),
-      name: z28.string(),
-      result: z28.unknown()
+    DaemonEventPongFrameSchemaZ = z29.object({ type: z29.literal("pong") }).strict();
+    DaemonEventActionCompleteFrameSchemaZ = z29.object({
+      type: z29.literal("action.complete"),
+      name: z29.string(),
+      result: z29.unknown()
     }).strict();
-    DaemonEventConfigChangedFrameSchemaZ = z28.object({
-      type: z28.literal("config.changed"),
-      sessionName: z28.string()
+    DaemonEventConfigChangedFrameSchemaZ = z29.object({
+      type: z29.literal("config.changed"),
+      sessionName: z29.string()
     }).strict();
-    DaemonEventTerminalsChangedFrameSchemaZ = z28.object({
-      type: z28.literal("terminals.changed"),
-      sessionName: z28.string()
+    DaemonEventTerminalsChangedFrameSchemaZ = z29.object({
+      type: z29.literal("terminals.changed"),
+      sessionName: z29.string()
     }).strict();
-    DaemonEventWorkspaceAddedFrameSchemaZ = z28.object({
-      type: z28.literal("workspace.added"),
+    DaemonEventWorkspaceAddedFrameSchemaZ = z29.object({
+      type: z29.literal("workspace.added"),
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonEventWorkspaceRemovedFrameSchemaZ = z28.object({
-      type: z28.literal("workspace.removed"),
-      name: z28.string()
+    DaemonEventWorkspaceRemovedFrameSchemaZ = z29.object({
+      type: z29.literal("workspace.removed"),
+      name: z29.string()
     }).strict();
-    DaemonEventProtocolErrorCodeSchemaZ = z28.enum(["invalid-json", "invalid-frame"]);
-    DaemonEventProtocolErrorFrameSchemaZ = z28.object({
-      type: z28.literal("protocol.error"),
+    DaemonEventProtocolErrorCodeSchemaZ = z29.enum(["invalid-json", "invalid-frame"]);
+    DaemonEventProtocolErrorFrameSchemaZ = z29.object({
+      type: z29.literal("protocol.error"),
       code: DaemonEventProtocolErrorCodeSchemaZ,
-      message: z28.string()
+      message: z29.string()
     }).strict();
-    DaemonEventServerFrameSchemaZ = z28.discriminatedUnion("type", [
+    DaemonEventServerFrameSchemaZ = z29.discriminatedUnion("type", [
       DaemonEventHelloFrameSchemaZ,
       DaemonEventSnapshotFrameSchemaZ,
       DaemonEventSessionsChangedFrameSchemaZ,
@@ -4731,6 +4887,7 @@ var init_src = __esm({
     init_application_shell();
     init_application_shell_resource();
     init_workspace_catalog_resource();
+    init_workspace_pane_creation();
     init_visual_tokens();
     init_visual_recipes();
     init_pane_appearance();
@@ -4989,11 +5146,11 @@ function assertAcyclicWorkspaceValue(value, ancestors = /* @__PURE__ */ new Set(
 function cloneWorkspaceConfigValue(value) {
   if (Array.isArray(value)) return value.map(cloneWorkspaceConfigValue);
   if (!isPlainObject(value)) return value;
-  const clone = {};
+  const clone2 = {};
   for (const [key, nestedValue] of Object.entries(value)) {
-    defineValue(clone, key, cloneWorkspaceConfigValue(nestedValue));
+    defineValue(clone2, key, cloneWorkspaceConfigValue(nestedValue));
   }
-  return clone;
+  return clone2;
 }
 function mergeAcyclicWorkspaceConfigValues(base, overlay) {
   if (!isPlainObject(overlay)) return cloneWorkspaceConfigValue(overlay);
@@ -5244,6 +5401,9 @@ function _getSpawner() {
   return _spawner;
 }
 function runTmux(args, options = {}) {
+  return runTmuxBinary("tmux", args, options);
+}
+function runTmuxBinary(executable, args, options = {}) {
   if (DEBUG || globalThis.__tmuxIdeVerbose) {
     console.error(`  [tmux] ${args.join(" ")}`);
   }
@@ -5252,7 +5412,7 @@ function runTmux(args, options = {}) {
     ...options
   };
   try {
-    return _executor("tmux", args, execOptions);
+    return _executor(executable, args, execOptions);
   } catch (error) {
     throw classifyTmuxError(error);
   }
@@ -5263,6 +5423,13 @@ function classifyTmuxError(error) {
     return new TmuxError("tmux session was not found", "SESSION_NOT_FOUND", {
       cause: error
     });
+  }
+  if (ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS.some((pattern) => detail.includes(pattern))) {
+    return new TmuxError(
+      "tmux environment variable was not found",
+      "ENVIRONMENT_VARIABLE_NOT_FOUND",
+      { cause: error }
+    );
   }
   if (TMUX_UNAVAILABLE_PATTERNS.some((pattern) => detail.includes(pattern))) {
     return new TmuxError("tmux is unavailable or its socket is inaccessible", "TMUX_UNAVAILABLE", {
@@ -5279,13 +5446,19 @@ function getErrorDetail(error) {
   if (Buffer.isBuffer(stderr) && stderr.length > 0) return stderr.toString("utf-8");
   return error?.message ?? "";
 }
-var DEBUG, SESSION_NOT_FOUND_PATTERNS, TMUX_UNAVAILABLE_PATTERNS, _executor, _spawner;
+var DEBUG, SESSION_NOT_FOUND_PATTERNS, ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS, TMUX_UNAVAILABLE_PATTERNS, _executor, _spawner;
 var init_runner = __esm({
   "packages/tmux-bridge/src/runner.ts"() {
     "use strict";
     init_errors();
     DEBUG = process.env.TMUX_IDE_DEBUG === "1";
-    SESSION_NOT_FOUND_PATTERNS = ["can't find session", "can't find window", "unknown target"];
+    SESSION_NOT_FOUND_PATTERNS = [
+      "can't find session",
+      "can't find window",
+      "can't find pane",
+      "unknown target"
+    ];
+    ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS = ["unknown variable:"];
     TMUX_UNAVAILABLE_PATTERNS = [
       "failed to connect to server",
       "no server running",
@@ -5633,6 +5806,7 @@ __export(src_exports, {
   resolveTarget: () => resolveTarget,
   runSessionCommand: () => runSessionCommand,
   runTmux: () => runTmux,
+  runTmuxBinary: () => runTmuxBinary,
   selectPane: () => selectPane,
   sendKeys: () => sendKeys,
   sendLiteral: () => sendLiteral,
@@ -7402,10 +7576,10 @@ __export(classify_exports, {
 });
 function parseAuthority(raw, nowSec) {
   if (!raw) return null;
-  const sep3 = raw.lastIndexOf(":");
-  if (sep3 === -1) return null;
-  const state = raw.slice(0, sep3);
-  const epoch = Number(raw.slice(sep3 + 1));
+  const sep6 = raw.lastIndexOf(":");
+  if (sep6 === -1) return null;
+  const state = raw.slice(0, sep6);
+  const epoch = Number(raw.slice(sep6 + 1));
   if (!AUTHORITY_STATES.has(state) || !Number.isFinite(epoch)) return null;
   if ((state === "working" || state === "blocked") && nowSec - epoch > AUTHORITY_STALE_SECONDS) {
     return null;
@@ -7421,9 +7595,9 @@ function sanitizeAgentText(raw) {
 }
 function parseAuthorityEpoch(raw) {
   if (!raw) return null;
-  const sep3 = raw.lastIndexOf(":");
-  if (sep3 === -1) return null;
-  const epoch = Number(raw.slice(sep3 + 1));
+  const sep6 = raw.lastIndexOf(":");
+  if (sep6 === -1) return null;
+  const epoch = Number(raw.slice(sep6 + 1));
   return Number.isFinite(epoch) ? epoch : null;
 }
 function classifyInstant(snapshot, manifest) {
@@ -9938,20 +10112,20 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z29 } from "zod";
+import { z as z30 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
     init_src();
     RegisteredProjectSchemaZ = DaemonRegisteredProjectSchemaZ;
-    RegisterProjectRequestSchemaZ = z29.object({
-      dir: z29.string().min(1),
-      name: z29.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z30.object({
+      dir: z30.string().min(1),
+      name: z30.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z29.object({
-      dir: z29.string().min(1),
-      template: z29.string().min(1).optional()
+    InitProjectRequestSchemaZ = z30.object({
+      dir: z30.string().min(1),
+      template: z30.string().min(1).optional()
     });
   }
 });
@@ -10013,7 +10187,7 @@ import { EventEmitter } from "node:events";
 import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname15, isAbsolute as isAbsolute3, join as join14, resolve as resolve11 } from "node:path";
-import { z as z30 } from "zod";
+import { z as z31 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -10152,9 +10326,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z30.object({
-      version: z30.literal(1),
-      projects: z30.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z31.object({
+      version: z31.literal(1),
+      projects: z31.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -10926,7 +11100,7 @@ var init_notify_state = __esm({
 import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync7, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname17, join as join18 } from "node:path";
-import { z as z31 } from "zod";
+import { z as z32 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -11084,9 +11258,9 @@ function createSnapshotter(deps2) {
         seeded = true;
       }
       const snapshot = deps2.collect();
-      const fingerprint = snapshotFingerprint(snapshot);
-      if (fingerprint === lastFingerprint) return;
-      lastFingerprint = fingerprint;
+      const fingerprint2 = snapshotFingerprint(snapshot);
+      if (fingerprint2 === lastFingerprint) return;
+      lastFingerprint = fingerprint2;
       deps2.write(snapshot);
     }
   };
@@ -11098,32 +11272,32 @@ var init_snapshot2 = __esm({
     init_src2();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z31.object({
-      index: z31.number(),
-      cwd: z31.string(),
-      command: z31.string().nullable(),
-      agent: z31.string().nullable(),
-      agentSessionId: z31.string().nullable(),
-      agentState: z31.string().nullable(),
-      title: z31.string()
+    PaneSnapshotSchemaZ = z32.object({
+      index: z32.number(),
+      cwd: z32.string(),
+      command: z32.string().nullable(),
+      agent: z32.string().nullable(),
+      agentSessionId: z32.string().nullable(),
+      agentState: z32.string().nullable(),
+      title: z32.string()
     });
-    WindowSnapshotSchemaZ = z31.object({
-      index: z31.number(),
-      name: z31.string(),
-      active: z31.boolean(),
-      layout: z31.string(),
-      panes: z31.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z32.object({
+      index: z32.number(),
+      name: z32.string(),
+      active: z32.boolean(),
+      layout: z32.string(),
+      panes: z32.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z31.object({
-      name: z31.string(),
-      cwd: z31.string(),
-      adopted: z31.boolean(),
-      windows: z31.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z32.object({
+      name: z32.string(),
+      cwd: z32.string(),
+      adopted: z32.boolean(),
+      windows: z32.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z31.object({
-      version: z31.literal(1),
-      savedAt: z31.string(),
-      sessions: z31.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z32.object({
+      version: z32.literal(1),
+      savedAt: z32.string(),
+      sessions: z32.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -13122,10 +13296,21 @@ var init_session_monitor = __esm({
 });
 
 // packages/daemon/src/terminal/PtyAdapter.ts
-var PtySpawnError;
+var PtyInputRejectedError, PtySpawnError;
 var init_PtyAdapter = __esm({
   "packages/daemon/src/terminal/PtyAdapter.ts"() {
     "use strict";
+    PtyInputRejectedError = class extends Error {
+      code = "pty_input_rejected";
+      reason;
+      snapshot;
+      constructor(args) {
+        super(`bounded PTY input rejected: ${args.reason}`);
+        this.name = "PtyInputRejectedError";
+        this.reason = args.reason;
+        this.snapshot = args.snapshot;
+      }
+    };
     PtySpawnError = class extends Error {
       adapter;
       code;
@@ -13134,6 +13319,116 @@ var init_PtyAdapter = __esm({
         this.name = "PtySpawnError";
         this.adapter = args.adapter;
         this.code = args.code;
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/MonotonicPtyInput.ts
+function validatePtyInputLimits(limits) {
+  validateLimit("maxFrameBytes", limits.maxFrameBytes, MAX_PTY_INPUT_FRAME_BYTES);
+  validateLimit("maxAcceptedBytes", limits.maxAcceptedBytes, MAX_PTY_INPUT_ACCEPTED_BYTES);
+  validateLimit("maxAcceptedFrames", limits.maxAcceptedFrames, MAX_PTY_INPUT_ACCEPTED_FRAMES);
+  if (limits.maxFrameBytes > limits.maxAcceptedBytes) {
+    throw new RangeError("maxFrameBytes cannot exceed maxAcceptedBytes");
+  }
+  return Object.freeze({ ...limits });
+}
+function validateLimit(name, value, maximum) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new RangeError(`${name} must be a positive safe integer no greater than ${maximum}`);
+  }
+}
+var DEFAULT_PTY_INPUT_LIMITS, MAX_PTY_INPUT_FRAME_BYTES, MAX_PTY_INPUT_ACCEPTED_BYTES, MAX_PTY_INPUT_ACCEPTED_FRAMES, MonotonicPtyInput;
+var init_MonotonicPtyInput = __esm({
+  "packages/daemon/src/terminal/MonotonicPtyInput.ts"() {
+    "use strict";
+    init_PtyAdapter();
+    DEFAULT_PTY_INPUT_LIMITS = Object.freeze({
+      maxFrameBytes: 16 * 1024,
+      maxAcceptedBytes: 256 * 1024,
+      maxAcceptedFrames: 8192
+    });
+    MAX_PTY_INPUT_FRAME_BYTES = 64 * 1024;
+    MAX_PTY_INPUT_ACCEPTED_BYTES = 4 * 1024 * 1024;
+    MAX_PTY_INPUT_ACCEPTED_FRAMES = 16384;
+    MonotonicPtyInput = class {
+      #limits;
+      #sink;
+      #acceptedBytes = 0;
+      #acceptedFrames = 0;
+      #state = "open";
+      #terminalReason = null;
+      constructor(limits, sink) {
+        this.#limits = validatePtyInputLimits(limits);
+        this.#sink = sink;
+      }
+      write(data) {
+        if (!(data instanceof Uint8Array)) {
+          throw new TypeError("bounded PTY input must be a Uint8Array");
+        }
+        if (data.byteLength === 0) {
+          return { status: "ignored", reason: "empty", snapshot: this.snapshot() };
+        }
+        if (this.#state === "exhausted") {
+          const reason = this.#terminalReason ?? (this.#acceptedFrames >= this.#limits.maxAcceptedFrames ? "lifetime_frames_exhausted" : "lifetime_bytes_exhausted");
+          this.#reject(reason, "exhausted");
+        }
+        if (this.#state !== "open") {
+          this.#reject("process_closed", this.#state);
+        }
+        if (data.byteLength > this.#limits.maxFrameBytes) {
+          this.#reject("frame_too_large", "exhausted");
+        }
+        if (this.#acceptedFrames >= this.#limits.maxAcceptedFrames) {
+          this.#reject("lifetime_frames_exhausted", "exhausted");
+        }
+        if (data.byteLength > this.#limits.maxAcceptedBytes - this.#acceptedBytes) {
+          this.#reject("lifetime_bytes_exhausted", "exhausted");
+        }
+        const frame = Buffer.from(data);
+        this.#acceptedBytes += frame.byteLength;
+        this.#acceptedFrames += 1;
+        if (this.#acceptedBytes === this.#limits.maxAcceptedBytes || this.#acceptedFrames === this.#limits.maxAcceptedFrames) {
+          this.#state = "exhausted";
+          this.#terminalReason = this.#acceptedFrames === this.#limits.maxAcceptedFrames ? "lifetime_frames_exhausted" : "lifetime_bytes_exhausted";
+        }
+        try {
+          this.#sink(frame);
+        } catch {
+          this.#state = "failed";
+          this.#terminalReason = "backend_write_failed";
+          throw new PtyInputRejectedError({
+            reason: "backend_write_failed",
+            snapshot: this.snapshot()
+          });
+        }
+        return {
+          status: "accepted",
+          byteLength: frame.byteLength,
+          snapshot: this.snapshot()
+        };
+      }
+      snapshot() {
+        return Object.freeze({
+          ...this.#limits,
+          state: this.#state,
+          acceptedBytes: this.#acceptedBytes,
+          acceptedFrames: this.#acceptedFrames,
+          remainingBytes: this.#limits.maxAcceptedBytes - this.#acceptedBytes,
+          remainingFrames: this.#limits.maxAcceptedFrames - this.#acceptedFrames
+        });
+      }
+      close() {
+        if (this.#state !== "closed") {
+          this.#state = "closed";
+          this.#terminalReason = "process_closed";
+        }
+      }
+      #reject(reason, state) {
+        this.#state = state;
+        this.#terminalReason = reason;
+        throw new PtyInputRejectedError({ reason, snapshot: this.snapshot() });
       }
     };
   }
@@ -13197,6 +13492,7 @@ var init_NodePtyAdapter = __esm({
   "packages/daemon/src/terminal/NodePtyAdapter.ts"() {
     "use strict";
     init_PtyAdapter();
+    init_MonotonicPtyInput();
     ADAPTER_ID = "node-pty";
     helperEnsured = false;
     NodePtyProcess = class {
@@ -13204,19 +13500,27 @@ var init_NodePtyAdapter = __esm({
       child;
       dataListeners = /* @__PURE__ */ new Set();
       exitListeners = /* @__PURE__ */ new Set();
-      constructor(child) {
+      boundedInput;
+      constructor(child, listeners = {}, inputLimits = DEFAULT_PTY_INPUT_LIMITS) {
         this.child = child;
+        this.boundedInput = new MonotonicPtyInput(inputLimits, (frame) => this.child.write(frame));
+        if (listeners.onData) this.dataListeners.add(listeners.onData);
+        if (listeners.onExit) this.exitListeners.add(listeners.onExit);
         this.child.onData((data) => {
           const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), "utf8");
           for (const listener of this.dataListeners) listener(buf);
         });
         this.child.onExit((evt) => {
           this.exited = true;
+          this.boundedInput.close();
           const event = {
             exitCode: evt.exitCode ?? 0,
             signal: typeof evt.signal === "number" ? evt.signal : null
           };
-          for (const listener of this.exitListeners) listener(event);
+          const listeners2 = [...this.exitListeners];
+          this.dataListeners.clear();
+          this.exitListeners.clear();
+          for (const listener of listeners2) listener(event);
         });
       }
       get pid() {
@@ -13225,7 +13529,7 @@ var init_NodePtyAdapter = __esm({
       write(data) {
         if (this.exited) return;
         if (typeof data === "string") this.child.write(data);
-        else this.child.write(Buffer.from(data).toString("binary"));
+        else this.child.write(Buffer.from(data));
       }
       resize(cols, rows) {
         if (this.exited) return;
@@ -13238,13 +13542,23 @@ var init_NodePtyAdapter = __esm({
         } catch {
         }
       }
+      pause() {
+        if (!this.exited) this.child.pause();
+      }
+      resume() {
+        if (!this.exited) this.child.resume();
+      }
       kill(signal) {
         if (this.exited) return;
+        this.boundedInput.close();
         try {
           this.child.kill(typeof signal === "number" ? String(signal) : signal);
         } catch {
           this.exited = true;
-          for (const listener of this.exitListeners) listener({ exitCode: 0, signal: null });
+          const listeners = [...this.exitListeners];
+          this.dataListeners.clear();
+          this.exitListeners.clear();
+          for (const listener of listeners) listener({ exitCode: 0, signal: null });
         }
       }
       onData(callback) {
@@ -13268,20 +13582,24 @@ var init_NodePtyAdapter = __esm({
       spawnPty;
       statCwd;
       skipHelperEnsure;
+      boundedInputLimits;
       constructor(options = {}) {
         this.spawnPty = options.spawnPty ?? pty.spawn;
         this.statCwd = options.statCwd ?? statSync3;
         this.skipHelperEnsure = options.skipHelperEnsure ?? false;
+        this.boundedInputLimits = validatePtyInputLimits(
+          options.boundedInputLimits ?? DEFAULT_PTY_INPUT_LIMITS
+        );
       }
-      async spawn(input) {
+      async spawn(input, listeners) {
         if (!this.skipHelperEnsure) ensureNodePtySpawnHelperExecutable();
-        return this.spawnSyncInternal(input);
+        return this.spawnSyncInternal(input, listeners);
       }
-      spawnSync(input) {
+      spawnSync(input, listeners) {
         if (!this.skipHelperEnsure) ensureNodePtySpawnHelperExecutable();
-        return this.spawnSyncInternal(input);
+        return this.spawnSyncInternal(input, listeners);
       }
-      spawnSyncInternal(input) {
+      spawnSyncInternal(input, listeners) {
         assertValidCwd(input.cwd, this.statCwd);
         if (!Number.isInteger(input.cols) || input.cols <= 0) {
           throw new PtySpawnError({
@@ -13336,7 +13654,7 @@ var init_NodePtyAdapter = __esm({
             cause: err
           });
         }
-        return new NodePtyProcess(child);
+        return new NodePtyProcess(child, listeners, this.boundedInputLimits);
       }
     };
     defaultNodePtyAdapter = new NodePtyAdapter();
@@ -14156,7 +14474,7 @@ import { EventEmitter as EventEmitter3 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { homedir as homedir16 } from "node:os";
 import { dirname as dirname24, join as join24 } from "node:path";
-import { z as z32 } from "zod";
+import { z as z33 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -14179,9 +14497,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z32.object({
-      version: z32.literal(1),
-      workspaces: z32.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z33.object({
+      version: z33.literal(1),
+      workspaces: z33.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -14323,9 +14641,9 @@ function semanticPaneIds(session) {
     const separator = line.indexOf("	");
     if (separator < 0) continue;
     const runtimePaneId = line.slice(0, separator);
-    const semanticPaneId = line.slice(separator + 1);
-    if (!/^%[0-9]+$/u.test(runtimePaneId) || semanticPaneId.length === 0) continue;
-    result.set(runtimePaneId, semanticPaneId);
+    const semanticPaneId2 = line.slice(separator + 1);
+    if (!/^%[0-9]+$/u.test(runtimePaneId) || semanticPaneId2.length === 0) continue;
+    result.set(runtimePaneId, semanticPaneId2);
   }
   return result;
 }
@@ -14816,6 +15134,3071 @@ var init_daemon_shutdown = __esm({
   }
 });
 
+// packages/daemon/src/lib/project-readiness.ts
+var init_project_readiness = __esm({
+  "packages/daemon/src/lib/project-readiness.ts"() {
+    "use strict";
+  }
+});
+
+// packages/daemon/src/lib/project-readiness-probe.ts
+import { execFile as execFile2 } from "node:child_process";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync28, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
+import { delimiter, isAbsolute as isAbsolute4, basename as basename8, resolve as resolve21, sep as sep2 } from "node:path";
+function errorCode(error) {
+  if (!error || typeof error !== "object" || !("code" in error)) return void 0;
+  const code = error.code;
+  return typeof code === "string" || typeof code === "number" ? code : void 0;
+}
+function normalizeTimeout(timeoutMs) {
+  if (timeoutMs === void 0 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return DEFAULT_TIMEOUT_MS;
+  }
+  return Math.min(Math.floor(timeoutMs), MAX_TIMEOUT_MS);
+}
+function safeCall(operation, fallback) {
+  try {
+    return operation();
+  } catch {
+    return fallback;
+  }
+}
+function isValidAbsolutePath(path2) {
+  return isAbsolute4(path2) && path2.trim().length > 0 && !path2.includes("\0") && !/[\r\n]/u.test(path2);
+}
+function normalizeCommandResult(value) {
+  if (!value || typeof value !== "object" || !("status" in value)) {
+    return { status: "unknown" };
+  }
+  const candidate = value;
+  if (!["success", "failure", "timeout", "not-found", "unknown"].includes(candidate.status)) {
+    return { status: "unknown" };
+  }
+  return {
+    status: candidate.status,
+    stdout: typeof candidate.stdout === "string" ? candidate.stdout : void 0,
+    stderr: typeof candidate.stderr === "string" ? candidate.stderr : void 0,
+    exitCode: typeof candidate.exitCode === "number" || candidate.exitCode === null ? candidate.exitCode : void 0
+  };
+}
+async function runBounded(io, executable, argv, options) {
+  return new Promise((resolveResult) => {
+    let settled = false;
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveResult(result);
+    };
+    const timer = setTimeout(() => settle({ status: "timeout" }), options.timeoutMs);
+    void Promise.resolve().then(() => io.runCommand(executable, [...argv], options)).then((result) => settle(normalizeCommandResult(result))).catch(() => settle({ status: "unknown" }));
+  });
+}
+function environmentPath(environment) {
+  const value = environment.PATH ?? environment.Path ?? environment.path;
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+function canonicalExecutable(path2, io) {
+  const canonical = safeCall(() => io.realpath(path2), path2);
+  return isValidAbsolutePath(canonical) ? canonical : path2;
+}
+function hasValidExecutableToken(executable) {
+  return executable.length > 0 && executable === executable.trim() && !executable.includes("\0") && !/[\r\n]/u.test(executable);
+}
+function inspectExecutableCandidate(path2, io) {
+  const kind = safeCall(() => io.inspectExecutable(path2), "unknown");
+  if (kind === "missing" || kind === "other") return "missing";
+  if (kind === "unknown") return "unknown";
+  return safeCall(() => io.isExecutable(path2), "unknown");
+}
+function locateExecutable(executable, cwd, environment, io) {
+  if (!hasValidExecutableToken(executable)) {
+    return { availability: "missing", path: null };
+  }
+  if (isAbsolute4(executable) || executable.includes(sep2) || executable.includes("/") || executable.includes("\\")) {
+    const candidate = isAbsolute4(executable) ? executable : resolve21(cwd, executable);
+    const availability = inspectExecutableCandidate(candidate, io);
+    return {
+      availability,
+      path: availability === "available" ? canonicalExecutable(candidate, io) : null
+    };
+  }
+  const pathValue = environmentPath(environment);
+  if (pathValue === null) return { availability: "unknown", path: null };
+  let sawUnknown = false;
+  for (const entry of pathValue.split(delimiter)) {
+    if (entry.length === 0) continue;
+    const directory = isAbsolute4(entry) ? entry : resolve21(cwd, entry);
+    const candidate = resolve21(directory, executable);
+    const availability = inspectExecutableCandidate(candidate, io);
+    if (availability === "available") {
+      return { availability, path: canonicalExecutable(candidate, io) };
+    }
+    if (availability === "unknown") sawUnknown = true;
+  }
+  return { availability: sawUnknown ? "unknown" : "missing", path: null };
+}
+function versionFrom(result) {
+  if (result.status !== "success") return null;
+  const line = (result.stdout ?? "").split(/\r?\n/u).map(
+    (part) => [...part].map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || code === 127 ? " " : character;
+    }).join("").replace(/\s+/gu, " ").trim()
+  ).find((part) => part.length > 0);
+  return line ? line.slice(0, 256) : null;
+}
+async function probeVersion(io, located, argv, commandOptions) {
+  if (located.availability !== "available" || located.path === null) {
+    return { version: null, commandReadiness: "unknown" };
+  }
+  const result = await runBounded(io, located.path, argv, commandOptions);
+  const version = versionFrom(result);
+  return {
+    version,
+    commandReadiness: result.status === "success" && version !== null ? "ready" : "unknown"
+  };
+}
+function customHarnessSpecs(profiles) {
+  return profiles.map((profile) => ({
+    id: profile.id,
+    kind: "custom",
+    label: profile.label,
+    command: [...profile.command],
+    source: profile.source ?? "user",
+    versionArgv: null,
+    authentication: profile.authentication ?? "unknown",
+    declaredCommandReadiness: profile.commandReadiness,
+    declaredVersion: profile.version
+  }));
+}
+async function probeHarness(spec, io, cwd, environment, commandOptions) {
+  const executable = spec.command[0] ?? "";
+  const executableValid = hasValidExecutableToken(executable);
+  const located = locateExecutable(executable, cwd, environment, io);
+  const versionProbe = spec.versionArgv === null ? { version: spec.declaredVersion ?? null, commandReadiness: "unknown" } : await probeVersion(io, located, spec.versionArgv, commandOptions);
+  const commandReadiness = !executableValid ? "invalid" : spec.declaredCommandReadiness ?? versionProbe.commandReadiness;
+  const command2 = [...spec.command];
+  if (located.availability === "available" && located.path !== null) command2[0] = located.path;
+  return {
+    id: spec.id,
+    kind: spec.kind,
+    label: spec.label,
+    command: command2,
+    installation: located.availability,
+    commandReadiness,
+    authentication: spec.authentication,
+    source: spec.source,
+    version: located.availability === "available" ? versionProbe.version : null
+  };
+}
+function nonRepositoryFailure(result) {
+  if (result.status !== "failure") return false;
+  const output = `${result.stderr ?? ""}
+${result.stdout ?? ""}`.toLowerCase();
+  return output.includes("not a git repository") || output.includes("not a work tree");
+}
+async function probeProjectReadiness(requestedPath, options = {}) {
+  const io = { ...defaultIo2, ...options.io };
+  const timeoutMs = normalizeTimeout(options.timeoutMs);
+  const environment = safeCall(() => io.environment(), {});
+  const platform = safeCall(() => io.platform(), {
+    os: process.platform,
+    arch: process.arch
+  });
+  const baseCwd = safeCall(() => io.cwd(), process.cwd());
+  const absoluteRequestedPath = isAbsolute4(requestedPath) ? requestedPath : resolve21(baseCwd, requestedPath);
+  const pathKind = safeCall(() => io.inspectPath(absoluteRequestedPath), "unknown");
+  const exists = pathKind === "directory" || pathKind === "other";
+  const isDirectory = pathKind === "directory";
+  const canonicalInput = isDirectory ? safeCall(() => io.realpath(absoluteRequestedPath), null) : null;
+  const validCanonicalInput = canonicalInput !== null && isValidAbsolutePath(canonicalInput) ? canonicalInput : null;
+  const commandCwd = validCanonicalInput ?? baseCwd;
+  const commandOptions = {
+    cwd: commandCwd,
+    env: environment,
+    timeoutMs
+  };
+  const gitLocated = locateExecutable("git", commandCwd, environment, io);
+  const tmuxLocated = locateExecutable("tmux", commandCwd, environment, io);
+  const shellCommand = options.shellCommand && options.shellCommand.length > 0 ? [...options.shellCommand] : [
+    typeof environment.SHELL === "string" && environment.SHELL.length > 0 ? environment.SHELL : "/bin/sh"
+  ];
+  const shellLocated = locateExecutable(shellCommand[0] ?? "", commandCwd, environment, io);
+  if (shellLocated.availability === "available" && shellLocated.path !== null) {
+    shellCommand[0] = shellLocated.path;
+  }
+  const gitRun = async (argv, cwd) => {
+    if (gitLocated.availability !== "available" || gitLocated.path === null) {
+      return { status: gitLocated.availability === "missing" ? "not-found" : "unknown" };
+    }
+    return runBounded(io, gitLocated.path, ["-C", cwd, ...argv], {
+      ...commandOptions,
+      cwd
+    });
+  };
+  let resolution = null;
+  if (validCanonicalInput !== null) {
+    try {
+      resolution = await resolveProject(validCanonicalInput, {
+        projectRootHint: options.projectRootHint,
+        io: {
+          exists: (path2) => safeCall(() => io.exists(path2), false),
+          realpath: (path2) => io.realpath(path2),
+          runGit: async (args, cwd) => {
+            const result = await gitRun(args, cwd);
+            return result.status === "success" ? (result.stdout ?? "").trim() || null : null;
+          }
+        }
+      });
+    } catch {
+      resolution = null;
+    }
+  }
+  const validResolution = resolution !== null && isValidAbsolutePath(resolution.projectRoot) ? resolution : null;
+  const projectRoot = validResolution?.projectRoot ?? null;
+  const identityKey = validResolution?.identityKey ?? null;
+  const identitySource = validResolution?.identitySource ?? null;
+  const projectNameSource = projectRoot ?? validCanonicalInput ?? absoluteRequestedPath;
+  const sanitizedName = sanitizeName(basename8(projectNameSource));
+  const [gitVersion, tmuxVersion, repositoryResult, ...harnesses] = await Promise.all([
+    probeVersion(io, gitLocated, ["--version"], commandOptions),
+    probeVersion(io, tmuxLocated, ["-V"], commandOptions),
+    validCanonicalInput === null ? Promise.resolve({ status: "unknown" }) : gitRun(["rev-parse", "--is-inside-work-tree"], validCanonicalInput),
+    ...[
+      ...BUILTIN_HARNESSES.map((spec) => ({
+        ...spec,
+        authentication: options.authentication?.[spec.id] ?? "unknown"
+      })),
+      ...customHarnessSpecs(options.customHarnesses ?? [])
+    ].map((spec) => probeHarness(spec, io, commandCwd, environment, commandOptions))
+  ]);
+  let repository = null;
+  if (repositoryResult.status === "success") {
+    const output = (repositoryResult.stdout ?? "").trim().toLowerCase();
+    repository = output === "true" ? true : output === "false" ? false : null;
+  } else if (nonRepositoryFailure(repositoryResult)) {
+    repository = false;
+  }
+  const requestedRegistration = options.registration ?? "unregistered";
+  const registration = pathKind === "missing" && requestedRegistration === "current" ? "stale" : requestedRegistration;
+  const tmuxAvailability = tmuxLocated.availability === "available" && tmuxVersion.commandReadiness !== "ready" ? "unknown" : tmuxLocated.availability;
+  return {
+    project: {
+      requestedPath: absoluteRequestedPath,
+      root: projectRoot,
+      name: sanitizedName || "project",
+      identityKey,
+      identitySource,
+      pathKind,
+      exists,
+      isDirectory,
+      registration
+    },
+    platform,
+    git: {
+      availability: gitLocated.availability,
+      version: gitVersion.version,
+      repository
+    },
+    tmux: {
+      availability: tmuxAvailability,
+      version: tmuxVersion.version
+    },
+    shell: {
+      availability: shellLocated.availability,
+      command: shellCommand,
+      version: null
+    },
+    harnesses,
+    preferredHarnessId: options.preferredHarnessId
+  };
+}
+var DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_OUTPUT_BYTES, BUILTIN_HARNESSES, defaultIo2;
+var init_project_readiness_probe = __esm({
+  "packages/daemon/src/lib/project-readiness-probe.ts"() {
+    "use strict";
+    init_project_readiness();
+    init_project_probe();
+    init_project_resolver();
+    DEFAULT_TIMEOUT_MS = 2e3;
+    MAX_TIMEOUT_MS = 3e4;
+    MAX_OUTPUT_BYTES = 64 * 1024;
+    BUILTIN_HARNESSES = [
+      {
+        id: "codex",
+        kind: "codex",
+        label: "Codex",
+        command: ["codex"],
+        source: "detected",
+        versionArgv: ["--version"]
+      },
+      {
+        id: "claude",
+        kind: "claude",
+        label: "Claude Code",
+        command: ["claude"],
+        source: "detected",
+        versionArgv: ["--version"]
+      },
+      {
+        id: "opencode",
+        kind: "opencode",
+        label: "OpenCode",
+        command: ["opencode"],
+        source: "detected",
+        versionArgv: ["--version"]
+      }
+    ];
+    defaultIo2 = {
+      cwd: () => process.cwd(),
+      environment: () => process.env,
+      platform: () => ({ os: process.platform, arch: process.arch }),
+      inspectPath: (path2) => {
+        try {
+          return statSync5(path2).isDirectory() ? "directory" : "other";
+        } catch (error) {
+          const code = errorCode(error);
+          return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
+        }
+      },
+      exists: existsSync28,
+      realpath: realpathSync4,
+      inspectExecutable: (path2) => {
+        try {
+          return statSync5(path2).isFile() ? "file" : "other";
+        } catch (error) {
+          const code = errorCode(error);
+          return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
+        }
+      },
+      isExecutable: (path2) => {
+        try {
+          accessSync2(path2, constants3.X_OK);
+          return "available";
+        } catch (error) {
+          const code = errorCode(error);
+          return code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" ? "missing" : "unknown";
+        }
+      },
+      runCommand: (executable, argv, options) => new Promise((resolveResult) => {
+        execFile2(
+          executable,
+          [...argv],
+          {
+            cwd: options.cwd,
+            env: { ...options.env },
+            encoding: "utf-8",
+            maxBuffer: MAX_OUTPUT_BYTES,
+            timeout: options.timeoutMs,
+            windowsHide: true
+          },
+          (error, stdout, stderr) => {
+            if (!error) {
+              resolveResult({ status: "success", stdout, stderr, exitCode: 0 });
+              return;
+            }
+            const code = errorCode(error);
+            if (code === "ENOENT") {
+              resolveResult({ status: "not-found", stdout, stderr, exitCode: null });
+              return;
+            }
+            if (code === "ETIMEDOUT" || "killed" in error && error.killed) {
+              resolveResult({ status: "timeout", stdout, stderr, exitCode: null });
+              return;
+            }
+            resolveResult({
+              status: "failure",
+              stdout,
+              stderr,
+              exitCode: typeof code === "number" ? code : null
+            });
+          }
+        );
+      })
+    };
+  }
+});
+
+// packages/daemon/src/lib/project-runtime-repository.ts
+import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
+import {
+  closeSync as closeSync3,
+  fsyncSync,
+  lstatSync as lstatSync2,
+  mkdirSync as mkdirSync19,
+  openSync as openSync3,
+  readFileSync as readFileSync22,
+  renameSync as renameSync11,
+  rmdirSync,
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync18
+} from "node:fs";
+import { isAbsolute as isAbsolute5, join as join26, relative as relative2, resolve as resolve22, sep as sep3, win32 } from "node:path";
+function createProjectRuntimeRepository(resolution, options = {}) {
+  return new ProjectRuntimeRepository(resolution, options);
+}
+async function openProjectRuntimeRepository(dir, options = {}) {
+  const resolver = options.resolver ?? resolveProject;
+  const resolution = await resolver(dir, {
+    ...options.resolveOptions,
+    explicitConfigPath: options.explicitConfigPath ?? options.resolveOptions?.explicitConfigPath,
+    io: options.resolverIo ?? options.resolveOptions?.io
+  });
+  return createProjectRuntimeRepository(resolution, options);
+}
+function parseDocumentEnvelope(path2, raw) {
+  const value = parseJson(raw, () => new CorruptRuntimeDocumentError(path2, "invalid JSON"));
+  if (!isRecord(value)) throw new CorruptRuntimeDocumentError(path2, "envelope must be an object");
+  if (!sameKeys(Object.keys(value), ["version", "revision", "payload"])) {
+    throw new CorruptRuntimeDocumentError(path2, "envelope has invalid keys");
+  }
+  if (value.version !== DOCUMENT_ENVELOPE_VERSION) {
+    if (Number.isInteger(value.version)) {
+      throw new UnsupportedRuntimeDocumentVersionError(path2, value.version);
+    }
+    throw new CorruptRuntimeDocumentError(path2, "envelope version must be a supported integer");
+  }
+  const revision = value.revision;
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1) {
+    throw new CorruptRuntimeDocumentError(path2, "revision must be a positive safe integer");
+  }
+  assertJsonPayload(value.payload);
+  return {
+    version: DOCUMENT_ENVELOPE_VERSION,
+    revision,
+    payload: cloneJson(value.payload)
+  };
+}
+function sha256(value) {
+  return createHash5("sha256").update(value).digest("hex");
+}
+function encodeUtf8(value) {
+  return Buffer.from(value, "utf-8");
+}
+function decodeUtf8(value) {
+  return Buffer.from(value).toString("utf-8");
+}
+function decodeUtf8Strict(value, path2) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(value);
+  } catch {
+    throw new CorruptRuntimeDocumentError(path2, "document is not valid UTF-8");
+  }
+}
+function isPromiseLike(value) {
+  return (typeof value === "object" || typeof value === "function") && value !== null && "then" in value && typeof value.then === "function";
+}
+function normalizeLockDuration(value, fallback, minimum, maximum, field) {
+  const resolved2 = value ?? fallback;
+  if (!Number.isSafeInteger(resolved2) || resolved2 < minimum || resolved2 > maximum) {
+    throw new InvalidJsonValueError(
+      `$.${field}`,
+      `${field} must be an integer between ${minimum} and ${maximum}`
+    );
+  }
+  return resolved2;
+}
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+function assertLockDirectory(path2) {
+  const stat = lstatSync2(path2);
+  if (stat.isSymbolicLink())
+    throw new InvalidRuntimePathError(path2, "symbolic links are not allowed");
+  if (!stat.isDirectory())
+    throw new InvalidRuntimePathError(path2, "writer lock parent must be a directory");
+}
+function parseEventLog(stream, raw) {
+  if (raw.length === 0) return [];
+  const lines = raw.endsWith("\n") ? raw.slice(0, -1).split("\n") : raw.split("\n");
+  if (lines.length === 1 && lines[0] === "") return [];
+  return lines.map((line, index) => {
+    const lineNumber = index + 1;
+    if (line.trim().length === 0) {
+      throw new CorruptEventLogError(stream, lineNumber, "blank lines are not allowed");
+    }
+    const value = parseJson(
+      line,
+      () => new CorruptEventLogError(stream, lineNumber, "invalid JSON")
+    );
+    if (!isRecord(value))
+      throw new CorruptEventLogError(stream, lineNumber, "event must be an object");
+    if (!sameKeys(Object.keys(value), ["version", "sequence", "timestamp", "payload"])) {
+      throw new CorruptEventLogError(stream, lineNumber, "event has invalid keys");
+    }
+    if (value.version !== EVENT_ENVELOPE_VERSION) {
+      throw new CorruptEventLogError(stream, lineNumber, "unsupported event version");
+    }
+    if (value.sequence !== lineNumber) {
+      throw new CorruptEventLogError(stream, lineNumber, "event sequence must be continuous");
+    }
+    if (typeof value.timestamp !== "string" || !isCanonicalTimestamp(value.timestamp)) {
+      throw new CorruptEventLogError(
+        stream,
+        lineNumber,
+        "timestamp must be a canonical ISO string"
+      );
+    }
+    assertJsonPayload(
+      value.payload,
+      (payloadPath, reason) => new CorruptEventLogError(stream, lineNumber, `${payloadPath}: ${reason}`)
+    );
+    return {
+      version: EVENT_ENVELOPE_VERSION,
+      sequence: value.sequence,
+      timestamp: value.timestamp,
+      payload: cloneJson(value.payload)
+    };
+  });
+}
+function parseJson(raw, errorFactory) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw errorFactory();
+  }
+}
+function serializeJsonPayload(value) {
+  assertJsonPayload(value);
+  return cloneJson(value);
+}
+function assertJsonPayload(value, errorFactory = (path2, reason) => new InvalidJsonValueError(path2, reason)) {
+  const stack = /* @__PURE__ */ new Set();
+  function visit(candidate, path2) {
+    if (candidate === null) return;
+    if (typeof candidate === "string" || typeof candidate === "boolean") return;
+    if (typeof candidate === "number") {
+      if (!Number.isFinite(candidate)) throw errorFactory(path2, "number must be finite");
+      return;
+    }
+    if (typeof candidate === "undefined") throw errorFactory(path2, "undefined is not JSON");
+    if (typeof candidate === "bigint") throw errorFactory(path2, "bigint is not JSON");
+    if (typeof candidate === "function") throw errorFactory(path2, "function is not JSON");
+    if (typeof candidate === "symbol") throw errorFactory(path2, "symbol is not JSON");
+    if (typeof candidate !== "object") throw errorFactory(path2, "value is not JSON");
+    if (stack.has(candidate)) throw errorFactory(path2, "cyclic values are not JSON");
+    stack.add(candidate);
+    try {
+      if (Array.isArray(candidate)) {
+        for (let index = 0; index < candidate.length; index += 1) {
+          if (!Object.hasOwn(candidate, index)) {
+            throw errorFactory(`${path2}[${index}]`, "sparse arrays are not JSON");
+          }
+          visit(candidate[index], `${path2}[${index}]`);
+        }
+        const customKeys = Reflect.ownKeys(candidate).filter((key) => {
+          if (key === "length") return false;
+          return typeof key === "symbol" || !/^(?:0|[1-9]\d*)$/.test(String(key));
+        });
+        if (customKeys.length > 0) throw errorFactory(path2, "arrays must not have custom keys");
+        return;
+      }
+      if (Object.getPrototypeOf(candidate) !== Object.prototype) {
+        throw errorFactory(path2, "object must be a plain object");
+      }
+      for (const key of Reflect.ownKeys(candidate)) {
+        if (typeof key === "symbol") throw errorFactory(path2, "symbol keys are not JSON");
+        const descriptor2 = Object.getOwnPropertyDescriptor(candidate, key);
+        if (!descriptor2) continue;
+        if ("get" in descriptor2 || "set" in descriptor2) {
+          throw errorFactory(`${path2}.${key}`, "accessors are not JSON");
+        }
+        visit(candidate[key], `${path2}.${key}`);
+      }
+    } finally {
+      stack.delete(candidate);
+    }
+  }
+  visit(value, "$");
+}
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function sameKeys(actual, expected) {
+  if (actual.length !== expected.length) return false;
+  const actualSet = new Set(actual);
+  return expected.every((key) => actualSet.has(key));
+}
+function validateSafeId(value, label2) {
+  if (!SAFE_ID_PATTERN.test(value) || value === "." || value === ".." || value.includes("..") || value.includes("\0")) {
+    throw new InvalidRuntimePathError(value, `${label2} must be a safe filesystem id`);
+  }
+}
+function validateSafeStreamId(value) {
+  if (!SAFE_ID_PATTERN.test(value) || value === "." || value === ".." || value.includes("..") || value.includes("\0")) {
+    throw new InvalidEventStreamError(value, "event stream must be a safe filesystem id");
+  }
+}
+function isWithinDirectory(path2, root) {
+  const fromRoot = relative2(root, path2);
+  return fromRoot === "" || fromRoot !== ".." && !fromRoot.startsWith(`..${sep3}`) && !isAbsolute5(fromRoot);
+}
+function safeTempId(value) {
+  return value.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+function isNodeError(error) {
+  return error instanceof Error && "code" in error;
+}
+function isCanonicalTimestamp(value) {
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+}
+var DOCUMENT_ENVELOPE_VERSION, EVENT_ENVELOPE_VERSION, SAFE_ID_PATTERN, PROJECT_RUNTIME_WRITER_LOCK_FILENAME, PROJECT_RUNTIME_PROCESS_INSTANCE_ID, ProjectRuntimeRepositoryError, InvalidRuntimePathError, InvalidEventStreamError, MissingRuntimeDocumentError, CorruptRuntimeDocumentError, UnsupportedRuntimeDocumentVersionError, InvalidJsonValueError, RevisionConflictError, ProjectRuntimeWriterLockTimeoutError, EventSequenceConflictError, CorruptEventLogError, ProjectRuntimeIoError, defaultIo3, tempCounter, ProjectRuntimeRepository;
+var init_project_runtime_repository = __esm({
+  "packages/daemon/src/lib/project-runtime-repository.ts"() {
+    "use strict";
+    init_project_resolver();
+    init_state_home();
+    DOCUMENT_ENVELOPE_VERSION = 1;
+    EVENT_ENVELOPE_VERSION = 1;
+    SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+    PROJECT_RUNTIME_WRITER_LOCK_FILENAME = "workspace/.state.lock";
+    PROJECT_RUNTIME_PROCESS_INSTANCE_ID = randomUUID2();
+    ProjectRuntimeRepositoryError = class extends Error {
+      code;
+      constructor(code, message) {
+        super(message);
+        this.name = new.target.name;
+        this.code = code;
+      }
+    };
+    InvalidRuntimePathError = class extends ProjectRuntimeRepositoryError {
+      path;
+      constructor(path2, reason) {
+        super("INVALID_PATH", `Invalid runtime path "${path2}": ${reason}`);
+        this.path = path2;
+      }
+    };
+    InvalidEventStreamError = class extends InvalidRuntimePathError {
+      stream;
+      constructor(stream, reason) {
+        super(stream, reason);
+        this.name = "InvalidEventStreamError";
+        this.stream = stream;
+      }
+    };
+    MissingRuntimeDocumentError = class extends ProjectRuntimeRepositoryError {
+      path;
+      constructor(path2) {
+        super("DOCUMENT_MISSING", `Runtime document "${path2}" does not exist`);
+        this.path = path2;
+      }
+    };
+    CorruptRuntimeDocumentError = class extends ProjectRuntimeRepositoryError {
+      path;
+      reason;
+      constructor(path2, reason) {
+        super("DOCUMENT_CORRUPT", `Runtime document "${path2}" is corrupt: ${reason}`);
+        this.path = path2;
+        this.reason = reason;
+      }
+    };
+    UnsupportedRuntimeDocumentVersionError = class extends ProjectRuntimeRepositoryError {
+      path;
+      version;
+      constructor(path2, version) {
+        super(
+          "UNSUPPORTED_DOCUMENT_VERSION",
+          `Runtime document "${path2}" uses unsupported envelope version ${String(version)}`
+        );
+        this.path = path2;
+        this.version = version;
+      }
+    };
+    InvalidJsonValueError = class extends ProjectRuntimeRepositoryError {
+      valuePath;
+      reason;
+      constructor(valuePath, reason) {
+        super("INVALID_JSON_VALUE", `Invalid JSON value at ${valuePath}: ${reason}`);
+        this.valuePath = valuePath;
+        this.reason = reason;
+      }
+    };
+    RevisionConflictError = class extends ProjectRuntimeRepositoryError {
+      path;
+      expectedRevision;
+      actualRevision;
+      constructor(path2, expectedRevision, actualRevision) {
+        super(
+          "REVISION_CONFLICT",
+          `Revision conflict for "${path2}": expected ${String(expectedRevision)}, actual ${String(
+            actualRevision
+          )}`
+        );
+        this.path = path2;
+        this.expectedRevision = expectedRevision;
+        this.actualRevision = actualRevision;
+      }
+    };
+    ProjectRuntimeWriterLockTimeoutError = class extends ProjectRuntimeRepositoryError {
+      lockPath;
+      timeoutMs;
+      constructor(lockPath, timeoutMs) {
+        super(
+          "WRITER_LOCK_TIMEOUT",
+          `Timed out after ${timeoutMs}ms waiting for project runtime writer lock`
+        );
+        this.name = "ProjectRuntimeWriterLockTimeoutError";
+        this.lockPath = lockPath;
+        this.timeoutMs = timeoutMs;
+      }
+    };
+    EventSequenceConflictError = class extends ProjectRuntimeRepositoryError {
+      stream;
+      expectedPreviousSequence;
+      actualPreviousSequence;
+      constructor(stream, expectedPreviousSequence, actualPreviousSequence) {
+        super(
+          "EVENT_SEQUENCE_CONFLICT",
+          `Event sequence conflict for "${stream}": expected previous ${expectedPreviousSequence}, actual previous ${actualPreviousSequence}`
+        );
+        this.stream = stream;
+        this.expectedPreviousSequence = expectedPreviousSequence;
+        this.actualPreviousSequence = actualPreviousSequence;
+      }
+    };
+    CorruptEventLogError = class extends ProjectRuntimeRepositoryError {
+      stream;
+      lineNumber;
+      reason;
+      constructor(stream, lineNumber, reason) {
+        super("EVENT_LOG_CORRUPT", `Event log "${stream}" is corrupt at line ${lineNumber}: ${reason}`);
+        this.stream = stream;
+        this.lineNumber = lineNumber;
+        this.reason = reason;
+      }
+    };
+    ProjectRuntimeIoError = class extends ProjectRuntimeRepositoryError {
+      path;
+      cause;
+      constructor(path2, operation, cause) {
+        super("IO_ERROR", `Unable to ${operation} runtime path "${path2}"`);
+        this.path = path2;
+        this.cause = cause;
+      }
+    };
+    defaultIo3 = {
+      readFile: (path2) => readFileSync22(path2, "utf-8"),
+      writeFile: (path2, data) => writeFileSync18(path2, data, "utf-8"),
+      readBytes: (path2) => readFileSync22(path2),
+      writeBytes: (path2, data) => writeFileSync18(path2, data),
+      fsyncFile: (path2) => {
+        const descriptor2 = openSync3(path2, "r");
+        try {
+          fsyncSync(descriptor2);
+        } finally {
+          closeSync3(descriptor2);
+        }
+      },
+      fsyncDirectory: (path2) => {
+        const descriptor2 = openSync3(path2, "r");
+        try {
+          fsyncSync(descriptor2);
+        } finally {
+          closeSync3(descriptor2);
+        }
+      },
+      mkdir: (path2) => mkdirSync19(path2, { recursive: true }),
+      rename: renameSync11,
+      unlink: unlinkSync2,
+      isSymbolicLink: (path2) => {
+        try {
+          return lstatSync2(path2).isSymbolicLink();
+        } catch (error) {
+          if (isNodeError(error) && error.code === "ENOENT") return false;
+          throw error;
+        }
+      },
+      now: () => /* @__PURE__ */ new Date(),
+      randomId: randomUUID2
+    };
+    tempCounter = 0;
+    ProjectRuntimeRepository = class {
+      resolution;
+      runtimeRoot;
+      metadata;
+      io;
+      constructor(resolution, options = {}) {
+        validateSafeId(resolution.identityKey, "identity key");
+        this.resolution = resolution;
+        this.io = { ...defaultIo3, ...options.io };
+        this.runtimeRoot = join26(
+          resolve22(options.home ?? options.stateHome ?? stateHome()),
+          "projects",
+          resolution.identityKey
+        );
+        this.metadata = {
+          identityKey: resolution.identityKey,
+          identitySource: resolution.identitySource,
+          identityAnchor: resolution.identityAnchor,
+          projectRoot: resolution.projectRoot,
+          runtimeRoot: this.runtimeRoot
+        };
+      }
+      readDocument(path2) {
+        const target = this.resolveRuntimePath(path2);
+        const bytes = this.readOptionalBytes(target, path2);
+        const raw = bytes === null ? null : decodeUtf8Strict(bytes, path2);
+        if (raw === null) return { found: false, path: path2, revision: null };
+        const envelope = parseDocumentEnvelope(path2, raw);
+        return {
+          found: true,
+          path: path2,
+          version: DOCUMENT_ENVELOPE_VERSION,
+          revision: envelope.revision,
+          payload: cloneJson(envelope.payload)
+        };
+      }
+      readRequiredDocument(path2) {
+        const document = this.readDocument(path2);
+        if (!document.found) throw new MissingRuntimeDocumentError(path2);
+        return {
+          path: document.path,
+          version: document.version,
+          revision: document.revision,
+          payload: document.payload
+        };
+      }
+      writeDocument(path2, payload, options) {
+        return this.withWriterLock(void 0, (writer) => writer.writeDocument(path2, payload, options));
+      }
+      /**
+       * Serialize a compound read/check/write transaction with every other
+       * compliant project-runtime writer, including writers in other processes.
+       * The supplied capability expires as soon as the callback returns.
+       */
+      withWriterLock(options, action) {
+        const outcome = this.withWriterLockOutcome(options, action);
+        if (outcome.releaseError) throw outcome.releaseError;
+        return outcome.value;
+      }
+      withWriterLockOutcome(options, action) {
+        const release = this.acquireWriterLock(options);
+        let active2 = true;
+        const assertActive = () => {
+          if (!active2) {
+            throw new ProjectRuntimeRepositoryError(
+              "IO_ERROR",
+              "Project runtime locked-writer capability is no longer active"
+            );
+          }
+        };
+        const writer = {
+          writeDocument: (path2, payload, writeOptions) => {
+            assertActive();
+            return this.writeDocumentUnlocked(path2, payload, writeOptions);
+          },
+          recoverDocument: (path2, payload, recoverOptions) => {
+            assertActive();
+            return this.recoverDocumentUnlocked(path2, payload, recoverOptions);
+          },
+          appendEvent: (stream, payload, appendOptions = {}) => {
+            assertActive();
+            return this.appendEventUnlocked(stream, payload, appendOptions);
+          }
+        };
+        let value;
+        try {
+          value = action(writer);
+          if (isPromiseLike(value)) {
+            throw new ProjectRuntimeRepositoryError(
+              "IO_ERROR",
+              "Project runtime writer transactions must be synchronous"
+            );
+          }
+        } catch (error) {
+          active2 = false;
+          try {
+            release();
+          } catch {
+          }
+          throw error;
+        }
+        active2 = false;
+        try {
+          release();
+          return { value, releaseError: null };
+        } catch (error) {
+          return {
+            value,
+            releaseError: error instanceof Error ? error : new Error(String(error))
+          };
+        }
+      }
+      writeDocumentUnlocked(path2, payload, options) {
+        if (options.expectedRevision !== null && (!Number.isSafeInteger(options.expectedRevision) || options.expectedRevision < 1)) {
+          throw new RevisionConflictError(path2, options.expectedRevision, null);
+        }
+        const target = this.resolveRuntimePath(path2);
+        const existingBytes = this.readOptionalBytes(target, path2);
+        const existing = existingBytes === null ? null : decodeUtf8Strict(existingBytes, path2);
+        const current = existing === null ? null : parseDocumentEnvelope(path2, existing);
+        const actualRevision = current?.revision ?? null;
+        if (options.expectedRevision !== actualRevision) {
+          throw new RevisionConflictError(path2, options.expectedRevision, actualRevision);
+        }
+        const serializedPayload = serializeJsonPayload(payload);
+        const envelope = {
+          version: DOCUMENT_ENVELOPE_VERSION,
+          revision: actualRevision === null ? 1 : actualRevision + 1,
+          payload: serializedPayload
+        };
+        this.atomicWrite(target, `${JSON.stringify(envelope, null, 2)}
+`, path2);
+        return {
+          path: path2,
+          version: DOCUMENT_ENVELOPE_VERSION,
+          revision: envelope.revision,
+          payload: cloneJson(serializedPayload)
+        };
+      }
+      /**
+       * Token for explicit recovery of a document whose envelope or payload cannot
+       * be safely written through normal revision CAS. No bytes are exposed.
+       */
+      documentRecoveryToken(path2) {
+        const target = this.resolveRuntimePath(path2);
+        const raw = this.readOptionalBytes(target, path2);
+        return raw === null ? null : sha256(raw);
+      }
+      /**
+       * Explicit destructive recovery. The exact prior bytes are atomically copied
+       * beneath `recovery/` before the target is replaced. Normal writes must never
+       * call this path.
+       */
+      recoverDocument(path2, payload, options) {
+        return this.withWriterLock(
+          void 0,
+          (writer) => writer.recoverDocument(path2, payload, options)
+        );
+      }
+      recoverDocumentUnlocked(path2, payload, options) {
+        const reason = options.reason.trim();
+        if (reason.length === 0 || reason.length > 512 || reason.includes("\0")) {
+          throw new InvalidJsonValueError(
+            "$.reason",
+            "recovery reason must contain 1-512 non-NUL characters"
+          );
+        }
+        if (!/^[a-f0-9]{64}$/u.test(options.expectedRawSha256)) {
+          throw new InvalidJsonValueError("$.expectedRawSha256", "recovery token must be SHA-256");
+        }
+        const target = this.resolveRuntimePath(path2);
+        const raw = this.readOptionalBytes(target, path2);
+        if (raw === null) throw new MissingRuntimeDocumentError(path2);
+        const actualToken = sha256(raw);
+        if (actualToken !== options.expectedRawSha256) {
+          throw new RevisionConflictError(path2, null, null);
+        }
+        const serializedPayload = serializeJsonPayload(payload);
+        let priorRevision = 0;
+        try {
+          priorRevision = parseDocumentEnvelope(path2, decodeUtf8(raw)).revision;
+        } catch {
+        }
+        const recoveredAt = this.io.now();
+        if (!Number.isFinite(recoveredAt.getTime())) {
+          throw new InvalidJsonValueError("$.recoveredAt", "recovery timestamp must be valid");
+        }
+        const envelope = {
+          version: DOCUMENT_ENVELOPE_VERSION,
+          revision: priorRevision + 1,
+          payload: serializedPayload
+        };
+        const replacement = encodeUtf8(`${JSON.stringify(envelope, null, 2)}
+`);
+        const recovery = this.reserveRecoveryOperation(path2, actualToken);
+        const backupPath = `${recovery.relativePath}/previous.bak`;
+        const metadataPath = `${recovery.relativePath}/audit.json`;
+        const preparedMetadata = {
+          version: 1,
+          status: "prepared",
+          operationId: recovery.operationId,
+          path: path2,
+          backupPath,
+          previousRawSha256: actualToken,
+          replacementRawSha256: sha256(replacement),
+          replacementRevision: envelope.revision,
+          reason,
+          recoveredAt: recoveredAt.toISOString(),
+          details: options.details ?? null
+        };
+        const backupTarget = this.resolveRuntimePath(backupPath);
+        try {
+          this.atomicWriteBytes(backupTarget, raw, backupPath, true);
+        } catch (error) {
+          try {
+            rmdirSync(recovery.target);
+            this.io.fsyncDirectory(resolve22(recovery.target, ".."));
+          } catch {
+          }
+          throw error;
+        }
+        this.atomicWriteBytes(
+          this.resolveRuntimePath(metadataPath),
+          encodeUtf8(`${JSON.stringify(serializeJsonPayload(preparedMetadata), null, 2)}
+`),
+          metadataPath,
+          true
+        );
+        const recheckedRaw = this.readOptionalBytes(target, path2);
+        if (recheckedRaw === null || sha256(recheckedRaw) !== actualToken) {
+          throw new RevisionConflictError(path2, null, null);
+        }
+        this.atomicWriteBytes(target, replacement, path2, true);
+        const completedMetadata = serializeJsonPayload({
+          ...preparedMetadata,
+          status: "completed",
+          completedAt: this.io.now().toISOString()
+        });
+        this.atomicWriteBytes(
+          this.resolveRuntimePath(metadataPath),
+          encodeUtf8(`${JSON.stringify(completedMetadata, null, 2)}
+`),
+          metadataPath,
+          true
+        );
+        return {
+          path: path2,
+          version: DOCUMENT_ENVELOPE_VERSION,
+          revision: envelope.revision,
+          payload: cloneJson(serializedPayload),
+          previousRawSha256: actualToken,
+          backupPath,
+          metadataPath,
+          reason
+        };
+      }
+      readEvents(stream) {
+        const target = this.resolveEventPath(stream);
+        const bytes = this.readOptionalBytes(target, `events/${stream}.jsonl`);
+        const raw = bytes === null ? null : decodeUtf8Strict(bytes, `events/${stream}.jsonl`);
+        if (raw === null) return [];
+        return parseEventLog(stream, raw);
+      }
+      appendEvent(stream, payload, options = {}) {
+        return this.withWriterLock(void 0, (writer) => writer.appendEvent(stream, payload, options));
+      }
+      appendEventUnlocked(stream, payload, options = {}) {
+        if (options.expectedPreviousSequence !== void 0 && (!Number.isSafeInteger(options.expectedPreviousSequence) || options.expectedPreviousSequence < 0)) {
+          throw new EventSequenceConflictError(stream, options.expectedPreviousSequence, 0);
+        }
+        const target = this.resolveEventPath(stream);
+        const bytes = this.readOptionalBytes(target, `events/${stream}.jsonl`);
+        const raw = bytes === null ? null : decodeUtf8Strict(bytes, `events/${stream}.jsonl`);
+        const events = raw === null ? [] : parseEventLog(stream, raw);
+        const actualPreviousSequence = events.at(-1)?.sequence ?? 0;
+        if (options.expectedPreviousSequence !== void 0 && options.expectedPreviousSequence !== actualPreviousSequence) {
+          throw new EventSequenceConflictError(
+            stream,
+            options.expectedPreviousSequence,
+            actualPreviousSequence
+          );
+        }
+        const now = this.io.now();
+        if (!Number.isFinite(now.getTime())) {
+          throw new InvalidJsonValueError("$.timestamp", "timestamp must be a valid date");
+        }
+        const event = {
+          version: EVENT_ENVELOPE_VERSION,
+          sequence: actualPreviousSequence + 1,
+          timestamp: now.toISOString(),
+          payload: serializeJsonPayload(payload)
+        };
+        this.atomicWrite(
+          target,
+          `${[...events, event].map((entry) => JSON.stringify(entry)).join("\n")}
+`,
+          `events/${stream}.jsonl`
+        );
+        return cloneJson(event);
+      }
+      resolveRuntimePath(path2, allowEventNamespace = false) {
+        if (path2.length === 0) throw new InvalidRuntimePathError(path2, "path must not be empty");
+        if (path2.includes("\0")) throw new InvalidRuntimePathError(path2, "path must not contain NUL");
+        if (path2.includes("\\")) {
+          throw new InvalidRuntimePathError(path2, "path must use forward slashes");
+        }
+        if (isAbsolute5(path2) || win32.isAbsolute(path2)) {
+          throw new InvalidRuntimePathError(path2, "path must be relative");
+        }
+        const parts = path2.split("/");
+        if (parts.some((part) => part.length === 0 || part === "." || part === "..")) {
+          throw new InvalidRuntimePathError(path2, "path contains an unsafe segment");
+        }
+        if (!allowEventNamespace && parts[0] === "events") {
+          throw new InvalidRuntimePathError(path2, "the events namespace is reserved for event streams");
+        }
+        const target = resolve22(this.runtimeRoot, ...parts);
+        if (!isWithinDirectory(target, this.runtimeRoot)) {
+          throw new InvalidRuntimePathError(path2, "path escapes the runtime root");
+        }
+        this.assertNoSymbolicLink(path2, parts);
+        return target;
+      }
+      resolveEventPath(stream) {
+        validateSafeStreamId(stream);
+        return this.resolveRuntimePath(`events/${stream}.jsonl`, true);
+      }
+      assertNoSymbolicLink(displayPath, parts) {
+        let current = this.runtimeRoot;
+        for (const part of parts) {
+          current = join26(current, part);
+          try {
+            if (this.io.isSymbolicLink(current)) {
+              throw new InvalidRuntimePathError(displayPath, "symbolic links are not allowed");
+            }
+          } catch (error) {
+            if (error instanceof ProjectRuntimeRepositoryError) throw error;
+            throw new ProjectRuntimeIoError(displayPath, "inspect", error);
+          }
+        }
+      }
+      readOptionalBytes(path2, displayPath) {
+        try {
+          return this.io.readBytes(path2);
+        } catch (error) {
+          if (isNodeError(error) && error.code === "ENOENT") return null;
+          throw new ProjectRuntimeIoError(displayPath, "read exact bytes from", error);
+        }
+      }
+      atomicWrite(target, data, displayPath) {
+        const destinationDir = resolve22(target, "..");
+        this.io.mkdir(destinationDir);
+        const tempPath = join26(
+          destinationDir,
+          `.tmp-${process.pid}-${tempCounter++}-${safeTempId(this.io.randomId())}`
+        );
+        try {
+          this.io.writeFile(tempPath, data);
+          this.io.fsyncFile(tempPath);
+          this.io.rename(tempPath, target);
+          this.io.fsyncDirectory(destinationDir);
+        } catch (error) {
+          try {
+            this.io.unlink(tempPath);
+          } catch (cleanupError) {
+            if (!isNodeError(cleanupError) || cleanupError.code !== "ENOENT") {
+            }
+          }
+          throw new ProjectRuntimeIoError(displayPath, "atomically write", error);
+        }
+      }
+      atomicWriteBytes(target, data, displayPath, durable) {
+        const destinationDir = resolve22(target, "..");
+        this.io.mkdir(destinationDir);
+        const tempPath = join26(
+          destinationDir,
+          `.tmp-${process.pid}-${tempCounter++}-${safeTempId(this.io.randomId())}`
+        );
+        try {
+          this.io.writeBytes(tempPath, data);
+          if (durable) this.io.fsyncFile(tempPath);
+          this.io.rename(tempPath, target);
+          if (durable) {
+            this.io.fsyncFile(target);
+            this.io.fsyncDirectory(destinationDir);
+          }
+        } catch (error) {
+          try {
+            this.io.unlink(tempPath);
+          } catch (cleanupError) {
+            if (!isNodeError(cleanupError) || cleanupError.code !== "ENOENT") {
+            }
+          }
+          throw new ProjectRuntimeIoError(displayPath, "durably atomically write", error);
+        }
+      }
+      acquireWriterLock(options) {
+        const timeoutMs = normalizeLockDuration(options?.timeoutMs, 2e3, 0, 6e4, "timeoutMs");
+        const pollMs = normalizeLockDuration(options?.pollMs, 10, 1, 250, "pollMs");
+        const lockPath = join26(this.runtimeRoot, PROJECT_RUNTIME_WRITER_LOCK_FILENAME);
+        const lockDirectory = resolve22(lockPath, "..");
+        this.io.mkdir(this.runtimeRoot);
+        assertLockDirectory(this.runtimeRoot);
+        this.io.mkdir(lockDirectory);
+        assertLockDirectory(lockDirectory);
+        const token = randomUUID2();
+        const owner = `${JSON.stringify({
+          version: 1,
+          token,
+          processInstanceId: PROJECT_RUNTIME_PROCESS_INSTANCE_ID,
+          pid: process.pid,
+          createdAtMs: Date.now()
+        })}
+`;
+        const startedAt = Date.now();
+        let installedIdentity = null;
+        for (; ; ) {
+          let descriptor2 = null;
+          let created = false;
+          try {
+            descriptor2 = openSync3(lockPath, "wx", 384);
+            created = true;
+            writeFileSync18(descriptor2, owner, "utf-8");
+            fsyncSync(descriptor2);
+            closeSync3(descriptor2);
+            descriptor2 = null;
+            const installed = lstatSync2(lockPath);
+            installedIdentity = { device: installed.dev, inode: installed.ino };
+            this.io.fsyncDirectory(lockDirectory);
+            break;
+          } catch (error) {
+            if (descriptor2 !== null) {
+              try {
+                closeSync3(descriptor2);
+              } catch {
+              }
+            }
+            if (created) {
+              try {
+                unlinkSync2(lockPath);
+                this.io.fsyncDirectory(lockDirectory);
+              } catch {
+              }
+            }
+            if (!isNodeError(error) || error.code !== "EEXIST") {
+              throw new ProjectRuntimeIoError(PROJECT_RUNTIME_WRITER_LOCK_FILENAME, "acquire", error);
+            }
+            if (Date.now() - startedAt >= timeoutMs) {
+              throw new ProjectRuntimeWriterLockTimeoutError(lockPath, timeoutMs);
+            }
+            sleepSync(Math.min(pollMs, Math.max(1, timeoutMs - (Date.now() - startedAt))));
+          }
+        }
+        return () => {
+          try {
+            const before = lstatSync2(lockPath);
+            if (!installedIdentity || before.dev !== installedIdentity.device || before.ino !== installedIdentity.inode || !before.isFile() || before.isSymbolicLink()) {
+              throw new Error("writer lock filesystem identity changed before release");
+            }
+            const currentOwner = readFileSync22(lockPath, "utf-8");
+            const afterRead = lstatSync2(lockPath);
+            const parsed = JSON.parse(currentOwner);
+            if (afterRead.dev !== before.dev || afterRead.ino !== before.ino || parsed.token !== token || parsed.processInstanceId !== PROJECT_RUNTIME_PROCESS_INSTANCE_ID) {
+              throw new Error("writer lock ownership changed before release");
+            }
+            const releasedPath = `${lockPath}.released-${token}`;
+            renameSync11(lockPath, releasedPath);
+            const moved = lstatSync2(releasedPath);
+            if (moved.dev !== before.dev || moved.ino !== before.ino) {
+              throw new Error("writer lock filesystem identity changed while releasing");
+            }
+            unlinkSync2(releasedPath);
+            this.io.fsyncDirectory(lockDirectory);
+          } catch (error) {
+            throw new ProjectRuntimeIoError(PROJECT_RUNTIME_WRITER_LOCK_FILENAME, "release", error);
+          }
+        };
+      }
+      reserveRecoveryOperation(path2, rawToken) {
+        const recoveryRoot = this.resolveRuntimePath("recovery");
+        this.io.mkdir(recoveryRoot);
+        this.io.fsyncDirectory(resolve22(recoveryRoot, ".."));
+        for (let attempt = 0; attempt < 16; attempt += 1) {
+          const operationId = safeTempId(this.io.randomId());
+          const relativePath = `recovery/${sha256(path2)}-${rawToken}-${operationId}`;
+          const target = this.resolveRuntimePath(relativePath);
+          try {
+            mkdirSync19(target, { mode: 448 });
+            this.io.fsyncDirectory(recoveryRoot);
+            return { operationId, relativePath, target };
+          } catch (error) {
+            if (isNodeError(error) && error.code === "EEXIST") continue;
+            throw new ProjectRuntimeIoError(relativePath, "reserve recovery operation", error);
+          }
+        }
+        throw new ProjectRuntimeIoError(
+          "recovery",
+          "reserve recovery operation",
+          new Error("recovery operation id collided too many times")
+        );
+      }
+    };
+  }
+});
+
+// packages/daemon/src/lib/mission-repository.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+function replayMissionEvents(events) {
+  const state = { sequence: 0, missions: {} };
+  for (const runtimeEvent of events) {
+    const parsed = parseRuntimeEvent(runtimeEvent);
+    validateRuntimeEventEnvelope(parsed, state.sequence + 1);
+    applyMissionEvent(state, parsed);
+  }
+  return parseProjectedState(state);
+}
+function applyMissionEvent(state, runtimeEvent) {
+  validateRuntimeEventEnvelope(runtimeEvent);
+  const event = runtimeEvent.payload;
+  const timestamp = runtimeEvent.timestamp;
+  switch (event.type) {
+    case "mission.created":
+      if (state.missions[event.missionId]) {
+        throw new MissionRepositoryError(
+          `Mission "${event.missionId}" already exists`,
+          "MISSION_ALREADY_EXISTS"
+        );
+      }
+      state.missions[event.missionId] = {
+        id: event.missionId,
+        title: event.title,
+        objective: event.objective,
+        acceptanceCriteria: [...event.acceptanceCriteria],
+        constraints: [...event.constraints],
+        labels: [...event.labels],
+        source: clone(event.source),
+        status: "created",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        tasks: {},
+        attempts: {},
+        proofs: {}
+      };
+      state.sequence = runtimeEvent.sequence;
+      return;
+    case "mission.planned":
+    case "mission.started":
+    case "mission.blocked":
+    case "mission.review":
+    case "mission.completed":
+    case "mission.failed":
+    case "mission.cancelled": {
+      const mission = requireMission(state, event.missionId);
+      const nextStatus = event.type.split(".")[1];
+      validateMissionTransition(
+        mission,
+        nextStatus,
+        "proofId" in event ? event.proofId : void 0
+      );
+      mission.status = nextStatus;
+      mission.updatedAt = timestamp;
+      if (event.type === "mission.started") mission.startedAt = timestamp;
+      if (["mission.completed", "mission.failed", "mission.cancelled"].includes(event.type)) {
+        mission.finishedAt = timestamp;
+      }
+      state.sequence = runtimeEvent.sequence;
+      return;
+    }
+    case "task.added": {
+      const mission = requireMission(state, event.missionId);
+      ensureMissionOpen(mission);
+      if (mission.tasks[event.taskId]) {
+        throw new MissionRepositoryError(
+          `Task "${event.taskId}" already exists`,
+          "TASK_ALREADY_EXISTS"
+        );
+      }
+      ensureDependenciesValid(mission, event.dependencies, event.taskId);
+      mission.tasks[event.taskId] = {
+        id: event.taskId,
+        missionId: event.missionId,
+        title: event.title,
+        ...event.description === void 0 ? {} : { description: event.description },
+        priority: event.priority,
+        dependencies: [...event.dependencies],
+        ...event.assignee === void 0 ? {} : { assignee: event.assignee },
+        status: "added",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        proofIds: [],
+        attemptIds: []
+      };
+      mission.updatedAt = timestamp;
+      state.sequence = runtimeEvent.sequence;
+      return;
+    }
+    case "task.updated": {
+      const mission = requireMission(state, event.missionId);
+      ensureMissionOpen(mission);
+      const task = ensureTask(mission, event.taskId);
+      if (event.dependencies !== void 0) {
+        ensureTaskMetadataCanChangeDependencies(task);
+        ensureDependenciesValid(mission, event.dependencies, event.taskId);
+      }
+      if (event.title !== void 0) task.title = event.title;
+      if (event.description !== void 0) task.description = event.description;
+      if (event.priority !== void 0) task.priority = event.priority;
+      if (event.dependencies !== void 0) task.dependencies = [...event.dependencies];
+      if ("assignee" in event) {
+        if (event.assignee === null) delete task.assignee;
+        else task.assignee = event.assignee;
+      }
+      task.updatedAt = timestamp;
+      mission.updatedAt = timestamp;
+      state.sequence = runtimeEvent.sequence;
+      return;
+    }
+    case "task.ready":
+    case "task.claimed":
+    case "task.started":
+    case "task.blocked":
+    case "task.submitted":
+    case "task.completed":
+    case "task.failed":
+    case "task.cancelled": {
+      const mission = requireMission(state, event.missionId);
+      ensureMissionOpen(mission);
+      const task = ensureTask(mission, event.taskId);
+      const nextStatus = event.type.split(".")[1];
+      validateTaskTransition(
+        mission,
+        task,
+        nextStatus,
+        "proofId" in event ? event.proofId : void 0
+      );
+      if (event.type === "task.claimed" && task.status === "blocked") {
+        ensureTaskDependenciesComplete(mission, task);
+      }
+      task.status = nextStatus;
+      if (event.type === "task.claimed") task.assignee = event.assignee;
+      if (event.type === "task.started") task.startedAt = timestamp;
+      if (event.type === "task.submitted" || event.type === "task.completed") {
+        if (event.proofId) pushUnique(task.proofIds, event.proofId);
+      }
+      if (["task.completed", "task.failed", "task.cancelled"].includes(event.type)) {
+        task.finishedAt = timestamp;
+      }
+      task.updatedAt = timestamp;
+      mission.updatedAt = timestamp;
+      state.sequence = runtimeEvent.sequence;
+      return;
+    }
+    case "attempt.started": {
+      const mission = requireMission(state, event.missionId);
+      ensureMissionOpen(mission);
+      const task = ensureTask(mission, event.taskId);
+      if (mission.attempts[event.attemptId]) {
+        throw new MissionRepositoryError(
+          `Attempt "${event.attemptId}" already exists`,
+          "ATTEMPT_ALREADY_EXISTS"
+        );
+      }
+      ensureTaskCanTransition(task, ["claimed", "started", "blocked"], "attempt.started");
+      ensureTaskDependenciesComplete(mission, task);
+      if (task.assignee && task.assignee !== event.agent) {
+        throw new MissionRepositoryError(
+          `Attempt agent "${event.agent}" does not match task assignee "${task.assignee}"`,
+          "ATTEMPT_OWNERSHIP_CONFLICT"
+        );
+      }
+      mission.attempts[event.attemptId] = {
+        id: event.attemptId,
+        missionId: event.missionId,
+        taskId: event.taskId,
+        agent: event.agent,
+        harness: event.harness,
+        ...event.model === void 0 ? {} : { model: event.model },
+        ...event.terminal === void 0 ? {} : { terminal: event.terminal },
+        ...event.session === void 0 ? {} : { session: event.session },
+        ...event.worktree === void 0 ? {} : { worktree: event.worktree },
+        status: "started",
+        startedAt: timestamp,
+        updatedAt: timestamp,
+        proofIds: []
+      };
+      task.attemptIds.push(event.attemptId);
+      task.updatedAt = timestamp;
+      mission.updatedAt = timestamp;
+      state.sequence = runtimeEvent.sequence;
+      return;
+    }
+    case "attempt.submitted":
+    case "attempt.approved":
+    case "attempt.rejected":
+    case "attempt.failed":
+    case "attempt.interrupted": {
+      const mission = requireMission(state, event.missionId);
+      ensureMissionOpen(mission);
+      const task = ensureTask(mission, event.taskId);
+      const attempt = ensureAttempt(mission, event.attemptId);
+      if (attempt.taskId !== task.id) {
+        throw new MissionRepositoryError(
+          `Attempt "${event.attemptId}" does not belong to task "${event.taskId}"`,
+          "ATTEMPT_OWNERSHIP_CONFLICT"
+        );
+      }
+      const nextStatus = event.type.split(".")[1];
+      validateAttemptTransition(mission, attempt, nextStatus, event.proofId);
+      attempt.status = nextStatus;
+      if (nextStatus !== "started") attempt.outcome = nextStatus;
+      if (event.proofId) pushUnique(attempt.proofIds, event.proofId);
+      if (["attempt.approved", "attempt.rejected", "attempt.failed", "attempt.interrupted"].includes(
+        event.type
+      )) {
+        attempt.finishedAt = timestamp;
+      }
+      attempt.updatedAt = timestamp;
+      mission.updatedAt = timestamp;
+      state.sequence = runtimeEvent.sequence;
+      return;
+    }
+    case "proof.recorded": {
+      const mission = requireMission(state, event.missionId);
+      ensureMissionOpen(mission);
+      if (mission.proofs[event.proofId]) {
+        throw new MissionRepositoryError(
+          `Proof "${event.proofId}" already exists`,
+          "PROOF_ALREADY_EXISTS"
+        );
+      }
+      const task = event.taskId ? ensureTask(mission, event.taskId) : null;
+      const attempt = event.attemptId ? ensureAttempt(mission, event.attemptId) : null;
+      if (task && attempt && attempt.taskId !== task.id) {
+        throw new MissionRepositoryError(
+          `Attempt "${event.attemptId}" does not belong to task "${event.taskId}"`,
+          "ATTEMPT_OWNERSHIP_CONFLICT"
+        );
+      }
+      mission.proofs[event.proofId] = clone(event.proof);
+      if (event.taskId) {
+        pushUnique(task.proofIds, event.proofId);
+        task.updatedAt = timestamp;
+      }
+      if (event.attemptId) {
+        pushUnique(attempt.proofIds, event.proofId);
+        attempt.updatedAt = timestamp;
+      }
+      mission.updatedAt = timestamp;
+      state.sequence = runtimeEvent.sequence;
+      return;
+    }
+  }
+}
+function parseRuntimeEvent(event) {
+  validateRuntimeEventEnvelope(event);
+  const parsed = MissionEventSchemaZ.safeParse(event.payload);
+  if (!parsed.success) {
+    throw new MissionRepositoryError(
+      `Invalid mission event at sequence ${event.sequence}: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
+      "MISSION_HISTORY_INVALID"
+    );
+  }
+  return { ...event, payload: parsed.data };
+}
+function validateRuntimeEventEnvelope(event, expectedSequence) {
+  if (event.version !== 1) {
+    throw new MissionRepositoryError(
+      `Invalid mission event envelope version ${String(event.version)}`,
+      "MISSION_HISTORY_INVALID"
+    );
+  }
+  if (!Number.isSafeInteger(event.sequence) || event.sequence < 1 || expectedSequence !== void 0 && event.sequence !== expectedSequence) {
+    throw new MissionRepositoryError(
+      `Invalid mission event sequence ${String(event.sequence)}`,
+      "MISSION_HISTORY_INVALID"
+    );
+  }
+  if (!isCanonicalTimestamp2(event.timestamp)) {
+    throw new MissionRepositoryError(
+      `Invalid mission event timestamp at sequence ${event.sequence}`,
+      "MISSION_HISTORY_INVALID"
+    );
+  }
+}
+function requireMission(state, missionId) {
+  const mission = state.missions[missionId];
+  if (!mission)
+    throw new MissionRepositoryError(`Mission "${missionId}" not found`, "MISSION_NOT_FOUND");
+  return mission;
+}
+function ensureTask(mission, taskId) {
+  const task = mission.tasks[taskId];
+  if (!task) throw new MissionRepositoryError(`Task "${taskId}" not found`, "TASK_NOT_FOUND");
+  return task;
+}
+function ensureAttempt(mission, attemptId) {
+  const attempt = mission.attempts[attemptId];
+  if (!attempt) {
+    throw new MissionRepositoryError(`Attempt "${attemptId}" not found`, "ATTEMPT_NOT_FOUND");
+  }
+  return attempt;
+}
+function ensureMissionOpen(mission) {
+  if (["completed", "failed", "cancelled"].includes(mission.status)) {
+    throw new MissionRepositoryError(`Mission "${mission.id}" is terminal`, "MISSION_TERMINAL");
+  }
+}
+function validateMissionTransition(mission, next, proofId) {
+  ensureMissionOpen(mission);
+  if (!MISSION_TRANSITIONS[mission.status].includes(next)) {
+    throw new MissionRepositoryError(
+      `Mission "${mission.id}" cannot transition from ${mission.status} to ${next}`,
+      "MISSION_HISTORY_INVALID"
+    );
+  }
+  if (next === "completed") {
+    if (mission.status !== "review") {
+      throw new MissionRepositoryError(
+        `Mission "${mission.id}" must be in review before completion`,
+        "MISSION_HISTORY_INVALID"
+      );
+    }
+    const incomplete = Object.values(mission.tasks).filter((task) => task.status !== "completed");
+    if (incomplete.length > 0) {
+      throw new MissionRepositoryError(
+        `Mission "${mission.id}" cannot complete with incomplete tasks`,
+        "MISSION_INCOMPLETE_TASKS"
+      );
+    }
+    if (proofId && !mission.proofs[proofId]) {
+      throw new MissionRepositoryError(`Proof "${proofId}" does not exist`, "PROOF_NOT_FOUND");
+    }
+  }
+}
+function ensureDependenciesValid(mission, dependencies, self) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const dependency of dependencies) {
+    if (dependency === self) {
+      throw new MissionRepositoryError("Task cannot depend on itself", "TASK_DEPENDENCY_UNMET");
+    }
+    if (seen.has(dependency)) {
+      throw new MissionRepositoryError(
+        `Task dependency "${dependency}" is duplicated`,
+        "TASK_DEPENDENCY_UNMET"
+      );
+    }
+    seen.add(dependency);
+    if (!mission.tasks[dependency]) {
+      throw new MissionRepositoryError(
+        `Dependency task "${dependency}" not found`,
+        "TASK_DEPENDENCY_NOT_FOUND"
+      );
+    }
+  }
+  if (self) ensureNoDependencyCycle(mission, self, dependencies);
+}
+function ensureNoDependencyCycle(mission, taskId, nextDependencies) {
+  const dependenciesFor = (candidate) => candidate === taskId ? nextDependencies : mission.tasks[candidate]?.dependencies ?? [];
+  const visiting = /* @__PURE__ */ new Set();
+  const visited = /* @__PURE__ */ new Set();
+  function visit(candidate) {
+    if (visiting.has(candidate)) {
+      throw new MissionRepositoryError(
+        "Task dependencies must not contain a cycle",
+        "TASK_DEPENDENCY_UNMET"
+      );
+    }
+    if (visited.has(candidate)) return;
+    visiting.add(candidate);
+    for (const dependency of dependenciesFor(candidate)) visit(dependency);
+    visiting.delete(candidate);
+    visited.add(candidate);
+  }
+  visit(taskId);
+}
+function ensureTaskMetadataCanChangeDependencies(task) {
+  if (!["added", "ready", "blocked"].includes(task.status)) {
+    throw new MissionRepositoryError(
+      `Task "${task.id}" dependencies cannot change after execution begins`,
+      "TASK_INVALID_TRANSITION"
+    );
+  }
+}
+function validateTaskTransition(mission, task, next, proofId) {
+  if (["completed", "failed", "cancelled"].includes(task.status)) {
+    throw new MissionRepositoryError(`Task "${task.id}" is terminal`, "TASK_TERMINAL");
+  }
+  if (!TASK_TRANSITIONS[task.status].includes(next)) {
+    throw new MissionRepositoryError(
+      `Task "${task.id}" cannot transition from ${task.status} to ${next}`,
+      "TASK_INVALID_TRANSITION"
+    );
+  }
+  if (["ready", "started", "submitted", "completed"].includes(next)) {
+    ensureTaskDependenciesComplete(mission, task);
+  }
+  if ((next === "submitted" || next === "completed") && !proofId) {
+    throw new MissionRepositoryError(
+      `Task "${task.id}" requires proof or an explicit no-proof reason`,
+      "PROOF_REQUIRED"
+    );
+  }
+  if (proofId && !mission.proofs[proofId]) {
+    throw new MissionRepositoryError(`Proof "${proofId}" does not exist`, "PROOF_NOT_FOUND");
+  }
+}
+function ensureTaskDependenciesComplete(mission, task) {
+  for (const dependencyId of task.dependencies) {
+    const dependency = ensureTask(mission, dependencyId);
+    if (dependency.status !== "completed") {
+      throw new MissionRepositoryError(
+        `Task "${task.id}" dependency "${dependencyId}" is not complete`,
+        "TASK_DEPENDENCY_UNMET"
+      );
+    }
+  }
+}
+function ensureTaskCanTransition(task, allowed, next) {
+  if (["completed", "failed", "cancelled"].includes(task.status)) {
+    throw new MissionRepositoryError(`Task "${task.id}" is terminal`, "TASK_TERMINAL");
+  }
+  if (!allowed.includes(task.status)) {
+    throw new MissionRepositoryError(
+      `Task "${task.id}" cannot transition from ${task.status} to ${next}`,
+      "TASK_INVALID_TRANSITION"
+    );
+  }
+}
+function validateAttemptTransition(mission, attempt, next, proofId) {
+  ensureAttemptCanTransition(attempt, next);
+  if ((next === "submitted" || next === "approved") && !proofId) {
+    throw new MissionRepositoryError(
+      `Attempt "${attempt.id}" requires proof or an explicit no-proof reason`,
+      "PROOF_REQUIRED"
+    );
+  }
+  if (proofId && !mission.proofs[proofId]) {
+    throw new MissionRepositoryError(`Proof "${proofId}" does not exist`, "PROOF_NOT_FOUND");
+  }
+}
+function ensureAttemptCanTransition(attempt, next) {
+  if (["approved", "rejected", "failed", "interrupted"].includes(attempt.status)) {
+    throw new MissionRepositoryError(`Attempt "${attempt.id}" is terminal`, "ATTEMPT_TERMINAL");
+  }
+  const allowed = {
+    started: [],
+    submitted: ["started"],
+    approved: ["submitted"],
+    rejected: ["submitted"],
+    failed: ["started", "submitted"],
+    interrupted: ["started", "submitted"]
+  };
+  if (!allowed[next].includes(attempt.status)) {
+    throw new MissionRepositoryError(
+      `Attempt "${attempt.id}" cannot transition from ${attempt.status} to ${next}`,
+      "ATTEMPT_INVALID_TRANSITION"
+    );
+  }
+}
+function parseMissionEventInput(event) {
+  const parsed = MissionEventSchemaZ.safeParse(event);
+  if (!parsed.success) {
+    throw new MissionRepositoryError(
+      `Invalid mission event input: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
+      "MISSION_HISTORY_INVALID"
+    );
+  }
+  return parsed.data;
+}
+function parseProjectedState(state) {
+  const parsed = MissionProjectStateSchemaZ.safeParse(state);
+  if (!parsed.success) {
+    throw new MissionRepositoryError(
+      `Invalid projected mission state: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
+      "MISSION_HISTORY_INVALID"
+    );
+  }
+  return parsed.data;
+}
+function definedExtras(extras) {
+  return Object.fromEntries(
+    Object.entries(extras).filter(([, value]) => value !== void 0)
+  );
+}
+function pushUnique(values2, value) {
+  if (!values2.includes(value)) values2.push(value);
+}
+function makeId(prefix) {
+  return `${prefix}_${randomUUID3()}`;
+}
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+function isCanonicalTimestamp2(value) {
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+}
+var MISSIONS_STREAM, MissionRepositoryError, MissionRepository, MISSION_TRANSITIONS, TASK_TRANSITIONS;
+var init_mission_repository = __esm({
+  "packages/daemon/src/lib/mission-repository.ts"() {
+    "use strict";
+    init_src();
+    init_errors2();
+    init_project_runtime_repository();
+    MISSIONS_STREAM = "missions";
+    MissionRepositoryError = class extends IdeError {
+      missionCode;
+      constructor(message, code, { cause } = {}) {
+        super(message, { code, cause });
+        this.name = "MissionRepositoryError";
+        this.missionCode = code;
+      }
+    };
+    MissionRepository = class _MissionRepository {
+      constructor(runtime) {
+        this.runtime = runtime;
+      }
+      static async open(dir, options = {}) {
+        return new _MissionRepository(await openProjectRuntimeRepository(dir, options));
+      }
+      metadata() {
+        return clone(this.runtime.metadata);
+      }
+      history() {
+        const history = this.readHistory();
+        replayMissionEvents(history);
+        return history.map(({ sequence, timestamp, payload }) => ({
+          sequence,
+          timestamp,
+          event: clone(payload)
+        }));
+      }
+      state() {
+        return clone(replayMissionEvents(this.readHistory()));
+      }
+      snapshot() {
+        const history = this.readHistory();
+        const state = replayMissionEvents(history);
+        return {
+          history: history.map(({ sequence, timestamp, payload }) => ({
+            sequence,
+            timestamp,
+            event: clone(payload)
+          })),
+          state: clone(state)
+        };
+      }
+      list() {
+        return Object.values(this.state().missions).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).map(clone);
+      }
+      get(missionId) {
+        return clone(this.state().missions[missionId] ?? null);
+      }
+      create(input, options = {}) {
+        const missionId = input.id ?? makeId("mis");
+        return this.appendGuarded(
+          {
+            version: 1,
+            type: "mission.created",
+            missionId,
+            title: input.title,
+            objective: input.objective,
+            acceptanceCriteria: input.acceptanceCriteria ?? [],
+            constraints: input.constraints ?? [],
+            labels: input.labels ?? [],
+            source: input.source ?? { type: "user" },
+            actor: input.actor
+          },
+          options,
+          (state) => {
+            if (state.missions[missionId]) {
+              throw new MissionRepositoryError(
+                `Mission "${missionId}" already exists`,
+                "MISSION_ALREADY_EXISTS"
+              );
+            }
+          },
+          (state) => state.missions[missionId]
+        );
+      }
+      planMission(missionId, actor, options = {}) {
+        return this.transitionMission(missionId, "mission.planned", "planned", actor, options);
+      }
+      startMission(missionId, actor, options = {}) {
+        return this.transitionMission(missionId, "mission.started", "started", actor, options);
+      }
+      blockMission(missionId, reason, actor, options = {}) {
+        return this.transitionMission(missionId, "mission.blocked", "blocked", actor, options, {
+          reason
+        });
+      }
+      reviewMission(missionId, actor, options = {}) {
+        return this.transitionMission(missionId, "mission.review", "review", actor, options);
+      }
+      completeMission(missionId, actor, options = {}) {
+        return this.transitionMission(missionId, "mission.completed", "completed", actor, options, {
+          proofId: options.proofId,
+          reason: options.reason
+        });
+      }
+      failMission(missionId, actor, options = {}) {
+        return this.transitionMission(missionId, "mission.failed", "failed", actor, options, {
+          reason: options.reason
+        });
+      }
+      cancelMission(missionId, actor, options = {}) {
+        return this.transitionMission(missionId, "mission.cancelled", "cancelled", actor, options, {
+          reason: options.reason
+        });
+      }
+      addTask(input, options = {}) {
+        const taskId = input.id ?? makeId("tsk");
+        return this.appendGuarded(
+          {
+            version: 1,
+            type: "task.added",
+            missionId: input.missionId,
+            taskId,
+            title: input.title,
+            ...input.description === void 0 ? {} : { description: input.description },
+            priority: input.priority ?? 0,
+            dependencies: input.dependencies ?? [],
+            ...input.assignee === void 0 ? {} : { assignee: input.assignee },
+            actor: input.actor
+          },
+          options,
+          (state) => {
+            const mission = requireMission(state, input.missionId);
+            ensureMissionOpen(mission);
+            if (mission.tasks[taskId]) {
+              throw new MissionRepositoryError(
+                `Task "${taskId}" already exists`,
+                "TASK_ALREADY_EXISTS"
+              );
+            }
+            ensureDependenciesValid(mission, input.dependencies ?? [], taskId);
+          },
+          (state) => state.missions[input.missionId].tasks[taskId]
+        );
+      }
+      updateTask(input, options = {}) {
+        return this.appendGuarded(
+          {
+            version: 1,
+            type: "task.updated",
+            missionId: input.missionId,
+            taskId: input.taskId,
+            ...input.title === void 0 ? {} : { title: input.title },
+            ...input.description === void 0 ? {} : { description: input.description },
+            ...input.priority === void 0 ? {} : { priority: input.priority },
+            ...input.dependencies === void 0 ? {} : { dependencies: input.dependencies },
+            ...input.assignee === void 0 ? {} : { assignee: input.assignee },
+            actor: input.actor
+          },
+          options,
+          (state) => {
+            const mission = requireMission(state, input.missionId);
+            ensureMissionOpen(mission);
+            const task = ensureTask(mission, input.taskId);
+            if (input.dependencies) {
+              ensureTaskMetadataCanChangeDependencies(task);
+              ensureDependenciesValid(mission, input.dependencies, input.taskId);
+            }
+          },
+          (state) => state.missions[input.missionId].tasks[input.taskId]
+        );
+      }
+      readyTask(missionId, taskId, actor, options = {}) {
+        return this.transitionTask(missionId, taskId, "task.ready", "ready", actor, options);
+      }
+      claimTask(missionId, taskId, assignee, actor, options = {}) {
+        return this.appendGuarded(
+          { version: 1, type: "task.claimed", missionId, taskId, assignee, actor },
+          options,
+          (state) => {
+            const mission = requireMission(state, missionId);
+            ensureMissionOpen(mission);
+            const task = ensureTask(mission, taskId);
+            ensureTaskCanTransition(task, ["added", "ready", "blocked"], "claimed");
+            if (task.status === "blocked") ensureTaskDependenciesComplete(mission, task);
+            if (task.assignee && task.assignee !== assignee) {
+              throw new MissionRepositoryError(
+                `Task "${taskId}" is already assigned to "${task.assignee}"`,
+                "TASK_OWNERSHIP_CONFLICT"
+              );
+            }
+          },
+          (state) => state.missions[missionId].tasks[taskId]
+        );
+      }
+      startTask(missionId, taskId, actor, options = {}) {
+        return this.transitionTask(missionId, taskId, "task.started", "started", actor, options);
+      }
+      blockTask(missionId, taskId, reason, actor, options = {}) {
+        return this.transitionTask(missionId, taskId, "task.blocked", "blocked", actor, options, {
+          reason
+        });
+      }
+      submitTask(missionId, taskId, actor, options = {}) {
+        return this.transitionTask(missionId, taskId, "task.submitted", "submitted", actor, options, {
+          proofId: options.proofId,
+          reason: options.reason
+        });
+      }
+      completeTask(missionId, taskId, actor, options = {}) {
+        return this.transitionTask(missionId, taskId, "task.completed", "completed", actor, options, {
+          proofId: options.proofId,
+          reason: options.reason
+        });
+      }
+      failTask(missionId, taskId, actor, options = {}) {
+        return this.transitionTask(missionId, taskId, "task.failed", "failed", actor, options, {
+          reason: options.reason
+        });
+      }
+      cancelTask(missionId, taskId, actor, options = {}) {
+        return this.transitionTask(missionId, taskId, "task.cancelled", "cancelled", actor, options, {
+          reason: options.reason
+        });
+      }
+      startAttempt(input, options = {}) {
+        const attemptId = input.id ?? makeId("att");
+        return this.appendGuarded(
+          {
+            version: 1,
+            type: "attempt.started",
+            missionId: input.missionId,
+            taskId: input.taskId,
+            attemptId,
+            agent: input.agent,
+            harness: input.harness,
+            ...input.model === void 0 ? {} : { model: input.model },
+            ...input.terminal === void 0 ? {} : { terminal: input.terminal },
+            ...input.session === void 0 ? {} : { session: input.session },
+            ...input.worktree === void 0 ? {} : { worktree: input.worktree },
+            actor: input.actor
+          },
+          options,
+          (state) => {
+            const mission = requireMission(state, input.missionId);
+            ensureMissionOpen(mission);
+            const task = ensureTask(mission, input.taskId);
+            ensureTaskCanTransition(task, ["claimed", "started", "blocked"], "attempt.started");
+            ensureTaskDependenciesComplete(mission, task);
+            if (task.assignee && task.assignee !== input.agent) {
+              throw new MissionRepositoryError(
+                `Attempt agent "${input.agent}" does not match task assignee "${task.assignee}"`,
+                "ATTEMPT_OWNERSHIP_CONFLICT"
+              );
+            }
+            if (mission.attempts[attemptId]) {
+              throw new MissionRepositoryError(
+                `Attempt "${attemptId}" already exists`,
+                "ATTEMPT_ALREADY_EXISTS"
+              );
+            }
+          },
+          (state) => state.missions[input.missionId].attempts[attemptId]
+        );
+      }
+      submitAttempt(missionId, taskId, attemptId, actor, options = {}) {
+        return this.transitionAttempt(
+          missionId,
+          taskId,
+          attemptId,
+          "attempt.submitted",
+          "submitted",
+          actor,
+          options
+        );
+      }
+      approveAttempt(missionId, taskId, attemptId, actor, options = {}) {
+        return this.transitionAttempt(
+          missionId,
+          taskId,
+          attemptId,
+          "attempt.approved",
+          "approved",
+          actor,
+          options
+        );
+      }
+      rejectAttempt(missionId, taskId, attemptId, actor, options = {}) {
+        return this.transitionAttempt(
+          missionId,
+          taskId,
+          attemptId,
+          "attempt.rejected",
+          "rejected",
+          actor,
+          options
+        );
+      }
+      failAttempt(missionId, taskId, attemptId, actor, options = {}) {
+        return this.transitionAttempt(
+          missionId,
+          taskId,
+          attemptId,
+          "attempt.failed",
+          "failed",
+          actor,
+          options
+        );
+      }
+      interruptAttempt(missionId, taskId, attemptId, actor, options = {}) {
+        return this.transitionAttempt(
+          missionId,
+          taskId,
+          attemptId,
+          "attempt.interrupted",
+          "interrupted",
+          actor,
+          options
+        );
+      }
+      recordProof(input, options = {}) {
+        const proofId = input.id ?? makeId("prf");
+        return this.appendGuarded(
+          {
+            version: 1,
+            type: "proof.recorded",
+            missionId: input.missionId,
+            ...input.taskId === void 0 ? {} : { taskId: input.taskId },
+            ...input.attemptId === void 0 ? {} : { attemptId: input.attemptId },
+            proofId,
+            proof: input.proof,
+            actor: input.actor
+          },
+          options,
+          (state) => {
+            const mission = requireMission(state, input.missionId);
+            ensureMissionOpen(mission);
+            if (mission.proofs[proofId]) {
+              throw new MissionRepositoryError(
+                `Proof "${proofId}" already exists`,
+                "PROOF_ALREADY_EXISTS"
+              );
+            }
+            if (input.taskId) ensureTask(mission, input.taskId);
+            if (input.attemptId) {
+              const attempt = ensureAttempt(mission, input.attemptId);
+              if (input.taskId && attempt.taskId !== input.taskId) {
+                throw new MissionRepositoryError(
+                  `Attempt "${input.attemptId}" does not belong to task "${input.taskId}"`,
+                  "ATTEMPT_OWNERSHIP_CONFLICT"
+                );
+              }
+            }
+          },
+          (state) => state.missions[input.missionId].proofs[proofId]
+        );
+      }
+      transitionMission(missionId, eventType, nextStatus, actor, options = {}, extras = {}) {
+        return this.appendGuarded(
+          { version: 1, type: eventType, missionId, actor, ...definedExtras(extras) },
+          options,
+          (state) => {
+            const mission = requireMission(state, missionId);
+            validateMissionTransition(mission, nextStatus, extras.proofId);
+          },
+          (state) => state.missions[missionId]
+        );
+      }
+      transitionTask(missionId, taskId, eventType, nextStatus, actor, options = {}, extras = {}) {
+        return this.appendGuarded(
+          {
+            version: 1,
+            type: eventType,
+            missionId,
+            taskId,
+            actor,
+            ...definedExtras(extras)
+          },
+          options,
+          (state) => {
+            const mission = requireMission(state, missionId);
+            ensureMissionOpen(mission);
+            const task = ensureTask(mission, taskId);
+            validateTaskTransition(mission, task, nextStatus, extras.proofId);
+          },
+          (state) => state.missions[missionId].tasks[taskId]
+        );
+      }
+      transitionAttempt(missionId, taskId, attemptId, eventType, nextStatus, actor, options = {}) {
+        return this.appendGuarded(
+          {
+            version: 1,
+            type: eventType,
+            missionId,
+            taskId,
+            attemptId,
+            actor,
+            ...definedExtras({ proofId: options.proofId, reason: options.reason })
+          },
+          options,
+          (state) => {
+            const mission = requireMission(state, missionId);
+            ensureMissionOpen(mission);
+            const task = ensureTask(mission, taskId);
+            const attempt = ensureAttempt(mission, attemptId);
+            if (attempt.taskId !== task.id) {
+              throw new MissionRepositoryError(
+                `Attempt "${attemptId}" does not belong to task "${taskId}"`,
+                "ATTEMPT_OWNERSHIP_CONFLICT"
+              );
+            }
+            ensureAttemptCanTransition(attempt, nextStatus);
+            if (nextStatus === "submitted" || nextStatus === "approved") {
+              ensureTaskDependenciesComplete(mission, task);
+            }
+            if ((nextStatus === "submitted" || nextStatus === "approved") && !options.proofId) {
+              throw new MissionRepositoryError(
+                `Attempt "${attemptId}" requires proof or an explicit no-proof reason`,
+                "PROOF_REQUIRED"
+              );
+            }
+            if (options.proofId && !mission.proofs[options.proofId]) {
+              throw new MissionRepositoryError(
+                `Proof "${options.proofId}" does not exist`,
+                "PROOF_NOT_FOUND"
+              );
+            }
+          },
+          (state) => state.missions[missionId].attempts[attemptId]
+        );
+      }
+      appendGuarded(event, options, guard, select) {
+        const history = this.readHistory();
+        const state = replayMissionEvents(history);
+        guard(state);
+        const expectedPreviousSequence = options.expectedPreviousSequence ?? state.sequence;
+        const appended = this.runtime.appendEvent(MISSIONS_STREAM, parseMissionEventInput(event), {
+          expectedPreviousSequence
+        });
+        const nextState = replayMissionEvents([...history, parseRuntimeEvent(appended)]);
+        return clone(select(nextState));
+      }
+      readHistory() {
+        return this.runtime.readEvents(MISSIONS_STREAM).map(parseRuntimeEvent);
+      }
+    };
+    MISSION_TRANSITIONS = {
+      created: ["planned", "started", "cancelled"],
+      planned: ["started", "blocked", "cancelled"],
+      started: ["blocked", "review", "failed", "cancelled"],
+      blocked: ["started", "failed", "cancelled"],
+      review: ["started", "completed", "failed", "cancelled"],
+      completed: [],
+      failed: [],
+      cancelled: []
+    };
+    TASK_TRANSITIONS = {
+      added: ["ready", "claimed", "blocked", "failed", "cancelled"],
+      ready: ["claimed", "blocked", "failed", "cancelled"],
+      claimed: ["started", "blocked", "failed", "cancelled"],
+      started: ["blocked", "submitted", "failed", "cancelled"],
+      blocked: ["ready", "claimed", "started", "failed", "cancelled"],
+      submitted: ["blocked", "completed", "failed", "cancelled"],
+      completed: [],
+      failed: [],
+      cancelled: []
+    };
+  }
+});
+
+// packages/daemon/src/lib/workspace-pane-creation.ts
+import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync5, statSync as statSync6 } from "node:fs";
+import { delimiter as delimiter2, isAbsolute as isAbsolute6, join as join27, relative as relative3, sep as sep4 } from "node:path";
+function canonicalProjectDir(path2) {
+  const canonical = realpathSync5(path2);
+  if (!statSync6(canonical).isDirectory()) throw new Error("project root is not a directory");
+  return canonical;
+}
+function canonicalWorkspaceFile(workspace, canonicalRoot, candidate, source) {
+  let canonicalConfig;
+  try {
+    canonicalConfig = realpathSync5(candidate);
+    if (!statSync6(canonicalConfig).isFile()) throw new Error("config is not a file");
+  } catch (cause) {
+    throw new WorkspacePaneCreationError(
+      "workspace_unavailable",
+      {
+        workspaceName: workspace.name,
+        reason: `${source}_config_provenance_unavailable`
+      },
+      cause
+    );
+  }
+  const ownedRelativePath = relative3(canonicalRoot, canonicalConfig);
+  if (ownedRelativePath === "" || ownedRelativePath === ".." || ownedRelativePath.startsWith(`..${sep4}`) || isAbsolute6(ownedRelativePath)) {
+    throw new WorkspacePaneCreationError("workspace_unavailable", {
+      workspaceName: workspace.name,
+      reason: `${source}_config_outside_workspace`
+    });
+  }
+  return canonicalConfig;
+}
+function workspaceWithTrustedConfig(workspace, canonicalRoot) {
+  const candidate = workspace.configPath ?? workspace.ideConfigPath;
+  if (!candidate) {
+    return { ...workspace, configPath: null, ideConfigPath: null };
+  }
+  const canonicalConfig = canonicalWorkspaceFile(workspace, canonicalRoot, candidate, "base");
+  return {
+    ...workspace,
+    configPath: canonicalConfig,
+    ideConfigPath: canonicalConfig
+  };
+}
+function assertEffectiveConfigProvenance(workspace, canonicalRoot, source) {
+  canonicalWorkspaceFile(workspace, canonicalRoot, source.basePath, "base");
+  if (source.localPath !== null) {
+    canonicalWorkspaceFile(workspace, canonicalRoot, source.localPath, "local");
+  }
+}
+function resolveTmuxExecutable() {
+  const configured = process.env.TMUX_IDE_TMUX_BIN;
+  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter((entry) => entry.length > 0 && isAbsolute6(entry)).map((entry) => join27(entry, "tmux"));
+  for (const candidate of candidates) {
+    try {
+      if (!isAbsolute6(candidate)) continue;
+      accessSync3(candidate, constants4.X_OK);
+      const canonical = realpathSync5(candidate);
+      if (statSync6(canonical).isFile()) return canonical;
+    } catch {
+    }
+  }
+  throw new WorkspacePaneCreationError("workspace_unavailable", {
+    reason: "tmux_executable_unavailable"
+  });
+}
+function tmuxClientEnvironment(source) {
+  const environment = {
+    TERM: SAFE_TERMINAL_VALUE.test(source.TERM ?? "") ? source.TERM : "xterm-256color"
+  };
+  if (SAFE_COLOR_TERMINAL_VALUE.test(source.COLORTERM ?? "")) {
+    environment.COLORTERM = source.COLORTERM;
+  }
+  for (const name of ["LANG", "LC_ALL", "LC_CTYPE"]) {
+    const value = source[name];
+    if (value && SAFE_LOCALE_VALUE.test(value)) environment[name] = value;
+  }
+  return environment;
+}
+function tmuxSocketFromEnvironment() {
+  const match = /^(.*),[0-9]+,[0-9]+$/u.exec(process.env.TMUX ?? "");
+  return match?.[1] || null;
+}
+function resolveWorkspacePaneTmuxAuthority() {
+  const executablePath = resolveTmuxExecutable();
+  const environmentSocket = tmuxSocketFromEnvironment();
+  if (environmentSocket) {
+    const path2 = realpathSync5(environmentSocket);
+    if (!statSync6(path2).isSocket()) {
+      throw new WorkspacePaneCreationError("workspace_unavailable", {
+        reason: "tmux_socket_unavailable"
+      });
+    }
+    return Object.freeze({
+      executablePath,
+      socketSelector: { kind: "path", path: path2 }
+    });
+  }
+  return Object.freeze({
+    executablePath,
+    socketSelector: { kind: "name", name: "default" }
+  });
+}
+function pinnedTmuxRunner(authority) {
+  const executablePath = realpathSync5(authority.executablePath);
+  accessSync3(executablePath, constants4.X_OK);
+  if (!isAbsolute6(executablePath) || !statSync6(executablePath).isFile()) {
+    throw new TypeError("Pinned tmux executable is invalid.");
+  }
+  const socketArgv = authority.socketSelector.kind === "path" ? (() => {
+    const path2 = realpathSync5(authority.socketSelector.path);
+    if (!isAbsolute6(path2) || !statSync6(path2).isSocket()) {
+      throw new TypeError("Pinned tmux socket is invalid.");
+    }
+    return ["-S", path2];
+  })() : authority.socketSelector.name === "default" ? ["-L", "default"] : (() => {
+    throw new TypeError("Pinned tmux socket is invalid.");
+  })();
+  const environment = Object.freeze(tmuxClientEnvironment(process.env));
+  return (args) => String(
+    runTmuxBinary(executablePath, [...socketArgv, ...args], {
+      encoding: "utf8",
+      env: environment,
+      maxBuffer: TMUX_OUTPUT_BYTES,
+      stdio: ["ignore", "pipe", "pipe"]
+    })
+  ).replace(/(?:\r?\n)+$/u, "");
+}
+function profileCommand(profile) {
+  return Array.isArray(profile.command) ? [...profile.command] : ["/bin/sh", "-lc", profile.command];
+}
+async function resolveHarness(workspace, canonicalRoot, harnessProfileId) {
+  let configuredProfiles = {};
+  try {
+    const loaded = await loadWorkspaceConfig(canonicalRoot, {
+      explicitConfigPath: workspace.configPath ?? workspace.ideConfigPath
+    });
+    assertEffectiveConfigProvenance(workspace, canonicalRoot, loaded.source);
+    configuredProfiles = loaded.config.harnesses ?? {};
+  } catch (error) {
+    if (!(error instanceof WorkspaceConfigLoadError)) throw error;
+    const configIsOptional = workspace.configKind !== "workspace" && workspace.hasWorkspaceConfig !== true && error.code === "WORKSPACE_CONFIG_REQUIRED";
+    if (!configIsOptional) {
+      throw new WorkspacePaneCreationError("workspace_unavailable", {
+        workspaceName: workspace.name
+      });
+    }
+  }
+  const customProfiles = Object.entries(configuredProfiles).map(([id, profile]) => ({
+    id,
+    label: id,
+    command: profileCommand(profile),
+    source: "workspace",
+    authentication: "not-required",
+    commandReadiness: "ready"
+  }));
+  const probe = await probeProjectReadiness(canonicalRoot, { customHarnesses: customProfiles });
+  const matches = probe.harnesses.filter((candidate) => candidate.id === harnessProfileId);
+  if (matches.length !== 1) {
+    throw new WorkspacePaneCreationError("harness_not_allowed", {
+      workspaceName: workspace.name,
+      harnessProfileId
+    });
+  }
+  const capability = matches[0];
+  if (capability.kind === "shell" || capability.installation !== "available" || capability.commandReadiness !== "ready") {
+    throw new WorkspacePaneCreationError("harness_unavailable", {
+      workspaceName: workspace.name,
+      harnessProfileId
+    });
+  }
+  const configured = configuredProfiles[harnessProfileId];
+  const resolved2 = {
+    id: capability.id,
+    label: capability.label,
+    command: [...capability.command],
+    environment: Object.freeze({ ...configured?.env ?? {} })
+  };
+  assertBoundedLaunch(resolved2);
+  return resolved2;
+}
+async function resolveMission(workspace, canonicalRoot, missionId) {
+  const repository = await MissionRepository.open(canonicalRoot, {
+    explicitConfigPath: workspace.configPath ?? workspace.ideConfigPath
+  });
+  const mission = repository.get(missionId);
+  if (!mission) {
+    throw new WorkspacePaneCreationError("mission_not_found", {
+      workspaceName: workspace.name,
+      missionId
+    });
+  }
+  return mission.id;
+}
+function assertBoundedLaunch(launch2) {
+  if (launch2.command.length === 0 || launch2.command.length > MAX_COMMAND_ARGUMENTS) {
+    throw new WorkspacePaneCreationError("harness_unavailable", {
+      harnessProfileId: launch2.id
+    });
+  }
+  let commandBytes = 0;
+  for (const argument of launch2.command) {
+    const bytes = Buffer.byteLength(argument);
+    if (argument.length === 0 || argument.includes("\0") || bytes > MAX_COMMAND_ARGUMENT_BYTES) {
+      throw new WorkspacePaneCreationError("harness_unavailable", {
+        harnessProfileId: launch2.id
+      });
+    }
+    commandBytes += bytes;
+  }
+  if (commandBytes > MAX_COMMAND_BYTES) {
+    throw new WorkspacePaneCreationError("harness_unavailable", {
+      harnessProfileId: launch2.id
+    });
+  }
+  const environment = Object.entries(launch2.environment);
+  if (environment.length > MAX_ENVIRONMENT_ENTRIES) {
+    throw new WorkspacePaneCreationError("harness_unavailable", {
+      harnessProfileId: launch2.id
+    });
+  }
+  let environmentBytes = 0;
+  for (const [key, value] of environment) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || value.includes("\0")) {
+      throw new WorkspacePaneCreationError("harness_unavailable", {
+        harnessProfileId: launch2.id
+      });
+    }
+    environmentBytes += Buffer.byteLength(key) + Buffer.byteLength(value);
+  }
+  if (environmentBytes > MAX_ENVIRONMENT_BYTES) {
+    throw new WorkspacePaneCreationError("harness_unavailable", {
+      harnessProfileId: launch2.id
+    });
+  }
+}
+function semanticPaneId(operationId) {
+  return `pane.${operationId.replaceAll("-", "")}`;
+}
+function provisionalWindowName(operationId) {
+  return `tmux-ide-${operationId.replaceAll("-", "").slice(0, 24)}`;
+}
+function tmuxFormatLiteral(value) {
+  return value.replaceAll("#", "##");
+}
+function fingerprint(request) {
+  return JSON.stringify(request);
+}
+function parseCreatedRuntime(output, creationId, provisionalName) {
+  const match = /^(%[0-9]+)\t(@[0-9]+)$/u.exec(output);
+  if (!match) throw new WorkspacePaneCreationError("pane_creation_failed");
+  return {
+    paneId: match[1],
+    windowId: match[2],
+    creationId,
+    provisionalWindowName: provisionalName,
+    ownershipProof: "create-output"
+  };
+}
+function defaultTitle(intent, harness) {
+  if (intent.displayTitle) return intent.displayTitle;
+  if (intent.kind === "agent") return (harness?.label ?? intent.harnessProfileId).slice(0, 80);
+  return "Terminal";
+}
+function resourceFor(request, title, resolvedMissionId) {
+  const intent = request.intent;
+  const common = {
+    resourceVersion: 1,
+    workspaceName: intent.workspaceName,
+    semanticPaneId: semanticPaneId(request.operationId),
+    displayTitle: title
+  };
+  if (intent.kind === "agent") {
+    return {
+      ...common,
+      kind: "agent",
+      harnessProfileId: intent.harnessProfileId,
+      role: intent.role,
+      missionId: resolvedMissionId
+    };
+  }
+  return {
+    ...common,
+    kind: "terminal",
+    harnessProfileId: null,
+    role: null,
+    missionId: null
+  };
+}
+function expectedPaneFacts(resource, creationId) {
+  return [
+    resource.semanticPaneId,
+    creationId,
+    resource.kind === "agent" ? "agent" : "shell",
+    resource.role ?? "shell",
+    resource.displayTitle,
+    resource.harnessProfileId ?? "",
+    resource.missionId ?? ""
+  ];
+}
+function inspectArgs(runtime) {
+  return [
+    "display-message",
+    "-p",
+    "-t",
+    runtime.paneId,
+    [
+      "#{pane_id}",
+      "#{window_id}",
+      `#{${SEMANTIC_PANE_OPTION}}`,
+      `#{${CREATION_OPTION}}`,
+      "#{@ide_type}",
+      "#{@ide_role}",
+      "#{@ide_name}",
+      `#{${HARNESS_OPTION}}`,
+      `#{${MISSION_OPTION}}`,
+      "#{window_name}"
+    ].join("	")
+  ];
+}
+function inspectMatches(output, runtime, resource) {
+  const fields = output.split("	");
+  return fields.length === 10 && fields[0] === runtime.paneId && fields[1] === runtime.windowId && fields.slice(2, 9).every((value, index) => value === expectedPaneFacts(resource, runtime.creationId)[index]) && fields[9] === resource.displayTitle;
+}
+function boundedAuthorityLimit(value, fallback) {
+  if (value === void 0) return fallback;
+  if (!Number.isInteger(value) || value < 1 || value > MAX_LIVE_OR_UNSAFE_OPERATIONS) {
+    throw new TypeError(
+      `authority limit must be an integer from 1 to ${MAX_LIVE_OR_UNSAFE_OPERATIONS}`
+    );
+  }
+  return value;
+}
+var MAX_LIVE_OR_UNSAFE_OPERATIONS, MAX_REPLAYABLE_FAILURES, MAX_COMMAND_ARGUMENTS, MAX_COMMAND_ARGUMENT_BYTES, MAX_COMMAND_BYTES, MAX_ENVIRONMENT_ENTRIES, MAX_ENVIRONMENT_BYTES, TMUX_OUTPUT_BYTES, CREATION_OPTION, HARNESS_OPTION, MISSION_OPTION, SEMANTIC_PANE_OPTION, ERROR_MESSAGES, WorkspacePaneCreationError, SAFE_TERMINAL_VALUE, SAFE_COLOR_TERMINAL_VALUE, SAFE_LOCALE_VALUE, DEFAULT_IO, WorkspacePaneCreationAuthority;
+var init_workspace_pane_creation2 = __esm({
+  "packages/daemon/src/lib/workspace-pane-creation.ts"() {
+    "use strict";
+    init_src();
+    init_src2();
+    init_project_readiness_probe();
+    init_workspace_config_loader();
+    init_workspace_registry();
+    init_shell();
+    init_mission_repository();
+    MAX_LIVE_OR_UNSAFE_OPERATIONS = 128;
+    MAX_REPLAYABLE_FAILURES = 64;
+    MAX_COMMAND_ARGUMENTS = 64;
+    MAX_COMMAND_ARGUMENT_BYTES = 4096;
+    MAX_COMMAND_BYTES = 32 * 1024;
+    MAX_ENVIRONMENT_ENTRIES = 64;
+    MAX_ENVIRONMENT_BYTES = 64 * 1024;
+    TMUX_OUTPUT_BYTES = 64 * 1024;
+    CREATION_OPTION = "@tmux_ide_creation_id";
+    HARNESS_OPTION = "@tmux_ide_harness";
+    MISSION_OPTION = "@tmux_ide_mission";
+    SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
+    ERROR_MESSAGES = {
+      daemon_instance_mismatch: "The daemon generation changed before the pane was created.",
+      workspace_not_found: "The requested workspace is not registered.",
+      workspace_unavailable: "The requested workspace is not available for pane creation.",
+      harness_not_allowed: "The requested harness is not in the workspace capability catalog.",
+      harness_unavailable: "The requested harness is not currently launchable.",
+      mission_not_found: "The requested mission is not present in the workspace mission repository.",
+      operation_conflict: "The operation id was already used for a different pane intent.",
+      operation_capacity: "The daemon has reached its bounded pane-creation operation capacity.",
+      pane_creation_failed: "tmux could not create and verify the requested pane.",
+      pane_cleanup_unproven: "The failed pane mutation could not be cleaned up safely.",
+      pane_resource_changed: "The created pane changed outside tmux-ide before the retry."
+    };
+    WorkspacePaneCreationError = class extends Error {
+      code;
+      context;
+      constructor(code, context = {}, cause) {
+        super(ERROR_MESSAGES[code], cause === void 0 ? void 0 : { cause });
+        this.name = "WorkspacePaneCreationError";
+        this.code = code;
+        this.context = Object.freeze({ ...context });
+      }
+    };
+    SAFE_TERMINAL_VALUE = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
+    SAFE_COLOR_TERMINAL_VALUE = /^(?:truecolor|24bit)$/u;
+    SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
+    DEFAULT_IO = {
+      canonicalProjectDir,
+      resolveHarness,
+      resolveMission,
+      isMissingTmuxTarget: (error) => error instanceof TmuxError && error.code === "SESSION_NOT_FOUND",
+      creationFailureCannotHaveMutated: (error) => error instanceof TmuxError && (error.code === "SESSION_NOT_FOUND" || error.code === "TMUX_UNAVAILABLE")
+    };
+    WorkspacePaneCreationAuthority = class {
+      #daemonInstanceId;
+      #registry;
+      #io;
+      #operations = /* @__PURE__ */ new Map();
+      #replayableFailures = /* @__PURE__ */ new Map();
+      #maxLiveOrUnsafeOperations;
+      #maxPendingOperations;
+      #tail = Promise.resolve();
+      #pendingOperations = 0;
+      #disposed = false;
+      #disposePromise = null;
+      constructor(options) {
+        this.#daemonInstanceId = options.daemonInstanceId;
+        this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
+        this.#io = {
+          ...DEFAULT_IO,
+          ...options.io,
+          runTmux: options.io?.runTmux ?? pinnedTmuxRunner(options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority())
+        };
+        this.#maxLiveOrUnsafeOperations = boundedAuthorityLimit(
+          options.maxLiveOrUnsafeOperations,
+          MAX_LIVE_OR_UNSAFE_OPERATIONS
+        );
+        this.#maxPendingOperations = boundedAuthorityLimit(
+          options.maxPendingOperations,
+          MAX_LIVE_OR_UNSAFE_OPERATIONS
+        );
+      }
+      create(raw) {
+        if (this.#disposed) return Promise.reject(this.#disposedError());
+        if (this.#pendingOperations >= this.#maxPendingOperations) {
+          return Promise.reject(
+            new WorkspacePaneCreationError("operation_capacity", { reason: "admission_queue_full" })
+          );
+        }
+        this.#pendingOperations += 1;
+        const run = this.#tail.then(
+          () => this.#create(raw),
+          () => this.#create(raw)
+        );
+        const admitted = run.finally(() => {
+          this.#pendingOperations -= 1;
+        });
+        this.#tail = admitted.then(
+          () => void 0,
+          () => void 0
+        );
+        return admitted;
+      }
+      /**
+       * Stop admitting mutations immediately and wait for the serialized authority
+       * queue to quiesce. In-flight async capability resolution observes the
+       * disposed state before it is allowed to mutate tmux.
+       */
+      dispose() {
+        this.#disposed = true;
+        this.#disposePromise ??= this.#tail.then(() => {
+          this.#operations.clear();
+          this.#replayableFailures.clear();
+        });
+        return this.#disposePromise;
+      }
+      async #create(raw) {
+        this.#assertActive();
+        const request = WorkspacePaneCreateMutationRequestSchemaZ.parse(raw);
+        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
+          throw new WorkspacePaneCreationError("daemon_instance_mismatch", {
+            operationId: request.operationId
+          });
+        }
+        const requestFingerprint = fingerprint(request);
+        const existing = this.#operations.get(request.operationId) ?? this.#replayableFailures.get(request.operationId);
+        if (existing) return this.#replay(existing, request, requestFingerprint);
+        if (this.#operations.size >= this.#maxLiveOrUnsafeOperations) {
+          this.#retireClosedResources();
+        }
+        if (this.#operations.size >= this.#maxLiveOrUnsafeOperations) {
+          throw new WorkspacePaneCreationError("operation_capacity", {
+            operationId: request.operationId
+          });
+        }
+        const workspace = this.#registry.get(request.intent.workspaceName);
+        if (!workspace) {
+          return this.#rememberFailure(
+            request,
+            requestFingerprint,
+            new WorkspacePaneCreationError("workspace_not_found", {
+              operationId: request.operationId,
+              workspaceName: request.intent.workspaceName
+            })
+          );
+        }
+        let runtime = null;
+        try {
+          const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
+          const trustedWorkspace = workspaceWithTrustedConfig(workspace, canonicalRoot);
+          this.#io.runTmux(["has-session", "-t", `=${workspace.sessionName}`]);
+          const harness = request.intent.kind === "agent" ? await this.#io.resolveHarness(
+            trustedWorkspace,
+            canonicalRoot,
+            request.intent.harnessProfileId
+          ) : null;
+          this.#assertActive(request.operationId);
+          if (harness) assertBoundedLaunch(harness);
+          const resolvedMissionId = request.intent.kind === "agent" && request.intent.missionId ? await this.#io.resolveMission(trustedWorkspace, canonicalRoot, request.intent.missionId) : null;
+          this.#assertActive(request.operationId);
+          const title = defaultTitle(request.intent, harness);
+          const resource = resourceFor(request, title, resolvedMissionId);
+          const recoveredSuccess = this.#completedRuntime(
+            workspace.sessionName,
+            request.operationId,
+            resource
+          );
+          if (recoveredSuccess) {
+            const result2 = WorkspacePaneCreateMutationResultSchemaZ.parse({
+              operationId: request.operationId,
+              daemonInstanceId: this.#daemonInstanceId,
+              outcome: "replayed",
+              resource
+            });
+            this.#operations.set(request.operationId, {
+              fingerprint: requestFingerprint,
+              status: "success",
+              result: result2,
+              runtime: recoveredSuccess
+            });
+            return result2;
+          }
+          const provisionalName = provisionalWindowName(request.operationId);
+          if (this.#provisionalRuntimes(workspace.sessionName, provisionalName, request.operationId).length > 0) {
+            throw new WorkspacePaneCreationError("pane_resource_changed", {
+              operationId: request.operationId,
+              workspaceName: workspace.name
+            });
+          }
+          const createArgs = [
+            "new-window",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}	#{window_id}",
+            "-t",
+            `=${workspace.sessionName}:`,
+            "-c",
+            canonicalRoot,
+            "-n",
+            provisionalName
+          ];
+          for (const [key, value] of Object.entries(harness?.environment ?? {}).sort(
+            ([a], [b]) => a.localeCompare(b)
+          )) {
+            createArgs.push("-e", `${key}=${value}`);
+          }
+          if (harness) createArgs.push(harness.command.map(shellEscape).join(" "));
+          let createOutput;
+          try {
+            createOutput = this.#io.runTmux(createArgs);
+          } catch (error) {
+            if (this.#io.creationFailureCannotHaveMutated(error)) throw error;
+            throw new WorkspacePaneCreationError(
+              "pane_cleanup_unproven",
+              { operationId: request.operationId, workspaceName: workspace.name },
+              error
+            );
+          }
+          try {
+            runtime = parseCreatedRuntime(createOutput, request.operationId, provisionalName);
+          } catch (error) {
+            throw new WorkspacePaneCreationError(
+              "pane_cleanup_unproven",
+              { operationId: request.operationId, workspaceName: workspace.name },
+              error
+            );
+          }
+          this.#assertActive(request.operationId);
+          const options = [
+            [CREATION_OPTION, request.operationId],
+            [SEMANTIC_PANE_OPTION, resource.semanticPaneId],
+            ["@ide_type", resource.kind === "agent" ? "agent" : "shell"],
+            ["@ide_role", resource.role ?? "shell"],
+            ["@ide_name", resource.displayTitle],
+            [HARNESS_OPTION, resource.harnessProfileId ?? ""],
+            [MISSION_OPTION, resource.missionId ?? ""]
+          ];
+          for (const [option, value] of options) {
+            this.#io.runTmux(["set-option", "-p", "-t", runtime.paneId, option, value]);
+          }
+          this.#io.runTmux([
+            "rename-window",
+            "-t",
+            runtime.windowId,
+            tmuxFormatLiteral(resource.displayTitle)
+          ]);
+          const inspected = this.#io.runTmux(inspectArgs(runtime));
+          if (!inspectMatches(inspected, runtime, resource)) {
+            throw new WorkspacePaneCreationError("pane_creation_failed", {
+              operationId: request.operationId,
+              workspaceName: workspace.name
+            });
+          }
+          this.#assertActive(request.operationId);
+          const result = WorkspacePaneCreateMutationResultSchemaZ.parse({
+            operationId: request.operationId,
+            daemonInstanceId: this.#daemonInstanceId,
+            outcome: "created",
+            resource
+          });
+          this.#operations.set(request.operationId, {
+            fingerprint: requestFingerprint,
+            status: "success",
+            result,
+            runtime
+          });
+          return result;
+        } catch (error) {
+          const mapped = error instanceof WorkspacePaneCreationError ? error : new WorkspacePaneCreationError(
+            runtime ? "pane_creation_failed" : "workspace_unavailable",
+            {
+              operationId: request.operationId,
+              workspaceName: request.intent.workspaceName
+            },
+            error
+          );
+          if (runtime && !this.#cleanupOwnedWindow(runtime)) {
+            return this.#rememberFailure(
+              request,
+              requestFingerprint,
+              new WorkspacePaneCreationError(
+                "pane_cleanup_unproven",
+                {
+                  operationId: request.operationId,
+                  workspaceName: request.intent.workspaceName
+                },
+                mapped
+              )
+            );
+          }
+          return this.#rememberFailure(request, requestFingerprint, mapped);
+        }
+      }
+      #assertActive(operationId) {
+        if (this.#disposed) throw this.#disposedError(operationId);
+      }
+      #disposedError(operationId) {
+        return new WorkspacePaneCreationError("workspace_unavailable", {
+          ...operationId ? { operationId } : {},
+          reason: "authority_disposed"
+        });
+      }
+      #replay(existing, request, requestFingerprint) {
+        if (existing.fingerprint !== requestFingerprint) {
+          throw new WorkspacePaneCreationError("operation_conflict", {
+            operationId: request.operationId
+          });
+        }
+        if (existing.status === "error") throw existing.error;
+        try {
+          const inspected = this.#io.runTmux(inspectArgs(existing.runtime));
+          if (!inspectMatches(inspected, existing.runtime, existing.result.resource)) throw new Error();
+        } catch (cause) {
+          const changed = new WorkspacePaneCreationError(
+            "pane_resource_changed",
+            {
+              operationId: request.operationId,
+              workspaceName: request.intent.workspaceName
+            },
+            cause
+          );
+          this.#operations.set(request.operationId, {
+            fingerprint: requestFingerprint,
+            status: "error",
+            error: changed
+          });
+          throw changed;
+        }
+        return WorkspacePaneCreateMutationResultSchemaZ.parse({
+          ...existing.result,
+          outcome: "replayed"
+        });
+      }
+      #cleanupOwnedWindow(runtime) {
+        try {
+          const proof = this.#io.runTmux([
+            "list-panes",
+            "-t",
+            runtime.windowId,
+            "-F",
+            `#{pane_id}	#{${CREATION_OPTION}}	#{window_name}	#{window_panes}`
+          ]);
+          const [paneId, marker, windowName, paneCount, extra] = proof.split("	");
+          const markerProvesOwnership = marker === runtime.creationId;
+          const provisionalNameProvesPreMarkerOwnership = runtime.ownershipProof === "create-output" && marker === "" && windowName === runtime.provisionalWindowName;
+          if (extra !== void 0 || paneId !== runtime.paneId || paneCount !== "1" || !markerProvesOwnership && !provisionalNameProvesPreMarkerOwnership) {
+            return false;
+          }
+          this.#io.runTmux(["kill-window", "-t", runtime.windowId]);
+          return true;
+        } catch {
+          try {
+            this.#io.runTmux(["display-message", "-p", "-t", runtime.windowId, "#{window_id}"]);
+            return false;
+          } catch (error) {
+            return this.#io.isMissingTmuxTarget(error);
+          }
+        }
+      }
+      #completedRuntime(sessionName, creationId, resource) {
+        const output = this.#io.runTmux([
+          "list-panes",
+          "-s",
+          "-t",
+          `=${sessionName}`,
+          "-F",
+          ["#{pane_id}", "#{window_id}", `#{${CREATION_OPTION}}`, `#{${SEMANTIC_PANE_OPTION}}`].join(
+            "	"
+          )
+        ]);
+        if (!output) return null;
+        const candidates = [];
+        for (const line of output.split("\n")) {
+          const [paneId, windowId, marker, semanticPaneId2, extra] = line.split("	");
+          if (marker !== creationId && semanticPaneId2 !== resource.semanticPaneId) continue;
+          if (extra !== void 0 || !/^%[0-9]+$/u.test(paneId ?? "") || !/^@[0-9]+$/u.test(windowId ?? "")) {
+            throw new WorkspacePaneCreationError("pane_resource_changed", { creationId });
+          }
+          candidates.push({
+            paneId,
+            windowId,
+            creationId,
+            provisionalWindowName: provisionalWindowName(creationId),
+            ownershipProof: "creation-marker"
+          });
+        }
+        if (candidates.length === 0) return null;
+        if (candidates.length !== 1) {
+          throw new WorkspacePaneCreationError("pane_resource_changed", { creationId });
+        }
+        const runtime = candidates[0];
+        const inspected = this.#io.runTmux(inspectArgs(runtime));
+        if (!inspectMatches(inspected, runtime, resource)) {
+          throw new WorkspacePaneCreationError("pane_resource_changed", { creationId });
+        }
+        const topology = this.#io.runTmux([
+          "list-panes",
+          "-t",
+          runtime.windowId,
+          "-F",
+          "#{pane_id}	#{window_panes}"
+        ]);
+        if (topology !== `${runtime.paneId}	1`) {
+          throw new WorkspacePaneCreationError("pane_resource_changed", { creationId });
+        }
+        return runtime;
+      }
+      #provisionalRuntimes(sessionName, expectedWindowName, creationId) {
+        const output = this.#io.runTmux([
+          "list-windows",
+          "-t",
+          `=${sessionName}`,
+          "-F",
+          "#{window_id}	#{window_name}	#{window_panes}	#{pane_id}"
+        ]);
+        if (!output) return [];
+        const matches = [];
+        for (const line of output.split("\n")) {
+          const [windowId, windowName, paneCount, paneId, extra] = line.split("	");
+          if (windowName !== expectedWindowName) continue;
+          if (extra !== void 0 || !/^@[0-9]+$/u.test(windowId ?? "") || !/^%[0-9]+$/u.test(paneId ?? "") || paneCount !== "1") {
+            throw new WorkspacePaneCreationError("pane_cleanup_unproven", { creationId });
+          }
+          matches.push({
+            windowId,
+            paneId
+          });
+        }
+        if (matches.length > 1) {
+          throw new WorkspacePaneCreationError("pane_cleanup_unproven", { creationId });
+        }
+        return matches;
+      }
+      #retireClosedResources() {
+        for (const [operationId, record] of this.#operations) {
+          if (record.status !== "success") continue;
+          try {
+            const inspected = this.#io.runTmux(inspectArgs(record.runtime));
+            if (inspectMatches(inspected, record.runtime, record.result.resource)) continue;
+            this.#io.runTmux([
+              "list-panes",
+              "-t",
+              record.runtime.windowId,
+              "-F",
+              "#{pane_id}	#{window_id}"
+            ]);
+          } catch (error) {
+            if (this.#io.isMissingTmuxTarget(error)) this.#operations.delete(operationId);
+          }
+        }
+      }
+      #rememberFailure(request, requestFingerprint, error) {
+        const failure = {
+          fingerprint: requestFingerprint,
+          status: "error",
+          error
+        };
+        if (error.code === "pane_cleanup_unproven" || error.code === "pane_resource_changed") {
+          this.#operations.set(request.operationId, failure);
+        } else {
+          this.#replayableFailures.delete(request.operationId);
+          this.#replayableFailures.set(request.operationId, failure);
+          while (this.#replayableFailures.size > MAX_REPLAYABLE_FAILURES) {
+            const oldest = this.#replayableFailures.keys().next().value;
+            if (oldest === void 0) break;
+            this.#replayableFailures.delete(oldest);
+          }
+        }
+        throw error;
+      }
+    };
+  }
+});
+
 // packages/daemon/src/lib/active-projects.ts
 function setActivationBackend(next) {
   backend = next;
@@ -14839,17 +18222,17 @@ var init_active_projects = __esm({
 });
 
 // packages/daemon/src/send.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { resolve as resolve21, join as join26 } from "node:path";
-import { existsSync as existsSync28, mkdirSync as mkdirSync19, writeFileSync as writeFileSync18 } from "node:fs";
+import { randomUUID as randomUUID4 } from "node:crypto";
+import { resolve as resolve23, join as join28 } from "node:path";
+import { existsSync as existsSync29, mkdirSync as mkdirSync20, writeFileSync as writeFileSync19 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
-  const dispatchDir = join26(dir, ".tasks", "dispatch");
-  if (!existsSync28(dispatchDir)) mkdirSync19(dispatchDir, { recursive: true });
+  const dispatchDir = join28(dir, ".tasks", "dispatch");
+  if (!existsSync29(dispatchDir)) mkdirSync20(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
-  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID2().slice(0, 8)}.md`;
-  const filePath = join26(dispatchDir, filename);
-  writeFileSync18(filePath, message);
+  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID4().slice(0, 8)}.md`;
+  const filePath = join28(dispatchDir, filename);
+  writeFileSync19(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
 }
 function resolvePane(panes, target) {
@@ -14927,7 +18310,7 @@ ${available}`, {
   };
 }
 async function send(targetDir, opts) {
-  const dir = resolve21(targetDir ?? ".");
+  const dir = resolve23(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const { json: json2, to: target, message: rawMessage, noEnter } = opts;
   if (!target) {
@@ -15026,92 +18409,92 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z33 } from "zod";
+import { z as z34 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z33.object({
-      status: z33.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z33.string().optional(),
-      title: z33.string().optional(),
-      description: z33.string().optional(),
-      priority: z33.number().optional()
+    updateTaskSchema = z34.object({
+      status: z34.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z34.string().optional(),
+      title: z34.string().optional(),
+      description: z34.string().optional(),
+      priority: z34.number().optional()
     });
-    createTaskSchema = z33.object({
-      title: z33.string().trim().min(1, "Title is required"),
-      description: z33.string().optional(),
-      priority: z33.number().optional(),
-      goal: z33.string().optional(),
-      tags: z33.array(z33.string()).optional()
+    createTaskSchema = z34.object({
+      title: z34.string().trim().min(1, "Title is required"),
+      description: z34.string().optional(),
+      priority: z34.number().optional(),
+      goal: z34.string().optional(),
+      tags: z34.array(z34.string()).optional()
     });
-    savePlanSchema = z33.object({
-      content: z33.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z34.object({
+      content: z34.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z33.object({
-      content: z33.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z34.object({
+      content: z34.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z33.object({
-      target: z33.string().min(1, "Target pane is required"),
-      message: z33.string().min(1, "Message is required"),
-      noEnter: z33.boolean().optional()
+    sendCommandSchema = z34.object({
+      target: z34.string().min(1, "Target pane is required"),
+      message: z34.string().min(1, "Message is required"),
+      noEnter: z34.boolean().optional()
     });
-    createMilestoneSchema = z33.object({
-      title: z33.string().trim().min(1, "Title is required"),
-      sequence: z33.number().int().positive(),
-      description: z33.string().optional()
+    createMilestoneSchema = z34.object({
+      title: z34.string().trim().min(1, "Title is required"),
+      sequence: z34.number().int().positive(),
+      description: z34.string().optional()
     });
-    updateMilestoneSchema = z33.object({
-      status: z33.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z33.string().optional(),
-      description: z33.string().optional()
+    updateMilestoneSchema = z34.object({
+      status: z34.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z34.string().optional(),
+      description: z34.string().optional()
     });
-    updateAssertionSchema = z33.object({
-      status: z33.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z33.string().optional(),
-      verifiedBy: z33.string().optional()
+    updateAssertionSchema = z34.object({
+      status: z34.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z34.string().optional(),
+      verifiedBy: z34.string().optional()
     });
-    triggerResearchSchema = z33.object({
-      type: z33.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z34.object({
+      type: z34.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z33.object({
-      attach: z33.boolean().optional()
+    launchSchema = z34.object({
+      attach: z34.boolean().optional()
     }).optional();
-    stopSchema = z33.object({}).optional();
+    stopSchema = z34.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z33.object({
-      name: z33.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z34.object({
+      name: z34.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z33.string().trim().optional(),
-      description: z33.string().optional(),
-      specialties: z33.array(z33.string()).optional(),
-      body: z33.string().optional()
+      role: z34.string().trim().optional(),
+      description: z34.string().optional(),
+      specialties: z34.array(z34.string()).optional(),
+      body: z34.string().optional()
     });
-    updateSkillSchema = z33.object({
-      role: z33.string().trim().optional(),
-      description: z33.string().optional(),
-      specialties: z33.array(z33.string()).optional(),
-      body: z33.string().optional()
+    updateSkillSchema = z34.object({
+      role: z34.string().trim().optional(),
+      description: z34.string().optional(),
+      specialties: z34.array(z34.string()).optional(),
+      body: z34.string().optional()
     });
   }
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { existsSync as existsSync29, mkdirSync as mkdirSync20, readFileSync as readFileSync22, renameSync as renameSync11, writeFileSync as writeFileSync19 } from "node:fs";
-import { dirname as dirname26, join as join27 } from "node:path";
+import { existsSync as existsSync30, mkdirSync as mkdirSync21, readFileSync as readFileSync23, renameSync as renameSync12, writeFileSync as writeFileSync20 } from "node:fs";
+import { dirname as dirname26, join as join29 } from "node:path";
 function path(dir) {
-  return join27(dir, TERMINALS_FILE);
+  return join29(dir, TERMINALS_FILE);
 }
 function ensureDir(dir) {
-  mkdirSync20(dirname26(path(dir)), { recursive: true });
+  mkdirSync21(dirname26(path(dir)), { recursive: true });
 }
 function loadTerminals(dir) {
   const file = path(dir);
-  if (!existsSync29(file)) return [];
+  if (!existsSync30(file)) return [];
   try {
-    const body = readFileSync22(file, "utf-8");
+    const body = readFileSync23(file, "utf-8");
     const parsed = JSON.parse(body);
     if (!parsed.terminals || !Array.isArray(parsed.terminals)) return [];
     return parsed.terminals.filter((t) => isTerminal(t)).map((t) => ({ ...t }));
@@ -15128,8 +18511,8 @@ function writeAtomic(dir, terminals) {
   ensureDir(dir);
   const file = path(dir);
   const tmp = `${file}.tmp`;
-  writeFileSync19(tmp, JSON.stringify({ terminals }, null, 2) + "\n");
-  renameSync11(tmp, file);
+  writeFileSync20(tmp, JSON.stringify({ terminals }, null, 2) + "\n");
+  renameSync12(tmp, file);
 }
 function upsertTerminal(dir, input) {
   if (!SAFE_ID.test(input.id)) {
@@ -15190,8 +18573,8 @@ __export(auth_service_exports, {
   AuthService: () => AuthService
 });
 import * as crypto2 from "node:crypto";
-import { readFileSync as readFileSync23, existsSync as existsSync30 } from "node:fs";
-import { join as join28 } from "node:path";
+import { readFileSync as readFileSync24, existsSync as existsSync31 } from "node:fs";
+import { join as join30 } from "node:path";
 import { homedir as homedir18 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
@@ -15335,9 +18718,9 @@ var init_auth_service = __esm({
       checkSSHKeyAuthorization(userId, publicKey) {
         try {
           const home = userId === process.env.USER ? homedir18() : `/home/${userId}`;
-          const authKeysPath = join28(home, ".ssh", "authorized_keys");
-          if (!existsSync30(authKeysPath)) return false;
-          const authorizedKeys = readFileSync23(authKeysPath, "utf-8");
+          const authKeysPath = join30(home, ".ssh", "authorized_keys");
+          if (!existsSync31(authKeysPath)) return false;
+          const authorizedKeys = readFileSync24(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
           const keyData = parts.length > 1 ? parts[1] : parts[0];
           return authorizedKeys.includes(keyData);
@@ -15581,9 +18964,9 @@ var init_project_stop = __esm({
 });
 
 // packages/daemon/src/restart.ts
-import { resolve as resolve22 } from "node:path";
+import { resolve as resolve24 } from "node:path";
 async function restart(targetDir, { json: json2, attach: attach2 } = {}) {
-  const dir = resolve22(targetDir ?? ".");
+  const dir = resolve24(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result = killSession(session);
@@ -15850,6 +19233,45 @@ var init_config_actions = __esm({
   }
 });
 
+// packages/daemon/src/command-center/actions/handlers/workspace-pane-create.ts
+async function workspacePaneCreateHandler(input, context = {}, deps2 = {}) {
+  const authority = deps2.authority ?? context.workspacePaneCreationBackend;
+  if (!authority) {
+    throw new ActionError({
+      code: "workspace_unavailable",
+      message: "Workspace pane creation is not available from this daemon."
+    });
+  }
+  if (!context.operationId || !context.daemonInstanceId) {
+    throw new ActionError({
+      code: "bad_request",
+      message: "Workspace pane creation requires trusted host retry and generation metadata."
+    });
+  }
+  try {
+    return await authority.create({
+      operationId: context.operationId,
+      expectedDaemonInstanceId: context.daemonInstanceId,
+      intent: input
+    });
+  } catch (error) {
+    if (!(error instanceof WorkspacePaneCreationError)) throw error;
+    throw new ActionError({
+      code: error.code,
+      message: error.message,
+      details: error.context,
+      cause: error
+    });
+  }
+}
+var init_workspace_pane_create = __esm({
+  "packages/daemon/src/command-center/actions/handlers/workspace-pane-create.ts"() {
+    "use strict";
+    init_workspace_pane_creation2();
+    init_errors3();
+  }
+});
+
 // packages/daemon/src/command-center/actions/registry.ts
 function getLooseActionEntry(name) {
   return actionRegistry[name];
@@ -15869,6 +19291,7 @@ var init_registry2 = __esm({
     init_config_actions();
     init_app_set_remote_access();
     init_daemon_shutdown();
+    init_workspace_pane_create();
     actionRegistry = {
       "project.openTerminal": {
         inputSchema: ActionContractsZ["project.openTerminal"].input,
@@ -15944,6 +19367,12 @@ var init_registry2 = __esm({
         inputSchema: ActionContractsZ["daemon.shutdown"].input,
         resultSchema: ActionContractsZ["daemon.shutdown"].result,
         handler: daemonShutdownHandler
+      },
+      "workspace.pane.create": {
+        inputSchema: ActionContractsZ["workspace.pane.create"].input,
+        resultSchema: ActionContractsZ["workspace.pane.create"].result,
+        handler: (input) => workspacePaneCreateHandler(input),
+        handlerWithContext: workspacePaneCreateHandler
       }
     };
   }
@@ -16103,7 +19532,8 @@ var init_command_definitions = __esm({
         category: "compatibility"
       },
       "app.setRemoteAccess": { label: "Set remote access", category: "application" },
-      "daemon.shutdown": { label: "Shut down daemon", category: "daemon", dangerous: true }
+      "daemon.shutdown": { label: "Shut down daemon", category: "daemon", dangerous: true },
+      "workspace.pane.create": { label: "Create workspace pane", category: "workspace" }
     };
     DAEMON_ACTION_COMMAND_DEFINITIONS = Object.freeze(
       ACTION_NAMES.map(
@@ -16208,7 +19638,12 @@ function createActionDispatcher(deps2 = {}) {
     }
     let result;
     try {
-      result = await entry.handler(commandResolution.command.input);
+      const context = {
+        operationId: c.req.header("X-Tmux-Ide-Operation-Id"),
+        daemonInstanceId: deps2.daemonInstanceId,
+        workspacePaneCreationBackend: deps2.workspacePaneCreationBackend
+      };
+      result = entry.handlerWithContext ? await entry.handlerWithContext(commandResolution.command.input, context) : await entry.handler(commandResolution.command.input);
     } catch (err) {
       const wrapped = wrapInternalError(err);
       return c.json(errorEnvelope(wrapped), 200);
@@ -16263,7 +19698,7 @@ function lineStreamer(onChunk) {
 async function runInit(options) {
   const spawnFn = options.spawnFn ?? spawn6;
   const command2 = options.command ?? "tmux-ide";
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS2;
   const args = ["init"];
   if (options.template) args.push("--template", options.template);
   const child = spawnFn(command2, args, { cwd: options.cwd });
@@ -16311,11 +19746,11 @@ async function runInit(options) {
     });
   });
 }
-var DEFAULT_TIMEOUT_MS, ProjectInitTimeoutError, ProjectInitFailedError;
+var DEFAULT_TIMEOUT_MS2, ProjectInitTimeoutError, ProjectInitFailedError;
 var init_project_init_runner = __esm({
   "packages/daemon/src/lib/project-init-runner.ts"() {
     "use strict";
-    DEFAULT_TIMEOUT_MS = 3e4;
+    DEFAULT_TIMEOUT_MS2 = 3e4;
     ProjectInitTimeoutError = class extends Error {
       timeoutMs;
       constructor(timeoutMs) {
@@ -16338,75 +19773,75 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z34 } from "zod";
+import { z as z35 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z34.object({
+    ProjectInspectDetectedSchemaZ = z35.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z34.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z35.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z34.array(z34.string()),
+      frameworks: z35.array(z35.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z34.string().nullable(),
+      devCommand: z35.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z34.string().nullable()
+      testCommand: z35.string().nullable()
     });
-    ProjectInspectSchemaZ = z34.object({
+    ProjectInspectSchemaZ = z35.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z34.string(),
+      name: z35.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z34.string(),
+      dir: z35.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z34.boolean(),
+      hasIdeYml: z35.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z34.boolean().optional(),
+      hasWorkspaceConfig: z35.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z34.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z35.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z34.string().nullable().optional(),
+      configPath: z35.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z34.string().nullable().optional(),
+      ideConfigPath: z35.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z34.string().nullable(),
+      gitOrigin: z35.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z34.string().nullable(),
+      gitBranch: z35.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z34.object({
-      dir: z34.string().min(1)
+    InspectFilesystemRequestSchemaZ = z35.object({
+      dir: z35.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z34.object({
-      dir: z34.string().min(1),
+    OnboardProjectRequestSchemaZ = z35.object({
+      dir: z35.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z34.string().min(1).optional(),
+      name: z35.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z34.number().int().min(1).max(3),
+      agents: z35.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z34.array(z34.string().min(1)).optional(),
+      agentNames: z35.array(z35.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z34.string().min(1).nullable().optional(),
+      devCommand: z35.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z34.string().min(1).nullable().optional(),
+      testCommand: z35.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z34.string().min(1).nullable().optional()
+      lintCommand: z35.string().min(1).nullable().optional()
     });
   }
 });
 
 // packages/daemon/src/lib/filesystem-browser.ts
-import { realpathSync as realpathSync4, readdirSync as readdirSync4, statSync as statSync5 } from "node:fs";
+import { realpathSync as realpathSync6, readdirSync as readdirSync4, statSync as statSync7 } from "node:fs";
 import { homedir as homedir19 } from "node:os";
-import { isAbsolute as isAbsolute4, join as join29, resolve as resolve23, sep as sep2 } from "node:path";
+import { isAbsolute as isAbsolute7, join as join31, resolve as resolve25, sep as sep5 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
-  const prefix = root.endsWith(sep2) ? root : root + sep2;
+  const prefix = root.endsWith(sep5) ? root : root + sep5;
   return canonical.startsWith(prefix);
 }
 function assertInsideSandbox(canonical, home) {
@@ -16432,8 +19867,8 @@ var init_filesystem_browser = __esm({
 });
 
 // packages/daemon/src/lib/project-inspect.ts
-import { existsSync as existsSync31 } from "node:fs";
-import { isAbsolute as isAbsolute5, resolve as resolve24 } from "node:path";
+import { existsSync as existsSync32 } from "node:fs";
+import { isAbsolute as isAbsolute8, resolve as resolve26 } from "node:path";
 function narrowPackageManager(raw) {
   if (!raw) return null;
   return KNOWN_PACKAGE_MANAGERS.has(raw) ? raw : null;
@@ -16443,8 +19878,8 @@ function inferTestCommand(packageManager) {
   return packageManager === "npm" ? "npm test" : `${packageManager} test`;
 }
 async function inspectProject(dir, io = {}) {
-  const exists = io.exists ?? existsSync31;
-  const absoluteDir = isAbsolute5(dir) ? dir : resolve24(dir);
+  const exists = io.exists ?? existsSync32;
+  const absoluteDir = isAbsolute8(dir) ? dir : resolve26(dir);
   if (!exists(absoluteDir)) {
     throw new InspectDirNotFoundError(absoluteDir);
   }
@@ -16572,10 +20007,10 @@ var init_project_onboard = __esm({
 });
 
 // packages/daemon/src/command-center/resources/application-shell.ts
-import { createHash as createHash5 } from "node:crypto";
-import { basename as basename8 } from "node:path";
+import { createHash as createHash6 } from "node:crypto";
+import { basename as basename9 } from "node:path";
 function digest(value) {
-  return createHash5("sha256").update(value).digest("hex").slice(0, 20);
+  return createHash6("sha256").update(value).digest("hex").slice(0, 20);
 }
 function semanticId(namespace, value) {
   return `${namespace}.${digest(value)}`;
@@ -16683,14 +20118,14 @@ function dockTools(projectId) {
   }
   return tools;
 }
-function deepFreeze3(value) {
+function deepFreeze4(value) {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze3(child);
+  for (const child of Object.values(value)) deepFreeze4(child);
   return Object.freeze(value);
 }
 function projectApplicationShellResource(session) {
   const sessionName = label(session.name, "tmux session");
-  const rootLabel = label(basename8(session.dir), sessionName);
+  const rootLabel = label(basename9(session.dir), sessionName);
   const projectId = semanticId("project", session.dir);
   const sessionId = semanticId("session", session.name);
   const ids = paneIdentities(session.panes);
@@ -16775,7 +20210,7 @@ function projectApplicationShellResource(session) {
     }
   });
   projectApplicationShellV1(parsed);
-  return deepFreeze3(parsed);
+  return deepFreeze4(parsed);
 }
 var init_application_shell2 = __esm({
   "packages/daemon/src/command-center/resources/application-shell.ts"() {
@@ -16791,19 +20226,20 @@ __export(server_exports, {
   createApp: () => createApp,
   getSseMetrics: () => getSseMetrics
 });
-import { execFile as execFile2 } from "node:child_process";
+import { execFile as execFile3 } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync as existsSync32, readdirSync as readdirSync5 } from "node:fs";
-import { join as join30, dirname as dirname27, basename as basename9 } from "node:path";
+import { existsSync as existsSync33, readdirSync as readdirSync5 } from "node:fs";
+import { join as join32, dirname as dirname27, basename as basename10 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
-import { realpathSync as realpathSync5 } from "node:fs";
+import { z as z36 } from "zod";
+import { realpathSync as realpathSync7 } from "node:fs";
 import { homedir as homedir20 } from "node:os";
-import { isAbsolute as isAbsolute6, resolve as pathResolve } from "node:path";
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { isAbsolute as isAbsolute9, resolve as pathResolve } from "node:path";
+import { randomUUID as randomUUID6 } from "node:crypto";
 import { WebSocketServer } from "ws";
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -16818,6 +20254,22 @@ function requireAuth(token, localBypassToken) {
       return next();
     }
     return c.json({ error: "Remote access token required" }, 401);
+  };
+}
+function requireHostCapability(ownerToken) {
+  return async (c, next) => {
+    if (c.req.param("name") !== "workspace.pane.create") return next();
+    if (!ownerToken) {
+      return c.json({ error: "Host mutation capability is unavailable" }, 503);
+    }
+    const supplied = bearerToken(c.req.header("Authorization"));
+    if (!supplied || supplied !== ownerToken) {
+      return c.json({ error: "Host mutation capability required" }, 401);
+    }
+    if (!z36.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+      return c.json({ error: "A stable host operation id is required" }, 400);
+    }
+    return next();
   };
 }
 function remoteAccessAuth(options) {
@@ -16870,13 +20322,13 @@ function sandboxResolveDir(rawDir) {
   } else if (candidate.startsWith("~/")) {
     candidate = `${home.replace(/\/+$/, "")}/${candidate.slice(2)}`;
   }
-  if (!isAbsolute6(candidate)) {
+  if (!isAbsolute9(candidate)) {
     return { error: "invalid-path", message: "Path must be absolute", status: 400 };
   }
   const resolved2 = pathResolve(candidate);
   let canonical;
   try {
-    canonical = realpathSync5(resolved2);
+    canonical = realpathSync7(resolved2);
   } catch (err) {
     const code = err.code;
     if (code === "ENOENT" || code === "ENOTDIR") {
@@ -16903,7 +20355,7 @@ function createApp(options = {}) {
   const authService = options.authService ?? new AuthService();
   const daemonIdentity = options.daemonIdentity ?? {
     productVersion: "0.0.0",
-    instanceId: randomUUID4(),
+    instanceId: randomUUID6(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const daemonInstanceIdentity = DaemonInstanceIdentitySchemaZ.parse({
@@ -16947,7 +20399,14 @@ function createApp(options = {}) {
     const token = authService.generateToken(userId);
     return c.json({ token, userId });
   });
-  app.post("/api/v2/action/:name", createActionDispatcher());
+  app.post(
+    "/api/v2/action/:name",
+    requireHostCapability(options.remoteAccess?.ownerToken ?? null),
+    createActionDispatcher({
+      daemonInstanceId: daemonIdentity.instanceId,
+      workspacePaneCreationBackend: options.workspacePaneCreationBackend
+    })
+  );
   app.get("/api/widget/:name/spawn", async (c) => {
     const { resolveWidgetSpawn: resolveWidgetSpawn2, WIDGET_TYPES: WIDGET_TYPES2 } = await Promise.resolve().then(() => (init_resolve(), resolve_exports));
     const name = c.req.param("name");
@@ -17026,7 +20485,7 @@ function createApp(options = {}) {
   app.post("/api/workspaces", zValidator("json", AddWorkspaceRequestSchemaZ), async (c) => {
     const body = c.req.valid("json");
     const registry = getDefaultWorkspaceRegistry();
-    const name = body.name ?? basename9(body.projectDir);
+    const name = body.name ?? basename10(body.projectDir);
     if (!name || name.length === 0) {
       return c.json({ error: "Cannot derive workspace name from projectDir" }, 400);
     }
@@ -17156,7 +20615,7 @@ function createApp(options = {}) {
         });
         scripted = true;
       }
-      if (!id) id = randomUUID4();
+      if (!id) id = randomUUID6();
       try {
         const upsertInput = {
           id,
@@ -17393,7 +20852,7 @@ function createApp(options = {}) {
       return c.json({ error: "Failed to write workspace config", detail: message }, 500);
     }
   });
-  const execFileAsync = promisify(execFile2);
+  const execFileAsync = promisify(execFile3);
   app.post("/api/project/:name/restart", async (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
@@ -17597,10 +21056,10 @@ function createApp(options = {}) {
     if (!parsed.success) {
       return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
     }
-    if (!existsSync32(parsed.data.dir)) {
+    if (!existsSync33(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
-    const jobId = randomUUID4();
+    const jobId = randomUUID6();
     const command2 = process.env.TMUX_IDE_INIT_COMMAND ?? "tmux-ide";
     void (async () => {
       try {
@@ -17704,8 +21163,8 @@ function createApp(options = {}) {
 function listAvailableTemplates() {
   const __filename = fileURLToPath10(import.meta.url);
   const __dir = dirname27(__filename);
-  const templatesDir = join30(__dir, "..", "..", "..", "..", "templates");
-  if (!existsSync32(templatesDir)) return [];
+  const templatesDir = join32(__dir, "..", "..", "..", "..", "templates");
+  if (!existsSync33(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
     nextjs: {
@@ -17819,7 +21278,7 @@ var init_types = __esm({
 
 // packages/daemon/src/lib/daemon-embed.ts
 import { execFileSync as execFileSync12 } from "node:child_process";
-import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "node:crypto";
+import { randomBytes as randomBytes3, randomUUID as randomUUID7 } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire as createRequire2 } from "node:module";
 import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
@@ -17874,13 +21333,13 @@ function validatePort(port) {
 }
 async function pickFreePort(hostname2) {
   const probe = createServer();
-  return await new Promise((resolve29, reject) => {
+  return await new Promise((resolve31, reject) => {
     probe.once("error", reject);
     probe.listen(0, hostname2, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve29(port);
+        if (port) resolve31(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -18006,21 +21465,21 @@ function attachWebSockets(server, opts) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve29) => wss.close(() => resolve29())), delay(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve31) => wss.close(() => resolve31())), delay(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve29, reject) => {
+  return new Promise((resolve31, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve29();
+      else resolve31();
     });
   });
 }
 function delay(ms) {
-  return new Promise((resolve29) => setTimeout(resolve29, ms));
+  return new Promise((resolve31) => setTimeout(resolve31, ms));
 }
 function generateLocalBypassToken() {
   return randomBytes3(32).toString("base64url");
@@ -18189,7 +21648,8 @@ async function startHttpServer({
   localBypassToken,
   silent,
   readProjectAuth,
-  daemonIdentity
+  daemonIdentity,
+  workspacePaneCreationBackend
 }) {
   const { createApp: createApp3 } = await Promise.resolve().then(() => (init_server(), server_exports));
   const { getRequestListener: getRequestListener3 } = await import(requireFromHere.resolve("@hono/node-server"));
@@ -18211,9 +21671,11 @@ async function startHttpServer({
     remoteAccess: {
       bindHostname,
       token: authToken ?? null,
-      localBypassToken: localBypassToken ?? null
+      localBypassToken: localBypassToken ?? null,
+      ownerToken: localBypassToken ?? null
     },
-    daemonIdentity
+    daemonIdentity,
+    workspacePaneCreationBackend
   });
   app.get("/api/daemon/health", (c) => {
     return c.json({ ok: true, session: sessionName });
@@ -18233,7 +21695,7 @@ async function startHttpServer({
       ...daemonIdentity
     })
   });
-  await new Promise((resolve29, reject) => {
+  await new Promise((resolve31, reject) => {
     const onError = (err) => {
       server.off("listening", onListening);
       if (err.code === "EADDRINUSE") {
@@ -18257,7 +21719,7 @@ async function startHttpServer({
           `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
         );
       }
-      resolve29();
+      resolve31();
     };
     server.once("error", onError);
     server.once("listening", onListening);
@@ -18323,7 +21785,7 @@ async function startEmbeddedDaemon(opts) {
     validatePort(port);
     const dir = process.cwd();
     const productVersion = resolveDaemonProductVersion(opts.productVersion);
-    const instanceId = randomUUID5();
+    const instanceId = randomUUID7();
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
     const workspaceRegistry = getDefaultWorkspaceRegistry();
     await workspaceRegistry.load();
@@ -18348,18 +21810,31 @@ async function startEmbeddedDaemon(opts) {
       } catch {
       }
     }
-    const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
-      sessionName,
-      requestedPort: port,
-      bindHostname,
-      dir,
-      authToken,
-      localBypassToken,
-      silent: opts.silent,
-      readProjectAuth: !sessionless,
-      daemonIdentity: { productVersion, instanceId, startedAt }
+    const workspacePaneCreation = new WorkspacePaneCreationAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry
     });
+    let startedServer;
+    try {
+      startedServer = await startHttpServer({
+        sessionName,
+        requestedPort: port,
+        bindHostname,
+        dir,
+        authToken,
+        localBypassToken,
+        silent: opts.silent,
+        readProjectAuth: !sessionless,
+        daemonIdentity: { productVersion, instanceId, startedAt },
+        workspacePaneCreationBackend: workspacePaneCreation
+      });
+    } catch (error) {
+      await workspacePaneCreation.dispose();
+      throw error;
+    }
+    const { server, sockets, closeClients, closeWsServers } = startedServer;
     const abortStartedServer = async () => {
+      await workspacePaneCreation.dispose();
       closeClients();
       const closePromise = waitForServerClose(server).catch(() => void 0);
       for (const socket of sockets) socket.destroy();
@@ -18376,7 +21851,7 @@ async function startEmbeddedDaemon(opts) {
           instanceId,
           startedAt,
           bindHostname,
-          authToken
+          authToken: localBypassToken
         },
         claim
       );
@@ -18472,6 +21947,7 @@ async function startEmbeddedDaemon(opts) {
           try {
             stopped = true;
             setActivationBackend(null);
+            await workspacePaneCreation.dispose();
             clearInterval(monitorInterval);
             const closePromise = waitForServerClose(server);
             closeClients();
@@ -18560,6 +22036,7 @@ var init_daemon_embed = __esm({
     init_daemon_shutdown();
     init_app_settings();
     init_workspace_registry();
+    init_workspace_pane_creation2();
     init_active_projects();
     init_canonical_daemon();
     requireFromHere = createRequire2(import.meta.url);
@@ -18575,7 +22052,8 @@ var init_daemon_embed = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
-import { z as z35 } from "zod";
+import { randomUUID as randomUUID8 } from "node:crypto";
+import { z as z37 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -18607,7 +22085,12 @@ async function resolveCanonicalDaemon() {
   if (existing) {
     if (await deps.isCanonicalDaemonAlive(existing)) {
       warnOnDaemonVersionSkew(existing, expectedDaemonVersion());
-      return { baseUrl: daemonBaseUrl(existing), transientHandle: null, restoreCwd: null };
+      return {
+        baseUrl: daemonBaseUrl(existing),
+        ownerToken: existing.authToken,
+        transientHandle: null,
+        restoreCwd: null
+      };
     }
   }
   if (process.env.TMUX_IDE_CLI_NO_AUTOSTART) {
@@ -18627,7 +22110,12 @@ async function resolveCanonicalDaemon() {
       process.chdir(previousCwd);
       return null;
     }
-    return { baseUrl: handle.apiBaseUrl, transientHandle: handle, restoreCwd: previousCwd };
+    return {
+      baseUrl: handle.apiBaseUrl,
+      ownerToken: handle.localBypassToken,
+      transientHandle: handle,
+      restoreCwd: previousCwd
+    };
   } catch {
     process.chdir(previousCwd);
     return null;
@@ -18646,37 +22134,46 @@ async function tryDispatchAction(name, input, options = {}) {
   if (!daemon) return null;
   const contract = ActionContractsZ[name];
   const parsedInput = contract.input.parse(input);
-  let response;
-  try {
-    response = await deps.fetch(`${daemon.baseUrl}/api/v2/action/${encodeURIComponent(name)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(parsedInput),
-      signal: timeoutSignal3(2e3)
-    });
-  } catch {
+  const operationId = name === "workspace.pane.create" ? options.operationId ?? randomUUID8() : null;
+  if (operationId && !daemon.ownerToken) {
     await stopTransientDaemon(daemon);
     return null;
   }
-  let body;
+  const request = () => deps.fetch(`${daemon.baseUrl}/api/v2/action/${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...daemon.ownerToken ? { Authorization: `Bearer ${daemon.ownerToken}` } : {},
+      ...operationId ? { "X-Tmux-Ide-Operation-Id": operationId } : {}
+    },
+    body: JSON.stringify(parsedInput),
+    signal: timeoutSignal3(2e3)
+  });
   try {
-    body = await response.json();
-  } catch {
-    await stopTransientDaemon(daemon);
+    const maximumAttempts = operationId ? 2 : 1;
+    for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+      let body;
+      try {
+        const response = await request();
+        body = await response.json();
+      } catch {
+        continue;
+      }
+      const failure = FailureEnvelopeZ.safeParse(body);
+      if (failure.success) {
+        throw new CliActionInvocationError({
+          code: failure.data.error.code,
+          message: failure.data.error.message,
+          details: failure.data.error.details
+        });
+      }
+      const success = z37.object({ ok: z37.literal(true), result: contract.result }).safeParse(body);
+      if (success.success) return success.data.result;
+    }
     return null;
+  } finally {
+    await stopTransientDaemon(daemon);
   }
-  await stopTransientDaemon(daemon);
-  const failure = FailureEnvelopeZ.safeParse(body);
-  if (failure.success) {
-    throw new CliActionInvocationError({
-      code: failure.data.error.code,
-      message: failure.data.error.message,
-      details: failure.data.error.details
-    });
-  }
-  const success = z35.object({ ok: z35.literal(true), result: contract.result }).safeParse(body);
-  if (!success.success) return null;
-  return success.data.result;
 }
 var FailureEnvelopeZ, deps, CliActionInvocationError, requireFromHere2;
 var init_cli_action_bridge = __esm({
@@ -18685,12 +22182,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z35.object({
-      ok: z35.literal(false),
-      error: z35.object({
-        code: z35.string(),
-        message: z35.string(),
-        details: z35.unknown().optional()
+    FailureEnvelopeZ = z37.object({
+      ok: z37.literal(false),
+      error: z37.object({
+        code: z37.string(),
+        message: z37.string(),
+        details: z37.unknown().optional()
       })
     });
     deps = {
@@ -18715,7 +22212,7 @@ var init_cli_action_bridge = __esm({
 });
 
 // packages/daemon/src/config.ts
-import { resolve as resolve25 } from "node:path";
+import { resolve as resolve27 } from "node:path";
 function readConfigSafe(dir) {
   let cfg;
   try {
@@ -18849,7 +22346,7 @@ function configDisableTeam(dir) {
   }).config;
 }
 async function config(targetDir, { json: json2, action, args } = {}) {
-  const dir = resolve25(targetDir ?? ".");
+  const dir = resolve27(targetDir ?? ".");
   if (await tryDispatchConfigAction(dir, { json: json2, action, args: args ?? [] })) return;
   const configContext = await resolveProjectConfigContext(dir);
   if (!configContext.configExists) {
@@ -19515,10 +23012,10 @@ function buildReport(target) {
   let ageSeconds = null;
   let stale = false;
   if (authRaw) {
-    const sep3 = authRaw.lastIndexOf(":");
-    if (sep3 !== -1) {
-      authState = authRaw.slice(0, sep3);
-      const epoch = Number(authRaw.slice(sep3 + 1));
+    const sep6 = authRaw.lastIndexOf(":");
+    if (sep6 !== -1) {
+      authState = authRaw.slice(0, sep6);
+      const epoch = Number(authRaw.slice(sep6 + 1));
       if (Number.isFinite(epoch)) {
         authEpoch = epoch;
         ageSeconds = nowSec - epoch;
@@ -19855,10 +23352,10 @@ var init_agent_lifecycle = __esm({
 });
 
 // packages/daemon/src/control/lifecycle.ts
-import { execFile as execFile3 } from "node:child_process";
+import { execFile as execFile4 } from "node:child_process";
 function tmuxRun(args) {
-  return new Promise((resolve29, reject) => {
-    execFile3("tmux", args, (err, stdout) => err ? reject(err) : resolve29(stdout.trimEnd()));
+  return new Promise((resolve31, reject) => {
+    execFile4("tmux", args, (err, stdout) => err ? reject(err) : resolve31(stdout.trimEnd()));
   });
 }
 async function tmuxTry(args) {
@@ -20030,25 +23527,25 @@ __export(server_exports2, {
   defaultControlSocketPath: () => defaultControlSocketPath,
   startControlServer: () => startControlServer
 });
-import { chmodSync as chmodSync5, existsSync as existsSync33, mkdirSync as mkdirSync21, statSync as statSync6, unlinkSync as unlinkSync2 } from "node:fs";
+import { chmodSync as chmodSync5, existsSync as existsSync34, mkdirSync as mkdirSync22, statSync as statSync8, unlinkSync as unlinkSync3 } from "node:fs";
 import { createServer as createServer2, connect } from "node:net";
-import { dirname as dirname29, join as join31 } from "node:path";
+import { dirname as dirname29, join as join33 } from "node:path";
 function defaultControlSocketPath() {
-  return join31(tuiStateHome(), "control.sock");
+  return join33(tuiStateHome(), "control.sock");
 }
 async function claimSocketPath(path2) {
-  if (!existsSync33(path2)) return;
-  if (!statSync6(path2).isSocket()) {
+  if (!existsSync34(path2)) return;
+  if (!statSync8(path2).isSocket()) {
     throw new IdeError(
       `${path2} exists and is not a socket \u2014 refusing to remove it. Pass a different --socket path.`,
       { code: "USAGE", exitCode: 1 }
     );
   }
-  const alive = await new Promise((resolve29) => {
+  const alive = await new Promise((resolve31) => {
     const probe = connect(path2);
     const done = (result) => {
       probe.destroy();
-      resolve29(result);
+      resolve31(result);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -20060,14 +23557,14 @@ async function claimSocketPath(path2) {
       exitCode: 1
     });
   }
-  unlinkSync2(path2);
+  unlinkSync3(path2);
 }
 async function startControlServer(opts = {}) {
   const socketPath = opts.socketPath ?? defaultControlSocketPath();
   const log = opts.log ?? (() => {
   });
   const tickMs = opts.tickMs ?? TICK_MS;
-  mkdirSync21(dirname29(socketPath), { recursive: true });
+  mkdirSync22(dirname29(socketPath), { recursive: true });
   await claimSocketPath(socketPath);
   const tracker = createStatusTracker();
   const handlers = createVerbHandlers({ tracker });
@@ -20130,7 +23627,7 @@ async function startControlServer(opts = {}) {
     conn.on("error", () => {
     });
   });
-  await new Promise((resolve29, reject) => {
+  await new Promise((resolve31, reject) => {
     server.once("error", (err) => {
       if ((err.code === "EINVAL" || err.code === "ENAMETOOLONG") && socketPath.length > 100) {
         reject(
@@ -20146,23 +23643,23 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
     });
     server.listen(socketPath, () => {
       server.removeAllListeners("error");
-      resolve29();
+      resolve31();
     });
   });
   chmodSync5(socketPath, 384);
   log(`listening on ${socketPath}`);
   return {
     socketPath,
-    close: () => new Promise((resolve29) => {
+    close: () => new Promise((resolve31) => {
       if (timer) clearInterval(timer);
       timer = null;
       for (const conn of connections) conn.destroy();
       server.close(() => {
         try {
-          unlinkSync2(socketPath);
+          unlinkSync3(socketPath);
         } catch {
         }
-        resolve29();
+        resolve31();
       });
     })
   };
@@ -20193,12 +23690,12 @@ __export(client_exports, {
 import { connect as connect2 } from "node:net";
 function connectControl(opts = {}) {
   const path2 = opts.socketPath ?? defaultControlSocketPath();
-  return new Promise((resolve29, reject) => {
+  return new Promise((resolve31, reject) => {
     const socket = connect2(path2);
     socket.once("error", reject);
     socket.once("connect", () => {
       socket.removeListener("error", reject);
-      resolve29(wrap(socket));
+      resolve31(wrap(socket));
     });
   });
 }
@@ -20250,12 +23747,12 @@ function wrap(socket) {
   });
   const request = (verb, params) => {
     const id = nextId++;
-    return new Promise((resolve29, reject) => {
+    return new Promise((resolve31, reject) => {
       if (socket.destroyed) {
         reject(new ControlRequestError("disconnected", "control socket closed"));
         return;
       }
-      pending.set(id, { resolve: resolve29, reject });
+      pending.set(id, { resolve: resolve31, reject });
       socket.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, id, verb, params }));
     });
   };
@@ -20301,7 +23798,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync15 } from "node:child_process";
-import { basename as basename10, dirname as dirname30, isAbsolute as isAbsolute7, join as join32, resolve as resolve27 } from "node:path";
+import { basename as basename11, dirname as dirname30, isAbsolute as isAbsolute10, join as join34, resolve as resolve29 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -20309,12 +23806,12 @@ function worktreeSessionName(project, branch) {
   return `${sanitizeForTmux(project)}@${sanitizeForTmux(branch)}`;
 }
 function defaultWorktreeBaseDir(repoDir) {
-  const abs = resolve27(repoDir);
-  return join32(dirname30(abs), `${basename10(abs)}-worktrees`);
+  const abs = resolve29(repoDir);
+  return join34(dirname30(abs), `${basename11(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
-  const base = configuredDir && configuredDir.length > 0 ? isAbsolute7(configuredDir) ? configuredDir : resolve27(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
-  return join32(base, branch);
+  const base = configuredDir && configuredDir.length > 0 ? isAbsolute10(configuredDir) ? configuredDir : resolve29(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
+  return join34(base, branch);
 }
 function parseWorktreeList(porcelain) {
   const entries = [];
@@ -20458,8 +23955,8 @@ __export(update_exports, {
   runUpdate: () => runUpdate
 });
 import { execSync as execSync4 } from "node:child_process";
-import { existsSync as existsSync34 } from "node:fs";
-import { dirname as dirname31, join as join33 } from "node:path";
+import { existsSync as existsSync35 } from "node:fs";
+import { dirname as dirname31, join as join35 } from "node:path";
 function detectPackageManager(cliPath) {
   const p = cliPath.toLowerCase();
   if (/(^|\/)\.?bun(\/|$)/.test(p)) return "bun";
@@ -20505,7 +24002,7 @@ function renderPlan(plan, { current, latest, dryRun }) {
 function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
-    if (existsSync34(join33(dir, ".git"))) return dir;
+    if (existsSync35(join35(dir, ".git"))) return dir;
     const parent = dirname31(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -20552,10 +24049,10 @@ async function startCommandCenter(options = {}) {
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
   const server = createServer3(listener);
-  return new Promise((resolve29) => {
+  return new Promise((resolve31) => {
     server.listen(port, hostname2, () => {
       console.log(`Command Center API on http://${hostname2}:${port}`);
-      resolve29(server);
+      resolve31(server);
     });
   });
 }
@@ -20608,21 +24105,21 @@ async function start(port) {
       handlePtyWebSocket(ws, id);
     });
   });
-  await new Promise((resolve29, reject) => {
+  await new Promise((resolve31, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, "0.0.0.0", () => {
       server.off("error", reject);
-      resolve29();
+      resolve31();
     });
   });
   console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve29, reject) => {
+    close: () => new Promise((resolve31, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve29());
+      server.close((err) => err ? reject(err) : resolve31());
     })
   };
 }
@@ -20638,9 +24135,9 @@ var init_server3 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve28, dirname as dirname32 } from "node:path";
+import { resolve as resolve30, dirname as dirname32 } from "node:path";
 import { execFileSync as execFileSync16 } from "node:child_process";
-import { existsSync as existsSync35 } from "node:fs";
+import { existsSync as existsSync36 } from "node:fs";
 import { fileURLToPath as fileURLToPath11 } from "node:url";
 
 // packages/daemon/src/tui/team/entry.ts
@@ -21379,7 +24876,7 @@ init_legacy_config_adapter();
 init_project_resolver();
 init_errors2();
 import { execFileSync as execFileSync13 } from "node:child_process";
-import { dirname as dirname28, resolve as resolve26 } from "node:path";
+import { dirname as dirname28, resolve as resolve28 } from "node:path";
 function gitIgnoresWorkspace(dir) {
   try {
     execFileSync13("git", ["-C", dir, "check-ignore", "-q", ".tmux-ide/workspace.yml"], {
@@ -21425,7 +24922,7 @@ async function migrate(targetDir, {
   write,
   onAfterRead
 } = {}) {
-  const dir = resolve26(targetDir ?? ".");
+  const dir = resolve28(targetDir ?? ".");
   if (!dryRun && !write) dryRun = true;
   if (dryRun && write) outputError("Use either --dry-run or --write, not both", "USAGE");
   try {
@@ -21786,6 +25283,7 @@ init_canonical_daemon();
 init_src();
 init_daemon_embed();
 init_errors2();
+init_auth_token();
 var defaultDependencies = {
   inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
@@ -21891,7 +25389,7 @@ async function findLiveCanonicalDaemon(deps2, options) {
   return existing.info;
 }
 function delay2(ms) {
-  return new Promise((resolve29) => setTimeout(resolve29, ms));
+  return new Promise((resolve31) => setTimeout(resolve31, ms));
 }
 async function waitForCanonicalWinner(deps2, options, timeoutMs = 15e3) {
   const deadline = Date.now() + timeoutMs;
@@ -21929,7 +25427,10 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
         handle = await deps2.startEmbeddedDaemon({
           port,
           bindHostname: "127.0.0.1",
+          // Persisted only in the owner-only daemon record. This capability is
+          // independent from the remotely shared access token.
           authToken: null,
+          localBypassToken: generateAuthToken(),
           silent: true,
           ...options.sessionName ? { sessionName: options.sessionName } : {},
           ...options.expectedVersion ? { productVersion: options.expectedVersion } : {}
@@ -21953,8 +25454,8 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
       });
     }
     let resolveStopped;
-    const stopped = new Promise((resolve29) => {
-      resolveStopped = resolve29;
+    const stopped = new Promise((resolve31) => {
+      resolveStopped = resolve31;
     });
     let stopFailure;
     const originalStop = handle.stop.bind(handle);
@@ -22014,7 +25515,7 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
 init_hosted();
 var __dirname5 = dirname32(fileURLToPath11(import.meta.url));
 var selfPath = fileURLToPath11(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve28(__dirname5, "cli.js");
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve30(__dirname5, "cli.js");
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -22234,7 +25735,7 @@ function execBunWidget(surface, scriptPath, args, commandLabel, extraEnv = {}) {
     surface,
     scriptPath,
     args,
-    checkoutExists: existsSync35(scriptPath),
+    checkoutExists: existsSync36(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui()
   });
@@ -22254,7 +25755,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   if (launch2.mode === "bun") {
     execFileSync16(launch2.bin, launch2.argv, {
       stdio: "inherit",
-      cwd: resolve28(__dirname5, ".."),
+      cwd: resolve30(__dirname5, ".."),
       env
     });
     return;
@@ -22266,7 +25767,7 @@ function launchHostedApp(scriptPath, appArgs) {
     surface: "app",
     scriptPath,
     args: appArgs,
-    checkoutExists: existsSync35(scriptPath),
+    checkoutExists: existsSync36(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui()
   });
@@ -22284,7 +25785,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve28(__dirname5, "..") : process.cwd();
+    const cwd = launch2.mode === "bun" ? resolve30(__dirname5, "..") : process.cwd();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -22330,8 +25831,8 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve28(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve28(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve30(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve30(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
@@ -22380,8 +25881,8 @@ try {
         } catch {
         }
       }
-      const targetDir = resolve28(startTargetDir || ".");
-      if (startTargetDir && !existsSync35(targetDir)) {
+      const targetDir = resolve30(startTargetDir || ".");
+      if (startTargetDir && !existsSync36(targetDir)) {
         throw new IdeError(
           `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
           { code: "CONFIG_NOT_FOUND", exitCode: 1 }
@@ -22479,11 +25980,11 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           "setup",
           scriptPath,
-          ["--dir=" + resolve28(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve30(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
@@ -22492,8 +25993,8 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve28(startTargetDir || ".")];
+      const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve30(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       execBunWidget("setup", scriptPath, setupArgs, "setup");
@@ -22504,15 +26005,15 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync24 } = await import("node:fs");
-        message = readFileSync24(0, "utf-8").trim();
+        const { readFileSync: readFileSync25 } = await import("node:fs");
+        message = readFileSync25(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
     }
     case "settings": {
-      const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget("config", scriptPath, ["--dir=" + resolve28(startTargetDir || ".")], "settings");
+      const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      execBunWidget("config", scriptPath, ["--dir=" + resolve30(startTargetDir || ".")], "settings");
       break;
     }
     case "team": {
@@ -22637,7 +26138,7 @@ try {
       break;
     }
     case "events": {
-      const { readFileSync: readFileSync24, existsSync: existsSync36, statSync: statSync7, openSync: openSync3, readSync, closeSync: closeSync3 } = await import("node:fs");
+      const { readFileSync: readFileSync25, existsSync: existsSync37, statSync: statSync9, openSync: openSync4, readSync, closeSync: closeSync4 } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
       const paintStatus = (status2, text) => {
@@ -22662,8 +26163,8 @@ try {
           socketPath: typeof socketFlag === "string" ? socketFlag : void 0
         }).catch(() => null);
         if (client) {
-          if (existsSync36(path2)) {
-            const backlog = readFileSync24(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+          if (existsSync37(path2)) {
+            const backlog = readFileSync25(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
             for (const line of backlog.slice(-50)) printLine(line);
           }
           await client.subscribe((frame) => {
@@ -22677,19 +26178,19 @@ try {
           break;
         }
       }
-      if (!existsSync36(path2)) {
+      if (!existsSync37(path2)) {
         console.log("no events yet \u2014 is a session adopted? (the chrome updater writes events)");
         break;
       }
-      const allLines = readFileSync24(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+      const allLines = readFileSync25(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
       for (const line of allLines.slice(-50)) printLine(line);
       if (!values.follow) break;
-      let offset = statSync7(path2).size;
+      let offset = statSync9(path2).size;
       let leftover = "";
       const timer = setInterval(() => {
         let size;
         try {
-          size = statSync7(path2).size;
+          size = statSync9(path2).size;
         } catch {
           return;
         }
@@ -22698,7 +26199,7 @@ try {
           leftover = "";
         }
         if (size <= offset) return;
-        const fd = openSync3(path2, "r");
+        const fd = openSync4(path2, "r");
         try {
           const buf = Buffer.alloc(size - offset);
           readSync(fd, buf, 0, buf.length, offset);
@@ -22707,7 +26208,7 @@ try {
           leftover = parts.pop() ?? "";
           for (const line of parts) if (line.trim().length > 0) printLine(line);
         } finally {
-          closeSync3(fd);
+          closeSync4(fd);
         }
       }, 500);
       process.on("SIGINT", () => {
@@ -22839,13 +26340,13 @@ try {
             console.log(forcedKey);
             act(forcedKey);
           } else {
-            const key = await new Promise((resolve29) => {
+            const key = await new Promise((resolve31) => {
               try {
                 process.stdin.setRawMode?.(true);
                 process.stdin.resume();
-                process.stdin.once("data", (data) => resolve29(data.toString()));
+                process.stdin.once("data", (data) => resolve31(data.toString()));
               } catch {
-                resolve29("");
+                resolve31("");
               }
             });
             try {
@@ -23044,7 +26545,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync16("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -23371,7 +26872,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve28(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve30(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync16("node", serverArgs, { stdio: "inherit" });
