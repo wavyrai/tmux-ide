@@ -1,4 +1,5 @@
 import {
+  AgentGraphOverlaySchemaZ,
   AppWindowMutationHostResultSchemaZ,
   ApplicationShellProjectionInputV3SchemaZ,
   WorkspacePaneCreateHostResultSchemaZ,
@@ -503,7 +504,7 @@ interface LiveWorkspaceProps extends Omit<DesktopLiveApplicationProps, "daemon">
   readonly catalogState: DesktopWorkspaceCatalogState;
 }
 
-type LiveWorkspaceProjection =
+export type LiveWorkspaceProjection =
   | {
       readonly status: "ready";
       readonly input: ApplicationShellProjectionInputV1;
@@ -517,8 +518,29 @@ function assertUniqueSemanticIds(label: string, ids: readonly string[]): void {
   }
 }
 
+/**
+ * The agent-graph overlay is a NON-durable, additive projection. A malformed
+ * overlay must never blank the whole workspace, so it is validated in isolation
+ * at the read boundary: if it fails, only the overlay is dropped and the shell
+ * read continues. A valid or absent overlay is returned untouched.
+ */
+export function sanitizeAgentGraphOverlay(
+  input: ApplicationShellProjectionInputV1,
+): ApplicationShellProjectionInputV1 {
+  if (!("agentGraphOverlay" in input)) return input;
+  const candidate = (input as { readonly agentGraphOverlay?: unknown }).agentGraphOverlay;
+  if (candidate === undefined || AgentGraphOverlaySchemaZ.safeParse(candidate).success) {
+    return input;
+  }
+  const rest: Record<string, unknown> = { ...input };
+  delete rest.agentGraphOverlay;
+  return rest as unknown as ApplicationShellProjectionInputV1;
+}
+
 /** Strict rendering boundary. Failures are intentionally sanitized by the caller. */
-function projectLiveWorkspace(input: ApplicationShellProjectionInputV1): LiveWorkspaceProjection {
+export function projectLiveWorkspace(
+  input: ApplicationShellProjectionInputV1,
+): LiveWorkspaceProjection {
   try {
     const shell = projectApplicationShellV1(input);
     const sessionIds = shell.sidebar.sessions.map(({ id }) => id);
@@ -534,7 +556,7 @@ function projectLiveWorkspace(input: ApplicationShellProjectionInputV1): LiveWor
       "terminal resource",
       terminalPanes.map(({ model }) => model.pane.id),
     );
-    return { status: "ready", input, terminalPanes };
+    return { status: "ready", input: sanitizeAgentGraphOverlay(input), terminalPanes };
   } catch {
     return { status: "rejected" };
   }

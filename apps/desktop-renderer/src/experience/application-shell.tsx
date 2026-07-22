@@ -5,6 +5,7 @@ import {
   applyApplicationShellInvocationV1,
   applicationShellCommandInvocation,
   commandsToOpenSurface,
+  type AgentGraphOverlay,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionInputV3,
@@ -54,10 +55,7 @@ import { CreatePaneFlow } from "./create-pane-flow.tsx";
 import { UpdateChip } from "./update-chip.tsx";
 import { MissionActivitySurface } from "./mission-activity-surface.tsx";
 import { WorkspaceFilesSurface, type FilesSurfaceProps } from "./workspace-files-surface.tsx";
-import {
-  WorkspaceChangesSurface,
-  type ChangesSurfaceProps,
-} from "./workspace-changes-surface.tsx";
+import { WorkspaceChangesSurface, type ChangesSurfaceProps } from "./workspace-changes-surface.tsx";
 import type { CreatePaneFlowCatalogs } from "./create-pane-flow-presenter.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
@@ -242,6 +240,13 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const missionWorkspace = createMemo(() => {
     const value = input();
     return "appWindows" in value ? value.missionWorkspace : undefined;
+  });
+  // The agent-graph overlay is a non-durable, additive V3 projection. It follows
+  // the same generation as the rest of the input, so reading it here keeps it
+  // reconciled with the mutation/refresh queue exactly like missionWorkspace.
+  const agentGraphOverlay = createMemo<AgentGraphOverlay | undefined>(() => {
+    const value = input();
+    return "appWindows" in value ? value.agentGraphOverlay : undefined;
   });
   const effectiveSidebarWidth = createMemo(() =>
     sidebarCollapsed() ? DOM_SHELL_GEOMETRY.sidebarCollapsedWidth : sidebarWidth(),
@@ -616,8 +621,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           class="dock-surface__content"
           classList={{
             "dock-surface__content--journey":
-              ("appWindows" in input() &&
-                (tool.id === "missions" || tool.id === "activity")) ||
+              ("appWindows" in input() && (tool.id === "missions" || tool.id === "activity")) ||
               tool.id === "files" ||
               tool.id === "changes",
           }}
@@ -1062,6 +1066,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   document={document()}
                   paneFrames={renderedPaneFrames()}
                   terminalInventory={shell().terminalInventory}
+                  overlay={agentGraphOverlay()}
                   workspaceName={props.terminalWorkspaceName ?? input().workspace.id}
                   transport={props.terminalTransport}
                   reducedMotion={props.reducedMotion}

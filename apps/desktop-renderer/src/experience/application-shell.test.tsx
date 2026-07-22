@@ -24,6 +24,13 @@ import {
 import { DOM_EXPERIENCE_VARIABLE, createDomExperience } from "./dom-experience.ts";
 import { createMissionActivityFixture } from "./mission-activity-fixture.ts";
 import {
+  agentGraphCanvasDocument,
+  agentGraphCanvasInventory,
+  agentGraphCanvasOverlay,
+  agentGraphCanvasPaneFrames,
+  type AgentGraphCanvasScenario,
+} from "./agent-graph-canvas-fixture.ts";
+import {
   createDefaultDomShellInput,
   createDefaultDomPaneFrames,
   createDomShellReplayState,
@@ -1173,5 +1180,101 @@ describe("visible DOM application shell", () => {
         source: { kind: "mouse", surface: "sidebar" },
       }),
     ]);
+  });
+});
+
+describe("DomApplicationShell agent-graph overlay pass-through", () => {
+  function agentGraphV3Input(
+    scenario: AgentGraphCanvasScenario,
+    workspaceId = "workspace.product",
+  ): ApplicationShellProjectionInputV3 {
+    const base = createDefaultDomShellInput();
+    const inventory = agentGraphCanvasInventory();
+    const agents = inventory.resources.map((resource) => ({
+      id: `agent.${resource.id}`,
+      name: resource.title,
+      harness: "claude-code" as const,
+      activity: "running" as const,
+      paneId: resource.id,
+      attention: false,
+    }));
+    const overlay = agentGraphCanvasOverlay(scenario);
+    return ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...base,
+      workspace: {
+        ...base.workspace,
+        id: workspaceId,
+        sidebar: { ...base.workspace.sidebar, agents },
+      },
+      focus: {
+        ...base.focus,
+        appFocusedPaneId: inventory.activeResourceId,
+        terminalInputPaneId: null,
+        layoutSelectedPaneId: null,
+        overlays: [],
+      },
+      terminalInventory: inventory,
+      appWindows: agentGraphCanvasDocument(),
+      ...(overlay ? { agentGraphOverlay: overlay } : {}),
+    });
+  }
+
+  function renderOverlayShell(input: () => ApplicationShellProjectionInputV3): HTMLElement {
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input()}
+            dataMode="runtime"
+            paneFrames={agentGraphCanvasPaneFrames()}
+          />
+        ),
+        root,
+      ),
+    );
+    return root;
+  }
+
+  it("hands a live overlay to the canvas so ground-truth status reaches window chrome", () => {
+    const root = renderOverlayShell(() => agentGraphV3Input("nodes-only"));
+    expect(root.querySelector(".agent-graph")).not.toBeNull();
+    const lead = root.querySelector<HTMLElement>('.app-window-card[data-window-id="window.lead"]')!;
+    expect(lead.dataset.agentStatus).toBe("working");
+    const worker = root.querySelector<HTMLElement>(
+      '.app-window-card[data-window-id="window.worker"]',
+    )!;
+    expect(worker.dataset.agentStatus).toBe("done");
+  });
+
+  it("renders exactly as today when the resource carries no overlay", () => {
+    const root = renderOverlayShell(() => agentGraphV3Input("no-overlay"));
+    expect(root.querySelector(".agent-graph")).toBeNull();
+    for (const card of root.querySelectorAll(".app-window-card")) {
+      expect(card.getAttribute("data-agent-status")).toBeNull();
+    }
+  });
+
+  it("drops the overlay when a new workspace generation arrives without one", () => {
+    const [input, setInput] = createSignal<ApplicationShellProjectionInputV3>(
+      agentGraphV3Input("nodes-only"),
+    );
+    const root = renderOverlayShell(input);
+    const leadWith = root.querySelector<HTMLElement>(
+      '.app-window-card[data-window-id="window.lead"]',
+    )!;
+    expect(leadWith.dataset.agentStatus).toBe("working");
+
+    setInput(agentGraphV3Input("no-overlay", "workspace.next-generation"));
+    expect(root.querySelector(".agent-graph")).toBeNull();
+    const leadAfter = root.querySelector<HTMLElement>(
+      '.app-window-card[data-window-id="window.lead"]',
+    )!;
+    expect(leadAfter.getAttribute("data-agent-status")).toBeNull();
   });
 });
