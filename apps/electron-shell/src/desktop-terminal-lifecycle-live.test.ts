@@ -41,7 +41,28 @@ import {
 import { WorkspaceRegistry } from "../../../packages/daemon/src/lib/workspace-registry.ts";
 import { GROUPED_TMUX_VIEW_SESSION_PREFIX } from "../../../packages/daemon/src/terminal/attachments/grouped-tmux.ts";
 import { DaemonConnectionCoordinator } from "./daemon-connection-coordinator.ts";
+import { DaemonResourceBroker } from "./daemon-resource-broker.ts";
+
+type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected" }>;
 import { canonicalDaemonPreflight, runDaemonPreflight } from "./daemon-preflight.ts";
+import { inspectCanonicalDaemonInfo } from "../../../packages/daemon/src/lib/canonical-daemon.ts";
+
+/**
+ * The default broker's 3s request timeout starves when the full monorepo check
+ * runs this live suite concurrently with the daemon's own suite; the raised
+ * budget changes nothing about behavior, only how long a live spawn may take.
+ */
+function liveBrokerFactory(daemon: ConnectedDaemonState): DaemonResourceBroker {
+  const canonical = inspectCanonicalDaemonInfo();
+  if (canonical.status !== "valid" || !canonical.info.authToken) {
+    throw new Error("canonical daemon owner capability is unavailable");
+  }
+  return new DaemonResourceBroker({
+    daemon,
+    ownerToken: canonical.info.authToken,
+    requestTimeoutMs: 20_000,
+  });
+}
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const cliPath = join(repoRoot, "bin/cli.js");
@@ -333,6 +354,7 @@ describe
       const firstCoordinator = new DaemonConnectionCoordinator({
         initialDaemon: firstDaemon,
         preflight: canonicalDaemonPreflight,
+        createBroker: liveBrokerFactory,
       });
 
       const listed = await firstCoordinator.listWorkspaces();
@@ -547,6 +569,7 @@ describe
       const secondCoordinator = new DaemonConnectionCoordinator({
         initialDaemon: secondDaemon,
         preflight: canonicalDaemonPreflight,
+        createBroker: liveBrokerFactory,
       });
       const secondCounters: SocketCounters = { connections: 0, outboundBinaryFrames: 0 };
       const secondEvents: NativeTerminalEvent[] = [];
