@@ -15,11 +15,14 @@ import {
   type Accessor,
 } from "solid-js";
 
-import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host.tsx";
+// Pane chrome CSS is already imported by the renderer's external stylesheet.
+// Importing the styled entry would make Vite inject a CSP-blocked <style> tag.
+import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host-unstyled.tsx";
 import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
+import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import {
   appWindowFocusInvocation,
@@ -182,6 +185,18 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
       <For each={windowRecords()}>
         {(record) => {
           const window = record.value;
+          let runtimeStyle: RuntimeStyleBinding | null = null;
+          createComputed(() => {
+            const value = window();
+            runtimeStyle?.update({
+              left: `${value.rect.x}px`,
+              top: `${value.rect.y}px`,
+              width: `${value.rect.width}px`,
+              height: `${value.rect.height}px`,
+              "z-index": value.zIndex,
+            });
+          });
+          onCleanup(() => runtimeStyle?.dispose());
           const terminalSourceId = () => {
             const source = window().source;
             return source.kind === "terminal" ? source.terminalSourceId : null;
@@ -200,19 +215,23 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
           });
           return (
             <article
+              ref={(element) => {
+                runtimeStyle = createRuntimeStyleBinding(element);
+                const value = window();
+                runtimeStyle.update({
+                  left: `${value.rect.x}px`,
+                  top: `${value.rect.y}px`,
+                  width: `${value.rect.width}px`,
+                  height: `${value.rect.height}px`,
+                  "z-index": value.zIndex,
+                });
+              }}
               class="app-window-card"
               data-window-id={window().windowId}
               data-terminal-source-id={terminalSourceId() ?? ""}
               data-placement={window().placement}
               data-selected={window().selected}
               data-active={window().active}
-              style={{
-                left: `${window().rect.x}px`,
-                top: `${window().rect.y}px`,
-                width: `${window().rect.width}px`,
-                height: `${window().rect.height}px`,
-                "z-index": window().zIndex,
-              }}
               onPointerDown={(event) => {
                 if (event.target instanceof Element && event.target.closest(".terminal-surface")) {
                   return;

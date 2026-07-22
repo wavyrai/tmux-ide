@@ -1,0 +1,8 @@
+/*
+ * Runtime geometry and theme values are written to this same-origin stylesheet
+ * through CSSOM. Keep the marker as a top-level rule: runtime-style.ts uses it
+ * to locate the CSP-authorized sheet without relying on a build-time filename.
+ */
+.tmi-runtime-style-registry {
+  --tmi-runtime-style-registry-ready: 1;
+}

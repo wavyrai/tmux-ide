@@ -15,6 +15,7 @@ import type {
   NativeTerminalTransport,
 } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
+import runtimeStyles from "../runtime-styles.css?raw";
 import { AppWindowCanvas } from "./app-window-canvas.tsx";
 
 const disposers: Array<() => void> = [];
@@ -148,6 +149,10 @@ const inventory: ApplicationShellTerminalInventory = {
 
 describe("AppWindowCanvas", () => {
   it("renders terminal content under canonical window identity and durable geometry", () => {
+    const runtimeSheet = document.createElement("style");
+    runtimeSheet.textContent = runtimeStyles;
+    document.head.append(runtimeSheet);
+    disposers.push(() => runtimeSheet.remove());
     const root = document.createElement("div");
     document.body.append(root);
     const onCommand = vi.fn();
@@ -169,8 +174,15 @@ describe("AppWindowCanvas", () => {
 
     const card = root.querySelector<HTMLElement>('.app-window-card[data-window-id="window.lead"]');
     expect(card?.dataset.terminalSourceId).toBe("terminal.lead");
-    expect(card?.getAttribute("style")).toContain("width: 900px");
-    expect(card?.getAttribute("style")).toContain("height: 540px");
+    expect(card?.getAttribute("style")).toBeNull();
+    const key = card?.dataset.tmiRuntimeStyle;
+    const rule = [...runtimeSheet.sheet!.cssRules].find(
+      (candidate) =>
+        candidate instanceof CSSStyleRule && candidate.selectorText.includes(key ?? "__missing__"),
+    );
+    expect(rule).toBeInstanceOf(CSSStyleRule);
+    expect((rule as CSSStyleRule).style.width).toBe("900px");
+    expect((rule as CSSStyleRule).style.height).toBe("540px");
     expect(card?.querySelector(".web-pane-frame")?.getAttribute("data-pane-id")).toBe(
       "window.lead",
     );

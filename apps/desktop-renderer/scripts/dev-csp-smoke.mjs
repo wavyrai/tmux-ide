@@ -125,6 +125,19 @@ try {
     const page = await browser.newPage({ viewport: { width: 1_200, height: 800 } });
     const consoleMessages = [];
     page.on("console", (message) => consoleMessages.push(message.text()));
+    await page.addInitScript(() => {
+      globalThis.__tmiCspViolations = [];
+      globalThis.document.addEventListener("securitypolicyviolation", (event) => {
+        globalThis.__tmiCspViolations.push({
+          blockedURI: event.blockedURI,
+          directive: event.effectiveDirective,
+          sourceFile: event.sourceFile,
+          lineNumber: event.lineNumber,
+          columnNumber: event.columnNumber,
+          sample: event.sample,
+        });
+      });
+    });
     await page.goto(rendererUrl, { waitUntil: "networkidle" });
     const result = await page.evaluate(() => {
       const frame = [...globalThis.document.querySelectorAll(".web-pane-frame")].find(
@@ -144,6 +157,8 @@ try {
       globalThis.document.body.append(mountRoot);
       const { mountControlledTabsSmokeFixture, mountUiSystemShowcaseFixture } =
         await import("/src/ui-system/showcase.fixture.tsx");
+      const { mountAppWindowCanvasSmokeFixture } =
+        await import("/src/experience/app-window-canvas.fixture.tsx");
       const dispose = mountUiSystemShowcaseFixture(mountRoot);
       const trigger = mountRoot.querySelector('[aria-label="Add pane"]');
       trigger?.focus();
@@ -161,6 +176,37 @@ try {
         controlledTriggers[0]?.getAttribute("tabindex") === "-1" &&
         controlledTriggers[1]?.getAttribute("aria-selected") === "true" &&
         controlledTriggers[1]?.getAttribute("tabindex") === "0";
+      const canvasRoot = globalThis.document.createElement("div");
+      globalThis.document.body.append(canvasRoot);
+      const disposeCanvas = mountAppWindowCanvasSmokeFixture(canvasRoot);
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const docked = canvasRoot.querySelector('[data-window-id="window.docked"]');
+      const floating = canvasRoot.querySelector('[data-window-id="window.floating"]');
+      const canvas = canvasRoot.querySelector(".app-window-canvas");
+      const canvasRect = canvas?.getBoundingClientRect();
+      const dockedRect = docked?.getBoundingClientRect();
+      const floatingRect = floating?.getBoundingClientRect();
+      const canvasRuntimeRules = [];
+      for (const sheet of globalThis.document.styleSheets) {
+        try {
+          for (const rule of sheet.cssRules) {
+            if (
+              rule instanceof globalThis.CSSStyleRule &&
+              [docked, floating].some(
+                (element) =>
+                  element &&
+                  rule.selectorText.includes(
+                    element.getAttribute("data-tmi-runtime-style") ?? "__missing__",
+                  ),
+              )
+            ) {
+              canvasRuntimeRules.push(rule.cssText);
+            }
+          }
+        } catch {
+          // Ignore opaque stylesheets.
+        }
+      }
       const output = {
         controlledTabsSynchronized,
         portaledWithinFixture: Boolean(tooltip && mountRoot.contains(tooltip)),
@@ -175,19 +221,76 @@ try {
               bottom: tooltipRect.bottom,
             }
           : null,
+        canvas: {
+          docked: dockedRect ? { width: dockedRect.width, height: dockedRect.height } : null,
+          floating: floatingRect
+            ? {
+                left: floatingRect.left - (canvasRect?.left ?? 0),
+                top: floatingRect.top - (canvasRect?.top ?? 0),
+                width: floatingRect.width,
+                height: floatingRect.height,
+              }
+            : null,
+          runtimeKeys: [docked, floating].map((element) =>
+            element?.getAttribute("data-tmi-runtime-style"),
+          ),
+          runtimeRules: canvasRuntimeRules,
+          inlineAttributes: globalThis.document.querySelectorAll("[style]").length,
+        },
       };
+      disposeCanvas();
+      canvasRoot.remove();
       controlledTabs.dispose();
       tabsRoot.remove();
       dispose();
       mountRoot.remove();
       return output;
     });
+    const styleDiagnostics = await page.evaluate(() => {
+      const describe = (element) => ({
+        tag: element.tagName.toLowerCase(),
+        id: element.id,
+        class: element.getAttribute("class") ?? "",
+        runtimeKey: element.getAttribute("data-tmi-runtime-style") ?? "",
+        style: element.getAttribute("style") ?? "",
+      });
+      const runtimeRules = [];
+      for (const sheet of globalThis.document.styleSheets) {
+        try {
+          for (const rule of sheet.cssRules) {
+            if (
+              rule instanceof globalThis.CSSStyleRule &&
+              rule.selectorText.includes("data-tmi-runtime-style")
+            ) {
+              runtimeRules.push(rule.cssText);
+            }
+          }
+        } catch {
+          // Opaque cross-origin sheets are irrelevant to the local runtime registry.
+        }
+      }
+      return {
+        inlineAttributes: [...globalThis.document.querySelectorAll("[style]")].map(describe),
+        styleElements: [...globalThis.document.querySelectorAll("style")].map(describe),
+        runtimeRules,
+        violations: globalThis.__tmiCspViolations ?? [],
+      };
+    });
     const violations = consoleMessages.filter((message) => cspViolation.test(message));
     if (violations.length > 0) {
-      throw new Error(`Renderer emitted CSP violations:\n${violations.join("\n")}`);
+      throw new Error(
+        `Renderer emitted CSP violations:\n${violations.join("\n")}\n` +
+          `Style diagnostics: ${JSON.stringify(styleDiagnostics, null, 2)}`,
+      );
     }
-    if (result.inlineStyleElements !== 0) {
-      throw new Error(`Renderer injected ${result.inlineStyleElements} inline style element(s)`);
+    if (
+      result.inlineStyleElements !== 0 ||
+      styleDiagnostics.inlineAttributes.length !== 0 ||
+      styleDiagnostics.styleElements.length !== 0
+    ) {
+      throw new Error(
+        `Renderer created inline style nodes or attributes: ${JSON.stringify(styleDiagnostics, null, 2)}`,
+      );
     }
     if (
       !result.frame ||
@@ -207,7 +310,15 @@ try {
       primitiveResult.tooltip.left < 0 ||
       primitiveResult.tooltip.top < 0 ||
       primitiveResult.tooltip.right > 1_200 ||
-      primitiveResult.tooltip.bottom > 800
+      primitiveResult.tooltip.bottom > 800 ||
+      primitiveResult.canvas.inlineAttributes !== 0 ||
+      primitiveResult.canvas.runtimeKeys.some((key) => !key) ||
+      primitiveResult.canvas.docked?.width !== 800 ||
+      primitiveResult.canvas.docked?.height !== 500 ||
+      primitiveResult.canvas.floating?.left !== 42 ||
+      primitiveResult.canvas.floating?.top !== 36 ||
+      primitiveResult.canvas.floating?.width !== 360 ||
+      primitiveResult.canvas.floating?.height !== 220
     ) {
       throw new Error(
         `Renderer primitive tooltip escaped safe geometry: ${JSON.stringify(primitiveResult)}`,

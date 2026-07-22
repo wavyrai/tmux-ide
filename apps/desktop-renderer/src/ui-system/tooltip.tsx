@@ -1,6 +1,8 @@
 import { createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 
+import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
+
 export type TooltipPlacement = "top" | "right" | "bottom" | "left";
 
 export interface TooltipTriggerProps {
@@ -95,6 +97,9 @@ export function Tooltip(props: TooltipProps): JSX.Element {
   const open = () => !dismissed() && (pointerOpen() || focusOpen());
   let anchor: HTMLSpanElement | undefined;
   let tooltip: HTMLSpanElement | undefined;
+  let runtimeStyle: RuntimeStyleBinding | null = null;
+
+  onCleanup(() => runtimeStyle?.dispose());
 
   const positionTooltip = () => {
     if (!anchor || !tooltip) return;
@@ -105,8 +110,7 @@ export function Tooltip(props: TooltipProps): JSX.Element {
       window.innerWidth,
       window.innerHeight,
     );
-    tooltip.style.setProperty("left", `${position.left}px`);
-    tooltip.style.setProperty("top", `${position.top}px`);
+    runtimeStyle?.update({ left: `${position.left}px`, top: `${position.top}px` });
     setPlacement(position.placement);
     setPositioned(true);
   };
@@ -175,7 +179,10 @@ export function Tooltip(props: TooltipProps): JSX.Element {
         }
       >
         <span
-          ref={(element) => (tooltip = element)}
+          ref={(element) => {
+            tooltip = element;
+            runtimeStyle = createRuntimeStyleBinding(element);
+          }}
           id={id}
           class="tmi-tooltip"
           role="tooltip"

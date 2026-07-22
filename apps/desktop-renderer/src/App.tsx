@@ -1,4 +1,4 @@
-import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type {
   ApplicationShellCommandInvocation,
   ApplicationShellProjectionInputV1,
@@ -30,6 +30,7 @@ import type {
   PaneFrameGripIntent,
   PaneFrameModel,
 } from "../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "./runtime-style.ts";
 
 export interface AppProps {
   readonly host?: HostCapabilities;
@@ -68,6 +69,7 @@ export function App(props: AppProps = {}) {
   let bootstrapRequest = 0;
   let daemonRefreshFlight: Promise<void> | null = null;
   let disposed = false;
+  let appRuntimeStyle: RuntimeStyleBinding | null = null;
   let productionTerminalAuthority: {
     readonly key: string;
     readonly transport: NativeTerminalTransport;
@@ -144,6 +146,10 @@ export function App(props: AppProps = {}) {
   const effectiveTheme = () => theme() ?? bootstrap()?.theme ?? initialTheme;
   const effectiveWindow = () => windowState() ?? bootstrap()?.window ?? null;
   const experience = createMemo(() => createDomExperience({ hostTheme: effectiveTheme() }));
+  createEffect(() => {
+    const variables = experience().variables;
+    appRuntimeStyle?.update(variables);
+  });
   const terminalThemeKey = createMemo(() => {
     const current = effectiveTheme();
     return `${current?.mode ?? "system"}:${current?.highContrast ?? false}`;
@@ -166,6 +172,14 @@ export function App(props: AppProps = {}) {
 
   return (
     <div
+      ref={(element) => {
+        appRuntimeStyle = createRuntimeStyleBinding(element);
+        appRuntimeStyle.update(experience().variables);
+        onCleanup(() => {
+          appRuntimeStyle?.dispose();
+          appRuntimeStyle = null;
+        });
+      }}
       class="app"
       data-theme={experience().appearance}
       data-platform={bootstrap()?.platform}
@@ -181,7 +195,6 @@ export function App(props: AppProps = {}) {
               ? "preview"
               : "runtime"
       }
-      style={experience().variables}
     >
       <Show
         when={!hostResolutionError && host}
