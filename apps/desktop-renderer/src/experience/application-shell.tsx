@@ -62,6 +62,7 @@ import type { AppWindowCanvasCommandInvocation } from "./app-window-canvas-prese
 import {
   createDefaultDomShellInput,
   createDefaultDomPaneFrames,
+  DOM_SHELL_GEOMETRY,
   createDomPaletteEntries,
   createDomShellReplayState,
   dockToolIcon,
@@ -212,7 +213,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const [state, setState] = createSignal(createDomShellReplayState(input()));
   const [viewport, setViewport] = createSignal(initialViewport());
   const [createPaneOpen, setCreatePaneOpen] = createSignal(false);
-  const [sidebarWidth, setSidebarWidth] = createSignal(272);
+  const [sidebarWidth, setSidebarWidth] = createSignal<number>(DOM_SHELL_GEOMETRY.sidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [paletteTransitionSource, setPaletteTransitionSource] = createSignal<"keyboard" | "mouse">(
     "keyboard",
@@ -225,7 +226,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   let returnFocusId: string | null = null;
 
   const shell = createMemo(() => projectDomApplicationShell(input(), state()));
-  const effectiveSidebarWidth = createMemo(() => (sidebarCollapsed() ? 56 : sidebarWidth()));
+  const effectiveSidebarWidth = createMemo(() =>
+    sidebarCollapsed() ? DOM_SHELL_GEOMETRY.sidebarCollapsedWidth : sidebarWidth(),
+  );
   createComputed(() => {
     const properties = { "--desktop-sidebar-width": `${effectiveSidebarWidth()}px` };
     titlebarStyle?.update(properties);
@@ -814,8 +817,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         <ResizeHandle
           class="workspace-sidebar__resize"
           value={sidebarWidth()}
-          min={240}
-          max={320}
+          min={DOM_SHELL_GEOMETRY.sidebarMinimumWidth}
+          max={DOM_SHELL_GEOMETRY.sidebarMaximumWidth}
           label="Resize workspace sidebar"
           disabled={sidebarCollapsed()}
           onValueChange={(width) => {
@@ -875,16 +878,6 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
             hidden={shell().workspaceCanvas.activeMode !== "terminals"}
             data-focus-zone="canvas"
           >
-            <header class="canvas-toolbar">
-              <span>
-                <strong>{shell().workspace.name}</strong>{" "}
-                <small>{dataMode() === "preview" ? "preview data" : "workspace snapshot"}</small>
-              </span>
-              <span>
-                {shell().terminalInventory?.resources.length ?? shell().sidebar.agents.length}{" "}
-                terminals · {shell().sidebar.agents.length} agents
-              </span>
-            </header>
             <Show
               when={focusedAppWindowDocument()}
               fallback={

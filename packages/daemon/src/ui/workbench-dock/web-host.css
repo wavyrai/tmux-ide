@@ -14,9 +14,18 @@
   overflow: hidden;
   container-type: inline-size;
   color: var(--dock-fg);
-  border-top: 1px solid var(--dock-border);
+  border-top: 0;
   background: var(--dock-bg);
-  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+  font-family:
+    "DM Sans",
+    Inter,
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Segoe UI",
+    sans-serif;
+  font-size: 13px;
 }
 
 .workbench-dock__bar {

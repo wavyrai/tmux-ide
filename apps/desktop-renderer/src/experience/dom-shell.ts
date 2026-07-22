@@ -68,13 +68,13 @@ export interface DomApplicationShellProjection extends Omit<
 }
 
 export const DOM_SHELL_GEOMETRY = Object.freeze({
-  titlebarHeight: 52,
-  statusHeight: 24,
-  dockStripHeight: 38,
-  sidebarWidth: 272,
-  sidebarMinimumWidth: 240,
-  sidebarMaximumWidth: 320,
-  sidebarCollapsedWidth: 56,
+  titlebarHeight: 50,
+  statusHeight: 22,
+  dockStripHeight: 40,
+  sidebarWidth: 236,
+  sidebarMinimumWidth: 220,
+  sidebarMaximumWidth: 300,
+  sidebarCollapsedWidth: 48,
 });
 
 export function createDefaultDomShellInput(): ApplicationShellProjectionInputV1 {
@@ -229,9 +229,9 @@ function variantMetrics(variant: DomShellVariant): {
   minimumDock: number;
   minimumCanvas: number;
 } {
-  if (variant === "compact") return { minimumDock: 126, minimumCanvas: 144 };
-  if (variant === "standard") return { minimumDock: 180, minimumCanvas: 216 };
-  return { minimumDock: 252, minimumCanvas: 288 };
+  if (variant === "compact") return { minimumDock: 132, minimumCanvas: 140 };
+  if (variant === "standard") return { minimumDock: 168, minimumCanvas: 216 };
+  return { minimumDock: 192, minimumCanvas: 288 };
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -261,7 +261,7 @@ export function projectDomWorkbenchDock(
   const workspaceWidth = Math.max(0, viewport.width - sidebarWidth);
   const maximumOpenDock = Math.max(metrics.minimumDock, workbenchHeight - metrics.minimumCanvas);
   const openDockHeight = clamp(
-    Math.round(workbenchHeight * 0.3),
+    Math.round(workbenchHeight * 0.24),
     metrics.minimumDock,
     maximumOpenDock,
   );
@@ -340,13 +340,13 @@ export function projectDomWorkbenchDock(
     dockBodyRail: {
       x: sidebarWidth,
       y: dockY + dockStripHeight,
-      width: dockStripHeight,
+      width: 0,
       height: bodyHeight,
     },
     dockBodyContent: {
-      x: sidebarWidth + dockStripHeight,
+      x: sidebarWidth,
       y: dockY + dockStripHeight,
-      width: Math.max(0, workspaceWidth - dockStripHeight),
+      width: workspaceWidth,
       height: bodyHeight,
     },
     tabs,

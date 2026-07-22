@@ -384,7 +384,7 @@ describe("visible DOM application shell", () => {
     expect(root.querySelectorAll('[role="tabpanel"]')).toHaveLength(6);
     expect(root.textContent).toContain("Sessions");
     expect(root.textContent).toContain("Agents");
-    expect(root.textContent).toContain("workspace snapshot");
+    expect(root.querySelector(".canvas-toolbar")).toBeNull();
     expect(root.textContent).not.toContain("Preview data");
     expect(root.querySelector(".shell-workbench")?.getAttribute("data-shell-source")).toBe(
       "runtime",
@@ -622,11 +622,11 @@ describe("visible DOM application shell", () => {
     const resize = root.querySelector<HTMLElement>('.workspace-sidebar__resize[role="separator"]')!;
     const toggle = root.querySelector<HTMLButtonElement>('[aria-label="Collapse sidebar"]')!;
 
-    expect(resize.getAttribute("aria-valuemin")).toBe("240");
-    expect(resize.getAttribute("aria-valuemax")).toBe("320");
-    expect(resize.getAttribute("aria-valuenow")).toBe("272");
+    expect(resize.getAttribute("aria-valuemin")).toBe("220");
+    expect(resize.getAttribute("aria-valuemax")).toBe("300");
+    expect(resize.getAttribute("aria-valuenow")).toBe("236");
     resize.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
-    expect(resize.getAttribute("aria-valuenow")).toBe("264");
+    expect(resize.getAttribute("aria-valuenow")).toBe("228");
 
     pointerClick(toggle);
     expect(workbench.getAttribute("data-sidebar-collapsed")).toBe("true");
@@ -667,21 +667,17 @@ describe("visible DOM application shell", () => {
     expect(getComputedStyle(runningIndicator).backgroundColor).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.status.info],
     );
-    expect(getComputedStyle(runningPane).backgroundColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.surface.terminal],
+    expect(getComputedStyle(runningPane).backgroundColor).not.toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.status.info],
     );
-    expect(getComputedStyle(runningPane).borderColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.border.focused],
-    );
+    expect(runningPane.getAttribute("data-border-role")).toBe("focused");
     expect(getComputedStyle(recoveryIndicator).backgroundColor).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.status.danger],
     );
-    expect(getComputedStyle(recoveryPane).backgroundColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.surface.terminal],
+    expect(getComputedStyle(recoveryPane).backgroundColor).not.toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.status.danger],
     );
-    expect(getComputedStyle(recoveryPane).borderColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.border.danger],
-    );
+    expect(recoveryPane.getAttribute("data-border-role")).toBe("danger");
   });
 
   it("makes an unavailable primary surface both explanatory and inert", () => {
@@ -1026,7 +1022,7 @@ describe("visible DOM application shell", () => {
     );
     expect(root.querySelector(".workspace-main")?.getAttribute("data-dock-mode")).toBe("maximized");
     expect(docsLeaf?.getAttribute("aria-pressed")).toBe("true");
-    expect(root.textContent).toContain("Reactive workspace");
+    expect(root.querySelector(".titlebar__brand")?.textContent).toContain("tmux-ide reactive");
     expect(root.textContent).toContain("Fresh documentation");
     expect(root.textContent).toContain("Codex refreshed");
     expect(root.textContent).toContain("999 indexed files");

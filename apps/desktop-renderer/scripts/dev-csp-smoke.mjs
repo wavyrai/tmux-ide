@@ -653,10 +653,10 @@ try {
       dragResult.styleAttributes !== 0 ||
       visualResult.app?.width !== 1_440 ||
       visualResult.app?.height !== 900 ||
-      visualResult.titlebar?.height !== 52 ||
-      visualResult.sidebar?.width !== 272 ||
-      visualResult.dock?.height !== 38 ||
-      visualResult.status?.height !== 24 ||
+      visualResult.titlebar?.height !== 50 ||
+      visualResult.sidebar?.width !== 236 ||
+      visualResult.dock?.height !== 40 ||
+      visualResult.status?.height !== 22 ||
       visualResult.tabs !== 2 ||
       visualResult.dockTabs !== 4 ||
       visualResult.cards.length !== 2 ||
@@ -678,6 +678,8 @@ try {
     }
 
     const shellEvidenceCases = [
+      { appearance: "dark", width: 1_440, height: 900 },
+      { appearance: "light", width: 1_440, height: 900 },
       { appearance: "dark", width: 1_200, height: 800 },
       { appearance: "light", width: 1_200, height: 800 },
       { appearance: "dark", width: 840, height: 620 },
@@ -721,14 +723,18 @@ try {
             return bounds
               ? {
                   left: bounds.left,
+                  top: bounds.top,
                   right: bounds.right,
+                  bottom: bounds.bottom,
                   width: bounds.width,
+                  height: bounds.height,
                 }
               : null;
           };
           return {
+            main: read(".workspace-main"),
             sidebar: read(".workspace-sidebar"),
-            canvas: read(".app-window-canvas"),
+            canvas: read(".workspace-canvas:not([hidden])"),
             dock: read(".workspace-dock"),
           };
         };
@@ -866,6 +872,30 @@ try {
           new globalThis.MouseEvent("mousedown", { bubbles: true, detail: 1 }),
         );
         await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        globalThis.document
+          .querySelector('[data-action="toggle-collapse"]')
+          ?.dispatchEvent(new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }));
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const openDock = layoutBounds();
+        globalThis.document
+          .querySelector('[data-action="toggle-collapse"]')
+          ?.dispatchEvent(new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }));
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const collapsedDock = layoutBounds();
+        globalThis.document
+          .querySelector('[data-action="toggle-collapse"]')
+          ?.dispatchEvent(new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }));
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        globalThis.document
+          .querySelector('[data-action="toggle-maximize"]')
+          ?.dispatchEvent(new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }));
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const maximizedDock = layoutBounds();
+        globalThis.document
+          .querySelector('[data-action="toggle-maximize"]')
+          ?.dispatchEvent(new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }));
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const restoredDock = layoutBounds();
         let interaction = null;
         if (width === 840) {
           globalThis.document
@@ -903,10 +933,17 @@ try {
           ),
           chromeColor: titlebarStyle?.backgroundColor ?? null,
           horizontalOverflow: globalThis.document.documentElement.scrollWidth > width,
+          verticalOverflow: globalThis.document.documentElement.scrollHeight > height,
           styleAttributes: globalThis.document.querySelectorAll("[style]").length,
           styleElements: globalThis.document.querySelectorAll("style").length,
           violations: globalThis.__tmiCspViolations ?? [],
           paletteEvidence,
+          dockModes: {
+            open: openDock,
+            collapsed: collapsedDock,
+            maximized: maximizedDock,
+            restored: restoredDock,
+          },
           interaction,
         };
       }, fixture);
@@ -923,22 +960,51 @@ try {
       }
       await evidencePage.close();
     }
-    const [darkEvidence, lightEvidence] = shellEvidence;
+    const darkEvidence = shellEvidence.find(
+      (evidence) => evidence.appearance === "dark" && evidence.viewport.width === 1_200,
+    );
+    const lightEvidence = shellEvidence.find(
+      (evidence) => evidence.appearance === "light" && evidence.viewport.width === 1_200,
+    );
+    const dockGeometryIsValid = (evidence) => {
+      const { open, collapsed, maximized, restored } = evidence.dockModes;
+      const aligned = (layout) =>
+        layout.main &&
+        layout.canvas &&
+        layout.dock &&
+        Math.abs(layout.canvas.bottom - layout.dock.top) < 0.5 &&
+        Math.abs(layout.dock.bottom - layout.main.bottom) < 0.5 &&
+        Math.abs(layout.dock.left - layout.main.left) < 0.5 &&
+        Math.abs(layout.dock.width - layout.main.width) < 0.5;
+      return (
+        aligned(open) &&
+        aligned(collapsed) &&
+        aligned(maximized) &&
+        aligned(restored) &&
+        Math.abs(collapsed.dock.height - 40) < 0.5 &&
+        Math.abs(maximized.canvas.height) < 0.5 &&
+        Math.abs(maximized.dock.height - maximized.main.height) < 0.5 &&
+        Math.abs(open.canvas.height - restored.canvas.height) < 0.5 &&
+        Math.abs(open.dock.height - restored.dock.height) < 0.5
+      );
+    };
     if (
       shellEvidence.some(
         (evidence) =>
           evidence.app?.width !== evidence.viewport.width ||
           evidence.app?.height !== evidence.viewport.height ||
-          evidence.titlebar?.height !== 52 ||
-          evidence.sidebar?.width !== 272 ||
-          evidence.dock?.height !== 38 ||
-          evidence.status?.height !== 24 ||
-          evidence.primaryTab?.height !== 38 ||
+          evidence.titlebar?.height !== 50 ||
+          evidence.sidebar?.width !== 236 ||
+          evidence.dock?.height !== 40 ||
+          evidence.status?.height !== 22 ||
+          evidence.primaryTab?.height !== 36 ||
           evidence.palette?.height !== 32 ||
-          (evidence.sidebarRow?.height ?? 0) < 38 ||
+          (evidence.sidebarRow?.height ?? 0) < 40 ||
           evidence.icon?.width !== 16 ||
           !evidence.resizeHandle ||
           evidence.horizontalOverflow ||
+          evidence.verticalOverflow ||
+          !dockGeometryIsValid(evidence) ||
           evidence.styleAttributes !== 0 ||
           evidence.styleElements !== 0 ||
           evidence.violations.some(({ directive }) => directive.startsWith("style-src")) ||
@@ -973,13 +1039,13 @@ try {
       shellEvidence.some(
         (evidence) =>
           evidence.interaction &&
-          (evidence.interaction.collapsed.sidebar?.width !== 56 ||
-            evidence.interaction.collapsed.dock?.left !== 56 ||
-            (evidence.interaction.collapsed.canvas?.left ?? 0) < 56 ||
-            evidence.interaction.resized.sidebar?.width !== 320 ||
-            evidence.interaction.resized.dock?.left !== 320 ||
-            (evidence.interaction.resized.canvas?.left ?? 0) < 320 ||
-            evidence.interaction.resizeValue !== "320"),
+          (evidence.interaction.collapsed.sidebar?.width !== 48 ||
+            evidence.interaction.collapsed.dock?.left !== 48 ||
+            (evidence.interaction.collapsed.canvas?.left ?? 0) < 48 ||
+            evidence.interaction.resized.sidebar?.width !== 300 ||
+            evidence.interaction.resized.dock?.left !== 300 ||
+            (evidence.interaction.resized.canvas?.left ?? 0) < 300 ||
+            evidence.interaction.resizeValue !== "300"),
       )
     ) {
       throw new Error(

@@ -27,26 +27,26 @@ describe("DOM application-shell projection", () => {
     {
       viewport: { width: 720, height: 480 },
       variant: "compact",
-      sidebar: 272,
-      workbench: 404,
-      canvas: 278,
-      dock: { x: 272, y: 330, width: 448, height: 126 },
+      sidebar: 236,
+      workbench: 408,
+      canvas: 276,
+      dock: { x: 236, y: 326, width: 484, height: 132 },
     },
     {
       viewport: { width: 1_280, height: 820 },
       variant: "standard",
-      sidebar: 272,
-      workbench: 744,
-      canvas: 521,
-      dock: { x: 272, y: 573, width: 1_008, height: 223 },
+      sidebar: 236,
+      workbench: 748,
+      canvas: 568,
+      dock: { x: 236, y: 618, width: 1_044, height: 180 },
     },
     {
       viewport: { width: 1_600, height: 1_000 },
       variant: "wide",
-      sidebar: 272,
-      workbench: 924,
-      canvas: 647,
-      dock: { x: 272, y: 699, width: 1_328, height: 277 },
+      sidebar: 236,
+      workbench: 928,
+      canvas: 705,
+      dock: { x: 236, y: 755, width: 1_364, height: 223 },
     },
   ])("uses bottom-dock geometry at $viewport.width×$viewport.height", (fixture) => {
     const dock = projectDomWorkbenchDock(projection(), fixture.viewport);
@@ -63,10 +63,10 @@ describe("DOM application-shell projection", () => {
       x: fixture.sidebar,
       y: fixture.dock.y,
       width: fixture.dock.width,
-      height: 38,
+      height: 40,
     });
-    expect(dock.dockBody.height).toBe(fixture.dock.height - 38);
-    expect(dock.dockBodyContent.width).toBe(fixture.dock.width - 38);
+    expect(dock.dockBody.height).toBe(fixture.dock.height - 40);
+    expect(dock.dockBodyContent.width).toBe(fixture.dock.width);
     expect(dock.dock.width).toBe(fixture.viewport.width - fixture.sidebar);
   });
 
@@ -75,10 +75,10 @@ describe("DOM application-shell projection", () => {
     const collapsed = projectDomWorkbenchDock(projection("collapsed"), viewport);
     const maximized = projectDomWorkbenchDock(projection("maximized"), viewport);
 
-    expect(collapsed.dock).toEqual({ x: 272, y: 758, width: 1_008, height: 38 });
+    expect(collapsed.dock).toEqual({ x: 236, y: 758, width: 1_044, height: 40 });
     expect(collapsed.dockBody.height).toBe(0);
-    expect(maximized.dock).toEqual({ x: 272, y: 52, width: 1_008, height: 744 });
-    expect(maximized.dockBody.height).toBe(706);
+    expect(maximized.dock).toEqual({ x: 236, y: 50, width: 1_044, height: 748 });
+    expect(maximized.dockBody.height).toBe(708);
   });
 
   it.each([56, 240, 272, 320])(
@@ -94,7 +94,7 @@ describe("DOM application-shell projection", () => {
         x: sidebarWidth,
         width: viewport.width - sidebarWidth,
       });
-      expect(dock.dockBodyContent.width).toBe(viewport.width - sidebarWidth - 38);
+      expect(dock.dockBodyContent.width).toBe(viewport.width - sidebarWidth);
     },
   );
 
