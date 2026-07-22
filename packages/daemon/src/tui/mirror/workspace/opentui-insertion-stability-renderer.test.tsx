@@ -1,5 +1,6 @@
 /* @jsxImportSource @opentui/solid */
 import { BoxRenderable } from "@opentui/core";
+import { insertNode } from "@opentui/solid";
 import { describe, expect, it } from "bun:test";
 import { For, Show, createSignal, onCleanup } from "solid-js";
 import {
@@ -122,7 +123,7 @@ describe("OpenTUI Solid insertion stability", () => {
     expect(disposed).toBe(1);
   });
 
-  it("continues to report direct same-node and genuinely foreign insertBefore anchors", async () => {
+  it("forwards nonresident identity anchors while preserving direct Core diagnostics", async () => {
     const setup = await renderForTest(
       () => (
         <box id="valid-parent">
@@ -134,11 +135,17 @@ describe("OpenTUI Solid insertion stability", () => {
     await setup.renderOnce();
     const parent = setup.renderer.root.findDescendantById("valid-parent")!;
     const child = setup.renderer.root.findDescendantById("valid-child")!;
+    const nonresidentIdentity = new BoxRenderable(setup.renderer, {
+      id: "nonresident-identity",
+    });
     const foreignAnchor = new BoxRenderable(setup.renderer, { id: "foreign-anchor" });
     const warnings: string[] = [];
     const originalWarn = console.warn;
     console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
     try {
+      insertNode(parent, nonresidentIdentity, nonresidentIdentity);
+      expect(nonresidentIdentity.parent).toBe(parent);
+      expect(parent.getChildren()).toContain(nonresidentIdentity);
       parent.insertBefore(child, child);
       parent.insertBefore(child, foreignAnchor);
     } finally {
