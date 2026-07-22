@@ -106,15 +106,8 @@ export class PtyInputRejectedError extends Error {
   readonly reason: PtyInputRejectionReason;
   readonly snapshot: PtyInputSnapshot;
 
-  constructor(args: {
-    reason: PtyInputRejectionReason;
-    snapshot: PtyInputSnapshot;
-    cause?: unknown;
-  }) {
-    super(
-      `bounded PTY input rejected: ${args.reason}`,
-      args.cause !== undefined ? { cause: args.cause } : undefined,
-    );
+  constructor(args: { reason: PtyInputRejectionReason; snapshot: PtyInputSnapshot }) {
+    super(`bounded PTY input rejected: ${args.reason}`);
     this.name = "PtyInputRejectedError";
     this.reason = args.reason;
     this.snapshot = args.snapshot;

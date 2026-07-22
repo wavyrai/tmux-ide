@@ -111,13 +111,12 @@ export class MonotonicPtyInput implements PtyBoundedInput {
 
     try {
       this.#sink(frame);
-    } catch (cause) {
+    } catch {
       this.#state = "failed";
       this.#terminalReason = "backend_write_failed";
       throw new PtyInputRejectedError({
         reason: "backend_write_failed",
         snapshot: this.snapshot(),
-        cause,
       });
     }
 
@@ -140,7 +139,7 @@ export class MonotonicPtyInput implements PtyBoundedInput {
   }
 
   close(): void {
-    if (this.#state === "open" || this.#state === "exhausted") {
+    if (this.#state !== "closed") {
       this.#state = "closed";
       this.#terminalReason = "process_closed";
     }

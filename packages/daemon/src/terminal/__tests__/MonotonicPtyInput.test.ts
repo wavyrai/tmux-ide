@@ -63,7 +63,7 @@ describe("MonotonicPtyInput", () => {
 
     const first = rejection(() => input.write(Uint8Array.of(1, 2, 3)));
     expect(first.reason).toBe("backend_write_failed");
-    expect(first.cause).toBe(backendError);
+    expect(first.cause).toBeUndefined();
     expect(first.snapshot).toMatchObject({
       state: "failed",
       acceptedBytes: 3,
@@ -75,6 +75,30 @@ describe("MonotonicPtyInput", () => {
     expect(second.reason).toBe("process_closed");
     expect(second.snapshot.acceptedBytes).toBe(3);
     expect(sink).toHaveBeenCalledOnce();
+  });
+
+  it("redacts a backend failure and transitions the failed generation to closed", () => {
+    const payload = Buffer.from("sec");
+    const sensitiveBackendMessage = "opaque writer retained secret terminal input";
+    const input = new MonotonicPtyInput(limits, () => {
+      throw new Error(sensitiveBackendMessage);
+    });
+
+    const failure = rejection(() => input.write(payload));
+    expect(failure).toMatchObject({
+      reason: "backend_write_failed",
+      snapshot: { state: "failed", acceptedBytes: payload.byteLength, acceptedFrames: 1 },
+    });
+    expect(failure.cause).toBeUndefined();
+    expect(failure.message).not.toContain(sensitiveBackendMessage);
+
+    input.close();
+    expect(input.snapshot()).toMatchObject({
+      state: "closed",
+      acceptedBytes: payload.byteLength,
+      acceptedFrames: 1,
+    });
+    expect(rejection(() => input.write(Uint8Array.of(1))).reason).toBe("process_closed");
   });
 
   it("caps task metadata independently with a lifetime frame count", () => {
