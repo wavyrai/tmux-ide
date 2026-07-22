@@ -60,6 +60,95 @@ export interface PtyExitEvent {
 }
 
 /**
+ * Fixed, daemon-owned limits for the fail-closed PTY input capability.
+ *
+ * These are lifetime limits, not watermarks. Accepted capacity is never
+ * returned because the public node-pty API cannot prove that its private
+ * writer queue released any particular byte. A fresh budget therefore
+ * requires a fresh {@link PtyProcess}; callers cannot reset one in place.
+ */
+export interface PtyInputLimits {
+  /** Largest single binary frame that can cross the adapter boundary. */
+  readonly maxFrameBytes: number;
+  /** Total bytes that can ever be handed to the opaque backend process. */
+  readonly maxAcceptedBytes: number;
+  /** Total non-empty frames that can ever be handed to the opaque backend. */
+  readonly maxAcceptedFrames: number;
+}
+
+export type PtyInputState = "open" | "exhausted" | "failed" | "closed";
+
+/** Immutable accounting snapshot; it never contains terminal input bytes. */
+export interface PtyInputSnapshot extends PtyInputLimits {
+  readonly state: PtyInputState;
+  readonly acceptedBytes: number;
+  readonly acceptedFrames: number;
+  readonly remainingBytes: number;
+  readonly remainingFrames: number;
+}
+
+export type PtyInputRejectionReason =
+  | "frame_too_large"
+  | "lifetime_bytes_exhausted"
+  | "lifetime_frames_exhausted"
+  | "process_closed"
+  | "backend_write_failed";
+
+/**
+ * Typed fail-closed rejection from {@link PtyBoundedInput.write}.
+ *
+ * The rejected payload is deliberately absent. Capacity/backend failures
+ * retire the capability permanently so a caller cannot ignore one rejected
+ * frame and continue with a divergent terminal input stream.
+ */
+export class PtyInputRejectedError extends Error {
+  readonly code = "pty_input_rejected" as const;
+  readonly reason: PtyInputRejectionReason;
+  readonly snapshot: PtyInputSnapshot;
+
+  constructor(args: {
+    reason: PtyInputRejectionReason;
+    snapshot: PtyInputSnapshot;
+    cause?: unknown;
+  }) {
+    super(
+      `bounded PTY input rejected: ${args.reason}`,
+      args.cause !== undefined ? { cause: args.cause } : undefined,
+    );
+    this.name = "PtyInputRejectedError";
+    this.reason = args.reason;
+    this.snapshot = args.snapshot;
+  }
+}
+
+export type PtyInputWriteReceipt =
+  | {
+      readonly status: "accepted";
+      readonly byteLength: number;
+      readonly snapshot: PtyInputSnapshot;
+    }
+  | {
+      readonly status: "ignored";
+      readonly reason: "empty";
+      readonly snapshot: PtyInputSnapshot;
+    };
+
+/**
+ * A bounded binary-only input capability for native attachment transports.
+ *
+ * `write` snapshots accepted input and reserves its byte+frame quota before
+ * invoking the opaque backend. It either returns an accepted/empty receipt or
+ * throws {@link PtyInputRejectedError}; it never silently drops a non-empty
+ * frame. There is intentionally no reset method.
+ */
+export interface PtyBoundedInput {
+  write(data: Uint8Array): PtyInputWriteReceipt;
+  snapshot(): PtyInputSnapshot;
+  /** Permanently reject future writes without releasing accepted capacity. */
+  close(): void;
+}
+
+/**
  * Optional listeners installed on the adapter's process wrapper before that
  * wrapper subscribes to the native child. This closes the post-spawn handle
  * handoff gap and captures even a child implementation which emits
@@ -82,7 +171,17 @@ export interface PtySpawnListeners {
 export interface PtyProcess {
   /** Underlying OS PID (or a synthetic positive integer for mocks). */
   readonly pid: number;
-  /** Write raw bytes (string is interpreted as UTF-8) into the child stdin. */
+  /**
+   * Fail-closed input for native attachment transports. This is the only PTY
+   * input surface whose opaque-backend memory can be bounded without a public
+   * node-pty drain callback.
+   */
+  readonly boundedInput: PtyBoundedInput;
+  /**
+   * Legacy, non-authoritative input with no completion or capacity proof.
+   * Native attachment transports MUST receive only `boundedInput`, never this
+   * process or method. Retained solely for the historical shell bridge.
+   */
   write(data: string | Uint8Array): void;
   /** Resize the controlling terminal. */
   resize(cols: number, rows: number): void;

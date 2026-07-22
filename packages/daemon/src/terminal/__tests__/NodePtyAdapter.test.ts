@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IPty, IPtyForkOptions } from "node-pty";
 import { NodePtyAdapter, ensureNodePtySpawnHelperExecutable } from "../NodePtyAdapter.ts";
-import { PtySpawnError } from "../PtyAdapter.ts";
+import { PtyInputRejectedError, PtySpawnError } from "../PtyAdapter.ts";
 
 const skipOnWin = process.platform === "win32";
 // node-pty's `onData` callback never fires under bun's runtime. This
@@ -50,6 +50,20 @@ function stubNodePty(write: IPty["write"]): IPty {
 }
 
 describe("NodePtyAdapter input encoding", () => {
+  it("rejects invalid bounded-input policy at adapter construction, before spawn", () => {
+    expect(
+      () =>
+        new NodePtyAdapter({
+          skipHelperEnsure: true,
+          boundedInputLimits: {
+            maxFrameBytes: 1,
+            maxAcceptedBytes: 1,
+            maxAcceptedFrames: 16_385,
+          },
+        }),
+    ).toThrow(/maxAcceptedFrames/u);
+  });
+
   it("passes raw bytes to node-pty without string transcoding and preserves UTF-8 strings", () => {
     const writes: Array<string | Buffer> = [];
     let spawnOptions: IPtyForkOptions | undefined;
@@ -140,6 +154,76 @@ describe("NodePtyAdapter input encoding", () => {
 
     expect(child.pause).toHaveBeenCalledOnce();
     expect(child.resume).toHaveBeenCalledOnce();
+  });
+
+  it("bounds an opaque node-pty writer that never reports drain", () => {
+    const writes: Array<string | Buffer> = [];
+    const child = stubNodePty((data) => writes.push(data));
+    const adapter = new NodePtyAdapter({
+      skipHelperEnsure: true,
+      spawnPty: () => child,
+      boundedInputLimits: {
+        maxFrameBytes: 3,
+        maxAcceptedBytes: 4,
+        maxAcceptedFrames: 2,
+      },
+    });
+    const proc = adapter.spawnSync({
+      shell: "/trusted/tmux",
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+      env: { TERM: "xterm-256color" },
+      encoding: null,
+    });
+
+    proc.boundedInput.write(Uint8Array.of(0x00, 0x80, 0xff));
+    expect(() => proc.boundedInput.write(Uint8Array.of(1, 2))).toThrowError(
+      expect.objectContaining<Partial<PtyInputRejectedError>>({
+        reason: "lifetime_bytes_exhausted",
+      }),
+    );
+
+    expect(writes).toEqual([Buffer.from([0x00, 0x80, 0xff])]);
+    expect(proc.boundedInput.snapshot()).toMatchObject({
+      state: "exhausted",
+      acceptedBytes: 3,
+      acceptedFrames: 1,
+    });
+  });
+
+  it("does not reclaim reserved capacity when node-pty write throws", () => {
+    const backendError = new Error("write queue unavailable");
+    const child = stubNodePty(() => {
+      throw backendError;
+    });
+    const adapter = new NodePtyAdapter({
+      skipHelperEnsure: true,
+      spawnPty: () => child,
+      boundedInputLimits: {
+        maxFrameBytes: 4,
+        maxAcceptedBytes: 4,
+        maxAcceptedFrames: 2,
+      },
+    });
+    const proc = adapter.spawnSync({
+      shell: "/trusted/tmux",
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+      env: { TERM: "xterm-256color" },
+    });
+
+    expect(() => proc.boundedInput.write(Uint8Array.of(1, 2, 3))).toThrowError(
+      expect.objectContaining<Partial<PtyInputRejectedError>>({
+        reason: "backend_write_failed",
+      }),
+    );
+    expect(proc.boundedInput.snapshot()).toMatchObject({
+      state: "failed",
+      acceptedBytes: 3,
+      acceptedFrames: 1,
+    });
   });
 });
 

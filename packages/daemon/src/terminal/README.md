@@ -90,13 +90,15 @@ we register there.
   This is enforced by `pty-bridge.ts` now consuming `PtyAdapter` and is
   the gate G14-T10 will tighten further.
 - Native PTY input is intentionally not exposed by the grouped attachment
-  launcher yet. Installed node-pty's public `IPty.write(): void` offers no
-  drain/completion or pending-capacity signal while its Unix implementation
-  has a private asynchronous queue. Until an adapter/native helper provides a
-  real bounded-write contract, interactive writes fail with
-  `input-backpressure-unavailable`; this prevents stalled tmux readers from
-  growing an unobservable queue without bound. Output uses public
-  `IPty.pause()`/`resume()` and byte+frame caps.
+  launcher yet. `PtyProcess.boundedInput` now provides a monotonic fail-closed
+  primitive: it snapshots and accounts a fixed lifetime byte+frame budget
+  before each opaque node-pty call and never reclaims it. That bounds the
+  private queue without reading private fields, but it does not prove delivery.
+  Interactive attachment writes therefore continue to fail with
+  `input-backpressure-unavailable` until the direct stream owns typed
+  exhaustion/re-attach behavior. Legacy `PtyProcess.write()` is explicitly
+  non-authoritative and must never reach that stream. See ADR-0003. Output uses
+  public `IPty.pause()`/`resume()` and byte+frame caps.
 - Read-only attachment clients are also fail-closed in this first launcher
   slice. They fail before PTY spawn with `read_only_unavailable` until the
   daemon proves the installed tmux version and continuously holds an

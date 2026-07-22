@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodePtyAdapter } from "../NodePtyAdapter.ts";
-import { PtySpawnError, type PtyAdapter } from "../PtyAdapter.ts";
+import { PtyInputRejectedError, PtySpawnError, type PtyAdapter } from "../PtyAdapter.ts";
 import { MockPtyAdapter } from "./MockPtyAdapter.ts";
 
 interface AdapterCase {
@@ -83,6 +83,26 @@ for (const ctx of CASES) {
       });
       expect(proc.pid).toBeGreaterThan(0);
       proc.kill();
+    });
+
+    it("gives each process a binary bounded-input capability that closes with it", () => {
+      const adapter = ctx.make();
+      const proc = adapter.spawnSync({
+        shell: "/bin/cat",
+        cwd: workDir,
+        cols: 80,
+        rows: 24,
+        env: { ...process.env },
+        encoding: null,
+      });
+
+      expect(proc.boundedInput.write(Uint8Array.of(0x00, 0x80, 0xff))).toMatchObject({
+        status: "accepted",
+        byteLength: 3,
+        snapshot: { acceptedBytes: 3, acceptedFrames: 1 },
+      });
+      proc.kill();
+      expect(() => proc.boundedInput.write(Uint8Array.of(1))).toThrowError(PtyInputRejectedError);
     });
 
     it("spawn() rejects with PtySpawnError on an invalid cwd", async () => {

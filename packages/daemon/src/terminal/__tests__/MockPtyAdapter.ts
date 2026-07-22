@@ -19,10 +19,12 @@ import {
   PtySpawnError,
   type PtyAdapter,
   type PtyExitEvent,
+  type PtyInputLimits,
   type PtyProcess,
   type PtySpawnInput,
   type PtySpawnListeners,
 } from "../PtyAdapter.ts";
+import { DEFAULT_PTY_INPUT_LIMITS, MonotonicPtyInput } from "../MonotonicPtyInput.ts";
 
 export interface MockPtyOptions {
   /** Force `spawn` to reject with this error. Used by error-path tests. */
@@ -31,12 +33,16 @@ export interface MockPtyOptions {
   syncUnsupported?: boolean;
   /** Synthetic starting pid for spawned processes; auto-increments. */
   startingPid?: number;
+  /** Override the fresh monotonic input budget assigned to each mock process. */
+  boundedInputLimits?: PtyInputLimits;
 }
 
 export class MockPtyProcess implements PtyProcess {
   readonly pid: number;
   /** Append-only log of every `write(...)` call so tests can assert input. */
   readonly writeLog: Array<string | Uint8Array> = [];
+  /** Frames accepted through the fail-closed monotonic capability. */
+  readonly boundedWriteLog: Buffer[] = [];
   /** Append-only log of every `resize(...)` call. */
   readonly resizeLog: Array<{ cols: number; rows: number }> = [];
   /** Records the last signal observed by `kill(...)`. */
@@ -46,10 +52,19 @@ export class MockPtyProcess implements PtyProcess {
   private readonly dataListeners = new Set<(data: Buffer) => void>();
   private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
   private readonly _input: PtySpawnInput;
+  readonly boundedInput: MonotonicPtyInput;
 
-  constructor(pid: number, input: PtySpawnInput, listeners: PtySpawnListeners = {}) {
+  constructor(
+    pid: number,
+    input: PtySpawnInput,
+    listeners: PtySpawnListeners = {},
+    inputLimits: PtyInputLimits = DEFAULT_PTY_INPUT_LIMITS,
+  ) {
     this.pid = pid;
     this._input = input;
+    this.boundedInput = new MonotonicPtyInput(inputLimits, (frame) => {
+      this.boundedWriteLog.push(Buffer.from(frame));
+    });
     if (listeners.onData) this.dataListeners.add(listeners.onData);
     if (listeners.onExit) this.exitListeners.add(listeners.onExit);
   }
@@ -82,6 +97,7 @@ export class MockPtyProcess implements PtyProcess {
   kill(signal?: NodeJS.Signals | number): void {
     if (this.exited) return;
     this.killed = signal ?? "SIGTERM";
+    this.boundedInput.close();
     // Synthesize an exit so subscribers detach cleanly — matches the
     // node-pty fallback inside NodePtyAdapter.
     this.emitExit({ exitCode: 0, signal: typeof signal === "number" ? signal : null });
@@ -122,6 +138,7 @@ export class MockPtyProcess implements PtyProcess {
   emitExit(event: PtyExitEvent): void {
     if (this.exited) return;
     this.exited = true;
+    this.boundedInput.close();
     const listeners = [...this.exitListeners];
     this.dataListeners.clear();
     this.exitListeners.clear();
@@ -146,11 +163,13 @@ export class MockPtyAdapter implements PtyAdapter {
   private nextPid: number;
   private _failNext: MockPtyOptions["failNext"];
   private readonly syncUnsupported: boolean;
+  private readonly boundedInputLimits: PtyInputLimits;
 
   constructor(options: MockPtyOptions = {}) {
     this.nextPid = options.startingPid ?? 100_000;
     this._failNext = options.failNext;
     this.syncUnsupported = options.syncUnsupported ?? false;
+    this.boundedInputLimits = options.boundedInputLimits ?? DEFAULT_PTY_INPUT_LIMITS;
   }
 
   /** Arm the next spawn to throw a typed error. */
@@ -165,7 +184,7 @@ export class MockPtyAdapter implements PtyAdapter {
       throw new PtySpawnError({ adapter: this.id, code: err.code, message: err.message });
     }
     this.spawnLog.push(input);
-    const proc = new MockPtyProcess(this.nextPid++, input, listeners);
+    const proc = new MockPtyProcess(this.nextPid++, input, listeners, this.boundedInputLimits);
     this.spawned.push(proc);
     return proc;
   }
@@ -184,7 +203,7 @@ export class MockPtyAdapter implements PtyAdapter {
       throw new PtySpawnError({ adapter: this.id, code: err.code, message: err.message });
     }
     this.spawnLog.push(input);
-    const proc = new MockPtyProcess(this.nextPid++, input, listeners);
+    const proc = new MockPtyProcess(this.nextPid++, input, listeners, this.boundedInputLimits);
     this.spawned.push(proc);
     return proc;
   }
