@@ -9,6 +9,7 @@ import {
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionInputV3,
   type ApplicationShellProjectionV1,
+  type AppWindowDocumentV1,
   type CommandSource,
   type DesktopDaemonCapabilityState,
   type DesktopWindowState,
@@ -218,6 +219,30 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     const value = input();
     return "appWindows" in value ? value.appWindows : null;
   });
+  const [localFocusedWindowId, setLocalFocusedWindowId] = createSignal<string | null>(null);
+  let appWindowWorkspaceId = input().workspace.id;
+  createEffect(() => {
+    const localId = localFocusedWindowId();
+    if (localId && appWindowDocument()?.focusedWindowId === localId) {
+      setLocalFocusedWindowId(null);
+    }
+  });
+  const focusedAppWindowDocument = createMemo<AppWindowDocumentV1 | null>(() => {
+    const document = appWindowDocument();
+    if (!document) return null;
+    const localId = localFocusedWindowId();
+    const windowId = localId && Object.hasOwn(document.windows, localId) ? localId : null;
+    if (!windowId || document.focusedWindowId === windowId) return document;
+    const window = document.windows[windowId]!;
+    return {
+      ...document,
+      focusedWindowId: windowId,
+      floatingOrder:
+        window.placement.mode === "floating"
+          ? [...document.floatingOrder.filter((candidate) => candidate !== windowId), windowId]
+          : document.floatingOrder,
+    };
+  });
   const paneFrames = createMemo<readonly PaneFrameModel[]>(() => {
     if (props.terminalPanes) return props.terminalPanes.map(({ model }) => model);
     if (props.paneFrames) return props.paneFrames;
@@ -359,6 +384,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   createEffect(() => {
     const nextInput = input();
     const nextDataMode = dataMode();
+    if (nextInput.workspace.id !== appWindowWorkspaceId) {
+      appWindowWorkspaceId = nextInput.workspace.id;
+      setLocalFocusedWindowId(null);
+    }
     if (nextInput === previousInput && nextDataMode === previousDataMode) return;
     const currentInput = previousInput;
     const currentDataMode = previousDataMode;
@@ -374,6 +403,34 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const dispatch = (invocation: ApplicationShellCommandInvocation): void => {
     setState((current) => applyApplicationShellInvocationV1(current, invocation));
     props.onCommand?.(invocation);
+  };
+
+  const dispatchAppWindow = (invocation: AppWindowCanvasCommandInvocation): void => {
+    if (invocation.command.type !== "window.focus" || invocation.command.windowId === null) {
+      props.onAppWindowCommand?.(invocation);
+      return;
+    }
+    const document = appWindowDocument();
+    const window = document?.windows[invocation.command.windowId];
+    if (!window || window.source.kind !== "terminal") return;
+    setLocalFocusedWindowId(window.id);
+    dispatch(
+      applicationShellCommandInvocation(
+        APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+        {
+          target: {
+            kind: "pane",
+            paneId: window.source.terminalSourceId,
+            input: "terminal",
+          },
+        },
+        {
+          kind: invocation.source === "programmatic" ? "keyboard" : invocation.source,
+          surface: "application-shell",
+        },
+      ),
+    );
+    props.onAppWindowCommand?.(invocation);
   };
 
   const dispatchSurface = (surface: ProductSurfaceId, source: CommandSource): void => {
@@ -736,7 +793,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               </span>
             </header>
             <Show
-              when={appWindowDocument()}
+              when={focusedAppWindowDocument()}
               fallback={
                 <div class="agent-grid" data-has-maximized={hasMaximizedPane()}>
                   <Index each={renderedPaneFrames()}>
@@ -836,22 +893,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   transport={props.terminalTransport}
                   reducedMotion={props.reducedMotion}
                   terminalThemeKey={props.terminalThemeKey}
-                  onCommand={props.onAppWindowCommand}
-                  onTerminalFocus={(_windowId, terminalSourceId, source) =>
-                    dispatch(
-                      applicationShellCommandInvocation(
-                        APPLICATION_SHELL_COMMAND_IDS.moveFocus,
-                        {
-                          target: {
-                            kind: "pane",
-                            paneId: terminalSourceId,
-                            input: "terminal",
-                          },
-                        },
-                        { kind: source, surface: "application-shell" },
-                      ),
-                    )
-                  }
+                  onCommand={dispatchAppWindow}
                 />
               )}
             </Show>

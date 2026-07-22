@@ -1,5 +1,6 @@
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   COHESION_FIXTURE_V1,
   DESKTOP_PACKAGED_RENDERER_ORIGIN,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
@@ -56,6 +57,26 @@ const APPLICATION_SHELL_ENVELOPE = {
     focus: COHESION_FIXTURE_V1.focus,
     connection: COHESION_FIXTURE_V1.connection,
     terminalInventory: { activeResourceId: null, resources: [] },
+  },
+};
+
+const APPLICATION_SHELL_V3_ENVELOPE = {
+  version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
+  daemon: IDENTITY,
+  resource: {
+    ...APPLICATION_SHELL_ENVELOPE.resource,
+    appWindows: {
+      version: 1,
+      revision: 0,
+      updatedAt: "2026-07-22T10:00:00.000Z",
+      windows: {},
+      dockRoot: null,
+      dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+      floatingOrder: [],
+      focusedWindowId: null,
+      activeLayoutId: null,
+      layouts: {},
+    },
   },
 };
 
@@ -329,9 +350,11 @@ describe("Electron main daemon resource broker", () => {
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       requests.push({ url, init });
-      return url.endsWith("/api/resources/workspace-catalog")
-        ? json(WORKSPACE_CATALOG)
-        : json(APPLICATION_SHELL_ENVELOPE);
+      if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+      if (url.endsWith("application-shell?version=3")) {
+        return json({ error: "Unsupported resource version" }, { status: 400 });
+      }
+      return json(APPLICATION_SHELL_ENVELOPE);
     });
     const broker = new DaemonResourceBroker({ daemon: CONNECTED, fetch });
 
@@ -349,11 +372,54 @@ describe("Electron main daemon resource broker", () => {
       "http://127.0.0.1:6060/api/resources/workspace-catalog",
       "http://127.0.0.1:6060/api/resources/workspace-catalog",
       "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=3",
+      "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=2",
     ]);
     expect(requests.every(({ init }) => init?.method === "GET" && init.redirect === "error")).toBe(
       true,
     );
     expect(JSON.stringify(requests.map(({ init }) => init?.headers))).not.toMatch(/bearer|token/iu);
+  });
+
+  it("honors an explicit V2 request without probing V3", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        return url.endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : json(APPLICATION_SHELL_ENVELOPE);
+      },
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V2_VERSION),
+    ).resolves.toEqual({ status: "ok", envelope: APPLICATION_SHELL_ENVELOPE });
+    expect(requests).toEqual([
+      "http://127.0.0.1:6060/api/resources/workspace-catalog",
+      "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=2",
+    ]);
+  });
+
+  it("returns V3 directly when the daemon supports it", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        return url.endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : json(APPLICATION_SHELL_V3_ENVELOPE);
+      },
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V3_VERSION),
+    ).resolves.toEqual({ status: "ok", envelope: APPLICATION_SHELL_V3_ENVELOPE });
+    expect(requests.at(-1)).toContain("application-shell?version=3");
+    expect(requests).toHaveLength(2);
   });
 
   it("never lets an unknown semantic name become a daemon route", async () => {

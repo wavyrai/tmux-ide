@@ -4,12 +4,22 @@ import {
   type ApplicationShellTerminalInventory,
   type PaneAppearance,
 } from "@tmux-ide/contracts";
-import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import {
+  For,
+  Show,
+  createComputed,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  type Accessor,
+} from "solid-js";
 
 import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host.tsx";
 import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
+import type { TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import {
   appWindowFocusInvocation,
@@ -27,21 +37,17 @@ export interface AppWindowCanvasProps {
   readonly transport?: NativeTerminalTransport | null;
   readonly reducedMotion?: boolean;
   readonly terminalThemeKey?: string;
+  readonly rendererFactory?: TerminalRendererFactory;
   readonly viewport?: AppWindowCanvasViewport;
   readonly onCommand?: (invocation: AppWindowCanvasCommandInvocation) => void;
-  readonly onTerminalFocus?: (
-    windowId: string,
-    terminalSourceId: string,
-    source: "keyboard" | "mouse",
-  ) => void;
 }
 
 function sceneAppearance(base: PaneAppearance, window: AppWindowCanvasItem): PaneAppearance {
   return resolvePaneAppearance({
     structure: window.placement,
     applicationFocus: {
-      pane: window.selected || base.accessibility.focused,
-      terminalInput: window.selected || base.accessibility.terminalInputOwner,
+      pane: window.selected,
+      terminalInput: window.selected,
       windowActive: base.header.windowActive,
     },
     agentActivity: base.header.agentActivity,
@@ -93,6 +99,39 @@ function measuredViewport(element: HTMLElement): AppWindowCanvasViewport {
   };
 }
 
+interface AppWindowCanvasRecord {
+  readonly windowId: string;
+  readonly value: Accessor<AppWindowCanvasItem>;
+  readonly update: (next: AppWindowCanvasItem) => void;
+}
+
+/** Preserve mounted terminal components while their projected geometry changes. */
+function createAppWindowRecords(
+  source: Accessor<readonly AppWindowCanvasItem[]>,
+): Accessor<readonly AppWindowCanvasRecord[]> {
+  const [records, setRecords] = createSignal<readonly AppWindowCanvasRecord[]>([]);
+  let available = new Map<string, AppWindowCanvasRecord>();
+  createComputed(() => {
+    const next = source().map((window) => {
+      const current = available.get(window.windowId);
+      if (current) {
+        current.update(window);
+        return current;
+      }
+      const [value, setValue] = createSignal(window, { equals: false });
+      return {
+        windowId: window.windowId,
+        value,
+        update: (item: AppWindowCanvasItem) => setValue(() => item),
+      };
+    });
+    available = new Map(next.map((record) => [record.windowId, record]));
+    setRecords(next);
+  });
+  onCleanup(() => available.clear());
+  return records;
+}
+
 /** App-owned scene host. tmux supplies bytes; it never owns this geometry. */
 export function AppWindowCanvas(props: AppWindowCanvasProps) {
   const [measured, setMeasured] = createSignal<AppWindowCanvasViewport>(
@@ -112,6 +151,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
 
   const viewport = createMemo(() => props.viewport ?? measured());
   const projection = createMemo(() => projectAppWindowCanvas(props.document, viewport()));
+  const windowRecords = createAppWindowRecords(() => projection().windows);
   const framesByTerminalSource = createMemo(
     () => new Map(props.paneFrames.map((frame) => [frame.pane.id, frame])),
   );
@@ -139,17 +179,20 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
       data-window-count={projection().windows.length}
       data-focused-window-id={projection().focusedWindowId ?? ""}
     >
-      <For each={projection().windows}>
-        {(window) => {
-          const terminalSourceId = () =>
-            window.source.kind === "terminal" ? window.source.terminalSourceId : null;
+      <For each={windowRecords()}>
+        {(record) => {
+          const window = record.value;
+          const terminalSourceId = () => {
+            const source = window().source;
+            return source.kind === "terminal" ? source.terminalSourceId : null;
+          };
           const sourceFrame = createMemo(() => {
             const sourceId = terminalSourceId();
             return sourceId ? (framesByTerminalSource().get(sourceId) ?? null) : null;
           });
           const frame = createMemo(() => {
             const source = sourceFrame();
-            return source ? windowFrameModel(window, source) : null;
+            return source ? windowFrameModel(window(), source) : null;
           });
           const target = createMemo(() => {
             const sourceId = terminalSourceId();
@@ -158,28 +201,31 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
           return (
             <article
               class="app-window-card"
-              data-window-id={window.windowId}
+              data-window-id={window().windowId}
               data-terminal-source-id={terminalSourceId() ?? ""}
-              data-placement={window.placement}
-              data-selected={window.selected}
-              data-active={window.active}
+              data-placement={window().placement}
+              data-selected={window().selected}
+              data-active={window().active}
               style={{
-                left: `${window.rect.x}px`,
-                top: `${window.rect.y}px`,
-                width: `${window.rect.width}px`,
-                height: `${window.rect.height}px`,
-                "z-index": window.zIndex,
+                left: `${window().rect.x}px`,
+                top: `${window().rect.y}px`,
+                width: `${window().rect.width}px`,
+                height: `${window().rect.height}px`,
+                "z-index": window().zIndex,
               }}
-              onPointerDown={() => {
-                if (!window.selected)
-                  props.onCommand?.(appWindowFocusInvocation(window.windowId, "mouse"));
+              onPointerDown={(event) => {
+                if (event.target instanceof Element && event.target.closest(".terminal-surface")) {
+                  return;
+                }
+                if (!window().selected)
+                  props.onCommand?.(appWindowFocusInvocation(window().windowId, "mouse"));
               }}
             >
               <Show
                 when={frame()}
                 fallback={
                   <section class="app-window-card__unavailable" role="status">
-                    <strong>{window.title ?? "Terminal unavailable"}</strong>
+                    <strong>{window().title ?? "Terminal unavailable"}</strong>
                     <span>This saved window no longer has a matching terminal resource.</span>
                   </section>
                 }
@@ -215,10 +261,13 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                             focused={model().appearance.accessibility.terminalInputOwner}
                             reducedMotion={props.reducedMotion}
                             themeKey={props.terminalThemeKey}
+                            rendererFactory={props.rendererFactory}
                             onFocus={(source) => {
                               const sourceId = terminalSourceId();
                               if (sourceId) {
-                                props.onTerminalFocus?.(window.windowId, sourceId, source);
+                                props.onCommand?.(
+                                  appWindowFocusInvocation(window().windowId, source),
+                                );
                               }
                             }}
                           />

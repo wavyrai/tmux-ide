@@ -1,8 +1,8 @@
 import { createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import {
-  APPLICATION_SHELL_RESOURCE_V2_VERSION,
-  ApplicationShellProjectionInputV2SchemaZ,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
+  ApplicationShellProjectionInputV3SchemaZ,
   COHESION_FIXTURE_V1,
   DesktopApplicationShellTargetSchemaZ,
   type ApplicationShellProjectionInputV1,
@@ -38,7 +38,7 @@ const daemonIdentity = {
 };
 
 function resource(name: string): ApplicationShellProjectionInputV1 {
-  return ApplicationShellProjectionInputV2SchemaZ.parse({
+  return ApplicationShellProjectionInputV3SchemaZ.parse({
     project: { ...COHESION_FIXTURE_V1.project, name },
     workspace: {
       ...COHESION_FIXTURE_V1.workspace,
@@ -54,6 +54,18 @@ function resource(name: string): ApplicationShellProjectionInputV1 {
     focus: { ...COHESION_FIXTURE_V1.focus, overlays: [] },
     connection: COHESION_FIXTURE_V1.connection,
     terminalInventory: { activeResourceId: null, resources: [] },
+    appWindows: {
+      version: 1,
+      revision: 0,
+      updatedAt: "2026-07-22T10:00:00.000Z",
+      windows: {},
+      dockRoot: null,
+      dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+      floatingOrder: [],
+      focusedWindowId: null,
+      activeLayoutId: null,
+      layouts: {},
+    },
   });
 }
 
@@ -64,7 +76,7 @@ function target(workspaceName = "project", daemon = daemonIdentity): DesktopAppl
 function jsonResponse(value: unknown, status = 200, daemon: unknown = daemonIdentity): Response {
   const body =
     status >= 200 && status < 300
-      ? { version: APPLICATION_SHELL_RESOURCE_V2_VERSION, daemon, resource: value }
+      ? { version: APPLICATION_SHELL_RESOURCE_V3_VERSION, daemon, resource: value }
       : value;
   return new Response(JSON.stringify(body), {
     status,

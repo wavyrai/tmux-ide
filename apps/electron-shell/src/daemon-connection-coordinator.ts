@@ -5,6 +5,7 @@ import {
   type DesktopDaemonCapabilityState,
   type DesktopDaemonEvent,
   type DesktopDaemonFetchApplicationShellResult,
+  type DesktopDaemonFetchApplicationShellRequest,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonRefreshConnectionResult,
@@ -35,7 +36,10 @@ export interface DaemonResourceAuthority {
     rendererOrigin: string,
   ): Promise<TerminalAttachmentIssueResult>;
   listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
-  fetchApplicationShell(workspaceName: string): Promise<DesktopDaemonFetchApplicationShellResult>;
+  fetchApplicationShell(
+    workspaceName: string,
+    resourceVersion?: DesktopDaemonFetchApplicationShellRequest["resourceVersion"],
+  ): Promise<DesktopDaemonFetchApplicationShellResult>;
   subscribe(
     workspaceNames: readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
@@ -252,11 +256,12 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
   async fetchApplicationShell(
     workspaceName: string,
+    resourceVersion?: DesktopDaemonFetchApplicationShellRequest["resourceVersion"],
   ): Promise<DesktopDaemonFetchApplicationShellResult> {
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.fetchApplicationShell(workspaceName);
+    const result = await broker.fetchApplicationShell(workspaceName, resourceVersion);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||

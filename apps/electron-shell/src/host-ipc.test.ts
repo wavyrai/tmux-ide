@@ -143,6 +143,13 @@ describe("host IPC trust boundary", () => {
     expect(
       await handlers.get(HOST_IPC.daemonFetchApplicationShell)?.(trustedEvent, {
         workspaceName: "product",
+        resourceVersion: 3,
+      }),
+    ).toMatchObject({ status: "error", error: { code: "workspace-not-found" } });
+    expect(
+      await handlers.get(HOST_IPC.daemonFetchApplicationShell)?.(trustedEvent, {
+        workspaceName: "product",
+        resourceVersion: 2,
       }),
     ).toMatchObject({ status: "error", error: { code: "workspace-not-found" } });
     expect(
@@ -151,7 +158,9 @@ describe("host IPC trust boundary", () => {
         sessionName: "raw-target",
       }),
     ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
-    expect(daemonResources.fetchApplicationShell).toHaveBeenCalledOnce();
+    expect(daemonResources.fetchApplicationShell).toHaveBeenNthCalledWith(1, "product", 3);
+    expect(daemonResources.fetchApplicationShell).toHaveBeenNthCalledWith(2, "product", 2);
+    expect(daemonResources.fetchApplicationShell).toHaveBeenCalledTimes(2);
 
     const created = await handlers.get(HOST_IPC.daemonCreateWorkspacePane)?.(trustedEvent, {
       version: 1,

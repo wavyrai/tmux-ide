@@ -251,6 +251,126 @@ describe("visible DOM application shell", () => {
     );
   });
 
+  it("gives exactly one canvas terminal input ownership through canonical window focus", () => {
+    const input = createDefaultDomShellInput();
+    const paneFrames = createDefaultDomPaneFrames();
+    const resources = paneFrames.map((frame) => ({
+      id: frame.pane.id,
+      title: frame.title,
+      kind: "agent" as const,
+      active: frame.pane.id === "pane.implementer",
+      attachability: { status: "available" as const, semanticPaneId: frame.pane.id },
+    }));
+    const v3 = ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...input,
+      terminalInventory: { activeResourceId: "pane.implementer", resources },
+      appWindows: {
+        version: 1,
+        revision: 4,
+        updatedAt: "2026-07-22T10:00:00.000Z",
+        windows: {
+          "window.pm": {
+            id: "window.pm",
+            source: { kind: "terminal", terminalSourceId: "pane.pm" },
+            title: "PM",
+            placement: {
+              mode: "docked",
+              docked: { stackId: "stack.pm", index: 0 },
+              floating: null,
+            },
+          },
+          "window.implementer": {
+            id: "window.implementer",
+            source: { kind: "terminal", terminalSourceId: "pane.implementer" },
+            title: "Implementer",
+            placement: {
+              mode: "docked",
+              docked: { stackId: "stack.implementer", index: 0 },
+              floating: null,
+            },
+          },
+        },
+        dockRoot: {
+          type: "split",
+          id: "split.canvas",
+          axis: "horizontal",
+          children: [
+            {
+              type: "stack",
+              id: "stack.pm",
+              windowIds: ["window.pm"],
+              activeWindowId: "window.pm",
+            },
+            {
+              type: "stack",
+              id: "stack.implementer",
+              windowIds: ["window.implementer"],
+              activeWindowId: "window.implementer",
+            },
+          ],
+          weights: [1, 1],
+        },
+        dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+        floatingOrder: [],
+        focusedWindowId: "window.implementer",
+        activeLayoutId: null,
+        layouts: {},
+      },
+    });
+    const onCommand = vi.fn<(invocation: ApplicationShellCommandInvocation) => void>();
+    const onAppWindowCommand = vi.fn<NonNullable<DomApplicationShellProps["onAppWindowCommand"]>>();
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={v3}
+            dataMode="runtime"
+            onCommand={onCommand}
+            onAppWindowCommand={onAppWindowCommand}
+            paneFrames={paneFrames}
+          />
+        ),
+        root,
+      ),
+    );
+
+    expect(root.querySelectorAll('.terminal-surface[data-focused="true"]')).toHaveLength(1);
+    expect(
+      root
+        .querySelector('[data-window-id="window.implementer"] .terminal-surface')
+        ?.getAttribute("data-focused"),
+    ).toBe("true");
+    root
+      .querySelector('[data-window-id="window.pm"] .web-pane-frame__header')
+      ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+
+    expect(root.querySelectorAll('.terminal-surface[data-focused="true"]')).toHaveLength(1);
+    expect(
+      root
+        .querySelector('[data-window-id="window.pm"] .terminal-surface')
+        ?.getAttribute("data-focused"),
+    ).toBe("true");
+    expect(onAppWindowCommand).toHaveBeenCalledOnce();
+    expect(onAppWindowCommand).toHaveBeenCalledWith({
+      command: { type: "window.focus", windowId: "window.pm" },
+      source: "mouse",
+    });
+    expect(onCommand).toHaveBeenCalledOnce();
+    expect(onCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+        args: { target: { kind: "pane", paneId: "pane.pm", input: "terminal" } },
+        source: { kind: "mouse", surface: "application-shell" },
+      }),
+    );
+  });
+
   it("renders honest landmarks, canonical tabs, disabled reasons, and platform shortcuts", async () => {
     const root = renderShell(withDisabledActivity());
 

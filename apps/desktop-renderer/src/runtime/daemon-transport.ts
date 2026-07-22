@@ -1,4 +1,5 @@
 import {
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellResourceV2SchemaZ,
   ApplicationShellResourceV3SchemaZ,
@@ -144,12 +145,18 @@ function validatedTarget(value: unknown): DesktopApplicationShellTarget {
   return parsed.data;
 }
 
-function applicationShellUrl(descriptor: DesktopDaemonHostDescriptor, sessionName: string): URL {
+function applicationShellUrl(
+  descriptor: DesktopDaemonHostDescriptor,
+  sessionName: string,
+  version:
+    | typeof APPLICATION_SHELL_RESOURCE_V2_VERSION
+    | typeof APPLICATION_SHELL_RESOURCE_V3_VERSION,
+): URL {
   const url = new URL(
     `/api/project/${encodeURIComponent(sessionName)}/application-shell`,
     descriptor.apiBaseUrl,
   );
-  url.searchParams.set("version", String(APPLICATION_SHELL_RESOURCE_V3_VERSION));
+  url.searchParams.set("version", String(version));
   return url;
 }
 
@@ -251,15 +258,24 @@ export function createDirectLoopbackDaemonTransport(
       const safeTarget = validateBoundTarget(target);
       const sessionName = resolvedSessionName(resolveSessionName, safeTarget.workspaceName);
       let response: Response;
+      let negotiatedVersion = APPLICATION_SHELL_RESOURCE_V3_VERSION as
+        | typeof APPLICATION_SHELL_RESOURCE_V2_VERSION
+        | typeof APPLICATION_SHELL_RESOURCE_V3_VERSION;
       try {
-        response = await fetchImpl(applicationShellUrl(descriptor, sessionName), {
-          method: "GET",
-          headers: { accept: "application/json" },
-          credentials: "omit",
-          cache: "no-store",
-          redirect: "error",
-          signal,
-        });
+        const request = (version: typeof negotiatedVersion) =>
+          fetchImpl(applicationShellUrl(descriptor, sessionName, version), {
+            method: "GET",
+            headers: { accept: "application/json" },
+            credentials: "omit",
+            cache: "no-store",
+            redirect: "error",
+            signal,
+          });
+        response = await request(negotiatedVersion);
+        if (response.status === 400) {
+          negotiatedVersion = APPLICATION_SHELL_RESOURCE_V2_VERSION;
+          response = await request(negotiatedVersion);
+        }
       } catch (error) {
         if (signal.aborted) throw error;
         throw new DaemonTransportError(
@@ -291,9 +307,10 @@ export function createDirectLoopbackDaemonTransport(
           "Daemon application-shell response was not valid JSON.",
         );
       }
-      const parsed = ApplicationShellResourceV2SchemaZ.or(
-        ApplicationShellResourceV3SchemaZ,
-      ).safeParse(body);
+      const parsed =
+        negotiatedVersion === APPLICATION_SHELL_RESOURCE_V3_VERSION
+          ? ApplicationShellResourceV3SchemaZ.safeParse(body)
+          : ApplicationShellResourceV2SchemaZ.safeParse(body);
       if (!parsed.success) {
         throw new DaemonTransportError(
           "schema-invalid",

@@ -205,7 +205,7 @@ export function projectAppWindowCanvas(
       stackIndex: null,
       selected: document.focusedWindowId === window.id,
       active: document.focusedWindowId === window.id,
-      zIndex: 100 + order,
+      zIndex: dockZ.value + order,
     });
   }
 

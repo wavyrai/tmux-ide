@@ -472,7 +472,10 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     if (!request.success) {
       return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
     }
-    const result = await deps.daemonResources.fetchApplicationShell(request.data.workspaceName);
+    const result = await deps.daemonResources.fetchApplicationShell(
+      request.data.workspaceName,
+      request.data.resourceVersion,
+    );
     assertRendererAuthority(event, authority.generation);
     return result;
   });

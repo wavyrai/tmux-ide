@@ -70,7 +70,7 @@ exports[`projectAppWindowCanvas > allocates the same semantic scene deterministi
       "stackIndex": null,
       "title": "Review",
       "windowId": "window.review",
-      "zIndex": 100,
+      "zIndex": 3,
     },
   ],
 }
@@ -146,7 +146,7 @@ exports[`projectAppWindowCanvas > projects canonical dock, tab, floating, focus,
       "stackIndex": null,
       "title": "Review",
       "windowId": "window.review",
-      "zIndex": 100,
+      "zIndex": 3,
     },
   ],
 }

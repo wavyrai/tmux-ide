@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellProjectionInputV2SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   COHESION_FIXTURE_V1,
   type DesktopDaemonHostDescriptor,
 } from "@tmux-ide/contracts";
@@ -47,7 +49,27 @@ const resource = ApplicationShellProjectionInputV2SchemaZ.parse({
   terminalInventory: { activeResourceId: null, resources: [] },
 });
 
-function resourceEnvelope(value: unknown = resource, daemon: unknown = daemonIdentity): unknown {
+const resourceV3 = ApplicationShellProjectionInputV3SchemaZ.parse({
+  ...resource,
+  appWindows: {
+    version: 1,
+    revision: 0,
+    updatedAt: "2026-07-22T10:00:00.000Z",
+    windows: {},
+    dockRoot: null,
+    dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+    floatingOrder: [],
+    focusedWindowId: null,
+    activeLayoutId: null,
+    layouts: {},
+  },
+});
+
+function resourceEnvelope(value: unknown = resourceV3, daemon: unknown = daemonIdentity): unknown {
+  return { version: APPLICATION_SHELL_RESOURCE_V3_VERSION, daemon, resource: value };
+}
+
+function resourceV2Envelope(value: unknown = resource, daemon: unknown = daemonIdentity): unknown {
   return { version: APPLICATION_SHELL_RESOURCE_V2_VERSION, daemon, resource: value };
 }
 
@@ -102,7 +124,7 @@ describe("browser-safe daemon transport", () => {
       new AbortController().signal,
     );
 
-    expect(result).toEqual(resource);
+    expect(result).toEqual(resourceV3);
     expect(fetch).toHaveBeenCalledOnce();
     const [url, init] = fetch.mock.calls[0]!;
     expect(String(url)).toBe(
@@ -116,6 +138,30 @@ describe("browser-safe daemon transport", () => {
       headers: { accept: "application/json" },
     });
     expect(JSON.stringify(init)).not.toContain("token");
+  });
+
+  it("falls back to V2 only when the same daemon rejects V3 as unsupported", async () => {
+    const fetch = vi.fn<DaemonFetch>(async (input) =>
+      String(input).endsWith("version=3")
+        ? new Response(JSON.stringify({ error: "Unsupported resource version" }), { status: 400 })
+        : new Response(JSON.stringify(resourceV2Envelope()), { status: 200 }),
+    );
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor,
+      resolveSessionName,
+      fetch,
+    });
+
+    await expect(
+      transport.fetchApplicationShell(
+        { daemon: daemonIdentity, workspaceName: "project / one" },
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual(resource);
+    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual([
+      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell?version=3",
+      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell?version=2",
+    ]);
   });
 
   it("classifies missing and invalid resources without returning unvalidated data", async () => {
@@ -155,7 +201,7 @@ describe("browser-safe daemon transport", () => {
       const transport = createDirectLoopbackDaemonTransport({
         descriptor,
         resolveSessionName,
-        fetch: async () => new Response(JSON.stringify(resourceEnvelope(resource, daemon))),
+        fetch: async () => new Response(JSON.stringify(resourceEnvelope(resourceV3, daemon))),
       });
       await expect(
         transport.fetchApplicationShell(

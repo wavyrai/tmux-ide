@@ -3596,7 +3596,7 @@ function replayInvocations(initialState, invocations) {
     deepFreeze2(ApplicationShellReplayStateV1SchemaZ.parse(initialState))
   );
 }
-var APPLICATION_SHELL_PROJECTION_VERSION, APPLICATION_SHELL_TRACE_VERSION, TerminalResourceUnavailableReasonSchemaZ, TerminalResourceAttachabilitySchemaZ, ApplicationShellTerminalResourceSchemaZ, ApplicationShellTerminalInventorySchemaZ, ApplicationShellProjectionInputV1Fields, ApplicationShellProjectionInputV1WireSchemaZ, ApplicationShellProjectionInputV1SchemaZ, ApplicationShellProjectionInputV2SchemaZ, WorkspaceFixtureSchemaZ, ApplicationShellSurfaceProjectionSchemaZ, ApplicationShellProjectionV1SchemaZ, ApplicationShellActivateModeArgumentsSchemaZ, ApplicationShellActivateDockToolArgumentsSchemaZ, ApplicationShellSetDockModeArgumentsSchemaZ, ApplicationShellMoveFocusArgumentsSchemaZ, ApplicationShellOpenPaletteArgumentsSchemaZ, ApplicationShellClosePaletteArgumentsSchemaZ, ApplicationShellSelectResourceArgumentsSchemaZ, APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS, ApplicationShellCommandInvocationSchemaZ, descriptor, APPLICATION_SHELL_COMMAND_DESCRIPTORS, descriptorById, APPLICATION_SHELL_COMMAND_DEFINITIONS, ApplicationShellResourceSelectionSchemaZ, ApplicationShellReplayStateV1SchemaZ, ApplicationShellActionTraceV1BaseSchemaZ, ApplicationShellActionTraceV1SchemaZ;
+var APPLICATION_SHELL_PROJECTION_VERSION, APPLICATION_SHELL_TRACE_VERSION, TerminalResourceUnavailableReasonSchemaZ, TerminalResourceAttachabilitySchemaZ, ApplicationShellTerminalResourceSchemaZ, ApplicationShellTerminalInventorySchemaZ, ApplicationShellProjectionInputV1Fields, ApplicationShellProjectionInputV1WireSchemaZ, ApplicationShellProjectionInputV1SchemaZ, ApplicationShellProjectionInputV2SchemaZ, ApplicationShellProjectionInputV3SchemaZ, WorkspaceFixtureSchemaZ, ApplicationShellSurfaceProjectionSchemaZ, ApplicationShellProjectionV1SchemaZ, ApplicationShellActivateModeArgumentsSchemaZ, ApplicationShellActivateDockToolArgumentsSchemaZ, ApplicationShellSetDockModeArgumentsSchemaZ, ApplicationShellMoveFocusArgumentsSchemaZ, ApplicationShellOpenPaletteArgumentsSchemaZ, ApplicationShellClosePaletteArgumentsSchemaZ, ApplicationShellSelectResourceArgumentsSchemaZ, APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS, ApplicationShellCommandInvocationSchemaZ, descriptor, APPLICATION_SHELL_COMMAND_DESCRIPTORS, descriptorById, APPLICATION_SHELL_COMMAND_DEFINITIONS, ApplicationShellResourceSelectionSchemaZ, ApplicationShellReplayStateV1SchemaZ, ApplicationShellActionTraceV1BaseSchemaZ, ApplicationShellActionTraceV1SchemaZ;
 var init_application_shell = __esm({
   "packages/contracts/src/application-shell.ts"() {
     "use strict";
@@ -3607,6 +3607,7 @@ var init_application_shell = __esm({
     init_focus_overlay();
     init_pane_appearance();
     init_semantic_identity();
+    init_app_window_state();
     APPLICATION_SHELL_PROJECTION_VERSION = 1;
     APPLICATION_SHELL_TRACE_VERSION = 1;
     TerminalResourceUnavailableReasonSchemaZ = z19.enum([
@@ -3721,6 +3722,31 @@ var init_application_shell = __esm({
     ApplicationShellProjectionInputV2SchemaZ = z19.object({
       ...ApplicationShellProjectionInputV1Fields,
       terminalInventory: ApplicationShellTerminalInventorySchemaZ
+    }).strict().superRefine((input, ctx) => {
+      refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
+        "workspace",
+        "sidebar",
+        "agents"
+      ]);
+      const resources = new Map(
+        input.terminalInventory.resources.map((resource2) => [resource2.id, resource2])
+      );
+      for (const [index, agent] of input.workspace.sidebar.agents.entries()) {
+        if (agent.paneId === null) continue;
+        const resource2 = resources.get(agent.paneId);
+        if (resource2 === void 0 || resource2.kind !== "agent") {
+          ctx.addIssue({
+            code: "custom",
+            path: ["workspace", "sidebar", "agents", index, "paneId"],
+            message: "attached agents must correlate to one agent terminal resource"
+          });
+        }
+      }
+    });
+    ApplicationShellProjectionInputV3SchemaZ = z19.object({
+      ...ApplicationShellProjectionInputV1Fields,
+      terminalInventory: ApplicationShellTerminalInventorySchemaZ,
+      appWindows: AppWindowDocumentV1SchemaZ
     }).strict().superRefine((input, ctx) => {
       refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
         "workspace",
@@ -4011,7 +4037,7 @@ var init_daemon_wire = __esm({
 
 // packages/contracts/src/application-shell-resource.ts
 import { z as z21 } from "zod";
-var APPLICATION_SHELL_RESOURCE_V1_VERSION, APPLICATION_SHELL_RESOURCE_V2_VERSION, ApplicationShellResourceV1SchemaZ, ApplicationShellResourceV2SchemaZ, ApplicationShellResourceSchemaZ;
+var APPLICATION_SHELL_RESOURCE_V1_VERSION, APPLICATION_SHELL_RESOURCE_V2_VERSION, APPLICATION_SHELL_RESOURCE_V3_VERSION, ApplicationShellResourceV1SchemaZ, ApplicationShellResourceV2SchemaZ, ApplicationShellResourceV3SchemaZ, ApplicationShellResourceSchemaZ;
 var init_application_shell_resource = __esm({
   "packages/contracts/src/application-shell-resource.ts"() {
     "use strict";
@@ -4019,6 +4045,7 @@ var init_application_shell_resource = __esm({
     init_daemon_wire();
     APPLICATION_SHELL_RESOURCE_V1_VERSION = 1;
     APPLICATION_SHELL_RESOURCE_V2_VERSION = 2;
+    APPLICATION_SHELL_RESOURCE_V3_VERSION = 3;
     ApplicationShellResourceV1SchemaZ = z21.object({
       version: z21.literal(APPLICATION_SHELL_RESOURCE_V1_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
@@ -4029,9 +4056,15 @@ var init_application_shell_resource = __esm({
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: ApplicationShellProjectionInputV2SchemaZ
     }).strict();
+    ApplicationShellResourceV3SchemaZ = z21.object({
+      version: z21.literal(APPLICATION_SHELL_RESOURCE_V3_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      resource: ApplicationShellProjectionInputV3SchemaZ
+    }).strict();
     ApplicationShellResourceSchemaZ = z21.discriminatedUnion("version", [
       ApplicationShellResourceV1SchemaZ,
-      ApplicationShellResourceV2SchemaZ
+      ApplicationShellResourceV2SchemaZ,
+      ApplicationShellResourceV3SchemaZ
     ]);
   }
 });
@@ -4044,7 +4077,7 @@ var init_desktop_host = __esm({
     "use strict";
     init_application_shell_resource();
     init_daemon_wire();
-    DESKTOP_HOST_API_VERSION = 5;
+    DESKTOP_HOST_API_VERSION = 6;
     DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide";
     DESKTOP_PACKAGED_RENDERER_HOST = "app";
     DESKTOP_PACKAGED_RENDERER_ORIGIN = `${DESKTOP_PACKAGED_RENDERER_SCHEME}://${DESKTOP_PACKAGED_RENDERER_HOST}`;
@@ -4146,7 +4179,10 @@ var init_desktop_host = __esm({
     ]);
     DesktopDaemonFetchApplicationShellRequestSchemaZ = z22.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
-      resourceVersion: z22.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION).optional()
+      resourceVersion: z22.union([
+        z22.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION),
+        z22.literal(APPLICATION_SHELL_RESOURCE_V3_VERSION)
+      ]).optional()
     }).strict();
     DesktopApplicationShellTargetSchemaZ = z22.object({
       daemon: DaemonInstanceIdentitySchemaZ,
@@ -12967,8 +13003,8 @@ async function launch(targetDir, {
     paneActions: paneActions2,
     diagnostics: launchDiagnostics
   } = collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir);
-  for (const diagnostic of launchDiagnostics) {
-    console.error(`tmux-ide: warning: ${diagnostic.message}`);
+  for (const diagnostic3 of launchDiagnostics) {
+    console.error(`tmux-ide: warning: ${diagnostic3.message}`);
   }
   for (const action of paneActions2) {
     if (action.title) {
@@ -25398,6 +25434,15 @@ function projectApplicationShellResource(session) {
   projectApplicationShellV1(parsed);
   return deepFreeze4(parsed);
 }
+function projectApplicationShellResourceV3(session, appWindows) {
+  const resource2 = projectApplicationShellResource(session);
+  const parsed = ApplicationShellProjectionInputV3SchemaZ.parse({
+    ...resource2,
+    appWindows
+  });
+  projectApplicationShellV1(parsed);
+  return deepFreeze4(parsed);
+}
 function projectLegacyApplicationShellResourceV1(session) {
   return deepFreeze4(
     projectApplicationShellResourceV1Core(session, legacyPaneIdentities(session.panes))
@@ -25407,6 +25452,1644 @@ var init_application_shell2 = __esm({
   "packages/daemon/src/command-center/resources/application-shell.ts"() {
     "use strict";
     init_src();
+  }
+});
+
+// packages/daemon/src/tui/mirror/app-window-state.ts
+function emptyAppWindowDocument(updatedAt) {
+  const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
+  return AppWindowDocumentV1SchemaZ.parse({
+    version: APP_WINDOW_DOCUMENT_VERSION,
+    revision: 0,
+    updatedAt: timestamp,
+    windows: {},
+    dockRoot: null,
+    dockState: { mode: "open", preferredHeight: null, focusZone: "canvas" },
+    floatingOrder: [],
+    focusedWindowId: null,
+    activeLayoutId: null,
+    layouts: {}
+  });
+}
+function stableAppWindowInstanceId(source, ordinal = 0) {
+  const parsed = AppWindowSourceSchemaZ.parse(source);
+  if (!Number.isInteger(ordinal) || ordinal < 0 || ordinal >= APP_WINDOW_MAX_WINDOWS) {
+    throw new Error("app window ordinal must be a bounded nonnegative integer");
+  }
+  const sourceKey = parsed.kind === "terminal" ? `terminal:${parsed.terminalSourceId}` : `native:${parsed.surface}:${parsed.resourceId === null ? "null" : `id:${parsed.resourceId}`}`;
+  const slug = sourceKey.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 72);
+  return AppWindowIdSchemaZ.parse(`window-${slug || "surface"}-${ordinal}-${fnv1a(sourceKey)}`);
+}
+function parseAppWindowDocument(value, fallbackTimestamp) {
+  const fallback = emptyAppWindowDocument(fallbackTimestamp);
+  if (!isRecord2(value)) {
+    return {
+      document: fallback,
+      diagnostics: [diagnostic("MALFORMED", "$", "app window document must be an object")],
+      writeProtected: false
+    };
+  }
+  const version = ownValue(value, "version");
+  if (version !== APP_WINDOW_DOCUMENT_VERSION) {
+    return {
+      document: fallback,
+      diagnostics: [
+        diagnostic(
+          "UNSUPPORTED_VERSION",
+          "$.version",
+          `unsupported app window document version ${String(version)}`
+        )
+      ],
+      writeProtected: typeof version === "number" && version > APP_WINDOW_DOCUMENT_VERSION
+    };
+  }
+  const parsed = AppWindowDocumentV1SchemaZ.safeParse(value);
+  if (parsed.success) {
+    return { document: canonicalDocument(parsed.data), diagnostics: [], writeProtected: false };
+  }
+  return {
+    document: fallback,
+    diagnostics: parsed.error.issues.map(
+      (issue) => diagnostic(
+        "INVALID_FIELD",
+        issue.path.length === 0 ? "$" : `$.${issue.path.map(String).join(".")}`,
+        issue.message
+      )
+    ),
+    writeProtected: true
+  };
+}
+function migrateWorkspaceUiStateV2ToAppWindowDocument(value, options) {
+  const migratedAt = AppWindowTimestampSchemaZ.parse(options.migratedAt);
+  if (!isRecord2(value) || ownValue(value, "version") !== 2) {
+    throw new Error("WorkspaceUiStateV2 is required for app window migration");
+  }
+  const diagnostics = [
+    diagnostic("MIGRATED", "$", "migrated WorkspaceUiStateV2 to app window document V1")
+  ];
+  const activeValue = ownValue(value, "active");
+  const active2 = isRecord2(activeValue) ? activeValue : null;
+  const activeViewId = ownString(active2, "viewId");
+  const activePanelValue = ownValue(active2, "panel");
+  const activePanel = typeof activePanelValue === "string" && LEGACY_PANELS.has(activePanelValue) ? activePanelValue : "terminals";
+  const dockValue = ownValue(value, "dock");
+  const dock = isRecord2(dockValue) ? dockValue : null;
+  const dockTabValue = ownValue(dock, "activeTab");
+  const requestedDockTab = typeof dockTabValue === "string" && LEGACY_DOCK_TABS.has(dockTabValue) ? dockTabValue : "files";
+  const dockMode = legacyDockMode(ownValue(dock, "mode"), diagnostics);
+  const preferredHeight = legacyPreferredHeight(ownValue(dock, "preferredHeight"), diagnostics);
+  const focusZone = legacyFocusZone(ownValue(dock, "focusZone"), diagnostics);
+  const terminalSourceIds = cleanTerminalSourceIds(options.terminalSourceIds ?? []);
+  const focusedTerminalSourceId = cleanFocusedTerminalSourceId(
+    terminalSourceIds,
+    options.focusedTerminalSourceId
+  );
+  if (activePanel === "terminals" && terminalSourceIds.length === 0) {
+    diagnostics.push(
+      diagnostic(
+        "TERMINAL_SOURCE_REQUIRED",
+        "$.active",
+        "terminal canvas was not persisted because no durable terminal source id was supplied"
+      )
+    );
+  }
+  const windows = {};
+  const dockWindowIds = NATIVE_DOCK_ORDER.map((surface, index) => {
+    const source = { kind: "native", surface, resourceId: null };
+    const id = stableAppWindowInstanceId(source);
+    windows[id] = dockedWindow(id, source, nativeTitle(surface), "stack-native-dock", index);
+    return id;
+  });
+  const requestedDockWindowId = dockWindowIds[NATIVE_DOCK_ORDER.indexOf(requestedDockTab)];
+  const canvasWindowIds = [];
+  const windowIdByViewId = /* @__PURE__ */ new Map();
+  const deferredViewIds = /* @__PURE__ */ new Set();
+  const viewsValue = ownValue(value, "views");
+  const views = isRecord2(viewsValue) ? viewsValue : {};
+  for (const [viewId, rawView] of Object.entries(views).sort(
+    ([left], [right]) => left.localeCompare(right)
+  )) {
+    if (!isRecord2(rawView)) continue;
+    const surface = legacyNativeSurface(ownValue(rawView, "panel"));
+    if (!surface) continue;
+    if (Object.hasOwn(rawView, "layout")) {
+      deferredViewIds.add(viewId);
+      diagnostics.push(
+        diagnostic(
+          "COMPOSITE_LAYOUT_DEFERRED",
+          `$.views.${viewId}.layout`,
+          "composite layout state needs its configured layout tree before app-window migration"
+        )
+      );
+      continue;
+    }
+    const source = {
+      kind: "native",
+      surface,
+      resourceId: stableLegacyResourceId(viewId)
+    };
+    const id = stableAppWindowInstanceId(source);
+    windows[id] = dockedWindow(
+      id,
+      source,
+      nativeTitle(surface),
+      "stack-canvas",
+      canvasWindowIds.length
+    );
+    canvasWindowIds.push(id);
+    windowIdByViewId.set(viewId, id);
+  }
+  const activeNativeSurface = legacyNativeSurface(activePanel);
+  if (activeNativeSurface && activeViewId && !windowIdByViewId.has(activeViewId) && !deferredViewIds.has(activeViewId)) {
+    const source = {
+      kind: "native",
+      surface: activeNativeSurface,
+      resourceId: stableLegacyResourceId(activeViewId)
+    };
+    const id = stableAppWindowInstanceId(source);
+    windows[id] = dockedWindow(
+      id,
+      source,
+      nativeTitle(activeNativeSurface),
+      "stack-canvas",
+      canvasWindowIds.length
+    );
+    canvasWindowIds.push(id);
+    windowIdByViewId.set(activeViewId, id);
+  }
+  const terminalWindowIdBySourceId2 = /* @__PURE__ */ new Map();
+  for (const terminalSourceId of terminalSourceIds) {
+    const source = { kind: "terminal", terminalSourceId };
+    const id = stableAppWindowInstanceId(source);
+    windows[id] = dockedWindow(id, source, null, "stack-canvas", canvasWindowIds.length);
+    canvasWindowIds.push(id);
+    terminalWindowIdBySourceId2.set(terminalSourceId, id);
+  }
+  const preferredCanvasWindowId = activePanel === "terminals" ? focusedTerminalSourceId ? terminalWindowIdBySourceId2.get(focusedTerminalSourceId) : void 0 : activeViewId ? windowIdByViewId.get(activeViewId) : void 0;
+  const activeCanvasWindowId = preferredCanvasWindowId ?? canvasWindowIds[0];
+  const nativeDock = {
+    type: "stack",
+    id: "stack-native-dock",
+    windowIds: dockWindowIds,
+    activeWindowId: requestedDockWindowId
+  };
+  const dockRoot = canvasWindowIds.length === 0 ? nativeDock : {
+    type: "split",
+    id: "split-workbench",
+    axis: "vertical",
+    children: [
+      {
+        type: "stack",
+        id: "stack-canvas",
+        windowIds: canvasWindowIds,
+        activeWindowId: activeCanvasWindowId
+      },
+      nativeDock
+    ],
+    weights: [3, 1]
+  };
+  const focusedWindowId = focusZone === "dock-tabs" || focusZone === "dock-body" ? requestedDockWindowId : preferredCanvasWindowId ?? null;
+  const scene = {
+    windows,
+    dockRoot,
+    dockState: { mode: dockMode, preferredHeight, focusZone },
+    floatingOrder: [],
+    focusedWindowId
+  };
+  const layoutId = "layout-migrated-workspace";
+  const layout = {
+    id: layoutId,
+    name: "Migrated workspace",
+    description: "Initial app-window layout migrated from WorkspaceUiStateV2",
+    revision: 1,
+    createdAt: migratedAt,
+    updatedAt: migratedAt,
+    scene: cloneScene(scene)
+  };
+  const document = AppWindowDocumentV1SchemaZ.parse({
+    version: APP_WINDOW_DOCUMENT_VERSION,
+    revision: 0,
+    updatedAt: migratedAt,
+    ...scene,
+    activeLayoutId: layoutId,
+    layouts: { [layoutId]: layout }
+  });
+  return { document: canonicalDocument(document), diagnostics };
+}
+function saveAppWindowNamedLayout(document, input) {
+  const current = AppWindowDocumentV1SchemaZ.parse(document);
+  const id = AppWindowIdSchemaZ.parse(input.id);
+  const updatedAt = AppWindowTimestampSchemaZ.parse(input.updatedAt);
+  requireNondecreasingTimestamp(current.updatedAt, updatedAt);
+  const previous = Object.hasOwn(current.layouts, id) ? current.layouts[id] : void 0;
+  const nextLayout = {
+    id,
+    name: input.name,
+    description: input.description ?? null,
+    revision: (previous?.revision ?? 0) + 1,
+    createdAt: previous?.createdAt ?? updatedAt,
+    updatedAt,
+    scene: cloneScene(current)
+  };
+  return canonicalDocument(
+    AppWindowDocumentV1SchemaZ.parse({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt,
+      activeLayoutId: id,
+      layouts: { ...current.layouts, [id]: nextLayout }
+    })
+  );
+}
+function restoreAppWindowNamedLayout(document, layoutId, updatedAt) {
+  const current = AppWindowDocumentV1SchemaZ.parse(document);
+  const id = AppWindowIdSchemaZ.parse(layoutId);
+  const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
+  requireNondecreasingTimestamp(current.updatedAt, timestamp);
+  const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : void 0;
+  if (!layout) throw new Error(`unknown app window layout "${id}"`);
+  return canonicalDocument(
+    AppWindowDocumentV1SchemaZ.parse({
+      ...current,
+      ...cloneScene(layout.scene),
+      revision: current.revision + 1,
+      updatedAt: timestamp,
+      activeLayoutId: id
+    })
+  );
+}
+function focusAppWindow(document, windowId, updatedAt) {
+  const current = AppWindowDocumentV1SchemaZ.parse(document);
+  const id = windowId === null ? null : AppWindowIdSchemaZ.parse(windowId);
+  const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
+  requireNondecreasingTimestamp(current.updatedAt, timestamp);
+  if (id && !Object.hasOwn(current.windows, id)) throw new Error(`unknown app window "${id}"`);
+  const floatingOrder = id && current.windows[id]?.placement.mode === "floating" ? [...current.floatingOrder.filter((candidate) => candidate !== id), id] : current.floatingOrder;
+  const dockRoot = id ? activateDockedWindow(current.dockRoot, id) : current.dockRoot;
+  return canonicalDocument(
+    AppWindowDocumentV1SchemaZ.parse({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: timestamp,
+      focusedWindowId: id,
+      floatingOrder,
+      dockRoot
+    })
+  );
+}
+function serializeAppWindowDocument(document) {
+  return `${JSON.stringify(canonicalDocument(AppWindowDocumentV1SchemaZ.parse(document)), null, 2)}
+`;
+}
+function dockedWindow(id, source, title, stackId, index) {
+  return {
+    id,
+    source,
+    title,
+    placement: {
+      mode: "docked",
+      docked: { stackId, index },
+      floating: null
+    }
+  };
+}
+function cleanTerminalSourceIds(values2) {
+  if (values2.length > APP_WINDOW_MAX_WINDOWS - NATIVE_DOCK_ORDER.length) {
+    throw new Error("terminal source id limit exceeded");
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const result = [];
+  for (const value of values2) {
+    const sourceId = AppWindowIdSchemaZ.parse(value);
+    if (seen.has(sourceId)) continue;
+    seen.add(sourceId);
+    result.push(sourceId);
+  }
+  return result;
+}
+function cleanFocusedTerminalSourceId(terminalSourceIds, value) {
+  if (value === null || value === void 0) return terminalSourceIds[0] ?? null;
+  const sourceId = AppWindowIdSchemaZ.parse(value);
+  if (!terminalSourceIds.includes(sourceId)) {
+    throw new Error("focused terminal source id must belong to terminalSourceIds");
+  }
+  return sourceId;
+}
+function legacyNativeSurface(value) {
+  if (value === "home" || value === "files" || value === "missions") return value;
+  if (value === "diff") return "changes";
+  return null;
+}
+function stableLegacyResourceId(viewId) {
+  const direct = AppWindowIdSchemaZ.safeParse(viewId);
+  if (direct.success) return direct.data;
+  const slug = viewId.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 80);
+  return AppWindowIdSchemaZ.parse(`view-${slug || "resource"}-${fnv1a(viewId)}`);
+}
+function legacyDockMode(value, diagnostics) {
+  if (value === "collapsed" || value === "open" || value === "maximized") return value;
+  diagnostics.push(
+    diagnostic("FIELD_DEFAULTED", "$.dock.mode", "invalid dock mode defaulted to open")
+  );
+  return "open";
+}
+function legacyPreferredHeight(value, diagnostics) {
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1e6) {
+    return value;
+  }
+  diagnostics.push(
+    diagnostic(
+      "FIELD_DEFAULTED",
+      "$.dock.preferredHeight",
+      "invalid preferred dock height defaulted to automatic"
+    )
+  );
+  return null;
+}
+function legacyFocusZone(value, diagnostics) {
+  if (value === "canvas" || value === "dock-tabs" || value === "dock-body") return value;
+  diagnostics.push(
+    diagnostic("FIELD_DEFAULTED", "$.dock.focusZone", "invalid focus zone defaulted to canvas")
+  );
+  return "canvas";
+}
+function activateDockedWindow(node, windowId) {
+  if (!node) return null;
+  if (node.type === "stack") {
+    return node.windowIds.includes(windowId) ? { ...node, activeWindowId: windowId } : node;
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => activateDockedWindow(child, windowId))
+  };
+}
+function nativeTitle(surface) {
+  if (surface === "changes") return "Changes";
+  return `${surface[0].toUpperCase()}${surface.slice(1)}`;
+}
+function cloneScene(scene) {
+  return {
+    windows: structuredClone(scene.windows),
+    dockRoot: structuredClone(scene.dockRoot),
+    dockState: { ...scene.dockState },
+    floatingOrder: [...scene.floatingOrder],
+    focusedWindowId: scene.focusedWindowId
+  };
+}
+function canonicalDocument(document) {
+  const layouts = Object.fromEntries(
+    Object.entries(document.layouts).sort(([left], [right]) => left.localeCompare(right)).map(([id, layout]) => [id, { ...layout, scene: canonicalScene(layout.scene) }])
+  );
+  return AppWindowDocumentV1SchemaZ.parse({
+    ...document,
+    ...canonicalScene(document),
+    layouts
+  });
+}
+function canonicalScene(scene) {
+  return {
+    windows: Object.fromEntries(
+      Object.entries(scene.windows).sort(([left], [right]) => left.localeCompare(right))
+    ),
+    dockRoot: structuredClone(scene.dockRoot),
+    dockState: { ...scene.dockState },
+    floatingOrder: [...scene.floatingOrder],
+    focusedWindowId: scene.focusedWindowId
+  };
+}
+function diagnostic(code, path2, message) {
+  return { code, path: path2, message };
+}
+function isRecord2(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function ownValue(record, key) {
+  return record && Object.hasOwn(record, key) ? record[key] : void 0;
+}
+function ownString(record, key) {
+  const value = ownValue(record, key);
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+function requireNondecreasingTimestamp(previous, next) {
+  if (Date.parse(next) < Date.parse(previous)) {
+    throw new Error("app window mutation timestamp must not move backwards");
+  }
+}
+function fnv1a(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(36).padStart(7, "0");
+}
+var NATIVE_DOCK_ORDER, LEGACY_DOCK_TABS, LEGACY_PANELS;
+var init_app_window_state2 = __esm({
+  "packages/daemon/src/tui/mirror/app-window-state.ts"() {
+    "use strict";
+    init_src();
+    NATIVE_DOCK_ORDER = ["files", "changes", "missions", "activity"];
+    LEGACY_DOCK_TABS = new Set(NATIVE_DOCK_ORDER);
+    LEGACY_PANELS = /* @__PURE__ */ new Set(["home", "terminals", "files", "diff", "missions"]);
+  }
+});
+
+// packages/daemon/src/lib/app-window-kernel.ts
+function applyAppWindowCommand(document, command2, timestamp) {
+  const current = requireDocument(document);
+  const at = requireTimestamp(current.updatedAt, timestamp);
+  switch (command2.type) {
+    case "window.focus":
+      if (command2.windowId !== null) requireWindowId(current, command2.windowId);
+      try {
+        return focusAppWindow(current, command2.windowId, at);
+      } catch (error) {
+        throw translateStateError(error, command2.windowId ? `$.windows.${command2.windowId}` : "$");
+      }
+    case "window.float":
+      return floatWindow(current, command2, at);
+    case "window.dock":
+      return dockWindow(current, command2, at);
+    case "window.move":
+      return moveFloatingWindow(current, command2, at);
+    case "window.resize":
+      return resizeFloatingWindow(current, command2, at);
+    case "stack.activate":
+      return activateStackWindow(current, command2, at);
+    case "stack.reorder":
+      return reorderStackWindow(current, command2, at);
+    case "layout.save":
+      try {
+        return saveAppWindowNamedLayout(current, {
+          id: command2.layoutId,
+          name: command2.name,
+          description: command2.description,
+          updatedAt: at
+        });
+      } catch (error) {
+        throw translateStateError(error, `$.layouts.${command2.layoutId}`);
+      }
+    case "layout.restore":
+      try {
+        return restoreAppWindowNamedLayout(current, command2.layoutId, at);
+      } catch (error) {
+        if (error.message.includes("unknown app window layout")) {
+          throw new AppWindowKernelError(
+            "LAYOUT_NOT_FOUND",
+            `$.layouts.${command2.layoutId}`,
+            error.message
+          );
+        }
+        throw translateStateError(error, `$.layouts.${command2.layoutId}`);
+      }
+    case "layout.rename":
+      return renameLayout(current, command2.layoutId, command2.name, at);
+    case "layout.delete":
+      return deleteLayout(current, command2.layoutId, at);
+  }
+}
+function isAppWindowCommandSatisfied(document, command2) {
+  const current = requireDocument(document);
+  switch (command2.type) {
+    case "window.focus": {
+      if (command2.windowId === null) return current.focusedWindowId === null;
+      const id = requireWindowId(current, command2.windowId);
+      if (current.focusedWindowId !== id) return false;
+      const window = current.windows[id];
+      if (window.placement.mode === "floating") return current.floatingOrder.at(-1) === id;
+      const stack = window.placement.docked ? findStack(current.dockRoot, window.placement.docked.stackId) : null;
+      return stack?.activeWindowId === id;
+    }
+    case "window.float": {
+      const id = requireWindowId(current, command2.windowId);
+      const window = current.windows[id];
+      if (window.placement.mode !== "floating" || !window.placement.floating || current.focusedWindowId !== id || current.floatingOrder.at(-1) !== id) {
+        return false;
+      }
+      return command2.rect === void 0 ? true : sameRect(window.placement.floating, normalizeRect(command2.rect));
+    }
+    case "window.dock": {
+      const id = requireWindowId(current, command2.windowId);
+      const window = current.windows[id];
+      if (window.placement.mode !== "docked" || !window.placement.docked) return false;
+      if (command2.stackId !== void 0) {
+        const stackId = requireId(command2.stackId, "$.stackId");
+        if (!findStack(current.dockRoot, stackId)) {
+          throw new AppWindowKernelError(
+            "STACK_NOT_FOUND",
+            `$.dockRoot.${stackId}`,
+            `unknown app window stack "${stackId}"`
+          );
+        }
+        if (window.placement.docked.stackId !== stackId) return false;
+      }
+      const stack = findStack(current.dockRoot, window.placement.docked.stackId);
+      if (!stack || stack.activeWindowId !== id || current.focusedWindowId !== id) return false;
+      if (command2.index === void 0) return true;
+      requireNonnegativeIndex(command2.index, "$.index", "dock index must be nonnegative");
+      return stack.windowIds.indexOf(id) === Math.min(command2.index, stack.windowIds.length - 1);
+    }
+    case "window.move": {
+      const [, , rect] = requireFloatingWindow(current, command2.windowId);
+      return rect.x === boundedCoordinate(command2.x, "$.x") && rect.y === boundedCoordinate(command2.y, "$.y");
+    }
+    case "window.resize": {
+      const [, , rect] = requireFloatingWindow(current, command2.windowId);
+      return rect.width === boundedExtent(command2.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.width") && rect.height === boundedExtent(command2.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.height");
+    }
+    case "stack.activate": {
+      const stackId = requireId(command2.stackId, "$.stackId");
+      const windowId = requireWindowId(current, command2.windowId);
+      const stack = requireStack(current.dockRoot, stackId);
+      if (!stack.windowIds.includes(windowId)) {
+        throw new AppWindowKernelError(
+          "WINDOW_NOT_IN_STACK",
+          `$.dockRoot.${stackId}`,
+          `window "${windowId}" is not in stack "${stackId}"`
+        );
+      }
+      return stack.activeWindowId === windowId && current.focusedWindowId === windowId;
+    }
+    case "stack.reorder": {
+      const stackId = requireId(command2.stackId, "$.stackId");
+      const windowId = requireWindowId(current, command2.windowId);
+      const stack = requireStack(current.dockRoot, stackId);
+      if (!stack.windowIds.includes(windowId)) {
+        throw new AppWindowKernelError(
+          "WINDOW_NOT_IN_STACK",
+          `$.dockRoot.${stackId}`,
+          `window "${windowId}" is not in stack "${stackId}"`
+        );
+      }
+      requireNonnegativeIndex(command2.index, "$.index", "index must be nonnegative");
+      return stack.windowIds.indexOf(windowId) === Math.min(command2.index, stack.windowIds.length - 1);
+    }
+    case "layout.save": {
+      const id = requireId(command2.layoutId, "$.layoutId");
+      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+      return Boolean(
+        layout && layout.name === command2.name && layout.description === (command2.description ?? null) && current.activeLayoutId === id && sameScene(layout.scene, current)
+      );
+    }
+    case "layout.restore": {
+      const id = requireId(command2.layoutId, "$.layoutId");
+      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+      if (!layout) return false;
+      return current.activeLayoutId === id && sameScene(layout.scene, current);
+    }
+    case "layout.rename": {
+      const id = requireId(command2.layoutId, "$.layoutId");
+      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+      return layout?.name === command2.name;
+    }
+    case "layout.delete": {
+      const id = requireId(command2.layoutId, "$.layoutId");
+      return !Object.hasOwn(current.layouts, id);
+    }
+  }
+}
+function floatWindow(current, command2, timestamp) {
+  const id = requireWindowId(current, command2.windowId);
+  const window = current.windows[id];
+  const rect = normalizeRect(
+    command2.rect ?? window.placement.floating ?? { x: 2, y: 2, width: 80, height: 24 }
+  );
+  const windows = structuredClone(current.windows);
+  windows[id] = {
+    ...window,
+    placement: {
+      mode: "floating",
+      docked: window.placement.docked,
+      floating: rect
+    }
+  };
+  const dockRoot = removeDockWindow(current.dockRoot, id);
+  syncDockMemories(windows, dockRoot);
+  return finalize(current, timestamp, {
+    windows,
+    dockRoot,
+    floatingOrder: [...current.floatingOrder.filter((candidate) => candidate !== id), id],
+    focusedWindowId: id
+  });
+}
+function dockWindow(current, command2, timestamp) {
+  const id = requireWindowId(current, command2.windowId);
+  const window = current.windows[id];
+  const requestedStackId = command2.stackId !== void 0 ? requireId(command2.stackId, "$.stackId") : window.placement.docked?.stackId;
+  if (command2.stackId !== void 0 && !findStack(current.dockRoot, requestedStackId)) {
+    throw new AppWindowKernelError(
+      "STACK_NOT_FOUND",
+      `$.dockRoot.${requestedStackId}`,
+      `unknown app window stack "${requestedStackId}"`
+    );
+  }
+  const dockRootWithoutWindow = removeDockWindow(current.dockRoot, id);
+  const existingFallback = firstStackId(dockRootWithoutWindow);
+  const removedFromRequestedStack = window.placement.mode === "docked" && window.placement.docked?.stackId === requestedStackId;
+  const targetStackId = (requestedStackId && findStack(dockRootWithoutWindow, requestedStackId) ? requestedStackId : removedFromRequestedStack ? requestedStackId : existingFallback) ?? uniqueRootStackId(dockRootWithoutWindow);
+  const rememberedIndex = command2.index ?? window.placement.docked?.index ?? Number.MAX_SAFE_INTEGER;
+  if (!Number.isInteger(rememberedIndex) || rememberedIndex < 0) {
+    throw new AppWindowKernelError(
+      "INVALID_INPUT",
+      "$.index",
+      "dock index must be a nonnegative integer"
+    );
+  }
+  const windows = structuredClone(current.windows);
+  windows[id] = {
+    ...window,
+    placement: {
+      mode: "docked",
+      docked: { stackId: targetStackId, index: 0 },
+      floating: window.placement.floating
+    }
+  };
+  let dockRoot = dockRootWithoutWindow ? insertDockWindow(dockRootWithoutWindow, targetStackId, id, rememberedIndex) : {
+    type: "stack",
+    id: targetStackId,
+    windowIds: [id],
+    activeWindowId: id
+  };
+  dockRoot = activateDockWindow(dockRoot, targetStackId, id);
+  syncDockMemories(windows, dockRoot);
+  return finalize(current, timestamp, {
+    windows,
+    dockRoot,
+    floatingOrder: current.floatingOrder.filter((candidate) => candidate !== id),
+    focusedWindowId: id
+  });
+}
+function moveFloatingWindow(current, command2, timestamp) {
+  const [id, window, rect] = requireFloatingWindow(current, command2.windowId);
+  return updateFloatingRect(
+    current,
+    id,
+    window,
+    {
+      ...rect,
+      x: boundedCoordinate(command2.x, "$.x"),
+      y: boundedCoordinate(command2.y, "$.y")
+    },
+    timestamp
+  );
+}
+function resizeFloatingWindow(current, command2, timestamp) {
+  const [id, window, rect] = requireFloatingWindow(current, command2.windowId);
+  return updateFloatingRect(
+    current,
+    id,
+    window,
+    {
+      ...rect,
+      width: boundedExtent(command2.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.width"),
+      height: boundedExtent(command2.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.height")
+    },
+    timestamp
+  );
+}
+function activateStackWindow(current, command2, timestamp) {
+  const stackId = requireId(command2.stackId, "$.stackId");
+  const windowId = requireWindowId(current, command2.windowId);
+  const stack = requireStack(current.dockRoot, stackId);
+  if (!stack.windowIds.includes(windowId)) {
+    throw new AppWindowKernelError(
+      "WINDOW_NOT_IN_STACK",
+      `$.dockRoot.${stackId}`,
+      `window "${windowId}" is not in stack "${stackId}"`
+    );
+  }
+  return finalize(current, timestamp, {
+    dockRoot: activateDockWindow(current.dockRoot, stackId, windowId),
+    focusedWindowId: windowId
+  });
+}
+function reorderStackWindow(current, command2, timestamp) {
+  const stackId = requireId(command2.stackId, "$.stackId");
+  const windowId = requireWindowId(current, command2.windowId);
+  const stack = requireStack(current.dockRoot, stackId);
+  if (!stack.windowIds.includes(windowId)) {
+    throw new AppWindowKernelError(
+      "WINDOW_NOT_IN_STACK",
+      `$.dockRoot.${stackId}`,
+      `window "${windowId}" is not in stack "${stackId}"`
+    );
+  }
+  if (!Number.isInteger(command2.index) || command2.index < 0) {
+    throw new AppWindowKernelError("INVALID_INPUT", "$.index", "index must be nonnegative");
+  }
+  const ids = stack.windowIds.filter((candidate) => candidate !== windowId);
+  ids.splice(Math.min(command2.index, ids.length), 0, windowId);
+  const dockRoot = replaceStack(current.dockRoot, stackId, { ...stack, windowIds: ids });
+  const windows = structuredClone(current.windows);
+  syncDockMemories(windows, dockRoot);
+  return finalize(current, timestamp, { windows, dockRoot });
+}
+function renameLayout(current, layoutId, name, timestamp) {
+  const id = requireId(layoutId, "$.layoutId");
+  const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+  if (!layout) {
+    throw new AppWindowKernelError(
+      "LAYOUT_NOT_FOUND",
+      `$.layouts.${id}`,
+      `unknown app window layout "${id}"`
+    );
+  }
+  return finalize(current, timestamp, {
+    layouts: {
+      ...current.layouts,
+      [id]: { ...layout, name, revision: layout.revision + 1, updatedAt: timestamp }
+    }
+  });
+}
+function deleteLayout(current, layoutId, timestamp) {
+  const id = requireId(layoutId, "$.layoutId");
+  if (!Object.hasOwn(current.layouts, id)) {
+    throw new AppWindowKernelError(
+      "LAYOUT_NOT_FOUND",
+      `$.layouts.${id}`,
+      `unknown app window layout "${id}"`
+    );
+  }
+  const layouts = { ...current.layouts };
+  delete layouts[id];
+  return finalize(current, timestamp, {
+    layouts,
+    activeLayoutId: current.activeLayoutId === id ? null : current.activeLayoutId
+  });
+}
+function updateFloatingRect(current, id, window, rect, timestamp) {
+  return finalize(current, timestamp, {
+    windows: {
+      ...current.windows,
+      [id]: { ...window, placement: { ...window.placement, floating: rect } }
+    }
+  });
+}
+function requireWindowId(current, value) {
+  const id = requireId(value, "$.windowId");
+  if (!Object.hasOwn(current.windows, id)) {
+    throw new AppWindowKernelError(
+      "WINDOW_NOT_FOUND",
+      `$.windows.${id}`,
+      `unknown app window "${id}"`
+    );
+  }
+  return id;
+}
+function requireFloatingWindow(current, value) {
+  const id = requireWindowId(current, value);
+  const window = current.windows[id];
+  if (window.placement.mode !== "floating" || !window.placement.floating) {
+    throw new AppWindowKernelError(
+      "INVALID_PLACEMENT",
+      `$.windows.${id}.placement`,
+      `window "${id}" is not floating`
+    );
+  }
+  return [id, window, window.placement.floating];
+}
+function requireStack(root, stackId) {
+  const stack = findStack(root, stackId);
+  if (!stack) {
+    throw new AppWindowKernelError(
+      "STACK_NOT_FOUND",
+      `$.dockRoot.${stackId}`,
+      `unknown app window stack "${stackId}"`
+    );
+  }
+  return stack;
+}
+function findStack(node, stackId) {
+  if (!node) return null;
+  if (node.type === "stack") return node.id === stackId ? node : null;
+  for (const child of node.children) {
+    const found = findStack(child, stackId);
+    if (found) return found;
+  }
+  return null;
+}
+function firstStackId(node) {
+  if (!node) return null;
+  if (node.type === "stack") return node.id;
+  return firstStackId(node.children[0] ?? null);
+}
+function removeDockWindow(node, windowId) {
+  if (!node) return null;
+  if (node.type === "stack") {
+    const index = node.windowIds.indexOf(windowId);
+    if (index < 0) return node;
+    const windowIds = node.windowIds.filter((candidate) => candidate !== windowId);
+    if (windowIds.length === 0) return null;
+    return {
+      ...node,
+      windowIds,
+      activeWindowId: node.activeWindowId === windowId ? windowIds[Math.min(index, windowIds.length - 1)] : node.activeWindowId
+    };
+  }
+  const pairs = node.children.map((child, index) => ({
+    child: removeDockWindow(child, windowId),
+    weight: node.weights[index]
+  })).filter(
+    (pair) => pair.child !== null
+  );
+  if (pairs.length === 0) return null;
+  if (pairs.length === 1) return pairs[0].child;
+  return {
+    ...node,
+    children: pairs.map((pair) => pair.child),
+    weights: pairs.map((pair) => pair.weight)
+  };
+}
+function insertDockWindow(node, stackId, windowId, index) {
+  if (node.type === "stack") {
+    if (node.id !== stackId) return node;
+    const windowIds = [...node.windowIds];
+    windowIds.splice(Math.min(index, windowIds.length), 0, windowId);
+    return { ...node, windowIds };
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => insertDockWindow(child, stackId, windowId, index))
+  };
+}
+function activateDockWindow(node, stackId, windowId) {
+  if (node.type === "stack") {
+    return node.id === stackId ? { ...node, activeWindowId: windowId } : node;
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => activateDockWindow(child, stackId, windowId))
+  };
+}
+function replaceStack(node, stackId, replacement) {
+  if (node.type === "stack") return node.id === stackId ? replacement : node;
+  return {
+    ...node,
+    children: node.children.map((child) => replaceStack(child, stackId, replacement))
+  };
+}
+function syncDockMemories(windows, node) {
+  if (!node) return;
+  if (node.type === "split") {
+    for (const child of node.children) syncDockMemories(windows, child);
+    return;
+  }
+  for (const [index, id] of node.windowIds.entries()) {
+    const window = Object.hasOwn(windows, id) ? windows[id] : null;
+    if (!window || window.placement.mode !== "docked") continue;
+    windows[id] = {
+      ...window,
+      placement: { ...window.placement, docked: { stackId: node.id, index } }
+    };
+  }
+}
+function uniqueRootStackId(root) {
+  let ordinal = 0;
+  while (true) {
+    const candidate = ordinal === 0 ? "stack-root" : `stack-root-${ordinal}`;
+    if (!findStack(root, candidate)) return candidate;
+    ordinal += 1;
+  }
+}
+function normalizeRect(rect) {
+  return {
+    x: boundedCoordinate(rect.x, "$.rect.x"),
+    y: boundedCoordinate(rect.y, "$.rect.y"),
+    width: boundedExtent(rect.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.rect.width"),
+    height: boundedExtent(rect.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.rect.height")
+  };
+}
+function sameRect(left, right) {
+  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
+}
+function sameScene(left, right) {
+  return JSON.stringify({
+    windows: left.windows,
+    dockRoot: left.dockRoot,
+    dockState: left.dockState,
+    floatingOrder: left.floatingOrder,
+    focusedWindowId: left.focusedWindowId
+  }) === JSON.stringify({
+    windows: right.windows,
+    dockRoot: right.dockRoot,
+    dockState: right.dockState,
+    floatingOrder: right.floatingOrder,
+    focusedWindowId: right.focusedWindowId
+  });
+}
+function requireNonnegativeIndex(value, path2, message) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new AppWindowKernelError("INVALID_INPUT", path2, message);
+  }
+}
+function boundedCoordinate(value, path2) {
+  if (!Number.isFinite(value)) {
+    throw new AppWindowKernelError("INVALID_INPUT", path2, "coordinate must be finite");
+  }
+  return Math.max(-APP_WINDOW_COORDINATE_LIMIT, Math.min(APP_WINDOW_COORDINATE_LIMIT, value));
+}
+function boundedExtent(value, minimum, path2) {
+  if (!Number.isFinite(value)) {
+    throw new AppWindowKernelError("INVALID_INPUT", path2, "extent must be finite");
+  }
+  return Math.max(minimum, Math.min(APP_WINDOW_COORDINATE_LIMIT, value));
+}
+function requireTimestamp(previous, value) {
+  let timestamp;
+  try {
+    timestamp = AppWindowTimestampSchemaZ.parse(value);
+  } catch (error) {
+    throw translateStateError(error, "$.timestamp");
+  }
+  if (Date.parse(timestamp) < Date.parse(previous)) {
+    throw new AppWindowKernelError(
+      "TIMESTAMP_REGRESSION",
+      "$.updatedAt",
+      "app window mutation timestamp must not move backwards"
+    );
+  }
+  return timestamp;
+}
+function requireDocument(value) {
+  try {
+    return AppWindowDocumentV1SchemaZ.parse(value);
+  } catch (error) {
+    throw translateStateError(error, "$");
+  }
+}
+function requireId(value, path2) {
+  try {
+    return AppWindowIdSchemaZ.parse(value);
+  } catch (error) {
+    throw translateStateError(error, path2);
+  }
+}
+function finalize(current, timestamp, patch) {
+  try {
+    return AppWindowDocumentV1SchemaZ.parse({
+      ...current,
+      ...patch,
+      version: current.version,
+      revision: current.revision + 1,
+      updatedAt: timestamp
+    });
+  } catch (error) {
+    throw translateStateError(error, "$");
+  }
+}
+function translateStateError(error, path2) {
+  if (error instanceof AppWindowKernelError) return error;
+  const message = error.message;
+  return new AppWindowKernelError("INVALID_INPUT", path2, message);
+}
+var APP_WINDOW_FLOAT_MIN_WIDTH, APP_WINDOW_FLOAT_MIN_HEIGHT, APP_WINDOW_COORDINATE_LIMIT, AppWindowKernelError;
+var init_app_window_kernel = __esm({
+  "packages/daemon/src/lib/app-window-kernel.ts"() {
+    "use strict";
+    init_src();
+    init_app_window_state2();
+    APP_WINDOW_FLOAT_MIN_WIDTH = 20;
+    APP_WINDOW_FLOAT_MIN_HEIGHT = 6;
+    APP_WINDOW_COORDINATE_LIMIT = 1e6;
+    AppWindowKernelError = class extends Error {
+      code;
+      path;
+      constructor(code, path2, message) {
+        super(message);
+        this.name = "AppWindowKernelError";
+        this.code = code;
+        this.path = path2;
+      }
+    };
+  }
+});
+
+// packages/daemon/src/lib/app-window-repository.ts
+function loadAppWindowDocument(repository, options) {
+  return loadAppWindowDocumentInternal(repository, options);
+}
+function loadAppWindowDocumentInternal(repository, options, writer) {
+  let runtimeDocument;
+  try {
+    runtimeDocument = repository.readDocument(APP_WINDOW_DOCUMENT_PATH);
+  } catch (error) {
+    return protectedReadFailure(repository, options.loadedAt, error);
+  }
+  if (!runtimeDocument.found) {
+    if (options.migrateLegacy !== false) {
+      const migration = writer ? attemptFirstMigrationLocked(repository, writer, options) : attemptFirstMigration(repository, options);
+      if (migration) return migration;
+    }
+    return {
+      document: emptyAppWindowDocument(options.loadedAt),
+      revision: null,
+      writeProtected: false,
+      diagnostics: [diagnostic2("MISSING", APP_WINDOW_DOCUMENT_PATH, "app window state is absent")],
+      recoveryToken: null
+    };
+  }
+  const parsed = parseAppWindowDocument(runtimeDocument.payload, options.loadedAt);
+  const diagnostics = parsed.diagnostics.map((entry) => ({ ...entry }));
+  const writeProtected = parsed.writeProtected || diagnostics.length > 0;
+  return {
+    document: parsed.document,
+    revision: runtimeDocument.revision,
+    writeProtected,
+    diagnostics,
+    ...writeProtected ? { preservedPayload: structuredClone(runtimeDocument.payload) } : {},
+    recoveryToken: safeRecoveryToken(repository)
+  };
+}
+function writeAppWindowDocument(repository, expectedRevision, document) {
+  return withAppWindowWriterLock(
+    repository,
+    void 0,
+    (writer) => writeAppWindowDocumentLocked(repository, writer, expectedRevision, document)
+  );
+}
+function writeAppWindowDocumentLocked(repository, writer, expectedRevision, document) {
+  const validation = AppWindowDocumentV1SchemaZ.safeParse(document);
+  if (!validation.success) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      validation.error.issues.map((issue) => issue.message).join("; ")
+    );
+  }
+  const loaded = loadAppWindowDocument(repository, {
+    loadedAt: validation.data.updatedAt,
+    migrateLegacy: false
+  });
+  assertWritable(loaded);
+  if (loaded.revision !== expectedRevision) throw revisionError(expectedRevision, loaded.revision);
+  assertNextDocumentRevision(loaded, validation.data);
+  try {
+    const payload = JSON.parse(serializeAppWindowDocument(validation.data));
+    const written = writer.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
+      expectedRevision
+    });
+    return {
+      document: validation.data,
+      revision: written.revision,
+      writeProtected: false,
+      diagnostics: [],
+      recoveryToken: safeRecoveryToken(repository)
+    };
+  } catch (error) {
+    if (error instanceof RevisionConflictError) {
+      throw revisionError(error.expectedRevision, error.actualRevision, error);
+    }
+    throw new AppWindowRepositoryError(
+      "WRITE_FAILED",
+      `app window state could not be written: ${error.message}`,
+      [diagnostic2("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
+      error
+    );
+  }
+}
+function resetAppWindowDocumentLocked(repository, writer, request) {
+  const loaded = loadAppWindowDocument(repository, {
+    loadedAt: request.resetAt,
+    migrateLegacy: false
+  });
+  if (!loaded.writeProtected) {
+    throw new AppWindowRepositoryError(
+      "RECOVERY_NOT_REQUIRED",
+      "app window state is valid; normal revision CAS must be used"
+    );
+  }
+  if (!loaded.recoveryToken || loaded.recoveryToken !== request.expectedRecoveryToken) {
+    throw new AppWindowRepositoryError(
+      "RECOVERY_CONFLICT",
+      "app window recovery token no longer matches the preserved document"
+    );
+  }
+  let resetDocument = request.document;
+  if (resetDocument === void 0) {
+    try {
+      resetDocument = emptyAppWindowDocument(request.resetAt);
+    } catch (error) {
+      throw new AppWindowRepositoryError(
+        "INVALID_DOCUMENT",
+        `resetAt must be a valid app window timestamp: ${error.message}`,
+        [],
+        error
+      );
+    }
+  }
+  const validation = AppWindowDocumentV1SchemaZ.safeParse(resetDocument);
+  if (!validation.success) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      validation.error.issues.map((issue) => issue.message).join("; ")
+    );
+  }
+  const document = validation.data;
+  try {
+    const payload = JSON.parse(serializeAppWindowDocument(document));
+    const recovered = writer.recoverDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
+      expectedRawSha256: request.expectedRecoveryToken,
+      reason: request.reason,
+      details: {
+        diagnostics: loaded.diagnostics.map((entry) => ({ ...entry }))
+      }
+    });
+    return {
+      document,
+      revision: recovered.revision,
+      writeProtected: false,
+      diagnostics: [
+        diagnostic2(
+          "RECOVERED",
+          APP_WINDOW_DOCUMENT_PATH,
+          `app window state was explicitly reset; prior bytes preserved at ${recovered.backupPath}`
+        )
+      ],
+      recoveryToken: safeRecoveryToken(repository),
+      backupPath: recovered.backupPath,
+      metadataPath: recovered.metadataPath,
+      reason: recovered.reason
+    };
+  } catch (error) {
+    if (error instanceof RevisionConflictError) {
+      throw new AppWindowRepositoryError(
+        "RECOVERY_CONFLICT",
+        "app window document changed before explicit recovery",
+        [],
+        error
+      );
+    }
+    throw new AppWindowRepositoryError(
+      "WRITE_FAILED",
+      `app window recovery failed: ${error.message}`,
+      [],
+      error
+    );
+  }
+}
+function assertNextDocumentRevision(loaded, next) {
+  if (loaded.revision === null) {
+    if (next.revision === 0 || next.revision === 1) return;
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      "a new app window document must start at domain revision 0 or 1"
+    );
+  }
+  if (next.revision !== loaded.document.revision + 1) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      `app window domain revision must advance exactly once from ${loaded.document.revision}`
+    );
+  }
+  if (Date.parse(next.updatedAt) < Date.parse(loaded.document.updatedAt)) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      "app window updatedAt must not move backwards"
+    );
+  }
+}
+function withAppWindowWriterLock(repository, options, action) {
+  try {
+    return repository.withWriterLock(options, action);
+  } catch (error) {
+    if (error instanceof AppWindowRepositoryError || error instanceof AppWindowKernelError) {
+      throw error;
+    }
+    throw new AppWindowRepositoryError(
+      "WRITE_FAILED",
+      `app window writer lock failed: ${error.message}`,
+      [diagnostic2("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
+      error
+    );
+  }
+}
+function attemptFirstMigration(repository, options) {
+  try {
+    return withAppWindowWriterLock(
+      repository,
+      void 0,
+      (writer) => attemptFirstMigrationLocked(repository, writer, options)
+    );
+  } catch (error) {
+    return migrationFailure(
+      repository,
+      options,
+      error,
+      "legacy migration lock could not be acquired"
+    );
+  }
+}
+function attemptFirstMigrationLocked(repository, writer, options) {
+  let current;
+  try {
+    current = repository.readDocument(APP_WINDOW_DOCUMENT_PATH);
+  } catch (error) {
+    return protectedReadFailure(repository, options.loadedAt, error);
+  }
+  if (current.found) {
+    return loadAppWindowDocumentInternal(repository, { ...options, migrateLegacy: false }, writer);
+  }
+  let legacy;
+  try {
+    legacy = repository.readDocument(LEGACY_WORKSPACE_UI_PATH);
+  } catch (error) {
+    return migrationFailure(
+      repository,
+      options,
+      error,
+      "legacy workspace UI state could not be read"
+    );
+  }
+  if (!legacy.found) return null;
+  try {
+    const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(legacy.payload, {
+      migratedAt: options.migratedAt ?? options.loadedAt,
+      terminalSourceIds: options.terminalSourceIds,
+      focusedTerminalSourceId: options.focusedTerminalSourceId
+    });
+    const payload = JSON.parse(serializeAppWindowDocument(migrated.document));
+    const written = writer.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
+      expectedRevision: null
+    });
+    return {
+      document: migrated.document,
+      revision: written.revision,
+      writeProtected: false,
+      diagnostics: migrated.diagnostics,
+      recoveryToken: safeRecoveryToken(repository)
+    };
+  } catch (error) {
+    if (error instanceof RevisionConflictError) {
+      return loadAppWindowDocumentInternal(
+        repository,
+        { ...options, migrateLegacy: false },
+        writer
+      );
+    }
+    return migrationFailure(
+      repository,
+      options,
+      error,
+      "legacy workspace UI state was not migrated"
+    );
+  }
+}
+function migrationFailure(repository, options, error, context) {
+  const optOut = validateMigrationFailureOptOut(options.migrationFailureOptOut);
+  const suffix = optOut ? `; explicit migration opt-out accepted: ${optOut}` : "; writes remain protected until an explicit migration opt-out reason is supplied";
+  return {
+    document: emptyAppWindowDocument(options.loadedAt),
+    revision: null,
+    writeProtected: optOut === null,
+    diagnostics: [
+      diagnostic2(
+        "MIGRATION_FAILED",
+        LEGACY_WORKSPACE_UI_PATH,
+        `${context}: ${error.message}${suffix}`
+      )
+    ],
+    recoveryToken: safeRecoveryToken(repository)
+  };
+}
+function validateMigrationFailureOptOut(value) {
+  if (value === void 0) return null;
+  const reason = value.reason.trim();
+  if (reason.length === 0 || reason.length > 512 || reason.includes("\0")) return null;
+  return reason;
+}
+function protectedReadFailure(repository, loadedAt, error) {
+  return {
+    document: emptyAppWindowDocument(loadedAt),
+    revision: null,
+    writeProtected: true,
+    diagnostics: [
+      diagnostic2(
+        "READ_FAILED",
+        APP_WINDOW_DOCUMENT_PATH,
+        `app window state could not be read safely: ${error.message}`
+      )
+    ],
+    recoveryToken: safeRecoveryToken(repository)
+  };
+}
+function assertWritable(loaded) {
+  if (!loaded.writeProtected) return;
+  throw new AppWindowRepositoryError(
+    "WRITE_PROTECTED",
+    "app window state is not safe to overwrite without explicit recovery",
+    [
+      ...loaded.diagnostics,
+      diagnostic2(
+        "WRITE_PROTECTED",
+        APP_WINDOW_DOCUMENT_PATH,
+        "preserved current app window bytes without writing"
+      )
+    ]
+  );
+}
+function safeRecoveryToken(repository) {
+  try {
+    return repository.documentRecoveryToken(APP_WINDOW_DOCUMENT_PATH);
+  } catch {
+    return null;
+  }
+}
+function revisionError(expected, actual, cause) {
+  return new AppWindowRepositoryError(
+    "REVISION_CONFLICT",
+    `app window revision conflict: expected ${String(expected)}, actual ${String(actual)}`,
+    [
+      diagnostic2(
+        "REVISION_CONFLICT",
+        APP_WINDOW_DOCUMENT_PATH,
+        `expected ${String(expected)}, actual ${String(actual)}`
+      )
+    ],
+    cause
+  );
+}
+function boundedRetries(value) {
+  if (value === void 0) return 2;
+  if (!Number.isInteger(value) || value < 0 || value > 8) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      "maxRetries must be an integer between 0 and 8"
+    );
+  }
+  return value;
+}
+function validateExpectedRevision(value) {
+  if (value === void 0 || value === null) return value;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      "expectedRevision must be null or a nonnegative safe integer"
+    );
+  }
+  return value;
+}
+function diagnostic2(code, path2, message) {
+  return { code, path: path2, message };
+}
+var APP_WINDOW_DOCUMENT_PATH, LEGACY_WORKSPACE_UI_PATH, AppWindowRepositoryError, AppWindowService;
+var init_app_window_repository = __esm({
+  "packages/daemon/src/lib/app-window-repository.ts"() {
+    "use strict";
+    init_src();
+    init_project_runtime_repository();
+    init_app_window_kernel();
+    init_app_window_state2();
+    APP_WINDOW_DOCUMENT_PATH = "ui/app-windows.json";
+    LEGACY_WORKSPACE_UI_PATH = "ui/workspace.json";
+    AppWindowRepositoryError = class extends Error {
+      code;
+      diagnostics;
+      cause;
+      constructor(code, message, diagnostics = [], cause) {
+        super(message);
+        this.name = "AppWindowRepositoryError";
+        this.code = code;
+        this.diagnostics = diagnostics;
+        this.cause = cause;
+      }
+    };
+    AppWindowService = class {
+      #runtime;
+      #now;
+      #migration;
+      #writerLock;
+      constructor(runtime, options = {}) {
+        this.#runtime = runtime;
+        this.#now = options.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
+        this.#migration = options.migration ? {
+          terminalSourceIds: options.migration.terminalSourceIds,
+          focusedTerminalSourceId: options.migration.focusedTerminalSourceId,
+          migrationFailureOptOut: options.migration.migrationFailureOptOut
+        } : void 0;
+        this.#writerLock = options.writerLock;
+      }
+      load() {
+        const timestamp = this.#now();
+        return loadAppWindowDocument(this.#runtime, {
+          loadedAt: timestamp,
+          migratedAt: timestamp,
+          ...this.#migration
+        });
+      }
+      execute(command2, options = {}) {
+        const expectedRevision = validateExpectedRevision(options.expectedRevision);
+        return withAppWindowWriterLock(this.#runtime, this.#writerLock, (writer) => {
+          const retries = boundedRetries(options.maxRetries);
+          for (let attempt = 0; attempt <= retries; attempt += 1) {
+            const timestamp = this.#now();
+            const loaded = loadAppWindowDocumentInternal(
+              this.#runtime,
+              {
+                loadedAt: timestamp,
+                migratedAt: timestamp,
+                ...this.#migration
+              },
+              writer
+            );
+            assertWritable(loaded);
+            if (expectedRevision !== void 0 && expectedRevision !== loaded.revision) {
+              throw revisionError(expectedRevision, loaded.revision);
+            }
+            if (isAppWindowCommandSatisfied(loaded.document, command2)) return loaded;
+            const clock = this.#now();
+            const commandTimestamp = Date.parse(clock) < Date.parse(loaded.document.updatedAt) ? loaded.document.updatedAt : clock;
+            const next = applyAppWindowCommand(loaded.document, command2, commandTimestamp);
+            try {
+              return writeAppWindowDocumentLocked(this.#runtime, writer, loaded.revision, next);
+            } catch (error) {
+              if (error instanceof AppWindowRepositoryError && error.code === "REVISION_CONFLICT" && expectedRevision === void 0 && attempt < retries) {
+                continue;
+              }
+              throw error;
+            }
+          }
+          throw new Error("unreachable app-window retry exhaustion");
+        });
+      }
+      reset(request) {
+        return withAppWindowWriterLock(
+          this.#runtime,
+          this.#writerLock,
+          (writer) => resetAppWindowDocumentLocked(this.#runtime, writer, request)
+        );
+      }
+    };
+  }
+});
+
+// packages/daemon/src/lib/application-shell-app-windows.ts
+function dockTree(stackNodes) {
+  if (stackNodes.length === 0) return null;
+  let level = [...stackNodes];
+  let depth = 0;
+  while (level.length > 1) {
+    const next = [];
+    for (let index = 0; index < level.length; index += MAX_SPLIT_CHILDREN) {
+      const children = level.slice(index, index + MAX_SPLIT_CHILDREN);
+      if (children.length === 1) {
+        next.push(children[0]);
+        continue;
+      }
+      next.push({
+        type: "split",
+        id: `split.terminals.${depth}.${Math.floor(index / MAX_SPLIT_CHILDREN)}`,
+        axis: depth % 2 === 0 ? "horizontal" : "vertical",
+        children,
+        weights: children.map(() => 1)
+      });
+    }
+    level = next;
+    depth += 1;
+  }
+  return level[0];
+}
+function initialApplicationShellAppWindows(terminalSourceIds, focusedTerminalSourceId, updatedAt) {
+  const uniqueSourceIds = [...new Set(terminalSourceIds)].sort((left, right) => left.localeCompare(right)).slice(0, APP_WINDOW_MAX_WINDOWS);
+  const windows = {};
+  const windowIdBySourceId = /* @__PURE__ */ new Map();
+  const stacks = uniqueSourceIds.map((terminalSourceId, index) => {
+    const source = { kind: "terminal", terminalSourceId };
+    const windowId = stableAppWindowInstanceId(source);
+    const stackId = `stack.terminal.${index}`;
+    windowIdBySourceId.set(terminalSourceId, windowId);
+    windows[windowId] = {
+      id: windowId,
+      source,
+      title: null,
+      placement: {
+        mode: "docked",
+        docked: { stackId, index: 0 },
+        floating: {
+          x: 32 + index % 4 * 28,
+          y: 32 + index % 4 * 24,
+          width: 720,
+          height: 440
+        }
+      }
+    };
+    return { type: "stack", id: stackId, windowIds: [windowId], activeWindowId: windowId };
+  });
+  return AppWindowDocumentV1SchemaZ.parse({
+    version: 1,
+    revision: 0,
+    updatedAt,
+    windows,
+    dockRoot: dockTree(stacks),
+    dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+    floatingOrder: [],
+    focusedWindowId: (focusedTerminalSourceId && windowIdBySourceId.get(focusedTerminalSourceId)) ?? (uniqueSourceIds[0] ? windowIdBySourceId.get(uniqueSourceIds[0]) : void 0) ?? null,
+    activeLayoutId: null,
+    layouts: {}
+  });
+}
+function terminalWindowIdBySourceId(document) {
+  return new Map(
+    Object.values(document.windows).flatMap(
+      (window) => window.source.kind === "terminal" ? [[window.source.terminalSourceId, window.id]] : []
+    )
+  );
+}
+function reconcileApplicationShellAppWindows(document, terminalSourceIds, focusedTerminalSourceId, updatedAt) {
+  const current = AppWindowDocumentV1SchemaZ.parse(document);
+  const timestamp = Date.parse(updatedAt) < Date.parse(current.updatedAt) ? current.updatedAt : updatedAt;
+  const sourceMap = terminalWindowIdBySourceId(current);
+  const capacity = Math.max(0, APP_WINDOW_MAX_WINDOWS - Object.keys(current.windows).length);
+  const admittedSourceIds = [...new Set(terminalSourceIds)].filter((sourceId) => !sourceMap.has(sourceId)).sort((left, right) => left.localeCompare(right)).slice(0, capacity);
+  if (admittedSourceIds.length === 0) return current;
+  const windows = structuredClone(current.windows);
+  const floatingOrder = [...current.floatingOrder];
+  const nextSourceMap = new Map(sourceMap);
+  for (const [index, terminalSourceId] of admittedSourceIds.entries()) {
+    const source = { kind: "terminal", terminalSourceId };
+    const windowId = stableAppWindowInstanceId(source);
+    nextSourceMap.set(terminalSourceId, windowId);
+    windows[windowId] = {
+      id: windowId,
+      source,
+      title: null,
+      placement: {
+        mode: "floating",
+        docked: null,
+        floating: {
+          x: 32 + index % 6 * 28,
+          y: 32 + index % 6 * 24,
+          width: 720,
+          height: 440
+        }
+      }
+    };
+    floatingOrder.push(windowId);
+  }
+  const requestedFocusId = focusedTerminalSourceId ? nextSourceMap.get(focusedTerminalSourceId) ?? null : null;
+  const focusId = requestedFocusId ?? current.focusedWindowId ?? floatingOrder[0] ?? null;
+  const added = AppWindowDocumentV1SchemaZ.parse({
+    ...current,
+    windows,
+    floatingOrder: current.focusedWindowId && windows[current.focusedWindowId]?.placement.mode === "floating" ? [
+      ...floatingOrder.filter((windowId) => windowId !== current.focusedWindowId),
+      current.focusedWindowId
+    ] : floatingOrder,
+    revision: current.revision,
+    updatedAt: timestamp,
+    activeLayoutId: null
+  });
+  return focusAppWindow(added, focusId, timestamp);
+}
+async function loadApplicationShellAppWindows(projectDir, terminalSourceIds, focusedTerminalSourceId) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const runtime = await openProjectRuntimeRepository(projectDir);
+  return reconcileApplicationShellAppWindowRepository(
+    runtime,
+    terminalSourceIds,
+    focusedTerminalSourceId,
+    now
+  );
+}
+function reconcileApplicationShellAppWindowRepository(runtime, terminalSourceIds, focusedTerminalSourceId, now) {
+  const service = new AppWindowService(runtime, {
+    now: () => now,
+    migration: { terminalSourceIds, focusedTerminalSourceId }
+  });
+  const loaded = service.load();
+  if (loaded.writeProtected || terminalSourceIds.length === 0) {
+    return loaded.document;
+  }
+  let current = loaded;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const next = current.revision === null ? initialApplicationShellAppWindows(terminalSourceIds, focusedTerminalSourceId, now) : reconcileApplicationShellAppWindows(
+      current.document,
+      terminalSourceIds,
+      focusedTerminalSourceId,
+      now
+    );
+    if (next === current.document) return current.document;
+    try {
+      return writeAppWindowDocument(runtime, current.revision, next).document;
+    } catch (error) {
+      if (error instanceof AppWindowRepositoryError && error.code === "REVISION_CONFLICT") {
+        current = service.load();
+        if (current.writeProtected) return current.document;
+        continue;
+      }
+      throw error;
+    }
+  }
+  return service.load().document;
+}
+var MAX_SPLIT_CHILDREN;
+var init_application_shell_app_windows = __esm({
+  "packages/daemon/src/lib/application-shell-app-windows.ts"() {
+    "use strict";
+    init_src();
+    init_app_window_repository();
+    init_project_runtime_repository();
+    init_app_window_state2();
+    MAX_SPLIT_CHILDREN = 8;
   }
 });
 
@@ -25922,10 +27605,10 @@ function createApp(options = {}) {
   app.get("/api/project/:name/application-shell", async (c) => {
     const name = c.req.param("name");
     const requestedVersion = c.req.query("version");
-    if (requestedVersion !== void 0 && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
+    if (requestedVersion !== void 0 && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION) && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V3_VERSION)) {
       return c.json({ error: "Unsupported application-shell resource version" }, 400);
     }
-    if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
+    if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION) || requestedVersion === String(APPLICATION_SHELL_RESOURCE_V3_VERSION)) {
       const backend3 = options.applicationShellInventoryBackend;
       if (!backend3) return c.json({ error: "Session discovery unavailable" }, 503);
       let session2;
@@ -25936,6 +27619,25 @@ function createApp(options = {}) {
       }
       if (!session2) return c.json({ error: "Session not found" }, 404);
       const resource3 = projectApplicationShellResource(session2);
+      if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V3_VERSION)) {
+        const appWindowBackend = options.applicationShellAppWindowBackend === void 0 ? defaultApplicationShellAppWindowBackend : options.applicationShellAppWindowBackend;
+        if (!appWindowBackend) return c.json({ error: "App window state unavailable" }, 503);
+        let appWindows;
+        try {
+          appWindows = await appWindowBackend.load(
+            session2.dir,
+            resource3.terminalInventory.resources.map(({ id }) => id),
+            resource3.terminalInventory.activeResourceId
+          );
+        } catch {
+          return c.json({ error: "App window state unavailable" }, 503);
+        }
+        return c.json({
+          version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
+          daemon: daemonInstanceIdentity,
+          resource: projectApplicationShellResourceV3(session2, appWindows)
+        });
+      }
       return c.json({
         version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
         daemon: daemonInstanceIdentity,
@@ -26657,7 +28359,7 @@ function attachWsEvents(server, daemonIdentity) {
     }
   };
 }
-var projectStreamConnections, sseMetrics;
+var defaultApplicationShellAppWindowBackend, projectStreamConnections, sseMetrics;
 var init_server = __esm({
   "packages/daemon/src/command-center/server.ts"() {
     "use strict";
@@ -26689,7 +28391,13 @@ var init_server = __esm({
     init_project_inspect();
     init_project_onboard();
     init_application_shell2();
+    init_application_shell_app_windows();
     init_terminal_attachment_issue();
+    defaultApplicationShellAppWindowBackend = {
+      async load(projectDir, terminalSourceIds, focusedTerminalSourceId) {
+        return loadApplicationShellAppWindows(projectDir, terminalSourceIds, focusedTerminalSourceId);
+      }
+    };
     projectStreamConnections = 0;
     sseMetrics = {
       connections: 0,
@@ -30507,8 +32215,8 @@ async function migrate(targetDir, {
     }
     if (write) console.log(`Created ${workspacePath}`);
     else console.log(workspaceYaml.trimEnd());
-    for (const diagnostic of result.diagnostics) {
-      console.log(`warning ${diagnostic.code} at ${diagnostic.path}: ${diagnostic.message}`);
+    for (const diagnostic3 of result.diagnostics) {
+      console.log(`warning ${diagnostic3.code} at ${diagnostic3.path}: ${diagnostic3.message}`);
     }
     for (const warning of warnings) {
       console.log(`warning ${warning.code}: ${warning.message}`);

@@ -1,4 +1,9 @@
-import { AppWindowDocumentV1SchemaZ, type AppWindowDocumentV1 } from "@tmux-ide/contracts";
+import {
+  AppWindowDocumentV1SchemaZ,
+  type AppWindowDockNodeShape,
+  type AppWindowDocumentV1,
+  type AppWindowInstance,
+} from "@tmux-ide/contracts";
 import { describe, expect, it } from "vitest";
 
 import { appWindowFocusInvocation, projectAppWindowCanvas } from "./app-window-canvas-presenter.ts";
@@ -96,6 +101,66 @@ function scene(): AppWindowDocumentV1 {
   });
 }
 
+function manyDockWindowsScene(count: number): AppWindowDocumentV1 {
+  const windows: Record<string, AppWindowInstance> = {};
+  let nodes: AppWindowDockNodeShape[] = Array.from({ length: count }, (_, index) => {
+    const windowId = `window.dock.${index}`;
+    const stackId = `stack.dock.${index}`;
+    windows[windowId] = {
+      id: windowId,
+      source: { kind: "terminal", terminalSourceId: `terminal.dock.${index}` },
+      title: null,
+      placement: {
+        mode: "docked",
+        docked: { stackId, index: 0 },
+        floating: null,
+      },
+    };
+    return { type: "stack", id: stackId, windowIds: [windowId], activeWindowId: windowId };
+  });
+  let level = 0;
+  while (nodes.length > 1) {
+    const next: AppWindowDockNodeShape[] = [];
+    for (let index = 0; index < nodes.length; index += 8) {
+      const children = nodes.slice(index, index + 8);
+      if (children.length === 1) next.push(children[0]!);
+      else {
+        next.push({
+          type: "split",
+          id: `split.dock.${level}.${index / 8}`,
+          axis: level % 2 === 0 ? "horizontal" : "vertical",
+          children,
+          weights: children.map(() => 1),
+        });
+      }
+    }
+    nodes = next;
+    level += 1;
+  }
+  windows["window.float"] = {
+    id: "window.float",
+    source: { kind: "terminal", terminalSourceId: "terminal.float" },
+    title: null,
+    placement: {
+      mode: "floating",
+      docked: null,
+      floating: { x: 10, y: 10, width: 320, height: 200 },
+    },
+  };
+  return AppWindowDocumentV1SchemaZ.parse({
+    version: 1,
+    revision: 0,
+    updatedAt: NOW,
+    windows,
+    dockRoot: nodes[0],
+    dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+    floatingOrder: ["window.float"],
+    focusedWindowId: "window.float",
+    activeLayoutId: null,
+    layouts: {},
+  });
+}
+
 describe("projectAppWindowCanvas", () => {
   it("projects canonical dock, tab, floating, focus, and z-order state at 800x500", () => {
     expect(
@@ -114,5 +179,19 @@ describe("projectAppWindowCanvas", () => {
       command: { type: "window.focus", windowId: "window.worker" },
       source: "mouse",
     });
+  });
+
+  it("keeps every floating window above a large dock inventory", () => {
+    const projection = projectAppWindowCanvas(manyDockWindowsScene(110), {
+      width: 1_920,
+      height: 1_080,
+    });
+    const floating = projection.windows.find(({ windowId }) => windowId === "window.float")!;
+    const dockZ = projection.windows
+      .filter(({ placement }) => placement === "docked")
+      .map(({ zIndex }) => zIndex);
+
+    expect(dockZ).toHaveLength(110);
+    expect(floating.zIndex).toBeGreaterThan(Math.max(...dockZ));
   });
 });

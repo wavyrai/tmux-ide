@@ -1,4 +1,5 @@
 import {
+  APP_WINDOW_MAX_WINDOWS,
   AppWindowDocumentV1SchemaZ,
   type AppWindowDockNodeShape,
   type AppWindowDocumentV1,
@@ -10,8 +11,11 @@ import {
   AppWindowService,
   writeAppWindowDocument,
 } from "./app-window-repository.ts";
-import { openProjectRuntimeRepository } from "./project-runtime-repository.ts";
-import { stableAppWindowInstanceId } from "../tui/mirror/app-window-state.ts";
+import {
+  openProjectRuntimeRepository,
+  type ProjectRuntimeRepository,
+} from "./project-runtime-repository.ts";
+import { focusAppWindow, stableAppWindowInstanceId } from "../tui/mirror/app-window-state.ts";
 
 const MAX_SPLIT_CHILDREN = 8;
 
@@ -47,7 +51,9 @@ export function initialApplicationShellAppWindows(
   focusedTerminalSourceId: string | null,
   updatedAt: string,
 ): AppWindowDocumentV1 {
-  const uniqueSourceIds = [...new Set(terminalSourceIds)];
+  const uniqueSourceIds = [...new Set(terminalSourceIds)]
+    .sort((left, right) => left.localeCompare(right))
+    .slice(0, APP_WINDOW_MAX_WINDOWS);
   const windows: Record<string, AppWindowInstance> = {};
   const windowIdBySourceId = new Map<string, string>();
   const stacks = uniqueSourceIds.map((terminalSourceId, index): AppWindowDockNodeShape => {
@@ -89,6 +95,84 @@ export function initialApplicationShellAppWindows(
   });
 }
 
+function terminalWindowIdBySourceId(document: AppWindowDocumentV1): ReadonlyMap<string, string> {
+  return new Map(
+    Object.values(document.windows).flatMap((window) =>
+      window.source.kind === "terminal"
+        ? [[window.source.terminalSourceId, window.id] as const]
+        : [],
+    ),
+  );
+}
+
+/**
+ * Preserve every existing placement and admit newly discovered terminals as
+ * floating cards. Sorting before the bounded slice makes overload behavior
+ * deterministic, while never evicting durable windows to make room.
+ */
+export function reconcileApplicationShellAppWindows(
+  document: AppWindowDocumentV1,
+  terminalSourceIds: readonly string[],
+  focusedTerminalSourceId: string | null,
+  updatedAt: string,
+): AppWindowDocumentV1 {
+  const current = AppWindowDocumentV1SchemaZ.parse(document);
+  const timestamp =
+    Date.parse(updatedAt) < Date.parse(current.updatedAt) ? current.updatedAt : updatedAt;
+  const sourceMap = terminalWindowIdBySourceId(current);
+  const capacity = Math.max(0, APP_WINDOW_MAX_WINDOWS - Object.keys(current.windows).length);
+  const admittedSourceIds = [...new Set(terminalSourceIds)]
+    .filter((sourceId) => !sourceMap.has(sourceId))
+    .sort((left, right) => left.localeCompare(right))
+    .slice(0, capacity);
+  if (admittedSourceIds.length === 0) return current;
+
+  const windows = structuredClone(current.windows);
+  const floatingOrder = [...current.floatingOrder];
+  const nextSourceMap = new Map(sourceMap);
+  for (const [index, terminalSourceId] of admittedSourceIds.entries()) {
+    const source = { kind: "terminal" as const, terminalSourceId };
+    const windowId = stableAppWindowInstanceId(source);
+    nextSourceMap.set(terminalSourceId, windowId);
+    windows[windowId] = {
+      id: windowId,
+      source,
+      title: null,
+      placement: {
+        mode: "floating",
+        docked: null,
+        floating: {
+          x: 32 + (index % 6) * 28,
+          y: 32 + (index % 6) * 24,
+          width: 720,
+          height: 440,
+        },
+      },
+    };
+    floatingOrder.push(windowId);
+  }
+
+  const requestedFocusId = focusedTerminalSourceId
+    ? (nextSourceMap.get(focusedTerminalSourceId) ?? null)
+    : null;
+  const focusId = requestedFocusId ?? current.focusedWindowId ?? floatingOrder[0] ?? null;
+  const added = AppWindowDocumentV1SchemaZ.parse({
+    ...current,
+    windows,
+    floatingOrder:
+      current.focusedWindowId && windows[current.focusedWindowId]?.placement.mode === "floating"
+        ? [
+            ...floatingOrder.filter((windowId) => windowId !== current.focusedWindowId),
+            current.focusedWindowId,
+          ]
+        : floatingOrder,
+    revision: current.revision,
+    updatedAt: timestamp,
+    activeLayoutId: null,
+  });
+  return focusAppWindow(added, focusId, timestamp);
+}
+
 /**
  * Load the canonical persisted scene. A genuinely new project receives one
  * durable, CAS-protected first-run layout instead of a renderer-owned grid.
@@ -100,25 +184,50 @@ export async function loadApplicationShellAppWindows(
 ): Promise<AppWindowDocumentV1> {
   const now = new Date().toISOString();
   const runtime = await openProjectRuntimeRepository(projectDir);
+  return reconcileApplicationShellAppWindowRepository(
+    runtime,
+    terminalSourceIds,
+    focusedTerminalSourceId,
+    now,
+  );
+}
+
+export function reconcileApplicationShellAppWindowRepository(
+  runtime: ProjectRuntimeRepository,
+  terminalSourceIds: readonly string[],
+  focusedTerminalSourceId: string | null,
+  now: string,
+): AppWindowDocumentV1 {
   const service = new AppWindowService(runtime, {
     now: () => now,
     migration: { terminalSourceIds, focusedTerminalSourceId },
   });
   const loaded = service.load();
-  if (loaded.revision !== null || loaded.writeProtected || terminalSourceIds.length === 0) {
+  if (loaded.writeProtected || terminalSourceIds.length === 0) {
     return loaded.document;
   }
-  const initial = initialApplicationShellAppWindows(
-    terminalSourceIds,
-    focusedTerminalSourceId,
-    now,
-  );
-  try {
-    return writeAppWindowDocument(runtime, null, initial).document;
-  } catch (error) {
-    if (error instanceof AppWindowRepositoryError && error.code === "REVISION_CONFLICT") {
-      return service.load().document;
+  let current = loaded;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const next =
+      current.revision === null
+        ? initialApplicationShellAppWindows(terminalSourceIds, focusedTerminalSourceId, now)
+        : reconcileApplicationShellAppWindows(
+            current.document,
+            terminalSourceIds,
+            focusedTerminalSourceId,
+            now,
+          );
+    if (next === current.document) return current.document;
+    try {
+      return writeAppWindowDocument(runtime, current.revision, next).document;
+    } catch (error) {
+      if (error instanceof AppWindowRepositoryError && error.code === "REVISION_CONFLICT") {
+        current = service.load();
+        if (current.writeProtected) return current.document;
+        continue;
+      }
+      throw error;
     }
-    throw error;
   }
+  return service.load().document;
 }

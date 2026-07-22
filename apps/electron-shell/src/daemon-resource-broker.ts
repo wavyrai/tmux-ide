@@ -1,4 +1,5 @@
 import {
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellResourceV2SchemaZ,
   ApplicationShellResourceV3SchemaZ,
@@ -20,6 +21,7 @@ import {
   type TerminalAttachmentIssueErrorCode,
   type TerminalAttachmentIssueMutationRequest,
   type TerminalAttachmentIssueResult,
+  type DesktopDaemonFetchApplicationShellRequest,
   WorkspaceCatalogResourceV1SchemaZ,
   WorkspacePaneCreateArgumentsSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
@@ -108,6 +110,15 @@ interface BrokerSubscription {
 class BrokerFailure extends Error {
   constructor(readonly error: DesktopDaemonCapabilityError) {
     super(error.reason);
+  }
+}
+
+class BrokerHttpFailure extends BrokerFailure {
+  constructor(
+    readonly statusCode: number,
+    error: DesktopDaemonCapabilityError,
+  ) {
+    super(error);
   }
 }
 
@@ -483,12 +494,13 @@ export class DaemonResourceBroker {
 
   async fetchApplicationShell(
     workspaceName: string,
+    resourceVersion: DesktopDaemonFetchApplicationShellRequest["resourceVersion"] = APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ): Promise<DesktopDaemonFetchApplicationShellResult> {
     if (this.#daemon.status !== "connected") return this.#disconnectedResult();
     try {
       const request = DesktopDaemonFetchApplicationShellRequestSchemaZ.safeParse({
         workspaceName,
-        resourceVersion: APPLICATION_SHELL_RESOURCE_V3_VERSION,
+        resourceVersion,
       });
       if (!request.success) throw new BrokerFailure(daemonCapabilityError("invalid-request"));
       const workspaces = await this.#loadWorkspaceCatalog();
@@ -496,12 +508,29 @@ export class DaemonResourceBroker {
         (candidate) => candidate.workspaceName === request.data.workspaceName,
       );
       if (!workspace) throw new BrokerFailure(daemonCapabilityError("workspace-not-found"));
-      const raw = await this.#requestJson(
-        `/api/project/${encodeURIComponent(workspace.sessionName)}/application-shell?version=${APPLICATION_SHELL_RESOURCE_V3_VERSION}`,
-      );
-      const envelope = ApplicationShellResourceV2SchemaZ.or(
-        ApplicationShellResourceV3SchemaZ,
-      ).parse(raw);
+      let negotiatedVersion = request.data.resourceVersion ?? APPLICATION_SHELL_RESOURCE_V3_VERSION;
+      let raw: unknown;
+      try {
+        raw = await this.#requestJson(
+          `/api/project/${encodeURIComponent(workspace.sessionName)}/application-shell?version=${negotiatedVersion}`,
+        );
+      } catch (error) {
+        if (
+          negotiatedVersion !== APPLICATION_SHELL_RESOURCE_V3_VERSION ||
+          !(error instanceof BrokerHttpFailure) ||
+          error.statusCode !== 400
+        ) {
+          throw error;
+        }
+        negotiatedVersion = APPLICATION_SHELL_RESOURCE_V2_VERSION;
+        raw = await this.#requestJson(
+          `/api/project/${encodeURIComponent(workspace.sessionName)}/application-shell?version=${negotiatedVersion}`,
+        );
+      }
+      const envelope =
+        negotiatedVersion === APPLICATION_SHELL_RESOURCE_V3_VERSION
+          ? ApplicationShellResourceV3SchemaZ.parse(raw)
+          : ApplicationShellResourceV2SchemaZ.parse(raw);
       if (!sameIdentity(envelope.daemon, daemonIdentity(this.#daemon))) {
         throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
       }
@@ -667,7 +696,8 @@ export class DaemonResourceBroker {
       });
       if (response.redirected) throw new BrokerFailure(daemonCapabilityError("request-failed"));
       if (!response.ok) {
-        throw new BrokerFailure(
+        throw new BrokerHttpFailure(
+          response.status,
           daemonCapabilityError(response.status === 404 ? "workspace-not-found" : "request-failed"),
         );
       }
