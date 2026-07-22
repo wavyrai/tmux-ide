@@ -15,6 +15,7 @@ import {
   type PaneAppearance,
   type ProductSurfaceId,
   type SemanticFocusTarget,
+  type WorkspacePaneCreateInvocation,
   resolvePaneAppearance,
 } from "@tmux-ide/contracts";
 import {
@@ -45,6 +46,8 @@ import type {
   WorkbenchDockHostTabId,
 } from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
 import { CommandPalette } from "./command-palette.tsx";
+import { CreatePaneFlow } from "./create-pane-flow.tsx";
+import type { CreatePaneFlowCatalogs } from "./create-pane-flow-presenter.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
@@ -79,6 +82,11 @@ export interface DomApplicationShellProps {
   readonly onCommand?: (invocation: ApplicationShellCommandInvocation) => void;
   readonly paneFrames?: readonly PaneFrameModel[];
   readonly terminalPanes?: readonly ApplicationShellTerminalPaneFrame[];
+  readonly createPaneFlow?: {
+    readonly catalogs: CreatePaneFlowCatalogs;
+    readonly initialWorkspaceName: string;
+    readonly onCommand: (invocation: WorkspacePaneCreateInvocation) => void | Promise<void>;
+  };
   readonly onPaneAction?: (
     intent: PaneFrameActionIntent,
     source: PaneFrameActivationSource,
@@ -189,6 +197,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   );
   const [state, setState] = createSignal(createDomShellReplayState(input()));
   const [viewport, setViewport] = createSignal(initialViewport());
+  const [createPaneOpen, setCreatePaneOpen] = createSignal(false);
   let previousInput = input();
   let previousDataMode = dataMode();
   let returnFocusElement: HTMLElement | null = null;
@@ -513,6 +522,17 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           }
         />
         <div class="titlebar__drag titlebar__spacer" />
+        <Show when={props.createPaneFlow}>
+          {(flow) => (
+            <CreatePaneFlow
+              open={createPaneOpen()}
+              catalogs={flow().catalogs}
+              initialWorkspaceName={flow().initialWorkspaceName}
+              onOpenChange={setCreatePaneOpen}
+              onCommand={flow().onCommand}
+            />
+          )}
+        </Show>
         <button
           class="palette-trigger"
           type="button"
