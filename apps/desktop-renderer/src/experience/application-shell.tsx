@@ -510,6 +510,11 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     );
   };
 
+  const returnToTerminals = (): void => {
+    setDockMode("collapsed", { kind: "mouse", surface: "mission-activity-surface" });
+    dispatchSurface("terminals", { kind: "mouse", surface: "mission-activity-surface" });
+  };
+
   const openPalette = (source: CommandSource): void => {
     if (shell().focus.palette.open) return;
     setPaletteTransitionSource(source.kind === "mouse" ? "mouse" : "keyboard");
@@ -632,12 +637,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                 onSelectActivity={(activityId) => selectResource("activity", activityId)}
                 onOpenMissions={openMissionFromActivity}
                 onOpenActivity={openMissionActivity}
-                onOpenTerminals={() =>
-                  dispatchSurface("terminals", {
-                    kind: "mouse",
-                    surface: "mission-activity-surface",
-                  })
-                }
+                onOpenTerminals={returnToTerminals}
                 onRefresh={props.onRefreshResource}
               />
             </Match>

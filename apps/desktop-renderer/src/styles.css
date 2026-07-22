@@ -221,7 +221,7 @@ select:focus-visible,
 .titlebar__product-copy small {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .titlebar__preview-badge {
@@ -955,7 +955,7 @@ kbd {
 .workspace-sidebar__project small {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .workspace-sidebar__project strong {
@@ -1085,7 +1085,7 @@ kbd {
 .sidebar-row__identity > small {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .sidebar-row b {
@@ -1851,7 +1851,8 @@ kbd {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
 }
 
 .dock-surface__rail {
@@ -1901,107 +1902,132 @@ kbd {
 
 .dock-surface__content--journey {
   display: grid;
-  grid-template-rows: 22px minmax(0, 1fr);
-  padding: 10px 0 0;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+  padding: 0;
   overflow: hidden;
 }
 
 .dock-surface__content--journey > header {
-  padding: 0 14px;
+  display: none;
 }
 
 .mission-journey {
   min-width: 0;
   min-height: 0;
-  color: var(--tmux-ide-text-primary);
-  background: var(--tmux-ide-surface-panel);
-}
-
-.mission-journey__toolbar {
-  display: flex;
-  min-height: 38px;
-  align-items: center;
-  gap: 12px;
-  padding: 5px 10px 5px 14px;
-  border-bottom: 1px solid var(--tmux-ide-border-subtle);
-  background: color-mix(in srgb, var(--tmux-ide-surface-header) 74%, transparent);
-}
-
-.mission-journey__toolbar > div:first-child {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.mission-journey__toolbar strong {
-  font-size: 11px;
-  letter-spacing: 0.01em;
-}
-
-.mission-journey__toolbar span,
-.mission-journey__toolbar .mission-journey__bounded {
+  height: 100%;
   overflow: hidden;
-  color: var(--tmux-ide-text-muted);
-  font-family: var(--tmux-ide-font-mono);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--tmux-ide-text-primary);
+  background: var(--desktop-dock);
 }
 
 .mission-journey__bounded {
-  padding: 2px 6px;
-  border: 1px solid var(--tmux-ide-border-attention);
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--tmux-ide-status-warning) 36%, transparent);
   border-radius: 999px;
   color: var(--tmux-ide-status-warning) !important;
+  background: color-mix(in srgb, var(--tmux-ide-status-warning) 7%, transparent);
 }
 
 .mission-journey__workspace {
   display: grid;
   min-width: 0;
   min-height: 0;
-  height: calc(100% - 38px);
-  grid-template-columns: minmax(220px, 31%) minmax(0, 1fr);
+  height: 100%;
+  grid-template-columns: minmax(236px, 31%) minmax(0, 1fr);
+}
+
+.mission-journey__list-region {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 54px minmax(0, 1fr);
+  border-right: 1px solid var(--desktop-separator);
+  background: color-mix(in srgb, var(--desktop-chrome) 40%, var(--desktop-dock));
+}
+
+.mission-journey__list-region > header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 16px;
+  border-bottom: 1px solid var(--desktop-separator);
+}
+
+.mission-journey__list-region > header > div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  line-height: 16px;
+}
+
+.mission-journey__list-region > header strong {
+  overflow: hidden;
+  color: var(--tmux-ide-text-bright);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-journey__list-region > header span {
+  overflow: hidden;
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mission-journey__list {
   min-width: 0;
   min-height: 0;
-  padding: 4px;
+  padding: 8px;
   overflow: auto;
-  border-right: 1px solid var(--tmux-ide-border-subtle);
-  background: color-mix(in srgb, var(--tmux-ide-surface-header) 52%, transparent);
+  background: transparent;
+  scrollbar-color: color-mix(in srgb, var(--tmux-ide-text-muted) 30%, transparent) transparent;
+  scrollbar-width: thin;
 }
 
 .mission-journey__list button {
   display: grid;
   width: 100%;
   min-width: 0;
+  min-height: 52px;
   grid-template-columns: 7px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
-  padding: 7px 8px;
+  gap: 10px;
+  padding: 7px 9px;
   border: 1px solid transparent;
-  border-radius: var(--tmux-ide-shape-control);
+  border-radius: 8px;
   color: var(--tmux-ide-text-secondary);
   background: transparent;
   text-align: left;
   cursor: pointer;
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth),
+    border-color 150ms var(--desktop-ease-smooth),
+    box-shadow 150ms var(--desktop-ease-smooth);
 }
 
 .mission-journey__list button:hover {
-  background: var(--tmux-ide-selection-hover);
+  color: var(--tmux-ide-text-primary);
+  background: var(--desktop-hover);
 }
 
 .mission-journey__list button[aria-selected="true"] {
-  border-color: color-mix(in srgb, var(--tmux-ide-border-focused) 48%, transparent);
-  color: var(--tmux-ide-text-primary);
-  background: var(--tmux-ide-selection-selection);
+  border-color: var(--desktop-separator);
+  color: var(--tmux-ide-text-bright);
+  background: var(--desktop-active);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--tmux-ide-border-focused) 36%, transparent);
 }
 
 .mission-journey__list button:focus-visible {
-  outline: 1px solid var(--tmux-ide-border-focused);
+  outline: 1px solid color-mix(in srgb, var(--tmux-ide-border-focused) 52%, transparent);
   outline-offset: -1px;
 }
 
@@ -2021,16 +2047,16 @@ kbd {
 
 .mission-journey__list button strong {
   color: inherit;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 620;
 }
 
 .mission-journey__list button small,
 .mission-journey__list button time,
 .mission-journey__list button code {
   color: var(--tmux-ide-text-muted);
-  font-family: var(--tmux-ide-font-mono);
-  font-size: 8px;
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
 }
 
 .mission-journey__status-dot,
@@ -2039,7 +2065,6 @@ kbd {
   height: 6px;
   border-radius: 50%;
   background: var(--tmux-ide-status-neutral);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tmux-ide-status-neutral) 18%, transparent);
 }
 
 .mission-journey__status-dot[data-status="started"],
@@ -2063,15 +2088,11 @@ kbd {
 .mission-journey__detail {
   min-width: 0;
   min-height: 0;
-  padding: 11px 14px 10px;
+  padding: 18px 20px 14px;
   overflow: auto;
-  background:
-    linear-gradient(
-      115deg,
-      color-mix(in srgb, var(--tmux-ide-status-info) 5%, transparent),
-      transparent 42%
-    ),
-    var(--tmux-ide-surface-panel);
+  background: var(--desktop-raised);
+  scrollbar-color: color-mix(in srgb, var(--tmux-ide-text-muted) 30%, transparent) transparent;
+  scrollbar-width: thin;
 }
 
 .mission-journey__detail > header {
@@ -2085,12 +2106,21 @@ kbd {
   min-width: 0;
 }
 
+.mission-journey__detail-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
 .mission-journey__detail h3 {
-  margin: 3px 0 0;
+  margin: 7px 0 0;
   overflow: hidden;
   color: var(--tmux-ide-text-bright);
-  font-size: 15px;
-  line-height: 1.25;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2099,56 +2129,57 @@ kbd {
   flex: 0 0 auto;
   padding-top: 2px;
   color: var(--tmux-ide-text-muted);
-  font-family: var(--tmux-ide-font-mono);
-  font-size: 8px;
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .mission-journey__status {
   display: inline-flex;
   align-items: center;
-  padding: 2px 6px;
-  border: 1px solid var(--tmux-ide-border-default);
+  padding: 1px 7px;
+  border: 1px solid var(--desktop-separator);
   border-radius: 999px;
   color: var(--tmux-ide-text-secondary);
-  font-family: var(--tmux-ide-font-mono);
-  font-size: 8px;
+  background: var(--desktop-hover);
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .mission-journey__status[data-status="blocked"],
 .mission-journey__status[data-status="failed"] {
-  border-color: var(--tmux-ide-border-danger);
   color: var(--tmux-ide-status-danger);
+  background: color-mix(in srgb, var(--tmux-ide-status-danger) 8%, transparent);
 }
 
 .mission-journey__status[data-status="review"] {
-  border-color: var(--tmux-ide-border-attention);
   color: var(--tmux-ide-status-warning);
+  background: color-mix(in srgb, var(--tmux-ide-status-warning) 8%, transparent);
 }
 
 .mission-journey__status[data-status="completed"] {
   color: var(--tmux-ide-status-success);
+  background: color-mix(in srgb, var(--tmux-ide-status-success) 8%, transparent);
 }
 
 .mission-journey__status[data-status="activity"] {
   color: var(--tmux-ide-status-info);
+  background: color-mix(in srgb, var(--tmux-ide-status-info) 8%, transparent);
 }
 
 .mission-journey__summary {
   max-width: 72ch;
-  margin: 8px 0 10px;
+  margin: 10px 0 18px;
   color: var(--tmux-ide-text-secondary);
-  font-size: 10px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .mission-progress {
   max-width: 640px;
-  padding: 8px 10px;
-  border: 1px solid var(--tmux-ide-border-subtle);
-  border-radius: var(--tmux-ide-shape-control);
-  background: color-mix(in srgb, var(--tmux-ide-surface-elevated) 66%, transparent);
+  padding: 0 0 14px;
 }
 
 .mission-progress > div:first-child {
@@ -2156,23 +2187,23 @@ kbd {
   align-items: center;
   justify-content: space-between;
   color: var(--tmux-ide-text-secondary);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .mission-progress progress {
   display: block;
   width: 100%;
-  height: 3px;
-  margin: 6px 0;
+  height: 4px;
+  margin: 8px 0 7px;
   appearance: none;
   overflow: hidden;
   border: 0;
   border-radius: 999px;
-  background: var(--tmux-ide-border-subtle);
+  background: var(--desktop-separator);
 }
 
 .mission-progress progress::-webkit-progress-bar {
-  background: var(--tmux-ide-border-subtle);
+  background: var(--desktop-separator);
 }
 
 .mission-progress progress::-webkit-progress-value {
@@ -2182,58 +2213,51 @@ kbd {
 
 .mission-progress small {
   color: var(--tmux-ide-text-muted);
-  font-family: var(--tmux-ide-font-mono);
-  font-size: 8px;
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
 }
 
 .mission-proof-grid {
   display: grid;
   max-width: 760px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
-  margin-top: 8px;
+  margin-top: 2px;
+  border-block: 1px solid var(--desktop-separator);
 }
 
 .mission-proof-grid section {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 3px;
-  padding: 8px 9px;
-  border: 1px solid var(--tmux-ide-border-subtle);
-  border-radius: var(--tmux-ide-shape-control);
-  background: var(--tmux-ide-surface-header);
+  gap: 4px;
+  padding: 12px;
 }
 
-.mission-proof-grid section[data-tone="verified"] {
-  border-color: color-mix(
-    in srgb,
-    var(--tmux-ide-status-success) 40%,
-    var(--tmux-ide-border-subtle)
-  );
+.mission-proof-grid section + section {
+  border-left: 1px solid var(--desktop-separator);
 }
 
-.mission-proof-grid section[data-tone="attention"] {
-  border-color: color-mix(
-    in srgb,
-    var(--tmux-ide-status-warning) 46%,
-    var(--tmux-ide-border-subtle)
-  );
+.mission-proof-grid section[data-tone="verified"] strong {
+  color: var(--tmux-ide-status-success);
+}
+
+.mission-proof-grid section[data-tone="attention"] strong {
+  color: var(--tmux-ide-status-warning);
 }
 
 .mission-proof-grid span,
 .mission-proof-grid small {
   overflow: hidden;
   color: var(--tmux-ide-text-muted);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mission-proof-grid strong {
   overflow: hidden;
-  font-family: var(--tmux-ide-font-mono);
-  font-size: 10px;
+  font-size: 13px;
+  font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2243,34 +2267,34 @@ kbd {
   max-width: 760px;
   align-items: center;
   gap: 7px;
-  margin-top: 8px;
-  padding: 6px 8px;
+  margin-top: 12px;
+  padding: 8px 10px;
   border-left: 2px solid var(--tmux-ide-status-warning);
   color: var(--tmux-ide-text-secondary);
   background: color-mix(in srgb, var(--tmux-ide-status-warning) 7%, transparent);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .mission-journey__history {
   display: grid;
   max-width: 760px;
   grid-template-columns: auto 1fr;
-  gap: 3px 10px;
-  margin-top: 8px;
-  padding: 7px 9px;
-  border-left: 2px solid var(--tmux-ide-status-success);
-  background: color-mix(in srgb, var(--tmux-ide-status-success) 6%, transparent);
+  gap: 4px 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-left: 2px solid color-mix(in srgb, var(--tmux-ide-status-success) 60%, transparent);
+  background: var(--desktop-hover);
 }
 
 .mission-journey__history > span {
   color: var(--tmux-ide-text-muted);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .mission-journey__history > strong {
   color: var(--tmux-ide-status-success);
-  font-family: var(--tmux-ide-font-mono);
-  font-size: 9px;
+  font-family: var(--desktop-mono-font);
+  font-size: 10px;
   text-transform: uppercase;
 }
 
@@ -2278,7 +2302,95 @@ kbd {
   grid-column: 1 / -1;
   overflow: hidden;
   color: var(--tmux-ide-text-secondary);
-  font-size: 8px;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-journey__timeline {
+  max-width: 760px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--desktop-separator);
+}
+
+.mission-journey__timeline > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mission-journey__timeline h4 {
+  margin: 0;
+  color: var(--tmux-ide-text-primary);
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.mission-journey__timeline > header span {
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 10px;
+}
+
+.mission-journey__timeline ol {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-journey__timeline li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 126px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 46px;
+  padding: 6px 0 6px 14px;
+  border-left: 1px solid var(--desktop-separator);
+}
+
+.mission-journey__timeline li::before {
+  position: absolute;
+  top: 12px;
+  left: -3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--tmux-ide-status-neutral);
+  content: "";
+}
+
+.mission-journey__timeline li[data-current="true"]::before,
+.mission-journey__timeline li:last-child::before {
+  background: var(--tmux-ide-status-info);
+}
+
+.mission-journey__timeline li time {
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 10px;
+}
+
+.mission-journey__timeline li > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mission-journey__timeline li strong {
+  overflow: hidden;
+  color: var(--tmux-ide-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-journey__timeline li small {
+  overflow: hidden;
+  color: var(--tmux-ide-text-muted);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2289,11 +2401,11 @@ kbd {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 9px;
-  padding-top: 8px;
-  border-top: 1px solid var(--tmux-ide-border-subtle);
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--desktop-separator);
   color: var(--tmux-ide-text-muted);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .mission-journey__detail > footer .tmi-button {
@@ -2304,31 +2416,30 @@ kbd {
   display: grid;
   max-width: 640px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  margin: 10px 0;
-  overflow: hidden;
-  border: 1px solid var(--tmux-ide-border-subtle);
-  border-radius: var(--tmux-ide-shape-control);
-  background: var(--tmux-ide-border-subtle);
+  margin: 14px 0;
+  border-block: 1px solid var(--desktop-separator);
 }
 
 .activity-detail__facts > div {
   min-width: 0;
-  padding: 8px 9px;
-  background: var(--tmux-ide-surface-header);
+  padding: 12px;
+}
+
+.activity-detail__facts > div + div {
+  border-left: 1px solid var(--desktop-separator);
 }
 
 .activity-detail__facts dt {
   color: var(--tmux-ide-text-muted);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .activity-detail__facts dd {
   margin: 3px 0 0;
   overflow: hidden;
   color: var(--tmux-ide-text-primary);
-  font-family: var(--tmux-ide-font-mono);
-  font-size: 9px;
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2337,11 +2448,11 @@ kbd {
   display: flex;
   max-width: 640px;
   flex-direction: column;
-  gap: 3px;
-  padding: 8px 9px;
+  gap: 4px;
+  padding: 10px 12px;
   border-left: 2px solid var(--tmux-ide-status-info);
   background: color-mix(in srgb, var(--tmux-ide-status-info) 6%, transparent);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .activity-detail__proof span {
@@ -2351,27 +2462,15 @@ kbd {
 .mission-journey__state {
   display: grid;
   min-height: 100%;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 16px 18px;
-  background:
-    radial-gradient(
-      circle at 20% 50%,
-      color-mix(in srgb, var(--tmux-ide-status-warning) 8%, transparent),
-      transparent 44%
-    ),
-    var(--tmux-ide-surface-panel);
+  gap: 14px;
+  padding: 20px;
+  background: var(--desktop-raised);
 }
 
 .mission-journey__state[data-empty="true"] {
-  background:
-    radial-gradient(
-      circle at 20% 50%,
-      color-mix(in srgb, var(--tmux-ide-status-info) 8%, transparent),
-      transparent 44%
-    ),
-    var(--tmux-ide-surface-panel);
+  background: var(--desktop-raised);
 }
 
 .mission-journey__state-icon {
@@ -2379,30 +2478,30 @@ kbd {
   width: 32px;
   height: 32px;
   place-items: center;
-  border: 1px solid var(--tmux-ide-border-default);
-  border-radius: var(--tmux-ide-shape-control);
+  border: 1px solid var(--desktop-separator);
+  border-radius: 8px;
   color: var(--tmux-ide-text-link);
-  background: var(--tmux-ide-surface-elevated);
+  background: var(--desktop-hover);
 }
 
 .mission-journey__state small {
   color: var(--tmux-ide-status-warning);
-  font-family: var(--tmux-ide-font-mono);
-  font-size: 8px;
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .mission-journey__state h3 {
-  margin: 3px 0 4px;
-  font-size: 14px;
+  margin: 4px 0 5px;
+  font-size: 16px;
 }
 
 .mission-journey__state p,
 .mission-journey__state div > span {
   margin: 0;
   color: var(--tmux-ide-text-secondary);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .mission-journey__state div > span {
@@ -2417,29 +2516,37 @@ kbd {
 
 @media (max-width: 980px) {
   .mission-journey__workspace {
-    grid-template-columns: minmax(190px, 36%) minmax(0, 1fr);
+    grid-template-columns: minmax(210px, 36%) minmax(0, 1fr);
   }
 
   .mission-proof-grid {
     grid-template-columns: 1fr;
   }
 
-  .mission-proof-grid section:nth-child(3) {
+  .mission-proof-grid section + section {
+    border-top: 1px solid var(--desktop-separator);
+    border-left: 0;
+  }
+
+  .mission-journey__list button time {
     display: none;
+  }
+
+  .mission-journey__timeline li {
+    grid-template-columns: 100px minmax(0, 1fr);
   }
 }
 
 @media (max-width: 760px) {
   .mission-journey__workspace {
-    grid-template-columns: minmax(150px, 43%) minmax(0, 1fr);
+    grid-template-columns: minmax(180px, 40%) minmax(0, 1fr);
   }
 
   .mission-journey__detail {
-    padding-inline: 10px;
+    padding-inline: 14px;
   }
 
   .mission-journey__detail > header time,
-  .mission-journey__toolbar > div:first-child > span,
   .mission-journey__bounded,
   .activity-detail__facts > div:nth-child(3) {
     display: none;
@@ -2450,8 +2557,8 @@ kbd {
   }
 
   .mission-journey__state {
-    grid-template-columns: 28px minmax(0, 1fr);
-    padding: 12px;
+    grid-template-columns: 32px minmax(0, 1fr);
+    padding: 14px;
   }
 
   .mission-journey__state-actions,
@@ -2474,7 +2581,7 @@ kbd {
   color: var(--tmux-ide-text-muted);
   background: var(--desktop-chrome);
   font-family: var(--desktop-mono-font);
-  font-size: 9px;
+  font-size: 10px;
   line-height: calc(var(--desktop-status-height) - 1px);
   white-space: nowrap;
 }

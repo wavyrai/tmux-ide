@@ -61,6 +61,8 @@ describe("desktop mission and activity journey", () => {
     expect(harness.root.textContent).toContain("12/12 tests passing");
     expect(harness.root.textContent).toContain("6 files");
     expect(harness.root.textContent).toContain("Follow activity");
+    expect(harness.root.textContent).toContain("Timeline");
+    expect(harness.root.textContent).toContain("Latest attempt");
     expect(harness.root.querySelector("progress")?.getAttribute("value")).toBe("50");
     expect(harness.root.querySelector("[style]")).toBeNull();
 
@@ -68,6 +70,11 @@ describe("desktop mission and activity journey", () => {
       .find((button) => button.textContent?.includes("Follow activity"))
       ?.click();
     expect(harness.onOpenActivity).toHaveBeenCalledWith("mis_alpha");
+
+    [...harness.root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Return to terminals"))
+      ?.click();
+    expect(harness.onOpenTerminals).toHaveBeenCalledOnce();
     harness.dispose();
   });
 
@@ -94,6 +101,8 @@ describe("desktop mission and activity journey", () => {
     expect(harness.root.textContent).toContain("Proof recorded");
     expect(harness.root.textContent).toContain("Renderer acceptance passed.");
     expect(harness.root.textContent).toContain("2 proof records · 12/12 tests");
+    expect(harness.root.textContent).toContain("Recent activity");
+    expect(harness.root.textContent).toContain("Mission entered review");
 
     [...harness.root.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.includes("Inspect mission"))

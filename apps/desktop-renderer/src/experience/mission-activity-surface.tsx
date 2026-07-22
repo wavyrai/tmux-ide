@@ -23,15 +23,20 @@ export interface MissionActivitySurfaceProps {
 }
 
 function timestamp(value: string): string {
-  return `${value.slice(0, 10)} ${value.slice(11, 16)}Z`;
+  const date = new Date(value);
+  return `${date.toLocaleDateString("en", { month: "short", day: "numeric", timeZone: "UTC" })}, ${value.slice(11, 16)} UTC`;
 }
 
 function duration(value: number | null): string {
-  if (value === null) return "In progress";
+  if (value === null) return "Running";
   const minutes = Math.floor(value / 60_000);
   if (minutes < 1) return `${Math.max(1, Math.round(value / 1_000))}s`;
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function countLabel(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function progress(mission: DesktopMissionSummary): number {
@@ -80,6 +85,7 @@ function MissionDetail(props: {
   history: DesktopMissionHistorySummary | undefined;
   headingId: string;
   onOpenActivity: (missionId: string) => void;
+  onOpenTerminals: () => void;
 }) {
   const evidence = () => props.mission.proof;
   return (
@@ -91,7 +97,12 @@ function MissionDetail(props: {
           </span>
           <h3 id={props.headingId}>{props.mission.title}</h3>
         </div>
-        <time dateTime={props.mission.updatedAt}>{timestamp(props.mission.updatedAt)}</time>
+        <div class="mission-journey__detail-actions">
+          <time dateTime={props.mission.updatedAt}>{timestamp(props.mission.updatedAt)}</time>
+          <Button size="small" variant="ghost" onClick={props.onOpenTerminals}>
+            Return to terminals
+          </Button>
+        </div>
       </header>
       <p class="mission-journey__summary">{props.mission.summary}</p>
       <section class="mission-progress" aria-label={`${progress(props.mission)}% complete`}>
@@ -112,16 +123,21 @@ function MissionDetail(props: {
       <div class="mission-proof-grid">
         <section data-tone={evidence().hasProof ? "verified" : "attention"}>
           <span>Proof</span>
-          <strong>{evidence().hasProof ? `${evidence().proofCount} recorded` : "Missing"}</strong>
+          <strong>
+            {evidence().hasProof
+              ? `${countLabel(evidence().proofCount, "record")} saved`
+              : "Missing"}
+          </strong>
           <small>
             {evidence().tests.passed}/{evidence().tests.total} tests passing
           </small>
         </section>
         <section>
           <span>Change evidence</span>
-          <strong>{evidence().filesChanged} files</strong>
+          <strong>{countLabel(evidence().filesChanged, "file")}</strong>
           <small>
-            +{evidence().insertions} −{evidence().deletions} · {evidence().commitCount} commits
+            +{evidence().insertions} −{evidence().deletions} ·{" "}
+            {countLabel(evidence().commitCount, "commit")}
           </small>
         </section>
         <section>
@@ -146,8 +162,8 @@ function MissionDetail(props: {
             <span>Recorded outcome</span>
             <strong>{history().outcome}</strong>
             <small>
-              {history().attempts.total} attempts · {history().attempts.approved} approved ·{" "}
-              {history().attempts.failed} failed
+              {countLabel(history().attempts.total, "attempt")} · {history().attempts.approved}{" "}
+              approved · {history().attempts.failed} failed
             </small>
             <Show when={history().lastEventLabel}>
               <small>{history().lastEventLabel}</small>
@@ -155,9 +171,47 @@ function MissionDetail(props: {
           </section>
         )}
       </Show>
+      <section class="mission-journey__timeline" aria-label="Mission timeline">
+        <header>
+          <h4>Timeline</h4>
+          <span>Durable mission state</span>
+        </header>
+        <ol>
+          <li>
+            <time dateTime={props.mission.startedAt ?? props.mission.updatedAt}>
+              {timestamp(props.mission.startedAt ?? props.mission.updatedAt)}
+            </time>
+            <span>
+              <strong>Mission started</strong>
+              <small>Execution entered the {props.mission.column} column.</small>
+            </span>
+          </li>
+          <Show when={props.mission.latestAttempt}>
+            {(attempt) => (
+              <li>
+                <time dateTime={attempt().updatedAt}>{timestamp(attempt().updatedAt)}</time>
+                <span>
+                  <strong>Latest attempt {attempt().status}</strong>
+                  <small>
+                    {attempt().agent} · {attempt().harness} ·{" "}
+                    {countLabel(attempt().proofCount, "proof record")}
+                  </small>
+                </span>
+              </li>
+            )}
+          </Show>
+          <li>
+            <time dateTime={props.mission.updatedAt}>{timestamp(props.mission.updatedAt)}</time>
+            <span>
+              <strong>Mission state updated</strong>
+              <small>{props.mission.summary}</small>
+            </span>
+          </li>
+        </ol>
+      </section>
       <footer>
         <span>
-          Duration <strong>{duration(props.mission.durationMs)}</strong>
+          Elapsed <strong>{duration(props.mission.durationMs)}</strong>
         </span>
         <Button
           size="small"
@@ -175,8 +229,10 @@ function MissionDetail(props: {
 function ActivityDetail(props: {
   event: DesktopMissionActivityEvent;
   mission: DesktopMissionSummary | undefined;
+  activity: readonly DesktopMissionActivityEvent[];
   headingId: string;
   onOpenMissions: (missionId: string) => void;
+  onOpenTerminals: () => void;
 }) {
   return (
     <article class="mission-journey__detail activity-detail" aria-labelledby={props.headingId}>
@@ -187,7 +243,12 @@ function ActivityDetail(props: {
           </span>
           <h3 id={props.headingId}>{props.event.label}</h3>
         </div>
-        <time dateTime={props.event.timestamp}>{timestamp(props.event.timestamp)}</time>
+        <div class="mission-journey__detail-actions">
+          <time dateTime={props.event.timestamp}>{timestamp(props.event.timestamp)}</time>
+          <Button size="small" variant="ghost" onClick={props.onOpenTerminals}>
+            Return to terminals
+          </Button>
+        </div>
       </header>
       <p class="mission-journey__summary">
         {props.event.reason ?? "This durable mission event did not include an additional reason."}
@@ -218,6 +279,27 @@ function ActivityDetail(props: {
           </div>
         )}
       </Show>
+      <section class="mission-journey__timeline" aria-label="Recent durable activity">
+        <header>
+          <h4>Recent activity</h4>
+          <span>{props.activity.length} bounded events</span>
+        </header>
+        <ol>
+          <For each={props.activity.slice(0, 5)}>
+            {(event) => (
+              <li data-current={event.id === props.event.id}>
+                <time dateTime={event.timestamp}>{timestamp(event.timestamp)}</time>
+                <span>
+                  <strong>{event.label}</strong>
+                  <small>
+                    {event.actor.label} · #{event.sequence}
+                  </small>
+                </span>
+              </li>
+            )}
+          </For>
+        </ol>
+      </section>
       <footer>
         <span>Durable event history</span>
         <Button
@@ -316,88 +398,91 @@ export function MissionActivitySurface(props: MissionActivitySurfaceProps) {
       </Show>
 
       <Show when={props.resource?.status === "ready"}>
-        <div class="mission-journey__toolbar">
-          <div>
-            <strong>{props.mode === "missions" ? "Mission control" : "Mission activity"}</strong>
-            <span>
-              {payload()?.counts.missions} missions · {payload()?.counts.history} outcomes ·{" "}
-              {payload()?.counts.activity} events
-            </span>
-          </div>
-          <Show when={payload()?.truncated}>
-            <span class="mission-journey__bounded">Showing latest bounded view</span>
-          </Show>
-          <Show when={props.onRefresh}>
-            <Button size="small" variant="ghost" onClick={() => props.onRefresh?.()}>
-              <DomIcon id="refresh" usage="action" />
-              Refresh
-            </Button>
-          </Show>
-        </div>
-
         <div class="mission-journey__workspace">
-          <Show
-            when={props.mode === "missions"}
-            fallback={
+          <section class="mission-journey__list-region">
+            <header>
+              <div>
+                <strong>{props.mode === "missions" ? "Missions" : "Activity"}</strong>
+                <span>
+                  {countLabel(payload()?.counts.missions ?? 0, "mission")} ·{" "}
+                  {countLabel(payload()?.counts.history ?? 0, "outcome")} ·{" "}
+                  {countLabel(payload()?.counts.activity ?? 0, "event")}
+                </span>
+              </div>
+              <Show when={payload()?.truncated}>
+                <span class="mission-journey__bounded">Latest bounded view</span>
+              </Show>
+              <Show when={props.onRefresh}>
+                <Button size="small" variant="ghost" onClick={() => props.onRefresh?.()}>
+                  <DomIcon id="refresh" usage="action" />
+                  Refresh
+                </Button>
+              </Show>
+            </header>
+            <Show
+              when={props.mode === "missions"}
+              fallback={
+                <div
+                  class="mission-journey__list activity-list"
+                  role="listbox"
+                  aria-label="Mission activity"
+                  onKeyDown={moveOptionFocus}
+                >
+                  <For each={payload()?.activity}>
+                    {(event) => (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selectedActivity()?.id === event.id}
+                        tabIndex={selectedActivity()?.id === event.id ? 0 : -1}
+                        onFocus={() => props.onSelectActivity(event.id)}
+                        onClick={() => props.onSelectActivity(event.id)}
+                      >
+                        <i aria-hidden="true" />
+                        <span>
+                          <strong>{event.label}</strong>
+                          <small>
+                            {event.actor.label} · {timestamp(event.timestamp)}
+                          </small>
+                        </span>
+                        <code>#{event.sequence}</code>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              }
+            >
               <div
-                class="mission-journey__list activity-list"
+                class="mission-journey__list"
                 role="listbox"
-                aria-label="Mission activity"
+                aria-label="Missions"
                 onKeyDown={moveOptionFocus}
               >
-                <For each={payload()?.activity}>
-                  {(event) => (
+                <For each={payload()?.missions}>
+                  {(mission) => (
                     <button
                       type="button"
                       role="option"
-                      aria-selected={selectedActivity()?.id === event.id}
-                      tabIndex={selectedActivity()?.id === event.id ? 0 : -1}
-                      onFocus={() => props.onSelectActivity(event.id)}
-                      onClick={() => props.onSelectActivity(event.id)}
+                      aria-selected={selectedMission()?.id === mission.id}
+                      tabIndex={selectedMission()?.id === mission.id ? 0 : -1}
+                      onFocus={() => props.onSelectMission(mission.id)}
+                      onClick={() => props.onSelectMission(mission.id)}
                     >
-                      <i aria-hidden="true" />
+                      <span class="mission-journey__status-dot" data-status={mission.status} />
                       <span>
-                        <strong>{event.label}</strong>
+                        <strong>{mission.title}</strong>
                         <small>
-                          {event.actor.label} · {timestamp(event.timestamp)}
+                          {mission.status} · {mission.progress.done}/{mission.progress.total} tasks
+                          · {countLabel(mission.proof.proofCount, "proof")}
                         </small>
                       </span>
-                      <code>#{event.sequence}</code>
+                      <time dateTime={mission.updatedAt}>{timestamp(mission.updatedAt)}</time>
                     </button>
                   )}
                 </For>
               </div>
-            }
-          >
-            <div
-              class="mission-journey__list"
-              role="listbox"
-              aria-label="Missions"
-              onKeyDown={moveOptionFocus}
-            >
-              <For each={payload()?.missions}>
-                {(mission) => (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={selectedMission()?.id === mission.id}
-                    tabIndex={selectedMission()?.id === mission.id ? 0 : -1}
-                    onFocus={() => props.onSelectMission(mission.id)}
-                    onClick={() => props.onSelectMission(mission.id)}
-                  >
-                    <span class="mission-journey__status-dot" data-status={mission.status} />
-                    <span>
-                      <strong>{mission.title}</strong>
-                      <small>
-                        {mission.status} · {progress(mission)}% · {mission.proof.proofCount} proof
-                      </small>
-                    </span>
-                    <time dateTime={mission.updatedAt}>{mission.updatedAt.slice(5, 10)}</time>
-                  </button>
-                )}
-              </For>
-            </div>
-          </Show>
+            </Show>
+          </section>
 
           <Show when={props.mode === "missions" ? selectedMission() : selectedActivity()}>
             {props.mode === "missions" ? (
@@ -406,13 +491,16 @@ export function MissionActivitySurface(props: MissionActivitySurfaceProps) {
                 history={selectedMissionHistory()}
                 headingId={`${instanceId}-mission-detail`}
                 onOpenActivity={props.onOpenActivity}
+                onOpenTerminals={props.onOpenTerminals}
               />
             ) : (
               <ActivityDetail
                 event={selectedActivity()!}
                 mission={selectedActivityMission()}
+                activity={payload()?.activity ?? []}
                 headingId={`${instanceId}-activity-detail`}
                 onOpenMissions={props.onOpenMissions}
+                onOpenTerminals={props.onOpenTerminals}
               />
             )}
           </Show>

@@ -1052,6 +1052,189 @@ try {
         `Desktop shell responsive/theme evidence failed: ${JSON.stringify(shellEvidence, null, 2)}`,
       );
     }
+
+    const journeyEvidenceCases = [
+      { mode: "missions", appearance: "dark", width: 1_440, height: 900 },
+      { mode: "missions", appearance: "light", width: 1_440, height: 900 },
+      { mode: "activity", appearance: "dark", width: 1_440, height: 900 },
+      { mode: "activity", appearance: "light", width: 1_440, height: 900 },
+      { mode: "missions", appearance: "dark", width: 1_200, height: 800 },
+      { mode: "missions", appearance: "light", width: 1_200, height: 800 },
+      { mode: "activity", appearance: "dark", width: 1_200, height: 800 },
+      { mode: "activity", appearance: "light", width: 1_200, height: 800 },
+      { mode: "missions", appearance: "dark", width: 840, height: 620 },
+      { mode: "missions", appearance: "light", width: 840, height: 620 },
+      { mode: "activity", appearance: "dark", width: 840, height: 620 },
+      { mode: "activity", appearance: "light", width: 840, height: 620 },
+    ];
+    const journeyEvidence = [];
+    for (const fixture of journeyEvidenceCases) {
+      const evidencePage = await browser.newPage({
+        viewport: { width: fixture.width, height: fixture.height },
+        colorScheme: fixture.appearance,
+      });
+      const evidenceConsoleMessages = [];
+      evidencePage.on("console", (message) => evidenceConsoleMessages.push(message.text()));
+      await evidencePage.addInitScript(() => {
+        globalThis.__tmiCspViolations = [];
+        globalThis.document.addEventListener("securitypolicyviolation", (event) => {
+          globalThis.__tmiCspViolations.push({
+            blockedURI: event.blockedURI,
+            directive: event.effectiveDirective,
+          });
+        });
+      });
+      await evidencePage.goto(rendererUrl, { waitUntil: "networkidle" });
+      const evidence = await evidencePage.evaluate(async ({ mode, appearance, width, height }) => {
+        globalThis.document.getElementById("root")?.remove();
+        const root = globalThis.document.createElement("div");
+        root.id = "root";
+        globalThis.document.body.append(root);
+        const { mountMissionActivityShellFixture } =
+          await import("/src/experience/mission-activity-shell.fixture.tsx");
+        mountMissionActivityShellFixture(root, mode, appearance);
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const bounds = (selector) => {
+          const rect = globalThis.document.querySelector(selector)?.getBoundingClientRect();
+          return rect
+            ? {
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                width: rect.width,
+                height: rect.height,
+              }
+            : null;
+        };
+        const genericHeader = globalThis.document.querySelector(
+          ".dock-surface__content--journey > header",
+        );
+        const detailTime = globalThis.document.querySelector(
+          ".mission-journey__detail > header time",
+        );
+        const selectedTerminalTab = globalThis.document.querySelector(
+          '.primary-tabs [role="tab"][aria-selected="true"]',
+        );
+        const statusConnection = globalThis.document.querySelector(
+          ".status-strip__connection",
+        );
+        const initial = {
+          app: bounds(".app"),
+          main: bounds(".workspace-main"),
+          dock: bounds(".workspace-dock"),
+          journey: bounds(".mission-journey"),
+          list: bounds(".mission-journey__list-region"),
+          detail: bounds(".mission-journey__detail"),
+          toolbarCount: globalThis.document.querySelectorAll(".mission-journey__toolbar").length,
+          genericHeaderDisplay: genericHeader
+            ? globalThis.getComputedStyle(genericHeader).display
+            : null,
+          detailTimeWhiteSpace: detailTime
+            ? globalThis.getComputedStyle(detailTime).whiteSpace
+            : null,
+          detailMetadataSize: detailTime
+            ? Number.parseFloat(globalThis.getComputedStyle(detailTime).fontSize)
+            : null,
+          selectedTerminalLabel: selectedTerminalTab?.textContent?.trim() ?? null,
+          dockMode: globalThis.document
+            .querySelector(".workspace-main")
+            ?.getAttribute("data-dock-mode"),
+          connectionState: statusConnection?.getAttribute("data-state") ?? null,
+          connectionText: statusConnection?.textContent?.trim() ?? null,
+          returnControl: Boolean(
+            [...globalThis.document.querySelectorAll("button")].find((button) =>
+              button.textContent?.includes("Return to terminals"),
+            ),
+          ),
+          timeline: Boolean(
+            globalThis.document.querySelector(
+              mode === "missions"
+                ? '[aria-label="Mission timeline"]'
+                : '[aria-label="Recent durable activity"]',
+            ),
+          ),
+          horizontalOverflow: globalThis.document.documentElement.scrollWidth > width,
+          verticalOverflow: globalThis.document.documentElement.scrollHeight > height,
+          styleAttributes: globalThis.document.querySelectorAll("[style]").length,
+          styleElements: globalThis.document.querySelectorAll("style").length,
+          violations: globalThis.__tmiCspViolations ?? [],
+        };
+        const returnControl = [...globalThis.document.querySelectorAll("button")].find((button) =>
+          button.textContent?.includes("Return to terminals"),
+        );
+        returnControl?.dispatchEvent(
+          new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }),
+        );
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        return {
+          mode,
+          appearance,
+          viewport: { width, height },
+          ...initial,
+          returned: {
+            dockMode: globalThis.document
+              .querySelector(".workspace-main")
+              ?.getAttribute("data-dock-mode"),
+            selectedTerminalLabel:
+              globalThis.document
+                .querySelector('.primary-tabs [role="tab"][aria-selected="true"]')
+                ?.textContent?.trim() ?? null,
+          },
+        };
+      }, fixture);
+      journeyEvidence.push({
+        ...evidence,
+        consoleViolations: evidenceConsoleMessages.filter((message) =>
+          cspViolation.test(message),
+        ),
+      });
+      if (process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT) {
+        const evidencePath = process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT.replace(
+          /(\.[^.]+)$/u,
+          `-${fixture.mode}-${fixture.appearance}-${fixture.width}x${fixture.height}$1`,
+        );
+        await evidencePage.screenshot({ path: evidencePath, fullPage: true });
+      }
+      await evidencePage.close();
+    }
+    if (
+      journeyEvidence.some(
+        (evidence) =>
+          evidence.app?.width !== evidence.viewport.width ||
+          evidence.app?.height !== evidence.viewport.height ||
+          !evidence.main ||
+          !evidence.dock ||
+          !evidence.journey ||
+          !evidence.list ||
+          !evidence.detail ||
+          Math.abs(evidence.dock.bottom - evidence.main.bottom) > 0.5 ||
+          Math.abs(evidence.journey.bottom - evidence.dock.bottom) > 0.5 ||
+          evidence.toolbarCount !== 0 ||
+          evidence.genericHeaderDisplay !== "none" ||
+          evidence.detailTimeWhiteSpace !== "nowrap" ||
+          (evidence.detailMetadataSize ?? 0) < 11 ||
+          !evidence.selectedTerminalLabel?.includes("Terminals") ||
+          evidence.dockMode !== "maximized" ||
+          evidence.connectionState !== "connected" ||
+          !evidence.connectionText?.includes("Native tmux workspace connected") ||
+          !evidence.returnControl ||
+          !evidence.timeline ||
+          evidence.horizontalOverflow ||
+          evidence.verticalOverflow ||
+          evidence.styleAttributes !== 0 ||
+          evidence.styleElements !== 0 ||
+          evidence.violations.some(({ directive }) => directive.startsWith("style-src")) ||
+          evidence.consoleViolations.length > 0 ||
+          evidence.returned.dockMode !== "collapsed" ||
+          !evidence.returned.selectedTerminalLabel?.includes("Terminals"),
+      )
+    ) {
+      throw new Error(
+        `Desktop mission/activity visual acceptance failed: ${JSON.stringify(journeyEvidence, null, 2)}`,
+      );
+    }
   } finally {
     await browser.close();
   }

@@ -330,6 +330,15 @@ describe("visible DOM application shell", () => {
     )!;
     pointerClick(inspect);
     expect(root.querySelector('.dock-surface[data-surface="missions"]')).not.toBeNull();
+
+    const returnToTerminals = [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("Return to terminals"),
+    )!;
+    pointerClick(returnToTerminals);
+    expect(root.querySelector(".workspace-main")?.getAttribute("data-dock-mode")).toBe("collapsed");
+    expect(root.querySelector("#primary-tab-terminals")?.getAttribute("aria-selected")).toBe(
+      "true",
+    );
   });
 
   it("gives exactly one canvas terminal input ownership through canonical window focus", () => {
