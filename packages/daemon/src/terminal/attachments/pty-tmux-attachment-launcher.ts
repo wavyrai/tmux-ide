@@ -738,15 +738,3 @@ export class PtyTmuxAttachmentInputUnavailableError extends Error {
     this.name = "PtyTmuxAttachmentInputUnavailableError";
   }
 }
-
-/** Canonical identity passed by the executor without parsing guarded argv. */
-export function ptyAttachmentIdentityFromPlan(plan: GroupedTmuxAttachmentPlan) {
-  return {
-    attachmentId: plan.identity.attachmentId,
-    generation: plan.identity.generation,
-    viewSessionName: plan.identity.viewSessionName,
-    markerValue: plan.identity.markerValue,
-    expectedWindowId: plan.identity.durableSource.windowId,
-    expectedPaneId: plan.identity.durableSource.runtimePaneId,
-  } as const;
-}

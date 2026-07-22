@@ -181,7 +181,6 @@ export {
 export {
   PtyTmuxAttachmentInputUnavailableError,
   PtyTmuxAttachmentLauncher,
-  ptyAttachmentIdentityFromPlan,
   type ClaimedPtyTmuxAttachment,
   type DaemonTmuxSocketSelector,
   type PtyTmuxAttachmentClaimKey,
