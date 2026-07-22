@@ -2568,6 +2568,614 @@ kbd {
   }
 }
 
+/* Files and Changes dock surfaces — siblings of the mission journey. */
+.workspace-files,
+.workspace-changes {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  color: var(--tmux-ide-text-primary);
+  background: var(--desktop-dock);
+}
+
+.workspace-files__workspace,
+.workspace-changes__workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  grid-template-columns: minmax(240px, 34%) minmax(0, 1fr);
+}
+
+.workspace-files__tree-region,
+.workspace-changes__list-region {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 54px minmax(0, 1fr);
+  border-right: 1px solid var(--desktop-separator);
+  background: color-mix(in srgb, var(--desktop-chrome) 40%, var(--desktop-dock));
+}
+
+.workspace-files__tree-region > header,
+.workspace-changes__list-region > header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 16px;
+  border-bottom: 1px solid var(--desktop-separator);
+}
+
+.workspace-files__tree-region > header > div,
+.workspace-changes__list-region > header > div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  line-height: 16px;
+}
+
+.workspace-files__tree-region > header strong,
+.workspace-changes__list-region > header strong {
+  overflow: hidden;
+  color: var(--tmux-ide-text-bright);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files__tree-region > header span,
+.workspace-changes__list-region > header span {
+  overflow: hidden;
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files__bounded,
+.workspace-changes__bounded {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--tmux-ide-status-warning) 36%, transparent);
+  border-radius: 999px;
+  color: var(--tmux-ide-status-warning) !important;
+  background: color-mix(in srgb, var(--tmux-ide-status-warning) 7%, transparent);
+}
+
+.workspace-files__tree,
+.workspace-changes__list {
+  min-width: 0;
+  min-height: 0;
+  padding: 6px;
+  overflow: auto;
+  background: transparent;
+  scrollbar-color: color-mix(in srgb, var(--tmux-ide-text-muted) 30%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+/* Explorer tree rows */
+.workspace-files__row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 2px 8px 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--tmux-ide-text-secondary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth);
+}
+
+.workspace-files__row:hover {
+  color: var(--tmux-ide-text-primary);
+  background: var(--desktop-hover);
+}
+
+.workspace-files__row[aria-selected="true"] {
+  color: var(--tmux-ide-text-bright);
+  background: var(--desktop-active);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--tmux-ide-border-focused) 36%, transparent);
+}
+
+.workspace-files__row:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--tmux-ide-border-focused) 52%, transparent);
+  outline-offset: -1px;
+}
+
+.workspace-files__row[data-hidden="true"],
+.workspace-files__row[data-ignored="true"] {
+  color: var(--tmux-ide-text-muted);
+}
+
+.workspace-files__indent {
+  flex: 0 0 12px;
+  align-self: stretch;
+  border-left: 1px solid var(--desktop-separator);
+}
+
+.workspace-files__twist {
+  display: grid;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: var(--tmux-ide-text-muted);
+  visibility: hidden;
+}
+
+.workspace-files__twist[data-visible="true"] {
+  visibility: visible;
+  cursor: pointer;
+}
+
+.workspace-files__glyph {
+  display: grid;
+  flex: 0 0 16px;
+  place-items: center;
+  color: var(--tmux-ide-text-muted);
+}
+
+.workspace-files__name {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files__git {
+  flex: 0 0 auto;
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
+  font-weight: 640;
+  color: var(--tmux-ide-status-info);
+}
+
+.workspace-files__git[data-status="modified"] {
+  color: var(--tmux-ide-status-warning);
+}
+
+.workspace-files__git[data-status="added"],
+.workspace-files__git[data-status="untracked"] {
+  color: var(--tmux-ide-status-success);
+}
+
+.workspace-files__git[data-status="deleted"],
+.workspace-files__git[data-status="conflicted"] {
+  color: var(--tmux-ide-status-danger);
+}
+
+.workspace-files__row-loading {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  margin: 0;
+  padding: 0 8px 0 4px;
+  color: var(--tmux-ide-text-muted);
+  font-size: 12px;
+}
+
+.workspace-files__row-loading > span:last-child {
+  padding-left: 20px;
+}
+
+/* Changes list */
+.workspace-changes__group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 8px 0 2px;
+  padding: 0 8px;
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.workspace-changes__group:first-child {
+  margin-top: 0;
+}
+
+.workspace-changes__group-count {
+  color: var(--tmux-ide-text-muted);
+}
+
+.workspace-changes__row {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--tmux-ide-text-secondary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth);
+}
+
+.workspace-changes__row:hover {
+  color: var(--tmux-ide-text-primary);
+  background: var(--desktop-hover);
+}
+
+.workspace-changes__row[aria-selected="true"] {
+  border-color: var(--desktop-separator);
+  color: var(--tmux-ide-text-bright);
+  background: var(--desktop-active);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--tmux-ide-border-focused) 36%, transparent);
+}
+
+.workspace-changes__row:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--tmux-ide-border-focused) 52%, transparent);
+  outline-offset: -1px;
+}
+
+.workspace-changes__status {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
+  font-weight: 660;
+  color: var(--tmux-ide-status-info);
+}
+
+.workspace-changes__status[data-status="modified"],
+.workspace-changes__status[data-status="renamed"],
+.workspace-changes__status[data-status="copied"],
+.workspace-changes__status[data-status="type-changed"] {
+  color: var(--tmux-ide-status-warning);
+}
+
+.workspace-changes__status[data-status="added"],
+.workspace-changes__status[data-status="untracked"] {
+  color: var(--tmux-ide-status-success);
+}
+
+.workspace-changes__status[data-status="deleted"],
+.workspace-changes__status[data-status="conflicted"] {
+  color: var(--tmux-ide-status-danger);
+}
+
+.workspace-changes__identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.workspace-changes__identity strong {
+  overflow: hidden;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 610;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-changes__identity small {
+  overflow: hidden;
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-changes__delta {
+  flex: 0 0 auto;
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
+}
+
+/* Read-only preview and diff panes */
+.workspace-files__preview,
+.workspace-changes__diff {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: auto;
+  background: var(--desktop-raised);
+  scrollbar-color: color-mix(in srgb, var(--tmux-ide-text-muted) 30%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.workspace-files__preview-empty,
+.workspace-changes__diff-empty {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--tmux-ide-text-muted);
+  text-align: center;
+}
+
+.workspace-files__preview-icon,
+.workspace-changes__diff-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--desktop-separator);
+  border-radius: 8px;
+  color: var(--tmux-ide-text-link);
+  background: var(--desktop-hover);
+}
+
+.workspace-files__preview-state,
+.workspace-changes__diff-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 18px 20px;
+  color: var(--tmux-ide-text-secondary);
+  font-size: 13px;
+}
+
+.workspace-files__preview-state[data-tone="attention"],
+.workspace-changes__diff-state[data-tone="attention"] {
+  border-left: 2px solid var(--tmux-ide-status-warning);
+}
+
+.workspace-files__preview-state small,
+.workspace-changes__diff-state small {
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
+}
+
+.workspace-files__preview-header,
+.workspace-changes__diff-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--desktop-separator);
+}
+
+.workspace-files__preview-header > div,
+.workspace-changes__diff-header > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.workspace-files__preview-header strong,
+.workspace-changes__diff-header strong {
+  overflow: hidden;
+  color: var(--tmux-ide-text-bright);
+  font-size: 13px;
+  font-weight: 640;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files__preview-header small,
+.workspace-changes__diff-header small {
+  overflow: hidden;
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files__preview-meta,
+.workspace-changes__diff-meta {
+  flex: 0 0 auto;
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.workspace-files__notice,
+.workspace-changes__notice {
+  margin: 0;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--desktop-separator);
+  color: var(--tmux-ide-status-warning);
+  background: color-mix(in srgb, var(--tmux-ide-status-warning) 7%, transparent);
+  font-size: 12px;
+}
+
+.workspace-files__empty,
+.workspace-changes__empty {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--tmux-ide-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.workspace-files__code {
+  margin: 0;
+  padding: 8px 0;
+  list-style: none;
+  counter-reset: preview-line;
+  font-family: var(--desktop-mono-font);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workspace-files__code li {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  padding: 0 16px 0 0;
+  white-space: pre;
+}
+
+.workspace-files__code li::before {
+  counter-increment: preview-line;
+  content: counter(preview-line);
+  padding-right: 8px;
+  color: var(--tmux-ide-text-muted);
+  text-align: right;
+  border-right: 1px solid var(--desktop-separator);
+}
+
+/* Structured diff */
+.workspace-changes__hunks {
+  min-width: 0;
+  padding: 6px 0 12px;
+  font-family: var(--desktop-mono-font);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workspace-changes__hunk-header {
+  margin: 8px 0 2px;
+  padding: 2px 16px;
+  color: var(--tmux-ide-text-link);
+  background: color-mix(in srgb, var(--tmux-ide-status-info) 8%, transparent);
+}
+
+.workspace-changes__line {
+  display: grid;
+  grid-template-columns: 40px 40px 14px minmax(0, 1fr);
+  gap: 4px;
+  padding-right: 12px;
+  white-space: pre;
+}
+
+.workspace-changes__line[data-kind="insert"] {
+  background: color-mix(in srgb, var(--tmux-ide-status-success) 12%, transparent);
+}
+
+.workspace-changes__line[data-kind="delete"] {
+  background: color-mix(in srgb, var(--tmux-ide-status-danger) 12%, transparent);
+}
+
+.workspace-changes__gutter {
+  color: var(--tmux-ide-text-muted);
+  text-align: right;
+}
+
+.workspace-changes__sign {
+  text-align: center;
+  color: var(--tmux-ide-text-muted);
+}
+
+.workspace-changes__line[data-kind="insert"] .workspace-changes__sign {
+  color: var(--tmux-ide-status-success);
+}
+
+.workspace-changes__line[data-kind="delete"] .workspace-changes__sign {
+  color: var(--tmux-ide-status-danger);
+}
+
+.workspace-changes__line code {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--tmux-ide-text-primary);
+}
+
+/* Files/Changes recovery and loading states */
+.workspace-files__state,
+.workspace-changes__state {
+  display: grid;
+  min-height: 100%;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 20px;
+  background: var(--desktop-raised);
+}
+
+.workspace-files__state-icon,
+.workspace-changes__state-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--desktop-separator);
+  border-radius: 8px;
+  color: var(--tmux-ide-text-link);
+  background: var(--desktop-hover);
+}
+
+.workspace-files__state small,
+.workspace-changes__state small {
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace-files__state[data-tone="attention"] small,
+.workspace-changes__state[data-tone="attention"] small {
+  color: var(--tmux-ide-status-warning);
+}
+
+.workspace-files__state h3,
+.workspace-changes__state h3 {
+  margin: 4px 0 5px;
+  font-size: 16px;
+}
+
+.workspace-files__state p,
+.workspace-changes__state p,
+.workspace-files__state div > span,
+.workspace-changes__state div > span {
+  margin: 0;
+  color: var(--tmux-ide-text-secondary);
+  font-size: 12px;
+}
+
+.workspace-files__state div > span,
+.workspace-changes__state div > span {
+  color: var(--tmux-ide-text-muted);
+}
+
+@media (max-width: 980px) {
+  .workspace-files__workspace,
+  .workspace-changes__workspace {
+    grid-template-columns: minmax(200px, 38%) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .workspace-files__preview-meta,
+  .workspace-changes__diff-meta {
+    display: none;
+  }
+
+  .workspace-files__state,
+  .workspace-changes__state {
+    grid-template-columns: 32px minmax(0, 1fr);
+    padding: 14px;
+  }
+}
+
 .status-strip {
   z-index: 10;
   display: flex;

@@ -1115,7 +1115,7 @@ describe("visible DOM application shell", () => {
     expect(root.querySelector(".titlebar__brand")?.textContent).toContain("tmux-ide reactive");
     expect(root.textContent).toContain("Fresh documentation");
     expect(root.textContent).toContain("Codex refreshed");
-    expect(root.textContent).toContain("999 indexed files");
+    expect(root.querySelector(".workspace-files")).not.toBeNull();
     expect(root.textContent).toContain("Connected from fresh host snapshot");
   });
 

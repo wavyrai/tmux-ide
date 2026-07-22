@@ -52,6 +52,11 @@ import type {
 import { CommandPalette } from "./command-palette.tsx";
 import { CreatePaneFlow } from "./create-pane-flow.tsx";
 import { MissionActivitySurface } from "./mission-activity-surface.tsx";
+import { WorkspaceFilesSurface, type FilesSurfaceProps } from "./workspace-files-surface.tsx";
+import {
+  WorkspaceChangesSurface,
+  type ChangesSurfaceProps,
+} from "./workspace-changes-surface.tsx";
 import type { CreatePaneFlowCatalogs } from "./create-pane-flow-presenter.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
@@ -107,6 +112,8 @@ export interface DomApplicationShellProps {
   ) => void | Promise<void>;
   readonly appWindowMutationUnavailableReason?: string;
   readonly onRefreshResource?: () => void;
+  readonly filesSurface?: FilesSurfaceProps;
+  readonly changesSurface?: ChangesSurfaceProps;
 }
 
 export interface PrimaryNavigationProps {
@@ -608,7 +615,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           class="dock-surface__content"
           classList={{
             "dock-surface__content--journey":
-              "appWindows" in input() && (tool.id === "missions" || tool.id === "activity"),
+              ("appWindows" in input() &&
+                (tool.id === "missions" || tool.id === "activity")) ||
+              tool.id === "files" ||
+              tool.id === "changes",
           }}
         >
           <header>
@@ -641,21 +651,24 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                 onRefresh={props.onRefreshResource}
               />
             </Match>
-            <Match when={tool.data.kind === "files" && tool.data}>
-              {(data) => (
-                <div class="surface-summary">
-                  <span>{data().fileCount} indexed files</span>
-                  <code>{data().selectedResourceId}</code>
-                </div>
-              )}
+            <Match when={tool.data.kind === "files"}>
+              <WorkspaceFilesSurface
+                model={props.filesSurface?.model}
+                preview={props.filesSurface?.preview}
+                onSelectFile={props.filesSurface?.onSelectFile}
+                onToggleDirectory={props.filesSurface?.onToggleDirectory}
+                onRetry={props.filesSurface?.onRetry}
+                onRetryPreview={props.filesSurface?.onRetryPreview}
+              />
             </Match>
-            <Match when={tool.data.kind === "changes" && tool.data}>
-              {(data) => (
-                <div class="surface-summary">
-                  <span>{data().changeCount} working tree changes</span>
-                  <code>{data().selectedResourceId}</code>
-                </div>
-              )}
+            <Match when={tool.data.kind === "changes"}>
+              <WorkspaceChangesSurface
+                model={props.changesSurface?.model}
+                diff={props.changesSurface?.diff}
+                onSelectChange={props.changesSurface?.onSelectChange}
+                onRetry={props.changesSurface?.onRetry}
+                onRetryDiff={props.changesSurface?.onRetryDiff}
+              />
             </Match>
             <Match when={tool.data.kind === "missions" && tool.data}>
               {(data) => (
