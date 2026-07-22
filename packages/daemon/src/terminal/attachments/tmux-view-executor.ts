@@ -157,6 +157,7 @@ export class TmuxAttachmentViewExecutorError extends Error {
 export interface TmuxAttachmentViewExecutorOptions {
   readonly runner?: TmuxAttachmentCommandRunner;
   readonly clientTransport?: TmuxAttachmentClientTransport;
+  readonly operationSerializer?: TmuxAttachmentOperationSerializer;
   readonly now?: () => number;
 }
 
@@ -176,20 +177,22 @@ interface ViewServerGuard {
   readonly format: string;
 }
 
-/*
- * One queue is shared by every executor instance in this daemon process. A
- * lease manager has its own queue, but that is not enough when more than one
- * manager is alive during lifecycle transitions or tests.
- */
-let serverWideAttachmentOperationTail: Promise<void> = Promise.resolve();
+/** Instance-owned queue shared explicitly by attachment executors for one tmux authority. */
+export class TmuxAttachmentOperationSerializer {
+  #tail: Promise<void> = Promise.resolve();
 
-function serializeServerWide<T>(operation: () => T | PromiseLike<T>): Promise<T> {
-  const run: Promise<T> = serverWideAttachmentOperationTail.then(operation, operation);
-  serverWideAttachmentOperationTail = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
+  run<T>(operation: () => T | PromiseLike<T>): Promise<T> {
+    const run: Promise<T> = this.#tail.then(operation, operation);
+    this.#tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  barrier(): Promise<void> {
+    return this.#tail;
+  }
 }
 
 const productionRunner: TmuxAttachmentCommandRunner = {
@@ -437,29 +440,34 @@ function canonicalPlanFor(operation: GuardedAttachmentViewOperation): GroupedTmu
 export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
   readonly #runner: TmuxAttachmentCommandRunner;
   readonly #clientTransport: TmuxAttachmentClientTransport | null;
+  readonly #operationSerializer: TmuxAttachmentOperationSerializer;
   readonly #now: () => number;
 
   constructor(options: TmuxAttachmentViewExecutorOptions = {}) {
     this.#runner = options.runner ?? productionRunner;
     this.#clientTransport = options.clientTransport ?? null;
+    this.#operationSerializer =
+      options.operationSerializer ?? new TmuxAttachmentOperationSerializer();
     this.#now = options.now ?? Date.now;
   }
 
   guardedCleanup(cleanup: GuardedAttachmentCleanup): Promise<GuardedAttachmentCleanupResult> {
-    return serializeServerWide(() => this.#guardedCleanup(cleanup));
+    return this.#operationSerializer.run(() => this.#guardedCleanup(cleanup));
   }
 
   executeGuardedViewOperation(
     operation: GuardedAttachmentViewOperation,
   ): Promise<GuardedAttachmentViewOperationResult> {
-    return serializeServerWide(() => this.#executeGuardedViewOperation(operation));
+    return this.#operationSerializer.run(() => this.#executeGuardedViewOperation(operation));
   }
 
   enumerateMarkedViews(
     prefix: typeof GROUPED_TMUX_VIEW_SESSION_PREFIX,
     markerEnvironment: typeof GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   ): Promise<readonly EnumeratedMarkedAttachmentView[]> {
-    return serializeServerWide(() => this.#enumerateMarkedViews(prefix, markerEnvironment));
+    return this.#operationSerializer.run(() =>
+      this.#enumerateMarkedViews(prefix, markerEnvironment),
+    );
   }
 
   #command(command: TmuxArgvPlan): TmuxAttachmentStandardCommandResult;
