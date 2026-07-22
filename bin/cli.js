@@ -5042,6 +5042,675 @@ var init_workspace_catalog_resource = __esm({
   }
 });
 
+// packages/contracts/src/workspace-resource-identity.ts
+import { z as z31 } from "zod";
+function opaqueIdentity(prefix) {
+  return z31.string().max(prefix.length + 64).regex(new RegExp(`^${prefix.replace(".", "\\.")}[A-Za-z0-9_-]{16,64}$`, "u")).refine((value) => !RESERVED_RECORD_KEYS3.has(value), "reserved record key is not allowed");
+}
+var RESERVED_RECORD_KEYS3, OPAQUE_TOKEN_PATTERN, WorkspaceResourceWorkspaceNameSchemaZ, WorkspaceFileResourceIdSchemaZ, WorkspaceChangeResourceIdSchemaZ, WorkspaceFilesRevisionSchemaZ, WorkspaceChangesRevisionSchemaZ, WorkspaceResourceOpaqueTokenSchemaZ, WorkspaceResourceNameSchemaZ, WorkspaceRelativeDisplayPathSchemaZ;
+var init_workspace_resource_identity = __esm({
+  "packages/contracts/src/workspace-resource-identity.ts"() {
+    "use strict";
+    RESERVED_RECORD_KEYS3 = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+    OPAQUE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,64}$/u;
+    WorkspaceResourceWorkspaceNameSchemaZ = z31.string().trim().min(1).max(160).refine(
+      (value) => [...value].every((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 32 && code !== 127;
+      }),
+      "workspace name contains control characters"
+    );
+    WorkspaceFileResourceIdSchemaZ = opaqueIdentity("file.");
+    WorkspaceChangeResourceIdSchemaZ = opaqueIdentity("change.");
+    WorkspaceFilesRevisionSchemaZ = opaqueIdentity("files-rev.");
+    WorkspaceChangesRevisionSchemaZ = opaqueIdentity("changes-rev.");
+    WorkspaceResourceOpaqueTokenSchemaZ = z31.string().regex(OPAQUE_TOKEN_PATTERN);
+    WorkspaceResourceNameSchemaZ = z31.string().min(1).max(255).refine((value) => value !== "." && value !== "..", "dot path segments are not resources").refine((value) => !/[\\/\0\r\n]/u.test(value), "resource name must be one path segment").refine(
+      (value) => [...value].every((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 32 && code !== 127;
+      }),
+      "resource name contains control characters"
+    );
+    WorkspaceRelativeDisplayPathSchemaZ = z31.string().min(1).max(1024).refine((value) => !value.startsWith("/"), "workspace display path must be relative").refine((value) => !value.includes("\\"), "workspace display path uses forward slashes").refine(
+      (value) => [...value].every((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 32 && code !== 127;
+      }),
+      "workspace display path contains control characters"
+    ).refine(
+      (value) => value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".."),
+      "workspace display path contains an invalid segment"
+    );
+  }
+});
+
+// packages/contracts/src/workspace-files-resource.ts
+import { z as z32 } from "zod";
+var WORKSPACE_FILES_CATALOG_RESOURCE_VERSION, WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION, WORKSPACE_FILES_CATALOG_MAX_ENTRIES, WORKSPACE_FILES_MAX_BREADCRUMBS, WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS, WORKSPACE_FILE_PREVIEW_MAX_LINES, WorkspaceFileGitStatusSchemaZ, WorkspaceFileEntryKindSchemaZ, WorkspaceFileEntrySchemaZ, WorkspaceFileBreadcrumbSchemaZ, WorkspaceFilesCatalogReadySchemaZ, WorkspaceFilesCatalogUnavailableReasonSchemaZ, WorkspaceFilesCatalogUnavailableSchemaZ, WorkspaceFilesCatalogResourceV1SchemaZ, WorkspaceFilesCatalogEnvelopeV1SchemaZ, WorkspaceFilePreviewBase, WorkspaceFilePreviewReadySchemaZ, WorkspaceFilePreviewBinarySchemaZ, WorkspaceFilePreviewTooLargeSchemaZ, WorkspaceFilePreviewUnavailableReasonSchemaZ, WorkspaceFilePreviewUnavailableSchemaZ, WorkspaceFilePreviewResourceV1SchemaZ, WorkspaceFilePreviewEnvelopeV1SchemaZ;
+var init_workspace_files_resource = __esm({
+  "packages/contracts/src/workspace-files-resource.ts"() {
+    "use strict";
+    init_daemon_wire();
+    init_workspace_resource_identity();
+    WORKSPACE_FILES_CATALOG_RESOURCE_VERSION = 1;
+    WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION = 1;
+    WORKSPACE_FILES_CATALOG_MAX_ENTRIES = 1024;
+    WORKSPACE_FILES_MAX_BREADCRUMBS = 64;
+    WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS = 512 * 1024;
+    WORKSPACE_FILE_PREVIEW_MAX_LINES = 1e4;
+    WorkspaceFileGitStatusSchemaZ = z32.enum([
+      "modified",
+      "added",
+      "deleted",
+      "renamed",
+      "untracked",
+      "conflicted"
+    ]);
+    WorkspaceFileEntryKindSchemaZ = z32.enum(["directory", "file", "symlink"]);
+    WorkspaceFileEntrySchemaZ = z32.strictObject({
+      id: WorkspaceFileResourceIdSchemaZ,
+      parentId: WorkspaceFileResourceIdSchemaZ,
+      name: WorkspaceResourceNameSchemaZ,
+      relativePath: WorkspaceRelativeDisplayPathSchemaZ,
+      kind: WorkspaceFileEntryKindSchemaZ,
+      hidden: z32.boolean(),
+      ignored: z32.boolean(),
+      hasChildren: z32.boolean(),
+      gitStatus: WorkspaceFileGitStatusSchemaZ.nullable()
+    }).superRefine((entry, ctx) => {
+      if (entry.relativePath.split("/").at(-1) !== entry.name) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["relativePath"],
+          message: "entry display path must end with its resource name"
+        });
+      }
+      if (entry.kind !== "directory" && entry.hasChildren) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["hasChildren"],
+          message: "only directories can advertise children"
+        });
+      }
+    });
+    WorkspaceFileBreadcrumbSchemaZ = z32.strictObject({
+      id: WorkspaceFileResourceIdSchemaZ,
+      label: WorkspaceResourceNameSchemaZ
+    });
+    WorkspaceFilesCatalogReadySchemaZ = z32.strictObject({
+      status: z32.literal("ready"),
+      workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
+      revision: WorkspaceFilesRevisionSchemaZ,
+      rootId: WorkspaceFileResourceIdSchemaZ,
+      directory: z32.strictObject({
+        id: WorkspaceFileResourceIdSchemaZ,
+        name: WorkspaceResourceNameSchemaZ,
+        relativePath: WorkspaceRelativeDisplayPathSchemaZ.nullable(),
+        parentId: WorkspaceFileResourceIdSchemaZ.nullable()
+      }),
+      breadcrumbs: z32.array(WorkspaceFileBreadcrumbSchemaZ).min(1).max(WORKSPACE_FILES_MAX_BREADCRUMBS),
+      entries: z32.array(WorkspaceFileEntrySchemaZ).max(WORKSPACE_FILES_CATALOG_MAX_ENTRIES),
+      totalEntries: z32.number().int().nonnegative(),
+      truncated: z32.boolean()
+    }).superRefine((resource2, ctx) => {
+      const breadcrumbIds = resource2.breadcrumbs.map(({ id }) => id);
+      if (new Set(breadcrumbIds).size !== breadcrumbIds.length) {
+        ctx.addIssue({ code: "custom", path: ["breadcrumbs"], message: "breadcrumb ids must be unique" });
+      }
+      if (resource2.breadcrumbs[0]?.id !== resource2.rootId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["breadcrumbs", 0, "id"],
+          message: "the first breadcrumb must identify the workspace root"
+        });
+      }
+      if (resource2.breadcrumbs.at(-1)?.id !== resource2.directory.id) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["breadcrumbs"],
+          message: "the final breadcrumb must identify the listed directory"
+        });
+      }
+      if (resource2.directory.id === resource2.rootId !== (resource2.directory.relativePath === null && resource2.directory.parentId === null)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["directory"],
+          message: "only the workspace root may omit relative path and parent identity"
+        });
+      }
+      const entryIds = /* @__PURE__ */ new Set();
+      const entryPaths = /* @__PURE__ */ new Set();
+      for (const [index, entry] of resource2.entries.entries()) {
+        if (entryIds.has(entry.id)) {
+          ctx.addIssue({ code: "custom", path: ["entries", index, "id"], message: "entry ids must be unique" });
+        }
+        if (entryPaths.has(entry.relativePath)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["entries", index, "relativePath"],
+            message: "entry display paths must be unique"
+          });
+        }
+        entryIds.add(entry.id);
+        entryPaths.add(entry.relativePath);
+        if (entry.id === resource2.directory.id || entry.parentId !== resource2.directory.id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["entries", index, "parentId"],
+            message: "catalog entries must be direct children of the listed directory"
+          });
+        }
+        const expectedPath = resource2.directory.relativePath ? `${resource2.directory.relativePath}/${entry.name}` : entry.name;
+        if (entry.relativePath !== expectedPath) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["entries", index, "relativePath"],
+            message: "catalog entries must use canonical direct-child display paths"
+          });
+        }
+      }
+      if (resource2.totalEntries < resource2.entries.length) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["totalEntries"],
+          message: "totalEntries cannot be smaller than the returned entry count"
+        });
+      }
+      if (resource2.truncated !== resource2.totalEntries > resource2.entries.length) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["truncated"],
+          message: "truncated must describe omitted catalog entries"
+        });
+      }
+    });
+    WorkspaceFilesCatalogUnavailableReasonSchemaZ = z32.enum([
+      "workspace-unavailable",
+      "resource-changed",
+      "directory-not-found",
+      "permission-denied",
+      "outside-workspace",
+      "too-many-entries",
+      "io-error"
+    ]);
+    WorkspaceFilesCatalogUnavailableSchemaZ = z32.strictObject({
+      status: z32.literal("unavailable"),
+      workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
+      reason: WorkspaceFilesCatalogUnavailableReasonSchemaZ,
+      message: z32.string().min(1).max(240),
+      retryable: z32.boolean()
+    });
+    WorkspaceFilesCatalogResourceV1SchemaZ = z32.discriminatedUnion("status", [
+      WorkspaceFilesCatalogReadySchemaZ,
+      WorkspaceFilesCatalogUnavailableSchemaZ
+    ]);
+    WorkspaceFilesCatalogEnvelopeV1SchemaZ = z32.strictObject({
+      version: z32.literal(WORKSPACE_FILES_CATALOG_RESOURCE_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      resource: WorkspaceFilesCatalogResourceV1SchemaZ
+    });
+    WorkspaceFilePreviewBase = {
+      workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
+      catalogRevision: WorkspaceFilesRevisionSchemaZ,
+      fileId: WorkspaceFileResourceIdSchemaZ,
+      name: WorkspaceResourceNameSchemaZ,
+      relativePath: WorkspaceRelativeDisplayPathSchemaZ
+    };
+    WorkspaceFilePreviewReadySchemaZ = z32.strictObject({
+      status: z32.literal("ready"),
+      ...WorkspaceFilePreviewBase,
+      encoding: z32.literal("utf-8"),
+      languageHint: z32.string().min(1).max(64).nullable(),
+      content: z32.string().max(WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS),
+      totalBytes: z32.number().int().nonnegative(),
+      totalLines: z32.number().int().nonnegative(),
+      truncated: z32.boolean()
+    }).superRefine((preview, ctx) => {
+      if (preview.content.includes("\0")) {
+        ctx.addIssue({ code: "custom", path: ["content"], message: "text previews cannot contain NUL bytes" });
+      }
+      const renderedLines = preview.content.length === 0 ? 0 : preview.content.split("\n").length;
+      if (renderedLines > WORKSPACE_FILE_PREVIEW_MAX_LINES) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["content"],
+          message: "file preview line limit exceeded"
+        });
+      }
+      if (!preview.truncated && renderedLines !== preview.totalLines) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["totalLines"],
+          message: "complete text previews must report their rendered line count"
+        });
+      }
+      if (preview.truncated && renderedLines > preview.totalLines) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["totalLines"],
+          message: "truncated text previews cannot render more lines than the source"
+        });
+      }
+    });
+    WorkspaceFilePreviewBinarySchemaZ = z32.strictObject({
+      status: z32.literal("binary"),
+      ...WorkspaceFilePreviewBase,
+      totalBytes: z32.number().int().nonnegative(),
+      mediaType: z32.string().min(1).max(160).nullable()
+    });
+    WorkspaceFilePreviewTooLargeSchemaZ = z32.strictObject({
+      status: z32.literal("too-large"),
+      ...WorkspaceFilePreviewBase,
+      totalBytes: z32.number().int().nonnegative(),
+      limitBytes: z32.number().int().positive()
+    });
+    WorkspaceFilePreviewUnavailableReasonSchemaZ = z32.enum([
+      "workspace-unavailable",
+      "resource-changed",
+      "file-not-found",
+      "not-a-file",
+      "symlink-unsupported",
+      "permission-denied",
+      "outside-workspace",
+      "unsupported-encoding",
+      "io-error"
+    ]);
+    WorkspaceFilePreviewUnavailableSchemaZ = z32.strictObject({
+      status: z32.literal("unavailable"),
+      workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
+      catalogRevision: WorkspaceFilesRevisionSchemaZ,
+      fileId: WorkspaceFileResourceIdSchemaZ,
+      reason: WorkspaceFilePreviewUnavailableReasonSchemaZ,
+      message: z32.string().min(1).max(240),
+      retryable: z32.boolean()
+    });
+    WorkspaceFilePreviewResourceV1SchemaZ = z32.discriminatedUnion("status", [
+      WorkspaceFilePreviewReadySchemaZ,
+      WorkspaceFilePreviewBinarySchemaZ,
+      WorkspaceFilePreviewTooLargeSchemaZ,
+      WorkspaceFilePreviewUnavailableSchemaZ
+    ]);
+    WorkspaceFilePreviewEnvelopeV1SchemaZ = z32.strictObject({
+      version: z32.literal(WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      resource: WorkspaceFilePreviewResourceV1SchemaZ
+    });
+  }
+});
+
+// packages/contracts/src/workspace-files-tree.ts
+var init_workspace_files_tree = __esm({
+  "packages/contracts/src/workspace-files-tree.ts"() {
+    "use strict";
+  }
+});
+
+// packages/contracts/src/workspace-changes-resource.ts
+import { z as z33 } from "zod";
+var WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION, WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION, WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES, WORKSPACE_CHANGE_MAX_LINE_DELTA, WORKSPACE_CHANGE_BRANCH_MAX_LENGTH, WORKSPACE_CHANGE_DIFF_MAX_HUNKS, WORKSPACE_CHANGE_DIFF_MAX_LINES, WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH, WorkspaceChangeGroupSchemaZ, WorkspaceChangeStatusSchemaZ, DiffCountSchemaZ, WorkspaceChangeEntrySchemaZ, WorkspaceChangesCatalogReadySchemaZ, WorkspaceChangesCatalogUnavailableReasonSchemaZ, WorkspaceChangesCatalogUnavailableSchemaZ, WorkspaceChangesCatalogResourceV1SchemaZ, WorkspaceChangesCatalogEnvelopeV1SchemaZ, WorkspaceDiffLineKindSchemaZ, WorkspaceDiffLineSchemaZ, WorkspaceDiffHunkSchemaZ, WorkspaceChangeDiffBase, WorkspaceChangeDiffReadySchemaZ, WorkspaceChangeDiffBinarySchemaZ, WorkspaceChangeDiffTooLargeSchemaZ, WorkspaceChangeDiffUnavailableReasonSchemaZ, WorkspaceChangeDiffUnavailableSchemaZ, WorkspaceChangeDiffResourceV1SchemaZ, WorkspaceChangeDiffEnvelopeV1SchemaZ;
+var init_workspace_changes_resource = __esm({
+  "packages/contracts/src/workspace-changes-resource.ts"() {
+    "use strict";
+    init_daemon_wire();
+    init_workspace_resource_identity();
+    WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION = 1;
+    WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION = 1;
+    WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES = 2048;
+    WORKSPACE_CHANGE_MAX_LINE_DELTA = 1e7;
+    WORKSPACE_CHANGE_BRANCH_MAX_LENGTH = 255;
+    WORKSPACE_CHANGE_DIFF_MAX_HUNKS = 512;
+    WORKSPACE_CHANGE_DIFF_MAX_LINES = 2e4;
+    WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH = 4096;
+    WorkspaceChangeGroupSchemaZ = z33.enum(["staged", "unstaged", "untracked"]);
+    WorkspaceChangeStatusSchemaZ = z33.enum([
+      "modified",
+      "added",
+      "deleted",
+      "renamed",
+      "copied",
+      "type-changed",
+      "conflicted",
+      "untracked"
+    ]);
+    DiffCountSchemaZ = z33.number().int().nonnegative().max(WORKSPACE_CHANGE_MAX_LINE_DELTA);
+    WorkspaceChangeEntrySchemaZ = z33.strictObject({
+      id: WorkspaceChangeResourceIdSchemaZ,
+      group: WorkspaceChangeGroupSchemaZ,
+      status: WorkspaceChangeStatusSchemaZ,
+      name: WorkspaceResourceNameSchemaZ,
+      relativePath: WorkspaceRelativeDisplayPathSchemaZ,
+      /** Present only for renames and copies; the pre-change display path. */
+      originPath: WorkspaceRelativeDisplayPathSchemaZ.nullable(),
+      binary: z33.boolean(),
+      additions: DiffCountSchemaZ.nullable(),
+      deletions: DiffCountSchemaZ.nullable()
+    }).superRefine((entry, ctx) => {
+      if (entry.relativePath.split("/").at(-1) !== entry.name) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["relativePath"],
+          message: "entry display path must end with its resource name"
+        });
+      }
+      const untrackedStatus = entry.status === "untracked";
+      const untrackedGroup = entry.group === "untracked";
+      if (untrackedGroup !== untrackedStatus) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["status"],
+          message: "untracked status and untracked group must agree"
+        });
+      }
+      const carriesOrigin = entry.status === "renamed" || entry.status === "copied";
+      if (carriesOrigin && entry.originPath === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["originPath"],
+          message: "renames and copies must carry an origin path"
+        });
+      }
+      if (!carriesOrigin && entry.originPath !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["originPath"],
+          message: "only renames and copies may carry an origin path"
+        });
+      }
+      if (entry.originPath !== null && entry.originPath === entry.relativePath) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["originPath"],
+          message: "origin path must differ from the current display path"
+        });
+      }
+      if (entry.binary) {
+        if (entry.additions !== null || entry.deletions !== null) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["additions"],
+            message: "binary changes cannot report line counts"
+          });
+        }
+      } else if (entry.additions === null || entry.deletions === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["additions"],
+          message: "text changes must report line counts"
+        });
+      }
+    });
+    WorkspaceChangesCatalogReadySchemaZ = z33.strictObject({
+      status: z33.literal("ready"),
+      workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
+      revision: WorkspaceChangesRevisionSchemaZ,
+      /** The current branch, or null when the workspace is detached or unborn. */
+      branch: z33.string().min(1).max(WORKSPACE_CHANGE_BRANCH_MAX_LENGTH).nullable(),
+      detached: z33.boolean(),
+      entries: z33.array(WorkspaceChangeEntrySchemaZ).max(WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES),
+      totalEntries: z33.number().int().nonnegative(),
+      truncated: z33.boolean()
+    }).superRefine((resource2, ctx) => {
+      if (resource2.detached && resource2.branch !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["branch"],
+          message: "a detached workspace cannot name a branch"
+        });
+      }
+      const ids = /* @__PURE__ */ new Set();
+      const paths = /* @__PURE__ */ new Set();
+      for (const [index, entry] of resource2.entries.entries()) {
+        if (ids.has(entry.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["entries", index, "id"],
+            message: "change ids must be unique"
+          });
+        }
+        const pathKey = `${entry.group}\0${entry.relativePath}`;
+        if (paths.has(pathKey)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["entries", index, "relativePath"],
+            message: "a display path may appear once per change group"
+          });
+        }
+        ids.add(entry.id);
+        paths.add(pathKey);
+      }
+      if (resource2.totalEntries < resource2.entries.length) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["totalEntries"],
+          message: "totalEntries cannot be smaller than the returned change count"
+        });
+      }
+      if (resource2.truncated !== resource2.totalEntries > resource2.entries.length) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["truncated"],
+          message: "truncated must describe omitted changes"
+        });
+      }
+    });
+    WorkspaceChangesCatalogUnavailableReasonSchemaZ = z33.enum([
+      "workspace-unavailable",
+      "resource-changed",
+      "not-a-git-repository",
+      "permission-denied",
+      "too-many-changes",
+      "io-error"
+    ]);
+    WorkspaceChangesCatalogUnavailableSchemaZ = z33.strictObject({
+      status: z33.literal("unavailable"),
+      workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
+      reason: WorkspaceChangesCatalogUnavailableReasonSchemaZ,
+      message: z33.string().min(1).max(240),
+      retryable: z33.boolean()
+    });
+    WorkspaceChangesCatalogResourceV1SchemaZ = z33.discriminatedUnion("status", [
+      WorkspaceChangesCatalogReadySchemaZ,
+      WorkspaceChangesCatalogUnavailableSchemaZ
+    ]);
+    WorkspaceChangesCatalogEnvelopeV1SchemaZ = z33.strictObject({
+      version: z33.literal(WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      resource: WorkspaceChangesCatalogResourceV1SchemaZ
+    });
+    WorkspaceDiffLineKindSchemaZ = z33.enum(["context", "insert", "delete"]);
+    WorkspaceDiffLineSchemaZ = z33.strictObject({
+      kind: WorkspaceDiffLineKindSchemaZ,
+      content: z33.string().max(WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH),
+      oldLine: z33.number().int().positive().nullable(),
+      newLine: z33.number().int().positive().nullable()
+    }).superRefine((line, ctx) => {
+      if (/[\0\r\n]/u.test(line.content)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["content"],
+          message: "diff line content is a single line without control breaks"
+        });
+      }
+      const expectsOld = line.kind !== "insert";
+      const expectsNew = line.kind !== "delete";
+      if (expectsOld !== (line.oldLine !== null)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["oldLine"],
+          message: "only context and delete lines carry an old line number"
+        });
+      }
+      if (expectsNew !== (line.newLine !== null)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["newLine"],
+          message: "only context and insert lines carry a new line number"
+        });
+      }
+    });
+    WorkspaceDiffHunkSchemaZ = z33.strictObject({
+      header: z33.string().min(1).max(255),
+      oldStart: z33.number().int().nonnegative(),
+      oldLines: z33.number().int().nonnegative(),
+      newStart: z33.number().int().nonnegative(),
+      newLines: z33.number().int().nonnegative(),
+      lines: z33.array(WorkspaceDiffLineSchemaZ).min(1).max(WORKSPACE_CHANGE_DIFF_MAX_LINES)
+    }).superRefine((hunk, ctx) => {
+      if (hunk.oldLines > 0 && hunk.oldStart < 1) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["oldStart"],
+          message: "a non-empty old side starts at line 1"
+        });
+      }
+      if (hunk.newLines > 0 && hunk.newStart < 1) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["newStart"],
+          message: "a non-empty new side starts at line 1"
+        });
+      }
+      let oldCursor = hunk.oldLines > 0 ? hunk.oldStart : 0;
+      let newCursor = hunk.newLines > 0 ? hunk.newStart : 0;
+      let oldCount = 0;
+      let newCount = 0;
+      for (const [index, line] of hunk.lines.entries()) {
+        if (line.kind !== "insert") {
+          if (line.oldLine !== oldCursor) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["lines", index, "oldLine"],
+              message: "old line numbers must run consecutively from the hunk start"
+            });
+          }
+          oldCursor += 1;
+          oldCount += 1;
+        }
+        if (line.kind !== "delete") {
+          if (line.newLine !== newCursor) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["lines", index, "newLine"],
+              message: "new line numbers must run consecutively from the hunk start"
+            });
+          }
+          newCursor += 1;
+          newCount += 1;
+        }
+      }
+      if (oldCount !== hunk.oldLines) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["oldLines"],
+          message: "oldLines must match the old-side line count"
+        });
+      }
+      if (newCount !== hunk.newLines) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["newLines"],
+          message: "newLines must match the new-side line count"
+        });
+      }
+    });
+    WorkspaceChangeDiffBase = {
+      workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
+      changesRevision: WorkspaceChangesRevisionSchemaZ,
+      changeId: WorkspaceChangeResourceIdSchemaZ,
+      group: WorkspaceChangeGroupSchemaZ,
+      relativePath: WorkspaceRelativeDisplayPathSchemaZ,
+      originPath: WorkspaceRelativeDisplayPathSchemaZ.nullable()
+    };
+    WorkspaceChangeDiffReadySchemaZ = z33.strictObject({
+      status: z33.literal("ready"),
+      ...WorkspaceChangeDiffBase,
+      hunks: z33.array(WorkspaceDiffHunkSchemaZ).max(WORKSPACE_CHANGE_DIFF_MAX_HUNKS),
+      totalHunks: z33.number().int().nonnegative(),
+      totalLines: z33.number().int().nonnegative(),
+      truncated: z33.boolean()
+    }).superRefine((diff, ctx) => {
+      if (diff.originPath !== null && diff.originPath === diff.relativePath) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["originPath"],
+          message: "origin path must differ from the current display path"
+        });
+      }
+      const renderedLines = diff.hunks.reduce((total, hunk) => total + hunk.lines.length, 0);
+      if (diff.totalHunks < diff.hunks.length) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["totalHunks"],
+          message: "totalHunks cannot be smaller than the returned hunk count"
+        });
+      }
+      if (diff.totalLines < renderedLines) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["totalLines"],
+          message: "totalLines cannot be smaller than the rendered line count"
+        });
+      }
+      const omitted = diff.totalHunks > diff.hunks.length || diff.totalLines > renderedLines;
+      if (diff.truncated !== omitted) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["truncated"],
+          message: "truncated must describe omitted hunks or lines"
+        });
+      }
+    });
+    WorkspaceChangeDiffBinarySchemaZ = z33.strictObject({
+      status: z33.literal("binary"),
+      ...WorkspaceChangeDiffBase,
+      oldBytes: z33.number().int().nonnegative().nullable(),
+      newBytes: z33.number().int().nonnegative().nullable()
+    });
+    WorkspaceChangeDiffTooLargeSchemaZ = z33.strictObject({
+      status: z33.literal("too-large"),
+      ...WorkspaceChangeDiffBase,
+      totalBytes: z33.number().int().nonnegative(),
+      limitBytes: z33.number().int().positive()
+    });
+    WorkspaceChangeDiffUnavailableReasonSchemaZ = z33.enum([
+      "workspace-unavailable",
+      "resource-changed",
+      "change-not-found",
+      "not-a-git-repository",
+      "permission-denied",
+      "io-error"
+    ]);
+    WorkspaceChangeDiffUnavailableSchemaZ = z33.strictObject({
+      status: z33.literal("unavailable"),
+      workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
+      changesRevision: WorkspaceChangesRevisionSchemaZ,
+      changeId: WorkspaceChangeResourceIdSchemaZ,
+      reason: WorkspaceChangeDiffUnavailableReasonSchemaZ,
+      message: z33.string().min(1).max(240),
+      retryable: z33.boolean()
+    });
+    WorkspaceChangeDiffResourceV1SchemaZ = z33.discriminatedUnion("status", [
+      WorkspaceChangeDiffReadySchemaZ,
+      WorkspaceChangeDiffBinarySchemaZ,
+      WorkspaceChangeDiffTooLargeSchemaZ,
+      WorkspaceChangeDiffUnavailableSchemaZ
+    ]);
+    WorkspaceChangeDiffEnvelopeV1SchemaZ = z33.strictObject({
+      version: z33.literal(WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      resource: WorkspaceChangeDiffResourceV1SchemaZ
+    });
+  }
+});
+
+// packages/contracts/src/workspace-changes-view.ts
+var init_workspace_changes_view = __esm({
+  "packages/contracts/src/workspace-changes-view.ts"() {
+    "use strict";
+  }
+});
+
 // packages/contracts/src/visual-recipes.ts
 var VISUAL_RECIPE_REGISTRY;
 var init_visual_recipes = __esm({
@@ -5145,7 +5814,7 @@ var init_visual_recipes = __esm({
 });
 
 // packages/contracts/src/daemon-resources.ts
-import { z as z31 } from "zod";
+import { z as z34 } from "zod";
 var DaemonSessionOverviewSchemaZ, DaemonPaneInfoSchemaZ, DaemonSessionsResponseSchemaZ, DaemonProjectResponseSchemaZ, DaemonPanesResponseSchemaZ, DaemonWorkspaceSchemaZ, DaemonWorkspacesResponseSchemaZ, DaemonWorkspaceResponseSchemaZ, DaemonRegisteredProjectSchemaZ, DaemonProjectsResponseSchemaZ, DaemonRegisteredProjectResponseSchemaZ, DaemonProjectTemplateSchemaZ, DaemonProjectTemplatesResponseSchemaZ;
 var init_daemon_resources = __esm({
   "packages/contracts/src/daemon-resources.ts"() {
@@ -5154,131 +5823,131 @@ var init_daemon_resources = __esm({
     init_workspace();
     DaemonSessionOverviewSchemaZ = SessionOverviewSchemaZ.strict();
     DaemonPaneInfoSchemaZ = PaneInfoSchemaZ.strict();
-    DaemonSessionsResponseSchemaZ = z31.object({
-      sessions: z31.array(DaemonSessionOverviewSchemaZ)
+    DaemonSessionsResponseSchemaZ = z34.object({
+      sessions: z34.array(DaemonSessionOverviewSchemaZ)
     }).strict();
-    DaemonProjectResponseSchemaZ = z31.object({
-      session: z31.string(),
-      dir: z31.string(),
-      panes: z31.array(DaemonPaneInfoSchemaZ)
+    DaemonProjectResponseSchemaZ = z34.object({
+      session: z34.string(),
+      dir: z34.string(),
+      panes: z34.array(DaemonPaneInfoSchemaZ)
     }).strict();
-    DaemonPanesResponseSchemaZ = z31.object({
-      panes: z31.array(DaemonPaneInfoSchemaZ)
+    DaemonPanesResponseSchemaZ = z34.object({
+      panes: z34.array(DaemonPaneInfoSchemaZ)
     }).strict();
     DaemonWorkspaceSchemaZ = WorkspaceSchemaZ.strict();
-    DaemonWorkspacesResponseSchemaZ = z31.object({
-      workspaces: z31.array(DaemonWorkspaceSchemaZ)
+    DaemonWorkspacesResponseSchemaZ = z34.object({
+      workspaces: z34.array(DaemonWorkspaceSchemaZ)
     }).strict();
-    DaemonWorkspaceResponseSchemaZ = z31.object({
+    DaemonWorkspaceResponseSchemaZ = z34.object({
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonRegisteredProjectSchemaZ = z31.object({
-      name: z31.string(),
-      dir: z31.string(),
-      hasIdeYml: z31.boolean(),
-      hasWorkspaceConfig: z31.boolean().optional(),
-      configKind: z31.enum(["workspace", "legacy", "none"]).optional(),
-      configPath: z31.string().nullable().optional(),
-      ideConfigPath: z31.string().nullable().optional(),
-      gitOrigin: z31.string().nullable(),
-      gitBranch: z31.string().nullable(),
-      registeredAt: z31.string()
+    DaemonRegisteredProjectSchemaZ = z34.object({
+      name: z34.string(),
+      dir: z34.string(),
+      hasIdeYml: z34.boolean(),
+      hasWorkspaceConfig: z34.boolean().optional(),
+      configKind: z34.enum(["workspace", "legacy", "none"]).optional(),
+      configPath: z34.string().nullable().optional(),
+      ideConfigPath: z34.string().nullable().optional(),
+      gitOrigin: z34.string().nullable(),
+      gitBranch: z34.string().nullable(),
+      registeredAt: z34.string()
     }).strict();
-    DaemonProjectsResponseSchemaZ = z31.object({
-      projects: z31.array(DaemonRegisteredProjectSchemaZ)
+    DaemonProjectsResponseSchemaZ = z34.object({
+      projects: z34.array(DaemonRegisteredProjectSchemaZ)
     }).strict();
-    DaemonRegisteredProjectResponseSchemaZ = z31.object({
+    DaemonRegisteredProjectResponseSchemaZ = z34.object({
       project: DaemonRegisteredProjectSchemaZ
     }).strict();
-    DaemonProjectTemplateSchemaZ = z31.object({
-      id: z31.string(),
-      label: z31.string(),
-      description: z31.string()
+    DaemonProjectTemplateSchemaZ = z34.object({
+      id: z34.string(),
+      label: z34.string(),
+      description: z34.string()
     }).strict();
-    DaemonProjectTemplatesResponseSchemaZ = z31.object({
-      templates: z31.array(DaemonProjectTemplateSchemaZ)
+    DaemonProjectTemplatesResponseSchemaZ = z34.object({
+      templates: z34.array(DaemonProjectTemplateSchemaZ)
     }).strict();
   }
 });
 
 // packages/contracts/src/daemon-events.ts
-import { z as z32 } from "zod";
+import { z as z35 } from "zod";
 var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
 var init_daemon_events = __esm({
   "packages/contracts/src/daemon-events.ts"() {
     "use strict";
     init_daemon_resources();
     init_daemon_wire();
-    SessionNamesSchemaZ = z32.array(z32.string());
-    DaemonEventSubscribeFrameSchemaZ = z32.object({
-      type: z32.literal("subscribe"),
+    SessionNamesSchemaZ = z35.array(z35.string());
+    DaemonEventSubscribeFrameSchemaZ = z35.object({
+      type: z35.literal("subscribe"),
       sessions: SessionNamesSchemaZ
     }).strict();
-    DaemonEventUnsubscribeFrameSchemaZ = z32.object({
-      type: z32.literal("unsubscribe"),
+    DaemonEventUnsubscribeFrameSchemaZ = z35.object({
+      type: z35.literal("unsubscribe"),
       sessions: SessionNamesSchemaZ
     }).strict();
-    DaemonEventPingFrameSchemaZ = z32.object({ type: z32.literal("ping") }).strict();
-    DaemonEventClientFrameSchemaZ = z32.discriminatedUnion("type", [
+    DaemonEventPingFrameSchemaZ = z35.object({ type: z35.literal("ping") }).strict();
+    DaemonEventClientFrameSchemaZ = z35.discriminatedUnion("type", [
       DaemonEventSubscribeFrameSchemaZ,
       DaemonEventUnsubscribeFrameSchemaZ,
       DaemonEventPingFrameSchemaZ
     ]);
-    DaemonSessionSnapshotSchemaZ = z32.object({
+    DaemonSessionSnapshotSchemaZ = z35.object({
       project: DaemonProjectResponseSchemaZ
     }).strict();
-    DaemonEventHelloFrameSchemaZ = z32.object({
-      type: z32.literal("hello"),
+    DaemonEventHelloFrameSchemaZ = z35.object({
+      type: z35.literal("hello"),
       daemon: DaemonInstanceIdentitySchemaZ,
-      sessions: z32.array(DaemonSessionOverviewSchemaZ)
+      sessions: z35.array(DaemonSessionOverviewSchemaZ)
     }).strict();
-    DaemonEventSnapshotFrameSchemaZ = z32.object({
-      type: z32.literal("snapshot"),
-      sessionName: z32.string(),
+    DaemonEventSnapshotFrameSchemaZ = z35.object({
+      type: z35.literal("snapshot"),
+      sessionName: z35.string(),
       data: DaemonSessionSnapshotSchemaZ
     }).strict();
-    DaemonEventSessionsChangedFrameSchemaZ = z32.object({ type: z32.literal("sessions.changed") }).strict();
-    DaemonEventProjectsChangedFrameSchemaZ = z32.object({ type: z32.literal("projects.changed") }).strict();
-    DaemonEventInitOutputFrameSchemaZ = z32.object({
-      type: z32.literal("init.output"),
-      jobId: z32.string(),
-      chunk: z32.string(),
-      done: z32.boolean().optional()
+    DaemonEventSessionsChangedFrameSchemaZ = z35.object({ type: z35.literal("sessions.changed") }).strict();
+    DaemonEventProjectsChangedFrameSchemaZ = z35.object({ type: z35.literal("projects.changed") }).strict();
+    DaemonEventInitOutputFrameSchemaZ = z35.object({
+      type: z35.literal("init.output"),
+      jobId: z35.string(),
+      chunk: z35.string(),
+      done: z35.boolean().optional()
     }).strict();
-    DaemonEventInitErrorFrameSchemaZ = z32.object({
-      type: z32.literal("init.error"),
-      jobId: z32.string(),
-      message: z32.string()
+    DaemonEventInitErrorFrameSchemaZ = z35.object({
+      type: z35.literal("init.error"),
+      jobId: z35.string(),
+      message: z35.string()
     }).strict();
-    DaemonEventPongFrameSchemaZ = z32.object({ type: z32.literal("pong") }).strict();
-    DaemonEventActionCompleteFrameSchemaZ = z32.object({
-      type: z32.literal("action.complete"),
-      name: z32.string(),
-      result: z32.unknown()
+    DaemonEventPongFrameSchemaZ = z35.object({ type: z35.literal("pong") }).strict();
+    DaemonEventActionCompleteFrameSchemaZ = z35.object({
+      type: z35.literal("action.complete"),
+      name: z35.string(),
+      result: z35.unknown()
     }).strict();
-    DaemonEventConfigChangedFrameSchemaZ = z32.object({
-      type: z32.literal("config.changed"),
-      sessionName: z32.string()
+    DaemonEventConfigChangedFrameSchemaZ = z35.object({
+      type: z35.literal("config.changed"),
+      sessionName: z35.string()
     }).strict();
-    DaemonEventTerminalsChangedFrameSchemaZ = z32.object({
-      type: z32.literal("terminals.changed"),
-      sessionName: z32.string()
+    DaemonEventTerminalsChangedFrameSchemaZ = z35.object({
+      type: z35.literal("terminals.changed"),
+      sessionName: z35.string()
     }).strict();
-    DaemonEventWorkspaceAddedFrameSchemaZ = z32.object({
-      type: z32.literal("workspace.added"),
+    DaemonEventWorkspaceAddedFrameSchemaZ = z35.object({
+      type: z35.literal("workspace.added"),
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonEventWorkspaceRemovedFrameSchemaZ = z32.object({
-      type: z32.literal("workspace.removed"),
-      name: z32.string()
+    DaemonEventWorkspaceRemovedFrameSchemaZ = z35.object({
+      type: z35.literal("workspace.removed"),
+      name: z35.string()
     }).strict();
-    DaemonEventProtocolErrorCodeSchemaZ = z32.enum(["invalid-json", "invalid-frame"]);
-    DaemonEventProtocolErrorFrameSchemaZ = z32.object({
-      type: z32.literal("protocol.error"),
+    DaemonEventProtocolErrorCodeSchemaZ = z35.enum(["invalid-json", "invalid-frame"]);
+    DaemonEventProtocolErrorFrameSchemaZ = z35.object({
+      type: z35.literal("protocol.error"),
       code: DaemonEventProtocolErrorCodeSchemaZ,
-      message: z32.string()
+      message: z35.string()
     }).strict();
-    DaemonEventServerFrameSchemaZ = z32.discriminatedUnion("type", [
+    DaemonEventServerFrameSchemaZ = z35.discriminatedUnion("type", [
       DaemonEventHelloFrameSchemaZ,
       DaemonEventSnapshotFrameSchemaZ,
       DaemonEventSessionsChangedFrameSchemaZ,
@@ -5324,6 +5993,11 @@ var init_src = __esm({
     init_application_shell();
     init_application_shell_resource();
     init_workspace_catalog_resource();
+    init_workspace_resource_identity();
+    init_workspace_files_resource();
+    init_workspace_files_tree();
+    init_workspace_changes_resource();
+    init_workspace_changes_view();
     init_workspace_pane_creation();
     init_workspace_open();
     init_visual_tokens();
@@ -10550,20 +11224,20 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z33 } from "zod";
+import { z as z36 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
     init_src();
     RegisteredProjectSchemaZ = DaemonRegisteredProjectSchemaZ;
-    RegisterProjectRequestSchemaZ = z33.object({
-      dir: z33.string().min(1),
-      name: z33.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z36.object({
+      dir: z36.string().min(1),
+      name: z36.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z33.object({
-      dir: z33.string().min(1),
-      template: z33.string().min(1).optional()
+    InitProjectRequestSchemaZ = z36.object({
+      dir: z36.string().min(1),
+      template: z36.string().min(1).optional()
     });
   }
 });
@@ -10625,7 +11299,7 @@ import { EventEmitter } from "node:events";
 import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname15, isAbsolute as isAbsolute3, join as join14, resolve as resolve11 } from "node:path";
-import { z as z34 } from "zod";
+import { z as z37 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -10764,9 +11438,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z34.object({
-      version: z34.literal(1),
-      projects: z34.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z37.object({
+      version: z37.literal(1),
+      projects: z37.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -11538,7 +12212,7 @@ var init_notify_state = __esm({
 import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync7, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname17, join as join18 } from "node:path";
-import { z as z35 } from "zod";
+import { z as z38 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -11710,32 +12384,32 @@ var init_snapshot2 = __esm({
     init_src2();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z35.object({
-      index: z35.number(),
-      cwd: z35.string(),
-      command: z35.string().nullable(),
-      agent: z35.string().nullable(),
-      agentSessionId: z35.string().nullable(),
-      agentState: z35.string().nullable(),
-      title: z35.string()
+    PaneSnapshotSchemaZ = z38.object({
+      index: z38.number(),
+      cwd: z38.string(),
+      command: z38.string().nullable(),
+      agent: z38.string().nullable(),
+      agentSessionId: z38.string().nullable(),
+      agentState: z38.string().nullable(),
+      title: z38.string()
     });
-    WindowSnapshotSchemaZ = z35.object({
-      index: z35.number(),
-      name: z35.string(),
-      active: z35.boolean(),
-      layout: z35.string(),
-      panes: z35.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z38.object({
+      index: z38.number(),
+      name: z38.string(),
+      active: z38.boolean(),
+      layout: z38.string(),
+      panes: z38.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z35.object({
-      name: z35.string(),
-      cwd: z35.string(),
-      adopted: z35.boolean(),
-      windows: z35.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z38.object({
+      name: z38.string(),
+      cwd: z38.string(),
+      adopted: z38.boolean(),
+      windows: z38.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z35.object({
-      version: z35.literal(1),
-      savedAt: z35.string(),
-      sessions: z35.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z38.object({
+      version: z38.literal(1),
+      savedAt: z38.string(),
+      sessions: z38.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -14926,7 +15600,7 @@ import { EventEmitter as EventEmitter3 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { homedir as homedir16 } from "node:os";
 import { dirname as dirname24, join as join24 } from "node:path";
-import { z as z36 } from "zod";
+import { z as z39 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -14949,9 +15623,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z36.object({
-      version: z36.literal(1),
-      workspaces: z36.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z39.object({
+      version: z39.literal(1),
+      workspaces: z39.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -18661,7 +19335,7 @@ var init_workspace_pane_creation2 = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts
-import { z as z37 } from "zod";
+import { z as z40 } from "zod";
 function analyzeTrustedSemanticPaneCatalog(candidates) {
   const rows = [];
   let invalidRuntimeProof = false;
@@ -18708,17 +19382,17 @@ var init_semantic_pane_catalog = __esm({
   "packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts"() {
     "use strict";
     init_src();
-    RuntimeSessionIdSchemaZ = z37.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-    RuntimeWindowIdSchemaZ = z37.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-    RuntimePaneIdSchemaZ = z37.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
-    TrustedSemanticPaneSnapshotSchemaZ = z37.object({
+    RuntimeSessionIdSchemaZ = z40.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+    RuntimeWindowIdSchemaZ = z40.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+    RuntimePaneIdSchemaZ = z40.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+    TrustedSemanticPaneSnapshotSchemaZ = z40.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
       sessionId: RuntimeSessionIdSchemaZ,
       windowId: RuntimeWindowIdSchemaZ,
       runtimePaneId: RuntimePaneIdSchemaZ,
-      windowPaneCount: z37.number().int().positive(),
-      sessionWindowCount: z37.number().int().positive()
+      windowPaneCount: z40.number().int().positive(),
+      sessionWindowCount: z40.number().int().positive()
     }).strict();
     SemanticPaneCatalogError = class extends Error {
       code;
@@ -21157,7 +21831,7 @@ var init_app_window_mutation2 = __esm({
 });
 
 // packages/contracts/src/terminal-attachment-stream.ts
-import { z as z38 } from "zod";
+import { z as z41 } from "zod";
 function decodeTerminalAttachmentInputFrame(frame) {
   if (!(frame instanceof Uint8Array) || frame.byteLength <= TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES || frame.byteLength > TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES || frame[0] !== TERMINAL_ATTACHMENT_INPUT_FRAME_KIND) {
     return null;
@@ -21182,38 +21856,38 @@ var init_terminal_attachment_stream = __esm({
     TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE = 4294967295;
     TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES = 64 * 1024;
     TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES = TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES + TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES;
-    TerminalAttachmentInputLimitsSchemaZ = z38.object({
-      maxFrameBytes: z38.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
-      maxAcceptedBytes: z38.number().int().positive().max(4 * 1024 * 1024),
-      maxAcceptedFrames: z38.number().int().positive().max(16384)
+    TerminalAttachmentInputLimitsSchemaZ = z41.object({
+      maxFrameBytes: z41.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
+      maxAcceptedBytes: z41.number().int().positive().max(4 * 1024 * 1024),
+      maxAcceptedFrames: z41.number().int().positive().max(16384)
     }).strict().refine((limits) => limits.maxFrameBytes <= limits.maxAcceptedBytes, {
       message: "terminal input frame limit cannot exceed its lifetime byte limit"
     });
-    TerminalAttachmentInputCapabilitySchemaZ = z38.union([
-      z38.literal("unavailable"),
-      z38.object({
-        mode: z38.literal("bounded"),
+    TerminalAttachmentInputCapabilitySchemaZ = z41.union([
+      z41.literal("unavailable"),
+      z41.object({
+        mode: z41.literal("bounded"),
         limits: TerminalAttachmentInputLimitsSchemaZ
       }).strict()
     ]);
-    TerminalAttachmentInputAckFrameSchemaZ = z38.object({
-      type: z38.literal("input-ack"),
-      protocolVersion: z38.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z38.number().int().nonnegative(),
-      sequence: z38.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE),
-      byteLength: z38.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
-      state: z38.enum(["open", "exhausted"]),
-      acceptedBytes: z38.number().int().positive().max(4 * 1024 * 1024),
-      acceptedFrames: z38.number().int().positive().max(16384),
-      remainingBytes: z38.number().int().nonnegative().max(4 * 1024 * 1024),
-      remainingFrames: z38.number().int().nonnegative().max(16384)
+    TerminalAttachmentInputAckFrameSchemaZ = z41.object({
+      type: z41.literal("input-ack"),
+      protocolVersion: z41.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z41.number().int().nonnegative(),
+      sequence: z41.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE),
+      byteLength: z41.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
+      state: z41.enum(["open", "exhausted"]),
+      acceptedBytes: z41.number().int().positive().max(4 * 1024 * 1024),
+      acceptedFrames: z41.number().int().positive().max(16384),
+      remainingBytes: z41.number().int().nonnegative().max(4 * 1024 * 1024),
+      remainingFrames: z41.number().int().nonnegative().max(16384)
     }).strict();
   }
 });
 
 // packages/daemon/src/terminal/attachments/direct-websocket.ts
 import { createHash as createHash7, timingSafeEqual } from "node:crypto";
-import { z as z39 } from "zod";
+import { z as z42 } from "zod";
 function defaultSchedule(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
   timer.unref?.();
@@ -21303,7 +21977,7 @@ function sameTarget(left, right) {
   return left.workspaceName === right.workspaceName && left.semanticPaneId === right.semanticPaneId;
 }
 function validDescriptorIdentity(descriptor2) {
-  return z39.uuid().safeParse(descriptor2.leaseId).success && z39.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
+  return z42.uuid().safeParse(descriptor2.leaseId).success && z42.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
 }
 function boundedInputCapability(client, viewerMode) {
   const input = viewerMode === "interactive" ? client.boundedInput : null;
@@ -21340,18 +22014,18 @@ var init_direct_websocket = __esm({
     TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES = 1024;
     WS_OPEN3 = 1;
     TicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
-    BindingIdSchemaZ = z39.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RedemptionFrameSchemaZ = z39.object({
-      type: z39.literal("redeem"),
-      protocolVersion: z39.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      ticket: z39.string().regex(TicketPattern),
-      requestId: z39.uuid(),
+    BindingIdSchemaZ = z42.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RedemptionFrameSchemaZ = z42.object({
+      type: z42.literal("redeem"),
+      protocolVersion: z42.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      ticket: z42.string().regex(TicketPattern),
+      requestId: z42.uuid(),
       daemonInstanceId: BindingIdSchemaZ
     }).strict();
-    ResizeFrameSchemaZ = z39.object({
-      type: z39.literal("resize"),
-      protocolVersion: z39.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z39.number().int().nonnegative(),
+    ResizeFrameSchemaZ = z42.object({
+      type: z42.literal("resize"),
+      protocolVersion: z42.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z42.number().int().nonnegative(),
       viewport: TerminalAttachmentViewportSchemaZ
     }).strict();
     GridSchemaZ = TerminalAttachmentViewportSchemaZ;
@@ -21469,7 +22143,7 @@ var init_direct_websocket = __esm({
             );
           }
           const origin = canonicalRendererOrigin(context.rendererOrigin);
-          const requestId = z39.uuid().parse(context.requestId);
+          const requestId = z42.uuid().parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);
           if (this.#pending.size + this.#pendingReservations >= this.#maxPending) {
             throw new TerminalAttachmentAdmissionError(
@@ -22218,13 +22892,13 @@ var init_direct_websocket = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/grouped-tmux.ts
-import { z as z40 } from "zod";
+import { z as z43 } from "zod";
 function tmux3(argv) {
   return { executable: "tmux", argv };
 }
 function groupedTmuxViewSessionName(attachmentId, generation) {
   const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.shape.attachmentId.parse(attachmentId);
-  const parsedGeneration = z40.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
+  const parsedGeneration = z43.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
   return `${GROUPED_TMUX_VIEW_SESSION_PREFIX}${parsed.replaceAll("-", "").toLowerCase()}-${parsedGeneration.toString(36)}`;
 }
 function markerValue(attachmentId, generation) {
@@ -22347,21 +23021,21 @@ var init_grouped_tmux = __esm({
     GROUPED_TMUX_MAX_GENERATION = 65535;
     GROUPED_TMUX_PLACEHOLDER_WINDOW = "__tmux_ide_attachment_placeholder";
     GROUPED_TMUX_PLACEHOLDER_COMMAND = "exec sleep 2147483647";
-    RuntimeSessionIdSchemaZ2 = z40.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
-    RuntimeWindowIdSchemaZ2 = z40.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
-    RuntimePaneIdSchemaZ2 = z40.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
-    GroupedTmuxAttachmentPlanInputSchemaZ = z40.object({
-      attachmentId: z40.uuid(),
-      generation: z40.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+    RuntimeSessionIdSchemaZ2 = z43.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
+    RuntimeWindowIdSchemaZ2 = z43.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
+    RuntimePaneIdSchemaZ2 = z43.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
+    GroupedTmuxAttachmentPlanInputSchemaZ = z43.object({
+      attachmentId: z43.uuid(),
+      generation: z43.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
       target: TerminalAttachmentSemanticTargetSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ,
       viewport: TerminalAttachmentViewportSchemaZ,
-      source: z40.object({
+      source: z43.object({
         sessionId: RuntimeSessionIdSchemaZ2,
         windowId: RuntimeWindowIdSchemaZ2,
         runtimePaneId: RuntimePaneIdSchemaZ2,
         /** Grouped views are valid only after discovery proves this invariant. */
-        paneCount: z40.literal(1)
+        paneCount: z43.literal(1)
       }).strict()
     }).strict();
   }
@@ -22369,7 +23043,7 @@ var init_grouped_tmux = __esm({
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
 import { createHash as createHash8, randomBytes as randomBytes2, randomUUID as randomUUID4, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
-import { z as z41 } from "zod";
+import { z as z44 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
   if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
@@ -22409,10 +23083,10 @@ var init_lease_manager = __esm({
     init_src();
     init_grouped_tmux();
     init_semantic_pane_catalog();
-    BindingIdSchemaZ2 = z41.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RequestIdSchemaZ = z41.uuid();
+    BindingIdSchemaZ2 = z44.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RequestIdSchemaZ = z44.uuid();
     RuntimeWindowId = /^@(?:0|[1-9][0-9]*)$/u;
-    AttachmentViewOperationSchemaZ = z41.enum(["create", "attach", "recover"]);
+    AttachmentViewOperationSchemaZ = z44.enum(["create", "attach", "recover"]);
     RedemptionTicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
     MarkerPattern = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/iu;
     AttachmentLeaseError = class extends Error {
@@ -22703,7 +23377,7 @@ var init_lease_manager = __esm({
             throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
           }
           const clientClaim = typeof executionResult === "object" && executionResult.status === "executed" ? executionResult.clientClaim : null;
-          if (clientClaim && (!z41.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
+          if (clientClaim && (!z44.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
             this.#removeState(state);
             await this.#cleanupPlan(state);
             throw new AttachmentLeaseError(
@@ -22862,7 +23536,7 @@ var init_lease_manager = __esm({
       #freshId() {
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const candidate = this.#createId();
-          if (z41.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
+          if (z44.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
         }
         throw new AttachmentLeaseError(
           "identity-generation-failed",
@@ -23072,7 +23746,7 @@ var init_lease_manager = __esm({
 
 // packages/daemon/src/terminal/attachments/tmux-view-executor.ts
 import { isDeepStrictEqual } from "node:util";
-import { z as z42 } from "zod";
+import { z as z45 } from "zod";
 function tmux4(argv) {
   return { executable: "tmux", argv };
 }
@@ -23162,7 +23836,7 @@ function parseViewSessionName(value) {
   const match = ViewNamePattern.exec(value);
   if (!match) return null;
   const attachmentId = uuidFromCompactHex(match[1]);
-  if (!z42.uuid().safeParse(attachmentId).success) return null;
+  if (!z45.uuid().safeParse(attachmentId).success) return null;
   const generation = Number.parseInt(match[2], 36);
   if (!Number.isSafeInteger(generation) || generation < 0 || generation > GROUPED_TMUX_MAX_GENERATION || generation.toString(36) !== match[2]) {
     return null;
@@ -23225,9 +23899,9 @@ var init_tmux_view_executor = __esm({
     MAX_MARKER_OUTPUT_ROWS = 1;
     SOURCE_PROOF_MISMATCH_SENTINEL = "__tmux_ide_source_proof_mismatch_v1__";
     VIEW_PROOF_MISMATCH_SENTINEL = "__tmux_ide_view_proof_mismatch_v1__";
-    RuntimeSessionIdSchemaZ3 = z42.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-    RuntimeWindowIdSchemaZ3 = z42.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-    RuntimePaneIdSchemaZ3 = z42.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+    RuntimeSessionIdSchemaZ3 = z45.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+    RuntimeWindowIdSchemaZ3 = z45.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+    RuntimePaneIdSchemaZ3 = z45.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
     MarkerPattern2 = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/u;
     ViewNamePattern = /^_tmux-ide-view-v1-([0-9a-f]{32})-([0-9a-z]+)$/u;
     TmuxAttachmentClientTransportError = class extends Error {
@@ -23289,13 +23963,13 @@ var init_tmux_view_executor = __esm({
         }
       }
     };
-    TmuxAttachmentClientTransportInputSchemaZ = z42.object({
-      operation: z42.enum(["attach", "recover"]),
-      identity: z42.object({
-        attachmentId: z42.uuid(),
-        generation: z42.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
-        viewSessionName: z42.string(),
-        markerValue: z42.string(),
+    TmuxAttachmentClientTransportInputSchemaZ = z45.object({
+      operation: z45.enum(["attach", "recover"]),
+      identity: z45.object({
+        attachmentId: z45.uuid(),
+        generation: z45.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+        viewSessionName: z45.string(),
+        markerValue: z45.string(),
         expectedSourceSessionId: RuntimeSessionIdSchemaZ3,
         expectedViewSessionId: RuntimeSessionIdSchemaZ3,
         expectedWindowId: RuntimeWindowIdSchemaZ3,
@@ -23366,7 +24040,7 @@ var init_tmux_view_executor = __esm({
             throw new TmuxAttachmentViewExecutorError("invalid-request");
           }
           const result = this.#clientTransport.beginGuardedAttach(input);
-          if (result.status !== "claimed" || !z42.uuid().safeParse(result.attemptId).success || result.attachmentId !== plan.identity.attachmentId || result.generation !== plan.identity.generation || !(result.outcome instanceof Promise)) {
+          if (result.status !== "claimed" || !z45.uuid().safeParse(result.attemptId).success || result.attachmentId !== plan.identity.attachmentId || result.generation !== plan.identity.generation || !(result.outcome instanceof Promise)) {
             throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
           }
           return result;
@@ -24296,7 +24970,7 @@ var init_pty_tmux_attachment_launcher = __esm({
 // packages/daemon/src/terminal/attachments/native-runtime.ts
 import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync8, statSync as statSync9 } from "node:fs";
 import { isAbsolute as isAbsolute9 } from "node:path";
-import { z as z43 } from "zod";
+import { z as z46 } from "zod";
 function presentationEnvironment(source) {
   const environment = {
     TERM: SAFE_TERMINAL_VALUE2.test(source.TERM ?? "") ? source.TERM : "xterm-256color"
@@ -24582,7 +25256,7 @@ function commandString(argv) {
   return argv.map((value) => value === ";" ? ";" : quoteArgument(value)).join(" ");
 }
 function geometryDescriptorIsValid(descriptor2, client) {
-  return z43.uuid().safeParse(descriptor2.leaseId).success && z43.uuid().safeParse(descriptor2.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor2.target).success && descriptor2.status === "active" && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0 && descriptor2.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z43.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor2.leaseId && client.generation === descriptor2.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
+  return z46.uuid().safeParse(descriptor2.leaseId).success && z46.uuid().safeParse(descriptor2.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor2.target).success && descriptor2.status === "active" && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0 && descriptor2.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z46.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor2.leaseId && client.generation === descriptor2.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
 }
 function createNativeTerminalAttachmentRuntime(options) {
   return new NativeTerminalAttachmentRuntime(options);
@@ -25214,74 +25888,74 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z44 } from "zod";
+import { z as z47 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z44.object({
-      status: z44.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z44.string().optional(),
-      title: z44.string().optional(),
-      description: z44.string().optional(),
-      priority: z44.number().optional()
+    updateTaskSchema = z47.object({
+      status: z47.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z47.string().optional(),
+      title: z47.string().optional(),
+      description: z47.string().optional(),
+      priority: z47.number().optional()
     });
-    createTaskSchema = z44.object({
-      title: z44.string().trim().min(1, "Title is required"),
-      description: z44.string().optional(),
-      priority: z44.number().optional(),
-      goal: z44.string().optional(),
-      tags: z44.array(z44.string()).optional()
+    createTaskSchema = z47.object({
+      title: z47.string().trim().min(1, "Title is required"),
+      description: z47.string().optional(),
+      priority: z47.number().optional(),
+      goal: z47.string().optional(),
+      tags: z47.array(z47.string()).optional()
     });
-    savePlanSchema = z44.object({
-      content: z44.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z47.object({
+      content: z47.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z44.object({
-      content: z44.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z47.object({
+      content: z47.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z44.object({
-      target: z44.string().min(1, "Target pane is required"),
-      message: z44.string().min(1, "Message is required"),
-      noEnter: z44.boolean().optional()
+    sendCommandSchema = z47.object({
+      target: z47.string().min(1, "Target pane is required"),
+      message: z47.string().min(1, "Message is required"),
+      noEnter: z47.boolean().optional()
     });
-    createMilestoneSchema = z44.object({
-      title: z44.string().trim().min(1, "Title is required"),
-      sequence: z44.number().int().positive(),
-      description: z44.string().optional()
+    createMilestoneSchema = z47.object({
+      title: z47.string().trim().min(1, "Title is required"),
+      sequence: z47.number().int().positive(),
+      description: z47.string().optional()
     });
-    updateMilestoneSchema = z44.object({
-      status: z44.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z44.string().optional(),
-      description: z44.string().optional()
+    updateMilestoneSchema = z47.object({
+      status: z47.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z47.string().optional(),
+      description: z47.string().optional()
     });
-    updateAssertionSchema = z44.object({
-      status: z44.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z44.string().optional(),
-      verifiedBy: z44.string().optional()
+    updateAssertionSchema = z47.object({
+      status: z47.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z47.string().optional(),
+      verifiedBy: z47.string().optional()
     });
-    triggerResearchSchema = z44.object({
-      type: z44.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z47.object({
+      type: z47.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z44.object({
-      attach: z44.boolean().optional()
+    launchSchema = z47.object({
+      attach: z47.boolean().optional()
     }).optional();
-    stopSchema = z44.object({}).optional();
+    stopSchema = z47.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z44.object({
-      name: z44.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z47.object({
+      name: z47.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z44.string().trim().optional(),
-      description: z44.string().optional(),
-      specialties: z44.array(z44.string()).optional(),
-      body: z44.string().optional()
+      role: z47.string().trim().optional(),
+      description: z47.string().optional(),
+      specialties: z47.array(z47.string()).optional(),
+      body: z47.string().optional()
     });
-    updateSkillSchema = z44.object({
-      role: z44.string().trim().optional(),
-      description: z44.string().optional(),
-      specialties: z44.array(z44.string()).optional(),
-      body: z44.string().optional()
+    updateSkillSchema = z47.object({
+      role: z47.string().trim().optional(),
+      description: z47.string().optional(),
+      specialties: z47.array(z47.string()).optional(),
+      body: z47.string().optional()
     });
   }
 });
@@ -26678,64 +27352,64 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z45 } from "zod";
+import { z as z48 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z45.object({
+    ProjectInspectDetectedSchemaZ = z48.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z45.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z48.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z45.array(z45.string()),
+      frameworks: z48.array(z48.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z45.string().nullable(),
+      devCommand: z48.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z45.string().nullable()
+      testCommand: z48.string().nullable()
     });
-    ProjectInspectSchemaZ = z45.object({
+    ProjectInspectSchemaZ = z48.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z45.string(),
+      name: z48.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z45.string(),
+      dir: z48.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z45.boolean(),
+      hasIdeYml: z48.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z45.boolean().optional(),
+      hasWorkspaceConfig: z48.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z45.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z48.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z45.string().nullable().optional(),
+      configPath: z48.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z45.string().nullable().optional(),
+      ideConfigPath: z48.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z45.string().nullable(),
+      gitOrigin: z48.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z45.string().nullable(),
+      gitBranch: z48.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z45.object({
-      dir: z45.string().min(1)
+    InspectFilesystemRequestSchemaZ = z48.object({
+      dir: z48.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z45.object({
-      dir: z45.string().min(1),
+    OnboardProjectRequestSchemaZ = z48.object({
+      dir: z48.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z45.string().min(1).optional(),
+      name: z48.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z45.number().int().min(1).max(3),
+      agents: z48.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z45.array(z45.string().min(1)).optional(),
+      agentNames: z48.array(z48.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z45.string().min(1).nullable().optional(),
+      devCommand: z48.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z45.string().min(1).nullable().optional(),
+      testCommand: z48.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z45.string().min(1).nullable().optional()
+      lintCommand: z48.string().min(1).nullable().optional()
     });
   }
 });
@@ -27666,7 +28340,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
-import { z as z46 } from "zod";
+import { z as z49 } from "zod";
 import { realpathSync as realpathSync10 } from "node:fs";
 import { homedir as homedir20 } from "node:os";
 import { isAbsolute as isAbsolute12, resolve as pathResolve } from "node:path";
@@ -27700,7 +28374,7 @@ function requireHostCapability(ownerToken) {
     if (!supplied || supplied !== ownerToken) {
       return c.json({ error: "Host mutation capability required" }, 401);
     }
-    if (!z46.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+    if (!z49.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
     return next();
@@ -27859,7 +28533,7 @@ function createApp(options = {}) {
       } catch {
         return c.json({ error: "Invalid capability request" }, 400);
       }
-      if (!z46.object({}).strict().safeParse(body).success) {
+      if (!z49.object({}).strict().safeParse(body).success) {
         return c.json({ error: "Invalid capability request" }, 400);
       }
       const appWindowCommandRegistered = daemonActionCommandRegistry.descriptors().some(({ id }) => id === "workspace.app-window.mutate");
@@ -29732,7 +30406,7 @@ var init_daemon_embed = __esm({
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
 import { randomUUID as randomUUID10 } from "node:crypto";
-import { z as z47 } from "zod";
+import { z as z50 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -29846,7 +30520,7 @@ async function tryDispatchAction(name, input, options = {}) {
           details: failure.data.error.details
         });
       }
-      const success = z47.object({ ok: z47.literal(true), result: contract.result }).safeParse(body);
+      const success = z50.object({ ok: z50.literal(true), result: contract.result }).safeParse(body);
       if (success.success) return success.data.result;
     }
     return null;
@@ -29861,12 +30535,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z47.object({
-      ok: z47.literal(false),
-      error: z47.object({
-        code: z47.string(),
-        message: z47.string(),
-        details: z47.unknown().optional()
+    FailureEnvelopeZ = z50.object({
+      ok: z50.literal(false),
+      error: z50.object({
+        code: z50.string(),
+        message: z50.string(),
+        details: z50.unknown().optional()
       })
     });
     RETRY_SAFE_OWNER_ACTIONS = /* @__PURE__ */ new Set([
