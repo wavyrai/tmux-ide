@@ -19,7 +19,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { WebSocket } from "ws";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Live spawns (daemon, tmux, pty) starve the default 5s/10s budgets when the
+// full monorepo check runs suites concurrently; same hardening as the daemon's
+// live suites.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 import {
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
