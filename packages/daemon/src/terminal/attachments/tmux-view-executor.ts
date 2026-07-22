@@ -3,7 +3,7 @@ import { z } from "zod";
 import { runTmux, TmuxError } from "@tmux-ide/tmux-bridge";
 import {
   GROUPED_TMUX_MAX_GENERATION,
-  GROUPED_TMUX_VIEW_MARKER_OPTION,
+  GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   GROUPED_TMUX_VIEW_SESSION_PREFIX,
   groupedTmuxViewSessionName,
   planGroupedTmuxAttachment,
@@ -23,6 +23,7 @@ const MAX_TMUX_OUTPUT_BYTES = 128 * 1024;
 const MAX_ENUMERATED_VIEWS = 256;
 const MAX_ENUMERATED_WINDOWS_PER_VIEW = 16;
 const MAX_SOURCE_PROOF_ROWS = 8;
+const MAX_MARKER_OUTPUT_ROWS = 1;
 const SOURCE_PROOF_MISMATCH_SENTINEL = "__tmux_ide_source_proof_mismatch_v1__";
 const VIEW_PROOF_MISMATCH_SENTINEL = "__tmux_ide_view_proof_mismatch_v1__";
 
@@ -45,7 +46,12 @@ const ViewNamePattern = /^_tmux-ide-view-v1-([0-9a-f]{32})-([0-9a-z]+)$/u;
 export type TmuxAttachmentCommandResult =
   | { readonly status: "ok"; readonly stdout: string }
   | { readonly status: "not-found" }
+  | { readonly status: "variable-not-found" }
   | { readonly status: "failed" };
+type TmuxAttachmentStandardCommandResult = Exclude<
+  TmuxAttachmentCommandResult,
+  { readonly status: "variable-not-found" }
+>;
 
 /**
  * Synchronous by design. The final source proof, deadline decision, and tmux
@@ -55,10 +61,28 @@ export interface TmuxAttachmentCommandRunner {
   readonly run: (command: TmuxArgvPlan) => TmuxAttachmentCommandResult;
 }
 
+export type TmuxAttachmentClientTransportResult =
+  | { readonly status: "executed" }
+  | { readonly status: "source-proof-mismatch" }
+  | { readonly status: "view-proof-mismatch" }
+  | { readonly status: "failed" };
+
+/**
+ * Explicit capability for commands which create a live tmux client. The
+ * ordinary daemon command runner is intentionally not treated as this
+ * capability: `attach-session` requires a PTY or control-client owner. The
+ * transport also owns decoding its terminal/control protocol and must not
+ * report `executed` unless the guarded mutation branch ran.
+ */
+export interface TmuxAttachmentClientTransport {
+  readonly runGuardedAttach: (command: TmuxArgvPlan) => TmuxAttachmentClientTransportResult;
+}
+
 export type TmuxAttachmentViewExecutorErrorCode =
   | "invalid-request"
   | "invalid-tmux-output"
   | "tmux-command-failed"
+  | "attachment-transport-unavailable"
   | "view-state-mismatch"
   | "mutation-outcome-uncertain";
 
@@ -66,6 +90,8 @@ const ERROR_MESSAGES: Record<TmuxAttachmentViewExecutorErrorCode, string> = {
   "invalid-request": "The guarded tmux attachment request is invalid.",
   "invalid-tmux-output": "Trusted tmux attachment discovery returned invalid output.",
   "tmux-command-failed": "The guarded tmux attachment command failed.",
+  "attachment-transport-unavailable":
+    "A tmux client transport is required for this attachment operation.",
   "view-state-mismatch": "The guarded tmux attachment view no longer matches its proof.",
   "mutation-outcome-uncertain": "The guarded tmux attachment mutation outcome is uncertain.",
 };
@@ -83,6 +109,7 @@ export class TmuxAttachmentViewExecutorError extends Error {
 
 export interface TmuxAttachmentViewExecutorOptions {
   readonly runner?: TmuxAttachmentCommandRunner;
+  readonly clientTransport?: TmuxAttachmentClientTransport;
   readonly now?: () => number;
 }
 
@@ -127,6 +154,9 @@ const productionRunner: TmuxAttachmentCommandRunner = {
     } catch (error) {
       if (error instanceof TmuxError && error.code === "SESSION_NOT_FOUND") {
         return { status: "not-found" };
+      }
+      if (error instanceof TmuxError && error.code === "ENVIRONMENT_VARIABLE_NOT_FOUND") {
+        return { status: "variable-not-found" };
       }
       return { status: "failed" };
     }
@@ -226,7 +256,7 @@ function canonicalMarker(attachmentId: string, generation: number): string {
 
 function parseCleanupIdentity(cleanup: GuardedAttachmentCleanup): ParsedViewIdentity {
   if (
-    cleanup.markerOption !== GROUPED_TMUX_VIEW_MARKER_OPTION ||
+    cleanup.markerEnvironment !== GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT ||
     !cleanup.exactViewSessionTarget.startsWith("=")
   ) {
     throw new TmuxAttachmentViewExecutorError("invalid-request");
@@ -278,10 +308,12 @@ function canonicalPlanFor(operation: GuardedAttachmentViewOperation): GroupedTmu
  */
 export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
   readonly #runner: TmuxAttachmentCommandRunner;
+  readonly #clientTransport: TmuxAttachmentClientTransport | null;
   readonly #now: () => number;
 
   constructor(options: TmuxAttachmentViewExecutorOptions = {}) {
     this.#runner = options.runner ?? productionRunner;
+    this.#clientTransport = options.clientTransport ?? null;
     this.#now = options.now ?? Date.now;
   }
 
@@ -297,25 +329,59 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
 
   enumerateMarkedViews(
     prefix: typeof GROUPED_TMUX_VIEW_SESSION_PREFIX,
-    markerOption: typeof GROUPED_TMUX_VIEW_MARKER_OPTION,
+    markerEnvironment: typeof GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   ): Promise<readonly EnumeratedMarkedAttachmentView[]> {
-    return serializeServerWide(() => this.#enumerateMarkedViews(prefix, markerOption));
+    return serializeServerWide(() => this.#enumerateMarkedViews(prefix, markerEnvironment));
   }
 
-  #command(command: TmuxArgvPlan): TmuxAttachmentCommandResult {
+  #command(command: TmuxArgvPlan): TmuxAttachmentStandardCommandResult;
+  #command(
+    command: TmuxArgvPlan,
+    options: { readonly allowVariableNotFound: true },
+  ): TmuxAttachmentCommandResult;
+  #command(
+    command: TmuxArgvPlan,
+    options: { readonly allowVariableNotFound?: boolean } = {},
+  ): TmuxAttachmentCommandResult {
     if (command.executable !== "tmux") {
       throw new TmuxAttachmentViewExecutorError("invalid-request");
     }
     try {
       const result = this.#runner.run({ executable: "tmux", argv: [...command.argv] });
       if (result.status === "ok") boundedOutput(result.stdout);
-      if (!["ok", "not-found", "failed"].includes(result.status)) {
+      if (
+        !["ok", "not-found", "variable-not-found", "failed"].includes(result.status) ||
+        (result.status === "variable-not-found" && !options.allowVariableNotFound)
+      ) {
         throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
       }
       return result;
     } catch (error) {
       if (error instanceof TmuxAttachmentViewExecutorError) throw error;
       throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
+    }
+  }
+
+  #clientCommand(command: TmuxArgvPlan): TmuxAttachmentClientTransportResult {
+    if (!this.#clientTransport) {
+      throw new TmuxAttachmentViewExecutorError("attachment-transport-unavailable");
+    }
+    try {
+      const result = this.#clientTransport.runGuardedAttach({
+        executable: "tmux",
+        argv: [...command.argv],
+      });
+      if (
+        !["executed", "source-proof-mismatch", "view-proof-mismatch", "failed"].includes(
+          result.status,
+        )
+      ) {
+        throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof TmuxAttachmentViewExecutorError) throw error;
+      throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
     }
   }
 
@@ -328,20 +394,42 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     return true;
   }
 
-  #marker(exactTarget: `=${string}`): string | null {
+  #sessionMarker(sessionId: string): string | null {
+    if (!RuntimeSessionIdSchemaZ.safeParse(sessionId).success) {
+      throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
+    }
     const result = this.#command(
-      tmux(["list-panes", "-t", exactTarget, "-F", `#{${GROUPED_TMUX_VIEW_MARKER_OPTION}}`]),
+      tmux(["show-environment", "-t", sessionId, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT]),
+      { allowVariableNotFound: true },
     );
+    if (result.status === "not-found") return null;
+    if (result.status === "variable-not-found") return null;
+    if (result.status === "failed") {
+      throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
+    }
+    const rows = strictLines(result.stdout, MAX_MARKER_OUTPUT_ROWS);
+    const assignmentPrefix = `${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}=`;
+    if (rows.length !== 1 || !rows[0]!.startsWith(assignmentPrefix)) {
+      throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
+    }
+    return rows[0]!.slice(assignmentPrefix.length);
+  }
+
+  #marker(exactTarget: `=${string}`): string | null {
+    const result = this.#command(tmux(["list-panes", "-t", exactTarget, "-F", "#{session_id}"]));
     if (result.status === "not-found") return null;
     if (result.status === "failed") {
       throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
     }
-    const markers = strictLines(result.stdout, MAX_SOURCE_PROOF_ROWS);
-    if (markers.length === 0) return "";
-    if (new Set(markers).size !== 1) {
+    const sessionIds = strictLines(result.stdout, MAX_SOURCE_PROOF_ROWS);
+    if (
+      sessionIds.length === 0 ||
+      new Set(sessionIds).size !== 1 ||
+      !RuntimeSessionIdSchemaZ.safeParse(sessionIds[0]).success
+    ) {
       throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
     }
-    return markers[0]!;
+    return this.#sessionMarker(sessionIds[0]!);
   }
 
   #windowIds(exactTarget: `=${string}`): readonly string[] | null {
@@ -371,7 +459,7 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
         "-t",
         exactTarget,
         "-F",
-        `#{session_id}\t#{window_id}\t#{pane_id}\t#{window_panes}\t#{session_windows}\t#{${GROUPED_TMUX_VIEW_MARKER_OPTION}}`,
+        "#{session_id}\t#{window_id}\t#{pane_id}\t#{window_panes}\t#{session_windows}",
       ]),
     );
     if (result.status === "not-found") return null;
@@ -381,10 +469,10 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     const rows = strictLines(result.stdout, MAX_SOURCE_PROOF_ROWS);
     if (rows.length !== 1) return null;
     const fields = rows[0]!.split("\t");
-    if (fields.length !== 6) {
+    if (fields.length !== 5) {
       throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
     }
-    const [sessionId, windowId, paneId, paneCount, sessionWindowCount, marker] = fields;
+    const [sessionId, windowId, paneId, paneCount, sessionWindowCount] = fields;
     if (
       !RuntimeSessionIdSchemaZ.safeParse(sessionId).success ||
       !RuntimeWindowIdSchemaZ.safeParse(windowId).success ||
@@ -398,13 +486,13 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
       windowId !== expectedWindowId ||
       paneCount !== "1" ||
       sessionWindowCount !== "1" ||
-      marker !== expectedMarker
+      this.#sessionMarker(sessionId!) !== expectedMarker
     ) {
       return null;
     }
     return {
       target: `${sessionId}:${windowId}.${paneId}`,
-      format: `#{&&:#{==:#{session_id},${sessionId}},#{&&:#{==:#{window_id},${windowId}},#{&&:#{==:#{window_panes},1},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_OPTION}},${expectedMarker}}}}}}`,
+      format: `#{&&:#{==:#{session_id},${sessionId}},#{&&:#{==:#{window_id},${windowId}},#{&&:#{==:#{window_panes},1},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${expectedMarker}}}}}}`,
     };
   }
 
@@ -412,7 +500,9 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     const identity = parseCleanupIdentity(cleanup);
     if (!this.#viewExists(identity.exactTarget)) return "absent";
     const marker = this.#marker(identity.exactTarget);
-    if (marker === null) return "absent";
+    if (marker === null) {
+      return this.#viewExists(identity.exactTarget) ? "ownership-mismatch" : "absent";
+    }
     if (marker !== identity.markerValue) return "ownership-mismatch";
     const windows = this.#windowIds(identity.exactTarget);
     if (windows === null) return "absent";
@@ -548,28 +638,47 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
       viewGuardedMutation,
       tmuxCommandString(tmux(["display-message", "-p", SOURCE_PROOF_MISMATCH_SENTINEL])),
     ]);
-    let result: TmuxAttachmentCommandResult;
+    if (operation.operation === "create") {
+      let result: TmuxAttachmentCommandResult;
+      try {
+        result = this.#command(guarded);
+      } catch {
+        throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
+      }
+      if (result.status !== "ok") {
+        throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
+      }
+      const output = boundedOutput(result.stdout);
+      if (output === SOURCE_PROOF_MISMATCH_SENTINEL) return "source-proof-mismatch";
+      if (output === VIEW_PROOF_MISMATCH_SENTINEL) {
+        throw new TmuxAttachmentViewExecutorError("view-state-mismatch");
+      }
+      return "executed";
+    }
+
+    let result: TmuxAttachmentClientTransportResult;
     try {
-      result = this.#command(guarded);
+      result = this.#clientCommand(guarded);
     } catch {
       throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
     }
-    if (result.status !== "ok") {
-      throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
+    switch (result.status) {
+      case "executed":
+        return "executed";
+      case "source-proof-mismatch":
+        return "source-proof-mismatch";
+      case "view-proof-mismatch":
+        throw new TmuxAttachmentViewExecutorError("view-state-mismatch");
+      case "failed":
+        throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
     }
-    const output = boundedOutput(result.stdout);
-    if (output === SOURCE_PROOF_MISMATCH_SENTINEL) return "source-proof-mismatch";
-    if (output === VIEW_PROOF_MISMATCH_SENTINEL) {
-      throw new TmuxAttachmentViewExecutorError("view-state-mismatch");
-    }
-    return "executed";
   }
 
   #bestEffortRollbackCreate(plan: GroupedTmuxAttachmentPlan): void {
     try {
       this.#guardedCleanup({
         exactViewSessionTarget: `=${plan.identity.viewSessionName}`,
-        markerOption: GROUPED_TMUX_VIEW_MARKER_OPTION,
+        markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
         expectedMarkerValue: plan.identity.markerValue,
         expectedWindowId: plan.identity.durableSource.windowId,
       });
@@ -582,6 +691,9 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     operation: GuardedAttachmentViewOperation,
   ): GuardedAttachmentViewOperationResult {
     const plan = canonicalPlanFor(operation);
+    if (operation.operation !== "create" && !this.#clientTransport) {
+      throw new TmuxAttachmentViewExecutorError("attachment-transport-unavailable");
+    }
     let viewGuard: ViewServerGuard | null = null;
 
     if (operation.operation === "create") {
@@ -623,23 +735,22 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
 
   #enumerateMarkedViews(
     prefix: typeof GROUPED_TMUX_VIEW_SESSION_PREFIX,
-    markerOption: typeof GROUPED_TMUX_VIEW_MARKER_OPTION,
+    markerEnvironment: typeof GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   ): readonly EnumeratedMarkedAttachmentView[] {
     if (
       prefix !== GROUPED_TMUX_VIEW_SESSION_PREFIX ||
-      markerOption !== GROUPED_TMUX_VIEW_MARKER_OPTION
+      markerEnvironment !== GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT
     ) {
       throw new TmuxAttachmentViewExecutorError("invalid-request");
     }
-    const result = this.#command(
-      tmux(["list-sessions", "-F", `#{session_name}\t#{${GROUPED_TMUX_VIEW_MARKER_OPTION}}`]),
-    );
+    const result = this.#command(tmux(["list-sessions", "-F", "#{session_name}\t#{session_id}"]));
     if (result.status === "not-found") return [];
     if (result.status === "failed") {
       throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
     }
     const rows = strictLines(result.stdout, MAX_ENUMERATED_VIEWS * 4);
     const found = new Map<string, { identity: ParsedViewIdentity; markerValue: string | null }>();
+    const runtimeSessionIds = new Set<string>();
     for (const row of rows) {
       const separator = row.indexOf("\t");
       if (separator < 0 || row.indexOf("\t", separator + 1) >= 0) {
@@ -651,10 +762,18 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
       if (!parsedName || found.has(sessionName)) {
         throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
       }
-      const rawMarker = row.slice(separator + 1);
+      const sessionId = row.slice(separator + 1);
+      if (
+        !RuntimeSessionIdSchemaZ.safeParse(sessionId).success ||
+        runtimeSessionIds.has(sessionId)
+      ) {
+        throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
+      }
+      runtimeSessionIds.add(sessionId);
+      const rawMarker = this.#sessionMarker(sessionId);
       let markerValue: string | null = null;
-      const markerMatch = MarkerPattern.exec(rawMarker);
-      if (markerMatch) {
+      const markerMatch = rawMarker === null ? null : MarkerPattern.exec(rawMarker);
+      if (rawMarker !== null && markerMatch) {
         const generation = Number.parseInt(markerMatch[2]!, 10);
         if (
           Number.isSafeInteger(generation) &&

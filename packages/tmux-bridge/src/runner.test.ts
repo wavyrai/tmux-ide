@@ -20,6 +20,7 @@ import {
   setSessionEnvironment,
   attachSession,
   runSessionCommand,
+  runTmux,
 } from "./index.ts";
 
 let mockExec;
@@ -447,6 +448,19 @@ describe("debug logging", () => {
 // --- Error classification edge cases ---
 
 describe("error classification", () => {
+  it('classifies an exact show-environment "unknown variable" separately', () => {
+    mockExec.mockImplementation(() => {
+      throw makeExecError("unknown variable: TMUX_IDE_ATTACHMENT_VIEW");
+    });
+
+    expect(() => runTmux(["show-environment", "-t", "$12", "TMUX_IDE_ATTACHMENT_VIEW"])).toThrow(
+      expect.objectContaining({
+        code: "ENVIRONMENT_VARIABLE_NOT_FOUND",
+        message: "tmux environment variable was not found",
+      }),
+    );
+  });
+
   it('classifies "can\'t find window" as SESSION_NOT_FOUND', () => {
     mockExec.mockImplementation(() => {
       throw makeExecError("can't find window: proj:0");

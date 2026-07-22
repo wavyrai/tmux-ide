@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  GROUPED_TMUX_VIEW_MARKER_OPTION,
+  GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   GROUPED_TMUX_VIEW_SESSION_PREFIX,
   GroupedTmuxAttachmentPlanInputSchemaZ,
   groupedTmuxViewSessionName,
@@ -66,7 +66,7 @@ describe("grouped tmux attachment planner", () => {
         "-s",
         view,
         "__tmux_ide_attachment_placeholder",
-        GROUPED_TMUX_VIEW_MARKER_OPTION,
+        GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
         plan.identity.markerValue,
         "link-window",
         "$12:@34",
@@ -127,7 +127,9 @@ describe("grouped tmux attachment planner", () => {
     const second = planGroupedTmuxAttachment(input());
     expect(second).toEqual(first);
     expect(first.recover.attach).toBe(first.attach);
-    expect(first.cleanup.ownership.expectedStdout).toBe(first.identity.markerValue);
+    expect(first.cleanup.ownership.expectedStdout).toBe(
+      `${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}=${first.identity.markerValue}`,
+    );
     expect(first.recover.topology.expectedStdout).toBe(first.identity.durableSource.windowId);
     expect(first.cleanup.command.argv).toEqual([
       "kill-session",
@@ -139,13 +141,14 @@ describe("grouped tmux attachment planner", () => {
   it("can clean only the exact daemon-marked view and never the durable source", () => {
     const plan = planGroupedTmuxAttachment(input());
     expect(plan.cleanup.ownership.query.argv).toEqual([
-      "show-options",
-      "-qv",
+      "show-environment",
       "-t",
-      plan.identity.viewSessionName,
-      GROUPED_TMUX_VIEW_MARKER_OPTION,
+      `=${plan.identity.viewSessionName}`,
+      GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
     ]);
-    expect(plan.cleanup.ownership.expectedStdout).toBe(plan.identity.markerValue);
+    expect(plan.cleanup.ownership.expectedStdout).toBe(
+      `${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}=${plan.identity.markerValue}`,
+    );
     expect(plan.cleanup.command.argv.at(-1)).toBe(`=${plan.identity.viewSessionName}`);
 
     const argv = everyArgv(plan);

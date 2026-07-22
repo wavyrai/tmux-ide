@@ -166,6 +166,8 @@ export {
   TmuxAttachmentViewExecutorError,
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
+  type TmuxAttachmentClientTransport,
+  type TmuxAttachmentClientTransportResult,
   type TmuxAttachmentViewExecutorErrorCode,
   type TmuxAttachmentViewExecutorOptions,
 } from "./terminal/attachments/tmux-view-executor.ts";

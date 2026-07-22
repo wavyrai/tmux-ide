@@ -1,7 +1,7 @@
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
-  GROUPED_TMUX_VIEW_MARKER_OPTION,
+  GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   GROUPED_TMUX_VIEW_SESSION_PREFIX,
   planGroupedTmuxAttachment,
   type GroupedTmuxAttachmentPlan,
@@ -14,6 +14,7 @@ import type {
 import {
   TmuxAttachmentViewExecutor,
   TmuxAttachmentViewExecutorError,
+  type TmuxAttachmentClientTransportResult,
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
 } from "../attachments/tmux-view-executor.ts";
@@ -29,6 +30,7 @@ interface FakeView {
 class FakeRunner implements TmuxAttachmentCommandRunner {
   readonly calls: string[][] = [];
   readonly views = new Map<string, FakeView>();
+  readonly sessionIds = new Map<string, string>();
   sourceOutput = "$12\t@34\t%56\t1\n";
   sessionsOutput: string | null = null;
   rawOutput: ((argv: readonly string[]) => string | null) | undefined;
@@ -38,6 +40,14 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
   mutationCount = 0;
   serverSourceGuardMatches = true;
   serverViewGuardMatches = true;
+
+  sessionId(name: string): string {
+    const existing = this.sessionIds.get(name);
+    if (existing) return existing;
+    const allocated = `$${90 + this.sessionIds.size}`;
+    this.sessionIds.set(name, allocated);
+    return allocated;
+  }
 
   #parseCommandString(value: string): string[][] {
     const commands: string[][] = [[]];
@@ -74,15 +84,17 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
       const name = creation[creation.indexOf("-s") + 1]!;
       const markerCommand = commands.find(
         (command) =>
-          command[0] === "set-option" && command.includes(GROUPED_TMUX_VIEW_MARKER_OPTION),
+          command[0] === "set-environment" &&
+          command.includes(GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT),
       );
-      const markerIndex = markerCommand?.indexOf(GROUPED_TMUX_VIEW_MARKER_OPTION) ?? -1;
+      const markerIndex = markerCommand?.indexOf(GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT) ?? -1;
       const link = commands.find((command) => command[0] === "link-window");
       const source = link?.[link.indexOf("-s") + 1] ?? "";
       this.views.set(name, {
         marker: markerCommand?.[markerIndex + 1] ?? null,
         windows: [source.slice(source.indexOf(":") + 1)],
       });
+      this.sessionId(name);
       this.mutationCount += 1;
       return this.partialCreateFailure ? { status: "failed" } : { status: "ok", stdout: "" };
     }
@@ -110,7 +122,7 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
       case "if-shell": {
         const target = argv[argv.indexOf("-t") + 1] ?? "";
         const isViewGuard =
-          target.startsWith("=") || argv[4]?.includes(GROUPED_TMUX_VIEW_MARKER_OPTION);
+          target.startsWith("=") || argv[4]?.includes(GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT);
         const matches = isViewGuard ? this.serverViewGuardMatches : this.serverSourceGuardMatches;
         return this.#runCommandString(argv[matches ? 5 : 6]!);
       }
@@ -118,11 +130,19 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
         const name = argv.at(-1)?.replace(/^=/u, "") ?? "";
         return this.views.has(name) ? { status: "ok", stdout: "" } : { status: "not-found" };
       }
-      case "show-options": {
-        const target = argv[argv.indexOf("-t") + 1]?.replace(/^=/u, "") ?? "";
-        const view = this.views.get(target);
+      case "show-environment": {
+        const sessionId = argv[argv.indexOf("-t") + 1] ?? "";
+        const name = [...this.sessionIds.entries()].find((entry) => entry[1] === sessionId)?.[0];
+        const view = name ? this.views.get(name) : undefined;
         if (!view) return { status: "not-found" };
-        return { status: "ok", stdout: `${view.marker ?? ""}\n` };
+        if (argv.at(-1) !== GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT) {
+          return { status: "failed" };
+        }
+        if (view.marker === null) return { status: "variable-not-found" };
+        return {
+          status: "ok",
+          stdout: `${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}=${view.marker}\n`,
+        };
       }
       case "list-windows": {
         const target = argv[argv.indexOf("-t") + 1]?.replace(/^=/u, "") ?? "";
@@ -135,12 +155,12 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
         if (!target.startsWith("=")) return { status: "ok", stdout: this.sourceOutput };
         const view = this.views.get(target.slice(1));
         if (!view) return { status: "not-found" };
-        if (argv.at(-1) === `#{${GROUPED_TMUX_VIEW_MARKER_OPTION}}`) {
-          return { status: "ok", stdout: `${view.marker ?? ""}\n` };
+        if (argv.at(-1) === "#{session_id}") {
+          return { status: "ok", stdout: `${this.sessionId(target.slice(1))}\n` };
         }
         return {
           status: "ok",
-          stdout: `$90\t${view.windows[0] ?? "@0"}\t%91\t${view.windows.length === 1 ? "1" : "2"}\t1\t${view.marker ?? ""}\n`,
+          stdout: `${this.sessionId(target.slice(1))}\t${view.windows[0] ?? "@0"}\t%91\t${view.windows.length === 1 ? "1" : "2"}\t1\n`,
         };
       }
       case "list-sessions":
@@ -149,19 +169,21 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
           stdout:
             this.sessionsOutput ??
             [...this.views.entries()]
-              .map(([name, view]) => `${name}\t${view.marker ?? ""}`)
+              .map(([name]) => `${name}\t${this.sessionId(name)}`)
               .join("\n"),
         };
       case "kill-session": {
         const name = argv.at(-1)?.replace(/^=/u, "") ?? "";
         if (!this.views.has(name)) return { status: "not-found" };
         this.views.delete(name);
+        this.sessionIds.delete(name);
         this.mutationCount += 1;
         return { status: "ok", stdout: "" };
       }
       case "attach-session":
       case "select-window":
       case "set-option":
+      case "set-environment":
         this.mutationCount += 1;
         return { status: "ok", stdout: "" };
       case "display-message":
@@ -210,7 +232,7 @@ function operation(
 function cleanup(selectedPlan = plan()): GuardedAttachmentCleanup {
   return {
     exactViewSessionTarget: `=${selectedPlan.identity.viewSessionName}`,
-    markerOption: GROUPED_TMUX_VIEW_MARKER_OPTION,
+    markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
     expectedMarkerValue: selectedPlan.identity.markerValue,
     expectedWindowId: selectedPlan.identity.durableSource.windowId,
   };
@@ -222,6 +244,23 @@ function seed(runner: FakeRunner, selectedPlan = plan(), overrides: Partial<Fake
     windows: [selectedPlan.identity.durableSource.windowId],
     ...overrides,
   });
+  runner.sessionId(selectedPlan.identity.viewSessionName);
+}
+
+function clientTransport(runner: FakeRunner) {
+  return {
+    runGuardedAttach: (command: TmuxArgvPlan): TmuxAttachmentClientTransportResult => {
+      const result = runner.run(command);
+      if (result.status !== "ok") return { status: "failed" };
+      if (result.stdout.trim() === "__tmux_ide_source_proof_mismatch_v1__") {
+        return { status: "source-proof-mismatch" };
+      }
+      if (result.stdout.trim() === "__tmux_ide_view_proof_mismatch_v1__") {
+        return { status: "view-proof-mismatch" };
+      }
+      return { status: "executed" };
+    },
+  };
 }
 
 function exposed(error: unknown): string {
@@ -284,7 +323,11 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
     const runner = new FakeRunner();
     const selectedPlan = plan();
     seed(runner, selectedPlan);
-    const executor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: clientTransport(runner),
+      now: () => 1_000,
+    });
 
     await expect(
       executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
@@ -311,6 +354,44 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
     expect(runner.calls.some((argv) => argv[0] === "new-session")).toBe(false);
   });
 
+  it("preserves a last-moment source guard failure through the client transport", async () => {
+    const runner = new FakeRunner();
+    const selectedPlan = plan();
+    seed(runner, selectedPlan);
+    runner.before = (argv) => {
+      if (argv[0] === "list-panes" && argv[2] === "$12:@34") {
+        runner.serverSourceGuardMatches = false;
+      }
+    };
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: clientTransport(runner),
+      now: () => 1_000,
+    });
+
+    await expect(
+      executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
+    ).resolves.toBe("source-proof-mismatch");
+    expect(runner.mutationCount).toBe(0);
+  });
+
+  it("preserves a last-moment view guard failure through the client transport", async () => {
+    const runner = new FakeRunner();
+    const selectedPlan = plan();
+    seed(runner, selectedPlan);
+    runner.serverViewGuardMatches = false;
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: clientTransport(runner),
+      now: () => 1_000,
+    });
+
+    await expect(
+      executor.executeGuardedViewOperation(operation("recover", selectedPlan)),
+    ).rejects.toMatchObject({ code: "view-state-mismatch" });
+    expect(runner.mutationCount).toBe(0);
+  });
+
   it("rejects injected or noncanonical argv before touching tmux", async () => {
     const runner = new FakeRunner();
     const hostile = structuredClone(plan()) as GroupedTmuxAttachmentPlan & {
@@ -329,7 +410,11 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
     const runner = new FakeRunner();
     const selectedPlan = plan();
     seed(runner, selectedPlan, { marker: "v1:00000000-0000-4000-8000-000000000000:0" });
-    const executor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: clientTransport(runner),
+      now: () => 1_000,
+    });
     await expect(
       executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
     ).rejects.toMatchObject({ code: "view-state-mismatch" });
@@ -341,6 +426,25 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
     ).rejects.toMatchObject({ code: "view-state-mismatch" });
     expect(runner.mutationCount).toBe(0);
   });
+
+  it.each(["attach", "recover"] as const)(
+    "rejects %s without an explicit client transport before any command or mutation",
+    async (selected) => {
+      const runner = new FakeRunner();
+      seed(runner);
+      runner.calls.length = 0;
+      const executor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+
+      await expect(executor.executeGuardedViewOperation(operation(selected))).rejects.toMatchObject(
+        {
+          code: "attachment-transport-unavailable",
+          message: "A tmux client transport is required for this attachment operation.",
+        },
+      );
+      expect(runner.calls).toHaveLength(0);
+      expect(runner.mutationCount).toBe(0);
+    },
+  );
 
   it("reports a partial mutation as uncertain, rolls back only a canonical view, and leaks nothing", async () => {
     const runner = new FakeRunner();
@@ -371,6 +475,28 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
       expect((error as Error).cause).toBeUndefined();
       expect(exposed(error)).not.toMatch(/raw-secret|%999|\$888|@777/u);
     }
+  });
+
+  it("sanitizes exact marker-query failures without retaining tmux output", async () => {
+    const runner = new FakeRunner();
+    seed(runner);
+    runner.fail = (argv) => (argv[0] === "show-environment" ? "throw" : null);
+    const executor = new TmuxAttachmentViewExecutor({ runner });
+
+    try {
+      await executor.guardedCleanup(cleanup());
+      throw new Error("expected command failure");
+    } catch (error) {
+      expect(error).toMatchObject({ code: "tmux-command-failed" });
+      expect((error as Error).cause).toBeUndefined();
+      expect(exposed(error)).not.toMatch(/raw-secret|%999|\$888|@777/u);
+    }
+    expect(runner.calls).toContainEqual([
+      "show-environment",
+      "-t",
+      runner.sessionId(plan().identity.viewSessionName),
+      GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+    ]);
   });
 });
 
@@ -445,16 +571,16 @@ describe("TmuxAttachmentViewExecutor marked-view enumeration", () => {
     seed(runner, first);
     seed(runner, second, { marker: null });
     runner.sessionsOutput = [
-      `durable-source\t${first.identity.markerValue}`,
-      `${first.identity.viewSessionName}\t${first.identity.markerValue}`,
-      `${second.identity.viewSessionName}\t`,
+      "durable-source\t$1",
+      `${first.identity.viewSessionName}\t${runner.sessionId(first.identity.viewSessionName)}`,
+      `${second.identity.viewSessionName}\t${runner.sessionId(second.identity.viewSessionName)}`,
     ].join("\n");
     const executor = new TmuxAttachmentViewExecutor({ runner });
 
     await expect(
       executor.enumerateMarkedViews(
         GROUPED_TMUX_VIEW_SESSION_PREFIX,
-        GROUPED_TMUX_VIEW_MARKER_OPTION,
+        GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
       ),
     ).resolves.toEqual([
       {
@@ -471,15 +597,19 @@ describe("TmuxAttachmentViewExecutor marked-view enumeration", () => {
     for (const argv of runner.calls.filter((entry) => entry[0] === "list-windows")) {
       expect(argv[argv.indexOf("-t") + 1]).toMatch(/^=_tmux-ide-view-v1-/u);
     }
+    for (const argv of runner.calls.filter((entry) => entry[0] === "show-environment")) {
+      expect(argv).toHaveLength(4);
+      expect(argv.at(-1)).toBe(GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT);
+    }
   });
 
   it.each([
     ["malformed row", `${plan().identity.viewSessionName}`],
     [
       "duplicate row",
-      `${plan().identity.viewSessionName}\t${plan().identity.markerValue}\n${plan().identity.viewSessionName}\t${plan().identity.markerValue}`,
+      `${plan().identity.viewSessionName}\t$90\n${plan().identity.viewSessionName}\t$90`,
     ],
-    ["noncanonical generated name", `${GROUPED_TMUX_VIEW_SESSION_PREFIX}not-an-id-0\t`],
+    ["noncanonical generated name", `${GROUPED_TMUX_VIEW_SESSION_PREFIX}not-an-id-0\t$90`],
     ["oversized output", "x".repeat(128 * 1024 + 1)],
   ])("fails closed with a static error for %s", async (_label, sessionsOutput) => {
     const runner = new FakeRunner();
@@ -488,7 +618,7 @@ describe("TmuxAttachmentViewExecutor marked-view enumeration", () => {
     try {
       await executor.enumerateMarkedViews(
         GROUPED_TMUX_VIEW_SESSION_PREFIX,
-        GROUPED_TMUX_VIEW_MARKER_OPTION,
+        GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
       );
       throw new Error("expected invalid output");
     } catch (error) {
@@ -510,7 +640,7 @@ describe("TmuxAttachmentViewExecutor marked-view enumeration", () => {
     await expect(
       executor.enumerateMarkedViews(
         GROUPED_TMUX_VIEW_SESSION_PREFIX,
-        GROUPED_TMUX_VIEW_MARKER_OPTION,
+        GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
       ),
     ).rejects.toMatchObject({ code: "invalid-tmux-output" });
   });

@@ -1,21 +1,24 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  GROUPED_TMUX_VIEW_MARKER_OPTION,
+  GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   GROUPED_TMUX_VIEW_SESSION_PREFIX,
   planGroupedTmuxAttachment,
   type TmuxArgvPlan,
 } from "../attachments/grouped-tmux.ts";
 import {
   TmuxAttachmentViewExecutor,
+  type TmuxAttachmentClientTransportResult,
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
+  type TmuxAttachmentClientTransport,
 } from "../attachments/tmux-view-executor.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 const socketName = `tmux-ide-executor-${process.pid}-${randomUUID().slice(0, 8)}`;
 const sleepCommand = "exec sleep 2147483647";
+const legacyPaneMarkerOption = "@tmux_ide_attachment_view";
 
 function runOnSocket(argv: readonly string[]): string {
   return execFileSync("tmux", ["-L", socketName, "-f", "/dev/null", ...argv], {
@@ -39,11 +42,58 @@ class LiveSocketRunner implements TmuxAttachmentCommandRunner {
       return result;
     } catch (error) {
       const stderr = String((error as { stderr?: string | Buffer }).stderr ?? "").toLowerCase();
-      const result: TmuxAttachmentCommandResult =
-        /(?:can't find|no such|not found|no server running)/u.test(stderr)
+      const result: TmuxAttachmentCommandResult = stderr.includes("unknown variable:")
+        ? { status: "variable-not-found" }
+        : /(?:can't find|no such|not found|no server running)/u.test(stderr)
           ? { status: "not-found" }
           : { status: "failed" };
       return result;
+    }
+  }
+}
+
+class LiveControlClientTransport implements TmuxAttachmentClientTransport {
+  detachTarget = "";
+
+  runGuardedAttach(command: TmuxArgvPlan): TmuxAttachmentClientTransportResult {
+    const detachTarget = this.detachTarget;
+    if (!detachTarget) return { status: "failed" };
+    const detachScript = [
+      'const { execFileSync } = require("node:child_process");',
+      "const [socketName, target] = process.argv.slice(1);",
+      "let attempts = 0;",
+      "const timer = setInterval(() => {",
+      "  try {",
+      '    execFileSync("tmux", ["-L", socketName, "detach-client", "-s", target], { stdio: "ignore" });',
+      "    clearInterval(timer);",
+      "  } catch {",
+      "    attempts += 1;",
+      "    if (attempts >= 100) { clearInterval(timer); process.exitCode = 1; }",
+      "  }",
+      "}, 20);",
+    ].join("\n");
+    const detacher = spawn(process.execPath, ["-e", detachScript, socketName, detachTarget], {
+      stdio: "ignore",
+    });
+    try {
+      const stdout = execFileSync("tmux", ["-L", socketName, "-C", ...command.argv], {
+        encoding: "utf8",
+        maxBuffer: 128 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 5_000,
+      });
+      if (stdout.includes("__tmux_ide_source_proof_mismatch_v1__")) {
+        return { status: "source-proof-mismatch" };
+      }
+      if (stdout.includes("__tmux_ide_view_proof_mismatch_v1__")) {
+        return { status: "view-proof-mismatch" };
+      }
+      return { status: "executed" };
+    } catch {
+      return { status: "failed" };
+    } finally {
+      detacher.unref();
+      this.detachTarget = "";
     }
   }
 }
@@ -88,9 +138,12 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
     });
   }
 
-  function liveOperation(selectedPlan: ReturnType<typeof livePlan>) {
+  function liveOperation(
+    selectedPlan: ReturnType<typeof livePlan>,
+    operation: "create" | "attach" | "recover" = "create",
+  ) {
     return {
-      operation: "create" as const,
+      operation,
       exactViewSessionTarget: `=${selectedPlan.identity.viewSessionName}` as const,
       deadline: 2_000,
       source: { sessionId, windowId, runtimePaneId: paneId, paneCount: 1 as const },
@@ -108,7 +161,7 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
     await expect(
       executor.enumerateMarkedViews(
         GROUPED_TMUX_VIEW_SESSION_PREFIX,
-        GROUPED_TMUX_VIEW_MARKER_OPTION,
+        GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
       ),
     ).resolves.toContainEqual({
       viewSessionName: selectedPlan.identity.viewSessionName,
@@ -117,7 +170,7 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
     });
     const cleanupResult = await executor.guardedCleanup({
       exactViewSessionTarget: `=${selectedPlan.identity.viewSessionName}`,
-      markerOption: GROUPED_TMUX_VIEW_MARKER_OPTION,
+      markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
       expectedMarkerValue: selectedPlan.identity.markerValue,
       expectedWindowId: windowId,
     });
@@ -126,6 +179,160 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
       runOnSocket(["has-session", "-t", `=${selectedPlan.identity.viewSessionName}`]),
     ).toThrow();
     expect(runOnSocket(["display-message", "-p", "-t", paneId, "#{pane_dead}"]).trim()).toBe("0");
+  });
+
+  it("does not accept a pane-only legacy option when the session marker is absent", async () => {
+    const selectedPlan = livePlan("677b4096-7e25-43bb-a01d-3fa7d9b93ce8");
+    const exactTarget = `=${selectedPlan.identity.viewSessionName}` as const;
+    const executor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    await executor.executeGuardedViewOperation(liveOperation(selectedPlan));
+    runOnSocket(["set-environment", "-u", "-t", exactTarget, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT]);
+    runOnSocket([
+      "set-option",
+      "-p",
+      "-t",
+      paneId,
+      legacyPaneMarkerOption,
+      selectedPlan.identity.markerValue,
+    ]);
+
+    await expect(
+      executor.guardedCleanup({
+        exactViewSessionTarget: exactTarget,
+        markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+        expectedMarkerValue: selectedPlan.identity.markerValue,
+        expectedWindowId: windowId,
+      }),
+    ).resolves.toBe("ownership-mismatch");
+    expect(runOnSocket(["has-session", "-t", exactTarget])).toBe("");
+
+    runOnSocket(["set-option", "-p", "-u", "-t", paneId, legacyPaneMarkerOption]);
+    runOnSocket(["kill-session", "-t", exactTarget]);
+  });
+
+  it("treats an exact missing marker as unowned despite a marker-looking multiline value", async () => {
+    const selectedPlan = livePlan("80805d88-9e3f-4d8e-99ae-0a16941e72e1");
+    const exactTarget = `=${selectedPlan.identity.viewSessionName}` as const;
+    const executor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    await executor.executeGuardedViewOperation(liveOperation(selectedPlan));
+    runOnSocket(["set-environment", "-u", "-t", exactTarget, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT]);
+    runOnSocket([
+      "set-environment",
+      "-t",
+      exactTarget,
+      "UNRELATED_MULTILINE",
+      `before\n${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}=${selectedPlan.identity.markerValue}\nafter`,
+    ]);
+
+    await expect(
+      executor.enumerateMarkedViews(
+        GROUPED_TMUX_VIEW_SESSION_PREFIX,
+        GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+      ),
+    ).resolves.toContainEqual({
+      viewSessionName: selectedPlan.identity.viewSessionName,
+      markerValue: null,
+      windowIds: [windowId],
+    });
+    await expect(
+      executor.guardedCleanup({
+        exactViewSessionTarget: exactTarget,
+        markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+        expectedMarkerValue: selectedPlan.identity.markerValue,
+        expectedWindowId: windowId,
+      }),
+    ).resolves.toBe("ownership-mismatch");
+    expect(runOnSocket(["has-session", "-t", exactTarget])).toBe("");
+    runOnSocket(["kill-session", "-t", exactTarget]);
+  });
+
+  it("recognizes the exact valid marker despite a conflicting multiline value", async () => {
+    const selectedPlan = livePlan("0b3283cc-9e16-4d68-9ffd-dd1521e9c028");
+    const exactTarget = `=${selectedPlan.identity.viewSessionName}` as const;
+    const executor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    await executor.executeGuardedViewOperation(liveOperation(selectedPlan));
+    runOnSocket([
+      "set-environment",
+      "-t",
+      exactTarget,
+      "UNRELATED_MULTILINE",
+      `before\n${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}=v1:00000000-0000-4000-8000-000000000000:0\nafter`,
+    ]);
+
+    await expect(
+      executor.enumerateMarkedViews(
+        GROUPED_TMUX_VIEW_SESSION_PREFIX,
+        GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+      ),
+    ).resolves.toContainEqual({
+      viewSessionName: selectedPlan.identity.viewSessionName,
+      markerValue: selectedPlan.identity.markerValue,
+      windowIds: [windowId],
+    });
+    await expect(
+      executor.guardedCleanup({
+        exactViewSessionTarget: exactTarget,
+        markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+        expectedMarkerValue: selectedPlan.identity.markerValue,
+        expectedWindowId: windowId,
+      }),
+    ).resolves.toBe("cleaned");
+  });
+
+  it("uses the session environment marker despite a conflicting pane user option", async () => {
+    const selectedPlan = livePlan("187efac9-a928-4ccb-bf71-10fb3c3cdf59");
+    const exactTarget = `=${selectedPlan.identity.viewSessionName}` as const;
+    const executor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    await executor.executeGuardedViewOperation(liveOperation(selectedPlan));
+    runOnSocket([
+      "set-option",
+      "-p",
+      "-t",
+      paneId,
+      legacyPaneMarkerOption,
+      "conflicting-pane-value",
+    ]);
+
+    await expect(
+      executor.guardedCleanup({
+        exactViewSessionTarget: exactTarget,
+        markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+        expectedMarkerValue: selectedPlan.identity.markerValue,
+        expectedWindowId: windowId,
+      }),
+    ).resolves.toBe("cleaned");
+    runOnSocket(["set-option", "-p", "-u", "-t", paneId, legacyPaneMarkerOption]);
+  });
+
+  it("runs attach and recover only through an explicit real tmux client transport", async () => {
+    const selectedPlan = livePlan("2fd6f699-416f-4258-b5f2-0bd9933e8f50");
+    const exactTarget = `=${selectedPlan.identity.viewSessionName}` as const;
+    const prepareExecutor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    await prepareExecutor.executeGuardedViewOperation(liveOperation(selectedPlan));
+
+    const transport = new LiveControlClientTransport();
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: transport,
+      now: () => 1_000,
+    });
+    transport.detachTarget = exactTarget;
+    await expect(
+      executor.executeGuardedViewOperation(liveOperation(selectedPlan, "attach")),
+    ).resolves.toBe("executed");
+    transport.detachTarget = exactTarget;
+    await expect(
+      executor.executeGuardedViewOperation(liveOperation(selectedPlan, "recover")),
+    ).resolves.toBe("executed");
+
+    await expect(
+      executor.guardedCleanup({
+        exactViewSessionTarget: exactTarget,
+        markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+        expectedMarkerValue: selectedPlan.identity.markerValue,
+        expectedWindowId: windowId,
+      }),
+    ).resolves.toBe("cleaned");
   });
 
   it("falsifies the server guard when an external client splits after daemon proof", async () => {
