@@ -1,8 +1,22 @@
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, screen, session } from "electron";
-import type { DesktopPlatform, DesktopThemeState } from "@tmux-ide/contracts";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  net,
+  protocol,
+  screen,
+  session,
+} from "electron";
+import {
+  DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
+  DESKTOP_PACKAGED_RENDERER_ORIGIN,
+  type DesktopPlatform,
+  type DesktopThemeState,
+} from "@tmux-ide/contracts";
 
 import {
   canonicalDaemonPreflight,
@@ -18,6 +32,13 @@ import {
   type TrustedRendererLocation,
 } from "./host-ipc.ts";
 import { ShutdownBarrier } from "./shutdown-barrier.ts";
+import {
+  developmentRendererContentSecurityPolicy,
+  installPackagedRendererProtocol,
+  installDevelopmentRendererCsp,
+  packagedRendererContentSecurityPolicy,
+  registerPackagedRendererScheme,
+} from "./packaged-renderer-protocol.ts";
 import { loadHiddenWindow } from "./window-loader.ts";
 import { denyRendererEscapes, secureWebPreferences } from "./window-security.ts";
 import {
@@ -32,6 +53,8 @@ export interface DesktopAppDependencies {
   daemonPreflight?: DaemonPreflight;
   loadTimeoutMs?: number;
 }
+
+registerPackagedRendererScheme(protocol);
 
 const smokeTest = process.argv.includes("--smoke-test");
 
@@ -79,6 +102,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   let hostIpc: RegisteredHostIpc | null = null;
   let quittingAfterBarrier = false;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  let rendererPolicyReloadTimer: ReturnType<typeof setTimeout> | null = null;
   let lastBoundsWrite = Promise.resolve();
   let rendererDidBootstrap: (() => void) | null = null;
   let latestNormalBounds: DesktopWindowBounds | null = null;
@@ -97,15 +121,45 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   );
   const daemonPreflight = deps.daemonPreflight ?? canonicalDaemonPreflight;
   const daemon = await runDaemonPreflight(daemonPreflight);
+  let daemonHttpOrigin = daemon.status === "connected" ? daemon.descriptor.apiBaseUrl : null;
+  const developmentUrl = trustedDevelopmentUrl();
+  const developmentOrigin = developmentUrl ? new URL(developmentUrl).origin : null;
+  const disposePackagedRendererProtocol = installPackagedRendererProtocol({
+    protocol,
+    fileFetcher: { fetch: (url) => net.fetch(url) },
+    rendererRoot: join(__dirname, "renderer"),
+    contentSecurityPolicy: () => packagedRendererContentSecurityPolicy(daemonHttpOrigin),
+  });
+  const disposeDevelopmentRendererCsp = developmentOrigin
+    ? installDevelopmentRendererCsp({
+        webRequest: desktopSession.webRequest,
+        rendererOrigin: developmentOrigin,
+        contentSecurityPolicy: () =>
+          developmentRendererContentSecurityPolicy(daemonHttpOrigin, developmentOrigin),
+      })
+    : () => undefined;
   const daemonResources = new DaemonConnectionCoordinator({
     initialDaemon: daemon,
     preflight: daemonPreflight,
+    onHostStateChanged: (state) => {
+      const nextOrigin = state.status === "connected" ? state.descriptor.apiBaseUrl : null;
+      if (nextOrigin === daemonHttpOrigin) return;
+      daemonHttpOrigin = nextOrigin;
+      if (!currentWindow || currentWindow.isDestroyed()) return;
+      if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
+      rendererPolicyReloadTimer = setTimeout(() => {
+        rendererPolicyReloadTimer = null;
+        if (currentWindow && !currentWindow.isDestroyed()) currentWindow.reload();
+      }, 0);
+    },
   });
-  const developmentUrl = trustedDevelopmentUrl();
-  const packagedRendererPath = join(__dirname, "renderer", "index.html");
   const trustedRendererLocation: TrustedRendererLocation = developmentUrl
     ? { kind: "development-origin", origin: new URL(developmentUrl).origin }
-    : { kind: "packaged-url", url: pathToFileURL(packagedRendererPath).toString() };
+    : {
+        kind: "packaged-origin",
+        origin: DESKTOP_PACKAGED_RENDERER_ORIGIN,
+        entryUrl: DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
+      };
 
   const persistBounds = async (): Promise<void> => {
     latestNormalBounds = captureDesktopWindowNormalBounds(currentWindow, latestNormalBounds);
@@ -171,7 +225,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         rendererReady,
         load: async () => {
           if (developmentUrl) await window.loadURL(developmentUrl);
-          else await window.loadFile(packagedRendererPath);
+          else await window.loadURL(DESKTOP_PACKAGED_RENDERER_ENTRY_URL);
         },
       });
     } finally {
@@ -228,8 +282,11 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         persistBounds,
         () => {
           if (persistTimer) clearTimeout(persistTimer);
+          if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
           hostIpc?.dispose();
           daemonResources.dispose();
+          disposeDevelopmentRendererCsp();
+          disposePackagedRendererProtocol();
           nativeTheme.removeListener("updated", onThemeUpdated);
         },
       ])

@@ -54,6 +54,8 @@ export interface DaemonConnectionCoordinatorDependencies {
   readonly preflight: DaemonPreflight;
   readonly preflightTimeoutMs?: number;
   readonly createBroker?: (daemon: ConnectedDaemonState) => DaemonResourceAuthority;
+  /** Main-process-only observer; renderer-safe state remains behind state(). */
+  readonly onHostStateChanged?: (daemon: DesktopDaemonHostState) => void;
 }
 
 interface RefreshFlight {
@@ -124,6 +126,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   readonly #preflight: DaemonPreflight;
   readonly #preflightTimeoutMs: number | undefined;
   readonly #createBroker: (daemon: ConnectedDaemonState) => DaemonResourceAuthority;
+  readonly #onHostStateChanged: ((daemon: DesktopDaemonHostState) => void) | undefined;
   readonly #subscriptions = new Map<number, CoordinatorSubscription>();
 
   #daemon: DesktopDaemonHostState;
@@ -139,6 +142,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     this.#preflight = dependencies.preflight;
     this.#preflightTimeoutMs = dependencies.preflightTimeoutMs;
     this.#createBroker = dependencies.createBroker ?? defaultBrokerFactory;
+    this.#onHostStateChanged = dependencies.onHostStateChanged;
     if (this.#daemon.status === "connected") {
       try {
         this.#broker = this.#createBroker(this.#daemon);
@@ -146,6 +150,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
         this.#daemon = BROKER_FAILED_STATE;
       }
     }
+    this.#publishHostState();
   }
 
   state(): DesktopDaemonCapabilityState {
@@ -394,7 +399,12 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
     if (candidate.status === "connected") {
       const nextIdentity = identityOf(candidate);
-      if (previousIdentity && sameIdentity(previousIdentity, nextIdentity)) {
+      if (
+        previousDaemon.status === "connected" &&
+        previousIdentity &&
+        sameIdentity(previousIdentity, nextIdentity) &&
+        previousDaemon.descriptor.apiBaseUrl === candidate.descriptor.apiBaseUrl
+      ) {
         return this.#parseResult({ outcome: "unchanged", daemon: this.state() });
       }
 
@@ -416,6 +426,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       const previousBroker = this.#broker;
       this.#daemon = candidate;
       this.#broker = nextBroker;
+      this.#publishHostState();
       const daemon = this.state();
       this.#retireSubscriptions({
         type: "daemon-generation.changed",
@@ -436,6 +447,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
     if (sameDisconnectedState(previousDaemon, candidate)) {
       this.#daemon = candidate;
+      this.#publishHostState();
       return this.#parseResult({ outcome: "unchanged", daemon: this.state() });
     }
     return this.#transitionToDisconnected(candidate, previousIdentity);
@@ -451,6 +463,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     const previousBroker = this.#broker;
     this.#daemon = candidate;
     this.#broker = null;
+    this.#publishHostState();
     const daemon = this.state();
     if (previousIdentity) {
       this.#retireSubscriptions({
@@ -489,6 +502,14 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       } catch {
         // Logical retirement happened before transport teardown.
       }
+    }
+  }
+
+  #publishHostState(): void {
+    try {
+      this.#onHostStateChanged?.(this.#daemon);
+    } catch {
+      // Presentation policy observation cannot change daemon authority state.
     }
   }
 

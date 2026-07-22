@@ -686,7 +686,14 @@ export class DaemonResourceBroker {
   }
 
   #canonicalRendererOrigin(value: string): string {
-    if (typeof value !== "string" || value.length > 2_048 || /[\0\r\n\t ]/u.test(value)) {
+    if (
+      typeof value !== "string" ||
+      value.length < 4 ||
+      value.length > 2_048 ||
+      value === "null" ||
+      value === "*" ||
+      /[\0\r\n\t ]/u.test(value)
+    ) {
       throw new BrokerFailure(daemonCapabilityError("invalid-request"));
     }
     let origin: URL;
@@ -696,17 +703,22 @@ export class DaemonResourceBroker {
       throw new BrokerFailure(daemonCapabilityError("invalid-request"));
     }
     if (
-      (origin.protocol !== "http:" && origin.protocol !== "https:") ||
-      origin.origin !== value ||
+      !/^[a-z][a-z0-9+.-]*:$/u.test(origin.protocol) ||
+      origin.protocol === "file:" ||
       origin.username.length > 0 ||
       origin.password.length > 0 ||
-      origin.pathname !== "/" ||
+      (origin.pathname !== "" && origin.pathname !== "/") ||
       origin.search.length > 0 ||
-      origin.hash.length > 0
+      origin.hash.length > 0 ||
+      !origin.hostname
     ) {
       throw new BrokerFailure(daemonCapabilityError("invalid-request"));
     }
-    return origin.origin;
+    const canonical = `${origin.protocol}//${origin.host}`;
+    if (canonical !== value) {
+      throw new BrokerFailure(daemonCapabilityError("invalid-request"));
+    }
+    return canonical;
   }
 
   async #mutationJson(

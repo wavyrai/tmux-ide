@@ -13,6 +13,14 @@ import type {
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
 export const DESKTOP_HOST_API_VERSION = 5 as const;
 
+/** Stable tuple origin for the packaged, sandboxed Electron renderer. */
+export const DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide" as const;
+export const DESKTOP_PACKAGED_RENDERER_HOST = "app" as const;
+export const DESKTOP_PACKAGED_RENDERER_ORIGIN =
+  `${DESKTOP_PACKAGED_RENDERER_SCHEME}://${DESKTOP_PACKAGED_RENDERER_HOST}` as const;
+export const DESKTOP_PACKAGED_RENDERER_ENTRY_URL =
+  `${DESKTOP_PACKAGED_RENDERER_ORIGIN}/index.html` as const;
+
 export const DesktopRuntimeKindSchemaZ = z.enum(["browser", "electron"]);
 export const DesktopPlatformSchemaZ = z.enum(["darwin", "linux", "win32", "unknown"]);
 export const DesktopThemeModeSchemaZ = z.enum(["light", "dark"]);

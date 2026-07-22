@@ -39,28 +39,16 @@ await Promise.all([
 await cp(rendererDist, join(dist, "renderer"), { recursive: true });
 
 const rendererHtml = await readFile(join(dist, "renderer", "index.html"), "utf8");
-for (const directive of [
-  "default-src 'self'",
-  "script-src 'self'",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "frame-ancestors 'none'",
-]) {
-  if (!rendererHtml.includes(directive)) {
-    throw new Error(`desktop renderer CSP is missing: ${directive}`);
-  }
-}
-if (/unsafe-(?:inline|eval)/u.test(rendererHtml)) {
-  throw new Error("desktop renderer CSP must not permit unsafe-inline or unsafe-eval");
-}
-if (/connect-src[^;]*(?:127\.0\.0\.1|localhost|\[::1\]|https?:|wss?:)/u.test(rendererHtml)) {
-  throw new Error("packaged desktop renderer CSP must not permit daemon or network origins");
-}
-if (/connect-src[^;]*\*/u.test(rendererHtml)) {
-  throw new Error("packaged desktop renderer CSP must not permit a wildcard connection source");
+if (/Content-Security-Policy/iu.test(rendererHtml)) {
+  throw new Error(
+    "packaged renderer must receive its exact CSP from the trusted protocol response",
+  );
 }
 
 const rendererAssets = await readdir(join(dist, "renderer", "assets"));
+if (rendererAssets.some((name) => name.endsWith(".map"))) {
+  throw new Error("packaged renderer must not ship source maps");
+}
 for (const asset of rendererAssets.filter((name) => name.endsWith(".js"))) {
   const source = await readFile(join(dist, "renderer", "assets", asset), "utf8");
   for (const forbidden of [

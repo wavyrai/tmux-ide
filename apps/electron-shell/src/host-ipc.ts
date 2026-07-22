@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import {
+  DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
+  DESKTOP_PACKAGED_RENDERER_ORIGIN,
   DESKTOP_HOST_API_VERSION,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
@@ -42,6 +44,11 @@ export interface HostIpcDependencies {
 
 export type TrustedRendererLocation =
   | { kind: "packaged-url"; url: string }
+  | {
+      kind: "packaged-origin";
+      origin: typeof DESKTOP_PACKAGED_RENDERER_ORIGIN;
+      entryUrl: typeof DESKTOP_PACKAGED_RENDERER_ENTRY_URL;
+    }
   | { kind: "development-origin"; origin: string };
 
 export function rendererLocationIsTrusted(
@@ -51,6 +58,18 @@ export function rendererLocationIsTrusted(
   try {
     const location = new URL(frameUrl);
     if (trusted.kind === "packaged-url") return location.toString() === trusted.url;
+    if (trusted.kind === "packaged-origin") {
+      return (
+        location.protocol === "tmux-ide:" &&
+        location.hostname === "app" &&
+        location.port.length === 0 &&
+        location.username.length === 0 &&
+        location.password.length === 0 &&
+        location.search.length === 0 &&
+        location.hash.length === 0 &&
+        location.toString() === trusted.entryUrl
+      );
+    }
     return location.origin === trusted.origin;
   } catch {
     return false;
@@ -359,25 +378,23 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         error: terminalAttachmentIssueError("invalid-request"),
       });
     }
-    if (deps.trustedRendererLocation.kind !== "development-origin") {
-      return TerminalAttachmentIssueResultSchemaZ.parse({
-        status: "error",
-        error: terminalAttachmentIssueError("renderer-origin-unavailable"),
-      });
-    }
     const rendererFrameUrl = authority.mainFrame?.url;
-    if (!rendererFrameUrl) {
+    if (
+      !rendererFrameUrl ||
+      !rendererLocationIsTrusted(rendererFrameUrl, deps.trustedRendererLocation)
+    ) {
       return TerminalAttachmentIssueResultSchemaZ.parse({
         status: "error",
         error: terminalAttachmentIssueError("renderer-origin-unavailable"),
       });
     }
-    const rendererOrigin = new URL(rendererFrameUrl).origin;
-    if (
-      rendererOrigin === "null" ||
-      rendererOrigin !== deps.trustedRendererLocation.origin ||
-      !["http:", "https:"].includes(new URL(rendererOrigin).protocol)
-    ) {
+    const rendererOrigin =
+      deps.trustedRendererLocation.kind === "development-origin"
+        ? deps.trustedRendererLocation.origin
+        : deps.trustedRendererLocation.kind === "packaged-origin"
+          ? deps.trustedRendererLocation.origin
+          : null;
+    if (!rendererOrigin) {
       return TerminalAttachmentIssueResultSchemaZ.parse({
         status: "error",
         error: terminalAttachmentIssueError("renderer-origin-unavailable"),
