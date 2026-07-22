@@ -24,6 +24,9 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
 const DEFAULT_MAX_EVENT_BYTES = 512 * 1024;
 const DEFAULT_EVENT_HANDSHAKE_TIMEOUT_MS = 3_000;
+const DEFAULT_EVENT_RECONNECT_INITIAL_DELAY_MS = 250;
+const DEFAULT_EVENT_RECONNECT_MAXIMUM_DELAY_MS = 4_000;
+const DEFAULT_EVENT_RECONNECT_MAXIMUM_ATTEMPTS = 4;
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
 
@@ -62,6 +65,9 @@ export interface DaemonResourceBrokerDependencies {
   readonly maxResponseBytes?: number;
   readonly maxEventBytes?: number;
   readonly eventHandshakeTimeoutMs?: number;
+  readonly eventReconnectInitialDelayMs?: number;
+  readonly eventReconnectMaximumDelayMs?: number;
+  readonly eventReconnectMaximumAttempts?: number;
 }
 
 export type BrokerSubscriptionResult =
@@ -208,6 +214,9 @@ export class DaemonResourceBroker {
   readonly #maxResponseBytes: number;
   readonly #maxEventBytes: number;
   readonly #eventHandshakeTimeoutMs: number;
+  readonly #eventReconnectInitialDelayMs: number;
+  readonly #eventReconnectMaximumDelayMs: number;
+  readonly #eventReconnectMaximumAttempts: number;
   readonly #controllers = new Set<AbortController>();
   readonly #subscriptions = new Map<number, BrokerSubscription>();
 
@@ -220,6 +229,8 @@ export class DaemonResourceBroker {
   #socketPeerVerified = false;
   #socketOpened = false;
   #socketHandshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  #socketReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  #socketReconnectAttempts = 0;
 
   constructor(dependencies: DaemonResourceBrokerDependencies) {
     this.#daemon = DesktopDaemonHostStateSchemaZ.parse(dependencies.daemon);
@@ -248,6 +259,24 @@ export class DaemonResourceBroker {
       DEFAULT_EVENT_HANDSHAKE_TIMEOUT_MS,
       1,
       30_000,
+    );
+    this.#eventReconnectInitialDelayMs = boundedInteger(
+      dependencies.eventReconnectInitialDelayMs,
+      DEFAULT_EVENT_RECONNECT_INITIAL_DELAY_MS,
+      1,
+      60_000,
+    );
+    this.#eventReconnectMaximumDelayMs = boundedInteger(
+      dependencies.eventReconnectMaximumDelayMs,
+      Math.max(DEFAULT_EVENT_RECONNECT_MAXIMUM_DELAY_MS, this.#eventReconnectInitialDelayMs),
+      this.#eventReconnectInitialDelayMs,
+      60_000,
+    );
+    this.#eventReconnectMaximumAttempts = boundedInteger(
+      dependencies.eventReconnectMaximumAttempts,
+      DEFAULT_EVENT_RECONNECT_MAXIMUM_ATTEMPTS,
+      0,
+      10,
     );
   }
 
@@ -319,6 +348,7 @@ export class DaemonResourceBroker {
         this.#synchronizeSocket();
       } catch {
         this.#subscriptions.delete(id);
+        this.#scheduleSocketReconnect();
         return { status: "error", error: daemonCapabilityError("event-unavailable") };
       }
       if (this.#socket?.readyState === WS_OPEN && this.#socketPeerVerified) {
@@ -335,7 +365,11 @@ export class DaemonResourceBroker {
           if (!active) return;
           active = false;
           this.#subscriptions.delete(id);
-          this.#synchronizeSocket();
+          try {
+            this.#synchronizeSocket();
+          } catch {
+            this.#scheduleSocketReconnect();
+          }
         },
       };
     } catch (error) {
@@ -349,6 +383,7 @@ export class DaemonResourceBroker {
     for (const controller of this.#controllers) controller.abort();
     this.#controllers.clear();
     this.#subscriptions.clear();
+    this.#clearSocketReconnect(true);
     this.#closeSocket();
   }
 
@@ -479,12 +514,14 @@ export class DaemonResourceBroker {
 
   #synchronizeSocket(): void {
     const required = this.#requiredSessions();
-    if (required.size === 0) {
+    if (this.#subscriptions.size === 0) {
+      this.#clearSocketReconnect(true);
       this.#closeSocket();
       return;
     }
     if (!this.#socket) {
       if (this.#daemon.status !== "connected") return;
+      this.#clearSocketReconnect(false);
       const url = new URL("/ws/events", this.#daemon.descriptor.apiBaseUrl);
       url.protocol = "ws:";
       const socket = this.#createWebSocket(url.toString());
@@ -516,7 +553,7 @@ export class DaemonResourceBroker {
         state: "degraded",
         error: daemonCapabilityError("invalid-response"),
       });
-      this.#closeSocket(1002, "event frame before open");
+      this.#closeSocket(1002, "event frame before open", true);
       return;
     }
     if (
@@ -528,7 +565,7 @@ export class DaemonResourceBroker {
         state: "degraded",
         error: daemonCapabilityError("invalid-response"),
       });
-      this.#closeSocket(1009, "invalid event frame");
+      this.#closeSocket(1009, "invalid event frame", true);
       return;
     }
     let raw: unknown;
@@ -540,7 +577,7 @@ export class DaemonResourceBroker {
         state: "degraded",
         error: daemonCapabilityError("invalid-response"),
       });
-      this.#closeSocket(1002, "invalid event frame");
+      this.#closeSocket(1002, "invalid event frame", true);
       return;
     }
     const parsed = DaemonEventServerFrameSchemaZ.safeParse(raw);
@@ -550,7 +587,7 @@ export class DaemonResourceBroker {
         state: "degraded",
         error: daemonCapabilityError("invalid-response"),
       });
-      this.#closeSocket(1002, "invalid event frame");
+      this.#closeSocket(1002, "invalid event frame", true);
       return;
     }
     if (!this.#socketPeerVerified) {
@@ -564,11 +601,12 @@ export class DaemonResourceBroker {
           state: "degraded",
           error: daemonCapabilityError("daemon-identity-mismatch"),
         });
-        this.#closeSocket(1008, "daemon generation mismatch");
+        this.#closeSocket(1008, "daemon generation mismatch", true);
         return;
       }
       this.#socketPeerVerified = true;
       this.#clearSocketHandshakeTimer();
+      this.#clearSocketReconnect(true);
       this.#sendSubscriptionDelta(this.#requiredSessions());
       this.#emit({ type: "connection.changed", state: "live", error: null });
       return;
@@ -579,7 +617,7 @@ export class DaemonResourceBroker {
         state: "degraded",
         error: daemonCapabilityError("invalid-response"),
       });
-      this.#closeSocket(1002, "duplicate hello frame");
+      this.#closeSocket(1002, "duplicate hello frame", true);
       return;
     }
     this.#projectServerFrame(parsed.data);
@@ -643,6 +681,7 @@ export class DaemonResourceBroker {
           state: "degraded",
           error: daemonCapabilityError("protocol-error"),
         });
+        this.#closeSocket(1002, "daemon protocol error", true);
         return;
       default:
         // init output and protocol keepalives are not renderer resources.
@@ -714,6 +753,7 @@ export class DaemonResourceBroker {
       state: "degraded",
       error: daemonCapabilityError("event-unavailable"),
     });
+    this.#scheduleSocketReconnect();
   }
 
   #socketErrored(socket: BrokerEventSocket): void {
@@ -723,7 +763,7 @@ export class DaemonResourceBroker {
       state: "degraded",
       error: daemonCapabilityError("event-unavailable"),
     });
-    this.#closeSocket(1011, "event connection failed");
+    this.#closeSocket(1011, "event connection failed", true);
   }
 
   #startSocketHandshakeTimer(socket: BrokerEventSocket): void {
@@ -735,7 +775,7 @@ export class DaemonResourceBroker {
         state: "degraded",
         error: daemonCapabilityError("event-unavailable"),
       });
-      this.#closeSocket(1008, "event handshake timeout");
+      this.#closeSocket(1008, "event handshake timeout", true);
     }, this.#eventHandshakeTimeoutMs);
     this.#socketHandshakeTimer.unref?.();
   }
@@ -746,26 +786,65 @@ export class DaemonResourceBroker {
     this.#socketHandshakeTimer = null;
   }
 
+  #scheduleSocketReconnect(): void {
+    if (
+      this.#disposed ||
+      this.#subscriptions.size === 0 ||
+      this.#socket !== null ||
+      this.#socketReconnectTimer !== null ||
+      this.#socketReconnectAttempts >= this.#eventReconnectMaximumAttempts
+    ) {
+      return;
+    }
+    const delay = Math.min(
+      this.#eventReconnectMaximumDelayMs,
+      this.#eventReconnectInitialDelayMs * 2 ** this.#socketReconnectAttempts,
+    );
+    this.#socketReconnectAttempts += 1;
+    this.#socketReconnectTimer = setTimeout(() => {
+      this.#socketReconnectTimer = null;
+      if (this.#disposed || this.#subscriptions.size === 0 || this.#socket !== null) return;
+      try {
+        this.#synchronizeSocket();
+      } catch {
+        this.#emit({
+          type: "connection.changed",
+          state: "degraded",
+          error: daemonCapabilityError("event-unavailable"),
+        });
+        this.#scheduleSocketReconnect();
+      }
+    }, delay);
+    this.#socketReconnectTimer.unref?.();
+  }
+
+  #clearSocketReconnect(resetAttempts: boolean): void {
+    if (this.#socketReconnectTimer) clearTimeout(this.#socketReconnectTimer);
+    this.#socketReconnectTimer = null;
+    if (resetAttempts) this.#socketReconnectAttempts = 0;
+  }
+
   #rejectSocketFrame(reason: string): void {
     this.#emit({
       type: "connection.changed",
       state: "degraded",
       error: daemonCapabilityError("invalid-response"),
     });
-    this.#closeSocket(1002, reason);
+    this.#closeSocket(1002, reason, true);
   }
 
   #rejectWorkspaceUpdate(reason: string): void {
     this.#rejectSocketFrame(reason);
-    void this.#refreshCatalogAfterRejectedUpdate();
+    void this.#refreshCatalogAfterRejectedUpdate(this.#rendererGeneration);
   }
 
-  async #refreshCatalogAfterRejectedUpdate(): Promise<void> {
+  async #refreshCatalogAfterRejectedUpdate(expectedRendererGeneration: number): Promise<void> {
     try {
       await this.#loadWorkspaceCatalog();
-      if (!this.#disposed) this.#synchronizeSocket();
+      if (this.#disposed || this.#rendererGeneration !== expectedRendererGeneration) return;
+      this.#synchronizeSocket();
     } catch (error) {
-      if (this.#disposed) return;
+      if (this.#disposed || this.#rendererGeneration !== expectedRendererGeneration) return;
       this.#emit({
         type: "connection.changed",
         state: "degraded",
@@ -774,7 +853,7 @@ export class DaemonResourceBroker {
     }
   }
 
-  #closeSocket(code = 1000, reason = "renderer released"): void {
+  #closeSocket(code = 1000, reason = "renderer released", reconnect = false): void {
     const socket = this.#socket;
     this.#clearSocketHandshakeTimer();
     this.#socket = null;
@@ -784,5 +863,6 @@ export class DaemonResourceBroker {
     if (socket && (socket.readyState === WS_CONNECTING || socket.readyState === WS_OPEN)) {
       socket.close(code, reason);
     }
+    if (reconnect) this.#scheduleSocketReconnect();
   }
 }

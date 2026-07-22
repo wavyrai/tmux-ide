@@ -130,6 +130,9 @@ describe("desktop host contract", () => {
         workspaceNames: ["product", "product"],
       }).success,
     ).toBe(false);
+    expect(DesktopDaemonEventSubscriptionRequestSchemaZ.parse({ workspaceNames: [] })).toEqual({
+      workspaceNames: [],
+    });
     expect(
       DesktopDaemonListWorkspacesResultSchemaZ.safeParse({
         status: "ok",

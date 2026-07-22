@@ -75,11 +75,46 @@ class FakeSocket implements BrokerEventSocket {
 
   emit(type: FakeSocketEvent, data?: unknown): void {
     if (type === "open") this.readyState = 1;
+    if (type === "close") this.readyState = 3;
     for (const listener of this.#listeners.get(type) ?? []) listener({ data });
   }
 }
 
 describe("Electron main daemon resource broker", () => {
+  it("keeps one physical socket for an empty catalog-only subscription", async () => {
+    const socket = new FakeSocket();
+    const events: DesktopDaemonEvent[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async () => json(WORKSPACE_CATALOG),
+      createWebSocket: () => socket,
+    });
+    const result = await broker.subscribe([], (event) => events.push(event));
+    expect(result.status).toBe("subscribed");
+    socket.emit("open");
+    socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
+    expect(socket.sent).toEqual([]);
+    expect(events).toEqual([{ type: "connection.changed", state: "live", error: null }]);
+
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "workspace.added",
+        workspace: {
+          name: "new-workspace",
+          sessionName: "private-route",
+          projectDir: "/private/project",
+          ideConfigPath: null,
+          addedAt: "2026-07-21T00:00:00.000Z",
+        },
+      }),
+    );
+    expect(events.at(-1)).toEqual({ type: "workspaces.changed" });
+    expect(JSON.stringify(events)).not.toMatch(/private-route|private\/project|sessionName/iu);
+    if (result.status === "subscribed") result.unsubscribe();
+    expect(socket.close).toHaveBeenCalledWith(1000, "renderer released");
+  });
+
   it("resolves a semantic workspace through the typed catalog and exposes no daemon route facts", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -449,6 +484,79 @@ describe("Electron main daemon resource broker", () => {
     },
   );
 
+  it.each(["success", "failure"] as const)(
+    "drops a released renderer's rejected-update refresh %s before a replacement renderer",
+    async (settlement) => {
+      let resolveOldRefresh!: (response: Response) => void;
+      let rejectOldRefresh!: (error: unknown) => void;
+      const oldRefresh = new Promise<Response>((resolve, reject) => {
+        resolveOldRefresh = resolve;
+        rejectOldRefresh = reject;
+      });
+      let fetchCalls = 0;
+      const fetch = vi.fn(() => {
+        fetchCalls += 1;
+        return fetchCalls === 2 ? oldRefresh : Promise.resolve(json(WORKSPACE_CATALOG));
+      });
+      const originalSocket = new FakeSocket();
+      const replacementSocket = new FakeSocket();
+      const sockets = [originalSocket, replacementSocket];
+      const createWebSocket = vi.fn(() => sockets.shift()!);
+      const originalEvents: DesktopDaemonEvent[] = [];
+      const replacementEvents: DesktopDaemonEvent[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch,
+        createWebSocket,
+      });
+
+      expect((await broker.subscribe(["docs"], (event) => originalEvents.push(event))).status).toBe(
+        "subscribed",
+      );
+      originalSocket.emit("open");
+      originalSocket.emit(
+        "message",
+        JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }),
+      );
+      originalSocket.emit(
+        "message",
+        JSON.stringify({
+          type: "workspace.added",
+          workspace: {
+            name: " docs ",
+            sessionName: "old-private-route",
+            projectDir: "/old/private/project",
+            ideConfigPath: null,
+            addedAt: "2026-07-21T00:00:00.000Z",
+          },
+        }),
+      );
+      expect(fetch).toHaveBeenCalledTimes(2);
+
+      broker.releaseRenderer();
+      expect(
+        (await broker.subscribe(["docs"], (event) => replacementEvents.push(event))).status,
+      ).toBe("subscribed");
+      replacementSocket.emit("open");
+      replacementSocket.emit(
+        "message",
+        JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }),
+      );
+      replacementEvents.length = 0;
+
+      if (settlement === "success") resolveOldRefresh(json(WORKSPACE_CATALOG));
+      else rejectOldRefresh(new Error("private released-renderer failure"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(replacementEvents).toEqual([]);
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(replacementEvents)).not.toMatch(/disposed|degraded|private/iu);
+      broker.dispose();
+    },
+  );
+
   it.each([false, true])(
     "bounds the event handshake when socket open=%s and clears it on release",
     async (opened) => {
@@ -506,33 +614,191 @@ describe("Electron main daemon resource broker", () => {
     expect(events.at(-1)).toMatchObject({ error: { code: "event-unavailable" } });
   });
 
+  it("recovers a retained logical subscriber over one physical socket at a time", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets = [new FakeSocket(), new FakeSocket(), new FakeSocket()];
+      const createWebSocket = vi.fn(() => sockets[createWebSocket.mock.calls.length - 1]!);
+      const events: DesktopDaemonEvent[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 10,
+        eventReconnectMaximumDelayMs: 10,
+        eventReconnectMaximumAttempts: 2,
+      });
+      const result = await broker.subscribe([], (event) => events.push(event));
+      expect(result.status).toBe("subscribed");
+      expect(createWebSocket).toHaveBeenCalledOnce();
+
+      sockets[0]!.emit("close");
+      await vi.advanceTimersByTimeAsync(9);
+      expect(createWebSocket).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      sockets[0]!.emit("close");
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+
+      sockets[1]!.emit("open");
+      sockets[1]!.emit(
+        "message",
+        JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }),
+      );
+      expect(events.at(-1)).toEqual({ type: "connection.changed", state: "live", error: null });
+      sockets[1]!.emit("close");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(createWebSocket).toHaveBeenCalledTimes(3);
+      if (result.status === "subscribed") result.unsubscribe();
+      expect(sockets[2]!.close).toHaveBeenCalledWith(1000, "renderer released");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("derives the default reconnect maximum from a larger initial delay override", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = new FakeSocket();
+      const second = new FakeSocket();
+      const sockets = [first, second];
+      const createWebSocket = vi.fn(() => sockets.shift()!);
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 5_000,
+        eventReconnectMaximumAttempts: 1,
+      });
+      const result = await broker.subscribe([], vi.fn());
+      first.emit("close");
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(createWebSocket).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds physical reconnect attempts while logical subscribers remain", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const createWebSocket = vi.fn(() => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      });
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 10,
+        eventReconnectMaximumDelayMs: 10,
+        eventReconnectMaximumAttempts: 2,
+      });
+      const result = await broker.subscribe([], vi.fn());
+      sockets[0]!.emit("close");
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[1]!.emit("close");
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[2]!.emit("close");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(createWebSocket).toHaveBeenCalledTimes(3);
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    {
+      label: "protocol error",
+      frame: {
+        type: "protocol.error",
+        code: "invalid-frame",
+        message: "Client frame does not match the daemon event protocol.",
+      },
+      close: [1002, "daemon protocol error"] as const,
+    },
+    {
+      label: "malformed frame",
+      frame: { type: "not-a-frame", private: "/must/not/leak" },
+      close: [1002, "invalid event frame"] as const,
+    },
+  ])("recovers its physical socket after a $label", async ({ frame, close }) => {
+    vi.useFakeTimers();
+    try {
+      const first = new FakeSocket();
+      const second = new FakeSocket();
+      const sockets = [first, second];
+      const createWebSocket = vi.fn(() => sockets.shift()!);
+      const events: DesktopDaemonEvent[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 10,
+        eventReconnectMaximumDelayMs: 10,
+        eventReconnectMaximumAttempts: 1,
+      });
+      const result = await broker.subscribe([], (event) => events.push(event));
+      first.emit("open");
+      first.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
+      first.emit("message", JSON.stringify(frame));
+      expect(first.close).toHaveBeenCalledWith(...close);
+      expect(events.at(-1)).toMatchObject({ type: "connection.changed", state: "degraded" });
+      expect(JSON.stringify(events)).not.toMatch(/must\/not\/leak|private/iu);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects an event peer mismatch and never sends the subscription", async () => {
-    const socket = new FakeSocket();
-    const events: DesktopDaemonEvent[] = [];
-    const broker = new DaemonResourceBroker({
-      daemon: CONNECTED,
-      fetch: async () => json(WORKSPACE_CATALOG),
-      createWebSocket: () => socket,
-    });
-    expect((await broker.subscribe(["docs"], (event) => events.push(event))).status).toBe(
-      "subscribed",
-    );
-    socket.emit("open");
-    socket.emit(
-      "message",
-      JSON.stringify({
-        type: "hello",
-        daemon: { ...IDENTITY, instanceId: "66ab67ed-18fe-431b-913b-70972b78c96f" },
-        sessions: [],
-      }),
-    );
-    expect(socket.sent).toEqual([]);
-    expect(socket.close).toHaveBeenCalledWith(1008, "daemon generation mismatch");
-    expect(events.at(-1)).toMatchObject({
-      type: "connection.changed",
-      state: "degraded",
-      error: { code: "daemon-identity-mismatch" },
-    });
+    vi.useFakeTimers();
+    try {
+      const first = new FakeSocket();
+      const second = new FakeSocket();
+      const sockets = [first, second];
+      const createWebSocket = vi.fn(() => sockets.shift()!);
+      const events: DesktopDaemonEvent[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 10,
+        eventReconnectMaximumDelayMs: 10,
+        eventReconnectMaximumAttempts: 1,
+      });
+      const result = await broker.subscribe(["docs"], (event) => events.push(event));
+      expect(result.status).toBe("subscribed");
+      first.emit("open");
+      first.emit(
+        "message",
+        JSON.stringify({
+          type: "hello",
+          daemon: { ...IDENTITY, instanceId: "66ab67ed-18fe-431b-913b-70972b78c96f" },
+          sessions: [],
+        }),
+      );
+      expect(first.sent).toEqual([]);
+      expect(first.close).toHaveBeenCalledWith(1008, "daemon generation mismatch");
+      expect(events.at(-1)).toMatchObject({
+        type: "connection.changed",
+        state: "degraded",
+        error: { code: "daemon-identity-mismatch" },
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects event data that arrives before the socket open boundary", async () => {
