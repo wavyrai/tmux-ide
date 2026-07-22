@@ -47,6 +47,7 @@ select:focus-visible,
 }
 
 .app {
+  position: relative;
   display: grid;
   grid-template-rows: 28px minmax(0, 1fr) 18px;
   width: 100%;
@@ -217,6 +218,234 @@ kbd {
 .window-controls button:last-child:hover {
   color: var(--tmux-ide-text-bright);
   background: var(--tmux-ide-status-danger);
+}
+
+.runtime-titlebar {
+  grid-row: 1;
+}
+
+.runtime-state-surface {
+  grid-row: 2;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  padding: clamp(22px, 5vw, 64px);
+  overflow: auto;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(100% - 1px),
+      var(--tmux-ide-border-subtle) calc(100% - 1px)
+    ),
+    var(--tmux-ide-surface-canvas);
+  background-size: min(72px, 8vw) 100%;
+}
+
+.runtime-state-card {
+  width: min(620px, 100%);
+  padding: clamp(20px, 4vw, 40px);
+  border: 1px solid var(--tmux-ide-border-default);
+  border-radius: var(--tmux-ide-shape-panel);
+  background: var(--tmux-ide-surface-panel);
+  box-shadow: var(--tmux-ide-elevation-floating-shadow);
+}
+
+.runtime-state-card__signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 24px;
+  color: var(--tmux-ide-text-muted);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.runtime-state-card__signal i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--tmux-ide-status-info);
+  border-radius: 50%;
+}
+
+.runtime-state-surface[data-state="pending"] .runtime-state-card__signal i,
+.runtime-state-surface[data-state="loading"] .runtime-state-card__signal i {
+  background: var(--tmux-ide-status-info);
+  animation: runtime-signal 1.4s linear infinite;
+}
+
+.runtime-state-surface[data-state="onboarding"] .runtime-state-card__signal i,
+.runtime-state-surface[data-state="chooser"] .runtime-state-card__signal i {
+  border-color: var(--tmux-ide-status-success);
+  background: var(--tmux-ide-status-success);
+}
+
+.runtime-state-surface[data-state="degraded"] .runtime-state-card__signal i,
+.runtime-state-surface[data-state="error"] .runtime-state-card__signal i,
+.runtime-state-surface[data-state="hard-error"] .runtime-state-card__signal i {
+  border-color: var(--tmux-ide-status-warning);
+  background: var(--tmux-ide-status-warning);
+}
+
+.runtime-state-surface[data-state="error"] .runtime-state-card__signal i,
+.runtime-state-surface[data-state="hard-error"] .runtime-state-card__signal i {
+  border-color: var(--tmux-ide-status-danger);
+  background: var(--tmux-ide-status-danger);
+}
+
+@keyframes runtime-signal {
+  50% {
+    opacity: 0.34;
+  }
+}
+
+.runtime-state-card h1 {
+  margin: 7px 0 10px;
+  color: var(--tmux-ide-text-bright);
+  font-size: clamp(22px, 4vw, 38px);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+}
+
+.runtime-state-card > p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--tmux-ide-text-secondary);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.runtime-state-card__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.runtime-action {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--tmux-ide-border-default);
+  border-radius: var(--tmux-ide-shape-control);
+  color: var(--tmux-ide-text-primary);
+  background: var(--tmux-ide-surface-panel-raised);
+  cursor: pointer;
+  transition:
+    color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
+    background-color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
+    border-color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard);
+}
+
+@media (hover: hover) {
+  .runtime-action:hover,
+  .workspace-chooser button:hover {
+    border-color: var(--tmux-ide-border-focused);
+    color: var(--tmux-ide-text-bright);
+    background: var(--tmux-ide-selection-hover);
+  }
+}
+
+.workspace-chooser {
+  display: grid;
+  gap: 6px;
+  max-height: min(312px, 38vh);
+  margin-top: 22px;
+  padding-right: 3px;
+  overflow: auto;
+}
+
+.workspace-chooser button {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  min-height: 48px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 9px;
+  border: 1px solid var(--tmux-ide-border-subtle);
+  border-radius: var(--tmux-ide-shape-control);
+  color: var(--tmux-ide-text-secondary);
+  background: var(--tmux-ide-surface-panel-raised);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
+    background-color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
+    border-color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard);
+}
+
+.workspace-chooser button > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.workspace-chooser button strong,
+.workspace-chooser button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-chooser button small {
+  color: var(--tmux-ide-text-muted);
+  font-size: 9px;
+}
+
+.workspace-chooser__mark {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--tmux-ide-border-default);
+  color: var(--tmux-ide-text-link);
+  background: var(--tmux-ide-surface-terminal);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.runtime-status-strip {
+  grid-row: 3;
+  justify-content: space-between;
+}
+
+.runtime-resource-notice {
+  position: absolute;
+  z-index: 40;
+  top: 34px;
+  left: 50%;
+  display: flex;
+  max-width: min(680px, calc(100vw - 48px));
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  overflow: hidden;
+  border: 1px solid var(--tmux-ide-border-attention);
+  border-radius: var(--tmux-ide-shape-status-radius);
+  color: var(--tmux-ide-text-primary);
+  background: var(--tmux-ide-surface-command);
+  box-shadow: var(--tmux-ide-elevation-floating-shadow);
+  font-size: 10px;
+  transform: translateX(-50%);
+}
+
+.runtime-resource-notice i {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tmux-ide-status-warning);
+}
+
+.runtime-resource-notice strong,
+.runtime-resource-notice span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-resource-notice span {
+  color: var(--tmux-ide-text-muted);
 }
 
 .shell-workbench {
@@ -429,14 +658,10 @@ kbd {
   color: var(--tmux-ide-text-secondary);
 }
 
-.home-canvas button {
-  height: 28px;
-  margin-top: 10px;
-  padding: 0 10px;
-  border: 1px solid var(--tmux-ide-border-focused);
-  border-radius: var(--tmux-ide-shape-control);
-  color: var(--tmux-ide-selection-selection-text);
-  background: var(--tmux-ide-selection-selection);
+.home-canvas__workspace-guidance {
+  display: block;
+  margin-top: 12px;
+  color: var(--tmux-ide-text-muted);
 }
 
 .readiness-card {

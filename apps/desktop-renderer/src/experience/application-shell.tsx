@@ -600,9 +600,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               <span class="eyebrow">Project workspace</span>
               <h1>{shell().project.name}</h1>
               <p>{shell().project.readiness.facts.join(" ")}</p>
-              <button type="button" onClick={() => void props.host.dialog.selectProjectDirectory()}>
-                Open another folder
-              </button>
+              <small class="home-canvas__workspace-guidance">
+                Additional workspaces appear after tmux-ide is started in their project.
+              </small>
             </div>
             <section class="readiness-card" aria-labelledby="readiness-heading">
               <header>
