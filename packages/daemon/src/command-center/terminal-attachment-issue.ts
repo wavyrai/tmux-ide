@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Hono } from "hono";
 import {
+  TERMINAL_ATTACHMENT_ISSUE_PATH,
   TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
   TerminalAttachmentIssueDescriptorSchemaZ,
   TerminalAttachmentIssueMutationRequestSchemaZ,
@@ -21,7 +22,6 @@ import {
 } from "../terminal/attachments/direct-websocket.ts";
 import { SemanticPaneCatalogError } from "../terminal/attachments/semantic-pane-catalog.ts";
 
-export const TERMINAL_ATTACHMENT_ISSUE_PATH = "/api/v1/terminal/attachments/issue" as const;
 const MAX_ISSUE_REQUEST_BYTES = 16 * 1024;
 
 export interface TerminalAttachmentIssueBackend {

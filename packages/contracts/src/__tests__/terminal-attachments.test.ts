@@ -4,7 +4,9 @@ import {
   TERMINAL_ATTACHMENT_MAX_ROWS,
   TERMINAL_ATTACHMENT_MIN_COLS,
   TERMINAL_ATTACHMENT_MIN_ROWS,
+  TERMINAL_ATTACHMENT_ISSUE_PATH,
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+  TERMINAL_ATTACHMENT_REDEEM_PATH,
   TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
   TerminalAttachRequestSchemaZ,
   TerminalAttachmentErrorSchemaZ,
@@ -30,6 +32,11 @@ function request() {
 }
 
 describe("terminal attachment contracts", () => {
+  it("publishes one shared issue and redemption endpoint authority", () => {
+    expect(TERMINAL_ATTACHMENT_ISSUE_PATH).toBe("/api/v1/terminal/attachments/issue");
+    expect(TERMINAL_ATTACHMENT_REDEEM_PATH).toBe("/v1/terminal/attachments/redeem");
+  });
+
   it("accepts alternate semantic ids and both viewer modes", () => {
     expect(TerminalAttachRequestSchemaZ.parse(request()).target).toEqual(target);
     expect(

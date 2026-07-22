@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  TERMINAL_ATTACHMENT_ISSUE_PATH,
   TerminalAttachmentIssueResultSchemaZ,
   type DesktopDaemonHostState,
   type TerminalAttachmentIssueMutationRequest,
@@ -12,7 +13,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DaemonResourceBroker } from "../../../../apps/electron-shell/src/daemon-resource-broker.ts";
 import { WorkspaceRegistry } from "../lib/workspace-registry.ts";
 import { createApp } from "./server.ts";
-import { TERMINAL_ATTACHMENT_ISSUE_PATH } from "./terminal-attachment-issue.ts";
 
 const IDENTITY = {
   protocolVersion: 1,
@@ -103,11 +103,15 @@ describe("owner terminal attachment issue route", () => {
       status: "connected",
       descriptor: { apiBaseUrl: "http://127.0.0.1:6060", ...IDENTITY },
     };
+    const brokerRequestUrls: string[] = [];
     const broker = new DaemonResourceBroker({
       daemon: connected,
       ownerToken: OWNER_TOKEN,
       now: () => now,
-      fetch: async (input, init) => app.fetch(new Request(input, init)),
+      fetch: async (input, init) => {
+        brokerRequestUrls.push(input.toString());
+        return app.fetch(new Request(input, init));
+      },
     });
 
     await expect(broker.issueTerminalAttachment(mutation(), ORIGIN)).resolves.toEqual({
@@ -128,6 +132,9 @@ describe("owner terminal attachment issue route", () => {
       projectIdentity: "product",
       rendererOrigin: ORIGIN,
     });
+    expect(brokerRequestUrls).toEqual([
+      `${connected.descriptor.apiBaseUrl}${TERMINAL_ATTACHMENT_ISSUE_PATH}`,
+    ]);
   });
 
   it.each([

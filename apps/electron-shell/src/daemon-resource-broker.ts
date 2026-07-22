@@ -9,6 +9,7 @@ import {
   DesktopDaemonHostStateSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopWorkspaceNameSchemaZ,
+  TERMINAL_ATTACHMENT_ISSUE_PATH,
   TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS,
   TerminalAttachmentIssueDescriptorSchemaZ,
   TerminalAttachmentIssueMutationRequestSchemaZ,
@@ -414,7 +415,7 @@ export class DaemonResourceBroker {
       }
       const origin = this.#canonicalRendererOrigin(rendererOrigin);
       const raw = await this.#mutationJson(
-        "/api/v1/terminal/attachments/issue",
+        TERMINAL_ATTACHMENT_ISSUE_PATH,
         parsed,
         {
           Origin: origin,

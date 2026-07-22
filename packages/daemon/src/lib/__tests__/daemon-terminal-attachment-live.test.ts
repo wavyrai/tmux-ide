@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  TERMINAL_ATTACHMENT_ISSUE_PATH,
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
   TerminalAttachmentIssueResultSchemaZ,
   type TerminalAttachmentIssueDescriptor,
@@ -99,7 +100,7 @@ describe
         silent: true,
       });
       const requestId = randomUUID();
-      const response = await fetch(`${handle.apiBaseUrl}/api/v1/terminal/attachments/issue`, {
+      const response = await fetch(`${handle.apiBaseUrl}${TERMINAL_ATTACHMENT_ISSUE_PATH}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${ownerToken}`,
