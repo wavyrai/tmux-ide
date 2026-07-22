@@ -7,8 +7,6 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import {
-  ApplicationShellDiscoveryError,
-  discoverApplicationShellSession,
   discoverSessions,
   buildOverviews,
   buildProjectDetail,
@@ -38,11 +36,13 @@ import {
 } from "../lib/workspace-registry.ts";
 import {
   AddWorkspaceRequestSchemaZ,
-  APPLICATION_SHELL_RESOURCE_VERSION,
+  APPLICATION_SHELL_RESOURCE_V1_VERSION,
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
   WORKSPACE_CATALOG_RESOURCE_VERSION,
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
   type ApplicationShellResourceV1,
+  type ApplicationShellResourceV2,
   type WorkspaceCatalogResourceV1,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
@@ -110,7 +110,10 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { projectApplicationShellResource } from "./resources/application-shell.ts";
+import {
+  projectApplicationShellResource,
+  type ApplicationShellSessionFacts,
+} from "./resources/application-shell.ts";
 import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
@@ -133,6 +136,11 @@ export interface CreateAppOptions {
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
+  applicationShellInventoryBackend?: {
+    discoverApplicationShellSession(
+      requestedSessionName: string,
+    ): Promise<ApplicationShellSessionFacts | null>;
+  } | null;
 }
 
 let projectStreamConnections = 0;
@@ -531,22 +539,44 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ ...detail } satisfies DaemonProjectResponse);
   });
 
-  app.get("/api/project/:name/application-shell", (c) => {
+  app.get("/api/project/:name/application-shell", async (c) => {
     const name = c.req.param("name");
-    let session: ReturnType<typeof discoverApplicationShellSession>;
+    const requestedVersion = c.req.query("version");
+    if (
+      requestedVersion !== undefined &&
+      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) &&
+      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION)
+    ) {
+      return c.json({ error: "Unsupported application-shell resource version" }, 400);
+    }
+    const backend = options.applicationShellInventoryBackend;
+    if (!backend) return c.json({ error: "Session discovery unavailable" }, 503);
+    let session: ApplicationShellSessionFacts | null;
     try {
-      session = discoverApplicationShellSession(name);
-    } catch (error) {
-      if (error instanceof ApplicationShellDiscoveryError) {
-        return c.json({ error: "Session discovery unavailable" }, 503);
-      }
-      throw error;
+      session = await backend.discoverApplicationShellSession(name);
+    } catch {
+      return c.json({ error: "Session discovery unavailable" }, 503);
     }
     if (!session) return c.json({ error: "Session not found" }, 404);
+    const resource = projectApplicationShellResource(session);
+    if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
+      return c.json({
+        version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
+        daemon: daemonInstanceIdentity,
+        resource,
+      } satisfies ApplicationShellResourceV2);
+    }
+    const legacyResource = {
+      project: resource.project,
+      workspace: resource.workspace,
+      dock: resource.dock,
+      focus: resource.focus,
+      connection: resource.connection,
+    };
     return c.json({
-      version: APPLICATION_SHELL_RESOURCE_VERSION,
+      version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
       daemon: daemonInstanceIdentity,
-      resource: projectApplicationShellResource(session),
+      resource: legacyResource,
     } satisfies ApplicationShellResourceV1);
   });
 

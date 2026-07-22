@@ -25,6 +25,7 @@ import {
 
 const attachmentId = "f3d8bc0b-460c-458c-b9c0-dbc2536d1486";
 const secondAttachmentId = "a45072f8-5a82-4930-8bed-0959c617e60b";
+const VIEW_WIRE_SEPARATOR = "|tmux-ide-view-field-v1|";
 
 interface FakeView {
   marker: string | null;
@@ -173,7 +174,7 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
           stdout:
             this.sessionsOutput ??
             [...this.views.entries()]
-              .map(([name]) => `${name}\t${this.sessionId(name)}`)
+              .map(([name]) => `${name}${VIEW_WIRE_SEPARATOR}${this.sessionId(name)}`)
               .join("\n"),
         };
       case "kill-session": {
@@ -695,9 +696,9 @@ describe("TmuxAttachmentViewExecutor marked-view enumeration", () => {
     seed(runner, first);
     seed(runner, second, { marker: null });
     runner.sessionsOutput = [
-      "durable-source\t$1",
-      `${first.identity.viewSessionName}\t${runner.sessionId(first.identity.viewSessionName)}`,
-      `${second.identity.viewSessionName}\t${runner.sessionId(second.identity.viewSessionName)}`,
+      `durable-source${VIEW_WIRE_SEPARATOR}$1`,
+      `${first.identity.viewSessionName}${VIEW_WIRE_SEPARATOR}${runner.sessionId(first.identity.viewSessionName)}`,
+      `${second.identity.viewSessionName}${VIEW_WIRE_SEPARATOR}${runner.sessionId(second.identity.viewSessionName)}`,
     ].join("\n");
     const executor = new TmuxAttachmentViewExecutor({ runner });
 
@@ -731,9 +732,12 @@ describe("TmuxAttachmentViewExecutor marked-view enumeration", () => {
     ["malformed row", `${plan().identity.viewSessionName}`],
     [
       "duplicate row",
-      `${plan().identity.viewSessionName}\t$90\n${plan().identity.viewSessionName}\t$90`,
+      `${plan().identity.viewSessionName}${VIEW_WIRE_SEPARATOR}$90\n${plan().identity.viewSessionName}${VIEW_WIRE_SEPARATOR}$90`,
     ],
-    ["noncanonical generated name", `${GROUPED_TMUX_VIEW_SESSION_PREFIX}not-an-id-0\t$90`],
+    [
+      "noncanonical generated name",
+      `${GROUPED_TMUX_VIEW_SESSION_PREFIX}not-an-id-0${VIEW_WIRE_SEPARATOR}$90`,
+    ],
     ["oversized output", "x".repeat(128 * 1024 + 1)],
   ])("fails closed with a static error for %s", async (_label, sessionsOutput) => {
     const runner = new FakeRunner();

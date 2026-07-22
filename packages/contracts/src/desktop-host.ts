@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { ApplicationShellResourceV1SchemaZ } from "./application-shell-resource.ts";
+import {
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  ApplicationShellResourceSchemaZ,
+} from "./application-shell-resource.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import type {
   TerminalAttachRequest,
@@ -170,7 +173,10 @@ export const DesktopDaemonListWorkspacesResultSchemaZ = z.discriminatedUnion("st
 ]);
 
 export const DesktopDaemonFetchApplicationShellRequestSchemaZ = z
-  .object({ workspaceName: DesktopWorkspaceNameSchemaZ })
+  .object({
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    resourceVersion: z.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION).optional(),
+  })
   .strict();
 
 /** Store key: semantic workspace plus a non-secret daemon generation. */
@@ -182,7 +188,7 @@ export const DesktopApplicationShellTargetSchemaZ = z
   .strict();
 
 export const DesktopDaemonFetchApplicationShellResultSchemaZ = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("ok"), envelope: ApplicationShellResourceV1SchemaZ }).strict(),
+  z.object({ status: z.literal("ok"), envelope: ApplicationShellResourceSchemaZ }).strict(),
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 

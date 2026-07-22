@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import {
   NativeTerminalAttachmentGeometryResolver,
   NativeTerminalAttachmentRuntimeError,
   createNativeTerminalAttachmentRuntime,
+  discoverWorkspaceRegistryTerminalInventory,
   discoverWorkspaceRegistrySemanticPanes,
   type NativeTerminalAttachmentCommandExecutor,
 } from "../attachments/native-runtime.ts";
@@ -39,6 +40,8 @@ const LEASE_ID = "f3d8bc0b-460c-458c-b9c0-dbc2536d1486";
 const ATTEMPT_ID = "a45072f8-5a82-4930-8bed-0959c617e60b";
 const ORIGIN = "tmux-ide://app";
 const WS_URL = "ws://127.0.0.1:6070/v1/terminal/attachments/redeem";
+const INVENTORY_SEPARATOR = "|tmux-ide-field-v2|";
+const VIEW_SEPARATOR = "|tmux-ide-view-field-v1|";
 const roots: string[] = [];
 
 afterEach(() => {
@@ -94,6 +97,31 @@ function row(overrides: Partial<TrustedSemanticPaneSnapshot> = {}): TrustedSeman
   };
 }
 
+function applicationShellPaneWire(
+  sessionName: string,
+  options: { stamp?: string; paneId?: string } = {},
+): string {
+  return [
+    sessionName,
+    "$7",
+    "@2",
+    options.paneId ?? "%3",
+    "1",
+    "1",
+    options.stamp ?? "pane.agent",
+    "0",
+    "Agent",
+    "codex",
+    "1",
+    "1",
+    "teammate",
+    "Codex",
+    "agent",
+    "/repo",
+    "tmux-ide-pane-v2",
+  ].join(INVENTORY_SEPARATOR);
+}
+
 function request(): TerminalAttachRequest {
   return {
     protocolVersion: 1,
@@ -120,47 +148,150 @@ function descriptor(overrides: Partial<AttachmentLeaseDescriptor> = {}): Attachm
 }
 
 describe("workspace-registry semantic pane discovery", () => {
-  it("maps semantic workspace name to a distinct exact tmux session name", async () => {
-    const { registry } = createRegistry("workspace.alpha", "runtime-session-different");
+  function inventoryRunner(
+    sessionName: string,
+    paneRows: string,
+  ): {
+    readonly runner: TmuxAttachmentCommandRunner;
+    readonly calls: string[][];
+  } {
     const calls: string[][] = [];
     const runner: TmuxAttachmentCommandRunner = {
       run(command) {
         calls.push([...command.argv]);
-        return {
-          status: "ok",
-          stdout: "runtime-session-different\t$1\t@2\t%3\t1\t2\tpane.agent\n",
-        };
+        if (command.argv[0] === "list-sessions") {
+          return {
+            status: "ok",
+            stdout: [sessionName, "$1", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n",
+          };
+        }
+        if (command.argv[0] === "list-panes") return { status: "ok", stdout: paneRows };
+        return { status: "failed" };
       },
     };
-    const catalog = new SemanticPaneCatalog({
-      discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
-    });
+    return { runner, calls };
+  }
 
-    await expect(catalog.resolve(request().target)).resolves.toMatchObject({
-      target: request().target,
-      source: { sessionId: "$1", windowId: "@2", runtimePaneId: "%3" },
-    });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toContain("=runtime-session-different");
-    expect(calls[0]).not.toContain("=workspace.alpha");
-  });
+  function paneWire(
+    sessionName: string,
+    options: {
+      stamp?: string;
+      windowId?: string;
+      paneId?: string;
+      windows?: number;
+      active?: boolean;
+    } = {},
+  ): string {
+    return [
+      sessionName,
+      "$1",
+      options.windowId ?? "@2",
+      options.paneId ?? "%3",
+      "1",
+      String(options.windows ?? 1),
+      options.stamp ?? "pane.agent",
+      "0",
+      "Agent",
+      "codex",
+      options.active === false ? "0" : "1",
+      options.active === false ? "0" : "1",
+      "teammate",
+      "Codex",
+      "agent",
+      "/repo",
+      "tmux-ide-pane-v2",
+    ].join(INVENTORY_SEPARATOR);
+  }
+
+  it.each(["runtime-session-different", "runtime:session"])(
+    "maps semantic workspace name to exact session %s, then targets only its runtime id",
+    async (sessionName) => {
+      const { registry } = createRegistry("workspace.alpha", sessionName);
+      const { runner, calls } = inventoryRunner(sessionName, `${paneWire(sessionName)}\n`);
+      const catalog = new SemanticPaneCatalog({
+        discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
+      });
+
+      await expect(catalog.resolve(request().target)).resolves.toMatchObject({
+        target: request().target,
+        source: { sessionId: "$1", windowId: "@2", runtimePaneId: "%3" },
+      });
+      expect(calls).toHaveLength(3);
+      expect(calls.slice(1).every((call) => call.includes("$1"))).toBe(true);
+      expect(calls.flat()).not.toContain(`=${sessionName}`);
+      expect(calls.flat()).not.toContain("=workspace.alpha");
+      expect(calls.flat().join("\n")).not.toContain("#{qa:");
+    },
+  );
 
   it.each([
-    ["missing stamp", "runtime-session\t$1\t@2\t%3\t1\t2\t\n", "missing-semantic-stamp"],
+    ["missing stamp", `${paneWire("runtime-session", { stamp: "" })}\n`, "missing-semantic-stamp"],
     [
       "duplicate stamp",
-      "runtime-session\t$1\t@2\t%3\t1\t2\tpane.agent\nruntime-session\t$1\t@4\t%5\t1\t2\tpane.agent\n",
+      `${paneWire("runtime-session", { windows: 2 })}\n${paneWire("runtime-session", { windowId: "@4", paneId: "%5", windows: 2, active: false })}\n`,
       "duplicate-semantic-stamp",
     ],
   ])("rejects %s from exact registry-backed discovery", async (_label, stdout, code) => {
     const { registry } = createRegistry();
+    const { runner } = inventoryRunner("runtime-session", stdout);
     const catalog = new SemanticPaneCatalog({
-      discover: () =>
-        discoverWorkspaceRegistrySemanticPanes(registry, {
-          run: () => ({ status: "ok", stdout }),
-        }),
+      discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
     });
     await expect(catalog.resolve(request().target)).rejects.toMatchObject({ code });
+  });
+
+  it("rejects a pane topology race between exact before/after snapshots", async () => {
+    const { registry } = createRegistry();
+    let paneReads = 0;
+    const base = inventoryRunner("runtime-session", "");
+    const runner: TmuxAttachmentCommandRunner = {
+      run(command) {
+        if (command.argv[0] === "list-sessions") return base.runner.run(command);
+        paneReads += 1;
+        return {
+          status: "ok",
+          stdout: `${paneWire("runtime-session", { paneId: paneReads === 1 ? "%3" : "%4" })}\n`,
+        };
+      },
+    };
+    await expect(discoverWorkspaceRegistrySemanticPanes(registry, runner)).rejects.toMatchObject({
+      code: "discovery-failed",
+    });
+  });
+
+  it("applies unstamped and duplicate faults globally to the inventory analyzer", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "session-a");
+    registry.add({ name: "workspace.beta", sessionName: "session-b", projectDir: root });
+    const snapshots = new Map([
+      ["$1", `${paneWire("session-a")}\n`],
+      [
+        "$2",
+        `${paneWire("session-b", { stamp: "" }).replace(`session-b${INVENTORY_SEPARATOR}$1`, `session-b${INVENTORY_SEPARATOR}$2`)}\n`,
+      ],
+    ]);
+    const runner: TmuxAttachmentCommandRunner = {
+      run(command) {
+        if (command.argv[0] === "list-sessions") {
+          return {
+            status: "ok",
+            stdout:
+              [
+                ["session-a", "$1", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR),
+                ["session-b", "$2", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR),
+              ].join("\n") + "\n",
+          };
+        }
+        const target = command.argv[command.argv.indexOf("-t") + 1]!;
+        return { status: "ok", stdout: snapshots.get(target) ?? "" };
+      },
+    };
+    const inventory = await discoverWorkspaceRegistryTerminalInventory(registry, runner);
+    expect(inventory.catalog.missingSemanticStamp).toBe(true);
+    expect(inventory.catalog.invalidRuntimeProof).toBe(false);
+
+    registry.add({ name: "workspace.alias", sessionName: "session-a", projectDir: root });
+    const aliased = await discoverWorkspaceRegistryTerminalInventory(registry, runner);
+    expect(aliased.catalog.duplicateRuntimePaneBinding).toBe(true);
   });
 });
 
@@ -330,7 +461,7 @@ class StartupReconciliationTmuxModel {
     const target = targetIndex < 0 ? "" : (argv[targetIndex + 1] ?? "");
     if (argv[0] === "list-sessions") {
       this.events.push("enumerate-orphans");
-      return this.viewExists ? `${this.viewName}\t$9\n` : "";
+      return this.viewExists ? `${this.viewName}${VIEW_SEPARATOR}$9\n` : "";
     }
     if (argv[0] === "show-environment") {
       if (!this.viewExists) throw new TmuxError("missing", "SESSION_NOT_FOUND");
@@ -360,6 +491,56 @@ class StartupReconciliationTmuxModel {
 }
 
 describe("native terminal attachment runtime lifecycle", () => {
+  it("uses the pinned executable and custom socket for exact application-shell inventory", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const calls: Array<{ executable: string; argv: readonly string[] }> = [];
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: {
+        ...authority(root),
+        socketSelector: { kind: "name", name: "inventory-socket" },
+      },
+      commandExecutor: (executable, rawArgv) => {
+        calls.push({ executable, argv: [...rawArgv] });
+        const argv = rawArgv.slice(2);
+        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+          return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+        }
+        if (argv[0] === "list-sessions") return "";
+        if (argv[0] === "list-panes") {
+          expect(argv[argv.indexOf("-t") + 1]).toBe("$7");
+          return `${applicationShellPaneWire("runtime:session")}\n`;
+        }
+        return "";
+      },
+    });
+
+    await runtime.whenReady();
+    await expect(runtime.discoverApplicationShellSession("workspace.alpha")).resolves.toBeNull();
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).resolves.toMatchObject(
+      {
+        name: "runtime:session",
+        runtimeSessionId: "$7",
+        catalogIssue: null,
+        panes: [expect.objectContaining({ semanticPaneId: "pane.agent", runtimePaneId: "%3" })],
+      },
+    );
+    expect(calls.every(({ argv }) => argv[0] === "-L" && argv[1] === "inventory-socket")).toBe(
+      true,
+    );
+    expect(new Set(calls.map(({ executable }) => executable))).toEqual(
+      new Set([realpathSync(authority(root).executablePath)]),
+    );
+
+    registry.add({ name: "workspace.beta", sessionName: "runtime:session", projectDir: root });
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).rejects.toMatchObject({
+      code: "discovery-failed",
+    });
+    await runtime.dispose();
+  });
+
   it("accepts no default tmux server only for construction with an empty registry", async () => {
     const { registry, root } = createEmptyRegistry();
     const calls: string[][] = [];
@@ -379,7 +560,13 @@ describe("native terminal attachment runtime lifecycle", () => {
 
     await expect(runtime.whenReady()).resolves.toBeUndefined();
     expect(calls).toEqual([
-      ["-L", "default", "list-sessions", "-F", "#{session_name}\t#{session_id}"],
+      [
+        "-L",
+        "default",
+        "list-sessions",
+        "-F",
+        "#{session_name}|tmux-ide-view-field-v1|#{session_id}",
+      ],
     ]);
     await runtime.dispose();
   });

@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import {
-  ApplicationShellProjectionInputV1SchemaZ,
+  ApplicationShellProjectionInputV2SchemaZ,
   CANONICAL_SURFACE_REGISTRY,
   SemanticProductIdSchemaZ,
   projectApplicationShellV1,
   type ApplicationShellProjectionInputV1,
+  type ApplicationShellProjectionInputV2,
   type TerminalResourceAttachability,
+  type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
 
 export interface ApplicationShellPaneFacts {
@@ -29,6 +31,11 @@ export interface ApplicationShellSessionFacts {
   /** Daemon-only generation identity; hashed into fallback resource identity. */
   readonly runtimeSessionId: string;
   readonly dir: string;
+  /** Global result from the same catalog analyzer used by live attachment. */
+  readonly catalogIssue: Exclude<
+    TerminalResourceUnavailableReason,
+    "invalid-semantic-stamp" | "not-single-pane-window"
+  > | null;
   readonly panes: readonly ApplicationShellPaneFacts[];
 }
 
@@ -80,30 +87,20 @@ function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIde
   const claimed = new Set<string>();
   return panes.map((pane) => {
     const stamped = pane.semanticPaneId;
-    let unavailableReason:
-      | "missing-semantic-stamp"
-      | "invalid-semantic-stamp"
-      | "duplicate-semantic-stamp"
-      | null = null;
-    if (stamped === null || stamped.length === 0) unavailableReason = "missing-semantic-stamp";
-    else if (!SemanticProductIdSchemaZ.safeParse(stamped).success) {
-      unavailableReason = "invalid-semantic-stamp";
-    } else if (validCounts.get(stamped) !== 1) {
-      unavailableReason = "duplicate-semantic-stamp";
-    }
-    if (
+    const locallyValid =
       stamped !== null &&
       SemanticProductIdSchemaZ.safeParse(stamped).success &&
-      validCounts.get(stamped) === 1 &&
-      !claimed.has(stamped)
-    ) {
+      validCounts.get(stamped) === 1;
+    if (locallyValid && !claimed.has(stamped)) {
       claimed.add(stamped);
       return {
         resourceId: stamped,
         attachability:
-          pane.windowPaneCount === 1
-            ? { status: "available", semanticPaneId: stamped }
-            : { status: "unavailable", reason: "not-single-pane-window" },
+          session.catalogIssue !== null
+            ? { status: "unavailable", reason: session.catalogIssue }
+            : pane.windowPaneCount === 1
+              ? { status: "available", semanticPaneId: stamped }
+              : { status: "unavailable", reason: "not-single-pane-window" },
       };
     }
     const base = fallbackPaneId(session, pane);
@@ -115,7 +112,13 @@ function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIde
       resourceId: candidate,
       attachability: {
         status: "unavailable",
-        reason: unavailableReason ?? "duplicate-semantic-stamp",
+        reason:
+          session.catalogIssue ??
+          (stamped === null || stamped.length === 0
+            ? "missing-semantic-stamp"
+            : !SemanticProductIdSchemaZ.safeParse(stamped).success
+              ? "invalid-runtime-proof"
+              : "duplicate-semantic-stamp"),
       },
     };
   });
@@ -210,7 +213,7 @@ function deepFreeze<T>(value: T): T {
  */
 export function projectApplicationShellResource(
   session: ApplicationShellSessionFacts,
-): ApplicationShellProjectionInputV1 {
+): ApplicationShellProjectionInputV2 {
   const sessionName = label(session.name, "tmux session");
   const rootLabel = label(basename(session.dir), sessionName);
   const projectId = semanticId("project", session.dir);
@@ -246,7 +249,7 @@ export function projectApplicationShellResource(
   const paneFact = `${session.panes.length} live terminal pane${session.panes.length === 1 ? "" : "s"} discovered`;
   const agentFact = `${agents.length} agent pane${agents.length === 1 ? "" : "s"} discovered`;
 
-  const parsed = ApplicationShellProjectionInputV1SchemaZ.parse({
+  const parsed = ApplicationShellProjectionInputV2SchemaZ.parse({
     project: {
       id: projectId,
       name: sessionName,

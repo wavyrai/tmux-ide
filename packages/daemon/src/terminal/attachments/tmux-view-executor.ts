@@ -934,7 +934,10 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     ) {
       throw new TmuxAttachmentViewExecutorError("invalid-request");
     }
-    const result = this.#command(tmux(["list-sessions", "-F", "#{session_name}\t#{session_id}"]));
+    const separator = "|tmux-ide-view-field-v1|";
+    const result = this.#command(
+      tmux(["list-sessions", "-F", `#{session_name}${separator}#{session_id}`]),
+    );
     if (result.status === "not-found") return [];
     if (result.status === "failed") {
       throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
@@ -943,17 +946,17 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     const found = new Map<string, { identity: ParsedViewIdentity; markerValue: string | null }>();
     const runtimeSessionIds = new Set<string>();
     for (const row of rows) {
-      const separator = row.indexOf("\t");
-      if (separator < 0 || row.indexOf("\t", separator + 1) >= 0) {
+      const separatorIndex = row.indexOf(separator);
+      if (separatorIndex < 0 || row.indexOf(separator, separatorIndex + separator.length) >= 0) {
         throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
       }
-      const sessionName = row.slice(0, separator);
+      const sessionName = row.slice(0, separatorIndex);
       if (!sessionName.startsWith(prefix)) continue;
       const parsedName = parseViewSessionName(sessionName);
       if (!parsedName || found.has(sessionName)) {
         throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
       }
-      const sessionId = row.slice(separator + 1);
+      const sessionId = row.slice(separatorIndex + separator.length);
       if (
         !RuntimeSessionIdSchemaZ.safeParse(sessionId).success ||
         runtimeSessionIds.has(sessionId)

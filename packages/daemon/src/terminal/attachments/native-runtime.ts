@@ -33,7 +33,12 @@ import {
   type DaemonTmuxSocketSelector,
   type PtyTmuxAttachmentLauncherOptions,
 } from "./pty-tmux-attachment-launcher.ts";
-import { SemanticPaneCatalog, type TrustedSemanticPaneSnapshot } from "./semantic-pane-catalog.ts";
+import {
+  SemanticPaneCatalog,
+  analyzeTrustedSemanticPaneCatalog,
+  type TrustedSemanticPaneCatalogAnalysis,
+  type TrustedSemanticPaneSnapshot,
+} from "./semantic-pane-catalog.ts";
 import {
   TmuxAttachmentOperationSerializer,
   TmuxAttachmentViewExecutor,
@@ -51,6 +56,12 @@ const SAFE_COLOR_TERMINAL_VALUE = /^(?:truecolor|24bit)$/u;
 const SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
 const INTEGER = /^(?:0|[1-9][0-9]*)$/u;
 const VIEW_MISMATCH = "__tmux_ide_geometry_view_mismatch_v1__";
+const SESSION_WIRE_SENTINEL = "tmux-ide-session-v2";
+const PANE_WIRE_SENTINEL = "tmux-ide-pane-v2";
+const WIRE_SEPARATOR = "|tmux-ide-field-v2|";
+const RUNTIME_SESSION_ID = /^\$(?:0|[1-9][0-9]*)$/u;
+const RUNTIME_WINDOW_ID = /^@(?:0|[1-9][0-9]*)$/u;
+const RUNTIME_PANE_ID = /^%(?:0|[1-9][0-9]*)$/u;
 
 export type NativeTerminalAttachmentRuntimeErrorCode =
   | "invalid-authority"
@@ -204,7 +215,7 @@ function pinnedRunner(
           command.argv.length === 3 &&
           command.argv[0] === "list-sessions" &&
           command.argv[1] === "-F" &&
-          command.argv[2] === "#{session_name}\t#{session_id}"
+          command.argv[2] === "#{session_name}|tmux-ide-view-field-v1|#{session_id}"
         ) {
           // A first-run project may have no default tmux server yet. This
           // one construction-time orphan enumeration is equivalent to zero
@@ -246,6 +257,22 @@ function positiveInteger(value: string): number {
   return parsed;
 }
 
+function nonnegativeInteger(value: string): number {
+  if (!INTEGER.test(value)) throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return parsed;
+}
+
+function boundedWireValue(value: string, maximum: number, allowEmpty = true): string {
+  if (value.length > maximum || (!allowEmpty && value.length === 0) || /[\0\r\n\t]/u.test(value)) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return value;
+}
+
 function viewport(cols: string, rows: string): TerminalAttachmentGeometry["sourceGrid"] {
   try {
     return TerminalAttachmentViewportSchemaZ.parse({
@@ -257,56 +284,286 @@ function viewport(cols: string, rows: string): TerminalAttachmentGeometry["sourc
   }
 }
 
+export type NativeTerminalInventoryCatalogIssue =
+  | "invalid-runtime-proof"
+  | "missing-semantic-stamp"
+  | "duplicate-semantic-stamp"
+  | "duplicate-runtime-pane-binding";
+
+export interface NativeTerminalInventoryPaneSnapshot extends TrustedSemanticPaneSnapshot {
+  readonly sessionName: string;
+  readonly index: number;
+  readonly title: string;
+  readonly currentCommand: string;
+  readonly active: boolean;
+  readonly role: string | null;
+  readonly name: string | null;
+  readonly type: string | null;
+  readonly dir: string;
+}
+
+export interface NativeTerminalInventorySnapshot {
+  readonly panes: readonly NativeTerminalInventoryPaneSnapshot[];
+  readonly catalog: TrustedSemanticPaneCatalogAnalysis;
+}
+
+export interface NativeApplicationShellSessionSnapshot {
+  readonly name: string;
+  readonly runtimeSessionId: string;
+  readonly dir: string;
+  readonly catalogIssue: NativeTerminalInventoryCatalogIssue | null;
+  readonly panes: readonly Omit<
+    NativeTerminalInventoryPaneSnapshot,
+    "workspaceName" | "sessionName" | "sessionId" | "sessionWindowCount" | "dir"
+  >[];
+}
+
+const SESSION_FORMAT = ["#{session_name}", "#{session_id}", SESSION_WIRE_SENTINEL].join(
+  WIRE_SEPARATOR,
+);
+const PANE_FORMAT = [
+  "#{session_name}",
+  "#{session_id}",
+  "#{window_id}",
+  "#{pane_id}",
+  "#{window_panes}",
+  "#{session_windows}",
+  "#{@tmux_ide_pane_id}",
+  "#{pane_index}",
+  "#{pane_title}",
+  "#{pane_current_command}",
+  "#{window_active}",
+  "#{pane_active}",
+  "#{@ide_role}",
+  "#{@ide_name}",
+  "#{@ide_type}",
+  "#{pane_current_path}",
+  PANE_WIRE_SENTINEL,
+].join(WIRE_SEPARATOR);
+
+function requiredTmuxResult(
+  runner: TmuxAttachmentCommandRunner,
+  argv: readonly string[],
+): string | null {
+  const result = runner.run({ executable: "tmux", argv });
+  if (result.status === "not-found") return null;
+  if (result.status !== "ok") {
+    throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+  }
+  return result.stdout;
+}
+
+interface LiveSessionIdentity {
+  readonly name: string;
+  readonly id: string;
+}
+
+function liveSessionIdentities(
+  runner: TmuxAttachmentCommandRunner,
+): readonly LiveSessionIdentity[] {
+  const stdout = requiredTmuxResult(runner, ["list-sessions", "-F", SESSION_FORMAT]);
+  if (stdout === null) return [];
+  const identities: LiveSessionIdentity[] = [];
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  for (const line of strictLines(stdout, MAX_DISCOVERED_WORKSPACES * 4)) {
+    const fields = line.split(WIRE_SEPARATOR);
+    if (fields.length !== 3 || fields[2] !== SESSION_WIRE_SENTINEL) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    const name = boundedWireValue(fields[0]!, 160, false);
+    const id = fields[1]!;
+    if (!RUNTIME_SESSION_ID.test(id) || names.has(name) || ids.has(id)) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    names.add(name);
+    ids.add(id);
+    identities.push({ name, id });
+  }
+  return identities;
+}
+
+type LivePaneFacts = Omit<NativeTerminalInventoryPaneSnapshot, "workspaceName">;
+
+function parsePaneSnapshot(
+  stdout: string,
+  expected: LiveSessionIdentity,
+): readonly LivePaneFacts[] {
+  const panes: LivePaneFacts[] = [];
+  const runtimeIds = new Set<string>();
+  for (const line of strictLines(stdout, MAX_DISCOVERED_PANES)) {
+    const fields = line.split(WIRE_SEPARATOR);
+    if (fields.length !== 17 || fields[16] !== PANE_WIRE_SENTINEL) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    const [
+      sessionName,
+      sessionId,
+      windowId,
+      runtimePaneId,
+      paneCountValue,
+      windowCountValue,
+      stamp,
+      indexValue,
+      title,
+      currentCommand,
+      windowActive,
+      paneActive,
+      role,
+      name,
+      type,
+      dir,
+    ] = fields as [
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    if (
+      sessionName !== expected.name ||
+      sessionId !== expected.id ||
+      !RUNTIME_WINDOW_ID.test(windowId) ||
+      !RUNTIME_PANE_ID.test(runtimePaneId) ||
+      runtimeIds.has(runtimePaneId) ||
+      !["0", "1"].includes(windowActive) ||
+      !["0", "1"].includes(paneActive)
+    ) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    runtimeIds.add(runtimePaneId);
+    const nullable = (value: string): string | null =>
+      boundedWireValue(value, 256).length === 0 ? null : value;
+    panes.push({
+      sessionName,
+      sessionId,
+      windowId,
+      runtimePaneId,
+      windowPaneCount: positiveInteger(paneCountValue),
+      sessionWindowCount: positiveInteger(windowCountValue),
+      semanticPaneId: nullable(stamp),
+      index: nonnegativeInteger(indexValue),
+      title: boundedWireValue(title, 1_024),
+      currentCommand: boundedWireValue(currentCommand, 512),
+      active: windowActive === "1" && paneActive === "1",
+      role: nullable(role),
+      name: nullable(name),
+      type: nullable(type),
+      dir: boundedWireValue(dir, 4_096, false),
+    });
+  }
+  const counts = new Map<string, number>();
+  for (const pane of panes) counts.set(pane.windowId, (counts.get(pane.windowId) ?? 0) + 1);
+  const windows = new Set(panes.map((pane) => pane.windowId));
+  if (
+    panes.some(
+      (pane) =>
+        counts.get(pane.windowId) !== pane.windowPaneCount ||
+        windows.size !== pane.sessionWindowCount,
+    ) ||
+    panes.filter((pane) => pane.active).length > 1
+  ) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return panes;
+}
+
+/**
+ * One bounded, old-tmux-safe discovery path for both live attachment and the
+ * application-shell inventory. Names are resolved exactly to `$session_id`
+ * before any pane query, and a byte-identical second snapshot closes races.
+ */
+export async function discoverWorkspaceRegistryTerminalInventory(
+  registry: WorkspaceRegistry,
+  runner: TmuxAttachmentCommandRunner,
+): Promise<NativeTerminalInventorySnapshot> {
+  const workspaces = registry.list();
+  if (workspaces.length > MAX_DISCOVERED_WORKSPACES) {
+    throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+  }
+  if (workspaces.length === 0) {
+    const catalog = analyzeTrustedSemanticPaneCatalog([]);
+    return Object.freeze({ panes: Object.freeze([]), catalog });
+  }
+  const liveSessions = liveSessionIdentities(runner);
+  const byName = new Map(liveSessions.map((session) => [session.name, session]));
+  const uniqueSessionNames = new Set(workspaces.map((workspace) => workspace.sessionName));
+  const bySessionName = new Map<string, readonly LivePaneFacts[]>();
+  for (const sessionName of uniqueSessionNames) {
+    const identity = byName.get(sessionName);
+    if (!identity) continue;
+    const argv = ["list-panes", "-s", "-t", identity.id, "-F", PANE_FORMAT] as const;
+    const before = requiredTmuxResult(runner, argv);
+    if (before === null) continue;
+    const panes = parsePaneSnapshot(before, identity);
+    const after = requiredTmuxResult(runner, argv);
+    if (after === null || before !== after) {
+      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    }
+    parsePaneSnapshot(after, identity);
+    bySessionName.set(sessionName, panes);
+  }
+
+  const panes: NativeTerminalInventoryPaneSnapshot[] = [];
+  for (const workspace of workspaces) {
+    for (const pane of bySessionName.get(workspace.sessionName) ?? []) {
+      panes.push({ ...pane, workspaceName: workspace.name });
+      if (panes.length > MAX_DISCOVERED_PANES) {
+        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      }
+    }
+  }
+  const catalog = analyzeTrustedSemanticPaneCatalog(
+    panes.map(
+      ({
+        sessionName: _sessionName,
+        index: _index,
+        title: _title,
+        currentCommand: _currentCommand,
+        active: _active,
+        role: _role,
+        name: _name,
+        type: _type,
+        dir: _dir,
+        ...row
+      }) => row,
+    ),
+  );
+  return Object.freeze({ panes: Object.freeze(panes), catalog });
+}
+
 /** Internal raw-id discovery; callers expose only SemanticPaneCatalog resolution. */
 export async function discoverWorkspaceRegistrySemanticPanes(
   registry: WorkspaceRegistry,
   runner: TmuxAttachmentCommandRunner,
 ): Promise<readonly TrustedSemanticPaneSnapshot[]> {
-  const workspaces = registry.list();
-  if (workspaces.length > MAX_DISCOVERED_WORKSPACES) {
-    throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
-  }
-  const rows: TrustedSemanticPaneSnapshot[] = [];
-  for (const workspace of workspaces) {
-    if (!SAFE_SESSION_NAME.test(workspace.sessionName)) {
-      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
-    }
-    const result = runner.run({
-      executable: "tmux",
-      argv: [
-        "list-panes",
-        "-s",
-        "-t",
-        `=${workspace.sessionName}`,
-        "-F",
-        "#{session_name}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{window_panes}\t#{session_windows}\t#{@tmux_ide_pane_id}",
-      ],
-    });
-    if (result.status === "not-found") continue;
-    if (result.status !== "ok") {
-      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
-    }
-    for (const line of strictLines(result.stdout, MAX_DISCOVERED_PANES)) {
-      const fields = line.split("\t");
-      if (fields.length !== 7 || fields[0] !== workspace.sessionName) {
-        throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
-      }
-      const [, sessionId, windowId, runtimePaneId, paneCount, windowCount, stamp] = fields;
-      rows.push({
-        workspaceName: workspace.name,
-        semanticPaneId: stamp === "" ? null : stamp!,
-        sessionId: sessionId!,
-        windowId: windowId!,
-        runtimePaneId: runtimePaneId!,
-        windowPaneCount: positiveInteger(paneCount!),
-        sessionWindowCount: positiveInteger(windowCount!),
-      });
-      if (rows.length > MAX_DISCOVERED_PANES) {
-        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
-      }
-    }
-  }
-  return rows;
+  const inventory = await discoverWorkspaceRegistryTerminalInventory(registry, runner);
+  return inventory.panes.map(
+    ({
+      sessionName: _sessionName,
+      index: _index,
+      title: _title,
+      currentCommand: _currentCommand,
+      active: _active,
+      role: _role,
+      name: _name,
+      type: _type,
+      dir: _dir,
+      ...row
+    }) => row,
+  );
 }
 
 function quoteArgument(value: string): string {
@@ -499,6 +756,8 @@ export class NativeTerminalAttachmentRuntime {
   readonly #launcher: PtyTmuxAttachmentLauncher;
   readonly #startupBarrier: Promise<void>;
   readonly #serializer: TmuxAttachmentOperationSerializer;
+  readonly #registry: WorkspaceRegistry;
+  readonly #discoverTerminalInventory: () => Promise<NativeTerminalInventorySnapshot>;
   #lifecycle: "initializing" | "ready" | "failed" | "disposing" | "disposed" = "initializing";
   #disposePromise: Promise<void> | null = null;
 
@@ -512,11 +771,29 @@ export class NativeTerminalAttachmentRuntime {
         options.registry.list().length === 0,
     };
     const runner = pinnedRunner(authority, execute, startupPolicy);
+    const discoverTerminalInventory = () =>
+      discoverWorkspaceRegistryTerminalInventory(options.registry, runner);
     const serializer = new TmuxAttachmentOperationSerializer();
     const catalog =
       options.semanticPaneCatalog ??
       new SemanticPaneCatalog({
-        discover: () => discoverWorkspaceRegistrySemanticPanes(options.registry, runner),
+        discover: async () => {
+          const inventory = await discoverTerminalInventory();
+          return inventory.panes.map(
+            ({
+              sessionName: _sessionName,
+              index: _index,
+              title: _title,
+              currentCommand: _currentCommand,
+              active: _active,
+              role: _role,
+              name: _name,
+              type: _type,
+              dir: _dir,
+              ...row
+            }) => row,
+          );
+        },
       });
     const launcher = new PtyTmuxAttachmentLauncher({
       ...options.launcher,
@@ -583,6 +860,60 @@ export class NativeTerminalAttachmentRuntime {
     });
     this.#launcher = launcher;
     this.#serializer = serializer;
+    this.#registry = options.registry;
+    this.#discoverTerminalInventory = discoverTerminalInventory;
+  }
+
+  /**
+   * Exact registry-session inventory for ApplicationShell V2. The runtime and
+   * attachment catalog intentionally share the same pinned runner, socket and
+   * global trust analyzer.
+   */
+  async discoverApplicationShellSession(
+    requestedSessionName: string,
+  ): Promise<NativeApplicationShellSessionSnapshot | null> {
+    const memberships = this.#registry
+      .list()
+      .filter((workspace) => workspace.sessionName === requestedSessionName);
+    if (memberships.length === 0) return null;
+    if (memberships.length !== 1) {
+      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    }
+    const workspace = memberships[0]!;
+    const inventory = await this.#discoverTerminalInventory();
+    const panes = inventory.panes.filter(
+      (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName,
+    );
+    if (panes.length === 0) return null;
+    const active = panes.find((pane) => pane.active) ?? panes[0]!;
+    const catalogIssue: NativeTerminalInventoryCatalogIssue | null = inventory.catalog
+      .invalidRuntimeProof
+      ? "invalid-runtime-proof"
+      : inventory.catalog.missingSemanticStamp
+        ? "missing-semantic-stamp"
+        : inventory.catalog.duplicateSemanticStamp
+          ? "duplicate-semantic-stamp"
+          : inventory.catalog.duplicateRuntimePaneBinding
+            ? "duplicate-runtime-pane-binding"
+            : null;
+    return Object.freeze({
+      name: workspace.sessionName,
+      runtimeSessionId: active.sessionId,
+      dir: active.dir,
+      catalogIssue,
+      panes: Object.freeze(
+        panes.map(
+          ({
+            workspaceName: _workspaceName,
+            sessionName: _sessionName,
+            sessionId: _sessionId,
+            sessionWindowCount: _sessionWindowCount,
+            dir: _dir,
+            ...pane
+          }) => Object.freeze(pane),
+        ),
+      ),
+    });
   }
 
   snapshot(): TerminalAttachmentAdmissionSnapshot {

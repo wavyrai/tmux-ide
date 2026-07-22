@@ -6,6 +6,8 @@ import {
   ApplicationShellActionTraceV1SchemaZ,
   ApplicationShellCommandInvocationSchemaZ,
   ApplicationShellProjectionV1SchemaZ,
+  ApplicationShellProjectionInputV1SchemaZ,
+  ApplicationShellProjectionInputV2SchemaZ,
   applyApplicationShellInvocationV1,
   applicationShellActionTraceV1,
   applicationShellCommandInvocation,
@@ -13,7 +15,11 @@ import {
   projectApplicationShellV1,
   replayApplicationShellActionTraceV1,
 } from "../application-shell.ts";
-import { ApplicationShellResourceV1SchemaZ } from "../application-shell-resource.ts";
+import {
+  ApplicationShellResourceSchemaZ,
+  ApplicationShellResourceV1SchemaZ,
+  ApplicationShellResourceV2SchemaZ,
+} from "../application-shell-resource.ts";
 import { COHESION_FIXTURE_V1 } from "../cohesion-fixture.ts";
 import {
   APPLICATION_SHELL_COMMAND_IDS,
@@ -75,6 +81,15 @@ describe("semantic application shell", () => {
         daemon: { ...envelope.daemon, token: "secret" },
       }).success,
     ).toBe(false);
+    expect(
+      ApplicationShellResourceV1SchemaZ.safeParse({
+        ...envelope,
+        resource: {
+          ...envelope.resource,
+          terminalInventory: { activeResourceId: null, resources: [] },
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps terminal inventory optional while strictly preserving semantic resources", () => {
@@ -123,6 +138,25 @@ describe("semantic application shell", () => {
     expect(projection.terminalInventory).toEqual(input.terminalInventory);
     expect(ApplicationShellProjectionV1SchemaZ.parse(serialized(projection))).toEqual(projection);
     expect(mutableDataPaths(projection.terminalInventory, "terminalInventory")).toEqual([]);
+    const v2Envelope = {
+      version: 2,
+      daemon: {
+        protocolVersion: 1,
+        productVersion: "2.8.0",
+        instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+        startedAt: "2026-07-21T00:00:00.000Z",
+      },
+      resource: {
+        project: input.project,
+        workspace: input.workspace,
+        dock: input.dock,
+        focus: input.focus,
+        connection: input.connection,
+        terminalInventory: input.terminalInventory,
+      },
+    };
+    expect(ApplicationShellResourceV2SchemaZ.parse(v2Envelope)).toEqual(v2Envelope);
+    expect(ApplicationShellResourceSchemaZ.parse(v2Envelope)).toEqual(v2Envelope);
 
     expect(() =>
       projectApplicationShellV1({
@@ -159,6 +193,30 @@ describe("semantic application shell", () => {
         },
       }),
     ).toThrow(/fallback/u);
+  });
+
+  it("rejects duplicate non-null agent pane ids at every strict projection boundary", () => {
+    const duplicateAgents = COHESION_FIXTURE_V1.workspace.sidebar.agents
+      .slice(0, 2)
+      .map((agent) => ({
+        ...agent,
+        paneId: "pane.shared",
+      }));
+    const input = {
+      ...COHESION_FIXTURE_V1,
+      workspace: {
+        ...COHESION_FIXTURE_V1.workspace,
+        sidebar: { ...COHESION_FIXTURE_V1.workspace.sidebar, agents: duplicateAgents },
+      },
+    };
+    expect(ApplicationShellProjectionInputV1SchemaZ.safeParse(input).success).toBe(false);
+    expect(
+      ApplicationShellProjectionInputV2SchemaZ.safeParse({
+        ...input,
+        terminalInventory: { activeResourceId: null, resources: [] },
+      }).success,
+    ).toBe(false);
+    expect(() => projectApplicationShellV1(input)).toThrow(/duplicate semantic pane identity/u);
   });
 
   it("projects navigation and dock identity only from the canonical surface registry", () => {

@@ -122,6 +122,18 @@ describe("desktop host contract", () => {
       DesktopDaemonFetchApplicationShellRequestSchemaZ.parse({ workspaceName: " product " }),
     ).toEqual({ workspaceName: "product" });
     expect(
+      DesktopDaemonFetchApplicationShellRequestSchemaZ.parse({
+        workspaceName: "product",
+        resourceVersion: 2,
+      }),
+    ).toEqual({ workspaceName: "product", resourceVersion: 2 });
+    expect(
+      DesktopDaemonFetchApplicationShellRequestSchemaZ.safeParse({
+        workspaceName: "product",
+        resourceVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
       DesktopDaemonFetchApplicationShellRequestSchemaZ.safeParse({
         workspaceName: "product",
         sessionName: "raw-session",

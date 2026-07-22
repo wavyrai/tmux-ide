@@ -697,6 +697,7 @@ async function startHttpServer({
     workspacePaneCreationBackend,
     workspaceRegistry,
     terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
+    applicationShellInventoryBackend: terminalAttachmentRuntime,
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({ ok: true, session: sessionName });

@@ -46,9 +46,11 @@ export interface ApplicationShellTerminalPaneFrame {
 export const TERMINAL_RESOURCE_UNAVAILABLE_LABELS: Readonly<
   Record<TerminalResourceUnavailableReason, string>
 > = Object.freeze({
+  "invalid-runtime-proof": "Terminal runtime proof is invalid",
   "missing-semantic-stamp": "Terminal identity has not been established",
   "invalid-semantic-stamp": "Terminal identity is invalid",
   "duplicate-semantic-stamp": "Terminal identity is duplicated",
+  "duplicate-runtime-pane-binding": "Terminal runtime binding is duplicated",
   "not-single-pane-window": "Terminal belongs to a multi-pane tmux window",
 });
 

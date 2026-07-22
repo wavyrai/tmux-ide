@@ -476,6 +476,7 @@ describe("desktop App live composition", () => {
     });
     expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledWith({
       workspaceName: "beta",
+      resourceVersion: 2,
     });
     const workspaceSubscription = harness.subscriptions.find(
       ({ workspaceNames }) => workspaceNames[0] === "beta",
@@ -579,6 +580,7 @@ describe("desktop App live composition", () => {
     expect(root.textContent).not.toContain("old-workspace");
     expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledWith({
       workspaceName: "new-workspace",
+      resourceVersion: 2,
     });
     expect(harness.host.daemon.fetchApplicationShell).not.toHaveBeenCalledWith({
       workspaceName: "old-workspace",

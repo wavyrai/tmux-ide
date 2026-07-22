@@ -43,9 +43,11 @@ export const APPLICATION_SHELL_PROJECTION_VERSION = 1 as const;
 export const APPLICATION_SHELL_TRACE_VERSION = 1 as const;
 
 export const TerminalResourceUnavailableReasonSchemaZ = z.enum([
+  "invalid-runtime-proof",
   "missing-semantic-stamp",
   "invalid-semantic-stamp",
   "duplicate-semantic-stamp",
+  "duplicate-runtime-pane-binding",
   "not-single-pane-window",
 ]);
 export type TerminalResourceUnavailableReason = z.infer<
@@ -151,17 +153,56 @@ export interface ApplicationShellProjectionInputV1 extends Pick<
   readonly terminalInventory?: ApplicationShellTerminalInventory;
 }
 
+const ApplicationShellProjectionInputV1Fields = {
+  project: CohesionFixtureV1SchemaZ.shape.project,
+  workspace: CohesionFixtureV1SchemaZ.shape.workspace,
+  dock: CohesionFixtureV1SchemaZ.shape.dock,
+  focus: FocusOverlayStateV1SchemaZ,
+  connection: CohesionFixtureV1SchemaZ.shape.connection,
+} as const;
+
+function refineUniqueAgentPaneIds(
+  agents: readonly { readonly paneId: string | null }[],
+  ctx: z.RefinementCtx,
+  pathPrefix: readonly PropertyKey[],
+): void {
+  const paneIds = new Set<string>();
+  for (const [index, agent] of agents.entries()) {
+    if (agent.paneId === null) continue;
+    if (paneIds.has(agent.paneId)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [...pathPrefix, index, "paneId"],
+        message: "duplicate semantic pane identity",
+      });
+    }
+    paneIds.add(agent.paneId);
+  }
+}
+
+export const ApplicationShellProjectionInputV1WireSchemaZ = z
+  .object(ApplicationShellProjectionInputV1Fields)
+  .strict()
+  .superRefine((input, ctx) => {
+    refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
+      "workspace",
+      "sidebar",
+      "agents",
+    ]);
+  });
+
 export const ApplicationShellProjectionInputV1SchemaZ = z
   .object({
-    project: CohesionFixtureV1SchemaZ.shape.project,
-    workspace: CohesionFixtureV1SchemaZ.shape.workspace,
-    dock: CohesionFixtureV1SchemaZ.shape.dock,
-    focus: FocusOverlayStateV1SchemaZ,
-    connection: CohesionFixtureV1SchemaZ.shape.connection,
+    ...ApplicationShellProjectionInputV1Fields,
     terminalInventory: ApplicationShellTerminalInventorySchemaZ.optional(),
   })
   .strict()
   .superRefine((input, ctx) => {
+    refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
+      "workspace",
+      "sidebar",
+      "agents",
+    ]);
     if (input.terminalInventory === undefined) return;
     const resources = new Map(
       input.terminalInventory.resources.map((resource) => [resource.id, resource]),
@@ -178,6 +219,37 @@ export const ApplicationShellProjectionInputV1SchemaZ = z
       }
     }
   });
+
+export const ApplicationShellProjectionInputV2SchemaZ = z
+  .object({
+    ...ApplicationShellProjectionInputV1Fields,
+    terminalInventory: ApplicationShellTerminalInventorySchemaZ,
+  })
+  .strict()
+  .superRefine((input, ctx) => {
+    refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
+      "workspace",
+      "sidebar",
+      "agents",
+    ]);
+    const resources = new Map(
+      input.terminalInventory.resources.map((resource) => [resource.id, resource]),
+    );
+    for (const [index, agent] of input.workspace.sidebar.agents.entries()) {
+      if (agent.paneId === null) continue;
+      const resource = resources.get(agent.paneId);
+      if (resource === undefined || resource.kind !== "agent") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["workspace", "sidebar", "agents", index, "paneId"],
+          message: "attached agents must correlate to one agent terminal resource",
+        });
+      }
+    }
+  });
+export type ApplicationShellProjectionInputV2 = z.infer<
+  typeof ApplicationShellProjectionInputV2SchemaZ
+>;
 
 type SidebarSession = CohesionFixtureV1["workspace"]["sidebar"]["sessions"][number];
 type SidebarAgent = CohesionFixtureV1["workspace"]["sidebar"]["agents"][number];
@@ -313,6 +385,7 @@ export const ApplicationShellProjectionV1SchemaZ = z
   })
   .strict()
   .superRefine((projection, ctx) => {
+    refineUniqueAgentPaneIds(projection.sidebar.agents, ctx, ["sidebar", "agents"]);
     if (projection.terminalInventory === undefined) return;
     const resources = new Map(
       projection.terminalInventory.resources.map((resource) => [resource.id, resource]),

@@ -79,9 +79,53 @@ export interface SemanticPaneCatalogOptions {
    * rows; the implementation is expected to query tmux plus the workspace
    * registry directly.
    */
-  readonly discover: () =>
-    | readonly TrustedSemanticPaneSnapshot[]
-    | Promise<readonly TrustedSemanticPaneSnapshot[]>;
+  readonly discover: () => readonly unknown[] | Promise<readonly unknown[]>;
+}
+
+export interface TrustedSemanticPaneCatalogAnalysis {
+  readonly rows: readonly TrustedSemanticPaneSnapshot[];
+  readonly invalidRuntimeProof: boolean;
+  readonly missingSemanticStamp: boolean;
+  readonly duplicateSemanticStamp: boolean;
+  readonly duplicateRuntimePaneBinding: boolean;
+}
+
+/**
+ * Pure trust analysis shared by attachment resolution and terminal inventory.
+ * It deliberately reports every global fault so each consumer can preserve its
+ * own user-facing precedence without ever weakening the catalog invariants.
+ */
+export function analyzeTrustedSemanticPaneCatalog(
+  candidates: readonly unknown[],
+): TrustedSemanticPaneCatalogAnalysis {
+  const rows: TrustedSemanticPaneSnapshot[] = [];
+  let invalidRuntimeProof = false;
+  for (const candidate of candidates) {
+    const parsed = TrustedSemanticPaneSnapshotSchemaZ.safeParse(candidate);
+    if (!parsed.success) {
+      invalidRuntimeProof = true;
+      continue;
+    }
+    rows.push(parsed.data);
+  }
+
+  const semanticCounts = new Map<string, number>();
+  const runtimeCounts = new Map<string, number>();
+  for (const row of rows) {
+    runtimeCounts.set(row.runtimePaneId, (runtimeCounts.get(row.runtimePaneId) ?? 0) + 1);
+    if (row.semanticPaneId !== null) {
+      const semanticKey = `${row.workspaceName}\0${row.semanticPaneId}`;
+      semanticCounts.set(semanticKey, (semanticCounts.get(semanticKey) ?? 0) + 1);
+    }
+  }
+
+  return Object.freeze({
+    rows: Object.freeze(rows),
+    invalidRuntimeProof,
+    missingSemanticStamp: rows.some((row) => row.semanticPaneId === null),
+    duplicateSemanticStamp: [...semanticCounts.values()].some((count) => count !== 1),
+    duplicateRuntimePaneBinding: [...runtimeCounts.values()].some((count) => count !== 1),
+  });
 }
 
 interface GenerationState {
@@ -118,7 +162,7 @@ export class SemanticPaneCatalog {
 
   async resolve(target: TerminalAttachmentSemanticTarget): Promise<SemanticPaneResolution> {
     const parsedTarget = TerminalAttachmentSemanticTargetSchemaZ.parse(target);
-    let discovered: readonly TrustedSemanticPaneSnapshot[];
+    let discovered: readonly unknown[];
     try {
       discovered = await this.#discover();
     } catch {
@@ -129,20 +173,17 @@ export class SemanticPaneCatalog {
       );
     }
 
-    const rows: TrustedSemanticPaneSnapshot[] = [];
-    for (const candidate of discovered) {
-      const parsed = TrustedSemanticPaneSnapshotSchemaZ.safeParse(candidate);
-      if (!parsed.success) {
-        throw new SemanticPaneCatalogError(
-          "invalid-runtime-proof",
-          parsedTarget,
-          "Trusted tmux discovery returned an invalid runtime proof.",
-        );
-      }
-      rows.push(parsed.data);
+    const analysis = analyzeTrustedSemanticPaneCatalog(discovered);
+    const rows = analysis.rows;
+    if (analysis.invalidRuntimeProof) {
+      throw new SemanticPaneCatalogError(
+        "invalid-runtime-proof",
+        parsedTarget,
+        "Trusted tmux discovery returned an invalid runtime proof.",
+      );
     }
 
-    if (rows.some((row) => row.semanticPaneId === null)) {
+    if (analysis.missingSemanticStamp) {
       throw new SemanticPaneCatalogError(
         "missing-semantic-stamp",
         parsedTarget,
@@ -159,24 +200,14 @@ export class SemanticPaneCatalog {
       );
     }
 
-    const semanticCounts = new Map<string, number>();
-    const runtimeCounts = new Map<string, number>();
-    for (const row of rows) {
-      runtimeCounts.set(row.runtimePaneId, (runtimeCounts.get(row.runtimePaneId) ?? 0) + 1);
-      const semanticKey = semanticPaneTargetKey({
-        workspaceName: row.workspaceName,
-        semanticPaneId: row.semanticPaneId!,
-      });
-      semanticCounts.set(semanticKey, (semanticCounts.get(semanticKey) ?? 0) + 1);
-    }
-    if ([...semanticCounts.values()].some((count) => count !== 1)) {
+    if (analysis.duplicateSemanticStamp) {
       throw new SemanticPaneCatalogError(
         "duplicate-semantic-stamp",
         parsedTarget,
         "Semantic pane identities must be unique across trusted discovery.",
       );
     }
-    if ([...runtimeCounts.values()].some((count) => count !== 1)) {
+    if (analysis.duplicateRuntimePaneBinding) {
       throw new SemanticPaneCatalogError(
         "duplicate-runtime-pane-binding",
         parsedTarget,
