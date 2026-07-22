@@ -4,8 +4,15 @@ import type {
   NativeTerminalTransportError,
 } from "./native-terminal-transport.ts";
 import {
+  NATIVE_TERMINAL_MAX_CONNECTION_LIFETIME_MS,
+  NATIVE_TERMINAL_MAX_CONTROL_BYTES,
+  NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW,
+  NATIVE_TERMINAL_MAX_INBOUND_FRAMES_PER_WINDOW,
+  NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES,
   NATIVE_TERMINAL_MAX_QUEUED_EVENTS,
   NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES,
+  NATIVE_TERMINAL_RATE_WINDOW_MS,
+  NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS,
   NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
   createNativeTerminalWebSocketTransport,
   type NativeTerminalSocketEvent,
@@ -56,13 +63,14 @@ function ready(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-function geometry(generation = 0): string {
+function geometry(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     type: "geometry",
     protocolVersion: 1,
-    generation,
+    generation: 0,
     sourceGrid: { cols: 100, rows: 30 },
     clientViewport: { cols: 98, rows: 28 },
+    ...overrides,
   });
 }
 
@@ -127,6 +135,7 @@ interface RigOptions {
   readonly descriptors?: readonly unknown[];
   readonly schedule?: NativeTerminalWebSocketTransportDependencies["schedule"];
   readonly issueAttachment?: NativeTerminalWebSocketTransportDependencies["issueAttachment"];
+  readonly now?: () => number;
 }
 
 function rig(options: RigOptions = {}) {
@@ -143,7 +152,7 @@ function rig(options: RigOptions = {}) {
   const transport = createNativeTerminalWebSocketTransport({
     issueAttachment,
     createWebSocket,
-    now: () => NOW,
+    now: options.now ?? (() => NOW),
     schedule: options.schedule,
   });
   return { transport, issueAttachment, createWebSocket, sockets };
@@ -227,6 +236,15 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     const result = await connection;
     expect(result.status).toBe("connected");
     if (result.status !== "connected") return;
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "state",
+        state: "connected",
+        error: null,
+        sourceGrid: { cols: 120, rows: 40 },
+        clientViewport: { cols: 118, rows: 38 },
+      }),
+    );
 
     socket.message(Uint8Array.of(0x00, 0x80, 0xff).buffer);
     await vi.waitFor(() => expect(events.some((event) => event.type === "output")).toBe(true));
@@ -277,7 +295,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     });
   });
 
-  it("coalesces resize to the latest bounded control frame and retires at socket HWM", async () => {
+  it("settles only the latest coalesced resize after matching authoritative geometry", async () => {
     const events: NativeTerminalEvent[] = [];
     const harness = rig();
     const { socket, attachment } = await connectLive(harness, (event) => {
@@ -286,13 +304,19 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     const first = attachment.resize({ cols: 80, rows: 24 });
     const second = attachment.resize({ cols: 90, rows: 25 });
     const third = attachment.resize({ cols: 100, rows: 30 });
-    expect(second).toBe(first);
-    expect(third).toBe(first);
-    await expect(Promise.all([first, second, third])).resolves.toEqual([
-      { status: "ok" },
-      { status: "ok" },
-      { status: "ok" },
-    ]);
+    await expect(first).resolves.toMatchObject({
+      status: "error",
+      error: { code: "resize-superseded" },
+    });
+    await expect(second).resolves.toMatchObject({
+      status: "error",
+      error: { code: "resize-superseded" },
+    });
+    let thirdSettled = false;
+    void third.then(() => {
+      thirdSettled = true;
+    });
+    await Promise.resolve();
     expect(socket.sent).toHaveLength(2);
     expect(JSON.parse(socket.sent[1] as string)).toMatchObject({
       type: "resize",
@@ -300,6 +324,22 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       viewport: { cols: 100, rows: 30 },
     });
     socket.message(geometry());
+    await Promise.resolve();
+    expect(thirdSettled).toBe(false);
+    socket.message(
+      geometry({
+        sourceGrid: { cols: 102, rows: 32 },
+        clientViewport: { cols: 100, rows: 30 },
+      }),
+    );
+    await expect(third).resolves.toEqual({ status: "ok" });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "geometry",
+        sourceGrid: { cols: 102, rows: 32 },
+        clientViewport: { cols: 100, rows: 30 },
+      }),
+    );
 
     socket.bufferedAmount = NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES;
     await expect(attachment.resize({ cols: 110, rows: 35 })).resolves.toMatchObject({
@@ -314,6 +354,28 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
         error: expect.objectContaining({ code: "socket-backpressure" }),
       }),
     );
+  });
+
+  it("serializes sent resize correlation and supersedes older promises deterministically", async () => {
+    const harness = rig();
+    const { socket, attachment } = await connectLive(harness);
+    const first = attachment.resize({ cols: 80, rows: 24 });
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
+    const latest = attachment.resize({ cols: 100, rows: 30 });
+    await expect(first).resolves.toMatchObject({
+      status: "error",
+      error: { code: "resize-superseded" },
+    });
+    expect(socket.sent).toHaveLength(2);
+
+    socket.message(geometry({ clientViewport: { cols: 80, rows: 24 } }));
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(3));
+    expect(JSON.parse(socket.sent[2] as string)).toMatchObject({
+      type: "resize",
+      viewport: { cols: 100, rows: 30 },
+    });
+    socket.message(geometry({ clientViewport: { cols: 100, rows: 30 } }));
+    await expect(latest).resolves.toEqual({ status: "ok" });
   });
 
   it("bounds asynchronous output delivery and retires instead of growing an event queue", async () => {
@@ -346,6 +408,164 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       }),
     );
     expect(events.filter((event) => event.type === "output")).toHaveLength(1);
+  });
+
+  it("rejects oversized text and binary frames before encoding or copying payloads", async () => {
+    const textHarness = rig();
+    const text = await connectLive(textHarness);
+    const encode = vi.spyOn(TextEncoder.prototype, "encode");
+    text.socket.message("x".repeat(NATIVE_TERMINAL_MAX_CONTROL_BYTES + 1));
+    expect(encode).not.toHaveBeenCalled();
+    expect(text.socket.closes.at(-1)).toEqual({
+      code: 1009,
+      reason: "control-frame-too-large",
+    });
+    encode.mockRestore();
+
+    const encodedHarness = rig();
+    const encoded = await connectLive(encodedHarness);
+    const encodedByteCheck = vi.spyOn(TextEncoder.prototype, "encode");
+    encoded.socket.message("€".repeat(Math.floor(NATIVE_TERMINAL_MAX_CONTROL_BYTES / 3) + 1));
+    expect(encodedByteCheck).toHaveBeenCalledOnce();
+    expect(encoded.socket.closes.at(-1)).toEqual({
+      code: 1009,
+      reason: "control-frame-too-large",
+    });
+    encodedByteCheck.mockRestore();
+
+    const bufferHarness = rig();
+    const buffer = await connectLive(bufferHarness);
+    const arrayBufferSlice = vi.spyOn(ArrayBuffer.prototype, "slice");
+    buffer.socket.message(new ArrayBuffer(NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES + 1));
+    expect(arrayBufferSlice).not.toHaveBeenCalled();
+    expect(buffer.socket.closes.at(-1)).toEqual({
+      code: 1009,
+      reason: "output-frame-too-large",
+    });
+    arrayBufferSlice.mockRestore();
+
+    const viewHarness = rig();
+    const view = await connectLive(viewHarness);
+    const typedArraySlice = vi.spyOn(Uint8Array.prototype, "slice");
+    view.socket.message(new Uint8Array(NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES + 1));
+    expect(typedArraySlice).not.toHaveBeenCalled();
+    expect(view.socket.closes.at(-1)).toEqual({
+      code: 1009,
+      reason: "output-frame-too-large",
+    });
+    typedArraySlice.mockRestore();
+  });
+
+  it("retires typed on bounded control and total inbound frame-rate exhaustion", async () => {
+    let clock = NOW;
+    const controlHarness = rig({ now: () => clock });
+    const control = await connectLive(controlHarness);
+    for (
+      let index = 1;
+      index <= NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW;
+      index += 1
+    ) {
+      control.socket.message(geometry());
+      await Promise.resolve();
+      await Promise.resolve();
+      if (control.socket.readyState === 3) break;
+    }
+    expect(control.socket.closes.at(-1)).toEqual({
+      code: 1008,
+      reason: "control-frame-rate-limit",
+    });
+
+    clock = NOW;
+    const frameHarness = rig({ now: () => clock });
+    const frames = await connectLive(frameHarness);
+    for (let index = 1; index <= NATIVE_TERMINAL_MAX_INBOUND_FRAMES_PER_WINDOW; index += 1) {
+      frames.socket.message(new ArrayBuffer(0));
+      if (frames.socket.readyState === 3) break;
+    }
+    expect(frames.socket.closes.at(-1)).toEqual({
+      code: 1008,
+      reason: "inbound-frame-rate-limit",
+    });
+
+    clock = NOW;
+    const renewalHarness = rig({ now: () => clock });
+    const renewal = await connectLive(renewalHarness);
+    for (let index = 0; index < 4; index += 1) {
+      clock += NATIVE_TERMINAL_RATE_WINDOW_MS;
+      renewal.socket.message(geometry());
+      await Promise.resolve();
+    }
+    expect(renewal.socket.closes).toEqual([]);
+  });
+
+  it("bounds connection lifetime and resize acknowledgement, settling outstanding callers", async () => {
+    const scheduled: Array<{ callback: () => void; active: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, active: true, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.active = false;
+      };
+    };
+
+    const resizeHarness = rig({ schedule });
+    const resize = await connectLive(resizeHarness);
+    const pending = resize.attachment.resize({ cols: 100, rows: 30 });
+    await vi.waitFor(() => expect(resize.socket.sent).toHaveLength(2));
+    const resizeTimeout = scheduled.find(
+      (entry) => entry.active && entry.delay === NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS,
+    );
+    expect(resizeTimeout).toBeDefined();
+    resizeTimeout!.callback();
+    await expect(pending).resolves.toMatchObject({
+      status: "error",
+      error: { code: "resize-ack-timeout" },
+    });
+    expect(resize.socket.closes.at(-1)).toEqual({ code: 1008, reason: "resize-ack-timeout" });
+
+    const lifetimeHarness = rig({ schedule });
+    const lifetimeEvents: NativeTerminalEvent[] = [];
+    const lifetime = await connectLive(lifetimeHarness, (event) => {
+      lifetimeEvents.push(event);
+    });
+    const lifetimeLimit = [...scheduled]
+      .reverse()
+      .find((entry) => entry.active && entry.delay === NATIVE_TERMINAL_MAX_CONNECTION_LIFETIME_MS);
+    expect(lifetimeLimit).toBeDefined();
+    lifetimeLimit!.callback();
+    expect(lifetime.socket.closes.at(-1)).toEqual({
+      code: 1008,
+      reason: "connection-lifetime-limit",
+    });
+    await vi.waitFor(() =>
+      expect(lifetimeEvents).toContainEqual({
+        type: "state",
+        state: "disconnected",
+        error: expect.objectContaining({ code: "connection-lifetime-limit" }),
+      }),
+    );
+  });
+
+  it("settles an outstanding resize with typed close and socket errors", async () => {
+    const closeHarness = rig();
+    const closed = await connectLive(closeHarness);
+    const closedResize = closed.attachment.resize({ cols: 100, rows: 30 });
+    await vi.waitFor(() => expect(closed.socket.sent).toHaveLength(2));
+    closed.socket.peerClose();
+    await expect(closedResize).resolves.toMatchObject({
+      status: "error",
+      error: { code: "attachment-closed" },
+    });
+
+    const errorHarness = rig();
+    const errored = await connectLive(errorHarness);
+    const erroredResize = errored.attachment.resize({ cols: 100, rows: 30 });
+    await vi.waitFor(() => expect(errored.socket.sent).toHaveLength(2));
+    errored.socket.error();
+    await expect(erroredResize).resolves.toMatchObject({
+      status: "error",
+      error: { code: "socket-unavailable" },
+    });
   });
 
   it("translates typed daemon failures and emits one disconnected state", async () => {

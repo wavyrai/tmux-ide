@@ -26,6 +26,11 @@ export const NATIVE_TERMINAL_MAX_CONTROL_FRAMES = 1_024;
 export const NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES = 64 * 1024;
 export const NATIVE_TERMINAL_MAX_DESCRIPTOR_LIFETIME_MS = 60_000;
 export const NATIVE_TERMINAL_DEFAULT_ISSUE_TIMEOUT_MS = 5_000;
+export const NATIVE_TERMINAL_RATE_WINDOW_MS = 1_000;
+export const NATIVE_TERMINAL_MAX_INBOUND_FRAMES_PER_WINDOW = 4_096;
+export const NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW = 256;
+export const NATIVE_TERMINAL_MAX_CONNECTION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
+export const NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS = 5_000;
 
 const REDEEM_PATH = "/v1/terminal/attachments/redeem";
 const WS_CONNECTING = 0;
@@ -91,11 +96,15 @@ interface ReadyFrame {
   readonly requestId: string;
   readonly generation: number;
   readonly effectiveViewerMode: TerminalAttachmentViewerMode;
+  readonly sourceGrid: TerminalAttachmentViewport;
+  readonly clientViewport: TerminalAttachmentViewport;
 }
 
 interface GeometryFrame {
   readonly type: "geometry";
   readonly generation: number;
+  readonly sourceGrid: TerminalAttachmentViewport;
+  readonly clientViewport: TerminalAttachmentViewport;
 }
 
 interface ExitFrame {
@@ -116,6 +125,19 @@ type ServerControlFrame = ReadyFrame | GeometryFrame | ExitFrame | ErrorFrame;
 interface QueuedEvent {
   readonly event: NativeTerminalEvent;
   readonly byteLength: number;
+}
+
+interface ResizeRequest {
+  readonly viewport: TerminalAttachmentViewport;
+  readonly promise: Promise<NativeTerminalMutationResult>;
+  readonly resolve: (result: NativeTerminalMutationResult) => void;
+  settled: boolean;
+}
+
+interface SentResize {
+  readonly viewport: TerminalAttachmentViewport;
+  request: ResizeRequest | null;
+  cancelTimeout: () => void;
 }
 
 function defaultCreateWebSocket(url: string, protocol: string): NativeTerminalWebSocket {
@@ -167,8 +189,12 @@ function safeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value);
 }
 
-function controlByteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+function boundedControlByteLength(value: string): number | null {
+  // A UTF-16 code unit always contributes at least one UTF-8 byte. Reject on
+  // that allocation-free lower bound before TextEncoder can copy hostile text.
+  if (value.length === 0 || value.length > NATIVE_TERMINAL_MAX_CONTROL_BYTES) return null;
+  const byteLength = new TextEncoder().encode(value).byteLength;
+  return byteLength <= NATIVE_TERMINAL_MAX_CONTROL_BYTES ? byteLength : null;
 }
 
 function validateLoopbackWebSocketUrl(value: unknown): string | null {
@@ -233,7 +259,7 @@ function validateIssueDescriptor(
     requestId: value.requestId,
     daemonInstanceId: value.daemonInstanceId,
   });
-  if (controlByteLength(redemptionFrame) > NATIVE_TERMINAL_MAX_CONTROL_BYTES) return null;
+  if (boundedControlByteLength(redemptionFrame) === null) return null;
 
   // A mode change is allowed only when it is explicit in both issue and ready;
   // the renderer never infers authority from the requested mode.
@@ -250,7 +276,6 @@ function validateIssueDescriptor(
 }
 
 function parseControlFrame(text: string): ServerControlFrame | null {
-  if (text.length === 0 || controlByteLength(text) > NATIVE_TERMINAL_MAX_CONTROL_BYTES) return null;
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -293,6 +318,8 @@ function parseControlFrame(text: string): ServerControlFrame | null {
       requestId: value.requestId,
       generation: value.generation,
       effectiveViewerMode: viewerMode.data,
+      sourceGrid: TerminalAttachmentViewportSchemaZ.parse(value.sourceGrid),
+      clientViewport: TerminalAttachmentViewportSchemaZ.parse(value.clientViewport),
     };
   }
 
@@ -312,7 +339,12 @@ function parseControlFrame(text: string): ServerControlFrame | null {
     ) {
       return null;
     }
-    return { type: "geometry", generation: value.generation };
+    return {
+      type: "geometry",
+      generation: value.generation,
+      sourceGrid: TerminalAttachmentViewportSchemaZ.parse(value.sourceGrid),
+      clientViewport: TerminalAttachmentViewportSchemaZ.parse(value.clientViewport),
+    };
   }
 
   if (value.type === "exit") {
@@ -374,12 +406,17 @@ function controlError(frame: ErrorFrame): NativeTerminalTransportError {
   );
 }
 
-function binaryBytes(value: unknown): Uint8Array | null {
+function binaryByteLength(value: unknown): number | null {
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return value.byteLength;
+  return null;
+}
+
+function copyBinaryBytes(value: ArrayBuffer | ArrayBufferView): Uint8Array {
   if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice();
   }
-  return null;
+  throw new TypeError("Terminal output frame is not binary.");
 }
 
 function boundedIssueTimeout(value: number | undefined): number {
@@ -388,6 +425,21 @@ function boundedIssueTimeout(value: number | undefined): number {
     throw new TypeError("Native terminal issue timeout is invalid.");
   }
   return selected;
+}
+
+function sameViewport(
+  left: TerminalAttachmentViewport,
+  right: TerminalAttachmentViewport,
+): boolean {
+  return left.cols === right.cols && left.rows === right.rows;
+}
+
+function resizeRequest(viewport: TerminalAttachmentViewport): ResizeRequest {
+  let resolve!: (result: NativeTerminalMutationResult) => void;
+  const promise = new Promise<NativeTerminalMutationResult>((settle) => {
+    resolve = settle;
+  });
+  return { viewport, promise, resolve, settled: false };
 }
 
 class NativeTerminalWebSocketSession {
@@ -402,6 +454,7 @@ class NativeTerminalWebSocketSession {
   #resolveConnect!: (result: NativeTerminalConnectResult) => void;
   #redemptionFrame: string | null;
   #cancelExpiry: (() => void) | null = null;
+  #cancelLifetime: (() => void) | null = null;
   #phase: "opening" | "redeeming" | "live" | "closed" = "opening";
   #generation: number | null = null;
   #connectSettled = false;
@@ -409,9 +462,13 @@ class NativeTerminalWebSocketSession {
   #eventCount = 0;
   #eventBytes = 0;
   #delivering = false;
-  #pendingResize: TerminalAttachmentViewport | null = null;
-  #resizePromise: Promise<NativeTerminalMutationResult> | null = null;
-  #controlFrames = 0;
+  #queuedResize: ResizeRequest | null = null;
+  #sentResize: SentResize | null = null;
+  #resizeFlushScheduled = false;
+  #outboundControlFrames = 0;
+  #rateWindowStartedAt: number;
+  #inboundFrames = 0;
+  #inboundControlFrames = 0;
 
   constructor(options: {
     readonly descriptor: SafeIssueDescriptor;
@@ -424,6 +481,7 @@ class NativeTerminalWebSocketSession {
     this.#listener = options.listener;
     this.#schedule = options.schedule;
     this.#now = options.now;
+    this.#rateWindowStartedAt = options.now();
     const { redemptionFrame, ...identity } = options.descriptor;
     this.#redemptionFrame = redemptionFrame;
     this.#identity = identity;
@@ -505,7 +563,21 @@ class NativeTerminalWebSocketSession {
       if (this.#phase === "opening") this.#protocolFailure();
       return;
     }
+    if (!this.#acceptInboundFrame(typeof event.data === "string")) return;
     if (typeof event.data === "string") {
+      if (boundedControlByteLength(event.data) === null) {
+        this.#retire(
+          transportError(
+            "control-frame-too-large",
+            "The daemon sent an oversized terminal control frame.",
+            true,
+          ),
+          this.#phase === "live",
+          1009,
+          "control-frame-too-large",
+        );
+        return;
+      }
       const frame = parseControlFrame(event.data);
       if (!frame) {
         this.#protocolFailure();
@@ -514,13 +586,13 @@ class NativeTerminalWebSocketSession {
       this.#handleControl(frame);
       return;
     }
-    const bytes = binaryBytes(event.data);
-    if (!bytes || this.#phase !== "live") {
+    const byteLength = binaryByteLength(event.data);
+    if (byteLength === null || this.#phase !== "live") {
       this.#protocolFailure();
       return;
     }
-    if (bytes.byteLength === 0) return;
-    if (bytes.byteLength > NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES) {
+    if (byteLength === 0) return;
+    if (byteLength > NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES) {
       this.#retire(
         transportError(
           "output-frame-too-large",
@@ -533,8 +605,41 @@ class NativeTerminalWebSocketSession {
       );
       return;
     }
-    this.#queueEvent({ type: "output", bytes }, bytes.byteLength);
+    const bytes = copyBinaryBytes(event.data as ArrayBuffer | ArrayBufferView);
+    this.#queueEvent({ type: "output", bytes }, byteLength);
   };
+
+  #acceptInboundFrame(control: boolean): boolean {
+    const now = this.#now();
+    if (
+      !Number.isSafeInteger(now) ||
+      now < this.#rateWindowStartedAt ||
+      now - this.#rateWindowStartedAt >= NATIVE_TERMINAL_RATE_WINDOW_MS
+    ) {
+      this.#rateWindowStartedAt = Number.isSafeInteger(now) ? now : this.#rateWindowStartedAt;
+      this.#inboundFrames = 0;
+      this.#inboundControlFrames = 0;
+    }
+    this.#inboundFrames += 1;
+    if (control) this.#inboundControlFrames += 1;
+    if (
+      this.#inboundFrames <= NATIVE_TERMINAL_MAX_INBOUND_FRAMES_PER_WINDOW &&
+      this.#inboundControlFrames <= NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW
+    ) {
+      return true;
+    }
+    const controlExhausted =
+      this.#inboundControlFrames > NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW;
+    const error = transportError(
+      controlExhausted ? "control-frame-rate-limit" : "inbound-frame-rate-limit",
+      controlExhausted
+        ? "The daemon exceeded the terminal control-frame rate limit."
+        : "The daemon exceeded the terminal inbound frame-rate limit.",
+      true,
+    );
+    this.#retire(error, this.#phase === "live", 1008, error.code);
+    return false;
+  }
 
   readonly #onClose = (): void => {
     if (this.#phase === "closed") return;
@@ -573,8 +678,32 @@ class NativeTerminalWebSocketSession {
       this.#phase = "live";
       this.#cancelExpiry?.();
       this.#cancelExpiry = null;
+      this.#cancelLifetime = this.#schedule(
+        () =>
+          this.#retire(
+            transportError(
+              "connection-lifetime-limit",
+              "The terminal attachment reached its maximum connection lifetime.",
+              true,
+            ),
+            true,
+            1008,
+            "connection-lifetime-limit",
+          ),
+        NATIVE_TERMINAL_MAX_CONNECTION_LIFETIME_MS,
+      );
+      if (this.#phase !== "live") return;
       this.#settleConnect({ status: "connected", attachment: this.#attachment });
-      this.#queueEvent({ type: "state", state: "connected", error: null }, 0);
+      this.#queueEvent(
+        {
+          type: "state",
+          state: "connected",
+          error: null,
+          sourceGrid: frame.sourceGrid,
+          clientViewport: frame.clientViewport,
+        },
+        0,
+      );
       return;
     }
 
@@ -587,7 +716,19 @@ class NativeTerminalWebSocketSession {
       return;
     }
     if (frame.type === "geometry") {
-      if (frame.generation !== this.#generation) this.#protocolFailure();
+      if (frame.generation !== this.#generation) {
+        this.#protocolFailure();
+        return;
+      }
+      this.#queueEvent(
+        {
+          type: "geometry",
+          sourceGrid: frame.sourceGrid,
+          clientViewport: frame.clientViewport,
+        },
+        0,
+      );
+      this.#acknowledgeResize(frame.clientViewport);
       return;
     }
     if (frame.type === "exit") {
@@ -644,47 +785,130 @@ class NativeTerminalWebSocketSession {
         errorResult(transportError("resize-unavailable", "Terminal resize is unavailable.", true)),
       );
     }
-    this.#pendingResize = parsed.data;
-    if (this.#resizePromise) return this.#resizePromise;
-    this.#resizePromise = Promise.resolve().then(() => {
-      const next = this.#pendingResize;
-      this.#pendingResize = null;
-      this.#resizePromise = null;
-      if (this.#phase !== "live" || this.#generation === null || !next) {
-        return errorResult(
-          transportError("resize-unavailable", "Terminal resize is unavailable.", true),
-        );
-      }
-      if (this.#controlFrames >= NATIVE_TERMINAL_MAX_CONTROL_FRAMES) {
-        const error = transportError(
+    const next = parsed.data;
+    if (this.#queuedResize && sameViewport(this.#queuedResize.viewport, next)) {
+      return this.#queuedResize.promise;
+    }
+    if (this.#sentResize && sameViewport(this.#sentResize.viewport, next)) {
+      this.#supersedeResize(this.#queuedResize);
+      this.#queuedResize = null;
+      if (this.#sentResize.request) return this.#sentResize.request.promise;
+      const request = resizeRequest(next);
+      this.#sentResize.request = request;
+      return request.promise;
+    }
+
+    if (this.#sentResize?.request) {
+      this.#supersedeResize(this.#sentResize.request);
+      this.#sentResize.request = null;
+    }
+    this.#supersedeResize(this.#queuedResize);
+    const request = resizeRequest(next);
+    this.#queuedResize = request;
+    this.#scheduleResizeFlush();
+    return request.promise;
+  }
+
+  #supersedeResize(request: ResizeRequest | null): void {
+    if (!request || request.settled) return;
+    request.settled = true;
+    request.resolve(
+      errorResult(
+        transportError(
+          "resize-superseded",
+          "A newer terminal viewport superseded this resize request.",
+          true,
+        ),
+      ),
+    );
+  }
+
+  #settleResize(request: ResizeRequest | null, result: NativeTerminalMutationResult): void {
+    if (!request || request.settled) return;
+    request.settled = true;
+    request.resolve(result);
+  }
+
+  #scheduleResizeFlush(): void {
+    if (this.#resizeFlushScheduled) return;
+    this.#resizeFlushScheduled = true;
+    void Promise.resolve().then(() => {
+      this.#resizeFlushScheduled = false;
+      this.#flushResize();
+    });
+  }
+
+  #flushResize(): void {
+    if (this.#sentResize || !this.#queuedResize) return;
+    if (this.#phase !== "live" || this.#generation === null) {
+      const request = this.#queuedResize;
+      this.#queuedResize = null;
+      this.#settleResize(
+        request,
+        errorResult(transportError("resize-unavailable", "Terminal resize is unavailable.", true)),
+      );
+      return;
+    }
+    if (this.#outboundControlFrames >= NATIVE_TERMINAL_MAX_CONTROL_FRAMES) {
+      this.#retire(
+        transportError(
           "control-frame-limit",
           "The terminal control-frame limit was exhausted.",
           true,
-        );
-        this.#retire(error, true, 1008, "control-frame-limit");
-        return errorResult(error);
-      }
-      const frame = JSON.stringify({
-        type: "resize",
-        protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
-        generation: this.#generation,
-        viewport: next,
-      });
-      const sendError = this.#sendControl(frame);
-      if (sendError) return errorResult(sendError);
-      this.#controlFrames += 1;
-      return { status: "ok" };
+        ),
+        true,
+        1008,
+        "control-frame-limit",
+      );
+      return;
+    }
+    const request = this.#queuedResize;
+    const frame = JSON.stringify({
+      type: "resize",
+      protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+      generation: this.#generation,
+      viewport: request.viewport,
     });
-    return this.#resizePromise;
+    const sendError = this.#sendControl(frame);
+    if (sendError) return;
+    this.#queuedResize = null;
+    this.#outboundControlFrames += 1;
+    const sent: SentResize = {
+      viewport: request.viewport,
+      request,
+      cancelTimeout: () => undefined,
+    };
+    this.#sentResize = sent;
+    sent.cancelTimeout = this.#schedule(() => {
+      if (this.#sentResize !== sent) return;
+      this.#retire(
+        transportError(
+          "resize-ack-timeout",
+          "The daemon did not confirm the terminal viewport in time.",
+          true,
+        ),
+        true,
+        1008,
+        "resize-ack-timeout",
+      );
+    }, NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS);
+  }
+
+  #acknowledgeResize(viewport: TerminalAttachmentViewport): void {
+    const sent = this.#sentResize;
+    if (!sent || !sameViewport(sent.viewport, viewport)) return;
+    sent.cancelTimeout();
+    this.#sentResize = null;
+    this.#settleResize(sent.request, { status: "ok" });
+    this.#scheduleResizeFlush();
   }
 
   #sendControl(frame: string): NativeTerminalTransportError | null {
-    const byteLength = controlByteLength(frame);
+    const byteLength = boundedControlByteLength(frame);
     const buffered = this.#socket.bufferedAmount;
     if (
       this.#socket.readyState !== WS_OPEN ||
-      byteLength === 0 ||
-      byteLength > NATIVE_TERMINAL_MAX_CONTROL_BYTES ||
+      byteLength === null ||
       !Number.isSafeInteger(buffered) ||
       buffered < 0 ||
       buffered > NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES - byteLength
@@ -793,9 +1017,17 @@ class NativeTerminalWebSocketSession {
     const wasLive = this.#phase === "live";
     this.#phase = "closed";
     this.#redemptionFrame = null;
-    this.#pendingResize = null;
+    const queuedResize = this.#queuedResize;
+    const sentResize = this.#sentResize;
+    this.#queuedResize = null;
+    this.#sentResize = null;
+    sentResize?.cancelTimeout();
+    this.#settleResize(sentResize?.request ?? null, errorResult(error));
+    this.#settleResize(queuedResize, errorResult(error));
     this.#cancelExpiry?.();
     this.#cancelExpiry = null;
+    this.#cancelLifetime?.();
+    this.#cancelLifetime = null;
     this.#socket.removeEventListener("open", this.#onOpen);
     this.#socket.removeEventListener("message", this.#onMessage);
     this.#socket.removeEventListener("close", this.#onClose);

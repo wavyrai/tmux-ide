@@ -7,11 +7,28 @@ import {
 
 export type NativeTerminalConnectionState = "connected" | "disconnected";
 
+export interface NativeTerminalGeometry {
+  readonly sourceGrid: TerminalAttachmentViewport;
+  readonly clientViewport: TerminalAttachmentViewport;
+}
+
 export type NativeTerminalEvent =
   | { readonly type: "output"; readonly bytes: Uint8Array }
   | {
       readonly type: "state";
-      readonly state: NativeTerminalConnectionState;
+      readonly state: "connected";
+      readonly error: null;
+      readonly sourceGrid: TerminalAttachmentViewport;
+      readonly clientViewport: TerminalAttachmentViewport;
+    }
+  | {
+      readonly type: "geometry";
+      readonly sourceGrid: TerminalAttachmentViewport;
+      readonly clientViewport: TerminalAttachmentViewport;
+    }
+  | {
+      readonly type: "state";
+      readonly state: "disconnected";
       readonly error: NativeTerminalTransportError | null;
     };
 
@@ -23,6 +40,7 @@ export interface NativeTerminalTransportError {
 
 export interface NativeTerminalAttachment {
   write(bytes: Uint8Array): Promise<NativeTerminalMutationResult>;
+  /** Resolves `ok` only after daemon-authoritative geometry matches this viewport. */
   resize(viewport: TerminalAttachmentViewport): Promise<NativeTerminalMutationResult>;
   dispose(): void;
 }
@@ -69,11 +87,16 @@ export {
   NATIVE_TERMINAL_DEFAULT_ISSUE_TIMEOUT_MS,
   NATIVE_TERMINAL_MAX_CONTROL_BYTES,
   NATIVE_TERMINAL_MAX_CONTROL_FRAMES,
+  NATIVE_TERMINAL_MAX_CONNECTION_LIFETIME_MS,
   NATIVE_TERMINAL_MAX_DESCRIPTOR_LIFETIME_MS,
+  NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW,
+  NATIVE_TERMINAL_MAX_INBOUND_FRAMES_PER_WINDOW,
   NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES,
   NATIVE_TERMINAL_MAX_QUEUED_EVENT_BYTES,
   NATIVE_TERMINAL_MAX_QUEUED_EVENTS,
   NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES,
+  NATIVE_TERMINAL_RATE_WINDOW_MS,
+  NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS,
   NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
   createNativeTerminalWebSocketTransport,
   type NativeTerminalIssueAttachment,
