@@ -23,7 +23,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
   // Real embedded daemon + tmux + pty over isolated state. Under parallel load
   // the beforeAll and attach path are starved past the default hook/test
   // budgets, so widen both. Assertions are unchanged.
-  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+  vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
   const root = mkdtempSync(join("/tmp", "tmux-ide-open-live-"));
   const projectDir = join(root, "project");

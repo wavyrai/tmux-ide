@@ -18,6 +18,10 @@ export default defineConfig({
   test: {
     css: true,
     environment: "node",
+    // The live suites spawn real daemons/tmux/pty; at unbounded parallelism
+    // those spawns starve their budgets. 6 workers is the configuration the
+    // isolation hardening was proven at (3x fully green under ambient load).
+    maxWorkers: 6,
     include: [
       "src/restore.test.ts",
       "src/doctor.test.ts",
