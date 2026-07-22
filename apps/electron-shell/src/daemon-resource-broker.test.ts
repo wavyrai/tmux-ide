@@ -1495,3 +1495,256 @@ describe("Electron main daemon resource broker", () => {
     expect(socket.close).toHaveBeenCalledWith(1002, "event frame before open");
   });
 });
+
+const FILES_CATALOG_ENVELOPE = {
+  version: 1,
+  daemon: IDENTITY,
+  resource: {
+    status: "ready" as const,
+    workspaceName: "product workspace",
+    revision: "files-rev.revrevrevrevrev01",
+    rootId: "file.rootrootrootroot01",
+    directory: {
+      id: "file.rootrootrootroot01",
+      name: "product",
+      relativePath: null,
+      parentId: null,
+    },
+    breadcrumbs: [{ id: "file.rootrootrootroot01", label: "product" }],
+    entries: [
+      {
+        id: "file.entryentryentry001",
+        parentId: "file.rootrootrootroot01",
+        name: "README.md",
+        relativePath: "README.md",
+        kind: "file" as const,
+        hidden: false,
+        ignored: false,
+        hasChildren: false,
+        gitStatus: null,
+      },
+    ],
+    totalEntries: 1,
+    truncated: false,
+  },
+};
+
+const FILE_PREVIEW_ENVELOPE = {
+  version: 1,
+  daemon: IDENTITY,
+  resource: {
+    status: "ready" as const,
+    workspaceName: "product workspace",
+    catalogRevision: "files-rev.revrevrevrevrev01",
+    fileId: "file.entryentryentry001",
+    name: "README.md",
+    relativePath: "README.md",
+    encoding: "utf-8" as const,
+    languageHint: "markdown",
+    content: "# Title\n",
+    totalBytes: 8,
+    totalLines: 2,
+    truncated: false,
+  },
+};
+
+const CHANGES_CATALOG_ENVELOPE = {
+  version: 1,
+  daemon: IDENTITY,
+  resource: {
+    status: "ready" as const,
+    workspaceName: "product workspace",
+    revision: "changes-rev.revrevrevrevrev01",
+    branch: "main",
+    detached: false,
+    entries: [
+      {
+        id: "change.changechangechange01",
+        group: "unstaged" as const,
+        status: "modified" as const,
+        name: "README.md",
+        relativePath: "README.md",
+        originPath: null,
+        binary: false,
+        additions: 3,
+        deletions: 1,
+      },
+    ],
+    totalEntries: 1,
+    truncated: false,
+  },
+};
+
+const CHANGE_DIFF_ENVELOPE = {
+  version: 1,
+  daemon: IDENTITY,
+  resource: {
+    status: "ready" as const,
+    workspaceName: "product workspace",
+    changesRevision: "changes-rev.revrevrevrevrev01",
+    changeId: "change.changechangechange01",
+    group: "unstaged" as const,
+    relativePath: "README.md",
+    originPath: null,
+    hunks: [
+      {
+        header: "@@ -1 +1 @@",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 1,
+        lines: [
+          { kind: "delete" as const, content: "old", oldLine: 1, newLine: null },
+          { kind: "insert" as const, content: "new", oldLine: null, newLine: 1 },
+        ],
+      },
+    ],
+    totalHunks: 1,
+    totalLines: 2,
+    truncated: false,
+  },
+};
+
+describe("Electron main daemon workspace read resources", () => {
+  it("authenticates a files catalog read and routes by encoded workspace name", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        const url = input.toString();
+        requests.push({ url, init });
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json(FILES_CATALOG_ENVELOPE);
+      },
+    });
+    const result = await broker.fetchWorkspaceFiles({ workspaceName: "product workspace" });
+    expect(result).toMatchObject({ status: "ok", envelope: { resource: { status: "ready" } } });
+    const filesRequest = requests.find(({ url }) => url.includes("/files"));
+    expect(filesRequest?.url).toBe("http://127.0.0.1:6060/api/project/product%20workspace/files");
+    expect(new Headers(filesRequest?.init?.headers).get("authorization")).toBe(
+      "Bearer owner-only-token",
+    );
+  });
+
+  it("passes a directory id as a query for incremental tree expansion", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json(FILES_CATALOG_ENVELOPE);
+      },
+    });
+    await broker.fetchWorkspaceFiles({
+      workspaceName: "product workspace",
+      directoryId: "file.rootrootrootroot01",
+    });
+    expect(requests).toContain(
+      "http://127.0.0.1:6060/api/project/product%20workspace/files?directoryId=file.rootrootrootroot01",
+    );
+  });
+
+  it("maps an unknown workspace to workspace-not-found without a resource request", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        requests.push(input.toString());
+        return json(WORKSPACE_CATALOG);
+      },
+    });
+    await expect(broker.fetchWorkspaceChanges({ workspaceName: "ghost" })).resolves.toMatchObject({
+      status: "error",
+      error: { code: "workspace-not-found" },
+    });
+    expect(requests.some((url) => url.includes("/changes"))).toBe(false);
+  });
+
+  it("refuses a read without an owner capability", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async () => json(WORKSPACE_CATALOG),
+    });
+    await expect(
+      broker.fetchWorkspaceFiles({ workspaceName: "product workspace" }),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-unavailable" } });
+  });
+
+  it("rejects a files catalog stamped by another daemon generation", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json({
+          ...FILES_CATALOG_ENVELOPE,
+          daemon: { ...IDENTITY, instanceId: "00000000-0000-4000-8000-000000000099" },
+        });
+      },
+    });
+    await expect(
+      broker.fetchWorkspaceFiles({ workspaceName: "product workspace" }),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
+  });
+
+  it("rejects a malformed resource envelope", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json({ version: 1, daemon: IDENTITY, resource: { status: "bogus" } });
+      },
+    });
+    await expect(
+      broker.fetchWorkspaceChangeDiff({
+        workspaceName: "product workspace",
+        changeId: "change.changechangechange01",
+      }),
+    ).resolves.toMatchObject({ status: "error", error: { code: "invalid-response" } });
+  });
+
+  it("reads a file preview and a change diff over authenticated query routes", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (url.includes("/file-preview")) return json(FILE_PREVIEW_ENVELOPE);
+        if (url.includes("/change-diff")) return json(CHANGE_DIFF_ENVELOPE);
+        return json(CHANGES_CATALOG_ENVELOPE);
+      },
+    });
+    await expect(
+      broker.fetchWorkspaceFilePreview({
+        workspaceName: "product workspace",
+        fileId: "file.entryentryentry001",
+      }),
+    ).resolves.toMatchObject({ status: "ok", envelope: { resource: { status: "ready" } } });
+    await expect(
+      broker.fetchWorkspaceChangeDiff({
+        workspaceName: "product workspace",
+        changeId: "change.changechangechange01",
+      }),
+    ).resolves.toMatchObject({ status: "ok", envelope: { resource: { status: "ready" } } });
+    await expect(
+      broker.fetchWorkspaceChanges({ workspaceName: "product workspace" }),
+    ).resolves.toMatchObject({ status: "ok", envelope: { resource: { status: "ready" } } });
+    expect(requests).toContain(
+      "http://127.0.0.1:6060/api/project/product%20workspace/file-preview?fileId=file.entryentryentry001",
+    );
+    expect(requests).toContain(
+      "http://127.0.0.1:6060/api/project/product%20workspace/change-diff?changeId=change.changechangechange01",
+    );
+  });
+});

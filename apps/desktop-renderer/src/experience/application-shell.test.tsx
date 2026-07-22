@@ -96,6 +96,22 @@ function host(): HostCapabilities {
         status: "error",
         error: { code: "preview-only", reason: "fixture only" },
       }),
+      fetchWorkspaceFiles: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      fetchWorkspaceFilePreview: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      fetchWorkspaceChanges: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      fetchWorkspaceChangeDiff: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
       subscribe: async () => ({
         status: "error",
         error: { code: "preview-only", reason: "fixture only" },

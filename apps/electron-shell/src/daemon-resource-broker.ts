@@ -13,9 +13,17 @@ import {
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
   DesktopDaemonFetchApplicationShellResultSchemaZ,
+  DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceChangesRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceFilesRequestSchemaZ,
   DesktopDaemonHostStateSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopWorkspaceNameSchemaZ,
+  WorkspaceChangeDiffEnvelopeV1SchemaZ,
+  WorkspaceChangesCatalogEnvelopeV1SchemaZ,
+  WorkspaceFilePreviewEnvelopeV1SchemaZ,
+  WorkspaceFilesCatalogEnvelopeV1SchemaZ,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
   TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS,
   TerminalAttachmentIssueDescriptorSchemaZ,
@@ -40,6 +48,10 @@ import {
   type DesktopDaemonEvent,
   type DesktopDaemonCapabilitiesResult,
   type DesktopDaemonFetchApplicationShellResult,
+  type DesktopDaemonFetchWorkspaceChangeDiffResult,
+  type DesktopDaemonFetchWorkspaceChangesResult,
+  type DesktopDaemonFetchWorkspaceFilePreviewResult,
+  type DesktopDaemonFetchWorkspaceFilesResult,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
   type WorkspacePaneCreateMutationRequest,
@@ -709,6 +721,106 @@ export class DaemonResourceBroker {
     }
   }
 
+  async fetchWorkspaceFiles(
+    request: unknown,
+  ): Promise<DesktopDaemonFetchWorkspaceFilesResult> {
+    const parsed = DesktopDaemonFetchWorkspaceFilesRequestSchemaZ.safeParse(request);
+    if (!parsed.success) {
+      return { status: "error", error: daemonCapabilityError("invalid-request") };
+    }
+    const query = parsed.data.directoryId
+      ? `?directoryId=${encodeURIComponent(parsed.data.directoryId)}`
+      : "";
+    return this.#fetchWorkspaceResource(
+      parsed.data.workspaceName,
+      (name) => `/api/project/${name}/files${query}`,
+      WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+    );
+  }
+
+  async fetchWorkspaceFilePreview(
+    request: unknown,
+  ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult> {
+    const parsed = DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ.safeParse(request);
+    if (!parsed.success) {
+      return { status: "error", error: daemonCapabilityError("invalid-request") };
+    }
+    const fileId = encodeURIComponent(parsed.data.fileId);
+    return this.#fetchWorkspaceResource(
+      parsed.data.workspaceName,
+      (name) => `/api/project/${name}/file-preview?fileId=${fileId}`,
+      WorkspaceFilePreviewEnvelopeV1SchemaZ,
+    );
+  }
+
+  async fetchWorkspaceChanges(
+    request: unknown,
+  ): Promise<DesktopDaemonFetchWorkspaceChangesResult> {
+    const parsed = DesktopDaemonFetchWorkspaceChangesRequestSchemaZ.safeParse(request);
+    if (!parsed.success) {
+      return { status: "error", error: daemonCapabilityError("invalid-request") };
+    }
+    return this.#fetchWorkspaceResource(
+      parsed.data.workspaceName,
+      (name) => `/api/project/${name}/changes`,
+      WorkspaceChangesCatalogEnvelopeV1SchemaZ,
+    );
+  }
+
+  async fetchWorkspaceChangeDiff(
+    request: unknown,
+  ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult> {
+    const parsed = DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ.safeParse(request);
+    if (!parsed.success) {
+      return { status: "error", error: daemonCapabilityError("invalid-request") };
+    }
+    const changeId = encodeURIComponent(parsed.data.changeId);
+    return this.#fetchWorkspaceResource(
+      parsed.data.workspaceName,
+      (name) => `/api/project/${name}/change-diff?changeId=${changeId}`,
+      WorkspaceChangeDiffEnvelopeV1SchemaZ,
+    );
+  }
+
+  /**
+   * Owner-authenticated read of a generation-stamped workspace resource. The
+   * semantic workspace name is resolved through the private catalog and used as
+   * the route parameter; a stale daemon generation on the envelope is rejected.
+   */
+  async #fetchWorkspaceResource<TEnvelope extends { daemon: DaemonInstanceIdentity }>(
+    workspaceName: string,
+    buildPath: (encodedWorkspaceName: string) => string,
+    envelopeSchema: z.ZodType<TEnvelope>,
+  ): Promise<
+    | { status: "ok"; envelope: TEnvelope }
+    | { status: "error"; error: DesktopDaemonCapabilityError }
+  > {
+    if (this.#daemon.status !== "connected") return this.#disconnectedResult();
+    if (!this.#ownerToken) {
+      return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
+    }
+    try {
+      const workspaces = await this.#loadWorkspaceCatalog();
+      const workspace = workspaces.find(
+        (candidate) => candidate.workspaceName === workspaceName,
+      );
+      if (!workspace) throw new BrokerFailure(daemonCapabilityError("workspace-not-found"));
+      const raw = await this.#requestJson(
+        buildPath(encodeURIComponent(workspace.workspaceName)),
+        this.#maxResponseBytes,
+        true,
+      );
+      const parsed = envelopeSchema.safeParse(raw);
+      if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
+      if (!sameIdentity(parsed.data.daemon, daemonIdentity(this.#daemon))) {
+        throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+      }
+      return { status: "ok", envelope: parsed.data };
+    } catch (error) {
+      return { status: "error", error: this.#boundedError(error) };
+    }
+  }
+
   async subscribe(
     workspaceNames: readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
@@ -833,9 +945,13 @@ export class DaemonResourceBroker {
   async #requestJson(
     pathname: string,
     maximumResponseBytes = this.#maxResponseBytes,
+    authorize = false,
   ): Promise<unknown> {
     if (this.#disposed) throw new BrokerFailure(daemonCapabilityError("disposed"));
     if (this.#daemon.status !== "connected") {
+      throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
+    }
+    if (authorize && !this.#ownerToken) {
       throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
     }
     const requestGeneration = this.#rendererGeneration;
@@ -844,6 +960,8 @@ export class DaemonResourceBroker {
     if (url.origin !== base.origin || url.username || url.password) {
       throw new BrokerFailure(daemonCapabilityError("invalid-request"));
     }
+    const headers: Record<string, string> = { accept: "application/json" };
+    if (authorize && this.#ownerToken) headers.Authorization = `Bearer ${this.#ownerToken}`;
     const controller = new AbortController();
     this.#controllers.add(controller);
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -857,7 +975,7 @@ export class DaemonResourceBroker {
     const operation = (async (): Promise<unknown> => {
       const response = await this.#fetch(url, {
         method: "GET",
-        headers: { accept: "application/json" },
+        headers,
         cache: "no-store",
         credentials: "omit",
         redirect: "error",

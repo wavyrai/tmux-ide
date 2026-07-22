@@ -7,6 +7,14 @@ import {
   type DesktopDaemonEvent,
   type DesktopDaemonFetchApplicationShellResult,
   type DesktopDaemonFetchApplicationShellRequest,
+  type DesktopDaemonFetchWorkspaceChangeDiffRequest,
+  type DesktopDaemonFetchWorkspaceChangeDiffResult,
+  type DesktopDaemonFetchWorkspaceChangesRequest,
+  type DesktopDaemonFetchWorkspaceChangesResult,
+  type DesktopDaemonFetchWorkspaceFilePreviewRequest,
+  type DesktopDaemonFetchWorkspaceFilePreviewResult,
+  type DesktopDaemonFetchWorkspaceFilesRequest,
+  type DesktopDaemonFetchWorkspaceFilesResult,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonRefreshConnectionResult,
@@ -48,6 +56,18 @@ export interface DaemonResourceAuthority {
     workspaceName: string,
     resourceVersion?: DesktopDaemonFetchApplicationShellRequest["resourceVersion"],
   ): Promise<DesktopDaemonFetchApplicationShellResult>;
+  fetchWorkspaceFiles(
+    request: DesktopDaemonFetchWorkspaceFilesRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceFilesResult>;
+  fetchWorkspaceFilePreview(
+    request: DesktopDaemonFetchWorkspaceFilePreviewRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult>;
+  fetchWorkspaceChanges(
+    request: DesktopDaemonFetchWorkspaceChangesRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceChangesResult>;
+  fetchWorkspaceChangeDiff(
+    request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult>;
   subscribe(
     workspaceNames: readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
@@ -300,6 +320,94 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
     const result = await broker.fetchApplicationShell(workspaceName, resourceVersion);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceFiles(
+    request: DesktopDaemonFetchWorkspaceFilesRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceFilesResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceFiles(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceFilePreview(
+    request: DesktopDaemonFetchWorkspaceFilePreviewRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceFilePreview(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceChanges(
+    request: DesktopDaemonFetchWorkspaceChangesRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceChangesResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceChanges(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceChangeDiff(
+    request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceChangeDiff(request);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||

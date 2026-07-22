@@ -116,6 +116,22 @@ describe("host IPC trust boundary", () => {
         status: "error",
         error: { code: "workspace-not-found", reason: "The requested workspace is unavailable." },
       })),
+      fetchWorkspaceFiles: vi.fn(async () => ({
+        status: "error",
+        error: { code: "workspace-not-found", reason: "files sentinel" },
+      })),
+      fetchWorkspaceFilePreview: vi.fn(async () => ({
+        status: "error",
+        error: { code: "workspace-not-found", reason: "preview sentinel" },
+      })),
+      fetchWorkspaceChanges: vi.fn(async () => ({
+        status: "error",
+        error: { code: "workspace-not-found", reason: "changes sentinel" },
+      })),
+      fetchWorkspaceChangeDiff: vi.fn(async () => ({
+        status: "error",
+        error: { code: "workspace-not-found", reason: "diff sentinel" },
+      })),
       subscribe: vi.fn(async (_names, listener) => {
         publishDaemonEvent = listener;
         return { status: "subscribed", unsubscribe: stopDaemonSubscription };
@@ -181,6 +197,43 @@ describe("host IPC trust boundary", () => {
     expect(daemonResources.fetchApplicationShell).toHaveBeenNthCalledWith(1, "product", 3);
     expect(daemonResources.fetchApplicationShell).toHaveBeenNthCalledWith(2, "product", 2);
     expect(daemonResources.fetchApplicationShell).toHaveBeenCalledTimes(2);
+
+    expect(
+      await handlers.get(HOST_IPC.daemonFetchWorkspaceFiles)?.(trustedEvent, {
+        workspaceName: "product",
+        directoryId: "file.rootrootrootroot01",
+      }),
+    ).toMatchObject({ status: "error", error: { reason: "files sentinel" } });
+    expect(daemonResources.fetchWorkspaceFiles).toHaveBeenCalledWith({
+      workspaceName: "product",
+      directoryId: "file.rootrootrootroot01",
+    });
+    expect(
+      await handlers.get(HOST_IPC.daemonFetchWorkspaceFiles)?.(trustedEvent, { unexpected: true }),
+    ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
+    expect(daemonResources.fetchWorkspaceFiles).toHaveBeenCalledTimes(1);
+
+    expect(
+      await handlers.get(HOST_IPC.daemonFetchWorkspaceFilePreview)?.(trustedEvent, {
+        workspaceName: "product",
+        fileId: "file.entryentryentry001",
+      }),
+    ).toMatchObject({ status: "error", error: { reason: "preview sentinel" } });
+    expect(
+      await handlers.get(HOST_IPC.daemonFetchWorkspaceChanges)?.(trustedEvent, {
+        workspaceName: "product",
+      }),
+    ).toMatchObject({ status: "error", error: { reason: "changes sentinel" } });
+    expect(
+      await handlers.get(HOST_IPC.daemonFetchWorkspaceChangeDiff)?.(trustedEvent, {
+        workspaceName: "product",
+        changeId: "change.changechangechange01",
+      }),
+    ).toMatchObject({ status: "error", error: { reason: "diff sentinel" } });
+    expect(daemonResources.fetchWorkspaceChangeDiff).toHaveBeenCalledWith({
+      workspaceName: "product",
+      changeId: "change.changechangechange01",
+    });
 
     const created = await handlers.get(HOST_IPC.daemonCreateWorkspacePane)?.(trustedEvent, {
       version: 1,

@@ -11,6 +11,10 @@ import {
   DesktopDaemonCapabilitiesResultSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceChangesRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceFilesRequestSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonSubscriptionIdSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
@@ -630,6 +634,58 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       request.data.workspaceName,
       request.data.resourceVersion,
     );
+    assertRendererAuthority(event, authority.generation);
+    return result;
+  });
+  handle(HOST_IPC.daemonFetchWorkspaceFiles, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const request = DesktopDaemonFetchWorkspaceFilesRequestSchemaZ.safeParse(args[0]);
+    if (!request.success) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const result = await deps.daemonResources.fetchWorkspaceFiles(request.data);
+    assertRendererAuthority(event, authority.generation);
+    return result;
+  });
+  handle(HOST_IPC.daemonFetchWorkspaceFilePreview, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const request = DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ.safeParse(args[0]);
+    if (!request.success) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const result = await deps.daemonResources.fetchWorkspaceFilePreview(request.data);
+    assertRendererAuthority(event, authority.generation);
+    return result;
+  });
+  handle(HOST_IPC.daemonFetchWorkspaceChanges, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const request = DesktopDaemonFetchWorkspaceChangesRequestSchemaZ.safeParse(args[0]);
+    if (!request.success) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const result = await deps.daemonResources.fetchWorkspaceChanges(request.data);
+    assertRendererAuthority(event, authority.generation);
+    return result;
+  });
+  handle(HOST_IPC.daemonFetchWorkspaceChangeDiff, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const request = DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ.safeParse(args[0]);
+    if (!request.success) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const result = await deps.daemonResources.fetchWorkspaceChangeDiff(request.data);
     assertRendererAuthority(event, authority.generation);
     return result;
   });

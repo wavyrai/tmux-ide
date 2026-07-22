@@ -63,6 +63,22 @@ function daemonHost(
           resource: RESOURCE,
         },
       }),
+      fetchWorkspaceFiles: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      fetchWorkspaceFilePreview: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      fetchWorkspaceChanges: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      fetchWorkspaceChangeDiff: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
       subscribe: async () => ({ status: "subscribed", unsubscribe: () => undefined }),
       ...overrides,
     },

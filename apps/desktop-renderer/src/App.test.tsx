@@ -208,6 +208,22 @@ function createHostHarness() {
           resource: shellInputs.get(workspaceName) ?? shellInput(workspaceName),
         },
       })),
+      fetchWorkspaceFiles: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
+      fetchWorkspaceFilePreview: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
+      fetchWorkspaceChanges: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
+      fetchWorkspaceChangeDiff: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
       subscribe: vi.fn(async (request, listener) => {
         const subscription: HostSubscription = {
           workspaceNames: [...request.workspaceNames],

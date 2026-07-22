@@ -8,6 +8,14 @@ import {
   DesktopDaemonEventWireEnvelopeSchemaZ,
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
   DesktopDaemonFetchApplicationShellResultSchemaZ,
+  DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ,
+  DesktopDaemonFetchWorkspaceChangesRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceChangesResultSchemaZ,
+  DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ,
+  DesktopDaemonFetchWorkspaceFilesRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
@@ -23,6 +31,10 @@ import {
   type DesktopDaemonEvent,
   type DesktopDaemonEventSubscriptionRequest,
   type DesktopDaemonFetchApplicationShellRequest,
+  type DesktopDaemonFetchWorkspaceChangeDiffRequest,
+  type DesktopDaemonFetchWorkspaceChangesRequest,
+  type DesktopDaemonFetchWorkspaceFilePreviewRequest,
+  type DesktopDaemonFetchWorkspaceFilesRequest,
   type DesktopThemeState,
   type DesktopWindowState,
   type HostCapabilities,
@@ -153,6 +165,30 @@ const capabilities: HostCapabilities = Object.freeze({
       const parsed = DesktopDaemonFetchApplicationShellRequestSchemaZ.parse(request);
       return DesktopDaemonFetchApplicationShellResultSchemaZ.parse(
         await ipcRenderer.invoke(HOST_IPC.daemonFetchApplicationShell, parsed),
+      );
+    },
+    fetchWorkspaceFiles: async (request: DesktopDaemonFetchWorkspaceFilesRequest) => {
+      const parsed = DesktopDaemonFetchWorkspaceFilesRequestSchemaZ.parse(request);
+      return DesktopDaemonFetchWorkspaceFilesResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonFetchWorkspaceFiles, parsed),
+      );
+    },
+    fetchWorkspaceFilePreview: async (request: DesktopDaemonFetchWorkspaceFilePreviewRequest) => {
+      const parsed = DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ.parse(request);
+      return DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonFetchWorkspaceFilePreview, parsed),
+      );
+    },
+    fetchWorkspaceChanges: async (request: DesktopDaemonFetchWorkspaceChangesRequest) => {
+      const parsed = DesktopDaemonFetchWorkspaceChangesRequestSchemaZ.parse(request);
+      return DesktopDaemonFetchWorkspaceChangesResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonFetchWorkspaceChanges, parsed),
+      );
+    },
+    fetchWorkspaceChangeDiff: async (request: DesktopDaemonFetchWorkspaceChangeDiffRequest) => {
+      const parsed = DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ.parse(request);
+      return DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonFetchWorkspaceChangeDiff, parsed),
       );
     },
     subscribe: async (

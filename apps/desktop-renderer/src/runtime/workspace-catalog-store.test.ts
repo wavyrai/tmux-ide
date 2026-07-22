@@ -117,6 +117,22 @@ function fakeDaemonHost(
       status: "error",
       error: { code: "preview-only", reason: "not used by catalog tests" },
     }),
+    fetchWorkspaceFiles: async () => ({
+      status: "error",
+      error: { code: "preview-only", reason: "not used by catalog tests" },
+    }),
+    fetchWorkspaceFilePreview: async () => ({
+      status: "error",
+      error: { code: "preview-only", reason: "not used by catalog tests" },
+    }),
+    fetchWorkspaceChanges: async () => ({
+      status: "error",
+      error: { code: "preview-only", reason: "not used by catalog tests" },
+    }),
+    fetchWorkspaceChangeDiff: async () => ({
+      status: "error",
+      error: { code: "preview-only", reason: "not used by catalog tests" },
+    }),
     subscribe,
   };
   return {
@@ -797,6 +813,6 @@ describe("desktop live workspace catalog and selection store", () => {
 
 describe("workspace catalog host contract seam", () => {
   it("uses the current versioned facade without exposing a generic transport", () => {
-    expect(DESKTOP_HOST_API_VERSION).toBe(8);
+    expect(DESKTOP_HOST_API_VERSION).toBe(9);
   });
 });

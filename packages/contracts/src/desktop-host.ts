@@ -6,6 +6,18 @@ import {
 } from "./application-shell-resource.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import { CommandAvailabilitySchemaZ } from "./commands.ts";
+import {
+  WorkspaceFilePreviewEnvelopeV1SchemaZ,
+  WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+} from "./workspace-files-resource.ts";
+import {
+  WorkspaceChangeDiffEnvelopeV1SchemaZ,
+  WorkspaceChangesCatalogEnvelopeV1SchemaZ,
+} from "./workspace-changes-resource.ts";
+import {
+  WorkspaceChangeResourceIdSchemaZ,
+  WorkspaceFileResourceIdSchemaZ,
+} from "./workspace-resource-identity.ts";
 import type {
   TerminalAttachRequest,
   TerminalAttachmentIssueResult,
@@ -21,7 +33,7 @@ import type {
 } from "./app-window-mutation.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 8 as const;
+export const DESKTOP_HOST_API_VERSION = 9 as const;
 
 /** Stable tuple origin for the packaged, sandboxed Electron renderer. */
 export const DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide" as const;
@@ -220,6 +232,64 @@ export const DesktopDaemonFetchApplicationShellResultSchemaZ = z.discriminatedUn
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
+/**
+ * Renderer-issued read requests for the native Files and Changes resources.
+ * The daemon-issued opaque ids are the only cursor into a workspace; callers
+ * never supply a path. Directory omission requests the workspace root catalog.
+ */
+export const DesktopDaemonFetchWorkspaceFilesRequestSchemaZ = z
+  .object({
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    directoryId: WorkspaceFileResourceIdSchemaZ.optional(),
+  })
+  .strict();
+
+export const DesktopDaemonFetchWorkspaceFilesResultSchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({ status: z.literal("ok"), envelope: WorkspaceFilesCatalogEnvelopeV1SchemaZ })
+    .strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+export const DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ = z
+  .object({
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    fileId: WorkspaceFileResourceIdSchemaZ,
+  })
+  .strict();
+
+export const DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({ status: z.literal("ok"), envelope: WorkspaceFilePreviewEnvelopeV1SchemaZ })
+    .strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+export const DesktopDaemonFetchWorkspaceChangesRequestSchemaZ = z
+  .object({ workspaceName: DesktopWorkspaceNameSchemaZ })
+  .strict();
+
+export const DesktopDaemonFetchWorkspaceChangesResultSchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({ status: z.literal("ok"), envelope: WorkspaceChangesCatalogEnvelopeV1SchemaZ })
+    .strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+export const DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ = z
+  .object({
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    changeId: WorkspaceChangeResourceIdSchemaZ,
+  })
+  .strict();
+
+export const DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({ status: z.literal("ok"), envelope: WorkspaceChangeDiffEnvelopeV1SchemaZ })
+    .strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
 export const DesktopDaemonEventSubscriptionRequestSchemaZ = z
   .object({
     /**
@@ -372,6 +442,30 @@ export type DesktopApplicationShellTarget = z.infer<typeof DesktopApplicationShe
 export type DesktopDaemonFetchApplicationShellResult = z.infer<
   typeof DesktopDaemonFetchApplicationShellResultSchemaZ
 >;
+export type DesktopDaemonFetchWorkspaceFilesRequest = z.infer<
+  typeof DesktopDaemonFetchWorkspaceFilesRequestSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceFilesResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceFilesResultSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceFilePreviewRequest = z.infer<
+  typeof DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceFilePreviewResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceChangesRequest = z.infer<
+  typeof DesktopDaemonFetchWorkspaceChangesRequestSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceChangesResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceChangesResultSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceChangeDiffRequest = z.infer<
+  typeof DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceChangeDiffResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ
+>;
 export type DesktopDaemonEventSubscriptionRequest = z.infer<
   typeof DesktopDaemonEventSubscriptionRequestSchemaZ
 >;
@@ -432,6 +526,18 @@ export interface HostCapabilities {
     fetchApplicationShell(
       request: DesktopDaemonFetchApplicationShellRequest,
     ): Promise<DesktopDaemonFetchApplicationShellResult>;
+    fetchWorkspaceFiles(
+      request: DesktopDaemonFetchWorkspaceFilesRequest,
+    ): Promise<DesktopDaemonFetchWorkspaceFilesResult>;
+    fetchWorkspaceFilePreview(
+      request: DesktopDaemonFetchWorkspaceFilePreviewRequest,
+    ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult>;
+    fetchWorkspaceChanges(
+      request: DesktopDaemonFetchWorkspaceChangesRequest,
+    ): Promise<DesktopDaemonFetchWorkspaceChangesResult>;
+    fetchWorkspaceChangeDiff(
+      request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
+    ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult>;
     subscribe(
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,

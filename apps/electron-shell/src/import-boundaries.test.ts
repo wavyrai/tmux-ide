@@ -64,6 +64,10 @@ describe("desktop process boundaries", () => {
       HOST_IPC.daemonIssueTerminalAttachment,
       HOST_IPC.daemonListWorkspaces,
       HOST_IPC.daemonFetchApplicationShell,
+      HOST_IPC.daemonFetchWorkspaceFiles,
+      HOST_IPC.daemonFetchWorkspaceFilePreview,
+      HOST_IPC.daemonFetchWorkspaceChanges,
+      HOST_IPC.daemonFetchWorkspaceChangeDiff,
       HOST_IPC.daemonSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);

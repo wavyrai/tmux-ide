@@ -284,6 +284,22 @@ function createHostHarness() {
               envelope: { version: APPLICATION_SHELL_RESOURCE_V2_VERSION, daemon, resource },
             },
       ),
+      fetchWorkspaceFiles: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by terminal tests" },
+      })),
+      fetchWorkspaceFilePreview: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by terminal tests" },
+      })),
+      fetchWorkspaceChanges: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by terminal tests" },
+      })),
+      fetchWorkspaceChangeDiff: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by terminal tests" },
+      })),
       subscribe: vi.fn(async (_request, listener) => {
         subscriptions.push(listener);
         return { status: "subscribed" as const, unsubscribe: () => undefined };
@@ -362,7 +378,7 @@ describe("production terminal composition", () => {
       return value!;
     });
     expect(placement.disabled).toBe(false);
-    expect(harness.host.apiVersion).toBe(8);
+    expect(harness.host.apiVersion).toBe(9);
     dispose();
   });
 
