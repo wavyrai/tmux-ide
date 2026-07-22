@@ -122,6 +122,11 @@ const capabilities: HostCapabilities = Object.freeze({
         await ipcRenderer.invoke(HOST_IPC.workspaceOpenProjectDirectory),
       ),
   }),
+  onboarding: Object.freeze({
+    acknowledgeIntro: async () => {
+      await ipcRenderer.invoke(HOST_IPC.onboardingAcknowledgeIntro);
+    },
+  }),
   theme: Object.freeze({
     getState: async () =>
       DesktopThemeStateSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.themeGetState)),

@@ -38,9 +38,15 @@ import { DomApplicationShell } from "../experience/application-shell.tsx";
 import type { AppWindowCanvasCommandInvocation } from "../experience/app-window-canvas-presenter.ts";
 import type { CreatePaneFlowCatalogs } from "../experience/create-pane-flow-presenter.ts";
 import { DomIcon } from "../experience/dom-icon.tsx";
+import { FirstRunIntro } from "../experience/first-run-intro.tsx";
 import type { ChangesSurfaceProps } from "../experience/workspace-changes-surface.tsx";
 import type { FilesSurfaceProps } from "../experience/workspace-files-surface.tsx";
 import { Button } from "../ui-system/index.ts";
+import {
+  reasonIndicatesMissingTmux,
+  recoveryForWorkspaceOpenError,
+  tmuxInstallCommand,
+} from "./connection-recovery.ts";
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
 import { createSolidDesktopApplicationShellResourceStore } from "./desktop-resource-store.ts";
 import { createHostDaemonTransport } from "./host-daemon-transport.ts";
@@ -94,6 +100,9 @@ export interface DesktopLiveApplicationProps {
   readonly terminalTransport?: NativeTerminalTransport | null;
   readonly reducedMotion?: boolean;
   readonly terminalThemeKey?: string;
+  /** Show the first-run intro layer over the first live workspace. */
+  readonly introPending?: boolean;
+  readonly onAcknowledgeIntro?: () => void;
 }
 
 interface DesktopConnectionSurfaceProps {
@@ -123,6 +132,41 @@ interface DesktopConnectionSurfaceProps {
   readonly onOpenProject?: () => void;
   readonly openProjectPhase?: "idle" | "selecting" | "opening" | "waiting" | "error";
   readonly openProjectError?: string | null;
+  /** A copyable shell command shown when a concrete step resolves this state. */
+  readonly command?: string | null;
+}
+
+/** Selectable command block with a best-effort copy button (no host clipboard needed). */
+function RecoveryCommand(props: { readonly command: string }) {
+  const [copied, setCopied] = createSignal(false);
+  let resetTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    if (resetTimer) clearTimeout(resetTimer);
+  });
+  const copy = (): void => {
+    const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+    void clipboard?.writeText(props.command).then(
+      () => {
+        setCopied(true);
+        if (resetTimer) clearTimeout(resetTimer);
+        resetTimer = setTimeout(() => setCopied(false), 2_000);
+      },
+      () => undefined,
+    );
+  };
+  return (
+    <div class="runtime-state-card__command">
+      <code>{props.command}</code>
+      <Button
+        size="small"
+        variant="secondary"
+        aria-label={copied() ? "Command copied" : "Copy command"}
+        onClick={copy}
+      >
+        {copied() ? "Copied" : "Copy"}
+      </Button>
+    </div>
+  );
 }
 
 function WindowControls(props: {
@@ -325,6 +369,10 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
                     <DomIcon id="refresh" usage="action" />
                     <span>{props.openProjectError}</span>
                   </div>
+                </Show>
+
+                <Show when={props.command}>
+                  {(command) => <RecoveryCommand command={command()} />}
                 </Show>
 
                 <Show when={props.onOpenProject || props.onRetry || props.onRestartConnection}>
@@ -1054,6 +1102,12 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
               />
             )}
           </Show>
+          <Show when={props.introPending}>
+            <FirstRunIntro
+              platform={props.platform}
+              onDismiss={() => props.onAcknowledgeIntro?.()}
+            />
+          </Show>
         </>
       )}
     </Show>
@@ -1073,6 +1127,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     "idle" | "selecting" | "opening" | "waiting" | "error"
   >("idle");
   const [openProjectError, setOpenProjectError] = createSignal<string | null>(null);
+  const [openProjectCommand, setOpenProjectCommand] = createSignal<string | null>(null);
   const [pendingWorkspaceName, setPendingWorkspaceName] = createSignal<string | null>(null);
   let openProjectRequest = 0;
   let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1101,6 +1156,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     const request = ++openProjectRequest;
     clearDiscoveryTimer();
     setOpenProjectError(null);
+    setOpenProjectCommand(null);
     setOpenProjectPhase("selecting");
     try {
       const result = await props.host.workspace.openProjectDirectory();
@@ -1110,7 +1166,9 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
         return;
       }
       if (result.status === "error") {
-        setOpenProjectError(result.error.reason);
+        const recovery = recoveryForWorkspaceOpenError(result.error, props.platform);
+        setOpenProjectError(recovery.description);
+        setOpenProjectCommand(recovery.command);
         setOpenProjectPhase("error");
         return;
       }
@@ -1126,6 +1184,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     const workspaceName = pendingWorkspaceName();
     if (!workspaceName) return;
     setOpenProjectError(null);
+    setOpenProjectCommand(null);
     waitForOpenedWorkspace(workspaceName);
   };
 
@@ -1177,6 +1236,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     clearDiscoveryTimer();
     setPendingWorkspaceName(null);
     setOpenProjectError(null);
+    setOpenProjectCommand(null);
     setOpenProjectPhase("idle");
   });
 
@@ -1198,6 +1258,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           onOpenProject={() => void openProject()}
           openProjectPhase={openProjectPhase()}
           openProjectError={openProjectError()}
+          command={openProjectCommand()}
           onRetry={pendingWorkspaceName() ? retryDiscovery : undefined}
           retryLabel="Retry discovery"
         />
@@ -1220,6 +1281,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           onOpenProject={() => void openProject()}
           openProjectPhase={openProjectPhase()}
           openProjectError={openProjectError()}
+          command={openProjectCommand()}
           onRetry={pendingWorkspaceName() ? retryDiscovery : undefined}
           retryLabel="Retry discovery"
         />
@@ -1228,6 +1290,11 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     const identityMismatch =
       state.status === "degraded" && state.code === "daemon-identity-mismatch";
     const recovery = recoveryPresentation(props.daemonRecovery ?? "idle");
+    const catalogReasonText = "reason" in state ? state.reason : null;
+    const missingTmuxCommand =
+      !identityMismatch && catalogReasonText && reasonIndicatesMissingTmux(catalogReasonText)
+        ? tmuxInstallCommand(props.platform)
+        : null;
     const surfaceState =
       state.status === "loading"
         ? "loading"
@@ -1241,6 +1308,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
         platform={props.platform}
         windowState={props.windowState}
         state={surfaceState}
+        command={missingTmuxCommand}
         eyebrow="Native tmux workspace"
         title={
           state.status === "loading"
@@ -1304,6 +1372,8 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           onDaemonIdentityMismatch={props.onDaemonIdentityMismatch}
           daemonRecovery={props.daemonRecovery}
           onRetryDaemonConnection={props.onRetryDaemonConnection}
+          introPending={props.introPending}
+          onAcknowledgeIntro={props.onAcknowledgeIntro}
         />
       )}
     </Show>

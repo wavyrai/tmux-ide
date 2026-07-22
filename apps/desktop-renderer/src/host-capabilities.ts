@@ -86,6 +86,7 @@ export function createBrowserHostCapabilities(): HostCapabilities {
         code: "preview-only",
         reason: "Browser preview does not attach to the desktop daemon.",
       },
+      onboarding: { introAcknowledged: false },
     }),
     lifecycle: {
       requestQuit: async () => undefined,
@@ -102,6 +103,9 @@ export function createBrowserHostCapabilities(): HostCapabilities {
     },
     workspace: {
       openProjectDirectory: async () => null,
+    },
+    onboarding: {
+      acknowledgeIntro: async () => undefined,
     },
     theme: {
       getState: async () => browserTheme(),
@@ -161,6 +165,7 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
     typeof candidate.window?.onStateChanged === "function" &&
     typeof candidate.menu?.showApplicationMenu === "function" &&
     typeof candidate.workspace?.openProjectDirectory === "function" &&
+    typeof candidate.onboarding?.acknowledgeIntro === "function" &&
     typeof candidate.theme?.getState === "function" &&
     typeof candidate.theme?.onChanged === "function" &&
     typeof candidate.update?.getStatus === "function" &&

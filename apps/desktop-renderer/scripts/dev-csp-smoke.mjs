@@ -1373,6 +1373,96 @@ try {
         )}`,
       );
     }
+
+    const onboardingPage = await browser.newPage({
+      viewport: { width: 1_200, height: 800 },
+      colorScheme: "dark",
+    });
+    const onboardingConsole = [];
+    onboardingPage.on("console", (message) => onboardingConsole.push(message.text()));
+    await onboardingPage.addInitScript(() => {
+      globalThis.__tmiCspViolations = [];
+      globalThis.document.addEventListener("securitypolicyviolation", (event) => {
+        globalThis.__tmiCspViolations.push({
+          blockedURI: event.blockedURI,
+          directive: event.effectiveDirective,
+        });
+      });
+    });
+    await onboardingPage.goto(rendererUrl, { waitUntil: "networkidle" });
+    const onboardingEvidence = await onboardingPage.evaluate(async () => {
+      globalThis.document.getElementById("root")?.remove();
+
+      const recoveryRoot = globalThis.document.createElement("div");
+      recoveryRoot.id = "root";
+      globalThis.document.body.append(recoveryRoot);
+      const { mountConnectionRecoveryFixture } =
+        await import("/src/runtime/connection-recovery.fixture.tsx");
+      const disposeRecovery = mountConnectionRecoveryFixture(recoveryRoot, "dark");
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const recoveryCommand = recoveryRoot.querySelector(
+        ".runtime-state-card__command code",
+      )?.textContent;
+      const recoveryCopy = Boolean(
+        [...recoveryRoot.querySelectorAll("button")].find(
+          (button) => button.getAttribute("aria-label") === "Copy command",
+        ),
+      );
+      const recoveryTitle = recoveryRoot.querySelector("h1")?.textContent ?? null;
+      disposeRecovery();
+      recoveryRoot.remove();
+
+      const introRoot = globalThis.document.createElement("div");
+      introRoot.id = "root";
+      globalThis.document.body.append(introRoot);
+      const { mountFirstRunIntroFixture } =
+        await import("/src/experience/first-run-intro.fixture.tsx");
+      const disposeIntro = mountFirstRunIntroFixture(introRoot, "dark");
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const introDialog = introRoot.querySelector('[role="dialog"].first-run-intro');
+      const introText = introDialog?.textContent ?? "";
+      const introDismiss = Boolean(
+        [...introRoot.querySelectorAll("button")].find(
+          (button) => button.textContent?.trim() === "Got it",
+        ),
+      );
+      disposeIntro();
+      introRoot.remove();
+
+      return {
+        recoveryCommand: recoveryCommand ?? null,
+        recoveryCopy,
+        recoveryTitle,
+        introPresent: Boolean(introDialog),
+        introMentionsPalette: introText.includes("command palette"),
+        introDismiss,
+        styleAttributes: globalThis.document.querySelectorAll("[style]").length,
+        styleElements: globalThis.document.querySelectorAll("style").length,
+        violations: globalThis.__tmiCspViolations ?? [],
+      };
+    });
+    await onboardingPage.close();
+    const onboardingViolations = onboardingConsole.filter((message) => cspViolation.test(message));
+    if (
+      onboardingViolations.length > 0 ||
+      onboardingEvidence.violations.some(({ directive }) => directive.startsWith("style-src")) ||
+      onboardingEvidence.styleAttributes !== 0 ||
+      onboardingEvidence.styleElements !== 0 ||
+      onboardingEvidence.recoveryCommand !== "brew install tmux" ||
+      !onboardingEvidence.recoveryCopy ||
+      onboardingEvidence.recoveryTitle !== "tmux is not installed" ||
+      !onboardingEvidence.introPresent ||
+      !onboardingEvidence.introMentionsPalette ||
+      !onboardingEvidence.introDismiss
+    ) {
+      throw new Error(
+        `Desktop onboarding/recovery acceptance failed: ${JSON.stringify(
+          { ...onboardingEvidence, onboardingViolations },
+          null,
+          2,
+        )}`,
+      );
+    }
   } finally {
     await browser.close();
   }

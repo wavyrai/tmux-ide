@@ -246,9 +246,7 @@ export const DesktopDaemonFetchWorkspaceFilesRequestSchemaZ = z
   .strict();
 
 export const DesktopDaemonFetchWorkspaceFilesResultSchemaZ = z.discriminatedUnion("status", [
-  z
-    .object({ status: z.literal("ok"), envelope: WorkspaceFilesCatalogEnvelopeV1SchemaZ })
-    .strict(),
+  z.object({ status: z.literal("ok"), envelope: WorkspaceFilesCatalogEnvelopeV1SchemaZ }).strict(),
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
@@ -260,9 +258,7 @@ export const DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ = z
   .strict();
 
 export const DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ = z.discriminatedUnion("status", [
-  z
-    .object({ status: z.literal("ok"), envelope: WorkspaceFilePreviewEnvelopeV1SchemaZ })
-    .strict(),
+  z.object({ status: z.literal("ok"), envelope: WorkspaceFilePreviewEnvelopeV1SchemaZ }).strict(),
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
@@ -285,9 +281,7 @@ export const DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ = z
   .strict();
 
 export const DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ = z.discriminatedUnion("status", [
-  z
-    .object({ status: z.literal("ok"), envelope: WorkspaceChangeDiffEnvelopeV1SchemaZ })
-    .strict(),
+  z.object({ status: z.literal("ok"), envelope: WorkspaceChangeDiffEnvelopeV1SchemaZ }).strict(),
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
@@ -402,6 +396,13 @@ export const DesktopDaemonEventWireEnvelopeSchemaZ = z
   })
   .strict();
 
+/**
+ * First-run onboarding state carried at bootstrap. `introAcknowledged` is a
+ * persisted, machine-local marker (see the daemon's onboarding-marker) so the
+ * gentle intro layer shows exactly once and never returns after dismissal.
+ */
+export const DesktopOnboardingStateSchemaZ = z.object({ introAcknowledged: z.boolean() }).strict();
+
 export const DesktopHostBootstrapSchemaZ = z
   .object({
     apiVersion: z.literal(DESKTOP_HOST_API_VERSION),
@@ -411,6 +412,7 @@ export const DesktopHostBootstrapSchemaZ = z
     theme: DesktopThemeStateSchemaZ,
     window: DesktopWindowStateSchemaZ,
     daemon: DesktopDaemonCapabilityStateSchemaZ,
+    onboarding: DesktopOnboardingStateSchemaZ,
   })
   .strict();
 
@@ -479,6 +481,7 @@ export type DesktopDaemonSubscribeWireResult = z.infer<
 >;
 /** @deprecated Compatibility name for existing host bootstrap consumers. */
 export type DesktopDaemonPreflight = DesktopDaemonHostState;
+export type DesktopOnboardingState = z.infer<typeof DesktopOnboardingStateSchemaZ>;
 export type DesktopHostBootstrap = z.infer<typeof DesktopHostBootstrapSchemaZ>;
 export type DesktopMenuResult = z.infer<typeof DesktopMenuResultSchemaZ>;
 export type DesktopDirectorySelection = z.infer<typeof DesktopDirectorySelectionSchemaZ>;
@@ -510,6 +513,10 @@ export interface HostCapabilities {
   };
   readonly workspace: {
     openProjectDirectory(): Promise<WorkspaceOpenHostResult | null>;
+  };
+  readonly onboarding: {
+    /** Persist that the first-run intro layer has been dismissed. Idempotent. */
+    acknowledgeIntro(): Promise<void>;
   };
   readonly theme: {
     getState(): Promise<DesktopThemeState>;

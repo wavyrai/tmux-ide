@@ -25,6 +25,7 @@ describe("desktop host contract", () => {
         theme: { mode: "dark", highContrast: false, reducedMotion: false },
         window: { maximized: false, fullscreen: false, focused: true },
         daemon: { status: "unavailable", code: "record-missing", reason: "owner not installed" },
+        onboarding: { introAcknowledged: false },
       }),
     ).toMatchObject({ apiVersion: 10, runtime: "electron" });
   });

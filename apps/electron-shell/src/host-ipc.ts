@@ -56,6 +56,8 @@ export interface HostIpcDependencies {
   selectProjectDirectory: (window: BrowserWindow) => Promise<string | null>;
   getTheme: () => DesktopThemeState;
   getUpdateStatus: () => DesktopUpdateStatus;
+  readOnboardingIntroAcknowledged: () => boolean;
+  acknowledgeOnboardingIntro: () => void;
   trustedRendererLocation: TrustedRendererLocation;
 }
 
@@ -258,6 +260,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       theme: deps.getTheme(),
       window: snapshotWindow(window),
       daemon: deps.daemonResources.state(),
+      onboarding: { introAcknowledged: deps.readOnboardingIntroAcknowledged() },
     };
     deps.rendererDidBootstrap?.();
     return DesktopHostBootstrapSchemaZ.parse(bootstrap);
@@ -348,6 +351,11 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         error: daemonCapabilityError("request-failed"),
       });
     }
+  });
+  handle(HOST_IPC.onboardingAcknowledgeIntro, (event, ...args) => {
+    trustedRendererAuthority(event);
+    if (args.length !== 0) throw new Error("desktop onboarding acknowledge request was invalid");
+    deps.acknowledgeOnboardingIntro();
   });
   handle(HOST_IPC.themeGetState, (event) => {
     trustedRendererAuthority(event);

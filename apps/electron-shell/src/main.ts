@@ -19,6 +19,10 @@ import {
 } from "@tmux-ide/contracts";
 
 import { canonicalDaemonPreflight, type DaemonPreflight } from "./daemon-preflight.ts";
+import {
+  acknowledgeOnboardingIntro,
+  readOnboardingIntroAcknowledged,
+} from "../../../packages/daemon/src/lib/onboarding-marker.ts";
 import { DaemonConnectionCoordinator } from "./daemon-connection-coordinator.ts";
 import { shutdownDesktopDaemonRuntime } from "./daemon-runtime-shutdown.ts";
 import {
@@ -421,6 +425,8 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         currentVersion: app.getVersion(),
         availableVersion: null,
       },
+      readOnboardingIntroAcknowledged,
+      acknowledgeOnboardingIntro,
       trustedRendererLocation,
     });
   } catch (error) {

@@ -140,6 +140,7 @@ describe("host IPC trust boundary", () => {
       dispose: vi.fn(),
     } as unknown as DaemonConnectionAuthority;
     const selectProjectDirectory = vi.fn(async () => "/private/project");
+    const acknowledgeOnboardingIntro = vi.fn();
     const registration = registerHostIpc({
       ipcMain,
       getWindow: () => window,
@@ -150,6 +151,8 @@ describe("host IPC trust boundary", () => {
       selectProjectDirectory,
       getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       getUpdateStatus: () => ({ phase: "idle", currentVersion: "test", availableVersion: null }),
+      readOnboardingIntroAcknowledged: () => false,
+      acknowledgeOnboardingIntro,
       trustedRendererLocation: {
         kind: "packaged-url",
         url: "file:///trusted/renderer/index.html",
@@ -165,7 +168,16 @@ describe("host IPC trust boundary", () => {
       runtime: "electron",
       appVersion: "test",
       daemon: { status: "connected", identity: { instanceId: daemon.descriptor.instanceId } },
+      onboarding: { introAcknowledged: false },
     });
+    expect(handlers.get(HOST_IPC.onboardingAcknowledgeIntro)?.(trustedEvent)).toBeUndefined();
+    expect(acknowledgeOnboardingIntro).toHaveBeenCalledTimes(1);
+    expect(() =>
+      handlers.get(HOST_IPC.onboardingAcknowledgeIntro)?.({
+        sender: webContents,
+        senderFrame: {},
+      } as unknown as IpcMainInvokeEvent),
+    ).toThrow("untrusted renderer");
     expect(() =>
       bootstrap?.({ sender: webContents, senderFrame: {} } as unknown as IpcMainInvokeEvent),
     ).toThrow("untrusted renderer");
@@ -539,6 +551,8 @@ describe("host IPC trust boundary", () => {
       selectProjectDirectory: async () => null,
       getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       getUpdateStatus: () => ({ phase: "idle", currentVersion: "test", availableVersion: null }),
+      readOnboardingIntroAcknowledged: () => false,
+      acknowledgeOnboardingIntro: () => undefined,
       trustedRendererLocation: {
         kind: "packaged-url",
         url: "file:///trusted/renderer/index.html",
@@ -671,6 +685,8 @@ describe("host IPC trust boundary", () => {
         selectProjectDirectory: async () => null,
         getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
         getUpdateStatus: () => ({ phase: "idle", currentVersion: "test", availableVersion: null }),
+        readOnboardingIntroAcknowledged: () => false,
+        acknowledgeOnboardingIntro: () => undefined,
         trustedRendererLocation,
       });
       const event = {

@@ -22,6 +22,7 @@ import {
   DesktopLiveApplication,
   type DesktopDaemonRecoveryPhase,
 } from "./runtime/live-app-composition.tsx";
+import { recoveryForDaemonCapability } from "./runtime/connection-recovery.ts";
 import { createHostNativeTerminalTransport } from "./runtime/host-terminal-transport.ts";
 import type { NativeTerminalTransport } from "./terminal/native-terminal-transport.ts";
 import type {
@@ -66,6 +67,7 @@ export function App(props: AppProps = {}) {
   const [daemonRecovery, setDaemonRecovery] = createSignal<DesktopDaemonRecoveryPhase>("idle");
   const [theme, setTheme] = createSignal<DesktopThemeState | null>(null);
   const [windowState, setWindowState] = createSignal<DesktopWindowState | null>(null);
+  const [introDismissed, setIntroDismissed] = createSignal(false);
   let bootstrapRequest = 0;
   let daemonRefreshFlight: Promise<void> | null = null;
   let disposed = false;
@@ -145,6 +147,12 @@ export function App(props: AppProps = {}) {
 
   const effectiveTheme = () => theme() ?? bootstrap()?.theme ?? initialTheme;
   const effectiveWindow = () => windowState() ?? bootstrap()?.window ?? null;
+  const introPending = () =>
+    !introDismissed() && bootstrap()?.onboarding.introAcknowledged === false;
+  const acknowledgeIntro = (): void => {
+    setIntroDismissed(true);
+    void host?.onboarding.acknowledgeIntro().catch(() => undefined);
+  };
   const experience = createMemo(() => createDomExperience({ hostTheme: effectiveTheme() }));
   createEffect(() => {
     const variables = experience().variables;
@@ -271,26 +279,37 @@ export function App(props: AppProps = {}) {
                     {(ready) => (
                       <Show
                         when={ready().daemon.status === "connected"}
-                        fallback={
-                          <DesktopConnectionSurface
-                            host={activeHost()}
-                            runtime={ready().runtime}
-                            platform={ready().platform}
-                            windowState={effectiveWindow()}
-                            state="degraded"
-                            eyebrow="Native tmux workspace"
-                            title="The daemon is unavailable"
-                            description={daemonCapabilityReason(ready().daemon)}
-                            guidance="The workspace stays hidden until daemon health is verified"
-                            onRetry={refreshDaemonConnection}
-                            retryLabel="Recheck daemon"
-                            diagnostics={[
-                              daemonCapabilityReason(ready().daemon),
-                              `Recovery phase: ${daemonRecovery()}`,
-                              "No workspace resource or terminal attachment has been mounted.",
-                            ]}
-                          />
-                        }
+                        fallback={(() => {
+                          const daemon = ready().daemon;
+                          const recovery =
+                            daemon.status === "connected"
+                              ? null
+                              : recoveryForDaemonCapability(daemon, ready().platform);
+                          return (
+                            <DesktopConnectionSurface
+                              host={activeHost()}
+                              runtime={ready().runtime}
+                              platform={ready().platform}
+                              windowState={effectiveWindow()}
+                              state="degraded"
+                              eyebrow={recovery?.eyebrow ?? "Native tmux workspace"}
+                              title={recovery?.title ?? "The daemon is unavailable"}
+                              description={recovery?.description ?? daemonCapabilityReason(daemon)}
+                              guidance={
+                                recovery?.guidance ??
+                                "The workspace stays hidden until daemon health is verified"
+                              }
+                              command={recovery?.command ?? null}
+                              onRetry={refreshDaemonConnection}
+                              retryLabel="Recheck daemon"
+                              diagnostics={[
+                                daemonCapabilityReason(daemon),
+                                `Recovery phase: ${daemonRecovery()}`,
+                                "No workspace resource or terminal attachment has been mounted.",
+                              ]}
+                            />
+                          );
+                        })()}
                       >
                         <DesktopLiveApplication
                           host={activeHost()}
@@ -311,6 +330,8 @@ export function App(props: AppProps = {}) {
                           onCommand={props.onCommand}
                           onPaneAction={props.onPaneAction}
                           onPaneGrip={props.onPaneGrip}
+                          introPending={introPending()}
+                          onAcknowledgeIntro={acknowledgeIntro}
                         />
                       </Show>
                     )}

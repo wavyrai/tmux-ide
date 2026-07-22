@@ -701,6 +701,97 @@ kbd {
   margin-top: 2px;
 }
 
+.runtime-state-card__command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--tmux-ide-border-subtle);
+  border-radius: 8px;
+  background: var(
+    --tmux-ide-surface-inset,
+    color-mix(in srgb, var(--tmux-ide-text-primary) 6%, transparent)
+  );
+}
+
+.runtime-state-card__command > code {
+  overflow-x: auto;
+  color: var(--tmux-ide-text-primary);
+  font-family: var(--tmux-ide-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre;
+  user-select: all;
+}
+
+.first-run-intro {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 40px;
+  z-index: 40;
+  display: flex;
+  justify-content: center;
+  padding: 0 16px;
+  pointer-events: none;
+}
+
+.first-run-intro__card {
+  width: min(480px, 100%);
+  padding: 18px 20px 16px;
+  border: 1px solid var(--tmux-ide-border-strong, var(--tmux-ide-border-subtle));
+  border-radius: 12px;
+  background: var(--tmux-ide-surface-raised, var(--tmux-ide-surface-inset));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  pointer-events: auto;
+}
+
+.first-run-intro__card h2 {
+  margin: 4px 0 2px;
+  color: var(--tmux-ide-text-primary);
+  font-size: 16px;
+}
+
+.first-run-intro__card > p {
+  margin: 0 0 12px;
+  color: var(--tmux-ide-text-secondary);
+  font-size: 12px;
+}
+
+.first-run-intro__points {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.first-run-intro__points li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  color: var(--tmux-ide-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.first-run-intro__points strong {
+  color: var(--tmux-ide-text-primary);
+}
+
+.first-run-intro__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.first-run-intro__hint {
+  color: var(--tmux-ide-text-muted);
+  font-size: 11px;
+}
+
 .runtime-diagnostics {
   margin-top: 20px;
   padding-top: 12px;

@@ -216,6 +216,7 @@ function createHostHarness() {
       theme: { mode: "dark" as const, highContrast: false, reducedMotion: false },
       window: { maximized: false, fullscreen: false, focused: true },
       daemon: { status: "connected" as const, identity: daemon },
+      onboarding: { introAcknowledged: true as const },
     })),
     lifecycle: { requestQuit: async () => undefined },
     window: {
@@ -227,6 +228,7 @@ function createHostHarness() {
     },
     menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
     workspace: { openProjectDirectory: async () => null },
+    onboarding: { acknowledgeIntro: async () => undefined },
     theme: {
       getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,

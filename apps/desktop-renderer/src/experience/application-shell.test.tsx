@@ -52,6 +52,7 @@ function host(): HostCapabilities {
       theme: { mode: "dark", highContrast: false, reducedMotion: false },
       window: WINDOW_STATE,
       daemon: { status: "unavailable", code: "preview-only", reason: "fixture only" },
+      onboarding: { introAcknowledged: true },
     }),
     lifecycle: { requestQuit: async () => undefined },
     window: {
@@ -63,6 +64,7 @@ function host(): HostCapabilities {
     },
     menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
     workspace: { openProjectDirectory: async () => null },
+    onboarding: { acknowledgeIntro: async () => undefined },
     theme: {
       getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,

@@ -74,6 +74,7 @@ function bootstrap(daemon: DaemonInstanceIdentity = DAEMON_A): DesktopHostBootst
     theme: { mode: "light", highContrast: false, reducedMotion: false },
     window: INITIAL_WINDOW,
     daemon: { status: "connected", identity: daemon },
+    onboarding: { introAcknowledged: true },
   };
 }
 
@@ -158,6 +159,7 @@ function createHostHarness() {
     },
     menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
     workspace: { openProjectDirectory: vi.fn(async () => null) },
+    onboarding: { acknowledgeIntro: vi.fn(async () => undefined) },
     theme: {
       getState: async () => ({ mode: "light", highContrast: false, reducedMotion: false }),
       onChanged(listener) {
@@ -549,6 +551,49 @@ describe("desktop App live composition", () => {
     dispose();
   });
 
+  it("shows the first-run intro over the first live workspace, then persists dismissal", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.bootstrap).mockResolvedValueOnce({
+      ...bootstrap(),
+      onboarding: { introAcknowledged: false },
+    });
+    const workspaceName = "project-00112233445566778899aabbccddeeff";
+    harness.setWorkspaces(workspaceName);
+    harness.setShell(workspaceName, shellInput("First live workspace"));
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await markLive(harness, [workspaceName]);
+    await vi.waitFor(() => expect(root.querySelector(".shell-workbench")).not.toBeNull());
+
+    const intro = root.querySelector('[role="dialog"].first-run-intro');
+    expect(intro).not.toBeNull();
+    expect(intro?.textContent).toContain("Your workspace is live");
+    expect(intro?.textContent).toContain("command palette");
+
+    buttonNamed(root, "Got it")?.click();
+    await vi.waitFor(() => expect(harness.host.onboarding.acknowledgeIntro).toHaveBeenCalledOnce());
+    expect(root.querySelector(".first-run-intro")).toBeNull();
+    // The shell stays mounted; only the intro layer is retired.
+    expect(root.querySelector(".shell-workbench")).not.toBeNull();
+    dispose();
+  });
+
+  it("does not show the first-run intro once acknowledged", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    const workspaceName = "project-00112233445566778899aabbccddeeff";
+    harness.setWorkspaces(workspaceName);
+    harness.setShell(workspaceName, shellInput("Returning workspace"));
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await markLive(harness, [workspaceName]);
+    await vi.waitFor(() => expect(root.querySelector(".shell-workbench")).not.toBeNull());
+    expect(root.querySelector(".first-run-intro")).toBeNull();
+    expect(harness.host.onboarding.acknowledgeIntro).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it("times out discovery honestly and retries it without reopening the folder", async () => {
     installLightMediaPreference();
     const harness = createHostHarness();
@@ -915,7 +960,9 @@ describe("desktop App live composition", () => {
       },
     });
 
-    await vi.waitFor(() => expect(root.textContent).toContain("The daemon is unavailable"));
+    await vi.waitFor(() =>
+      expect(root.textContent).toContain("The workspace engine isn't running yet"),
+    );
     expect(root.textContent).toContain("canonical daemon is not running");
     expect(root.textContent).not.toContain("Revalidating the daemon");
     expect(root.querySelector(".shell-workbench")).toBeNull();
