@@ -30,6 +30,7 @@ type TmuxRunner = (args: string[]) => string;
 let _tmuxRunner: TmuxRunner = (args) =>
   execFileSync("tmux", args, {
     encoding: "utf-8",
+    maxBuffer: 1024 * 1024,
     stdio: ["ignore", "pipe", "ignore"],
   }).trim();
 

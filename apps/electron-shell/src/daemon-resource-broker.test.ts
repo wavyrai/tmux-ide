@@ -1,5 +1,5 @@
 import {
-  APPLICATION_SHELL_RESOURCE_VERSION,
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
   COHESION_FIXTURE_V1,
   DESKTOP_PACKAGED_RENDERER_ORIGIN,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
@@ -38,14 +38,24 @@ const WORKSPACE_CATALOG = {
 };
 
 const APPLICATION_SHELL_ENVELOPE = {
-  version: APPLICATION_SHELL_RESOURCE_VERSION,
+  version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
   daemon: IDENTITY,
   resource: {
     project: COHESION_FIXTURE_V1.project,
-    workspace: COHESION_FIXTURE_V1.workspace,
+    workspace: {
+      ...COHESION_FIXTURE_V1.workspace,
+      sidebar: {
+        ...COHESION_FIXTURE_V1.workspace.sidebar,
+        agents: COHESION_FIXTURE_V1.workspace.sidebar.agents.map((agent) => ({
+          ...agent,
+          paneId: null,
+        })),
+      },
+    },
     dock: COHESION_FIXTURE_V1.dock,
     focus: COHESION_FIXTURE_V1.focus,
     connection: COHESION_FIXTURE_V1.connection,
+    terminalInventory: { activeResourceId: null, resources: [] },
   },
 };
 
@@ -338,7 +348,7 @@ describe("Electron main daemon resource broker", () => {
     expect(requests.map(({ url }) => url)).toEqual([
       "http://127.0.0.1:6060/api/resources/workspace-catalog",
       "http://127.0.0.1:6060/api/resources/workspace-catalog",
-      "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell",
+      "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=2",
     ]);
     expect(requests.every(({ init }) => init?.method === "GET" && init.redirect === "error")).toBe(
       true,

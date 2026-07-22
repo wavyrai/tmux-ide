@@ -17,7 +17,10 @@ import {
   PANE_FRAME_FIXTURE_EXPECTED_TRACE,
   PANE_FRAME_FIXTURE_MODEL,
 } from "../../../ui/pane-frame/fixture.ts";
-import { paneFrameModelsFromApplicationShellAgents } from "../../../ui/pane-frame/model.ts";
+import {
+  paneFrameModelsFromApplicationShellAgents,
+  paneFrameTerminalsFromApplicationShellInventory,
+} from "../../../ui/pane-frame/model.ts";
 import type { PaneFrameInput } from "./pane-frame.ts";
 import { paneFrameHitTest, projectPaneFrame, projectSemanticPaneFrame } from "./pane-frame.ts";
 import { PaneFrame } from "./pane-frame.tsx";
@@ -334,6 +337,64 @@ describe("PaneFrame OpenTUI renderer", () => {
       setup.renderer.destroy();
     },
   );
+
+  it("renders a plain application-shell terminal resource through native OpenTUI chrome", async () => {
+    const shell = projectApplicationShellV1({
+      project: COHESION_FIXTURE_V1.project,
+      workspace: {
+        ...COHESION_FIXTURE_V1.workspace,
+        sidebar: { ...COHESION_FIXTURE_V1.workspace.sidebar, agents: [] },
+      },
+      dock: COHESION_FIXTURE_V1.dock,
+      focus: {
+        ...COHESION_FIXTURE_V1.focus,
+        appFocusedPaneId: "pane.dev-shell",
+        terminalInputPaneId: null,
+        layoutSelectedPaneId: null,
+        overlays: [],
+      },
+      connection: COHESION_FIXTURE_V1.connection,
+      terminalInventory: {
+        activeResourceId: "pane.dev-shell",
+        resources: [
+          {
+            id: "pane.dev-shell",
+            title: "Dev shell",
+            kind: "terminal",
+            active: true,
+            attachability: { status: "available", semanticPaneId: "pane.dev-shell" },
+          },
+        ],
+      },
+    });
+    const terminal = paneFrameTerminalsFromApplicationShellInventory(shell)[0]!;
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const projection = projectSemanticPaneFrame({ width: 120, height: 40, model: terminal.model });
+    const setup = await renderForTest(
+      () => (
+        <PaneFrame theme={theme} projection={projection}>
+          <text fg={theme.colors.mutedForeground}> native plain terminal body</text>
+        </PaneFrame>
+      ),
+      { width: 120, height: 40 },
+    );
+    await setup.renderOnce();
+    const frame = stableFrame(setup.captureCharFrame());
+
+    expect(terminal).toMatchObject({
+      terminalTarget: { semanticPaneId: "pane.dev-shell" },
+      unavailableReason: null,
+    });
+    expect(projection.model).toMatchObject({
+      pane: { id: "pane.dev-shell", kind: "terminal" },
+      title: "Dev shell",
+      subtitle: "Terminal",
+    });
+    expect(frame).toContain("Dev shell");
+    expect(frame).toContain("native plain terminal body");
+    expect(frame).toMatchSnapshot();
+    setup.renderer.destroy();
+  });
 
   it("routes projected action spans and keeps keyboard ownership in the harness", async () => {
     const harness = await renderPane(120, 40);

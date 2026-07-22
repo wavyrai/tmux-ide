@@ -15,6 +15,7 @@ import {
   TerminalAttachmentIssueMutationRequestSchemaZ,
   TerminalAttachmentIssueResultSchemaZ,
   TerminalAttachmentPlanResponseSchemaZ,
+  TerminalAttachmentSemanticPaneIdSchemaZ,
 } from "../terminal-attachments.ts";
 
 const target = {
@@ -42,6 +43,35 @@ describe("terminal attachment contracts", () => {
     expect(
       TerminalAttachRequestSchemaZ.safeParse({ ...request(), viewerMode: "read-only" }).success,
     ).toBe(true);
+  });
+
+  it("reserves discovered fallback ids outside attachment authority", () => {
+    const reserved = "terminal.discovered.user-authored";
+    expect(TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(reserved).success).toBe(false);
+    expect(
+      TerminalAttachRequestSchemaZ.safeParse({
+        ...request(),
+        target: { ...target, semanticPaneId: reserved },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("uses the exact portable workspace-id grammar for semantic pane admission", () => {
+    for (const semanticPaneId of [
+      "pane:colon",
+      "constructor",
+      "__proto__",
+      ".leading-dot",
+      `pane.${"x".repeat(124)}`,
+    ]) {
+      expect(TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(semanticPaneId).success).toBe(false);
+      expect(
+        TerminalAttachRequestSchemaZ.safeParse({
+          ...request(),
+          target: { ...target, semanticPaneId },
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("enforces fixed integer viewport limits", () => {

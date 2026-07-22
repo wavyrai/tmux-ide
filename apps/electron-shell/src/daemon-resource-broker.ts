@@ -1,5 +1,6 @@
 import {
-  ApplicationShellResourceV1SchemaZ,
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  ApplicationShellResourceV2SchemaZ,
   DaemonEventClientFrameSchemaZ,
   DaemonEventServerFrameSchemaZ,
   DesktopDaemonEventSchemaZ,
@@ -484,7 +485,10 @@ export class DaemonResourceBroker {
   ): Promise<DesktopDaemonFetchApplicationShellResult> {
     if (this.#daemon.status !== "connected") return this.#disconnectedResult();
     try {
-      const request = DesktopDaemonFetchApplicationShellRequestSchemaZ.safeParse({ workspaceName });
+      const request = DesktopDaemonFetchApplicationShellRequestSchemaZ.safeParse({
+        workspaceName,
+        resourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
+      });
       if (!request.success) throw new BrokerFailure(daemonCapabilityError("invalid-request"));
       const workspaces = await this.#loadWorkspaceCatalog();
       const workspace = workspaces.find(
@@ -492,9 +496,9 @@ export class DaemonResourceBroker {
       );
       if (!workspace) throw new BrokerFailure(daemonCapabilityError("workspace-not-found"));
       const raw = await this.#requestJson(
-        `/api/project/${encodeURIComponent(workspace.sessionName)}/application-shell`,
+        `/api/project/${encodeURIComponent(workspace.sessionName)}/application-shell?version=${APPLICATION_SHELL_RESOURCE_V2_VERSION}`,
       );
-      const envelope = ApplicationShellResourceV1SchemaZ.parse(raw);
+      const envelope = ApplicationShellResourceV2SchemaZ.parse(raw);
       if (!sameIdentity(envelope.daemon, daemonIdentity(this.#daemon))) {
         throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
       }

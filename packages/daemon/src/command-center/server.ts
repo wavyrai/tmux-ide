@@ -36,11 +36,13 @@ import {
 } from "../lib/workspace-registry.ts";
 import {
   AddWorkspaceRequestSchemaZ,
-  APPLICATION_SHELL_RESOURCE_VERSION,
+  APPLICATION_SHELL_RESOURCE_V1_VERSION,
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
   WORKSPACE_CATALOG_RESOURCE_VERSION,
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
   type ApplicationShellResourceV1,
+  type ApplicationShellResourceV2,
   type WorkspaceCatalogResourceV1,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
@@ -108,7 +110,11 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { projectApplicationShellResource } from "./resources/application-shell.ts";
+import {
+  projectLegacyApplicationShellResourceV1,
+  projectApplicationShellResource,
+  type ApplicationShellSessionFacts,
+} from "./resources/application-shell.ts";
 import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
@@ -131,6 +137,11 @@ export interface CreateAppOptions {
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
+  applicationShellInventoryBackend?: {
+    discoverApplicationShellSession(
+      requestedSessionName: string,
+    ): Promise<ApplicationShellSessionFacts | null>;
+  } | null;
 }
 
 let projectStreamConnections = 0;
@@ -529,14 +540,64 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ ...detail } satisfies DaemonProjectResponse);
   });
 
-  app.get("/api/project/:name/application-shell", (c) => {
+  app.get("/api/project/:name/application-shell", async (c) => {
     const name = c.req.param("name");
-    const session = discoverSessions().find((candidate) => candidate.name === name);
+    const requestedVersion = c.req.query("version");
+    if (
+      requestedVersion !== undefined &&
+      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) &&
+      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION)
+    ) {
+      return c.json({ error: "Unsupported application-shell resource version" }, 400);
+    }
+    if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
+      const backend = options.applicationShellInventoryBackend;
+      if (!backend) return c.json({ error: "Session discovery unavailable" }, 503);
+      let session: ApplicationShellSessionFacts | null;
+      try {
+        session = await backend.discoverApplicationShellSession(name);
+      } catch {
+        return c.json({ error: "Session discovery unavailable" }, 503);
+      }
+      if (!session) return c.json({ error: "Session not found" }, 404);
+      const resource = projectApplicationShellResource(session);
+      return c.json({
+        version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
+        daemon: daemonInstanceIdentity,
+        resource,
+      } satisfies ApplicationShellResourceV2);
+    }
+
+    const backend = options.applicationShellInventoryBackend;
+    if (!backend) {
+      const legacySession = discoverSessions().find((candidate) => candidate.name === name);
+      if (!legacySession) return c.json({ error: "Session not found" }, 404);
+      return c.json({
+        version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
+        daemon: daemonInstanceIdentity,
+        resource: projectLegacyApplicationShellResourceV1(legacySession),
+      } satisfies ApplicationShellResourceV1);
+    }
+
+    let session: ApplicationShellSessionFacts | null;
+    try {
+      session = await backend.discoverApplicationShellSession(name);
+    } catch {
+      return c.json({ error: "Session discovery unavailable" }, 503);
+    }
     if (!session) return c.json({ error: "Session not found" }, 404);
+    const resource = projectApplicationShellResource(session);
+    const legacyResource = {
+      project: resource.project,
+      workspace: resource.workspace,
+      dock: resource.dock,
+      focus: resource.focus,
+      connection: resource.connection,
+    };
     return c.json({
-      version: APPLICATION_SHELL_RESOURCE_VERSION,
+      version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
       daemon: daemonInstanceIdentity,
-      resource: projectApplicationShellResource(session),
+      resource: legacyResource,
     } satisfies ApplicationShellResourceV1);
   });
 

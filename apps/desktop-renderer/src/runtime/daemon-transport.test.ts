@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  APPLICATION_SHELL_RESOURCE_VERSION,
-  ApplicationShellProjectionInputV1SchemaZ,
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  ApplicationShellProjectionInputV2SchemaZ,
   COHESION_FIXTURE_V1,
   type DesktopDaemonHostDescriptor,
 } from "@tmux-ide/contracts";
@@ -29,16 +29,26 @@ const daemonIdentity = {
 const resolveSessionName = (workspaceName: string): string =>
   workspaceName === "project / one" ? "session / one" : workspaceName;
 
-const resource = ApplicationShellProjectionInputV1SchemaZ.parse({
+const resource = ApplicationShellProjectionInputV2SchemaZ.parse({
   project: COHESION_FIXTURE_V1.project,
-  workspace: COHESION_FIXTURE_V1.workspace,
+  workspace: {
+    ...COHESION_FIXTURE_V1.workspace,
+    sidebar: {
+      ...COHESION_FIXTURE_V1.workspace.sidebar,
+      agents: COHESION_FIXTURE_V1.workspace.sidebar.agents.map((agent) => ({
+        ...agent,
+        paneId: null,
+      })),
+    },
+  },
   dock: COHESION_FIXTURE_V1.dock,
   focus: { ...COHESION_FIXTURE_V1.focus, overlays: [] },
   connection: COHESION_FIXTURE_V1.connection,
+  terminalInventory: { activeResourceId: null, resources: [] },
 });
 
 function resourceEnvelope(value: unknown = resource, daemon: unknown = daemonIdentity): unknown {
-  return { version: APPLICATION_SHELL_RESOURCE_VERSION, daemon, resource: value };
+  return { version: APPLICATION_SHELL_RESOURCE_V2_VERSION, daemon, resource: value };
 }
 
 class FakeSocket implements DaemonEventSocket {
@@ -96,7 +106,7 @@ describe("browser-safe daemon transport", () => {
     expect(fetch).toHaveBeenCalledOnce();
     const [url, init] = fetch.mock.calls[0]!;
     expect(String(url)).toBe(
-      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell",
+      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell?version=2",
     );
     expect(init).toMatchObject({
       method: "GET",

@@ -90,6 +90,7 @@ function sameDomShellIdentity(
 
 function availablePaneIds(input: ApplicationShellProjectionInputV1): ReadonlySet<string> {
   return new Set([
+    ...(input.terminalInventory?.resources.map(({ id }) => id) ?? []),
     ...input.workspace.sidebar.agents.flatMap((agent) =>
       agent.paneId === null ? [] : [agent.paneId],
     ),
@@ -142,6 +143,7 @@ function reconcileResourceSelections(
   const terminalResourceIds = new Set([
     ...input.workspace.sidebar.sessions.map(({ id }) => id),
     ...input.workspace.sidebar.agents.map(({ id }) => id),
+    ...(input.terminalInventory?.resources.map(({ id }) => id) ?? []),
   ]);
   return state.selectedResources.filter(
     (selection) =>

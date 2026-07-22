@@ -94,6 +94,7 @@ describe("experience-kernel import boundary", () => {
       "experience-shell.ts",
       "focus-overlay.ts",
       "pane-appearance.ts",
+      "semantic-identity.ts",
       "visual-recipes.ts",
       "visual-tokens.ts",
     ]);

@@ -4,6 +4,7 @@ import {
   ApplicationShellProjectionInputV1SchemaZ,
   DESKTOP_HOST_API_VERSION,
   applicationShellActionTraceV1,
+  projectApplicationShellV1,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
   type DesktopWindowState,
@@ -27,6 +28,7 @@ import {
 } from "./dom-shell.ts";
 import styles from "../styles.css?raw";
 import paneFrameStyles from "../../../../packages/daemon/src/ui/pane-frame/web-host.css?raw";
+import { paneFrameTerminalsFromApplicationShellInventory } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 
 const disposers: Array<() => void> = [];
 
@@ -612,6 +614,84 @@ describe("visible DOM application shell", () => {
     expect(root.querySelector(".status-strip__safe")?.textContent).toBe("Illustrative data only");
     expect(root.textContent).not.toContain("agent processes remain active");
     expect(root.textContent).not.toContain("Retry the attachment");
+  });
+
+  it("constructs TerminalSurface only for explicitly attachable inventory resources", () => {
+    const base = createDefaultDomShellInput();
+    const reasons = [
+      "missing-semantic-stamp",
+      "invalid-semantic-stamp",
+      "duplicate-semantic-stamp",
+      "not-single-pane-window",
+    ] as const;
+    const unavailableResources = [
+      { id: "terminal.discovered.unavailable-0", title: "Unstamped shell", kind: "terminal" },
+      { id: "pane.pm", title: "Project manager", kind: "agent" },
+      { id: "pane.reviewer", title: "Reviewer", kind: "agent" },
+      { id: "pane.recovery", title: "Recovery", kind: "agent" },
+    ] as const;
+    const input = ApplicationShellProjectionInputV1SchemaZ.parse({
+      ...base,
+      focus: {
+        ...base.focus,
+        appFocusedPaneId: "pane.implementer",
+        terminalInputPaneId: null,
+        layoutSelectedPaneId: null,
+      },
+      terminalInventory: {
+        activeResourceId: "pane.implementer",
+        resources: [
+          {
+            id: "pane.implementer",
+            title: "Implementer terminal",
+            kind: "agent",
+            active: true,
+            attachability: {
+              status: "available",
+              semanticPaneId: "pane.implementer",
+            },
+          },
+          ...reasons.map((reason, index) => ({
+            ...unavailableResources[index]!,
+            active: false,
+            attachability: { status: "unavailable" as const, reason },
+          })),
+        ],
+      },
+    });
+    const terminalPanes = paneFrameTerminalsFromApplicationShellInventory(
+      projectApplicationShellV1(input),
+    );
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input}
+            dataMode="runtime"
+            terminalPanes={terminalPanes}
+          />
+        ),
+        root,
+      ),
+    );
+
+    expect(terminalPanes).toHaveLength(5);
+    expect(terminalPanes.filter(({ terminalTarget }) => terminalTarget !== null)).toHaveLength(1);
+    expect(root.querySelectorAll(".web-pane-frame")).toHaveLength(5);
+    expect(root.querySelectorAll(".terminal-surface__viewport")).toHaveLength(1);
+    expect(root.querySelectorAll(".terminal-surface--unavailable")).toHaveLength(4);
+    for (const reason of reasons) {
+      expect(terminalPanes.find(({ unavailableReason }) => unavailableReason === reason)).toEqual(
+        expect.objectContaining({ terminalTarget: null }),
+      );
+    }
+    expect(root.textContent).not.toContain("terminal.discovered.unavailable-");
   });
 
   it.each([

@@ -1,5 +1,6 @@
 import {
-  ApplicationShellResourceV1SchemaZ,
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  ApplicationShellResourceV2SchemaZ,
   DaemonEventClientFrameSchemaZ,
   DaemonEventServerFrameSchemaZ,
   DesktopApplicationShellTargetSchemaZ,
@@ -143,10 +144,12 @@ function validatedTarget(value: unknown): DesktopApplicationShellTarget {
 }
 
 function applicationShellUrl(descriptor: DesktopDaemonHostDescriptor, sessionName: string): URL {
-  return new URL(
+  const url = new URL(
     `/api/project/${encodeURIComponent(sessionName)}/application-shell`,
     descriptor.apiBaseUrl,
   );
+  url.searchParams.set("version", String(APPLICATION_SHELL_RESOURCE_V2_VERSION));
+  return url;
 }
 
 function eventSocketUrl(descriptor: DesktopDaemonHostDescriptor): string {
@@ -287,7 +290,7 @@ export function createDirectLoopbackDaemonTransport(
           "Daemon application-shell response was not valid JSON.",
         );
       }
-      const parsed = ApplicationShellResourceV1SchemaZ.safeParse(body);
+      const parsed = ApplicationShellResourceV2SchemaZ.safeParse(body);
       if (!parsed.success) {
         throw new DaemonTransportError(
           "schema-invalid",

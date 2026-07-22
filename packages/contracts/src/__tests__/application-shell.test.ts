@@ -6,6 +6,9 @@ import {
   ApplicationShellActionTraceV1SchemaZ,
   ApplicationShellCommandInvocationSchemaZ,
   ApplicationShellProjectionV1SchemaZ,
+  ApplicationShellProjectionInputV1SchemaZ,
+  ApplicationShellProjectionInputV2SchemaZ,
+  TerminalResourceAttachabilitySchemaZ,
   applyApplicationShellInvocationV1,
   applicationShellActionTraceV1,
   applicationShellCommandInvocation,
@@ -13,7 +16,11 @@ import {
   projectApplicationShellV1,
   replayApplicationShellActionTraceV1,
 } from "../application-shell.ts";
-import { ApplicationShellResourceV1SchemaZ } from "../application-shell-resource.ts";
+import {
+  ApplicationShellResourceSchemaZ,
+  ApplicationShellResourceV1SchemaZ,
+  ApplicationShellResourceV2SchemaZ,
+} from "../application-shell-resource.ts";
 import { COHESION_FIXTURE_V1 } from "../cohesion-fixture.ts";
 import {
   APPLICATION_SHELL_COMMAND_IDS,
@@ -75,6 +82,166 @@ describe("semantic application shell", () => {
         daemon: { ...envelope.daemon, token: "secret" },
       }).success,
     ).toBe(false);
+    expect(
+      ApplicationShellResourceV1SchemaZ.safeParse({
+        ...envelope,
+        resource: {
+          ...envelope.resource,
+          terminalInventory: { activeResourceId: null, resources: [] },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps terminal inventory optional while strictly preserving semantic resources", () => {
+    const legacy = projectApplicationShellV1(COHESION_FIXTURE_V1);
+    expect(legacy.terminalInventory).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(legacy, "terminalInventory")).toBe(false);
+
+    const input = {
+      ...COHESION_FIXTURE_V1,
+      workspace: {
+        ...COHESION_FIXTURE_V1.workspace,
+        sidebar: {
+          ...COHESION_FIXTURE_V1.workspace.sidebar,
+          agents: COHESION_FIXTURE_V1.workspace.sidebar.agents.filter(
+            ({ paneId }) => paneId === "pane.implementer",
+          ),
+        },
+      },
+      terminalInventory: {
+        activeResourceId: "pane.implementer",
+        resources: [
+          {
+            id: "pane.implementer",
+            title: "Implementer",
+            kind: "agent" as const,
+            active: true,
+            attachability: {
+              status: "available" as const,
+              semanticPaneId: "pane.implementer",
+            },
+          },
+          {
+            id: "terminal.discovered.shell",
+            title: "Shell",
+            kind: "terminal" as const,
+            active: false,
+            attachability: {
+              status: "unavailable" as const,
+              reason: "missing-semantic-stamp" as const,
+            },
+          },
+        ],
+      },
+    };
+    const projection = projectApplicationShellV1(input);
+    expect(projection.terminalInventory).toEqual(input.terminalInventory);
+    expect(ApplicationShellProjectionV1SchemaZ.parse(serialized(projection))).toEqual(projection);
+    expect(mutableDataPaths(projection.terminalInventory, "terminalInventory")).toEqual([]);
+    const v2Envelope = {
+      version: 2,
+      daemon: {
+        protocolVersion: 1,
+        productVersion: "2.8.0",
+        instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+        startedAt: "2026-07-21T00:00:00.000Z",
+      },
+      resource: {
+        project: input.project,
+        workspace: input.workspace,
+        dock: input.dock,
+        focus: input.focus,
+        connection: input.connection,
+        terminalInventory: input.terminalInventory,
+      },
+    };
+    expect(ApplicationShellResourceV2SchemaZ.parse(v2Envelope)).toEqual(v2Envelope);
+    expect(ApplicationShellResourceSchemaZ.parse(v2Envelope)).toEqual(v2Envelope);
+
+    expect(() =>
+      projectApplicationShellV1({
+        ...input,
+        terminalInventory: {
+          activeResourceId: "pane.implementer",
+          resources: [input.terminalInventory.resources[0]!, input.terminalInventory.resources[0]!],
+        },
+      }),
+    ).toThrow(/unique/u);
+    expect(() =>
+      projectApplicationShellV1({
+        ...input,
+        terminalInventory: { ...input.terminalInventory, activeResourceId: null },
+      }),
+    ).toThrow(/activeResourceId/u);
+    expect(() =>
+      projectApplicationShellV1({
+        ...input,
+        terminalInventory: {
+          activeResourceId: "terminal.discovered.fallback",
+          resources: [
+            {
+              id: "terminal.discovered.fallback",
+              title: "Fallback",
+              kind: "terminal",
+              active: true,
+              attachability: {
+                status: "available",
+                semanticPaneId: "terminal.discovered.fallback",
+              },
+            },
+          ],
+        },
+      }),
+    ).toThrow(/fallback/u);
+  });
+
+  it("uses terminal attachment admission identity for available resources", () => {
+    for (const semanticPaneId of [
+      "pane:colon",
+      "constructor",
+      "__proto__",
+      ".leading-dot",
+      `pane.${"x".repeat(124)}`,
+      "terminal.discovered.user-authored",
+    ]) {
+      expect(
+        TerminalResourceAttachabilitySchemaZ.safeParse({
+          status: "available",
+          semanticPaneId,
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      TerminalResourceAttachabilitySchemaZ.safeParse({
+        status: "available",
+        semanticPaneId: "pane.portable-worker_2",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects duplicate non-null agent pane ids at every strict projection boundary", () => {
+    const duplicateAgents = COHESION_FIXTURE_V1.workspace.sidebar.agents
+      .slice(0, 2)
+      .map((agent) => ({
+        ...agent,
+        paneId: "pane.shared",
+      }));
+    const input = {
+      ...COHESION_FIXTURE_V1,
+      workspace: {
+        ...COHESION_FIXTURE_V1.workspace,
+        sidebar: { ...COHESION_FIXTURE_V1.workspace.sidebar, agents: duplicateAgents },
+      },
+    };
+    expect(ApplicationShellProjectionInputV1SchemaZ.safeParse(input).success).toBe(false);
+    expect(
+      ApplicationShellProjectionInputV2SchemaZ.safeParse({
+        ...input,
+        terminalInventory: { activeResourceId: null, resources: [] },
+      }).success,
+    ).toBe(false);
+    expect(() => projectApplicationShellV1(input)).toThrow(/duplicate semantic pane identity/u);
   });
 
   it("projects navigation and dock identity only from the canonical surface registry", () => {
