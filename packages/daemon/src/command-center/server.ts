@@ -111,6 +111,7 @@ import { isAbsolute, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import {
+  projectLegacyApplicationShellResourceV1,
   projectApplicationShellResource,
   type ApplicationShellSessionFacts,
 } from "./resources/application-shell.ts";
@@ -549,8 +550,35 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     ) {
       return c.json({ error: "Unsupported application-shell resource version" }, 400);
     }
+    if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
+      const backend = options.applicationShellInventoryBackend;
+      if (!backend) return c.json({ error: "Session discovery unavailable" }, 503);
+      let session: ApplicationShellSessionFacts | null;
+      try {
+        session = await backend.discoverApplicationShellSession(name);
+      } catch {
+        return c.json({ error: "Session discovery unavailable" }, 503);
+      }
+      if (!session) return c.json({ error: "Session not found" }, 404);
+      const resource = projectApplicationShellResource(session);
+      return c.json({
+        version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
+        daemon: daemonInstanceIdentity,
+        resource,
+      } satisfies ApplicationShellResourceV2);
+    }
+
     const backend = options.applicationShellInventoryBackend;
-    if (!backend) return c.json({ error: "Session discovery unavailable" }, 503);
+    if (!backend) {
+      const legacySession = discoverSessions().find((candidate) => candidate.name === name);
+      if (!legacySession) return c.json({ error: "Session not found" }, 404);
+      return c.json({
+        version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
+        daemon: daemonInstanceIdentity,
+        resource: projectLegacyApplicationShellResourceV1(legacySession),
+      } satisfies ApplicationShellResourceV1);
+    }
+
     let session: ApplicationShellSessionFacts | null;
     try {
       session = await backend.discoverApplicationShellSession(name);
@@ -559,13 +587,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
     if (!session) return c.json({ error: "Session not found" }, 404);
     const resource = projectApplicationShellResource(session);
-    if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
-      return c.json({
-        version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
-        daemon: daemonInstanceIdentity,
-        resource,
-      } satisfies ApplicationShellResourceV2);
-    }
     const legacyResource = {
       project: resource.project,
       workspace: resource.workspace,

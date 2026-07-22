@@ -115,6 +115,37 @@ describe("SemanticPaneCatalog", () => {
     await expectCode(catalog.resolve(target), "missing-semantic-stamp");
   });
 
+  it("rejects the display-only fallback namespace in targets and trusted stamps", async () => {
+    const reserved = "terminal.discovered.user-authored";
+    const catalog = new SemanticPaneCatalog({ discover: () => [row()] });
+    await expect(catalog.resolve({ ...target, semanticPaneId: reserved })).rejects.toThrow(
+      /reserved discovered-terminal identity/u,
+    );
+
+    const poisoned = new SemanticPaneCatalog({
+      discover: () => [row({ semanticPaneId: reserved })],
+    });
+    await expectCode(poisoned.resolve(target), "invalid-runtime-proof");
+  });
+
+  it("shares the portable workspace-id grammar across targets and trusted stamps", async () => {
+    for (const semanticPaneId of [
+      "pane:colon",
+      "constructor",
+      "__proto__",
+      ".leading-dot",
+      `pane.${"x".repeat(124)}`,
+    ]) {
+      const catalog = new SemanticPaneCatalog({ discover: () => [row()] });
+      await expect(catalog.resolve({ ...target, semanticPaneId })).rejects.toThrow();
+
+      const poisoned = new SemanticPaneCatalog({
+        discover: () => [row({ semanticPaneId })],
+      });
+      await expectCode(poisoned.resolve(target), "invalid-runtime-proof");
+    }
+  });
+
   it("fails closed when an unrelated authoritative discovery row is unstamped", async () => {
     const catalog = new SemanticPaneCatalog({
       discover: () => [

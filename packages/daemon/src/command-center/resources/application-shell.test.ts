@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
   ApplicationShellProjectionInputV1SchemaZ,
   ApplicationShellResourceV1SchemaZ,
@@ -6,7 +6,15 @@ import {
   projectApplicationShellV1,
 } from "@tmux-ide/contracts";
 import { createApp } from "../server.ts";
+import { _setTmuxRunner } from "../discovery.ts";
+import { _setExecutor } from "../../widgets/lib/pane-comms.ts";
 import { projectApplicationShellResource } from "./application-shell.ts";
+
+const restorers: Array<() => void> = [];
+
+afterEach(() => {
+  while (restorers.length > 0) restorers.pop()!();
+});
 
 function liveSession() {
   return {
@@ -196,6 +204,53 @@ describe("application-shell resource projector", () => {
     });
   });
 
+  it("never promotes the reserved fallback namespace to attachment authority", () => {
+    const session = liveSession();
+    const result = projectApplicationShellResource({
+      ...session,
+      catalogIssue: null,
+      panes: [
+        {
+          ...session.panes[0],
+          semanticPaneId: "terminal.discovered.user-authored",
+          active: true,
+        },
+      ],
+    });
+    const resource = result.terminalInventory.resources[0]!;
+
+    expect(resource.id).toMatch(/^terminal\.discovered\.[a-f0-9]{20}$/u);
+    expect(resource.id).not.toBe("terminal.discovered.user-authored");
+    expect(resource.attachability).toEqual({
+      status: "unavailable",
+      reason: "invalid-runtime-proof",
+    });
+  });
+
+  it("falls back for every semantic stamp outside attachment target grammar", () => {
+    const session = liveSession();
+    for (const semanticPaneId of [
+      "pane:colon",
+      "constructor",
+      "__proto__",
+      ".leading-dot",
+      `pane.${"x".repeat(124)}`,
+    ]) {
+      const result = projectApplicationShellResource({
+        ...session,
+        catalogIssue: null,
+        panes: [{ ...session.panes[0], semanticPaneId, active: true }],
+      });
+      const resource = result.terminalInventory.resources[0]!;
+      expect(resource.id).toMatch(/^terminal\.discovered\.[a-f0-9]{20}$/u);
+      expect(resource.id).not.toBe(semanticPaneId);
+      expect(resource.attachability).toEqual({
+        status: "unavailable",
+        reason: "invalid-runtime-proof",
+      });
+    }
+  });
+
   it("does not invent application focus when tmux reports no active pane", () => {
     const session = liveSession();
     const result = projectApplicationShellResource({
@@ -216,6 +271,43 @@ describe("application-shell resource projector", () => {
 });
 
 describe("GET /api/project/:name/application-shell", () => {
+  it("keeps standalone default and explicit V1 discovery while V2 fails closed", async () => {
+    restorers.push(
+      _setTmuxRunner((args) => {
+        if (args[0] === "list-sessions") return "product";
+        if (args[0] === "display-message") return "/repo/product";
+        if (args[0] === "list-panes") return "%7\tpane.implementer";
+        return "";
+      }),
+    );
+    restorers.push(
+      _setExecutor((_command, args) =>
+        args[0] === "list-panes"
+          ? "%7\t0\tImplementer\tcodex\t120\t40\t1\tteammate\tCodex\tagent"
+          : "",
+      ),
+    );
+    const app = createApp();
+
+    for (const path of [
+      "/api/project/product/application-shell",
+      "/api/project/product/application-shell?version=1",
+    ]) {
+      const response = await app.request(path);
+      expect(response.status).toBe(200);
+      const body = ApplicationShellResourceV1SchemaZ.parse(await response.json());
+      expect(body.resource.workspace.sidebar.agents[0]).toEqual(
+        expect.objectContaining({ name: "Codex", paneId: "pane.implementer" }),
+      );
+      expect(Object.hasOwn(body.resource, "terminalInventory")).toBe(false);
+      expect(JSON.stringify(body)).not.toContain("%7");
+    }
+
+    const v2 = await app.request("/api/project/product/application-shell?version=2");
+    expect(v2.status).toBe(503);
+    expect(await v2.json()).toEqual({ error: "Session discovery unavailable" });
+  });
+
   it("defaults old callers to V1 and gives negotiated callers a strict V2 inventory", async () => {
     const requests: string[] = [];
     const app = createApp({

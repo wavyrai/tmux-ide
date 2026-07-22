@@ -8,6 +8,7 @@ import {
   ApplicationShellProjectionV1SchemaZ,
   ApplicationShellProjectionInputV1SchemaZ,
   ApplicationShellProjectionInputV2SchemaZ,
+  TerminalResourceAttachabilitySchemaZ,
   applyApplicationShellInvocationV1,
   applicationShellActionTraceV1,
   applicationShellCommandInvocation,
@@ -193,6 +194,30 @@ describe("semantic application shell", () => {
         },
       }),
     ).toThrow(/fallback/u);
+  });
+
+  it("uses terminal attachment admission identity for available resources", () => {
+    for (const semanticPaneId of [
+      "pane:colon",
+      "constructor",
+      "__proto__",
+      ".leading-dot",
+      `pane.${"x".repeat(124)}`,
+      "terminal.discovered.user-authored",
+    ]) {
+      expect(
+        TerminalResourceAttachabilitySchemaZ.safeParse({
+          status: "available",
+          semanticPaneId,
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      TerminalResourceAttachabilitySchemaZ.safeParse({
+        status: "available",
+        semanticPaneId: "pane.portable-worker_2",
+      }).success,
+    ).toBe(true);
   });
 
   it("rejects duplicate non-null agent pane ids at every strict projection boundary", () => {

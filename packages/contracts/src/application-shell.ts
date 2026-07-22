@@ -38,6 +38,7 @@ import {
   type SemanticOverlay,
 } from "./focus-overlay.ts";
 import { SemanticProductIdSchemaZ } from "./pane-appearance.ts";
+import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
 
 export const APPLICATION_SHELL_PROJECTION_VERSION = 1 as const;
 export const APPLICATION_SHELL_TRACE_VERSION = 1 as const;
@@ -58,7 +59,7 @@ export const TerminalResourceAttachabilitySchemaZ = z.discriminatedUnion("status
   z
     .object({
       status: z.literal("available"),
-      semanticPaneId: SemanticProductIdSchemaZ,
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
     })
     .strict(),
   z

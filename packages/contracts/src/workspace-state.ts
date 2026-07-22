@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  PORTABLE_WORKSPACE_ID_MAX_LENGTH,
+  PortableWorkspaceIdSchemaZ,
+} from "./semantic-identity.ts";
 
 /** Shared, serializable workspace-domain contract. No renderer or tmux dependencies. */
 export const WORKSPACE_STATE_VERSION = 1 as const;
@@ -9,22 +13,16 @@ export const WORKSPACE_STATE_MAX_CHECKOUTS = 16;
 export const WORKSPACE_STATE_MAX_PANES = 128;
 export const WORKSPACE_STATE_MAX_TREE_DEPTH = 32;
 export const WORKSPACE_STATE_MAX_TREE_NODES = 255;
-export const WORKSPACE_STATE_MAX_ID_LENGTH = 128;
+export const WORKSPACE_STATE_MAX_ID_LENGTH = PORTABLE_WORKSPACE_ID_MAX_LENGTH;
 export const WORKSPACE_STATE_MAX_NAME_LENGTH = 80;
 
-const RESERVED_RECORD_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const SafeStringSchemaZ = (max: number) =>
   z
     .string()
     .min(1)
     .max(max)
     .refine((value) => !value.includes("\0"), "text must not contain NUL bytes");
-export const WorkspaceIdSchemaZ = z
-  .string()
-  .min(1)
-  .max(WORKSPACE_STATE_MAX_ID_LENGTH)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
-  .refine((value) => !RESERVED_RECORD_KEYS.has(value), "reserved record key is not allowed");
+export const WorkspaceIdSchemaZ = PortableWorkspaceIdSchemaZ;
 const NullableTextSchemaZ = (max: number) => SafeStringSchemaZ(max).nullable();
 const AbsolutePathSchemaZ = SafeStringSchemaZ(4096).refine(
   (value) => /^(?:[/\\]{1,2}|[A-Za-z]:[/\\])/u.test(value),

@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import {
+  ApplicationShellProjectionInputV1WireSchemaZ,
   ApplicationShellProjectionInputV2SchemaZ,
   CANONICAL_SURFACE_REGISTRY,
   SemanticProductIdSchemaZ,
+  TerminalAttachmentSemanticPaneIdSchemaZ,
   projectApplicationShellV1,
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionInputV2,
@@ -11,19 +13,22 @@ import {
   type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
 
-export interface ApplicationShellPaneFacts {
-  /** Daemon-only live identity used solely as stable fallback hash input. */
-  readonly runtimePaneId: string;
+interface ApplicationShellPanePresentationFacts {
   /** Durable tmux-ide pane stamp. A live `%pane_id` is never accepted as identity. */
   readonly semanticPaneId: string | null;
   readonly index: number;
   readonly title: string;
   readonly currentCommand: string;
   readonly active: boolean;
-  readonly windowPaneCount: number;
   readonly role: string | null;
   readonly name: string | null;
   readonly type: string | null;
+}
+
+export interface ApplicationShellPaneFacts extends ApplicationShellPanePresentationFacts {
+  /** Daemon-only live identity used solely as stable fallback hash input. */
+  readonly runtimePaneId: string;
+  readonly windowPaneCount: number;
 }
 
 export interface ApplicationShellSessionFacts {
@@ -37,6 +42,17 @@ export interface ApplicationShellSessionFacts {
     "invalid-semantic-stamp" | "not-single-pane-window"
   > | null;
   readonly panes: readonly ApplicationShellPaneFacts[];
+}
+
+export interface LegacyApplicationShellPaneFacts extends ApplicationShellPanePresentationFacts {
+  /** Legacy live identity. It is intentionally excluded from the V1 projection. */
+  readonly id: string;
+}
+
+export interface LegacyApplicationShellSessionFacts {
+  readonly name: string;
+  readonly dir: string;
+  readonly panes: readonly LegacyApplicationShellPaneFacts[];
 }
 
 function digest(value: string): string {
@@ -81,7 +97,7 @@ function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIde
   const panes = session.panes;
   const validCounts = new Map<string, number>();
   for (const pane of panes) {
-    if (!SemanticProductIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
+    if (!TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
     validCounts.set(pane.semanticPaneId!, (validCounts.get(pane.semanticPaneId!) ?? 0) + 1);
   }
   const claimed = new Set<string>();
@@ -89,7 +105,7 @@ function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIde
     const stamped = pane.semanticPaneId;
     const locallyValid =
       stamped !== null &&
-      SemanticProductIdSchemaZ.safeParse(stamped).success &&
+      TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(stamped).success &&
       validCounts.get(stamped) === 1;
     if (locallyValid && !claimed.has(stamped)) {
       claimed.add(stamped);
@@ -116,7 +132,7 @@ function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIde
           session.catalogIssue ??
           (stamped === null || stamped.length === 0
             ? "missing-semantic-stamp"
-            : !SemanticProductIdSchemaZ.safeParse(stamped).success
+            : !TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(stamped).success
               ? "invalid-runtime-proof"
               : "duplicate-semantic-stamp"),
       },
@@ -124,14 +140,61 @@ function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIde
   });
 }
 
-function harnessForPane(pane: ApplicationShellPaneFacts): "codex" | "claude-code" | "custom" {
+function legacyFallbackPaneId(pane: LegacyApplicationShellPaneFacts): string {
+  // Preserve the original V1 identity projection. Runtime pane ids were not
+  // part of this legacy fallback and still never cross the resource wire.
+  return semanticId(
+    "pane.discovered",
+    JSON.stringify({
+      index: pane.index,
+      title: pane.title,
+      command: pane.currentCommand,
+      role: pane.role,
+      name: pane.name,
+      type: pane.type,
+    }),
+  );
+}
+
+function legacyPaneIdentities(
+  panes: readonly LegacyApplicationShellPaneFacts[],
+): readonly string[] {
+  const validCounts = new Map<string, number>();
+  for (const pane of panes) {
+    if (!SemanticProductIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
+    validCounts.set(pane.semanticPaneId!, (validCounts.get(pane.semanticPaneId!) ?? 0) + 1);
+  }
+  const claimed = new Set<string>();
+  return panes.map((pane) => {
+    const stamped = pane.semanticPaneId;
+    if (
+      stamped !== null &&
+      SemanticProductIdSchemaZ.safeParse(stamped).success &&
+      validCounts.get(stamped) === 1 &&
+      !claimed.has(stamped)
+    ) {
+      claimed.add(stamped);
+      return stamped;
+    }
+    const base = legacyFallbackPaneId(pane);
+    let candidate = base;
+    let suffix = 1;
+    while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
+    claimed.add(candidate);
+    return candidate;
+  });
+}
+
+function harnessForPane(
+  pane: ApplicationShellPanePresentationFacts,
+): "codex" | "claude-code" | "custom" {
   const executable = `${pane.currentCommand} ${pane.type ?? ""} ${pane.name ?? ""}`.toLowerCase();
   if (executable.includes("codex")) return "codex";
   if (executable.includes("claude")) return "claude-code";
   return "custom";
 }
 
-function isAgentPane(pane: ApplicationShellPaneFacts): boolean {
+function isAgentPane(pane: ApplicationShellPanePresentationFacts): boolean {
   const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
   return (
     metadata.includes("codex") ||
@@ -146,7 +209,7 @@ function isAgentPane(pane: ApplicationShellPaneFacts): boolean {
   );
 }
 
-function agentActivity(pane: ApplicationShellPaneFacts): "idle" | "running" {
+function agentActivity(pane: ApplicationShellPanePresentationFacts): "idle" | "running" {
   return /^(?:ba|z|fi)?sh$/u.test(pane.currentCommand.trim().toLowerCase()) ? "idle" : "running";
 }
 
@@ -206,34 +269,23 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
-/**
- * Pure live-session -> canonical desktop shell adapter. It projects only
- * discovered daemon facts; renderer state, terminal transport, and fixtures
- * are intentionally outside this boundary.
- */
-export function projectApplicationShellResource(
-  session: ApplicationShellSessionFacts,
-): ApplicationShellProjectionInputV2 {
+function projectApplicationShellResourceV1Core(
+  session: {
+    readonly name: string;
+    readonly dir: string;
+    readonly panes: readonly ApplicationShellPanePresentationFacts[];
+  },
+  paneIds: readonly string[],
+): ApplicationShellProjectionInputV1 {
   const sessionName = label(session.name, "tmux session");
   const rootLabel = label(basename(session.dir), sessionName);
   const projectId = semanticId("project", session.dir);
   const sessionId = semanticId("session", session.name);
-  const identities = paneIdentities(session);
   const focusedIndex = session.panes.findIndex((pane) => pane.active);
-  const focusedPaneId = focusedIndex < 0 ? null : (identities[focusedIndex]?.resourceId ?? null);
-  const terminalResources = session.panes.map((pane, index) => {
-    const identity = identities[index]!;
-    return {
-      id: identity.resourceId,
-      title: label(pane.name ?? pane.title, `Terminal ${index + 1}`),
-      kind: isAgentPane(pane) ? ("agent" as const) : ("terminal" as const),
-      active: identity.resourceId === focusedPaneId,
-      attachability: identity.attachability,
-    };
-  });
+  const focusedPaneId = focusedIndex < 0 ? null : (paneIds[focusedIndex] ?? null);
   const agents = session.panes.flatMap((pane, index) => {
     if (!isAgentPane(pane)) return [];
-    const paneId = identities[index]!.resourceId;
+    const paneId = paneIds[index]!;
     return [
       {
         id: semanticId("agent", paneId),
@@ -249,7 +301,7 @@ export function projectApplicationShellResource(
   const paneFact = `${session.panes.length} live terminal pane${session.panes.length === 1 ? "" : "s"} discovered`;
   const agentFact = `${agents.length} agent pane${agents.length === 1 ? "" : "s"} discovered`;
 
-  const parsed = ApplicationShellProjectionInputV2SchemaZ.parse({
+  const parsed = ApplicationShellProjectionInputV1WireSchemaZ.parse({
     project: {
       id: projectId,
       name: sessionName,
@@ -311,6 +363,37 @@ export function projectApplicationShellResource(
           safeState: "No terminal attachment was attempted",
           nextAction: "Wait for tmux pane discovery to recover",
         },
+  });
+  projectApplicationShellV1(parsed);
+  return parsed;
+}
+
+/**
+ * Pure live-session -> canonical desktop shell adapter. It projects only
+ * discovered daemon facts; renderer state, terminal transport, and fixtures
+ * are intentionally outside this boundary.
+ */
+export function projectApplicationShellResource(
+  session: ApplicationShellSessionFacts,
+): ApplicationShellProjectionInputV2 {
+  const identities = paneIdentities(session);
+  const core = projectApplicationShellResourceV1Core(
+    session,
+    identities.map(({ resourceId }) => resourceId),
+  );
+  const focusedPaneId = core.focus.appFocusedPaneId;
+  const terminalResources = session.panes.map((pane, index) => {
+    const identity = identities[index]!;
+    return {
+      id: identity.resourceId,
+      title: label(pane.name ?? pane.title, `Terminal ${index + 1}`),
+      kind: isAgentPane(pane) ? ("agent" as const) : ("terminal" as const),
+      active: identity.resourceId === focusedPaneId,
+      attachability: identity.attachability,
+    };
+  });
+  const parsed = ApplicationShellProjectionInputV2SchemaZ.parse({
+    ...core,
     terminalInventory: {
       activeResourceId: focusedPaneId,
       resources: terminalResources,
@@ -321,4 +404,18 @@ export function projectApplicationShellResource(
   // never publish an input that the shared application shell cannot project.
   projectApplicationShellV1(parsed);
   return deepFreeze(parsed);
+}
+
+/**
+ * Preserve the pre-inventory V1 resource for standalone command-center
+ * callers. This adapter deliberately cannot produce a V2 inventory: its
+ * discovery input was not collected by the pinned attachment runtime and
+ * therefore carries no attachability authority.
+ */
+export function projectLegacyApplicationShellResourceV1(
+  session: LegacyApplicationShellSessionFacts,
+): ApplicationShellProjectionInputV1 {
+  return deepFreeze(
+    projectApplicationShellResourceV1Core(session, legacyPaneIdentities(session.panes)),
+  );
 }

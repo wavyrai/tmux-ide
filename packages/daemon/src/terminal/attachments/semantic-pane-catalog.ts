@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  TerminalAttachmentSemanticPaneIdSchemaZ,
   TerminalAttachmentSemanticTargetSchemaZ,
   WorkspaceIdSchemaZ,
   type TerminalAttachmentSemanticTarget,
@@ -22,7 +23,7 @@ const RuntimePaneIdSchemaZ = z
 export const TrustedSemanticPaneSnapshotSchemaZ = z
   .object({
     workspaceName: WorkspaceIdSchemaZ,
-    semanticPaneId: WorkspaceIdSchemaZ.nullable(),
+    semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
     sessionId: RuntimeSessionIdSchemaZ,
     windowId: RuntimeWindowIdSchemaZ,
     runtimePaneId: RuntimePaneIdSchemaZ,
