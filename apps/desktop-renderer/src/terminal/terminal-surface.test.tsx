@@ -354,6 +354,49 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
+  it("coalesces viewport measurements while connect is delayed", async () => {
+    const connection = deferred<NativeTerminalConnectResult>();
+    const attachment = attachmentHarness();
+    const transport = transportHarness(async () => connection.promise);
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ viewport: { cols: 80, rows: 24 } }),
+      expect.any(Function),
+    );
+
+    let fitCalls = vi.mocked(renderer.renderer.fit).mock.calls.length;
+    renderer.setViewport({ cols: 100, rows: 30 });
+    ResizeObserverHarness.active[0]!.trigger();
+    await vi.waitFor(() => expect(renderer.renderer.fit).toHaveBeenCalledTimes(fitCalls + 1));
+    fitCalls += 1;
+    renderer.setViewport({ cols: 120, rows: 40 });
+    ResizeObserverHarness.active[0]!.trigger();
+    await vi.waitFor(() => expect(renderer.renderer.fit).toHaveBeenCalledTimes(fitCalls + 1));
+    expect(attachment.resize).not.toHaveBeenCalled();
+
+    connection.resolve({ status: "connected", attachment });
+    await vi.waitFor(() => expect(attachment.resize).toHaveBeenCalledWith({ cols: 120, rows: 40 }));
+    expect(attachment.resize).toHaveBeenCalledOnce();
+
+    ResizeObserverHarness.active[0]!.trigger();
+    await Promise.resolve();
+    expect(attachment.resize).toHaveBeenCalledOnce();
+    dispose();
+  });
+
   it("fails closed on a typed host input rejection without starting a second writer", async () => {
     const attachment = attachmentHarness({
       write: vi.fn(async () => ({
@@ -797,6 +840,79 @@ describe("TerminalSurface", () => {
     connection.resolve({ status: "connected", attachment });
     await vi.waitFor(() => expect(attachment.dispose).toHaveBeenCalledOnce());
     expect(root.textContent).toContain("Terminal disconnected");
+    dispose();
+  });
+
+  it("retires a typed connect failure before rejecting late output", async () => {
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return {
+        status: "error",
+        error: { code: "attach-failed", reason: "tmux attach failed", retryable: true },
+      };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+    );
+
+    await expect(
+      Promise.resolve(
+        (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+          type: "output",
+          bytes: new Uint8Array([1]),
+        }),
+      ),
+    ).rejects.toThrow("Terminal output was not consumed by the renderer.");
+    expect(renderer.renderer.write).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("retires a rejected connect before rejecting late output", async () => {
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness((_request, nextListener) => {
+      listener = nextListener;
+      return Promise.reject(new Error("transport rejected"));
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+    );
+
+    await expect(
+      Promise.resolve(
+        (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+          type: "output",
+          bytes: new Uint8Array([1]),
+        }),
+      ),
+    ).rejects.toThrow("Terminal output was not consumed by the renderer.");
+    expect(renderer.renderer.write).not.toHaveBeenCalled();
     dispose();
   });
 

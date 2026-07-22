@@ -128,6 +128,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let observedTarget = `${props.target.workspaceName}\0${props.target.semanticPaneId}`;
   let observedTransport = props.transport;
   let currentViewport: TerminalAttachmentViewport | null = null;
+  let latestMeasuredViewport: TerminalAttachmentViewport | null = null;
   let pendingResize: TerminalAttachmentViewport | null = null;
   let resizeFlight: Promise<void> | null = null;
   let pointerFocus = false;
@@ -319,6 +320,14 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     disposeAttachment();
   };
 
+  const failConnect = (message: string, activeGeneration: number): void => {
+    if (disposed || activeGeneration !== generation) return;
+    generation += 1;
+    disposeAttachment();
+    setReason(message);
+    setPhase("error");
+  };
+
   const connect = (viewport: TerminalAttachmentViewport): void => {
     if (!props.transport || attachment || phase() === "connecting" || disposed) return;
     const activeGeneration = ++generation;
@@ -333,8 +342,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         viewport,
       });
     } catch {
-      setReason("The semantic terminal target or viewport is invalid.");
-      setPhase("error");
+      failConnect("The semantic terminal target or viewport is invalid.", activeGeneration);
       return;
     }
     void props.transport
@@ -347,19 +355,22 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           return;
         }
         if (result.status === "error") {
-          setReason(validatedTransportReason(result.error.reason));
-          setPhase("error");
+          failConnect(validatedTransportReason(result.error.reason), activeGeneration);
           return;
         }
         attachment = result.attachment;
         currentViewport = viewport;
         setPhase("connected");
+        const latestViewport = latestMeasuredViewport;
+        if (latestViewport && !sameViewport(currentViewport, latestViewport)) {
+          currentViewport = latestViewport;
+          pendingResize = latestViewport;
+          flushResize();
+        }
         if (props.focused) renderer?.focus();
       })
       .catch(() => {
-        if (disposed || activeGeneration !== generation) return;
-        setReason("The native terminal transport could not attach this pane.");
-        setPhase("error");
+        failConnect("The native terminal transport could not attach this pane.", activeGeneration);
       });
   };
 
@@ -371,6 +382,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       if (!attachment && props.transport) setPhase("measuring");
       return;
     }
+    latestMeasuredViewport = viewport;
     if (!attachment) {
       if (phase() === "measuring") connect(viewport);
       return;
@@ -391,6 +403,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     disposeAttachment();
     disposeRenderer();
     currentViewport = null;
+    latestMeasuredViewport = null;
     pendingResize = null;
     setHasValidatedFrame(false);
     setPhase(props.transport ? "measuring" : "unavailable");
@@ -564,6 +577,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     disposeAttachment();
     disposeRenderer();
     currentViewport = null;
+    latestMeasuredViewport = null;
     pendingResize = null;
     setReason(null);
     setHasValidatedFrame(false);
