@@ -23,6 +23,7 @@ export default defineConfig({
       "src/doctor.test.ts",
       "src/terminal/__tests__/*.test.ts",
       "src/lib/app-config.test.ts",
+      "src/lib/cli-action-bridge.test.ts",
       "src/lib/__tests__/*.test.ts",
       "src/command-center/actions/*.test.ts",
       "src/command-center/workspace-pane-create-auth.test.ts",
