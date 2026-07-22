@@ -108,4 +108,21 @@ describe("canvas focus and gesture gating", () => {
     );
     expect(canvasOwnsWheel(canvas)).toBe(true);
   });
+
+  it("allows Space-drag panning from non-input window content but never a terminal", () => {
+    expect(
+      routeCanvasPointer({
+        region: { kind: "window-content", windowId: "window.lead" },
+        button: 0,
+        spaceKey: true,
+      }),
+    ).toEqual({ action: "pan", claimPointer: true, focusWindowId: null });
+    expect(
+      routeCanvasPointer({
+        region: { kind: "terminal", windowId: "window.lead" },
+        button: 0,
+        spaceKey: true,
+      }),
+    ).toEqual({ action: "terminal-input", claimPointer: false, focusWindowId: "window.lead" });
+  });
 });

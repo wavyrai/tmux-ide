@@ -8,11 +8,13 @@ import {
   For,
   Show,
   createComputed,
+  createEffect,
   createMemo,
   createSignal,
   onCleanup,
   onMount,
   type Accessor,
+  type JSX,
 } from "solid-js";
 
 // Pane chrome CSS is already imported by the renderer's external stylesheet.
@@ -23,6 +25,31 @@ import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
+import {
+  beginCanvasMove,
+  beginCanvasResize,
+  cancelCanvasPointerTransaction,
+  commitCanvasPointerTransaction,
+  updateCanvasPointerTransaction,
+  type CanvasPointerTransaction,
+} from "./canvas-pointer-transaction.ts";
+import {
+  fitCanvasViewport,
+  panCanvasViewport,
+  zoomCanvasViewportAt,
+  type CanvasViewportTransform,
+  type CanvasResizeEdge,
+} from "./canvas-interaction-geometry.ts";
+import {
+  canvasOwnsWheel,
+  routeCanvasPointer,
+  type CanvasPointerRegion,
+} from "./canvas-input-routing.ts";
+import {
+  canvasViewportKeyboardCommand,
+  canvasWheelTransform,
+  keyboardCanvasViewportTransform,
+} from "./canvas-viewport-input.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import {
   appWindowFocusInvocation,
@@ -43,6 +70,40 @@ export interface AppWindowCanvasProps {
   readonly rendererFactory?: TerminalRendererFactory;
   readonly viewport?: AppWindowCanvasViewport;
   readonly onCommand?: (invocation: AppWindowCanvasCommandInvocation) => void;
+}
+
+const CANVAS_SCALE_RANGE = { min: 0.35, max: 2.4 } as const;
+const DEFAULT_CANVAS_TRANSFORM: CanvasViewportTransform = { x: 0, y: 0, scale: 1 };
+
+type CanvasControlIconId = "zoom-in" | "zoom-out" | "fit" | "reset";
+
+function CanvasControlIcon(props: { readonly id: CanvasControlIconId }): JSX.Element {
+  return (
+    <svg
+      class="canvas-controls__icon"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+      data-icon={props.id}
+    >
+      <Show when={props.id === "zoom-in"}>
+        <path d="M8 3v10M3 8h10" />
+      </Show>
+      <Show when={props.id === "zoom-out"}>
+        <path d="M3 8h10" />
+      </Show>
+      <Show when={props.id === "fit"}>
+        <path d="M6 3H3v3M10 3h3v3M13 10v3h-3M6 13H3v-3" />
+      </Show>
+      <Show when={props.id === "reset"}>
+        <path d="M13 5.5V2.75l-1.5 1.5A5.25 5.25 0 1 0 13 10M13 2.75h-2.75" />
+      </Show>
+    </svg>
+  );
 }
 
 function sceneAppearance(base: PaneAppearance, window: AppWindowCanvasItem): PaneAppearance {
@@ -141,6 +202,35 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     props.viewport ?? { width: 1_000, height: 640 },
   );
   let canvas: HTMLDivElement | undefined;
+  let sceneRuntimeStyle: RuntimeStyleBinding | null = null;
+  let canvasRuntimeStyle: RuntimeStyleBinding | null = null;
+  let pointerTransaction: CanvasPointerTransaction | null = null;
+  let panTransaction: {
+    readonly pointerId: number;
+    readonly origin: { readonly x: number; readonly y: number };
+    readonly transform: CanvasViewportTransform;
+  } | null = null;
+  const [spaceKey, setSpaceKey] = createSignal(false);
+  const [transform, setTransform] = createSignal<CanvasViewportTransform>(DEFAULT_CANVAS_TRANSFORM);
+  const [rectOverrides, setRectOverrides] = createSignal(
+    new Map<
+      string,
+      { readonly rect: AppWindowCanvasItem["rect"]; readonly revision: number | null }
+    >(),
+    { equals: false },
+  );
+  onCleanup(() => {
+    sceneRuntimeStyle?.dispose();
+    canvasRuntimeStyle?.dispose();
+  });
+
+  const eventTargetsTerminalInput = (event: Event): boolean => {
+    const target = event.target;
+    return (
+      target instanceof Element &&
+      Boolean(target.closest(".terminal-surface, input, textarea, select, [contenteditable=true]"))
+    );
+  };
 
   onMount(() => {
     if (!canvas || props.viewport) return;
@@ -152,6 +242,30 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     onCleanup(() => observer.disconnect());
   });
 
+  onMount(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && (pointerTransaction || panTransaction)) {
+        event.preventDefault();
+        cancelActivePointer();
+        return;
+      }
+      if (event.code !== "Space" || event.repeat || eventTargetsTerminalInput(event)) return;
+      setSpaceKey(true);
+    };
+    const keyup = (event: KeyboardEvent) => {
+      if (event.code === "Space") setSpaceKey(false);
+    };
+    const blur = () => setSpaceKey(false);
+    document.addEventListener("keydown", keydown);
+    document.addEventListener("keyup", keyup);
+    window.addEventListener("blur", blur);
+    onCleanup(() => {
+      document.removeEventListener("keydown", keydown);
+      document.removeEventListener("keyup", keyup);
+      window.removeEventListener("blur", blur);
+    });
+  });
+
   const viewport = createMemo(() => props.viewport ?? measured());
   const projection = createMemo(() => projectAppWindowCanvas(props.document, viewport()));
   const windowRecords = createAppWindowRecords(() => projection().windows);
@@ -161,6 +275,262 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   const resourcesById = createMemo(
     () => new Map(props.terminalInventory?.resources.map((resource) => [resource.id, resource])),
   );
+
+  createEffect(() => {
+    const revision = projection().revision;
+    const windows = new Map(projection().windows.map((window) => [window.windowId, window]));
+    const current = rectOverrides();
+    let changed = false;
+    const next = new Map(current);
+    for (const [windowId, override] of current) {
+      if (override.revision !== null && revision > override.revision) {
+        next.delete(windowId);
+        changed = true;
+      } else if (!windows.has(windowId)) {
+        next.delete(windowId);
+        changed = true;
+      }
+    }
+    if (changed) setRectOverrides(next);
+  });
+
+  createEffect(() => {
+    const value = transform();
+    sceneRuntimeStyle?.update({
+      transform: `translate(${value.x}px, ${value.y}px) scale(${value.scale})`,
+      "transform-origin": "0 0",
+    });
+    const grid = 28 * value.scale;
+    canvasRuntimeStyle?.update({
+      "background-position": `center, ${value.x}px ${value.y}px, ${value.x}px ${value.y}px, 0 0`,
+      "background-size": `auto, ${grid}px ${grid}px, ${grid}px ${grid}px, auto`,
+    });
+  });
+
+  const displayedWindow = (window: AppWindowCanvasItem): AppWindowCanvasItem => {
+    const override = rectOverrides().get(window.windowId);
+    return override ? { ...window, rect: override.rect } : window;
+  };
+
+  const pointInCanvas = (event: { readonly clientX: number; readonly clientY: number }) => {
+    const bounds = canvas?.getBoundingClientRect();
+    return { x: event.clientX - (bounds?.left ?? 0), y: event.clientY - (bounds?.top ?? 0) };
+  };
+
+  const pointerRegion = (target: EventTarget | null): CanvasPointerRegion | null => {
+    if (!(target instanceof Element) || target.closest(".canvas-controls")) return null;
+    const card = target.closest<HTMLElement>(".app-window-card");
+    if (!card) return { kind: "canvas" };
+    const windowId = card.dataset.windowId;
+    if (!windowId) return null;
+    const edge = target.closest<HTMLElement>("[data-canvas-resize-edge]")?.dataset.canvasResizeEdge;
+    if (edge) {
+      return { kind: "resize-handle", windowId, edge: edge as CanvasResizeEdge };
+    }
+    if (target.closest(".terminal-surface")) return { kind: "terminal", windowId };
+    if (target.closest(".web-pane-frame__header")) {
+      return {
+        kind: "window-header",
+        windowId,
+        interactiveControl: Boolean(
+          target.closest("button:not(.web-pane-frame__grip), a, input, select, textarea"),
+        ),
+      };
+    }
+    return { kind: "window-content", windowId };
+  };
+
+  const focusWindow = (windowId: string, source: "keyboard" | "mouse") => {
+    if (projection().focusedWindowId !== windowId) {
+      props.onCommand?.(appWindowFocusInvocation(windowId, source));
+    }
+  };
+
+  const updateOverride = (
+    windowId: string,
+    rect: AppWindowCanvasItem["rect"],
+    revision: number | null,
+  ) => {
+    const next = new Map(rectOverrides());
+    next.set(windowId, { rect, revision });
+    setRectOverrides(next);
+  };
+
+  const resetViewport = () => setTransform(DEFAULT_CANVAS_TRANSFORM);
+  const fitViewport = () =>
+    setTransform(
+      fitCanvasViewport(
+        projection().windows.map((window) => displayedWindow(window).rect),
+        viewport(),
+        { padding: 56, scaleRange: CANVAS_SCALE_RANGE },
+      ),
+    );
+  const zoomViewport = (factor: number) => {
+    const current = transform();
+    setTransform(
+      zoomCanvasViewportAt(
+        current,
+        current.scale * factor,
+        { x: viewport().width / 2, y: viewport().height / 2 },
+        CANVAS_SCALE_RANGE,
+      ),
+    );
+  };
+
+  const handlePointerDown: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
+    const region = pointerRegion(event.target);
+    if (!region) return;
+    const route = routeCanvasPointer({ region, button: event.button, spaceKey: spaceKey() });
+    // TerminalSurface owns terminal focus. Dispatching here as well would emit
+    // duplicate focus commands from the same bubbling pointer event.
+    if (route.focusWindowId && route.action !== "terminal-input") {
+      focusWindow(route.focusWindowId, "mouse");
+    }
+    if (route.action === "clear-focus") {
+      canvas?.focus({ preventScroll: true });
+      props.onCommand?.(appWindowFocusInvocation(null, "mouse"));
+      return;
+    }
+    if (!route.claimPointer) return;
+    const pointer = pointInCanvas(event);
+    if (route.action === "pan") {
+      event.preventDefault();
+      panTransaction = { pointerId: event.pointerId, origin: pointer, transform: transform() };
+      canvas?.setPointerCapture(event.pointerId);
+      canvas?.setAttribute("data-gesture", "pan");
+      return;
+    }
+    if (route.action !== "move" && route.action !== "resize") return;
+    const window = projection().windows.find(({ windowId }) => windowId === route.focusWindowId);
+    if (!window || window.placement !== "floating") return;
+    event.preventDefault();
+    const transactionInput = {
+      pointer: { ...pointer, pointerId: event.pointerId },
+      windowId: window.windowId,
+      rect: displayedWindow(window).rect,
+      transform: transform(),
+      scaleRange: CANVAS_SCALE_RANGE,
+      constraints: { minWidth: 320, minHeight: 180 },
+      presentation: { reducedMotion: props.reducedMotion ?? false },
+    };
+    pointerTransaction =
+      route.action === "resize"
+        ? beginCanvasResize({ ...transactionInput, edge: route.edge })
+        : beginCanvasMove(transactionInput);
+    canvas?.setPointerCapture(event.pointerId);
+    canvas?.setAttribute("data-gesture", route.action);
+  };
+
+  const handlePointerMove: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
+    const pointer = pointInCanvas(event);
+    if (panTransaction?.pointerId === event.pointerId) {
+      event.preventDefault();
+      setTransform(
+        panCanvasViewport(
+          panTransaction.transform,
+          { x: pointer.x - panTransaction.origin.x, y: pointer.y - panTransaction.origin.y },
+          CANVAS_SCALE_RANGE,
+        ),
+      );
+      return;
+    }
+    if (pointerTransaction?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const update = updateCanvasPointerTransaction(pointerTransaction, {
+      ...pointer,
+      pointerId: event.pointerId,
+    });
+    pointerTransaction = update.transaction;
+    updateOverride(pointerTransaction.windowId, update.frame.rect, null);
+  };
+
+  const completePointer = (event: PointerEvent, cancelled: boolean) => {
+    if (panTransaction?.pointerId === event.pointerId) panTransaction = null;
+    if (pointerTransaction?.pointerId === event.pointerId) {
+      const transaction = pointerTransaction;
+      const completion = cancelled
+        ? cancelCanvasPointerTransaction(transaction)
+        : commitCanvasPointerTransaction(transaction);
+      pointerTransaction = null;
+      if (completion.persist) {
+        updateOverride(transaction.windowId, completion.rect, projection().revision);
+        const [intent] = completion.commands;
+        if (intent) props.onCommand?.(intent);
+      } else {
+        const next = new Map(rectOverrides());
+        next.delete(transaction.windowId);
+        setRectOverrides(next);
+      }
+    }
+    if (canvas?.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    canvas?.removeAttribute("data-gesture");
+  };
+
+  const cancelActivePointer = () => {
+    const pointerId = pointerTransaction?.pointerId ?? panTransaction?.pointerId ?? null;
+    if (pointerTransaction) {
+      const transaction = pointerTransaction;
+      const completion = cancelCanvasPointerTransaction(transaction);
+      pointerTransaction = null;
+      updateOverride(transaction.windowId, completion.rect, null);
+      const next = new Map(rectOverrides());
+      next.delete(transaction.windowId);
+      setRectOverrides(next);
+    }
+    panTransaction = null;
+    if (pointerId !== null && canvas?.hasPointerCapture(pointerId)) {
+      canvas.releasePointerCapture(pointerId);
+    }
+    canvas?.removeAttribute("data-gesture");
+  };
+
+  const handleWheel: JSX.EventHandler<HTMLDivElement, WheelEvent> = (event) => {
+    const region = pointerRegion(event.target);
+    if (!region || !canvasOwnsWheel(region)) return;
+    event.preventDefault();
+    setTransform(
+      canvasWheelTransform({
+        transform: transform(),
+        anchor: pointInCanvas(event),
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        deltaMode: event.deltaMode,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        scaleRange: CANVAS_SCALE_RANGE,
+      }),
+    );
+  };
+
+  const handleKeyDown: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (event) => {
+    if (event.target !== canvas || eventTargetsTerminalInput(event)) return;
+    if (event.key === "Escape" && pointerTransaction) {
+      event.preventDefault();
+      cancelActivePointer();
+      return;
+    }
+    const command = canvasViewportKeyboardCommand(event);
+    if (!command) return;
+    event.preventDefault();
+    if (command === "fit") fitViewport();
+    else if (command === "reset") resetViewport();
+    else {
+      setTransform(
+        keyboardCanvasViewportTransform({
+          transform: transform(),
+          command,
+          center: { x: viewport().width / 2, y: viewport().height / 2 },
+          scaleRange: CANVAS_SCALE_RANGE,
+        }),
+      );
+    }
+  };
+
+  onMount(() => {
+    window.addEventListener("blur", cancelActivePointer);
+    onCleanup(() => window.removeEventListener("blur", cancelActivePointer));
+  });
 
   const terminalTarget = (terminalSourceId: string): string | null => {
     const resource = resourcesById().get(terminalSourceId);
@@ -176,136 +546,242 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     <div
       ref={(element) => {
         canvas = element;
+        canvasRuntimeStyle = createRuntimeStyleBinding(element);
+        const value = transform();
+        const grid = 28 * value.scale;
+        canvasRuntimeStyle.update({
+          "background-position": `center, ${value.x}px ${value.y}px, ${value.x}px ${value.y}px, 0 0`,
+          "background-size": `auto, ${grid}px ${grid}px, ${grid}px ${grid}px, auto`,
+        });
       }}
       class="app-window-canvas"
+      role="region"
+      aria-label="Terminal canvas"
+      aria-keyshortcuts="+ - 0 F ArrowLeft ArrowRight ArrowUp ArrowDown"
+      tabIndex={0}
       data-window-revision={projection().revision}
       data-window-count={projection().windows.length}
       data-focused-window-id={projection().focusedWindowId ?? ""}
+      data-viewport-persistence="runtime-only"
+      data-viewport-x={Math.round(transform().x)}
+      data-viewport-y={Math.round(transform().y)}
+      data-viewport-scale={transform().scale.toFixed(3)}
+      data-space-key={spaceKey()}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={(event) => completePointer(event, false)}
+      onPointerCancel={(event) => completePointer(event, true)}
+      onLostPointerCapture={(event) => {
+        if (
+          pointerTransaction?.pointerId === event.pointerId ||
+          panTransaction?.pointerId === event.pointerId
+        ) {
+          cancelActivePointer();
+        }
+      }}
+      onWheel={handleWheel}
+      onKeyDown={handleKeyDown}
     >
-      <For each={windowRecords()}>
-        {(record) => {
-          const window = record.value;
-          let runtimeStyle: RuntimeStyleBinding | null = null;
-          createComputed(() => {
-            const value = window();
-            runtimeStyle?.update({
-              left: `${value.rect.x}px`,
-              top: `${value.rect.y}px`,
-              width: `${value.rect.width}px`,
-              height: `${value.rect.height}px`,
-              "z-index": value.zIndex,
-            });
+      <div
+        ref={(element) => {
+          sceneRuntimeStyle = createRuntimeStyleBinding(element);
+          const value = transform();
+          sceneRuntimeStyle.update({
+            transform: `translate(${value.x}px, ${value.y}px) scale(${value.scale})`,
+            "transform-origin": "0 0",
           });
-          onCleanup(() => runtimeStyle?.dispose());
-          const terminalSourceId = () => {
-            const source = window().source;
-            return source.kind === "terminal" ? source.terminalSourceId : null;
-          };
-          const sourceFrame = createMemo(() => {
-            const sourceId = terminalSourceId();
-            return sourceId ? (framesByTerminalSource().get(sourceId) ?? null) : null;
-          });
-          const frame = createMemo(() => {
-            const source = sourceFrame();
-            return source ? windowFrameModel(window(), source) : null;
-          });
-          const target = createMemo(() => {
-            const sourceId = terminalSourceId();
-            return sourceId ? terminalTarget(sourceId) : null;
-          });
-          return (
-            <article
-              ref={(element) => {
-                runtimeStyle = createRuntimeStyleBinding(element);
-                const value = window();
-                runtimeStyle.update({
-                  left: `${value.rect.x}px`,
-                  top: `${value.rect.y}px`,
-                  width: `${value.rect.width}px`,
-                  height: `${value.rect.height}px`,
-                  "z-index": value.zIndex,
-                });
-              }}
-              class="app-window-card"
-              data-window-id={window().windowId}
-              data-terminal-source-id={terminalSourceId() ?? ""}
-              data-placement={window().placement}
-              data-selected={window().selected}
-              data-active={window().active}
-              onPointerDown={(event) => {
-                if (event.target instanceof Element && event.target.closest(".terminal-surface")) {
-                  return;
-                }
-                if (!window().selected)
-                  props.onCommand?.(appWindowFocusInvocation(window().windowId, "mouse"));
-              }}
-            >
-              <Show
-                when={frame()}
-                fallback={
-                  <section class="app-window-card__unavailable" role="status">
-                    <strong>{window().title ?? "Terminal unavailable"}</strong>
-                    <span>This saved window no longer has a matching terminal resource.</span>
-                  </section>
-                }
-              >
-                {(model) => (
-                  <WebPaneFrame
-                    model={model()}
-                    renderPaneIcon={(_pane, icon) => <DomIcon id={icon} usage="pane" />}
-                    renderActionIcon={(action) => <DomIcon id={action.icon} usage="action" />}
-                    renderGripIcon={(icon) => <DomIcon id={icon} usage="action" />}
-                  >
-                    <div class="agent-pane__body" data-focus-zone="terminal">
-                      <Show
-                        when={target()}
-                        fallback={
-                          <div class="terminal-surface terminal-surface--unavailable" role="status">
-                            <strong>Terminal unavailable</strong>
-                            <span>
-                              {model().status?.description ??
-                                "This terminal cannot be attached safely."}
-                            </span>
-                          </div>
-                        }
-                      >
-                        {(semanticPaneId) => (
-                          <TerminalSurface
-                            target={{
-                              workspaceName: props.workspaceName,
-                              semanticPaneId: semanticPaneId(),
-                            }}
-                            title={model().title}
-                            transport={props.transport}
-                            focused={model().appearance.accessibility.terminalInputOwner}
-                            reducedMotion={props.reducedMotion}
-                            themeKey={props.terminalThemeKey}
-                            rendererFactory={props.rendererFactory}
-                            onFocus={(source) => {
-                              const sourceId = terminalSourceId();
-                              if (sourceId) {
-                                props.onCommand?.(
-                                  appWindowFocusInvocation(window().windowId, source),
-                                );
-                              }
-                            }}
-                          />
-                        )}
-                      </Show>
-                    </div>
-                  </WebPaneFrame>
-                )}
-              </Show>
-            </article>
-          );
         }}
-      </For>
-      <Show when={projection().windows.length === 0}>
-        <div class="app-window-canvas__empty" role="status">
-          <strong>No terminal windows in this saved layout</strong>
-          <span>Create or restore a terminal window to place it on the canvas.</span>
-        </div>
-      </Show>
+        class="app-window-canvas__scene"
+      >
+        <For each={windowRecords()}>
+          {(record) => {
+            const window = createMemo(() => displayedWindow(record.value()));
+            let runtimeStyle: RuntimeStyleBinding | null = null;
+            createComputed(() => {
+              const value = window();
+              runtimeStyle?.update({
+                left: `${value.rect.x}px`,
+                top: `${value.rect.y}px`,
+                width: `${value.rect.width}px`,
+                height: `${value.rect.height}px`,
+                "z-index": value.zIndex,
+              });
+            });
+            onCleanup(() => runtimeStyle?.dispose());
+            const terminalSourceId = () => {
+              const source = window().source;
+              return source.kind === "terminal" ? source.terminalSourceId : null;
+            };
+            const sourceFrame = createMemo(() => {
+              const sourceId = terminalSourceId();
+              return sourceId ? (framesByTerminalSource().get(sourceId) ?? null) : null;
+            });
+            const frame = createMemo(() => {
+              const source = sourceFrame();
+              return source ? windowFrameModel(window(), source) : null;
+            });
+            const target = createMemo(() => {
+              const sourceId = terminalSourceId();
+              return sourceId ? terminalTarget(sourceId) : null;
+            });
+            return (
+              <article
+                ref={(element) => {
+                  runtimeStyle = createRuntimeStyleBinding(element);
+                  const value = window();
+                  runtimeStyle.update({
+                    left: `${value.rect.x}px`,
+                    top: `${value.rect.y}px`,
+                    width: `${value.rect.width}px`,
+                    height: `${value.rect.height}px`,
+                    "z-index": value.zIndex,
+                  });
+                }}
+                class="app-window-card"
+                data-window-id={window().windowId}
+                data-terminal-source-id={terminalSourceId() ?? ""}
+                data-placement={window().placement}
+                data-selected={window().selected}
+                data-active={window().active}
+                data-transient-geometry={rectOverrides().get(window().windowId)?.revision === null}
+              >
+                <Show
+                  when={frame()}
+                  fallback={
+                    <section class="app-window-card__unavailable" role="status">
+                      <strong>{window().title ?? "Terminal unavailable"}</strong>
+                      <span>This saved window no longer has a matching terminal resource.</span>
+                    </section>
+                  }
+                >
+                  {(model) => (
+                    <WebPaneFrame
+                      model={model()}
+                      onGripActivate={(_intent, source) => {
+                        if (source === "keyboard") focusWindow(window().windowId, "keyboard");
+                      }}
+                      renderPaneIcon={(_pane, icon) => <DomIcon id={icon} usage="pane" />}
+                      renderActionIcon={(action) => <DomIcon id={action.icon} usage="action" />}
+                      renderGripIcon={(icon) => <DomIcon id={icon} usage="action" />}
+                    >
+                      <div class="agent-pane__body" data-focus-zone="terminal">
+                        <Show
+                          when={target()}
+                          fallback={
+                            <div
+                              class="terminal-surface terminal-surface--unavailable"
+                              role="status"
+                            >
+                              <strong>Terminal unavailable</strong>
+                              <span>
+                                {model().status?.description ??
+                                  "This terminal cannot be attached safely."}
+                              </span>
+                            </div>
+                          }
+                        >
+                          {(semanticPaneId) => (
+                            <TerminalSurface
+                              target={{
+                                workspaceName: props.workspaceName,
+                                semanticPaneId: semanticPaneId(),
+                              }}
+                              title={model().title}
+                              transport={props.transport}
+                              focused={model().appearance.accessibility.terminalInputOwner}
+                              reducedMotion={props.reducedMotion}
+                              themeKey={props.terminalThemeKey}
+                              rendererFactory={props.rendererFactory}
+                              onFocus={(source) => {
+                                const sourceId = terminalSourceId();
+                                if (sourceId) {
+                                  props.onCommand?.(
+                                    appWindowFocusInvocation(window().windowId, source),
+                                  );
+                                }
+                              }}
+                            />
+                          )}
+                        </Show>
+                      </div>
+                    </WebPaneFrame>
+                  )}
+                </Show>
+                <Show when={window().placement === "floating"}>
+                  <For
+                    each={
+                      [
+                        "north-west",
+                        "north",
+                        "north-east",
+                        "east",
+                        "south-east",
+                        "south",
+                        "south-west",
+                        "west",
+                      ] as const
+                    }
+                  >
+                    {(edge) => (
+                      <span
+                        class="app-window-card__resize-handle"
+                        data-canvas-resize-edge={edge}
+                        aria-hidden="true"
+                      />
+                    )}
+                  </For>
+                </Show>
+              </article>
+            );
+          }}
+        </For>
+        <Show when={projection().windows.length === 0}>
+          <div class="app-window-canvas__empty" role="status">
+            <strong>No terminal windows in this saved layout</strong>
+            <span>Create or restore a terminal window to place it on the canvas.</span>
+          </div>
+        </Show>
+      </div>
+      <nav class="canvas-controls" aria-label="Canvas view controls">
+        <button
+          type="button"
+          aria-label="Zoom out"
+          title="Zoom out (-)"
+          disabled={transform().scale <= CANVAS_SCALE_RANGE.min}
+          onClick={() => zoomViewport(1 / 1.2)}
+        >
+          <CanvasControlIcon id="zoom-out" />
+        </button>
+        <output aria-label={`Canvas zoom ${Math.round(transform().scale * 100)} percent`}>
+          {Math.round(transform().scale * 100)}%
+        </output>
+        <button
+          type="button"
+          aria-label="Zoom in"
+          title="Zoom in (+)"
+          disabled={transform().scale >= CANVAS_SCALE_RANGE.max}
+          onClick={() => zoomViewport(1.2)}
+        >
+          <CanvasControlIcon id="zoom-in" />
+        </button>
+        <i aria-hidden="true" />
+        <button
+          type="button"
+          aria-label="Fit windows"
+          title="Fit windows (F)"
+          onClick={fitViewport}
+        >
+          <CanvasControlIcon id="fit" />
+        </button>
+        <button
+          type="button"
+          aria-label="Reset view"
+          title="Reset view (0)"
+          onClick={resetViewport}
+        >
+          <CanvasControlIcon id="reset" />
+        </button>
+      </nav>
     </div>
   );
 }

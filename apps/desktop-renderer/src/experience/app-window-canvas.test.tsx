@@ -95,6 +95,25 @@ function documentFixture(): AppWindowDocumentV1 {
   });
 }
 
+function floatingDocumentFixture(): AppWindowDocumentV1 {
+  const value = documentFixture();
+  return AppWindowDocumentV1SchemaZ.parse({
+    ...value,
+    windows: {
+      "window.lead": {
+        ...value.windows["window.lead"],
+        placement: {
+          mode: "floating",
+          docked: null,
+          floating: { x: 42, y: 36, width: 360, height: 220 },
+        },
+      },
+    },
+    dockRoot: null,
+    floatingOrder: ["window.lead"],
+  });
+}
+
 function frame(): PaneFrameModel {
   const appearance = resolvePaneAppearance({
     structure: "docked",
@@ -219,7 +238,252 @@ describe("AppWindowCanvas", () => {
       command: { type: "window.focus", windowId: "window.lead" },
       source: "mouse",
     });
+    expect(onCommand).toHaveBeenCalledTimes(1);
   });
+
+  it("lets the terminal emit the only focus command for an unfocused terminal click", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onCommand = vi.fn();
+    const unfocused = AppWindowDocumentV1SchemaZ.parse({
+      ...floatingDocumentFixture(),
+      focusedWindowId: null,
+    });
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={unfocused}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            onCommand={onCommand}
+          />
+        ),
+        root,
+      ),
+    );
+    root
+      .querySelector<HTMLElement>(".terminal-surface")!
+      .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 3, button: 0 }));
+    expect(onCommand.mock.calls).toEqual([
+      [
+        {
+          command: { type: "window.focus", windowId: "window.lead" },
+          source: "mouse",
+        },
+      ],
+    ]);
+  });
+
+  it("routes canvas pinch and floating drag without stealing terminal wheel or pointer input", async () => {
+    const lifecycle = installTerminalLifecycleHarness();
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onCommand = vi.fn();
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={floatingDocumentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            transport={lifecycle.transport}
+            rendererFactory={lifecycle.rendererFactory}
+            onCommand={onCommand}
+          />
+        ),
+        root,
+      ),
+    );
+    await vi.waitFor(() => expect(lifecycle.transport.connect).toHaveBeenCalledOnce());
+    const canvas = root.querySelector<HTMLElement>(".app-window-canvas")!;
+    const terminalMount = root.querySelector(".terminal-surface__viewport");
+    const capture = vi.fn();
+    const release = vi.fn();
+    Object.assign(canvas, {
+      setPointerCapture: capture,
+      hasPointerCapture: () => true,
+      releasePointerCapture: release,
+    });
+
+    const zoomIn = root.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!;
+    zoomIn.click();
+    zoomIn.click();
+    expect(Number(canvas.dataset.viewportScale)).toBeCloseTo(1.44);
+
+    const terminal = root.querySelector<HTMLElement>(".terminal-surface")!;
+    terminal.dispatchEvent(
+      new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 80, ctrlKey: true }),
+    );
+    terminal.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, pointerId: 3, button: 0 }),
+    );
+    expect(Number(canvas.dataset.viewportScale)).toBeCloseTo(1.44);
+    expect(capture).not.toHaveBeenCalled();
+    expect(onCommand.mock.calls).toEqual([
+      [
+        {
+          command: { type: "window.focus", windowId: "window.lead" },
+          source: "mouse",
+        },
+      ],
+    ]);
+    onCommand.mockClear();
+
+    const header = root.querySelector<HTMLElement>(".web-pane-frame__title")!;
+    header.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 7,
+        button: 0,
+        clientX: 120,
+        clientY: 100,
+      }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 7,
+        clientX: 264,
+        clientY: 172,
+      }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointerup", {
+        bubbles: true,
+        pointerId: 7,
+        button: 0,
+        clientX: 264,
+        clientY: 172,
+      }),
+    );
+
+    expect(capture).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledWith(7);
+    expect(onCommand).toHaveBeenCalledTimes(1);
+    expect(onCommand).toHaveBeenCalledWith({
+      command: {
+        type: "window.float",
+        windowId: "window.lead",
+        rect: { x: 142, y: 86, width: 360, height: 220 },
+      },
+      source: "mouse",
+    });
+
+    onCommand.mockClear();
+    root.querySelector<HTMLElement>('[data-canvas-resize-edge="south-east"]')!.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 8,
+        button: 0,
+        clientX: 500,
+        clientY: 300,
+      }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 8,
+        clientX: 644,
+        clientY: 372,
+      }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointerup", {
+        bubbles: true,
+        pointerId: 8,
+        button: 0,
+        clientX: 644,
+        clientY: 372,
+      }),
+    );
+    expect(onCommand).toHaveBeenCalledOnce();
+    expect(onCommand).toHaveBeenCalledWith({
+      command: {
+        type: "window.float",
+        windowId: "window.lead",
+        rect: { x: 142, y: 86, width: 460, height: 270 },
+      },
+      source: "mouse",
+    });
+    expect(root.querySelector(".terminal-surface__viewport")).toBe(terminalMount);
+    expect(lifecycle.rendererFactory).toHaveBeenCalledOnce();
+    expect(lifecycle.transport.connect).toHaveBeenCalledOnce();
+    expect(lifecycle.renderer.dispose).not.toHaveBeenCalled();
+    expect(lifecycle.attachment.dispose).not.toHaveBeenCalled();
+  });
+
+  it.each(["lost capture", "window blur", "Escape"] as const)(
+    "cancels captured window movement on %s without a durable command",
+    (cancellation) => {
+      const root = document.createElement("div");
+      document.body.append(root);
+      const onCommand = vi.fn();
+      disposers.push(
+        render(
+          () => (
+            <AppWindowCanvas
+              document={floatingDocumentFixture()}
+              paneFrames={[frame()]}
+              terminalInventory={inventory}
+              workspaceName="workspace.product"
+              viewport={{ width: 900, height: 540 }}
+              onCommand={onCommand}
+            />
+          ),
+          root,
+        ),
+      );
+      const canvas = root.querySelector<HTMLElement>(".app-window-canvas")!;
+      Object.assign(canvas, {
+        setPointerCapture: vi.fn(),
+        hasPointerCapture: () => false,
+        releasePointerCapture: vi.fn(),
+      });
+      root.querySelector<HTMLElement>(".web-pane-frame__title")!.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          pointerId: 11,
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+        }),
+      );
+      canvas.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          pointerId: 11,
+          clientX: 180,
+          clientY: 140,
+        }),
+      );
+      if (cancellation === "lost capture") {
+        canvas.dispatchEvent(
+          new PointerEvent("lostpointercapture", { bubbles: true, pointerId: 11 }),
+        );
+      } else if (cancellation === "window blur") {
+        window.dispatchEvent(new Event("blur"));
+      } else {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" }),
+        );
+      }
+
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(canvas.dataset.gesture).toBeUndefined();
+      expect(root.querySelector(".app-window-card")?.getAttribute("data-transient-geometry")).toBe(
+        "false",
+      );
+    },
+  );
 
   it("keeps one terminal renderer and attachment across scene and viewport refreshes", async () => {
     const lifecycle = installTerminalLifecycleHarness();

@@ -843,17 +843,45 @@ kbd {
     28px 28px,
     auto;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 3%, transparent);
+  outline: none;
+}
+
+.app-window-canvas:focus-visible {
+  box-shadow:
+    inset 0 0 0 var(--tmux-ide-focus-outline) var(--tmux-ide-border-focused),
+    inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 3%, transparent);
+}
+
+.app-window-canvas__scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 0;
+}
+
+.app-window-canvas[data-space-key="true"],
+.app-window-canvas[data-gesture="pan"] {
+  cursor: grab;
+}
+
+.app-window-canvas[data-gesture="pan"] {
+  cursor: grabbing;
 }
 
 .app-window-card {
   position: absolute;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 9px;
   transition:
     filter var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
     opacity var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard);
+}
+
+.app-window-card[data-transient-geometry="true"] {
+  filter: drop-shadow(0 22px 44px rgb(0 0 0 / 38%));
 }
 
 .app-window-card > .web-pane-frame {
@@ -861,6 +889,7 @@ kbd {
   height: 100%;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .app-window-card[data-placement="floating"] {
@@ -893,6 +922,168 @@ kbd {
 .app-window-card .web-pane-frame__subtitle {
   font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
   font-size: 9px;
+}
+
+.app-window-card__resize-handle {
+  position: absolute;
+  z-index: 6;
+  display: block;
+  touch-action: none;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="north"],
+.app-window-card__resize-handle[data-canvas-resize-edge="south"] {
+  right: 16px;
+  left: 16px;
+  height: 12px;
+  cursor: ns-resize;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="north"] {
+  top: -6px;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="south"] {
+  bottom: -6px;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="east"],
+.app-window-card__resize-handle[data-canvas-resize-edge="west"] {
+  top: 16px;
+  bottom: 16px;
+  width: 12px;
+  cursor: ew-resize;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="east"] {
+  right: -6px;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="west"] {
+  left: -6px;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="north-east"],
+.app-window-card__resize-handle[data-canvas-resize-edge="north-west"],
+.app-window-card__resize-handle[data-canvas-resize-edge="south-east"],
+.app-window-card__resize-handle[data-canvas-resize-edge="south-west"] {
+  width: 20px;
+  height: 20px;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="north-west"] {
+  top: -7px;
+  left: -7px;
+  cursor: nwse-resize;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="north-east"] {
+  top: -7px;
+  right: -7px;
+  cursor: nesw-resize;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="south-east"] {
+  right: -7px;
+  bottom: -7px;
+  cursor: nwse-resize;
+}
+
+.app-window-card__resize-handle[data-canvas-resize-edge="south-west"] {
+  bottom: -7px;
+  left: -7px;
+  cursor: nesw-resize;
+}
+
+.canvas-controls {
+  position: absolute;
+  z-index: 200;
+  bottom: 14px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--tmux-ide-border-default) 86%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--tmux-ide-surface-elevated) 94%, transparent);
+  box-shadow:
+    0 12px 30px rgb(0 0 0 / 30%),
+    inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 5%, transparent);
+  transform: translateX(-50%);
+  -webkit-app-region: no-drag;
+}
+
+.canvas-controls button {
+  appearance: none;
+  display: inline-grid;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--tmux-ide-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
+    background-color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
+    transform var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard);
+}
+
+.canvas-controls button:hover:not(:disabled) {
+  color: var(--tmux-ide-text-bright);
+  background: var(--tmux-ide-selection-hover);
+}
+
+.canvas-controls button:active:not(:disabled) {
+  color: var(--tmux-ide-text-bright);
+  background: var(--tmux-ide-selection-pressed);
+  transform: scale(0.95);
+}
+
+.canvas-controls button:focus-visible {
+  outline: var(--tmux-ide-focus-outline) solid var(--tmux-ide-border-focused);
+  outline-offset: var(--tmux-ide-focus-outline-offset);
+}
+
+.canvas-controls button:disabled {
+  color: var(--tmux-ide-control-disabled-foreground);
+  cursor: default;
+}
+
+.canvas-controls output {
+  min-width: 43px;
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--tmux-ide-font-mono);
+  font-size: 10px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas-controls > i {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--tmux-ide-border-subtle);
+}
+
+.canvas-controls__icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-controls button {
+    transition: none;
+  }
+
+  .canvas-controls button:active:not(:disabled) {
+    transform: none;
+  }
 }
 
 .app-window-card__unavailable,

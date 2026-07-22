@@ -479,6 +479,33 @@ try {
           height: bounds.height,
         };
       });
+      const canvasElement = globalThis.document.querySelector(".app-window-canvas");
+      const terminalElement = globalThis.document.querySelector(
+        '.app-window-card[data-selected="true"] .terminal-surface',
+      );
+      const initialScale = Number(canvasElement?.getAttribute("data-viewport-scale"));
+      terminalElement?.dispatchEvent(
+        new globalThis.WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          deltaY: -40,
+        }),
+      );
+      const scaleAfterTerminalWheel = Number(canvasElement?.getAttribute("data-viewport-scale"));
+      canvasElement?.dispatchEvent(
+        new globalThis.WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          clientX: 720,
+          clientY: 420,
+          deltaY: -40,
+        }),
+      );
+      const scaleAfterCanvasPinch = Number(canvasElement?.getAttribute("data-viewport-scale"));
+      globalThis.document.querySelector('[aria-label="Reset view"]')?.click();
+      const scaleAfterReset = Number(canvasElement?.getAttribute("data-viewport-scale"));
       return {
         app: rect(".app"),
         titlebar: rect(".titlebar"),
@@ -491,9 +518,42 @@ try {
         dockTabs: globalThis.document.querySelectorAll(".workbench-dock__tab").length,
         styleAttributes: globalThis.document.querySelectorAll("[style]").length,
         styleElements: globalThis.document.querySelectorAll("style").length,
+        viewportInput: {
+          initialScale,
+          scaleAfterTerminalWheel,
+          scaleAfterCanvasPinch,
+          scaleAfterReset,
+        },
         violations: globalThis.__tmiCspViolations ?? [],
       };
     });
+    const activeCard = visualPage.locator('.app-window-card[data-selected="true"]');
+    const terminalViewport = activeCard.locator(".terminal-surface__viewport");
+    await terminalViewport.evaluate((element) => {
+      element.setAttribute("data-canvas-smoke-identity", "stable");
+    });
+    const beforeDrag = await activeCard.boundingBox();
+    const header = await activeCard.locator(".web-pane-frame__title").boundingBox();
+    if (!beforeDrag || !header) throw new Error("Desktop canvas drag target is unavailable");
+    await visualPage.mouse.move(
+      header.x + Math.min(40, header.width / 2),
+      header.y + header.height / 2,
+    );
+    await visualPage.mouse.down();
+    await visualPage.mouse.move(
+      header.x + Math.min(40, header.width / 2) + 72,
+      header.y + header.height / 2 + 48,
+      { steps: 4 },
+    );
+    await visualPage.mouse.up();
+    const afterDrag = await activeCard.boundingBox();
+    const dragResult = {
+      deltaX: afterDrag ? Math.round(afterDrag.x - beforeDrag.x) : null,
+      deltaY: afterDrag ? Math.round(afterDrag.y - beforeDrag.y) : null,
+      terminalIdentityStable:
+        (await terminalViewport.getAttribute("data-canvas-smoke-identity")) === "stable",
+      styleAttributes: await visualPage.locator("[style]").count(),
+    };
     if (process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT) {
       await visualPage.screenshot({
         path: process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT,
@@ -508,6 +568,14 @@ try {
       visualResult.violations.some(({ directive }) => directive.startsWith("style-src")) ||
       visualResult.styleAttributes !== 0 ||
       visualResult.styleElements !== 0 ||
+      visualResult.viewportInput.initialScale !== 1 ||
+      visualResult.viewportInput.scaleAfterTerminalWheel !== 1 ||
+      visualResult.viewportInput.scaleAfterCanvasPinch <= 1 ||
+      visualResult.viewportInput.scaleAfterReset !== 1 ||
+      dragResult.deltaX !== 72 ||
+      dragResult.deltaY !== 48 ||
+      !dragResult.terminalIdentityStable ||
+      dragResult.styleAttributes !== 0 ||
       visualResult.app?.width !== 1_440 ||
       visualResult.app?.height !== 900 ||
       visualResult.titlebar?.height !== 40 ||
@@ -529,6 +597,7 @@ try {
     ) {
       throw new Error(
         `Desktop first-run canvas visual acceptance failed: ${JSON.stringify(visualResult, null, 2)}\n` +
+          `Interaction result: ${JSON.stringify(dragResult, null, 2)}\n` +
           visualViolations.join("\n"),
       );
     }

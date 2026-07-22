@@ -246,3 +246,54 @@ export function canvasRectsEqual(left: CanvasRect, right: CanvasRect): boolean {
     left.height === right.height
   );
 }
+
+/** Smallest canvas-space rectangle containing every supplied rectangle. */
+export function canvasRectBounds(rects: readonly CanvasRect[]): CanvasRect | null {
+  if (rects.length === 0) return null;
+  let left = Number.POSITIVE_INFINITY;
+  let top = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  for (const rect of rects) {
+    const x = finite(rect.x, 0);
+    const y = finite(rect.y, 0);
+    const width = Math.max(0, finite(rect.width, 0));
+    const height = Math.max(0, finite(rect.height, 0));
+    left = Math.min(left, x);
+    top = Math.min(top, y);
+    right = Math.max(right, x + width);
+    bottom = Math.max(bottom, y + height);
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+/** Fit canvas content into a screen-space viewport while preserving its center. */
+export function fitCanvasViewport(
+  rects: readonly CanvasRect[],
+  viewport: { readonly width: number; readonly height: number },
+  options: {
+    readonly padding?: number;
+    readonly scaleRange?: CanvasScaleRange;
+  } = {},
+): CanvasViewportTransform {
+  const bounds = canvasRectBounds(rects);
+  if (!bounds) return normalizeCanvasTransform({ x: 0, y: 0, scale: 1 }, options.scaleRange);
+  const width = Math.max(0, finite(viewport.width, 0));
+  const height = Math.max(0, finite(viewport.height, 0));
+  const padding = Math.max(0, finite(options.padding ?? 48, 48));
+  const availableWidth = Math.max(1, width - padding * 2);
+  const availableHeight = Math.max(1, height - padding * 2);
+  const requestedScale = Math.min(
+    bounds.width > 0 ? availableWidth / bounds.width : 1,
+    bounds.height > 0 ? availableHeight / bounds.height : 1,
+  );
+  const normalized = normalizeCanvasTransform(
+    { x: 0, y: 0, scale: requestedScale },
+    options.scaleRange,
+  );
+  return {
+    scale: normalized.scale,
+    x: width / 2 - (bounds.x + bounds.width / 2) * normalized.scale,
+    y: height / 2 - (bounds.y + bounds.height / 2) * normalized.scale,
+  };
+}

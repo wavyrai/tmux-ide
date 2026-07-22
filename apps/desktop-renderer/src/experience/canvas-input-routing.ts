@@ -187,6 +187,12 @@ export function routeCanvasPointer(input: CanvasPointerRoutingInput): CanvasPoin
   if (input.button !== 0) {
     return { action: "ignore", claimPointer: false, focusWindowId: null };
   }
+  if (region.kind === "terminal") {
+    return { action: "terminal-input", claimPointer: false, focusWindowId: region.windowId };
+  }
+  if (region.kind === "window-header" && region.interactiveControl) {
+    return { action: "focus", claimPointer: false, focusWindowId: region.windowId };
+  }
   if (region.kind === "resize-handle") {
     return {
       action: "resize",
@@ -195,19 +201,13 @@ export function routeCanvasPointer(input: CanvasPointerRoutingInput): CanvasPoin
       focusWindowId: region.windowId,
     };
   }
+  if (input.spaceKey) return { action: "pan", claimPointer: true, focusWindowId: null };
   if (region.kind === "window-header") {
-    if (region.interactiveControl) {
-      return { action: "focus", claimPointer: false, focusWindowId: region.windowId };
-    }
     return { action: "move", claimPointer: true, focusWindowId: region.windowId };
-  }
-  if (region.kind === "terminal") {
-    return { action: "terminal-input", claimPointer: false, focusWindowId: region.windowId };
   }
   if (region.kind === "window-content") {
     return { action: "focus", claimPointer: false, focusWindowId: region.windowId };
   }
-  if (input.spaceKey) return { action: "pan", claimPointer: true, focusWindowId: null };
   return { action: "clear-focus", claimPointer: false, focusWindowId: null };
 }
 

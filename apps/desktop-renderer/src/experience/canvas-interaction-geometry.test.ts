@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   canvasDeltaFromScreenDelta,
+  canvasRectBounds,
   canvasToScreen,
+  fitCanvasViewport,
   moveCanvasRect,
   panCanvasViewport,
   resizeCanvasRect,
@@ -59,6 +61,39 @@ describe("canvas viewport geometry", () => {
       x: 15,
       y: 28,
       scale: 0.1,
+    });
+  });
+
+  it("fits the complete window bounds with screen-space padding", () => {
+    const transform = fitCanvasViewport(
+      [
+        { x: -100, y: 50, width: 400, height: 200 },
+        { x: 500, y: 300, width: 300, height: 250 },
+      ],
+      { width: 1_000, height: 700 },
+      { padding: 50, scaleRange: { min: 0.25, max: 2 } },
+    );
+    const bounds = canvasRectBounds([
+      { x: -100, y: 50, width: 400, height: 200 },
+      { x: 500, y: 300, width: 300, height: 250 },
+    ])!;
+    const topLeft = canvasToScreen({ x: bounds.x, y: bounds.y }, transform);
+    const bottomRight = canvasToScreen(
+      { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
+      transform,
+    );
+
+    expect(bounds).toEqual({ x: -100, y: 50, width: 900, height: 500 });
+    expect(transform.scale).toBe(1);
+    expect(topLeft).toEqual({ x: 50, y: 100 });
+    expect(bottomRight).toEqual({ x: 950, y: 600 });
+  });
+
+  it("uses an identity viewport when there is no content to fit", () => {
+    expect(fitCanvasViewport([], { width: 900, height: 600 })).toEqual({
+      x: 0,
+      y: 0,
+      scale: 1,
     });
   });
 });
