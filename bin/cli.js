@@ -3383,6 +3383,20 @@ var init_cohesion_fixture = __esm({
 
 // packages/contracts/src/application-shell.ts
 import { z as z18 } from "zod";
+function refineUniqueAgentPaneIds(agents, ctx, pathPrefix) {
+  const paneIds = /* @__PURE__ */ new Set();
+  for (const [index, agent] of agents.entries()) {
+    if (agent.paneId === null) continue;
+    if (paneIds.has(agent.paneId)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [...pathPrefix, index, "paneId"],
+        message: "duplicate semantic pane identity"
+      });
+    }
+    paneIds.add(agent.paneId);
+  }
+}
 function deepFreeze2(value) {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) deepFreeze2(child);
@@ -3417,7 +3431,8 @@ function projectApplicationShellV1(input) {
     workspace: input.workspace,
     dock: input.dock,
     focus: input.focus,
-    connection: input.connection
+    connection: input.connection,
+    terminalInventory: input.terminalInventory
   });
   const surfaces = CANONICAL_SURFACE_REGISTRY.map((surface) => projectedSurface(surface, parsed));
   const palette = paletteOverlay(parsed.focus);
@@ -3451,6 +3466,15 @@ function projectApplicationShellV1(input) {
         tools: surfaces.filter((surface) => surface.kind === "dock-tool")
       },
       statusStrip: { ...parsed.connection },
+      ...parsed.terminalInventory === void 0 ? {} : {
+        terminalInventory: {
+          activeResourceId: parsed.terminalInventory.activeResourceId,
+          resources: parsed.terminalInventory.resources.map((resource) => ({
+            ...resource,
+            attachability: { ...resource.attachability }
+          }))
+        }
+      },
       focus: {
         windowActivity: parsed.focus.windowActivity,
         zone: parsed.focus.focusZone,
@@ -3556,7 +3580,7 @@ function replayInvocations(initialState, invocations) {
     deepFreeze2(ApplicationShellReplayStateV1SchemaZ.parse(initialState))
   );
 }
-var APPLICATION_SHELL_PROJECTION_VERSION, APPLICATION_SHELL_TRACE_VERSION, ApplicationShellProjectionInputV1SchemaZ, WorkspaceFixtureSchemaZ, ApplicationShellSurfaceProjectionSchemaZ, ApplicationShellProjectionV1SchemaZ, ApplicationShellActivateModeArgumentsSchemaZ, ApplicationShellActivateDockToolArgumentsSchemaZ, ApplicationShellSetDockModeArgumentsSchemaZ, ApplicationShellMoveFocusArgumentsSchemaZ, ApplicationShellOpenPaletteArgumentsSchemaZ, ApplicationShellClosePaletteArgumentsSchemaZ, ApplicationShellSelectResourceArgumentsSchemaZ, APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS, ApplicationShellCommandInvocationSchemaZ, descriptor, APPLICATION_SHELL_COMMAND_DESCRIPTORS, descriptorById, APPLICATION_SHELL_COMMAND_DEFINITIONS, ApplicationShellResourceSelectionSchemaZ, ApplicationShellReplayStateV1SchemaZ, ApplicationShellActionTraceV1BaseSchemaZ, ApplicationShellActionTraceV1SchemaZ;
+var APPLICATION_SHELL_PROJECTION_VERSION, APPLICATION_SHELL_TRACE_VERSION, TerminalResourceUnavailableReasonSchemaZ, TerminalResourceAttachabilitySchemaZ, ApplicationShellTerminalResourceSchemaZ, ApplicationShellTerminalInventorySchemaZ, ApplicationShellProjectionInputV1Fields, ApplicationShellProjectionInputV1WireSchemaZ, ApplicationShellProjectionInputV1SchemaZ, ApplicationShellProjectionInputV2SchemaZ, WorkspaceFixtureSchemaZ, ApplicationShellSurfaceProjectionSchemaZ, ApplicationShellProjectionV1SchemaZ, ApplicationShellActivateModeArgumentsSchemaZ, ApplicationShellActivateDockToolArgumentsSchemaZ, ApplicationShellSetDockModeArgumentsSchemaZ, ApplicationShellMoveFocusArgumentsSchemaZ, ApplicationShellOpenPaletteArgumentsSchemaZ, ApplicationShellClosePaletteArgumentsSchemaZ, ApplicationShellSelectResourceArgumentsSchemaZ, APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS, ApplicationShellCommandInvocationSchemaZ, descriptor, APPLICATION_SHELL_COMMAND_DESCRIPTORS, descriptorById, APPLICATION_SHELL_COMMAND_DEFINITIONS, ApplicationShellResourceSelectionSchemaZ, ApplicationShellReplayStateV1SchemaZ, ApplicationShellActionTraceV1BaseSchemaZ, ApplicationShellActionTraceV1SchemaZ;
 var init_application_shell = __esm({
   "packages/contracts/src/application-shell.ts"() {
     "use strict";
@@ -3568,13 +3592,139 @@ var init_application_shell = __esm({
     init_pane_appearance();
     APPLICATION_SHELL_PROJECTION_VERSION = 1;
     APPLICATION_SHELL_TRACE_VERSION = 1;
-    ApplicationShellProjectionInputV1SchemaZ = z18.object({
+    TerminalResourceUnavailableReasonSchemaZ = z18.enum([
+      "invalid-runtime-proof",
+      "missing-semantic-stamp",
+      "invalid-semantic-stamp",
+      "duplicate-semantic-stamp",
+      "duplicate-runtime-pane-binding",
+      "not-single-pane-window"
+    ]);
+    TerminalResourceAttachabilitySchemaZ = z18.discriminatedUnion("status", [
+      z18.object({
+        status: z18.literal("available"),
+        semanticPaneId: SemanticProductIdSchemaZ
+      }).strict(),
+      z18.object({
+        status: z18.literal("unavailable"),
+        reason: TerminalResourceUnavailableReasonSchemaZ
+      }).strict()
+    ]);
+    ApplicationShellTerminalResourceSchemaZ = z18.object({
+      id: SemanticProductIdSchemaZ,
+      title: z18.string().min(1).max(160),
+      kind: z18.enum(["agent", "terminal"]),
+      active: z18.boolean(),
+      attachability: TerminalResourceAttachabilitySchemaZ
+    }).strict();
+    ApplicationShellTerminalInventorySchemaZ = z18.object({
+      activeResourceId: SemanticProductIdSchemaZ.nullable(),
+      resources: z18.array(ApplicationShellTerminalResourceSchemaZ).max(512)
+    }).strict().superRefine((inventory, ctx) => {
+      const ids = /* @__PURE__ */ new Set();
+      const active2 = inventory.resources.filter((resource) => resource.active);
+      for (const [index, resource] of inventory.resources.entries()) {
+        if (ids.has(resource.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["resources", index, "id"],
+            message: "terminal resource ids must be unique"
+          });
+        }
+        ids.add(resource.id);
+        if (resource.attachability.status === "available" && resource.attachability.semanticPaneId !== resource.id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["resources", index, "attachability", "semanticPaneId"],
+            message: "attachable semantic pane identity must equal its terminal resource id"
+          });
+        }
+        if (resource.id.startsWith("terminal.discovered.") && resource.attachability.status === "available") {
+          ctx.addIssue({
+            code: "custom",
+            path: ["resources", index, "attachability"],
+            message: "discovered fallback terminal resources cannot be attachable"
+          });
+        }
+      }
+      if (active2.length > 1) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["resources"],
+          message: "terminal inventory may contain at most one active resource"
+        });
+      }
+      if (inventory.activeResourceId === null && active2.length !== 0 || inventory.activeResourceId !== null && (active2.length !== 1 || active2[0].id !== inventory.activeResourceId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["activeResourceId"],
+          message: "activeResourceId must identify the active terminal resource"
+        });
+      }
+    });
+    ApplicationShellProjectionInputV1Fields = {
       project: CohesionFixtureV1SchemaZ.shape.project,
       workspace: CohesionFixtureV1SchemaZ.shape.workspace,
       dock: CohesionFixtureV1SchemaZ.shape.dock,
       focus: FocusOverlayStateV1SchemaZ,
       connection: CohesionFixtureV1SchemaZ.shape.connection
-    }).strict();
+    };
+    ApplicationShellProjectionInputV1WireSchemaZ = z18.object(ApplicationShellProjectionInputV1Fields).strict().superRefine((input, ctx) => {
+      refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
+        "workspace",
+        "sidebar",
+        "agents"
+      ]);
+    });
+    ApplicationShellProjectionInputV1SchemaZ = z18.object({
+      ...ApplicationShellProjectionInputV1Fields,
+      terminalInventory: ApplicationShellTerminalInventorySchemaZ.optional()
+    }).strict().superRefine((input, ctx) => {
+      refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
+        "workspace",
+        "sidebar",
+        "agents"
+      ]);
+      if (input.terminalInventory === void 0) return;
+      const resources = new Map(
+        input.terminalInventory.resources.map((resource) => [resource.id, resource])
+      );
+      for (const [index, agent] of input.workspace.sidebar.agents.entries()) {
+        if (agent.paneId === null) continue;
+        const resource = resources.get(agent.paneId);
+        if (resource === void 0 || resource.kind !== "agent") {
+          ctx.addIssue({
+            code: "custom",
+            path: ["workspace", "sidebar", "agents", index, "paneId"],
+            message: "attached agents must correlate to one agent terminal resource"
+          });
+        }
+      }
+    });
+    ApplicationShellProjectionInputV2SchemaZ = z18.object({
+      ...ApplicationShellProjectionInputV1Fields,
+      terminalInventory: ApplicationShellTerminalInventorySchemaZ
+    }).strict().superRefine((input, ctx) => {
+      refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
+        "workspace",
+        "sidebar",
+        "agents"
+      ]);
+      const resources = new Map(
+        input.terminalInventory.resources.map((resource) => [resource.id, resource])
+      );
+      for (const [index, agent] of input.workspace.sidebar.agents.entries()) {
+        if (agent.paneId === null) continue;
+        const resource = resources.get(agent.paneId);
+        if (resource === void 0 || resource.kind !== "agent") {
+          ctx.addIssue({
+            code: "custom",
+            path: ["workspace", "sidebar", "agents", index, "paneId"],
+            message: "attached agents must correlate to one agent terminal resource"
+          });
+        }
+      }
+    });
     WorkspaceFixtureSchemaZ = CohesionFixtureV1SchemaZ.shape.workspace;
     ApplicationShellSurfaceProjectionSchemaZ = z18.object({
       id: ProductSurfaceIdSchemaZ,
@@ -3613,6 +3763,7 @@ var init_application_shell = __esm({
         tools: z18.array(ApplicationShellSurfaceProjectionSchemaZ)
       }).strict(),
       statusStrip: CohesionFixtureV1SchemaZ.shape.connection,
+      terminalInventory: ApplicationShellTerminalInventorySchemaZ.optional(),
       focus: z18.object({
         windowActivity: z18.enum(["active", "inactive"]),
         zone: FocusZoneSchemaZ,
@@ -3626,7 +3777,24 @@ var init_application_shell = __esm({
           focusReturnTarget: SemanticFocusTargetSchemaZ.nullable()
         }).strict()
       }).strict()
-    }).strict();
+    }).strict().superRefine((projection, ctx) => {
+      refineUniqueAgentPaneIds(projection.sidebar.agents, ctx, ["sidebar", "agents"]);
+      if (projection.terminalInventory === void 0) return;
+      const resources = new Map(
+        projection.terminalInventory.resources.map((resource) => [resource.id, resource])
+      );
+      for (const [index, agent] of projection.sidebar.agents.entries()) {
+        if (agent.paneId === null) continue;
+        const resource = resources.get(agent.paneId);
+        if (resource === void 0 || resource.kind !== "agent") {
+          ctx.addIssue({
+            code: "custom",
+            path: ["sidebar", "agents", index, "paneId"],
+            message: "attached agents must correlate to one agent terminal resource"
+          });
+        }
+      }
+    });
     ApplicationShellActivateModeArgumentsSchemaZ = z18.object({ mode: PrimaryWorkspaceModeIdSchemaZ }).strict();
     ApplicationShellActivateDockToolArgumentsSchemaZ = z18.object({ tool: DockToolIdSchemaZ }).strict();
     ApplicationShellSetDockModeArgumentsSchemaZ = z18.object({ mode: ApplicationShellDockModeSchemaZ }).strict();
@@ -3826,18 +3994,28 @@ var init_daemon_wire = __esm({
 
 // packages/contracts/src/application-shell-resource.ts
 import { z as z20 } from "zod";
-var APPLICATION_SHELL_RESOURCE_VERSION, ApplicationShellResourceV1SchemaZ;
+var APPLICATION_SHELL_RESOURCE_V1_VERSION, APPLICATION_SHELL_RESOURCE_V2_VERSION, ApplicationShellResourceV1SchemaZ, ApplicationShellResourceV2SchemaZ, ApplicationShellResourceSchemaZ;
 var init_application_shell_resource = __esm({
   "packages/contracts/src/application-shell-resource.ts"() {
     "use strict";
     init_application_shell();
     init_daemon_wire();
-    APPLICATION_SHELL_RESOURCE_VERSION = 1;
+    APPLICATION_SHELL_RESOURCE_V1_VERSION = 1;
+    APPLICATION_SHELL_RESOURCE_V2_VERSION = 2;
     ApplicationShellResourceV1SchemaZ = z20.object({
-      version: z20.literal(APPLICATION_SHELL_RESOURCE_VERSION),
+      version: z20.literal(APPLICATION_SHELL_RESOURCE_V1_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
-      resource: ApplicationShellProjectionInputV1SchemaZ
+      resource: ApplicationShellProjectionInputV1WireSchemaZ
     }).strict();
+    ApplicationShellResourceV2SchemaZ = z20.object({
+      version: z20.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      resource: ApplicationShellProjectionInputV2SchemaZ
+    }).strict();
+    ApplicationShellResourceSchemaZ = z20.discriminatedUnion("version", [
+      ApplicationShellResourceV1SchemaZ,
+      ApplicationShellResourceV2SchemaZ
+    ]);
   }
 });
 
@@ -3949,13 +4127,16 @@ var init_desktop_host = __esm({
       }).strict(),
       z21.object({ status: z21.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonFetchApplicationShellRequestSchemaZ = z21.object({ workspaceName: DesktopWorkspaceNameSchemaZ }).strict();
+    DesktopDaemonFetchApplicationShellRequestSchemaZ = z21.object({
+      workspaceName: DesktopWorkspaceNameSchemaZ,
+      resourceVersion: z21.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION).optional()
+    }).strict();
     DesktopApplicationShellTargetSchemaZ = z21.object({
       daemon: DaemonInstanceIdentitySchemaZ,
       workspaceName: DesktopWorkspaceNameSchemaZ
     }).strict();
     DesktopDaemonFetchApplicationShellResultSchemaZ = z21.discriminatedUnion("status", [
-      z21.object({ status: z21.literal("ok"), envelope: ApplicationShellResourceV1SchemaZ }).strict(),
+      z21.object({ status: z21.literal("ok"), envelope: ApplicationShellResourceSchemaZ }).strict(),
       z21.object({ status: z21.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
     DesktopDaemonEventSubscriptionRequestSchemaZ = z21.object({
@@ -14768,6 +14949,7 @@ var init_discovery = __esm({
     init_workspace_registry();
     _tmuxRunner = (args) => execFileSync11("tmux", args, {
       encoding: "utf-8",
+      maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
   }
@@ -19482,6 +19664,34 @@ var init_grouped_tmux = __esm({
 
 // packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts
 import { z as z37 } from "zod";
+function analyzeTrustedSemanticPaneCatalog(candidates) {
+  const rows = [];
+  let invalidRuntimeProof = false;
+  for (const candidate of candidates) {
+    const parsed = TrustedSemanticPaneSnapshotSchemaZ.safeParse(candidate);
+    if (!parsed.success) {
+      invalidRuntimeProof = true;
+      continue;
+    }
+    rows.push(parsed.data);
+  }
+  const semanticCounts = /* @__PURE__ */ new Map();
+  const runtimeCounts = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    runtimeCounts.set(row.runtimePaneId, (runtimeCounts.get(row.runtimePaneId) ?? 0) + 1);
+    if (row.semanticPaneId !== null) {
+      const semanticKey = `${row.workspaceName}\0${row.semanticPaneId}`;
+      semanticCounts.set(semanticKey, (semanticCounts.get(semanticKey) ?? 0) + 1);
+    }
+  }
+  return Object.freeze({
+    rows: Object.freeze(rows),
+    invalidRuntimeProof,
+    missingSemanticStamp: rows.some((row) => row.semanticPaneId === null),
+    duplicateSemanticStamp: [...semanticCounts.values()].some((count) => count !== 1),
+    duplicateRuntimePaneBinding: [...runtimeCounts.values()].some((count) => count !== 1)
+  });
+}
 function semanticPaneTargetKey(target) {
   const parsed = TerminalAttachmentSemanticTargetSchemaZ.parse(target);
   return `${parsed.workspaceName}\0${parsed.semanticPaneId}`;
@@ -19540,19 +19750,16 @@ var init_semantic_pane_catalog = __esm({
             "Trusted tmux pane discovery failed."
           );
         }
-        const rows = [];
-        for (const candidate of discovered) {
-          const parsed = TrustedSemanticPaneSnapshotSchemaZ.safeParse(candidate);
-          if (!parsed.success) {
-            throw new SemanticPaneCatalogError(
-              "invalid-runtime-proof",
-              parsedTarget,
-              "Trusted tmux discovery returned an invalid runtime proof."
-            );
-          }
-          rows.push(parsed.data);
+        const analysis = analyzeTrustedSemanticPaneCatalog(discovered);
+        const rows = analysis.rows;
+        if (analysis.invalidRuntimeProof) {
+          throw new SemanticPaneCatalogError(
+            "invalid-runtime-proof",
+            parsedTarget,
+            "Trusted tmux discovery returned an invalid runtime proof."
+          );
         }
-        if (rows.some((row2) => row2.semanticPaneId === null)) {
+        if (analysis.missingSemanticStamp) {
           throw new SemanticPaneCatalogError(
             "missing-semantic-stamp",
             parsedTarget,
@@ -19567,24 +19774,14 @@ var init_semantic_pane_catalog = __esm({
             "The requested workspace is not present in trusted tmux discovery."
           );
         }
-        const semanticCounts = /* @__PURE__ */ new Map();
-        const runtimeCounts = /* @__PURE__ */ new Map();
-        for (const row2 of rows) {
-          runtimeCounts.set(row2.runtimePaneId, (runtimeCounts.get(row2.runtimePaneId) ?? 0) + 1);
-          const semanticKey = semanticPaneTargetKey({
-            workspaceName: row2.workspaceName,
-            semanticPaneId: row2.semanticPaneId
-          });
-          semanticCounts.set(semanticKey, (semanticCounts.get(semanticKey) ?? 0) + 1);
-        }
-        if ([...semanticCounts.values()].some((count) => count !== 1)) {
+        if (analysis.duplicateSemanticStamp) {
           throw new SemanticPaneCatalogError(
             "duplicate-semantic-stamp",
             parsedTarget,
             "Semantic pane identities must be unique across trusted discovery."
           );
         }
-        if ([...runtimeCounts.values()].some((count) => count !== 1)) {
+        if (analysis.duplicateRuntimePaneBinding) {
           throw new SemanticPaneCatalogError(
             "duplicate-runtime-pane-binding",
             parsedTarget,
@@ -20945,7 +21142,10 @@ var init_tmux_view_executor = __esm({
         if (prefix !== GROUPED_TMUX_VIEW_SESSION_PREFIX || markerEnvironment !== GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT) {
           throw new TmuxAttachmentViewExecutorError("invalid-request");
         }
-        const result = this.#command(tmux4(["list-sessions", "-F", "#{session_name}	#{session_id}"]));
+        const separator = "|tmux-ide-view-field-v1|";
+        const result = this.#command(
+          tmux4(["list-sessions", "-F", `#{session_name}${separator}#{session_id}`])
+        );
         if (result.status === "not-found") return [];
         if (result.status === "failed") {
           throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
@@ -20954,17 +21154,17 @@ var init_tmux_view_executor = __esm({
         const found = /* @__PURE__ */ new Map();
         const runtimeSessionIds = /* @__PURE__ */ new Set();
         for (const row of rows) {
-          const separator = row.indexOf("	");
-          if (separator < 0 || row.indexOf("	", separator + 1) >= 0) {
+          const separatorIndex = row.indexOf(separator);
+          if (separatorIndex < 0 || row.indexOf(separator, separatorIndex + separator.length) >= 0) {
             throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
           }
-          const sessionName = row.slice(0, separator);
+          const sessionName = row.slice(0, separatorIndex);
           if (!sessionName.startsWith(prefix)) continue;
           const parsedName = parseViewSessionName(sessionName);
           if (!parsedName || found.has(sessionName)) {
             throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
           }
-          const sessionId = row.slice(separator + 1);
+          const sessionId = row.slice(separatorIndex + separator.length);
           if (!RuntimeSessionIdSchemaZ3.safeParse(sessionId).success || runtimeSessionIds.has(sessionId)) {
             throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
           }
@@ -21634,7 +21834,7 @@ function pinnedRunner(authority, execute, startupPolicy) {
         if (error instanceof TmuxError && error.code === "SESSION_NOT_FOUND") {
           return { status: "not-found" };
         }
-        if (error instanceof TmuxError && error.code === "TMUX_UNAVAILABLE" && startupPolicy.allowUnavailableDefaultEnumeration && authority.socketSelector.kind === "name" && authority.socketSelector.name === "default" && command2.argv.length === 3 && command2.argv[0] === "list-sessions" && command2.argv[1] === "-F" && command2.argv[2] === "#{session_name}	#{session_id}") {
+        if (error instanceof TmuxError && error.code === "TMUX_UNAVAILABLE" && startupPolicy.allowUnavailableDefaultEnumeration && authority.socketSelector.kind === "name" && authority.socketSelector.name === "default" && command2.argv.length === 3 && command2.argv[0] === "list-sessions" && command2.argv[1] === "-F" && command2.argv[2] === "#{session_name}|tmux-ide-view-field-v1|#{session_id}") {
           return { status: "not-found" };
         }
         if (error instanceof TmuxError && error.code === "ENVIRONMENT_VARIABLE_NOT_FOUND") {
@@ -21665,6 +21865,20 @@ function positiveInteger(value) {
   }
   return parsed;
 }
+function nonnegativeInteger(value) {
+  if (!INTEGER.test(value)) throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return parsed;
+}
+function boundedWireValue(value, maximum, allowEmpty = true) {
+  if (value.length > maximum || !allowEmpty && value.length === 0 || /[\0\r\n\t]/u.test(value)) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return value;
+}
 function viewport(cols, rows) {
   try {
     return TerminalAttachmentViewportSchemaZ.parse({
@@ -21675,52 +21889,148 @@ function viewport(cols, rows) {
     throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
   }
 }
-async function discoverWorkspaceRegistrySemanticPanes(registry, runner) {
+function requiredTmuxResult(runner, argv) {
+  const result = runner.run({ executable: "tmux", argv });
+  if (result.status === "not-found") return null;
+  if (result.status !== "ok") {
+    throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+  }
+  return result.stdout;
+}
+function liveSessionIdentities(runner) {
+  const stdout = requiredTmuxResult(runner, ["list-sessions", "-F", SESSION_FORMAT]);
+  if (stdout === null) return [];
+  const identities = [];
+  const names = /* @__PURE__ */ new Set();
+  const ids = /* @__PURE__ */ new Set();
+  for (const line of strictLines2(stdout, MAX_DISCOVERED_WORKSPACES * 4)) {
+    const fields = line.split(WIRE_SEPARATOR);
+    if (fields.length !== 3 || fields[2] !== SESSION_WIRE_SENTINEL) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    const name = boundedWireValue(fields[0], 160, false);
+    const id = fields[1];
+    if (!RUNTIME_SESSION_ID.test(id) || names.has(name) || ids.has(id)) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    names.add(name);
+    ids.add(id);
+    identities.push({ name, id });
+  }
+  return identities;
+}
+function parsePaneSnapshot(stdout, expected) {
+  const panes = [];
+  const runtimeIds = /* @__PURE__ */ new Set();
+  for (const line of strictLines2(stdout, MAX_DISCOVERED_PANES)) {
+    const fields = line.split(WIRE_SEPARATOR);
+    if (fields.length !== 17 || fields[16] !== PANE_WIRE_SENTINEL) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    const [
+      sessionName,
+      sessionId,
+      windowId,
+      runtimePaneId,
+      paneCountValue,
+      windowCountValue,
+      stamp,
+      indexValue,
+      title,
+      currentCommand,
+      windowActive,
+      paneActive,
+      role,
+      name,
+      type,
+      dir
+    ] = fields;
+    if (sessionName !== expected.name || sessionId !== expected.id || !RUNTIME_WINDOW_ID.test(windowId) || !RUNTIME_PANE_ID.test(runtimePaneId) || runtimeIds.has(runtimePaneId) || !["0", "1"].includes(windowActive) || !["0", "1"].includes(paneActive)) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    runtimeIds.add(runtimePaneId);
+    const nullable2 = (value) => boundedWireValue(value, 256).length === 0 ? null : value;
+    panes.push({
+      sessionName,
+      sessionId,
+      windowId,
+      runtimePaneId,
+      windowPaneCount: positiveInteger(paneCountValue),
+      sessionWindowCount: positiveInteger(windowCountValue),
+      semanticPaneId: nullable2(stamp),
+      index: nonnegativeInteger(indexValue),
+      title: boundedWireValue(title, 1024),
+      currentCommand: boundedWireValue(currentCommand, 512),
+      active: windowActive === "1" && paneActive === "1",
+      role: nullable2(role),
+      name: nullable2(name),
+      type: nullable2(type),
+      dir: boundedWireValue(dir, 4096, false)
+    });
+  }
+  const counts = /* @__PURE__ */ new Map();
+  for (const pane of panes) counts.set(pane.windowId, (counts.get(pane.windowId) ?? 0) + 1);
+  const windows = new Set(panes.map((pane) => pane.windowId));
+  if (panes.some(
+    (pane) => counts.get(pane.windowId) !== pane.windowPaneCount || windows.size !== pane.sessionWindowCount
+  ) || panes.filter((pane) => pane.active).length > 1) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return panes;
+}
+async function discoverWorkspaceRegistryTerminalInventory(registry, runner) {
   const workspaces = registry.list();
   if (workspaces.length > MAX_DISCOVERED_WORKSPACES) {
     throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
   }
-  const rows = [];
+  if (workspaces.length === 0) {
+    const catalog2 = analyzeTrustedSemanticPaneCatalog([]);
+    return Object.freeze({ panes: Object.freeze([]), catalog: catalog2 });
+  }
+  const liveSessions2 = liveSessionIdentities(runner);
+  const byName = new Map(liveSessions2.map((session) => [session.name, session]));
+  const uniqueSessionNames = new Set(workspaces.map((workspace) => workspace.sessionName));
+  const bySessionName = /* @__PURE__ */ new Map();
+  for (const sessionName of uniqueSessionNames) {
+    const identity = byName.get(sessionName);
+    if (!identity) continue;
+    const argv = ["list-panes", "-s", "-t", identity.id, "-F", PANE_FORMAT];
+    const before = requiredTmuxResult(runner, argv);
+    if (before === null) continue;
+    const panes2 = parsePaneSnapshot(before, identity);
+    const after = requiredTmuxResult(runner, argv);
+    if (after === null || before !== after) {
+      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    }
+    parsePaneSnapshot(after, identity);
+    bySessionName.set(sessionName, panes2);
+  }
+  const panes = [];
   for (const workspace of workspaces) {
-    if (!SAFE_SESSION_NAME.test(workspace.sessionName)) {
-      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
-    }
-    const result = runner.run({
-      executable: "tmux",
-      argv: [
-        "list-panes",
-        "-s",
-        "-t",
-        `=${workspace.sessionName}`,
-        "-F",
-        "#{session_name}	#{session_id}	#{window_id}	#{pane_id}	#{window_panes}	#{session_windows}	#{@tmux_ide_pane_id}"
-      ]
-    });
-    if (result.status === "not-found") continue;
-    if (result.status !== "ok") {
-      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
-    }
-    for (const line of strictLines2(result.stdout, MAX_DISCOVERED_PANES)) {
-      const fields = line.split("	");
-      if (fields.length !== 7 || fields[0] !== workspace.sessionName) {
-        throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
-      }
-      const [, sessionId, windowId, runtimePaneId, paneCount, windowCount, stamp] = fields;
-      rows.push({
-        workspaceName: workspace.name,
-        semanticPaneId: stamp === "" ? null : stamp,
-        sessionId,
-        windowId,
-        runtimePaneId,
-        windowPaneCount: positiveInteger(paneCount),
-        sessionWindowCount: positiveInteger(windowCount)
-      });
-      if (rows.length > MAX_DISCOVERED_PANES) {
+    for (const pane of bySessionName.get(workspace.sessionName) ?? []) {
+      panes.push({ ...pane, workspaceName: workspace.name });
+      if (panes.length > MAX_DISCOVERED_PANES) {
         throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
       }
     }
   }
-  return rows;
+  const catalog = analyzeTrustedSemanticPaneCatalog(
+    panes.map(
+      ({
+        sessionName: _sessionName,
+        index: _index,
+        title: _title,
+        currentCommand: _currentCommand,
+        active: _active,
+        role: _role,
+        name: _name,
+        type: _type,
+        dir: _dir,
+        ...row
+      }) => row
+    )
+  );
+  return Object.freeze({ panes: Object.freeze(panes), catalog });
 }
 function quoteArgument(value) {
   if (/\0|\r|\n/u.test(value)) {
@@ -21737,7 +22047,7 @@ function geometryDescriptorIsValid(descriptor2, client) {
 function createNativeTerminalAttachmentRuntime(options) {
   return new NativeTerminalAttachmentRuntime(options);
 }
-var MAX_TMUX_OUTPUT_BYTES2, MAX_DISCOVERED_WORKSPACES, MAX_DISCOVERED_PANES, MAX_GEOMETRY_CLIENTS, SAFE_SESSION_NAME, SAFE_TERMINAL_VALUE2, SAFE_COLOR_TERMINAL_VALUE2, SAFE_LOCALE_VALUE2, INTEGER, VIEW_MISMATCH, ERROR_MESSAGES3, NativeTerminalAttachmentRuntimeError, NativeTerminalAttachmentGeometryResolver, NativeTerminalAttachmentRuntime;
+var MAX_TMUX_OUTPUT_BYTES2, MAX_DISCOVERED_WORKSPACES, MAX_DISCOVERED_PANES, MAX_GEOMETRY_CLIENTS, SAFE_SESSION_NAME, SAFE_TERMINAL_VALUE2, SAFE_COLOR_TERMINAL_VALUE2, SAFE_LOCALE_VALUE2, INTEGER, VIEW_MISMATCH, SESSION_WIRE_SENTINEL, PANE_WIRE_SENTINEL, WIRE_SEPARATOR, RUNTIME_SESSION_ID, RUNTIME_WINDOW_ID, RUNTIME_PANE_ID, ERROR_MESSAGES3, NativeTerminalAttachmentRuntimeError, SESSION_FORMAT, PANE_FORMAT, NativeTerminalAttachmentGeometryResolver, NativeTerminalAttachmentRuntime;
 var init_native_runtime = __esm({
   "packages/daemon/src/terminal/attachments/native-runtime.ts"() {
     "use strict";
@@ -21759,6 +22069,12 @@ var init_native_runtime = __esm({
     SAFE_LOCALE_VALUE2 = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
     INTEGER = /^(?:0|[1-9][0-9]*)$/u;
     VIEW_MISMATCH = "__tmux_ide_geometry_view_mismatch_v1__";
+    SESSION_WIRE_SENTINEL = "tmux-ide-session-v2";
+    PANE_WIRE_SENTINEL = "tmux-ide-pane-v2";
+    WIRE_SEPARATOR = "|tmux-ide-field-v2|";
+    RUNTIME_SESSION_ID = /^\$(?:0|[1-9][0-9]*)$/u;
+    RUNTIME_WINDOW_ID = /^@(?:0|[1-9][0-9]*)$/u;
+    RUNTIME_PANE_ID = /^%(?:0|[1-9][0-9]*)$/u;
     ERROR_MESSAGES3 = {
       "invalid-authority": "The daemon tmux authority is invalid.",
       "discovery-failed": "Trusted semantic pane discovery failed.",
@@ -21775,6 +22091,28 @@ var init_native_runtime = __esm({
         this.code = code;
       }
     };
+    SESSION_FORMAT = ["#{session_name}", "#{session_id}", SESSION_WIRE_SENTINEL].join(
+      WIRE_SEPARATOR
+    );
+    PANE_FORMAT = [
+      "#{session_name}",
+      "#{session_id}",
+      "#{window_id}",
+      "#{pane_id}",
+      "#{window_panes}",
+      "#{session_windows}",
+      "#{@tmux_ide_pane_id}",
+      "#{pane_index}",
+      "#{pane_title}",
+      "#{pane_current_command}",
+      "#{window_active}",
+      "#{pane_active}",
+      "#{@ide_role}",
+      "#{@ide_name}",
+      "#{@ide_type}",
+      "#{pane_current_path}",
+      PANE_WIRE_SENTINEL
+    ].join(WIRE_SEPARATOR);
     NativeTerminalAttachmentGeometryResolver = class {
       #catalog;
       #runner;
@@ -21856,6 +22194,8 @@ var init_native_runtime = __esm({
       #launcher;
       #startupBarrier;
       #serializer;
+      #registry;
+      #discoverTerminalInventory;
       #lifecycle = "initializing";
       #disposePromise = null;
       constructor(options) {
@@ -21865,9 +22205,26 @@ var init_native_runtime = __esm({
           allowUnavailableDefaultEnumeration: authority.socketSelector.kind === "name" && authority.socketSelector.name === "default" && options.registry.list().length === 0
         };
         const runner = pinnedRunner(authority, execute, startupPolicy);
+        const discoverTerminalInventory = () => discoverWorkspaceRegistryTerminalInventory(options.registry, runner);
         const serializer = new TmuxAttachmentOperationSerializer();
         const catalog = options.semanticPaneCatalog ?? new SemanticPaneCatalog({
-          discover: () => discoverWorkspaceRegistrySemanticPanes(options.registry, runner)
+          discover: async () => {
+            const inventory = await discoverTerminalInventory();
+            return inventory.panes.map(
+              ({
+                sessionName: _sessionName,
+                index: _index,
+                title: _title,
+                currentCommand: _currentCommand,
+                active: _active,
+                role: _role,
+                name: _name,
+                type: _type,
+                dir: _dir,
+                ...row
+              }) => row
+            );
+          }
         });
         const launcher = new PtyTmuxAttachmentLauncher({
           ...options.launcher,
@@ -21926,6 +22283,46 @@ var init_native_runtime = __esm({
         });
         this.#launcher = launcher;
         this.#serializer = serializer;
+        this.#registry = options.registry;
+        this.#discoverTerminalInventory = discoverTerminalInventory;
+      }
+      /**
+       * Exact registry-session inventory for ApplicationShell V2. The runtime and
+       * attachment catalog intentionally share the same pinned runner, socket and
+       * global trust analyzer.
+       */
+      async discoverApplicationShellSession(requestedSessionName) {
+        const memberships = this.#registry.list().filter((workspace2) => workspace2.sessionName === requestedSessionName);
+        if (memberships.length === 0) return null;
+        if (memberships.length !== 1) {
+          throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+        }
+        const workspace = memberships[0];
+        const inventory = await this.#discoverTerminalInventory();
+        const panes = inventory.panes.filter(
+          (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName
+        );
+        if (panes.length === 0) return null;
+        const active2 = panes.find((pane) => pane.active) ?? panes[0];
+        const catalogIssue = inventory.catalog.invalidRuntimeProof ? "invalid-runtime-proof" : inventory.catalog.missingSemanticStamp ? "missing-semantic-stamp" : inventory.catalog.duplicateSemanticStamp ? "duplicate-semantic-stamp" : inventory.catalog.duplicateRuntimePaneBinding ? "duplicate-runtime-pane-binding" : null;
+        return Object.freeze({
+          name: workspace.sessionName,
+          runtimeSessionId: active2.sessionId,
+          dir: active2.dir,
+          catalogIssue,
+          panes: Object.freeze(
+            panes.map(
+              ({
+                workspaceName: _workspaceName,
+                sessionName: _sessionName,
+                sessionId: _sessionId,
+                sessionWindowCount: _sessionWindowCount,
+                dir: _dir,
+                ...pane
+              }) => Object.freeze(pane)
+            )
+          )
+        });
       }
       snapshot() {
         return this.admission.snapshot();
@@ -23887,20 +24284,18 @@ function label(value, fallback) {
   const normalized = withoutControls.replace(/\s+/gu, " ").trim().slice(0, 160);
   return normalized || fallback;
 }
-function fallbackPaneId(pane) {
+function fallbackPaneId(session, pane) {
   return semanticId(
-    "pane.discovered",
+    "terminal.discovered",
     JSON.stringify({
-      index: pane.index,
-      title: pane.title,
-      command: pane.currentCommand,
-      role: pane.role,
-      name: pane.name,
-      type: pane.type
+      session: session.name,
+      runtimeSessionId: session.runtimeSessionId,
+      runtimePaneId: pane.runtimePaneId
     })
   );
 }
-function paneIdentities(panes) {
+function paneIdentities(session) {
+  const panes = session.panes;
   const validCounts = /* @__PURE__ */ new Map();
   for (const pane of panes) {
     if (!SemanticProductIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
@@ -23909,16 +24304,26 @@ function paneIdentities(panes) {
   const claimed = /* @__PURE__ */ new Set();
   return panes.map((pane) => {
     const stamped = pane.semanticPaneId;
-    if (stamped !== null && SemanticProductIdSchemaZ.safeParse(stamped).success && validCounts.get(stamped) === 1 && !claimed.has(stamped)) {
+    const locallyValid = stamped !== null && SemanticProductIdSchemaZ.safeParse(stamped).success && validCounts.get(stamped) === 1;
+    if (locallyValid && !claimed.has(stamped)) {
       claimed.add(stamped);
-      return stamped;
+      return {
+        resourceId: stamped,
+        attachability: session.catalogIssue !== null ? { status: "unavailable", reason: session.catalogIssue } : pane.windowPaneCount === 1 ? { status: "available", semanticPaneId: stamped } : { status: "unavailable", reason: "not-single-pane-window" }
+      };
     }
-    const base = fallbackPaneId(pane);
+    const base = fallbackPaneId(session, pane);
     let candidate = base;
     let suffix = 1;
     while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
     claimed.add(candidate);
-    return candidate;
+    return {
+      resourceId: candidate,
+      attachability: {
+        status: "unavailable",
+        reason: session.catalogIssue ?? (stamped === null || stamped.length === 0 ? "missing-semantic-stamp" : !SemanticProductIdSchemaZ.safeParse(stamped).success ? "invalid-runtime-proof" : "duplicate-semantic-stamp")
+      }
+    };
   });
 }
 function harnessForPane(pane) {
@@ -23992,12 +24397,22 @@ function projectApplicationShellResource(session) {
   const rootLabel = label(basename9(session.dir), sessionName);
   const projectId = semanticId("project", session.dir);
   const sessionId = semanticId("session", session.name);
-  const ids = paneIdentities(session.panes);
+  const identities = paneIdentities(session);
   const focusedIndex = session.panes.findIndex((pane) => pane.active);
-  const focusedPaneId = focusedIndex < 0 ? null : ids[focusedIndex] ?? null;
+  const focusedPaneId = focusedIndex < 0 ? null : identities[focusedIndex]?.resourceId ?? null;
+  const terminalResources = session.panes.map((pane, index) => {
+    const identity = identities[index];
+    return {
+      id: identity.resourceId,
+      title: label(pane.name ?? pane.title, `Terminal ${index + 1}`),
+      kind: isAgentPane(pane) ? "agent" : "terminal",
+      active: identity.resourceId === focusedPaneId,
+      attachability: identity.attachability
+    };
+  });
   const agents = session.panes.flatMap((pane, index) => {
     if (!isAgentPane(pane)) return [];
-    const paneId = ids[index];
+    const paneId = identities[index].resourceId;
     return [
       {
         id: semanticId("agent", paneId),
@@ -24012,7 +24427,7 @@ function projectApplicationShellResource(session) {
   const hasPanes = session.panes.length > 0;
   const paneFact = `${session.panes.length} live terminal pane${session.panes.length === 1 ? "" : "s"} discovered`;
   const agentFact = `${agents.length} agent pane${agents.length === 1 ? "" : "s"} discovered`;
-  const parsed = ApplicationShellProjectionInputV1SchemaZ.parse({
+  const parsed = ApplicationShellProjectionInputV2SchemaZ.parse({
     project: {
       id: projectId,
       name: sessionName,
@@ -24071,6 +24486,10 @@ function projectApplicationShellResource(session) {
       message: "The tmux session has no discoverable panes",
       safeState: "No terminal attachment was attempted",
       nextAction: "Wait for tmux pane discovery to recover"
+    },
+    terminalInventory: {
+      activeResourceId: focusedPaneId,
+      resources: terminalResources
     }
   });
   projectApplicationShellV1(parsed);
@@ -24588,14 +25007,40 @@ function createApp(options = {}) {
     const detail = buildProjectDetail(session);
     return c.json({ ...detail });
   });
-  app.get("/api/project/:name/application-shell", (c) => {
+  app.get("/api/project/:name/application-shell", async (c) => {
     const name = c.req.param("name");
-    const session = discoverSessions().find((candidate) => candidate.name === name);
+    const requestedVersion = c.req.query("version");
+    if (requestedVersion !== void 0 && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
+      return c.json({ error: "Unsupported application-shell resource version" }, 400);
+    }
+    const backend2 = options.applicationShellInventoryBackend;
+    if (!backend2) return c.json({ error: "Session discovery unavailable" }, 503);
+    let session;
+    try {
+      session = await backend2.discoverApplicationShellSession(name);
+    } catch {
+      return c.json({ error: "Session discovery unavailable" }, 503);
+    }
     if (!session) return c.json({ error: "Session not found" }, 404);
+    const resource = projectApplicationShellResource(session);
+    if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
+      return c.json({
+        version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
+        daemon: daemonInstanceIdentity,
+        resource
+      });
+    }
+    const legacyResource = {
+      project: resource.project,
+      workspace: resource.workspace,
+      dock: resource.dock,
+      focus: resource.focus,
+      connection: resource.connection
+    };
     return c.json({
-      version: APPLICATION_SHELL_RESOURCE_VERSION,
+      version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
       daemon: daemonInstanceIdentity,
-      resource: projectApplicationShellResource(session)
+      resource: legacyResource
     });
   });
   app.get("/api/project/:name/panes", (c) => {
@@ -25762,7 +26207,8 @@ async function startHttpServer({
     daemonIdentity,
     workspacePaneCreationBackend,
     workspaceRegistry,
-    terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission
+    terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
+    applicationShellInventoryBackend: terminalAttachmentRuntime
   });
   app.get("/api/daemon/health", (c) => {
     return c.json({ ok: true, session: sessionName });
