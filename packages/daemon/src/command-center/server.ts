@@ -46,6 +46,7 @@ import {
   type ApplicationShellResourceV2,
   type ApplicationShellResourceV3,
   type AppWindowDocumentV1,
+  type DesktopMissionWorkspaceResource,
   type WorkspaceCatalogResourceV1,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
@@ -121,6 +122,8 @@ import {
 } from "./resources/application-shell.ts";
 import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
 import { daemonActionCommandRegistry } from "./actions/command-definitions.ts";
+import { MissionRepository } from "../lib/mission-repository.ts";
+import { projectDesktopMissionWorkspace } from "./resources/desktop-missions.ts";
 import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
@@ -157,6 +160,9 @@ export interface CreateAppOptions {
       focusedTerminalSourceId: string | null,
     ): Promise<AppWindowDocumentV1>;
   } | null;
+  applicationShellMissionBackend?: {
+    load(projectDir: string): Promise<DesktopMissionWorkspaceResource>;
+  } | null;
 }
 
 const defaultApplicationShellAppWindowBackend = {
@@ -166,6 +172,13 @@ const defaultApplicationShellAppWindowBackend = {
     focusedTerminalSourceId: string | null,
   ): Promise<AppWindowDocumentV1> {
     return loadApplicationShellAppWindows(projectDir, terminalSourceIds, focusedTerminalSourceId);
+  },
+};
+
+const defaultApplicationShellMissionBackend = {
+  async load(projectDir: string): Promise<DesktopMissionWorkspaceResource> {
+    const repository = await MissionRepository.open(projectDir);
+    return projectDesktopMissionWorkspace(repository.snapshot());
   },
 };
 
@@ -658,10 +671,31 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         } catch {
           return c.json({ error: "App window state unavailable" }, 503);
         }
+        const missionBackend =
+          options.applicationShellMissionBackend === undefined
+            ? defaultApplicationShellMissionBackend
+            : options.applicationShellMissionBackend;
+        let missionWorkspace: DesktopMissionWorkspaceResource;
+        if (!missionBackend) {
+          missionWorkspace = {
+            status: "degraded",
+            reason: "Mission history is unavailable from this daemon.",
+          };
+        } else {
+          try {
+            missionWorkspace = await missionBackend.load(session.dir);
+          } catch {
+            missionWorkspace = {
+              status: "degraded",
+              reason:
+                "Mission history could not be verified. The terminal workspace remains available.",
+            };
+          }
+        }
         return c.json({
           version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
           daemon: daemonInstanceIdentity,
-          resource: projectApplicationShellResourceV3(session, appWindows),
+          resource: projectApplicationShellResourceV3(session, appWindows, missionWorkspace),
         } satisfies ApplicationShellResourceV3);
       }
       return c.json({

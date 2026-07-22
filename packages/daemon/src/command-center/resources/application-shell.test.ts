@@ -400,6 +400,46 @@ describe("GET /api/project/:name/application-shell", () => {
     expect(requests).toEqual(["product", "product", "product"]);
   });
 
+  it("degrades only mission history when its repository fails and preserves terminal truth", async () => {
+    const app = createApp({
+      applicationShellInventoryBackend: {
+        discoverApplicationShellSession: async () => ({ ...liveSession(), name: "product" }),
+      },
+      applicationShellAppWindowBackend: {
+        load: async () =>
+          AppWindowDocumentV1SchemaZ.parse({
+            version: 1,
+            revision: 0,
+            updatedAt: "2026-07-22T10:00:00.000Z",
+            windows: {},
+            dockRoot: null,
+            dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+            floatingOrder: [],
+            focusedWindowId: null,
+            activeLayoutId: null,
+            layouts: {},
+          }),
+      },
+      applicationShellMissionBackend: {
+        load: async () => {
+          throw new Error("repository unavailable at /private/secret/project");
+        },
+      },
+    });
+
+    const response = await app.request("/api/project/product/application-shell?version=3");
+    expect(response.status).toBe(200);
+    const body = ApplicationShellResourceV3SchemaZ.parse(await response.json());
+    expect(body.resource.terminalInventory.resources).toHaveLength(2);
+    expect(body.resource.appWindows.revision).toBe(0);
+    expect(body.resource.missionWorkspace).toEqual({
+      status: "degraded",
+      reason: "Mission history could not be verified. The terminal workspace remains available.",
+    });
+    expect(body.resource.dock.tools.find(({ id }) => id === "missions")?.disabledReason).toBeNull();
+    expect(JSON.stringify(body)).not.toMatch(/\/private\/secret|repository unavailable/u);
+  });
+
   it("returns the established 404 envelope for an unknown session", async () => {
     const response = await createApp({
       applicationShellInventoryBackend: { discoverApplicationShellSession: async () => null },

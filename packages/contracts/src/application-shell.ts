@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DesktopMissionWorkspaceResourceSchemaZ } from "./desktop-missions.ts";
 import { CohesionFixtureV1SchemaZ, type CohesionFixtureV1 } from "./cohesion-fixture.ts";
 import {
   APPLICATION_SHELL_COMMAND_IDS,
@@ -263,6 +264,7 @@ export const ApplicationShellProjectionInputV3SchemaZ = z
     ...ApplicationShellProjectionInputV1Fields,
     terminalInventory: ApplicationShellTerminalInventorySchemaZ,
     appWindows: AppWindowDocumentV1SchemaZ,
+    missionWorkspace: DesktopMissionWorkspaceResourceSchemaZ.optional(),
   })
   .strict()
   .superRefine((input, ctx) => {

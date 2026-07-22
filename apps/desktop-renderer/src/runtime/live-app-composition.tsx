@@ -906,6 +906,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
               (appWindowMutationAvailable() ? mutateAppWindow : undefined)
             }
             appWindowMutationUnavailableReason={appWindowMutationUnavailableReason()}
+            onRefreshResource={() => store.refresh()}
           />
           <Show when={notice()}>
             {(current) => (

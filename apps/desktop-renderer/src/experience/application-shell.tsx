@@ -51,6 +51,7 @@ import type {
 } from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
 import { CommandPalette } from "./command-palette.tsx";
 import { CreatePaneFlow } from "./create-pane-flow.tsx";
+import { MissionActivitySurface } from "./mission-activity-surface.tsx";
 import type { CreatePaneFlowCatalogs } from "./create-pane-flow-presenter.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
@@ -105,6 +106,7 @@ export interface DomApplicationShellProps {
     invocation: AppWindowCanvasCommandInvocation,
   ) => void | Promise<void>;
   readonly appWindowMutationUnavailableReason?: string;
+  readonly onRefreshResource?: () => void;
 }
 
 export interface PrimaryNavigationProps {
@@ -229,6 +231,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   let returnFocusId: string | null = null;
 
   const shell = createMemo(() => projectDomApplicationShell(input(), state()));
+  const missionWorkspace = createMemo(() => {
+    const value = input();
+    return "appWindows" in value ? value.missionWorkspace : undefined;
+  });
   const effectiveSidebarWidth = createMemo(() =>
     sidebarCollapsed() ? DOM_SHELL_GEOMETRY.sidebarCollapsedWidth : sidebarWidth(),
   );
@@ -468,6 +474,32 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     }
   };
 
+  const selectResource = (surface: ProductSurfaceId, resourceId: string): void => {
+    dispatch(
+      applicationShellCommandInvocation(
+        APPLICATION_SHELL_COMMAND_IDS.selectResource,
+        { surface, resourceId },
+        { kind: "mouse", surface: "mission-activity-surface" },
+      ),
+    );
+  };
+
+  const openMissionActivity = (missionId: string): void => {
+    selectResource("missions", missionId);
+    const resource = missionWorkspace();
+    const event =
+      resource?.status === "ready"
+        ? resource.activity.find((candidate) => candidate.missionId === missionId)
+        : undefined;
+    if (event) selectResource("activity", event.id);
+    dispatchSurface("activity", { kind: "mouse", surface: "mission-activity-surface" });
+  };
+
+  const openMissionFromActivity = (missionId: string): void => {
+    selectResource("missions", missionId);
+    dispatchSurface("missions", { kind: "mouse", surface: "mission-activity-surface" });
+  };
+
   const setDockMode = (mode: WorkbenchDockHostMode, source: CommandSource): void => {
     dispatch(
       applicationShellCommandInvocation(
@@ -567,12 +599,48 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         <div class="dock-surface__rail" aria-hidden="true">
           <DomIcon id={dockToolIcon(shell(), tool.id)} usage="rail" />
         </div>
-        <div class="dock-surface__content">
+        <div
+          class="dock-surface__content"
+          classList={{
+            "dock-surface__content--journey":
+              "appWindows" in input() && (tool.id === "missions" || tool.id === "activity"),
+          }}
+        >
           <header>
             <strong>{tool.label}</strong>
             <span>{tool.shortcut}</span>
           </header>
           <Switch>
+            <Match
+              when={
+                "appWindows" in input() &&
+                (tool.data.kind === "missions" || tool.data.kind === "activity")
+              }
+            >
+              <MissionActivitySurface
+                mode={tool.id === "activity" ? "activity" : "missions"}
+                resource={missionWorkspace()}
+                selectedMissionId={
+                  state().selectedResources.find(({ surface }) => surface === "missions")
+                    ?.resourceId ?? null
+                }
+                selectedActivityId={
+                  state().selectedResources.find(({ surface }) => surface === "activity")
+                    ?.resourceId ?? null
+                }
+                onSelectMission={(missionId) => selectResource("missions", missionId)}
+                onSelectActivity={(activityId) => selectResource("activity", activityId)}
+                onOpenMissions={openMissionFromActivity}
+                onOpenActivity={openMissionActivity}
+                onOpenTerminals={() =>
+                  dispatchSurface("terminals", {
+                    kind: "mouse",
+                    surface: "mission-activity-surface",
+                  })
+                }
+                onRefresh={props.onRefreshResource}
+              />
+            </Match>
             <Match when={tool.data.kind === "files" && tool.data}>
               {(data) => (
                 <div class="surface-summary">

@@ -12,6 +12,7 @@ import {
   type ApplicationShellProjectionInputV2,
   type ApplicationShellProjectionInputV3,
   type AppWindowDocumentV1,
+  type DesktopMissionWorkspaceResource,
   type TerminalResourceAttachability,
   type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
@@ -416,14 +417,77 @@ export function projectApplicationShellResource(
 export function projectApplicationShellResourceV3(
   session: ApplicationShellSessionFacts,
   appWindows: AppWindowDocumentV1,
+  missionWorkspace?: DesktopMissionWorkspaceResource,
 ): ApplicationShellProjectionInputV3 {
   const resource = projectApplicationShellResource(session);
+  const dock = missionWorkspace
+    ? dockWithMissionWorkspace(resource.dock, missionWorkspace)
+    : resource.dock;
   const parsed = ApplicationShellProjectionInputV3SchemaZ.parse({
     ...resource,
+    dock,
     appWindows,
+    ...(missionWorkspace === undefined ? {} : { missionWorkspace }),
   });
   projectApplicationShellV1(parsed);
   return deepFreeze(parsed);
+}
+
+function dockWithMissionWorkspace(
+  dock: ApplicationShellProjectionInputV2["dock"],
+  missionWorkspace: DesktopMissionWorkspaceResource,
+): ApplicationShellProjectionInputV2["dock"] {
+  const primary =
+    missionWorkspace.status === "ready" ? (missionWorkspace.missions[0] ?? null) : null;
+  const latestActivity =
+    missionWorkspace.status === "ready" ? (missionWorkspace.activity[0] ?? null) : null;
+  return {
+    ...dock,
+    tools: dock.tools.map((tool) => {
+      if (tool.id === "missions") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: {
+            kind: "missions" as const,
+            missionId: primary?.id ?? null,
+            title:
+              missionWorkspace.status === "degraded"
+                ? "Mission history needs attention"
+                : (primary?.title ?? "No missions yet"),
+            status:
+              missionWorkspace.status === "degraded"
+                ? ("recovering" as const)
+                : missionStatusForDock(primary?.status),
+            goalCount: primary?.progress.total ?? 0,
+            taskCount: primary?.progress.total ?? 0,
+          },
+        };
+      }
+      if (tool.id === "activity") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: {
+            kind: "activity" as const,
+            eventCount: missionWorkspace.status === "ready" ? missionWorkspace.counts.activity : 0,
+            latestEventLabel: latestActivity?.label ?? null,
+          },
+        };
+      }
+      return tool;
+    }),
+  };
+}
+
+function missionStatusForDock(
+  status: string | undefined,
+): "idle" | "running" | "blocked" | "review" | "done" {
+  if (status === "started") return "running";
+  if (status === "blocked") return "blocked";
+  if (status === "review") return "review";
+  if (status === "completed" || status === "failed" || status === "cancelled") return "done";
+  return "idle";
 }
 
 /**

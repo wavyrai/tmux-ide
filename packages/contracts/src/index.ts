@@ -31,6 +31,7 @@ export * from "./terminal-attachments.ts";
 export * from "./control.ts";
 export * from "./commands.ts";
 export * from "./desktop-host.ts";
+export * from "./desktop-missions.ts";
 export * from "./experience-identifiers.ts";
 export * from "./semantic-identity.ts";
 export * from "./experience-shell.ts";

@@ -10,6 +10,7 @@ import { replayMissionEvents } from "../mission-repository.ts";
 import {
   MissionProjectionError,
   missionStatusToBoardColumn,
+  projectMissionActivity,
   projectMissionBoard,
   projectMissionDetail,
   projectMissionHistory,
@@ -282,6 +283,22 @@ function richHistory(): MissionHistoryEntry[] {
 }
 
 describe("mission projection mappings", () => {
+  it("projects the complete activity stream newest-first after canonical validation", () => {
+    const history = richHistory();
+    const projected = projectMissionActivity(stateFrom(history), history);
+
+    expect(projected).toHaveLength(history.length);
+    expect(projected.map(({ sequence }) => sequence)).toEqual(
+      history.map(({ sequence }) => sequence).reverse(),
+    );
+    expect(projected.at(-1)).toEqual(
+      expect.objectContaining({
+        sequence: 1,
+        missionId: "mis_alpha",
+        label: "Mission created",
+      }),
+    );
+  });
   it("maps every mission and task status to fixed board columns", () => {
     expect(
       Object.fromEntries(

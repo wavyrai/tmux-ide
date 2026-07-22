@@ -8,6 +8,7 @@ import {
   projectApplicationShellV1,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
+  type ApplicationShellProjectionInputV3,
   type DesktopWindowState,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
@@ -21,6 +22,7 @@ import {
   type DomApplicationShellProps,
 } from "./application-shell.tsx";
 import { DOM_EXPERIENCE_VARIABLE, createDomExperience } from "./dom-experience.ts";
+import { createMissionActivityFixture } from "./mission-activity-fixture.ts";
 import {
   createDefaultDomShellInput,
   createDefaultDomPaneFrames,
@@ -114,6 +116,37 @@ function withDisabledActivity(): ApplicationShellProjectionInputV1 {
           : tool,
       ),
     },
+  });
+}
+
+function withMissionWorkspace(): ApplicationShellProjectionInputV3 {
+  const input = createDefaultDomShellInput();
+  const paneFrames = createDefaultDomPaneFrames();
+  return ApplicationShellProjectionInputV3SchemaZ.parse({
+    ...input,
+    terminalInventory: {
+      activeResourceId: input.focus.appFocusedPaneId,
+      resources: paneFrames.map((frame) => ({
+        id: frame.pane.id,
+        title: frame.title,
+        kind: "agent" as const,
+        active: frame.pane.id === input.focus.appFocusedPaneId,
+        attachability: { status: "available" as const, semanticPaneId: frame.pane.id },
+      })),
+    },
+    appWindows: {
+      version: 1,
+      revision: 0,
+      updatedAt: "2026-07-22T15:30:00.000Z",
+      windows: {},
+      dockRoot: null,
+      dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+      floatingOrder: [],
+      focusedWindowId: null,
+      activeLayoutId: null,
+      layouts: {},
+    },
+    missionWorkspace: createMissionActivityFixture(),
   });
 }
 
@@ -257,6 +290,46 @@ describe("visible DOM application shell", () => {
     expect(card?.querySelector(".web-pane-frame")?.getAttribute("data-pane-id")).toBe(
       "window.implementer",
     );
+  });
+
+  it("routes the V3 mission-to-activity journey through existing semantic commands", () => {
+    const invocations: ApplicationShellCommandInvocation[] = [];
+    const root = renderShell(withMissionWorkspace(), (invocation) => invocations.push(invocation));
+    pointerClick(root.querySelector("#workbench-dock-tab-missions")!);
+    expect(root.querySelector('.dock-surface[data-surface="missions"]')).not.toBeNull();
+    expect(root.textContent).toContain("12/12 tests passing");
+
+    const follow = [...root.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.textContent?.includes("Follow activity"),
+    )!;
+    pointerClick(follow);
+    expect(root.querySelector('.dock-surface[data-surface="activity"]')).not.toBeNull();
+    expect(root.textContent).toContain("Renderer acceptance passed.");
+
+    const semanticJourney = invocations.filter(
+      ({ source }) => source.surface === "mission-activity-surface",
+    );
+    expect(semanticJourney.map(({ id }) => id)).toEqual([
+      APPLICATION_SHELL_COMMAND_IDS.selectResource,
+      APPLICATION_SHELL_COMMAND_IDS.selectResource,
+      APPLICATION_SHELL_COMMAND_IDS.activateMode,
+      APPLICATION_SHELL_COMMAND_IDS.setDockMode,
+      APPLICATION_SHELL_COMMAND_IDS.activateDockTool,
+    ]);
+    expect(semanticJourney[0]?.args).toEqual({
+      surface: "missions",
+      resourceId: "mis_alpha",
+    });
+    expect(semanticJourney[1]?.args).toEqual({
+      surface: "activity",
+      resourceId: "activity.12",
+    });
+
+    const inspect = [...root.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.textContent?.includes("Inspect mission"),
+    )!;
+    pointerClick(inspect);
+    expect(root.querySelector('.dock-surface[data-surface="missions"]')).not.toBeNull();
   });
 
   it("gives exactly one canvas terminal input ownership through canonical window focus", () => {
