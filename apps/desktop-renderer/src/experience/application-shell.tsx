@@ -214,6 +214,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const [createPaneOpen, setCreatePaneOpen] = createSignal(false);
   const [sidebarWidth, setSidebarWidth] = createSignal(272);
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
+  const [paletteTransitionSource, setPaletteTransitionSource] = createSignal<"keyboard" | "mouse">(
+    "keyboard",
+  );
   let titlebarStyle: RuntimeStyleBinding | null = null;
   let workbenchStyle: RuntimeStyleBinding | null = null;
   let previousInput = input();
@@ -470,6 +473,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
 
   const openPalette = (source: CommandSource): void => {
     if (shell().focus.palette.open) return;
+    setPaletteTransitionSource(source.kind === "mouse" ? "mouse" : "keyboard");
     const activeElement = document.activeElement;
     returnFocusElement =
       activeElement && "focus" in activeElement ? (activeElement as HTMLElement) : null;
@@ -494,6 +498,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const closePalette = (sourceKind: "keyboard" | "mouse"): void => {
     const overlayId = shell().focus.palette.overlayId;
     if (!overlayId) return;
+    setPaletteTransitionSource(sourceKind);
     dispatch(
       applicationShellCommandInvocation(
         APPLICATION_SHELL_COMMAND_IDS.closePalette,
@@ -1043,6 +1048,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       <CommandPalette
         open={shell().focus.palette.open}
         entries={paletteEntries()}
+        transitionSource={paletteTransitionSource()}
         onClose={closePalette}
         onClosed={() => {
           const currentTarget = returnFocusId ? document.getElementById(returnFocusId) : null;

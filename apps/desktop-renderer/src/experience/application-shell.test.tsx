@@ -413,6 +413,7 @@ describe("visible DOM application shell", () => {
 
     const returnTarget = root.querySelector<HTMLButtonElement>("#primary-tab-terminals")!;
     returnTarget.focus();
+    const returnFocus = vi.spyOn(returnTarget, "focus");
     expect(document.activeElement).toBe(returnTarget);
     document.dispatchEvent(
       new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }),
@@ -422,6 +423,15 @@ describe("visible DOM application shell", () => {
     expect(input.getAttribute("aria-controls")).toBe("application-command-palette-list");
     expect(root.querySelector('[role="dialog"]')).not.toBeNull();
     expect(root.querySelector('[role="listbox"]')).not.toBeNull();
+    expect(root.querySelectorAll('.command-palette__group[role="group"]')).toHaveLength(2);
+    expect(root.querySelector("#palette-group-workspace")?.textContent).toBe("Workspace");
+    expect(root.querySelector("#palette-group-workbench")?.textContent).toBe("Workbench");
+    expect(
+      root.querySelector("#palette-option-terminals .command-palette__icon svg"),
+    ).not.toBeNull();
+    expect(
+      root.querySelector("#palette-option-terminals .command-palette__copy")?.textContent,
+    ).toContain("Switch the workspace");
     const disabledOption = root.querySelector<HTMLElement>("#palette-option-activity")!;
     expect(disabledOption.getAttribute("aria-disabled")).toBe("true");
     expect(disabledOption.textContent).toContain("Activity requires a daemon connection");
@@ -429,6 +439,7 @@ describe("visible DOM application shell", () => {
     expect(input.getAttribute("aria-activedescendant")).toBe("palette-option-missions");
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await vi.waitFor(() => expect(document.activeElement).toBe(returnTarget));
+    expect(returnFocus).toHaveBeenCalledOnce();
 
     expect(styles).toContain(
       "grid-template-rows: var(--desktop-chrome-height) minmax(0, 1fr) var(--desktop-status-height)",
@@ -438,9 +449,11 @@ describe("visible DOM application shell", () => {
     expect(styles).toMatch(
       /@media \(max-width: 999px\)[\s\S]*?\.status-strip__safe \{\s*display: none;[\s\S]*?\.status-strip__guidance \{[\s\S]*?max-width: 184px;[\s\S]*?text-overflow: ellipsis;/u,
     );
-    expect(styles).not.toMatch(
-      /\.command-palette(?:-overlay)?(?:--open)?\s*\{[^}]*(?:transition|transform)\s*:/gu,
-    );
+    expect(styles).toContain('.command-palette-overlay[data-transition-source="keyboard"]');
+    expect(styles).toContain("transition: none");
+    expect(styles).toContain("opacity 150ms cubic-bezier(0, 0.55, 0.45, 1)");
+    expect(styles).toContain("opacity 100ms cubic-bezier(0.5, 0, 1, 1)");
+    expect(styles).not.toContain("transition: all");
     expect(styles).toContain('.status-strip__connection[data-state="recovering"] > i');
     expect(styles).toContain('@import "../../../packages/daemon/src/ui/pane-frame/web-host.css"');
     expect(styles).toContain(
@@ -769,6 +782,9 @@ describe("visible DOM application shell", () => {
     const trigger = root.querySelector<HTMLButtonElement>("#application-command-palette-trigger")!;
 
     trigger.click();
+    expect(
+      root.querySelector(".command-palette-overlay")?.getAttribute("data-transition-source"),
+    ).toBe("keyboard");
     expect(invocations.slice(0, 2).map(({ id, source }) => ({ id, source }))).toEqual([
       {
         id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
@@ -784,6 +800,9 @@ describe("visible DOM application shell", () => {
       .querySelector<HTMLInputElement>('[role="combobox"]')!
       .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     pointerClick(trigger);
+    expect(
+      root.querySelector(".command-palette-overlay")?.getAttribute("data-transition-source"),
+    ).toBe("mouse");
     expect(invocations.slice(-2).map(({ id, source }) => ({ id, source }))).toEqual([
       {
         id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,

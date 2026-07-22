@@ -606,6 +606,7 @@ try {
       { appearance: "dark", width: 1_200, height: 800 },
       { appearance: "light", width: 1_200, height: 800 },
       { appearance: "dark", width: 840, height: 620 },
+      { appearance: "light", width: 840, height: 620 },
     ];
     const shellEvidence = [];
     for (const fixture of shellEvidenceCases) {
@@ -672,6 +673,124 @@ try {
           sidebarRow: dimensions(".sidebar-row"),
           icon: dimensions('.primary-tabs [role="tab"] svg'),
         };
+        const paletteTrigger = globalThis.document.querySelector(
+          "#application-command-palette-trigger",
+        );
+        paletteTrigger?.focus();
+        globalThis.document.dispatchEvent(
+          new globalThis.KeyboardEvent("keydown", {
+            key: "k",
+            metaKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const keyboardOverlay = globalThis.document.querySelector(".command-palette-overlay");
+        const keyboardPalette = globalThis.document.querySelector(".command-palette");
+        const paletteInput = globalThis.document.querySelector('[role="combobox"]');
+        const keyboardPaletteBounds = keyboardPalette?.getBoundingClientRect();
+        const paletteBounds = keyboardPaletteBounds
+          ? {
+              width: keyboardPaletteBounds.width,
+              height: keyboardPaletteBounds.height,
+              left: keyboardPaletteBounds.left,
+              right: keyboardPaletteBounds.right,
+              bottom: keyboardPaletteBounds.bottom,
+            }
+          : null;
+        const keyboardOverlayDuration = keyboardOverlay
+          ? globalThis.getComputedStyle(keyboardOverlay).transitionDuration
+          : null;
+        const keyboardPaletteDuration = keyboardPalette
+          ? globalThis.getComputedStyle(keyboardPalette).transitionDuration
+          : null;
+        if (paletteInput instanceof globalThis.HTMLInputElement) {
+          paletteInput.value = "nothing-matches-this";
+          paletteInput.dispatchEvent(new globalThis.InputEvent("input", { bubbles: true }));
+        }
+        const emptyText = globalThis.document.querySelector(".command-palette__empty")?.textContent;
+        paletteInput?.dispatchEvent(
+          new globalThis.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        await Promise.resolve();
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const keyboardFocusReturned = globalThis.document.activeElement === paletteTrigger;
+        paletteTrigger?.dispatchEvent(
+          new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }),
+        );
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const pointerOverlay = globalThis.document.querySelector(".command-palette-overlay");
+        const pointerPalette = globalThis.document.querySelector(".command-palette");
+        const pointerOpen = {
+          source: pointerOverlay?.getAttribute("data-transition-source") ?? null,
+          overlayDuration: pointerOverlay
+            ? globalThis.getComputedStyle(pointerOverlay).transitionDuration
+            : null,
+          paletteDuration: pointerPalette
+            ? globalThis.getComputedStyle(pointerPalette).transitionDuration
+            : null,
+        };
+        const appElement = globalThis.document.querySelector(".app");
+        const previousReducedMotion = appElement?.getAttribute("data-reduced-motion") ?? null;
+        appElement?.setAttribute("data-reduced-motion", "true");
+        const reducedMotion = {
+          overlayDuration: pointerOverlay
+            ? globalThis.getComputedStyle(pointerOverlay).transitionDuration
+            : null,
+          paletteDuration: pointerPalette
+            ? globalThis.getComputedStyle(pointerPalette).transitionDuration
+            : null,
+        };
+        if (previousReducedMotion === null) appElement?.removeAttribute("data-reduced-motion");
+        else appElement?.setAttribute("data-reduced-motion", previousReducedMotion);
+        pointerOverlay?.dispatchEvent(
+          new globalThis.MouseEvent("mousedown", { bubbles: true, detail: 1 }),
+        );
+        const pointerClose = {
+          source: pointerOverlay?.getAttribute("data-transition-source") ?? null,
+          state: pointerOverlay?.getAttribute("data-state") ?? null,
+          overlayDuration: pointerOverlay
+            ? globalThis.getComputedStyle(pointerOverlay).transitionDuration
+            : null,
+          paletteDuration: pointerPalette
+            ? globalThis.getComputedStyle(pointerPalette).transitionDuration
+            : null,
+        };
+        paletteTrigger?.dispatchEvent(
+          new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }),
+        );
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const paletteEvidence = {
+          source: keyboardOverlay?.getAttribute("data-transition-source") ?? null,
+          state: keyboardOverlay?.getAttribute("data-state") ?? null,
+          groups: globalThis.document.querySelectorAll('.command-palette__group[role="group"]')
+            .length,
+          options: globalThis.document.querySelectorAll('.command-palette__option[role="option"]')
+            .length,
+          icons: globalThis.document.querySelectorAll(".command-palette__option svg").length,
+          shortcuts: globalThis.document.querySelectorAll(".command-palette__option kbd").length,
+          width: paletteBounds?.width ?? null,
+          height: paletteBounds?.height ?? null,
+          left: paletteBounds?.left ?? null,
+          right: paletteBounds?.right ?? null,
+          bottom: paletteBounds?.bottom ?? null,
+          keyboardOverlayDuration,
+          keyboardPaletteDuration,
+          keyboardFocusReturned,
+          emptyText: emptyText ?? null,
+          pointerOpen,
+          pointerClose,
+          reducedMotion,
+        };
+        pointerOverlay?.dispatchEvent(
+          new globalThis.MouseEvent("mousedown", { bubbles: true, detail: 1 }),
+        );
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
         let interaction = null;
         if (width === 840) {
           globalThis.document
@@ -696,6 +815,10 @@ try {
             resizeValue: resizeHandle?.getAttribute("aria-valuenow") ?? null,
           };
         }
+        paletteTrigger?.dispatchEvent(
+          new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 180));
         return {
           appearance,
           viewport: { width, height },
@@ -708,6 +831,7 @@ try {
           styleAttributes: globalThis.document.querySelectorAll("[style]").length,
           styleElements: globalThis.document.querySelectorAll("style").length,
           violations: globalThis.__tmiCspViolations ?? [],
+          paletteEvidence,
           interaction,
         };
       }, fixture);
@@ -743,7 +867,30 @@ try {
           evidence.styleAttributes !== 0 ||
           evidence.styleElements !== 0 ||
           evidence.violations.some(({ directive }) => directive.startsWith("style-src")) ||
-          evidence.consoleViolations.length > 0,
+          evidence.consoleViolations.length > 0 ||
+          evidence.paletteEvidence.groups !== 2 ||
+          evidence.paletteEvidence.options !== 6 ||
+          evidence.paletteEvidence.icons !== 6 ||
+          evidence.paletteEvidence.shortcuts !== 6 ||
+          !evidence.paletteEvidence.width ||
+          evidence.paletteEvidence.width > 680 ||
+          !evidence.paletteEvidence.height ||
+          evidence.paletteEvidence.left < 0 ||
+          evidence.paletteEvidence.right > evidence.viewport.width ||
+          evidence.paletteEvidence.bottom > evidence.viewport.height ||
+          evidence.paletteEvidence.keyboardOverlayDuration !== "0s" ||
+          evidence.paletteEvidence.keyboardPaletteDuration !== "0s" ||
+          !evidence.paletteEvidence.keyboardFocusReturned ||
+          !evidence.paletteEvidence.emptyText?.includes("No commands found") ||
+          evidence.paletteEvidence.pointerOpen.source !== "mouse" ||
+          evidence.paletteEvidence.pointerOpen.overlayDuration !== "0.15s, 0s" ||
+          evidence.paletteEvidence.pointerOpen.paletteDuration !== "0.15s, 0.15s" ||
+          evidence.paletteEvidence.pointerClose.source !== "mouse" ||
+          evidence.paletteEvidence.pointerClose.state !== "closed" ||
+          evidence.paletteEvidence.pointerClose.overlayDuration !== "0.1s, 0s" ||
+          evidence.paletteEvidence.pointerClose.paletteDuration !== "0.1s, 0.1s" ||
+          evidence.paletteEvidence.reducedMotion.overlayDuration !== "0s" ||
+          evidence.paletteEvidence.reducedMotion.paletteDuration !== "0s",
       ) ||
       !darkEvidence?.chromeColor ||
       !lightEvidence?.chromeColor ||

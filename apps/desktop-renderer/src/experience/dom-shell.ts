@@ -37,11 +37,21 @@ export interface DomWorkbenchGeometry {
 
 export type DomShellVariant = "compact" | "standard" | "wide";
 
+export type DomPaletteGroupId = "workspace" | "workbench";
+
 export interface DomPaletteEntry {
   readonly id: ProductSurfaceId;
   readonly icon: SemanticIconId;
   readonly label: string;
+  readonly description: string;
   readonly shortcut: string;
+  readonly keywords: readonly string[];
+  readonly group: {
+    readonly id: DomPaletteGroupId;
+    readonly label: string;
+    readonly order: number;
+  };
+  readonly rank: number;
   readonly current: boolean;
   readonly disabledReason: string | null;
   readonly commands: readonly SurfaceCommandTemplate[];
@@ -355,7 +365,20 @@ export function createDomPaletteEntries(
       id: surface.id,
       icon: surface.icon,
       label: surface.label,
+      description:
+        surface.kind === "primary-mode"
+          ? `Switch the workspace to ${surface.label}`
+          : `Open ${surface.label} in the workbench panel`,
       shortcut: surface.shortcut,
+      keywords:
+        surface.kind === "primary-mode"
+          ? ["navigate", "workspace", "view", surface.id]
+          : ["panel", "tool", "bottom", "dock", surface.id],
+      group:
+        surface.kind === "primary-mode"
+          ? { id: "workspace" as const, label: "Workspace", order: 0 }
+          : { id: "workbench" as const, label: "Workbench", order: 1 },
+      rank: surface.order,
       current: surface.active,
       disabledReason: surface.disabledReason,
       commands: commandsToOpenSurface({ surface: surface.id }),
