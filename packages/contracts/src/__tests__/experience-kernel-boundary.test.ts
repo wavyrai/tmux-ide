@@ -87,6 +87,7 @@ describe("experience-kernel import boundary", () => {
 
     expect(findings).toEqual([]);
     expect([...visited].map(displayPath).sort()).toEqual([
+      "agent-graph-overlay.ts",
       "app-window-state.ts",
       "application-shell.ts",
       "cohesion-fixture.ts",

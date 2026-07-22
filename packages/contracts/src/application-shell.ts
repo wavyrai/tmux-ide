@@ -41,6 +41,7 @@ import {
 import { SemanticProductIdSchemaZ } from "./pane-appearance.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
 import { AppWindowDocumentV1SchemaZ } from "./app-window-state.ts";
+import { AgentGraphOverlaySchemaZ } from "./agent-graph-overlay.ts";
 
 export const APPLICATION_SHELL_PROJECTION_VERSION = 1 as const;
 export const APPLICATION_SHELL_TRACE_VERSION = 1 as const;
@@ -265,6 +266,15 @@ export const ApplicationShellProjectionInputV3SchemaZ = z
     terminalInventory: ApplicationShellTerminalInventorySchemaZ,
     appWindows: AppWindowDocumentV1SchemaZ,
     missionWorkspace: DesktopMissionWorkspaceResourceSchemaZ.optional(),
+    /**
+     * The runtime agent-graph overlay: a NON-durable, path-free projection of
+     * the live fleet onto the canvas (ground-truth status nodes keyed by durable
+     * AppWindow ids, plus spawn/mission edges and mission groups). Additive and
+     * optional exactly like {@link missionWorkspace} — producers that never
+     * assemble it, and consumers that ignore it, are unaffected. It carries no
+     * pane id, session name, or path (see AgentGraphOverlaySchemaZ).
+     */
+    agentGraphOverlay: AgentGraphOverlaySchemaZ.optional(),
   })
   .strict()
   .superRefine((input, ctx) => {

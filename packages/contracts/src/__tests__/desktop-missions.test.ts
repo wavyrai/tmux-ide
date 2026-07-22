@@ -148,4 +148,64 @@ describe("desktop mission workspace contract", () => {
     });
     expect(parsed.success).toBe(true);
   });
+
+  it("accepts an optional agent-graph overlay on V3 and rejects a malformed one", () => {
+    const baseInput = {
+      project: COHESION_FIXTURE_V1.project,
+      workspace: COHESION_FIXTURE_V1.workspace,
+      dock: COHESION_FIXTURE_V1.dock,
+      focus: COHESION_FIXTURE_V1.focus,
+      connection: COHESION_FIXTURE_V1.connection,
+      terminalInventory: {
+        resources: COHESION_FIXTURE_V1.workspace.sidebar.agents.map((agent) => ({
+          id: agent.paneId,
+          title: agent.name,
+          kind: "agent" as const,
+          active: agent.paneId === COHESION_FIXTURE_V1.focus.appFocusedPaneId,
+          attachability: { status: "available" as const, semanticPaneId: agent.paneId },
+        })),
+        activeResourceId: COHESION_FIXTURE_V1.focus.appFocusedPaneId,
+      },
+      appWindows: {
+        version: 1,
+        revision: 0,
+        updatedAt: "2026-07-22T10:00:00.000Z",
+        windows: {},
+        dockRoot: null,
+        dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+        floatingOrder: [],
+        focusedWindowId: null,
+        activeLayoutId: null,
+        layouts: {},
+      },
+    };
+    const node = {
+      windowId: "window-terminal-pane.pm-0-abc",
+      status: "working" as const,
+      statusSource: "authority" as const,
+      attention: false,
+      label: "Fable",
+    };
+
+    const withOverlay = ApplicationShellProjectionInputV3SchemaZ.safeParse({
+      ...baseInput,
+      agentGraphOverlay: {
+        nodes: { [node.windowId]: node },
+        edges: [],
+        groups: [],
+      },
+    });
+    expect(withOverlay.success).toBe(true);
+
+    // A raw tmux pane id can never key an overlay node -> the whole V3 input fails.
+    const malformed = ApplicationShellProjectionInputV3SchemaZ.safeParse({
+      ...baseInput,
+      agentGraphOverlay: {
+        nodes: { "%12": { ...node, windowId: "%12" } },
+        edges: [],
+        groups: [],
+      },
+    });
+    expect(malformed.success).toBe(false);
+  });
 });

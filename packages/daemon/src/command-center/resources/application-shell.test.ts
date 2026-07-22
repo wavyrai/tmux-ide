@@ -15,6 +15,42 @@ import {
   projectApplicationShellResourceV3,
   resolveAgentPresentation,
 } from "./application-shell.ts";
+import { projectApplicationShellAgentGraphOverlay } from "./agent-graph-overlay.ts";
+import { initialApplicationShellAppWindows } from "../../lib/application-shell-app-windows.ts";
+import { stableAppWindowInstanceId } from "../../tui/mirror/app-window-state.ts";
+import { MissionRepository, type MissionRepositorySnapshot } from "../../lib/mission-repository.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+async function missionSnapshotWithSpawn(): Promise<MissionRepositorySnapshot> {
+  const dir = mkdtempSync(join(tmpdir(), "zz-shell-overlay-"));
+  restorers.push(() => rmSync(dir, { recursive: true, force: true }));
+  const repository = await MissionRepository.open(dir);
+  const user = { type: "user" as const };
+  const mission = repository.create({ title: "Ship overlay", objective: "o", actor: user });
+  const taskA = repository.addTask({ missionId: mission.id, title: "A", actor: user });
+  repository.claimTask(mission.id, taskA.id, "fable", user);
+  repository.startAttempt({
+    missionId: mission.id,
+    taskId: taskA.id,
+    agent: "fable",
+    harness: "claude-code",
+    terminal: "%11",
+    actor: user,
+  });
+  const taskB = repository.addTask({ missionId: mission.id, title: "B", actor: user });
+  repository.claimTask(mission.id, taskB.id, "codex", user);
+  repository.startAttempt({
+    missionId: mission.id,
+    taskId: taskB.id,
+    agent: "codex",
+    harness: "claude-code",
+    terminal: "%12",
+    actor: { type: "agent", id: "fable" },
+  });
+  return repository.snapshot();
+}
 
 const EMPTY_APP_WINDOWS = AppWindowDocumentV1SchemaZ.parse({
   version: 1,
@@ -313,6 +349,46 @@ describe("application-shell resource projector", () => {
     });
     expect(result.terminalInventory!.activeResourceId).toBeNull();
     expect(result.terminalInventory!.resources.every(({ active }) => !active)).toBe(true);
+  });
+
+  it("attaches an optional agent-graph overlay to V3 and omits it when absent", () => {
+    const base = projectApplicationShellResource(liveSession());
+    const sourceIds = base.terminalInventory.resources.map(({ id }) => id);
+    const appWindows = initialApplicationShellAppWindows(
+      sourceIds,
+      base.terminalInventory.activeResourceId,
+      "2026-07-22T10:00:00.000Z",
+    );
+    const overlay = projectApplicationShellAgentGraphOverlay({
+      session: liveSession(),
+      appWindows,
+      missionSnapshot: null,
+      nowSec: 1_000_000,
+    });
+    expect(Object.keys(overlay.nodes)).toHaveLength(2);
+
+    const withOverlay = projectApplicationShellResourceV3(
+      liveSession(),
+      appWindows,
+      undefined,
+      undefined,
+      overlay,
+    );
+    expect(withOverlay.agentGraphOverlay).toEqual(overlay);
+    const pmWindow = stableAppWindowInstanceId({ kind: "terminal", terminalSourceId: "pane.pm" });
+    expect(withOverlay.agentGraphOverlay!.nodes[pmWindow]).toMatchObject({
+      status: "working",
+      label: "Fable",
+    });
+
+    const withoutOverlay = projectApplicationShellResourceV3(liveSession(), appWindows);
+    expect(Object.hasOwn(withoutOverlay, "agentGraphOverlay")).toBe(false);
+
+    // The overlay never carries a raw pane id, session name, or absolute path.
+    const wire = JSON.stringify(withOverlay.agentGraphOverlay);
+    expect(wire).not.toMatch(/%1[12]/u);
+    expect(wire).not.toContain("Product Workspace");
+    expect(wire).not.toContain("/Users/example");
   });
 });
 
@@ -626,6 +702,81 @@ describe("GET /api/project/:name/application-shell", () => {
     expect(body.resource.dock.tools.find(({ id }) => id === "files")?.disabledReason).toBeNull();
     expect(body.resource.dock.tools.find(({ id }) => id === "changes")?.disabledReason).toBeNull();
     expect(JSON.stringify(body)).not.toMatch(/\/private\/secret|repository unavailable/u);
+  });
+
+  it("assembles a path-free agent-graph overlay into the V3 route response", async () => {
+    const snapshot = await missionSnapshotWithSpawn();
+    const app = createApp({
+      applicationShellInventoryBackend: {
+        discoverApplicationShellSession: async () => ({ ...liveSession(), name: "product" }),
+      },
+      applicationShellAppWindowBackend: {
+        load: async (_projectDir, terminalSourceIds, focusedTerminalSourceId) =>
+          initialApplicationShellAppWindows(
+            terminalSourceIds,
+            focusedTerminalSourceId,
+            "2026-07-22T10:00:00.000Z",
+          ),
+      },
+      applicationShellMissionBackend: {
+        load: async () => ({
+          status: "empty",
+          counts: { missions: 0, history: 0, activity: 0 },
+          missions: [],
+          history: [],
+          activity: [],
+          truncated: false,
+        }),
+        loadSnapshot: async () => snapshot,
+      },
+    });
+
+    const response = await app.request("/api/project/product/application-shell?version=3");
+    expect(response.status).toBe(200);
+    const body = ApplicationShellResourceV3SchemaZ.parse(await response.json());
+    const overlay = body.resource.agentGraphOverlay;
+    expect(overlay).toBeDefined();
+    expect(Object.keys(overlay!.nodes)).toHaveLength(2);
+    expect(overlay!.groups).toHaveLength(1);
+    expect(overlay!.groups[0]!.label).toBe("Ship overlay");
+    expect(overlay!.edges).toHaveLength(1);
+    expect(overlay!.edges[0]!.kind).toBe("spawned");
+    // The overlay correlated raw %pane targets to durable window ids only.
+    expect(JSON.stringify(overlay)).not.toMatch(/%1[12]/u);
+  });
+
+  it("omits the overlay but still serves V3 when the mission snapshot fails", async () => {
+    const app = createApp({
+      applicationShellInventoryBackend: {
+        discoverApplicationShellSession: async () => ({ ...liveSession(), name: "product" }),
+      },
+      applicationShellAppWindowBackend: {
+        load: async (_projectDir, terminalSourceIds, focusedTerminalSourceId) =>
+          initialApplicationShellAppWindows(
+            terminalSourceIds,
+            focusedTerminalSourceId,
+            "2026-07-22T10:00:00.000Z",
+          ),
+      },
+      applicationShellMissionBackend: {
+        load: async () => ({
+          status: "degraded",
+          reason: "Mission history is unavailable from this daemon.",
+        }),
+        loadSnapshot: async () => {
+          throw new Error("snapshot unavailable at /private/secret/project");
+        },
+      },
+    });
+
+    const response = await app.request("/api/project/product/application-shell?version=3");
+    expect(response.status).toBe(200);
+    const body = ApplicationShellResourceV3SchemaZ.parse(await response.json());
+    // Nodes exist but no mission edges/groups; the overlay may still project the
+    // fleet nodes, and the shell read never fails on a mission-snapshot error.
+    expect(body.resource.agentGraphOverlay?.edges ?? []).toEqual([]);
+    expect(body.resource.agentGraphOverlay?.groups ?? []).toEqual([]);
+    expect(JSON.stringify(body)).not.toMatch(/\/private\/secret|snapshot unavailable/u);
   });
 
   it("returns the established 404 envelope for an unknown session", async () => {

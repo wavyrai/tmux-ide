@@ -11,6 +11,7 @@ import {
   resolveAgentStatusPresentation,
   type AgentActivity,
   type AgentGraphDetectStatus,
+  type AgentGraphOverlay,
   type AgentGraphStatusSource,
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionInputV2,
@@ -124,7 +125,7 @@ interface PaneIdentity {
   readonly attachability: TerminalResourceAttachability;
 }
 
-function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIdentity[] {
+export function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIdentity[] {
   const panes = session.panes;
   const validCounts = new Map<string, number>();
   for (const pane of panes) {
@@ -225,7 +226,7 @@ function harnessForPane(
   return "custom";
 }
 
-function isAgentPane(pane: ApplicationShellPanePresentationFacts): boolean {
+export function isAgentPane(pane: ApplicationShellPanePresentationFacts): boolean {
   const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
   return (
     metadata.includes("codex") ||
@@ -546,6 +547,13 @@ export function projectApplicationShellResourceV3(
   appWindows: AppWindowDocumentV1,
   missionWorkspace?: DesktopMissionWorkspaceResource,
   dockSummary?: ApplicationShellWorkspaceDockSummary,
+  /**
+   * The runtime agent-graph overlay assembled elsewhere from the same shell read
+   * (see `resources/agent-graph-overlay.ts`). Additive and optional: when absent
+   * the V3 resource is byte-identical to before. Overlay assembly failures must
+   * degrade to omitting it upstream — it never fails the shell read.
+   */
+  agentGraphOverlay?: AgentGraphOverlay,
   opts: { readonly nowSec?: number } = {},
 ): ApplicationShellProjectionInputV3 {
   const resource = projectApplicationShellResource(session, opts);
@@ -561,6 +569,7 @@ export function projectApplicationShellResourceV3(
     dock,
     appWindows,
     ...(missionWorkspace === undefined ? {} : { missionWorkspace }),
+    ...(agentGraphOverlay === undefined ? {} : { agentGraphOverlay }),
   });
   projectApplicationShellV1(parsed);
   return deepFreeze(parsed);

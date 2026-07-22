@@ -45,6 +45,7 @@ import {
   type ApplicationShellResourceV1,
   type ApplicationShellResourceV2,
   type ApplicationShellResourceV3,
+  type AgentGraphOverlay,
   type AppWindowDocumentV1,
   type DesktopMissionWorkspaceResource,
   type WorkspaceCatalogResourceV1,
@@ -125,8 +126,9 @@ import { FilesAuthority } from "./resources/workspace-files-authority.ts";
 import { ChangesAuthority } from "./resources/workspace-changes-authority.ts";
 import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
 import { daemonActionCommandRegistry } from "./actions/command-definitions.ts";
-import { MissionRepository } from "../lib/mission-repository.ts";
+import { MissionRepository, type MissionRepositorySnapshot } from "../lib/mission-repository.ts";
 import { projectDesktopMissionWorkspace } from "./resources/desktop-missions.ts";
+import { projectApplicationShellAgentGraphOverlay } from "./resources/agent-graph-overlay.ts";
 import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
@@ -166,6 +168,12 @@ export interface CreateAppOptions {
   } | null;
   applicationShellMissionBackend?: {
     load(projectDir: string): Promise<DesktopMissionWorkspaceResource>;
+    /**
+     * The raw mission snapshot for daemon-side agent-graph correlation. Optional
+     * and best-effort: it still carries attempt terminal/session targets, so it
+     * is consumed only to derive durable window ids and never crosses the wire.
+     */
+    loadSnapshot?(projectDir: string): Promise<MissionRepositorySnapshot | null>;
   } | null;
 }
 
@@ -183,6 +191,10 @@ const defaultApplicationShellMissionBackend = {
   async load(projectDir: string): Promise<DesktopMissionWorkspaceResource> {
     const repository = await MissionRepository.open(projectDir);
     return projectDesktopMissionWorkspace(repository.snapshot());
+  },
+  async loadSnapshot(projectDir: string): Promise<MissionRepositorySnapshot | null> {
+    const repository = await MissionRepository.open(projectDir);
+    return repository.snapshot();
   },
 };
 
@@ -718,6 +730,26 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             };
           }
         }
+        // Best-effort runtime agent-graph overlay. Correlating the raw mission
+        // snapshot (attempt terminal/session targets) to durable window ids
+        // happens entirely here; any failure degrades to omitting the overlay
+        // and never fails the shell read (mirroring mission verification above).
+        let agentGraphOverlay: AgentGraphOverlay | undefined;
+        try {
+          let missionSnapshot: MissionRepositorySnapshot | null = null;
+          if (missionBackend?.loadSnapshot) {
+            missionSnapshot = await missionBackend.loadSnapshot(session.dir);
+          }
+          const overlay = projectApplicationShellAgentGraphOverlay({
+            session,
+            appWindows,
+            missionSnapshot,
+            nowSec: Math.floor(Date.now() / 1000),
+          });
+          if (Object.keys(overlay.nodes).length > 0) agentGraphOverlay = overlay;
+        } catch {
+          agentGraphOverlay = undefined;
+        }
         return c.json({
           version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
           daemon: daemonInstanceIdentity,
@@ -726,6 +758,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             appWindows,
             missionWorkspace,
             workspaceDockSummary(session.dir, name),
+            agentGraphOverlay,
           ),
         } satisfies ApplicationShellResourceV3);
       }
