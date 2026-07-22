@@ -1610,6 +1610,155 @@ kbd {
   background: transparent;
 }
 
+/* Agent-graph overlay: edges + group frames, painted under the window cards and
+   inside the scene transform so they pan and zoom with the windows. */
+.agent-graph {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.agent-graph__edge {
+  fill: none;
+  stroke: color-mix(in srgb, var(--tmux-ide-text-muted) 55%, transparent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* A mission edge reads as a lighter, dashed relation; a spawn edge is solid. */
+.agent-graph__edge[data-kind="mission"] {
+  stroke: color-mix(in srgb, var(--tmux-ide-text-muted) 46%, transparent);
+  stroke-dasharray: 5 4;
+}
+
+.agent-graph__edge[data-attention="true"] {
+  stroke: color-mix(in srgb, var(--tmux-ide-status-warning) 78%, transparent);
+}
+
+.agent-graph__arrow {
+  stroke: none;
+  fill: color-mix(in srgb, var(--tmux-ide-text-muted) 62%, transparent);
+}
+
+.agent-graph__arrow[data-attention="true"] {
+  fill: var(--tmux-ide-status-warning);
+}
+
+.agent-graph__group-frame {
+  fill: color-mix(in srgb, var(--tmux-ide-text-muted) 5%, transparent);
+  stroke: color-mix(in srgb, var(--tmux-ide-text-muted) 26%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.agent-graph__group-pill {
+  fill: color-mix(in srgb, var(--desktop-raised) 92%, var(--desktop-canvas));
+  stroke: color-mix(in srgb, var(--tmux-ide-text-muted) 26%, transparent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.agent-graph__group-label {
+  fill: var(--tmux-ide-text-secondary);
+  font-family: var(--desktop-ui-font);
+  font-size: 11px;
+  font-weight: 600;
+  dominant-baseline: middle;
+}
+
+/* A blocked node earns a restrained amber ring on its window chrome. */
+.app-window-card[data-agent-attention="true"] > .web-pane-frame {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--tmux-ide-status-warning) 55%, transparent),
+    0 10px 26px color-mix(in srgb, var(--desktop-shadow) 70%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .app-window-card[data-agent-attention="true"] > .web-pane-frame {
+    animation: agent-attention-pulse 2.4s var(--desktop-ease-smooth) infinite;
+  }
+}
+
+@keyframes agent-attention-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--tmux-ide-status-warning) 42%, transparent),
+      0 10px 26px color-mix(in srgb, var(--desktop-shadow) 70%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--tmux-ide-status-warning) 80%, transparent),
+      0 10px 26px color-mix(in srgb, var(--desktop-shadow) 70%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-window-canvas__scene {
+    transition: none !important;
+  }
+}
+
+/* Minimap: a fixed corner overview, outside the scene transform. */
+.canvas-minimap {
+  position: absolute;
+  z-index: 200;
+  right: 16px;
+  bottom: 16px;
+  width: 168px;
+  height: 108px;
+  overflow: hidden;
+  border: 1px solid var(--desktop-separator);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--desktop-raised) 90%, transparent);
+  box-shadow:
+    0 14px 34px var(--desktop-shadow),
+    inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 5%, transparent);
+  -webkit-app-region: no-drag;
+}
+
+.canvas-minimap__surface {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.canvas-minimap__window {
+  fill: color-mix(in srgb, var(--tmux-ide-text-muted) 42%, transparent);
+  stroke: none;
+}
+
+.canvas-minimap__window[data-status="working"] {
+  fill: var(--tmux-ide-status-info);
+}
+
+.canvas-minimap__window[data-status="blocked"],
+.canvas-minimap__window[data-attention="true"] {
+  fill: var(--tmux-ide-status-warning);
+}
+
+.canvas-minimap__window[data-status="done"] {
+  fill: var(--tmux-ide-status-success);
+}
+
+.canvas-minimap__window[data-status="idle"] {
+  fill: color-mix(in srgb, var(--tmux-ide-text-muted) 52%, transparent);
+}
+
+.canvas-minimap__viewport {
+  fill: color-mix(in srgb, var(--tmux-ide-text-bright) 8%, transparent);
+  stroke: color-mix(in srgb, var(--tmux-ide-border-focused) 70%, transparent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
 .agent-pane__body {
   height: 100%;
   padding: 0;

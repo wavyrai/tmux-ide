@@ -1,5 +1,6 @@
 import {
   resolvePaneAppearance,
+  type AgentGraphOverlay,
   type AppWindowDocumentV1,
   type ApplicationShellTerminalInventory,
   type PaneAppearance,
@@ -67,6 +68,14 @@ import {
   floatAppWindowIntent,
   toggleAppWindowMaximizeIntent,
 } from "./canvas-interaction-intents.ts";
+import {
+  agentGraphMinimapPanTransform,
+  projectAgentGraphMinimap,
+  projectAgentGraphScene,
+  type AgentGraphMinimap,
+  type AgentGraphScene,
+  type AgentGraphSceneRect,
+} from "./agent-graph-canvas-geometry.ts";
 
 export interface AppWindowCanvasProps {
   readonly document: AppWindowDocumentV1;
@@ -82,10 +91,27 @@ export interface AppWindowCanvasProps {
   readonly mutationsAvailable?: boolean;
   readonly mutationUnavailableReason?: string;
   readonly onCommand?: (invocation: AppWindowCanvasCommandInvocation) => void | Promise<void>;
+  /**
+   * The runtime agent-graph overlay. This is a NON-DURABLE projection of the
+   * live fleet — directed spawn/mission edges, labeled mission groups, and a
+   * ground-truth status glyph per window — keyed by the same durable window ids
+   * as {@link document}. It is an OPTIONAL seam: when absent the canvas renders
+   * exactly as it does without any graph awareness (no edge/group layer, no
+   * minimap, no attention chrome). The live integration feeds it later; nothing
+   * here reads or writes daemon state. Overlay entries whose windowId has no
+   * projected rect degrade silently (they are skipped, never thrown).
+   */
+  readonly overlay?: AgentGraphOverlay;
 }
 
 const CANVAS_SCALE_RANGE = { min: 0.35, max: 2.4 } as const;
 const DEFAULT_CANVAS_TRANSFORM: CanvasViewportTransform = { x: 0, y: 0, scale: 1 };
+/** Duration of the zoom-to-node framing transition (skipped under reduced motion). */
+const VIEWPORT_ANIMATION_MS = 260;
+/** How close two header taps must fall to count as a zoom-to-node double-tap. */
+const HEADER_DOUBLE_TAP_MS = 400;
+const MINIMAP_SIZE = { width: 168, height: 108 } as const;
+const MINIMAP_PADDING = 6;
 
 export const APP_WINDOW_CANVAS_ACTION_IDS = Object.freeze({
   placement: "app-window-placement",
@@ -287,7 +313,17 @@ function createAppWindowRecords(
   return records;
 }
 
-/** App-owned scene host. tmux supplies bytes; it never owns this geometry. */
+/**
+ * App-owned scene host. tmux supplies bytes; it never owns this geometry.
+ *
+ * When {@link AppWindowCanvasProps.overlay} is present the scene also paints, in
+ * layers UNDER the window cards and inside the same pan/zoom transform, an SVG
+ * edge layer (directed spawn/mission connectors) and a group-frame layer
+ * (labeled mission boxes). A minimap corner overlay and a blocked-attention
+ * treatment on window chrome complete the graph presentation. All of it derives
+ * from the same reactive window rects the cards use, so it tracks live drags and
+ * zoom, and it is skipped entirely when no overlay is supplied.
+ */
 export function AppWindowCanvas(props: AppWindowCanvasProps) {
   const [measured, setMeasured] = createSignal<AppWindowCanvasViewport>(
     props.viewport ?? { width: 1_000, height: 640 },
@@ -304,6 +340,9 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   } | null = null;
   const [spaceKey, setSpaceKey] = createSignal(false);
   const [transform, setTransform] = createSignal<CanvasViewportTransform>(DEFAULT_CANVAS_TRANSFORM);
+  const [viewportAnimating, setViewportAnimating] = createSignal(false);
+  let viewportAnimationTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastHeaderTap: { readonly windowId: string; readonly time: number } | null = null;
   const [rectOverrides, setRectOverrides] = createSignal(
     new Map<
       string,
@@ -322,6 +361,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   onCleanup(() => {
     sceneRuntimeStyle?.dispose();
     canvasRuntimeStyle?.dispose();
+    if (viewportAnimationTimer !== null) clearTimeout(viewportAnimationTimer);
   });
 
   const eventTargetsTerminalInput = (event: Event): boolean => {
@@ -428,6 +468,11 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     sceneRuntimeStyle?.update({
       transform: `translate(${value.x}px, ${value.y}px) scale(${value.scale})`,
       "transform-origin": "0 0",
+      // Only the zoom-to-node framing animates; drags/pans stay one-to-one. A
+      // reduced-motion media rule in styles.css hard-disables this regardless.
+      transition: viewportAnimating()
+        ? `transform ${VIEWPORT_ANIMATION_MS}ms var(--desktop-ease-smooth)`
+        : "none",
     });
     const grid = 28 * value.scale;
     canvasRuntimeStyle?.update({
@@ -441,13 +486,49 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     return override ? { ...window, rect: override.rect } : window;
   };
 
+  // Window rects for the graph overlay, read through `displayedWindow` so edges,
+  // group frames, and the minimap track live drag/resize transactions.
+  const overlayRects = createMemo<readonly AgentGraphSceneRect[]>(() =>
+    projection().windows.map((window) => ({
+      windowId: window.windowId,
+      rect: displayedWindow(window).rect,
+    })),
+  );
+  const overlayScene = createMemo<AgentGraphScene | null>(() => {
+    const overlay = props.overlay;
+    return overlay ? projectAgentGraphScene(overlay, overlayRects()) : null;
+  });
+  const minimap = createMemo<AgentGraphMinimap | null>(() => {
+    const overlay = props.overlay;
+    if (!overlay) return null;
+    const statusById = new Map(
+      Object.values(overlay.nodes).map((node) => [node.windowId, node.status] as const),
+    );
+    const attentionById = new Map(
+      Object.values(overlay.nodes).map((node) => [node.windowId, node.attention] as const),
+    );
+    return projectAgentGraphMinimap({
+      windows: overlayRects(),
+      statusById,
+      attentionById,
+      viewport: viewport(),
+      transform: transform(),
+      size: MINIMAP_SIZE,
+      scaleRange: CANVAS_SCALE_RANGE,
+      padding: MINIMAP_PADDING,
+    });
+  });
+  const overlayNode = (windowId: string) => props.overlay?.nodes[windowId] ?? null;
+
   const pointInCanvas = (event: { readonly clientX: number; readonly clientY: number }) => {
     const bounds = canvas?.getBoundingClientRect();
     return { x: event.clientX - (bounds?.left ?? 0), y: event.clientY - (bounds?.top ?? 0) };
   };
 
   const pointerRegion = (target: EventTarget | null): CanvasPointerRegion | null => {
-    if (!(target instanceof Element) || target.closest(".canvas-controls")) return null;
+    if (!(target instanceof Element) || target.closest(".canvas-controls, .canvas-minimap")) {
+      return null;
+    }
     const card = target.closest<HTMLElement>(".app-window-card");
     if (!card) return { kind: "canvas" };
     const windowId = card.dataset.windowId;
@@ -504,6 +585,36 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
         { x: viewport().width / 2, y: viewport().height / 2 },
         CANVAS_SCALE_RANGE,
       ),
+    );
+  };
+
+  const animateViewport = (next: CanvasViewportTransform) => {
+    if (props.reducedMotion) {
+      setViewportAnimating(false);
+      setTransform(next);
+      return;
+    }
+    setViewportAnimating(true);
+    setTransform(next);
+    if (viewportAnimationTimer !== null) clearTimeout(viewportAnimationTimer);
+    viewportAnimationTimer = setTimeout(() => {
+      viewportAnimationTimer = null;
+      setViewportAnimating(false);
+    }, VIEWPORT_ANIMATION_MS);
+  };
+
+  /** Frame a single window: fit-to-rect, clamped, with a reduced-motion-aware ease. */
+  const zoomToWindow = (rect: AppWindowCanvasItem["rect"]) => {
+    animateViewport(
+      fitCanvasViewport([rect], viewport(), { padding: 96, scaleRange: CANVAS_SCALE_RANGE }),
+    );
+  };
+
+  const panToMinimapPoint = (point: { readonly x: number; readonly y: number }) => {
+    const current = minimap();
+    if (!current) return;
+    setTransform(
+      agentGraphMinimapPanTransform(current, point, transform(), viewport(), MINIMAP_PADDING),
     );
   };
 
@@ -633,6 +744,33 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
       return;
     }
     if (!route.claimPointer) return;
+    // Zoom-to-node: a double header tap frames that window. This is resolved
+    // BEFORE the move transaction starts (a single tap still begins/ends a
+    // no-op move), so it never fights pointer capture, and it does not rely on
+    // the native dblclick event — a header move preventDefaults the pointer,
+    // which suppresses the compatibility click/dblclick pair.
+    if (
+      props.overlay &&
+      route.action === "move" &&
+      region.kind === "window-header" &&
+      !region.interactiveControl
+    ) {
+      const now = event.timeStamp || Date.now();
+      const isDoubleTap =
+        lastHeaderTap !== null &&
+        lastHeaderTap.windowId === region.windowId &&
+        now - lastHeaderTap.time <= HEADER_DOUBLE_TAP_MS;
+      if (isDoubleTap) {
+        lastHeaderTap = null;
+        const target = projection().windows.find(({ windowId }) => windowId === region.windowId);
+        if (target) {
+          event.preventDefault();
+          zoomToWindow(displayedWindow(target).rect);
+          return;
+        }
+      }
+      lastHeaderTap = { windowId: region.windowId, time: now };
+    }
     const pointer = pointInCanvas(event);
     if (route.action === "pan") {
       event.preventDefault();
@@ -857,6 +995,67 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
         }}
         class="app-window-canvas__scene"
       >
+        <Show when={overlayScene()}>
+          {(scene) => (
+            <svg class="agent-graph" aria-hidden="true">
+              <For each={scene().groups}>
+                {(group) => {
+                  const pillWidth = Math.min(
+                    Math.max(24, group.rect.width - 12),
+                    Math.max(48, group.label.length * 7 + 22),
+                  );
+                  return (
+                    <g class="agent-graph__group" data-group-id={group.id}>
+                      <rect
+                        class="agent-graph__group-frame"
+                        x={group.rect.x}
+                        y={group.rect.y}
+                        width={group.rect.width}
+                        height={group.rect.height}
+                        rx="14"
+                      />
+                      <rect
+                        class="agent-graph__group-pill"
+                        x={group.rect.x + 12}
+                        y={group.rect.y - 11}
+                        width={pillWidth}
+                        height="22"
+                        rx="11"
+                      />
+                      <text class="agent-graph__group-label" x={group.rect.x + 22} y={group.rect.y}>
+                        {group.label}
+                      </text>
+                    </g>
+                  );
+                }}
+              </For>
+              <For each={scene().edges}>
+                {(edge) => (
+                  <g
+                    class="agent-graph__edge-group"
+                    data-kind={edge.kind}
+                    data-attention={edge.attention ? "true" : "false"}
+                    data-from={edge.from}
+                    data-to={edge.to}
+                  >
+                    <path
+                      class="agent-graph__edge"
+                      data-kind={edge.kind}
+                      data-attention={edge.attention ? "true" : "false"}
+                      d={edge.path}
+                    />
+                    <path
+                      class="agent-graph__arrow"
+                      data-kind={edge.kind}
+                      data-attention={edge.attention ? "true" : "false"}
+                      d={edge.arrow}
+                    />
+                  </g>
+                )}
+              </For>
+            </svg>
+          )}
+        </Show>
         <For each={windowRecords()}>
           {(record) => {
             const window = createMemo(() => displayedWindow(record.value()));
@@ -913,6 +1112,16 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                 data-placement={window().placement}
                 data-selected={window().selected}
                 data-active={window().active}
+                data-agent-status={
+                  props.overlay ? (overlayNode(window().windowId)?.status ?? "") : undefined
+                }
+                data-agent-attention={
+                  props.overlay
+                    ? overlayNode(window().windowId)?.attention
+                      ? "true"
+                      : "false"
+                    : undefined
+                }
                 data-maximized={maximizeStates().has(window().windowId)}
                 data-transient-geometry={rectOverrides().get(window().windowId)?.revision === null}
               >
@@ -1056,6 +1265,51 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
           <CanvasControlIcon id="reset" />
         </button>
       </nav>
+      <Show when={minimap()}>
+        {(map) => (
+          <div class="canvas-minimap" data-window-count={map().windows.length}>
+            <svg
+              class="canvas-minimap__surface"
+              viewBox={`0 0 ${MINIMAP_SIZE.width} ${MINIMAP_SIZE.height}`}
+              role="img"
+              aria-label="Canvas minimap"
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const bounds = event.currentTarget.getBoundingClientRect();
+                if (bounds.width === 0 || bounds.height === 0) return;
+                panToMinimapPoint({
+                  x: ((event.clientX - bounds.left) / bounds.width) * MINIMAP_SIZE.width,
+                  y: ((event.clientY - bounds.top) / bounds.height) * MINIMAP_SIZE.height,
+                });
+              }}
+            >
+              <For each={map().windows}>
+                {(window) => (
+                  <rect
+                    class="canvas-minimap__window"
+                    data-status={window.status ?? "none"}
+                    data-attention={window.attention ? "true" : "false"}
+                    x={window.rect.x}
+                    y={window.rect.y}
+                    width={Math.max(2, window.rect.width)}
+                    height={Math.max(2, window.rect.height)}
+                    rx="1.5"
+                  />
+                )}
+              </For>
+              <rect
+                class="canvas-minimap__viewport"
+                x={map().viewportRect.x}
+                y={map().viewportRect.y}
+                width={Math.max(0, map().viewportRect.width)}
+                height={Math.max(0, map().viewportRect.height)}
+              />
+            </svg>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }
