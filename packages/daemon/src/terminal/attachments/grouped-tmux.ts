@@ -148,9 +148,11 @@ function attachCommand(
   viewerMode: TerminalAttachmentViewerMode,
 ): TmuxArgvPlan {
   const target = `=${viewSessionName}`;
+  // `-E` keeps daemon-client environment values out of the view session by
+  // disabling tmux's update-environment behavior during every attachment.
   return viewerMode === "read-only"
-    ? tmux(["attach-session", "-f", "read-only,ignore-size", "-t", target])
-    : tmux(["attach-session", "-t", target]);
+    ? tmux(["attach-session", "-E", "-r", "-t", target])
+    : tmux(["attach-session", "-E", "-t", target]);
 }
 
 /**

@@ -17,10 +17,11 @@
  * tsx-via-node instead of bun in `src/lib/tmux.ts`).
  */
 
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { IPty, IPtyForkOptions } from "node-pty";
 import { NodePtyAdapter, ensureNodePtySpawnHelperExecutable } from "../NodePtyAdapter.ts";
 import { PtySpawnError } from "../PtyAdapter.ts";
 
@@ -29,6 +30,61 @@ const skipOnWin = process.platform === "win32";
 // suite is a vitest-only integration test; under `bun test` we skip
 // the entire describe block. See file header.
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+
+function stubNodePty(write: IPty["write"]): IPty {
+  return {
+    pid: 123,
+    cols: 80,
+    rows: 24,
+    process: "tmux",
+    handleFlowControl: false,
+    onData: () => ({ dispose: () => undefined }),
+    onExit: () => ({ dispose: () => undefined }),
+    resize: () => undefined,
+    clear: () => undefined,
+    write,
+    kill: () => undefined,
+    pause: () => undefined,
+    resume: () => undefined,
+  };
+}
+
+describe("NodePtyAdapter input encoding", () => {
+  it("passes raw bytes to node-pty without string transcoding and preserves UTF-8 strings", () => {
+    const writes: Array<string | Buffer> = [];
+    let spawnOptions: IPtyForkOptions | undefined;
+    const child = stubNodePty((data) => writes.push(data));
+    const spawnPty = vi.fn((_file: string, _args: string[], options: IPtyForkOptions) => {
+      spawnOptions = options;
+      return child;
+    });
+    const adapter = new NodePtyAdapter({
+      skipHelperEnsure: true,
+      spawnPty,
+    });
+    const proc = adapter.spawnSync({
+      shell: "tmux",
+      args: ["attach-session", "-E", "-r", "-t", "=tmux-ide-view"],
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+      env: { ...process.env },
+      encoding: null,
+    });
+
+    const raw = Uint8Array.from([0x00, 0x7f, 0x80, 0xff]);
+    const text = "tmux 🙂";
+    proc.write(raw);
+    proc.write(text);
+
+    expect(spawnOptions?.encoding).toBeNull();
+    expect(Buffer.isBuffer(writes[0])).toBe(true);
+    expect(writes[0]).toEqual(Buffer.from(raw));
+    expect(typeof writes[0]).not.toBe("string");
+    expect(writes[1]).toBe(text);
+    expect(Buffer.from(writes[1] as string, "utf8")).toEqual(Buffer.from(text, "utf8"));
+  });
+});
 
 describe.skipIf(skipOnWin || isBun)("NodePtyAdapter", () => {
   let workDir: string;

@@ -128,7 +128,7 @@ class NodePtyProcess implements PtyProcess {
   write(data: string | Uint8Array): void {
     if (this.exited) return;
     if (typeof data === "string") this.child.write(data);
-    else this.child.write(Buffer.from(data).toString("binary"));
+    else this.child.write(Buffer.from(data));
   }
 
   resize(cols: number, rows: number): void {
@@ -236,7 +236,7 @@ export class NodePtyAdapter implements PtyAdapter {
         rows: input.rows,
         cwd: input.cwd,
         env,
-        encoding: input.encoding === "utf8" ? "utf8" : (null as unknown as undefined),
+        encoding: input.encoding === "utf8" ? "utf8" : null,
       });
     } catch (err) {
       const errno = (err as NodeJS.ErrnoException | undefined)?.code;
