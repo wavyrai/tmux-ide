@@ -1,11 +1,30 @@
 import { EventEmitter } from "node:events";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DaemonEventServerFrameSchemaZ, type DaemonEventServerFrame } from "@tmux-ide/contracts";
 import {
   _detachProjectRegistryListenerForTests,
   _stopSessionsPollerForTests,
   handleWsEventsConnection,
 } from "../../command-center/ws-events.ts";
+import { _setTmuxRunner } from "../../command-center/discovery.ts";
+
+// This suite exercises only the client-frame protocol, never live session
+// discovery. `handleWsEventsConnection` eagerly calls `discoverSessions()`
+// (hello + sessions poller), which by default spawns `tmux` against the
+// caller's real default socket. Under parallel test load those synchronous
+// subprocess spawns block the worker long enough to trip the test timeout,
+// and they reach into the user's real tmux server — both forbidden. Pin a
+// runner that returns no sessions so discovery is instant and hermetic.
+let restoreTmuxRunner: (() => void) | null = null;
+
+beforeAll(() => {
+  restoreTmuxRunner = _setTmuxRunner(() => "");
+});
+
+afterAll(() => {
+  restoreTmuxRunner?.();
+  restoreTmuxRunner = null;
+});
 
 const daemonIdentity = {
   protocolVersion: 1,

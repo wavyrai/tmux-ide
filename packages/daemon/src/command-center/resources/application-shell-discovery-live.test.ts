@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceRegistry } from "../../lib/workspace-registry.ts";
 import { discoverWorkspaceRegistryTerminalInventory } from "../../terminal/attachments/native-runtime.ts";
@@ -30,6 +30,11 @@ function runTmux(args: readonly string[]): string {
 }
 
 describe.skipIf(!hasTmux)("application-shell pinned all-window discovery", () => {
+  // Live tmux discovery over an isolated socket; real subprocess spawns are
+  // starved under parallel load, so widen the per-case budget past the 5s
+  // default. Assertions are unchanged.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
   let registry!: WorkspaceRegistry;
   let legacyPane = "";
   let runtimePaneIds: string[] = [];

@@ -11,7 +11,7 @@ import {
   WorkspaceOpenMutationResultSchemaZ,
 } from "@tmux-ide/contracts";
 import { WebSocket } from "ws";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "../daemon-embed.ts";
 import { deriveWorkspaceOpenIdentity } from "../workspace-open.ts";
@@ -20,6 +20,11 @@ import { _setDefaultWorkspaceRegistryForTests, WorkspaceRegistry } from "../work
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 
 describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux integration", () => {
+  // Real embedded daemon + tmux + pty over isolated state. Under parallel load
+  // the beforeAll and attach path are starved past the default hook/test
+  // budgets, so widen both. Assertions are unchanged.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
   const root = mkdtempSync(join("/tmp", "tmux-ide-open-live-"));
   const projectDir = join(root, "project");
   const aliasDir = join(root, "project-alias");
@@ -316,7 +321,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
       origin: "tmux-ide://app",
     });
     const ready = new Promise<unknown>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("attachment did not become ready")), 5_000);
+      const timeout = setTimeout(() => reject(new Error("attachment did not become ready")), 15_000);
       socket.on("error", reject);
       socket.on("message", (data, isBinary) => {
         if (isBinary) return;

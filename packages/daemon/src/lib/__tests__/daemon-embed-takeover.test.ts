@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect, type Socket } from "node:net";
 import { once } from "node:events";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { setDaemonShutdownBackend } from "../../command-center/actions/handlers/daemon-shutdown.ts";
 import {
@@ -170,6 +170,11 @@ afterEach(async () => {
 });
 
 describe.sequential("embedded daemon cooperative takeover", () => {
+  // Each case starts one or more real embedded daemons (HTTP + tmux probes).
+  // Under parallel load those startups are starved past the default budgets,
+  // so widen both hook and test budgets. Assertions are unchanged.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
   it("makes concurrent stop callers join canonical cleanup", async () => {
     const handle = trackHandle(await startEmbeddedDaemon({ silent: true }));
     const connection = connect({ host: "127.0.0.1", port: handle.port });

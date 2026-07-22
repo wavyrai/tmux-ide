@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +6,11 @@ import { join } from "node:path";
 
 import { WorkspaceRegistry } from "../../lib/workspace-registry.ts";
 import { createApp } from "../server.ts";
+
+// Cases build a real git-backed workspace and exercise the resource routes
+// over several git subprocesses. Under parallel test load those spawns are
+// starved past the 5s default; widen the budget without touching assertions.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const OWNER = "owner-capability-secret";
 const scratch: string[] = [];

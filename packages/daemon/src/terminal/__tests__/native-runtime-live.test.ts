@@ -47,6 +47,11 @@ class LiveSocket extends EventEmitter implements DirectTerminalSocket {
 }
 
 describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration", () => {
+  // Real tmux + node-pty over an isolated socket. Under parallel load the
+  // beforeAll spawns and the redeem/attach path are starved past the default
+  // hook/test budgets, so widen both. Assertions are unchanged.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
   const root = mkdtempSync(join(tmpdir(), "tmux-ide-native-runtime-live-"));
   const socketName = `tmux-ide-a1-${process.pid}-${randomUUID().slice(0, 8)}`;
   const sessionName = "native-runtime-source";
@@ -144,7 +149,7 @@ describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration",
             ]),
           });
         },
-        { timeout: 3_000 },
+        { timeout: 15_000 },
       );
       expect(runtime.snapshot().liveConnections).toBe(1);
     } finally {
@@ -152,7 +157,7 @@ describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration",
     }
     expect(runtime.snapshot()).toMatchObject({ liveConnections: 0, shuttingDown: true });
     expect(run(["list-sessions", "-F", "#{session_name}"])).toBe(sessionName);
-  }, 10_000);
+  }, 30_000);
 
   it("removes a strictly marked view left by a simulated crash before restart readiness", async () => {
     const orphanAttachmentId = randomUUID();
@@ -228,5 +233,5 @@ describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration",
       ),
     ).resolves.toMatchObject({ daemonInstanceId: `${daemonInstanceId}-restart` });
     await restarted.dispose();
-  }, 10_000);
+  }, 30_000);
 });

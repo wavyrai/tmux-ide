@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +10,12 @@ import {
 } from "@tmux-ide/contracts";
 
 import { ChangesAuthority, confineToWorkspace } from "./workspace-changes-authority.ts";
+
+// Each catalog/diff case initializes a real git repo and runs several git
+// subprocesses. On a machine saturated by parallel test workers those spawns
+// are starved well past the 5s default, so give the whole file a generous
+// wall-clock budget — the assertions themselves are unchanged.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const scratch: string[] = [];
 

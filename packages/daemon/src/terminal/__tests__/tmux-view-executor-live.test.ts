@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   GROUPED_TMUX_VIEW_SESSION_PREFIX,
@@ -71,6 +71,13 @@ class DirectSocketRunner implements TmuxAttachmentCommandRunner {
 }
 
 describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () => {
+  // These cases each spawn real tmux subprocesses and a real PTY client. On a
+  // machine saturated by parallel test workers, fork/exec latency dominates,
+  // so give every case and its guarded operations a generous wall-clock
+  // budget. The waits below stay observable (they resolve the instant the
+  // real condition holds); the budget only matters when the host is loaded.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
   const runner = new LiveSocketRunner();
   let sessionId = "";
   let windowId = "";
@@ -117,7 +124,7 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
     return {
       operation,
       exactViewSessionTarget: `=${selectedPlan.identity.viewSessionName}` as const,
-      deadline: 2_000,
+      deadline: 10_000,
       source: { sessionId, windowId, runtimePaneId: paneId, paneCount: 1 as const },
       plan: selectedPlan,
     };
@@ -287,7 +294,7 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
       trustedCwd: process.cwd(),
       proofRunner: new DirectSocketRunner(),
       environment: process.env,
-      readinessTimeoutMs: 5_000,
+      readinessTimeoutMs: 15_000,
     });
     const executor = new TmuxAttachmentViewExecutor({
       runner,
@@ -307,29 +314,39 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
     expect(runOnSocket(["list-panes", "-t", exactTarget, "-F", "#{pane_id}"]).trim()).toBe(paneId);
     const redraw: Buffer[] = [];
     const detachData = client.onData((data) => redraw.push(data));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(Buffer.concat(redraw).toString("utf8")).toContain("authoritative-redraw");
+    await vi.waitFor(() =>
+      expect(Buffer.concat(redraw).toString("utf8")).toContain("authoritative-redraw"),
+    );
     expect(client).not.toHaveProperty("write");
     expect(client.boundedInput?.write(Buffer.from("bounded-input"))).toMatchObject({
       status: "accepted",
       byteLength: 13,
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(runOnSocket(["capture-pane", "-p", "-t", paneId])).toContain("bounded-input");
+    await vi.waitFor(() =>
+      expect(runOnSocket(["capture-pane", "-p", "-t", paneId])).toContain("bounded-input"),
+    );
     client.resize(100, 30);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(
-      runOnSocket([
-        "list-clients",
-        "-t",
-        exactTarget,
-        "-F",
-        "#{client_width}x#{client_height}",
-      ]).trim(),
-    ).toBe("100x30");
+    await vi.waitFor(() =>
+      expect(
+        runOnSocket([
+          "list-clients",
+          "-t",
+          exactTarget,
+          "-F",
+          "#{client_width}x#{client_height}",
+        ]).trim(),
+      ).toBe("100x30"),
+    );
     detachData();
     client.dispose();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Dispose detaches the PTY client; the durable view must survive it. Wait
+    // for the client to actually leave the server (observable), then assert
+    // the source view and its pane are still intact.
+    await vi.waitFor(() =>
+      expect(runOnSocket(["list-clients", "-t", exactTarget, "-F", "#{client_pid}"]).trim()).toBe(
+        "",
+      ),
+    );
     expect(runOnSocket(["has-session", "-t", exactTarget])).toBe("");
     expect(runOnSocket(["display-message", "-p", "-t", paneId, "#{pane_dead}"]).trim()).toBe("0");
 

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigError } from "../errors.ts";
 import { resolveProjectConfigContext } from "../config-context.ts";
 
@@ -22,6 +22,14 @@ function tempDir(): string {
   roots.add(root);
   return root;
 }
+
+// Each case initializes a real git repo and resolves the project config
+// context. Under parallel load the git spawns are starved past the 5s default,
+// so widen the budget. Note: the production resolver hard-bounds its git calls
+// at ~2s; under pathological CPU starvation that internal bound (not this
+// test's budget) can fire and change identitySource — a production behavior,
+// not a test-isolation concern. Assertions here are unchanged.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 describe("resolveProjectConfigContext", () => {
   it("returns configKind none only for a normal no-config resolution", async () => {

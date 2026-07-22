@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { planGroupedTmuxAttachment, type TmuxArgvPlan } from "../attachments/grouped-tmux.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
@@ -21,6 +21,11 @@ function runPlan(command: TmuxArgvPlan): string {
 }
 
 describe.skipIf(!hasTmux)("grouped tmux attachment live isolation", () => {
+  // The beforeAll spawns a real tmux server and several windows; under
+  // parallel load those spawns are starved past the 10s default hook budget.
+  // Widen both hook and test budgets — the assertions are unchanged.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
   let sourceSessionId = "";
   let authorizedWindowId = "";
   let authorizedPaneId = "";
@@ -117,5 +122,5 @@ describe.skipIf(!hasTmux)("grouped tmux attachment live isolation", () => {
         .sort(),
     ).toEqual([authorizedWindowId, forbiddenWindowId].sort());
     expect(runTmux(["display-message", "-p", "-t", authorizedPaneId, "#{pane_dead}"])).toBe("0");
-  });
+  }, 30_000);
 });

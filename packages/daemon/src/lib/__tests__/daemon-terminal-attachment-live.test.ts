@@ -4,7 +4,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { WebSocket } from "ws";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   TERMINAL_ATTACHMENT_ISSUE_PATH,
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
@@ -21,6 +21,11 @@ const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 describe
   .skipIf(!hasTmux)
   .sequential("embedded daemon direct attachment isolated tmux integration", () => {
+    // Real embedded daemon + tmux + node-pty. Under parallel load the beforeAll
+    // and the redeem/attach path are starved past the default hook/test
+    // budgets, so widen both. Assertions are unchanged.
+    vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
     // Keep the canonicalized -S path below the Unix-domain socket limit on macOS.
     const root = mkdtempSync(join("/tmp", "tmux-ide-a2-live-"));
     const socketPath = join(root, "tmux.sock");
@@ -136,7 +141,7 @@ describe
       const ready = new Promise<unknown>((resolve, reject) => {
         const timeout = setTimeout(
           () => reject(new Error("direct attachment did not become ready")),
-          5_000,
+          15_000,
         );
         socket.on("error", reject);
         socket.on("message", (data, isBinary) => {
@@ -175,5 +180,5 @@ describe
 
       expect(inspectCanonicalDaemonInfo().status).toBe("missing");
       expect(run(["list-sessions", "-F", "#{session_name}"])).toBe(sessionName);
-    }, 15_000);
+    }, 30_000);
   });

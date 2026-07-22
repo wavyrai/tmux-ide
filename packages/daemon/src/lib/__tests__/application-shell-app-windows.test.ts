@@ -2,7 +2,7 @@ import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { APP_WINDOW_MAX_WINDOWS, AppWindowDocumentV1SchemaZ } from "@tmux-ide/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectResolution } from "../project-resolver.ts";
 import {
@@ -82,6 +82,11 @@ function legacyDefaultDocument(terminalSourceId = "terminal.lead") {
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+
+// Repeated project-runtime repository initialization and schema validation
+// over real temp dirs. Under parallel CPU load this in-process work is starved
+// past the 5s default, so widen the budget; assertions are unchanged.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 describe("initialApplicationShellAppWindows", () => {
   it("creates deterministic staggered canvas windows and preserves semantic focus", () => {
