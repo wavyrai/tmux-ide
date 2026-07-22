@@ -38,11 +38,14 @@ import {
   AddWorkspaceRequestSchemaZ,
   APPLICATION_SHELL_RESOURCE_V1_VERSION,
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   WORKSPACE_CATALOG_RESOURCE_VERSION,
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
   type ApplicationShellResourceV1,
   type ApplicationShellResourceV2,
+  type ApplicationShellResourceV3,
+  type AppWindowDocumentV1,
   type WorkspaceCatalogResourceV1,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
@@ -113,8 +116,10 @@ import { WebSocketServer } from "ws";
 import {
   projectLegacyApplicationShellResourceV1,
   projectApplicationShellResource,
+  projectApplicationShellResourceV3,
   type ApplicationShellSessionFacts,
 } from "./resources/application-shell.ts";
+import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
 import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
@@ -143,7 +148,24 @@ export interface CreateAppOptions {
       requestedSessionName: string,
     ): Promise<ApplicationShellSessionFacts | null>;
   } | null;
+  applicationShellAppWindowBackend?: {
+    load(
+      projectDir: string,
+      terminalSourceIds: readonly string[],
+      focusedTerminalSourceId: string | null,
+    ): Promise<AppWindowDocumentV1>;
+  } | null;
 }
+
+const defaultApplicationShellAppWindowBackend = {
+  async load(
+    projectDir: string,
+    terminalSourceIds: readonly string[],
+    focusedTerminalSourceId: string | null,
+  ): Promise<AppWindowDocumentV1> {
+    return loadApplicationShellAppWindows(projectDir, terminalSourceIds, focusedTerminalSourceId);
+  },
+};
 
 let projectStreamConnections = 0;
 
@@ -551,11 +573,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     if (
       requestedVersion !== undefined &&
       requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) &&
-      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION)
+      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION) &&
+      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V3_VERSION)
     ) {
       return c.json({ error: "Unsupported application-shell resource version" }, 400);
     }
-    if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
+    if (
+      requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION) ||
+      requestedVersion === String(APPLICATION_SHELL_RESOURCE_V3_VERSION)
+    ) {
       const backend = options.applicationShellInventoryBackend;
       if (!backend) return c.json({ error: "Session discovery unavailable" }, 503);
       let session: ApplicationShellSessionFacts | null;
@@ -566,6 +592,28 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       }
       if (!session) return c.json({ error: "Session not found" }, 404);
       const resource = projectApplicationShellResource(session);
+      if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V3_VERSION)) {
+        const appWindowBackend =
+          options.applicationShellAppWindowBackend === undefined
+            ? defaultApplicationShellAppWindowBackend
+            : options.applicationShellAppWindowBackend;
+        if (!appWindowBackend) return c.json({ error: "App window state unavailable" }, 503);
+        let appWindows: AppWindowDocumentV1;
+        try {
+          appWindows = await appWindowBackend.load(
+            session.dir,
+            resource.terminalInventory.resources.map(({ id }) => id),
+            resource.terminalInventory.activeResourceId,
+          );
+        } catch {
+          return c.json({ error: "App window state unavailable" }, 503);
+        }
+        return c.json({
+          version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
+          daemon: daemonInstanceIdentity,
+          resource: projectApplicationShellResourceV3(session, appWindows),
+        } satisfies ApplicationShellResourceV3);
+      }
       return c.json({
         version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
         daemon: daemonInstanceIdentity,

@@ -39,6 +39,7 @@ import {
 } from "./focus-overlay.ts";
 import { SemanticProductIdSchemaZ } from "./pane-appearance.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
+import { AppWindowDocumentV1SchemaZ } from "./app-window-state.ts";
 
 export const APPLICATION_SHELL_PROJECTION_VERSION = 1 as const;
 export const APPLICATION_SHELL_TRACE_VERSION = 1 as const;
@@ -250,6 +251,43 @@ export const ApplicationShellProjectionInputV2SchemaZ = z
   });
 export type ApplicationShellProjectionInputV2 = z.infer<
   typeof ApplicationShellProjectionInputV2SchemaZ
+>;
+
+/**
+ * V3 is the first desktop projection input that carries durable app-window
+ * state. The complete document is retained at this boundary so renderer
+ * projections can preserve canonical window identity and revision provenance.
+ */
+export const ApplicationShellProjectionInputV3SchemaZ = z
+  .object({
+    ...ApplicationShellProjectionInputV1Fields,
+    terminalInventory: ApplicationShellTerminalInventorySchemaZ,
+    appWindows: AppWindowDocumentV1SchemaZ,
+  })
+  .strict()
+  .superRefine((input, ctx) => {
+    refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
+      "workspace",
+      "sidebar",
+      "agents",
+    ]);
+    const resources = new Map(
+      input.terminalInventory.resources.map((resource) => [resource.id, resource]),
+    );
+    for (const [index, agent] of input.workspace.sidebar.agents.entries()) {
+      if (agent.paneId === null) continue;
+      const resource = resources.get(agent.paneId);
+      if (resource === undefined || resource.kind !== "agent") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["workspace", "sidebar", "agents", index, "paneId"],
+          message: "attached agents must correlate to one agent terminal resource",
+        });
+      }
+    }
+  });
+export type ApplicationShellProjectionInputV3 = z.infer<
+  typeof ApplicationShellProjectionInputV3SchemaZ
 >;
 
 type SidebarSession = CohesionFixtureV1["workspace"]["sidebar"]["sessions"][number];

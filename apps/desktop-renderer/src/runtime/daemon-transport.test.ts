@@ -106,7 +106,7 @@ describe("browser-safe daemon transport", () => {
     expect(fetch).toHaveBeenCalledOnce();
     const [url, init] = fetch.mock.calls[0]!;
     expect(String(url)).toBe(
-      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell?version=2",
+      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell?version=3",
     );
     expect(init).toMatchObject({
       method: "GET",

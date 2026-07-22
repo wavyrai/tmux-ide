@@ -2,6 +2,7 @@
 import {
   APPLICATION_SHELL_COMMAND_IDS,
   ApplicationShellProjectionInputV1SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   DESKTOP_HOST_API_VERSION,
   applicationShellActionTraceV1,
   projectApplicationShellV1,
@@ -193,6 +194,63 @@ afterEach(() => {
 });
 
 describe("visible DOM application shell", () => {
+  it("uses the durable AppWindow scene instead of the legacy fixed terminal grid", () => {
+    const input = createDefaultDomShellInput();
+    const resources = createDefaultDomPaneFrames().map((frame) => ({
+      id: frame.pane.id,
+      title: frame.title,
+      kind: "agent" as const,
+      active: frame.pane.id === input.focus.appFocusedPaneId,
+      attachability: { status: "available" as const, semanticPaneId: frame.pane.id },
+    }));
+    const v3 = ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...input,
+      terminalInventory: {
+        activeResourceId: input.focus.appFocusedPaneId,
+        resources,
+      },
+      appWindows: {
+        version: 1,
+        revision: 9,
+        updatedAt: "2026-07-22T10:00:00.000Z",
+        windows: {
+          "window.implementer": {
+            id: "window.implementer",
+            source: { kind: "terminal", terminalSourceId: "pane.implementer" },
+            title: "Implementer",
+            placement: {
+              mode: "docked",
+              docked: { stackId: "stack.canvas", index: 0 },
+              floating: null,
+            },
+          },
+        },
+        dockRoot: {
+          type: "stack",
+          id: "stack.canvas",
+          windowIds: ["window.implementer"],
+          activeWindowId: "window.implementer",
+        },
+        dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+        floatingOrder: [],
+        focusedWindowId: "window.implementer",
+        activeLayoutId: null,
+        layouts: {},
+      },
+    });
+
+    const root = renderShell(v3);
+    expect(root.querySelector(".agent-grid")).toBeNull();
+    expect(root.querySelector(".app-window-canvas")?.getAttribute("data-window-revision")).toBe(
+      "9",
+    );
+    const card = root.querySelector('.app-window-card[data-window-id="window.implementer"]');
+    expect(card?.getAttribute("data-terminal-source-id")).toBe("pane.implementer");
+    expect(card?.querySelector(".web-pane-frame")?.getAttribute("data-pane-id")).toBe(
+      "window.implementer",
+    );
+  });
+
   it("renders honest landmarks, canonical tabs, disabled reasons, and platform shortcuts", async () => {
     const root = renderShell(withDisabledActivity());
 

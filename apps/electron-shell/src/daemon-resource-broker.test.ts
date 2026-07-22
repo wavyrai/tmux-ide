@@ -348,7 +348,7 @@ describe("Electron main daemon resource broker", () => {
     expect(requests.map(({ url }) => url)).toEqual([
       "http://127.0.0.1:6060/api/resources/workspace-catalog",
       "http://127.0.0.1:6060/api/resources/workspace-catalog",
-      "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=2",
+      "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=3",
     ]);
     expect(requests.every(({ init }) => init?.method === "GET" && init.redirect === "error")).toBe(
       true,

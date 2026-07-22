@@ -3,6 +3,8 @@ import {
   ApplicationShellProjectionInputV1SchemaZ,
   ApplicationShellResourceV1SchemaZ,
   ApplicationShellResourceV2SchemaZ,
+  ApplicationShellResourceV3SchemaZ,
+  AppWindowDocumentV1SchemaZ,
   projectApplicationShellV1,
 } from "@tmux-ide/contracts";
 import { createApp } from "../server.ts";
@@ -271,7 +273,7 @@ describe("application-shell resource projector", () => {
 });
 
 describe("GET /api/project/:name/application-shell", () => {
-  it("keeps standalone default and explicit V1 discovery while V2 fails closed", async () => {
+  it("keeps standalone default and explicit V1 discovery while V2/V3 fail closed", async () => {
     restorers.push(
       _setTmuxRunner((args) => {
         if (args[0] === "list-sessions") return "product";
@@ -306,10 +308,26 @@ describe("GET /api/project/:name/application-shell", () => {
     const v2 = await app.request("/api/project/product/application-shell?version=2");
     expect(v2.status).toBe(503);
     expect(await v2.json()).toEqual({ error: "Session discovery unavailable" });
+    const v3 = await app.request("/api/project/product/application-shell?version=3");
+    expect(v3.status).toBe(503);
+    expect(await v3.json()).toEqual({ error: "Session discovery unavailable" });
   });
 
-  it("defaults old callers to V1 and gives negotiated callers a strict V2 inventory", async () => {
+  it("negotiates V3 with the persisted app-window document while preserving V1/V2", async () => {
     const requests: string[] = [];
+    const windowLoads: unknown[] = [];
+    const appWindows = AppWindowDocumentV1SchemaZ.parse({
+      version: 1,
+      revision: 4,
+      updatedAt: "2026-07-21T00:00:00.000Z",
+      windows: {},
+      dockRoot: null,
+      dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+      floatingOrder: [],
+      focusedWindowId: null,
+      activeLayoutId: null,
+      layouts: {},
+    });
     const app = createApp({
       remoteAccess: { bindHostname: "0.0.0.0", token: "secret" },
       daemonIdentity: {
@@ -321,6 +339,12 @@ describe("GET /api/project/:name/application-shell", () => {
         async discoverApplicationShellSession(name) {
           requests.push(name);
           return { ...liveSession(), name: "product" };
+        },
+      },
+      applicationShellAppWindowBackend: {
+        async load(projectDir, terminalSourceIds, focusedTerminalSourceId) {
+          windowLoads.push({ projectDir, terminalSourceIds, focusedTerminalSourceId });
+          return appWindows;
         },
       },
     });
@@ -359,7 +383,21 @@ describe("GET /api/project/:name/application-shell", () => {
       }),
     );
     expect(JSON.stringify(body)).not.toMatch(/%[79]/u);
-    expect(requests).toEqual(["product", "product"]);
+
+    const v3Response = await app.request("/api/project/product/application-shell?version=3", {
+      headers: { authorization: "Bearer secret" },
+    });
+    expect(v3Response.status).toBe(200);
+    const v3 = ApplicationShellResourceV3SchemaZ.parse(await v3Response.json());
+    expect(v3.resource.appWindows).toEqual(appWindows);
+    expect(windowLoads).toEqual([
+      {
+        projectDir: liveSession().dir,
+        terminalSourceIds: v3.resource.terminalInventory.resources.map(({ id }) => id),
+        focusedTerminalSourceId: v3.resource.terminalInventory.activeResourceId,
+      },
+    ]);
+    expect(requests).toEqual(["product", "product", "product"]);
   });
 
   it("returns the established 404 envelope for an unknown session", async () => {

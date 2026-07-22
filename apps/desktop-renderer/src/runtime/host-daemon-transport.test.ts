@@ -1,6 +1,6 @@
 import {
   APPLICATION_SHELL_RESOURCE_VERSION,
-  APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   COHESION_FIXTURE_V1,
   type DesktopDaemonEvent,
   type HostCapabilities,
@@ -75,7 +75,7 @@ describe("HostCapabilities-backed daemon transport", () => {
     expect(result).toEqual(RESOURCE);
     expect(fetchApplicationShell).toHaveBeenCalledWith({
       workspaceName: "product",
-      resourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
+      resourceVersion: APPLICATION_SHELL_RESOURCE_V3_VERSION,
     });
     expect(JSON.stringify(fetchApplicationShell.mock.calls)).not.toMatch(
       /apiBaseUrl|sessionName|token|authorization/iu,

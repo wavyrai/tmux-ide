@@ -3,12 +3,14 @@ import { z } from "zod";
 import {
   ApplicationShellProjectionInputV1WireSchemaZ,
   ApplicationShellProjectionInputV2SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
 } from "./application-shell.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 
 export const APPLICATION_SHELL_RESOURCE_V1_VERSION = 1 as const;
 export const APPLICATION_SHELL_RESOURCE_V2_VERSION = 2 as const;
-/** @deprecated Use the explicit V1/V2 constants at a wire boundary. */
+export const APPLICATION_SHELL_RESOURCE_V3_VERSION = 3 as const;
+/** @deprecated Use the explicit version constants at a wire boundary. */
 export const APPLICATION_SHELL_RESOURCE_VERSION = APPLICATION_SHELL_RESOURCE_V1_VERSION;
 
 /**
@@ -35,9 +37,20 @@ export const ApplicationShellResourceV2SchemaZ = z
   .strict();
 export type ApplicationShellResourceV2 = z.infer<typeof ApplicationShellResourceV2SchemaZ>;
 
-/** Reader for persisted/captured envelopes across the V1 → V2 transition. */
+/** V3 adds the durable app-window document used by native canvas hosts. */
+export const ApplicationShellResourceV3SchemaZ = z
+  .object({
+    version: z.literal(APPLICATION_SHELL_RESOURCE_V3_VERSION),
+    daemon: DaemonInstanceIdentitySchemaZ,
+    resource: ApplicationShellProjectionInputV3SchemaZ,
+  })
+  .strict();
+export type ApplicationShellResourceV3 = z.infer<typeof ApplicationShellResourceV3SchemaZ>;
+
+/** Reader for persisted/captured envelopes across application-shell revisions. */
 export const ApplicationShellResourceSchemaZ = z.discriminatedUnion("version", [
   ApplicationShellResourceV1SchemaZ,
   ApplicationShellResourceV2SchemaZ,
+  ApplicationShellResourceV3SchemaZ,
 ]);
 export type ApplicationShellResource = z.infer<typeof ApplicationShellResourceSchemaZ>;

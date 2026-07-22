@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
   type DesktopDaemonHostState,
   type TerminalAttachRequest,
@@ -374,6 +375,19 @@ describe
       runTmux(["select-window", "-t", createdRuntime![0]!]);
       const shell = await firstCoordinator.fetchApplicationShell(workspaceName);
       expect(shell.status, JSON.stringify(shell)).toBe("ok");
+      if (shell.status !== "ok") throw new Error(shell.error.reason);
+      expect(shell.envelope.version).toBe(APPLICATION_SHELL_RESOURCE_V3_VERSION);
+      if (shell.envelope.version !== APPLICATION_SHELL_RESOURCE_V3_VERSION) {
+        throw new Error("application shell did not negotiate durable app-window state");
+      }
+      expect(Object.values(shell.envelope.resource.appWindows.windows)).toContainEqual(
+        expect.objectContaining({
+          source: {
+            kind: "terminal",
+            terminalSourceId: created.resource.semanticPaneId,
+          },
+        }),
+      );
       expect(shell).toMatchObject({
         status: "ok",
         envelope: {

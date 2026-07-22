@@ -22,6 +22,7 @@ import type {
   PaneFrameGripIntent,
 } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { DomApplicationShell } from "../experience/application-shell.tsx";
+import type { AppWindowCanvasCommandInvocation } from "../experience/app-window-canvas-presenter.ts";
 import type { CreatePaneFlowCatalogs } from "../experience/create-pane-flow-presenter.ts";
 import { DomIcon } from "../experience/dom-icon.tsx";
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
@@ -55,6 +56,7 @@ export interface DesktopLiveApplicationProps {
     source: PaneFrameActivationSource,
   ) => void;
   readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
+  readonly onAppWindowCommand?: (invocation: AppWindowCanvasCommandInvocation) => void;
   readonly terminalTransport?: NativeTerminalTransport | null;
   readonly reducedMotion?: boolean;
   readonly terminalThemeKey?: string;
@@ -629,6 +631,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             }}
             onPaneAction={props.onPaneAction}
             onPaneGrip={props.onPaneGrip}
+            onAppWindowCommand={props.onAppWindowCommand}
           />
           <Show when={notice()}>
             {(current) => (
@@ -782,6 +785,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           onCommand={props.onCommand}
           onPaneAction={props.onPaneAction}
           onPaneGrip={props.onPaneGrip}
+          onAppWindowCommand={props.onAppWindowCommand}
           onDaemonIdentityMismatch={props.onDaemonIdentityMismatch}
           daemonRecovery={props.daemonRecovery}
           onRetryDaemonConnection={props.onRetryDaemonConnection}

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellResourceSchemaZ,
 } from "./application-shell-resource.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
@@ -175,7 +176,12 @@ export const DesktopDaemonListWorkspacesResultSchemaZ = z.discriminatedUnion("st
 export const DesktopDaemonFetchApplicationShellRequestSchemaZ = z
   .object({
     workspaceName: DesktopWorkspaceNameSchemaZ,
-    resourceVersion: z.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION).optional(),
+    resourceVersion: z
+      .union([
+        z.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION),
+        z.literal(APPLICATION_SHELL_RESOURCE_V3_VERSION),
+      ])
+      .optional(),
   })
   .strict();
 

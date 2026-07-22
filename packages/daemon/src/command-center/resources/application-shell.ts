@@ -3,12 +3,15 @@ import { basename } from "node:path";
 import {
   ApplicationShellProjectionInputV1WireSchemaZ,
   ApplicationShellProjectionInputV2SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   CANONICAL_SURFACE_REGISTRY,
   SemanticProductIdSchemaZ,
   TerminalAttachmentSemanticPaneIdSchemaZ,
   projectApplicationShellV1,
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionInputV2,
+  type ApplicationShellProjectionInputV3,
+  type AppWindowDocumentV1,
   type TerminalResourceAttachability,
   type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
@@ -402,6 +405,23 @@ export function projectApplicationShellResource(
 
   // Enforce the downstream kernel invariant here so the HTTP boundary can
   // never publish an input that the shared application shell cannot project.
+  projectApplicationShellV1(parsed);
+  return deepFreeze(parsed);
+}
+
+/**
+ * V3 keeps live terminal discovery and durable window layout as separate
+ * authorities, then combines their validated snapshots at the wire edge.
+ */
+export function projectApplicationShellResourceV3(
+  session: ApplicationShellSessionFacts,
+  appWindows: AppWindowDocumentV1,
+): ApplicationShellProjectionInputV3 {
+  const resource = projectApplicationShellResource(session);
+  const parsed = ApplicationShellProjectionInputV3SchemaZ.parse({
+    ...resource,
+    appWindows,
+  });
   projectApplicationShellV1(parsed);
   return deepFreeze(parsed);
 }

@@ -1,0 +1,153 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`projectAppWindowCanvas > allocates the same semantic scene deterministically at 1440x900 1`] = `
+{
+  "focusedWindowId": "window.review",
+  "hiddenWindowIds": [
+    "window.hidden",
+  ],
+  "revision": 7,
+  "viewport": {
+    "height": 900,
+    "width": 1440,
+  },
+  "windows": [
+    {
+      "active": true,
+      "placement": "docked",
+      "rect": {
+        "height": 900,
+        "width": 477,
+        "x": 0,
+        "y": 0,
+      },
+      "selected": false,
+      "source": {
+        "kind": "terminal",
+        "terminalSourceId": "terminal.lead",
+      },
+      "stackId": "stack.left",
+      "stackIndex": 0,
+      "title": "Lead",
+      "windowId": "window.lead",
+      "zIndex": 1,
+    },
+    {
+      "active": true,
+      "placement": "docked",
+      "rect": {
+        "height": 900,
+        "width": 955,
+        "x": 485,
+        "y": 0,
+      },
+      "selected": false,
+      "source": {
+        "kind": "terminal",
+        "terminalSourceId": "terminal.worker",
+      },
+      "stackId": "stack.right",
+      "stackIndex": 0,
+      "title": "Worker",
+      "windowId": "window.worker",
+      "zIndex": 2,
+    },
+    {
+      "active": true,
+      "placement": "floating",
+      "rect": {
+        "height": 220,
+        "width": 360,
+        "x": 42,
+        "y": 36,
+      },
+      "selected": true,
+      "source": {
+        "kind": "terminal",
+        "terminalSourceId": "terminal.review",
+      },
+      "stackId": null,
+      "stackIndex": null,
+      "title": "Review",
+      "windowId": "window.review",
+      "zIndex": 100,
+    },
+  ],
+}
+`;
+
+exports[`projectAppWindowCanvas > projects canonical dock, tab, floating, focus, and z-order state at 800x500 1`] = `
+{
+  "focusedWindowId": "window.review",
+  "hiddenWindowIds": [
+    "window.hidden",
+  ],
+  "revision": 7,
+  "viewport": {
+    "height": 500,
+    "width": 800,
+  },
+  "windows": [
+    {
+      "active": true,
+      "placement": "docked",
+      "rect": {
+        "height": 500,
+        "width": 264,
+        "x": 0,
+        "y": 0,
+      },
+      "selected": false,
+      "source": {
+        "kind": "terminal",
+        "terminalSourceId": "terminal.lead",
+      },
+      "stackId": "stack.left",
+      "stackIndex": 0,
+      "title": "Lead",
+      "windowId": "window.lead",
+      "zIndex": 1,
+    },
+    {
+      "active": true,
+      "placement": "docked",
+      "rect": {
+        "height": 500,
+        "width": 528,
+        "x": 272,
+        "y": 0,
+      },
+      "selected": false,
+      "source": {
+        "kind": "terminal",
+        "terminalSourceId": "terminal.worker",
+      },
+      "stackId": "stack.right",
+      "stackIndex": 0,
+      "title": "Worker",
+      "windowId": "window.worker",
+      "zIndex": 2,
+    },
+    {
+      "active": true,
+      "placement": "floating",
+      "rect": {
+        "height": 220,
+        "width": 360,
+        "x": 42,
+        "y": 36,
+      },
+      "selected": true,
+      "source": {
+        "kind": "terminal",
+        "terminalSourceId": "terminal.review",
+      },
+      "stackId": null,
+      "stackIndex": null,
+      "title": "Review",
+      "windowId": "window.review",
+      "zIndex": 100,
+    },
+  ],
+}
+`;

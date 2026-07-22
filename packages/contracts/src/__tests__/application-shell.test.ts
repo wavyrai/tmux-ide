@@ -8,6 +8,7 @@ import {
   ApplicationShellProjectionV1SchemaZ,
   ApplicationShellProjectionInputV1SchemaZ,
   ApplicationShellProjectionInputV2SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   TerminalResourceAttachabilitySchemaZ,
   applyApplicationShellInvocationV1,
   applicationShellActionTraceV1,
@@ -20,6 +21,7 @@ import {
   ApplicationShellResourceSchemaZ,
   ApplicationShellResourceV1SchemaZ,
   ApplicationShellResourceV2SchemaZ,
+  ApplicationShellResourceV3SchemaZ,
 } from "../application-shell-resource.ts";
 import { COHESION_FIXTURE_V1 } from "../cohesion-fixture.ts";
 import {
@@ -158,6 +160,30 @@ describe("semantic application shell", () => {
     };
     expect(ApplicationShellResourceV2SchemaZ.parse(v2Envelope)).toEqual(v2Envelope);
     expect(ApplicationShellResourceSchemaZ.parse(v2Envelope)).toEqual(v2Envelope);
+    const v3Envelope = {
+      ...v2Envelope,
+      version: 3,
+      resource: {
+        ...v2Envelope.resource,
+        appWindows: {
+          version: 1,
+          revision: 0,
+          updatedAt: "2026-07-21T00:00:00.000Z",
+          windows: {},
+          dockRoot: null,
+          dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+          floatingOrder: [],
+          focusedWindowId: null,
+          activeLayoutId: null,
+          layouts: {},
+        },
+      },
+    };
+    expect(ApplicationShellProjectionInputV3SchemaZ.parse(v3Envelope.resource)).toEqual(
+      v3Envelope.resource,
+    );
+    expect(ApplicationShellResourceV3SchemaZ.parse(v3Envelope)).toEqual(v3Envelope);
+    expect(ApplicationShellResourceSchemaZ.parse(v3Envelope)).toEqual(v3Envelope);
 
     expect(() =>
       projectApplicationShellV1({

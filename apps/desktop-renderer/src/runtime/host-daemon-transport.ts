@@ -1,5 +1,5 @@
 import {
-  APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   DesktopApplicationShellTargetSchemaZ,
   isDaemonWireProtocolCompatible,
   type DaemonInstanceIdentity,
@@ -117,7 +117,7 @@ export function createHostDaemonTransport(
       if (signal.aborted) throw aborted();
       const request = host.daemon.fetchApplicationShell({
         workspaceName: safeTarget.workspaceName,
-        resourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
+        resourceVersion: APPLICATION_SHELL_RESOURCE_V3_VERSION,
       });
       let rejectAborted: (() => void) | undefined;
       const abortRequest = new Promise<never>((_resolve, reject) => {
