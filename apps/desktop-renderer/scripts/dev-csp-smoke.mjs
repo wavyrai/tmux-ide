@@ -142,7 +142,8 @@ try {
     const primitiveResult = await page.evaluate(async () => {
       const mountRoot = globalThis.document.createElement("div");
       globalThis.document.body.append(mountRoot);
-      const { mountUiSystemShowcaseFixture } = await import("/src/ui-system/showcase.fixture.tsx");
+      const { mountControlledTabsSmokeFixture, mountUiSystemShowcaseFixture } =
+        await import("/src/ui-system/showcase.fixture.tsx");
       const dispose = mountUiSystemShowcaseFixture(mountRoot);
       const trigger = mountRoot.querySelector('[aria-label="Add pane"]');
       trigger?.focus();
@@ -150,8 +151,22 @@ try {
       await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
       const tooltip = globalThis.document.querySelector('[role="tooltip"][data-open="true"]');
       const tooltipRect = tooltip?.getBoundingClientRect();
+      const tabsRoot = globalThis.document.createElement("div");
+      globalThis.document.body.append(tabsRoot);
+      const controlledTabs = mountControlledTabsSmokeFixture(tabsRoot);
+      controlledTabs.select("changes");
+      const controlledTriggers = [...tabsRoot.querySelectorAll('[role="tab"]')];
+      const controlledTabsSynchronized =
+        controlledTriggers[0]?.getAttribute("aria-selected") === "false" &&
+        controlledTriggers[0]?.getAttribute("tabindex") === "-1" &&
+        controlledTriggers[1]?.getAttribute("aria-selected") === "true" &&
+        controlledTriggers[1]?.getAttribute("tabindex") === "0";
       const output = {
+        controlledTabsSynchronized,
         portaledWithinFixture: Boolean(tooltip && mountRoot.contains(tooltip)),
+        portaledWithinOverlay: Boolean(
+          tooltip && trigger?.closest("[data-overlay-root]")?.contains(tooltip),
+        ),
         tooltip: tooltipRect
           ? {
               left: tooltipRect.left,
@@ -161,6 +176,8 @@ try {
             }
           : null,
       };
+      controlledTabs.dispose();
+      tabsRoot.remove();
       dispose();
       mountRoot.remove();
       return output;
@@ -184,6 +201,8 @@ try {
     }
     if (
       !primitiveResult.portaledWithinFixture ||
+      !primitiveResult.portaledWithinOverlay ||
+      !primitiveResult.controlledTabsSynchronized ||
       !primitiveResult.tooltip ||
       primitiveResult.tooltip.left < 0 ||
       primitiveResult.tooltip.top < 0 ||

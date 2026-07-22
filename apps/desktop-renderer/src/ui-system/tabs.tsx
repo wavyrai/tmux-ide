@@ -1,4 +1,13 @@
-import { For, createMemo, createSignal, createUniqueId, mergeProps, type JSX } from "solid-js";
+import {
+  For,
+  createEffect,
+  createMemo,
+  createSignal,
+  createUniqueId,
+  mergeProps,
+  on,
+  type JSX,
+} from "solid-js";
 
 export interface TabItem {
   readonly id: string;
@@ -40,6 +49,17 @@ export function Tabs(props: TabsProps): JSX.Element {
       : selectedValue();
   });
   const triggers: Array<HTMLButtonElement | undefined> = [];
+  let tablist: HTMLDivElement | undefined;
+
+  createEffect(
+    on(selectedValue, (selected) => {
+      if (!selected) return;
+      const focusInsideTablist = tablist?.contains(document.activeElement) ?? false;
+      if (merged.activationMode === "automatic" || !focusInsideTablist) {
+        setFocusedValue(selected);
+      }
+    }),
+  );
 
   const select = (id: string) => {
     if (merged.value === undefined) setInternalValue(id);
@@ -86,7 +106,12 @@ export function Tabs(props: TabsProps): JSX.Element {
       class={`tmi-tabs${merged.class ? ` ${merged.class}` : ""}`}
       data-orientation={merged.orientation}
     >
-      <div role="tablist" aria-label={merged.label} aria-orientation={merged.orientation}>
+      <div
+        ref={(element) => (tablist = element)}
+        role="tablist"
+        aria-label={merged.label}
+        aria-orientation={merged.orientation}
+      >
         <For each={merged.items}>
           {(item, index) => {
             const selected = () => selectedValue() === item.id;

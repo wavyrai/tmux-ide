@@ -5,12 +5,13 @@ import { render } from "solid-js/web";
 import { contrastRatio, type RendererNeutralColor } from "@tmux-ide/contracts";
 
 import { createDomExperience, DOM_EXPERIENCE_VARIABLE } from "../experience/dom-experience.ts";
+import shellStyles from "../styles.css?raw";
 import { Button } from "./button.tsx";
 import { EmptyState } from "./empty-state.tsx";
 import { IconButton } from "./icon-button.tsx";
 import { ResizeHandle } from "./resize-handle.tsx";
 import { Tabs } from "./tabs.tsx";
-import { resolveTooltipPosition } from "./tooltip.tsx";
+import { resolveTooltipPosition, Tooltip } from "./tooltip.tsx";
 import styles from "./ui-system.css?raw";
 
 const disposers: Array<() => void> = [];
@@ -168,6 +169,73 @@ describe("desktop UI primitives", () => {
     expect(onValueChange).toHaveBeenCalledWith("changes");
   });
 
+  it("aligns automatic roving tabindex when a controlled value rerenders", () => {
+    let setControlledValue: (value: string) => void = () => undefined;
+    const root = mount(() => {
+      const [value, setValue] = createSignal("canvas");
+      setControlledValue = setValue;
+      return (
+        <Tabs
+          label="Controlled automatic views"
+          value={value()}
+          items={[
+            { id: "canvas", label: "Canvas", panel: "Canvas panel" },
+            { id: "changes", label: "Changes", panel: "Changes panel" },
+          ]}
+        />
+      );
+    });
+    const tabs = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+
+    setControlledValue("changes");
+
+    expect(tabs[0]!.getAttribute("aria-selected")).toBe("false");
+    expect(tabs[0]!.tabIndex).toBe(-1);
+    expect(tabs[1]!.getAttribute("aria-selected")).toBe("true");
+    expect(tabs[1]!.tabIndex).toBe(0);
+  });
+
+  it("preserves manual user roving only while focus remains in the tablist", () => {
+    let setControlledValue: (value: string) => void = () => undefined;
+    const root = mount(() => {
+      const [value, setValue] = createSignal("canvas");
+      setControlledValue = setValue;
+      return (
+        <>
+          <button type="button" data-outside-tabs>
+            Outside
+          </button>
+          <Tabs
+            label="Controlled manual views"
+            activationMode="manual"
+            value={value()}
+            items={[
+              { id: "canvas", label: "Canvas", panel: "Canvas panel" },
+              { id: "changes", label: "Changes", panel: "Changes panel" },
+              { id: "missions", label: "Missions", panel: "Missions panel" },
+            ]}
+          />
+        </>
+      );
+    });
+    const tabs = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+
+    tabs[0]!.focus();
+    tabs[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    setControlledValue("missions");
+
+    expect(tabs[2]!.getAttribute("aria-selected")).toBe("true");
+    expect(tabs[1]!.tabIndex).toBe(0);
+    expect(tabs[2]!.tabIndex).toBe(-1);
+
+    root.querySelector<HTMLButtonElement>("[data-outside-tabs]")!.focus();
+    setControlledValue("canvas");
+
+    expect(tabs[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(tabs[0]!.tabIndex).toBe(0);
+    expect(tabs[1]!.tabIndex).toBe(-1);
+  });
+
   it("exposes a keyboard-operable separator with bounded values", () => {
     const changes: number[] = [];
     const root = mount(() => {
@@ -239,22 +307,118 @@ describe("desktop UI primitives", () => {
     expect(position).toEqual({ placement: "bottom", left: 112, top: 29 });
   });
 
-  it("portals tooltips to the theme root outside clipped feature surfaces", () => {
+  it("portals tooltips into the create-pane overlay above its clipped dialog", () => {
+    const shellSheet = document.createElement("style");
+    shellSheet.textContent = shellStyles;
+    const primitiveSheet = document.createElement("style");
+    primitiveSheet.textContent = styles;
+    document.head.append(shellSheet, primitiveSheet);
     const root = mount(() => (
       <div class="app">
-        <div class="clipped-surface">
-          <IconButton label="Add pane">
-            <span aria-hidden="true">+</span>
-          </IconButton>
+        <div
+          class="create-pane-flow__overlay create-pane-flow__overlay--open"
+          data-overlay-root="true"
+        >
+          <div class="create-pane-flow__dialog">
+            <div class="clipped-surface">
+              <IconButton label="Add pane">
+                <span aria-hidden="true">+</span>
+              </IconButton>
+            </div>
+          </div>
         </div>
       </div>
     ));
     const app = root.querySelector(".app")!;
+    const overlay = root.querySelector<HTMLElement>(".create-pane-flow__overlay")!;
+    const dialog = root.querySelector(".create-pane-flow__dialog")!;
     const clipped = root.querySelector(".clipped-surface")!;
-    const tooltip = document.querySelector('[role="tooltip"]')!;
+    const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]')!;
 
     expect(app.contains(tooltip)).toBe(true);
+    expect(overlay.contains(tooltip)).toBe(true);
+    expect(dialog.contains(tooltip)).toBe(false);
     expect(clipped.contains(tooltip)).toBe(false);
+    expect(getComputedStyle(overlay).zIndex).toBe("120");
+    expect(getComputedStyle(tooltip).zIndex).toBe("1");
+    expect(getComputedStyle(tooltip).position).toBe("fixed");
+    shellSheet.remove();
+    primitiveSheet.remove();
+  });
+
+  it("lets only the innermost tooltip consume Escape before its overlay", () => {
+    const overlayEscape = vi.fn();
+    const root = mount(() => (
+      <div
+        data-overlay-root="true"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") overlayEscape();
+        }}
+      >
+        <Tooltip content="Outer help">
+          {(outerTrigger) => (
+            <span aria-describedby={outerTrigger["aria-describedby"]}>
+              <Tooltip content="Inner help">
+                {(innerTrigger) => (
+                  <button type="button" aria-describedby={innerTrigger["aria-describedby"]}>
+                    Nested help
+                  </button>
+                )}
+              </Tooltip>
+            </span>
+          )}
+        </Tooltip>
+      </div>
+    ));
+    const button = root.querySelector("button")!;
+    const tooltips = [...document.querySelectorAll<HTMLElement>('[role="tooltip"]')];
+    const outer = tooltips.find((tooltip) => tooltip.textContent === "Outer help")!;
+    const inner = tooltips.find((tooltip) => tooltip.textContent === "Inner help")!;
+
+    button.focus();
+    expect(outer.dataset.open).toBe("true");
+    expect(inner.dataset.open).toBe("true");
+
+    const firstEscape = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    button.dispatchEvent(firstEscape);
+    expect(firstEscape.defaultPrevented).toBe(true);
+    expect(inner.dataset.open).toBe("false");
+    expect(outer.dataset.open).toBe("true");
+    expect(overlayEscape).not.toHaveBeenCalled();
+
+    button.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    expect(outer.dataset.open).toBe("false");
+    expect(overlayEscape).not.toHaveBeenCalled();
+
+    button.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(overlayEscape).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves overlay Escape untouched when an icon action has no tooltip", () => {
+    const overlayEscape = vi.fn();
+    const root = mount(() => (
+      <div
+        data-overlay-root="true"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") overlayEscape();
+        }}
+      >
+        <IconButton label="Close" tooltip={false}>
+          <span aria-hidden="true">×</span>
+        </IconButton>
+      </div>
+    ));
+
+    root
+      .querySelector("button")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(overlayEscape).toHaveBeenCalledTimes(1);
   });
 });
 

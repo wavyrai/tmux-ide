@@ -37,6 +37,7 @@
   --tmi-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
   --tmi-ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
   --tmi-ease-in-quart: cubic-bezier(0.895, 0.03, 0.685, 0.22);
+  --tmi-layer-tooltip: 100;
 }
 
 [data-theme="dark"],
@@ -95,6 +96,10 @@
   --tmi-radius-panel: var(--tmux-ide-shape-floating-radius, 6px);
   --tmi-motion-fast: var(--tmux-ide-motion-fast, 150ms);
   --tmi-motion-exit: var(--tmux-ide-motion-instant, 100ms);
+}
+
+[data-overlay-root] {
+  --tmi-layer-tooltip: 1;
 }
 
 .tmi-technical {
@@ -321,7 +326,7 @@
 
 .tmi-tooltip {
   position: fixed;
-  z-index: 100;
+  z-index: var(--tmi-layer-tooltip);
   width: max-content;
   max-width: min(260px, calc(100vw - 24px));
   padding: 6px 8px;

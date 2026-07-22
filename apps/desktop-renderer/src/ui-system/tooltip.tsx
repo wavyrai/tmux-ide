@@ -145,7 +145,9 @@ export function Tooltip(props: TooltipProps): JSX.Element {
   };
 
   const closeOnEscape: JSX.EventHandler<HTMLSpanElement, KeyboardEvent> = (event) => {
-    if (event.key === "Escape") {
+    if (event.key === "Escape" && open()) {
+      event.preventDefault();
+      event.stopPropagation();
       setDismissed(true);
       setPositioned(false);
     }
@@ -165,7 +167,13 @@ export function Tooltip(props: TooltipProps): JSX.Element {
       onKeyDown={closeOnEscape}
     >
       {props.children({ "aria-describedby": id })}
-      <Portal mount={anchor?.closest<HTMLElement>(".app, [data-tmi-theme]") ?? document.body}>
+      <Portal
+        mount={
+          anchor?.closest<HTMLElement>("[data-overlay-root]") ??
+          anchor?.closest<HTMLElement>(".app, [data-tmi-theme]") ??
+          document.body
+        }
+      >
         <span
           ref={(element) => (tooltip = element)}
           id={id}

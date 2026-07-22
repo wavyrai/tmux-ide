@@ -20,7 +20,7 @@ export function UiSystemShowcaseFixture(): JSX.Element {
   const [split, setSplit] = createSignal(48);
   return (
     <div class="tmi-showcase" data-tmi-theme="dark">
-      <div>
+      <div data-overlay-root="true">
         <Button variant="primary">New terminal</Button>
         <Button>Reconnect</Button>
         <Button variant="ghost">Cancel</Button>
@@ -53,4 +53,26 @@ export function UiSystemShowcaseFixture(): JSX.Element {
 /** Browser-smoke mount kept out of the application shell composition. */
 export function mountUiSystemShowcaseFixture(root: HTMLElement): () => void {
   return render(() => <UiSystemShowcaseFixture />, root);
+}
+
+/** Real-browser controlled rerender probe used by the strict-CSP smoke. */
+export function mountControlledTabsSmokeFixture(root: HTMLElement): {
+  readonly select: (value: string) => void;
+  readonly dispose: () => void;
+} {
+  const [value, setValue] = createSignal("canvas");
+  const dispose = render(
+    () => (
+      <Tabs
+        label="Controlled smoke views"
+        value={value()}
+        items={[
+          { id: "canvas", label: "Canvas", panel: "Canvas panel" },
+          { id: "changes", label: "Changes", panel: "Changes panel" },
+        ]}
+      />
+    ),
+    root,
+  );
+  return { select: setValue, dispose };
 }

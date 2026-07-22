@@ -18,5 +18,7 @@ mode with focus roving independently from selection. `ResizeHandle` is a focusab
 ARIA separator: arrow keys move one step, Shift+arrow moves a large step, and
 Home/End move to the bounds. `Tooltip` uses a render prop so its trigger receives
 `aria-describedby` without cloning elements. Its fixed layer portals to the nearest
-app/theme root, flips and clamps against the viewport, and is exercised by the
-strict-CSP browser smoke without injecting a style element.
+`data-overlay-root` (then the app/theme root), flips and clamps against the viewport,
+and is exercised by the strict-CSP browser smoke without injecting a style element.
+Escape dismisses only the innermost open tooltip; once tooltip layers are gone, the
+event remains available to the containing dialog or palette.
