@@ -99,21 +99,26 @@ describe("grouped tmux attachment planner", () => {
     ).toBe(true);
   });
 
-  it("models interactive and read-only input/size ownership separately", () => {
+  it("uses exact safe interactive and read-only client argv for attach and recovery", () => {
     const interactive = planGroupedTmuxAttachment(input());
     const readOnly = planGroupedTmuxAttachment(input({ viewerMode: "read-only" }));
-    expect(interactive.attach.argv).toEqual([
+    const interactiveAttachArgv = [
       "attach-session",
+      "-E",
       "-t",
       `=${interactive.identity.viewSessionName}`,
-    ]);
-    expect(readOnly.attach.argv).toEqual([
+    ];
+    const readOnlyAttachArgv = [
       "attach-session",
-      "-f",
-      "read-only,ignore-size",
+      "-E",
+      "-r",
       "-t",
       `=${readOnly.identity.viewSessionName}`,
-    ]);
+    ];
+    expect(interactive.attach.argv).toEqual(interactiveAttachArgv);
+    expect(interactive.recover.attach.argv).toEqual(interactiveAttachArgv);
+    expect(readOnly.attach.argv).toEqual(readOnlyAttachArgv);
+    expect(readOnly.recover.attach.argv).toEqual(readOnlyAttachArgv);
     for (const argv of everyArgv(readOnly)) {
       expect(argv).not.toContain("set-window-option");
       expect(argv).not.toContain("resize-window");
