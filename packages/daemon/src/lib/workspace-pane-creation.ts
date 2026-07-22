@@ -1,4 +1,5 @@
-import { realpathSync, statSync } from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { delimiter, isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
   WorkspacePaneCreateMutationRequestSchemaZ,
@@ -9,7 +10,7 @@ import {
   type WorkspacePaneCreateMutationResult,
   type WorkspacePaneCreatedResource,
 } from "@tmux-ide/contracts";
-import { runTmux, TmuxError } from "@tmux-ide/tmux-bridge";
+import { runTmuxBinary, TmuxError } from "@tmux-ide/tmux-bridge";
 
 import { probeProjectReadiness } from "./project-readiness-probe.ts";
 import { loadWorkspaceConfig, WorkspaceConfigLoadError } from "./workspace-config-loader.ts";
@@ -86,6 +87,12 @@ interface RuntimePaneIdentity {
   readonly windowId: string;
   readonly creationId: string;
   readonly provisionalWindowName: string;
+  readonly ownershipProof: "create-output" | "creation-marker";
+}
+
+interface ProvisionalRuntimeIdentity {
+  readonly paneId: string;
+  readonly windowId: string;
 }
 
 interface SuccessfulOperation {
@@ -120,20 +127,140 @@ export interface WorkspacePaneCreationIo {
   readonly creationFailureCannotHaveMutated: (error: unknown) => boolean;
 }
 
+export interface WorkspacePaneTmuxAuthority {
+  readonly executablePath: string;
+  readonly socketSelector:
+    | { readonly kind: "path"; readonly path: string }
+    | { readonly kind: "name"; readonly name: "default" };
+}
+
 function canonicalProjectDir(path: string): string {
   const canonical = realpathSync(path);
   if (!statSync(canonical).isDirectory()) throw new Error("project root is not a directory");
   return canonical;
 }
 
-function tmux(args: readonly string[]): string {
-  return String(
-    runTmux([...args], {
-      encoding: "utf8",
-      maxBuffer: TMUX_OUTPUT_BYTES,
-      stdio: ["ignore", "pipe", "pipe"],
-    }),
-  ).replace(/(?:\r?\n)+$/u, "");
+function workspaceWithTrustedConfig(workspace: Workspace, canonicalRoot: string): Workspace {
+  const candidate = workspace.configPath ?? workspace.ideConfigPath;
+  if (!candidate) {
+    return { ...workspace, configPath: null, ideConfigPath: null };
+  }
+  let canonicalConfig: string;
+  try {
+    canonicalConfig = realpathSync(candidate);
+    if (!statSync(canonicalConfig).isFile()) throw new Error("config is not a file");
+  } catch (cause) {
+    throw new WorkspacePaneCreationError(
+      "workspace_unavailable",
+      { workspaceName: workspace.name, reason: "config_provenance_unavailable" },
+      cause,
+    );
+  }
+  const ownedRelativePath = relative(canonicalRoot, canonicalConfig);
+  if (
+    ownedRelativePath === "" ||
+    ownedRelativePath === ".." ||
+    ownedRelativePath.startsWith(`..${sep}`) ||
+    isAbsolute(ownedRelativePath)
+  ) {
+    throw new WorkspacePaneCreationError("workspace_unavailable", {
+      workspaceName: workspace.name,
+      reason: "config_outside_workspace",
+    });
+  }
+  return {
+    ...workspace,
+    configPath: canonicalConfig,
+    ideConfigPath: canonicalConfig,
+  };
+}
+
+function resolveTmuxExecutable(): string {
+  const configured = process.env.TMUX_IDE_TMUX_BIN;
+  const candidates = configured
+    ? [configured]
+    : (process.env.PATH ?? "")
+        .split(delimiter)
+        .filter(Boolean)
+        .map((entry) => resolve(entry, "tmux"));
+  for (const candidate of candidates) {
+    try {
+      if (!isAbsolute(candidate)) continue;
+      accessSync(candidate, constants.X_OK);
+      const canonical = realpathSync(candidate);
+      if (statSync(canonical).isFile()) return canonical;
+    } catch {
+      // Continue to the next daemon-start candidate.
+    }
+  }
+  throw new WorkspacePaneCreationError("workspace_unavailable", {
+    reason: "tmux_executable_unavailable",
+  });
+}
+
+function tmuxSocketFromEnvironment(): string | null {
+  const match = /^(.*),[0-9]+,[0-9]+$/u.exec(process.env.TMUX ?? "");
+  return match?.[1] || null;
+}
+
+export function resolveWorkspacePaneTmuxAuthority(): WorkspacePaneTmuxAuthority {
+  const executablePath = resolveTmuxExecutable();
+  const environmentSocket = tmuxSocketFromEnvironment();
+  if (environmentSocket) {
+    const path = realpathSync(environmentSocket);
+    if (!statSync(path).isSocket()) {
+      throw new WorkspacePaneCreationError("workspace_unavailable", {
+        reason: "tmux_socket_unavailable",
+      });
+    }
+    return Object.freeze({
+      executablePath,
+      socketSelector: { kind: "path" as const, path },
+    });
+  }
+  // A sessionless daemon may start before the default tmux server exists. Pin
+  // the daemon's default socket *name* and captured environment rather than
+  // consulting a later request's TMUX/PATH.
+  return Object.freeze({
+    executablePath,
+    socketSelector: { kind: "name" as const, name: "default" as const },
+  });
+}
+
+function pinnedTmuxRunner(
+  authority: WorkspacePaneTmuxAuthority,
+): (args: readonly string[]) => string {
+  const executablePath = realpathSync(authority.executablePath);
+  accessSync(executablePath, constants.X_OK);
+  if (!isAbsolute(executablePath) || !statSync(executablePath).isFile()) {
+    throw new TypeError("Pinned tmux executable is invalid.");
+  }
+  const socketArgv =
+    authority.socketSelector.kind === "path"
+      ? (() => {
+          const path = realpathSync(authority.socketSelector.path);
+          if (!isAbsolute(path) || !statSync(path).isSocket()) {
+            throw new TypeError("Pinned tmux socket is invalid.");
+          }
+          return ["-S", path];
+        })()
+      : authority.socketSelector.name === "default"
+        ? ["-L", "default"]
+        : (() => {
+            throw new TypeError("Pinned tmux socket is invalid.");
+          })();
+  const environment = { ...process.env };
+  delete environment.TMUX;
+  delete environment.TMUX_PANE;
+  return (args) =>
+    String(
+      runTmuxBinary(executablePath, [...socketArgv, ...args], {
+        encoding: "utf8",
+        env: environment,
+        maxBuffer: TMUX_OUTPUT_BYTES,
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    ).replace(/(?:\r?\n)+$/u, "");
 }
 
 function profileCommand(profile: WorkspaceHarnessProfile): readonly string[] {
@@ -222,9 +349,8 @@ async function resolveMission(
   return mission.id;
 }
 
-const DEFAULT_IO: WorkspacePaneCreationIo = {
+const DEFAULT_IO: Omit<WorkspacePaneCreationIo, "runTmux"> = {
   canonicalProjectDir,
-  runTmux: tmux,
   resolveHarness,
   resolveMission,
   isMissingTmuxTarget: (error) => error instanceof TmuxError && error.code === "SESSION_NOT_FOUND",
@@ -305,6 +431,7 @@ function parseCreatedRuntime(
     windowId: match[2]!,
     creationId,
     provisionalWindowName: provisionalName,
+    ownershipProof: "create-output",
   };
 }
 
@@ -426,10 +553,17 @@ export class WorkspacePaneCreationAuthority {
     io?: Partial<WorkspacePaneCreationIo>;
     maxLiveOrUnsafeOperations?: number;
     maxPendingOperations?: number;
+    tmuxAuthority?: WorkspacePaneTmuxAuthority;
   }) {
     this.#daemonInstanceId = options.daemonInstanceId;
     this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
-    this.#io = { ...DEFAULT_IO, ...options.io };
+    this.#io = {
+      ...DEFAULT_IO,
+      ...options.io,
+      runTmux:
+        options.io?.runTmux ??
+        pinnedTmuxRunner(options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority()),
+    };
     this.#maxLiveOrUnsafeOperations = boundedAuthorityLimit(
       options.maxLiveOrUnsafeOperations,
       MAX_LIVE_OR_UNSAFE_OPERATIONS,
@@ -515,16 +649,21 @@ export class WorkspacePaneCreationAuthority {
     let runtime: RuntimePaneIdentity | null = null;
     try {
       const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
+      const trustedWorkspace = workspaceWithTrustedConfig(workspace, canonicalRoot);
       this.#io.runTmux(["has-session", "-t", `=${workspace.sessionName}`]);
       const harness =
         request.intent.kind === "agent"
-          ? await this.#io.resolveHarness(workspace, canonicalRoot, request.intent.harnessProfileId)
+          ? await this.#io.resolveHarness(
+              trustedWorkspace,
+              canonicalRoot,
+              request.intent.harnessProfileId,
+            )
           : null;
       this.#assertActive(request.operationId);
       if (harness) assertBoundedLaunch(harness);
       const resolvedMissionId =
         request.intent.kind === "agent" && request.intent.missionId
-          ? await this.#io.resolveMission(workspace, canonicalRoot, request.intent.missionId)
+          ? await this.#io.resolveMission(trustedWorkspace, canonicalRoot, request.intent.missionId)
           : null;
       this.#assertActive(request.operationId);
       const title = defaultTitle(request.intent, harness);
@@ -582,56 +721,21 @@ export class WorkspacePaneCreationAuthority {
       try {
         createOutput = this.#io.runTmux(createArgs);
       } catch (error) {
-        let recovered: RuntimePaneIdentity[];
-        try {
-          recovered = this.#provisionalRuntimes(
-            workspace.sessionName,
-            provisionalName,
-            request.operationId,
-          );
-        } catch (recoveryError) {
-          throw new WorkspacePaneCreationError(
-            "pane_cleanup_unproven",
-            { operationId: request.operationId, workspaceName: workspace.name },
-            new AggregateError([error, recoveryError], "tmux create and recovery both failed"),
-          );
-        }
-        runtime = recovered[0] ?? null;
-        if (!runtime && !this.#io.creationFailureCannotHaveMutated(error)) {
-          throw new WorkspacePaneCreationError(
-            "pane_cleanup_unproven",
-            { operationId: request.operationId, workspaceName: workspace.name },
-            error,
-          );
-        }
-        throw error;
+        if (this.#io.creationFailureCannotHaveMutated(error)) throw error;
+        throw new WorkspacePaneCreationError(
+          "pane_cleanup_unproven",
+          { operationId: request.operationId, workspaceName: workspace.name },
+          error,
+        );
       }
       try {
         runtime = parseCreatedRuntime(createOutput, request.operationId, provisionalName);
       } catch (error) {
-        let recovered: RuntimePaneIdentity[];
-        try {
-          recovered = this.#provisionalRuntimes(
-            workspace.sessionName,
-            provisionalName,
-            request.operationId,
-          );
-        } catch (recoveryError) {
-          throw new WorkspacePaneCreationError(
-            "pane_cleanup_unproven",
-            { operationId: request.operationId, workspaceName: workspace.name },
-            new AggregateError([error, recoveryError], "tmux output and recovery both failed"),
-          );
-        }
-        runtime = recovered[0] ?? null;
-        if (!runtime) {
-          throw new WorkspacePaneCreationError(
-            "pane_cleanup_unproven",
-            { operationId: request.operationId, workspaceName: workspace.name },
-            error,
-          );
-        }
-        throw error;
+        throw new WorkspacePaneCreationError(
+          "pane_cleanup_unproven",
+          { operationId: request.operationId, workspaceName: workspace.name },
+          error,
+        );
       }
       this.#assertActive(request.operationId);
 
@@ -764,7 +868,9 @@ export class WorkspacePaneCreationAuthority {
       const [paneId, marker, windowName, paneCount, extra] = proof.split("\t");
       const markerProvesOwnership = marker === runtime.creationId;
       const provisionalNameProvesPreMarkerOwnership =
-        marker === "" && windowName === runtime.provisionalWindowName;
+        runtime.ownershipProof === "create-output" &&
+        marker === "" &&
+        windowName === runtime.provisionalWindowName;
       if (
         extra !== undefined ||
         paneId !== runtime.paneId ||
@@ -818,6 +924,7 @@ export class WorkspacePaneCreationAuthority {
         windowId: windowId!,
         creationId,
         provisionalWindowName: provisionalWindowName(creationId),
+        ownershipProof: "creation-marker",
       });
     }
     if (candidates.length === 0) return null;
@@ -846,7 +953,7 @@ export class WorkspacePaneCreationAuthority {
     sessionName: string,
     expectedWindowName: string,
     creationId: string,
-  ): RuntimePaneIdentity[] {
+  ): ProvisionalRuntimeIdentity[] {
     const output = this.#io.runTmux([
       "list-windows",
       "-t",
@@ -855,7 +962,7 @@ export class WorkspacePaneCreationAuthority {
       "#{window_id}\t#{window_name}\t#{window_panes}\t#{pane_id}",
     ]);
     if (!output) return [];
-    const matches: RuntimePaneIdentity[] = [];
+    const matches: ProvisionalRuntimeIdentity[] = [];
     for (const line of output.split("\n")) {
       const [windowId, windowName, paneCount, paneId, extra] = line.split("\t");
       if (windowName !== expectedWindowName) continue;
@@ -870,8 +977,6 @@ export class WorkspacePaneCreationAuthority {
       matches.push({
         windowId: windowId!,
         paneId: paneId!,
-        creationId,
-        provisionalWindowName: expectedWindowName,
       });
     }
     if (matches.length > 1) {

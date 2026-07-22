@@ -13,6 +13,8 @@
 import type { z } from "zod";
 import {
   ActionContractsZ,
+  type WorkspacePaneCreateMutationRequest,
+  type WorkspacePaneCreateMutationResult,
   type ActionInput,
   type ActionName,
   type ActionResult,
@@ -39,6 +41,9 @@ import { workspacePaneCreateHandler } from "./handlers/workspace-pane-create.ts"
 export interface ActionExecutionContext {
   readonly operationId?: string;
   readonly daemonInstanceId?: string;
+  readonly workspacePaneCreationBackend?: {
+    create(input: WorkspacePaneCreateMutationRequest): Promise<WorkspacePaneCreateMutationResult>;
+  };
 }
 
 export type ActionHandler<N extends ActionName> = (

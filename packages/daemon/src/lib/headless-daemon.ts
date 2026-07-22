@@ -248,9 +248,10 @@ export async function runHeadlessDaemon(
         handle = await deps.startEmbeddedDaemon({
           port,
           bindHostname: "127.0.0.1",
-          // Persisted only in the owner-only daemon record. Native main and
-          // trusted CLI transports use it; renderer/browser code never sees it.
-          authToken: generateAuthToken(),
+          // Persisted only in the owner-only daemon record. This capability is
+          // independent from the remotely shared access token.
+          authToken: null,
+          localBypassToken: generateAuthToken(),
           silent: true,
           ...(options.sessionName ? { sessionName: options.sessionName } : {}),
           ...(options.expectedVersion ? { productVersion: options.expectedVersion } : {}),

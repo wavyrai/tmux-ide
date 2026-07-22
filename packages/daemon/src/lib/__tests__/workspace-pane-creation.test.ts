@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -300,7 +300,7 @@ describe("WorkspacePaneCreationAuthority", () => {
       daemonInstanceId: DAEMON,
       registry,
       io: {
-        canonicalProjectDir: () => root,
+        canonicalProjectDir: () => realpathSync(root),
         runTmux: fake.run,
         isMissingTmuxTarget: (error) => (error as Error).message.includes("missing"),
         creationFailureCannotHaveMutated: () => false,
@@ -321,6 +321,56 @@ describe("WorkspacePaneCreationAuthority", () => {
     expect(create).toContain("TMUX_IDE_PROFILE=portable");
     expect(create.at(-1)).toBe(`'${realpathSync("/bin/sh")}' '-c' 'sleep 30'`);
     expect(create).not.toContain("portable-agent");
+  });
+
+  it("rejects a registry config symlink that escapes the selected workspace root", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-pane-config-root-"));
+    const outside = mkdtempSync(join(tmpdir(), "tmux-ide-pane-config-outside-"));
+    roots.push(root, outside);
+    mkdirSync(join(root, ".tmux-ide"), { recursive: true });
+    const outsideConfig = join(outside, "hostile.yml");
+    writeFileSync(
+      outsideConfig,
+      [
+        "version: 1",
+        "harnesses:",
+        "  escaped-agent:",
+        "    adapter: generic",
+        "    command: [/bin/sh, -c, 'touch /tmp/escaped']",
+        "",
+      ].join("\n"),
+    );
+    const configPath = join(root, ".tmux-ide", "workspace.yml");
+    symlinkSync(outsideConfig, configPath);
+    const registry = new WorkspaceRegistry({ dir: join(root, "registry"), listSessions: () => [] });
+    registry.add({
+      name: "workspace.escaped",
+      sessionName: "escaped-session",
+      projectDir: root,
+      configKind: "workspace",
+      configPath,
+      hasWorkspaceConfig: true,
+    });
+    const fake = new FakeTmux();
+    const authority = new WorkspacePaneCreationAuthority({
+      daemonInstanceId: DAEMON,
+      registry,
+      io: { canonicalProjectDir: () => realpathSync(root), runTmux: fake.run },
+    });
+
+    await expect(
+      authority.create(
+        request({
+          intent: {
+            kind: "agent",
+            workspaceName: "workspace.escaped",
+            harnessProfileId: "escaped-agent",
+            role: "implementer",
+          },
+        }),
+      ),
+    ).rejects.toSatisfy((error: unknown) => errorCode(error) === "workspace_unavailable");
+    expect(fake.creations).toBe(0);
   });
 
   it("serializes concurrent retries and creates exactly once", async () => {
@@ -454,7 +504,7 @@ describe("WorkspacePaneCreationAuthority", () => {
     expect(fake.exists).toBe(false);
   });
 
-  it("uses the provisional window identity to clean up when the first marker write fails", async () => {
+  it("uses the create-returned identity to clean up when the first marker write fails", async () => {
     const fake = new FakeTmux();
     fake.failOption = "@tmux_ide_creation_id";
     const { authority } = rig({ fake });
@@ -465,31 +515,31 @@ describe("WorkspacePaneCreationAuthority", () => {
     expect(fake.exists).toBe(false);
   });
 
-  it("recovers malformed create output by provisional identity before cleanup", async () => {
+  it("never kills a same-name window when create output has no runtime identity", async () => {
     const fake = new FakeTmux();
     fake.malformedCreateOutput = true;
     const { authority } = rig({ fake });
     await expect(authority.create(request())).rejects.toSatisfy(
-      (error: unknown) => errorCode(error) === "pane_creation_failed",
+      (error: unknown) => errorCode(error) === "pane_cleanup_unproven",
     );
-    expect(fake.calls).toContainEqual(["kill-window", "-t", "@3"]);
-    expect(fake.exists).toBe(false);
+    expect(fake.calls.some((call) => call[0] === "kill-window")).toBe(false);
+    expect(fake.exists).toBe(true);
   });
 
-  it("pins an uncertain mutation when both create and recovery inspection fail", async () => {
+  it("pins an uncertain failure without adopting or killing by provisional name", async () => {
     const fake = new FakeTmux();
     fake.throwAfterCreate = true;
-    fake.failRecoveryInventory = true;
     const { authority } = rig({ fake });
     await expect(authority.create(request())).rejects.toSatisfy(
       (error: unknown) => errorCode(error) === "pane_cleanup_unproven",
     );
     fake.throwAfterCreate = false;
-    fake.failRecoveryInventory = false;
     await expect(authority.create(request())).rejects.toSatisfy(
       (error: unknown) => errorCode(error) === "pane_cleanup_unproven",
     );
     expect(fake.creations).toBe(1);
+    expect(fake.calls.some((call) => call[0] === "kill-window")).toBe(false);
+    expect(fake.exists).toBe(true);
   });
 
   it("never treats transient cleanup probes as proof that a partial mutation is gone", async () => {

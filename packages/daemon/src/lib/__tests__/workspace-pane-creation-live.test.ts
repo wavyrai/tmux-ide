@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -168,5 +168,47 @@ describe.skipIf(!hasTmux)("workspace pane creation live tmux boundary", () => {
         intent: { kind: "terminal", workspaceName: "workspace.retire" },
       }),
     ).resolves.toMatchObject({ outcome: "created" });
+  });
+
+  it("uses a daemon-pinned absolute tmux executable and socket after ambient env changes", async () => {
+    const registry = new WorkspaceRegistry({
+      dir: join(root, "pinned-registry"),
+      listSessions: () => [],
+    });
+    registry.add({ name: "workspace.pinned", sessionName, projectDir: root });
+    const executablePath = realpathSync(
+      execFileSync("which", ["tmux"], { encoding: "utf8" }).trim(),
+    );
+    const socketPath = realpathSync(runOnSocket(["display-message", "-p", "#{socket_path}"]));
+    const authority = new WorkspacePaneCreationAuthority({
+      daemonInstanceId,
+      registry,
+      tmuxAuthority: { executablePath, socketSelector: { kind: "path", path: socketPath } },
+    });
+    const originalPath = process.env.PATH;
+    const originalTmux = process.env.TMUX;
+    process.env.PATH = "/definitely-not-a-real-path";
+    process.env.TMUX = "/tmp/hostile-tmux.sock,999,9";
+    try {
+      await expect(
+        authority.create({
+          operationId: "60000000-0000-4000-8000-000000000006",
+          expectedDaemonInstanceId: daemonInstanceId,
+          intent: {
+            kind: "terminal",
+            workspaceName: "workspace.pinned",
+            displayTitle: "Pinned authority",
+          },
+        }),
+      ).resolves.toMatchObject({ outcome: "created" });
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalTmux === undefined) delete process.env.TMUX;
+      else process.env.TMUX = originalTmux;
+    }
+    expect(
+      runOnSocket(["list-windows", "-t", `=${sessionName}`, "-F", "#{window_name}"]),
+    ).toContain("Pinned authority");
   });
 });

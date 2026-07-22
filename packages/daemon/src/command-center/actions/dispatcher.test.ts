@@ -3,15 +3,19 @@ import { Hono } from "hono";
 import { ActionContractsZ } from "./contract.ts";
 import { createActionDispatcher } from "./dispatcher.ts";
 import { setDaemonShutdownBackend } from "./handlers/daemon-shutdown.ts";
-import { setWorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
+import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
 
-const actionApp = (broadcast = vi.fn()) => {
+const actionApp = (
+  broadcast = vi.fn(),
+  workspacePaneCreationBackend?: WorkspacePaneCreationBackend,
+) => {
   const app = new Hono();
   app.post(
     "/api/v2/action/:name",
     createActionDispatcher({
       broadcast,
       daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+      workspacePaneCreationBackend,
     }),
   );
   return { app, broadcast };
@@ -19,7 +23,6 @@ const actionApp = (broadcast = vi.fn()) => {
 
 afterEach(() => {
   setDaemonShutdownBackend(null);
-  setWorkspacePaneCreationBackend(null);
 });
 
 describe("command-backed action dispatcher compatibility", () => {
@@ -130,8 +133,7 @@ describe("command-backed action dispatcher compatibility", () => {
         missionId: null,
       },
     }));
-    setWorkspacePaneCreationBackend({ create });
-    const { app, broadcast } = actionApp();
+    const { app, broadcast } = actionApp(vi.fn(), { create });
     const body = { kind: "terminal", workspaceName: "workspace.alpha" } as const;
     const response = await app.request("http://localhost/api/v2/action/workspace.pane.create", {
       method: "POST",
@@ -163,8 +165,7 @@ describe("command-backed action dispatcher compatibility", () => {
 
   it("rejects renderer-authored runtime fields before pane creation", async () => {
     const create = vi.fn();
-    setWorkspacePaneCreationBackend({ create });
-    const { app } = actionApp();
+    const { app } = actionApp(vi.fn(), { create });
     const response = await app.request("http://localhost/api/v2/action/workspace.pane.create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

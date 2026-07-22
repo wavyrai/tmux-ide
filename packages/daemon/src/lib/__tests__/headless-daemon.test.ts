@@ -157,7 +157,8 @@ describe("runHeadlessDaemon", () => {
       {
         port: 4321,
         bindHostname: "127.0.0.1",
-        authToken: expect.any(String),
+        authToken: null,
+        localBypassToken: expect.any(String),
         silent: true,
       },
     ]);

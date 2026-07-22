@@ -12,18 +12,12 @@ export interface WorkspacePaneCreationBackend {
   create(input: WorkspacePaneCreateMutationRequest): Promise<WorkspacePaneCreateMutationResult>;
 }
 
-let backend: WorkspacePaneCreationBackend | null = null;
-
-export function setWorkspacePaneCreationBackend(next: WorkspacePaneCreationBackend | null): void {
-  backend = next;
-}
-
 export async function workspacePaneCreateHandler(
   input: WorkspacePaneCreateArguments,
   context: ActionExecutionContext = {},
   deps: { authority?: WorkspacePaneCreationBackend } = {},
 ): Promise<WorkspacePaneCreateMutationResult> {
-  const authority = deps.authority ?? backend;
+  const authority = deps.authority ?? context.workspacePaneCreationBackend;
   if (!authority) {
     throw new ActionError({
       code: "workspace_unavailable",

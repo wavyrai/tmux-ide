@@ -21,6 +21,7 @@ import {
   attachSession,
   runSessionCommand,
   runTmux,
+  runTmuxBinary,
 } from "./index.ts";
 
 let mockExec;
@@ -448,6 +449,13 @@ describe("debug logging", () => {
 // --- Error classification edge cases ---
 
 describe("error classification", () => {
+  it("executes an explicitly pinned binary without replacing it with ambient tmux", () => {
+    mockExec.mockImplementation(() => "ok");
+    expect(runTmuxBinary("/trusted/bin/tmux", ["-S", "/trusted/socket", "list-panes"])).toBe("ok");
+    expect(mockExec.mock.calls[0][0]).toBe("/trusted/bin/tmux");
+    expect(mockExec.mock.calls[0][1]).toEqual(["-S", "/trusted/socket", "list-panes"]);
+  });
+
   it('classifies an exact show-environment "unknown variable" separately', () => {
     mockExec.mockImplementation(() => {
       throw makeExecError("unknown variable: TMUX_IDE_ATTACHMENT_VIEW");

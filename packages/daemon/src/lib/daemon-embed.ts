@@ -22,7 +22,6 @@ import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
 import { handleWsEventsConnection } from "../command-center/ws-events.ts";
 import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
-import { setWorkspacePaneCreationBackend } from "../command-center/actions/handlers/workspace-pane-create.ts";
 import { readAppSettings } from "./app-settings.ts";
 import { getDefaultWorkspaceRegistry } from "./workspace-registry.ts";
 import { WorkspacePaneCreationAuthority } from "./workspace-pane-creation.ts";
@@ -583,6 +582,7 @@ async function startHttpServer({
   silent,
   readProjectAuth,
   daemonIdentity,
+  workspacePaneCreationBackend,
 }: {
   sessionName: string;
   requestedPort: number;
@@ -597,6 +597,7 @@ async function startHttpServer({
     instanceId: string;
     startedAt: string;
   };
+  workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
 }): Promise<{
   server: Server;
   sockets: Set<Socket>;
@@ -628,8 +629,10 @@ async function startHttpServer({
       bindHostname,
       token: authToken ?? null,
       localBypassToken: localBypassToken ?? null,
+      ownerToken: localBypassToken ?? null,
     },
     daemonIdentity,
+    workspacePaneCreationBackend,
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({ ok: true, session: sessionName });
@@ -803,7 +806,6 @@ export async function startEmbeddedDaemon(
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
     });
-    setWorkspacePaneCreationBackend(workspacePaneCreation);
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
       startedServer = await startHttpServer({
@@ -816,15 +818,14 @@ export async function startEmbeddedDaemon(
         silent: opts.silent,
         readProjectAuth: !sessionless,
         daemonIdentity: { productVersion, instanceId, startedAt },
+        workspacePaneCreationBackend: workspacePaneCreation,
       });
     } catch (error) {
-      setWorkspacePaneCreationBackend(null);
       await workspacePaneCreation.dispose();
       throw error;
     }
     const { server, sockets, closeClients, closeWsServers } = startedServer;
     const abortStartedServer = async (): Promise<void> => {
-      setWorkspacePaneCreationBackend(null);
       await workspacePaneCreation.dispose();
       closeClients();
       const closePromise = waitForServerClose(server).catch(() => undefined);
@@ -842,7 +843,7 @@ export async function startEmbeddedDaemon(
           instanceId,
           startedAt,
           bindHostname,
-          authToken,
+          authToken: localBypassToken,
         },
         claim,
       );
@@ -964,7 +965,6 @@ export async function startEmbeddedDaemon(
           try {
             stopped = true;
             setActivationBackend(null);
-            setWorkspacePaneCreationBackend(null);
             await workspacePaneCreation.dispose();
             clearInterval(monitorInterval);
 

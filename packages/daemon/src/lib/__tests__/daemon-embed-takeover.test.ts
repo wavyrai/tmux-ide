@@ -184,16 +184,18 @@ describe.sequential("embedded daemon cooperative takeover", () => {
     connection.destroy();
   });
 
-  it("replaces a live authenticated owner only after its claim and generation are released", async () => {
+  it("keeps the remotely shared token out of owner state during authenticated takeover", async () => {
     const owner = trackHandle(
       await startEmbeddedDaemon({
         bindHostname: "0.0.0.0",
-        authToken: "old-owner-secret",
+        authToken: "remotely-shared-secret",
+        localBypassToken: "old-owner-secret",
         silent: true,
       }),
     );
     const oldInfo = readCanonicalDaemonInfo();
     expect(oldInfo).toMatchObject({ instanceId: owner.instanceId, authToken: "old-owner-secret" });
+    expect(JSON.stringify(oldInfo)).not.toContain("remotely-shared-secret");
 
     const replacement = trackHandle(
       await startEmbeddedDaemon({

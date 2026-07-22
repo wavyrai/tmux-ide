@@ -5401,6 +5401,9 @@ function _getSpawner() {
   return _spawner;
 }
 function runTmux(args, options = {}) {
+  return runTmuxBinary("tmux", args, options);
+}
+function runTmuxBinary(executable, args, options = {}) {
   if (DEBUG || globalThis.__tmuxIdeVerbose) {
     console.error(`  [tmux] ${args.join(" ")}`);
   }
@@ -5409,7 +5412,7 @@ function runTmux(args, options = {}) {
     ...options
   };
   try {
-    return _executor("tmux", args, execOptions);
+    return _executor(executable, args, execOptions);
   } catch (error) {
     throw classifyTmuxError(error);
   }
@@ -5803,6 +5806,7 @@ __export(src_exports, {
   resolveTarget: () => resolveTarget,
   runSessionCommand: () => runSessionCommand,
   runTmux: () => runTmux,
+  runTmuxBinary: () => runTmuxBinary,
   selectPane: () => selectPane,
   sendKeys: () => sendKeys,
   sendLiteral: () => sendLiteral,
@@ -7572,10 +7576,10 @@ __export(classify_exports, {
 });
 function parseAuthority(raw, nowSec) {
   if (!raw) return null;
-  const sep5 = raw.lastIndexOf(":");
-  if (sep5 === -1) return null;
-  const state = raw.slice(0, sep5);
-  const epoch = Number(raw.slice(sep5 + 1));
+  const sep6 = raw.lastIndexOf(":");
+  if (sep6 === -1) return null;
+  const state = raw.slice(0, sep6);
+  const epoch = Number(raw.slice(sep6 + 1));
   if (!AUTHORITY_STATES.has(state) || !Number.isFinite(epoch)) return null;
   if ((state === "working" || state === "blocked") && nowSec - epoch > AUTHORITY_STALE_SECONDS) {
     return null;
@@ -7591,9 +7595,9 @@ function sanitizeAgentText(raw) {
 }
 function parseAuthorityEpoch(raw) {
   if (!raw) return null;
-  const sep5 = raw.lastIndexOf(":");
-  if (sep5 === -1) return null;
-  const epoch = Number(raw.slice(sep5 + 1));
+  const sep6 = raw.lastIndexOf(":");
+  if (sep6 === -1) return null;
+  const epoch = Number(raw.slice(sep6 + 1));
   return Number.isFinite(epoch) ? epoch : null;
 }
 function classifyInstant(snapshot, manifest) {
@@ -13292,10 +13296,21 @@ var init_session_monitor = __esm({
 });
 
 // packages/daemon/src/terminal/PtyAdapter.ts
-var PtySpawnError;
+var PtyInputRejectedError, PtySpawnError;
 var init_PtyAdapter = __esm({
   "packages/daemon/src/terminal/PtyAdapter.ts"() {
     "use strict";
+    PtyInputRejectedError = class extends Error {
+      code = "pty_input_rejected";
+      reason;
+      snapshot;
+      constructor(args) {
+        super(`bounded PTY input rejected: ${args.reason}`);
+        this.name = "PtyInputRejectedError";
+        this.reason = args.reason;
+        this.snapshot = args.snapshot;
+      }
+    };
     PtySpawnError = class extends Error {
       adapter;
       code;
@@ -13304,6 +13319,116 @@ var init_PtyAdapter = __esm({
         this.name = "PtySpawnError";
         this.adapter = args.adapter;
         this.code = args.code;
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/MonotonicPtyInput.ts
+function validatePtyInputLimits(limits) {
+  validateLimit("maxFrameBytes", limits.maxFrameBytes, MAX_PTY_INPUT_FRAME_BYTES);
+  validateLimit("maxAcceptedBytes", limits.maxAcceptedBytes, MAX_PTY_INPUT_ACCEPTED_BYTES);
+  validateLimit("maxAcceptedFrames", limits.maxAcceptedFrames, MAX_PTY_INPUT_ACCEPTED_FRAMES);
+  if (limits.maxFrameBytes > limits.maxAcceptedBytes) {
+    throw new RangeError("maxFrameBytes cannot exceed maxAcceptedBytes");
+  }
+  return Object.freeze({ ...limits });
+}
+function validateLimit(name, value, maximum) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new RangeError(`${name} must be a positive safe integer no greater than ${maximum}`);
+  }
+}
+var DEFAULT_PTY_INPUT_LIMITS, MAX_PTY_INPUT_FRAME_BYTES, MAX_PTY_INPUT_ACCEPTED_BYTES, MAX_PTY_INPUT_ACCEPTED_FRAMES, MonotonicPtyInput;
+var init_MonotonicPtyInput = __esm({
+  "packages/daemon/src/terminal/MonotonicPtyInput.ts"() {
+    "use strict";
+    init_PtyAdapter();
+    DEFAULT_PTY_INPUT_LIMITS = Object.freeze({
+      maxFrameBytes: 16 * 1024,
+      maxAcceptedBytes: 256 * 1024,
+      maxAcceptedFrames: 8192
+    });
+    MAX_PTY_INPUT_FRAME_BYTES = 64 * 1024;
+    MAX_PTY_INPUT_ACCEPTED_BYTES = 4 * 1024 * 1024;
+    MAX_PTY_INPUT_ACCEPTED_FRAMES = 16384;
+    MonotonicPtyInput = class {
+      #limits;
+      #sink;
+      #acceptedBytes = 0;
+      #acceptedFrames = 0;
+      #state = "open";
+      #terminalReason = null;
+      constructor(limits, sink) {
+        this.#limits = validatePtyInputLimits(limits);
+        this.#sink = sink;
+      }
+      write(data) {
+        if (!(data instanceof Uint8Array)) {
+          throw new TypeError("bounded PTY input must be a Uint8Array");
+        }
+        if (data.byteLength === 0) {
+          return { status: "ignored", reason: "empty", snapshot: this.snapshot() };
+        }
+        if (this.#state === "exhausted") {
+          const reason = this.#terminalReason ?? (this.#acceptedFrames >= this.#limits.maxAcceptedFrames ? "lifetime_frames_exhausted" : "lifetime_bytes_exhausted");
+          this.#reject(reason, "exhausted");
+        }
+        if (this.#state !== "open") {
+          this.#reject("process_closed", this.#state);
+        }
+        if (data.byteLength > this.#limits.maxFrameBytes) {
+          this.#reject("frame_too_large", "exhausted");
+        }
+        if (this.#acceptedFrames >= this.#limits.maxAcceptedFrames) {
+          this.#reject("lifetime_frames_exhausted", "exhausted");
+        }
+        if (data.byteLength > this.#limits.maxAcceptedBytes - this.#acceptedBytes) {
+          this.#reject("lifetime_bytes_exhausted", "exhausted");
+        }
+        const frame = Buffer.from(data);
+        this.#acceptedBytes += frame.byteLength;
+        this.#acceptedFrames += 1;
+        if (this.#acceptedBytes === this.#limits.maxAcceptedBytes || this.#acceptedFrames === this.#limits.maxAcceptedFrames) {
+          this.#state = "exhausted";
+          this.#terminalReason = this.#acceptedFrames === this.#limits.maxAcceptedFrames ? "lifetime_frames_exhausted" : "lifetime_bytes_exhausted";
+        }
+        try {
+          this.#sink(frame);
+        } catch {
+          this.#state = "failed";
+          this.#terminalReason = "backend_write_failed";
+          throw new PtyInputRejectedError({
+            reason: "backend_write_failed",
+            snapshot: this.snapshot()
+          });
+        }
+        return {
+          status: "accepted",
+          byteLength: frame.byteLength,
+          snapshot: this.snapshot()
+        };
+      }
+      snapshot() {
+        return Object.freeze({
+          ...this.#limits,
+          state: this.#state,
+          acceptedBytes: this.#acceptedBytes,
+          acceptedFrames: this.#acceptedFrames,
+          remainingBytes: this.#limits.maxAcceptedBytes - this.#acceptedBytes,
+          remainingFrames: this.#limits.maxAcceptedFrames - this.#acceptedFrames
+        });
+      }
+      close() {
+        if (this.#state !== "closed") {
+          this.#state = "closed";
+          this.#terminalReason = "process_closed";
+        }
+      }
+      #reject(reason, state) {
+        this.#state = state;
+        this.#terminalReason = reason;
+        throw new PtyInputRejectedError({ reason, snapshot: this.snapshot() });
       }
     };
   }
@@ -13367,6 +13492,7 @@ var init_NodePtyAdapter = __esm({
   "packages/daemon/src/terminal/NodePtyAdapter.ts"() {
     "use strict";
     init_PtyAdapter();
+    init_MonotonicPtyInput();
     ADAPTER_ID = "node-pty";
     helperEnsured = false;
     NodePtyProcess = class {
@@ -13374,8 +13500,10 @@ var init_NodePtyAdapter = __esm({
       child;
       dataListeners = /* @__PURE__ */ new Set();
       exitListeners = /* @__PURE__ */ new Set();
-      constructor(child, listeners = {}) {
+      boundedInput;
+      constructor(child, listeners = {}, inputLimits = DEFAULT_PTY_INPUT_LIMITS) {
         this.child = child;
+        this.boundedInput = new MonotonicPtyInput(inputLimits, (frame) => this.child.write(frame));
         if (listeners.onData) this.dataListeners.add(listeners.onData);
         if (listeners.onExit) this.exitListeners.add(listeners.onExit);
         this.child.onData((data) => {
@@ -13384,6 +13512,7 @@ var init_NodePtyAdapter = __esm({
         });
         this.child.onExit((evt) => {
           this.exited = true;
+          this.boundedInput.close();
           const event = {
             exitCode: evt.exitCode ?? 0,
             signal: typeof evt.signal === "number" ? evt.signal : null
@@ -13421,6 +13550,7 @@ var init_NodePtyAdapter = __esm({
       }
       kill(signal) {
         if (this.exited) return;
+        this.boundedInput.close();
         try {
           this.child.kill(typeof signal === "number" ? String(signal) : signal);
         } catch {
@@ -13452,10 +13582,14 @@ var init_NodePtyAdapter = __esm({
       spawnPty;
       statCwd;
       skipHelperEnsure;
+      boundedInputLimits;
       constructor(options = {}) {
         this.spawnPty = options.spawnPty ?? pty.spawn;
         this.statCwd = options.statCwd ?? statSync3;
         this.skipHelperEnsure = options.skipHelperEnsure ?? false;
+        this.boundedInputLimits = validatePtyInputLimits(
+          options.boundedInputLimits ?? DEFAULT_PTY_INPUT_LIMITS
+        );
       }
       async spawn(input, listeners) {
         if (!this.skipHelperEnsure) ensureNodePtySpawnHelperExecutable();
@@ -13520,7 +13654,7 @@ var init_NodePtyAdapter = __esm({
             cause: err
           });
         }
-        return new NodePtyProcess(child, listeners);
+        return new NodePtyProcess(child, listeners, this.boundedInputLimits);
       }
     };
     defaultNodePtyAdapter = new NodePtyAdapter();
@@ -14843,8 +14977,8 @@ var init_app_settings = __esm({
 
 // packages/daemon/src/command-center/actions/handlers/app-set-remote-access.ts
 import { hostname, networkInterfaces } from "node:os";
-function setRemoteAccessRestartBackend(backend3) {
-  remoteAccessRestartBackend = backend3;
+function setRemoteAccessRestartBackend(backend2) {
+  remoteAccessRestartBackend = backend2;
 }
 function currentPort(deps2) {
   const envPort = Number(process.env.TMUX_IDE_DAEMON_PORT);
@@ -14960,10 +15094,10 @@ var init_errors3 = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/daemon-shutdown.ts
-function setDaemonShutdownBackend(backend3, instanceId = null) {
-  shutdownBackend = backend3;
-  daemonInstanceId = backend3 ? instanceId : null;
-  if (!backend3) shutdownInProgress = false;
+function setDaemonShutdownBackend(backend2, instanceId = null) {
+  shutdownBackend = backend2;
+  daemonInstanceId = backend2 ? instanceId : null;
+  if (!backend2) shutdownInProgress = false;
 }
 function daemonShutdownHandler(input, deps2 = {}) {
   const expectedInstanceId = input.expectedInstanceId;
@@ -17255,16 +17389,104 @@ var init_mission_repository = __esm({
 });
 
 // packages/daemon/src/lib/workspace-pane-creation.ts
-import { realpathSync as realpathSync5, statSync as statSync6 } from "node:fs";
+import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync5, statSync as statSync6 } from "node:fs";
+import { delimiter as delimiter2, isAbsolute as isAbsolute6, relative as relative3, resolve as resolve23, sep as sep4 } from "node:path";
 function canonicalProjectDir(path2) {
   const canonical = realpathSync5(path2);
   if (!statSync6(canonical).isDirectory()) throw new Error("project root is not a directory");
   return canonical;
 }
-function tmux3(args) {
-  return String(
-    runTmux([...args], {
+function workspaceWithTrustedConfig(workspace, canonicalRoot) {
+  const candidate = workspace.configPath ?? workspace.ideConfigPath;
+  if (!candidate) {
+    return { ...workspace, configPath: null, ideConfigPath: null };
+  }
+  let canonicalConfig;
+  try {
+    canonicalConfig = realpathSync5(candidate);
+    if (!statSync6(canonicalConfig).isFile()) throw new Error("config is not a file");
+  } catch (cause) {
+    throw new WorkspacePaneCreationError(
+      "workspace_unavailable",
+      { workspaceName: workspace.name, reason: "config_provenance_unavailable" },
+      cause
+    );
+  }
+  const ownedRelativePath = relative3(canonicalRoot, canonicalConfig);
+  if (ownedRelativePath === "" || ownedRelativePath === ".." || ownedRelativePath.startsWith(`..${sep4}`) || isAbsolute6(ownedRelativePath)) {
+    throw new WorkspacePaneCreationError("workspace_unavailable", {
+      workspaceName: workspace.name,
+      reason: "config_outside_workspace"
+    });
+  }
+  return {
+    ...workspace,
+    configPath: canonicalConfig,
+    ideConfigPath: canonicalConfig
+  };
+}
+function resolveTmuxExecutable() {
+  const configured = process.env.TMUX_IDE_TMUX_BIN;
+  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter(Boolean).map((entry) => resolve23(entry, "tmux"));
+  for (const candidate of candidates) {
+    try {
+      if (!isAbsolute6(candidate)) continue;
+      accessSync3(candidate, constants4.X_OK);
+      const canonical = realpathSync5(candidate);
+      if (statSync6(canonical).isFile()) return canonical;
+    } catch {
+    }
+  }
+  throw new WorkspacePaneCreationError("workspace_unavailable", {
+    reason: "tmux_executable_unavailable"
+  });
+}
+function tmuxSocketFromEnvironment() {
+  const match = /^(.*),[0-9]+,[0-9]+$/u.exec(process.env.TMUX ?? "");
+  return match?.[1] || null;
+}
+function resolveWorkspacePaneTmuxAuthority() {
+  const executablePath = resolveTmuxExecutable();
+  const environmentSocket = tmuxSocketFromEnvironment();
+  if (environmentSocket) {
+    const path2 = realpathSync5(environmentSocket);
+    if (!statSync6(path2).isSocket()) {
+      throw new WorkspacePaneCreationError("workspace_unavailable", {
+        reason: "tmux_socket_unavailable"
+      });
+    }
+    return Object.freeze({
+      executablePath,
+      socketSelector: { kind: "path", path: path2 }
+    });
+  }
+  return Object.freeze({
+    executablePath,
+    socketSelector: { kind: "name", name: "default" }
+  });
+}
+function pinnedTmuxRunner(authority) {
+  const executablePath = realpathSync5(authority.executablePath);
+  accessSync3(executablePath, constants4.X_OK);
+  if (!isAbsolute6(executablePath) || !statSync6(executablePath).isFile()) {
+    throw new TypeError("Pinned tmux executable is invalid.");
+  }
+  const socketArgv = authority.socketSelector.kind === "path" ? (() => {
+    const path2 = realpathSync5(authority.socketSelector.path);
+    if (!isAbsolute6(path2) || !statSync6(path2).isSocket()) {
+      throw new TypeError("Pinned tmux socket is invalid.");
+    }
+    return ["-S", path2];
+  })() : authority.socketSelector.name === "default" ? ["-L", "default"] : (() => {
+    throw new TypeError("Pinned tmux socket is invalid.");
+  })();
+  const environment = { ...process.env };
+  delete environment.TMUX;
+  delete environment.TMUX_PANE;
+  return (args) => String(
+    runTmuxBinary(executablePath, [...socketArgv, ...args], {
       encoding: "utf8",
+      env: environment,
       maxBuffer: TMUX_OUTPUT_BYTES,
       stdio: ["ignore", "pipe", "pipe"]
     })
@@ -17396,7 +17618,8 @@ function parseCreatedRuntime(output, creationId, provisionalName) {
     paneId: match[1],
     windowId: match[2],
     creationId,
-    provisionalWindowName: provisionalName
+    provisionalWindowName: provisionalName,
+    ownershipProof: "create-output"
   };
 }
 function defaultTitle(intent, harness) {
@@ -17521,7 +17744,6 @@ var init_workspace_pane_creation2 = __esm({
     };
     DEFAULT_IO = {
       canonicalProjectDir,
-      runTmux: tmux3,
       resolveHarness,
       resolveMission,
       isMissingTmuxTarget: (error) => error instanceof TmuxError && error.code === "SESSION_NOT_FOUND",
@@ -17542,7 +17764,11 @@ var init_workspace_pane_creation2 = __esm({
       constructor(options) {
         this.#daemonInstanceId = options.daemonInstanceId;
         this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
-        this.#io = { ...DEFAULT_IO, ...options.io };
+        this.#io = {
+          ...DEFAULT_IO,
+          ...options.io,
+          runTmux: options.io?.runTmux ?? pinnedTmuxRunner(options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority())
+        };
         this.#maxLiveOrUnsafeOperations = boundedAuthorityLimit(
           options.maxLiveOrUnsafeOperations,
           MAX_LIVE_OR_UNSAFE_OPERATIONS
@@ -17619,11 +17845,16 @@ var init_workspace_pane_creation2 = __esm({
         let runtime = null;
         try {
           const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
+          const trustedWorkspace = workspaceWithTrustedConfig(workspace, canonicalRoot);
           this.#io.runTmux(["has-session", "-t", `=${workspace.sessionName}`]);
-          const harness = request.intent.kind === "agent" ? await this.#io.resolveHarness(workspace, canonicalRoot, request.intent.harnessProfileId) : null;
+          const harness = request.intent.kind === "agent" ? await this.#io.resolveHarness(
+            trustedWorkspace,
+            canonicalRoot,
+            request.intent.harnessProfileId
+          ) : null;
           this.#assertActive(request.operationId);
           if (harness) assertBoundedLaunch(harness);
-          const resolvedMissionId = request.intent.kind === "agent" && request.intent.missionId ? await this.#io.resolveMission(workspace, canonicalRoot, request.intent.missionId) : null;
+          const resolvedMissionId = request.intent.kind === "agent" && request.intent.missionId ? await this.#io.resolveMission(trustedWorkspace, canonicalRoot, request.intent.missionId) : null;
           this.#assertActive(request.operationId);
           const title = defaultTitle(request.intent, harness);
           const resource = resourceFor(request, title, resolvedMissionId);
@@ -17677,56 +17908,21 @@ var init_workspace_pane_creation2 = __esm({
           try {
             createOutput = this.#io.runTmux(createArgs);
           } catch (error) {
-            let recovered;
-            try {
-              recovered = this.#provisionalRuntimes(
-                workspace.sessionName,
-                provisionalName,
-                request.operationId
-              );
-            } catch (recoveryError) {
-              throw new WorkspacePaneCreationError(
-                "pane_cleanup_unproven",
-                { operationId: request.operationId, workspaceName: workspace.name },
-                new AggregateError([error, recoveryError], "tmux create and recovery both failed")
-              );
-            }
-            runtime = recovered[0] ?? null;
-            if (!runtime && !this.#io.creationFailureCannotHaveMutated(error)) {
-              throw new WorkspacePaneCreationError(
-                "pane_cleanup_unproven",
-                { operationId: request.operationId, workspaceName: workspace.name },
-                error
-              );
-            }
-            throw error;
+            if (this.#io.creationFailureCannotHaveMutated(error)) throw error;
+            throw new WorkspacePaneCreationError(
+              "pane_cleanup_unproven",
+              { operationId: request.operationId, workspaceName: workspace.name },
+              error
+            );
           }
           try {
             runtime = parseCreatedRuntime(createOutput, request.operationId, provisionalName);
           } catch (error) {
-            let recovered;
-            try {
-              recovered = this.#provisionalRuntimes(
-                workspace.sessionName,
-                provisionalName,
-                request.operationId
-              );
-            } catch (recoveryError) {
-              throw new WorkspacePaneCreationError(
-                "pane_cleanup_unproven",
-                { operationId: request.operationId, workspaceName: workspace.name },
-                new AggregateError([error, recoveryError], "tmux output and recovery both failed")
-              );
-            }
-            runtime = recovered[0] ?? null;
-            if (!runtime) {
-              throw new WorkspacePaneCreationError(
-                "pane_cleanup_unproven",
-                { operationId: request.operationId, workspaceName: workspace.name },
-                error
-              );
-            }
-            throw error;
+            throw new WorkspacePaneCreationError(
+              "pane_cleanup_unproven",
+              { operationId: request.operationId, workspaceName: workspace.name },
+              error
+            );
           }
           this.#assertActive(request.operationId);
           const options = [
@@ -17845,7 +18041,7 @@ var init_workspace_pane_creation2 = __esm({
           ]);
           const [paneId, marker, windowName, paneCount, extra] = proof.split("	");
           const markerProvesOwnership = marker === runtime.creationId;
-          const provisionalNameProvesPreMarkerOwnership = marker === "" && windowName === runtime.provisionalWindowName;
+          const provisionalNameProvesPreMarkerOwnership = runtime.ownershipProof === "create-output" && marker === "" && windowName === runtime.provisionalWindowName;
           if (extra !== void 0 || paneId !== runtime.paneId || paneCount !== "1" || !markerProvesOwnership && !provisionalNameProvesPreMarkerOwnership) {
             return false;
           }
@@ -17883,7 +18079,8 @@ var init_workspace_pane_creation2 = __esm({
             paneId,
             windowId,
             creationId,
-            provisionalWindowName: provisionalWindowName(creationId)
+            provisionalWindowName: provisionalWindowName(creationId),
+            ownershipProof: "creation-marker"
           });
         }
         if (candidates.length === 0) return null;
@@ -17925,9 +18122,7 @@ var init_workspace_pane_creation2 = __esm({
           }
           matches.push({
             windowId,
-            paneId,
-            creationId,
-            provisionalWindowName: expectedWindowName
+            paneId
           });
         }
         if (matches.length > 1) {
@@ -17976,75 +18171,31 @@ var init_workspace_pane_creation2 = __esm({
   }
 });
 
-// packages/daemon/src/command-center/actions/handlers/workspace-pane-create.ts
-function setWorkspacePaneCreationBackend(next) {
-  backend = next;
-}
-async function workspacePaneCreateHandler(input, context = {}, deps2 = {}) {
-  const authority = deps2.authority ?? backend;
-  if (!authority) {
-    throw new ActionError({
-      code: "workspace_unavailable",
-      message: "Workspace pane creation is not available from this daemon."
-    });
-  }
-  if (!context.operationId || !context.daemonInstanceId) {
-    throw new ActionError({
-      code: "bad_request",
-      message: "Workspace pane creation requires trusted host retry and generation metadata."
-    });
-  }
-  try {
-    return await authority.create({
-      operationId: context.operationId,
-      expectedDaemonInstanceId: context.daemonInstanceId,
-      intent: input
-    });
-  } catch (error) {
-    if (!(error instanceof WorkspacePaneCreationError)) throw error;
-    throw new ActionError({
-      code: error.code,
-      message: error.message,
-      details: error.context,
-      cause: error
-    });
-  }
-}
-var backend;
-var init_workspace_pane_create = __esm({
-  "packages/daemon/src/command-center/actions/handlers/workspace-pane-create.ts"() {
-    "use strict";
-    init_workspace_pane_creation2();
-    init_errors3();
-    backend = null;
-  }
-});
-
 // packages/daemon/src/lib/active-projects.ts
 function setActivationBackend(next) {
-  backend2 = next;
+  backend = next;
   active.clear();
 }
 async function activateProject(name, options = {}) {
   if (active.has(name) && !options.orchestrate) return;
-  if (!backend2) {
+  if (!backend) {
     throw new Error("No active-project backend is registered");
   }
-  await backend2.activateProject(name, options);
+  await backend.activateProject(name, options);
   active.add(name);
 }
-var backend2, active;
+var backend, active;
 var init_active_projects = __esm({
   "packages/daemon/src/lib/active-projects.ts"() {
     "use strict";
-    backend2 = null;
+    backend = null;
     active = /* @__PURE__ */ new Set();
   }
 });
 
 // packages/daemon/src/send.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { resolve as resolve23, join as join27 } from "node:path";
+import { resolve as resolve24, join as join27 } from "node:path";
 import { existsSync as existsSync29, mkdirSync as mkdirSync20, writeFileSync as writeFileSync19 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
@@ -18131,7 +18282,7 @@ ${available}`, {
   };
 }
 async function send(targetDir, opts) {
-  const dir = resolve23(targetDir ?? ".");
+  const dir = resolve24(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const { json: json2, to: target, message: rawMessage, noEnter } = opts;
   if (!target) {
@@ -18785,9 +18936,9 @@ var init_project_stop = __esm({
 });
 
 // packages/daemon/src/restart.ts
-import { resolve as resolve24 } from "node:path";
+import { resolve as resolve25 } from "node:path";
 async function restart(targetDir, { json: json2, attach: attach2 } = {}) {
-  const dir = resolve24(targetDir ?? ".");
+  const dir = resolve25(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result = killSession(session);
@@ -19051,6 +19202,45 @@ var init_config_actions = __esm({
     init_project_context();
     init_resolved_config();
     init_config_context();
+  }
+});
+
+// packages/daemon/src/command-center/actions/handlers/workspace-pane-create.ts
+async function workspacePaneCreateHandler(input, context = {}, deps2 = {}) {
+  const authority = deps2.authority ?? context.workspacePaneCreationBackend;
+  if (!authority) {
+    throw new ActionError({
+      code: "workspace_unavailable",
+      message: "Workspace pane creation is not available from this daemon."
+    });
+  }
+  if (!context.operationId || !context.daemonInstanceId) {
+    throw new ActionError({
+      code: "bad_request",
+      message: "Workspace pane creation requires trusted host retry and generation metadata."
+    });
+  }
+  try {
+    return await authority.create({
+      operationId: context.operationId,
+      expectedDaemonInstanceId: context.daemonInstanceId,
+      intent: input
+    });
+  } catch (error) {
+    if (!(error instanceof WorkspacePaneCreationError)) throw error;
+    throw new ActionError({
+      code: error.code,
+      message: error.message,
+      details: error.context,
+      cause: error
+    });
+  }
+}
+var init_workspace_pane_create = __esm({
+  "packages/daemon/src/command-center/actions/handlers/workspace-pane-create.ts"() {
+    "use strict";
+    init_workspace_pane_creation2();
+    init_errors3();
   }
 });
 
@@ -19422,7 +19612,8 @@ function createActionDispatcher(deps2 = {}) {
     try {
       const context = {
         operationId: c.req.header("X-Tmux-Ide-Operation-Id"),
-        daemonInstanceId: deps2.daemonInstanceId
+        daemonInstanceId: deps2.daemonInstanceId,
+        workspacePaneCreationBackend: deps2.workspacePaneCreationBackend
       };
       result = entry.handlerWithContext ? await entry.handlerWithContext(commandResolution.command.input, context) : await entry.handler(commandResolution.command.input);
     } catch (err) {
@@ -19619,10 +19810,10 @@ var init_inspect = __esm({
 // packages/daemon/src/lib/filesystem-browser.ts
 import { realpathSync as realpathSync6, readdirSync as readdirSync4, statSync as statSync7 } from "node:fs";
 import { homedir as homedir19 } from "node:os";
-import { isAbsolute as isAbsolute6, join as join30, resolve as resolve25, sep as sep4 } from "node:path";
+import { isAbsolute as isAbsolute7, join as join30, resolve as resolve26, sep as sep5 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
-  const prefix = root.endsWith(sep4) ? root : root + sep4;
+  const prefix = root.endsWith(sep5) ? root : root + sep5;
   return canonical.startsWith(prefix);
 }
 function assertInsideSandbox(canonical, home) {
@@ -19649,7 +19840,7 @@ var init_filesystem_browser = __esm({
 
 // packages/daemon/src/lib/project-inspect.ts
 import { existsSync as existsSync32 } from "node:fs";
-import { isAbsolute as isAbsolute7, resolve as resolve26 } from "node:path";
+import { isAbsolute as isAbsolute8, resolve as resolve27 } from "node:path";
 function narrowPackageManager(raw) {
   if (!raw) return null;
   return KNOWN_PACKAGE_MANAGERS.has(raw) ? raw : null;
@@ -19660,7 +19851,7 @@ function inferTestCommand(packageManager) {
 }
 async function inspectProject(dir, io = {}) {
   const exists = io.exists ?? existsSync32;
-  const absoluteDir = isAbsolute7(dir) ? dir : resolve26(dir);
+  const absoluteDir = isAbsolute8(dir) ? dir : resolve27(dir);
   if (!exists(absoluteDir)) {
     throw new InspectDirNotFoundError(absoluteDir);
   }
@@ -20019,7 +20210,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z as z36 } from "zod";
 import { realpathSync as realpathSync7 } from "node:fs";
 import { homedir as homedir20 } from "node:os";
-import { isAbsolute as isAbsolute8, resolve as pathResolve } from "node:path";
+import { isAbsolute as isAbsolute9, resolve as pathResolve } from "node:path";
 import { randomUUID as randomUUID6 } from "node:crypto";
 import { WebSocketServer } from "ws";
 function bearerToken(authHeader) {
@@ -20037,15 +20228,14 @@ function requireAuth(token, localBypassToken) {
     return c.json({ error: "Remote access token required" }, 401);
   };
 }
-function requireHostCapability(token, localBypassToken) {
-  const accepted = new Set([token, localBypassToken].filter((value) => !!value));
+function requireHostCapability(ownerToken) {
   return async (c, next) => {
     if (c.req.param("name") !== "workspace.pane.create") return next();
-    if (accepted.size === 0) {
+    if (!ownerToken) {
       return c.json({ error: "Host mutation capability is unavailable" }, 503);
     }
     const supplied = bearerToken(c.req.header("Authorization"));
-    if (!supplied || !accepted.has(supplied)) {
+    if (!supplied || supplied !== ownerToken) {
       return c.json({ error: "Host mutation capability required" }, 401);
     }
     if (!z36.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
@@ -20104,7 +20294,7 @@ function sandboxResolveDir(rawDir) {
   } else if (candidate.startsWith("~/")) {
     candidate = `${home.replace(/\/+$/, "")}/${candidate.slice(2)}`;
   }
-  if (!isAbsolute8(candidate)) {
+  if (!isAbsolute9(candidate)) {
     return { error: "invalid-path", message: "Path must be absolute", status: 400 };
   }
   const resolved2 = pathResolve(candidate);
@@ -20183,11 +20373,11 @@ function createApp(options = {}) {
   });
   app.post(
     "/api/v2/action/:name",
-    requireHostCapability(
-      options.remoteAccess?.token ?? null,
-      options.remoteAccess?.localBypassToken ?? null
-    ),
-    createActionDispatcher({ daemonInstanceId: daemonIdentity.instanceId })
+    requireHostCapability(options.remoteAccess?.ownerToken ?? null),
+    createActionDispatcher({
+      daemonInstanceId: daemonIdentity.instanceId,
+      workspacePaneCreationBackend: options.workspacePaneCreationBackend
+    })
   );
   app.get("/api/widget/:name/spawn", async (c) => {
     const { resolveWidgetSpawn: resolveWidgetSpawn2, WIDGET_TYPES: WIDGET_TYPES2 } = await Promise.resolve().then(() => (init_resolve(), resolve_exports));
@@ -21079,7 +21269,7 @@ function resolveDaemonProductVersion(explicit, loadPackage = loadBundledPackage)
   }
   return "0.0.0";
 }
-function tmux4(...args) {
+function tmux3(...args) {
   return execFileSync12("tmux", args, {
     encoding: "utf-8",
     // Pipe stdio explicitly. Inheriting (the default) inherits the parent's
@@ -21092,14 +21282,14 @@ function tmux4(...args) {
 }
 function tmuxSilent2(...args) {
   try {
-    return tmux4(...args);
+    return tmux3(...args);
   } catch {
     return "";
   }
 }
 function assertTmuxSession(sessionName) {
   try {
-    tmux4("has-session", "-t", sessionName);
+    tmux3("has-session", "-t", sessionName);
   } catch (err) {
     throw new DaemonStartupError(
       `tmux session "${sessionName}" does not exist`,
@@ -21115,13 +21305,13 @@ function validatePort(port) {
 }
 async function pickFreePort(hostname2) {
   const probe = createServer();
-  return await new Promise((resolve31, reject) => {
+  return await new Promise((resolve32, reject) => {
     probe.once("error", reject);
     probe.listen(0, hostname2, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve31(port);
+        if (port) resolve32(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -21129,7 +21319,7 @@ async function pickFreePort(hostname2) {
 }
 function sessionExists(sessionName) {
   try {
-    tmux4("has-session", "-t", sessionName);
+    tmux3("has-session", "-t", sessionName);
     return "yes";
   } catch (err) {
     const msg = err.message ?? "";
@@ -21247,21 +21437,21 @@ function attachWebSockets(server, opts) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve31) => wss.close(() => resolve31())), delay(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve32) => wss.close(() => resolve32())), delay(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve31, reject) => {
+  return new Promise((resolve32, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve31();
+      else resolve32();
     });
   });
 }
 function delay(ms) {
-  return new Promise((resolve31) => setTimeout(resolve31, ms));
+  return new Promise((resolve32) => setTimeout(resolve32, ms));
 }
 function generateLocalBypassToken() {
   return randomBytes3(32).toString("base64url");
@@ -21430,7 +21620,8 @@ async function startHttpServer({
   localBypassToken,
   silent,
   readProjectAuth,
-  daemonIdentity
+  daemonIdentity,
+  workspacePaneCreationBackend
 }) {
   const { createApp: createApp3 } = await Promise.resolve().then(() => (init_server(), server_exports));
   const { getRequestListener: getRequestListener3 } = await import(requireFromHere.resolve("@hono/node-server"));
@@ -21452,9 +21643,11 @@ async function startHttpServer({
     remoteAccess: {
       bindHostname,
       token: authToken ?? null,
-      localBypassToken: localBypassToken ?? null
+      localBypassToken: localBypassToken ?? null,
+      ownerToken: localBypassToken ?? null
     },
-    daemonIdentity
+    daemonIdentity,
+    workspacePaneCreationBackend
   });
   app.get("/api/daemon/health", (c) => {
     return c.json({ ok: true, session: sessionName });
@@ -21474,7 +21667,7 @@ async function startHttpServer({
       ...daemonIdentity
     })
   });
-  await new Promise((resolve31, reject) => {
+  await new Promise((resolve32, reject) => {
     const onError = (err) => {
       server.off("listening", onListening);
       if (err.code === "EADDRINUSE") {
@@ -21498,7 +21691,7 @@ async function startHttpServer({
           `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
         );
       }
-      resolve31();
+      resolve32();
     };
     server.once("error", onError);
     server.once("listening", onListening);
@@ -21593,7 +21786,6 @@ async function startEmbeddedDaemon(opts) {
       daemonInstanceId: instanceId,
       registry: workspaceRegistry
     });
-    setWorkspacePaneCreationBackend(workspacePaneCreation);
     let startedServer;
     try {
       startedServer = await startHttpServer({
@@ -21605,16 +21797,15 @@ async function startEmbeddedDaemon(opts) {
         localBypassToken,
         silent: opts.silent,
         readProjectAuth: !sessionless,
-        daemonIdentity: { productVersion, instanceId, startedAt }
+        daemonIdentity: { productVersion, instanceId, startedAt },
+        workspacePaneCreationBackend: workspacePaneCreation
       });
     } catch (error) {
-      setWorkspacePaneCreationBackend(null);
       await workspacePaneCreation.dispose();
       throw error;
     }
     const { server, sockets, closeClients, closeWsServers } = startedServer;
     const abortStartedServer = async () => {
-      setWorkspacePaneCreationBackend(null);
       await workspacePaneCreation.dispose();
       closeClients();
       const closePromise = waitForServerClose(server).catch(() => void 0);
@@ -21632,7 +21823,7 @@ async function startEmbeddedDaemon(opts) {
           instanceId,
           startedAt,
           bindHostname,
-          authToken
+          authToken: localBypassToken
         },
         claim
       );
@@ -21728,7 +21919,6 @@ async function startEmbeddedDaemon(opts) {
           try {
             stopped = true;
             setActivationBackend(null);
-            setWorkspacePaneCreationBackend(null);
             await workspacePaneCreation.dispose();
             clearInterval(monitorInterval);
             const closePromise = waitForServerClose(server);
@@ -21816,7 +22006,6 @@ var init_daemon_embed = __esm({
     init_ws_events();
     init_app_set_remote_access();
     init_daemon_shutdown();
-    init_workspace_pane_create();
     init_app_settings();
     init_workspace_registry();
     init_workspace_pane_creation2();
@@ -21995,7 +22184,7 @@ var init_cli_action_bridge = __esm({
 });
 
 // packages/daemon/src/config.ts
-import { resolve as resolve27 } from "node:path";
+import { resolve as resolve28 } from "node:path";
 function readConfigSafe(dir) {
   let cfg;
   try {
@@ -22129,7 +22318,7 @@ function configDisableTeam(dir) {
   }).config;
 }
 async function config(targetDir, { json: json2, action, args } = {}) {
-  const dir = resolve27(targetDir ?? ".");
+  const dir = resolve28(targetDir ?? ".");
   if (await tryDispatchConfigAction(dir, { json: json2, action, args: args ?? [] })) return;
   const configContext = await resolveProjectConfigContext(dir);
   if (!configContext.configExists) {
@@ -22755,7 +22944,7 @@ __export(agent_explain_exports, {
   renderReport: () => renderReport
 });
 import { execFileSync as execFileSync14 } from "node:child_process";
-function tmux5(args) {
+function tmux4(args) {
   try {
     return execFileSync14("tmux", args, {
       encoding: "utf8",
@@ -22767,7 +22956,7 @@ function tmux5(args) {
 }
 function readPaneInfo(target) {
   const fmt = "#{pane_id}	#{pane_pid}	#{pane_current_command}	#{@agent_state}	#{@agent_hint}	#{pane_title}";
-  const raw = tmux5(["display-message", "-p", "-t", target, "-F", fmt]);
+  const raw = tmux4(["display-message", "-p", "-t", target, "-F", fmt]);
   if (!raw) return null;
   const [id = "", pid = "", cmd = "", authorityRaw = "", hintRaw = "", ...titleParts] = raw.split("	");
   if (!id) return null;
@@ -22795,10 +22984,10 @@ function buildReport(target) {
   let ageSeconds = null;
   let stale = false;
   if (authRaw) {
-    const sep5 = authRaw.lastIndexOf(":");
-    if (sep5 !== -1) {
-      authState = authRaw.slice(0, sep5);
-      const epoch = Number(authRaw.slice(sep5 + 1));
+    const sep6 = authRaw.lastIndexOf(":");
+    if (sep6 !== -1) {
+      authState = authRaw.slice(0, sep6);
+      const epoch = Number(authRaw.slice(sep6 + 1));
       if (Number.isFinite(epoch)) {
         authEpoch = epoch;
         ageSeconds = nowSec - epoch;
@@ -23137,8 +23326,8 @@ var init_agent_lifecycle = __esm({
 // packages/daemon/src/control/lifecycle.ts
 import { execFile as execFile4 } from "node:child_process";
 function tmuxRun(args) {
-  return new Promise((resolve31, reject) => {
-    execFile4("tmux", args, (err, stdout) => err ? reject(err) : resolve31(stdout.trimEnd()));
+  return new Promise((resolve32, reject) => {
+    execFile4("tmux", args, (err, stdout) => err ? reject(err) : resolve32(stdout.trimEnd()));
   });
 }
 async function tmuxTry(args) {
@@ -23324,11 +23513,11 @@ async function claimSocketPath(path2) {
       { code: "USAGE", exitCode: 1 }
     );
   }
-  const alive = await new Promise((resolve31) => {
+  const alive = await new Promise((resolve32) => {
     const probe = connect(path2);
     const done = (result) => {
       probe.destroy();
-      resolve31(result);
+      resolve32(result);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -23410,7 +23599,7 @@ async function startControlServer(opts = {}) {
     conn.on("error", () => {
     });
   });
-  await new Promise((resolve31, reject) => {
+  await new Promise((resolve32, reject) => {
     server.once("error", (err) => {
       if ((err.code === "EINVAL" || err.code === "ENAMETOOLONG") && socketPath.length > 100) {
         reject(
@@ -23426,14 +23615,14 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
     });
     server.listen(socketPath, () => {
       server.removeAllListeners("error");
-      resolve31();
+      resolve32();
     });
   });
   chmodSync5(socketPath, 384);
   log(`listening on ${socketPath}`);
   return {
     socketPath,
-    close: () => new Promise((resolve31) => {
+    close: () => new Promise((resolve32) => {
       if (timer) clearInterval(timer);
       timer = null;
       for (const conn of connections) conn.destroy();
@@ -23442,7 +23631,7 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
           unlinkSync3(socketPath);
         } catch {
         }
-        resolve31();
+        resolve32();
       });
     })
   };
@@ -23473,12 +23662,12 @@ __export(client_exports, {
 import { connect as connect2 } from "node:net";
 function connectControl(opts = {}) {
   const path2 = opts.socketPath ?? defaultControlSocketPath();
-  return new Promise((resolve31, reject) => {
+  return new Promise((resolve32, reject) => {
     const socket = connect2(path2);
     socket.once("error", reject);
     socket.once("connect", () => {
       socket.removeListener("error", reject);
-      resolve31(wrap(socket));
+      resolve32(wrap(socket));
     });
   });
 }
@@ -23530,12 +23719,12 @@ function wrap(socket) {
   });
   const request = (verb, params) => {
     const id = nextId++;
-    return new Promise((resolve31, reject) => {
+    return new Promise((resolve32, reject) => {
       if (socket.destroyed) {
         reject(new ControlRequestError("disconnected", "control socket closed"));
         return;
       }
-      pending.set(id, { resolve: resolve31, reject });
+      pending.set(id, { resolve: resolve32, reject });
       socket.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, id, verb, params }));
     });
   };
@@ -23581,7 +23770,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync15 } from "node:child_process";
-import { basename as basename11, dirname as dirname30, isAbsolute as isAbsolute9, join as join33, resolve as resolve29 } from "node:path";
+import { basename as basename11, dirname as dirname30, isAbsolute as isAbsolute10, join as join33, resolve as resolve30 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -23589,11 +23778,11 @@ function worktreeSessionName(project, branch) {
   return `${sanitizeForTmux(project)}@${sanitizeForTmux(branch)}`;
 }
 function defaultWorktreeBaseDir(repoDir) {
-  const abs = resolve29(repoDir);
+  const abs = resolve30(repoDir);
   return join33(dirname30(abs), `${basename11(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
-  const base = configuredDir && configuredDir.length > 0 ? isAbsolute9(configuredDir) ? configuredDir : resolve29(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
+  const base = configuredDir && configuredDir.length > 0 ? isAbsolute10(configuredDir) ? configuredDir : resolve30(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
   return join33(base, branch);
 }
 function parseWorktreeList(porcelain) {
@@ -23832,10 +24021,10 @@ async function startCommandCenter(options = {}) {
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
   const server = createServer3(listener);
-  return new Promise((resolve31) => {
+  return new Promise((resolve32) => {
     server.listen(port, hostname2, () => {
       console.log(`Command Center API on http://${hostname2}:${port}`);
-      resolve31(server);
+      resolve32(server);
     });
   });
 }
@@ -23888,21 +24077,21 @@ async function start(port) {
       handlePtyWebSocket(ws, id);
     });
   });
-  await new Promise((resolve31, reject) => {
+  await new Promise((resolve32, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, "0.0.0.0", () => {
       server.off("error", reject);
-      resolve31();
+      resolve32();
     });
   });
   console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve31, reject) => {
+    close: () => new Promise((resolve32, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve31());
+      server.close((err) => err ? reject(err) : resolve32());
     })
   };
 }
@@ -23918,7 +24107,7 @@ var init_server3 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve30, dirname as dirname32 } from "node:path";
+import { resolve as resolve31, dirname as dirname32 } from "node:path";
 import { execFileSync as execFileSync16 } from "node:child_process";
 import { existsSync as existsSync36 } from "node:fs";
 import { fileURLToPath as fileURLToPath11 } from "node:url";
@@ -24659,7 +24848,7 @@ init_legacy_config_adapter();
 init_project_resolver();
 init_errors2();
 import { execFileSync as execFileSync13 } from "node:child_process";
-import { dirname as dirname28, resolve as resolve28 } from "node:path";
+import { dirname as dirname28, resolve as resolve29 } from "node:path";
 function gitIgnoresWorkspace(dir) {
   try {
     execFileSync13("git", ["-C", dir, "check-ignore", "-q", ".tmux-ide/workspace.yml"], {
@@ -24705,7 +24894,7 @@ async function migrate(targetDir, {
   write,
   onAfterRead
 } = {}) {
-  const dir = resolve28(targetDir ?? ".");
+  const dir = resolve29(targetDir ?? ".");
   if (!dryRun && !write) dryRun = true;
   if (dryRun && write) outputError("Use either --dry-run or --write, not both", "USAGE");
   try {
@@ -25172,7 +25361,7 @@ async function findLiveCanonicalDaemon(deps2, options) {
   return existing.info;
 }
 function delay2(ms) {
-  return new Promise((resolve31) => setTimeout(resolve31, ms));
+  return new Promise((resolve32) => setTimeout(resolve32, ms));
 }
 async function waitForCanonicalWinner(deps2, options, timeoutMs = 15e3) {
   const deadline = Date.now() + timeoutMs;
@@ -25210,9 +25399,10 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
         handle = await deps2.startEmbeddedDaemon({
           port,
           bindHostname: "127.0.0.1",
-          // Persisted only in the owner-only daemon record. Native main and
-          // trusted CLI transports use it; renderer/browser code never sees it.
-          authToken: generateAuthToken(),
+          // Persisted only in the owner-only daemon record. This capability is
+          // independent from the remotely shared access token.
+          authToken: null,
+          localBypassToken: generateAuthToken(),
           silent: true,
           ...options.sessionName ? { sessionName: options.sessionName } : {},
           ...options.expectedVersion ? { productVersion: options.expectedVersion } : {}
@@ -25236,8 +25426,8 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
       });
     }
     let resolveStopped;
-    const stopped = new Promise((resolve31) => {
-      resolveStopped = resolve31;
+    const stopped = new Promise((resolve32) => {
+      resolveStopped = resolve32;
     });
     let stopFailure;
     const originalStop = handle.stop.bind(handle);
@@ -25297,7 +25487,7 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
 init_hosted();
 var __dirname5 = dirname32(fileURLToPath11(import.meta.url));
 var selfPath = fileURLToPath11(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve30(__dirname5, "cli.js");
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve31(__dirname5, "cli.js");
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -25537,7 +25727,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   if (launch2.mode === "bun") {
     execFileSync16(launch2.bin, launch2.argv, {
       stdio: "inherit",
-      cwd: resolve30(__dirname5, ".."),
+      cwd: resolve31(__dirname5, ".."),
       env
     });
     return;
@@ -25567,7 +25757,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve30(__dirname5, "..") : process.cwd();
+    const cwd = launch2.mode === "bun" ? resolve31(__dirname5, "..") : process.cwd();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -25613,8 +25803,8 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve30(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve30(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve31(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve31(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
@@ -25663,7 +25853,7 @@ try {
         } catch {
         }
       }
-      const targetDir = resolve30(startTargetDir || ".");
+      const targetDir = resolve31(startTargetDir || ".");
       if (startTargetDir && !existsSync36(targetDir)) {
         throw new IdeError(
           `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
@@ -25762,11 +25952,11 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           "setup",
           scriptPath,
-          ["--dir=" + resolve30(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve31(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
@@ -25775,8 +25965,8 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve30(startTargetDir || ".")];
+      const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve31(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       execBunWidget("setup", scriptPath, setupArgs, "setup");
@@ -25794,8 +25984,8 @@ try {
       break;
     }
     case "settings": {
-      const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget("config", scriptPath, ["--dir=" + resolve30(startTargetDir || ".")], "settings");
+      const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      execBunWidget("config", scriptPath, ["--dir=" + resolve31(startTargetDir || ".")], "settings");
       break;
     }
     case "team": {
@@ -26122,13 +26312,13 @@ try {
             console.log(forcedKey);
             act(forcedKey);
           } else {
-            const key = await new Promise((resolve31) => {
+            const key = await new Promise((resolve32) => {
               try {
                 process.stdin.setRawMode?.(true);
                 process.stdin.resume();
-                process.stdin.once("data", (data) => resolve31(data.toString()));
+                process.stdin.once("data", (data) => resolve32(data.toString()));
               } catch {
-                resolve31("");
+                resolve32("");
               }
             });
             try {
@@ -26327,7 +26517,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync16("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -26654,7 +26844,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve30(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve31(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync16("node", serverArgs, { stdio: "inherit" });

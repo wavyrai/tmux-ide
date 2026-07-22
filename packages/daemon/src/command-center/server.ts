@@ -116,12 +116,15 @@ export interface CreateAppOptions {
     bindHostname?: string;
     token?: string | null;
     localBypassToken?: string | null;
+    /** Private owner-only capability. This is never the remote access token. */
+    ownerToken?: string | null;
   };
   daemonIdentity?: {
     productVersion: string;
     instanceId: string;
     startedAt: string;
   };
+  workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
 }
 
 let projectStreamConnections = 0;
@@ -144,18 +147,14 @@ function requireAuth(token: string | null, localBypassToken: string | null): Mid
   };
 }
 
-function requireHostCapability(
-  token: string | null,
-  localBypassToken: string | null,
-): MiddlewareHandler {
-  const accepted = new Set([token, localBypassToken].filter((value): value is string => !!value));
+function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
   return async (c, next) => {
     if (c.req.param("name") !== "workspace.pane.create") return next();
-    if (accepted.size === 0) {
+    if (!ownerToken) {
       return c.json({ error: "Host mutation capability is unavailable" }, 503);
     }
     const supplied = bearerToken(c.req.header("Authorization"));
-    if (!supplied || !accepted.has(supplied)) {
+    if (!supplied || supplied !== ownerToken) {
       return c.json({ error: "Host mutation capability required" }, 401);
     }
     if (!z.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
@@ -355,11 +354,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   app.post(
     "/api/v2/action/:name",
-    requireHostCapability(
-      options.remoteAccess?.token ?? null,
-      options.remoteAccess?.localBypassToken ?? null,
-    ),
-    createActionDispatcher({ daemonInstanceId: daemonIdentity.instanceId }),
+    requireHostCapability(options.remoteAccess?.ownerToken ?? null),
+    createActionDispatcher({
+      daemonInstanceId: daemonIdentity.instanceId,
+      workspacePaneCreationBackend: options.workspacePaneCreationBackend,
+    }),
   );
 
   app.get("/api/widget/:name/spawn", async (c) => {
