@@ -37,6 +37,7 @@ const ACTION_COMMAND_METADATA: Record<ActionName, ActionCommandMetadata> = {
   },
   "app.setRemoteAccess": { label: "Set remote access", category: "application" },
   "daemon.shutdown": { label: "Shut down daemon", category: "daemon", dangerous: true },
+  "workspace.pane.create": { label: "Create workspace pane", category: "workspace" },
 };
 
 function actionDescriptor(name: ActionName): CommandDescriptor {

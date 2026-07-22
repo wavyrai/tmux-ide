@@ -21,6 +21,7 @@ import {
   type EmbeddedDaemonOptions,
 } from "./daemon-embed.ts";
 import { DaemonStartupError, IdeError } from "./errors.ts";
+import { generateAuthToken } from "./auth-token.ts";
 
 export interface HeadlessDaemonOptions {
   readonly port?: string | number;
@@ -247,7 +248,9 @@ export async function runHeadlessDaemon(
         handle = await deps.startEmbeddedDaemon({
           port,
           bindHostname: "127.0.0.1",
-          authToken: null,
+          // Persisted only in the owner-only daemon record. Native main and
+          // trusted CLI transports use it; renderer/browser code never sees it.
+          authToken: generateAuthToken(),
           silent: true,
           ...(options.sessionName ? { sessionName: options.sessionName } : {}),
           ...(options.expectedVersion ? { productVersion: options.expectedVersion } : {}),

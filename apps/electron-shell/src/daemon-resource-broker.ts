@@ -10,6 +10,8 @@ import {
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopWorkspaceNameSchemaZ,
   WorkspaceCatalogResourceV1SchemaZ,
+  WorkspacePaneCreateArgumentsSchemaZ,
+  WorkspacePaneCreateMutationResultSchemaZ,
   type DaemonEventServerFrame,
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityError,
@@ -18,7 +20,10 @@ import {
   type DesktopDaemonFetchApplicationShellResult,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
+  type WorkspacePaneCreateArguments,
+  type WorkspacePaneCreateMutationResult,
 } from "@tmux-ide/contracts";
+import { z } from "zod";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -68,6 +73,8 @@ export interface DaemonResourceBrokerDependencies {
   readonly eventReconnectInitialDelayMs?: number;
   readonly eventReconnectMaximumDelayMs?: number;
   readonly eventReconnectMaximumAttempts?: number;
+  /** Owner-only canonical capability retained in Electron main. */
+  readonly ownerToken?: string | null;
 }
 
 export type BrokerSubscriptionResult =
@@ -217,6 +224,7 @@ export class DaemonResourceBroker {
   readonly #eventReconnectInitialDelayMs: number;
   readonly #eventReconnectMaximumDelayMs: number;
   readonly #eventReconnectMaximumAttempts: number;
+  readonly #ownerToken: string | null;
   readonly #controllers = new Set<AbortController>();
   readonly #subscriptions = new Map<number, BrokerSubscription>();
 
@@ -278,6 +286,42 @@ export class DaemonResourceBroker {
       0,
       10,
     );
+    this.#ownerToken = dependencies.ownerToken ?? null;
+  }
+
+  async createWorkspacePane(
+    intent: WorkspacePaneCreateArguments,
+    operationId: string,
+  ): Promise<WorkspacePaneCreateMutationResult> {
+    if (this.#daemon.status !== "connected" || !this.#ownerToken) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
+    }
+    const parsedIntent = WorkspacePaneCreateArgumentsSchemaZ.parse(intent);
+    const parsedOperationId = z.uuid().parse(operationId);
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const raw = await this.#mutationJson(
+          "/api/v2/action/workspace.pane.create",
+          parsedIntent,
+          parsedOperationId,
+        );
+        const envelope = z
+          .object({ ok: z.literal(true), result: WorkspacePaneCreateMutationResultSchemaZ })
+          .strict()
+          .parse(raw);
+        if (
+          envelope.result.operationId !== parsedOperationId ||
+          envelope.result.daemonInstanceId !== this.#daemon.descriptor.instanceId
+        ) {
+          throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+        }
+        return envelope.result;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
   }
 
   async listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult> {
@@ -479,6 +523,66 @@ export class DaemonResourceBroker {
         throw new BrokerFailure(
           daemonCapabilityError(response.status === 404 ? "workspace-not-found" : "request-failed"),
         );
+      }
+      return readBoundedJson(response, this.#maxResponseBytes);
+    })();
+    try {
+      const result = await Promise.race([operation, deadline]);
+      if (requestGeneration !== this.#rendererGeneration) {
+        throw new BrokerFailure(daemonCapabilityError("disposed"));
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof BrokerFailure) throw error;
+      if (requestGeneration !== this.#rendererGeneration || this.#disposed) {
+        throw new BrokerFailure(daemonCapabilityError("disposed"));
+      }
+      throw new BrokerFailure(daemonCapabilityError("request-failed"));
+    } finally {
+      controller.abort();
+      this.#controllers.delete(controller);
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  async #mutationJson(pathname: string, body: unknown, operationId: string): Promise<unknown> {
+    if (this.#disposed) throw new BrokerFailure(daemonCapabilityError("disposed"));
+    if (this.#daemon.status !== "connected" || !this.#ownerToken) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
+    }
+    const requestGeneration = this.#rendererGeneration;
+    const base = new URL(this.#daemon.descriptor.apiBaseUrl);
+    const url = new URL(pathname, base);
+    if (url.origin !== base.origin || url.username || url.password) {
+      throw new BrokerFailure(daemonCapabilityError("invalid-request"));
+    }
+    const controller = new AbortController();
+    this.#controllers.add(controller);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new BrokerFailure(daemonCapabilityError("request-timeout")));
+      }, this.#requestTimeoutMs);
+      timeout.unref?.();
+    });
+    const operation = (async (): Promise<unknown> => {
+      const response = await this.#fetch(url, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          Authorization: `Bearer ${this.#ownerToken}`,
+          "Content-Type": "application/json",
+          "X-Tmux-Ide-Operation-Id": operationId,
+        },
+        body: JSON.stringify(body),
+        cache: "no-store",
+        credentials: "omit",
+        redirect: "error",
+        signal: controller.signal,
+      });
+      if (response.redirected || !response.ok) {
+        throw new BrokerFailure(daemonCapabilityError("request-failed"));
       }
       return readBoundedJson(response, this.#maxResponseBytes);
     })();

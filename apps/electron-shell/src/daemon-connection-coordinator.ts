@@ -8,6 +8,8 @@ import {
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonRefreshConnectionResult,
+  type WorkspacePaneCreateArguments,
+  type WorkspacePaneCreateMutationResult,
 } from "@tmux-ide/contracts";
 
 import {
@@ -17,10 +19,15 @@ import {
   type BrokerSubscriptionResult,
 } from "./daemon-resource-broker.ts";
 import { runDaemonPreflight, type DaemonPreflight } from "./daemon-preflight.ts";
+import { inspectCanonicalDaemonInfo } from "../../../packages/daemon/src/canonical.ts";
 
 type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected" }>;
 
 export interface DaemonResourceAuthority {
+  createWorkspacePane(
+    intent: WorkspacePaneCreateArguments,
+    operationId: string,
+  ): Promise<WorkspacePaneCreateMutationResult>;
   listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
   fetchApplicationShell(workspaceName: string): Promise<DesktopDaemonFetchApplicationShellResult>;
   subscribe(
@@ -90,7 +97,17 @@ function sameDisconnectedState(
 }
 
 function defaultBrokerFactory(daemon: ConnectedDaemonState): DaemonResourceAuthority {
-  return new DaemonResourceBroker({ daemon });
+  const canonical = inspectCanonicalDaemonInfo();
+  if (
+    canonical.status !== "valid" ||
+    canonical.info.instanceId !== daemon.descriptor.instanceId ||
+    canonical.info.protocolVersion !== daemon.descriptor.protocolVersion ||
+    canonical.info.startedAt !== daemon.descriptor.startedAt ||
+    !canonical.info.authToken
+  ) {
+    throw new Error("canonical daemon owner capability is unavailable or changed");
+  }
+  return new DaemonResourceBroker({ daemon, ownerToken: canonical.info.authToken });
 }
 
 /**
@@ -155,6 +172,24 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       },
     );
     return operation;
+  }
+
+  async createWorkspacePane(
+    intent: WorkspacePaneCreateArguments,
+    operationId: string,
+  ): Promise<WorkspacePaneCreateMutationResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.createWorkspacePane(intent, operationId);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
   }
 
   async listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult> {

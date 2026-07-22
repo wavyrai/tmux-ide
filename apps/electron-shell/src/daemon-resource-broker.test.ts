@@ -81,6 +81,59 @@ class FakeSocket implements BrokerEventSocket {
 }
 
 describe("Electron main daemon resource broker", () => {
+  it("keeps the owner token in main and reuses one operation id across a transport retry", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const operationId = "10000000-0000-4000-8000-000000000001";
+    let attempt = 0;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        attempt += 1;
+        if (attempt === 1) throw new Error("transport timeout after commit");
+        return json({
+          ok: true,
+          result: {
+            operationId,
+            daemonInstanceId: IDENTITY.instanceId,
+            outcome: "replayed",
+            resource: {
+              resourceVersion: 1,
+              workspaceName: "product workspace",
+              semanticPaneId: "pane.10000000000040008000000000000001",
+              kind: "terminal",
+              displayTitle: "Terminal",
+              harnessProfileId: null,
+              role: null,
+              missionId: null,
+            },
+          },
+        });
+      },
+    });
+
+    await expect(
+      broker.createWorkspacePane(
+        { kind: "terminal", workspaceName: "product workspace" },
+        operationId,
+      ),
+    ).resolves.toMatchObject({ operationId, outcome: "replayed" });
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      expect(request.url).toBe("http://127.0.0.1:6060/api/v2/action/workspace.pane.create");
+      expect(new Headers(request.init?.headers)).toMatchObject({});
+      expect(new Headers(request.init?.headers).get("authorization")).toBe(
+        "Bearer owner-only-token",
+      );
+      expect(new Headers(request.init?.headers).get("x-tmux-ide-operation-id")).toBe(operationId);
+      expect(JSON.parse(String(request.init?.body))).toEqual({
+        kind: "terminal",
+        workspaceName: "product workspace",
+      });
+    }
+  });
+
   it("keeps one physical socket for an empty catalog-only subscription", async () => {
     const socket = new FakeSocket();
     const events: DesktopDaemonEvent[] = [];

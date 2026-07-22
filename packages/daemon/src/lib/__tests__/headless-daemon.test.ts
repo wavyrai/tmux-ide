@@ -154,7 +154,12 @@ describe("runHeadlessDaemon", () => {
     await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
 
     expect(harness.startOptions).toEqual([
-      { port: 4321, bindHostname: "127.0.0.1", authToken: null, silent: true },
+      {
+        port: 4321,
+        bindHostname: "127.0.0.1",
+        authToken: expect.any(String),
+        silent: true,
+      },
     ]);
     expect(harness.signals.has("SIGINT")).toBe(true);
     harness.signals.get("SIGTERM")?.();

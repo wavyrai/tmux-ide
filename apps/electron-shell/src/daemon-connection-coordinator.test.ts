@@ -82,6 +82,21 @@ function brokerHarness(
   };
   return {
     authority: {
+      createWorkspacePane: async (intent, operationId) => ({
+        operationId,
+        daemonInstanceId: identity.instanceId,
+        outcome: "created",
+        resource: {
+          resourceVersion: 1,
+          workspaceName: intent.workspaceName,
+          semanticPaneId: `pane.${operationId.replaceAll("-", "")}`,
+          kind: "terminal",
+          displayTitle: "Terminal",
+          harnessProfileId: null,
+          role: null,
+          missionId: null,
+        },
+      }),
       listWorkspaces: async () => {
         await pending?.promise;
         return { status: "ok", daemon: identity, workspaces: [{ workspaceName: "product" }] };

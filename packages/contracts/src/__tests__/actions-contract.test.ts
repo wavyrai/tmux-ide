@@ -17,4 +17,23 @@ describe("daemon action contract", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("accepts only renderer-safe semantic workspace pane creation", () => {
+    const input = { kind: "terminal", workspaceName: "workspace.alpha" } as const;
+    expect(ActionContractsZ["workspace.pane.create"].input.parse(input)).toEqual(input);
+    for (const [field, value] of [
+      ["cwd", "/tmp/project"],
+      ["argv", ["sh", "-c", "owned"]],
+      ["env", { SECRET: "renderer" }],
+      ["paneId", "%42"],
+      ["sessionName", "runtime-session"],
+    ] as const) {
+      expect(
+        ActionContractsZ["workspace.pane.create"].input.safeParse({
+          ...input,
+          [field]: value,
+        }).success,
+      ).toBe(false);
+    }
+  });
 });

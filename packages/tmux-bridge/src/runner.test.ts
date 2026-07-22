@@ -469,6 +469,15 @@ describe("error classification", () => {
     expect(result).toEqual({ running: false, reason: "SESSION_NOT_FOUND" });
   });
 
+  it('classifies "can\'t find pane" as SESSION_NOT_FOUND', () => {
+    mockExec.mockImplementation(() => {
+      throw makeExecError("can't find pane: %42");
+    });
+    expect(() => runTmux(["list-panes", "-t", "%42"])).toThrow(
+      expect.objectContaining({ code: "SESSION_NOT_FOUND" }),
+    );
+  });
+
   it('classifies "unknown target" as SESSION_NOT_FOUND', () => {
     mockExec.mockImplementation(() => {
       throw makeExecError("unknown target: proj");

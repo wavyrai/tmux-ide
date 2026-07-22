@@ -22,8 +22,10 @@ import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
 import { handleWsEventsConnection } from "../command-center/ws-events.ts";
 import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
+import { setWorkspacePaneCreationBackend } from "../command-center/actions/handlers/workspace-pane-create.ts";
 import { readAppSettings } from "./app-settings.ts";
 import { getDefaultWorkspaceRegistry } from "./workspace-registry.ts";
+import { WorkspacePaneCreationAuthority } from "./workspace-pane-creation.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import {
   canonicalDaemonUrl,
@@ -797,18 +799,33 @@ export async function startEmbeddedDaemon(
         // Already added or persistence failed; non-fatal.
       }
     }
-    const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
-      sessionName,
-      requestedPort: port,
-      bindHostname,
-      dir,
-      authToken,
-      localBypassToken,
-      silent: opts.silent,
-      readProjectAuth: !sessionless,
-      daemonIdentity: { productVersion, instanceId, startedAt },
+    const workspacePaneCreation = new WorkspacePaneCreationAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
     });
+    setWorkspacePaneCreationBackend(workspacePaneCreation);
+    let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
+    try {
+      startedServer = await startHttpServer({
+        sessionName,
+        requestedPort: port,
+        bindHostname,
+        dir,
+        authToken,
+        localBypassToken,
+        silent: opts.silent,
+        readProjectAuth: !sessionless,
+        daemonIdentity: { productVersion, instanceId, startedAt },
+      });
+    } catch (error) {
+      setWorkspacePaneCreationBackend(null);
+      await workspacePaneCreation.dispose();
+      throw error;
+    }
+    const { server, sockets, closeClients, closeWsServers } = startedServer;
     const abortStartedServer = async (): Promise<void> => {
+      setWorkspacePaneCreationBackend(null);
+      await workspacePaneCreation.dispose();
       closeClients();
       const closePromise = waitForServerClose(server).catch(() => undefined);
       for (const socket of sockets) socket.destroy();
@@ -947,6 +964,8 @@ export async function startEmbeddedDaemon(
           try {
             stopped = true;
             setActivationBackend(null);
+            setWorkspacePaneCreationBackend(null);
+            await workspacePaneCreation.dispose();
             clearInterval(monitorInterval);
 
             const closePromise = waitForServerClose(server);

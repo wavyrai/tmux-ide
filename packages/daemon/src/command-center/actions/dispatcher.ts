@@ -32,6 +32,8 @@ import { daemonActionCommandRegistry } from "./command-definitions.ts";
 export interface DispatcherDeps {
   /** Override the WS broadcaster (tests / non-default daemons). */
   broadcast?: (name: string, result: unknown) => void;
+  /** Trusted daemon generation; never accepted from an HTTP request body. */
+  daemonInstanceId?: string;
 }
 
 interface DispatchOk {
@@ -151,7 +153,13 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
 
     let result: unknown;
     try {
-      result = await entry.handler(commandResolution.command.input);
+      const context = {
+        operationId: c.req.header("X-Tmux-Ide-Operation-Id"),
+        daemonInstanceId: deps.daemonInstanceId,
+      };
+      result = entry.handlerWithContext
+        ? await entry.handlerWithContext(commandResolution.command.input, context)
+        : await entry.handler(commandResolution.command.input);
     } catch (err) {
       const wrapped = wrapInternalError(err);
       return c.json(errorEnvelope(wrapped) satisfies ActionErrorEnvelope, 200);
