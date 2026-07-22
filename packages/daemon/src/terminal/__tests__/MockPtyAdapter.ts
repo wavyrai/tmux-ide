@@ -21,6 +21,7 @@ import {
   type PtyExitEvent,
   type PtyProcess,
   type PtySpawnInput,
+  type PtySpawnListeners,
 } from "../PtyAdapter.ts";
 
 export interface MockPtyOptions {
@@ -46,9 +47,11 @@ export class MockPtyProcess implements PtyProcess {
   private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
   private readonly _input: PtySpawnInput;
 
-  constructor(pid: number, input: PtySpawnInput) {
+  constructor(pid: number, input: PtySpawnInput, listeners: PtySpawnListeners = {}) {
     this.pid = pid;
     this._input = input;
+    if (listeners.onData) this.dataListeners.add(listeners.onData);
+    if (listeners.onExit) this.exitListeners.add(listeners.onExit);
   }
 
   /** Original spawn input — handy for assertions. */
@@ -64,6 +67,16 @@ export class MockPtyProcess implements PtyProcess {
   resize(cols: number, rows: number): void {
     if (this.exited) return;
     this.resizeLog.push({ cols, rows });
+  }
+
+  paused = false;
+
+  pause(): void {
+    if (!this.exited) this.paused = true;
+  }
+
+  resume(): void {
+    if (!this.exited) this.paused = false;
   }
 
   kill(signal?: NodeJS.Signals | number): void {
@@ -109,7 +122,10 @@ export class MockPtyProcess implements PtyProcess {
   emitExit(event: PtyExitEvent): void {
     if (this.exited) return;
     this.exited = true;
-    for (const listener of this.exitListeners) listener(event);
+    const listeners = [...this.exitListeners];
+    this.dataListeners.clear();
+    this.exitListeners.clear();
+    for (const listener of listeners) listener(event);
   }
 
   /** Number of currently attached data listeners — handy for leak assertions. */
@@ -142,19 +158,19 @@ export class MockPtyAdapter implements PtyAdapter {
     this._failNext = { code, message };
   }
 
-  async spawn(input: PtySpawnInput): Promise<PtyProcess> {
+  async spawn(input: PtySpawnInput, listeners?: PtySpawnListeners): Promise<PtyProcess> {
     if (this._failNext) {
       const err = this._failNext;
       this._failNext = undefined;
       throw new PtySpawnError({ adapter: this.id, code: err.code, message: err.message });
     }
     this.spawnLog.push(input);
-    const proc = new MockPtyProcess(this.nextPid++, input);
+    const proc = new MockPtyProcess(this.nextPid++, input, listeners);
     this.spawned.push(proc);
     return proc;
   }
 
-  spawnSync(input: PtySpawnInput): PtyProcess {
+  spawnSync(input: PtySpawnInput, listeners?: PtySpawnListeners): PtyProcess {
     if (this.syncUnsupported) {
       throw new PtySpawnError({
         adapter: this.id,
@@ -168,7 +184,7 @@ export class MockPtyAdapter implements PtyAdapter {
       throw new PtySpawnError({ adapter: this.id, code: err.code, message: err.message });
     }
     this.spawnLog.push(input);
-    const proc = new MockPtyProcess(this.nextPid++, input);
+    const proc = new MockPtyProcess(this.nextPid++, input, listeners);
     this.spawned.push(proc);
     return proc;
   }

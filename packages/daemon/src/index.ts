@@ -167,7 +167,18 @@ export {
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
   type TmuxAttachmentClientTransport,
-  type TmuxAttachmentClientTransportResult,
+  type TmuxAttachmentClientTransportAttempt,
+  type TmuxAttachmentClientTransportInput,
+  type TmuxAttachmentClientTransportOutcome,
   type TmuxAttachmentViewExecutorErrorCode,
   type TmuxAttachmentViewExecutorOptions,
 } from "./terminal/attachments/tmux-view-executor.ts";
+export {
+  PtyTmuxAttachmentInputUnavailableError,
+  PtyTmuxAttachmentLauncher,
+  ptyAttachmentIdentityFromPlan,
+  type ClaimedPtyTmuxAttachment,
+  type DaemonTmuxSocketSelector,
+  type PtyTmuxAttachmentClaimKey,
+  type PtyTmuxAttachmentLauncherOptions,
+} from "./terminal/attachments/pty-tmux-attachment-launcher.ts";

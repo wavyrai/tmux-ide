@@ -14,7 +14,8 @@ import type {
 import {
   TmuxAttachmentViewExecutor,
   TmuxAttachmentViewExecutorError,
-  type TmuxAttachmentClientTransportResult,
+  type TmuxAttachmentClientTransportInput,
+  type TmuxAttachmentClientTransportOutcome,
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
 } from "../attachments/tmux-view-executor.ts";
@@ -249,16 +250,26 @@ function seed(runner: FakeRunner, selectedPlan = plan(), overrides: Partial<Fake
 
 function clientTransport(runner: FakeRunner) {
   return {
-    runGuardedAttach: (command: TmuxArgvPlan): TmuxAttachmentClientTransportResult => {
-      const result = runner.run(command);
-      if (result.status !== "ok") return { status: "failed" };
-      if (result.stdout.trim() === "__tmux_ide_source_proof_mismatch_v1__") {
-        return { status: "source-proof-mismatch" };
+    beginGuardedAttach: (input: TmuxAttachmentClientTransportInput) => {
+      const result = runner.run(input.command);
+      let outcome: TmuxAttachmentClientTransportOutcome = { status: "executed" };
+      if (result.status !== "ok") {
+        outcome = { status: "failed" };
+      } else {
+        if (result.stdout.trim() === "__tmux_ide_source_proof_mismatch_v1__") {
+          outcome = { status: "source-proof-mismatch" };
+        }
+        if (result.stdout.trim() === "__tmux_ide_view_proof_mismatch_v1__") {
+          outcome = { status: "view-proof-mismatch" };
+        }
       }
-      if (result.stdout.trim() === "__tmux_ide_view_proof_mismatch_v1__") {
-        return { status: "view-proof-mismatch" };
-      }
-      return { status: "executed" };
+      return {
+        status: "claimed" as const,
+        attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
+        attachmentId: input.identity.attachmentId,
+        generation: input.identity.generation,
+        outcome: Promise.resolve(outcome),
+      };
     },
   };
 }
@@ -445,6 +456,69 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
       expect(runner.mutationCount).toBe(0);
     },
   );
+
+  it("synchronously claims the PTY before yielding after the final daemon proof", async () => {
+    const runner = new FakeRunner();
+    const selectedPlan = plan();
+    seed(runner, selectedPlan);
+    let yielded = false;
+    let began = false;
+    runner.before = (argv) => {
+      if (argv[0] === "list-panes" && argv[2] === "$12:@34") {
+        queueMicrotask(() => {
+          yielded = true;
+        });
+      }
+    };
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: {
+        beginGuardedAttach(input) {
+          began = true;
+          expect(yielded).toBe(false);
+          return {
+            status: "claimed",
+            attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
+            attachmentId: input.identity.attachmentId,
+            generation: input.identity.generation,
+            outcome: Promise.resolve({ status: "executed" }),
+          };
+        },
+      },
+      now: () => 1_000,
+    });
+
+    await expect(
+      executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
+    ).resolves.toBe("executed");
+    expect(began).toBe(true);
+    expect(yielded).toBe(true);
+  });
+
+  it("fails closed on a transport outcome outside the static protocol", async () => {
+    const runner = new FakeRunner();
+    const selectedPlan = plan();
+    seed(runner, selectedPlan);
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: {
+        beginGuardedAttach(input) {
+          return {
+            status: "claimed",
+            attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
+            attachmentId: input.identity.attachmentId,
+            generation: input.identity.generation,
+            outcome: Promise.resolve({ status: "hostile" } as never),
+          };
+        },
+      },
+      now: () => 1_000,
+    });
+
+    await expect(
+      executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
+    ).rejects.toMatchObject({ code: "mutation-outcome-uncertain" });
+  });
 
   it("reports a partial mutation as uncertain, rolls back only a canonical view, and leaks nothing", async () => {
     const runner = new FakeRunner();

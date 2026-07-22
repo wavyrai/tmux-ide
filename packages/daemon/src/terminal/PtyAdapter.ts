@@ -60,6 +60,18 @@ export interface PtyExitEvent {
 }
 
 /**
+ * Optional listeners installed on the adapter's process wrapper before that
+ * wrapper subscribes to the native child. This closes the post-spawn handle
+ * handoff gap and captures even a child implementation which emits
+ * synchronously while `onData`/`onExit` is registered. It does not claim that
+ * a native backend can accept callbacks before its own `spawn(...)` returns.
+ */
+export interface PtySpawnListeners {
+  readonly onData?: (data: Buffer) => void;
+  readonly onExit?: (event: PtyExitEvent) => void;
+}
+
+/**
  * Handle to a live PTY child returned by `PtyAdapter.spawn`. Modelled on
  * t3's `PtyProcess` and `node-pty`'s `IPty` so wrapping is trivial.
  *
@@ -74,6 +86,10 @@ export interface PtyProcess {
   write(data: string | Uint8Array): void;
   /** Resize the controlling terminal. */
   resize(cols: number, rows: number): void;
+  /** Pause delivery from the native PTY without terminating its child. */
+  pause(): void;
+  /** Resume delivery after a matching pause. */
+  resume(): void;
   /**
    * Send a signal to the child. Defaults to `SIGTERM` so adapters that
    * can't deliver arbitrary signals (mocks, sandboxed remotes) still
@@ -131,10 +147,10 @@ export interface PtyAdapter {
   /** Human-readable adapter id, surfaced in `PtySpawnError.adapter`. */
   readonly id: string;
   /** Canonical async spawn. Resolves once the child PID is known. */
-  spawn(input: PtySpawnInput): Promise<PtyProcess>;
+  spawn(input: PtySpawnInput, listeners?: PtySpawnListeners): Promise<PtyProcess>;
   /**
    * Synchronous spawn. Adapters that can't satisfy this (because they
    * need async setup) MUST throw `PtySpawnError({ code: "sync_unsupported" })`.
    */
-  spawnSync(input: PtySpawnInput): PtyProcess;
+  spawnSync(input: PtySpawnInput, listeners?: PtySpawnListeners): PtyProcess;
 }

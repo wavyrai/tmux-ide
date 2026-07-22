@@ -61,21 +61,48 @@ export interface TmuxAttachmentCommandRunner {
   readonly run: (command: TmuxArgvPlan) => TmuxAttachmentCommandResult;
 }
 
-export type TmuxAttachmentClientTransportResult =
+export type TmuxAttachmentClientTransportOutcome =
   | { readonly status: "executed" }
   | { readonly status: "source-proof-mismatch" }
   | { readonly status: "view-proof-mismatch" }
   | { readonly status: "failed" };
 
+export interface TmuxAttachmentClientTransportInput {
+  readonly command: TmuxArgvPlan;
+  readonly identity: {
+    readonly attachmentId: string;
+    readonly generation: number;
+    readonly viewSessionName: string;
+    readonly markerValue: string;
+    readonly expectedWindowId: string;
+    readonly expectedPaneId: string;
+  };
+  readonly viewport: {
+    readonly cols: number;
+    readonly rows: number;
+  };
+  readonly viewerMode: GroupedTmuxAttachmentPlan["viewerMode"];
+}
+
+export interface TmuxAttachmentClientTransportAttempt {
+  readonly status: "claimed";
+  readonly attemptId: string;
+  readonly attachmentId: string;
+  readonly generation: number;
+  readonly outcome: Promise<TmuxAttachmentClientTransportOutcome>;
+}
+
 /**
  * Explicit capability for commands which create a live tmux client. The
  * ordinary daemon command runner is intentionally not treated as this
- * capability: `attach-session` requires a PTY or control-client owner. The
- * transport also owns decoding its terminal/control protocol and must not
- * report `executed` unless the guarded mutation branch ran.
+ * capability: `attach-session` requires a real PTY-owned tmux client. The
+ * transport must not report `executed` until daemon-side tmux discovery
+ * proves that exact client attached to the expected view.
  */
 export interface TmuxAttachmentClientTransport {
-  readonly runGuardedAttach: (command: TmuxArgvPlan) => TmuxAttachmentClientTransportResult;
+  readonly beginGuardedAttach: (
+    input: TmuxAttachmentClientTransportInput,
+  ) => TmuxAttachmentClientTransportAttempt;
 }
 
 export type TmuxAttachmentViewExecutorErrorCode =
@@ -133,8 +160,8 @@ interface ViewServerGuard {
  */
 let serverWideAttachmentOperationTail: Promise<void> = Promise.resolve();
 
-function serializeServerWide<T>(operation: () => T): Promise<T> {
-  const run = serverWideAttachmentOperationTail.then(operation, operation);
+function serializeServerWide<T>(operation: () => T | PromiseLike<T>): Promise<T> {
+  const run: Promise<T> = serverWideAttachmentOperationTail.then(operation, operation);
   serverWideAttachmentOperationTail = run.then(
     () => undefined,
     () => undefined,
@@ -362,19 +389,36 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     }
   }
 
-  #clientCommand(command: TmuxArgvPlan): TmuxAttachmentClientTransportResult {
+  #clientCommand(
+    command: TmuxArgvPlan,
+    plan: GroupedTmuxAttachmentPlan,
+  ): TmuxAttachmentClientTransportAttempt {
     if (!this.#clientTransport) {
       throw new TmuxAttachmentViewExecutorError("attachment-transport-unavailable");
     }
     try {
-      const result = this.#clientTransport.runGuardedAttach({
-        executable: "tmux",
-        argv: [...command.argv],
+      const result = this.#clientTransport.beginGuardedAttach({
+        command: {
+          executable: "tmux",
+          argv: [...command.argv],
+        },
+        identity: {
+          attachmentId: plan.identity.attachmentId,
+          generation: plan.identity.generation,
+          viewSessionName: plan.identity.viewSessionName,
+          markerValue: plan.identity.markerValue,
+          expectedWindowId: plan.identity.durableSource.windowId,
+          expectedPaneId: plan.identity.durableSource.runtimePaneId,
+        },
+        viewport: { ...plan.viewport },
+        viewerMode: plan.viewerMode,
       });
       if (
-        !["executed", "source-proof-mismatch", "view-proof-mismatch", "failed"].includes(
-          result.status,
-        )
+        result.status !== "claimed" ||
+        !z.uuid().safeParse(result.attemptId).success ||
+        result.attachmentId !== plan.identity.attachmentId ||
+        result.generation !== plan.identity.generation ||
+        !(result.outcome instanceof Promise)
       ) {
         throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
       }
@@ -613,7 +657,7 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     plan: GroupedTmuxAttachmentPlan,
     commands: readonly TmuxArgvPlan[],
     viewGuard: ViewServerGuard | null,
-  ): GuardedAttachmentViewOperationResult {
+  ): GuardedAttachmentViewOperationResult | Promise<GuardedAttachmentViewOperationResult> {
     const mutation = tmuxCommandListString(commands);
     const viewGuardedMutation =
       operation.operation === "create"
@@ -656,22 +700,37 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
       return "executed";
     }
 
-    let result: TmuxAttachmentClientTransportResult;
+    let attempt: TmuxAttachmentClientTransportAttempt;
     try {
-      result = this.#clientCommand(guarded);
+      attempt = this.#clientCommand(guarded, plan);
     } catch {
       throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
     }
-    switch (result.status) {
-      case "executed":
-        return "executed";
-      case "source-proof-mismatch":
-        return "source-proof-mismatch";
-      case "view-proof-mismatch":
-        throw new TmuxAttachmentViewExecutorError("view-state-mismatch");
-      case "failed":
+    return attempt.outcome.then(
+      (result) => {
+        if (
+          !result ||
+          !["executed", "source-proof-mismatch", "view-proof-mismatch", "failed"].includes(
+            result.status,
+          )
+        ) {
+          throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
+        }
+        switch (result.status) {
+          case "executed":
+            return "executed" as const;
+          case "source-proof-mismatch":
+            return "source-proof-mismatch" as const;
+          case "view-proof-mismatch":
+            throw new TmuxAttachmentViewExecutorError("view-state-mismatch");
+          case "failed":
+            throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
+        }
+      },
+      () => {
         throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
-    }
+      },
+    );
   }
 
   #bestEffortRollbackCreate(plan: GroupedTmuxAttachmentPlan): void {
@@ -689,7 +748,7 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
 
   #executeGuardedViewOperation(
     operation: GuardedAttachmentViewOperation,
-  ): GuardedAttachmentViewOperationResult {
+  ): GuardedAttachmentViewOperationResult | Promise<GuardedAttachmentViewOperationResult> {
     const plan = canonicalPlanFor(operation);
     if (operation.operation !== "create" && !this.#clientTransport) {
       throw new TmuxAttachmentViewExecutorError("attachment-transport-unavailable");

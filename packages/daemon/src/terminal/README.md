@@ -28,6 +28,12 @@ a remote transport.
 - `NodePtyAdapter.ts` — concrete implementation backed by `node-pty`.
   Ports t3's `ensureNodePtySpawnHelperExecutable` chmod-on-helper trick
   so a fresh install always boots.
+- `attachments/pty-tmux-attachment-launcher.ts` — daemon-owned normal
+  `tmux attach-session` PTY client. It accepts only the executor's guarded
+  argv plus canonical view identity, keeps socket/cwd/environment authority
+  in the daemon, bounds output until tmux proves the spawned client PID is
+  attached to that exact marked one-window view, and exposes an exactly-once
+  claim/dispose lifecycle.
 - `__tests__/MockPtyAdapter.ts` — scripted PTY for the test suite. Lives
   under `__tests__/` so production bundling never picks it up.
 - `__tests__/*.test.ts` — contract tests parameterised over every
@@ -81,6 +87,14 @@ we register there.
 - No production code outside `NodePtyAdapter.ts` imports `node-pty`.
   This is enforced by `pty-bridge.ts` now consuming `PtyAdapter` and is
   the gate G14-T10 will tighten further.
+- Native PTY input is intentionally not exposed by the grouped attachment
+  launcher yet. Installed node-pty's public `IPty.write(): void` offers no
+  drain/completion or pending-capacity signal while its Unix implementation
+  has a private asynchronous queue. Until an adapter/native helper provides a
+  real bounded-write contract, interactive writes fail with
+  `input-backpressure-unavailable`; this prevents stalled tmux readers from
+  growing an unobservable queue without bound. Output uses public
+  `IPty.pause()`/`resume()` and byte+frame caps.
 
 ## Roadmap notes
 

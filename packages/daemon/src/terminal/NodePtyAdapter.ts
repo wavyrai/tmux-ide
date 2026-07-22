@@ -21,6 +21,7 @@ import {
   type PtyExitEvent,
   type PtyProcess,
   type PtySpawnInput,
+  type PtySpawnListeners,
 } from "./PtyAdapter.ts";
 
 const ADAPTER_ID = "node-pty";
@@ -102,8 +103,10 @@ class NodePtyProcess implements PtyProcess {
   private readonly dataListeners = new Set<(data: Buffer) => void>();
   private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
 
-  constructor(child: pty.IPty) {
+  constructor(child: pty.IPty, listeners: PtySpawnListeners = {}) {
     this.child = child;
+    if (listeners.onData) this.dataListeners.add(listeners.onData);
+    if (listeners.onExit) this.exitListeners.add(listeners.onExit);
     // node-pty hands us strings by default; we want raw buffers for
     // byte-accurate WS bridging. The encoding:null on spawn opts gives us
     // buffers in the typings of node-pty@1.2.0-beta.12.
@@ -117,7 +120,10 @@ class NodePtyProcess implements PtyProcess {
         exitCode: evt.exitCode ?? 0,
         signal: typeof evt.signal === "number" ? evt.signal : null,
       };
-      for (const listener of this.exitListeners) listener(event);
+      const listeners = [...this.exitListeners];
+      this.dataListeners.clear();
+      this.exitListeners.clear();
+      for (const listener of listeners) listener(event);
     });
   }
 
@@ -145,6 +151,14 @@ class NodePtyProcess implements PtyProcess {
     }
   }
 
+  pause(): void {
+    if (!this.exited) this.child.pause();
+  }
+
+  resume(): void {
+    if (!this.exited) this.child.resume();
+  }
+
   kill(signal?: NodeJS.Signals | number): void {
     if (this.exited) return;
     try {
@@ -152,7 +166,10 @@ class NodePtyProcess implements PtyProcess {
     } catch {
       // Already gone. Synthesize an exit so listeners detach cleanly.
       this.exited = true;
-      for (const listener of this.exitListeners) listener({ exitCode: 0, signal: null });
+      const listeners = [...this.exitListeners];
+      this.dataListeners.clear();
+      this.exitListeners.clear();
+      for (const listener of listeners) listener({ exitCode: 0, signal: null });
     }
   }
 
@@ -197,17 +214,17 @@ export class NodePtyAdapter implements PtyAdapter {
     this.skipHelperEnsure = options.skipHelperEnsure ?? false;
   }
 
-  async spawn(input: PtySpawnInput): Promise<PtyProcess> {
+  async spawn(input: PtySpawnInput, listeners?: PtySpawnListeners): Promise<PtyProcess> {
     if (!this.skipHelperEnsure) ensureNodePtySpawnHelperExecutable();
-    return this.spawnSyncInternal(input);
+    return this.spawnSyncInternal(input, listeners);
   }
 
-  spawnSync(input: PtySpawnInput): PtyProcess {
+  spawnSync(input: PtySpawnInput, listeners?: PtySpawnListeners): PtyProcess {
     if (!this.skipHelperEnsure) ensureNodePtySpawnHelperExecutable();
-    return this.spawnSyncInternal(input);
+    return this.spawnSyncInternal(input, listeners);
   }
 
-  private spawnSyncInternal(input: PtySpawnInput): PtyProcess {
+  private spawnSyncInternal(input: PtySpawnInput, listeners?: PtySpawnListeners): PtyProcess {
     assertValidCwd(input.cwd, this.statCwd);
     if (!Number.isInteger(input.cols) || input.cols <= 0) {
       throw new PtySpawnError({
@@ -263,7 +280,7 @@ export class NodePtyAdapter implements PtyAdapter {
         cause: err,
       });
     }
-    return new NodePtyProcess(child);
+    return new NodePtyProcess(child, listeners);
   }
 }
 

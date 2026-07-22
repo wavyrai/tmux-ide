@@ -84,6 +84,63 @@ describe("NodePtyAdapter input encoding", () => {
     expect(writes[1]).toBe(text);
     expect(Buffer.from(writes[1] as string, "utf8")).toEqual(Buffer.from(text, "utf8"));
   });
+
+  it("installs spawn listeners before a child can emit synchronous output or exit", () => {
+    const child = stubNodePty(() => undefined);
+    child.onData = ((callback: (data: Buffer) => void) => {
+      callback(Buffer.from([0x00, 0x80, 0xff]));
+      return { dispose: () => undefined };
+    }) as IPty["onData"];
+    child.onExit = ((callback: (event: { exitCode: number; signal?: number }) => void) => {
+      callback({ exitCode: 7, signal: 15 });
+      return { dispose: () => undefined };
+    }) as IPty["onExit"];
+    const adapter = new NodePtyAdapter({
+      skipHelperEnsure: true,
+      spawnPty: () => child,
+    });
+    const data: Buffer[] = [];
+    const exits: Array<{ exitCode: number; signal: number | null }> = [];
+
+    adapter.spawnSync(
+      {
+        shell: "/trusted/tmux",
+        args: ["attach-session", "-E", "-t", "=view"],
+        cwd: process.cwd(),
+        cols: 80,
+        rows: 24,
+        env: { TERM: "xterm-256color" },
+        encoding: null,
+      },
+      {
+        onData: (chunk) => data.push(chunk),
+        onExit: (event) => exits.push(event),
+      },
+    );
+
+    expect(Buffer.concat(data)).toEqual(Buffer.from([0x00, 0x80, 0xff]));
+    expect(exits).toEqual([{ exitCode: 7, signal: 15 }]);
+  });
+
+  it("forwards public pause and resume to node-pty", () => {
+    const child = stubNodePty(() => undefined);
+    child.pause = vi.fn();
+    child.resume = vi.fn();
+    const adapter = new NodePtyAdapter({ skipHelperEnsure: true, spawnPty: () => child });
+    const proc = adapter.spawnSync({
+      shell: "/trusted/tmux",
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+      env: { TERM: "xterm-256color" },
+    });
+
+    proc.pause();
+    proc.resume();
+
+    expect(child.pause).toHaveBeenCalledOnce();
+    expect(child.resume).toHaveBeenCalledOnce();
+  });
 });
 
 describe.skipIf(skipOnWin || isBun)("NodePtyAdapter", () => {

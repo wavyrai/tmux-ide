@@ -1,4 +1,4 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -9,15 +9,18 @@ import {
 } from "../attachments/grouped-tmux.ts";
 import {
   TmuxAttachmentViewExecutor,
-  type TmuxAttachmentClientTransportResult,
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
-  type TmuxAttachmentClientTransport,
 } from "../attachments/tmux-view-executor.ts";
+import {
+  PtyTmuxAttachmentInputUnavailableError,
+  PtyTmuxAttachmentLauncher,
+} from "../attachments/pty-tmux-attachment-launcher.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 const socketName = `tmux-ide-executor-${process.pid}-${randomUUID().slice(0, 8)}`;
 const sleepCommand = "exec sleep 2147483647";
+const durableCommand = "exec sh -c 'printf authoritative-redraw; sleep 2147483647'";
 const legacyPaneMarkerOption = "@tmux_ide_attachment_view";
 
 function runOnSocket(argv: readonly string[]): string {
@@ -52,48 +55,20 @@ class LiveSocketRunner implements TmuxAttachmentCommandRunner {
   }
 }
 
-class LiveControlClientTransport implements TmuxAttachmentClientTransport {
-  detachTarget = "";
-
-  runGuardedAttach(command: TmuxArgvPlan): TmuxAttachmentClientTransportResult {
-    const detachTarget = this.detachTarget;
-    if (!detachTarget) return { status: "failed" };
-    const detachScript = [
-      'const { execFileSync } = require("node:child_process");',
-      "const [socketName, target] = process.argv.slice(1);",
-      "let attempts = 0;",
-      "const timer = setInterval(() => {",
-      "  try {",
-      '    execFileSync("tmux", ["-L", socketName, "detach-client", "-s", target], { stdio: "ignore" });',
-      "    clearInterval(timer);",
-      "  } catch {",
-      "    attempts += 1;",
-      "    if (attempts >= 100) { clearInterval(timer); process.exitCode = 1; }",
-      "  }",
-      "}, 20);",
-    ].join("\n");
-    const detacher = spawn(process.execPath, ["-e", detachScript, socketName, detachTarget], {
-      stdio: "ignore",
-    });
+class DirectSocketRunner implements TmuxAttachmentCommandRunner {
+  run(command: TmuxArgvPlan): TmuxAttachmentCommandResult {
     try {
-      const stdout = execFileSync("tmux", ["-L", socketName, "-C", ...command.argv], {
+      const stdout = execFileSync("tmux", [...command.argv], {
         encoding: "utf8",
         maxBuffer: 128 * 1024,
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 5_000,
       });
-      if (stdout.includes("__tmux_ide_source_proof_mismatch_v1__")) {
-        return { status: "source-proof-mismatch" };
-      }
-      if (stdout.includes("__tmux_ide_view_proof_mismatch_v1__")) {
-        return { status: "view-proof-mismatch" };
-      }
-      return { status: "executed" };
-    } catch {
-      return { status: "failed" };
-    } finally {
-      detacher.unref();
-      this.detachTarget = "";
+      return { status: "ok", stdout };
+    } catch (error) {
+      const stderr = String((error as { stderr?: string | Buffer }).stderr ?? "").toLowerCase();
+      return /(?:can't find|no such|not found|no server running)/u.test(stderr)
+        ? { status: "not-found" }
+        : { status: "failed" };
     }
   }
 }
@@ -105,7 +80,7 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
   let paneId = "";
 
   beforeAll(() => {
-    runOnSocket(["new-session", "-d", "-s", "durable-source", "-n", "authorized", sleepCommand]);
+    runOnSocket(["new-session", "-d", "-s", "durable-source", "-n", "authorized", durableCommand]);
     sessionId = runOnSocket([
       "display-message",
       "-p",
@@ -127,12 +102,12 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
     spawnSync("tmux", ["-L", socketName, "kill-server"], { stdio: "ignore" });
   });
 
-  function livePlan(attachmentId: string) {
+  function livePlan(attachmentId: string, viewerMode: "interactive" | "read-only" = "read-only") {
     return planGroupedTmuxAttachment({
       attachmentId,
       generation: 0,
       target: { workspaceName: "workspace.live", semanticPaneId: "pane.authorized" },
-      viewerMode: "read-only",
+      viewerMode,
       viewport: { cols: 120, rows: 40 },
       source: { sessionId, windowId, runtimePaneId: paneId, paneCount: 1 },
     });
@@ -304,26 +279,60 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
     runOnSocket(["set-option", "-p", "-u", "-t", paneId, legacyPaneMarkerOption]);
   });
 
-  it("runs attach and recover only through an explicit real tmux client transport", async () => {
-    const selectedPlan = livePlan("2fd6f699-416f-4258-b5f2-0bd9933e8f50");
+  it("attaches a normal real PTY client, redraws and resizes, then detaches without killing durable truth", async () => {
+    const selectedPlan = livePlan("2fd6f699-416f-4258-b5f2-0bd9933e8f50", "interactive");
     const exactTarget = `=${selectedPlan.identity.viewSessionName}` as const;
     const prepareExecutor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
     await prepareExecutor.executeGuardedViewOperation(liveOperation(selectedPlan));
 
-    const transport = new LiveControlClientTransport();
+    const transport = new PtyTmuxAttachmentLauncher({
+      socketSelector: { kind: "name", name: socketName },
+      trustedCwd: process.cwd(),
+      proofRunner: new DirectSocketRunner(),
+      environment: process.env,
+      readinessTimeoutMs: 5_000,
+    });
+    let claimedAttempt: ReturnType<typeof transport.beginGuardedAttach> | null = null;
     const executor = new TmuxAttachmentViewExecutor({
       runner,
-      clientTransport: transport,
+      clientTransport: {
+        beginGuardedAttach(input) {
+          claimedAttempt = transport.beginGuardedAttach(input);
+          return claimedAttempt;
+        },
+      },
       now: () => 1_000,
     });
-    transport.detachTarget = exactTarget;
     await expect(
       executor.executeGuardedViewOperation(liveOperation(selectedPlan, "attach")),
     ).resolves.toBe("executed");
-    transport.detachTarget = exactTarget;
-    await expect(
-      executor.executeGuardedViewOperation(liveOperation(selectedPlan, "recover")),
-    ).resolves.toBe("executed");
+    expect(claimedAttempt).not.toBeNull();
+    const client = transport.claim(claimedAttempt!)!;
+    expect(runOnSocket(["list-windows", "-t", exactTarget, "-F", "#{window_id}"]).trim()).toBe(
+      windowId,
+    );
+    expect(runOnSocket(["list-panes", "-t", exactTarget, "-F", "#{pane_id}"]).trim()).toBe(paneId);
+    const redraw: Buffer[] = [];
+    const detachData = client.onData((data) => redraw.push(data));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(Buffer.concat(redraw).toString("utf8")).toContain("authoritative-redraw");
+    expect(() => client.write("unbounded-input")).toThrow(PtyTmuxAttachmentInputUnavailableError);
+    client.resize(100, 30);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      runOnSocket([
+        "list-clients",
+        "-t",
+        exactTarget,
+        "-F",
+        "#{client_width}x#{client_height}",
+      ]).trim(),
+    ).toBe("100x30");
+    detachData();
+    client.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runOnSocket(["has-session", "-t", exactTarget])).toBe("");
+    expect(runOnSocket(["display-message", "-p", "-t", paneId, "#{pane_dead}"]).trim()).toBe("0");
 
     await expect(
       executor.guardedCleanup({
