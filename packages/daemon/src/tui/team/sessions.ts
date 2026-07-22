@@ -11,14 +11,8 @@
  * to a single session status.
  */
 import { execFileSync } from "node:child_process";
-import {
-  classifyInstant,
-  parseAuthority,
-  parseAuthorityEpoch,
-  sanitizeAgentText,
-  type AgentStatus,
-  type StatusTracker,
-} from "../detect/classify.ts";
+import { classifyInstant, type AgentStatus, type StatusTracker } from "../detect/classify.ts";
+import { agentDisplayMetadata, resolveAgentStatus } from "../detect/agent-resolution.ts";
 import type { AgentManifest, ManifestConfidence } from "../detect/manifest.ts";
 import { readProcessTable, resolveAgentCommand } from "../detect/process-tree.ts";
 import { readPaneSnapshot } from "../detect/snapshot.ts";
@@ -141,13 +135,7 @@ export function agentMetadataFor(
   pane: Pick<PaneRecord, "statusTextRaw" | "displayNameRaw">,
   authorityFresh: boolean,
 ): { statusText?: string; displayName?: string } {
-  if (!authorityFresh) return {};
-  const statusText = sanitizeAgentText(pane.statusTextRaw);
-  const displayName = sanitizeAgentText(pane.displayNameRaw);
-  return {
-    ...(statusText !== undefined ? { statusText } : {}),
-    ...(displayName !== undefined ? { displayName } : {}),
-  };
+  return agentDisplayMetadata(pane.statusTextRaw, pane.displayNameRaw, authorityFresh);
 }
 
 /**
@@ -312,42 +300,38 @@ export function listTeamSessions(
       const nowSec = Math.floor(Date.now() / 1000);
       const agents: PaneAgentEntry[] = [];
       const statuses = panes.map((pane) => {
-        // AUTHORITY first: a fresh hook-reported state outranks scraping.
-        const authority = parseAuthority(pane.authority, nowSec);
-        let status: AgentStatus;
         // The agent kind is needed for BOTH the chip (onPane) and the per-pane
         // agent entry, so the manifest is resolved for every pane. It's cheap —
         // the process table is already loaded, and authority panes take NO
         // capture-pane round-trip.
-        let manifest: AgentManifest | undefined;
-        // The authority state's own timestamp (its "since"); only fresh
-        // authority states carry one — scraped panes have no stamp.
-        let since: number | null = null;
-        if (authority !== null) {
-          since = parseAuthorityEpoch(pane.authority);
-          if (authority === "done" && seen) {
-            // Viewing acknowledges a finished agent — persist the ack so the
-            // pane doesn't flip back to done on the next tick.
-            ackDone(pane.id, nowSec);
-            status = "idle";
-          } else {
-            status = authority;
-          }
-          manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
-            hint: pane.hint,
-          }).manifest;
-        } else {
-          // FALLBACK: snapshot scraping. Resolve the real agent from the pane's
-          // process tree (pane_current_command alone is usually just node/bun/sh).
-          // Only capture recognized agent panes; unknown commands stay "unknown"
-          // without a capture-pane round-trip.
-          manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
-            hint: pane.hint,
-          }).manifest;
-          const instant = manifest
-            ? classifyInstant({ ...readPaneSnapshot(pane.id), title: pane.title }, manifest)
-            : "unknown";
-          status = tracker.update(pane.id, instant, { seen });
+        const manifest: AgentManifest | undefined = resolveAgentCommand(
+          pane.cmd,
+          pane.pid,
+          processTable,
+          { hint: pane.hint },
+        ).manifest;
+        // AUTHORITY first (the ONE shared decision): a fresh hook-reported state
+        // outranks scraping. The scrape callback — process-tree manifest +
+        // capture, folded through the tracker so cross-tick `done` surfaces — is
+        // invoked only when authority is absent/stale, so authority panes take no
+        // capture round-trip.
+        const resolution = resolveAgentStatus({
+          authorityRaw: pane.authority,
+          nowSec,
+          scrape: () => {
+            const instant = manifest
+              ? classifyInstant({ ...readPaneSnapshot(pane.id), title: pane.title }, manifest)
+              : "unknown";
+            return tracker.update(pane.id, instant, { seen });
+          },
+        });
+        let status: AgentStatus = resolution.status;
+        const since: number | null = resolution.since;
+        if (resolution.source === "authority" && status === "done" && seen) {
+          // Viewing acknowledges a finished agent — persist the ack so the pane
+          // doesn't flip back to done on the next tick.
+          ackDone(pane.id, nowSec);
+          status = "idle";
         }
         // The `shell` catch-all isn't a real agent — a raw shell pane gets no
         // chip (agent null → empty chip → border falls back to the pane title).
@@ -371,7 +355,7 @@ export function listTeamSessions(
           manifest,
           state: status,
           since,
-          ...agentMetadataFor(pane, authority !== null),
+          ...agentMetadataFor(pane, resolution.source === "authority"),
         });
         if (entry) agents.push(entry);
         return status;

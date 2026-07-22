@@ -5967,6 +5967,12 @@ function isControlFree(value) {
     return code >= 32 && code !== 127;
   });
 }
+function resolveAgentStatusPresentation(input) {
+  if (input.stale && (input.status === "working" || input.status === "blocked")) {
+    return STALE_STATUS_PRESENTATION;
+  }
+  return FRESH_STATUS_PRESENTATION[input.status];
+}
 var AGENT_GRAPH_MAX_NODES, AGENT_GRAPH_MAX_EDGES, AGENT_GRAPH_MAX_GROUPS, AGENT_GRAPH_MAX_GROUP_MEMBERS, AGENT_GRAPH_LABEL_MAX_LENGTH, AGENT_GRAPH_GROUP_TOKEN_MIN, AGENT_GRAPH_GROUP_TOKEN_MAX, RESERVED_RECORD_KEYS4, AgentGraphLabelSchemaZ, AgentGraphGroupIdSchemaZ, AgentGraphNodeStatusSchemaZ, AgentGraphStatusSourceSchemaZ, AgentGraphEdgeKindSchemaZ, AgentGraphNodeSchemaZ, AgentGraphEdgeSchemaZ, AgentGraphGroupSchemaZ, AgentGraphOverlayShapeSchemaZ, AgentGraphOverlaySchemaZ, FRESH_STATUS_PRESENTATION, STALE_STATUS_PRESENTATION;
 var init_agent_graph_overlay = __esm({
   "packages/contracts/src/agent-graph-overlay.ts"() {
@@ -9079,6 +9085,31 @@ var init_classify = __esm({
   }
 });
 
+// packages/daemon/src/tui/detect/agent-resolution.ts
+function resolveAgentStatus(input) {
+  const authority = parseAuthority(input.authorityRaw, input.nowSec);
+  if (authority !== null) {
+    return { status: authority, source: "authority", since: parseAuthorityEpoch(input.authorityRaw) };
+  }
+  const status2 = input.scrape();
+  return { status: status2, source: status2 === "unknown" ? "unknown" : "scrape", since: null };
+}
+function agentDisplayMetadata(statusTextRaw, displayNameRaw, authorityFresh) {
+  if (!authorityFresh) return {};
+  const statusText = sanitizeAgentText(statusTextRaw);
+  const displayName = sanitizeAgentText(displayNameRaw);
+  return {
+    ...statusText !== void 0 ? { statusText } : {},
+    ...displayName !== void 0 ? { displayName } : {}
+  };
+}
+var init_agent_resolution = __esm({
+  "packages/daemon/src/tui/detect/agent-resolution.ts"() {
+    "use strict";
+    init_classify();
+  }
+});
+
 // packages/daemon/src/tui/detect/manifest-loader.ts
 import { readdirSync, readFileSync as readFileSync4 } from "node:fs";
 import { homedir } from "node:os";
@@ -9393,13 +9424,7 @@ function buildAgentEntry(input) {
   };
 }
 function agentMetadataFor(pane, authorityFresh) {
-  if (!authorityFresh) return {};
-  const statusText = sanitizeAgentText(pane.statusTextRaw);
-  const displayName = sanitizeAgentText(pane.displayNameRaw);
-  return {
-    ...statusText !== void 0 ? { statusText } : {},
-    ...displayName !== void 0 ? { displayName } : {}
-  };
+  return agentDisplayMetadata(pane.statusTextRaw, pane.displayNameRaw, authorityFresh);
 }
 function excludeSidebarPanes(panes) {
   return panes.filter((pane) => !pane.sidebar);
@@ -9433,27 +9458,25 @@ function listTeamSessions(tracker, opts = {}) {
     const nowSec = Math.floor(Date.now() / 1e3);
     const agents = [];
     const statuses = panes.map((pane) => {
-      const authority = parseAuthority(pane.authority, nowSec);
-      let status2;
-      let manifest;
-      let since = null;
-      if (authority !== null) {
-        since = parseAuthorityEpoch(pane.authority);
-        if (authority === "done" && seen) {
-          ackDone(pane.id, nowSec);
-          status2 = "idle";
-        } else {
-          status2 = authority;
+      const manifest = resolveAgentCommand(
+        pane.cmd,
+        pane.pid,
+        processTable,
+        { hint: pane.hint }
+      ).manifest;
+      const resolution = resolveAgentStatus({
+        authorityRaw: pane.authority,
+        nowSec,
+        scrape: () => {
+          const instant = manifest ? classifyInstant({ ...readPaneSnapshot(pane.id), title: pane.title }, manifest) : "unknown";
+          return tracker.update(pane.id, instant, { seen });
         }
-        manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
-          hint: pane.hint
-        }).manifest;
-      } else {
-        manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
-          hint: pane.hint
-        }).manifest;
-        const instant = manifest ? classifyInstant({ ...readPaneSnapshot(pane.id), title: pane.title }, manifest) : "unknown";
-        status2 = tracker.update(pane.id, instant, { seen });
+      });
+      let status2 = resolution.status;
+      const since = resolution.since;
+      if (resolution.source === "authority" && status2 === "done" && seen) {
+        ackDone(pane.id, nowSec);
+        status2 = "idle";
       }
       opts.onPane?.({
         sessionName: name,
@@ -9471,7 +9494,7 @@ function listTeamSessions(tracker, opts = {}) {
         manifest,
         state: status2,
         since,
-        ...agentMetadataFor(pane, authority !== null)
+        ...agentMetadataFor(pane, resolution.source === "authority")
       });
       if (entry) agents.push(entry);
       return status2;
@@ -9580,6 +9603,7 @@ var init_sessions2 = __esm({
   "packages/daemon/src/tui/team/sessions.ts"() {
     "use strict";
     init_classify();
+    init_agent_resolution();
     init_process_tree();
     init_snapshot();
     SIDEBAR_PANE_OPTION = "@tmux_ide_sidebar";
@@ -25701,6 +25725,7 @@ var init_native_runtime = __esm({
       #serializer;
       #registry;
       #discoverTerminalInventory;
+      #agentStatusProbe;
       #lifecycle = "initializing";
       #disposePromise = null;
       constructor(options) {
@@ -25790,6 +25815,12 @@ var init_native_runtime = __esm({
         this.#serializer = serializer;
         this.#registry = options.registry;
         this.#discoverTerminalInventory = discoverTerminalInventory;
+        this.#agentStatusProbe = options.agentStatusProbe ?? (options.agentStatusProbeFactory ? options.agentStatusProbeFactory({
+          run: (argv) => {
+            const result = runner.run({ executable: "tmux", argv });
+            return result.status === "ok" ? result.stdout : null;
+          }
+        }) : null);
       }
       /**
        * Exact registry-session inventory for ApplicationShell V2. The runtime and
@@ -25810,6 +25841,22 @@ var init_native_runtime = __esm({
         if (panes.length === 0) return null;
         const active2 = panes.find((pane) => pane.active) ?? panes[0];
         const catalogIssue = inventory.catalog.invalidRuntimeProof ? "invalid-runtime-proof" : inventory.catalog.missingSemanticStamp ? "missing-semantic-stamp" : inventory.catalog.duplicateSemanticStamp ? "duplicate-semantic-stamp" : inventory.catalog.duplicateRuntimePaneBinding ? "duplicate-runtime-pane-binding" : null;
+        let agentFacts = /* @__PURE__ */ new Map();
+        if (this.#agentStatusProbe) {
+          try {
+            agentFacts = this.#agentStatusProbe.probe({
+              sessionId: active2.sessionId,
+              nowSec: Math.floor(Date.now() / 1e3),
+              panes: panes.map((pane) => ({
+                runtimePaneId: pane.runtimePaneId,
+                currentCommand: pane.currentCommand,
+                title: pane.title
+              }))
+            });
+          } catch {
+            agentFacts = /* @__PURE__ */ new Map();
+          }
+        }
         return Object.freeze({
           name: workspace.sessionName,
           runtimeSessionId: active2.sessionId,
@@ -25828,7 +25875,7 @@ var init_native_runtime = __esm({
                 sessionWindowCount: _sessionWindowCount,
                 dir: _dir,
                 ...pane
-              }) => Object.freeze(pane)
+              }) => Object.freeze({ ...pane, ...agentFacts.get(pane.runtimePaneId) ?? {} })
             )
           )
         });
@@ -25862,6 +25909,107 @@ var init_native_runtime = __esm({
         }
       }
     };
+  }
+});
+
+// packages/daemon/src/terminal/attachments/agent-status-probe.ts
+function emptyToNull(value) {
+  return value.length === 0 ? null : value;
+}
+function parseAgentOptions(stdout) {
+  const result = /* @__PURE__ */ new Map();
+  for (const line of stdout.split("\n")) {
+    if (line.length === 0) continue;
+    const fields = line.split(AGENT_FIELD_SEPARATOR);
+    if (fields.length !== 7 || fields[6] !== AGENT_LINE_SENTINEL) continue;
+    const runtimePaneId = fields[0];
+    if (!RUNTIME_PANE_ID2.test(runtimePaneId)) continue;
+    const pidText = fields[5];
+    const pid = /^[0-9]+$/u.test(pidText) ? Number(pidText) : null;
+    result.set(runtimePaneId, {
+      stateRaw: emptyToNull(fields[1]),
+      statusTextRaw: emptyToNull(fields[2]),
+      displayNameRaw: emptyToNull(fields[3]),
+      hint: emptyToNull(fields[4]),
+      pid: pid !== null && Number.isSafeInteger(pid) ? pid : null
+    });
+  }
+  return result;
+}
+function createTmuxAgentStatusProbe(deps2) {
+  const readProcessTable2 = deps2.readProcessTable ?? readProcessTable;
+  const capture = deps2.capture ?? ((runtimePaneId, lines) => deps2.run(["capture-pane", "-p", "-J", "-t", runtimePaneId, "-S", `-${lines}`]));
+  return {
+    probe(input) {
+      const facts = /* @__PURE__ */ new Map();
+      if (input.panes.length === 0) return facts;
+      const optionsStdout = deps2.run([
+        "list-panes",
+        "-s",
+        "-t",
+        input.sessionId,
+        "-F",
+        AGENT_OPTIONS_FORMAT
+      ]);
+      const options = optionsStdout === null ? /* @__PURE__ */ new Map() : parseAgentOptions(optionsStdout);
+      let processTable = null;
+      const table = () => processTable ??= readProcessTable2();
+      for (const pane of input.panes) {
+        const raw = options.get(pane.runtimePaneId);
+        const stateRaw = raw?.stateRaw ?? null;
+        const statusTextRaw = raw?.statusTextRaw ?? null;
+        const displayNameRaw = raw?.displayNameRaw ?? null;
+        const authority = parseAuthority(stateRaw ?? void 0, input.nowSec);
+        if (authority !== null) {
+          facts.set(pane.runtimePaneId, {
+            agentStateRaw: stateRaw,
+            agentStatusTextRaw: statusTextRaw,
+            agentDisplayNameRaw: displayNameRaw,
+            agentScrapeState: null
+          });
+          continue;
+        }
+        const manifest = resolveAgentCommand(pane.currentCommand, raw?.pid ?? 0, table(), {
+          ...raw?.hint ? { hint: raw.hint } : {},
+          ...deps2.manifests ? { manifests: deps2.manifests } : {}
+        }).manifest;
+        let scrapeState = "unknown";
+        if (manifest && manifest.id !== "shell") {
+          const captured = capture(pane.runtimePaneId, SCRAPE_LINES);
+          const snapshot = parseSnapshot(captured ?? "", { lines: SCRAPE_LINES });
+          scrapeState = classifyInstant({ ...snapshot, title: pane.title }, manifest);
+        }
+        facts.set(pane.runtimePaneId, {
+          agentStateRaw: stateRaw,
+          agentStatusTextRaw: statusTextRaw,
+          agentDisplayNameRaw: displayNameRaw,
+          agentScrapeState: scrapeState
+        });
+      }
+      return facts;
+    }
+  };
+}
+var AGENT_FIELD_SEPARATOR, AGENT_LINE_SENTINEL, AGENT_OPTIONS_FORMAT, SCRAPE_LINES, RUNTIME_PANE_ID2;
+var init_agent_status_probe = __esm({
+  "packages/daemon/src/terminal/attachments/agent-status-probe.ts"() {
+    "use strict";
+    init_classify();
+    init_process_tree();
+    init_snapshot();
+    AGENT_FIELD_SEPARATOR = "|tmux-ide-agent-field-v1|";
+    AGENT_LINE_SENTINEL = "tmux-ide-agent-v1";
+    AGENT_OPTIONS_FORMAT = [
+      "#{pane_id}",
+      "#{@agent_state}",
+      "#{@agent_status_text}",
+      "#{@agent_display_name}",
+      "#{@agent_hint}",
+      "#{pane_pid}",
+      AGENT_LINE_SENTINEL
+    ].join(AGENT_FIELD_SEPARATOR);
+    SCRAPE_LINES = 20;
+    RUNTIME_PANE_ID2 = /^%(?:0|[1-9][0-9]*)$/u;
   }
 });
 
@@ -27979,8 +28127,42 @@ function isAgentPane(pane) {
   const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
   return metadata.includes("codex") || metadata.includes("claude") || metadata.includes("opencode") || pane.type === "agent" || pane.role === "lead" || pane.role === "teammate" || pane.role === "planner" || pane.role === "validator" || pane.role === "researcher";
 }
-function agentActivity(pane) {
+function legacyAgentActivity(pane) {
   return /^(?:ba|z|fi)?sh$/u.test(pane.currentCommand.trim().toLowerCase()) ? "idle" : "running";
+}
+function resolveAgentPresentation(pane, nowSec) {
+  const authorityRaw = pane.agentStateRaw ?? void 0;
+  if (pane.agentScrapeState === void 0 && parseAuthority(authorityRaw, nowSec) === null) {
+    const legacy = legacyAgentActivity(pane);
+    return {
+      activity: legacy,
+      attention: false,
+      statusSource: "unknown",
+      detectStatus: legacy === "idle" ? "idle" : "working"
+    };
+  }
+  const resolution = resolveAgentStatus({
+    authorityRaw,
+    nowSec,
+    scrape: () => pane.agentScrapeState ?? "unknown"
+  });
+  const presentation = resolveAgentStatusPresentation({
+    status: resolution.status,
+    stale: false
+  });
+  const metadata = agentDisplayMetadata(
+    pane.agentStatusTextRaw ?? void 0,
+    pane.agentDisplayNameRaw ?? void 0,
+    resolution.source === "authority"
+  );
+  return {
+    activity: presentation.activity,
+    attention: presentation.attention,
+    statusSource: resolution.source,
+    detectStatus: resolution.status,
+    ...metadata.displayName !== void 0 ? { displayName: metadata.displayName } : {},
+    ...metadata.statusText !== void 0 ? { statusText: metadata.statusText } : {}
+  };
 }
 function dockTools(projectId) {
   const tools = [];
@@ -28035,7 +28217,7 @@ function deepFreeze4(value) {
   for (const child of Object.values(value)) deepFreeze4(child);
   return Object.freeze(value);
 }
-function projectApplicationShellResourceV1Core(session, paneIds) {
+function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
   const sessionName = label(session.name, "tmux session");
   const rootLabel = label(basename10(session.dir), sessionName);
   const projectId = semanticId("project", session.dir);
@@ -28045,14 +28227,17 @@ function projectApplicationShellResourceV1Core(session, paneIds) {
   const agents = session.panes.flatMap((pane, index) => {
     if (!isAgentPane(pane)) return [];
     const paneId = paneIds[index];
+    const presentation = resolveAgentPresentation(pane, nowSec);
     return [
       {
         id: semanticId("agent", paneId),
-        name: label(pane.name ?? pane.title, `Agent ${index + 1}`),
+        // A fresh authority stamp's sanitized display name outranks the raw pane
+        // title; both pass through label()'s control-strip/clamp before the wire.
+        name: label(presentation.displayName ?? pane.name ?? pane.title, `Agent ${index + 1}`),
         harness: harnessForPane(pane),
-        activity: agentActivity(pane),
+        activity: presentation.activity,
         paneId,
-        attention: false
+        attention: presentation.attention
       }
     ];
   });
@@ -28123,11 +28308,13 @@ function projectApplicationShellResourceV1Core(session, paneIds) {
   projectApplicationShellV1(parsed);
   return parsed;
 }
-function projectApplicationShellResource(session) {
+function projectApplicationShellResource(session, opts = {}) {
+  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1e3);
   const identities = paneIdentities(session);
   const core = projectApplicationShellResourceV1Core(
     session,
-    identities.map(({ resourceId }) => resourceId)
+    identities.map(({ resourceId }) => resourceId),
+    nowSec
   );
   const focusedPaneId = core.focus.appFocusedPaneId;
   const terminalResources = session.panes.map((pane, index) => {
@@ -28150,8 +28337,8 @@ function projectApplicationShellResource(session) {
   projectApplicationShellV1(parsed);
   return deepFreeze4(parsed);
 }
-function projectApplicationShellResourceV3(session, appWindows, missionWorkspace, dockSummary) {
-  const resource2 = projectApplicationShellResource(session);
+function projectApplicationShellResourceV3(session, appWindows, missionWorkspace, dockSummary, opts = {}) {
+  const resource2 = projectApplicationShellResource(session, opts);
   const withMissions = missionWorkspace ? dockWithMissionWorkspace(resource2.dock, missionWorkspace) : resource2.dock;
   const dock = dockWithWorkspaceSurfaces(
     withMissions,
@@ -28232,13 +28419,19 @@ function missionStatusForDock(status2) {
 }
 function projectLegacyApplicationShellResourceV1(session) {
   return deepFreeze4(
-    projectApplicationShellResourceV1Core(session, legacyPaneIdentities(session.panes))
+    projectApplicationShellResourceV1Core(
+      session,
+      legacyPaneIdentities(session.panes),
+      Math.floor(Date.now() / 1e3)
+    )
   );
 }
 var init_application_shell2 = __esm({
   "packages/daemon/src/command-center/resources/application-shell.ts"() {
     "use strict";
     init_src();
+    init_classify();
+    init_agent_resolution();
   }
 });
 
@@ -32446,7 +32639,10 @@ async function startEmbeddedDaemon(opts) {
           executablePath: tmuxAuthority.executablePath,
           socketSelector: tmuxAuthority.socketSelector,
           trustedCwd: dir
-        }
+        },
+        // Ground-truth agent status: authority-first with a screen-scrape
+        // fallback. Option/capture IO rides the runtime's own pinned runner.
+        agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run })
       });
       await terminalAttachmentRuntime.whenReady();
       startedServer = await startHttpServer({
@@ -32724,6 +32920,7 @@ var init_daemon_embed = __esm({
     init_workspace_open2();
     init_app_window_mutation2();
     init_native_runtime();
+    init_agent_status_probe();
     init_terminal_attachment_upgrade();
     init_active_projects();
     init_canonical_daemon();

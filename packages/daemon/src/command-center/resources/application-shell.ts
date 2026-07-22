@@ -20,11 +20,8 @@ import {
   type TerminalResourceAttachability,
   type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
-import {
-  parseAuthority,
-  sanitizeAgentText,
-  type InstantState,
-} from "../../tui/detect/classify.ts";
+import { parseAuthority, type InstantState } from "../../tui/detect/classify.ts";
+import { agentDisplayMetadata, resolveAgentStatus } from "../../tui/detect/agent-resolution.ts";
 
 interface ApplicationShellPanePresentationFacts {
   /** Durable tmux-ide pane stamp. A live `%pane_id` is never accepted as identity. */
@@ -276,51 +273,57 @@ export interface ResolvedAgentPresentation {
 /**
  * PURE — resolve one pane's ground-truth agent presentation.
  *
- * Authority-first: a fresh `@agent_state` stamp (parsed with the staleness
- * guard in {@link parseAuthority}) OUTRANKS scraping and maps through the shared
- * {@link resolveAgentStatusPresentation} table. When authority is absent or
- * stale, the discovery layer's screen-scrape verdict (`agentScrapeState`) is
- * used. Display metadata (`@agent_status_text` / `@agent_display_name`) is
- * trusted only while authority is fresh — the options carry no epoch of their
- * own, so a stale/absent stamp drops them rather than lying (mirrors the
- * cockpit's `agentMetadataFor`). A facts source that gathered no agent options
- * (legacy discovery, `agentScrapeState === undefined`) falls back to the
- * historical {@link legacyAgentActivity} heuristic.
+ * The status decision itself is {@link resolveAgentStatus} — the exact same
+ * authority-first kernel the cockpit uses (tui/detect/agent-resolution.ts), so
+ * the desktop app, the cockpit TUI and `team --json` all render one answer. This
+ * function only adapts that shared status to the renderer's enums: it maps the
+ * status through the shared {@link resolveAgentStatusPresentation} table and
+ * gates display metadata via the shared {@link agentDisplayMetadata} (trusted
+ * only while authority is fresh). A facts source that gathered no agent options
+ * (legacy V1 discovery, `agentScrapeState === undefined`) keeps the historical
+ * {@link legacyAgentActivity} heuristic.
  */
 export function resolveAgentPresentation(
   pane: ApplicationShellPanePresentationFacts,
   nowSec: number,
 ): ResolvedAgentPresentation {
-  const authority = parseAuthority(pane.agentStateRaw ?? undefined, nowSec);
-  if (authority !== null) {
-    const presentation = resolveAgentStatusPresentation({ status: authority, stale: false });
-    const displayName = sanitizeAgentText(pane.agentDisplayNameRaw ?? undefined);
-    const statusText = sanitizeAgentText(pane.agentStatusTextRaw ?? undefined);
+  const authorityRaw = pane.agentStateRaw ?? undefined;
+  // Legacy back-compat: a facts source that gathered no agent options at all
+  // (pre-inventory V1 discovery) has neither authority nor a scrape verdict —
+  // keep its historical shell-vs-active heuristic instead of "disconnected".
+  if (pane.agentScrapeState === undefined && parseAuthority(authorityRaw, nowSec) === null) {
+    const legacy = legacyAgentActivity(pane);
     return {
-      activity: presentation.activity,
-      attention: presentation.attention,
-      statusSource: "authority",
-      detectStatus: authority,
-      ...(displayName !== undefined ? { displayName } : {}),
-      ...(statusText !== undefined ? { statusText } : {}),
+      activity: legacy,
+      attention: false,
+      statusSource: "unknown",
+      detectStatus: legacy === "idle" ? "idle" : "working",
     };
   }
-  if (pane.agentScrapeState !== undefined) {
-    const scrape: AgentGraphDetectStatus = pane.agentScrapeState ?? "unknown";
-    const presentation = resolveAgentStatusPresentation({ status: scrape, stale: false });
-    return {
-      activity: presentation.activity,
-      attention: presentation.attention,
-      statusSource: scrape === "unknown" ? "unknown" : "scrape",
-      detectStatus: scrape,
-    };
-  }
-  const legacy = legacyAgentActivity(pane);
+  // THE shared authority-first decision — the same resolveAgentStatus the cockpit
+  // uses. The desktop's scrape verdict is the discovery layer's pre-resolved
+  // probe state (no tracker: `done` comes only from an authority stamp here).
+  const resolution = resolveAgentStatus({
+    authorityRaw,
+    nowSec,
+    scrape: () => pane.agentScrapeState ?? "unknown",
+  });
+  const presentation = resolveAgentStatusPresentation({
+    status: resolution.status,
+    stale: false,
+  });
+  const metadata = agentDisplayMetadata(
+    pane.agentStatusTextRaw ?? undefined,
+    pane.agentDisplayNameRaw ?? undefined,
+    resolution.source === "authority",
+  );
   return {
-    activity: legacy,
-    attention: false,
-    statusSource: "unknown",
-    detectStatus: legacy === "idle" ? "idle" : "working",
+    activity: presentation.activity,
+    attention: presentation.attention,
+    statusSource: resolution.source,
+    detectStatus: resolution.status,
+    ...(metadata.displayName !== undefined ? { displayName: metadata.displayName } : {}),
+    ...(metadata.statusText !== undefined ? { statusText: metadata.statusText } : {}),
   };
 }
 
