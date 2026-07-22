@@ -30,14 +30,17 @@ architecture vocabulary only:
 | Reference                     | Transferable pattern                                                                                                                   | Explicitly not transferred                                                       |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | Gloomberb                     | Dense app bar, focused pane chrome, command-first navigation, dock/float/zoom verbs, shared behavior across terminal and desktop hosts | Source, names, assets, glyph sequences, theme values, finance-specific layout    |
-| NodeTerm                      | Immediate terminal/agent creation, spatial orientation, helpful empty canvas, one visible creation locus                               | Source or assets; `node-pty`; React Flow; its storage, node, or terminal runtime |
+| NodeTerm                      | Immediate terminal/agent creation, spatial orientation, helpful empty canvas, one visible creation locus                               | Source/assets; React Flow; storage; renderer-owned or parallel shell/PTY runtime |
 | T3 Code                       | Typed renderer/host boundary, honest startup readiness, a reusable web renderer inside a desktop shell                                 | Source, visual design, provider runtime, application state model                 |
 | tuiboard / tuiparts / OpenTUI | Responsive zones, behavior-versus-style separation, keyboard/focus primitives, headless snapshots                                      | Board data model, component source, or styling recipes                           |
 
-NodeTerm is BUSL-1.1 and is treated as a behavioral reference only. This design does
-not introduce it as a dependency and does not reproduce its code or assets. All
-tmux-ide components and interaction details below are original and use the existing
-tmux-ide contracts.
+NodeTerm is BUSL-1.1 and is treated as a behavioral reference only. Gloomberb is also
+used only as an observable behavioral reference. This design does not introduce either
+application as a dependency and does not reproduce their source, assets, terminal
+runtime, or transport. All tmux-ide components and interaction details below are
+original and use native tmux-ide contracts. ADR-0002 permits the existing daemon
+`PtyAdapter` solely around a fixed real tmux client; it does not permit a reference
+runtime or a second shell authority.
 
 “Parity” in this document means product-quality capability parity: coherent chrome,
 navigation, onboarding, recovery, and pane manipulation. It does not mean pixel
@@ -49,9 +52,11 @@ copying or making tmux-ide impersonate another product.
 flowchart TB
   Person[Person]
   TUI[OpenTUI / Solid host]
-  Desktop[Solid / Electron host]
+  Desktop[Solid renderer]
+  Host[Electron issue boundary]
   Kernel[Shared experience contracts\ncommands · focus · tokens · projections]
-  Daemon[tmux-ide daemon\ntyped resources · leases · mutations]
+  Daemon[tmux-ide daemon\ntyped resources · descriptors · mutations]
+  Client[proof-bound real tmux client\ndaemon PtyAdapter]
   Tmux[tmux server\nPTYs · sessions · windows · panes · history]
   Native[Native app surfaces\nFiles · Changes · Missions · Activity]
 
@@ -59,23 +64,36 @@ flowchart TB
   Person --> Desktop
   TUI --> Kernel
   Desktop --> Kernel
+  Desktop --> Host
+  Host -. issue one-time descriptor .-> Daemon
   Kernel --> Daemon
   Daemon --> Tmux
+  Desktop == direct binary terminal stream ==> Daemon
+  Daemon --> Client
+  Client --> Tmux
   Kernel --> Native
-  Tmux -. terminal bytes and pane events .-> Daemon
+  Tmux -. pane events and authority .-> Daemon
   Daemon -. validated projections .-> Kernel
 ```
 
 Hard boundaries:
 
-- A renderer cannot spawn a PTY, invent a semantic pane identity, or receive a raw
-  tmux `%pane_id`. Raw correlation stays inside the daemon/trusted host.
-- A terminal tile attaches through a validated, generation-bound lease and the
-  one-writer transport contract.
+- A renderer cannot spawn a PTY, invent a semantic pane identity, author a terminal
+  command/cwd, or receive a raw tmux `%pane_id`. Raw correlation stays inside the
+  daemon/trusted host.
+- A terminal tile obtains a short-lived, single-use, daemon-instance/request/origin-
+  bound attachment descriptor through the narrow Electron host issue call, then
+  streams bytes directly to the daemon. Electron main never proxies terminal input,
+  output, resize, acknowledgements, or lifecycle events.
+- The daemon may reuse its existing `PtyAdapter`/`node-pty` boundary only to host a
+  fixed argv-safe real `tmux attach-session` into a proof-bound ephemeral one-window
+  view. That view creates no shell, agent, pane history, or parallel process authority.
 - App layout state may describe how panes are presented, but terminal existence,
   command execution, scrollback, and lifecycle always resolve back to tmux.
-- Electron secrets, daemon endpoints, tickets, and transport credentials remain in
-  the trusted host. Renderer state contains semantic resources only.
+- Durable daemon credentials and reusable, directly admissible terminal endpoints
+  remain in the trusted host. The renderer may receive only the expiring one-use
+  attachment descriptor defined by ADR-0002; it is memory-only, redacted, and inert
+  after atomic redemption or expiry.
 - A stale or invalid resource fails visibly. Electron never substitutes preview
   fixtures for live state.
 - Mission data may be displayed as history or capability state. The app must not
@@ -267,19 +285,19 @@ Requirements:
 Every blocking state answers four questions: what happened, what remains safe, what
 the user can do now, and where details live.
 
-| State               | Preserve                                                          | Primary action                            | Never do                                     |
-| ------------------- | ----------------------------------------------------------------- | ----------------------------------------- | -------------------------------------------- |
-| Discovering         | Window chrome and recent identity                                 | Wait/cancel only if genuinely cancellable | Show fake workspace content                  |
-| No workspace        | Folder choice and detected system readiness                       | Use/Open folder                           | Demand YAML                                  |
-| Workspace chooser   | Search and keyboard selection                                     | Open selected                             | Auto-open an ambiguous project               |
-| Starting            | Selected project and progress stage                               | Cancel if safe                            | Spawn duplicate sessions on retry            |
-| Live                | Full app                                                          | Contextual                                | Hide degraded resources                      |
-| Stale snapshot      | Last validated content, visibly marked                            | Refresh                                   | Present stale data as current                |
-| Reconnecting        | Last validated terminal frame, input disabled until lease returns | Retry now                                 | Clear the terminal or create a second writer |
-| Daemon unavailable  | Project identity and diagnostics                                  | Start/reconnect daemon                    | Replace live mode with preview fixtures      |
-| Incompatible daemon | Version facts                                                     | Restart/update the older side             | Retry forever                                |
-| Mutation failed     | Last daemon-confirmed layout/state                                | Retry or dismiss                          | Leave optimistic geometry as truth           |
-| Terminal exited     | Scrollback and exit status                                        | Restart/new terminal                      | Discard evidence automatically               |
+| State               | Preserve                                                                               | Primary action                            | Never do                                       |
+| ------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------- |
+| Discovering         | Window chrome and recent identity                                                      | Wait/cancel only if genuinely cancellable | Show fake workspace content                    |
+| No workspace        | Folder choice and detected system readiness                                            | Use/Open folder                           | Demand YAML                                    |
+| Workspace chooser   | Search and keyboard selection                                                          | Open selected                             | Auto-open an ambiguous project                 |
+| Starting            | Selected project and progress stage                                                    | Cancel if safe                            | Spawn duplicate sessions on retry              |
+| Live                | Full app                                                                               | Contextual                                | Hide degraded resources                        |
+| Stale snapshot      | Last validated content, visibly marked                                                 | Refresh                                   | Present stale data as current                  |
+| Reconnecting        | Last validated terminal frame, input disabled until a fresh descriptor and tmux redraw | Retry now                                 | Replay a cached tail or create a second writer |
+| Daemon unavailable  | Project identity and diagnostics                                                       | Start/reconnect daemon                    | Replace live mode with preview fixtures        |
+| Incompatible daemon | Version facts                                                                          | Restart/update the older side             | Retry forever                                  |
+| Mutation failed     | Last daemon-confirmed layout/state                                                     | Retry or dismiss                          | Leave optimistic geometry as truth             |
+| Terminal exited     | Scrollback and exit status                                                             | Restart/new terminal                      | Discard evidence automatically                 |
 
 Additional rules:
 
@@ -288,6 +306,10 @@ Additional rules:
 - A same-daemon refresh preserves subscriptions and known-safe content. A daemon
   identity change retires the previous connection before the new one becomes
   authoritative.
+- Terminal reconnect always issues a fresh one-time descriptor, resets the emulator
+  for the real tmux client's fresh redraw, and rejects late bytes from the retired
+  request. Control-mode output, `capture-pane`, and replay tails are not terminal
+  framebuffer initialization.
 - Retry is idempotent and visibly busy. Repeated activation cannot create overlapping
   connections or tmux panes.
 - Technical detail is copyable from an expandable diagnostics section. The primary
@@ -385,15 +407,21 @@ Requirements:
 ### UX-01 — Real terminal body in the shared PaneFrame
 
 Highest impact. Replace the desktop placeholder pane body with the validated native
-tmux attachment stream already being built by the terminal transport cards.
+tmux attachment stream defined by ADR-0002.
 
 Acceptance:
 
 - At least one live tmux pane renders, accepts input, resizes, reconnects, and preserves
   scrollback across status-only rerenders.
-- The renderer cannot access tmux credentials or spawn a PTY.
-- One-writer lease, expiry, daemon generation, and detach behavior have adversarial
-  tests.
+- The renderer cannot access durable daemon/tmux credentials, author command/cwd, or
+  spawn a PTY; its one-use descriptor is request/origin/instance/proof-bound.
+- Electron main has no terminal input/output/resize/ACK byte path. Renderer and daemon
+  use the bounded direct binary WebSocket after descriptor issue.
+- The daemon `PtyAdapter` launches only fixed argv-safe real `tmux attach-session` in a
+  proof-bound ephemeral one-window view; tmux owns process, history, and redraw truth.
+- One-writer reservation, atomic issue/redeem, expiry, daemon generation, Origin/CSP,
+  bounded backpressure, fresh-redraw reconnect, and detach behavior have adversarial
+  and live tmux tests.
 - `Ctrl-C` reaches the foreground process; app shutdown remains separate.
 - Desktop tests prove the terminal mount sentinel is not replaced when chrome/status
   changes.
@@ -485,8 +513,9 @@ Acceptance:
   processes without exposing raw tmux correlation to Solid.
 - Camera, placement, fit/focus, empty guidance, persistence, recovery, and one resize
   authority have dedicated tests.
-- Dependency audit confirms no NodeTerm source/assets, `node-pty`, or parallel terminal
-  runtime entered the product.
+- Dependency audit confirms no NodeTerm/Gloomberb source, assets, transport, or runtime
+  entered the product; `node-pty` remains isolated behind the daemon `PtyAdapter` and
+  can launch only the real tmux client, never a parallel shell/runtime.
 
 ## Quality gate
 
