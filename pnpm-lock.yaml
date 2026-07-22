@@ -7,6 +7,11 @@ settings:
 overrides:
   zod: ^4.3.6
 
+patchedDependencies:
+  '@opentui/solid@0.4.3':
+    hash: 0b3f46dbad979dced2505fab7aa41bcd7a9606d489e282d251010d80c9600123
+    path: patches/@opentui__solid@0.4.3.patch
+
 importers:
 
   .:
@@ -22,7 +27,7 @@ importers:
         version: 0.4.3(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@opentui/solid':
         specifier: ^0.4.3
-        version: 0.4.3(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+        version: 0.4.3(patch_hash=0b3f46dbad979dced2505fab7aa41bcd7a9606d489e282d251010d80c9600123)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -256,7 +261,7 @@ importers:
         version: 0.4.3(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@opentui/solid':
         specifier: ^0.4.3
-        version: 0.4.3(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+        version: 0.4.3(patch_hash=0b3f46dbad979dced2505fab7aa41bcd7a9606d489e282d251010d80c9600123)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -4586,7 +4591,7 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  '@opentui/solid@0.4.3(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)':
+  '@opentui/solid@0.4.3(patch_hash=0b3f46dbad979dced2505fab7aa41bcd7a9606d489e282d251010d80c9600123)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)':
     dependencies:
       '@babel/core': 7.28.0
       '@babel/preset-typescript': 7.27.1(@babel/core@7.28.0)

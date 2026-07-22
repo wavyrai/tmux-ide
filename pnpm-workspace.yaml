@@ -3,3 +3,14 @@ packages:
   - apps/*
   - docs
   - packages/*
+
+onlyBuiltDependencies:
+  - "@parcel/watcher"
+  - esbuild
+  - node-pty
+
+overrides:
+  zod: ^4.3.6
+
+patchedDependencies:
+  "@opentui/solid@0.4.3": patches/@opentui__solid@0.4.3.patch
