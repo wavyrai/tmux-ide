@@ -117,6 +117,72 @@ select:focus-visible,
   --desktop-shadow: rgb(25 28 36 / 18%);
 }
 
+/*
+ * Terminal palette. This is the single source of truth the xterm renderer reads
+ * at runtime (see terminal/xterm-renderer.ts). Background, foreground, cursor,
+ * and selection follow the live app theme tokens; the sixteen ANSI colors are
+ * tuned per appearance to harmonize with the app's neutral + blue-accent
+ * identity instead of the raw VGA-ish xterm defaults. Keyed on [data-theme] so
+ * isolated fixtures resolve without the full `.app` shell, and duplicated onto
+ * `.app[data-theme]` so it also wins inside the runtime token cascade.
+ */
+.app,
+[data-theme] {
+  --tmux-ide-terminal-font-family:
+    "SF Mono", "SFMono-Regular", "JetBrains Mono", "Cascadia Code", "DejaVu Sans Mono",
+    "Liberation Mono", Menlo, Consolas, monospace;
+}
+
+.app[data-theme="dark"],
+[data-theme="dark"] {
+  --tmux-ide-terminal-background: var(--tmux-ide-surface-terminal, #12131a);
+  --tmux-ide-terminal-foreground: var(--tmux-ide-text-primary, #e6e8f2);
+  --tmux-ide-terminal-cursor: var(--tmux-ide-text-bright, #c7d4ff);
+  --tmux-ide-terminal-cursor-accent: var(--tmux-ide-surface-terminal, #12131a);
+  --tmux-ide-terminal-selection: var(--tmux-ide-selection-selection, #33406b);
+  --tmux-ide-terminal-ansi-black: #2a2c37;
+  --tmux-ide-terminal-ansi-red: #f0748c;
+  --tmux-ide-terminal-ansi-green: #7fd88f;
+  --tmux-ide-terminal-ansi-yellow: #e6c67a;
+  --tmux-ide-terminal-ansi-blue: #8bb4ff;
+  --tmux-ide-terminal-ansi-magenta: #cba6f7;
+  --tmux-ide-terminal-ansi-cyan: #7fd4d8;
+  --tmux-ide-terminal-ansi-white: #cdd0da;
+  --tmux-ide-terminal-ansi-bright-black: #5c6072;
+  --tmux-ide-terminal-ansi-bright-red: #ff92a6;
+  --tmux-ide-terminal-ansi-bright-green: #9ce8a8;
+  --tmux-ide-terminal-ansi-bright-yellow: #f4d99a;
+  --tmux-ide-terminal-ansi-bright-blue: #aecbff;
+  --tmux-ide-terminal-ansi-bright-magenta: #ddc4ff;
+  --tmux-ide-terminal-ansi-bright-cyan: #a3e8ec;
+  --tmux-ide-terminal-ansi-bright-white: #f6f8fc;
+}
+
+.app[data-theme="light"],
+[data-theme="light"] {
+  --tmux-ide-terminal-background: var(--tmux-ide-surface-terminal, #ffffff);
+  --tmux-ide-terminal-foreground: var(--tmux-ide-text-primary, #24252b);
+  --tmux-ide-terminal-cursor: var(--tmux-ide-text-bright, #2f4d8f);
+  --tmux-ide-terminal-cursor-accent: var(--tmux-ide-surface-terminal, #ffffff);
+  --tmux-ide-terminal-selection: var(--tmux-ide-selection-selection, #cdd8fb);
+  --tmux-ide-terminal-ansi-black: #2c3542;
+  --tmux-ide-terminal-ansi-red: #c0435a;
+  --tmux-ide-terminal-ansi-green: #2f8a5b;
+  --tmux-ide-terminal-ansi-yellow: #97710f;
+  --tmux-ide-terminal-ansi-blue: #3a63cf;
+  --tmux-ide-terminal-ansi-magenta: #8a4fb0;
+  --tmux-ide-terminal-ansi-cyan: #2f8794;
+  --tmux-ide-terminal-ansi-white: #c9ccd4;
+  --tmux-ide-terminal-ansi-bright-black: #6a6f7c;
+  --tmux-ide-terminal-ansi-bright-red: #d05068;
+  --tmux-ide-terminal-ansi-bright-green: #3a9b68;
+  --tmux-ide-terminal-ansi-bright-yellow: #a9821b;
+  --tmux-ide-terminal-ansi-bright-blue: #4a70de;
+  --tmux-ide-terminal-ansi-bright-magenta: #9a5fc0;
+  --tmux-ide-terminal-ansi-bright-cyan: #3a97a4;
+  --tmux-ide-terminal-ansi-bright-white: #1c2129;
+}
+
 .titlebar {
   -webkit-app-region: drag;
   z-index: 10;
@@ -1785,10 +1851,11 @@ kbd {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  /* The xterm renderer copies this computed family into the terminal; without an
-     explicit mono stack the container inherits the shell's sans UI font. */
-  font-family: var(--desktop-mono-font);
-  background: var(--tmux-ide-surface-terminal);
+  /* Defensive mono stack: the renderer derives its font from the terminal font
+     token explicitly, but keeping a mono family on the container prevents the
+     surface from ever inheriting the shell's sans UI font. */
+  font-family: var(--tmux-ide-terminal-font-family, var(--desktop-mono-font));
+  background: var(--tmux-ide-terminal-background, var(--tmux-ide-surface-terminal));
 }
 
 .terminal-surface--unavailable {
@@ -1818,6 +1885,14 @@ kbd {
   min-height: 0;
   padding: 6px 7px;
   overflow: hidden;
+  /*
+   * The padding gutter and any sub-cell remainder the fit addon cannot fill
+   * paint the terminal background, never the pane-frame chrome, so no color
+   * seam shows at the edges. The font-family here defends against inheriting
+   * the chrome's proportional UI font even if a token is ever missing.
+   */
+  background: var(--tmux-ide-terminal-background, var(--tmux-ide-surface-terminal));
+  font-family: var(--tmux-ide-terminal-font-family);
 }
 
 .terminal-surface__viewport .xterm {
@@ -1841,7 +1916,7 @@ kbd {
   align-content: center;
   padding: 14px;
   color: var(--tmux-ide-text-muted);
-  background: var(--tmux-ide-surface-terminal);
+  background: var(--tmux-ide-terminal-background, var(--tmux-ide-surface-terminal));
 }
 
 .terminal-surface[data-preserves-frame="true"] .terminal-surface__state {

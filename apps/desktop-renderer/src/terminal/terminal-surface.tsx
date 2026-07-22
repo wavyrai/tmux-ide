@@ -580,6 +580,10 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   createEffect(() => {
     const themeKey = props.themeKey;
     renderer?.refreshTheme();
+    // A theme change can alter the font token, which changes xterm's cell
+    // metrics; re-fit so cols/rows (and the host viewport) never go stale
+    // against the new cell size. When geometry is unchanged this is a no-op.
+    scheduleFit();
     return themeKey;
   });
 

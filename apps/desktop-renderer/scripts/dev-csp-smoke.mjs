@@ -428,6 +428,56 @@ try {
       );
     }
 
+    for (const appearance of ["dark", "light"]) {
+      const galleryPage = await browser.newPage({
+        viewport: { width: 960, height: 720 },
+        colorScheme: appearance,
+      });
+      try {
+        await galleryPage.goto(rendererUrl, { waitUntil: "networkidle" });
+        const galleryReady = await galleryPage.evaluate(async () => {
+          globalThis.document.getElementById("root")?.remove();
+          const root = globalThis.document.createElement("div");
+          root.id = "root";
+          globalThis.document.body.append(root);
+          const { mountTerminalRenderingGalleryFixture } =
+            await import("/src/terminal/terminal-surface.fixture.tsx");
+          mountTerminalRenderingGalleryFixture(root);
+          const deadline = Date.now() + 5_000;
+          let surfaceCount = 0;
+          while (Date.now() < deadline) {
+            const surfaces = [...globalThis.document.querySelectorAll(".terminal-surface")];
+            surfaceCount = surfaces.length;
+            const connected = surfaces.filter(
+              (surface) =>
+                surface.getAttribute("data-phase") === "connected" &&
+                surface.querySelector(".xterm"),
+            );
+            const renderedText = root.textContent?.includes("CSP terminal ready") ?? false;
+            if (surfaces.length >= 4 && connected.length === surfaces.length && renderedText) {
+              return { surfaces: surfaces.length, renderedText: true };
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+          return { surfaces: surfaceCount, renderedText: false };
+        });
+        if (galleryReady.surfaces < 4 || !galleryReady.renderedText) {
+          throw new Error(
+            `Terminal rendering gallery (${appearance}) did not render: ${JSON.stringify(galleryReady)}`,
+          );
+        }
+        if (process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT) {
+          const galleryPath = process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT.replace(
+            /(\.[^.]+)$/u,
+            `-terminal-gallery-${appearance}$1`,
+          );
+          await galleryPage.screenshot({ path: galleryPath, fullPage: true });
+        }
+      } finally {
+        await galleryPage.close();
+      }
+    }
+
     const visualPage = await browser.newPage({
       viewport: { width: 1_440, height: 900 },
       colorScheme: "dark",
