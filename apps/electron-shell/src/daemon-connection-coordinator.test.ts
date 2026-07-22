@@ -83,6 +83,18 @@ function brokerHarness(
   };
   return {
     authority: {
+      capabilities: async () => ({
+        status: "ok",
+        daemon: identity,
+        capabilities: { appWindowMutation: { available: true } },
+      }),
+      mutateAppWindow: async (request) => ({
+        operationId: request.operationId,
+        daemonInstanceId: identity.instanceId,
+        outcome: "applied",
+        workspaceName: request.intent.workspaceName,
+        documentRevision: request.intent.expectedDocumentRevision + 1,
+      }),
       openWorkspace: async (request) => ({
         operationId: request.operationId,
         daemonInstanceId: identity.instanceId,

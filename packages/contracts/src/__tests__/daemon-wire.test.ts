@@ -13,7 +13,7 @@ import {
 const fixturePath = fileURLToPath(new URL("./fixtures/daemon-wire-v1.json", import.meta.url));
 
 describe("daemon wire protocol", () => {
-  it("validates the shared Swift/TypeScript v1 fixture", () => {
+  it("validates the shared desktop/TypeScript v1 fixture", () => {
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as Record<string, unknown>;
 
     expect(CanonicalDaemonInfoSchema.parse(fixture.canonical).protocolVersion).toBe(

@@ -31,6 +31,7 @@ import {
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
+import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
 import {
   createNativeTerminalAttachmentRuntime,
   type NativeTerminalAttachmentRuntime,
@@ -642,6 +643,7 @@ async function startHttpServer({
   daemonIdentity,
   workspacePaneCreationBackend,
   workspaceOpenBackend,
+  appWindowMutationBackend,
   workspaceRegistry,
   terminalAttachmentRuntime,
 }: {
@@ -660,6 +662,7 @@ async function startHttpServer({
   };
   workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
   workspaceOpenBackend: WorkspaceOpenAuthority;
+  appWindowMutationBackend: AppWindowMutationAuthority;
   workspaceRegistry: WorkspaceRegistry;
   terminalAttachmentRuntime: NativeTerminalAttachmentRuntime;
 }): Promise<{
@@ -699,6 +702,7 @@ async function startHttpServer({
     daemonIdentity,
     workspacePaneCreationBackend,
     workspaceOpenBackend,
+    appWindowMutationBackend,
     workspaceRegistry,
     terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
     applicationShellInventoryBackend: terminalAttachmentRuntime,
@@ -902,6 +906,10 @@ export async function startEmbeddedDaemon(
       registry: workspaceRegistry,
       tmuxAuthority,
     });
+    const appWindowMutation = new AppWindowMutationAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
+    });
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
@@ -930,6 +938,7 @@ export async function startEmbeddedDaemon(
         daemonIdentity: { productVersion, instanceId, startedAt },
         workspacePaneCreationBackend: workspacePaneCreation,
         workspaceOpenBackend: workspaceOpen,
+        appWindowMutationBackend: appWindowMutation,
         workspaceRegistry,
         terminalAttachmentRuntime,
       });
@@ -938,6 +947,7 @@ export async function startEmbeddedDaemon(
         terminalAttachmentRuntime?.dispose() ?? Promise.resolve(),
         workspacePaneCreation.dispose(),
         workspaceOpen.dispose(),
+        appWindowMutation.dispose(),
       ]);
       throw error;
     }
@@ -950,12 +960,14 @@ export async function startEmbeddedDaemon(
       );
       const paneDisposal = Promise.resolve().then(() => workspacePaneCreation.dispose());
       const workspaceOpenDisposal = Promise.resolve().then(() => workspaceOpen.dispose());
+      const appWindowMutationDisposal = Promise.resolve().then(() => appWindowMutation.dispose());
       const closePromise = Promise.resolve()
         .then(() => waitForServerClose(server))
         .catch(() => undefined);
       await Promise.allSettled([
         paneDisposal,
         workspaceOpenDisposal,
+        appWindowMutationDisposal,
         Promise.resolve().then(() => closeClients()),
         ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
         Promise.race([closePromise, delay(100)]),
@@ -1117,6 +1129,7 @@ export async function startEmbeddedDaemon(
             );
             await capture(() => workspacePaneCreation.dispose());
             await capture(() => workspaceOpen.dispose());
+            await capture(() => appWindowMutation.dispose());
 
             let closePromise: Promise<void>;
             try {

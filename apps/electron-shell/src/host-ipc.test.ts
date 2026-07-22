@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import type {
+  AppWindowMutationRequest,
   TerminalAttachmentIssueMutationRequest,
   TerminalAttachmentIssueResult,
   WorkspaceOpenMutationRequest,
@@ -47,6 +48,13 @@ describe("host IPC trust boundary", () => {
     let publishDaemonEvent: ((event: { type: "workspaces.changed" }) => void) | undefined;
     const stopDaemonSubscription = vi.fn();
     const daemonResources = {
+      mutateAppWindow: vi.fn(async (request: AppWindowMutationRequest) => ({
+        operationId: request.operationId,
+        daemonInstanceId: request.expectedDaemonInstanceId,
+        outcome: "applied" as const,
+        workspaceName: request.intent.workspaceName,
+        documentRevision: request.intent.expectedDocumentRevision + 1,
+      })),
       openWorkspace: vi.fn(async (request: WorkspaceOpenMutationRequest) => ({
         operationId: request.operationId,
         daemonInstanceId: request.expectedDaemonInstanceId,
@@ -188,6 +196,20 @@ describe("host IPC trust boundary", () => {
       },
     });
     expect(daemonResources.createWorkspacePane).toHaveBeenCalledOnce();
+    const mutated = await handlers.get(HOST_IPC.daemonMutateAppWindow)?.(trustedEvent, {
+      workspaceName: "product",
+      expectedDocumentRevision: 4,
+      command: { type: "window.focus", windowId: null },
+    });
+    expect(mutated).toMatchObject({
+      status: "ok",
+      result: { workspaceName: "product", documentRevision: 5 },
+    });
+    expect(daemonResources.mutateAppWindow).toHaveBeenCalledOnce();
+    expect(vi.mocked(daemonResources.mutateAppWindow).mock.calls[0]?.[0]).toMatchObject({
+      expectedDaemonInstanceId: daemon.descriptor.instanceId,
+      intent: { workspaceName: "product", expectedDocumentRevision: 4 },
+    });
     const authoredCreate = vi.mocked(daemonResources.createWorkspacePane).mock.calls[0]?.[0];
     expect(authoredCreate).toMatchObject({
       expectedDaemonInstanceId: daemon.descriptor.instanceId,

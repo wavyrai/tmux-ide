@@ -236,6 +236,134 @@ class FakeSocket implements BrokerEventSocket {
 }
 
 describe("Electron main daemon resource broker", () => {
+  it("negotiates owner-authenticated AppWindow availability and treats an old 404 as unsupported", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        return new Response("missing", { status: 404 });
+      },
+    });
+    await expect(broker.capabilities()).resolves.toEqual({
+      status: "ok",
+      daemon: IDENTITY,
+      capabilities: {
+        appWindowMutation: {
+          available: false,
+          reason: "This daemon predates durable AppWindow mutation support.",
+        },
+      },
+    });
+    expect(requests[0]?.url).toBe("http://127.0.0.1:6060/api/v2/capabilities");
+    expect(new Headers(requests[0]?.init?.headers).get("Authorization")).toBe(
+      "Bearer owner-only-token",
+    );
+    expect(requests[0]?.init?.redirect).toBe("error");
+  });
+
+  it("rejects a capability catalog stamped by another daemon generation", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({
+          status: "ok",
+          daemon: { ...IDENTITY, instanceId: "00000000-0000-4000-8000-000000000099" },
+          capabilities: { appWindowMutation: { available: true } },
+        }),
+    });
+    await expect(broker.capabilities()).resolves.toMatchObject({
+      status: "error",
+      error: { code: "daemon-identity-mismatch" },
+    });
+  });
+
+  it("reuses one AppWindow operation id across a single uncertain transport retry", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const operationId = "30000000-0000-4000-8000-000000000003";
+    let mutationAttempt = 0;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        const url = input.toString();
+        requests.push({ url, init });
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        mutationAttempt += 1;
+        if (mutationAttempt === 1) throw new Error("transport timeout after commit");
+        return json({
+          ok: true,
+          result: {
+            operationId,
+            daemonInstanceId: IDENTITY.instanceId,
+            outcome: "replayed",
+            workspaceName: "product workspace",
+            documentRevision: 5,
+          },
+        });
+      },
+    });
+
+    await expect(
+      broker.mutateAppWindow({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: {
+          workspaceName: "product workspace",
+          expectedDocumentRevision: 4,
+          command: { type: "window.focus", windowId: null },
+        },
+      }),
+    ).resolves.toMatchObject({ operationId, outcome: "replayed", documentRevision: 5 });
+    const mutationRequests = requests.filter(({ url }) =>
+      url.endsWith("/api/v2/action/workspace.app-window.mutate"),
+    );
+    expect(mutationRequests).toHaveLength(2);
+    for (const request of mutationRequests) {
+      expect(new Headers(request.init?.headers).get("x-tmux-ide-operation-id")).toBe(operationId);
+      expect(new Headers(request.init?.headers).get("authorization")).toBe(
+        "Bearer owner-only-token",
+      );
+    }
+  });
+
+  it("does not replay a deterministic AppWindow revision conflict", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json({
+          ok: false,
+          error: {
+            code: "workspace_resource_changed",
+            message: "The workspace layout changed.",
+          },
+        });
+      },
+    });
+
+    await expect(
+      broker.mutateAppWindow({
+        operationId: "40000000-0000-4000-8000-000000000004",
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: {
+          workspaceName: "product workspace",
+          expectedDocumentRevision: 4,
+          command: { type: "window.focus", windowId: null },
+        },
+      }),
+    ).rejects.toMatchObject({ error: { code: "resource-changed" } });
+    expect(
+      requests.filter((url) => url.endsWith("/api/v2/action/workspace.app-window.mutate")),
+    ).toHaveLength(1);
+  });
+
   it("keeps the owner token in main and reuses one operation id across a transport retry", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const operationId = "10000000-0000-4000-8000-000000000001";

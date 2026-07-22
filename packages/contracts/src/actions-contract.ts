@@ -26,6 +26,10 @@ import {
   WorkspaceOpenArgumentsSchemaZ,
   WorkspaceOpenMutationResultSchemaZ,
 } from "./workspace-open.ts";
+import {
+  AppWindowMutationArgumentsSchemaZ,
+  AppWindowMutationResultSchemaZ,
+} from "./app-window-mutation.ts";
 
 // ---------------------------------------------------------------------------
 // project.openTerminal
@@ -215,6 +219,13 @@ export const WorkspaceOpenInputZ = WorkspaceOpenArgumentsSchemaZ;
 export const WorkspaceOpenResultZ = WorkspaceOpenMutationResultSchemaZ;
 
 // ---------------------------------------------------------------------------
+// workspace.app-window.mutate
+// ---------------------------------------------------------------------------
+
+export const AppWindowMutationInputZ = AppWindowMutationArgumentsSchemaZ;
+export const AppWindowMutationResultZ = AppWindowMutationResultSchemaZ;
+
+// ---------------------------------------------------------------------------
 // Registry of action contracts (name → input/output schemas)
 // ---------------------------------------------------------------------------
 
@@ -286,6 +297,10 @@ export const ActionContractsZ = {
   "workspace.open": {
     input: WorkspaceOpenInputZ,
     result: WorkspaceOpenResultZ,
+  },
+  "workspace.app-window.mutate": {
+    input: AppWindowMutationInputZ,
+    result: AppWindowMutationResultZ,
   },
 } as const;
 

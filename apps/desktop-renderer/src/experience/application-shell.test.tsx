@@ -66,6 +66,14 @@ function host(): HostCapabilities {
       onChanged: () => () => undefined,
     },
     daemon: {
+      capabilities: async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      }),
+      mutateAppWindow: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
       createWorkspacePane: async () => ({
         status: "error",
         error: { code: "preview-only", reason: "fixture only" },

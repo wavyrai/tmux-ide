@@ -120,6 +120,7 @@ import {
   type ApplicationShellSessionFacts,
 } from "./resources/application-shell.ts";
 import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
+import { daemonActionCommandRegistry } from "./actions/command-definitions.ts";
 import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
@@ -141,6 +142,7 @@ export interface CreateAppOptions {
   };
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
   workspaceOpenBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenBackend;
+  appWindowMutationBackend?: import("./actions/handlers/app-window-mutate.ts").AppWindowMutationBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
   applicationShellInventoryBackend?: {
@@ -190,7 +192,11 @@ function requireAuth(token: string | null, localBypassToken: string | null): Mid
 function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
   return async (c, next) => {
     const actionName = c.req.param("name");
-    if (actionName !== "workspace.pane.create" && actionName !== "workspace.open") {
+    if (
+      actionName !== "workspace.pane.create" &&
+      actionName !== "workspace.open" &&
+      actionName !== "workspace.app-window.mutate"
+    ) {
       return next();
     }
     if (!ownerToken) {
@@ -202,6 +208,17 @@ function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
     }
     if (!z.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
+    }
+    return next();
+  };
+}
+
+function requireOwnerCapability(ownerToken: string | null): MiddlewareHandler {
+  return async (c, next) => {
+    if (!ownerToken) return c.json({ error: "Host capability discovery is unavailable" }, 503);
+    const supplied = bearerToken(c.req.header("Authorization"));
+    if (!supplied || supplied !== ownerToken) {
+      return c.json({ error: "Host capability discovery requires owner authority" }, 401);
     }
     return next();
   };
@@ -406,12 +423,45 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   //     project / terminal operations — see src/command-center/actions/) ---
 
   app.post(
+    "/api/v2/capabilities",
+    requireOwnerCapability(options.remoteAccess?.ownerToken ?? null),
+    async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid capability request" }, 400);
+      }
+      if (!z.object({}).strict().safeParse(body).success) {
+        return c.json({ error: "Invalid capability request" }, 400);
+      }
+      const appWindowCommandRegistered = daemonActionCommandRegistry
+        .descriptors()
+        .some(({ id }) => id === "workspace.app-window.mutate");
+      return c.json({
+        status: "ok" as const,
+        daemon: daemonInstanceIdentity,
+        capabilities: {
+          appWindowMutation:
+            appWindowCommandRegistered && options.appWindowMutationBackend !== undefined
+              ? { available: true as const }
+              : {
+                  available: false as const,
+                  reason: "This daemon generation has no AppWindow mutation backend.",
+                },
+        },
+      });
+    },
+  );
+
+  app.post(
     "/api/v2/action/:name",
     requireHostCapability(options.remoteAccess?.ownerToken ?? null),
     createActionDispatcher({
       daemonInstanceId: daemonIdentity.instanceId,
       workspacePaneCreationBackend: options.workspacePaneCreationBackend,
       workspaceOpenBackend: options.workspaceOpenBackend,
+      appWindowMutationBackend: options.appWindowMutationBackend,
     }),
   );
 

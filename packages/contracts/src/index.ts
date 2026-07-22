@@ -22,6 +22,7 @@ export * from "./tmux.ts";
 export * from "./workspace.ts";
 export * from "./workspace-state.ts";
 export * from "./app-window-state.ts";
+export * from "./app-window-mutation.ts";
 export * from "./workspace-config.ts";
 export * from "./actions-contract.ts";
 export * from "./actions-errors.ts";

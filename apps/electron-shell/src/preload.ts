@@ -1,7 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
+  AppWindowMutationArgumentsSchemaZ,
+  AppWindowMutationHostResultSchemaZ,
   DESKTOP_HOST_API_VERSION,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
+  DesktopDaemonCapabilitiesResultSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
   DesktopDaemonFetchApplicationShellResultSchemaZ,
@@ -25,6 +28,7 @@ import {
   type HostCapabilities,
   type TerminalAttachRequest,
   type WorkspacePaneCreateInvocation,
+  type AppWindowMutationArguments,
 } from "@tmux-ide/contracts";
 
 import { HOST_IPC } from "./ipc-channels.ts";
@@ -115,6 +119,16 @@ const capabilities: HostCapabilities = Object.freeze({
       ),
   }),
   daemon: Object.freeze({
+    capabilities: async () =>
+      DesktopDaemonCapabilitiesResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonCapabilities),
+      ),
+    mutateAppWindow: async (intent: AppWindowMutationArguments) => {
+      const parsed = AppWindowMutationArgumentsSchemaZ.parse(intent);
+      return AppWindowMutationHostResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonMutateAppWindow, parsed),
+      );
+    },
     createWorkspacePane: async (invocation: WorkspacePaneCreateInvocation) => {
       const parsed = WorkspacePaneCreateInvocationSchemaZ.parse(invocation);
       return WorkspacePaneCreateHostResultSchemaZ.parse(

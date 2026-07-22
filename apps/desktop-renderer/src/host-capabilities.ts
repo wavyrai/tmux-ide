@@ -108,6 +108,8 @@ export function createBrowserHostCapabilities(): HostCapabilities {
       onChanged: subscribeMedia,
     },
     daemon: {
+      capabilities: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
+      mutateAppWindow: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
       createWorkspacePane: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
       issueTerminalAttachment: async () => ({
         status: "error",
@@ -149,6 +151,8 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
     typeof candidate.workspace?.openProjectDirectory === "function" &&
     typeof candidate.theme?.getState === "function" &&
     typeof candidate.theme?.onChanged === "function" &&
+    typeof candidate.daemon?.mutateAppWindow === "function" &&
+    typeof candidate.daemon?.capabilities === "function" &&
     typeof candidate.daemon?.createWorkspacePane === "function" &&
     typeof candidate.daemon?.issueTerminalAttachment === "function" &&
     typeof candidate.daemon?.refreshConnection === "function" &&

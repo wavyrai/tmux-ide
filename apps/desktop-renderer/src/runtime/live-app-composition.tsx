@@ -1,4 +1,6 @@
 import {
+  AppWindowMutationHostResultSchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   WorkspacePaneCreateHostResultSchemaZ,
   projectApplicationShellV1,
   type ApplicationShellCommandInvocation,
@@ -66,7 +68,9 @@ export interface DesktopLiveApplicationProps {
     source: PaneFrameActivationSource,
   ) => void;
   readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
-  readonly onAppWindowCommand?: (invocation: AppWindowCanvasCommandInvocation) => void;
+  readonly onAppWindowCommand?: (
+    invocation: AppWindowCanvasCommandInvocation,
+  ) => void | Promise<void>;
   readonly terminalTransport?: NativeTerminalTransport | null;
   readonly reducedMotion?: boolean;
   readonly terminalThemeKey?: string;
@@ -522,6 +526,50 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     transport: createHostDaemonTransport(props.host),
   });
   createEffect(() => store.setTarget(props.target));
+  const [mutationError, setMutationError] = createSignal<string | null>(null);
+  const [appWindowMutationAvailable, setAppWindowMutationAvailable] = createSignal(false);
+  const [appWindowMutationUnavailableReason, setAppWindowMutationUnavailableReason] = createSignal(
+    "Checking durable window controls…",
+  );
+  let mutationTail: Promise<void> = Promise.resolve();
+  let capabilityGeneration = 0;
+  let disposed = false;
+  createEffect(() => {
+    const daemon = { ...props.target.daemon };
+    const generation = ++capabilityGeneration;
+    setAppWindowMutationAvailable(false);
+    setAppWindowMutationUnavailableReason("Checking durable window controls…");
+    void (async () => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const result = await props.host.daemon.capabilities();
+          if (disposed || generation !== capabilityGeneration) return;
+          if (
+            result.status === "ok" &&
+            result.daemon.protocolVersion === daemon.protocolVersion &&
+            result.daemon.productVersion === daemon.productVersion &&
+            result.daemon.instanceId === daemon.instanceId &&
+            result.daemon.startedAt === daemon.startedAt
+          ) {
+            setAppWindowMutationAvailable(result.capabilities.appWindowMutation.available);
+            setAppWindowMutationUnavailableReason(
+              result.capabilities.appWindowMutation.available
+                ? ""
+                : result.capabilities.appWindowMutation.reason,
+            );
+            return;
+          }
+        } catch {
+          // One bounded retry covers a transient IPC/broker handoff.
+        }
+      }
+      if (!disposed && generation === capabilityGeneration) {
+        setAppWindowMutationUnavailableReason(
+          "Durable window controls are unavailable. Reopen the workspace to recheck.",
+        );
+      }
+    })();
+  });
 
   const createPaneCatalogs = createMemo<CreatePaneFlowCatalogs>(() => {
     const snapshot = props.catalogState.snapshot;
@@ -554,7 +602,6 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     readonly reject: () => void;
     readonly timer: ReturnType<typeof setTimeout>;
   } | null = null;
-  let disposed = false;
 
   const settlePendingRefresh = (outcome: "resolve" | "reject"): void => {
     const pending = pendingRefresh;
@@ -637,6 +684,78 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     return snapshot ? projectLiveWorkspace(snapshot) : null;
   });
 
+  const waitForAppWindowRevision = async (revision: number): Promise<void> => {
+    const deadline = Date.now() + 8_000;
+    while (!disposed && Date.now() < deadline) {
+      const parsed = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
+      if (parsed.success && parsed.data.appWindows.revision >= revision) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("The authoritative window layout did not refresh.");
+  };
+
+  const mutateAppWindow = (invocation: AppWindowCanvasCommandInvocation): Promise<void> => {
+    const operation = mutationTail.then(async () => {
+      if (disposed) throw new Error("The active workspace changed during window mutation.");
+      let current = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
+      if (!current.success) throw new Error("The live window layout is unavailable.");
+      let attemptedRevision = current.data.appWindows.revision;
+      try {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          attemptedRevision = current.data.appWindows.revision;
+          const result = AppWindowMutationHostResultSchemaZ.parse(
+            await props.host.daemon.mutateAppWindow({
+              workspaceName: props.target.workspaceName,
+              expectedDocumentRevision: attemptedRevision,
+              command: invocation.command,
+            }),
+          );
+          if (result.status === "error") {
+            if (result.error.code === "daemon-identity-mismatch") {
+              props.onDaemonIdentityMismatch?.();
+            }
+            if (result.error.code !== "resource-changed" || attempt > 0) {
+              throw new Error(result.error.reason);
+            }
+            store.refresh();
+            await waitForAppWindowRevision(attemptedRevision + 1);
+            current = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
+            if (!current.success) throw new Error("The refreshed window layout is unavailable.");
+            continue;
+          }
+          if (
+            result.result.daemonInstanceId !== props.target.daemon.instanceId ||
+            result.result.workspaceName !== props.target.workspaceName
+          ) {
+            props.onDaemonIdentityMismatch?.();
+            throw new Error("The window layout belongs to a different workspace generation.");
+          }
+          store.refresh();
+          await waitForAppWindowRevision(result.result.documentRevision);
+          setMutationError(null);
+          return;
+        }
+      } catch (error) {
+        // A conflict means our V3 revision is stale. Refresh before releasing
+        // the serialized mutation queue so the next gesture can retry once.
+        store.refresh();
+        const deadline = Date.now() + 2_000;
+        while (!disposed && Date.now() < deadline) {
+          const refreshed = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
+          if (refreshed.success && refreshed.data.appWindows.revision !== attemptedRevision) {
+            break;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        }
+        throw error;
+      }
+    });
+    mutationTail = operation.catch((error: unknown) => {
+      setMutationError(error instanceof Error ? error.message : "Window mutation failed.");
+    });
+    return operation;
+  };
+
   let mismatchGeneration = -1;
   createEffect(() => {
     const state = store.state();
@@ -663,6 +782,13 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
         tone: "degraded" as const,
         label: "Workspace connection degraded",
         reason: resource.reason,
+      };
+    }
+    if (mutationError()) {
+      return {
+        tone: "degraded" as const,
+        label: "Window layout was not saved",
+        reason: mutationError() ?? "Try the window action again.",
       };
     }
     const reason = catalogReason(props.catalogState);
@@ -775,7 +901,11 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             }}
             onPaneAction={props.onPaneAction}
             onPaneGrip={props.onPaneGrip}
-            onAppWindowCommand={props.onAppWindowCommand}
+            onAppWindowCommand={
+              props.onAppWindowCommand ??
+              (appWindowMutationAvailable() ? mutateAppWindow : undefined)
+            }
+            appWindowMutationUnavailableReason={appWindowMutationUnavailableReason()}
           />
           <Show when={notice()}>
             {(current) => (

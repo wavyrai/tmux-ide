@@ -5,6 +5,7 @@ import {
   ApplicationShellResourceSchemaZ,
 } from "./application-shell-resource.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
+import { CommandAvailabilitySchemaZ } from "./commands.ts";
 import type {
   TerminalAttachRequest,
   TerminalAttachmentIssueResult,
@@ -14,9 +15,13 @@ import type {
   WorkspacePaneCreateInvocation,
 } from "./workspace-pane-creation.ts";
 import type { WorkspaceOpenHostResult } from "./workspace-open.ts";
+import type {
+  AppWindowMutationArguments,
+  AppWindowMutationHostResult,
+} from "./app-window-mutation.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 7 as const;
+export const DESKTOP_HOST_API_VERSION = 8 as const;
 
 /** Stable tuple origin for the packaged, sandboxed Electron renderer. */
 export const DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide" as const;
@@ -147,6 +152,7 @@ export const DesktopDaemonCapabilityErrorCodeSchemaZ = z.enum([
   "invalid-response",
   "daemon-identity-mismatch",
   "request-failed",
+  "resource-changed",
   "event-unavailable",
   "protocol-error",
   "disposed",
@@ -169,6 +175,21 @@ export const DesktopDaemonListWorkspacesResultSchemaZ = z.discriminatedUnion("st
       status: z.literal("ok"),
       daemon: DaemonInstanceIdentitySchemaZ,
       workspaces: z.array(DesktopDaemonWorkspaceSummarySchemaZ),
+    })
+    .strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+export const DesktopDaemonCapabilitiesResultSchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("ok"),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      capabilities: z
+        .object({
+          appWindowMutation: CommandAvailabilitySchemaZ,
+        })
+        .strict(),
     })
     .strict(),
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
@@ -341,6 +362,9 @@ export type DesktopDaemonWorkspaceSummary = z.infer<typeof DesktopDaemonWorkspac
 export type DesktopDaemonListWorkspacesResult = z.infer<
   typeof DesktopDaemonListWorkspacesResultSchemaZ
 >;
+export type DesktopDaemonCapabilitiesResult = z.infer<
+  typeof DesktopDaemonCapabilitiesResultSchemaZ
+>;
 export type DesktopDaemonFetchApplicationShellRequest = z.infer<
   typeof DesktopDaemonFetchApplicationShellRequestSchemaZ
 >;
@@ -397,6 +421,8 @@ export interface HostCapabilities {
     onChanged(listener: (state: DesktopThemeState) => void): DesktopHostUnsubscribe;
   };
   readonly daemon: {
+    capabilities(): Promise<DesktopDaemonCapabilitiesResult>;
+    mutateAppWindow(intent: AppWindowMutationArguments): Promise<AppWindowMutationHostResult>;
     createWorkspacePane(
       invocation: WorkspacePaneCreateInvocation,
     ): Promise<WorkspacePaneCreateHostResult>;

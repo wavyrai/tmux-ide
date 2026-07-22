@@ -166,6 +166,15 @@ function createHostHarness() {
       },
     },
     daemon: {
+      capabilities: vi.fn(async () => ({
+        status: "ok" as const,
+        daemon: activeDaemon,
+        capabilities: { appWindowMutation: { available: true as const } },
+      })),
+      mutateAppWindow: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
       createWorkspacePane: vi.fn(async () => ({
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "fixture only" },

@@ -101,7 +101,10 @@ export interface DomApplicationShellProps {
     source: PaneFrameActivationSource,
   ) => void;
   readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
-  readonly onAppWindowCommand?: (invocation: AppWindowCanvasCommandInvocation) => void;
+  readonly onAppWindowCommand?: (
+    invocation: AppWindowCanvasCommandInvocation,
+  ) => void | Promise<void>;
+  readonly appWindowMutationUnavailableReason?: string;
 }
 
 export interface PrimaryNavigationProps {
@@ -430,10 +433,11 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     props.onCommand?.(invocation);
   };
 
-  const dispatchAppWindow = (invocation: AppWindowCanvasCommandInvocation): void => {
+  const dispatchAppWindow = (
+    invocation: AppWindowCanvasCommandInvocation,
+  ): void | Promise<void> => {
     if (invocation.command.type !== "window.focus" || invocation.command.windowId === null) {
-      props.onAppWindowCommand?.(invocation);
-      return;
+      return props.onAppWindowCommand?.(invocation);
     }
     const document = appWindowDocument();
     const window = document?.windows[invocation.command.windowId];
@@ -455,7 +459,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         },
       ),
     );
-    props.onAppWindowCommand?.(invocation);
+    return props.onAppWindowCommand?.(invocation);
   };
 
   const dispatchSurface = (surface: ProductSurfaceId, source: CommandSource): void => {
@@ -981,6 +985,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   terminalThemeKey={props.terminalThemeKey}
                   onCommand={dispatchAppWindow}
                   mutationsAvailable={props.onAppWindowCommand !== undefined}
+                  mutationUnavailableReason={props.appWindowMutationUnavailableReason}
                 />
               )}
             </Show>

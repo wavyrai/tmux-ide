@@ -198,7 +198,7 @@ describe("canonical Electron daemon attachment", () => {
       status: "connected",
       descriptor: {
         apiBaseUrl: "http://127.0.0.1:6060",
-        protocolVersion: 1,
+        protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
         productVersion: "2.8.0",
         instanceId: info.instanceId,
         startedAt: info.startedAt,

@@ -29,6 +29,15 @@ function daemonHost(
 ): Pick<HostCapabilities, "daemon"> {
   return {
     daemon: {
+      capabilities: async () => ({
+        status: "ok",
+        daemon: DAEMON,
+        capabilities: { appWindowMutation: { available: true } },
+      }),
+      mutateAppWindow: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
       createWorkspacePane: async () => ({
         status: "error",
         error: { code: "preview-only", reason: "fixture only" },

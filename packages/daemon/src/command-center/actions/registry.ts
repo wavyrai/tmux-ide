@@ -12,6 +12,8 @@
 
 import type { z } from "zod";
 import {
+  type AppWindowMutationRequest,
+  type AppWindowMutationResult,
   ActionContractsZ,
   type WorkspacePaneCreateMutationRequest,
   type WorkspacePaneCreateMutationResult,
@@ -21,6 +23,7 @@ import {
   type ActionName,
   type ActionResult,
 } from "./contract.ts";
+import { appWindowMutateHandler } from "./handlers/app-window-mutate.ts";
 import { projectOpenTerminalHandler } from "./handlers/project-open-terminal.ts";
 import { projectActivateHandler } from "./handlers/project-activate.ts";
 import { projectLaunchHandler } from "./handlers/project-launch.ts";
@@ -49,6 +52,9 @@ export interface ActionExecutionContext {
   };
   readonly workspaceOpenBackend?: {
     open(input: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
+  };
+  readonly appWindowMutationBackend?: {
+    mutate(input: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
   };
 }
 
@@ -157,6 +163,12 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["workspace.open"].result,
     handler: (input) => workspaceOpenHandler(input),
     handlerWithContext: workspaceOpenHandler,
+  },
+  "workspace.app-window.mutate": {
+    inputSchema: ActionContractsZ["workspace.app-window.mutate"].input,
+    resultSchema: ActionContractsZ["workspace.app-window.mutate"].result,
+    handler: (input) => appWindowMutateHandler(input),
+    handlerWithContext: appWindowMutateHandler,
   },
 };
 

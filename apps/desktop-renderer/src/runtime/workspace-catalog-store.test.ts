@@ -92,6 +92,14 @@ function fakeDaemonHost(
     return subscribeResult ? subscribeResult() : ({ status: "subscribed", unsubscribe } as const);
   });
   const daemon: HostCapabilities["daemon"] = {
+    capabilities: async () => ({
+      status: "error",
+      error: { code: "preview-only", reason: "fixture only" },
+    }),
+    mutateAppWindow: async () => ({
+      status: "error",
+      error: { code: "preview-only", reason: "fixture only" },
+    }),
     createWorkspacePane: async () => ({
       status: "error",
       error: { code: "preview-only", reason: "fixture only" },
@@ -789,6 +797,6 @@ describe("desktop live workspace catalog and selection store", () => {
 
 describe("workspace catalog host contract seam", () => {
   it("uses the current versioned facade without exposing a generic transport", () => {
-    expect(DESKTOP_HOST_API_VERSION).toBe(7);
+    expect(DESKTOP_HOST_API_VERSION).toBe(8);
   });
 });

@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import {
+  AppWindowMutationArgumentsSchemaZ,
+  AppWindowMutationHostResultSchemaZ,
+  AppWindowMutationRequestSchemaZ,
   DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
   DESKTOP_PACKAGED_RENDERER_ORIGIN,
   DESKTOP_HOST_API_VERSION,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
+  DesktopDaemonCapabilitiesResultSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
@@ -28,7 +32,11 @@ import {
 } from "@tmux-ide/contracts";
 
 import type { DaemonConnectionAuthority } from "./daemon-connection-coordinator.ts";
-import { daemonCapabilityError, terminalAttachmentIssueError } from "./daemon-resource-broker.ts";
+import {
+  daemonCapabilityError,
+  daemonCapabilityErrorFromUnknown,
+  terminalAttachmentIssueError,
+} from "./daemon-resource-broker.ts";
 import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
 
 export interface HostIpcDependencies {
@@ -354,6 +362,21 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     return result;
   });
 
+  handle(HOST_IPC.daemonCapabilities, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 0) {
+      return DesktopDaemonCapabilitiesResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("invalid-request"),
+      });
+    }
+    const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
+      await deps.daemonResources.capabilities(),
+    );
+    assertRendererAuthority(event, authority.generation);
+    return result;
+  });
+
   handle(HOST_IPC.daemonCreateWorkspacePane, async (event, ...args) => {
     const authority = trustedRendererAuthority(event);
     if (args.length !== 1) {
@@ -416,6 +439,80 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       return WorkspacePaneCreateHostResultSchemaZ.parse({
         status: "error",
         error: daemonCapabilityError("request-failed"),
+      });
+    }
+  });
+
+  handle(HOST_IPC.daemonMutateAppWindow, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return AppWindowMutationHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("invalid-request"),
+      });
+    }
+    const intent = AppWindowMutationArgumentsSchemaZ.safeParse(args[0]);
+    if (!intent.success) {
+      return AppWindowMutationHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("invalid-request"),
+      });
+    }
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return AppWindowMutationHostResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedCapabilityError(before),
+      });
+    }
+    const request = AppWindowMutationRequestSchemaZ.parse({
+      operationId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      intent: intent.data,
+    });
+    try {
+      const result = await deps.daemonResources.mutateAppWindow(request);
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return AppWindowMutationHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        result.operationId !== request.operationId ||
+        result.daemonInstanceId !== request.expectedDaemonInstanceId ||
+        result.workspaceName !== request.intent.workspaceName
+      ) {
+        return AppWindowMutationHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return AppWindowMutationHostResultSchemaZ.parse({ status: "ok", result });
+    } catch (error) {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return AppWindowMutationHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (after.status !== "connected" || !sameDaemonIdentity(before.identity, after.identity)) {
+        return AppWindowMutationHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return AppWindowMutationHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityErrorFromUnknown(error),
       });
     }
   });

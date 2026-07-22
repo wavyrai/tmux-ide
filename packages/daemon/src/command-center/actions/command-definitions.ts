@@ -39,6 +39,7 @@ const ACTION_COMMAND_METADATA: Record<ActionName, ActionCommandMetadata> = {
   "daemon.shutdown": { label: "Shut down daemon", category: "daemon", dangerous: true },
   "workspace.pane.create": { label: "Create workspace pane", category: "workspace" },
   "workspace.open": { label: "Open config-free workspace", category: "workspace" },
+  "workspace.app-window.mutate": { label: "Mutate application window", category: "workspace" },
 };
 
 function actionDescriptor(name: ActionName): CommandDescriptor {

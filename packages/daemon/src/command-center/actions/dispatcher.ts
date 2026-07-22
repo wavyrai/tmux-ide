@@ -30,6 +30,7 @@ import { broadcastActionComplete } from "../ws-events.ts";
 import { daemonActionCommandRegistry } from "./command-definitions.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
 import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
+import type { AppWindowMutationBackend } from "./handlers/app-window-mutate.ts";
 
 export interface DispatcherDeps {
   /** Override the WS broadcaster (tests / non-default daemons). */
@@ -40,6 +41,8 @@ export interface DispatcherDeps {
   workspacePaneCreationBackend?: WorkspacePaneCreationBackend;
   /** Instance-owned config-free admission authority; never renderer-authored. */
   workspaceOpenBackend?: WorkspaceOpenBackend;
+  /** Instance-owned AppWindow authority; renderer never supplies its envelope. */
+  appWindowMutationBackend?: AppWindowMutationBackend;
 }
 
 interface DispatchOk {
@@ -164,6 +167,7 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
         daemonInstanceId: deps.daemonInstanceId,
         workspacePaneCreationBackend: deps.workspacePaneCreationBackend,
         workspaceOpenBackend: deps.workspaceOpenBackend,
+        appWindowMutationBackend: deps.appWindowMutationBackend,
       };
       result = entry.handlerWithContext
         ? await entry.handlerWithContext(commandResolution.command.input, context)
@@ -180,12 +184,20 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       return c.json(outputZodErrorEnvelope(outputParsed.error) satisfies ActionErrorEnvelope, 200);
     }
 
-    // Fire-and-forget: subscribers learn about the success via the WS bus.
-    try {
-      broadcast(actionName, outputParsed.data);
-    } catch (err) {
-      // Broadcast failure must not turn a successful action into a failure.
-      console.error("[actions] broadcast failed:", err);
+    const unchangedAppWindowMutation =
+      actionName === "workspace.app-window.mutate" &&
+      typeof outputParsed.data === "object" &&
+      outputParsed.data !== null &&
+      "outcome" in outputParsed.data &&
+      outputParsed.data.outcome === "unchanged";
+    if (!unchangedAppWindowMutation) {
+      // Fire-and-forget: subscribers learn about durable state changes via WS.
+      try {
+        broadcast(actionName, outputParsed.data);
+      } catch (err) {
+        // Broadcast failure must not turn a successful action into a failure.
+        console.error("[actions] broadcast failed:", err);
+      }
     }
 
     return c.json({ ok: true, result: outputParsed.data } satisfies DispatchOk, 200);

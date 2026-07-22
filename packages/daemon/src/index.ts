@@ -135,6 +135,11 @@ export {
   type WorkspacePaneTmuxAuthority,
 } from "./lib/workspace-pane-creation.ts";
 export {
+  AppWindowMutationAuthority,
+  AppWindowMutationError,
+  type AppWindowMutationErrorCode,
+} from "./lib/app-window-mutation.ts";
+export {
   SemanticPaneCatalog,
   SemanticPaneCatalogError,
   TrustedSemanticPaneSnapshotSchemaZ,

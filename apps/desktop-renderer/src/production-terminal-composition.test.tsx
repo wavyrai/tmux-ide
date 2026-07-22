@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellProjectionInputV2SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   DESKTOP_HOST_API_VERSION,
   type ApplicationShellProjectionInputV2,
+  type ApplicationShellProjectionInputV3,
   type DaemonInstanceIdentity,
   type DesktopDaemonEvent,
   type HostCapabilities,
@@ -147,9 +150,61 @@ function shellInput(extraTerminalId?: string): ApplicationShellProjectionInputV2
   });
 }
 
+function shellInputV3(): ApplicationShellProjectionInputV3 {
+  return ApplicationShellProjectionInputV3SchemaZ.parse({
+    ...shellInput(),
+    appWindows: {
+      version: 1,
+      revision: 0,
+      updatedAt: "2026-07-22T10:00:00.000Z",
+      windows: {
+        "window.shell": {
+          id: "window.shell",
+          source: { kind: "terminal", terminalSourceId: "pane.shell" },
+          title: "Project shell",
+          placement: {
+            mode: "floating",
+            docked: null,
+            floating: { x: 40, y: 30, width: 720, height: 440 },
+          },
+        },
+      },
+      dockRoot: null,
+      dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+      floatingOrder: ["window.shell"],
+      focusedWindowId: "window.shell",
+      activeLayoutId: null,
+      layouts: {},
+    },
+  });
+}
+
+function shellInputV3AtRevision(
+  revision: number,
+  rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): ApplicationShellProjectionInputV3 {
+  const input = shellInputV3();
+  return ApplicationShellProjectionInputV3SchemaZ.parse({
+    ...input,
+    appWindows: {
+      ...input.appWindows,
+      revision,
+      updatedAt: `2026-07-22T10:00:0${revision}.000Z`,
+      windows: {
+        ...input.appWindows.windows,
+        "window.shell": {
+          ...input.appWindows.windows["window.shell"],
+          placement: { mode: "floating", docked: null, floating: rect },
+        },
+      },
+    },
+  });
+}
+
 function createHostHarness() {
   let daemon = DAEMON_A;
-  let resource = shellInput();
+  let resource: ApplicationShellProjectionInputV2 | ApplicationShellProjectionInputV3 =
+    shellInput();
   const subscriptions: Array<(event: DesktopDaemonEvent) => void> = [];
   const host: HostCapabilities = {
     apiVersion: DESKTOP_HOST_API_VERSION,
@@ -177,6 +232,15 @@ function createHostHarness() {
       onChanged: () => () => undefined,
     },
     daemon: {
+      capabilities: vi.fn(async () => ({
+        status: "ok" as const,
+        daemon,
+        capabilities: { appWindowMutation: { available: true as const } },
+      })),
+      mutateAppWindow: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "test transport" },
+      })),
       createWorkspacePane: vi.fn(async () => ({
         status: "ok" as const,
         result: {
@@ -209,14 +273,17 @@ function createHostHarness() {
         daemon,
         workspaces: [{ workspaceName: "alpha" }],
       })),
-      fetchApplicationShell: vi.fn(async () => ({
-        status: "ok" as const,
-        envelope: {
-          version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
-          daemon,
-          resource,
-        },
-      })),
+      fetchApplicationShell: vi.fn(async () =>
+        "appWindows" in resource
+          ? {
+              status: "ok" as const,
+              envelope: { version: APPLICATION_SHELL_RESOURCE_V3_VERSION, daemon, resource },
+            }
+          : {
+              status: "ok" as const,
+              envelope: { version: APPLICATION_SHELL_RESOURCE_V2_VERSION, daemon, resource },
+            },
+      ),
       subscribe: vi.fn(async (_request, listener) => {
         subscriptions.push(listener);
         return { status: "subscribed" as const, unsubscribe: () => undefined };
@@ -228,7 +295,7 @@ function createHostHarness() {
     setDaemon(next: DaemonInstanceIdentity) {
       daemon = next;
     },
-    setResource(next: ApplicationShellProjectionInputV2) {
+    setResource(next: ApplicationShellProjectionInputV2 | ApplicationShellProjectionInputV3) {
       resource = next;
     },
     emit(event: DesktopDaemonEvent) {
@@ -280,6 +347,156 @@ afterEach(() => {
 });
 
 describe("production terminal composition", () => {
+  it("enables durable AppWindow controls after exact-generation capability negotiation", async () => {
+    const harness = createHostHarness();
+    harness.setResource(shellInputV3());
+    window.tmuxIdeHost = harness.host;
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <App />, root);
+
+    const placement = await vi.waitFor(() => {
+      const value = root.querySelector<HTMLButtonElement>(
+        '[data-action-id="app-window-placement"]',
+      );
+      expect(value).not.toBeNull();
+      return value!;
+    });
+    expect(placement.disabled).toBe(false);
+    expect(harness.host.apiVersion).toBe(8);
+    dispose();
+  });
+
+  it("retries one transient capability handoff before enabling window controls", async () => {
+    const harness = createHostHarness();
+    harness.setResource(shellInputV3());
+    vi.mocked(harness.host.daemon.capabilities)
+      .mockRejectedValueOnce(new Error("transient IPC handoff"))
+      .mockResolvedValueOnce({
+        status: "ok",
+        daemon: DAEMON_A,
+        capabilities: { appWindowMutation: { available: true } },
+      });
+    window.tmuxIdeHost = harness.host;
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <App />, root);
+
+    await vi.waitFor(() => {
+      expect(
+        root.querySelector<HTMLButtonElement>('[data-action-id="app-window-placement"]')?.disabled,
+      ).toBe(false);
+    });
+    expect(harness.host.daemon.capabilities).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+
+  it.each([
+    ["protocolVersion", { protocolVersion: 2 }],
+    ["productVersion", { productVersion: "different-product" }],
+    ["instanceId", { instanceId: "00000000-0000-4000-8000-000000000099" }],
+    ["startedAt", { startedAt: "2026-07-22T00:00:01.000Z" }],
+  ] as const)(
+    "rejects capability authority with a mismatched daemon %s",
+    async (_field, changed) => {
+      const harness = createHostHarness();
+      harness.setResource(shellInputV3());
+      vi.mocked(harness.host.daemon.capabilities).mockResolvedValue({
+        status: "ok",
+        daemon: { ...DAEMON_A, ...changed },
+        capabilities: { appWindowMutation: { available: true } },
+      });
+      window.tmuxIdeHost = harness.host;
+      const root = document.body.appendChild(document.createElement("div"));
+      const dispose = render(() => <App />, root);
+
+      await vi.waitFor(() => {
+        const placement = root.querySelector<HTMLButtonElement>(
+          '[data-action-id="app-window-placement"]',
+        );
+        expect(placement?.disabled).toBe(true);
+        expect(placement?.title).toBe(
+          "Durable window controls are unavailable. Reopen the workspace to recheck.",
+        );
+      });
+      expect(harness.host.daemon.capabilities).toHaveBeenCalledTimes(2);
+      dispose();
+    },
+  );
+
+  it("keeps AppWindow controls disabled with the daemon-provided capability reason", async () => {
+    const harness = createHostHarness();
+    harness.setResource(shellInputV3());
+    vi.mocked(harness.host.daemon.capabilities).mockResolvedValue({
+      status: "ok",
+      daemon: DAEMON_A,
+      capabilities: {
+        appWindowMutation: { available: false, reason: "Upgrade the daemon to save layouts." },
+      },
+    });
+    window.tmuxIdeHost = harness.host;
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <App />, root);
+    await vi.waitFor(() => {
+      const placement = root.querySelector<HTMLButtonElement>(
+        '[data-action-id="app-window-placement"]',
+      );
+      expect(placement?.disabled).toBe(true);
+      expect(placement?.title).toBe("Upgrade the daemon to save layouts.");
+    });
+    dispose();
+  });
+
+  it("refreshes and retries one semantic AppWindow command after a revision conflict", async () => {
+    const harness = createHostHarness();
+    harness.setResource(shellInputV3());
+    vi.mocked(harness.host.daemon.mutateAppWindow)
+      .mockImplementationOnce(async () => {
+        harness.setResource(shellInputV3AtRevision(1, { x: 44, y: 34, width: 720, height: 440 }));
+        return {
+          status: "error" as const,
+          error: { code: "resource-changed" as const, reason: "The layout changed." },
+        };
+      })
+      .mockImplementationOnce(async () => {
+        harness.setResource(shellInputV3AtRevision(2, { x: 12, y: 12, width: 876, height: 516 }));
+        return {
+          status: "ok" as const,
+          result: {
+            operationId: "00000000-0000-4000-8000-000000000020",
+            daemonInstanceId: DAEMON_A.instanceId,
+            outcome: "applied" as const,
+            workspaceName: "alpha",
+            documentRevision: 2,
+          },
+        };
+      });
+    window.tmuxIdeHost = harness.host;
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <App />, root);
+    const maximize = await vi.waitFor(() => {
+      const value = root.querySelector<HTMLButtonElement>('[data-action-id="app-window-maximize"]');
+      expect(value?.disabled).toBe(false);
+      return value!;
+    });
+    maximize.click();
+
+    await vi.waitFor(() => expect(harness.host.daemon.mutateAppWindow).toHaveBeenCalledTimes(2));
+    expect(harness.host.daemon.mutateAppWindow).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ expectedDocumentRevision: 0 }),
+    );
+    expect(harness.host.daemon.mutateAppWindow).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ expectedDocumentRevision: 1 }),
+    );
+    expect(
+      vi.mocked(harness.host.daemon.mutateAppWindow).mock.calls.map(([request]) => request.command),
+    ).toEqual([
+      expect.objectContaining({ type: "window.float", windowId: "window.shell" }),
+      expect.objectContaining({ type: "window.float", windowId: "window.shell" }),
+    ]);
+    dispose();
+  });
+
   it("uses every available semantic inventory entry and never attaches unavailable panes", async () => {
     const harness = createHostHarness();
     window.tmuxIdeHost = harness.host;

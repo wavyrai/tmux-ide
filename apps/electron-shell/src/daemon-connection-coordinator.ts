@@ -3,6 +3,7 @@ import {
   DesktopDaemonRefreshConnectionResultSchemaZ,
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityState,
+  type DesktopDaemonCapabilitiesResult,
   type DesktopDaemonEvent,
   type DesktopDaemonFetchApplicationShellResult,
   type DesktopDaemonFetchApplicationShellRequest,
@@ -15,6 +16,8 @@ import {
   type WorkspacePaneCreateMutationResult,
   type WorkspaceOpenMutationRequest,
   type WorkspaceOpenMutationResult,
+  type AppWindowMutationRequest,
+  type AppWindowMutationResult,
 } from "@tmux-ide/contracts";
 
 import {
@@ -30,6 +33,8 @@ import { inspectCanonicalDaemonInfo } from "../../../packages/daemon/src/canonic
 type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected" }>;
 
 export interface DaemonResourceAuthority {
+  capabilities(): Promise<DesktopDaemonCapabilitiesResult>;
+  mutateAppWindow(request: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
   openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
   createWorkspacePane(
     request: WorkspacePaneCreateMutationRequest,
@@ -199,6 +204,21 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
     const rendererGeneration = this.#rendererGeneration;
     const result = await broker.createWorkspacePane(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
+  }
+
+  async mutateAppWindow(request: AppWindowMutationRequest): Promise<AppWindowMutationResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.mutateAppWindow(request);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
@@ -558,5 +578,22 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
   #parseResult(value: unknown): DesktopDaemonRefreshConnectionResult {
     return DesktopDaemonRefreshConnectionResultSchemaZ.parse(value);
+  }
+
+  async capabilities(): Promise<DesktopDaemonCapabilitiesResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) {
+      return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
+    }
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.capabilities();
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return { status: "error", error: daemonCapabilityError("disposed") };
+    }
+    return result;
   }
 }

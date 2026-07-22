@@ -80,7 +80,8 @@ export interface AppWindowCanvasProps {
   readonly viewport?: AppWindowCanvasViewport;
   /** True only when the host can durably execute AppWindow commands. */
   readonly mutationsAvailable?: boolean;
-  readonly onCommand?: (invocation: AppWindowCanvasCommandInvocation) => void;
+  readonly mutationUnavailableReason?: string;
+  readonly onCommand?: (invocation: AppWindowCanvasCommandInvocation) => void | Promise<void>;
 }
 
 const CANVAS_SCALE_RANGE = { min: 0.35, max: 2.4 } as const;
@@ -98,16 +99,17 @@ interface LocalMaximizedWindow {
   readonly observedRevision: number;
 }
 
-function unavailableReason(commandsAvailable: boolean): string | null {
-  return commandsAvailable ? null : "Window mutations are unavailable in this host";
+function unavailableReason(commandsAvailable: boolean, reason?: string): string | null {
+  return commandsAvailable ? null : (reason ?? "Window mutations are unavailable in this host");
 }
 
 export function appWindowCanvasActions(input: {
   readonly placement: AppWindowCanvasItem["placement"];
   readonly maximized: boolean;
   readonly commandsAvailable: boolean;
+  readonly unavailableReason?: string;
 }): readonly PaneFrameAction[] {
-  const mutationUnavailable = unavailableReason(input.commandsAvailable);
+  const mutationUnavailable = unavailableReason(input.commandsAvailable, input.unavailableReason);
   const docked = input.placement === "docked";
   return [
     {
@@ -216,7 +218,11 @@ function sceneAppearance(
 function windowFrameModel(
   window: AppWindowCanvasItem,
   source: PaneFrameModel,
-  options: { readonly maximized: boolean; readonly commandsAvailable: boolean },
+  options: {
+    readonly maximized: boolean;
+    readonly commandsAvailable: boolean;
+    readonly unavailableReason?: string;
+  },
 ): PaneFrameModel {
   const paneId = window.windowId;
   return {
@@ -233,6 +239,7 @@ function windowFrameModel(
       placement: window.placement,
       maximized: options.maximized,
       commandsAvailable: options.commandsAvailable,
+      unavailableReason: options.unavailableReason,
     }),
   };
 }
@@ -289,6 +296,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   let sceneRuntimeStyle: RuntimeStyleBinding | null = null;
   let canvasRuntimeStyle: RuntimeStyleBinding | null = null;
   let pointerTransaction: CanvasPointerTransaction | null = null;
+  let nextMutationToken = 0;
   let panTransaction: {
     readonly pointerId: number;
     readonly origin: { readonly x: number; readonly y: number };
@@ -299,7 +307,11 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   const [rectOverrides, setRectOverrides] = createSignal(
     new Map<
       string,
-      { readonly rect: AppWindowCanvasItem["rect"]; readonly revision: number | null }
+      {
+        readonly rect: AppWindowCanvasItem["rect"];
+        readonly revision: number | null;
+        readonly mutationToken?: number;
+      }
     >(),
     { equals: false },
   );
@@ -467,9 +479,10 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     windowId: string,
     rect: AppWindowCanvasItem["rect"],
     revision: number | null,
+    mutationToken?: number,
   ) => {
     const next = new Map(rectOverrides());
-    next.set(windowId, { rect, revision });
+    next.set(windowId, { rect, revision, mutationToken });
     setRectOverrides(next);
   };
 
@@ -500,6 +513,26 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     setMaximizeStates(next);
   };
 
+  const dispatchDurableCommand = (
+    invocation: AppWindowCanvasCommandInvocation | undefined,
+    rollback?: () => void,
+    committed?: () => void,
+    synchronouslyCommitted?: () => void,
+  ): void => {
+    if (!invocation || !props.onCommand) return;
+    try {
+      const result = props.onCommand(invocation);
+      if (result && typeof result.then === "function") {
+        void result.then(
+          () => committed?.(),
+          () => rollback?.(),
+        );
+      } else synchronouslyCommitted?.();
+    } catch {
+      rollback?.();
+    }
+  };
+
   const handleWindowAction = (
     window: AppWindowCanvasItem,
     actionId: string,
@@ -507,11 +540,13 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   ) => {
     if (!(props.mutationsAvailable ?? props.onCommand !== undefined)) return;
     if (actionId === APP_WINDOW_CANVAS_ACTION_IDS.placement) {
+      const previousMaximizeStates = maximizeStates();
       clearMaximizeState(window.windowId);
-      props.onCommand?.(
+      dispatchDurableCommand(
         window.placement === "floating"
           ? dockAppWindowIntent(window.windowId, source)
           : floatAppWindowIntent(window.windowId, source),
+        () => setMaximizeStates(previousMaximizeStates),
       );
       return;
     }
@@ -551,8 +586,34 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     } else {
       clearMaximizeState(window.windowId);
     }
-    updateOverride(window.windowId, next.rect, projection().revision);
-    props.onCommand?.(next.commands[0]);
+    const mutationToken = ++nextMutationToken;
+    updateOverride(window.windowId, next.rect, null, mutationToken);
+    const clearOwnedOverride = () => {
+      const overrides = new Map(rectOverrides());
+      if (overrides.get(window.windowId)?.mutationToken === mutationToken) {
+        overrides.delete(window.windowId);
+      }
+      setRectOverrides(overrides);
+    };
+    const markOwnedCommitted = () => {
+      const overrides = new Map(rectOverrides());
+      if (overrides.get(window.windowId)?.mutationToken === mutationToken) {
+        overrides.set(window.windowId, {
+          rect: next.rect,
+          revision: projection().revision,
+        });
+      }
+      setRectOverrides(overrides);
+    };
+    dispatchDurableCommand(
+      next.commands[0],
+      () => {
+        clearMaximizeState(window.windowId);
+        clearOwnedOverride();
+      },
+      clearOwnedOverride,
+      markOwnedCommitted,
+    );
   };
 
   const handlePointerDown: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
@@ -566,7 +627,9 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     }
     if (route.action === "clear-focus") {
       canvas?.focus({ preventScroll: true });
-      props.onCommand?.(appWindowFocusInvocation(null, "mouse"));
+      if (projection().focusedWindowId !== null) {
+        props.onCommand?.(appWindowFocusInvocation(null, "mouse"));
+      }
       return;
     }
     if (!route.claimPointer) return;
@@ -633,9 +696,30 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
         : commitCanvasPointerTransaction(transaction);
       pointerTransaction = null;
       if (completion.persist) {
-        updateOverride(transaction.windowId, completion.rect, projection().revision);
+        const mutationToken = ++nextMutationToken;
+        // Keep this optimistic frame independent from base revisions while the
+        // serialized host command is pending. An earlier mutation refresh must
+        // not erase a later drag on the same window.
+        updateOverride(transaction.windowId, completion.rect, null, mutationToken);
         const [intent] = completion.commands;
-        if (intent) props.onCommand?.(intent);
+        const clearOwnedOverride = () => {
+          const overrides = new Map(rectOverrides());
+          if (overrides.get(transaction.windowId)?.mutationToken === mutationToken) {
+            overrides.delete(transaction.windowId);
+          }
+          setRectOverrides(overrides);
+        };
+        const markOwnedCommitted = () => {
+          const overrides = new Map(rectOverrides());
+          if (overrides.get(transaction.windowId)?.mutationToken === mutationToken) {
+            overrides.set(transaction.windowId, {
+              rect: completion.rect,
+              revision: projection().revision,
+            });
+          }
+          setRectOverrides(overrides);
+        };
+        dispatchDurableCommand(intent, clearOwnedOverride, clearOwnedOverride, markOwnedCommitted);
       } else {
         const next = new Map(rectOverrides());
         next.delete(transaction.windowId);
@@ -802,6 +886,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                 ? windowFrameModel(window(), source, {
                     maximized: maximizeStates().has(window().windowId),
                     commandsAvailable: props.mutationsAvailable ?? props.onCommand !== undefined,
+                    unavailableReason: props.mutationUnavailableReason,
                   })
                 : null;
             });
@@ -883,11 +968,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                               rendererFactory={props.rendererFactory}
                               onFocus={(source) => {
                                 const sourceId = terminalSourceId();
-                                if (sourceId) {
-                                  props.onCommand?.(
-                                    appWindowFocusInvocation(window().windowId, source),
-                                  );
-                                }
+                                if (sourceId) focusWindow(window().windowId, source);
                               }}
                             />
                           )}

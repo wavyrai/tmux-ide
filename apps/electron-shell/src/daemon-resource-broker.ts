@@ -1,4 +1,7 @@
 import {
+  AppWindowMutationArgumentsSchemaZ,
+  AppWindowMutationRequestSchemaZ,
+  AppWindowMutationResultSchemaZ,
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellResourceV2SchemaZ,
@@ -6,6 +9,7 @@ import {
   DaemonEventClientFrameSchemaZ,
   DaemonEventServerFrameSchemaZ,
   DesktopDaemonEventSchemaZ,
+  DesktopDaemonCapabilitiesResultSchemaZ,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
   DesktopDaemonFetchApplicationShellResultSchemaZ,
@@ -34,6 +38,7 @@ import {
   type DesktopDaemonCapabilityError,
   type DesktopDaemonCapabilityErrorCode,
   type DesktopDaemonEvent,
+  type DesktopDaemonCapabilitiesResult,
   type DesktopDaemonFetchApplicationShellResult,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
@@ -41,6 +46,8 @@ import {
   type WorkspacePaneCreateMutationResult,
   type WorkspaceOpenMutationRequest,
   type WorkspaceOpenMutationResult,
+  type AppWindowMutationRequest,
+  type AppWindowMutationResult,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
 
@@ -127,6 +134,10 @@ class BrokerFailure extends Error {
   }
 }
 
+export function daemonCapabilityErrorFromUnknown(error: unknown): DesktopDaemonCapabilityError {
+  return error instanceof BrokerFailure ? error.error : daemonCapabilityError("request-failed");
+}
+
 class BrokerHttpFailure extends BrokerFailure {
   constructor(
     readonly statusCode: number,
@@ -147,6 +158,7 @@ const ERROR_REASON: Record<DesktopDaemonCapabilityErrorCode, string> = {
   "invalid-response": "The daemon returned an invalid resource response.",
   "daemon-identity-mismatch": "The daemon generation changed during the resource request.",
   "request-failed": "The daemon resource request failed.",
+  "resource-changed": "The workspace resource changed before the mutation was applied.",
   "event-unavailable": "The daemon event connection is unavailable.",
   "protocol-error": "The daemon event protocol rejected the subscription.",
   disposed: "The desktop daemon resource broker was disposed.",
@@ -331,6 +343,7 @@ export class DaemonResourceBroker {
   #rendererGeneration = 0;
   #nextSubscription = 0;
   #workspaceCatalog = new Map<string, WorkspaceCatalogEntry>();
+  #capabilityCatalog: DesktopDaemonCapabilitiesResult | null = null;
   #socket: BrokerEventSocket | null = null;
   #sentSessions = new Set<string>();
   #socketPeerVerified = false;
@@ -423,6 +436,39 @@ export class DaemonResourceBroker {
     throw lastError;
   }
 
+  async capabilities(): Promise<DesktopDaemonCapabilitiesResult> {
+    if (this.#capabilityCatalog?.status === "ok") return this.#capabilityCatalog;
+    if (this.#daemon.status !== "connected" || !this.#ownerToken) {
+      return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
+    }
+    try {
+      const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
+        await this.#mutationJson("/api/v2/capabilities", {}, {}),
+      );
+      if (result.status === "ok" && !sameIdentity(result.daemon, daemonIdentity(this.#daemon))) {
+        return { status: "error", error: daemonCapabilityError("daemon-identity-mismatch") };
+      }
+      if (result.status === "ok") this.#capabilityCatalog = result;
+      return result;
+    } catch (error) {
+      if (error instanceof BrokerHttpFailure && error.statusCode === 404) {
+        const unsupported = {
+          status: "ok",
+          daemon: daemonIdentity(this.#daemon),
+          capabilities: {
+            appWindowMutation: {
+              available: false,
+              reason: "This daemon predates durable AppWindow mutation support.",
+            },
+          },
+        } as const;
+        this.#capabilityCatalog = unsupported;
+        return unsupported;
+      }
+      return { status: "error", error: this.#boundedError(error) };
+    }
+  }
+
   async createWorkspacePane(
     request: WorkspacePaneCreateMutationRequest,
   ): Promise<WorkspacePaneCreateMutationResult> {
@@ -454,6 +500,72 @@ export class DaemonResourceBroker {
         return envelope.result;
       } catch (error) {
         lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
+  async mutateAppWindow(request: AppWindowMutationRequest): Promise<AppWindowMutationResult> {
+    if (this.#daemon.status !== "connected" || !this.#ownerToken) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
+    }
+    const parsed = AppWindowMutationRequestSchemaZ.parse(request);
+    if (parsed.expectedDaemonInstanceId !== this.#daemon.descriptor.instanceId) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+    }
+    await this.#loadWorkspaceCatalog();
+    if (!this.#workspaceCatalog.has(parsed.intent.workspaceName)) {
+      throw new BrokerFailure(daemonCapabilityError("invalid-request"));
+    }
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const raw = await this.#mutationJson(
+          "/api/v2/action/workspace.app-window.mutate",
+          AppWindowMutationArgumentsSchemaZ.parse(parsed.intent),
+          { "X-Tmux-Ide-Operation-Id": parsed.operationId },
+        );
+        const envelope = z
+          .discriminatedUnion("ok", [
+            z.object({ ok: z.literal(true), result: AppWindowMutationResultSchemaZ }).strict(),
+            z
+              .object({
+                ok: z.literal(false),
+                error: z
+                  .object({
+                    code: z.string(),
+                    message: z.string(),
+                    details: z.unknown().optional(),
+                  })
+                  .strict(),
+              })
+              .strict(),
+          ])
+          .parse(raw);
+        if (!envelope.ok) {
+          throw new BrokerFailure(
+            envelope.error.code === "workspace_resource_changed"
+              ? daemonCapabilityError("resource-changed")
+              : daemonCapabilityError("request-failed"),
+          );
+        }
+        if (
+          envelope.result.operationId !== parsed.operationId ||
+          envelope.result.daemonInstanceId !== this.#daemon.descriptor.instanceId ||
+          envelope.result.workspaceName !== parsed.intent.workspaceName
+        ) {
+          throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+        }
+        return envelope.result;
+      } catch (error) {
+        lastError = error;
+        if (
+          error instanceof BrokerFailure &&
+          error.error.code !== "request-failed" &&
+          error.error.code !== "request-timeout"
+        ) {
+          break;
+        }
       }
     }
     throw lastError;
@@ -857,7 +969,7 @@ export class DaemonResourceBroker {
         signal: controller.signal,
       });
       if (response.redirected || !response.ok) {
-        throw new BrokerFailure(daemonCapabilityError("request-failed"));
+        throw new BrokerHttpFailure(response.status, daemonCapabilityError("request-failed"));
       }
       return readBoundedJson(response, maximumResponseBytes);
     })();
@@ -1045,7 +1157,25 @@ export class DaemonResourceBroker {
         return;
       case "sessions.changed":
       case "projects.changed":
+        this.#emit({ type: "workspaces.changed" });
+        for (const workspace of this.#workspaceCatalog.values()) {
+          this.#emit({
+            type: "application-shell.changed",
+            workspaceName: workspace.workspaceName,
+          });
+        }
+        return;
       case "action.complete":
+        if (frame.name === "workspace.app-window.mutate") {
+          const mutation = AppWindowMutationResultSchemaZ.safeParse(frame.result);
+          if (mutation.success && this.#workspaceCatalog.has(mutation.data.workspaceName)) {
+            this.#emit({
+              type: "application-shell.changed",
+              workspaceName: mutation.data.workspaceName,
+            });
+            return;
+          }
+        }
         this.#emit({ type: "workspaces.changed" });
         for (const workspace of this.#workspaceCatalog.values()) {
           this.#emit({

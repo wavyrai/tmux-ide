@@ -346,14 +346,10 @@ describe("AppWindowCanvas", () => {
     root
       .querySelector<HTMLElement>(".terminal-surface")!
       .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 3, button: 0 }));
-    expect(onCommand.mock.calls).toEqual([
-      [
-        {
-          command: { type: "window.focus", windowId: "window.lead" },
-          source: "mouse",
-        },
-      ],
-    ]);
+    expect(onCommand).toHaveBeenCalledWith({
+      command: { type: "window.focus", windowId: "window.lead" },
+      source: "mouse",
+    });
   });
 
   it("routes canvas pinch and floating drag without stealing terminal wheel or pointer input", async () => {
@@ -403,14 +399,9 @@ describe("AppWindowCanvas", () => {
     );
     expect(Number(canvas.dataset.viewportScale)).toBeCloseTo(1.44);
     expect(capture).not.toHaveBeenCalled();
-    expect(onCommand.mock.calls).toEqual([
-      [
-        {
-          command: { type: "window.focus", windowId: "window.lead" },
-          source: "mouse",
-        },
-      ],
-    ]);
+    // The terminal was already the durable focus owner; repeated terminal
+    // input focus does not generate another revision/invalidation.
+    expect(onCommand).not.toHaveBeenCalled();
     onCommand.mockClear();
 
     const header = root.querySelector<HTMLElement>(".web-pane-frame__title")!;
@@ -692,6 +683,96 @@ describe("AppWindowCanvas", () => {
     expect(onCommand).toHaveBeenLastCalledWith({
       command: { type: "window.float", windowId: "window.lead", rect: externalRect },
       source: "keyboard",
+    });
+  });
+
+  it("keeps a rapid restore frame owned while the earlier maximize refresh lands", async () => {
+    const [documentValue, setDocumentValue] = createSignal(floatingDocumentFixture());
+    const runtimeSheet = document.createElement("style");
+    runtimeSheet.textContent = runtimeStyles;
+    document.head.append(runtimeSheet);
+    disposers.push(() => runtimeSheet.remove());
+    const resolvers: Array<() => void> = [];
+    const onCommand = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={documentValue()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            onCommand={onCommand}
+          />
+        ),
+        root,
+      ),
+    );
+    const maximize = root.querySelector<HTMLButtonElement>(
+      `[data-action-id="${APP_WINDOW_CANVAS_ACTION_IDS.maximize}"]`,
+    )!;
+    maximize.click();
+    maximize.click();
+    expect(onCommand).toHaveBeenCalledTimes(2);
+
+    const initial = documentValue();
+    setDocumentValue(
+      AppWindowDocumentV1SchemaZ.parse({
+        ...initial,
+        revision: 1,
+        updatedAt: "2026-07-22T10:01:00.000Z",
+        windows: {
+          ...initial.windows,
+          "window.lead": {
+            ...initial.windows["window.lead"],
+            placement: {
+              mode: "floating",
+              docked: null,
+              floating: { x: 12, y: 12, width: 876, height: 516 },
+            },
+          },
+        },
+      }),
+    );
+    resolvers[0]?.();
+    await vi.waitFor(() => {
+      const card = root.querySelector<HTMLElement>(".app-window-card")!;
+      const rule = [...runtimeSheet.sheet!.cssRules].find(
+        (candidate) =>
+          candidate instanceof CSSStyleRule &&
+          candidate.selectorText.includes(card.dataset.tmiRuntimeStyle ?? "__missing__"),
+      ) as CSSStyleRule;
+      expect(rule.style.left).toBe("42px");
+      expect(rule.style.top).toBe("36px");
+      expect(card.dataset.transientGeometry).toBe("true");
+    });
+
+    setDocumentValue(
+      AppWindowDocumentV1SchemaZ.parse({
+        ...initial,
+        revision: 2,
+        updatedAt: "2026-07-22T10:02:00.000Z",
+      }),
+    );
+    resolvers[1]?.();
+    await vi.waitFor(() => {
+      const card = root.querySelector<HTMLElement>(".app-window-card")!;
+      const rule = [...runtimeSheet.sheet!.cssRules].find(
+        (candidate) =>
+          candidate instanceof CSSStyleRule &&
+          candidate.selectorText.includes(card.dataset.tmiRuntimeStyle ?? "__missing__"),
+      ) as CSSStyleRule;
+      expect(rule.style.left).toBe("42px");
+      expect(rule.style.top).toBe("36px");
+      expect(card.dataset.transientGeometry).toBe("false");
     });
   });
 
