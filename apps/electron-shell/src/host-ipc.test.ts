@@ -5,6 +5,10 @@ import type {
   TerminalAttachmentIssueResult,
   WorkspacePaneCreateMutationRequest,
 } from "@tmux-ide/contracts";
+import {
+  DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
+  DESKTOP_PACKAGED_RENDERER_ORIGIN,
+} from "@tmux-ide/contracts";
 
 import type { DaemonConnectionAuthority } from "./daemon-connection-coordinator.ts";
 import { registerHostIpc, rendererLocationIsTrusted } from "./host-ipc.ts";
@@ -426,137 +430,166 @@ describe("host IPC trust boundary", () => {
     registration.dispose();
   });
 
-  it("authors terminal authority in main and discards a ticket completed after retirement", async () => {
-    const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
-    const ipcMain = {
-      handle: (
-        channel: string,
-        handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
-      ) => handlers.set(channel, handler),
-      removeHandler: (channel: string) => handlers.delete(channel),
-    } as unknown as IpcMain;
-    const mainFrame = { url: "http://127.0.0.1:5173/src/main.tsx" };
-    const webContents = { id: 17, mainFrame, send: vi.fn() };
-    const window = {
-      isDestroyed: () => false,
-      isMaximized: () => false,
-      isFullScreen: () => false,
-      isFocused: () => true,
-      webContents,
-    } as unknown as BrowserWindow;
-    const identity = {
-      protocolVersion: 1,
-      productVersion: "2.8.0",
-      instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
-      startedAt: "2026-07-21T00:00:00.000Z",
-    };
-    const descriptorFor = (request: TerminalAttachmentIssueMutationRequest, ticket: string) => ({
-      protocolVersion: 1 as const,
-      webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
-      subprotocol: "tmux-ide-terminal.v1" as const,
-      redemptionTicket: ticket,
-      daemonInstanceId: identity.instanceId,
-      requestId: request.requestId,
-      expiresAt: Date.now() + 30_000,
-      effectiveViewerMode: "interactive" as const,
-    });
-    const issueTerminalAttachment = vi.fn(
-      async (
-        request: TerminalAttachmentIssueMutationRequest,
-        origin: string,
-      ): Promise<TerminalAttachmentIssueResult> => {
-        expect(origin).toBe("http://127.0.0.1:5173");
-        return {
-          status: "issued" as const,
-          descriptor: descriptorFor(request, `ta1_${"A".repeat(43)}`),
-        };
-      },
-    );
-    const daemonResources = {
-      state: () => ({ status: "connected" as const, identity }),
-      createWorkspacePane: vi.fn(),
-      issueTerminalAttachment,
-      refreshConnection: vi.fn(),
-      listWorkspaces: vi.fn(),
-      fetchApplicationShell: vi.fn(),
-      subscribe: vi.fn(),
-      releaseRenderer: vi.fn(),
-      dispose: vi.fn(),
-    } as unknown as DaemonConnectionAuthority;
-    const registration = registerHostIpc({
-      ipcMain,
-      getWindow: () => window,
-      appVersion: "test",
-      platform: "darwin",
-      daemonResources,
-      requestQuit: vi.fn(),
-      selectProjectDirectory: async () => null,
-      getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
+  it.each([
+    {
+      label: "development renderer",
+      frameUrl: "http://127.0.0.1:5173/src/main.tsx",
+      expectedOrigin: "http://127.0.0.1:5173",
       trustedRendererLocation: {
-        kind: "development-origin",
+        kind: "development-origin" as const,
         origin: "http://127.0.0.1:5173",
       },
-    });
-    const event = { sender: webContents, senderFrame: mainFrame } as unknown as IpcMainInvokeEvent;
-    handlers.get(HOST_IPC.bootstrap)?.(event);
-    const attachment = {
-      protocolVersion: 1,
-      target: { workspaceName: "product", semanticPaneId: "pane.worker" },
-      viewerMode: "interactive",
-      viewport: { cols: 120, rows: 40 },
-    };
+    },
+    {
+      label: "packaged renderer",
+      frameUrl: DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
+      expectedOrigin: DESKTOP_PACKAGED_RENDERER_ORIGIN,
+      trustedRendererLocation: {
+        kind: "packaged-origin" as const,
+        origin: DESKTOP_PACKAGED_RENDERER_ORIGIN,
+        entryUrl: DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
+      },
+    },
+  ])(
+    "authors terminal authority for the $label and discards a ticket completed after retirement",
+    async ({ frameUrl, expectedOrigin, trustedRendererLocation }) => {
+      const handlers = new Map<
+        string,
+        (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+      >();
+      const ipcMain = {
+        handle: (
+          channel: string,
+          handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
+        ) => handlers.set(channel, handler),
+        removeHandler: (channel: string) => handlers.delete(channel),
+      } as unknown as IpcMain;
+      const mainFrame = { url: frameUrl };
+      const webContents = { id: 17, mainFrame, send: vi.fn() };
+      const window = {
+        isDestroyed: () => false,
+        isMaximized: () => false,
+        isFullScreen: () => false,
+        isFocused: () => true,
+        webContents,
+      } as unknown as BrowserWindow;
+      const identity = {
+        protocolVersion: 1,
+        productVersion: "2.8.0",
+        instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+        startedAt: "2026-07-21T00:00:00.000Z",
+      };
+      const descriptorFor = (request: TerminalAttachmentIssueMutationRequest, ticket: string) => ({
+        protocolVersion: 1 as const,
+        webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
+        subprotocol: "tmux-ide-terminal.v1" as const,
+        redemptionTicket: ticket,
+        daemonInstanceId: identity.instanceId,
+        requestId: request.requestId,
+        expiresAt: Date.now() + 30_000,
+        effectiveViewerMode: "interactive" as const,
+      });
+      const issueTerminalAttachment = vi.fn(
+        async (
+          request: TerminalAttachmentIssueMutationRequest,
+          origin: string,
+        ): Promise<TerminalAttachmentIssueResult> => {
+          expect(origin).toBe(expectedOrigin);
+          return {
+            status: "issued" as const,
+            descriptor: descriptorFor(request, `ta1_${"A".repeat(43)}`),
+          };
+        },
+      );
+      const daemonResources = {
+        state: () => ({ status: "connected" as const, identity }),
+        createWorkspacePane: vi.fn(),
+        issueTerminalAttachment,
+        refreshConnection: vi.fn(),
+        listWorkspaces: vi.fn(),
+        fetchApplicationShell: vi.fn(),
+        subscribe: vi.fn(),
+        releaseRenderer: vi.fn(),
+        dispose: vi.fn(),
+      } as unknown as DaemonConnectionAuthority;
+      const registration = registerHostIpc({
+        ipcMain,
+        getWindow: () => window,
+        appVersion: "test",
+        platform: "darwin",
+        daemonResources,
+        requestQuit: vi.fn(),
+        selectProjectDirectory: async () => null,
+        getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
+        trustedRendererLocation,
+      });
+      const event = {
+        sender: webContents,
+        senderFrame: mainFrame,
+      } as unknown as IpcMainInvokeEvent;
+      handlers.get(HOST_IPC.bootstrap)?.(event);
+      const attachment = {
+        protocolVersion: 1,
+        target: { workspaceName: "product", semanticPaneId: "pane.worker" },
+        viewerMode: "interactive",
+        viewport: { cols: 120, rows: 40 },
+      };
 
-    const issued = await handlers.get(HOST_IPC.daemonIssueTerminalAttachment)?.(event, attachment);
-    expect(issued).toMatchObject({
-      status: "issued",
-      descriptor: { daemonInstanceId: identity.instanceId },
-    });
-    const authored = issueTerminalAttachment.mock.calls[0]?.[0];
-    expect(authored).toMatchObject({
-      expectedDaemonInstanceId: identity.instanceId,
-      attachment,
-    });
-    expect(authored?.requestId).toMatch(/^[0-9a-f-]{36}$/u);
-    expect(JSON.stringify(authored)).not.toMatch(/ownerToken|authorization|rendererOrigin/iu);
-
-    expect(
-      await handlers.get(HOST_IPC.daemonIssueTerminalAttachment)?.(event, {
-        ...attachment,
-        ownerToken: "renderer-secret",
-      }),
-    ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
-    expect(issueTerminalAttachment).toHaveBeenCalledOnce();
-    await expect(
-      handlers.get(HOST_IPC.daemonIssueTerminalAttachment)?.(
-        {
-          sender: webContents,
-          senderFrame: { url: mainFrame.url },
-        } as unknown as IpcMainInvokeEvent,
+      const issued = await handlers.get(HOST_IPC.daemonIssueTerminalAttachment)?.(
+        event,
         attachment,
-      ),
-    ).rejects.toThrow("untrusted renderer");
+      );
+      expect(issued).toMatchObject({
+        status: "issued",
+        descriptor: { daemonInstanceId: identity.instanceId },
+      });
+      const authored = issueTerminalAttachment.mock.calls[0]?.[0];
+      expect(authored).toMatchObject({
+        expectedDaemonInstanceId: identity.instanceId,
+        attachment,
+      });
+      expect(authored?.requestId).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(JSON.stringify(authored)).not.toMatch(/ownerToken|authorization|rendererOrigin/iu);
 
-    let finishIssue: ((result: TerminalAttachmentIssueResult) => void) | undefined;
-    issueTerminalAttachment.mockImplementationOnce(
-      async () =>
-        new Promise<TerminalAttachmentIssueResult>((resolve) => {
-          finishIssue = resolve;
+      expect(
+        await handlers.get(HOST_IPC.daemonIssueTerminalAttachment)?.(event, {
+          ...attachment,
+          ownerToken: "renderer-secret",
         }),
-    );
-    const pending = handlers.get(HOST_IPC.daemonIssueTerminalAttachment)?.(event, attachment);
-    await vi.waitFor(() => expect(issueTerminalAttachment).toHaveBeenCalledTimes(2));
-    const lateRequest = issueTerminalAttachment.mock.calls[1]?.[0];
-    registration.releaseRenderer();
-    finishIssue?.({
-      status: "issued",
-      descriptor: descriptorFor(lateRequest!, `ta1_${"B".repeat(43)}`),
-    });
-    const retired = await pending;
-    expect(retired).toMatchObject({ status: "error", error: { code: "disposed" } });
-    expect(JSON.stringify(retired)).not.toContain(`ta1_${"B".repeat(43)}`);
-    expect(daemonResources.releaseRenderer).toHaveBeenCalledOnce();
-    registration.dispose();
-  });
+      ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
+      expect(issueTerminalAttachment).toHaveBeenCalledOnce();
+      await expect(
+        handlers.get(HOST_IPC.daemonIssueTerminalAttachment)?.(
+          {
+            sender: webContents,
+            senderFrame: { url: mainFrame.url },
+          } as unknown as IpcMainInvokeEvent,
+          attachment,
+        ),
+      ).rejects.toThrow("untrusted renderer");
+
+      let finishIssue: ((result: TerminalAttachmentIssueResult) => void) | undefined;
+      issueTerminalAttachment.mockImplementationOnce(
+        async () =>
+          new Promise<TerminalAttachmentIssueResult>((resolve) => {
+            finishIssue = resolve;
+          }),
+      );
+      const pending = handlers.get(HOST_IPC.daemonIssueTerminalAttachment)?.(event, attachment);
+      await vi.waitFor(() => expect(issueTerminalAttachment).toHaveBeenCalledTimes(2));
+      const lateRequest = issueTerminalAttachment.mock.calls[1]?.[0];
+      registration.releaseRenderer();
+      finishIssue?.({
+        status: "issued",
+        descriptor: descriptorFor(lateRequest!, `ta1_${"B".repeat(43)}`),
+      });
+      const retired = await pending;
+      expect(retired).toMatchObject({ status: "error", error: { code: "disposed" } });
+      expect(JSON.stringify(retired)).not.toContain(`ta1_${"B".repeat(43)}`);
+      expect(daemonResources.releaseRenderer).toHaveBeenCalledOnce();
+      registration.dispose();
+    },
+  );
 
   it("accepts a configured development origin but not a lookalike or foreign origin", () => {
     const trusted = { kind: "development-origin", origin: "http://127.0.0.1:5173" } as const;
@@ -564,5 +597,19 @@ describe("host IPC trust boundary", () => {
     expect(rendererLocationIsTrusted("http://127.0.0.1:5173.evil.invalid/", trusted)).toBe(false);
     expect(rendererLocationIsTrusted("http://127.0.0.1:5174/", trusted)).toBe(false);
     expect(rendererLocationIsTrusted("not a URL", trusted)).toBe(false);
+  });
+
+  it("accepts only the exact packaged application entry URL", () => {
+    const trusted = {
+      kind: "packaged-origin",
+      origin: DESKTOP_PACKAGED_RENDERER_ORIGIN,
+      entryUrl: DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
+    } as const;
+    expect(rendererLocationIsTrusted(DESKTOP_PACKAGED_RENDERER_ENTRY_URL, trusted)).toBe(true);
+    expect(rendererLocationIsTrusted("tmux-ide://app/", trusted)).toBe(false);
+    expect(rendererLocationIsTrusted("tmux-ide://app.evil.invalid/index.html", trusted)).toBe(
+      false,
+    );
+    expect(rendererLocationIsTrusted("file:///trusted/renderer/index.html", trusted)).toBe(false);
   });
 });

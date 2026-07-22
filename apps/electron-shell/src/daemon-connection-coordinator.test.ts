@@ -131,18 +131,14 @@ function brokerHarness(
 }
 
 describe("main-process daemon connection coordinator", () => {
-  it("keeps the broker and subscriptions intact when revalidation verifies the same identity", async () => {
-    const sameA = {
-      ...A,
-      descriptor: { ...A.descriptor, apiBaseUrl: "http://localhost:6060" },
-    } satisfies DesktopDaemonHostState;
+  it("keeps the broker and subscriptions intact when revalidation verifies the same authority", async () => {
     const first = brokerHarness(A, {
       earlyEvent: { type: "connection.changed", state: "live", error: null },
     });
     const createBroker = vi.fn(() => first.authority);
     const coordinator = new DaemonConnectionCoordinator({
       initialDaemon: A,
-      preflight: preflight(async () => sameA),
+      preflight: preflight(async () => A),
       createBroker,
     });
     const events: DesktopDaemonEvent[] = [];
@@ -166,6 +162,38 @@ describe("main-process daemon connection coordinator", () => {
     ]);
   });
 
+  it("replaces the broker and publishes policy state when the verified endpoint changes", async () => {
+    const movedA = {
+      ...A,
+      descriptor: { ...A.descriptor, apiBaseUrl: "http://localhost:6060" },
+    } satisfies Extract<DesktopDaemonHostState, { status: "connected" }>;
+    const first = brokerHarness(A);
+    const second = brokerHarness(movedA);
+    const createBroker = vi
+      .fn<(daemon: typeof A) => DaemonResourceAuthority>()
+      .mockReturnValueOnce(first.authority)
+      .mockReturnValueOnce(second.authority);
+    const hostStates: DesktopDaemonHostState[] = [];
+    const coordinator = new DaemonConnectionCoordinator({
+      initialDaemon: A,
+      preflight: preflight(async () => movedA),
+      createBroker,
+      onHostStateChanged: (state) => hostStates.push(state),
+    });
+
+    const result = await coordinator.refreshConnection();
+
+    expect(result).toMatchObject({
+      outcome: "generation-replaced",
+      previousIdentity: { instanceId: A.descriptor.instanceId },
+      daemon: { status: "connected", identity: { instanceId: A.descriptor.instanceId } },
+    });
+    expect(createBroker).toHaveBeenCalledTimes(2);
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(second.dispose).not.toHaveBeenCalled();
+    expect(hostStates).toEqual([A, movedA]);
+  });
+
   it("atomically replaces A with B, emits one generation event, and rejects late A activity", async () => {
     const first = brokerHarness(A);
     const second = brokerHarness(B);
@@ -173,10 +201,12 @@ describe("main-process daemon connection coordinator", () => {
       .fn<(daemon: typeof A | typeof B) => DaemonResourceAuthority>()
       .mockReturnValueOnce(first.authority)
       .mockReturnValueOnce(second.authority);
+    const hostStates: DesktopDaemonHostState[] = [];
     const coordinator = new DaemonConnectionCoordinator({
       initialDaemon: A,
       preflight: preflight(async () => B),
       createBroker,
+      onHostStateChanged: (state) => hostStates.push(state),
     });
     const events: DesktopDaemonEvent[] = [];
     await coordinator.subscribe(["product"], (event) => events.push(event));
@@ -202,6 +232,7 @@ describe("main-process daemon connection coordinator", () => {
     expect(first.unsubscribe).toHaveBeenCalledOnce();
     expect(first.dispose).toHaveBeenCalledOnce();
     expect((await coordinator.listWorkspaces()).status).toBe("ok");
+    expect(hostStates).toEqual([A, B]);
   });
 
   it("retires connected authority on failed preflight without leaking its malformed payload", async () => {

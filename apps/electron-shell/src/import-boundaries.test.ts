@@ -89,19 +89,18 @@ describe("desktop process boundaries", () => {
 
   it("ships a strict browser renderer policy", async () => {
     const html = await readFile(join(packageRoot, "..", "desktop-renderer", "index.html"), "utf8");
-    expect(html).toContain("default-src 'self'");
-    expect(html).toContain("object-src 'none'");
-    expect(html).toContain("frame-ancestors 'none'");
-    expect(html).toContain("connect-src 'self'");
-    expect(html).not.toMatch(/connect-src[^;]*(?:127\.0\.0\.1|localhost|\[::1\]|https?:|wss?:)/u);
-    expect(html).not.toMatch(/connect-src[^;]*\*/u);
-    expect(html).not.toMatch(/unsafe-(?:inline|eval)/u);
+    expect(html).not.toMatch(/Content-Security-Policy/iu);
 
     const vite = await readFile(
       join(packageRoot, "..", "desktop-renderer", "vite.config.ts"),
       "utf8",
     );
-    expect(vite).toContain('apply: "serve"');
+    expect(vite).toContain('"Content-Security-Policy"');
+    expect(vite).toContain("default-src 'self'");
+    expect(vite).toContain("object-src 'none'");
+    expect(vite).toContain("frame-ancestors 'none'");
     expect(vite).toContain("ws://127.0.0.1:5173");
+    expect(vite).toContain("sourcemap: false");
+    expect(vite).not.toMatch(/unsafe-(?:inline|eval)/u);
   });
 });
