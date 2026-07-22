@@ -62,6 +62,7 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
   let viewport = initialViewport;
   let input: ((bytes: Uint8Array) => void) | null = null;
   const writes: Uint8Array[] = [];
+  const disposeInput = vi.fn(() => (input = null));
   const renderer: TerminalRenderer = {
     open: vi.fn(),
     write: vi.fn(async (bytes) => {
@@ -73,7 +74,7 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
     setReducedMotion: vi.fn(),
     onInput: vi.fn((listener) => {
       input = listener;
-      return { dispose: vi.fn(() => (input = null)) };
+      return { dispose: disposeInput };
     }),
     dispose: vi.fn(),
   };
@@ -82,6 +83,7 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
     renderer,
     factory,
     writes,
+    disposeInput,
     emitInput(bytes: Uint8Array) {
       input?.(bytes);
     },
@@ -89,6 +91,18 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
       viewport = next;
     },
   };
+}
+
+function rendererFleetHarness(
+  initialViewport: TerminalAttachmentViewport = { cols: 80, rows: 24 },
+) {
+  const instances: Array<ReturnType<typeof rendererHarness>> = [];
+  const factory: TerminalRendererFactory = vi.fn(() => {
+    const instance = rendererHarness(initialViewport);
+    instances.push(instance);
+    return instance.renderer;
+  });
+  return { factory, instances };
 }
 
 function attachmentHarness(overrides: Partial<NativeTerminalAttachment> = {}) {
@@ -370,6 +384,103 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
+  it("ignores zero-byte input without calling the host", async () => {
+    const attachment = attachmentHarness();
+    const transport = transportHarness(async () => ({ status: "connected", attachment }));
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+
+    renderer.emitInput(new Uint8Array());
+    await Promise.resolve();
+
+    expect(attachment.write).not.toHaveBeenCalled();
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected");
+    dispose();
+  });
+
+  it("fails closed at a bounded input entry count behind a stalled host write", async () => {
+    const firstWrite = deferred<void>();
+    const attachment = attachmentHarness({
+      write: vi.fn(async () => {
+        await firstWrite.promise;
+        return { status: "ok" as const };
+      }),
+    });
+    const transport = transportHarness(async () => ({ status: "connected", attachment }));
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+
+    renderer.emitInput(new Uint8Array([0]));
+    await vi.waitFor(() => expect(attachment.write).toHaveBeenCalledOnce());
+    for (let index = 1; index <= 64; index += 1) {
+      renderer.emitInput(new Uint8Array([index]));
+    }
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+    );
+
+    expect(root.textContent).toContain("Terminal input exceeded the native forwarding buffer.");
+    expect(attachment.dispose).toHaveBeenCalledOnce();
+    expect(attachment.write).toHaveBeenCalledOnce();
+    firstWrite.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(attachment.write).toHaveBeenCalledOnce();
+    dispose();
+  });
+
+  it("fails closed before copying an input payload beyond the byte budget", async () => {
+    const attachment = attachmentHarness();
+    const transport = transportHarness(async () => ({ status: "connected", attachment }));
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+
+    renderer.emitInput(new Uint8Array(256 * 1024 + 1));
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+    );
+
+    expect(attachment.write).not.toHaveBeenCalled();
+    expect(attachment.dispose).toHaveBeenCalledOnce();
+    dispose();
+  });
+
   it("retires late connect, output, input, and resize work after unmount", async () => {
     const connection = deferred<NativeTerminalConnectResult>();
     const attachment = attachmentHarness();
@@ -456,9 +567,8 @@ describe("TerminalSurface", () => {
       listeners.push(listener);
       return { status: "connected", attachment: attachments[connectionIndex++]! };
     });
-    const renderer = rendererHarness();
+    const rendererFleet = rendererFleetHarness();
     const blockedWrite = deferred<void>();
-    vi.mocked(renderer.renderer.write).mockImplementation(async () => blockedWrite.promise);
     const [target, setTarget] = createSignal(TARGET_A);
     const root = document.body.appendChild(document.createElement("div"));
     const dispose = render(
@@ -467,25 +577,96 @@ describe("TerminalSurface", () => {
           target={target()}
           title="Codex"
           transport={transport}
-          rendererFactory={renderer.factory}
+          rendererFactory={rendererFleet.factory}
         />
       ),
       root,
     );
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    const oldRenderer = rendererFleet.instances[0]!;
+    vi.mocked(oldRenderer.renderer.write).mockImplementation(async () => blockedWrite.promise);
     const oldAcknowledgment = expect(
       Promise.resolve(listeners[0]!({ type: "output", bytes: new Uint8Array([1]) })),
     ).rejects.toThrow("Terminal output was not consumed by the renderer.");
-    await vi.waitFor(() => expect(renderer.renderer.write).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(oldRenderer.renderer.write).toHaveBeenCalledOnce());
     setTarget(TARGET_B);
     await oldAcknowledgment;
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(rendererFleet.instances).toHaveLength(2));
+    const newRenderer = rendererFleet.instances[1]!;
     expect(attachments[0]!.dispose).toHaveBeenCalledOnce();
+    expect(oldRenderer.renderer.dispose).toHaveBeenCalledOnce();
+    expect(oldRenderer.disposeInput).toHaveBeenCalledOnce();
+    expect(ResizeObserverHarness.active[0]!.disconnect).toHaveBeenCalledOnce();
     expect(transport.connect).toHaveBeenLastCalledWith(
       expect.objectContaining({ target: TARGET_B }),
       expect.any(Function),
     );
+    await Promise.resolve(listeners[1]!({ type: "output", bytes: new Uint8Array([2]) }));
+    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
     blockedWrite.resolve();
+    await Promise.resolve();
+    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
+    dispose();
+  });
+
+  it("replaces the renderer when terminal transport authority changes", async () => {
+    const attachments = [attachmentHarness(), attachmentHarness()];
+    let oldListener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    let newListener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const oldTransport = transportHarness(async (_request, listener) => {
+      oldListener = listener;
+      return { status: "connected", attachment: attachments[0]! };
+    });
+    const newTransport = transportHarness(async (_request, listener) => {
+      newListener = listener;
+      return { status: "connected", attachment: attachments[1]! };
+    });
+    const [transport, setTransport] = createSignal<NativeTerminalTransport>(oldTransport);
+    const rendererFleet = rendererFleetHarness();
+    const blockedWrite = deferred<void>();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport()}
+          rendererFactory={rendererFleet.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(oldTransport.connect).toHaveBeenCalledOnce());
+    const oldRenderer = rendererFleet.instances[0]!;
+    vi.mocked(oldRenderer.renderer.write).mockImplementation(async () => blockedWrite.promise);
+    const oldAcknowledgment = expect(
+      Promise.resolve(
+        (oldListener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+          type: "output",
+          bytes: new Uint8Array([1]),
+        }),
+      ),
+    ).rejects.toThrow("Terminal output was not consumed by the renderer.");
+    await vi.waitFor(() => expect(oldRenderer.renderer.write).toHaveBeenCalledOnce());
+
+    setTransport(newTransport);
+    await oldAcknowledgment;
+    await vi.waitFor(() => expect(newTransport.connect).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(rendererFleet.instances).toHaveLength(2));
+    const newRenderer = rendererFleet.instances[1]!;
+    expect(attachments[0]!.dispose).toHaveBeenCalledOnce();
+    expect(oldRenderer.renderer.dispose).toHaveBeenCalledOnce();
+    await Promise.resolve(
+      (newListener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+        type: "output",
+        bytes: new Uint8Array([2]),
+      }),
+    );
+    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
+    blockedWrite.resolve();
+    await Promise.resolve();
+    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
     dispose();
   });
 
@@ -621,13 +802,14 @@ describe("TerminalSurface", () => {
 
   it("requires an explicit retry after disconnect instead of reconnecting on resize", async () => {
     const attachments = [attachmentHarness(), attachmentHarness()];
-    const listeners: Array<(event: NativeTerminalEvent) => void> = [];
+    const listeners: Array<(event: NativeTerminalEvent) => void | Promise<void>> = [];
     let connectionIndex = 0;
     const transport = transportHarness(async (_request, listener) => {
       listeners.push(listener);
       return { status: "connected", attachment: attachments[connectionIndex++]! };
     });
-    const renderer = rendererHarness();
+    const rendererFleet = rendererFleetHarness();
+    const blockedWrite = deferred<void>();
     const root = document.body.appendChild(document.createElement("div"));
     const dispose = render(
       () => (
@@ -635,14 +817,21 @@ describe("TerminalSurface", () => {
           target={TARGET_A}
           title="Codex"
           transport={transport}
-          rendererFactory={renderer.factory}
+          rendererFactory={rendererFleet.factory}
         />
       ),
       root,
     );
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    const oldRenderer = rendererFleet.instances[0]!;
+    vi.mocked(oldRenderer.renderer.write).mockImplementation(async () => blockedWrite.promise);
+    const oldAcknowledgment = expect(
+      Promise.resolve(listeners[0]!({ type: "output", bytes: new Uint8Array([1]) })),
+    ).rejects.toThrow("Terminal output was not consumed by the renderer.");
+    await vi.waitFor(() => expect(oldRenderer.renderer.write).toHaveBeenCalledOnce());
     listeners[0]!({ type: "state", state: "disconnected", error: null });
-    renderer.setViewport({ cols: 120, rows: 40 });
+    await oldAcknowledgment;
+    oldRenderer.setViewport({ cols: 120, rows: 40 });
     ResizeObserverHarness.active[0]!.trigger();
     await Promise.resolve();
     expect(transport.connect).toHaveBeenCalledOnce();
@@ -650,6 +839,17 @@ describe("TerminalSurface", () => {
     root.querySelector<HTMLButtonElement>(".terminal-surface__state button")!.click();
     expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("measuring");
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(rendererFleet.instances).toHaveLength(2));
+    const newRenderer = rendererFleet.instances[1]!;
+    expect(oldRenderer.renderer.dispose).toHaveBeenCalledOnce();
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-preserves-frame")).toBe(
+      "false",
+    );
+    await Promise.resolve(listeners[1]!({ type: "output", bytes: new Uint8Array([2]) }));
+    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
+    blockedWrite.resolve();
+    await Promise.resolve();
+    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
     dispose();
   });
 

@@ -27,6 +27,8 @@ export type TerminalSurfacePhase =
 
 const MAX_PENDING_OUTPUT_WRITES = 64;
 const OUTPUT_WRITE_TIMEOUT_MS = 15_000;
+const MAX_PENDING_INPUT_WRITES = 64;
+const MAX_PENDING_INPUT_BYTES = 256 * 1024;
 
 export interface TerminalSurfaceProps {
   readonly target: TerminalAttachmentSemanticTarget;
@@ -72,12 +74,32 @@ interface OutputEpoch {
   pending: number;
 }
 
+interface InputEpoch {
+  readonly queue: Uint8Array[];
+  retired: boolean;
+  inFlight: boolean;
+  inFlightBytes: number;
+  pendingEntries: number;
+  pendingBytes: number;
+}
+
 function outputEpoch(): OutputEpoch {
   let retire = (): void => undefined;
   const retired = new Promise<void>((resolve) => {
     retire = resolve;
   });
   return { retired, retire, pending: 0 };
+}
+
+function inputEpoch(): InputEpoch {
+  return {
+    queue: [],
+    retired: false,
+    inFlight: false,
+    inFlightBytes: 0,
+    pendingEntries: 0,
+    pendingBytes: 0,
+  };
 }
 
 const OUTPUT_NOT_CONSUMED = new Error("Terminal output was not consumed by the renderer.");
@@ -100,7 +122,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let animationFrame: number | null = null;
   let disposed = false;
   let generation = 0;
-  let writeTail = Promise.resolve();
+  let activeInputEpoch = inputEpoch();
   let outputTail = Promise.resolve();
   let activeOutputEpoch = outputEpoch();
   let observedTarget = `${props.target.workspaceName}\0${props.target.semanticPaneId}`;
@@ -111,8 +133,13 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let pointerFocus = false;
   let rendererLoadGeneration = 0;
 
-  const retireWrites = (): void => {
-    writeTail = Promise.resolve();
+  const retireInput = (): void => {
+    const epoch = activeInputEpoch;
+    epoch.retired = true;
+    epoch.queue.length = 0;
+    epoch.pendingEntries = epoch.inFlight ? 1 : 0;
+    epoch.pendingBytes = epoch.inFlightBytes;
+    activeInputEpoch = inputEpoch();
   };
 
   const retireOutput = (): void => {
@@ -134,9 +161,41 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     attachment = null;
     pendingResize = null;
     resizeFlight = null;
-    retireWrites();
+    retireInput();
     retireOutput();
     if (active) safelyDispose(active);
+  };
+
+  const disposeRenderer = (): void => {
+    rendererLoadGeneration += 1;
+    if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+    animationFrame = null;
+    const activeObserver = observer;
+    observer = null;
+    try {
+      activeObserver?.disconnect();
+    } catch {
+      // A stale observer cannot retain renderer ownership after invalidation.
+    }
+    const activeInputSubscription = inputSubscription;
+    inputSubscription = null;
+    try {
+      activeInputSubscription?.dispose();
+    } catch {
+      // A stale input callback is generation-gated even if teardown is broken.
+    }
+    const activeRenderer = renderer;
+    renderer = null;
+    try {
+      activeRenderer?.dispose();
+    } catch {
+      // Renderer teardown is best-effort; authority has already been retired.
+    }
+    try {
+      mount?.replaceChildren();
+    } catch {
+      // The replacement renderer still receives a fresh generation and instance.
+    }
   };
 
   const flushResize = (): void => {
@@ -330,51 +389,103 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const retry = (): void => {
     generation += 1;
     disposeAttachment();
+    disposeRenderer();
     currentViewport = null;
     pendingResize = null;
-    if (animationFrame !== null) cancelAnimationFrame(animationFrame);
-    animationFrame = null;
+    setHasValidatedFrame(false);
     setPhase(props.transport ? "measuring" : "unavailable");
     ensureRenderer();
     scheduleFit();
   };
 
-  const queueInput = (bytes: Uint8Array): void => {
+  const failInput = (message: string): void => {
+    setReason(message);
+    setPhase("error");
+    generation += 1;
+    disposeAttachment();
+  };
+
+  const drainInput = (epoch: InputEpoch): void => {
+    if (
+      disposed ||
+      epoch !== activeInputEpoch ||
+      epoch.retired ||
+      epoch.inFlight ||
+      epoch.queue.length === 0
+    ) {
+      return;
+    }
     const activeAttachment = attachment;
     const activeGeneration = generation;
     if (!activeAttachment || phase() !== "connected") return;
-    const payload = bytes.slice();
-    writeTail = writeTail
-      .catch(() => undefined)
-      .then(async () => {
+    const payload = epoch.queue.shift();
+    if (!payload) return;
+    epoch.inFlight = true;
+    epoch.inFlightBytes = payload.byteLength;
+    void Promise.resolve()
+      .then(() => {
         if (
           disposed ||
+          epoch.retired ||
+          epoch !== activeInputEpoch ||
           generation !== activeGeneration ||
           attachment !== activeAttachment ||
           phase() !== "connected"
         ) {
+          return null;
+        }
+        return activeAttachment.write(payload);
+      })
+      .then((result) => {
+        if (
+          !result ||
+          result.status !== "error" ||
+          disposed ||
+          epoch.retired ||
+          epoch !== activeInputEpoch ||
+          generation !== activeGeneration ||
+          attachment !== activeAttachment
+        ) {
           return;
         }
-        const result = await activeAttachment.write(payload);
-        if (result.status === "error") {
-          if (disposed || generation !== activeGeneration || attachment !== activeAttachment) {
-            return;
-          }
-          setReason(validatedTransportReason(result.error.reason));
-          setPhase("error");
-          generation += 1;
-          disposeAttachment();
-        }
+        failInput(validatedTransportReason(result.error.reason));
       })
       .catch(() => {
-        if (disposed || generation !== activeGeneration || attachment !== activeAttachment) {
+        if (
+          disposed ||
+          epoch.retired ||
+          epoch !== activeInputEpoch ||
+          generation !== activeGeneration ||
+          attachment !== activeAttachment
+        ) {
           return;
         }
-        setReason("The desktop host could not forward terminal input.");
-        setPhase("error");
-        generation += 1;
-        disposeAttachment();
+        failInput("The desktop host could not forward terminal input.");
+      })
+      .finally(() => {
+        epoch.inFlight = false;
+        epoch.inFlightBytes = 0;
+        epoch.pendingEntries -= 1;
+        epoch.pendingBytes -= payload.byteLength;
+        if (epoch === activeInputEpoch && !epoch.retired) drainInput(epoch);
       });
+  };
+
+  const queueInput = (bytes: Uint8Array): void => {
+    if (bytes.byteLength === 0 || !attachment || phase() !== "connected") return;
+    const epoch = activeInputEpoch;
+    if (
+      epoch.pendingEntries >= MAX_PENDING_INPUT_WRITES ||
+      bytes.byteLength > MAX_PENDING_INPUT_BYTES - epoch.pendingBytes
+    ) {
+      failInput("Terminal input exceeded the native forwarding buffer.");
+      return;
+    }
+    const payload = bytes.slice();
+    epoch.queue.push(payload);
+    epoch.pendingEntries += 1;
+    epoch.pendingBytes += payload.byteLength;
+    drainInput(epoch);
   };
 
   const activateRenderer = (nextRenderer: TerminalRenderer, activeLoad: number): void => {
@@ -387,8 +498,12 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     renderer.refreshTheme();
     renderer.setReducedMotion(props.reducedMotion ?? false);
     if (props.focused) renderer.focus();
-    inputSubscription = renderer.onInput(queueInput);
-    observer = new ResizeObserver(scheduleFit);
+    inputSubscription = renderer.onInput((bytes) => {
+      if (activeLoad === rendererLoadGeneration && renderer === nextRenderer) queueInput(bytes);
+    });
+    observer = new ResizeObserver(() => {
+      if (activeLoad === rendererLoadGeneration && renderer === nextRenderer) scheduleFit();
+    });
     observer.observe(mount);
     scheduleFit();
   };
@@ -419,15 +534,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     onCleanup(() => {
       disposed = true;
       generation += 1;
-      rendererLoadGeneration += 1;
-      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
-      observer?.disconnect();
-      inputSubscription?.dispose();
       disposeAttachment();
-      renderer?.dispose();
-      observer = null;
-      inputSubscription = null;
-      renderer = null;
+      disposeRenderer();
     });
   });
 
@@ -454,6 +562,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     if (disposed) return;
     generation += 1;
     disposeAttachment();
+    disposeRenderer();
     currentViewport = null;
     pendingResize = null;
     setReason(null);
