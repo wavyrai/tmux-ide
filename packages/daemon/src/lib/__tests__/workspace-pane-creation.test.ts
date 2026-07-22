@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -319,7 +319,7 @@ describe("WorkspacePaneCreationAuthority", () => {
     );
     const create = fake.calls.find((call) => call[0] === "new-window")!;
     expect(create).toContain("TMUX_IDE_PROFILE=portable");
-    expect(create.at(-1)).toBe("'/bin/sh' '-c' 'sleep 30'");
+    expect(create.at(-1)).toBe(`'${realpathSync("/bin/sh")}' '-c' 'sleep 30'`);
     expect(create).not.toContain("portable-agent");
   });
 
