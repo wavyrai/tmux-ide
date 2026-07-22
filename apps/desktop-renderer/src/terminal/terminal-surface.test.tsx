@@ -41,6 +41,13 @@ const TARGET_B: TerminalAttachmentSemanticTarget = {
   semanticPaneId: "agent-b",
 };
 
+function connectedState(
+  clientViewport: TerminalAttachmentViewport = { cols: 80, rows: 24 },
+  sourceGrid: TerminalAttachmentViewport = clientViewport,
+): NativeTerminalEvent {
+  return { type: "state", state: "connected", error: null, sourceGrid, clientViewport };
+}
+
 class ResizeObserverHarness {
   static readonly active: ResizeObserverHarness[] = [];
   readonly callback: ResizeObserverCallback;
@@ -322,7 +329,10 @@ describe("TerminalSurface", () => {
         return { status: "ok" as const };
       }),
     });
-    const transport = transportHarness(async () => ({ status: "connected", attachment }));
+    const transport = transportHarness(async (_request, listener) => {
+      await listener(connectedState());
+      return { status: "connected", attachment };
+    });
     const renderer = rendererHarness();
     const root = document.body.appendChild(document.createElement("div"));
     const dispose = render(
@@ -356,8 +366,21 @@ describe("TerminalSurface", () => {
 
   it("coalesces viewport measurements while connect is delayed", async () => {
     const connection = deferred<NativeTerminalConnectResult>();
-    const attachment = attachmentHarness();
-    const transport = transportHarness(async () => connection.promise);
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const attachment = attachmentHarness({
+      resize: vi.fn(async (viewport: TerminalAttachmentViewport) => {
+        await (listener as (event: NativeTerminalEvent) => void | Promise<void>)({
+          type: "geometry",
+          sourceGrid: viewport,
+          clientViewport: viewport,
+        });
+        return { status: "ok" as const };
+      }),
+    });
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return connection.promise;
+    });
     const renderer = rendererHarness();
     const root = document.body.appendChild(document.createElement("div"));
     const dispose = render(
@@ -387,9 +410,19 @@ describe("TerminalSurface", () => {
     await vi.waitFor(() => expect(renderer.renderer.fit).toHaveBeenCalledTimes(fitCalls + 1));
     expect(attachment.resize).not.toHaveBeenCalled();
 
+    await (listener as unknown as (event: NativeTerminalEvent) => void | Promise<void>)(
+      connectedState(),
+    );
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-source-grid")).toBe("80x24");
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-client-viewport")).toBe(
+      "80x24",
+    );
     connection.resolve({ status: "connected", attachment });
     await vi.waitFor(() => expect(attachment.resize).toHaveBeenCalledWith({ cols: 120, rows: 40 }));
     expect(attachment.resize).toHaveBeenCalledOnce();
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-client-viewport")).toBe(
+      "120x40",
+    );
 
     ResizeObserverHarness.active[0]!.trigger();
     await Promise.resolve();

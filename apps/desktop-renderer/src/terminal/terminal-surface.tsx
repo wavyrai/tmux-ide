@@ -114,6 +114,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   );
   const [reason, setReason] = createSignal<string | null>(null);
   const [hasValidatedFrame, setHasValidatedFrame] = createSignal(false);
+  const [sourceGrid, setSourceGrid] = createSignal<TerminalAttachmentViewport | null>(null);
+  const [clientViewport, setClientViewport] = createSignal<TerminalAttachmentViewport | null>(null);
   let mount: HTMLDivElement | undefined;
   let renderer: TerminalRenderer | null = null;
   let attachment: NativeTerminalAttachment | null = null;
@@ -302,11 +304,30 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         if (!disposed && activeGeneration === generation) setHasValidatedFrame(true);
       });
     }
+    if (event.type === "geometry") {
+      currentViewport = event.clientViewport;
+      setSourceGrid(event.sourceGrid);
+      setClientViewport(event.clientViewport);
+      const measured = latestMeasuredViewport;
+      if (attachment && measured && !sameViewport(event.clientViewport, measured)) {
+        pendingResize = measured;
+        flushResize();
+      }
+      return;
+    }
     if (event.type !== "state") return;
     if (event.state === "connected") {
+      currentViewport = event.clientViewport;
+      setSourceGrid(event.sourceGrid);
+      setClientViewport(event.clientViewport);
       if (attachment) {
         setReason(null);
         setPhase("connected");
+        const measured = latestMeasuredViewport;
+        if (measured && !sameViewport(event.clientViewport, measured)) {
+          pendingResize = measured;
+          flushResize();
+        }
       }
       return;
     }
@@ -359,11 +380,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           return;
         }
         attachment = result.attachment;
-        currentViewport = viewport;
         setPhase("connected");
         const latestViewport = latestMeasuredViewport;
-        if (latestViewport && !sameViewport(currentViewport, latestViewport)) {
-          currentViewport = latestViewport;
+        if (currentViewport && latestViewport && !sameViewport(currentViewport, latestViewport)) {
           pendingResize = latestViewport;
           flushResize();
         }
@@ -387,8 +406,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       if (phase() === "measuring") connect(viewport);
       return;
     }
+    if (!currentViewport) return;
     if (sameViewport(currentViewport, viewport)) return;
-    currentViewport = viewport;
     pendingResize = viewport;
     flushResize();
   };
@@ -405,6 +424,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     currentViewport = null;
     latestMeasuredViewport = null;
     pendingResize = null;
+    setSourceGrid(null);
+    setClientViewport(null);
     setHasValidatedFrame(false);
     setPhase(props.transport ? "measuring" : "unavailable");
     ensureRenderer();
@@ -579,6 +600,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     currentViewport = null;
     latestMeasuredViewport = null;
     pendingResize = null;
+    setSourceGrid(null);
+    setClientViewport(null);
     setReason(null);
     setHasValidatedFrame(false);
     setPhase(nextTransport ? "measuring" : "unavailable");
@@ -593,6 +616,10 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       data-focused={props.focused ?? false}
       data-reduced-motion={props.reducedMotion ?? false}
       data-preserves-frame={hasValidatedFrame()}
+      data-source-grid={sourceGrid() ? `${sourceGrid()!.cols}x${sourceGrid()!.rows}` : undefined}
+      data-client-viewport={
+        clientViewport() ? `${clientViewport()!.cols}x${clientViewport()!.rows}` : undefined
+      }
       onPointerDown={() => {
         pointerFocus = true;
         props.onFocus?.("mouse");
