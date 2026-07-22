@@ -32,6 +32,7 @@ import {
 
 import { WebWorkbenchDock } from "../../../../packages/daemon/src/ui/workbench-dock/web-host.tsx";
 import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host.tsx";
+import type { ApplicationShellTerminalPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
@@ -77,6 +78,7 @@ export interface DomApplicationShellProps {
   readonly terminalThemeKey?: string;
   readonly onCommand?: (invocation: ApplicationShellCommandInvocation) => void;
   readonly paneFrames?: readonly PaneFrameModel[];
+  readonly terminalPanes?: readonly ApplicationShellTerminalPaneFrame[];
   readonly onPaneAction?: (
     intent: PaneFrameActionIntent,
     source: PaneFrameActivationSource,
@@ -194,6 +196,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
 
   const shell = createMemo(() => projectDomApplicationShell(input(), state()));
   const paneFrames = createMemo<readonly PaneFrameModel[]>(() => {
+    if (props.terminalPanes) return props.terminalPanes.map(({ model }) => model);
     if (props.paneFrames) return props.paneFrames;
     if (dataMode() === "preview") return createDefaultDomPaneFrames();
     return shell().sidebar.agents.flatMap((agent) => {
@@ -693,7 +696,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                 <strong>{shell().workspace.name}</strong>{" "}
                 <small>{dataMode() === "preview" ? "preview data" : "workspace snapshot"}</small>
               </span>
-              <span>{shell().sidebar.agents.length} agents</span>
+              <span>
+                {shell().terminalInventory?.resources.length ?? shell().sidebar.agents.length}{" "}
+                terminals · {shell().sidebar.agents.length} agents
+              </span>
             </header>
             <div class="agent-grid" data-has-maximized={hasMaximizedPane()}>
               <Index each={renderedPaneFrames()}>
@@ -701,6 +707,22 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   const agent = createMemo(() =>
                     shell().sidebar.agents.find((item) => item.paneId === paneFrame().pane.id),
                   );
+                  const terminalTarget = createMemo(() => {
+                    const inventory = shell().terminalInventory;
+                    if (inventory !== undefined) {
+                      const resource = inventory.resources.find(
+                        ({ id }) => id === paneFrame().pane.id,
+                      );
+                      return resource?.attachability.status === "available"
+                        ? resource.attachability.semanticPaneId
+                        : null;
+                    }
+                    const projected = props.terminalPanes?.find(
+                      ({ model }) => model.pane.id === paneFrame().pane.id,
+                    );
+                    if (projected) return projected.terminalTarget?.semanticPaneId ?? null;
+                    return paneFrame().pane.id;
+                  });
                   return (
                     <WebPaneFrame
                       model={paneFrame()}
@@ -711,32 +733,50 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                       renderGripIcon={(icon) => <DomIcon id={icon} usage="action" />}
                     >
                       <div class="agent-pane__body" data-focus-zone="terminal">
-                        <TerminalSurface
-                          target={{
-                            workspaceName: props.terminalWorkspaceName ?? input().workspace.id,
-                            semanticPaneId: paneFrame().pane.id,
-                          }}
-                          title={paneFrame().title}
-                          transport={props.terminalTransport}
-                          focused={paneFrame().appearance.accessibility.terminalInputOwner}
-                          reducedMotion={props.reducedMotion}
-                          themeKey={props.terminalThemeKey}
-                          onFocus={(source) =>
-                            dispatch(
-                              applicationShellCommandInvocation(
-                                APPLICATION_SHELL_COMMAND_IDS.moveFocus,
-                                {
-                                  target: {
-                                    kind: "pane",
-                                    paneId: paneFrame().pane.id,
-                                    input: "terminal",
-                                  },
-                                },
-                                { kind: source, surface: "application-shell" },
-                              ),
-                            )
+                        <Show
+                          when={terminalTarget()}
+                          fallback={
+                            <div
+                              class="terminal-surface terminal-surface--unavailable"
+                              role="status"
+                            >
+                              <strong>Terminal unavailable</strong>
+                              <span>
+                                {paneFrame().status?.description ??
+                                  "This terminal cannot be attached safely."}
+                              </span>
+                            </div>
                           }
-                        />
+                        >
+                          {(semanticPaneId) => (
+                            <TerminalSurface
+                              target={{
+                                workspaceName: props.terminalWorkspaceName ?? input().workspace.id,
+                                semanticPaneId: semanticPaneId(),
+                              }}
+                              title={paneFrame().title}
+                              transport={props.terminalTransport}
+                              focused={paneFrame().appearance.accessibility.terminalInputOwner}
+                              reducedMotion={props.reducedMotion}
+                              themeKey={props.terminalThemeKey}
+                              onFocus={(source) =>
+                                dispatch(
+                                  applicationShellCommandInvocation(
+                                    APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+                                    {
+                                      target: {
+                                        kind: "pane",
+                                        paneId: paneFrame().pane.id,
+                                        input: "terminal",
+                                      },
+                                    },
+                                    { kind: source, surface: "application-shell" },
+                                  ),
+                                )
+                              }
+                            />
+                          )}
+                        </Show>
                         <span class="sr-only">
                           {agent()?.harness ?? paneFrame().subtitle ?? paneFrame().pane.kind} ·
                           Activity: {agent()?.activity ?? paneFrame().status?.label ?? "idle"}

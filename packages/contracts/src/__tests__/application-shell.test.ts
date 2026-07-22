@@ -77,6 +77,90 @@ describe("semantic application shell", () => {
     ).toBe(false);
   });
 
+  it("keeps terminal inventory optional while strictly preserving semantic resources", () => {
+    const legacy = projectApplicationShellV1(COHESION_FIXTURE_V1);
+    expect(legacy.terminalInventory).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(legacy, "terminalInventory")).toBe(false);
+
+    const input = {
+      ...COHESION_FIXTURE_V1,
+      workspace: {
+        ...COHESION_FIXTURE_V1.workspace,
+        sidebar: {
+          ...COHESION_FIXTURE_V1.workspace.sidebar,
+          agents: COHESION_FIXTURE_V1.workspace.sidebar.agents.filter(
+            ({ paneId }) => paneId === "pane.implementer",
+          ),
+        },
+      },
+      terminalInventory: {
+        activeResourceId: "pane.implementer",
+        resources: [
+          {
+            id: "pane.implementer",
+            title: "Implementer",
+            kind: "agent" as const,
+            active: true,
+            attachability: {
+              status: "available" as const,
+              semanticPaneId: "pane.implementer",
+            },
+          },
+          {
+            id: "terminal.discovered.shell",
+            title: "Shell",
+            kind: "terminal" as const,
+            active: false,
+            attachability: {
+              status: "unavailable" as const,
+              reason: "missing-semantic-stamp" as const,
+            },
+          },
+        ],
+      },
+    };
+    const projection = projectApplicationShellV1(input);
+    expect(projection.terminalInventory).toEqual(input.terminalInventory);
+    expect(ApplicationShellProjectionV1SchemaZ.parse(serialized(projection))).toEqual(projection);
+    expect(mutableDataPaths(projection.terminalInventory, "terminalInventory")).toEqual([]);
+
+    expect(() =>
+      projectApplicationShellV1({
+        ...input,
+        terminalInventory: {
+          activeResourceId: "pane.implementer",
+          resources: [input.terminalInventory.resources[0]!, input.terminalInventory.resources[0]!],
+        },
+      }),
+    ).toThrow(/unique/u);
+    expect(() =>
+      projectApplicationShellV1({
+        ...input,
+        terminalInventory: { ...input.terminalInventory, activeResourceId: null },
+      }),
+    ).toThrow(/activeResourceId/u);
+    expect(() =>
+      projectApplicationShellV1({
+        ...input,
+        terminalInventory: {
+          activeResourceId: "terminal.discovered.fallback",
+          resources: [
+            {
+              id: "terminal.discovered.fallback",
+              title: "Fallback",
+              kind: "terminal",
+              active: true,
+              attachability: {
+                status: "available",
+                semanticPaneId: "terminal.discovered.fallback",
+              },
+            },
+          ],
+        },
+      }),
+    ).toThrow(/fallback/u);
+  });
+
   it("projects navigation and dock identity only from the canonical surface registry", () => {
     const projection = projectApplicationShellV1(COHESION_FIXTURE_V1);
     const projectedSurfaces = [

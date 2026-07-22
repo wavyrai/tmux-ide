@@ -7,6 +7,8 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import {
+  ApplicationShellDiscoveryError,
+  discoverApplicationShellSession,
   discoverSessions,
   buildOverviews,
   buildProjectDetail,
@@ -531,7 +533,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   app.get("/api/project/:name/application-shell", (c) => {
     const name = c.req.param("name");
-    const session = discoverSessions().find((candidate) => candidate.name === name);
+    let session: ReturnType<typeof discoverApplicationShellSession>;
+    try {
+      session = discoverApplicationShellSession(name);
+    } catch (error) {
+      if (error instanceof ApplicationShellDiscoveryError) {
+        return c.json({ error: "Session discovery unavailable" }, 503);
+      }
+      throw error;
+    }
     if (!session) return c.json({ error: "Session not found" }, 404);
     return c.json({
       version: APPLICATION_SHELL_RESOURCE_VERSION,

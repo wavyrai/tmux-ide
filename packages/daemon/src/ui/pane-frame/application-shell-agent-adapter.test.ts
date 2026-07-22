@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS,
   paneFrameModelsFromApplicationShellAgents,
+  paneFrameTerminalsFromApplicationShellInventory,
 } from "./model.js";
 
 type ConnectionState = ApplicationShellProjectionV1["statusStrip"]["state"];
@@ -198,5 +199,82 @@ describe("application-shell agent-terminal PaneFrame adapter", () => {
       expect(id.length).toBeLessThanOrEqual(128);
       expect(id).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
     }
+  });
+
+  it("projects one native frame per terminal resource and enriches matching agents", () => {
+    const projection = shell({ activity: "running" });
+    const terminals = paneFrameTerminalsFromApplicationShellInventory({
+      ...projection,
+      terminalInventory: {
+        activeResourceId: "pane.agent-primary",
+        resources: [
+          {
+            id: "pane.agent-primary",
+            title: "Primary terminal",
+            kind: "agent",
+            active: true,
+            attachability: {
+              status: "available",
+              semanticPaneId: "pane.agent-primary",
+            },
+          },
+          {
+            id: "pane.shell",
+            title: "Dev shell",
+            kind: "terminal",
+            active: false,
+            attachability: { status: "available", semanticPaneId: "pane.shell" },
+          },
+          {
+            id: "terminal.discovered.legacy",
+            title: "Legacy terminal",
+            kind: "terminal",
+            active: false,
+            attachability: { status: "unavailable", reason: "missing-semantic-stamp" },
+          },
+        ],
+      },
+    });
+
+    expect(terminals.map(({ model }) => model.pane.id)).toEqual([
+      "pane.agent-primary",
+      "pane.shell",
+      "terminal.discovered.legacy",
+    ]);
+    expect(terminals[0]).toMatchObject({
+      model: {
+        title: "Primary implementer",
+        subtitle: "Codex",
+        appearance: { accessibility: { focused: true } },
+      },
+      terminalTarget: { semanticPaneId: "pane.agent-primary" },
+      unavailableReason: null,
+    });
+    expect(terminals[1]).toMatchObject({
+      model: { title: "Dev shell", subtitle: "Terminal" },
+      terminalTarget: { semanticPaneId: "pane.shell" },
+      unavailableReason: null,
+    });
+    expect(terminals[2]).toMatchObject({
+      model: {
+        pane: { id: "terminal.discovered.legacy" },
+        title: "Legacy terminal",
+        status: { label: "Unavailable" },
+      },
+      terminalTarget: null,
+      unavailableReason: "missing-semantic-stamp",
+    });
+    expect(JSON.stringify(terminals[2])).not.toContain("semanticPaneId");
+    expect(terminals[2]!.model.title).not.toBe(terminals[2]!.model.pane.id);
+  });
+
+  it("defaults legacy shells without explicit inventory to visible but non-attachable frames", () => {
+    const terminals = paneFrameTerminalsFromApplicationShellInventory(shell());
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]).toMatchObject({
+      model: { pane: { id: "pane.agent-primary" } },
+      terminalTarget: null,
+      unavailableReason: "missing-semantic-stamp",
+    });
   });
 });

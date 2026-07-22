@@ -10,12 +10,14 @@ import {
 } from "@tmux-ide/contracts";
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 
-import { paneFrameModelsFromApplicationShellAgents } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+import {
+  paneFrameTerminalsFromApplicationShellInventory,
+  type ApplicationShellTerminalPaneFrame,
+} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
   PaneFrameGripIntent,
-  PaneFrameModel,
 } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { DomApplicationShell } from "../experience/application-shell.tsx";
 import { DomIcon } from "../experience/dom-icon.tsx";
@@ -301,7 +303,7 @@ type LiveWorkspaceProjection =
   | {
       readonly status: "ready";
       readonly input: ApplicationShellProjectionInputV1;
-      readonly paneFrames: readonly PaneFrameModel[];
+      readonly terminalPanes: readonly ApplicationShellTerminalPaneFrame[];
     }
   | { readonly status: "rejected" };
 
@@ -323,8 +325,12 @@ function projectLiveWorkspace(input: ApplicationShellProjectionInputV1): LiveWor
     if (!sessionIds.includes(shell.sidebar.activeSessionId)) {
       throw new Error("Live workspace active session identity is incoherent.");
     }
-    const paneFrames = paneFrameModelsFromApplicationShellAgents(shell);
-    return { status: "ready", input, paneFrames };
+    const terminalPanes = paneFrameTerminalsFromApplicationShellInventory(shell);
+    assertUniqueSemanticIds(
+      "terminal resource",
+      terminalPanes.map(({ model }) => model.pane.id),
+    );
+    return { status: "ready", input, terminalPanes };
   } catch {
     return { status: "rejected" };
   }
@@ -504,7 +510,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             reducedMotion={props.reducedMotion}
             terminalThemeKey={props.terminalThemeKey}
             onCommand={props.onCommand}
-            paneFrames={ready().paneFrames}
+            terminalPanes={ready().terminalPanes}
             onPaneAction={props.onPaneAction}
             onPaneGrip={props.onPaneGrip}
           />

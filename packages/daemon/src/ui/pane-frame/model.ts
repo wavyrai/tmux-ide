@@ -2,6 +2,7 @@ import {
   ApplicationShellProjectionV1SchemaZ,
   resolvePaneAppearance,
   type AgentActivity,
+  type ApplicationShellTerminalResource,
   type ApplicationShellProjectionV1,
   type CanonicalDomainStatus,
   type CohesionFixtureV1,
@@ -9,6 +10,7 @@ import {
   type PaneStructure,
   type PaneVisualStateV1,
   type SemanticProductId,
+  type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
 import type { PaneFrameAction, PaneFrameModel } from "./presenter.js";
 
@@ -33,6 +35,22 @@ export interface ApplicationShellAgentTerminalAdapterOptions {
     ApplicationShellAgentTerminalLocalState
   >;
 }
+
+export interface ApplicationShellTerminalPaneFrame {
+  readonly model: PaneFrameModel;
+  /** Null is a deliberate deny: a TerminalSurface target must not be constructed. */
+  readonly terminalTarget: { readonly semanticPaneId: SemanticProductId } | null;
+  readonly unavailableReason: TerminalResourceUnavailableReason | null;
+}
+
+export const TERMINAL_RESOURCE_UNAVAILABLE_LABELS: Readonly<
+  Record<TerminalResourceUnavailableReason, string>
+> = Object.freeze({
+  "missing-semantic-stamp": "Terminal identity has not been established",
+  "invalid-semantic-stamp": "Terminal identity is invalid",
+  "duplicate-semantic-stamp": "Terminal identity is duplicated",
+  "not-single-pane-window": "Terminal belongs to a multi-pane tmux window",
+});
 
 type ApplicationShellAgent = ApplicationShellProjectionV1["sidebar"]["agents"][number];
 
@@ -252,6 +270,68 @@ function paneFrameModelFromApplicationShellAgent(
   };
 }
 
+function paneFrameModelFromTerminalResource(
+  shell: ApplicationShellProjectionV1,
+  resource: ApplicationShellTerminalResource,
+  local: ApplicationShellAgentTerminalLocalState,
+): PaneFrameModel {
+  const structure = local.structure ?? "docked";
+  const unavailable = resource.attachability.status === "unavailable";
+  const visualState: PaneVisualStateV1 = {
+    structure,
+    applicationFocus: {
+      pane: shell.focus.appFocusedPaneId === resource.id,
+      terminalInput: shell.focus.terminalInputPaneId === resource.id,
+      windowActive: shell.focus.windowActivity === "active",
+    },
+    agentActivity: unavailable ? "disconnected" : "idle",
+    domainStatus: unavailable ? "disconnected" : "idle",
+    attention: unavailable ? "recovery" : "none",
+    layoutInteraction: {
+      editable: local.layoutEditable ?? true,
+      selected: shell.focus.layoutSelectedPaneId === resource.id,
+      dragging: false,
+      resizing: false,
+      previewing: false,
+    },
+    controlInteraction: {
+      ...DEFAULT_CONTROL_INTERACTION,
+      ...local.controlInteraction,
+    },
+  };
+  const appearance = resolvePaneAppearance(visualState);
+  const statusLabel = unavailable ? "Unavailable" : resource.active ? "Active" : "Ready";
+  const description =
+    resource.attachability.status === "unavailable"
+      ? TERMINAL_RESOURCE_UNAVAILABLE_LABELS[resource.attachability.reason]
+      : appearance.accessibility.description;
+  return {
+    pane: { id: resource.id, kind: "terminal" },
+    appearance,
+    title: resource.title,
+    subtitle: resource.kind === "agent" ? "Agent terminal" : "Terminal",
+    status: {
+      id: paneChildId(resource.id, "status"),
+      label: statusLabel,
+      description,
+      tone: appearance.status.tone,
+      busy: false,
+    },
+    chips: unavailable
+      ? [
+          {
+            id: paneChildId(resource.id, "availability"),
+            kind: "state",
+            label: description,
+            description,
+            tone: appearance.status.attentionTone,
+          },
+        ]
+      : [],
+    actions: applicationShellAgentTerminalActions(structure),
+  };
+}
+
 /**
  * Canonical live application-shell agent terminals -> shared PaneFrame input.
  *
@@ -280,6 +360,70 @@ export function paneFrameModelsFromApplicationShellAgents(
         options.localStateByPaneId?.get(agent.paneId) ?? {},
       ),
     ];
+  });
+}
+
+/**
+ * Canonical terminal inventory -> renderable pane chrome plus an explicit,
+ * default-deny attachment target. Agent metadata enriches the same resource;
+ * it never creates a second terminal or a launch profile.
+ */
+export function paneFrameTerminalsFromApplicationShellInventory(
+  rawShell: ApplicationShellProjectionV1,
+  options: ApplicationShellAgentTerminalAdapterOptions = {},
+): readonly ApplicationShellTerminalPaneFrame[] {
+  const shell = ApplicationShellProjectionV1SchemaZ.parse(rawShell);
+  if (shell.terminalInventory === undefined) {
+    return paneFrameModelsFromApplicationShellAgents(shell, options).map((model) => ({
+      model,
+      terminalTarget: null,
+      unavailableReason: "missing-semantic-stamp",
+    }));
+  }
+  const agentsByResourceId = new Map(
+    shell.sidebar.agents.flatMap((agent) =>
+      agent.paneId === null ? [] : ([[agent.paneId, agent]] as const),
+    ),
+  );
+  return shell.terminalInventory.resources.map((resource) => {
+    const agent = agentsByResourceId.get(resource.id);
+    const local = options.localStateByPaneId?.get(resource.id) ?? {};
+    const attachable = resource.attachability.status === "available";
+    let model =
+      agent && attachable
+        ? paneFrameModelFromApplicationShellAgent(
+            shell,
+            agent as ApplicationShellAgent & { readonly paneId: SemanticProductId },
+            local,
+          )
+        : paneFrameModelFromTerminalResource(shell, resource, local);
+    if (agent && !attachable) {
+      const harness = harnessLabel(agent.harness);
+      model = {
+        ...model,
+        title: agent.name,
+        subtitle: harness,
+        chips: [
+          {
+            id: paneChildId(resource.id, "agent"),
+            kind: "agent",
+            label: `${harness}: ${agent.activity}`,
+            description: `${agent.name} uses ${harness}`,
+            tone: model.appearance.status.domainTone,
+          },
+          ...model.chips,
+        ],
+      };
+    }
+    return {
+      model,
+      terminalTarget:
+        resource.attachability.status === "available"
+          ? { semanticPaneId: resource.attachability.semanticPaneId }
+          : null,
+      unavailableReason:
+        resource.attachability.status === "unavailable" ? resource.attachability.reason : null,
+    };
   });
 }
 

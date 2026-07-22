@@ -783,6 +783,26 @@ kbd {
   background: var(--tmux-ide-surface-terminal);
 }
 
+.terminal-surface--unavailable {
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  padding: 14px;
+  color: var(--tmux-ide-text-muted);
+}
+
+.terminal-surface--unavailable strong {
+  color: var(--tmux-ide-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.terminal-surface--unavailable span {
+  max-width: 46ch;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .terminal-surface__viewport {
   position: absolute;
   inset: 0;

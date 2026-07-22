@@ -113,6 +113,64 @@ describe("DOM application-shell projection", () => {
     expect(reconcileDomShellReplayState(previous, next, current)).toEqual(current);
   });
 
+  it("preserves plain terminal selection across refresh while the durable resource remains", () => {
+    const legacy = createDefaultDomShellInput();
+    const agentResources = legacy.workspace.sidebar.agents.flatMap((agent) =>
+      agent.paneId === null
+        ? []
+        : [
+            {
+              id: agent.paneId,
+              title: agent.name,
+              kind: "agent" as const,
+              active: agent.paneId === "pane.implementer",
+              attachability: {
+                status: "available" as const,
+                semanticPaneId: agent.paneId,
+              },
+            },
+          ],
+    );
+    const previous = ApplicationShellProjectionInputV1SchemaZ.parse({
+      ...legacy,
+      terminalInventory: {
+        activeResourceId: "pane.implementer",
+        resources: [
+          ...agentResources,
+          {
+            id: "terminal.discovered.plain-shell",
+            title: "Plain shell",
+            kind: "terminal",
+            active: false,
+            attachability: { status: "unavailable", reason: "missing-semantic-stamp" },
+          },
+        ],
+      },
+    });
+    const current = ApplicationShellReplayStateV1SchemaZ.parse({
+      ...createDomShellReplayState(previous),
+      selectedResources: [{ surface: "terminals", resourceId: "terminal.discovered.plain-shell" }],
+    });
+    const refreshed = ApplicationShellProjectionInputV1SchemaZ.parse({
+      ...previous,
+      project: { ...previous.project, name: "Refreshed" },
+    });
+
+    expect(reconcileDomShellReplayState(previous, refreshed, current).selectedResources).toEqual(
+      current.selectedResources,
+    );
+    const withoutPlain = ApplicationShellProjectionInputV1SchemaZ.parse({
+      ...refreshed,
+      terminalInventory: {
+        activeResourceId: "pane.implementer",
+        resources: agentResources,
+      },
+    });
+    expect(
+      reconcileDomShellReplayState(refreshed, withoutPlain, current).selectedResources,
+    ).toEqual([]);
+  });
+
   it("falls back from unavailable local targets and resets renderer state on identity change", () => {
     const previous = createDefaultDomShellInput();
     const current = ApplicationShellReplayStateV1SchemaZ.parse({

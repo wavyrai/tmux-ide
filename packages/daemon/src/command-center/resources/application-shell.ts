@@ -6,15 +6,19 @@ import {
   SemanticProductIdSchemaZ,
   projectApplicationShellV1,
   type ApplicationShellProjectionInputV1,
+  type TerminalResourceAttachability,
 } from "@tmux-ide/contracts";
 
 export interface ApplicationShellPaneFacts {
+  /** Daemon-only live identity used solely as stable fallback hash input. */
+  readonly runtimePaneId: string;
   /** Durable tmux-ide pane stamp. A live `%pane_id` is never accepted as identity. */
   readonly semanticPaneId: string | null;
   readonly index: number;
   readonly title: string;
   readonly currentCommand: string;
   readonly active: boolean;
+  readonly windowPaneCount: number;
   readonly role: string | null;
   readonly name: string | null;
   readonly type: string | null;
@@ -22,6 +26,8 @@ export interface ApplicationShellPaneFacts {
 
 export interface ApplicationShellSessionFacts {
   readonly name: string;
+  /** Daemon-only generation identity; hashed into fallback resource identity. */
+  readonly runtimeSessionId: string;
   readonly dir: string;
   readonly panes: readonly ApplicationShellPaneFacts[];
 }
@@ -43,23 +49,29 @@ function label(value: string | null | undefined, fallback: string): string {
   return normalized || fallback;
 }
 
-function fallbackPaneId(pane: ApplicationShellPaneFacts): string {
-  // The topology index is a last-resort disambiguator for unstamped legacy
-  // panes. The live tmux `%pane_id` is deliberately absent from this digest.
+function fallbackPaneId(
+  session: ApplicationShellSessionFacts,
+  pane: ApplicationShellPaneFacts,
+): string {
+  // Runtime identity is hashed, never serialized. Unlike title/command/index,
+  // it is stable for the lifetime of a pane across resource refreshes.
   return semanticId(
-    "pane.discovered",
+    "terminal.discovered",
     JSON.stringify({
-      index: pane.index,
-      title: pane.title,
-      command: pane.currentCommand,
-      role: pane.role,
-      name: pane.name,
-      type: pane.type,
+      session: session.name,
+      runtimeSessionId: session.runtimeSessionId,
+      runtimePaneId: pane.runtimePaneId,
     }),
   );
 }
 
-function paneIdentities(panes: readonly ApplicationShellPaneFacts[]): readonly string[] {
+interface PaneIdentity {
+  readonly resourceId: string;
+  readonly attachability: TerminalResourceAttachability;
+}
+
+function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIdentity[] {
+  const panes = session.panes;
   const validCounts = new Map<string, number>();
   for (const pane of panes) {
     if (!SemanticProductIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
@@ -68,6 +80,17 @@ function paneIdentities(panes: readonly ApplicationShellPaneFacts[]): readonly s
   const claimed = new Set<string>();
   return panes.map((pane) => {
     const stamped = pane.semanticPaneId;
+    let unavailableReason:
+      | "missing-semantic-stamp"
+      | "invalid-semantic-stamp"
+      | "duplicate-semantic-stamp"
+      | null = null;
+    if (stamped === null || stamped.length === 0) unavailableReason = "missing-semantic-stamp";
+    else if (!SemanticProductIdSchemaZ.safeParse(stamped).success) {
+      unavailableReason = "invalid-semantic-stamp";
+    } else if (validCounts.get(stamped) !== 1) {
+      unavailableReason = "duplicate-semantic-stamp";
+    }
     if (
       stamped !== null &&
       SemanticProductIdSchemaZ.safeParse(stamped).success &&
@@ -75,14 +98,26 @@ function paneIdentities(panes: readonly ApplicationShellPaneFacts[]): readonly s
       !claimed.has(stamped)
     ) {
       claimed.add(stamped);
-      return stamped;
+      return {
+        resourceId: stamped,
+        attachability:
+          pane.windowPaneCount === 1
+            ? { status: "available", semanticPaneId: stamped }
+            : { status: "unavailable", reason: "not-single-pane-window" },
+      };
     }
-    const base = fallbackPaneId(pane);
+    const base = fallbackPaneId(session, pane);
     let candidate = base;
     let suffix = 1;
     while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
     claimed.add(candidate);
-    return candidate;
+    return {
+      resourceId: candidate,
+      attachability: {
+        status: "unavailable",
+        reason: unavailableReason ?? "duplicate-semantic-stamp",
+      },
+    };
   });
 }
 
@@ -180,12 +215,22 @@ export function projectApplicationShellResource(
   const rootLabel = label(basename(session.dir), sessionName);
   const projectId = semanticId("project", session.dir);
   const sessionId = semanticId("session", session.name);
-  const ids = paneIdentities(session.panes);
+  const identities = paneIdentities(session);
   const focusedIndex = session.panes.findIndex((pane) => pane.active);
-  const focusedPaneId = focusedIndex < 0 ? null : (ids[focusedIndex] ?? null);
+  const focusedPaneId = focusedIndex < 0 ? null : (identities[focusedIndex]?.resourceId ?? null);
+  const terminalResources = session.panes.map((pane, index) => {
+    const identity = identities[index]!;
+    return {
+      id: identity.resourceId,
+      title: label(pane.name ?? pane.title, `Terminal ${index + 1}`),
+      kind: isAgentPane(pane) ? ("agent" as const) : ("terminal" as const),
+      active: identity.resourceId === focusedPaneId,
+      attachability: identity.attachability,
+    };
+  });
   const agents = session.panes.flatMap((pane, index) => {
     if (!isAgentPane(pane)) return [];
-    const paneId = ids[index]!;
+    const paneId = identities[index]!.resourceId;
     return [
       {
         id: semanticId("agent", paneId),
@@ -263,6 +308,10 @@ export function projectApplicationShellResource(
           safeState: "No terminal attachment was attempted",
           nextAction: "Wait for tmux pane discovery to recover",
         },
+    terminalInventory: {
+      activeResourceId: focusedPaneId,
+      resources: terminalResources,
+    },
   });
 
   // Enforce the downstream kernel invariant here so the HTTP boundary can

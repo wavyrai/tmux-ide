@@ -42,10 +42,114 @@ import { SemanticProductIdSchemaZ } from "./pane-appearance.ts";
 export const APPLICATION_SHELL_PROJECTION_VERSION = 1 as const;
 export const APPLICATION_SHELL_TRACE_VERSION = 1 as const;
 
-export type ApplicationShellProjectionInputV1 = Pick<
+export const TerminalResourceUnavailableReasonSchemaZ = z.enum([
+  "missing-semantic-stamp",
+  "invalid-semantic-stamp",
+  "duplicate-semantic-stamp",
+  "not-single-pane-window",
+]);
+export type TerminalResourceUnavailableReason = z.infer<
+  typeof TerminalResourceUnavailableReasonSchemaZ
+>;
+
+export const TerminalResourceAttachabilitySchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("available"),
+      semanticPaneId: SemanticProductIdSchemaZ,
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unavailable"),
+      reason: TerminalResourceUnavailableReasonSchemaZ,
+    })
+    .strict(),
+]);
+export type TerminalResourceAttachability = z.infer<typeof TerminalResourceAttachabilitySchemaZ>;
+
+export const ApplicationShellTerminalResourceSchemaZ = z
+  .object({
+    id: SemanticProductIdSchemaZ,
+    title: z.string().min(1).max(160),
+    kind: z.enum(["agent", "terminal"]),
+    active: z.boolean(),
+    attachability: TerminalResourceAttachabilitySchemaZ,
+  })
+  .strict();
+export type ApplicationShellTerminalResource = z.infer<
+  typeof ApplicationShellTerminalResourceSchemaZ
+>;
+
+export const ApplicationShellTerminalInventorySchemaZ = z
+  .object({
+    activeResourceId: SemanticProductIdSchemaZ.nullable(),
+    resources: z.array(ApplicationShellTerminalResourceSchemaZ).max(512),
+  })
+  .strict()
+  .superRefine((inventory, ctx) => {
+    const ids = new Set<string>();
+    const active = inventory.resources.filter((resource) => resource.active);
+    for (const [index, resource] of inventory.resources.entries()) {
+      if (ids.has(resource.id)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["resources", index, "id"],
+          message: "terminal resource ids must be unique",
+        });
+      }
+      ids.add(resource.id);
+      if (
+        resource.attachability.status === "available" &&
+        resource.attachability.semanticPaneId !== resource.id
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["resources", index, "attachability", "semanticPaneId"],
+          message: "attachable semantic pane identity must equal its terminal resource id",
+        });
+      }
+      if (
+        resource.id.startsWith("terminal.discovered.") &&
+        resource.attachability.status === "available"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["resources", index, "attachability"],
+          message: "discovered fallback terminal resources cannot be attachable",
+        });
+      }
+    }
+    if (active.length > 1) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["resources"],
+        message: "terminal inventory may contain at most one active resource",
+      });
+    }
+    if (
+      (inventory.activeResourceId === null && active.length !== 0) ||
+      (inventory.activeResourceId !== null &&
+        (active.length !== 1 || active[0]!.id !== inventory.activeResourceId))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["activeResourceId"],
+        message: "activeResourceId must identify the active terminal resource",
+      });
+    }
+  });
+export type ApplicationShellTerminalInventory = z.infer<
+  typeof ApplicationShellTerminalInventorySchemaZ
+>;
+
+export interface ApplicationShellProjectionInputV1 extends Pick<
   CohesionFixtureV1,
   "project" | "workspace" | "dock" | "focus" | "connection"
->;
+> {
+  /** Optional for backward compatibility with pre-inventory daemon resources. */
+  readonly terminalInventory?: ApplicationShellTerminalInventory;
+}
 
 export const ApplicationShellProjectionInputV1SchemaZ = z
   .object({
@@ -54,8 +158,26 @@ export const ApplicationShellProjectionInputV1SchemaZ = z
     dock: CohesionFixtureV1SchemaZ.shape.dock,
     focus: FocusOverlayStateV1SchemaZ,
     connection: CohesionFixtureV1SchemaZ.shape.connection,
+    terminalInventory: ApplicationShellTerminalInventorySchemaZ.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, ctx) => {
+    if (input.terminalInventory === undefined) return;
+    const resources = new Map(
+      input.terminalInventory.resources.map((resource) => [resource.id, resource]),
+    );
+    for (const [index, agent] of input.workspace.sidebar.agents.entries()) {
+      if (agent.paneId === null) continue;
+      const resource = resources.get(agent.paneId);
+      if (resource === undefined || resource.kind !== "agent") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["workspace", "sidebar", "agents", index, "paneId"],
+          message: "attached agents must correlate to one agent terminal resource",
+        });
+      }
+    }
+  });
 
 type SidebarSession = CohesionFixtureV1["workspace"]["sidebar"]["sessions"][number];
 type SidebarAgent = CohesionFixtureV1["workspace"]["sidebar"]["agents"][number];
@@ -102,6 +224,8 @@ export interface ApplicationShellProjectionV1 {
     readonly tools: readonly ApplicationShellSurfaceProjection[];
   };
   readonly statusStrip: Connection;
+  /** Present on live resources that enumerate daemon-discovered terminal panes. */
+  readonly terminalInventory?: ApplicationShellTerminalInventory;
   readonly focus: {
     readonly windowActivity: FocusOverlayStateV1["windowActivity"];
     readonly zone: FocusZone;
@@ -168,6 +292,7 @@ export const ApplicationShellProjectionV1SchemaZ = z
       })
       .strict(),
     statusStrip: CohesionFixtureV1SchemaZ.shape.connection,
+    terminalInventory: ApplicationShellTerminalInventorySchemaZ.optional(),
     focus: z
       .object({
         windowActivity: z.enum(["active", "inactive"]),
@@ -186,7 +311,24 @@ export const ApplicationShellProjectionV1SchemaZ = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((projection, ctx) => {
+    if (projection.terminalInventory === undefined) return;
+    const resources = new Map(
+      projection.terminalInventory.resources.map((resource) => [resource.id, resource]),
+    );
+    for (const [index, agent] of projection.sidebar.agents.entries()) {
+      if (agent.paneId === null) continue;
+      const resource = resources.get(agent.paneId);
+      if (resource === undefined || resource.kind !== "agent") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["sidebar", "agents", index, "paneId"],
+          message: "attached agents must correlate to one agent terminal resource",
+        });
+      }
+    }
+  });
 
 function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
@@ -243,6 +385,7 @@ export function projectApplicationShellV1(
     dock: input.dock,
     focus: input.focus,
     connection: input.connection,
+    terminalInventory: input.terminalInventory,
   });
   const surfaces = CANONICAL_SURFACE_REGISTRY.map((surface) => projectedSurface(surface, parsed));
   const palette = paletteOverlay(parsed.focus);
@@ -276,6 +419,17 @@ export function projectApplicationShellV1(
         tools: surfaces.filter((surface) => surface.kind === "dock-tool"),
       },
       statusStrip: { ...parsed.connection },
+      ...(parsed.terminalInventory === undefined
+        ? {}
+        : {
+            terminalInventory: {
+              activeResourceId: parsed.terminalInventory.activeResourceId,
+              resources: parsed.terminalInventory.resources.map((resource) => ({
+                ...resource,
+                attachability: { ...resource.attachability },
+              })),
+            },
+          }),
       focus: {
         windowActivity: parsed.focus.windowActivity,
         zone: parsed.focus.focusZone,
@@ -694,6 +848,7 @@ export function applicationShellActionTraceV1(
     dock: input.dock,
     focus: input.focus,
     connection: input.connection,
+    terminalInventory: input.terminalInventory,
   });
   if (parsedInput.focus.overlays.length > 0) {
     throw new Error("application shell action traces require a closed-overlay initial state");
