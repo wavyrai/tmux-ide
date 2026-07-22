@@ -10,7 +10,23 @@ import {
 import { createApp } from "../server.ts";
 import { _setTmuxRunner } from "../discovery.ts";
 import { _setExecutor } from "../../widgets/lib/pane-comms.ts";
-import { projectApplicationShellResource } from "./application-shell.ts";
+import {
+  projectApplicationShellResource,
+  projectApplicationShellResourceV3,
+} from "./application-shell.ts";
+
+const EMPTY_APP_WINDOWS = AppWindowDocumentV1SchemaZ.parse({
+  version: 1,
+  revision: 0,
+  updatedAt: "2026-07-22T10:00:00.000Z",
+  windows: {},
+  dockRoot: null,
+  dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+  floatingOrder: [],
+  focusedWindowId: null,
+  activeLayoutId: null,
+  layouts: {},
+});
 
 const restorers: Array<() => void> = [];
 
@@ -133,6 +149,33 @@ describe("application-shell resource projector", () => {
       eventCount: 0,
       latestEventLabel: null,
     });
+  });
+
+  it("marks the V3 Files and Changes dock tools available with bounded counts", () => {
+    const result = projectApplicationShellResourceV3(liveSession(), EMPTY_APP_WINDOWS, undefined, {
+      fileCount: 214,
+      changeCount: 4,
+    });
+    const files = result.dock.tools.find(({ id }) => id === "files")!;
+    const changes = result.dock.tools.find(({ id }) => id === "changes")!;
+    expect(files.disabledReason).toBeNull();
+    expect(changes.disabledReason).toBeNull();
+    expect(files.data).toEqual({ kind: "files", selectedResourceId: null, fileCount: 214 });
+    expect(changes.data).toEqual({ kind: "changes", selectedResourceId: null, changeCount: 4 });
+    // Missions and activity stay disabled until their own workspace lands.
+    expect(result.dock.tools.find(({ id }) => id === "missions")?.disabledReason).toContain(
+      "not available",
+    );
+  });
+
+  it("keeps V3 Files and Changes openable with zero counts when no summary is provided", () => {
+    const result = projectApplicationShellResourceV3(liveSession(), EMPTY_APP_WINDOWS);
+    const files = result.dock.tools.find(({ id }) => id === "files")!;
+    const changes = result.dock.tools.find(({ id }) => id === "changes")!;
+    expect(files.disabledReason).toBeNull();
+    expect(changes.disabledReason).toBeNull();
+    expect(files.data).toEqual({ kind: "files", selectedResourceId: null, fileCount: 0 });
+    expect(changes.data).toEqual({ kind: "changes", selectedResourceId: null, changeCount: 0 });
   });
 
   it("keeps duplicate stamps visible, uniquely keyed, and explicitly unavailable", () => {
@@ -437,6 +480,8 @@ describe("GET /api/project/:name/application-shell", () => {
       reason: "Mission history could not be verified. The terminal workspace remains available.",
     });
     expect(body.resource.dock.tools.find(({ id }) => id === "missions")?.disabledReason).toBeNull();
+    expect(body.resource.dock.tools.find(({ id }) => id === "files")?.disabledReason).toBeNull();
+    expect(body.resource.dock.tools.find(({ id }) => id === "changes")?.disabledReason).toBeNull();
     expect(JSON.stringify(body)).not.toMatch(/\/private\/secret|repository unavailable/u);
   });
 

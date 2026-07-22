@@ -301,6 +301,36 @@ export class FilesAuthority {
     return parsed.data;
   }
 
+  /**
+   * A cheap bounded count of the workspace root's direct entries, for the dock
+   * badge only. One `readdir` — no id interning, ignore parsing, or per-child
+   * `hasChildren` probes. Returns null when the root cannot be listed so the
+   * caller can fall back to a zero count rather than a fabricated one.
+   */
+  rootEntryCount(): number | null {
+    let realRoot: string;
+    try {
+      realRoot = realpathSync(this.root);
+    } catch {
+      return null;
+    }
+    let dirents: Dirent[];
+    try {
+      if (!lstatSync(realRoot).isDirectory()) return null;
+      dirents = readdirSync(realRoot, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+    let count = 0;
+    for (const dirent of dirents) {
+      if (direntKind(dirent) === null) continue;
+      if (!WorkspaceResourceNameSchemaZ.safeParse(dirent.name).success) continue;
+      count += 1;
+      if (count >= WORKSPACE_FILES_CATALOG_MAX_ENTRIES) break;
+    }
+    return count;
+  }
+
   preview(fileId: string): WorkspaceFilePreviewResourceV1 {
     let realRoot: string;
     try {

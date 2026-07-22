@@ -10,6 +10,8 @@ import {
   type DesktopPlatform,
   type DesktopWindowState,
   type HostCapabilities,
+  type WorkspaceChangeResourceId,
+  type WorkspaceFileResourceId,
   type WorkspacePaneCreateInvocation,
 } from "@tmux-ide/contracts";
 import {
@@ -36,6 +38,8 @@ import { DomApplicationShell } from "../experience/application-shell.tsx";
 import type { AppWindowCanvasCommandInvocation } from "../experience/app-window-canvas-presenter.ts";
 import type { CreatePaneFlowCatalogs } from "../experience/create-pane-flow-presenter.ts";
 import { DomIcon } from "../experience/dom-icon.tsx";
+import type { ChangesSurfaceProps } from "../experience/workspace-changes-surface.tsx";
+import type { FilesSurfaceProps } from "../experience/workspace-files-surface.tsx";
 import { Button } from "../ui-system/index.ts";
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
 import { createSolidDesktopApplicationShellResourceStore } from "./desktop-resource-store.ts";
@@ -45,6 +49,22 @@ import {
   createSolidDesktopWorkspaceCatalogStore,
   type DesktopWorkspaceCatalogState,
 } from "./workspace-catalog-store.ts";
+import {
+  createSolidWorkspaceChangeDiffStore,
+  createSolidWorkspaceChangesCatalogStore,
+} from "./workspace-changes-store.ts";
+import {
+  createSolidWorkspaceFilePreviewStore,
+  createSolidWorkspaceFilesCatalogStore,
+} from "./workspace-files-store.ts";
+import {
+  changeDiffSurfaceModel,
+  changeEntriesById,
+  changesSurfaceModel,
+  collectFileCatalogs,
+  filePreviewSurfaceModel,
+  filesSurfaceModel,
+} from "./workspace-surface-model.ts";
 
 export type DesktopDaemonRecoveryPhase =
   | "idle"
@@ -526,6 +546,121 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     transport: createHostDaemonTransport(props.host),
   });
   createEffect(() => store.setTarget(props.target));
+
+  // Live Files and Changes read stores, pinned to the same daemon generation as
+  // the shell resource. Expansion and selection are renderer-owned; each store
+  // parses responses at the boundary and drops stale-generation reads.
+  const filesCatalog = createSolidWorkspaceFilesCatalogStore({
+    host: props.host,
+    target: props.target,
+  });
+  const filePreview = createSolidWorkspaceFilePreviewStore({
+    host: props.host,
+    target: props.target,
+  });
+  const changesCatalog = createSolidWorkspaceChangesCatalogStore({
+    host: props.host,
+    target: props.target,
+  });
+  const changeDiff = createSolidWorkspaceChangeDiffStore({
+    host: props.host,
+    target: props.target,
+  });
+  const [filesExpandedIds, setFilesExpandedIds] = createSignal<
+    ReadonlySet<WorkspaceFileResourceId>
+  >(new Set<WorkspaceFileResourceId>());
+  const [filesSelectedId, setFilesSelectedId] = createSignal<WorkspaceFileResourceId | null>(null);
+  const [changesSelectedId, setChangesSelectedId] = createSignal<WorkspaceChangeResourceId | null>(
+    null,
+  );
+  let workspaceSurfaceKey = "";
+  createEffect(() => {
+    const target = props.target;
+    filesCatalog.setTarget(target);
+    filePreview.setTarget(target);
+    changesCatalog.setTarget(target);
+    changeDiff.setTarget(target);
+    const key = [target.daemon.instanceId, target.daemon.startedAt, target.workspaceName].join(
+      "\u0000",
+    );
+    if (key === workspaceSurfaceKey) return;
+    // A new workspace generation retires renderer-owned expansion and selection.
+    workspaceSurfaceKey = key;
+    setFilesExpandedIds(new Set<WorkspaceFileResourceId>());
+    setFilesSelectedId(null);
+    setChangesSelectedId(null);
+  });
+
+  const fileEntriesById = createMemo(() => collectFileCatalogs(filesCatalog.state()).entriesById);
+
+  // A directory whose incremental load failed must not spin forever: drop it and
+  // collapse it so the row returns to an openable, honest collapsed state.
+  createEffect(() => {
+    const directories = filesCatalog.state().directories;
+    const expanded = filesExpandedIds();
+    const failed: WorkspaceFileResourceId[] = [];
+    for (const [id, slot] of directories) {
+      if (!expanded.has(id)) continue;
+      if (
+        slot.status === "error" ||
+        (slot.status === "loaded" && slot.resource.status !== "ready")
+      ) {
+        failed.push(id);
+      }
+    }
+    if (failed.length === 0) return;
+    const next = new Set(expanded);
+    for (const id of failed) {
+      next.delete(id);
+      filesCatalog.dropDirectory(id);
+    }
+    setFilesExpandedIds(next);
+  });
+
+  const filesSurface = createMemo<FilesSurfaceProps>(() => ({
+    model: filesSurfaceModel(
+      filesCatalog.state(),
+      props.target.workspaceName,
+      filesExpandedIds(),
+      filesSelectedId(),
+    ),
+    preview: filePreviewSurfaceModel(filePreview.state(), fileEntriesById()),
+    onSelectFile: (id) => {
+      setFilesSelectedId(id);
+      if (fileEntriesById().get(id)?.kind === "file") filePreview.load(id);
+    },
+    onToggleDirectory: (id, next) => {
+      const current = new Set(filesExpandedIds());
+      if (next) {
+        current.add(id);
+        filesCatalog.loadDirectory(id);
+      } else {
+        current.delete(id);
+        filesCatalog.dropDirectory(id);
+      }
+      setFilesExpandedIds(current);
+    },
+    onRetry: () => filesCatalog.refresh(),
+    onRetryPreview: () => {
+      const id = filesSelectedId();
+      if (id && fileEntriesById().get(id)?.kind === "file") filePreview.load(id);
+    },
+  }));
+
+  const changesSurface = createMemo<ChangesSurfaceProps>(() => ({
+    model: changesSurfaceModel(changesCatalog.state(), changesSelectedId()),
+    diff: changeDiffSurfaceModel(changeDiff.state(), changeEntriesById(changesCatalog.state())),
+    onSelectChange: (id) => {
+      setChangesSelectedId(id);
+      changeDiff.load(id);
+    },
+    onRetry: () => changesCatalog.refresh(),
+    onRetryDiff: () => {
+      const id = changesSelectedId();
+      if (id) changeDiff.load(id);
+    },
+  }));
+
   const [mutationError, setMutationError] = createSignal<string | null>(null);
   const [appWindowMutationAvailable, setAppWindowMutationAvailable] = createSignal(false);
   const [appWindowMutationUnavailableReason, setAppWindowMutationUnavailableReason] = createSignal(
@@ -907,6 +1042,8 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             }
             appWindowMutationUnavailableReason={appWindowMutationUnavailableReason()}
             onRefreshResource={() => store.refresh()}
+            filesSurface={filesSurface()}
+            changesSurface={changesSurface()}
           />
           <Show when={notice()}>
             {(current) => (

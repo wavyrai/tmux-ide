@@ -92,6 +92,19 @@ describe("FilesAuthority.catalog", () => {
     expect(ignored.ignored).toBe(true);
   });
 
+  it("counts bounded root entries cheaply and reports null when unreadable", () => {
+    const root = makeRoot();
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "index.ts"), "1\n");
+    writeFileSync(join(root, "readme.md"), "# hi\n");
+    writeFileSync(join(root, ".env"), "SECRET=1\n");
+
+    const authority = new FilesAuthority(root, "alpha");
+    // src, readme.md, .env are three valid top-level entries.
+    expect(authority.rootEntryCount()).toBe(3);
+    expect(new FilesAuthority(join(root, "missing"), "alpha").rootEntryCount()).toBeNull();
+  });
+
   it("navigates into a subdirectory and issues resolvable child ids", () => {
     const root = makeRoot();
     mkdirSync(join(root, "pkg"));

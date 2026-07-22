@@ -119,7 +119,10 @@ import {
   projectApplicationShellResource,
   projectApplicationShellResourceV3,
   type ApplicationShellSessionFacts,
+  type ApplicationShellWorkspaceDockSummary,
 } from "./resources/application-shell.ts";
+import { FilesAuthority } from "./resources/workspace-files-authority.ts";
+import { ChangesAuthority } from "./resources/workspace-changes-authority.ts";
 import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
 import { daemonActionCommandRegistry } from "./actions/command-definitions.ts";
 import { MissionRepository } from "../lib/mission-repository.ts";
@@ -188,6 +191,28 @@ let projectStreamConnections = 0;
 function bearerToken(authHeader: string | undefined): string | null {
   if (!authHeader?.startsWith("Bearer ")) return null;
   return authHeader.slice("Bearer ".length);
+}
+
+/**
+ * Bounded Files/Changes counts for the V3 dock badges. Best-effort: a failed
+ * listing or non-repository maps to a zero count so the shell read never fails
+ * on a workspace surface that has its own honest unavailable state.
+ */
+function workspaceDockSummary(
+  projectDir: string,
+  workspaceName: string,
+): ApplicationShellWorkspaceDockSummary {
+  const safeCount = (read: () => number | null): number => {
+    try {
+      return read() ?? 0;
+    } catch {
+      return 0;
+    }
+  };
+  return {
+    fileCount: safeCount(() => new FilesAuthority(projectDir, workspaceName).rootEntryCount()),
+    changeCount: safeCount(() => new ChangesAuthority(projectDir, workspaceName).changeCount()),
+  };
 }
 
 function requireAuth(token: string | null, localBypassToken: string | null): MiddlewareHandler {
@@ -696,7 +721,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return c.json({
           version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
           daemon: daemonInstanceIdentity,
-          resource: projectApplicationShellResourceV3(session, appWindows, missionWorkspace),
+          resource: projectApplicationShellResourceV3(
+            session,
+            appWindows,
+            missionWorkspace,
+            workspaceDockSummary(session.dir, name),
+          ),
         } satisfies ApplicationShellResourceV3);
       }
       return c.json({

@@ -85,6 +85,22 @@ describe("ChangesAuthority.catalog", () => {
     expect(byPath.get("unstaged:tracked.txt")?.additions).toBe(1);
   });
 
+  it("counts working-tree changes cheaply and reports null outside a repo", () => {
+    const repo = initRepo();
+    writeFileSync(join(repo, "tracked.txt"), "one\n");
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "-qm", "init");
+    writeFileSync(join(repo, "tracked.txt"), "one\ntwo\n");
+    writeFileSync(join(repo, "staged.txt"), "new\n");
+    git(repo, "add", "staged.txt");
+    writeFileSync(join(repo, "untracked.txt"), "u\n");
+
+    expect(new ChangesAuthority(repo, "alpha").changeCount()).toBe(3);
+    const notRepo = mkdtempSync(join(tmpdir(), "not-a-repo-count-"));
+    scratch.push(notRepo);
+    expect(new ChangesAuthority(notRepo, "alpha").changeCount()).toBeNull();
+  });
+
   it("detects a staged rename with its origin path", () => {
     const repo = initRepo();
     writeFileSync(join(repo, "old.txt"), "stable content here\n");

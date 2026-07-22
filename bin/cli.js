@@ -28150,9 +28150,13 @@ function projectApplicationShellResource(session) {
   projectApplicationShellV1(parsed);
   return deepFreeze4(parsed);
 }
-function projectApplicationShellResourceV3(session, appWindows, missionWorkspace) {
+function projectApplicationShellResourceV3(session, appWindows, missionWorkspace, dockSummary) {
   const resource2 = projectApplicationShellResource(session);
-  const dock = missionWorkspace ? dockWithMissionWorkspace(resource2.dock, missionWorkspace) : resource2.dock;
+  const withMissions = missionWorkspace ? dockWithMissionWorkspace(resource2.dock, missionWorkspace) : resource2.dock;
+  const dock = dockWithWorkspaceSurfaces(
+    withMissions,
+    dockSummary ?? { fileCount: 0, changeCount: 0 }
+  );
   const parsed = ApplicationShellProjectionInputV3SchemaZ.parse({
     ...resource2,
     dock,
@@ -28161,6 +28165,28 @@ function projectApplicationShellResourceV3(session, appWindows, missionWorkspace
   });
   projectApplicationShellV1(parsed);
   return deepFreeze4(parsed);
+}
+function dockWithWorkspaceSurfaces(dock, summary) {
+  return {
+    ...dock,
+    tools: dock.tools.map((tool) => {
+      if (tool.id === "files" && tool.data.kind === "files") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: { ...tool.data, fileCount: summary.fileCount }
+        };
+      }
+      if (tool.id === "changes" && tool.data.kind === "changes") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: { ...tool.data, changeCount: summary.changeCount }
+        };
+      }
+      return tool;
+    })
+  };
 }
 function dockWithMissionWorkspace(dock, missionWorkspace) {
   const primary = missionWorkspace.status === "ready" ? missionWorkspace.missions[0] ?? null : null;
@@ -28213,6 +28239,1173 @@ var init_application_shell2 = __esm({
   "packages/daemon/src/command-center/resources/application-shell.ts"() {
     "use strict";
     init_src();
+  }
+});
+
+// packages/daemon/src/command-center/resources/workspace-resource-ids.ts
+import { createHash as createHash10 } from "node:crypto";
+function opaqueDigest(...parts) {
+  const hash = createHash10("sha256");
+  for (const part of parts) {
+    hash.update(part, "utf8");
+    hash.update("\0");
+  }
+  return hash.digest("base64url").slice(0, OPAQUE_DIGEST_LENGTH);
+}
+function fileResourceId(relativePath) {
+  return `file.${opaqueDigest("file", relativePath)}`;
+}
+function changeResourceId(group, relativePath) {
+  return `change.${opaqueDigest("change", group, relativePath)}`;
+}
+function filesRevision(seed) {
+  return `files-rev.${opaqueDigest("files-rev", seed)}`;
+}
+function changesRevision(seed) {
+  return `changes-rev.${opaqueDigest("changes-rev", seed)}`;
+}
+var OPAQUE_DIGEST_LENGTH, WorkspaceFileIdTable;
+var init_workspace_resource_ids = __esm({
+  "packages/daemon/src/command-center/resources/workspace-resource-ids.ts"() {
+    "use strict";
+    OPAQUE_DIGEST_LENGTH = 32;
+    WorkspaceFileIdTable = class {
+      byId = /* @__PURE__ */ new Map();
+      maxEntries;
+      constructor(maxEntries = 5e5) {
+        this.maxEntries = maxEntries;
+      }
+      /** The id for the workspace root (the empty relative path). */
+      rootId() {
+        return this.intern("");
+      }
+      /** Issue (or recall) the id for a relative path. */
+      intern(relativePath) {
+        const id = relativePath === "" ? fileResourceId("") : fileResourceId(relativePath);
+        if (!this.byId.has(id)) {
+          if (this.byId.size >= this.maxEntries) this.byId.clear();
+          this.byId.set(id, relativePath);
+        }
+        return id;
+      }
+      /** Resolve an id to its interned relative path, or null when unknown. */
+      resolve(id) {
+        return this.byId.get(id) ?? null;
+      }
+      get size() {
+        return this.byId.size;
+      }
+    };
+  }
+});
+
+// packages/daemon/src/command-center/resources/workspace-files-authority.ts
+import { lstatSync as lstatSync3, readdirSync as readdirSync5, readFileSync as readFileSync25, realpathSync as realpathSync10 } from "node:fs";
+import { basename as basename11, dirname as dirname27, resolve as resolvePath, sep as sep6 } from "node:path";
+import ignore from "ignore";
+function extensionOf(name) {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return null;
+  return name.slice(dot + 1).toLowerCase();
+}
+function languageHintFor(name) {
+  const ext = extensionOf(name);
+  return ext ? LANGUAGE_BY_EXTENSION.get(ext) ?? null : null;
+}
+function mediaTypeFor(name) {
+  const ext = extensionOf(name);
+  return ext ? MEDIA_TYPE_BY_EXTENSION.get(ext) ?? null : null;
+}
+function looksBinary(buffer) {
+  const scanLength = Math.min(buffer.length, 8192);
+  for (let i = 0; i < scanLength; i += 1) {
+    if (buffer[i] === 0) return true;
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    return false;
+  } catch {
+    return true;
+  }
+}
+function boundPreviewText(content) {
+  const totalLines = content.length === 0 ? 0 : content.split("\n").length;
+  if (totalLines <= WORKSPACE_FILE_PREVIEW_MAX_LINES) {
+    return { content, totalLines, truncated: false };
+  }
+  const kept = content.split("\n").slice(0, WORKSPACE_FILE_PREVIEW_MAX_LINES).join("\n");
+  return { content: kept, totalLines, truncated: true };
+}
+function direntKind(dirent) {
+  if (dirent.isSymbolicLink()) return { kind: "symlink" };
+  if (dirent.isDirectory()) return { kind: "directory" };
+  if (dirent.isFile()) return { kind: "file" };
+  return null;
+}
+function WorkspaceFileEntrySafe(entry) {
+  return WorkspaceResourceNameSchemaZ.safeParse(entry.name).success && entry.relativePath.length > 0;
+}
+function compareDirents(a, b) {
+  const aDir = a.isDirectory() && !a.isSymbolicLink();
+  const bDir = b.isDirectory() && !b.isSymbolicLink();
+  if (aDir !== bDir) return aDir ? -1 : 1;
+  const an = a.name.toLowerCase();
+  const bn = b.name.toLowerCase();
+  if (an < bn) return -1;
+  if (an > bn) return 1;
+  if (a.name < b.name) return -1;
+  if (a.name > b.name) return 1;
+  return 0;
+}
+function directoryHasChildren(absDir) {
+  try {
+    return readdirSync5(absDir).length > 0;
+  } catch {
+    return false;
+  }
+}
+function buildIgnore(root) {
+  const ig = ignore();
+  try {
+    ig.add(readFileSync25(resolvePath(root, ".gitignore"), "utf8"));
+  } catch {
+  }
+  return ig;
+}
+function safeIgnores(ig, relativePath) {
+  if (relativePath === "" || relativePath === "/") return false;
+  try {
+    return ig.ignores(relativePath.replace(/\/+$/, "") || relativePath);
+  } catch {
+    return false;
+  }
+}
+function safeName(value, fallback) {
+  return WorkspaceResourceNameSchemaZ.safeParse(value).success ? value : fallback;
+}
+function isWithin2(root, candidate) {
+  if (candidate === root) return true;
+  const prefix = root.endsWith(sep6) ? root : `${root}${sep6}`;
+  return candidate.startsWith(prefix);
+}
+var ALWAYS_IGNORED_NAMES, LANGUAGE_BY_EXTENSION, MEDIA_TYPE_BY_EXTENSION, FilesAuthority;
+var init_workspace_files_authority = __esm({
+  "packages/daemon/src/command-center/resources/workspace-files-authority.ts"() {
+    "use strict";
+    init_src();
+    init_workspace_resource_ids();
+    ALWAYS_IGNORED_NAMES = /* @__PURE__ */ new Set([
+      "node_modules",
+      ".git",
+      ".svn",
+      ".hg",
+      "dist",
+      "build",
+      "out",
+      ".next",
+      ".turbo",
+      ".cache",
+      "__pycache__",
+      "coverage",
+      ".nyc_output",
+      "target",
+      "vendor",
+      "bower_components"
+    ]);
+    LANGUAGE_BY_EXTENSION = /* @__PURE__ */ new Map([
+      ["ts", "typescript"],
+      ["tsx", "typescript"],
+      ["js", "javascript"],
+      ["jsx", "javascript"],
+      ["mjs", "javascript"],
+      ["cjs", "javascript"],
+      ["json", "json"],
+      ["md", "markdown"],
+      ["css", "css"],
+      ["scss", "scss"],
+      ["html", "html"],
+      ["yml", "yaml"],
+      ["yaml", "yaml"],
+      ["toml", "toml"],
+      ["sh", "shell"],
+      ["bash", "shell"],
+      ["zsh", "shell"],
+      ["py", "python"],
+      ["rs", "rust"],
+      ["go", "go"],
+      ["rb", "ruby"],
+      ["java", "java"],
+      ["c", "c"],
+      ["h", "c"],
+      ["cpp", "cpp"],
+      ["sql", "sql"]
+    ]);
+    MEDIA_TYPE_BY_EXTENSION = /* @__PURE__ */ new Map([
+      ["png", "image/png"],
+      ["jpg", "image/jpeg"],
+      ["jpeg", "image/jpeg"],
+      ["gif", "image/gif"],
+      ["webp", "image/webp"],
+      ["svg", "image/svg+xml"],
+      ["ico", "image/x-icon"],
+      ["pdf", "application/pdf"],
+      ["zip", "application/zip"],
+      ["gz", "application/gzip"],
+      ["wasm", "application/wasm"],
+      ["woff", "font/woff"],
+      ["woff2", "font/woff2"],
+      ["ttf", "font/ttf"],
+      ["mp4", "video/mp4"],
+      ["mp3", "audio/mpeg"]
+    ]);
+    FilesAuthority = class {
+      constructor(root, workspaceName) {
+        this.root = root;
+        this.workspaceName = workspaceName;
+      }
+      ids = new WorkspaceFileIdTable();
+      catalog(directoryId) {
+        let realRoot;
+        try {
+          realRoot = realpathSync10(this.root);
+        } catch {
+          return this.catalogUnavailable(
+            "workspace-unavailable",
+            "Workspace root is unavailable.",
+            true
+          );
+        }
+        const rootId = this.ids.rootId();
+        const targetId = directoryId && directoryId.length > 0 ? directoryId : rootId;
+        let relPath;
+        if (targetId === rootId) {
+          relPath = "";
+        } else {
+          const resolved2 = this.ids.resolve(targetId);
+          if (resolved2 === null) {
+            return this.catalogUnavailable(
+              "directory-not-found",
+              "The requested directory is unknown."
+            );
+          }
+          relPath = resolved2;
+        }
+        const absCandidate = relPath === "" ? realRoot : resolvePath(realRoot, relPath);
+        let absReal;
+        try {
+          absReal = realpathSync10(absCandidate);
+        } catch (error) {
+          const code = error.code;
+          if (code === "EACCES" || code === "EPERM") {
+            return this.catalogUnavailable("permission-denied", "The directory cannot be read.");
+          }
+          return this.catalogUnavailable(
+            "directory-not-found",
+            "The requested directory is unavailable."
+          );
+        }
+        if (!isWithin2(realRoot, absReal)) {
+          return this.catalogUnavailable(
+            "outside-workspace",
+            "The directory is outside the workspace."
+          );
+        }
+        let dirents;
+        try {
+          const stat = lstatSync3(absReal);
+          if (!stat.isDirectory()) {
+            return this.catalogUnavailable("directory-not-found", "The resource is not a directory.");
+          }
+          dirents = readdirSync5(absReal, { withFileTypes: true });
+        } catch (error) {
+          const code = error.code;
+          if (code === "EACCES" || code === "EPERM") {
+            return this.catalogUnavailable("permission-denied", "The directory cannot be read.");
+          }
+          return this.catalogUnavailable("io-error", "The directory could not be listed.");
+        }
+        const ig = buildIgnore(realRoot);
+        const sorted = [...dirents].sort(compareDirents);
+        const totalEntries = sorted.length;
+        const entries = [];
+        for (const dirent of sorted) {
+          if (entries.length >= WORKSPACE_FILES_CATALOG_MAX_ENTRIES) break;
+          const kindInfo = direntKind(dirent);
+          if (kindInfo === null) continue;
+          const name = dirent.name;
+          if (!WorkspaceResourceNameSchemaZ.safeParse(name).success) continue;
+          const childRel = relPath === "" ? name : `${relPath}/${name}`;
+          const childAbs = resolvePath(absReal, name);
+          const ignorePath = kindInfo.kind === "directory" ? `${childRel}/` : childRel;
+          const ignored = ALWAYS_IGNORED_NAMES.has(name) || safeIgnores(ig, ignorePath) || safeIgnores(ig, childRel);
+          const entry = {
+            id: this.ids.intern(childRel),
+            parentId: targetId,
+            name,
+            relativePath: childRel,
+            kind: kindInfo.kind,
+            hidden: name.startsWith("."),
+            ignored,
+            hasChildren: kindInfo.kind === "directory" && directoryHasChildren(childAbs),
+            gitStatus: null
+          };
+          if (WorkspaceFileEntrySafe(entry)) entries.push(entry);
+        }
+        const truncated = totalEntries > entries.length;
+        const rootLabel = safeName(basename11(realRoot), "workspace");
+        const revision = filesRevision(
+          JSON.stringify({ dir: relPath, entries: entries.map((e) => `${e.name}:${e.kind}`) })
+        );
+        const breadcrumbs = this.buildBreadcrumbs(rootId, rootLabel, relPath);
+        if (breadcrumbs === null) {
+          return this.catalogUnavailable("io-error", "The directory path is too deep to browse.");
+        }
+        const directory = relPath === "" ? { id: rootId, name: rootLabel, relativePath: null, parentId: null } : {
+          id: targetId,
+          name: safeName(basename11(relPath), rootLabel),
+          relativePath: relPath,
+          parentId: this.parentId(rootId, relPath)
+        };
+        const candidate = {
+          status: "ready",
+          workspaceName: this.workspaceName,
+          revision,
+          rootId,
+          directory,
+          breadcrumbs,
+          entries,
+          totalEntries,
+          truncated
+        };
+        const parsed = WorkspaceFilesCatalogResourceV1SchemaZ.safeParse(candidate);
+        if (!parsed.success) {
+          return this.catalogUnavailable("io-error", "The directory listing could not be produced.");
+        }
+        return parsed.data;
+      }
+      /**
+       * A cheap bounded count of the workspace root's direct entries, for the dock
+       * badge only. One `readdir` — no id interning, ignore parsing, or per-child
+       * `hasChildren` probes. Returns null when the root cannot be listed so the
+       * caller can fall back to a zero count rather than a fabricated one.
+       */
+      rootEntryCount() {
+        let realRoot;
+        try {
+          realRoot = realpathSync10(this.root);
+        } catch {
+          return null;
+        }
+        let dirents;
+        try {
+          if (!lstatSync3(realRoot).isDirectory()) return null;
+          dirents = readdirSync5(realRoot, { withFileTypes: true });
+        } catch {
+          return null;
+        }
+        let count = 0;
+        for (const dirent of dirents) {
+          if (direntKind(dirent) === null) continue;
+          if (!WorkspaceResourceNameSchemaZ.safeParse(dirent.name).success) continue;
+          count += 1;
+          if (count >= WORKSPACE_FILES_CATALOG_MAX_ENTRIES) break;
+        }
+        return count;
+      }
+      preview(fileId) {
+        let realRoot;
+        try {
+          realRoot = realpathSync10(this.root);
+        } catch {
+          return this.previewWorkspaceUnavailable(fileId);
+        }
+        const relPath = this.ids.resolve(fileId);
+        if (relPath === null || relPath === "") {
+          return this.previewUnavailable(fileId, "file-not-found", "The requested file is unknown.");
+        }
+        const abs = resolvePath(realRoot, relPath);
+        let stat;
+        try {
+          stat = lstatSync3(abs);
+        } catch (error) {
+          const code = error.code;
+          if (code === "EACCES" || code === "EPERM") {
+            return this.previewUnavailable(fileId, "permission-denied", "The file cannot be read.");
+          }
+          return this.previewUnavailable(
+            fileId,
+            "file-not-found",
+            "The requested file is unavailable."
+          );
+        }
+        if (stat.isSymbolicLink()) {
+          return this.previewUnavailable(
+            fileId,
+            "symlink-unsupported",
+            "Symlinks cannot be previewed."
+          );
+        }
+        let realParent;
+        try {
+          realParent = realpathSync10(dirname27(abs));
+        } catch {
+          return this.previewUnavailable(
+            fileId,
+            "file-not-found",
+            "The requested file is unavailable."
+          );
+        }
+        if (!isWithin2(realRoot, resolvePath(realParent, basename11(abs)))) {
+          return this.previewUnavailable(
+            fileId,
+            "outside-workspace",
+            "The file is outside the workspace."
+          );
+        }
+        if (stat.isDirectory() || !stat.isFile()) {
+          return this.previewUnavailable(fileId, "not-a-file", "The resource is not a regular file.");
+        }
+        const name = basename11(relPath);
+        const catalogRevision = filesRevision(`${relPath}:${stat.size}:${stat.mtimeMs}`);
+        const totalBytes = stat.size;
+        if (totalBytes > WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS) {
+          return this.previewParse(fileId, {
+            status: "too-large",
+            workspaceName: this.workspaceName,
+            catalogRevision,
+            fileId,
+            name,
+            relativePath: relPath,
+            totalBytes,
+            limitBytes: WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS
+          });
+        }
+        let buffer;
+        try {
+          buffer = readFileSync25(abs);
+        } catch (error) {
+          const code = error.code;
+          if (code === "EACCES" || code === "EPERM") {
+            return this.previewUnavailable(fileId, "permission-denied", "The file cannot be read.");
+          }
+          return this.previewUnavailable(fileId, "io-error", "The file could not be read.");
+        }
+        if (looksBinary(buffer)) {
+          return this.previewParse(fileId, {
+            status: "binary",
+            workspaceName: this.workspaceName,
+            catalogRevision,
+            fileId,
+            name,
+            relativePath: relPath,
+            totalBytes,
+            mediaType: mediaTypeFor(name)
+          });
+        }
+        const decoded = buffer.toString("utf8");
+        const bounded2 = boundPreviewText(decoded);
+        return this.previewParse(fileId, {
+          status: "ready",
+          workspaceName: this.workspaceName,
+          catalogRevision,
+          fileId,
+          name,
+          relativePath: relPath,
+          encoding: "utf-8",
+          languageHint: languageHintFor(name),
+          content: bounded2.content,
+          totalBytes,
+          totalLines: bounded2.totalLines,
+          truncated: bounded2.truncated
+        });
+      }
+      buildBreadcrumbs(rootId, rootLabel, relPath) {
+        const crumbs = [{ id: rootId, label: rootLabel }];
+        if (relPath === "") return crumbs;
+        const segments = relPath.split("/");
+        if (segments.length + 1 > WORKSPACE_FILES_MAX_BREADCRUMBS) return null;
+        let cumulative = "";
+        for (const segment of segments) {
+          cumulative = cumulative === "" ? segment : `${cumulative}/${segment}`;
+          crumbs.push({ id: this.ids.intern(cumulative), label: safeName(segment, rootLabel) });
+        }
+        return crumbs;
+      }
+      parentId(rootId, relPath) {
+        const segments = relPath.split("/");
+        segments.pop();
+        const parentRel = segments.join("/");
+        return parentRel === "" ? rootId : this.ids.intern(parentRel);
+      }
+      catalogUnavailable(reason, message, retryable = false) {
+        return WorkspaceFilesCatalogResourceV1SchemaZ.parse({
+          status: "unavailable",
+          workspaceName: this.workspaceName,
+          reason,
+          message,
+          retryable
+        });
+      }
+      previewUnavailable(fileId, reason, message, retryable = false) {
+        return WorkspaceFilePreviewResourceV1SchemaZ.parse({
+          status: "unavailable",
+          workspaceName: this.workspaceName,
+          catalogRevision: filesRevision(`unavailable:${fileId}`),
+          fileId,
+          reason,
+          message,
+          retryable
+        });
+      }
+      previewWorkspaceUnavailable(fileId) {
+        return this.previewUnavailable(
+          fileId,
+          "workspace-unavailable",
+          "Workspace root is unavailable.",
+          true
+        );
+      }
+      previewParse(fileId, candidate) {
+        const parsed = WorkspaceFilePreviewResourceV1SchemaZ.safeParse(candidate);
+        if (!parsed.success) {
+          return this.previewUnavailable(fileId, "io-error", "The file preview could not be produced.");
+        }
+        return parsed.data;
+      }
+    };
+  }
+});
+
+// packages/daemon/src/command-center/resources/workspace-changes-git.ts
+function splitNul(buffer) {
+  const tokens = [];
+  let start2 = 0;
+  for (let i = 0; i < buffer.length; i += 1) {
+    if (buffer[i] === 0) {
+      tokens.push(buffer.toString("utf8", start2, i));
+      start2 = i + 1;
+    }
+  }
+  if (start2 < buffer.length) tokens.push(buffer.toString("utf8", start2));
+  return tokens;
+}
+function mapStatusLetter(letter) {
+  switch (letter) {
+    case "M":
+      return "modified";
+    case "A":
+      return "added";
+    case "D":
+      return "deleted";
+    case "R":
+      return "renamed";
+    case "C":
+      return "copied";
+    case "T":
+      return "type-changed";
+    default:
+      return null;
+  }
+}
+function parseStatusV2(buffer) {
+  const tokens = splitNul(buffer);
+  let branch = null;
+  let detached = false;
+  const changes = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token.length === 0) continue;
+    if (token.startsWith("# ")) {
+      if (token.startsWith("# branch.head ")) {
+        const value = token.slice("# branch.head ".length);
+        if (value === "(detached)") {
+          detached = true;
+          branch = null;
+        } else {
+          branch = value;
+        }
+      }
+      continue;
+    }
+    const type = token[0];
+    if (type === "1" || type === "2") {
+      const fields = token.split(" ");
+      const xy = fields[1] ?? "..";
+      const pathFrom = type === "1" ? 8 : 9;
+      const path2 = fields.slice(pathFrom).join(" ");
+      let originPath = null;
+      if (type === "2") {
+        originPath = tokens[i + 1] ?? null;
+        i += 1;
+      }
+      const x = xy[0] ?? ".";
+      const y = xy[1] ?? ".";
+      if (x !== ".") {
+        const status2 = mapStatusLetter(x);
+        if (status2) {
+          changes.push({
+            group: "staged",
+            status: status2,
+            path: path2,
+            originPath: status2 === "renamed" || status2 === "copied" ? originPath : null
+          });
+        }
+      }
+      if (y !== ".") {
+        const status2 = mapStatusLetter(y);
+        if (status2) {
+          changes.push({
+            group: "unstaged",
+            status: status2,
+            path: path2,
+            originPath: status2 === "renamed" || status2 === "copied" ? originPath : null
+          });
+        }
+      }
+    } else if (type === "u") {
+      const fields = token.split(" ");
+      const path2 = fields.slice(10).join(" ");
+      if (path2.length > 0) {
+        changes.push({ group: "unstaged", status: "conflicted", path: path2, originPath: null });
+      }
+    } else if (type === "?") {
+      const path2 = token.slice(2);
+      if (path2.length > 0) {
+        changes.push({ group: "untracked", status: "untracked", path: path2, originPath: null });
+      }
+    }
+  }
+  return { branch, detached, changes };
+}
+function parseNumstatZ(buffer) {
+  const tokens = splitNul(buffer);
+  const map = /* @__PURE__ */ new Map();
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token.length === 0) continue;
+    const parts = token.split("	");
+    if (parts.length < 3) continue;
+    const addRaw = parts[0];
+    const delRaw = parts[1];
+    const inlinePath = parts.slice(2).join("	");
+    let path2;
+    if (inlinePath.length > 0) {
+      path2 = inlinePath;
+    } else {
+      i += 1;
+      path2 = tokens[i + 1] ?? "";
+      i += 1;
+      if (path2.length === 0) continue;
+    }
+    const binary = addRaw === "-" || delRaw === "-";
+    map.set(path2, {
+      additions: binary ? null : Number.parseInt(addRaw, 10) || 0,
+      deletions: binary ? null : Number.parseInt(delRaw, 10) || 0,
+      binary
+    });
+  }
+  return map;
+}
+function parseUnifiedDiff(patch) {
+  const lines = patch.split("\n");
+  const hunks = [];
+  let lineTruncated = false;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.startsWith("Binary files ") || line === "GIT binary patch") {
+      return { binary: true, hunks: [], lineTruncated: false };
+    }
+    const match = HUNK_HEADER.exec(line);
+    if (!match) {
+      i += 1;
+      continue;
+    }
+    const oldStart = Number.parseInt(match[1], 10);
+    const newStart = Number.parseInt(match[2], 10);
+    const header = line.slice(0, 255);
+    const hunkLines = [];
+    let oldNo = oldStart;
+    let newNo = newStart;
+    i += 1;
+    while (i < lines.length) {
+      const raw = lines[i];
+      if (raw.startsWith("@@") || raw.startsWith("diff --git")) break;
+      if (raw.startsWith("\\")) {
+        i += 1;
+        continue;
+      }
+      const marker = raw[0];
+      if (marker !== " " && marker !== "+" && marker !== "-") break;
+      let content = raw.slice(1);
+      if (content.length > WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH) {
+        content = content.slice(0, WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH);
+        lineTruncated = true;
+      }
+      if (marker === " ") {
+        hunkLines.push({ kind: "context", content, oldLine: oldNo, newLine: newNo });
+        oldNo += 1;
+        newNo += 1;
+      } else if (marker === "+") {
+        hunkLines.push({ kind: "insert", content, oldLine: null, newLine: newNo });
+        newNo += 1;
+      } else {
+        hunkLines.push({ kind: "delete", content, oldLine: oldNo, newLine: null });
+        oldNo += 1;
+      }
+      i += 1;
+    }
+    if (hunkLines.length > 0) {
+      hunks.push({ header: header || "@@", oldStart, newStart, lines: hunkLines });
+    }
+  }
+  return { binary: false, hunks, lineTruncated };
+}
+var HUNK_HEADER;
+var init_workspace_changes_git = __esm({
+  "packages/daemon/src/command-center/resources/workspace-changes-git.ts"() {
+    "use strict";
+    init_src();
+    HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u;
+  }
+});
+
+// packages/daemon/src/command-center/resources/workspace-changes-authority.ts
+import { spawnSync } from "node:child_process";
+import { readFileSync as readFileSync26, realpathSync as realpathSync11, statSync as statSync11 } from "node:fs";
+import { basename as basename12, isAbsolute as isAbsolute12, relative as relative4, resolve as resolvePath2 } from "node:path";
+function runGit(args, cwd) {
+  const result = spawnSync("git", args, {
+    cwd,
+    timeout: GIT_TIMEOUT_MS2,
+    maxBuffer: GIT_MAX_BUFFER,
+    windowsHide: true,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" }
+  });
+  if (result.error) {
+    return {
+      ok: false,
+      status: null,
+      stdout: Buffer.alloc(0),
+      stderr: result.error.message,
+      errorCode: result.error.code ?? null
+    };
+  }
+  return {
+    ok: result.status === 0,
+    status: result.status,
+    stdout: result.stdout ?? Buffer.alloc(0),
+    stderr: (result.stderr ?? Buffer.alloc(0)).toString("utf8"),
+    errorCode: null
+  };
+}
+function mapCatalogReasonToDiff(reason) {
+  switch (reason) {
+    case "workspace-unavailable":
+      return "workspace-unavailable";
+    case "not-a-git-repository":
+      return "not-a-git-repository";
+    case "permission-denied":
+      return "permission-denied";
+    case "resource-changed":
+      return "resource-changed";
+    default:
+      return "io-error";
+  }
+}
+function confineToWorkspace(realRoot, repoRoot, gitPath) {
+  if (gitPath.length === 0 || gitPath.includes("\0")) return null;
+  const abs = resolvePath2(repoRoot, gitPath);
+  const rel = relative4(realRoot, abs);
+  if (rel.length === 0 || rel.startsWith("..") || isAbsolute12(rel)) return null;
+  const display = rel.split(/[\\/]+/u).join("/");
+  return WorkspaceRelativeDisplayPathSchemaZ.safeParse(display).success ? display : null;
+}
+function buildChangeEntry(raw, displayPath, originPath, counts) {
+  const carriesOrigin = raw.status === "renamed" || raw.status === "copied";
+  const candidate = {
+    id: changeResourceId(raw.group, displayPath),
+    group: raw.group,
+    status: raw.status,
+    name: basename12(displayPath),
+    relativePath: displayPath,
+    originPath: carriesOrigin ? originPath ?? null : null,
+    binary: counts.binary,
+    additions: counts.binary ? null : counts.additions ?? 0,
+    deletions: counts.binary ? null : counts.deletions ?? 0
+  };
+  if (candidate.originPath !== null && candidate.originPath === candidate.relativePath) {
+    candidate.originPath = null;
+  }
+  if (carriesOrigin && candidate.originPath === null) return null;
+  const parsed = WorkspaceChangeEntrySchemaZ.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
+function boundHunks(hunks) {
+  const totalLines = hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
+  const kept = [];
+  let rendered = 0;
+  let truncated = false;
+  for (const hunk of hunks) {
+    if (kept.length >= WORKSPACE_CHANGE_DIFF_MAX_HUNKS) {
+      truncated = true;
+      break;
+    }
+    let lines = hunk.lines;
+    if (lines.length > WORKSPACE_CHANGE_DIFF_MAX_LINES) {
+      lines = lines.slice(0, WORKSPACE_CHANGE_DIFF_MAX_LINES);
+      truncated = true;
+    }
+    if (rendered + lines.length > DIFF_TOTAL_LINE_BUDGET) {
+      const room = DIFF_TOTAL_LINE_BUDGET - rendered;
+      if (room <= 0) {
+        truncated = true;
+        break;
+      }
+      lines = lines.slice(0, room);
+      truncated = true;
+    }
+    if (lines.length === 0) continue;
+    const oldLines = lines.filter((l) => l.kind !== "insert").length;
+    const newLines = lines.filter((l) => l.kind !== "delete").length;
+    kept.push({
+      header: hunk.header.slice(0, 255) || "@@",
+      oldStart: oldLines > 0 ? hunk.oldStart : 0,
+      oldLines,
+      newStart: newLines > 0 ? hunk.newStart : 0,
+      newLines,
+      lines: lines.map((l) => ({ ...l }))
+    });
+    rendered += lines.length;
+  }
+  return {
+    hunks: kept,
+    totalLines,
+    truncated: truncated || hunks.length > kept.length || totalLines > rendered
+  };
+}
+var DIFF_MAX_BYTES, DIFF_TOTAL_LINE_BUDGET, GIT_TIMEOUT_MS2, GIT_MAX_BUFFER, ChangesAuthority;
+var init_workspace_changes_authority = __esm({
+  "packages/daemon/src/command-center/resources/workspace-changes-authority.ts"() {
+    "use strict";
+    init_src();
+    init_workspace_files_authority();
+    init_workspace_resource_ids();
+    init_workspace_changes_git();
+    DIFF_MAX_BYTES = 2 * 1024 * 1024;
+    DIFF_TOTAL_LINE_BUDGET = 2e4;
+    GIT_TIMEOUT_MS2 = 15e3;
+    GIT_MAX_BUFFER = 64 * 1024 * 1024;
+    ChangesAuthority = class {
+      constructor(root, workspaceName) {
+        this.root = root;
+        this.workspaceName = workspaceName;
+      }
+      catalog() {
+        const context = this.resolveRepo();
+        if ("reason" in context) {
+          return this.catalogUnavailable(context.reason, context.message, context.retryable);
+        }
+        const computed = this.computeChanges(context.root, context.repoRoot);
+        if ("reason" in computed) {
+          return this.catalogUnavailable(computed.reason, computed.message, computed.retryable);
+        }
+        const candidate = {
+          status: "ready",
+          workspaceName: this.workspaceName,
+          revision: computed.revision,
+          branch: computed.detached ? null : computed.branch,
+          detached: computed.detached,
+          entries: computed.resolved.map((r) => r.entry),
+          totalEntries: computed.totalEntries,
+          truncated: computed.truncated
+        };
+        const parsed = WorkspaceChangesCatalogResourceV1SchemaZ.safeParse(candidate);
+        if (!parsed.success) {
+          return this.catalogUnavailable("io-error", "The changes list could not be produced.");
+        }
+        return parsed.data;
+      }
+      /**
+       * A cheap bounded count of working-tree changes, for the dock badge only. It
+       * runs a single `git status` (no per-change numstat or diff) and applies the
+       * same workspace confinement and per-group dedupe as the full catalog.
+       * Returns null when the repository cannot be read so the caller can fall back
+       * to a zero count rather than a fabricated one.
+       */
+      changeCount() {
+        const context = this.resolveRepo();
+        if ("reason" in context) return null;
+        const status2 = runGit(
+          ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"],
+          context.repoRoot
+        );
+        if (!status2.ok) return null;
+        const parsed = parseStatusV2(status2.stdout);
+        const seen = /* @__PURE__ */ new Set();
+        let count = 0;
+        for (const raw of parsed.changes) {
+          const displayPath = confineToWorkspace(context.root, context.repoRoot, raw.path);
+          if (displayPath === null) continue;
+          if (raw.originPath !== null && confineToWorkspace(context.root, context.repoRoot, raw.originPath) === null) {
+            continue;
+          }
+          const key = `${raw.group} ${displayPath}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          count += 1;
+          if (count >= WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES) break;
+        }
+        return count;
+      }
+      diff(changeId) {
+        const context = this.resolveRepo();
+        if ("reason" in context) {
+          return this.diffUnavailable(
+            changeId,
+            mapCatalogReasonToDiff(context.reason),
+            context.message
+          );
+        }
+        const computed = this.computeChanges(context.root, context.repoRoot);
+        if ("reason" in computed) {
+          return this.diffUnavailable(
+            changeId,
+            mapCatalogReasonToDiff(computed.reason),
+            computed.message
+          );
+        }
+        const match = computed.resolved.find((r) => r.entry.id === changeId);
+        if (!match) {
+          return this.diffUnavailable(changeId, "change-not-found", "The requested change is unknown.");
+        }
+        const base = {
+          workspaceName: this.workspaceName,
+          changesRevision: computed.revision,
+          changeId,
+          group: match.entry.group,
+          relativePath: match.entry.relativePath,
+          originPath: match.entry.originPath
+        };
+        if (match.entry.binary) {
+          return this.diffParse(changeId, {
+            status: "binary",
+            ...base,
+            oldBytes: null,
+            newBytes: null
+          });
+        }
+        if (match.entry.group === "untracked") {
+          return this.untrackedDiff(changeId, base, resolvePath2(context.repoRoot, match.gitPath));
+        }
+        const args = match.entry.group === "staged" ? ["diff", "--cached", "-M", "-C", "--no-color", "--", match.gitPath] : ["diff", "-M", "-C", "--no-color", "--", match.gitPath];
+        const result = runGit(args, context.repoRoot);
+        if (!result.ok) {
+          return this.diffUnavailable(changeId, "io-error", "The diff could not be produced.");
+        }
+        if (result.stdout.length > DIFF_MAX_BYTES) {
+          return this.diffParse(changeId, {
+            status: "too-large",
+            ...base,
+            totalBytes: result.stdout.length,
+            limitBytes: DIFF_MAX_BYTES
+          });
+        }
+        const parsed = parseUnifiedDiff(result.stdout.toString("utf8"));
+        if (parsed.binary) {
+          return this.diffParse(changeId, {
+            status: "binary",
+            ...base,
+            oldBytes: null,
+            newBytes: null
+          });
+        }
+        return this.readyDiff(changeId, base, parsed.hunks, parsed.lineTruncated);
+      }
+      untrackedDiff(changeId, base, absPath) {
+        let buffer;
+        try {
+          const stat = statSync11(absPath);
+          if (stat.size > DIFF_MAX_BYTES) {
+            return this.diffParse(changeId, {
+              status: "too-large",
+              ...base,
+              totalBytes: stat.size,
+              limitBytes: DIFF_MAX_BYTES
+            });
+          }
+          buffer = readFileSync26(absPath);
+        } catch {
+          return this.diffUnavailable(changeId, "io-error", "The file could not be read.");
+        }
+        if (looksBinary(buffer)) {
+          return this.diffParse(changeId, {
+            status: "binary",
+            ...base,
+            oldBytes: 0,
+            newBytes: buffer.length
+          });
+        }
+        const text = buffer.toString("utf8");
+        const rawLines = text.split("\n");
+        if (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") rawLines.pop();
+        const synthetic = {
+          header: `@@ -0,0 +1,${rawLines.length} @@`,
+          oldStart: 0,
+          newStart: 1,
+          lines: rawLines.map((content, index) => ({
+            kind: "insert",
+            content: content.slice(0, 4096),
+            oldLine: null,
+            newLine: index + 1
+          }))
+        };
+        return this.readyDiff(changeId, base, rawLines.length === 0 ? [] : [synthetic], false);
+      }
+      readyDiff(changeId, base, hunks, lineTruncated) {
+        const bounded2 = boundHunks(hunks);
+        const candidate = {
+          status: "ready",
+          ...base,
+          hunks: bounded2.hunks,
+          totalHunks: hunks.length,
+          totalLines: bounded2.totalLines,
+          truncated: bounded2.truncated || lineTruncated
+        };
+        return this.diffParse(changeId, candidate);
+      }
+      resolveRepo() {
+        let realRoot;
+        try {
+          realRoot = realpathSync11(this.root);
+        } catch {
+          return {
+            reason: "workspace-unavailable",
+            message: "Workspace root is unavailable.",
+            retryable: true
+          };
+        }
+        const top = runGit(["rev-parse", "--show-toplevel"], realRoot);
+        if (top.errorCode === "ENOENT") {
+          return { reason: "io-error", message: "git is not available.", retryable: false };
+        }
+        if (top.errorCode === "EACCES" || top.errorCode === "EPERM") {
+          return {
+            reason: "permission-denied",
+            message: "The repository cannot be read.",
+            retryable: false
+          };
+        }
+        if (!top.ok) {
+          return {
+            reason: "not-a-git-repository",
+            message: "The workspace is not a git repository.",
+            retryable: false
+          };
+        }
+        const repoRoot = top.stdout.toString("utf8").trim();
+        if (repoRoot.length === 0) {
+          return {
+            reason: "not-a-git-repository",
+            message: "The workspace is not a git repository.",
+            retryable: false
+          };
+        }
+        return { root: realRoot, repoRoot };
+      }
+      computeChanges(realRoot, repoRoot) {
+        const status2 = runGit(
+          ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"],
+          repoRoot
+        );
+        if (!status2.ok) {
+          return { reason: "io-error", message: "Change status could not be read.", retryable: true };
+        }
+        const parsed = parseStatusV2(status2.stdout);
+        const stagedNumstat = parseNumstatZ(
+          runGit(["diff", "--cached", "--numstat", "-z", "-M", "-C"], repoRoot).stdout
+        );
+        const unstagedNumstat = parseNumstatZ(
+          runGit(["diff", "--numstat", "-z", "-M", "-C"], repoRoot).stdout
+        );
+        const resolved2 = [];
+        const seen = /* @__PURE__ */ new Set();
+        let totalEntries = 0;
+        for (const raw of parsed.changes) {
+          const displayPath = confineToWorkspace(realRoot, repoRoot, raw.path);
+          if (displayPath === null) continue;
+          const originPath = raw.originPath === null ? null : confineToWorkspace(realRoot, repoRoot, raw.originPath);
+          if (raw.originPath !== null && originPath === null) continue;
+          const dedupeKey = `${raw.group}\0${displayPath}`;
+          if (seen.has(dedupeKey)) continue;
+          const counts = this.countsFor(raw, repoRoot, stagedNumstat, unstagedNumstat);
+          const entry = buildChangeEntry(raw, displayPath, originPath, counts);
+          if (entry === null) continue;
+          seen.add(dedupeKey);
+          totalEntries += 1;
+          if (resolved2.length < WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES) {
+            resolved2.push({ entry, gitPath: raw.path });
+          }
+        }
+        const revision = changesRevision(
+          JSON.stringify({
+            branch: parsed.branch,
+            detached: parsed.detached,
+            ids: resolved2.map((r) => r.entry.id)
+          })
+        );
+        return {
+          branch: parsed.branch && parsed.branch.length <= WORKSPACE_CHANGE_BRANCH_MAX_LENGTH ? parsed.branch : null,
+          detached: parsed.detached,
+          revision,
+          resolved: resolved2,
+          totalEntries,
+          truncated: totalEntries > resolved2.length
+        };
+      }
+      countsFor(raw, repoRoot, staged, unstaged) {
+        if (raw.group === "untracked") {
+          try {
+            const buffer = readFileSync26(resolvePath2(repoRoot, raw.path));
+            if (looksBinary(buffer)) return { additions: null, deletions: null, binary: true };
+            const text = buffer.toString("utf8");
+            const lines = text.length === 0 ? 0 : text.replace(/\n$/u, "").split("\n").length;
+            return { additions: lines, deletions: 0, binary: false };
+          } catch {
+            return { additions: 0, deletions: 0, binary: false };
+          }
+        }
+        const source = raw.group === "staged" ? staged : unstaged;
+        return source.get(raw.path) ?? { additions: 0, deletions: 0, binary: false };
+      }
+      catalogUnavailable(reason, message, retryable = false) {
+        return WorkspaceChangesCatalogResourceV1SchemaZ.parse({
+          status: "unavailable",
+          workspaceName: this.workspaceName,
+          reason,
+          message,
+          retryable
+        });
+      }
+      diffUnavailable(changeId, reason, message, retryable = false) {
+        return WorkspaceChangeDiffResourceV1SchemaZ.parse({
+          status: "unavailable",
+          workspaceName: this.workspaceName,
+          changesRevision: changesRevision(`unavailable:${changeId}`),
+          changeId,
+          reason,
+          message,
+          retryable
+        });
+      }
+      diffParse(changeId, candidate) {
+        const parsed = WorkspaceChangeDiffResourceV1SchemaZ.safeParse(candidate);
+        if (!parsed.success) {
+          return this.diffUnavailable(changeId, "io-error", "The diff could not be produced.");
+        }
+        return parsed.data;
+      }
+    };
   }
 });
 
@@ -29302,1112 +30495,6 @@ var init_terminal_attachment_issue = __esm({
   }
 });
 
-// packages/daemon/src/command-center/resources/workspace-resource-ids.ts
-import { createHash as createHash10 } from "node:crypto";
-function opaqueDigest(...parts) {
-  const hash = createHash10("sha256");
-  for (const part of parts) {
-    hash.update(part, "utf8");
-    hash.update("\0");
-  }
-  return hash.digest("base64url").slice(0, OPAQUE_DIGEST_LENGTH);
-}
-function fileResourceId(relativePath) {
-  return `file.${opaqueDigest("file", relativePath)}`;
-}
-function changeResourceId(group, relativePath) {
-  return `change.${opaqueDigest("change", group, relativePath)}`;
-}
-function filesRevision(seed) {
-  return `files-rev.${opaqueDigest("files-rev", seed)}`;
-}
-function changesRevision(seed) {
-  return `changes-rev.${opaqueDigest("changes-rev", seed)}`;
-}
-var OPAQUE_DIGEST_LENGTH, WorkspaceFileIdTable;
-var init_workspace_resource_ids = __esm({
-  "packages/daemon/src/command-center/resources/workspace-resource-ids.ts"() {
-    "use strict";
-    OPAQUE_DIGEST_LENGTH = 32;
-    WorkspaceFileIdTable = class {
-      byId = /* @__PURE__ */ new Map();
-      maxEntries;
-      constructor(maxEntries = 5e5) {
-        this.maxEntries = maxEntries;
-      }
-      /** The id for the workspace root (the empty relative path). */
-      rootId() {
-        return this.intern("");
-      }
-      /** Issue (or recall) the id for a relative path. */
-      intern(relativePath) {
-        const id = relativePath === "" ? fileResourceId("") : fileResourceId(relativePath);
-        if (!this.byId.has(id)) {
-          if (this.byId.size >= this.maxEntries) this.byId.clear();
-          this.byId.set(id, relativePath);
-        }
-        return id;
-      }
-      /** Resolve an id to its interned relative path, or null when unknown. */
-      resolve(id) {
-        return this.byId.get(id) ?? null;
-      }
-      get size() {
-        return this.byId.size;
-      }
-    };
-  }
-});
-
-// packages/daemon/src/command-center/resources/workspace-files-authority.ts
-import { lstatSync as lstatSync3, readdirSync as readdirSync5, readFileSync as readFileSync25, realpathSync as realpathSync10 } from "node:fs";
-import { basename as basename11, dirname as dirname27, resolve as resolvePath, sep as sep6 } from "node:path";
-import ignore from "ignore";
-function extensionOf(name) {
-  const dot = name.lastIndexOf(".");
-  if (dot <= 0 || dot === name.length - 1) return null;
-  return name.slice(dot + 1).toLowerCase();
-}
-function languageHintFor(name) {
-  const ext = extensionOf(name);
-  return ext ? LANGUAGE_BY_EXTENSION.get(ext) ?? null : null;
-}
-function mediaTypeFor(name) {
-  const ext = extensionOf(name);
-  return ext ? MEDIA_TYPE_BY_EXTENSION.get(ext) ?? null : null;
-}
-function looksBinary(buffer) {
-  const scanLength = Math.min(buffer.length, 8192);
-  for (let i = 0; i < scanLength; i += 1) {
-    if (buffer[i] === 0) return true;
-  }
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-    return false;
-  } catch {
-    return true;
-  }
-}
-function boundPreviewText(content) {
-  const totalLines = content.length === 0 ? 0 : content.split("\n").length;
-  if (totalLines <= WORKSPACE_FILE_PREVIEW_MAX_LINES) {
-    return { content, totalLines, truncated: false };
-  }
-  const kept = content.split("\n").slice(0, WORKSPACE_FILE_PREVIEW_MAX_LINES).join("\n");
-  return { content: kept, totalLines, truncated: true };
-}
-function direntKind(dirent) {
-  if (dirent.isSymbolicLink()) return { kind: "symlink" };
-  if (dirent.isDirectory()) return { kind: "directory" };
-  if (dirent.isFile()) return { kind: "file" };
-  return null;
-}
-function WorkspaceFileEntrySafe(entry) {
-  return WorkspaceResourceNameSchemaZ.safeParse(entry.name).success && entry.relativePath.length > 0;
-}
-function compareDirents(a, b) {
-  const aDir = a.isDirectory() && !a.isSymbolicLink();
-  const bDir = b.isDirectory() && !b.isSymbolicLink();
-  if (aDir !== bDir) return aDir ? -1 : 1;
-  const an = a.name.toLowerCase();
-  const bn = b.name.toLowerCase();
-  if (an < bn) return -1;
-  if (an > bn) return 1;
-  if (a.name < b.name) return -1;
-  if (a.name > b.name) return 1;
-  return 0;
-}
-function directoryHasChildren(absDir) {
-  try {
-    return readdirSync5(absDir).length > 0;
-  } catch {
-    return false;
-  }
-}
-function buildIgnore(root) {
-  const ig = ignore();
-  try {
-    ig.add(readFileSync25(resolvePath(root, ".gitignore"), "utf8"));
-  } catch {
-  }
-  return ig;
-}
-function safeIgnores(ig, relativePath) {
-  if (relativePath === "" || relativePath === "/") return false;
-  try {
-    return ig.ignores(relativePath.replace(/\/+$/, "") || relativePath);
-  } catch {
-    return false;
-  }
-}
-function safeName(value, fallback) {
-  return WorkspaceResourceNameSchemaZ.safeParse(value).success ? value : fallback;
-}
-function isWithin2(root, candidate) {
-  if (candidate === root) return true;
-  const prefix = root.endsWith(sep6) ? root : `${root}${sep6}`;
-  return candidate.startsWith(prefix);
-}
-var ALWAYS_IGNORED_NAMES, LANGUAGE_BY_EXTENSION, MEDIA_TYPE_BY_EXTENSION, FilesAuthority;
-var init_workspace_files_authority = __esm({
-  "packages/daemon/src/command-center/resources/workspace-files-authority.ts"() {
-    "use strict";
-    init_src();
-    init_workspace_resource_ids();
-    ALWAYS_IGNORED_NAMES = /* @__PURE__ */ new Set([
-      "node_modules",
-      ".git",
-      ".svn",
-      ".hg",
-      "dist",
-      "build",
-      "out",
-      ".next",
-      ".turbo",
-      ".cache",
-      "__pycache__",
-      "coverage",
-      ".nyc_output",
-      "target",
-      "vendor",
-      "bower_components"
-    ]);
-    LANGUAGE_BY_EXTENSION = /* @__PURE__ */ new Map([
-      ["ts", "typescript"],
-      ["tsx", "typescript"],
-      ["js", "javascript"],
-      ["jsx", "javascript"],
-      ["mjs", "javascript"],
-      ["cjs", "javascript"],
-      ["json", "json"],
-      ["md", "markdown"],
-      ["css", "css"],
-      ["scss", "scss"],
-      ["html", "html"],
-      ["yml", "yaml"],
-      ["yaml", "yaml"],
-      ["toml", "toml"],
-      ["sh", "shell"],
-      ["bash", "shell"],
-      ["zsh", "shell"],
-      ["py", "python"],
-      ["rs", "rust"],
-      ["go", "go"],
-      ["rb", "ruby"],
-      ["java", "java"],
-      ["c", "c"],
-      ["h", "c"],
-      ["cpp", "cpp"],
-      ["sql", "sql"]
-    ]);
-    MEDIA_TYPE_BY_EXTENSION = /* @__PURE__ */ new Map([
-      ["png", "image/png"],
-      ["jpg", "image/jpeg"],
-      ["jpeg", "image/jpeg"],
-      ["gif", "image/gif"],
-      ["webp", "image/webp"],
-      ["svg", "image/svg+xml"],
-      ["ico", "image/x-icon"],
-      ["pdf", "application/pdf"],
-      ["zip", "application/zip"],
-      ["gz", "application/gzip"],
-      ["wasm", "application/wasm"],
-      ["woff", "font/woff"],
-      ["woff2", "font/woff2"],
-      ["ttf", "font/ttf"],
-      ["mp4", "video/mp4"],
-      ["mp3", "audio/mpeg"]
-    ]);
-    FilesAuthority = class {
-      constructor(root, workspaceName) {
-        this.root = root;
-        this.workspaceName = workspaceName;
-      }
-      ids = new WorkspaceFileIdTable();
-      catalog(directoryId) {
-        let realRoot;
-        try {
-          realRoot = realpathSync10(this.root);
-        } catch {
-          return this.catalogUnavailable(
-            "workspace-unavailable",
-            "Workspace root is unavailable.",
-            true
-          );
-        }
-        const rootId = this.ids.rootId();
-        const targetId = directoryId && directoryId.length > 0 ? directoryId : rootId;
-        let relPath;
-        if (targetId === rootId) {
-          relPath = "";
-        } else {
-          const resolved2 = this.ids.resolve(targetId);
-          if (resolved2 === null) {
-            return this.catalogUnavailable(
-              "directory-not-found",
-              "The requested directory is unknown."
-            );
-          }
-          relPath = resolved2;
-        }
-        const absCandidate = relPath === "" ? realRoot : resolvePath(realRoot, relPath);
-        let absReal;
-        try {
-          absReal = realpathSync10(absCandidate);
-        } catch (error) {
-          const code = error.code;
-          if (code === "EACCES" || code === "EPERM") {
-            return this.catalogUnavailable("permission-denied", "The directory cannot be read.");
-          }
-          return this.catalogUnavailable(
-            "directory-not-found",
-            "The requested directory is unavailable."
-          );
-        }
-        if (!isWithin2(realRoot, absReal)) {
-          return this.catalogUnavailable(
-            "outside-workspace",
-            "The directory is outside the workspace."
-          );
-        }
-        let dirents;
-        try {
-          const stat = lstatSync3(absReal);
-          if (!stat.isDirectory()) {
-            return this.catalogUnavailable("directory-not-found", "The resource is not a directory.");
-          }
-          dirents = readdirSync5(absReal, { withFileTypes: true });
-        } catch (error) {
-          const code = error.code;
-          if (code === "EACCES" || code === "EPERM") {
-            return this.catalogUnavailable("permission-denied", "The directory cannot be read.");
-          }
-          return this.catalogUnavailable("io-error", "The directory could not be listed.");
-        }
-        const ig = buildIgnore(realRoot);
-        const sorted = [...dirents].sort(compareDirents);
-        const totalEntries = sorted.length;
-        const entries = [];
-        for (const dirent of sorted) {
-          if (entries.length >= WORKSPACE_FILES_CATALOG_MAX_ENTRIES) break;
-          const kindInfo = direntKind(dirent);
-          if (kindInfo === null) continue;
-          const name = dirent.name;
-          if (!WorkspaceResourceNameSchemaZ.safeParse(name).success) continue;
-          const childRel = relPath === "" ? name : `${relPath}/${name}`;
-          const childAbs = resolvePath(absReal, name);
-          const ignorePath = kindInfo.kind === "directory" ? `${childRel}/` : childRel;
-          const ignored = ALWAYS_IGNORED_NAMES.has(name) || safeIgnores(ig, ignorePath) || safeIgnores(ig, childRel);
-          const entry = {
-            id: this.ids.intern(childRel),
-            parentId: targetId,
-            name,
-            relativePath: childRel,
-            kind: kindInfo.kind,
-            hidden: name.startsWith("."),
-            ignored,
-            hasChildren: kindInfo.kind === "directory" && directoryHasChildren(childAbs),
-            gitStatus: null
-          };
-          if (WorkspaceFileEntrySafe(entry)) entries.push(entry);
-        }
-        const truncated = totalEntries > entries.length;
-        const rootLabel = safeName(basename11(realRoot), "workspace");
-        const revision = filesRevision(
-          JSON.stringify({ dir: relPath, entries: entries.map((e) => `${e.name}:${e.kind}`) })
-        );
-        const breadcrumbs = this.buildBreadcrumbs(rootId, rootLabel, relPath);
-        if (breadcrumbs === null) {
-          return this.catalogUnavailable("io-error", "The directory path is too deep to browse.");
-        }
-        const directory = relPath === "" ? { id: rootId, name: rootLabel, relativePath: null, parentId: null } : {
-          id: targetId,
-          name: safeName(basename11(relPath), rootLabel),
-          relativePath: relPath,
-          parentId: this.parentId(rootId, relPath)
-        };
-        const candidate = {
-          status: "ready",
-          workspaceName: this.workspaceName,
-          revision,
-          rootId,
-          directory,
-          breadcrumbs,
-          entries,
-          totalEntries,
-          truncated
-        };
-        const parsed = WorkspaceFilesCatalogResourceV1SchemaZ.safeParse(candidate);
-        if (!parsed.success) {
-          return this.catalogUnavailable("io-error", "The directory listing could not be produced.");
-        }
-        return parsed.data;
-      }
-      preview(fileId) {
-        let realRoot;
-        try {
-          realRoot = realpathSync10(this.root);
-        } catch {
-          return this.previewWorkspaceUnavailable(fileId);
-        }
-        const relPath = this.ids.resolve(fileId);
-        if (relPath === null || relPath === "") {
-          return this.previewUnavailable(fileId, "file-not-found", "The requested file is unknown.");
-        }
-        const abs = resolvePath(realRoot, relPath);
-        let stat;
-        try {
-          stat = lstatSync3(abs);
-        } catch (error) {
-          const code = error.code;
-          if (code === "EACCES" || code === "EPERM") {
-            return this.previewUnavailable(fileId, "permission-denied", "The file cannot be read.");
-          }
-          return this.previewUnavailable(
-            fileId,
-            "file-not-found",
-            "The requested file is unavailable."
-          );
-        }
-        if (stat.isSymbolicLink()) {
-          return this.previewUnavailable(
-            fileId,
-            "symlink-unsupported",
-            "Symlinks cannot be previewed."
-          );
-        }
-        let realParent;
-        try {
-          realParent = realpathSync10(dirname27(abs));
-        } catch {
-          return this.previewUnavailable(
-            fileId,
-            "file-not-found",
-            "The requested file is unavailable."
-          );
-        }
-        if (!isWithin2(realRoot, resolvePath(realParent, basename11(abs)))) {
-          return this.previewUnavailable(
-            fileId,
-            "outside-workspace",
-            "The file is outside the workspace."
-          );
-        }
-        if (stat.isDirectory() || !stat.isFile()) {
-          return this.previewUnavailable(fileId, "not-a-file", "The resource is not a regular file.");
-        }
-        const name = basename11(relPath);
-        const catalogRevision = filesRevision(`${relPath}:${stat.size}:${stat.mtimeMs}`);
-        const totalBytes = stat.size;
-        if (totalBytes > WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS) {
-          return this.previewParse(fileId, {
-            status: "too-large",
-            workspaceName: this.workspaceName,
-            catalogRevision,
-            fileId,
-            name,
-            relativePath: relPath,
-            totalBytes,
-            limitBytes: WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS
-          });
-        }
-        let buffer;
-        try {
-          buffer = readFileSync25(abs);
-        } catch (error) {
-          const code = error.code;
-          if (code === "EACCES" || code === "EPERM") {
-            return this.previewUnavailable(fileId, "permission-denied", "The file cannot be read.");
-          }
-          return this.previewUnavailable(fileId, "io-error", "The file could not be read.");
-        }
-        if (looksBinary(buffer)) {
-          return this.previewParse(fileId, {
-            status: "binary",
-            workspaceName: this.workspaceName,
-            catalogRevision,
-            fileId,
-            name,
-            relativePath: relPath,
-            totalBytes,
-            mediaType: mediaTypeFor(name)
-          });
-        }
-        const decoded = buffer.toString("utf8");
-        const bounded2 = boundPreviewText(decoded);
-        return this.previewParse(fileId, {
-          status: "ready",
-          workspaceName: this.workspaceName,
-          catalogRevision,
-          fileId,
-          name,
-          relativePath: relPath,
-          encoding: "utf-8",
-          languageHint: languageHintFor(name),
-          content: bounded2.content,
-          totalBytes,
-          totalLines: bounded2.totalLines,
-          truncated: bounded2.truncated
-        });
-      }
-      buildBreadcrumbs(rootId, rootLabel, relPath) {
-        const crumbs = [{ id: rootId, label: rootLabel }];
-        if (relPath === "") return crumbs;
-        const segments = relPath.split("/");
-        if (segments.length + 1 > WORKSPACE_FILES_MAX_BREADCRUMBS) return null;
-        let cumulative = "";
-        for (const segment of segments) {
-          cumulative = cumulative === "" ? segment : `${cumulative}/${segment}`;
-          crumbs.push({ id: this.ids.intern(cumulative), label: safeName(segment, rootLabel) });
-        }
-        return crumbs;
-      }
-      parentId(rootId, relPath) {
-        const segments = relPath.split("/");
-        segments.pop();
-        const parentRel = segments.join("/");
-        return parentRel === "" ? rootId : this.ids.intern(parentRel);
-      }
-      catalogUnavailable(reason, message, retryable = false) {
-        return WorkspaceFilesCatalogResourceV1SchemaZ.parse({
-          status: "unavailable",
-          workspaceName: this.workspaceName,
-          reason,
-          message,
-          retryable
-        });
-      }
-      previewUnavailable(fileId, reason, message, retryable = false) {
-        return WorkspaceFilePreviewResourceV1SchemaZ.parse({
-          status: "unavailable",
-          workspaceName: this.workspaceName,
-          catalogRevision: filesRevision(`unavailable:${fileId}`),
-          fileId,
-          reason,
-          message,
-          retryable
-        });
-      }
-      previewWorkspaceUnavailable(fileId) {
-        return this.previewUnavailable(
-          fileId,
-          "workspace-unavailable",
-          "Workspace root is unavailable.",
-          true
-        );
-      }
-      previewParse(fileId, candidate) {
-        const parsed = WorkspaceFilePreviewResourceV1SchemaZ.safeParse(candidate);
-        if (!parsed.success) {
-          return this.previewUnavailable(fileId, "io-error", "The file preview could not be produced.");
-        }
-        return parsed.data;
-      }
-    };
-  }
-});
-
-// packages/daemon/src/command-center/resources/workspace-changes-git.ts
-function splitNul(buffer) {
-  const tokens = [];
-  let start2 = 0;
-  for (let i = 0; i < buffer.length; i += 1) {
-    if (buffer[i] === 0) {
-      tokens.push(buffer.toString("utf8", start2, i));
-      start2 = i + 1;
-    }
-  }
-  if (start2 < buffer.length) tokens.push(buffer.toString("utf8", start2));
-  return tokens;
-}
-function mapStatusLetter(letter) {
-  switch (letter) {
-    case "M":
-      return "modified";
-    case "A":
-      return "added";
-    case "D":
-      return "deleted";
-    case "R":
-      return "renamed";
-    case "C":
-      return "copied";
-    case "T":
-      return "type-changed";
-    default:
-      return null;
-  }
-}
-function parseStatusV2(buffer) {
-  const tokens = splitNul(buffer);
-  let branch = null;
-  let detached = false;
-  const changes = [];
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (token.length === 0) continue;
-    if (token.startsWith("# ")) {
-      if (token.startsWith("# branch.head ")) {
-        const value = token.slice("# branch.head ".length);
-        if (value === "(detached)") {
-          detached = true;
-          branch = null;
-        } else {
-          branch = value;
-        }
-      }
-      continue;
-    }
-    const type = token[0];
-    if (type === "1" || type === "2") {
-      const fields = token.split(" ");
-      const xy = fields[1] ?? "..";
-      const pathFrom = type === "1" ? 8 : 9;
-      const path2 = fields.slice(pathFrom).join(" ");
-      let originPath = null;
-      if (type === "2") {
-        originPath = tokens[i + 1] ?? null;
-        i += 1;
-      }
-      const x = xy[0] ?? ".";
-      const y = xy[1] ?? ".";
-      if (x !== ".") {
-        const status2 = mapStatusLetter(x);
-        if (status2) {
-          changes.push({
-            group: "staged",
-            status: status2,
-            path: path2,
-            originPath: status2 === "renamed" || status2 === "copied" ? originPath : null
-          });
-        }
-      }
-      if (y !== ".") {
-        const status2 = mapStatusLetter(y);
-        if (status2) {
-          changes.push({
-            group: "unstaged",
-            status: status2,
-            path: path2,
-            originPath: status2 === "renamed" || status2 === "copied" ? originPath : null
-          });
-        }
-      }
-    } else if (type === "u") {
-      const fields = token.split(" ");
-      const path2 = fields.slice(10).join(" ");
-      if (path2.length > 0) {
-        changes.push({ group: "unstaged", status: "conflicted", path: path2, originPath: null });
-      }
-    } else if (type === "?") {
-      const path2 = token.slice(2);
-      if (path2.length > 0) {
-        changes.push({ group: "untracked", status: "untracked", path: path2, originPath: null });
-      }
-    }
-  }
-  return { branch, detached, changes };
-}
-function parseNumstatZ(buffer) {
-  const tokens = splitNul(buffer);
-  const map = /* @__PURE__ */ new Map();
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (token.length === 0) continue;
-    const parts = token.split("	");
-    if (parts.length < 3) continue;
-    const addRaw = parts[0];
-    const delRaw = parts[1];
-    const inlinePath = parts.slice(2).join("	");
-    let path2;
-    if (inlinePath.length > 0) {
-      path2 = inlinePath;
-    } else {
-      i += 1;
-      path2 = tokens[i + 1] ?? "";
-      i += 1;
-      if (path2.length === 0) continue;
-    }
-    const binary = addRaw === "-" || delRaw === "-";
-    map.set(path2, {
-      additions: binary ? null : Number.parseInt(addRaw, 10) || 0,
-      deletions: binary ? null : Number.parseInt(delRaw, 10) || 0,
-      binary
-    });
-  }
-  return map;
-}
-function parseUnifiedDiff(patch) {
-  const lines = patch.split("\n");
-  const hunks = [];
-  let lineTruncated = false;
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.startsWith("Binary files ") || line === "GIT binary patch") {
-      return { binary: true, hunks: [], lineTruncated: false };
-    }
-    const match = HUNK_HEADER.exec(line);
-    if (!match) {
-      i += 1;
-      continue;
-    }
-    const oldStart = Number.parseInt(match[1], 10);
-    const newStart = Number.parseInt(match[2], 10);
-    const header = line.slice(0, 255);
-    const hunkLines = [];
-    let oldNo = oldStart;
-    let newNo = newStart;
-    i += 1;
-    while (i < lines.length) {
-      const raw = lines[i];
-      if (raw.startsWith("@@") || raw.startsWith("diff --git")) break;
-      if (raw.startsWith("\\")) {
-        i += 1;
-        continue;
-      }
-      const marker = raw[0];
-      if (marker !== " " && marker !== "+" && marker !== "-") break;
-      let content = raw.slice(1);
-      if (content.length > WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH) {
-        content = content.slice(0, WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH);
-        lineTruncated = true;
-      }
-      if (marker === " ") {
-        hunkLines.push({ kind: "context", content, oldLine: oldNo, newLine: newNo });
-        oldNo += 1;
-        newNo += 1;
-      } else if (marker === "+") {
-        hunkLines.push({ kind: "insert", content, oldLine: null, newLine: newNo });
-        newNo += 1;
-      } else {
-        hunkLines.push({ kind: "delete", content, oldLine: oldNo, newLine: null });
-        oldNo += 1;
-      }
-      i += 1;
-    }
-    if (hunkLines.length > 0) {
-      hunks.push({ header: header || "@@", oldStart, newStart, lines: hunkLines });
-    }
-  }
-  return { binary: false, hunks, lineTruncated };
-}
-var HUNK_HEADER;
-var init_workspace_changes_git = __esm({
-  "packages/daemon/src/command-center/resources/workspace-changes-git.ts"() {
-    "use strict";
-    init_src();
-    HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u;
-  }
-});
-
-// packages/daemon/src/command-center/resources/workspace-changes-authority.ts
-import { spawnSync } from "node:child_process";
-import { readFileSync as readFileSync26, realpathSync as realpathSync11, statSync as statSync11 } from "node:fs";
-import { basename as basename12, isAbsolute as isAbsolute12, relative as relative4, resolve as resolvePath2 } from "node:path";
-function runGit(args, cwd) {
-  const result = spawnSync("git", args, {
-    cwd,
-    timeout: GIT_TIMEOUT_MS2,
-    maxBuffer: GIT_MAX_BUFFER,
-    windowsHide: true,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" }
-  });
-  if (result.error) {
-    return {
-      ok: false,
-      status: null,
-      stdout: Buffer.alloc(0),
-      stderr: result.error.message,
-      errorCode: result.error.code ?? null
-    };
-  }
-  return {
-    ok: result.status === 0,
-    status: result.status,
-    stdout: result.stdout ?? Buffer.alloc(0),
-    stderr: (result.stderr ?? Buffer.alloc(0)).toString("utf8"),
-    errorCode: null
-  };
-}
-function mapCatalogReasonToDiff(reason) {
-  switch (reason) {
-    case "workspace-unavailable":
-      return "workspace-unavailable";
-    case "not-a-git-repository":
-      return "not-a-git-repository";
-    case "permission-denied":
-      return "permission-denied";
-    case "resource-changed":
-      return "resource-changed";
-    default:
-      return "io-error";
-  }
-}
-function confineToWorkspace(realRoot, repoRoot, gitPath) {
-  if (gitPath.length === 0 || gitPath.includes("\0")) return null;
-  const abs = resolvePath2(repoRoot, gitPath);
-  const rel = relative4(realRoot, abs);
-  if (rel.length === 0 || rel.startsWith("..") || isAbsolute12(rel)) return null;
-  const display = rel.split(/[\\/]+/u).join("/");
-  return WorkspaceRelativeDisplayPathSchemaZ.safeParse(display).success ? display : null;
-}
-function buildChangeEntry(raw, displayPath, originPath, counts) {
-  const carriesOrigin = raw.status === "renamed" || raw.status === "copied";
-  const candidate = {
-    id: changeResourceId(raw.group, displayPath),
-    group: raw.group,
-    status: raw.status,
-    name: basename12(displayPath),
-    relativePath: displayPath,
-    originPath: carriesOrigin ? originPath ?? null : null,
-    binary: counts.binary,
-    additions: counts.binary ? null : counts.additions ?? 0,
-    deletions: counts.binary ? null : counts.deletions ?? 0
-  };
-  if (candidate.originPath !== null && candidate.originPath === candidate.relativePath) {
-    candidate.originPath = null;
-  }
-  if (carriesOrigin && candidate.originPath === null) return null;
-  const parsed = WorkspaceChangeEntrySchemaZ.safeParse(candidate);
-  return parsed.success ? parsed.data : null;
-}
-function boundHunks(hunks) {
-  const totalLines = hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
-  const kept = [];
-  let rendered = 0;
-  let truncated = false;
-  for (const hunk of hunks) {
-    if (kept.length >= WORKSPACE_CHANGE_DIFF_MAX_HUNKS) {
-      truncated = true;
-      break;
-    }
-    let lines = hunk.lines;
-    if (lines.length > WORKSPACE_CHANGE_DIFF_MAX_LINES) {
-      lines = lines.slice(0, WORKSPACE_CHANGE_DIFF_MAX_LINES);
-      truncated = true;
-    }
-    if (rendered + lines.length > DIFF_TOTAL_LINE_BUDGET) {
-      const room = DIFF_TOTAL_LINE_BUDGET - rendered;
-      if (room <= 0) {
-        truncated = true;
-        break;
-      }
-      lines = lines.slice(0, room);
-      truncated = true;
-    }
-    if (lines.length === 0) continue;
-    const oldLines = lines.filter((l) => l.kind !== "insert").length;
-    const newLines = lines.filter((l) => l.kind !== "delete").length;
-    kept.push({
-      header: hunk.header.slice(0, 255) || "@@",
-      oldStart: oldLines > 0 ? hunk.oldStart : 0,
-      oldLines,
-      newStart: newLines > 0 ? hunk.newStart : 0,
-      newLines,
-      lines: lines.map((l) => ({ ...l }))
-    });
-    rendered += lines.length;
-  }
-  return {
-    hunks: kept,
-    totalLines,
-    truncated: truncated || hunks.length > kept.length || totalLines > rendered
-  };
-}
-var DIFF_MAX_BYTES, DIFF_TOTAL_LINE_BUDGET, GIT_TIMEOUT_MS2, GIT_MAX_BUFFER, ChangesAuthority;
-var init_workspace_changes_authority = __esm({
-  "packages/daemon/src/command-center/resources/workspace-changes-authority.ts"() {
-    "use strict";
-    init_src();
-    init_workspace_files_authority();
-    init_workspace_resource_ids();
-    init_workspace_changes_git();
-    DIFF_MAX_BYTES = 2 * 1024 * 1024;
-    DIFF_TOTAL_LINE_BUDGET = 2e4;
-    GIT_TIMEOUT_MS2 = 15e3;
-    GIT_MAX_BUFFER = 64 * 1024 * 1024;
-    ChangesAuthority = class {
-      constructor(root, workspaceName) {
-        this.root = root;
-        this.workspaceName = workspaceName;
-      }
-      catalog() {
-        const context = this.resolveRepo();
-        if ("reason" in context) {
-          return this.catalogUnavailable(context.reason, context.message, context.retryable);
-        }
-        const computed = this.computeChanges(context.root, context.repoRoot);
-        if ("reason" in computed) {
-          return this.catalogUnavailable(computed.reason, computed.message, computed.retryable);
-        }
-        const candidate = {
-          status: "ready",
-          workspaceName: this.workspaceName,
-          revision: computed.revision,
-          branch: computed.detached ? null : computed.branch,
-          detached: computed.detached,
-          entries: computed.resolved.map((r) => r.entry),
-          totalEntries: computed.totalEntries,
-          truncated: computed.truncated
-        };
-        const parsed = WorkspaceChangesCatalogResourceV1SchemaZ.safeParse(candidate);
-        if (!parsed.success) {
-          return this.catalogUnavailable("io-error", "The changes list could not be produced.");
-        }
-        return parsed.data;
-      }
-      diff(changeId) {
-        const context = this.resolveRepo();
-        if ("reason" in context) {
-          return this.diffUnavailable(
-            changeId,
-            mapCatalogReasonToDiff(context.reason),
-            context.message
-          );
-        }
-        const computed = this.computeChanges(context.root, context.repoRoot);
-        if ("reason" in computed) {
-          return this.diffUnavailable(
-            changeId,
-            mapCatalogReasonToDiff(computed.reason),
-            computed.message
-          );
-        }
-        const match = computed.resolved.find((r) => r.entry.id === changeId);
-        if (!match) {
-          return this.diffUnavailable(changeId, "change-not-found", "The requested change is unknown.");
-        }
-        const base = {
-          workspaceName: this.workspaceName,
-          changesRevision: computed.revision,
-          changeId,
-          group: match.entry.group,
-          relativePath: match.entry.relativePath,
-          originPath: match.entry.originPath
-        };
-        if (match.entry.binary) {
-          return this.diffParse(changeId, {
-            status: "binary",
-            ...base,
-            oldBytes: null,
-            newBytes: null
-          });
-        }
-        if (match.entry.group === "untracked") {
-          return this.untrackedDiff(changeId, base, resolvePath2(context.repoRoot, match.gitPath));
-        }
-        const args = match.entry.group === "staged" ? ["diff", "--cached", "-M", "-C", "--no-color", "--", match.gitPath] : ["diff", "-M", "-C", "--no-color", "--", match.gitPath];
-        const result = runGit(args, context.repoRoot);
-        if (!result.ok) {
-          return this.diffUnavailable(changeId, "io-error", "The diff could not be produced.");
-        }
-        if (result.stdout.length > DIFF_MAX_BYTES) {
-          return this.diffParse(changeId, {
-            status: "too-large",
-            ...base,
-            totalBytes: result.stdout.length,
-            limitBytes: DIFF_MAX_BYTES
-          });
-        }
-        const parsed = parseUnifiedDiff(result.stdout.toString("utf8"));
-        if (parsed.binary) {
-          return this.diffParse(changeId, {
-            status: "binary",
-            ...base,
-            oldBytes: null,
-            newBytes: null
-          });
-        }
-        return this.readyDiff(changeId, base, parsed.hunks, parsed.lineTruncated);
-      }
-      untrackedDiff(changeId, base, absPath) {
-        let buffer;
-        try {
-          const stat = statSync11(absPath);
-          if (stat.size > DIFF_MAX_BYTES) {
-            return this.diffParse(changeId, {
-              status: "too-large",
-              ...base,
-              totalBytes: stat.size,
-              limitBytes: DIFF_MAX_BYTES
-            });
-          }
-          buffer = readFileSync26(absPath);
-        } catch {
-          return this.diffUnavailable(changeId, "io-error", "The file could not be read.");
-        }
-        if (looksBinary(buffer)) {
-          return this.diffParse(changeId, {
-            status: "binary",
-            ...base,
-            oldBytes: 0,
-            newBytes: buffer.length
-          });
-        }
-        const text = buffer.toString("utf8");
-        const rawLines = text.split("\n");
-        if (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") rawLines.pop();
-        const synthetic = {
-          header: `@@ -0,0 +1,${rawLines.length} @@`,
-          oldStart: 0,
-          newStart: 1,
-          lines: rawLines.map((content, index) => ({
-            kind: "insert",
-            content: content.slice(0, 4096),
-            oldLine: null,
-            newLine: index + 1
-          }))
-        };
-        return this.readyDiff(changeId, base, rawLines.length === 0 ? [] : [synthetic], false);
-      }
-      readyDiff(changeId, base, hunks, lineTruncated) {
-        const bounded2 = boundHunks(hunks);
-        const candidate = {
-          status: "ready",
-          ...base,
-          hunks: bounded2.hunks,
-          totalHunks: hunks.length,
-          totalLines: bounded2.totalLines,
-          truncated: bounded2.truncated || lineTruncated
-        };
-        return this.diffParse(changeId, candidate);
-      }
-      resolveRepo() {
-        let realRoot;
-        try {
-          realRoot = realpathSync11(this.root);
-        } catch {
-          return {
-            reason: "workspace-unavailable",
-            message: "Workspace root is unavailable.",
-            retryable: true
-          };
-        }
-        const top = runGit(["rev-parse", "--show-toplevel"], realRoot);
-        if (top.errorCode === "ENOENT") {
-          return { reason: "io-error", message: "git is not available.", retryable: false };
-        }
-        if (top.errorCode === "EACCES" || top.errorCode === "EPERM") {
-          return {
-            reason: "permission-denied",
-            message: "The repository cannot be read.",
-            retryable: false
-          };
-        }
-        if (!top.ok) {
-          return {
-            reason: "not-a-git-repository",
-            message: "The workspace is not a git repository.",
-            retryable: false
-          };
-        }
-        const repoRoot = top.stdout.toString("utf8").trim();
-        if (repoRoot.length === 0) {
-          return {
-            reason: "not-a-git-repository",
-            message: "The workspace is not a git repository.",
-            retryable: false
-          };
-        }
-        return { root: realRoot, repoRoot };
-      }
-      computeChanges(realRoot, repoRoot) {
-        const status2 = runGit(
-          ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"],
-          repoRoot
-        );
-        if (!status2.ok) {
-          return { reason: "io-error", message: "Change status could not be read.", retryable: true };
-        }
-        const parsed = parseStatusV2(status2.stdout);
-        const stagedNumstat = parseNumstatZ(
-          runGit(["diff", "--cached", "--numstat", "-z", "-M", "-C"], repoRoot).stdout
-        );
-        const unstagedNumstat = parseNumstatZ(
-          runGit(["diff", "--numstat", "-z", "-M", "-C"], repoRoot).stdout
-        );
-        const resolved2 = [];
-        const seen = /* @__PURE__ */ new Set();
-        let totalEntries = 0;
-        for (const raw of parsed.changes) {
-          const displayPath = confineToWorkspace(realRoot, repoRoot, raw.path);
-          if (displayPath === null) continue;
-          const originPath = raw.originPath === null ? null : confineToWorkspace(realRoot, repoRoot, raw.originPath);
-          if (raw.originPath !== null && originPath === null) continue;
-          const dedupeKey = `${raw.group}\0${displayPath}`;
-          if (seen.has(dedupeKey)) continue;
-          const counts = this.countsFor(raw, repoRoot, stagedNumstat, unstagedNumstat);
-          const entry = buildChangeEntry(raw, displayPath, originPath, counts);
-          if (entry === null) continue;
-          seen.add(dedupeKey);
-          totalEntries += 1;
-          if (resolved2.length < WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES) {
-            resolved2.push({ entry, gitPath: raw.path });
-          }
-        }
-        const revision = changesRevision(
-          JSON.stringify({
-            branch: parsed.branch,
-            detached: parsed.detached,
-            ids: resolved2.map((r) => r.entry.id)
-          })
-        );
-        return {
-          branch: parsed.branch && parsed.branch.length <= WORKSPACE_CHANGE_BRANCH_MAX_LENGTH ? parsed.branch : null,
-          detached: parsed.detached,
-          revision,
-          resolved: resolved2,
-          totalEntries,
-          truncated: totalEntries > resolved2.length
-        };
-      }
-      countsFor(raw, repoRoot, staged, unstaged) {
-        if (raw.group === "untracked") {
-          try {
-            const buffer = readFileSync26(resolvePath2(repoRoot, raw.path));
-            if (looksBinary(buffer)) return { additions: null, deletions: null, binary: true };
-            const text = buffer.toString("utf8");
-            const lines = text.length === 0 ? 0 : text.replace(/\n$/u, "").split("\n").length;
-            return { additions: lines, deletions: 0, binary: false };
-          } catch {
-            return { additions: 0, deletions: 0, binary: false };
-          }
-        }
-        const source = raw.group === "staged" ? staged : unstaged;
-        return source.get(raw.path) ?? { additions: 0, deletions: 0, binary: false };
-      }
-      catalogUnavailable(reason, message, retryable = false) {
-        return WorkspaceChangesCatalogResourceV1SchemaZ.parse({
-          status: "unavailable",
-          workspaceName: this.workspaceName,
-          reason,
-          message,
-          retryable
-        });
-      }
-      diffUnavailable(changeId, reason, message, retryable = false) {
-        return WorkspaceChangeDiffResourceV1SchemaZ.parse({
-          status: "unavailable",
-          workspaceName: this.workspaceName,
-          changesRevision: changesRevision(`unavailable:${changeId}`),
-          changeId,
-          reason,
-          message,
-          retryable
-        });
-      }
-      diffParse(changeId, candidate) {
-        const parsed = WorkspaceChangeDiffResourceV1SchemaZ.safeParse(candidate);
-        if (!parsed.success) {
-          return this.diffUnavailable(changeId, "io-error", "The diff could not be produced.");
-        }
-        return parsed.data;
-      }
-    };
-  }
-});
-
 // packages/daemon/src/command-center/resources/workspace-resource-routes.ts
 import { timingSafeEqual as timingSafeEqual5 } from "node:crypto";
 function bearerMatches(header, ownerToken) {
@@ -30546,6 +30633,19 @@ import { WebSocketServer as WebSocketServer2 } from "ws";
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
   return authHeader.slice("Bearer ".length);
+}
+function workspaceDockSummary(projectDir, workspaceName) {
+  const safeCount = (read) => {
+    try {
+      return read() ?? 0;
+    } catch {
+      return 0;
+    }
+  };
+  return {
+    fileCount: safeCount(() => new FilesAuthority(projectDir, workspaceName).rootEntryCount()),
+    changeCount: safeCount(() => new ChangesAuthority(projectDir, workspaceName).changeCount())
+  };
 }
 function requireAuth(token, localBypassToken) {
   return async (c, next) => {
@@ -30930,7 +31030,12 @@ function createApp(options = {}) {
         return c.json({
           version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
           daemon: daemonInstanceIdentity,
-          resource: projectApplicationShellResourceV3(session2, appWindows, missionWorkspace)
+          resource: projectApplicationShellResourceV3(
+            session2,
+            appWindows,
+            missionWorkspace,
+            workspaceDockSummary(session2.dir, name)
+          )
         });
       }
       return c.json({
@@ -31691,6 +31796,8 @@ var init_server = __esm({
     init_project_inspect();
     init_project_onboard();
     init_application_shell2();
+    init_workspace_files_authority();
+    init_workspace_changes_authority();
     init_application_shell_app_windows();
     init_command_definitions();
     init_mission_repository();

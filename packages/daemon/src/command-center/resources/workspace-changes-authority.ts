@@ -130,6 +130,42 @@ export class ChangesAuthority {
     return parsed.data;
   }
 
+  /**
+   * A cheap bounded count of working-tree changes, for the dock badge only. It
+   * runs a single `git status` (no per-change numstat or diff) and applies the
+   * same workspace confinement and per-group dedupe as the full catalog.
+   * Returns null when the repository cannot be read so the caller can fall back
+   * to a zero count rather than a fabricated one.
+   */
+  changeCount(): number | null {
+    const context = this.resolveRepo();
+    if ("reason" in context) return null;
+    const status = runGit(
+      ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"],
+      context.repoRoot,
+    );
+    if (!status.ok) return null;
+    const parsed = parseStatusV2(status.stdout);
+    const seen = new Set<string>();
+    let count = 0;
+    for (const raw of parsed.changes) {
+      const displayPath = confineToWorkspace(context.root, context.repoRoot, raw.path);
+      if (displayPath === null) continue;
+      if (
+        raw.originPath !== null &&
+        confineToWorkspace(context.root, context.repoRoot, raw.originPath) === null
+      ) {
+        continue;
+      }
+      const key = `${raw.group} ${displayPath}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      count += 1;
+      if (count >= WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES) break;
+    }
+    return count;
+  }
+
   diff(changeId: string): WorkspaceChangeDiffResourceV1 {
     const context = this.resolveRepo();
     if ("reason" in context) {
@@ -340,7 +376,7 @@ export class ChangesAuthority {
         raw.originPath === null ? null : confineToWorkspace(realRoot, repoRoot, raw.originPath);
       if (raw.originPath !== null && originPath === null) continue;
 
-      const dedupeKey = `${raw.group} ${displayPath}`;
+      const dedupeKey = `${raw.group}\u0000${displayPath}`;
       if (seen.has(dedupeKey)) continue;
 
       const counts = this.countsFor(raw, repoRoot, stagedNumstat, unstagedNumstat);

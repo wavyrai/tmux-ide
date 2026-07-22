@@ -411,6 +411,16 @@ export function projectApplicationShellResource(
 }
 
 /**
+ * Bounded counts for the Files and Changes dock badges. They come from the same
+ * authorities the renderer reads, computed cheaply (one directory listing, one
+ * `git status`) rather than scanned in this projection.
+ */
+export interface ApplicationShellWorkspaceDockSummary {
+  readonly fileCount: number;
+  readonly changeCount: number;
+}
+
+/**
  * V3 keeps live terminal discovery and durable window layout as separate
  * authorities, then combines their validated snapshots at the wire edge.
  */
@@ -418,11 +428,16 @@ export function projectApplicationShellResourceV3(
   session: ApplicationShellSessionFacts,
   appWindows: AppWindowDocumentV1,
   missionWorkspace?: DesktopMissionWorkspaceResource,
+  dockSummary?: ApplicationShellWorkspaceDockSummary,
 ): ApplicationShellProjectionInputV3 {
   const resource = projectApplicationShellResource(session);
-  const dock = missionWorkspace
+  const withMissions = missionWorkspace
     ? dockWithMissionWorkspace(resource.dock, missionWorkspace)
     : resource.dock;
+  const dock = dockWithWorkspaceSurfaces(
+    withMissions,
+    dockSummary ?? { fileCount: 0, changeCount: 0 },
+  );
   const parsed = ApplicationShellProjectionInputV3SchemaZ.parse({
     ...resource,
     dock,
@@ -431,6 +446,38 @@ export function projectApplicationShellResourceV3(
   });
   projectApplicationShellV1(parsed);
   return deepFreeze(parsed);
+}
+
+/**
+ * The desktop shell owns live Files and Changes surfaces, so V3 marks those
+ * dock tools available and stamps their bounded counts. Their own surfaces
+ * render an honest unavailable state when a workspace read fails, so the tool
+ * stays openable regardless of the count.
+ */
+function dockWithWorkspaceSurfaces(
+  dock: ApplicationShellProjectionInputV2["dock"],
+  summary: ApplicationShellWorkspaceDockSummary,
+): ApplicationShellProjectionInputV2["dock"] {
+  return {
+    ...dock,
+    tools: dock.tools.map((tool) => {
+      if (tool.id === "files" && tool.data.kind === "files") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: { ...tool.data, fileCount: summary.fileCount },
+        };
+      }
+      if (tool.id === "changes" && tool.data.kind === "changes") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: { ...tool.data, changeCount: summary.changeCount },
+        };
+      }
+      return tool;
+    }),
+  };
 }
 
 function dockWithMissionWorkspace(

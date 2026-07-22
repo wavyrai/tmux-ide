@@ -1117,9 +1117,7 @@ try {
         const selectedTerminalTab = globalThis.document.querySelector(
           '.primary-tabs [role="tab"][aria-selected="true"]',
         );
-        const statusConnection = globalThis.document.querySelector(
-          ".status-strip__connection",
-        );
+        const statusConnection = globalThis.document.querySelector(".status-strip__connection");
         const initial = {
           app: bounds(".app"),
           main: bounds(".workspace-main"),
@@ -1186,9 +1184,7 @@ try {
       }, fixture);
       journeyEvidence.push({
         ...evidence,
-        consoleViolations: evidenceConsoleMessages.filter((message) =>
-          cspViolation.test(message),
-        ),
+        consoleViolations: evidenceConsoleMessages.filter((message) => cspViolation.test(message)),
       });
       if (process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT) {
         const evidencePath = process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT.replace(
@@ -1233,6 +1229,98 @@ try {
     ) {
       throw new Error(
         `Desktop mission/activity visual acceptance failed: ${JSON.stringify(journeyEvidence, null, 2)}`,
+      );
+    }
+
+    const workspaceSurfacePage = await browser.newPage({
+      viewport: { width: 1_440, height: 900 },
+      colorScheme: "dark",
+    });
+    const workspaceSurfaceConsole = [];
+    workspaceSurfacePage.on("console", (message) => workspaceSurfaceConsole.push(message.text()));
+    await workspaceSurfacePage.addInitScript(() => {
+      globalThis.__tmiCspViolations = [];
+      globalThis.document.addEventListener("securitypolicyviolation", (event) => {
+        globalThis.__tmiCspViolations.push({
+          blockedURI: event.blockedURI,
+          directive: event.effectiveDirective,
+        });
+      });
+    });
+    await workspaceSurfacePage.goto(rendererUrl, { waitUntil: "networkidle" });
+    const workspaceSurfaceEvidence = await workspaceSurfacePage.evaluate(async () => {
+      globalThis.document.getElementById("root")?.remove();
+      const filesRoot = globalThis.document.createElement("div");
+      filesRoot.id = "root";
+      globalThis.document.body.append(filesRoot);
+      const { mountWorkspaceFilesShellFixture } =
+        await import("/src/experience/workspace-files-surface.fixture.tsx");
+      const disposeFiles = mountWorkspaceFilesShellFixture(filesRoot, "ready-preview", "dark");
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const treeRows = filesRoot.querySelectorAll('.workspace-files__row[role="treeitem"]').length;
+      const previewLines = filesRoot.querySelectorAll(".workspace-files__code li").length;
+      const selectedFile = filesRoot.querySelector('.workspace-files__row[aria-selected="true"]');
+      const gitGlyph = filesRoot.querySelector(".workspace-files__git");
+      disposeFiles();
+      filesRoot.remove();
+
+      const changesRoot = globalThis.document.createElement("div");
+      changesRoot.id = "root";
+      globalThis.document.body.append(changesRoot);
+      const { mountWorkspaceChangesShellFixture } =
+        await import("/src/experience/workspace-changes-surface.fixture.tsx");
+      const disposeChanges = mountWorkspaceChangesShellFixture(changesRoot, "ready-diff", "dark");
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const changeRows = changesRoot.querySelectorAll(
+        '.workspace-changes__row[role="option"]',
+      ).length;
+      const hunks = changesRoot.querySelectorAll(".workspace-changes__hunk").length;
+      const diffLines = changesRoot.querySelectorAll(".workspace-changes__line").length;
+      const insertLine = changesRoot.querySelector('.workspace-changes__line[data-kind="insert"]');
+      disposeChanges();
+      changesRoot.remove();
+
+      return {
+        treeRows,
+        previewLines,
+        selectedFile: selectedFile?.querySelector(".workspace-files__name")?.textContent ?? null,
+        gitGlyph: gitGlyph?.textContent ?? null,
+        changeRows,
+        hunks,
+        diffLines,
+        insertLine: insertLine?.querySelector("code")?.textContent ?? null,
+        styleAttributes: globalThis.document.querySelectorAll("[style]").length,
+        styleElements: globalThis.document.querySelectorAll("style").length,
+        violations: globalThis.__tmiCspViolations ?? [],
+      };
+    });
+    await workspaceSurfacePage.close();
+    const workspaceSurfaceViolations = workspaceSurfaceConsole.filter((message) =>
+      cspViolation.test(message),
+    );
+    if (
+      workspaceSurfaceViolations.length > 0 ||
+      workspaceSurfaceEvidence.violations.some(({ directive }) =>
+        directive.startsWith("style-src"),
+      ) ||
+      workspaceSurfaceEvidence.styleAttributes !== 0 ||
+      workspaceSurfaceEvidence.styleElements !== 0 ||
+      workspaceSurfaceEvidence.treeRows < 3 ||
+      workspaceSurfaceEvidence.previewLines < 1 ||
+      !workspaceSurfaceEvidence.selectedFile ||
+      workspaceSurfaceEvidence.changeRows < 1 ||
+      workspaceSurfaceEvidence.hunks < 1 ||
+      workspaceSurfaceEvidence.diffLines < 1 ||
+      !workspaceSurfaceEvidence.insertLine
+    ) {
+      throw new Error(
+        `Desktop Files/Changes surface acceptance failed: ${JSON.stringify(
+          { ...workspaceSurfaceEvidence, workspaceSurfaceViolations },
+          null,
+          2,
+        )}`,
       );
     }
   } finally {

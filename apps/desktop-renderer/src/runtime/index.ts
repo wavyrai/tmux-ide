@@ -12,4 +12,5 @@ export * from "./workspace-catalog-store.ts";
 export * from "./workspace-resource-store.ts";
 export * from "./workspace-files-store.ts";
 export * from "./workspace-changes-store.ts";
+export * from "./workspace-surface-model.ts";
 export * from "./live-app-composition.tsx";
