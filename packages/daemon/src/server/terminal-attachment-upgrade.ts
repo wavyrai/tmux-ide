@@ -1,6 +1,7 @@
 import type { Server } from "node:http";
 import type { Socket } from "node:net";
 import { WebSocketServer } from "ws";
+import { TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES } from "@tmux-ide/contracts/terminal-attachment-stream";
 import {
   TERMINAL_ATTACHMENT_REDEEM_PATH,
   TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
@@ -62,7 +63,13 @@ export function attachTerminalAttachmentWebSocket(
     noServer: true,
     clientTracking: false,
     perMessageDeflate: false,
-    maxPayload: TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES,
+    // The WebSocket implementation has one connection-wide limit. Pre-auth
+    // still enforces its smaller text-only redemption bound in the admission
+    // state machine; this ceiling admits only bounded live binary input.
+    maxPayload: Math.max(
+      TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES,
+      TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES,
+    ),
     handleProtocols(offered) {
       return offered.size === 1 && offered.has(TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL)
         ? TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL

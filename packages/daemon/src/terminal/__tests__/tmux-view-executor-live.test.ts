@@ -12,10 +12,7 @@ import {
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
 } from "../attachments/tmux-view-executor.ts";
-import {
-  PtyTmuxAttachmentInputUnavailableError,
-  PtyTmuxAttachmentLauncher,
-} from "../attachments/pty-tmux-attachment-launcher.ts";
+import { PtyTmuxAttachmentLauncher } from "../attachments/pty-tmux-attachment-launcher.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 const socketName = `tmux-ide-executor-${process.pid}-${randomUUID().slice(0, 8)}`;
@@ -312,7 +309,13 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
     const detachData = client.onData((data) => redraw.push(data));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(Buffer.concat(redraw).toString("utf8")).toContain("authoritative-redraw");
-    expect(() => client.write("unbounded-input")).toThrow(PtyTmuxAttachmentInputUnavailableError);
+    expect(client).not.toHaveProperty("write");
+    expect(client.boundedInput?.write(Buffer.from("bounded-input"))).toMatchObject({
+      status: "accepted",
+      byteLength: 13,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runOnSocket(["capture-pane", "-p", "-t", paneId])).toContain("bounded-input");
     client.resize(100, 30);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(

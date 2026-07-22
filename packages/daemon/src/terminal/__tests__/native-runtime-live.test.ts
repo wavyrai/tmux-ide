@@ -126,7 +126,14 @@ describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration",
           expect({ ready, closes: socket.closes, audits }).toMatchObject({
             ready: {
               type: "ready",
-              inputCapability: "unavailable",
+              inputCapability: {
+                mode: "bounded",
+                limits: {
+                  maxFrameBytes: 16 * 1024,
+                  maxAcceptedBytes: 256 * 1024,
+                  maxAcceptedFrames: 8_192,
+                },
+              },
               sourceGrid: { cols: expect.any(Number), rows: expect.any(Number) },
               clientViewport: { cols: expect.any(Number), rows: expect.any(Number) },
             },

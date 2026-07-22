@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PtyAdapter, PtyProcess, PtySpawnInput, PtySpawnListeners } from "../PtyAdapter.ts";
-import {
-  PtyTmuxAttachmentInputUnavailableError,
-  PtyTmuxAttachmentLauncher,
-} from "../attachments/pty-tmux-attachment-launcher.ts";
+import { PtyTmuxAttachmentLauncher } from "../attachments/pty-tmux-attachment-launcher.ts";
 import {
   planGroupedTmuxAttachment,
   type GroupedTmuxAttachmentPlan,
@@ -382,7 +379,7 @@ describe("PtyTmuxAttachmentLauncher", () => {
     transport.disposeAll();
   });
 
-  it("keeps native input gated and rejects read-only before PTY spawn", async () => {
+  it("exposes only bounded native input and rejects read-only before PTY spawn", async () => {
     const adapter = new MockPtyAdapter();
     const proof = new ProofRunner();
     const interactivePlan = plan();
@@ -391,11 +388,18 @@ describe("PtyTmuxAttachmentLauncher", () => {
     const attempt = transport.beginGuardedAttach(input(interactivePlan));
     await attempt.outcome;
     const interactive = transport.claim(attempt)!;
-    expect(() => interactive.write("unbounded")).toThrow(PtyTmuxAttachmentInputUnavailableError);
+    expect(interactive).not.toHaveProperty("write");
+    expect(interactive).not.toHaveProperty("process");
+    expect(interactive.boundedInput?.write(Uint8Array.of(0, 0x80, 0xff))).toMatchObject({
+      status: "accepted",
+      byteLength: 3,
+    });
     expect(adapter.lastSpawned()!.writeLog).toHaveLength(0);
+    expect(adapter.lastSpawned()!.boundedWriteLog).toEqual([Buffer.from([0, 0x80, 0xff])]);
     interactive.resize(91, 31);
     expect(adapter.lastSpawned()!.resizeLog).toEqual([{ cols: 91, rows: 31 }]);
     interactive.dispose();
+    expect(interactive.boundedInput?.snapshot().state).toBe("closed");
 
     const readOnlyPlan = plan(SECOND_ID, 0, "read-only");
     const spawnCount = adapter.spawnCount;

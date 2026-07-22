@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { decodeTerminalAttachmentInputFrame } from "@tmux-ide/contracts/terminal-attachment-stream";
 import type {
   NativeTerminalEvent,
   NativeTerminalTransportError,
@@ -8,6 +9,7 @@ import {
   NATIVE_TERMINAL_MAX_CONTROL_BYTES,
   NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW,
   NATIVE_TERMINAL_MAX_INBOUND_FRAMES_PER_WINDOW,
+  NATIVE_TERMINAL_INPUT_ACK_TIMEOUT_MS,
   NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES,
   NATIVE_TERMINAL_MAX_QUEUED_EVENTS,
   NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES,
@@ -56,9 +58,36 @@ function ready(overrides: Record<string, unknown> = {}): string {
     requestId: REQUEST_ID,
     generation: 0,
     effectiveViewerMode: "interactive",
-    inputCapability: "unavailable",
+    inputCapability: {
+      mode: "bounded",
+      limits: {
+        maxFrameBytes: 16 * 1024,
+        maxAcceptedBytes: 256 * 1024,
+        maxAcceptedFrames: 8_192,
+      },
+    },
     sourceGrid: { cols: 120, rows: 40 },
     clientViewport: { cols: 118, rows: 38 },
+    ...overrides,
+  });
+}
+
+function inputAck(
+  sequence: number,
+  byteLength: number,
+  overrides: Record<string, unknown> = {},
+): string {
+  return JSON.stringify({
+    type: "input-ack",
+    protocolVersion: 1,
+    generation: 0,
+    sequence,
+    byteLength,
+    state: "open",
+    acceptedBytes: byteLength,
+    acceptedFrames: sequence,
+    remainingBytes: 256 * 1024 - byteLength,
+    remainingFrames: 8_192 - sequence,
     ...overrides,
   });
 }
@@ -178,6 +207,15 @@ async function connectLive(
   return { socket, attachment: result.attachment };
 }
 
+function decodedInput(value: string | ArrayBuffer | ArrayBufferView) {
+  if (typeof value === "string") return null;
+  const bytes =
+    value instanceof ArrayBuffer
+      ? new Uint8Array(value)
+      : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  return decodeTerminalAttachmentInputFrame(bytes);
+}
+
 describe("NativeTerminalTransport direct WebSocket adapter", () => {
   it("validates semantic requests before issue and rejects unsafe issue descriptors", async () => {
     const invalidRequest = rig();
@@ -208,7 +246,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     }
   });
 
-  it("opens the exact subprotocol, redeems once first, streams binary, and never sends input", async () => {
+  it("opens the exact subprotocol, redeems once first, streams output, and acks bounded input", async () => {
     const events: NativeTerminalEvent[] = [];
     const harness = rig();
     const connection = harness.transport.connect(REQUEST, (event) => {
@@ -249,15 +287,22 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     socket.message(Uint8Array.of(0x00, 0x80, 0xff).buffer);
     await vi.waitFor(() => expect(events.some((event) => event.type === "output")).toBe(true));
     expect(events).toContainEqual({ type: "output", bytes: Uint8Array.of(0x00, 0x80, 0xff) });
-    await expect(result.attachment.write(Uint8Array.of(3, 0, 255))).resolves.toEqual({
-      status: "error",
-      error: {
-        code: "input-backpressure-unavailable",
-        reason: "Terminal input is unavailable until the daemon enables bounded input recovery.",
-        retryable: false,
-      },
+    const input = result.attachment.write(Uint8Array.of(3, 0, 255));
+    expect(socket.sent).toHaveLength(2);
+    const encodedInput = socket.sent[1] as ArrayBufferView;
+    expect(
+      decodeTerminalAttachmentInputFrame(
+        new Uint8Array(encodedInput.buffer, encodedInput.byteOffset, encodedInput.byteLength),
+      ),
+    ).toMatchObject({ sequence: 1, payload: Uint8Array.of(3, 0, 255) });
+    let inputSettled = false;
+    void input.then(() => {
+      inputSettled = true;
     });
-    expect(socket.sent).toHaveLength(1);
+    await Promise.resolve();
+    expect(inputSettled).toBe(false);
+    socket.message(inputAck(1, 3));
+    await expect(input).resolves.toEqual({ status: "ok" });
     expect(JSON.stringify(result.attachment)).not.toContain(TICKET);
   });
 
@@ -701,6 +746,161 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     expect(secondEvents.filter((event) => event.type === "output")).toEqual([
       { type: "output", bytes: Uint8Array.of(2) },
     ]);
+  });
+
+  it("chunks one bounded write in sequence and resolves only after every exact acknowledgement", async () => {
+    const harness = rig();
+    const connection = harness.transport.connect(REQUEST, () => undefined);
+    const socket = await waitForSocket(harness.sockets);
+    socket.open();
+    socket.message(
+      ready({
+        inputCapability: {
+          mode: "bounded",
+          limits: { maxFrameBytes: 3, maxAcceptedBytes: 7, maxAcceptedFrames: 3 },
+        },
+      }),
+    );
+    const result = await connection;
+    if (result.status !== "connected") throw new Error(result.error.reason);
+
+    const pending = result.attachment.write(Uint8Array.of(1, 2, 3, 4, 5, 6, 7));
+    expect(decodedInput(socket.sent[1]!)).toMatchObject({
+      sequence: 1,
+      payload: Uint8Array.of(1, 2, 3),
+    });
+    await expect(result.attachment.write(Uint8Array.of(9))).resolves.toMatchObject({
+      status: "error",
+      error: { code: "input-write-in-progress" },
+    });
+    expect(socket.sent).toHaveLength(2);
+
+    socket.message(
+      inputAck(1, 3, {
+        acceptedBytes: 3,
+        acceptedFrames: 1,
+        remainingBytes: 4,
+        remainingFrames: 2,
+      }),
+    );
+    expect(decodedInput(socket.sent[2]!)).toMatchObject({
+      sequence: 2,
+      payload: Uint8Array.of(4, 5, 6),
+    });
+    socket.message(
+      inputAck(2, 3, {
+        acceptedBytes: 6,
+        acceptedFrames: 2,
+        remainingBytes: 1,
+        remainingFrames: 1,
+      }),
+    );
+    expect(decodedInput(socket.sent[3]!)).toMatchObject({
+      sequence: 3,
+      payload: Uint8Array.of(7),
+    });
+    socket.message(
+      inputAck(3, 1, {
+        state: "exhausted",
+        acceptedBytes: 7,
+        acceptedFrames: 3,
+        remainingBytes: 0,
+        remainingFrames: 0,
+      }),
+    );
+    await expect(pending).resolves.toEqual({ status: "ok" });
+  });
+
+  it("retires malicious, duplicate, and timed-out acknowledgements without replaying input", async () => {
+    const maliciousHarness = rig();
+    const malicious = await connectLive(maliciousHarness);
+    const pending = malicious.attachment.write(Uint8Array.of(1, 2));
+    malicious.socket.message(inputAck(2, 2));
+    await expect(pending).resolves.toMatchObject({
+      status: "error",
+      error: { code: "protocol-error" },
+    });
+    expect(malicious.socket.closes.at(-1)).toEqual({ code: 1002, reason: "protocol-error" });
+
+    const duplicateHarness = rig();
+    const duplicate = await connectLive(duplicateHarness);
+    const accepted = duplicate.attachment.write(Uint8Array.of(7));
+    duplicate.socket.message(inputAck(1, 1));
+    await expect(accepted).resolves.toEqual({ status: "ok" });
+    duplicate.socket.message(inputAck(1, 1));
+    expect(duplicate.socket.closes.at(-1)).toEqual({ code: 1002, reason: "protocol-error" });
+
+    const scheduled: Array<{ callback: () => void; active: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, active: true, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.active = false;
+      };
+    };
+    const timeoutHarness = rig({ schedule });
+    const timed = await connectLive(timeoutHarness);
+    const timedWrite = timed.attachment.write(Uint8Array.of(8));
+    const timeout = scheduled.find(
+      (entry) => entry.active && entry.delay === NATIVE_TERMINAL_INPUT_ACK_TIMEOUT_MS,
+    );
+    expect(timeout).toBeDefined();
+    timeout!.callback();
+    await expect(timedWrite).resolves.toMatchObject({
+      status: "error",
+      error: { code: "input-ack-timeout" },
+    });
+    timed.socket.message(inputAck(1, 1));
+    expect(timed.socket.sent.filter((frame) => typeof frame !== "string")).toHaveLength(1);
+  });
+
+  it("keeps unavailable generations read-only and drops unacknowledged bytes on reconnect", async () => {
+    const unavailableHarness = rig();
+    const unavailableConnection = unavailableHarness.transport.connect(REQUEST, () => undefined);
+    const unavailableSocket = await waitForSocket(unavailableHarness.sockets);
+    unavailableSocket.open();
+    unavailableSocket.message(ready({ inputCapability: "unavailable" }));
+    const unavailable = await unavailableConnection;
+    if (unavailable.status !== "connected") throw new Error(unavailable.error.reason);
+    await expect(unavailable.attachment.write(Uint8Array.of(1))).resolves.toMatchObject({
+      status: "error",
+      error: { code: "input-backpressure-unavailable" },
+    });
+    expect(unavailableSocket.sent).toHaveLength(1);
+
+    const reconnectHarness = rig({ descriptors: [issueDescriptor(), issueDescriptor()] });
+    const first = await connectLive(reconnectHarness);
+    const abandoned = first.attachment.write(Uint8Array.of(4, 5, 6));
+    first.socket.peerClose();
+    await expect(abandoned).resolves.toMatchObject({
+      status: "error",
+      error: { code: "attachment-closed" },
+    });
+    const second = await connectLive(reconnectHarness, () => undefined, 1);
+    expect(second.socket.sent).toHaveLength(1);
+    expect(decodedInput(first.socket.sent[1]!)).toMatchObject({
+      sequence: 1,
+      payload: Uint8Array.of(4, 5, 6),
+    });
+  });
+
+  it("settles an in-flight input write on renderer shutdown and ignores a late acknowledgement", async () => {
+    const harness = rig();
+    const { socket, attachment } = await connectLive(harness);
+    const pending = attachment.write(Uint8Array.of(4, 5));
+    expect(decodedInput(socket.sent[1]!)).toMatchObject({
+      sequence: 1,
+      payload: Uint8Array.of(4, 5),
+    });
+
+    attachment.dispose();
+    await expect(pending).resolves.toMatchObject({
+      status: "error",
+      error: { code: "disposed" },
+    });
+    socket.message(inputAck(1, 2));
+    expect(socket.sent.filter((frame) => typeof frame !== "string")).toHaveLength(1);
+    expect(socket.closes).toEqual([{ code: 1000, reason: "renderer-disposed" }]);
   });
 
   it("does not reflect bearer material through typed failures", async () => {
