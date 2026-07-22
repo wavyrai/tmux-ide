@@ -4,6 +4,7 @@ import { TmuxError } from "./errors.ts";
 const DEBUG = process.env.TMUX_IDE_DEBUG === "1";
 
 const SESSION_NOT_FOUND_PATTERNS = ["can't find session", "can't find window", "unknown target"];
+const ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS = ["unknown variable:"];
 
 const TMUX_UNAVAILABLE_PATTERNS = [
   "failed to connect to server",
@@ -70,6 +71,14 @@ function classifyTmuxError(error: unknown): TmuxError {
     return new TmuxError("tmux session was not found", "SESSION_NOT_FOUND", {
       cause: error as Error,
     });
+  }
+
+  if (ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS.some((pattern) => detail.includes(pattern))) {
+    return new TmuxError(
+      "tmux environment variable was not found",
+      "ENVIRONMENT_VARIABLE_NOT_FOUND",
+      { cause: error as Error },
+    );
   }
 
   if (TMUX_UNAVAILABLE_PATTERNS.some((pattern) => detail.includes(pattern))) {

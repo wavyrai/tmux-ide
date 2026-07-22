@@ -10,8 +10,12 @@ import {
 
 /** Namespace reserved for daemon-owned, disposable grouped view sessions. */
 export const GROUPED_TMUX_VIEW_SESSION_PREFIX = "_tmux-ide-view-v1-" as const;
-/** Session-local proof that cleanup owns a view rather than a durable session. */
-export const GROUPED_TMUX_VIEW_MARKER_OPTION = "@tmux_ide_attachment_view" as const;
+/**
+ * Session-local ownership proof. tmux has no pane/window scope for environment
+ * entries, unlike `@` user options whose effective format value can be
+ * shadowed by a linked pane or window.
+ */
+export const GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT = "TMUX_IDE_ATTACHMENT_VIEW" as const;
 export const GROUPED_TMUX_MAX_GENERATION = 65_535;
 const GROUPED_TMUX_PLACEHOLDER_WINDOW = "__tmux_ide_attachment_placeholder" as const;
 const GROUPED_TMUX_PLACEHOLDER_COMMAND = "exec sleep 2147483647" as const;
@@ -68,7 +72,7 @@ export interface GroupedTmuxAttachmentPlan {
     readonly attachmentId: string;
     readonly generation: number;
     readonly viewSessionName: string;
-    readonly markerOption: typeof GROUPED_TMUX_VIEW_MARKER_OPTION;
+    readonly markerEnvironment: typeof GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT;
     readonly markerValue: string;
     readonly semanticTarget: TerminalAttachmentSemanticTarget;
     readonly durableSource: {
@@ -157,7 +161,7 @@ function attachCommand(
  * session would expose every source window through next/previous navigation.
  *
  * The linked window's contents and window options are shared with the durable
- * source. This planner therefore mutates session-scoped view options only;
+ * source. This planner therefore mutates session-scoped view state only;
  * especially, read-only setup never writes `window-size` or resizes a window.
  */
 export function planGroupedTmuxAttachment(
@@ -169,8 +173,8 @@ export function planGroupedTmuxAttachment(
   const exactViewTarget = `=${viewSessionName}`;
   const existenceProbe = tmux(["has-session", "-t", exactViewTarget]);
   const ownership: TmuxOutputGate = {
-    query: tmux(["show-options", "-qv", "-t", viewSessionName, GROUPED_TMUX_VIEW_MARKER_OPTION]),
-    expectedStdout: viewMarkerValue,
+    query: tmux(["show-environment", "-t", exactViewTarget, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT]),
+    expectedStdout: `${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}=${viewMarkerValue}`,
   };
   const topology: TmuxOutputGate = {
     query: tmux(["list-windows", "-t", exactViewTarget, "-F", "#{window_id}"]),
@@ -191,10 +195,10 @@ export function planGroupedTmuxAttachment(
     GROUPED_TMUX_PLACEHOLDER_WINDOW,
     GROUPED_TMUX_PLACEHOLDER_COMMAND,
     ";",
-    "set-option",
+    "set-environment",
     "-t",
     viewSessionName,
-    GROUPED_TMUX_VIEW_MARKER_OPTION,
+    GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
     viewMarkerValue,
     ";",
     "set-option",
@@ -226,7 +230,7 @@ export function planGroupedTmuxAttachment(
       attachmentId: parsed.attachmentId,
       generation: parsed.generation,
       viewSessionName,
-      markerOption: GROUPED_TMUX_VIEW_MARKER_OPTION,
+      markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
       markerValue: viewMarkerValue,
       semanticTarget: parsed.target,
       durableSource: {

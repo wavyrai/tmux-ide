@@ -8,7 +8,7 @@ import {
 } from "@tmux-ide/contracts";
 import {
   GROUPED_TMUX_MAX_GENERATION,
-  GROUPED_TMUX_VIEW_MARKER_OPTION,
+  GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   GROUPED_TMUX_VIEW_SESSION_PREFIX,
   groupedTmuxViewSessionName,
   planGroupedTmuxAttachment,
@@ -58,7 +58,7 @@ export type GuardedAttachmentCleanupResult =
 export interface GuardedAttachmentCleanup {
   /** Exact-name tmux target. Never a caller-authored prefix or pattern. */
   readonly exactViewSessionTarget: `=${string}`;
-  readonly markerOption: typeof GROUPED_TMUX_VIEW_MARKER_OPTION;
+  readonly markerEnvironment: typeof GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT;
   readonly expectedMarkerValue: string;
   readonly expectedWindowId: string;
 }
@@ -107,7 +107,7 @@ export interface AttachmentViewExecutor {
   ) => Promise<GuardedAttachmentViewOperationResult>;
   readonly enumerateMarkedViews: (
     prefix: typeof GROUPED_TMUX_VIEW_SESSION_PREFIX,
-    markerOption: typeof GROUPED_TMUX_VIEW_MARKER_OPTION,
+    markerEnvironment: typeof GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   ) => Promise<readonly EnumeratedMarkedAttachmentView[]>;
 }
 
@@ -677,7 +677,7 @@ export class AttachmentLeaseManager {
       try {
         const enumerated = await this.#viewExecutor.enumerateMarkedViews(
           GROUPED_TMUX_VIEW_SESSION_PREFIX,
-          GROUPED_TMUX_VIEW_MARKER_OPTION,
+          GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
         );
         if (!Array.isArray(enumerated)) throw new TypeError("Invalid marked view enumeration.");
         candidates = [...enumerated];
@@ -713,7 +713,7 @@ export class AttachmentLeaseManager {
         try {
           const result = await this.#viewExecutor.guardedCleanup({
             exactViewSessionTarget: `=${parsed.viewSessionName}`,
-            markerOption: GROUPED_TMUX_VIEW_MARKER_OPTION,
+            markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
             expectedMarkerValue: parsed.markerValue,
             expectedWindowId: parsed.windowId,
           });
@@ -932,7 +932,7 @@ export class AttachmentLeaseManager {
     try {
       const status = await this.#viewExecutor.guardedCleanup({
         exactViewSessionTarget: exactViewSessionTarget(state.plan),
-        markerOption: state.plan.identity.markerOption,
+        markerEnvironment: state.plan.identity.markerEnvironment,
         expectedMarkerValue: state.plan.identity.markerValue,
         expectedWindowId: state.plan.recover.topology.expectedStdout,
       });
