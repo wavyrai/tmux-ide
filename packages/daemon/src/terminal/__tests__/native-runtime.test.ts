@@ -523,6 +523,9 @@ describe("native terminal attachment runtime lifecycle", () => {
       {
         name: "runtime:session",
         runtimeSessionId: "$7",
+        // The inventory fixture reports /repo as the active pane cwd. Durable
+        // application state must remain rooted at the registered workspace.
+        dir: root,
         catalogIssue: null,
         panes: [expect.objectContaining({ semanticPaneId: "pane.agent", runtimePaneId: "%3" })],
       },

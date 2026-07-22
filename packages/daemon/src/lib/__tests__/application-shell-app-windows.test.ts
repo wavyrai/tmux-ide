@@ -5,10 +5,14 @@ import { APP_WINDOW_MAX_WINDOWS, AppWindowDocumentV1SchemaZ } from "@tmux-ide/co
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { ProjectResolution } from "../project-resolver.ts";
-import { createProjectRuntimeRepository } from "../project-runtime-repository.ts";
+import {
+  createProjectRuntimeRepository,
+  openProjectRuntimeRepository,
+} from "../project-runtime-repository.ts";
 import { APP_WINDOW_DOCUMENT_PATH, writeAppWindowDocument } from "../app-window-repository.ts";
 import {
   initialApplicationShellAppWindows,
+  loadApplicationShellAppWindows,
   reconcileApplicationShellAppWindowRepository,
   reconcileApplicationShellAppWindows,
 } from "../application-shell-app-windows.ts";
@@ -130,6 +134,20 @@ describe("initialApplicationShellAppWindows", () => {
     expect(AppWindowDocumentV1SchemaZ.safeParse(reconciled).success).toBe(true);
   });
 
+  it("preserves document identity when the terminal inventory is already reconciled", () => {
+    const initial = initialApplicationShellAppWindows(["terminal.lead"], "terminal.lead", NOW);
+    const reconciled = reconcileApplicationShellAppWindows(
+      initial,
+      ["terminal.lead", "terminal.lead"],
+      "terminal.lead",
+      LATER,
+    );
+
+    expect(reconciled).toBe(initial);
+    expect(reconciled.revision).toBe(0);
+    expect(reconciled.updatedAt).toBe(NOW);
+  });
+
   it("persists newly discovered terminals after first run through revision CAS", () => {
     const { first, second } = repositoryPair();
     const created = reconcileApplicationShellAppWindowRepository(
@@ -152,6 +170,39 @@ describe("initialApplicationShellAppWindows", () => {
       terminalSourceId: "terminal.worker",
     });
     expect(first.readRequiredDocument(APP_WINDOW_DOCUMENT_PATH).revision).toBe(2);
+  });
+
+  it("initializes a config-free project once and serves repeat V3 loads without rewriting", async () => {
+    const home = temporaryRoot("application-shell-config-free-home-");
+    const project = temporaryRoot("application-shell-config-free-project-");
+    const previousHome = process.env.TMUX_IDE_HOME;
+    process.env.TMUX_IDE_HOME = home;
+    try {
+      const created = await loadApplicationShellAppWindows(
+        project,
+        ["pane.workspace.lead"],
+        "pane.workspace.lead",
+      );
+      const runtime = await openProjectRuntimeRepository(project);
+      const firstEnvelope = runtime.readRequiredDocument(APP_WINDOW_DOCUMENT_PATH);
+
+      const repeated = await loadApplicationShellAppWindows(
+        project,
+        ["pane.workspace.lead"],
+        "pane.workspace.lead",
+      );
+      const secondEnvelope = runtime.readRequiredDocument(APP_WINDOW_DOCUMENT_PATH);
+
+      expect(Object.values(created.windows)).toHaveLength(1);
+      expect(created.focusedWindowId).not.toBeNull();
+      expect(repeated).toEqual(created);
+      expect(firstEnvelope.revision).toBe(1);
+      expect(secondEnvelope.revision).toBe(firstEnvelope.revision);
+      expect(secondEnvelope.payload).toEqual(firstEnvelope.payload);
+    } finally {
+      if (previousHome === undefined) delete process.env.TMUX_IDE_HOME;
+      else process.env.TMUX_IDE_HOME = previousHome;
+    }
   });
 
   it("retries a stale reconciliation without losing an external terminal", () => {

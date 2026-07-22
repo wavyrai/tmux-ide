@@ -899,7 +899,11 @@ export class NativeTerminalAttachmentRuntime {
     return Object.freeze({
       name: workspace.sessionName,
       runtimeSessionId: active.sessionId,
-      dir: active.dir,
+      // Application-owned resources belong to the registered workspace, not
+      // whichever cwd happens to be active inside one tmux pane. Pane cwd may
+      // be outside the project (or move during a shell session), while the
+      // registry projectDir is the durable workspace identity boundary.
+      dir: workspace.projectDir,
       catalogIssue,
       panes: Object.freeze(
         panes.map(

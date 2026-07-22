@@ -125,7 +125,11 @@ export function reconcileApplicationShellAppWindows(
     .filter((sourceId) => !sourceMap.has(sourceId))
     .sort((left, right) => left.localeCompare(right))
     .slice(0, capacity);
-  if (admittedSourceIds.length === 0) return current;
+  // Preserve the caller's identity for a semantic no-op. Schema parsing
+  // intentionally clones the document; returning that clone would make the
+  // repository reconciliation loop mistake every repeat load for a mutation
+  // and attempt to persist an unchanged domain revision.
+  if (admittedSourceIds.length === 0) return document;
 
   const windows = structuredClone(current.windows);
   const floatingOrder = [...current.floatingOrder];
