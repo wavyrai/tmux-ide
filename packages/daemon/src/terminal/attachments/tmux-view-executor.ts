@@ -92,6 +92,18 @@ export interface TmuxAttachmentClientTransportAttempt {
   readonly outcome: Promise<TmuxAttachmentClientTransportOutcome>;
 }
 
+export type TmuxAttachmentClientTransportErrorCode = "read_only_unavailable";
+
+export class TmuxAttachmentClientTransportError extends Error {
+  readonly code: TmuxAttachmentClientTransportErrorCode;
+
+  constructor(code: TmuxAttachmentClientTransportErrorCode) {
+    super("The requested terminal attachment transport mode is unavailable.");
+    this.name = "TmuxAttachmentClientTransportError";
+    this.code = code;
+  }
+}
+
 /**
  * Explicit capability for commands which create a live tmux client. The
  * ordinary daemon command runner is intentionally not treated as this
@@ -110,6 +122,7 @@ export type TmuxAttachmentViewExecutorErrorCode =
   | "invalid-tmux-output"
   | "tmux-command-failed"
   | "attachment-transport-unavailable"
+  | "read_only_unavailable"
   | "view-state-mismatch"
   | "mutation-outcome-uncertain";
 
@@ -119,6 +132,7 @@ const ERROR_MESSAGES: Record<TmuxAttachmentViewExecutorErrorCode, string> = {
   "tmux-command-failed": "The guarded tmux attachment command failed.",
   "attachment-transport-unavailable":
     "A tmux client transport is required for this attachment operation.",
+  read_only_unavailable: "Read-only terminal attachment is not proven safe on this daemon.",
   "view-state-mismatch": "The guarded tmux attachment view no longer matches its proof.",
   "mutation-outcome-uncertain": "The guarded tmux attachment mutation outcome is uncertain.",
 };
@@ -425,6 +439,12 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
       return result;
     } catch (error) {
       if (error instanceof TmuxAttachmentViewExecutorError) throw error;
+      if (
+        error instanceof TmuxAttachmentClientTransportError &&
+        error.code === "read_only_unavailable"
+      ) {
+        throw new TmuxAttachmentViewExecutorError("read_only_unavailable");
+      }
       throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
     }
   }
@@ -703,7 +723,8 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     let attempt: TmuxAttachmentClientTransportAttempt;
     try {
       attempt = this.#clientCommand(guarded, plan);
-    } catch {
+    } catch (error) {
+      if (error instanceof TmuxAttachmentViewExecutorError) throw error;
       throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
     }
     return attempt.outcome.then(

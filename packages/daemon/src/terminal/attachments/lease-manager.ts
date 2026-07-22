@@ -192,6 +192,7 @@ export type AttachmentLeaseErrorCode =
   | "view-generation-exhausted"
   | "view-cleanup-failed"
   | "view-operation-failed"
+  | "read_only_unavailable"
   | "orphan-enumeration-failed"
   | "source-proof-mismatch"
   | "identity-generation-failed";
@@ -578,9 +579,15 @@ export class AttachmentLeaseManager {
             },
             plan: structuredClone(state.plan),
           });
-        } catch {
+        } catch (error) {
           this.#removeState(state);
           await this.#cleanupPlan(state);
+          if (error instanceof Error && "code" in error && error.code === "read_only_unavailable") {
+            throw new AttachmentLeaseError(
+              "read_only_unavailable",
+              "Read-only terminal attachment is not proven safe on this daemon.",
+            );
+          }
           throw new AttachmentLeaseError(
             "view-operation-failed",
             "The guarded terminal view operation failed.",

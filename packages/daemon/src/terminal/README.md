@@ -95,6 +95,11 @@ we register there.
   `input-backpressure-unavailable`; this prevents stalled tmux readers from
   growing an unobservable queue without bound. Output uses public
   `IPty.pause()`/`resume()` and byte+frame caps.
+- Read-only attachment clients are also fail-closed in this first launcher
+  slice. They fail before PTY spawn with `read_only_unavailable` until the
+  daemon proves the installed tmux version and continuously holds an
+  interactive geometry owner with defined owner-loss behavior. The tmux
+  `attach-session -r` flag alone is not treated as a geometry-safety proof.
 
 ## Roadmap notes
 

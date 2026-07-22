@@ -11,13 +11,14 @@ import {
   type GroupedTmuxAttachmentPlan,
   type TmuxArgvPlan,
 } from "./grouped-tmux.ts";
-import type {
-  TmuxAttachmentClientTransport,
-  TmuxAttachmentClientTransportAttempt,
-  TmuxAttachmentClientTransportInput,
-  TmuxAttachmentClientTransportOutcome,
-  TmuxAttachmentCommandResult,
-  TmuxAttachmentCommandRunner,
+import {
+  TmuxAttachmentClientTransportError,
+  type TmuxAttachmentClientTransport,
+  type TmuxAttachmentClientTransportAttempt,
+  type TmuxAttachmentClientTransportInput,
+  type TmuxAttachmentClientTransportOutcome,
+  type TmuxAttachmentCommandResult,
+  type TmuxAttachmentCommandRunner,
 } from "./tmux-view-executor.ts";
 
 const MAX_PROOF_OUTPUT_BYTES = 64 * 1024;
@@ -279,6 +280,12 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
     input: TmuxAttachmentClientTransportInput,
   ): TmuxAttachmentClientTransportAttempt {
     validateIdentity(input);
+    if (input.viewerMode === "read-only") {
+      // Read-only tmux clients are not geometry-neutral without a proven
+      // installed-version gate and continuously held interactive size owner.
+      // This slice owns neither dependency, so it fails before PTY spawn.
+      throw new TmuxAttachmentClientTransportError("read_only_unavailable");
+    }
     const existing = this.#ownedByAttachment.get(input.identity.attachmentId);
     if (existing && input.identity.generation <= existing.generation) {
       throw new TypeError("attachment generation is stale or already owned");

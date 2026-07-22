@@ -12,6 +12,7 @@ import type {
   GuardedAttachmentViewOperation,
 } from "../attachments/lease-manager.ts";
 import {
+  TmuxAttachmentClientTransportError,
   TmuxAttachmentViewExecutor,
   TmuxAttachmentViewExecutorError,
   type TmuxAttachmentClientTransportInput,
@@ -195,12 +196,16 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
   }
 }
 
-function plan(id = attachmentId, generation = 0): GroupedTmuxAttachmentPlan {
+function plan(
+  id = attachmentId,
+  generation = 0,
+  viewerMode: "interactive" | "read-only" = "interactive",
+): GroupedTmuxAttachmentPlan {
   return planGroupedTmuxAttachment({
     attachmentId: id,
     generation,
     target: { workspaceName: "workspace.alpha", semanticPaneId: "pane.worker" },
-    viewerMode: "interactive",
+    viewerMode,
     viewport: { cols: 120, rows: 40 },
     source: {
       sessionId: "$12",
@@ -493,6 +498,28 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
     ).resolves.toBe("executed");
     expect(began).toBe(true);
     expect(yielded).toBe(true);
+  });
+
+  it("preserves a typed read-only transport refusal before client spawn", async () => {
+    const runner = new FakeRunner();
+    const selectedPlan = plan(attachmentId, 0, "read-only");
+    seed(runner, selectedPlan);
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: {
+        beginGuardedAttach() {
+          throw new TmuxAttachmentClientTransportError("read_only_unavailable");
+        },
+      },
+      now: () => 1_000,
+    });
+
+    await expect(
+      executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
+    ).rejects.toMatchObject({
+      code: "read_only_unavailable",
+      message: "Read-only terminal attachment is not proven safe on this daemon.",
+    });
   });
 
   it("fails closed on a transport outcome outside the static protocol", async () => {

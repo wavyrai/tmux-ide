@@ -316,7 +316,7 @@ describe("PtyTmuxAttachmentLauncher", () => {
     transport.disposeAll();
   });
 
-  it("keeps native input gated and rejects every read-only mutation", async () => {
+  it("keeps native input gated and rejects read-only before PTY spawn", async () => {
     const adapter = new MockPtyAdapter();
     const proof = new ProofRunner();
     const interactivePlan = plan();
@@ -332,13 +332,14 @@ describe("PtyTmuxAttachmentLauncher", () => {
     interactive.dispose();
 
     const readOnlyPlan = plan(SECOND_ID, 0, "read-only");
-    proveCurrentAttached(proof, adapter, readOnlyPlan);
-    const readOnlyAttempt = transport.beginGuardedAttach(input(readOnlyPlan));
-    await readOnlyAttempt.outcome;
-    const readOnly = transport.claim(readOnlyAttempt)!;
-    expect(() => readOnly.write("x")).toThrow(/read-only/u);
-    expect(() => readOnly.resize(80, 24)).toThrow(/read-only/u);
-    readOnly.dispose();
+    const spawnCount = adapter.spawnCount;
+    expect(() => transport.beginGuardedAttach(input(readOnlyPlan))).toThrowError(
+      expect.objectContaining({
+        name: "TmuxAttachmentClientTransportError",
+        code: "read_only_unavailable",
+      }),
+    );
+    expect(adapter.spawnCount).toBe(spawnCount);
   });
 
   it("disposes only the PTY client and never emits a tmux kill-session command", async () => {

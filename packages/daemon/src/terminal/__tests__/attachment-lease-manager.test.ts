@@ -86,6 +86,7 @@ class FakeViewExecutor implements AttachmentViewExecutor {
   cleanupFailure = false;
   sourceProofMatches = true;
   operationFailure = false;
+  operationErrorCode: "read_only_unavailable" | null = null;
   enumerationFailure = false;
   viewMutationCount = 0;
   operationNow: () => number = () => 0;
@@ -131,6 +132,11 @@ class FakeViewExecutor implements AttachmentViewExecutor {
     this.beforeViewMutation?.(operation);
     if (this.operationNow() >= operation.deadline) return "lease-expired" as const;
     this.viewMutationCount += 1;
+    if (this.operationErrorCode) {
+      throw Object.assign(new Error("typed executor refusal"), {
+        code: this.operationErrorCode,
+      });
+    }
     if (this.operationFailure) {
       this.seed(operation.plan);
       throw new Error("executor leaked bearer-secret-on-%99-at-$77:@88");
@@ -702,6 +708,25 @@ describe("AttachmentLeaseManager", () => {
     expect(executor.views.size).toBe(0);
     executor.operationFailure = false;
     await expect(manager.issue(request(), context(2))).resolves.toBeDefined();
+  });
+
+  it("preserves a typed read-only transport refusal and cleans the lease", async () => {
+    const { manager, executor } = rig();
+    const issued = await manager.issue(request("read-only"), context(1));
+    await manager.redeem(issued.redemptionTicket, binding(issued.descriptor.requestId));
+    executor.operationErrorCode = "read_only_unavailable";
+
+    await errorCode(
+      manager.executeViewOperation(
+        issued.descriptor.leaseId,
+        binding(issued.descriptor.requestId),
+        "attach",
+      ),
+      "read_only_unavailable",
+    );
+    expect(manager.snapshot().leases).toHaveLength(0);
+    expect(executor.views.size).toBe(0);
+    expect(executor.cleanups).toHaveLength(1);
   });
 
   it("does not execute an operation when the lease expires during its proof gate", async () => {

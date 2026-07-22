@@ -164,9 +164,11 @@ export {
 export {
   TmuxAttachmentViewExecutor,
   TmuxAttachmentViewExecutorError,
+  TmuxAttachmentClientTransportError,
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
   type TmuxAttachmentClientTransport,
+  type TmuxAttachmentClientTransportErrorCode,
   type TmuxAttachmentClientTransportAttempt,
   type TmuxAttachmentClientTransportInput,
   type TmuxAttachmentClientTransportOutcome,
