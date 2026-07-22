@@ -41,6 +41,14 @@ import { z } from "zod";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
+/**
+ * V3 can carry 33 schema-bounded app-window scenes: the current scene plus
+ * 32 named layouts, each with 128 windows and a 255-node dock tree. A fixture
+ * using every maximum and worst-case JSON-escaped text is about 10.2 MiB.
+ * Keep a finite power-of-two ceiling with headroom for the rest of the shell
+ * projection while leaving catalog, V2, and mutation limits unchanged.
+ */
+export const APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_TERMINAL_ATTACHMENT_ISSUE_RESPONSE_BYTES = 16 * 1024;
 const DEFAULT_MAX_EVENT_BYTES = 512 * 1024;
 const DEFAULT_EVENT_HANDSHAKE_TIMEOUT_MS = 3_000;
@@ -513,6 +521,9 @@ export class DaemonResourceBroker {
       try {
         raw = await this.#requestJson(
           `/api/project/${encodeURIComponent(workspace.sessionName)}/application-shell?version=${negotiatedVersion}`,
+          negotiatedVersion === APPLICATION_SHELL_RESOURCE_V3_VERSION
+            ? APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES
+            : this.#maxResponseBytes,
         );
       } catch (error) {
         if (
@@ -525,12 +536,15 @@ export class DaemonResourceBroker {
         negotiatedVersion = APPLICATION_SHELL_RESOURCE_V2_VERSION;
         raw = await this.#requestJson(
           `/api/project/${encodeURIComponent(workspace.sessionName)}/application-shell?version=${negotiatedVersion}`,
+          this.#maxResponseBytes,
         );
       }
-      const envelope =
+      const parsed =
         negotiatedVersion === APPLICATION_SHELL_RESOURCE_V3_VERSION
-          ? ApplicationShellResourceV3SchemaZ.parse(raw)
-          : ApplicationShellResourceV2SchemaZ.parse(raw);
+          ? ApplicationShellResourceV3SchemaZ.safeParse(raw)
+          : ApplicationShellResourceV2SchemaZ.safeParse(raw);
+      if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
+      const envelope = parsed.data;
       if (!sameIdentity(envelope.daemon, daemonIdentity(this.#daemon))) {
         throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
       }
@@ -664,7 +678,10 @@ export class DaemonResourceBroker {
     return { workspaceName: workspaceName.data, sessionName: entry.sessionName };
   }
 
-  async #requestJson(pathname: string): Promise<unknown> {
+  async #requestJson(
+    pathname: string,
+    maximumResponseBytes = this.#maxResponseBytes,
+  ): Promise<unknown> {
     if (this.#disposed) throw new BrokerFailure(daemonCapabilityError("disposed"));
     if (this.#daemon.status !== "connected") {
       throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
@@ -701,7 +718,7 @@ export class DaemonResourceBroker {
           daemonCapabilityError(response.status === 404 ? "workspace-not-found" : "request-failed"),
         );
       }
-      return readBoundedJson(response, this.#maxResponseBytes);
+      return readBoundedJson(response, maximumResponseBytes);
     })();
     try {
       const result = await Promise.race([operation, deadline]);

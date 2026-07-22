@@ -1,15 +1,26 @@
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
+  APP_WINDOW_MAX_ID_LENGTH,
+  APP_WINDOW_MAX_LAYOUTS,
+  APP_WINDOW_MAX_WINDOWS,
+  ApplicationShellResourceV3SchemaZ,
+  AppWindowDocumentV1SchemaZ,
   COHESION_FIXTURE_V1,
   DESKTOP_PACKAGED_RENDERER_ORIGIN,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
   type DesktopDaemonEvent,
   type DesktopDaemonHostState,
+  type AppWindowDockNodeShape,
+  type AppWindowInstance,
 } from "@tmux-ide/contracts";
 import { describe, expect, it, vi } from "vitest";
 
-import { DaemonResourceBroker, type BrokerEventSocket } from "./daemon-resource-broker.ts";
+import {
+  APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES,
+  DaemonResourceBroker,
+  type BrokerEventSocket,
+} from "./daemon-resource-broker.ts";
 
 const IDENTITY = {
   protocolVersion: 1,
@@ -79,6 +90,114 @@ const APPLICATION_SHELL_V3_ENVELOPE = {
     },
   },
 };
+
+function maximumSemanticId(prefix: string, index: number): string {
+  const head = `${prefix}${String(index).padStart(3, "0")}`;
+  return `${head}${"x".repeat(APP_WINDOW_MAX_ID_LENGTH - head.length)}`;
+}
+
+/** Current schema maxima with the six-byte JSON escape expansion for bounded text. */
+function maximumApplicationShellV3Envelope() {
+  const escapedText = "\u0001";
+  const windows: Record<string, AppWindowInstance> = {};
+  let dockNodes: AppWindowDockNodeShape[] = Array.from(
+    { length: APP_WINDOW_MAX_WINDOWS },
+    (_, index) => {
+      const windowId = maximumSemanticId("window.", index);
+      const stackId = maximumSemanticId("stack.", index);
+      windows[windowId] = {
+        id: windowId,
+        source: {
+          kind: "terminal",
+          terminalSourceId: maximumSemanticId("terminal.", index),
+        },
+        title: escapedText.repeat(160),
+        placement: {
+          mode: "docked",
+          docked: { stackId, index: 0 },
+          floating: { x: -1_000_000, y: -1_000_000, width: 1_000_000, height: 1_000_000 },
+        },
+      };
+      return {
+        type: "stack",
+        id: stackId,
+        windowIds: [windowId],
+        activeWindowId: windowId,
+      };
+    },
+  );
+  let level = 0;
+  while (dockNodes.length > 1) {
+    const next: AppWindowDockNodeShape[] = [];
+    for (let index = 0; index < dockNodes.length; index += 2) {
+      const left = dockNodes[index]!;
+      const right = dockNodes[index + 1];
+      if (!right) {
+        next.push(left);
+        continue;
+      }
+      next.push({
+        type: "split",
+        id: maximumSemanticId(`split.${level}.`, index / 2),
+        axis: level % 2 === 0 ? "horizontal" : "vertical",
+        children: [left, right],
+        weights: [1_000_000, 1_000_000],
+      });
+    }
+    dockNodes = next;
+    level += 1;
+  }
+  const focusedWindowId = Object.keys(windows)[0]!;
+  const scene = {
+    windows,
+    dockRoot: dockNodes[0]!,
+    dockState: { mode: "maximized", preferredHeight: 1_000_000, focusZone: "dock-body" },
+    floatingOrder: [],
+    focusedWindowId,
+  };
+  const layouts = Object.fromEntries(
+    Array.from({ length: APP_WINDOW_MAX_LAYOUTS }, (_, index) => {
+      const layoutId = maximumSemanticId("layout.", index);
+      return [
+        layoutId,
+        {
+          id: layoutId,
+          name: escapedText.repeat(80),
+          description: escapedText.repeat(512),
+          revision: Number.MAX_SAFE_INTEGER,
+          createdAt: "2026-07-22T10:00:00.000Z",
+          updatedAt: "2026-07-22T10:00:00.000Z",
+          scene,
+        },
+      ];
+    }),
+  );
+  const appWindows = AppWindowDocumentV1SchemaZ.parse({
+    ...scene,
+    version: 1,
+    revision: Number.MAX_SAFE_INTEGER,
+    updatedAt: "2026-07-22T10:00:00.000Z",
+    activeLayoutId: Object.keys(layouts)[0],
+    layouts,
+  });
+  return ApplicationShellResourceV3SchemaZ.parse({
+    ...APPLICATION_SHELL_V3_ENVELOPE,
+    resource: {
+      ...APPLICATION_SHELL_V3_ENVELOPE.resource,
+      terminalInventory: {
+        activeResourceId: null,
+        resources: Array.from({ length: 512 }, (_, index) => ({
+          id: maximumSemanticId("resource.", index),
+          title: escapedText.repeat(160),
+          kind: "terminal",
+          active: false,
+          attachability: { status: "unavailable", reason: "invalid-runtime-proof" },
+        })),
+      },
+      appWindows,
+    },
+  });
+}
 
 function json(value: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
@@ -420,6 +539,113 @@ describe("Electron main daemon resource broker", () => {
     ).resolves.toEqual({ status: "ok", envelope: APPLICATION_SHELL_V3_ENVELOPE });
     expect(requests.at(-1)).toContain("application-shell?version=3");
     expect(requests).toHaveLength(2);
+  });
+
+  it("accepts the schema-maximum app-window document above the generic response cap", async () => {
+    const envelope = maximumApplicationShellV3Envelope();
+    const serialized = JSON.stringify(envelope);
+    const payloadBytes = new TextEncoder().encode(serialized).byteLength;
+    expect(payloadBytes).toBeGreaterThan(1024 * 1024);
+    expect(payloadBytes).toBeLessThanOrEqual(APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES);
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) =>
+        input.toString().endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : new Response(serialized, { headers: { "content-type": "application/json" } }),
+    });
+
+    const result = await broker.fetchApplicationShell(
+      "product workspace",
+      APPLICATION_SHELL_RESOURCE_V3_VERSION,
+    );
+    expect(result.status).toBe("ok");
+    if (
+      result.status === "ok" &&
+      result.envelope.version === APPLICATION_SHELL_RESOURCE_V3_VERSION
+    ) {
+      expect(Object.keys(result.envelope.resource.appWindows.windows)).toHaveLength(
+        APP_WINDOW_MAX_WINDOWS,
+      );
+      expect(Object.keys(result.envelope.resource.appWindows.layouts)).toHaveLength(
+        APP_WINDOW_MAX_LAYOUTS,
+      );
+    }
+  });
+
+  it("rejects a V3 response one byte beyond its dedicated ceiling", async () => {
+    const requests: string[] = [];
+    const oversizedBody = `"${"x".repeat(APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES - 1)}"`;
+    expect(new TextEncoder().encode(oversizedBody)).toHaveLength(
+      APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES + 1,
+    );
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return new Response(oversizedBody, { headers: { "content-type": "application/json" } });
+      },
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V3_VERSION),
+    ).resolves.toMatchObject({
+      status: "error",
+      error: { code: "response-too-large" },
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests.at(-1)).toContain("application-shell?version=3");
+  });
+
+  it("keeps V2 application-shell responses on the generic one MiB ceiling", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) =>
+        input.toString().endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : new Response("{}", {
+              headers: {
+                "content-type": "application/json",
+                "content-length": String(1024 * 1024 + 1),
+              },
+            }),
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V2_VERSION),
+    ).resolves.toMatchObject({
+      status: "error",
+      error: { code: "response-too-large" },
+    });
+  });
+
+  it("classifies a bounded malformed V3 envelope without exposing parser details", async () => {
+    const malformed = {
+      ...APPLICATION_SHELL_V3_ENVELOPE,
+      resource: {
+        ...APPLICATION_SHELL_V3_ENVELOPE.resource,
+        appWindows: { ...APPLICATION_SHELL_V3_ENVELOPE.resource.appWindows, unexpected: true },
+      },
+    };
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) =>
+        input.toString().endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : json(malformed),
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V3_VERSION),
+    ).resolves.toEqual({
+      status: "error",
+      error: {
+        code: "invalid-response",
+        reason: "The daemon returned an invalid resource response.",
+      },
+    });
   });
 
   it("never lets an unknown semantic name become a daemon route", async () => {
