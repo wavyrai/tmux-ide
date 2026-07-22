@@ -69,14 +69,11 @@ export const WorkspaceRelativeDisplayPathSchemaZ = z
     "workspace display path contains control characters",
   )
   .refine(
-    (value) =>
-      value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".."),
+    (value) => value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".."),
     "workspace display path contains an invalid segment",
   );
 
-export type WorkspaceResourceWorkspaceName = z.infer<
-  typeof WorkspaceResourceWorkspaceNameSchemaZ
->;
+export type WorkspaceResourceWorkspaceName = z.infer<typeof WorkspaceResourceWorkspaceNameSchemaZ>;
 export type WorkspaceFileResourceId = z.infer<typeof WorkspaceFileResourceIdSchemaZ>;
 export type WorkspaceChangeResourceId = z.infer<typeof WorkspaceChangeResourceIdSchemaZ>;
 export type WorkspaceFilesRevision = z.infer<typeof WorkspaceFilesRevisionSchemaZ>;

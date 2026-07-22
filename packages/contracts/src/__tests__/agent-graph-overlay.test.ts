@@ -36,7 +36,10 @@ function node(windowId: string, overrides: Partial<AgentGraphNode> = {}): AgentG
   };
 }
 
-function overlay(nodes: AgentGraphNode[], rest: Partial<AgentGraphOverlay> = {}): AgentGraphOverlay {
+function overlay(
+  nodes: AgentGraphNode[],
+  rest: Partial<AgentGraphOverlay> = {},
+): AgentGraphOverlay {
   const record: Record<string, AgentGraphNode> = {};
   for (const n of nodes) record[n.windowId] = n;
   return { nodes: record, edges: [], groups: [], ...rest } as AgentGraphOverlay;
@@ -92,9 +95,9 @@ describe("agent-graph node/group id schemas", () => {
   it("bounds labels and rejects control characters", () => {
     expect(AgentGraphLabelSchemaZ.safeParse("PM · orchestrator").success).toBe(true);
     expect(AgentGraphLabelSchemaZ.safeParse("").success).toBe(false);
-    expect(AgentGraphLabelSchemaZ.safeParse("a".repeat(AGENT_GRAPH_LABEL_MAX_LENGTH + 1)).success).toBe(
-      false,
-    );
+    expect(
+      AgentGraphLabelSchemaZ.safeParse("a".repeat(AGENT_GRAPH_LABEL_MAX_LENGTH + 1)).success,
+    ).toBe(false);
     for (const bad of [NUL, BELL, TAB, ESC, DEL, "\n", "\r"]) {
       expect(AgentGraphLabelSchemaZ.safeParse(`label${bad}x`).success).toBe(false);
     }
@@ -239,8 +242,12 @@ describe("resolveAgentStatusPresentation", () => {
       attention: false,
     });
     // done/idle are terminal and never go stale.
-    expect(resolveAgentStatusPresentation({ status: "done", stale: true }).domainStatus).toBe("done");
-    expect(resolveAgentStatusPresentation({ status: "idle", stale: true }).domainStatus).toBe("idle");
+    expect(resolveAgentStatusPresentation({ status: "done", stale: true }).domainStatus).toBe(
+      "done",
+    );
+    expect(resolveAgentStatusPresentation({ status: "idle", stale: true }).domainStatus).toBe(
+      "idle",
+    );
   });
 
   it("only ever emits values within the renderer enums", () => {
@@ -258,7 +265,10 @@ describe("resolveAgentStatusPresentation", () => {
 });
 
 describe("projectAgentGraphOverlay", () => {
-  const pnode = (windowId: string, over: Partial<AgentGraphProjectionNode> = {}): AgentGraphProjectionNode => ({
+  const pnode = (
+    windowId: string,
+    over: Partial<AgentGraphProjectionNode> = {},
+  ): AgentGraphProjectionNode => ({
     windowId,
     status: "working",
     statusSource: "authority",
@@ -271,7 +281,9 @@ describe("projectAgentGraphOverlay", () => {
     const { overlay: result, truncated } = projectAgentGraphOverlay({
       nodes: [pnode("terminal.pm"), pnode("terminal.sub", { status: "blocked" })],
       edges: [{ from: "terminal.pm", to: "terminal.sub", kind: "spawned" }],
-      groups: [{ id: VALID_GROUP_ID, label: "m", memberWindowIds: ["terminal.pm", "terminal.sub"] }],
+      groups: [
+        { id: VALID_GROUP_ID, label: "m", memberWindowIds: ["terminal.pm", "terminal.sub"] },
+      ],
     });
     expect(truncated).toBe(false);
     expect(AgentGraphOverlaySchemaZ.safeParse(result).success).toBe(true);
@@ -325,8 +337,14 @@ describe("projectAgentGraphOverlay", () => {
   });
 
   it("enforces the node cap with honest truncation", () => {
-    const nodes = Array.from({ length: AGENT_GRAPH_MAX_NODES + 5 }, (_, i) => pnode(`terminal.n${i}`));
-    const { overlay: result, truncated } = projectAgentGraphOverlay({ nodes, edges: [], groups: [] });
+    const nodes = Array.from({ length: AGENT_GRAPH_MAX_NODES + 5 }, (_, i) =>
+      pnode(`terminal.n${i}`),
+    );
+    const { overlay: result, truncated } = projectAgentGraphOverlay({
+      nodes,
+      edges: [],
+      groups: [],
+    });
     expect(truncated).toBe(true);
     expect(Object.keys(result.nodes)).toHaveLength(AGENT_GRAPH_MAX_NODES);
     expect(AgentGraphOverlaySchemaZ.safeParse(result).success).toBe(true);

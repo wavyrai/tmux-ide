@@ -124,7 +124,10 @@ describe("createTmuxAgentStatusProbe", () => {
       nowSec: NOW,
     });
 
-    expect(facts.get("%3")).toMatchObject({ agentScrapeState: "blocked", agentStateRaw: `working:${NOW - 700}` });
+    expect(facts.get("%3")).toMatchObject({
+      agentScrapeState: "blocked",
+      agentStateRaw: `working:${NOW - 700}`,
+    });
     expect(facts.get("%4")).toMatchObject({ agentScrapeState: "blocked", agentStateRaw: null });
     // The `ps` read is shared across both scraped panes — taken at most once.
     expect(processTableReads).toBe(1);

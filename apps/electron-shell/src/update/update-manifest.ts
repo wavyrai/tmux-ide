@@ -140,7 +140,8 @@ function validateArtifact(
   const { platform, url, size, sha256 } = value;
   if (typeof platform !== "string" || platform.length === 0) return "artifact-invalid";
   if (typeof url !== "string" || url.length === 0) return "artifact-invalid";
-  if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) return "artifact-invalid";
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0)
+    return "artifact-invalid";
   if (typeof sha256 !== "string" || !HEX64.test(sha256)) return "artifact-invalid";
   if (size > context.maxArtifactBytes) return "artifact-too-large";
   let parsedUrl: URL;

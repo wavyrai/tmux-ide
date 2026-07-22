@@ -19,12 +19,16 @@ describe("resolveAgentStatus (the shared authority-first decision)", () => {
   });
 
   it("carries the authority epoch as `since` for every fresh state", () => {
-    expect(resolveAgentStatus({ authorityRaw: `blocked:${NOW - 5}`, nowSec: NOW, scrape: () => "idle" })).toEqual(
-      { status: "blocked", source: "authority", since: NOW - 5 },
-    );
+    expect(
+      resolveAgentStatus({ authorityRaw: `blocked:${NOW - 5}`, nowSec: NOW, scrape: () => "idle" }),
+    ).toEqual({ status: "blocked", source: "authority", since: NOW - 5 });
     // done/idle never go stale.
     expect(
-      resolveAgentStatus({ authorityRaw: `done:${NOW - 100_000}`, nowSec: NOW, scrape: () => "idle" }),
+      resolveAgentStatus({
+        authorityRaw: `done:${NOW - 100_000}`,
+        nowSec: NOW,
+        scrape: () => "idle",
+      }),
     ).toEqual({ status: "done", source: "authority", since: NOW - 100_000 });
   });
 
@@ -38,7 +42,9 @@ describe("resolveAgentStatus (the shared authority-first decision)", () => {
   });
 
   it("falls back to scrape when there is no authority stamp", () => {
-    expect(resolveAgentStatus({ authorityRaw: undefined, nowSec: NOW, scrape: () => "working" })).toEqual({
+    expect(
+      resolveAgentStatus({ authorityRaw: undefined, nowSec: NOW, scrape: () => "working" }),
+    ).toEqual({
       status: "working",
       source: "scrape",
       since: null,
@@ -51,7 +57,9 @@ describe("resolveAgentStatus (the shared authority-first decision)", () => {
   });
 
   it("reports source `unknown` when the scrape itself cannot classify", () => {
-    expect(resolveAgentStatus({ authorityRaw: undefined, nowSec: NOW, scrape: () => "unknown" })).toEqual({
+    expect(
+      resolveAgentStatus({ authorityRaw: undefined, nowSec: NOW, scrape: () => "unknown" }),
+    ).toEqual({
       status: "unknown",
       source: "unknown",
       since: null,

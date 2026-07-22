@@ -14,10 +14,7 @@
  */
 import type { DesktopUpdateStatus } from "@tmux-ide/contracts";
 
-import {
-  parseUpdateManifest,
-  type ParseUpdateManifestContext,
-} from "./update-manifest.ts";
+import { parseUpdateManifest, type ParseUpdateManifestContext } from "./update-manifest.ts";
 import {
   INITIAL_UPDATE_STATE,
   reduceUpdateState,
@@ -29,10 +26,7 @@ import {
   verifyManifestSignature,
   type ManifestSignatureVerifier,
 } from "./update-verify.ts";
-import {
-  PENDING_UPDATE_MARKER_SCHEMA_VERSION,
-  type PendingUpdateMarker,
-} from "./staged-update.ts";
+import { PENDING_UPDATE_MARKER_SCHEMA_VERSION, type PendingUpdateMarker } from "./staged-update.ts";
 
 export interface DesktopUpdaterConfig {
   /** Whether checking is enabled at all. When false the updater is inert. */

@@ -13,7 +13,9 @@ const rootId = fileId("root");
 const srcId = fileId("src");
 const assetsId = fileId("assets");
 
-const entry = (over: Partial<WorkspaceFileEntry> & Pick<WorkspaceFileEntry, "id" | "name">): WorkspaceFileEntry => ({
+const entry = (
+  over: Partial<WorkspaceFileEntry> & Pick<WorkspaceFileEntry, "id" | "name">,
+): WorkspaceFileEntry => ({
   parentId: rootId,
   relativePath: over.name,
   kind: "file",
@@ -26,7 +28,13 @@ const entry = (over: Partial<WorkspaceFileEntry> & Pick<WorkspaceFileEntry, "id"
 
 const rootEntries: WorkspaceFileEntry[] = [
   entry({ id: srcId, name: "src", kind: "directory", hasChildren: true, relativePath: "src" }),
-  entry({ id: assetsId, name: "Assets", kind: "directory", hasChildren: true, relativePath: "Assets" }),
+  entry({
+    id: assetsId,
+    name: "Assets",
+    kind: "directory",
+    hasChildren: true,
+    relativePath: "Assets",
+  }),
   entry({ id: fileId("readme"), name: "README.md", relativePath: "README.md" }),
   entry({ id: fileId("app"), name: "app.ts", relativePath: "app.ts" }),
 ];
@@ -43,7 +51,10 @@ const srcCatalog: WorkspaceFileTreeCatalog = {
   ],
 };
 
-const catalogs: WorkspaceFileTreeCatalog[] = [{ directoryId: rootId, entries: rootEntries }, srcCatalog];
+const catalogs: WorkspaceFileTreeCatalog[] = [
+  { directoryId: rootId, entries: rootEntries },
+  srcCatalog,
+];
 
 describe("workspace file tree projection", () => {
   it("orders directories before files, case-insensitively", () => {
@@ -80,7 +91,18 @@ describe("workspace file tree projection", () => {
   it("guards against a catalog cycle instead of looping forever", () => {
     const loopId = fileId("loop");
     const cyclic: WorkspaceFileTreeCatalog[] = [
-      { directoryId: rootId, entries: [entry({ id: loopId, name: "loop", kind: "directory", hasChildren: true, relativePath: "loop" })] },
+      {
+        directoryId: rootId,
+        entries: [
+          entry({
+            id: loopId,
+            name: "loop",
+            kind: "directory",
+            hasChildren: true,
+            relativePath: "loop",
+          }),
+        ],
+      },
       {
         directoryId: loopId,
         entries: [
@@ -95,7 +117,11 @@ describe("workspace file tree projection", () => {
         ],
       },
     ];
-    const view = flattenWorkspaceFileTree({ rootId, catalogs: cyclic, expandedIds: [loopId, rootId] });
+    const view = flattenWorkspaceFileTree({
+      rootId,
+      catalogs: cyclic,
+      expandedIds: [loopId, rootId],
+    });
     expect(view.truncated).toBe(true);
     // The walk stops when it revisits the root rather than recursing endlessly.
     expect(view.rows.length).toBeLessThan(5);

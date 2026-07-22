@@ -17,7 +17,10 @@ const ROOT_ID = "file.root00000000000000";
 const SRC_ID = "file.src000000000000000";
 const COMPONENTS_ID = "file.components00000000";
 
-function entry(partial: Partial<WorkspaceFileEntry> & Pick<WorkspaceFileEntry, "id" | "parentId" | "name" | "relativePath" | "kind">): WorkspaceFileEntry {
+function entry(
+  partial: Partial<WorkspaceFileEntry> &
+    Pick<WorkspaceFileEntry, "id" | "parentId" | "name" | "relativePath" | "kind">,
+): WorkspaceFileEntry {
   return {
     hidden: false,
     ignored: false,

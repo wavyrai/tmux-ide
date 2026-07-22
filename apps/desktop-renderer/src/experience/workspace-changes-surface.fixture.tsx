@@ -44,7 +44,11 @@ function changesSurface(scenario: ChangesSurfaceScenario): ChangesSurfaceProps {
     case "ready-diff":
       return { model: createChangesReadyModel(), diff: createDiffReadyModel(), ...callbacks };
     case "truncated-diff":
-      return { model: createChangesDetachedModel(), diff: createDiffTruncatedModel(), ...callbacks };
+      return {
+        model: createChangesDetachedModel(),
+        diff: createDiffTruncatedModel(),
+        ...callbacks,
+      };
     case "binary-diff":
       return { model: createChangesReadyModel(), diff: createDiffBinaryModel(), ...callbacks };
     case "unavailable-diff":

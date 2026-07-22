@@ -432,7 +432,11 @@ describe("agent status composition (facts -> presentation)", () => {
       NOW,
     );
     // done/idle are terminal and never go stale.
-    expect(done).toMatchObject({ activity: "complete", attention: false, statusSource: "authority" });
+    expect(done).toMatchObject({
+      activity: "complete",
+      attention: false,
+      statusSource: "authority",
+    });
   });
 
   it("falls back to the scrape verdict when authority is stale", () => {

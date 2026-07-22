@@ -2,10 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-import {
-  WorkspaceChangesSurface,
-  type ChangesSurfaceProps,
-} from "./workspace-changes-surface.tsx";
+import { WorkspaceChangesSurface, type ChangesSurfaceProps } from "./workspace-changes-surface.tsx";
 import {
   CHANGES_SELECTED_ID,
   createChangesDetachedModel,

@@ -1,7 +1,4 @@
-import type {
-  WorkspaceChangeEntry,
-  WorkspaceChangeGroup,
-} from "./workspace-changes-resource.ts";
+import type { WorkspaceChangeEntry, WorkspaceChangeGroup } from "./workspace-changes-resource.ts";
 import type { WorkspaceChangeResourceId } from "./workspace-resource-identity.ts";
 
 /**
@@ -182,8 +179,9 @@ export function moveWorkspaceChangeSelection(
   currentId: WorkspaceChangeResourceId | null,
   direction: "up" | "down",
 ): WorkspaceChangeResourceId | null {
-  const selectable = rows.filter((row): row is WorkspaceChangesRow & { entry: WorkspaceChangeEntry } =>
-    row.selectable && row.entry !== null,
+  const selectable = rows.filter(
+    (row): row is WorkspaceChangesRow & { entry: WorkspaceChangeEntry } =>
+      row.selectable && row.entry !== null,
   );
   if (selectable.length === 0) return null;
   const step = direction === "down" ? 1 : -1;

@@ -133,11 +133,7 @@ export function createWorkspaceFilesCatalogStore(
     void daemon
       .fetchWorkspaceFiles(request)
       .then((result) => {
-        if (
-          disposed ||
-          generation !== expectedGeneration ||
-          activeRequests.get(key) !== token
-        ) {
+        if (disposed || generation !== expectedGeneration || activeRequests.get(key) !== token) {
           return;
         }
         activeRequests.delete(key);
@@ -169,11 +165,7 @@ export function createWorkspaceFilesCatalogStore(
         emit();
       })
       .catch(() => {
-        if (
-          disposed ||
-          generation !== expectedGeneration ||
-          activeRequests.get(key) !== token
-        ) {
+        if (disposed || generation !== expectedGeneration || activeRequests.get(key) !== token) {
           return;
         }
         activeRequests.delete(key);

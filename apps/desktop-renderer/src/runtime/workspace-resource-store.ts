@@ -48,9 +48,7 @@ export type WorkspaceResourceTargetValidation =
  * Strictly validate an untrusted store target. A path, credential, or
  * incompatible protocol is rejected here so it can never reach a request.
  */
-export function validateWorkspaceResourceTarget(
-  value: unknown,
-): WorkspaceResourceTargetValidation {
+export function validateWorkspaceResourceTarget(value: unknown): WorkspaceResourceTargetValidation {
   const parsed = DesktopApplicationShellTargetSchemaZ.safeParse(value);
   if (!parsed.success) {
     return { ok: false, reason: "Workspace resource target is invalid." };

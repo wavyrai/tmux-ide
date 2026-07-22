@@ -120,7 +120,9 @@ describe("parseUpdateManifest", () => {
 
   it("rejects when no artifact matches this platform", () => {
     const raw = manifest({
-      artifacts: [{ platform: "win32-x64", url: "https://dl.example/w.zip", size: 10, sha256: SHA }],
+      artifacts: [
+        { platform: "win32-x64", url: "https://dl.example/w.zip", size: 10, sha256: SHA },
+      ],
     });
     expect(parseUpdateManifest(raw, context())).toEqual({
       ok: false,
@@ -170,7 +172,12 @@ describe("parseUpdateManifest", () => {
   it("rejects a URL carrying credentials even over https", () => {
     const raw = manifest({
       artifacts: [
-        { platform: "darwin-arm64", url: "https://user:pw@dl.example/a.zip", size: 10, sha256: SHA },
+        {
+          platform: "darwin-arm64",
+          url: "https://user:pw@dl.example/a.zip",
+          size: 10,
+          sha256: SHA,
+        },
       ],
     });
     expect(parseUpdateManifest(raw, context({ trustArtifactUrl: httpsOnlyArtifactUrl }))).toEqual({

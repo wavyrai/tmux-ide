@@ -321,7 +321,10 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
       origin: "tmux-ide://app",
     });
     const ready = new Promise<unknown>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("attachment did not become ready")), 15_000);
+      const timeout = setTimeout(
+        () => reject(new Error("attachment did not become ready")),
+        15_000,
+      );
       socket.on("error", reject);
       socket.on("message", (data, isBinary) => {
         if (isBinary) return;

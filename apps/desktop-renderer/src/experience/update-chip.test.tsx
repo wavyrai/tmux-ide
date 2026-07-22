@@ -84,9 +84,7 @@ describe("UpdateChip", () => {
 
   it("unsubscribes on cleanup", async () => {
     const unsubscribe = vi.fn();
-    const root = mount(
-      hostWith({ initial: IDLE, onStatusChanged: () => unsubscribe }),
-    );
+    const root = mount(hostWith({ initial: IDLE, onStatusChanged: () => unsubscribe }));
     await vi.waitFor(() => expect(root).toBeTruthy());
     for (const dispose of disposers.splice(0)) dispose();
     expect(unsubscribe).toHaveBeenCalledOnce();

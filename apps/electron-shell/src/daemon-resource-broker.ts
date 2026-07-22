@@ -721,9 +721,7 @@ export class DaemonResourceBroker {
     }
   }
 
-  async fetchWorkspaceFiles(
-    request: unknown,
-  ): Promise<DesktopDaemonFetchWorkspaceFilesResult> {
+  async fetchWorkspaceFiles(request: unknown): Promise<DesktopDaemonFetchWorkspaceFilesResult> {
     const parsed = DesktopDaemonFetchWorkspaceFilesRequestSchemaZ.safeParse(request);
     if (!parsed.success) {
       return { status: "error", error: daemonCapabilityError("invalid-request") };
@@ -753,9 +751,7 @@ export class DaemonResourceBroker {
     );
   }
 
-  async fetchWorkspaceChanges(
-    request: unknown,
-  ): Promise<DesktopDaemonFetchWorkspaceChangesResult> {
+  async fetchWorkspaceChanges(request: unknown): Promise<DesktopDaemonFetchWorkspaceChangesResult> {
     const parsed = DesktopDaemonFetchWorkspaceChangesRequestSchemaZ.safeParse(request);
     if (!parsed.success) {
       return { status: "error", error: daemonCapabilityError("invalid-request") };
@@ -792,8 +788,7 @@ export class DaemonResourceBroker {
     buildPath: (encodedWorkspaceName: string) => string,
     envelopeSchema: z.ZodType<TEnvelope>,
   ): Promise<
-    | { status: "ok"; envelope: TEnvelope }
-    | { status: "error"; error: DesktopDaemonCapabilityError }
+    { status: "ok"; envelope: TEnvelope } | { status: "error"; error: DesktopDaemonCapabilityError }
   > {
     if (this.#daemon.status !== "connected") return this.#disconnectedResult();
     if (!this.#ownerToken) {
@@ -801,9 +796,7 @@ export class DaemonResourceBroker {
     }
     try {
       const workspaces = await this.#loadWorkspaceCatalog();
-      const workspace = workspaces.find(
-        (candidate) => candidate.workspaceName === workspaceName,
-      );
+      const workspace = workspaces.find((candidate) => candidate.workspaceName === workspaceName);
       if (!workspace) throw new BrokerFailure(daemonCapabilityError("workspace-not-found"));
       const raw = await this.#requestJson(
         buildPath(encodeURIComponent(workspace.workspaceName)),

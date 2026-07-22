@@ -115,9 +115,7 @@ const UNAVAILABLE_CATALOG: DesktopDaemonFetchWorkspaceFilesResult = {
   },
 };
 
-function makeHost(
-  daemon: Partial<HostCapabilities["daemon"]>,
-): Pick<HostCapabilities, "daemon"> {
+function makeHost(daemon: Partial<HostCapabilities["daemon"]>): Pick<HostCapabilities, "daemon"> {
   return { daemon: daemon as HostCapabilities["daemon"] };
 }
 
@@ -289,7 +287,10 @@ describe("workspace file preview store", () => {
     });
     expect(store.getState()).toMatchObject({ status: "idle", fileId: null });
     store.load("file.fillfillfillfill01");
-    expect(store.getState()).toMatchObject({ status: "loading", fileId: "file.fillfillfillfill01" });
+    expect(store.getState()).toMatchObject({
+      status: "loading",
+      fileId: "file.fillfillfillfill01",
+    });
     await flush();
     expect(store.getState()).toMatchObject({
       status: "loaded",

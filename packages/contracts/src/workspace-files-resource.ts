@@ -84,7 +84,11 @@ const WorkspaceFilesCatalogReadySchemaZ = z
   .superRefine((resource, ctx) => {
     const breadcrumbIds = resource.breadcrumbs.map(({ id }) => id);
     if (new Set(breadcrumbIds).size !== breadcrumbIds.length) {
-      ctx.addIssue({ code: "custom", path: ["breadcrumbs"], message: "breadcrumb ids must be unique" });
+      ctx.addIssue({
+        code: "custom",
+        path: ["breadcrumbs"],
+        message: "breadcrumb ids must be unique",
+      });
     }
     if (resource.breadcrumbs[0]?.id !== resource.rootId) {
       ctx.addIssue({
@@ -114,7 +118,11 @@ const WorkspaceFilesCatalogReadySchemaZ = z
     const entryPaths = new Set<string>();
     for (const [index, entry] of resource.entries.entries()) {
       if (entryIds.has(entry.id)) {
-        ctx.addIssue({ code: "custom", path: ["entries", index, "id"], message: "entry ids must be unique" });
+        ctx.addIssue({
+          code: "custom",
+          path: ["entries", index, "id"],
+          message: "entry ids must be unique",
+        });
       }
       if (entryPaths.has(entry.relativePath)) {
         ctx.addIssue({
@@ -150,7 +158,7 @@ const WorkspaceFilesCatalogReadySchemaZ = z
         message: "totalEntries cannot be smaller than the returned entry count",
       });
     }
-    if (resource.truncated !== (resource.totalEntries > resource.entries.length)) {
+    if (resource.truncated !== resource.totalEntries > resource.entries.length) {
       ctx.addIssue({
         code: "custom",
         path: ["truncated"],
@@ -209,7 +217,11 @@ const WorkspaceFilePreviewReadySchemaZ = z
   })
   .superRefine((preview, ctx) => {
     if (preview.content.includes("\0")) {
-      ctx.addIssue({ code: "custom", path: ["content"], message: "text previews cannot contain NUL bytes" });
+      ctx.addIssue({
+        code: "custom",
+        path: ["content"],
+        message: "text previews cannot contain NUL bytes",
+      });
     }
     const renderedLines = preview.content.length === 0 ? 0 : preview.content.split("\n").length;
     if (renderedLines > WORKSPACE_FILE_PREVIEW_MAX_LINES) {
@@ -294,9 +306,5 @@ export type WorkspaceFilesCatalogResourceV1 = z.infer<
 export type WorkspaceFilesCatalogEnvelopeV1 = z.infer<
   typeof WorkspaceFilesCatalogEnvelopeV1SchemaZ
 >;
-export type WorkspaceFilePreviewResourceV1 = z.infer<
-  typeof WorkspaceFilePreviewResourceV1SchemaZ
->;
-export type WorkspaceFilePreviewEnvelopeV1 = z.infer<
-  typeof WorkspaceFilePreviewEnvelopeV1SchemaZ
->;
+export type WorkspaceFilePreviewResourceV1 = z.infer<typeof WorkspaceFilePreviewResourceV1SchemaZ>;
+export type WorkspaceFilePreviewEnvelopeV1 = z.infer<typeof WorkspaceFilePreviewEnvelopeV1SchemaZ>;

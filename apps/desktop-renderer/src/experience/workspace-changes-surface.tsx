@@ -301,10 +301,7 @@ export function WorkspaceChangesSurface(props: ChangesSurfaceProps) {
         <Match when={model().kind === "ready" && view()}>
           {(current) => (
             <div class="workspace-changes__workspace">
-              <section
-                class="workspace-changes__list-region"
-                aria-labelledby={`${listId}-heading`}
-              >
+              <section class="workspace-changes__list-region" aria-labelledby={`${listId}-heading`}>
                 <header>
                   <div>
                     <strong id={`${listId}-heading`}>{branchLabel()}</strong>
@@ -313,7 +310,9 @@ export function WorkspaceChangesSurface(props: ChangesSurfaceProps) {
                       {summary()?.deletions ?? 0}
                     </span>
                   </div>
-                  <Show when={(model() as Extract<ChangesSurfaceModel, { kind: "ready" }>).truncated}>
+                  <Show
+                    when={(model() as Extract<ChangesSurfaceModel, { kind: "ready" }>).truncated}
+                  >
                     <span class="workspace-changes__bounded">Bounded view</span>
                   </Show>
                   <Show when={props.onRetry}>

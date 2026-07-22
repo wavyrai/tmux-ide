@@ -420,11 +420,12 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         return result.canceled ? null : (result.filePaths[0] ?? null);
       },
       getTheme: themeState,
-      getUpdateStatus: () => desktopUpdater?.status() ?? {
-        phase: "idle",
-        currentVersion: app.getVersion(),
-        availableVersion: null,
-      },
+      getUpdateStatus: () =>
+        desktopUpdater?.status() ?? {
+          phase: "idle",
+          currentVersion: app.getVersion(),
+          availableVersion: null,
+        },
       readOnboardingIntroAcknowledged,
       acknowledgeOnboardingIntro,
       trustedRendererLocation,

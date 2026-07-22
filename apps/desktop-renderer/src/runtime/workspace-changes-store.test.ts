@@ -103,9 +103,7 @@ function diff(daemon = DAEMON): DesktopDaemonFetchWorkspaceChangeDiffResult {
   };
 }
 
-function makeHost(
-  daemon: Partial<HostCapabilities["daemon"]>,
-): Pick<HostCapabilities, "daemon"> {
+function makeHost(daemon: Partial<HostCapabilities["daemon"]>): Pick<HostCapabilities, "daemon"> {
   return { daemon: daemon as HostCapabilities["daemon"] };
 }
 

@@ -49,7 +49,11 @@ export function resolveAgentStatus(input: {
 }): ResolvedAgentStatus {
   const authority = parseAuthority(input.authorityRaw, input.nowSec);
   if (authority !== null) {
-    return { status: authority, source: "authority", since: parseAuthorityEpoch(input.authorityRaw) };
+    return {
+      status: authority,
+      source: "authority",
+      since: parseAuthorityEpoch(input.authorityRaw),
+    };
   }
   const status = input.scrape();
   return { status, source: status === "unknown" ? "unknown" : "scrape", since: null };

@@ -45,9 +45,7 @@ describe("workspace resource identity", () => {
   it("bounds the bare opaque token", () => {
     expect(WorkspaceResourceOpaqueTokenSchemaZ.safeParse("0123456789abcdef").success).toBe(true);
     expect(WorkspaceResourceOpaqueTokenSchemaZ.safeParse("short").success).toBe(false);
-    expect(WorkspaceResourceOpaqueTokenSchemaZ.safeParse("has/slash012345678").success).toBe(
-      false,
-    );
+    expect(WorkspaceResourceOpaqueTokenSchemaZ.safeParse("has/slash012345678").success).toBe(false);
   });
 
   it("treats a resource name as a single sanitized path segment", () => {

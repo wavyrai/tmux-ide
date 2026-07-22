@@ -128,8 +128,7 @@ export function flattenWorkspaceFileTree(input: WorkspaceFileTreeInput): Workspa
 
   walk(input.rootId, 0);
 
-  const selectedIndex =
-    selectedId === null ? -1 : rows.findIndex((row) => row.id === selectedId);
+  const selectedIndex = selectedId === null ? -1 : rows.findIndex((row) => row.id === selectedId);
   return {
     rows,
     selectedId: selectedIndex === -1 ? null : selectedId,

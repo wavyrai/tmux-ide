@@ -118,11 +118,14 @@ describe("daemon event contracts", () => {
 
   it("strictly parses agent-status.changed and rejects missing or extra fields", () => {
     expect(
-      DaemonEventServerFrameSchemaZ.parse({ type: "agent-status.changed", sessionName: "tmux-ide" }),
+      DaemonEventServerFrameSchemaZ.parse({
+        type: "agent-status.changed",
+        sessionName: "tmux-ide",
+      }),
     ).toEqual({ type: "agent-status.changed", sessionName: "tmux-ide" });
-    expect(
-      DaemonEventServerFrameSchemaZ.safeParse({ type: "agent-status.changed" }).success,
-    ).toBe(false);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ type: "agent-status.changed" }).success).toBe(
+      false,
+    );
     expect(
       DaemonEventServerFrameSchemaZ.safeParse({
         type: "agent-status.changed",

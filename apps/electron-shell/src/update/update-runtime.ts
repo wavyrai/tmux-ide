@@ -14,10 +14,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  httpsOnlyArtifactUrl,
-  loopbackOrHttpsArtifactUrl,
-} from "./update-manifest.ts";
+import { httpsOnlyArtifactUrl, loopbackOrHttpsArtifactUrl } from "./update-manifest.ts";
 import type { DesktopUpdaterConfig, DesktopUpdaterIo } from "./desktop-updater.ts";
 import {
   parsePendingUpdateMarker,

@@ -55,7 +55,10 @@ function sessionStateWordsChanged(
  * Coalescing is inherent: any number of pane flips within one session collapse
  * to a single entry. Sorted for deterministic emission order.
  */
-export function diffChangedSessions(previous: AgentStateReading, next: AgentStateReading): string[] {
+export function diffChangedSessions(
+  previous: AgentStateReading,
+  next: AgentStateReading,
+): string[] {
   const changed = new Set<string>();
   for (const [sessionName, panes] of next) {
     const before = previous.get(sessionName);

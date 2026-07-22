@@ -89,10 +89,7 @@ function treeItems(list: HTMLElement): HTMLButtonElement[] {
   return [...list.querySelectorAll<HTMLButtonElement>('[role="treeitem"]')];
 }
 
-function PreviewPanel(props: {
-  preview: FilesPreviewModel;
-  onRetry?: () => void;
-}) {
+function PreviewPanel(props: { preview: FilesPreviewModel; onRetry?: () => void }) {
   const lines = createMemo(() => {
     const preview = props.preview;
     return preview.kind === "ready" ? preview.content.split("\n") : [];
@@ -135,7 +132,10 @@ function PreviewPanel(props: {
                   {preview().totalLines}.
                 </p>
               </Show>
-              <ol class="workspace-files__code" aria-label={`Contents of ${preview().relativePath}`}>
+              <ol
+                class="workspace-files__code"
+                aria-label={`Contents of ${preview().relativePath}`}
+              >
                 <For each={lines()}>{(line) => <li>{line === "" ? " " : line}</li>}</For>
               </ol>
             </>
@@ -426,7 +426,10 @@ export function WorkspaceFilesSurface(props: FilesSurfaceProps) {
                   </p>
                 </Show>
               </section>
-              <PreviewPanel preview={props.preview ?? { kind: "absent" }} onRetry={props.onRetryPreview} />
+              <PreviewPanel
+                preview={props.preview ?? { kind: "absent" }}
+                onRetry={props.onRetryPreview}
+              />
             </div>
           )}
         </Match>
