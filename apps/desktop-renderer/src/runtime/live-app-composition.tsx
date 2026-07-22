@@ -1,4 +1,5 @@
 import {
+  WorkspacePaneCreateHostResultSchemaZ,
   projectApplicationShellV1,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
@@ -7,8 +8,9 @@ import {
   type DesktopPlatform,
   type DesktopWindowState,
   type HostCapabilities,
+  type WorkspacePaneCreateInvocation,
 } from "@tmux-ide/contracts";
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import {
   paneFrameTerminalsFromApplicationShellInventory,
@@ -20,6 +22,7 @@ import type {
   PaneFrameGripIntent,
 } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { DomApplicationShell } from "../experience/application-shell.tsx";
+import type { CreatePaneFlowCatalogs } from "../experience/create-pane-flow-presenter.ts";
 import { DomIcon } from "../experience/dom-icon.tsx";
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
 import { createSolidDesktopApplicationShellResourceStore } from "./desktop-resource-store.ts";
@@ -391,6 +394,114 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
   });
   createEffect(() => store.setTarget(props.target));
 
+  const createPaneCatalogs = createMemo<CreatePaneFlowCatalogs>(() => {
+    const snapshot = props.catalogState.snapshot;
+    return {
+      workspaces: snapshot
+        ? {
+            status: "ready",
+            items: snapshot.workspaces.map(({ workspaceName }) => ({
+              name: workspaceName,
+              label: workspaceName,
+              available: workspaceName === props.target.workspaceName,
+            })),
+          }
+        : props.catalogState.status === "loading"
+          ? { status: "loading" }
+          : { status: "unavailable" },
+      // These catalogs do not yet exist as reviewed host resources. Keep the
+      // agent affordance visible but honestly unavailable until that card lands.
+      harnessProfiles: { status: "unavailable" },
+      missions: { status: "unavailable" },
+    };
+  });
+
+  let pendingRefresh: {
+    readonly semanticPaneId: string;
+    readonly daemonInstanceId: string;
+    readonly workspaceName: string;
+    readonly initialState: DesktopApplicationShellResourceState;
+    readonly resolve: () => void;
+    readonly reject: () => void;
+    readonly timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  let disposed = false;
+
+  const settlePendingRefresh = (outcome: "resolve" | "reject"): void => {
+    const pending = pendingRefresh;
+    if (!pending) return;
+    pendingRefresh = null;
+    clearTimeout(pending.timer);
+    pending[outcome]();
+  };
+
+  createEffect(() => {
+    const state = store.state();
+    const pending = pendingRefresh;
+    if (!pending || state === pending.initialState) return;
+    if (
+      props.target.daemon.instanceId !== pending.daemonInstanceId ||
+      props.target.workspaceName !== pending.workspaceName
+    ) {
+      settlePendingRefresh("reject");
+      return;
+    }
+    const data = resourceData(state);
+    if (data?.terminalInventory?.resources.some(({ id }) => id === pending.semanticPaneId)) {
+      settlePendingRefresh("resolve");
+      return;
+    }
+    if (state.status === "error" || state.status === "degraded") {
+      settlePendingRefresh("reject");
+    }
+  });
+
+  onCleanup(() => {
+    disposed = true;
+    settlePendingRefresh("reject");
+  });
+
+  const createWorkspacePane = async (invocation: WorkspacePaneCreateInvocation): Promise<void> => {
+    if (
+      disposed ||
+      pendingRefresh ||
+      invocation.args.workspaceName !== props.target.workspaceName
+    ) {
+      throw new Error("The selected workspace is not available for terminal creation.");
+    }
+    const result = WorkspacePaneCreateHostResultSchemaZ.parse(
+      await props.host.daemon.createWorkspacePane(invocation),
+    );
+    if (disposed) throw new Error("The active workspace changed during terminal creation.");
+    if (result.status === "error") {
+      if (result.error.code === "daemon-identity-mismatch") props.onDaemonIdentityMismatch?.();
+      throw new Error(result.error.reason);
+    }
+    if (
+      result.result.daemonInstanceId !== props.target.daemon.instanceId ||
+      result.result.resource.workspaceName !== props.target.workspaceName ||
+      result.result.resource.kind !== invocation.args.kind
+    ) {
+      props.onDaemonIdentityMismatch?.();
+      throw new Error("The created terminal does not belong to the active workspace generation.");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      pendingRefresh = {
+        semanticPaneId: result.result.resource.semanticPaneId,
+        daemonInstanceId: props.target.daemon.instanceId,
+        workspaceName: props.target.workspaceName,
+        initialState: store.state(),
+        resolve,
+        reject: () => reject(new Error("The authoritative terminal inventory did not refresh.")),
+        timer: setTimeout(() => settlePendingRefresh("reject"), 8_000),
+      };
+      // Force a read in addition to the daemon event invalidation; the dialog
+      // closes only after that authoritative inventory contains the new pane.
+      store.refresh();
+    });
+  };
+
   const input = createMemo(() => resourceData(store.state()));
   const projection = createMemo<LiveWorkspaceProjection | null>(() => {
     const snapshot = input();
@@ -511,6 +622,11 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             terminalThemeKey={props.terminalThemeKey}
             onCommand={props.onCommand}
             terminalPanes={ready().terminalPanes}
+            createPaneFlow={{
+              catalogs: createPaneCatalogs(),
+              initialWorkspaceName: props.target.workspaceName,
+              onCommand: createWorkspacePane,
+            }}
             onPaneAction={props.onPaneAction}
             onPaneGrip={props.onPaneGrip}
           />

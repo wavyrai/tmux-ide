@@ -22,6 +22,7 @@ import {
   DesktopLiveApplication,
   type DesktopDaemonRecoveryPhase,
 } from "./runtime/live-app-composition.tsx";
+import { createHostNativeTerminalTransport } from "./runtime/host-terminal-transport.ts";
 import type { NativeTerminalTransport } from "./terminal/native-terminal-transport.ts";
 import type {
   PaneFrameActionIntent,
@@ -67,6 +68,10 @@ export function App(props: AppProps = {}) {
   let bootstrapRequest = 0;
   let daemonRefreshFlight: Promise<void> | null = null;
   let disposed = false;
+  let productionTerminalAuthority: {
+    readonly key: string;
+    readonly transport: NativeTerminalTransport;
+  } | null = null;
 
   const loadBootstrap = (): void => {
     if (!host || disposed) return;
@@ -142,6 +147,21 @@ export function App(props: AppProps = {}) {
   const terminalThemeKey = createMemo(() => {
     const current = effectiveTheme();
     return `${current?.mode ?? "system"}:${current?.highContrast ?? false}`;
+  });
+  const productionTerminalTransport = createMemo<NativeTerminalTransport | null>(() => {
+    const daemon = bootstrap()?.daemon;
+    if (!host || browserPreview || daemon?.status !== "connected") return null;
+    const identity = daemon.identity;
+    const key = [
+      identity.protocolVersion,
+      identity.productVersion,
+      identity.instanceId,
+      identity.startedAt,
+    ].join("\u0000");
+    if (productionTerminalAuthority?.key === key) return productionTerminalAuthority.transport;
+    const transport = createHostNativeTerminalTransport(host, identity);
+    productionTerminalAuthority = { key, transport };
+    return transport;
   });
 
   return (
@@ -255,7 +275,11 @@ export function App(props: AppProps = {}) {
                           platform={ready().platform}
                           windowState={effectiveWindow()}
                           daemonRecovery={daemonRecovery()}
-                          terminalTransport={props.terminalTransport}
+                          terminalTransport={
+                            props.terminalTransport === undefined
+                              ? productionTerminalTransport()
+                              : props.terminalTransport
+                          }
                           reducedMotion={experience().accessibility.reducedMotion}
                           terminalThemeKey={terminalThemeKey()}
                           onRetryDaemonConnection={refreshDaemonConnection}
