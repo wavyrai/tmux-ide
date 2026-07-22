@@ -14,6 +14,9 @@ The semantic colors prefer the existing `--tmux-ide-*` visual-contract variables
 inside the app and provide dark-first fallbacks for isolated fixtures.
 
 `Tabs` uses automatic activation by default and supports a manual activation
-mode. `ResizeHandle` is a focusable ARIA separator: arrow keys move one step,
-Shift+arrow moves a large step, and Home/End move to the bounds. `Tooltip` uses a
-render prop so its trigger receives `aria-describedby` without cloning elements.
+mode with focus roving independently from selection. `ResizeHandle` is a focusable
+ARIA separator: arrow keys move one step, Shift+arrow moves a large step, and
+Home/End move to the bounds. `Tooltip` uses a render prop so its trigger receives
+`aria-describedby` without cloning elements. Its fixed layer portals to the nearest
+app/theme root, flips and clamps against the viewport, and is exercised by the
+strict-CSP browser smoke without injecting a style element.

@@ -32,6 +32,13 @@ export function Tabs(props: TabsProps): JSX.Element {
       ? requested
       : firstEnabled();
   });
+  const [focusedValue, setFocusedValue] = createSignal(selectedValue());
+  const rovingValue = createMemo(() => {
+    const focused = focusedValue();
+    return merged.items.some((item) => item.id === focused && !item.disabled)
+      ? focused
+      : selectedValue();
+  });
   const triggers: Array<HTMLButtonElement | undefined> = [];
 
   const select = (id: string) => {
@@ -51,11 +58,17 @@ export function Tabs(props: TabsProps): JSX.Element {
     else target = (Math.max(current, 0) + direction + enabled.length) % enabled.length;
     const next = enabled[target];
     if (!next) return;
+    setFocusedValue(next.item.id);
     triggers[next.index]?.focus();
     if (merged.activationMode === "automatic") select(next.item.id);
   };
 
-  const onKeyDown = (event: KeyboardEvent, index: number) => {
+  const onKeyDown = (event: KeyboardEvent, index: number, id: string) => {
+    if (merged.activationMode === "manual" && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      select(id);
+      return;
+    }
     const previousKey = merged.orientation === "vertical" ? "ArrowUp" : "ArrowLeft";
     const nextKey = merged.orientation === "vertical" ? "ArrowDown" : "ArrowRight";
     let direction: 1 | -1 | "first" | "last" | undefined;
@@ -86,10 +99,14 @@ export function Tabs(props: TabsProps): JSX.Element {
                 role="tab"
                 aria-selected={selected()}
                 aria-controls={`${prefix}-panel-${index()}`}
-                tabIndex={selected() ? 0 : -1}
+                tabIndex={rovingValue() === item.id ? 0 : -1}
                 disabled={item.disabled}
-                onClick={() => select(item.id)}
-                onKeyDown={(event) => onKeyDown(event, index())}
+                onFocus={() => setFocusedValue(item.id)}
+                onClick={() => {
+                  setFocusedValue(item.id);
+                  select(item.id);
+                }}
+                onKeyDown={(event) => onKeyDown(event, index(), item.id)}
               >
                 {item.label}
               </button>

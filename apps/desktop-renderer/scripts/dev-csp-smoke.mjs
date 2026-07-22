@@ -139,6 +139,32 @@ try {
         inlineStyleElements: globalThis.document.querySelectorAll("style").length,
       };
     });
+    const primitiveResult = await page.evaluate(async () => {
+      const mountRoot = globalThis.document.createElement("div");
+      globalThis.document.body.append(mountRoot);
+      const { mountUiSystemShowcaseFixture } = await import("/src/ui-system/showcase.fixture.tsx");
+      const dispose = mountUiSystemShowcaseFixture(mountRoot);
+      const trigger = mountRoot.querySelector('[aria-label="Add pane"]');
+      trigger?.focus();
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const tooltip = globalThis.document.querySelector('[role="tooltip"][data-open="true"]');
+      const tooltipRect = tooltip?.getBoundingClientRect();
+      const output = {
+        portaledWithinFixture: Boolean(tooltip && mountRoot.contains(tooltip)),
+        tooltip: tooltipRect
+          ? {
+              left: tooltipRect.left,
+              top: tooltipRect.top,
+              right: tooltipRect.right,
+              bottom: tooltipRect.bottom,
+            }
+          : null,
+      };
+      dispose();
+      mountRoot.remove();
+      return output;
+    });
     const violations = consoleMessages.filter((message) => cspViolation.test(message));
     if (violations.length > 0) {
       throw new Error(`Renderer emitted CSP violations:\n${violations.join("\n")}`);
@@ -155,6 +181,18 @@ try {
       result.viewport.height <= 0
     ) {
       throw new Error(`Renderer chrome has invalid geometry: ${JSON.stringify(result)}`);
+    }
+    if (
+      !primitiveResult.portaledWithinFixture ||
+      !primitiveResult.tooltip ||
+      primitiveResult.tooltip.left < 0 ||
+      primitiveResult.tooltip.top < 0 ||
+      primitiveResult.tooltip.right > 1_200 ||
+      primitiveResult.tooltip.bottom > 800
+    ) {
+      throw new Error(
+        `Renderer primitive tooltip escaped safe geometry: ${JSON.stringify(primitiveResult)}`,
+      );
     }
   } finally {
     await browser.close();

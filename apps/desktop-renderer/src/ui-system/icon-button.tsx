@@ -33,6 +33,7 @@ export function IconButton(props: IconButtonProps): JSX.Element {
     "tooltipPlacement",
     "class",
     "type",
+    "aria-describedby",
   ]);
 
   const control = (describedBy?: string) => (
@@ -43,7 +44,9 @@ export function IconButton(props: IconButtonProps): JSX.Element {
       data-variant={local.variant}
       data-size={local.size}
       aria-label={local.label}
-      aria-describedby={describedBy}
+      aria-describedby={
+        [local["aria-describedby"], describedBy].filter(Boolean).join(" ") || undefined
+      }
       aria-pressed={local.pressed}
     >
       {local.children}

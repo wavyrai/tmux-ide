@@ -1,4 +1,5 @@
 import { createSignal, type JSX } from "solid-js";
+import { render } from "solid-js/web";
 
 import { Button } from "./button.tsx";
 import { EmptyState } from "./empty-state.tsx";
@@ -47,4 +48,9 @@ export function UiSystemShowcaseFixture(): JSX.Element {
       />
     </div>
   );
+}
+
+/** Browser-smoke mount kept out of the application shell composition. */
+export function mountUiSystemShowcaseFixture(root: HTMLElement): () => void {
+  return render(() => <UiSystemShowcaseFixture />, root);
 }

@@ -15,7 +15,7 @@
   --tmi-text-bright: var(--tmux-ide-text-bright, #ffffff);
   --tmi-text-secondary: var(--tmux-ide-text-secondary, #b4b6c2);
   --tmi-text-muted: var(--tmux-ide-text-muted, #858896);
-  --tmi-text-on-accent: var(--tmux-ide-selection-selection-text, #101116);
+  --tmi-text-on-accent: var(--tmux-ide-text-inverse, #101116);
   --tmi-border-subtle: var(--tmux-ide-border-subtle, #292a34);
   --tmi-border-default: var(--tmux-ide-border-default, #383a46);
   --tmi-accent: var(--tmux-ide-border-focused, #7c9cff);
@@ -28,9 +28,9 @@
   --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, #616472);
   --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, #181920);
   --tmi-focus-width: var(--tmux-ide-focus-outline, 2px);
-  --tmi-focus-offset: 2px;
-  --tmi-radius-control: var(--tmux-ide-shape-control, 6px);
-  --tmi-radius-panel: var(--tmux-ide-shape-panel, 9px);
+  --tmi-focus-offset: var(--tmux-ide-focus-outline-offset, 1px);
+  --tmi-radius-control: var(--tmux-ide-shape-control-radius, 4px);
+  --tmi-radius-panel: var(--tmux-ide-shape-floating-radius, 6px);
   --tmi-shadow-overlay: var(--tmux-ide-elevation-palette-shadow, 0 10px 28px rgb(0 0 0 / 44%));
   --tmi-motion-fast: var(--tmux-ide-motion-fast, 150ms);
   --tmi-motion-exit: var(--tmux-ide-motion-instant, 100ms);
@@ -49,7 +49,7 @@
   --tmi-text-bright: var(--tmux-ide-text-bright, #ffffff);
   --tmi-text-secondary: var(--tmux-ide-text-secondary, #b4b6c2);
   --tmi-text-muted: var(--tmux-ide-text-muted, #858896);
-  --tmi-text-on-accent: var(--tmux-ide-selection-selection-text, #101116);
+  --tmi-text-on-accent: var(--tmux-ide-text-inverse, #101116);
   --tmi-border-subtle: var(--tmux-ide-border-subtle, #292a34);
   --tmi-border-default: var(--tmux-ide-border-default, #383a46);
   --tmi-accent: var(--tmux-ide-border-focused, #7c9cff);
@@ -72,7 +72,7 @@
   --tmi-text-bright: var(--tmux-ide-text-bright, #101116);
   --tmi-text-secondary: var(--tmux-ide-text-secondary, #4f515c);
   --tmi-text-muted: var(--tmux-ide-text-muted, #737681);
-  --tmi-text-on-accent: var(--tmux-ide-selection-selection-text, #ffffff);
+  --tmi-text-on-accent: var(--tmux-ide-text-inverse, #ffffff);
   --tmi-border-subtle: var(--tmux-ide-border-subtle, #dedfe4);
   --tmi-border-default: var(--tmux-ide-border-default, #c8cad2);
   --tmi-accent: var(--tmux-ide-border-focused, #496de2);
@@ -90,8 +90,9 @@
 [data-tmi-theme] {
   --tmi-danger-surface: color-mix(in srgb, var(--tmi-danger) 15%, var(--tmi-surface-panel));
   --tmi-focus-width: var(--tmux-ide-focus-outline, 2px);
-  --tmi-radius-control: var(--tmux-ide-shape-control, 6px);
-  --tmi-radius-panel: var(--tmux-ide-shape-panel, 9px);
+  --tmi-focus-offset: var(--tmux-ide-focus-outline-offset, 1px);
+  --tmi-radius-control: var(--tmux-ide-shape-control-radius, 4px);
+  --tmi-radius-panel: var(--tmux-ide-shape-floating-radius, 6px);
   --tmi-motion-fast: var(--tmux-ide-motion-fast, 150ms);
   --tmi-motion-exit: var(--tmux-ide-motion-instant, 100ms);
 }
@@ -193,9 +194,9 @@
 }
 
 .tmi-button[data-variant="danger"] {
-  color: var(--tmi-danger);
-  border-color: color-mix(in srgb, var(--tmi-danger) 46%, transparent);
-  background: var(--tmi-danger-surface);
+  color: var(--tmi-text-on-accent);
+  border-color: var(--tmi-danger);
+  background: var(--tmi-danger);
 }
 
 @media (hover: hover) {
@@ -215,15 +216,24 @@
 
   .tmi-button[data-variant="danger"]:hover:not(:disabled),
   .tmi-icon-button[data-variant="danger"]:hover:not(:disabled) {
-    color: var(--tmi-text-bright);
+    color: var(--tmi-text-on-accent);
     border-color: var(--tmi-danger);
     background: var(--tmi-danger);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tmi-text-on-accent) 38%, transparent);
   }
 }
 
 .tmi-button:active:not(:disabled),
 .tmi-icon-button:active:not(:disabled) {
   background: var(--tmi-pressed);
+}
+
+.tmi-button[data-variant="primary"]:active:not(:disabled) {
+  background: var(--tmi-accent);
+}
+
+.tmi-button[data-variant="danger"]:active:not(:disabled) {
+  background: var(--tmi-danger);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -310,7 +320,7 @@
 }
 
 .tmi-tooltip {
-  position: absolute;
+  position: fixed;
   z-index: 100;
   width: max-content;
   max-width: min(260px, calc(100vw - 24px));
@@ -337,6 +347,11 @@
   transform: scale(0.95);
 }
 
+.tmi-tooltip[data-positioned="false"] {
+  visibility: hidden;
+  opacity: 0;
+}
+
 .tmi-tooltip[data-open="true"] {
   visibility: visible;
   opacity: 1;
@@ -347,31 +362,19 @@
 }
 
 .tmi-tooltip[data-placement="top"] {
-  bottom: calc(100% + 7px);
-  left: 50%;
   transform-origin: bottom center;
-  translate: -50% 0;
 }
 
 .tmi-tooltip[data-placement="bottom"] {
-  top: calc(100% + 7px);
-  left: 50%;
   transform-origin: top center;
-  translate: -50% 0;
 }
 
 .tmi-tooltip[data-placement="left"] {
-  top: 50%;
-  right: calc(100% + 7px);
   transform-origin: right center;
-  translate: 0 -50%;
 }
 
 .tmi-tooltip[data-placement="right"] {
-  top: 50%;
-  left: calc(100% + 7px);
   transform-origin: left center;
-  translate: 0 -50%;
 }
 
 .tmi-tabs {
@@ -603,4 +606,11 @@
   animation: none;
   border-right-color: currentColor;
   opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-reduced-motion="true"] .tmi-button:not([data-variant="ghost"]):active:not(:disabled),
+  [data-reduced-motion="true"] .tmi-icon-button:not([data-variant="ghost"]):active:not(:disabled) {
+    transform: none;
+  }
 }
