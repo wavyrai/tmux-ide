@@ -24,7 +24,7 @@ await Promise.all([
   cp(join(packageRoot, "dist", "preload.cjs"), join(staging, "preload.cjs")),
   cp(join(packageRoot, "dist", "daemon-child.cjs"), join(staging, "daemon-child.cjs")),
   cp(join(packageRoot, "dist", "renderer"), join(staging, "renderer"), { recursive: true }),
-  cp(join(repoRoot, "templates"), join(staging, "templates"), { recursive: true }),
+  cp(join(packageRoot, "dist", "templates"), join(staging, "templates"), { recursive: true }),
 ]);
 
 const nodePtyRoot = dirname(requireFromHere.resolve("node-pty/package.json"));

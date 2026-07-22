@@ -322,6 +322,60 @@ describe("Electron canonical daemon supervisor", () => {
     });
   });
 
+  it("cancels and stops the exact spawned child when quit wins the ownership handoff", async () => {
+    const child = new FakeChild(5100);
+    const ownedInfo = { ...externalInfo, pid: 5100, instanceId: OWNED_GENERATION_ID };
+    let releaseReadiness!: (state: DesktopDaemonHostState) => void;
+    const readiness = new Promise<DesktopDaemonHostState>((resolve) => {
+      releaseReadiness = resolve;
+    });
+    const daemonPreflight: DaemonPreflight = {
+      probe: vi
+        .fn<() => Promise<DesktopDaemonHostState>>()
+        .mockResolvedValueOnce(missing)
+        .mockImplementationOnce(() => readiness),
+    };
+    const supervisor = new DesktopDaemonSupervisor(
+      {
+        preflight: daemonPreflight,
+        childEntryPath: "/packaged/daemon-child.cjs",
+        productVersion: "2.8.0",
+        probeTimeoutMs: 10_000,
+        shutdownTimeoutMs: 10,
+      },
+      {
+        claimAllowsStartupAttempt: () => true,
+        inspectCanonical: sequence([{ status: "missing" }, valid(ownedInfo)]),
+        ownerProvenDead: async () => true,
+        spawnChild: () => child as unknown as SpawnedDaemonChild,
+        now: () => 0,
+        sleep: async () => undefined,
+      },
+    );
+
+    const starting = supervisor.start();
+    await vi.waitFor(() => expect(daemonPreflight.probe).toHaveBeenCalledTimes(2));
+    expect(supervisor.snapshot()).toMatchObject({ phase: "starting", ownedGeneration: null });
+
+    const stopping = supervisor.stopOwned();
+    releaseReadiness(connected(ownedInfo));
+    await Promise.all([starting, stopping]);
+
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(supervisor.snapshot()).toMatchObject({ phase: "stopped", ownedGeneration: null });
+  });
+
+  it("never starts after shutdown was requested before startup", async () => {
+    const setup = harness({ states: [missing], canonical: [{ status: "missing" }] });
+
+    await setup.supervisor.stopOwned();
+    await setup.supervisor.start();
+
+    expect(setup.spawnChild).not.toHaveBeenCalled();
+    expect(setup.supervisor.snapshot()).toMatchObject({ phase: "stopped", ownedGeneration: null });
+  });
+
   it("deduplicates concurrent start and quit calls", async () => {
     const ownedInfo = { ...externalInfo, pid: 5100, instanceId: ONE_GENERATION_ID };
     const setup = harness({

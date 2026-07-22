@@ -25,6 +25,7 @@ import {
   DesktopDaemonSupervisor,
   type DesktopDaemonSupervisorSnapshot,
 } from "./daemon-supervisor.ts";
+import { DesktopQuitCoordinator } from "./desktop-quit-coordinator.ts";
 import {
   publishTheme,
   publishWindowState,
@@ -32,7 +33,6 @@ import {
   type RegisteredHostIpc,
   type TrustedRendererLocation,
 } from "./host-ipc.ts";
-import { ShutdownBarrier } from "./shutdown-barrier.ts";
 import {
   developmentRendererContentSecurityPolicy,
   installPackagedRendererProtocol,
@@ -102,28 +102,16 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
 
   let currentWindow: BrowserWindow | null = null;
   let hostIpc: RegisteredHostIpc | null = null;
-  let quittingAfterBarrier = false;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
   let rendererPolicyReloadTimer: ReturnType<typeof setTimeout> | null = null;
   let lastBoundsWrite = Promise.resolve();
   let rendererDidBootstrap: (() => void) | null = null;
   let latestNormalBounds: DesktopWindowBounds | null = null;
   let daemonResources: DaemonConnectionCoordinator | null = null;
-  const shutdown = new ShutdownBarrier();
-
-  await app.whenReady();
-
-  const desktopSession = session.defaultSession;
-  desktopSession.setPermissionCheckHandler(() => false);
-  desktopSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
-    callback(false),
-  );
-
-  const stateStore = new DesktopWindowStateStore(
-    join(app.getPath("userData"), "window-state.json"),
-  );
-  const developmentUrl = trustedDevelopmentUrl();
-  const developmentOrigin = developmentUrl ? new URL(developmentUrl).origin : null;
+  let persistBounds = async (): Promise<void> => undefined;
+  let disposePackagedRendererProtocol = (): void => undefined;
+  let disposeDevelopmentRendererCsp = (): void => undefined;
+  let onThemeUpdated: (() => void) | null = null;
   const daemonPreflight = deps.daemonPreflight ?? canonicalDaemonPreflight;
   const onOwnedDaemonCrash = (_snapshot: DesktopDaemonSupervisorSnapshot): void => {
     void daemonResources?.refreshConnection().catch((error: unknown) => {
@@ -138,9 +126,53 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       productVersion: app.getVersion(),
       onOwnedDaemonCrash,
     });
-  const daemon = await daemonSupervisor.start();
+  const teardownDesktopHost = async (): Promise<void> => {
+    if (persistTimer) clearTimeout(persistTimer);
+    if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
+    if (onThemeUpdated) nativeTheme.removeListener("updated", onThemeUpdated);
+    // Renderer terminal capabilities and the main-process broker are retired
+    // before the exact Electron-owned daemon child is signalled.
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => disposeDevelopmentRendererCsp()),
+      Promise.resolve().then(() => disposePackagedRendererProtocol()),
+      shutdownDesktopDaemonRuntime({
+        disposeHostIpc: () => hostIpc?.dispose(),
+        disposeDaemonResources: () => daemonResources?.dispose(),
+        stopOwnedDaemon: () => daemonSupervisor.stopOwned(),
+      }),
+    ]);
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length > 0) throw new AggregateError(failures, "desktop host cleanup failed");
+  };
+  const quitCoordinator = new DesktopQuitCoordinator({
+    app,
+    shutdownTasks: () => [persistBounds, teardownDesktopHost],
+    onShutdownError: (error: unknown) => console.error("Desktop shutdown was incomplete", error),
+  });
+
+  // This must precede both app readiness and daemon startup: a native quit can
+  // arrive while either promise is pending.
+  quitCoordinator.install();
+
+  await app.whenReady();
+  if (quitCoordinator.quitRequested) return;
+
+  const desktopSession = session.defaultSession;
+  desktopSession.setPermissionCheckHandler(() => false);
+  desktopSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
+    callback(false),
+  );
+
+  const stateStore = new DesktopWindowStateStore(
+    join(app.getPath("userData"), "window-state.json"),
+  );
+  const developmentUrl = trustedDevelopmentUrl();
+  const developmentOrigin = developmentUrl ? new URL(developmentUrl).origin : null;
+  const daemon = await quitCoordinator.startUnlessQuitting(() => daemonSupervisor.start());
+  if (!daemon) return;
   let daemonHttpOrigin = daemon.status === "connected" ? daemon.descriptor.apiBaseUrl : null;
-  let disposePackagedRendererProtocol: () => void;
   try {
     disposePackagedRendererProtocol = installPackagedRendererProtocol({
       protocol,
@@ -152,7 +184,6 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     await daemonSupervisor.stopOwned().catch(() => undefined);
     throw error;
   }
-  let disposeDevelopmentRendererCsp: () => void;
   try {
     disposeDevelopmentRendererCsp = developmentOrigin
       ? installDevelopmentRendererCsp({
@@ -219,7 +250,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         entryUrl: DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
       };
 
-  const persistBounds = async (): Promise<void> => {
+  persistBounds = async (): Promise<void> => {
     latestNormalBounds = captureDesktopWindowNormalBounds(currentWindow, latestNormalBounds);
     if (!latestNormalBounds) return lastBoundsWrite;
     const bounds = latestNormalBounds;
@@ -316,7 +347,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     throw error;
   }
 
-  const onThemeUpdated = (): void => publishTheme(currentWindow, themeState());
+  onThemeUpdated = (): void => publishTheme(currentWindow, themeState());
   nativeTheme.on("updated", onThemeUpdated);
 
   app.on("second-instance", () => {
@@ -335,42 +366,6 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
 
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
-  });
-
-  app.on("before-quit", (event) => {
-    if (quittingAfterBarrier) return;
-    event.preventDefault();
-    void shutdown
-      .run([
-        persistBounds,
-        async () => {
-          if (persistTimer) clearTimeout(persistTimer);
-          if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
-          nativeTheme.removeListener("updated", onThemeUpdated);
-          // Renderer terminal capabilities and the main-process broker are
-          // retired before the exact Electron-owned daemon child is signalled.
-          const results = await Promise.allSettled([
-            Promise.resolve().then(() => disposeDevelopmentRendererCsp()),
-            Promise.resolve().then(() => disposePackagedRendererProtocol()),
-            shutdownDesktopDaemonRuntime({
-              disposeHostIpc: () => hostIpc?.dispose(),
-              disposeDaemonResources: () => daemonResources?.dispose(),
-              stopOwnedDaemon: () => daemonSupervisor.stopOwned(),
-            }),
-          ]);
-          const failures = results
-            .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-            .map((result) => result.reason);
-          if (failures.length > 0) {
-            throw new AggregateError(failures, "desktop host cleanup failed");
-          }
-        },
-      ])
-      .catch((error: unknown) => console.error("Desktop shutdown was incomplete", error))
-      .finally(() => {
-        quittingAfterBarrier = true;
-        app.quit();
-      });
   });
 
   try {

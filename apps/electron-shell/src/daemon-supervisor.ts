@@ -179,7 +179,9 @@ export class DesktopDaemonSupervisor {
   #child: SpawnedDaemonChild | null = null;
   #childExit: ChildExit | null = null;
   #childExitPromise: Promise<ChildExit> | null = null;
+  #childStopPromise: Promise<void> | null = null;
   #expectedStop = false;
+  #stopRequested = false;
   #startPromise: Promise<DesktopDaemonHostState> | null = null;
   #stopPromise: Promise<void> | null = null;
 
@@ -192,7 +194,11 @@ export class DesktopDaemonSupervisor {
   }
 
   start(): Promise<DesktopDaemonHostState> {
-    if (!this.#startPromise) this.#startPromise = this.#start();
+    if (!this.#startPromise) {
+      this.#startPromise = this.#stopRequested
+        ? Promise.resolve(this.#finishCancelledStartup())
+        : this.#start();
+    }
     return this.#startPromise;
   }
 
@@ -217,6 +223,10 @@ export class DesktopDaemonSupervisor {
   }
 
   stopOwned(): Promise<void> {
+    // Cancellation is synchronous so every await boundary in start() observes
+    // shutdown before it can spawn or adopt a canonical generation.
+    this.#stopRequested = true;
+    this.#expectedStop = true;
     if (!this.#stopPromise) this.#stopPromise = this.#stopOwned();
     return this.#stopPromise;
   }
@@ -227,6 +237,7 @@ export class DesktopDaemonSupervisor {
       this.#options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
     );
     this.#daemon = initial;
+    if (this.#stopRequested) return this.#finishCancelledStartup();
     if (initial.status === "connected") {
       this.#phase = "attached";
       return initial;
@@ -240,12 +251,14 @@ export class DesktopDaemonSupervisor {
     }
 
     const spawnIsSafe = await this.#spawnIsSafe(initial.code);
+    if (this.#stopRequested) return this.#finishCancelledStartup();
     if (!spawnIsSafe) {
       const current = await runDaemonPreflight(
         this.#options.preflight,
         this.#options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       );
       this.#daemon = current;
+      if (this.#stopRequested) return this.#finishCancelledStartup();
       this.#phase = current.status === "connected" ? "attached" : "unavailable";
       return current;
     }
@@ -278,6 +291,10 @@ export class DesktopDaemonSupervisor {
       child.once("exit", (code, signal) => finish({ code, signal }));
       child.once("error", () => finish({ code: null, signal: null }));
     });
+    if (this.#stopRequested) {
+      await this.#stopSpawnedChild();
+      return this.#finishCancelledStartup();
+    }
     if (!Number.isInteger(child.pid) || (child.pid ?? 0) < 1) {
       await this.#stopSpawnedChild();
       const failure = startupFailure("The bundled daemon process did not publish a process ID.");
@@ -302,10 +319,18 @@ export class DesktopDaemonSupervisor {
     const deadline = this.#dependencies.now() + timeoutMs;
     let backoffMs = 25;
     while (this.#dependencies.now() < deadline) {
+      if (this.#stopRequested) {
+        await this.#stopSpawnedChild();
+        return this.#finishCancelledStartup();
+      }
       const daemon = await runDaemonPreflight(
         this.#options.preflight,
         this.#options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       );
+      if (this.#stopRequested) {
+        await this.#stopSpawnedChild();
+        return this.#finishCancelledStartup();
+      }
       if (daemon.status === "connected") {
         const canonical = this.#dependencies.inspectCanonical();
         if (canonical.status !== "valid" || !canonicalMatchesDaemon(canonical.info, daemon)) {
@@ -368,20 +393,28 @@ export class DesktopDaemonSupervisor {
   }
 
   async #stopOwned(): Promise<void> {
-    this.#expectedStop = true;
-    if (!this.#ownedGeneration || !this.#child) {
-      this.#phase = "stopped";
-      return;
-    }
+    // The exact child reference is sufficient authority to terminate a child
+    // that is still inside the readiness barrier. Waiting for
+    // ownedGeneration here would leak a daemon when quit races that handoff.
+    await this.#stopSpawnedChild();
+    await this.#startPromise?.catch(() => undefined);
+    // start() may have crossed the synchronous spawn boundary immediately
+    // before cancellation. Re-check after it settles and use the same
+    // deduplicated exact-child termination.
     await this.#stopSpawnedChild();
     this.#ownedGeneration = null;
     this.#phase = "stopped";
   }
 
-  async #stopSpawnedChild(): Promise<void> {
+  #stopSpawnedChild(): Promise<void> {
     const child = this.#child;
     const exit = this.#childExitPromise;
-    if (!child || !exit || this.#childExit) return;
+    if (!child || !exit || this.#childExit) return Promise.resolve();
+    if (!this.#childStopPromise) this.#childStopPromise = this.#terminateSpawnedChild(child, exit);
+    return this.#childStopPromise;
+  }
+
+  async #terminateSpawnedChild(child: SpawnedDaemonChild, exit: Promise<ChildExit>): Promise<void> {
     this.#expectedStop = true;
     child.kill("SIGTERM");
     const timeoutMs = this.#options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
@@ -392,6 +425,16 @@ export class DesktopDaemonSupervisor {
     if (finished || this.#childExit) return;
     child.kill("SIGKILL");
     await Promise.race([exit, this.#dependencies.sleep(250)]);
+  }
+
+  #finishCancelledStartup(): DesktopDaemonHostState {
+    const daemon =
+      this.#daemon ??
+      startupFailure("Bundled daemon startup was cancelled during desktop shutdown.");
+    this.#daemon = daemon;
+    this.#ownedGeneration = null;
+    this.#phase = "stopped";
+    return daemon;
   }
 
   #onChildExit(exit: ChildExit): void {

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = join(packageRoot, "..", "..");
 const dist = join(packageRoot, "dist");
 const rendererDist = join(packageRoot, "..", "desktop-renderer", "dist");
 
@@ -52,7 +53,15 @@ await Promise.all([
   }),
 ]);
 
-await cp(rendererDist, join(dist, "renderer"), { recursive: true });
+await Promise.all([
+  cp(rendererDist, join(dist, "renderer"), { recursive: true }),
+  cp(join(repoRoot, "templates"), join(dist, "templates"), { recursive: true }),
+]);
+
+const bundledTemplates = await readdir(join(dist, "templates"));
+if (!bundledTemplates.includes("default.yml")) {
+  throw new Error("desktop daemon build must include the default workspace template");
+}
 
 const rendererHtml = await readFile(join(dist, "renderer", "index.html"), "utf8");
 if (/Content-Security-Policy/iu.test(rendererHtml)) {
