@@ -54,12 +54,37 @@ function repositoryPair() {
   };
 }
 
+function legacyDefaultDocument(terminalSourceId = "terminal.lead") {
+  const generated = initialApplicationShellAppWindows([terminalSourceId], terminalSourceId, NOW);
+  const windowId = Object.keys(generated.windows)[0]!;
+  return AppWindowDocumentV1SchemaZ.parse({
+    ...generated,
+    windows: {
+      [windowId]: {
+        ...generated.windows[windowId]!,
+        placement: {
+          mode: "docked",
+          docked: { stackId: "stack.terminal.0", index: 0 },
+          floating: { x: 32, y: 32, width: 720, height: 440 },
+        },
+      },
+    },
+    dockRoot: {
+      type: "stack",
+      id: "stack.terminal.0",
+      windowIds: [windowId],
+      activeWindowId: windowId,
+    },
+    floatingOrder: [],
+  });
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("initialApplicationShellAppWindows", () => {
-  it("creates one deterministic visible dock leaf per terminal and preserves semantic focus", () => {
+  it("creates deterministic staggered canvas windows and preserves semantic focus", () => {
     const sourceIds = Array.from({ length: 17 }, (_, index) => `terminal.agent.${index}`);
     const first = initialApplicationShellAppWindows(sourceIds, sourceIds[11]!, NOW);
     const second = initialApplicationShellAppWindows(sourceIds, sourceIds[11]!, NOW);
@@ -76,7 +101,18 @@ describe("initialApplicationShellAppWindows", () => {
       kind: "terminal",
       terminalSourceId: sourceIds[11],
     });
-    expect(first.dockRoot).toMatchObject({ type: "split", axis: "vertical" });
+    expect(first.dockRoot).toBeNull();
+    expect(first.floatingOrder).toHaveLength(17);
+    expect(
+      Object.values(first.windows).every(({ placement }) => placement.mode === "floating"),
+    ).toBe(true);
+    expect(Object.values(first.windows)[0]?.placement.floating).toEqual({
+      x: 48,
+      y: 40,
+      width: 840,
+      height: 520,
+    });
+    expect(first.floatingOrder.at(-1)).toBe(first.focusedWindowId);
   });
 
   it("deduplicates discovery and keeps an empty first-run scene valid", () => {
@@ -86,7 +122,8 @@ describe("initialApplicationShellAppWindows", () => {
       NOW,
     );
     expect(Object.values(duplicate.windows)).toHaveLength(1);
-    expect(duplicate.dockRoot).toMatchObject({ type: "stack" });
+    expect(duplicate.dockRoot).toBeNull();
+    expect(duplicate.floatingOrder).toEqual(Object.keys(duplicate.windows));
 
     const empty = initialApplicationShellAppWindows([], null, NOW);
     expect(empty.dockRoot).toBeNull();
@@ -132,6 +169,73 @@ describe("initialApplicationShellAppWindows", () => {
     expect(reconciled.floatingOrder.at(-1)).toBe(worker.id);
     expect(reconciled.focusedWindowId).toBe(worker.id);
     expect(AppWindowDocumentV1SchemaZ.safeParse(reconciled).success).toBe(true);
+  });
+
+  it("upgrades the exact untouched legacy docked scene once without rewriting custom layouts", () => {
+    const terminalSourceId = "terminal.lead";
+    const exactLegacy = legacyDefaultDocument(terminalSourceId);
+    const generatedWindowId = Object.keys(exactLegacy.windows)[0]!;
+    const upgraded = reconcileApplicationShellAppWindows(
+      exactLegacy,
+      [terminalSourceId],
+      terminalSourceId,
+      LATER,
+    );
+
+    expect(upgraded.revision).toBe(1);
+    expect(upgraded.updatedAt).toBe(LATER);
+    expect(upgraded.dockRoot).toBeNull();
+    expect(upgraded.windows[generatedWindowId]?.placement).toEqual({
+      mode: "floating",
+      docked: null,
+      floating: { x: 48, y: 40, width: 840, height: 520 },
+    });
+    expect(upgraded.floatingOrder).toEqual([generatedWindowId]);
+    expect(
+      reconcileApplicationShellAppWindows(upgraded, [terminalSourceId], terminalSourceId, LAST),
+    ).toBe(upgraded);
+
+    const customized = AppWindowDocumentV1SchemaZ.parse({
+      ...exactLegacy,
+      windows: {
+        [generatedWindowId]: {
+          ...exactLegacy.windows[generatedWindowId]!,
+          title: "My saved terminal",
+        },
+      },
+    });
+    expect(
+      reconcileApplicationShellAppWindows(customized, [terminalSourceId], terminalSourceId, LATER),
+    ).toBe(customized);
+  });
+
+  it("persists the legacy first-run upgrade once through repository CAS", () => {
+    const { first, second } = repositoryPair();
+    const terminalSourceId = "terminal.lead";
+    const legacy = legacyDefaultDocument(terminalSourceId);
+    writeAppWindowDocument(first, null, legacy);
+
+    const upgraded = reconcileApplicationShellAppWindowRepository(
+      second,
+      [terminalSourceId],
+      terminalSourceId,
+      LATER,
+    );
+    const firstEnvelope = first.readRequiredDocument(APP_WINDOW_DOCUMENT_PATH);
+    const repeated = reconcileApplicationShellAppWindowRepository(
+      first,
+      [terminalSourceId],
+      terminalSourceId,
+      LAST,
+    );
+    const secondEnvelope = first.readRequiredDocument(APP_WINDOW_DOCUMENT_PATH);
+
+    expect(upgraded.revision).toBe(1);
+    expect(upgraded.dockRoot).toBeNull();
+    expect(firstEnvelope.revision).toBe(2);
+    expect(repeated).toEqual(upgraded);
+    expect(secondEnvelope.revision).toBe(firstEnvelope.revision);
+    expect(secondEnvelope.payload).toEqual(firstEnvelope.payload);
   });
 
   it("preserves document identity when the terminal inventory is already reconciled", () => {

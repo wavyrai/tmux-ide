@@ -9,7 +9,13 @@
 @import "../../../packages/daemon/src/ui/workbench-dock/web-host.css";
 
 :root {
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Segoe UI",
+    sans-serif;
   color: CanvasText;
   background: Canvas;
   font-synthesis: none;
@@ -57,14 +63,26 @@ select:focus-visible,
 }
 
 .app {
+  --desktop-chrome-height: 40px;
+  --desktop-sidebar-width: 216px;
+  --desktop-dock-bar-height: 36px;
+  --desktop-status-height: 22px;
+  --desktop-panel-radius: 10px;
   position: relative;
   display: grid;
-  grid-template-rows: 28px minmax(0, 1fr) 18px;
+  grid-template-rows: var(--desktop-chrome-height) minmax(0, 1fr) var(--desktop-status-height);
   width: 100%;
   height: 100%;
   overflow: hidden;
   color: var(--tmux-ide-text-primary);
   background: var(--tmux-ide-surface-canvas);
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Segoe UI",
+    sans-serif;
   font-size: 12px;
   line-height: 18px;
 }
@@ -74,10 +92,11 @@ select:focus-visible,
   z-index: 10;
   display: flex;
   min-width: 0;
-  height: 28px;
+  height: var(--desktop-chrome-height);
   align-items: stretch;
   border-bottom: 1px solid var(--tmux-ide-border-subtle);
-  background: var(--tmux-ide-surface-header);
+  background: color-mix(in srgb, var(--tmux-ide-surface-header) 94%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 4%, transparent);
   user-select: none;
 }
 
@@ -91,11 +110,11 @@ select:focus-visible,
 
 .titlebar__brand {
   display: flex;
-  flex: 0 0 168px;
+  flex: 0 0 var(--desktop-sidebar-width);
   min-width: 0;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px;
+  gap: 7px;
+  padding: 0 12px;
   overflow: hidden;
   color: var(--tmux-ide-text-secondary);
   border-right: 1px solid var(--tmux-ide-border-subtle);
@@ -134,6 +153,9 @@ select:focus-visible,
   -webkit-app-region: no-drag;
   display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
 }
 
 .primary-tabs button,
@@ -147,11 +169,12 @@ select:focus-visible,
 
 .primary-tabs button {
   display: inline-flex;
-  height: 28px;
+  height: 31px;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
-  border-right: 1px solid var(--tmux-ide-border-subtle);
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   cursor: pointer;
 }
 
@@ -166,6 +189,10 @@ select:focus-visible,
   background: var(--tmux-ide-surface-header-active) !important;
 }
 
+.primary-tabs button:hover {
+  border-color: color-mix(in srgb, var(--tmux-ide-border-default) 72%, transparent);
+}
+
 .primary-tabs button:disabled {
   color: var(--tmux-ide-control-disabled-foreground);
   background: var(--tmux-ide-control-disabled-background);
@@ -173,7 +200,10 @@ select:focus-visible,
 }
 
 .primary-tabs__tab--active {
-  box-shadow: inset 0 -2px 0 var(--tmux-ide-border-focused);
+  border-color: var(--tmux-ide-border-subtle);
+  box-shadow:
+    inset 0 -2px 0 var(--tmux-ide-border-focused),
+    0 1px 4px color-mix(in srgb, var(--tmux-ide-surface-canvas) 36%, transparent);
 }
 
 .titlebar__spacer {
@@ -185,11 +215,13 @@ select:focus-visible,
   -webkit-app-region: no-drag;
   display: inline-flex;
   flex: 0 0 auto;
-  height: 28px;
+  height: 31px;
   align-items: center;
   gap: 6px;
-  padding: 0 8px;
-  border-left: 1px solid var(--tmux-ide-border-subtle);
+  margin: 4px 5px 4px 0;
+  padding: 0 10px;
+  border: 1px solid var(--tmux-ide-border-subtle);
+  border-radius: 6px;
   cursor: pointer;
 }
 
@@ -211,8 +243,8 @@ kbd {
 
 .window-controls button {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: var(--desktop-chrome-height);
   place-items: center;
   cursor: default;
   transition:
@@ -243,22 +275,20 @@ kbd {
   padding: clamp(22px, 5vw, 64px);
   overflow: auto;
   background:
-    linear-gradient(
-      90deg,
-      transparent 0,
-      transparent calc(100% - 1px),
-      var(--tmux-ide-border-subtle) calc(100% - 1px)
+    radial-gradient(
+      circle at 50% 35%,
+      color-mix(in srgb, var(--tmux-ide-border-focused) 9%, transparent),
+      transparent 42%
     ),
     var(--tmux-ide-surface-canvas);
-  background-size: min(72px, 8vw) 100%;
 }
 
 .runtime-state-card {
   width: min(620px, 100%);
   padding: clamp(20px, 4vw, 40px);
   border: 1px solid var(--tmux-ide-border-default);
-  border-radius: var(--tmux-ide-shape-panel);
-  background: var(--tmux-ide-surface-panel);
+  border-radius: var(--desktop-panel-radius);
+  background: color-mix(in srgb, var(--tmux-ide-surface-panel) 96%, transparent);
   box-shadow: var(--tmux-ide-elevation-floating-shadow);
 }
 
@@ -460,7 +490,7 @@ kbd {
 
 .shell-workbench {
   display: grid;
-  grid-template-columns: 168px minmax(0, 1fr);
+  grid-template-columns: var(--desktop-sidebar-width) minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -469,10 +499,10 @@ kbd {
 .workspace-sidebar {
   min-width: 0;
   min-height: 0;
-  padding: 7px 6px;
+  padding: 10px 8px;
   overflow: hidden auto;
   border-right: 1px solid var(--tmux-ide-border-subtle);
-  background: var(--tmux-ide-surface-panel);
+  background: color-mix(in srgb, var(--tmux-ide-surface-panel) 92%, var(--tmux-ide-surface-canvas));
 }
 
 .workspace-sidebar__project {
@@ -480,21 +510,26 @@ kbd {
   align-items: center;
   gap: 7px;
   min-width: 0;
-  height: 38px;
-  margin-bottom: 6px;
-  padding: 4px;
+  height: 46px;
+  margin-bottom: 10px;
+  padding: 5px 6px 10px;
   border-bottom: 1px solid var(--tmux-ide-border-subtle);
 }
 
 .project-monogram {
   display: grid;
   flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   place-items: center;
   color: var(--tmux-ide-text-bright);
   border: 1px solid var(--tmux-ide-border-default);
-  background: var(--tmux-ide-surface-panel-raised);
+  border-radius: 7px;
+  background: linear-gradient(
+    145deg,
+    var(--tmux-ide-surface-panel-raised),
+    var(--tmux-ide-surface-header)
+  );
   font-size: 9px;
   text-transform: uppercase;
 }
@@ -526,7 +561,7 @@ kbd {
   display: flex;
   justify-content: space-between;
   margin: 0;
-  padding: 0 5px 3px;
+  padding: 0 7px 5px;
   color: var(--tmux-ide-text-muted);
   font-size: 10px;
   font-weight: 600;
@@ -539,14 +574,15 @@ kbd {
   display: flex;
   width: 100%;
   min-width: 0;
-  height: 26px;
+  height: 30px;
   align-items: center;
   gap: 7px;
-  padding: 0 5px;
+  padding: 0 7px;
   overflow: hidden;
   border: 0;
   color: var(--tmux-ide-text-muted);
   background: transparent;
+  border-radius: 6px;
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
@@ -556,6 +592,10 @@ kbd {
 .sidebar-row--active {
   color: var(--tmux-ide-text-primary);
   background: var(--tmux-ide-selection-hover);
+}
+
+.sidebar-row--active {
+  box-shadow: inset 2px 0 0 var(--tmux-ide-border-focused);
 }
 
 .sidebar-row i,
@@ -614,11 +654,11 @@ kbd {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--tmux-ide-surface-canvas);
+  background: var(--tmux-ide-surface-workspace);
 }
 
 .workspace-main[data-dock-mode="collapsed"] {
-  grid-template-rows: minmax(0, 1fr) 28px;
+  grid-template-rows: minmax(0, 1fr) var(--desktop-dock-bar-height);
 }
 
 .workspace-main[data-dock-mode="maximized"] {
@@ -723,21 +763,30 @@ kbd {
 }
 
 .terminal-canvas {
-  padding: 8px;
+  padding: 10px 12px 12px;
+  overflow: hidden;
 }
 
 .canvas-toolbar {
-  height: 27px;
-  padding: 0 4px 7px;
+  height: 38px;
+  padding: 0 5px 9px;
   color: var(--tmux-ide-text-muted);
 }
 
 .canvas-toolbar strong {
   color: var(--tmux-ide-text-primary);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .canvas-toolbar small {
   color: var(--tmux-ide-status-success);
+  margin-left: 5px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--tmux-ide-status-success) 32%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tmux-ide-status-success) 8%, transparent);
+  font-size: 9px;
 }
 
 .agent-grid {
@@ -766,15 +815,34 @@ kbd {
   position: relative;
   isolation: isolate;
   width: 100%;
-  height: calc(100% - 27px);
+  height: calc(100% - 38px);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  border: 1px solid var(--tmux-ide-border-subtle);
+  border-radius: var(--desktop-panel-radius);
   background:
-    linear-gradient(var(--tmux-ide-border-subtle) 1px, transparent 1px),
-    linear-gradient(90deg, var(--tmux-ide-border-subtle) 1px, transparent 1px),
+    radial-gradient(
+      circle at 50% 42%,
+      color-mix(in srgb, var(--tmux-ide-border-focused) 5%, transparent),
+      transparent 48%
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--tmux-ide-border-subtle) 52%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--tmux-ide-border-subtle) 52%, transparent) 1px,
+      transparent 1px
+    ),
     var(--tmux-ide-surface-workspace);
-  background-size: 24px 24px;
+  background-size:
+    auto,
+    28px 28px,
+    28px 28px,
+    auto;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 3%, transparent);
 }
 
 .app-window-card {
@@ -782,6 +850,10 @@ kbd {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  border-radius: 9px;
+  transition:
+    filter var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
+    opacity var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard);
 }
 
 .app-window-card > .web-pane-frame {
@@ -792,7 +864,35 @@ kbd {
 }
 
 .app-window-card[data-placement="floating"] {
-  filter: drop-shadow(0 12px 24px rgb(0 0 0 / 35%));
+  filter: drop-shadow(0 18px 34px rgb(0 0 0 / 32%));
+}
+
+.app-window-card[data-placement="floating"][data-selected="false"] {
+  filter: drop-shadow(0 10px 22px rgb(0 0 0 / 22%));
+}
+
+.app-window-card > .web-pane-frame {
+  grid-template-rows: 34px minmax(0, 1fr);
+  border-radius: 9px;
+}
+
+.app-window-card[data-selected="true"] > .web-pane-frame {
+  box-shadow:
+    0 0 0 1px var(--tmux-ide-border-focused),
+    0 18px 44px rgb(0 0 0 / 30%);
+}
+
+.app-window-card .web-pane-frame__header {
+  padding-inline: 3px;
+}
+
+.app-window-card .web-pane-frame__title {
+  font-size: 12px;
+}
+
+.app-window-card .web-pane-frame__subtitle {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  font-size: 9px;
 }
 
 .app-window-card__unavailable,
@@ -997,13 +1097,25 @@ kbd {
 .app .workbench-dock__bar,
 .app .workbench-dock__tab,
 .app .workbench-dock__action {
-  height: 28px;
-  min-height: 28px;
+  height: var(--desktop-dock-bar-height);
+  min-height: var(--desktop-dock-bar-height);
 }
 
 .app .workbench-dock__tab {
-  gap: 6px;
-  padding: 0 8px;
+  gap: 7px;
+  padding: 0 11px;
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Segoe UI",
+    sans-serif;
+  font-weight: 550;
+}
+
+.app .workbench-dock__tab[aria-selected="true"] {
+  box-shadow: inset 0 2px 0 var(--tmux-ide-border-focused);
 }
 
 .app .workbench-dock__glyph {
@@ -1012,15 +1124,15 @@ kbd {
 
 .app .workbench-dock__action {
   display: grid;
-  width: 28px;
-  min-width: 28px;
+  width: 36px;
+  min-width: 36px;
   padding: 0;
   place-items: center;
 }
 
 .dock-surface {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: var(--desktop-dock-bar-height) minmax(0, 1fr);
   min-width: 0;
   min-height: 100%;
 }
@@ -1036,7 +1148,7 @@ kbd {
 
 .dock-surface__content {
   min-width: 0;
-  padding: 8px 10px;
+  padding: 10px 14px;
   overflow: auto;
 }
 
@@ -1079,16 +1191,16 @@ kbd {
   z-index: 10;
   display: flex;
   min-width: 0;
-  height: 18px;
+  height: var(--desktop-status-height);
   align-items: center;
   gap: 14px;
-  padding: 0 6px;
+  padding: 0 10px;
   overflow: hidden;
   border-top: 1px solid var(--tmux-ide-border-subtle);
   color: var(--tmux-ide-text-muted);
-  background: var(--tmux-ide-surface-header);
+  background: color-mix(in srgb, var(--tmux-ide-surface-header) 90%, var(--tmux-ide-surface-panel));
   font-size: 10px;
-  line-height: 17px;
+  line-height: calc(var(--desktop-status-height) - 1px);
   white-space: nowrap;
 }
 
@@ -1126,7 +1238,7 @@ kbd {
   inset: 0;
   display: flex;
   justify-content: center;
-  padding-top: 54px;
+  padding-top: 68px;
   visibility: hidden;
   background: color-mix(in srgb, var(--tmux-ide-surface-canvas) 46%, transparent);
 }
@@ -1141,7 +1253,7 @@ kbd {
   align-self: flex-start;
   overflow: hidden;
   border: 1px solid var(--tmux-ide-border-default);
-  border-radius: var(--tmux-ide-shape-floating);
+  border-radius: 12px;
   background: var(--tmux-ide-surface-command);
   box-shadow: var(--tmux-ide-elevation-palette-shadow);
 }
@@ -1624,11 +1736,11 @@ kbd {
 
 @media (min-width: 1440px) {
   .titlebar__brand {
-    flex-basis: 184px;
+    flex-basis: 232px;
   }
 
   .shell-workbench {
-    grid-template-columns: 184px minmax(0, 1fr);
+    grid-template-columns: 232px minmax(0, 1fr);
   }
 
   .workspace-main {

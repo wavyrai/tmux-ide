@@ -50,9 +50,9 @@ export interface DomApplicationShellProjection extends Omit<
   };
 }
 
-const TITLEBAR_HEIGHT = 28;
-const STATUS_HEIGHT = 18;
-const DOCK_STRIP_HEIGHT = 28;
+const TITLEBAR_HEIGHT = 40;
+const STATUS_HEIGHT = 22;
+const DOCK_STRIP_HEIGHT = 36;
 
 export function createDefaultDomShellInput(): ApplicationShellProjectionInputV1 {
   return ApplicationShellProjectionInputV1SchemaZ.parse({
@@ -208,8 +208,8 @@ function variantMetrics(variant: DomShellVariant): {
   minimumCanvas: number;
 } {
   if (variant === "compact") return { sidebar: 48, minimumDock: 126, minimumCanvas: 144 };
-  if (variant === "standard") return { sidebar: 168, minimumDock: 180, minimumCanvas: 216 };
-  return { sidebar: 184, minimumDock: 252, minimumCanvas: 288 };
+  if (variant === "standard") return { sidebar: 216, minimumDock: 180, minimumCanvas: 216 };
+  return { sidebar: 232, minimumDock: 252, minimumCanvas: 288 };
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -269,8 +269,8 @@ export function projectDomWorkbenchDock(
         shell.bottomDock.mode === "collapsed" ? "Open bottom dock" : "Collapse bottom dock",
       nextMode: shell.bottomDock.mode === "collapsed" ? ("open" as const) : ("collapsed" as const),
       active: shell.bottomDock.mode !== "collapsed",
-      x: viewport.width - 56,
-      width: 28,
+      x: viewport.width - 72,
+      width: 36,
     },
     {
       id: "toggle-maximize" as const,
@@ -279,8 +279,8 @@ export function projectDomWorkbenchDock(
         shell.bottomDock.mode === "maximized" ? "Restore bottom dock" : "Maximize bottom dock",
       nextMode: shell.bottomDock.mode === "maximized" ? ("open" as const) : ("maximized" as const),
       active: shell.bottomDock.mode === "maximized",
-      x: viewport.width - 28,
-      width: 28,
+      x: viewport.width - 36,
+      width: 36,
     },
   ];
   const bodyHeight = shell.bottomDock.mode === "collapsed" ? 0 : dockHeight - DOCK_STRIP_HEIGHT;

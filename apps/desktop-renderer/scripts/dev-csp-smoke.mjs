@@ -427,6 +427,111 @@ try {
         `Renderer primitive, canvas, or xterm boundary failed: ${JSON.stringify(primitiveResult)}`,
       );
     }
+
+    const visualPage = await browser.newPage({
+      viewport: { width: 1_440, height: 900 },
+      colorScheme: "dark",
+    });
+    const visualConsoleMessages = [];
+    visualPage.on("console", (message) => visualConsoleMessages.push(message.text()));
+    await visualPage.addInitScript(() => {
+      globalThis.__tmiCspViolations = [];
+      globalThis.document.addEventListener("securitypolicyviolation", (event) => {
+        globalThis.__tmiCspViolations.push({
+          blockedURI: event.blockedURI,
+          directive: event.effectiveDirective,
+        });
+      });
+    });
+    await visualPage.goto(rendererUrl, { waitUntil: "networkidle" });
+    const visualResult = await visualPage.evaluate(async () => {
+      const oldRoot = globalThis.document.getElementById("root");
+      oldRoot?.remove();
+      const root = globalThis.document.createElement("div");
+      root.id = "root";
+      globalThis.document.body.append(root);
+      const { mountDesktopCanvasFirstRunFixture } =
+        await import("/src/experience/desktop-canvas-first-run.fixture.tsx");
+      mountDesktopCanvasFirstRunFixture(root);
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const rect = (selector) => {
+        const bounds = globalThis.document.querySelector(selector)?.getBoundingClientRect();
+        return bounds
+          ? {
+              left: bounds.left,
+              top: bounds.top,
+              width: bounds.width,
+              height: bounds.height,
+              right: bounds.right,
+              bottom: bounds.bottom,
+            }
+          : null;
+      };
+      const canvas = rect(".app-window-canvas");
+      const cards = [...globalThis.document.querySelectorAll(".app-window-card")].map((card) => {
+        const bounds = card.getBoundingClientRect();
+        return {
+          placement: card.getAttribute("data-placement"),
+          left: bounds.left - (canvas?.left ?? 0),
+          top: bounds.top - (canvas?.top ?? 0),
+          width: bounds.width,
+          height: bounds.height,
+        };
+      });
+      return {
+        app: rect(".app"),
+        titlebar: rect(".titlebar"),
+        sidebar: rect(".workspace-sidebar"),
+        canvas,
+        cards,
+        dock: rect(".workspace-dock"),
+        status: rect(".status-strip"),
+        tabs: globalThis.document.querySelectorAll(".primary-tabs [role=tab]").length,
+        dockTabs: globalThis.document.querySelectorAll(".workbench-dock__tab").length,
+        styleAttributes: globalThis.document.querySelectorAll("[style]").length,
+        styleElements: globalThis.document.querySelectorAll("style").length,
+        violations: globalThis.__tmiCspViolations ?? [],
+      };
+    });
+    if (process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT) {
+      await visualPage.screenshot({
+        path: process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT,
+        fullPage: true,
+      });
+    }
+    await visualPage.close();
+    const visualViolations = visualConsoleMessages.filter((message) => cspViolation.test(message));
+    const [frontCard] = visualResult.cards.slice(-1);
+    if (
+      visualViolations.length > 0 ||
+      visualResult.violations.some(({ directive }) => directive.startsWith("style-src")) ||
+      visualResult.styleAttributes !== 0 ||
+      visualResult.styleElements !== 0 ||
+      visualResult.app?.width !== 1_440 ||
+      visualResult.app?.height !== 900 ||
+      visualResult.titlebar?.height !== 40 ||
+      visualResult.sidebar?.width !== 232 ||
+      visualResult.dock?.height !== 36 ||
+      visualResult.status?.height !== 22 ||
+      visualResult.tabs !== 2 ||
+      visualResult.dockTabs !== 4 ||
+      visualResult.cards.length !== 2 ||
+      visualResult.cards.some(
+        (card) => card.placement !== "floating" || card.width !== 840 || card.height !== 520,
+      ) ||
+      !visualResult.canvas ||
+      !frontCard ||
+      frontCard.left <= 0 ||
+      frontCard.top <= 0 ||
+      frontCard.left + frontCard.width >= visualResult.canvas.width ||
+      frontCard.top + frontCard.height >= visualResult.canvas.height
+    ) {
+      throw new Error(
+        `Desktop first-run canvas visual acceptance failed: ${JSON.stringify(visualResult, null, 2)}\n` +
+          visualViolations.join("\n"),
+      );
+    }
   } finally {
     await browser.close();
   }

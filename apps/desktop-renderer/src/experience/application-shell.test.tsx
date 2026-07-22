@@ -430,7 +430,9 @@ describe("visible DOM application shell", () => {
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await vi.waitFor(() => expect(document.activeElement).toBe(returnTarget));
 
-    expect(styles).toContain("grid-template-rows: 28px minmax(0, 1fr) 18px");
+    expect(styles).toContain(
+      "grid-template-rows: var(--desktop-chrome-height) minmax(0, 1fr) var(--desktop-status-height)",
+    );
     expect(styles).toContain("grid-template-columns: 48px minmax(0, 1fr)");
     expect(styles).toContain("width: 456px");
     expect(styles).toMatch(

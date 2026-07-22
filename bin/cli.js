@@ -23157,7 +23157,11 @@ var init_native_runtime = __esm({
         return Object.freeze({
           name: workspace.sessionName,
           runtimeSessionId: active2.sessionId,
-          dir: active2.dir,
+          // Application-owned resources belong to the registered workspace, not
+          // whichever cwd happens to be active inside one tmux pane. Pane cwd may
+          // be outside the project (or move during a shell session), while the
+          // registry projectDir is the durable workspace identity boundary.
+          dir: workspace.projectDir,
           catalogIssue,
           panes: Object.freeze(
             panes.map(
@@ -26927,6 +26931,16 @@ var init_app_window_repository = __esm({
 });
 
 // packages/daemon/src/lib/application-shell-app-windows.ts
+import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
+function firstRunFloatingRect(index) {
+  const offset = index % FIRST_RUN_CASCADE_COLUMNS;
+  return {
+    x: 48 + offset * 32,
+    y: 40 + offset * 28,
+    width: FIRST_RUN_WINDOW_WIDTH,
+    height: FIRST_RUN_WINDOW_HEIGHT
+  };
+}
 function dockTree(stackNodes) {
   if (stackNodes.length === 0) return null;
   let level = [...stackNodes];
@@ -26952,7 +26966,7 @@ function dockTree(stackNodes) {
   }
   return level[0];
 }
-function initialApplicationShellAppWindows(terminalSourceIds, focusedTerminalSourceId, updatedAt) {
+function legacyDockedInitialApplicationShellAppWindows(terminalSourceIds, focusedTerminalSourceId, updatedAt) {
   const uniqueSourceIds = [...new Set(terminalSourceIds)].sort((left, right) => left.localeCompare(right)).slice(0, APP_WINDOW_MAX_WINDOWS);
   const windows = {};
   const windowIdBySourceId = /* @__PURE__ */ new Map();
@@ -26991,6 +27005,70 @@ function initialApplicationShellAppWindows(terminalSourceIds, focusedTerminalSou
     layouts: {}
   });
 }
+function initialApplicationShellAppWindows(terminalSourceIds, focusedTerminalSourceId, updatedAt) {
+  const uniqueSourceIds = [...new Set(terminalSourceIds)].sort((left, right) => left.localeCompare(right)).slice(0, APP_WINDOW_MAX_WINDOWS);
+  const windows = {};
+  const windowIdBySourceId = /* @__PURE__ */ new Map();
+  const floatingOrder = [];
+  for (const [index, terminalSourceId] of uniqueSourceIds.entries()) {
+    const source = { kind: "terminal", terminalSourceId };
+    const windowId = stableAppWindowInstanceId(source);
+    windowIdBySourceId.set(terminalSourceId, windowId);
+    floatingOrder.push(windowId);
+    windows[windowId] = {
+      id: windowId,
+      source,
+      title: null,
+      placement: {
+        mode: "floating",
+        docked: null,
+        floating: firstRunFloatingRect(index)
+      }
+    };
+  }
+  const focusedWindowId = (focusedTerminalSourceId && windowIdBySourceId.get(focusedTerminalSourceId)) ?? (uniqueSourceIds[0] ? windowIdBySourceId.get(uniqueSourceIds[0]) : void 0) ?? null;
+  if (focusedWindowId) {
+    floatingOrder.splice(floatingOrder.indexOf(focusedWindowId), 1);
+    floatingOrder.push(focusedWindowId);
+  }
+  return AppWindowDocumentV1SchemaZ.parse({
+    version: 1,
+    revision: 0,
+    updatedAt,
+    windows,
+    dockRoot: null,
+    dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+    floatingOrder,
+    focusedWindowId,
+    activeLayoutId: null,
+    layouts: {}
+  });
+}
+function legacyDefaultSourceIds(document) {
+  const sourceIds = Object.values(document.windows).flatMap(
+    ({ source }) => source.kind === "terminal" ? [source.terminalSourceId] : []
+  );
+  return sourceIds.length === Object.keys(document.windows).length ? sourceIds : null;
+}
+function legacyDefaultCanvasScene(document) {
+  if (document.revision !== 0) return null;
+  const sourceIds = legacyDefaultSourceIds(document);
+  if (!sourceIds) return null;
+  const focusedSource = document.focusedWindowId ? document.windows[document.focusedWindowId]?.source : null;
+  const focusedTerminalSourceId = focusedSource?.kind === "terminal" ? focusedSource.terminalSourceId : null;
+  const legacy = legacyDockedInitialApplicationShellAppWindows(
+    sourceIds,
+    focusedTerminalSourceId,
+    document.updatedAt
+  );
+  if (!isDeepStrictEqual2(document, legacy)) return null;
+  const upgraded = initialApplicationShellAppWindows(
+    sourceIds,
+    focusedTerminalSourceId,
+    document.updatedAt
+  );
+  return AppWindowDocumentV1SchemaZ.parse({ ...upgraded, revision: document.revision });
+}
 function terminalWindowIdBySourceId(document) {
   return new Map(
     Object.values(document.windows).flatMap(
@@ -26999,12 +27077,21 @@ function terminalWindowIdBySourceId(document) {
   );
 }
 function reconcileApplicationShellAppWindows(document, terminalSourceIds, focusedTerminalSourceId, updatedAt) {
-  const current = AppWindowDocumentV1SchemaZ.parse(document);
+  const persisted = AppWindowDocumentV1SchemaZ.parse(document);
+  const legacyCanvas = legacyDefaultCanvasScene(persisted);
+  const current = legacyCanvas ?? persisted;
   const timestamp = Date.parse(updatedAt) < Date.parse(current.updatedAt) ? current.updatedAt : updatedAt;
   const sourceMap = terminalWindowIdBySourceId(current);
   const capacity = Math.max(0, APP_WINDOW_MAX_WINDOWS - Object.keys(current.windows).length);
   const admittedSourceIds = [...new Set(terminalSourceIds)].filter((sourceId) => !sourceMap.has(sourceId)).sort((left, right) => left.localeCompare(right)).slice(0, capacity);
-  if (admittedSourceIds.length === 0) return current;
+  if (admittedSourceIds.length === 0) {
+    if (!legacyCanvas) return document;
+    return AppWindowDocumentV1SchemaZ.parse({
+      ...current,
+      revision: persisted.revision + 1,
+      updatedAt: timestamp
+    });
+  }
   const windows = structuredClone(current.windows);
   const floatingOrder = [...current.floatingOrder];
   const nextSourceMap = new Map(sourceMap);
@@ -27085,7 +27172,7 @@ function reconcileApplicationShellAppWindowRepository(runtime, terminalSourceIds
   }
   return service.load().document;
 }
-var MAX_SPLIT_CHILDREN;
+var MAX_SPLIT_CHILDREN, FIRST_RUN_WINDOW_WIDTH, FIRST_RUN_WINDOW_HEIGHT, FIRST_RUN_CASCADE_COLUMNS;
 var init_application_shell_app_windows = __esm({
   "packages/daemon/src/lib/application-shell-app-windows.ts"() {
     "use strict";
@@ -27094,6 +27181,9 @@ var init_application_shell_app_windows = __esm({
     init_project_runtime_repository();
     init_app_window_state2();
     MAX_SPLIT_CHILDREN = 8;
+    FIRST_RUN_WINDOW_WIDTH = 840;
+    FIRST_RUN_WINDOW_HEIGHT = 520;
+    FIRST_RUN_CASCADE_COLUMNS = 8;
   }
 });
 
