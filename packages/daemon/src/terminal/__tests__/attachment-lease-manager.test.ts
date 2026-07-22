@@ -87,6 +87,7 @@ class FakeViewExecutor implements AttachmentViewExecutor {
   sourceProofMatches = true;
   operationFailure = false;
   operationErrorCode: "read_only_unavailable" | null = null;
+  clientClaimAttemptId: string | null = null;
   enumerationFailure = false;
   viewMutationCount = 0;
   operationNow: () => number = () => 0;
@@ -140,6 +141,16 @@ class FakeViewExecutor implements AttachmentViewExecutor {
     if (this.operationFailure) {
       this.seed(operation.plan);
       throw new Error("executor leaked bearer-secret-on-%99-at-$77:@88");
+    }
+    if (this.clientClaimAttemptId) {
+      return {
+        status: "executed" as const,
+        clientClaim: {
+          attachmentId: operation.plan.identity.attachmentId,
+          generation: operation.plan.identity.generation,
+          attemptId: this.clientClaimAttemptId,
+        },
+      };
     }
     return "executed" as const;
   }
@@ -681,6 +692,28 @@ describe("AttachmentLeaseManager", () => {
       ),
       "source-proof-mismatch",
     );
+  });
+
+  it("returns the exact one-use client claim key from the guarded executor", async () => {
+    const { manager, executor } = rig();
+    const issued = await manager.issue(request(), context(1));
+    await manager.redeem(issued.redemptionTicket, binding(issued.descriptor.requestId));
+    executor.clientClaimAttemptId = "728e8e59-00e7-4b6b-b794-1f55686f39ea";
+
+    await expect(
+      manager.executeViewOperation(
+        issued.descriptor.leaseId,
+        binding(issued.descriptor.requestId),
+        "attach",
+      ),
+    ).resolves.toMatchObject({
+      operation: "attach",
+      clientClaim: {
+        attachmentId: issued.descriptor.leaseId,
+        generation: issued.descriptor.viewGeneration,
+        attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
+      },
+    });
   });
 
   it("sanitizes guarded executor failures and cleans uncertain view state", async () => {

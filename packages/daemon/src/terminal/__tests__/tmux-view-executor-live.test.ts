@@ -292,22 +292,18 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
       environment: process.env,
       readinessTimeoutMs: 5_000,
     });
-    let claimedAttempt: ReturnType<typeof transport.beginGuardedAttach> | null = null;
     const executor = new TmuxAttachmentViewExecutor({
       runner,
-      clientTransport: {
-        beginGuardedAttach(input) {
-          claimedAttempt = transport.beginGuardedAttach(input);
-          return claimedAttempt;
-        },
-      },
+      clientTransport: transport,
       now: () => 1_000,
     });
-    await expect(
-      executor.executeGuardedViewOperation(liveOperation(selectedPlan, "attach")),
-    ).resolves.toBe("executed");
-    expect(claimedAttempt).not.toBeNull();
-    const client = transport.claim(claimedAttempt!)!;
+    const executed = await executor.executeGuardedViewOperation(
+      liveOperation(selectedPlan, "attach"),
+    );
+    expect(executed).toMatchObject({ status: "executed", clientClaim: expect.any(Object) });
+    if (typeof executed === "string") throw new Error("expected a client claim");
+    const client = transport.claim(executed.clientClaim)!;
+    expect(client).not.toBeNull();
     expect(runOnSocket(["list-windows", "-t", exactTarget, "-F", "#{window_id}"]).trim()).toBe(
       windowId,
     );

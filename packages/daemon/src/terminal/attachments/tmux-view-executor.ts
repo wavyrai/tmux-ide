@@ -2,6 +2,10 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { runTmux, TmuxError } from "@tmux-ide/tmux-bridge";
 import {
+  TerminalAttachmentViewerModeSchemaZ,
+  TerminalAttachmentViewportSchemaZ,
+} from "@tmux-ide/contracts";
+import {
   GROUPED_TMUX_MAX_GENERATION,
   GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   GROUPED_TMUX_VIEW_SESSION_PREFIX,
@@ -68,12 +72,14 @@ export type TmuxAttachmentClientTransportOutcome =
   | { readonly status: "failed" };
 
 export interface TmuxAttachmentClientTransportInput {
-  readonly command: TmuxArgvPlan;
+  readonly operation: "attach" | "recover";
   readonly identity: {
     readonly attachmentId: string;
     readonly generation: number;
     readonly viewSessionName: string;
     readonly markerValue: string;
+    readonly expectedSourceSessionId: string;
+    readonly expectedViewSessionId: string;
     readonly expectedWindowId: string;
     readonly expectedPaneId: string;
   };
@@ -163,6 +169,9 @@ interface ParsedViewIdentity {
 }
 
 interface ViewServerGuard {
+  readonly sessionId: string;
+  readonly windowId: string;
+  readonly paneId: string;
   readonly target: string;
   readonly format: string;
 }
@@ -241,6 +250,84 @@ function sourceProofFormat(operation: GuardedAttachmentViewOperation): string {
   // format comparator treats a `%N` rhs specially, so re-check the enclosing
   // session/window/count while target resolution proves the pane identity.
   return `#{&&:#{==:#{session_id},${source.sessionId}},#{&&:#{==:#{window_id},${source.windowId}},#{==:#{window_panes},1}}}`;
+}
+
+const TmuxAttachmentClientTransportInputSchemaZ = z
+  .object({
+    operation: z.enum(["attach", "recover"]),
+    identity: z
+      .object({
+        attachmentId: z.uuid(),
+        generation: z.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+        viewSessionName: z.string(),
+        markerValue: z.string(),
+        expectedSourceSessionId: RuntimeSessionIdSchemaZ,
+        expectedViewSessionId: RuntimeSessionIdSchemaZ,
+        expectedWindowId: RuntimeWindowIdSchemaZ,
+        expectedPaneId: RuntimePaneIdSchemaZ,
+      })
+      .strict(),
+    viewport: TerminalAttachmentViewportSchemaZ,
+    viewerMode: TerminalAttachmentViewerModeSchemaZ,
+  })
+  .strict();
+
+/**
+ * Reconstructs the only normal-client argv accepted by the PTY launcher. No
+ * caller-authored tmux argv crosses the transport boundary.
+ */
+export function planCanonicalTmuxAttachmentClientCommand(
+  input: TmuxAttachmentClientTransportInput,
+): TmuxArgvPlan {
+  const parsed = TmuxAttachmentClientTransportInputSchemaZ.parse(input);
+  const identity = parsed.identity;
+  if (
+    groupedTmuxViewSessionName(identity.attachmentId, identity.generation) !==
+      identity.viewSessionName ||
+    identity.markerValue !== `v1:${identity.attachmentId.toLowerCase()}:${identity.generation}`
+  ) {
+    throw new TmuxAttachmentViewExecutorError("invalid-request");
+  }
+  const exactViewTarget = `=${identity.viewSessionName}`;
+  const attach = tmux(
+    parsed.viewerMode === "read-only"
+      ? ["attach-session", "-E", "-r", "-t", exactViewTarget]
+      : ["attach-session", "-E", "-t", exactViewTarget],
+  );
+  const commands =
+    parsed.operation === "attach"
+      ? [attach]
+      : [
+          tmux(["select-window", "-t", `${identity.viewSessionName}:${identity.expectedWindowId}`]),
+          tmux(["set-option", "-t", identity.viewSessionName, "status", "off"]),
+          tmux(["set-option", "-t", identity.viewSessionName, "destroy-unattached", "off"]),
+          attach,
+        ];
+  const mutation = tmuxCommandListString(commands);
+  const viewTarget = `${identity.expectedViewSessionId}:${identity.expectedWindowId}.${identity.expectedPaneId}`;
+  const viewFormat = `#{&&:#{==:#{session_id},${identity.expectedViewSessionId}},#{&&:#{==:#{window_id},${identity.expectedWindowId}},#{&&:#{==:#{window_panes},1},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${identity.markerValue}}}}}}`;
+  const viewGuardedMutation = tmuxCommandString(
+    tmux([
+      "if-shell",
+      "-F",
+      "-t",
+      viewTarget,
+      viewFormat,
+      mutation,
+      tmuxCommandString(tmux(["display-message", "-p", VIEW_PROOF_MISMATCH_SENTINEL])),
+    ]),
+  );
+  const sourceTarget = `${identity.expectedSourceSessionId}:${identity.expectedWindowId}.${identity.expectedPaneId}`;
+  const sourceFormat = `#{&&:#{==:#{session_id},${identity.expectedSourceSessionId}},#{&&:#{==:#{window_id},${identity.expectedWindowId}},#{==:#{window_panes},1}}}`;
+  return tmux([
+    "if-shell",
+    "-F",
+    "-t",
+    sourceTarget,
+    sourceFormat,
+    viewGuardedMutation,
+    tmuxCommandString(tmux(["display-message", "-p", SOURCE_PROOF_MISMATCH_SENTINEL])),
+  ]);
 }
 
 function boundedOutput(stdout: string): string {
@@ -405,28 +492,33 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
 
   #clientCommand(
     command: TmuxArgvPlan,
+    operation: "attach" | "recover",
     plan: GroupedTmuxAttachmentPlan,
+    viewGuard: ViewServerGuard,
   ): TmuxAttachmentClientTransportAttempt {
     if (!this.#clientTransport) {
       throw new TmuxAttachmentViewExecutorError("attachment-transport-unavailable");
     }
     try {
-      const result = this.#clientTransport.beginGuardedAttach({
-        command: {
-          executable: "tmux",
-          argv: [...command.argv],
-        },
+      const input: TmuxAttachmentClientTransportInput = {
+        operation,
         identity: {
           attachmentId: plan.identity.attachmentId,
           generation: plan.identity.generation,
           viewSessionName: plan.identity.viewSessionName,
           markerValue: plan.identity.markerValue,
+          expectedSourceSessionId: plan.identity.durableSource.sessionId,
+          expectedViewSessionId: viewGuard.sessionId,
           expectedWindowId: plan.identity.durableSource.windowId,
           expectedPaneId: plan.identity.durableSource.runtimePaneId,
         },
         viewport: { ...plan.viewport },
         viewerMode: plan.viewerMode,
-      });
+      };
+      if (!isDeepStrictEqual(command, planCanonicalTmuxAttachmentClientCommand(input))) {
+        throw new TmuxAttachmentViewExecutorError("invalid-request");
+      }
+      const result = this.#clientTransport.beginGuardedAttach(input);
       if (
         result.status !== "claimed" ||
         !z.uuid().safeParse(result.attemptId).success ||
@@ -555,6 +647,9 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
       return null;
     }
     return {
+      sessionId: sessionId!,
+      windowId: windowId!,
+      paneId: paneId!,
       target: `${sessionId}:${windowId}.${paneId}`,
       format: `#{&&:#{==:#{session_id},${sessionId}},#{&&:#{==:#{window_id},${windowId}},#{&&:#{==:#{window_panes},1},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${expectedMarker}}}}}}`,
     };
@@ -665,11 +760,12 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     if (this.#marker(exactTarget) !== plan.identity.markerValue) return null;
     const windows = this.#windowIds(exactTarget);
     if (windows?.length !== 1 || windows[0] !== plan.identity.durableSource.windowId) return null;
-    return this.#viewServerGuard(
+    const guard = this.#viewServerGuard(
       exactTarget,
       plan.identity.markerValue,
       plan.identity.durableSource.windowId,
     );
+    return guard?.paneId === plan.identity.durableSource.runtimePaneId ? guard : null;
   }
 
   #runServerGuardedMutation(
@@ -722,7 +818,7 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
 
     let attempt: TmuxAttachmentClientTransportAttempt;
     try {
-      attempt = this.#clientCommand(guarded, plan);
+      attempt = this.#clientCommand(guarded, operation.operation, plan, viewGuard!);
     } catch (error) {
       if (error instanceof TmuxAttachmentViewExecutorError) throw error;
       throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
@@ -739,7 +835,14 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
         }
         switch (result.status) {
           case "executed":
-            return "executed" as const;
+            return {
+              status: "executed" as const,
+              clientClaim: {
+                attachmentId: attempt.attachmentId,
+                generation: attempt.generation,
+                attemptId: attempt.attemptId,
+              },
+            };
           case "source-proof-mismatch":
             return "source-proof-mismatch" as const;
           case "view-proof-mismatch":

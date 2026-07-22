@@ -80,8 +80,20 @@ export interface GuardedAttachmentViewOperation {
   readonly plan: GroupedTmuxAttachmentPlan;
 }
 
+export interface AttachmentViewClientClaimKey {
+  readonly attachmentId: string;
+  readonly generation: number;
+  readonly attemptId: string;
+}
+
+export interface ExecutedGuardedAttachmentClientOperation {
+  readonly status: "executed";
+  readonly clientClaim: AttachmentViewClientClaimKey;
+}
+
 export type GuardedAttachmentViewOperationResult =
   | "executed"
+  | ExecutedGuardedAttachmentClientOperation
   | "source-proof-mismatch"
   | "lease-expired";
 
@@ -139,6 +151,8 @@ export interface RedeemedAttachmentLease {
 export interface ExecutedAttachmentViewOperation {
   readonly descriptor: AttachmentLeaseDescriptor;
   readonly operation: AttachmentViewOperation;
+  /** Exact one-use key for adopting the daemon-owned PTY client, when one was launched. */
+  readonly clientClaim?: AttachmentViewClientClaimKey;
 }
 
 export interface ReconciledOrphanAttachmentDescriptor {
@@ -613,7 +627,25 @@ export class AttachmentLeaseManager {
         await this.#cleanupPlan(state);
         throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
       }
-      if (executionResult !== "executed") {
+      const clientClaim =
+        typeof executionResult === "object" && executionResult.status === "executed"
+          ? executionResult.clientClaim
+          : null;
+      if (
+        clientClaim &&
+        (!z.uuid().safeParse(clientClaim.attemptId).success ||
+          clientClaim.attachmentId !== state.plan.identity.attachmentId ||
+          clientClaim.generation !== state.plan.identity.generation ||
+          parsedOperation === "create")
+      ) {
+        this.#removeState(state);
+        await this.#cleanupPlan(state);
+        throw new AttachmentLeaseError(
+          "view-operation-failed",
+          "The guarded terminal view operation failed.",
+        );
+      }
+      if (executionResult !== "executed" && !clientClaim) {
         this.#removeState(state);
         await this.#cleanupPlan(state);
         throw new AttachmentLeaseError(
@@ -624,6 +656,7 @@ export class AttachmentLeaseManager {
       return {
         descriptor: this.#descriptor(state),
         operation: parsedOperation,
+        ...(clientClaim ? { clientClaim: { ...clientClaim } } : {}),
       };
     });
   }

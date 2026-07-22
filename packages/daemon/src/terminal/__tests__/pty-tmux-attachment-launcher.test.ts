@@ -8,9 +8,10 @@ import {
   planGroupedTmuxAttachment,
   type GroupedTmuxAttachmentPlan,
 } from "../attachments/grouped-tmux.ts";
-import type {
-  TmuxAttachmentClientTransportInput,
-  TmuxAttachmentCommandRunner,
+import {
+  planCanonicalTmuxAttachmentClientCommand,
+  type TmuxAttachmentClientTransportInput,
+  type TmuxAttachmentCommandRunner,
 } from "../attachments/tmux-view-executor.ts";
 import { MockPtyAdapter, MockPtyProcess } from "./MockPtyAdapter.ts";
 
@@ -34,15 +35,14 @@ function plan(
 
 function input(selectedPlan = plan()): TmuxAttachmentClientTransportInput {
   return {
-    command: {
-      executable: "tmux",
-      argv: ["if-shell", "-F", "-t", "$12:@34.%56", "trusted-proof", "attach"],
-    },
+    operation: "attach",
     identity: {
       attachmentId: selectedPlan.identity.attachmentId,
       generation: selectedPlan.identity.generation,
       viewSessionName: selectedPlan.identity.viewSessionName,
       markerValue: selectedPlan.identity.markerValue,
+      expectedSourceSessionId: selectedPlan.identity.durableSource.sessionId,
+      expectedViewSessionId: "$90",
       expectedWindowId: selectedPlan.identity.durableSource.windowId,
       expectedPaneId: selectedPlan.identity.durableSource.runtimePaneId,
     },
@@ -102,15 +102,18 @@ function proveCurrentAttached(
 }
 
 describe("PtyTmuxAttachmentLauncher", () => {
-  it("rejects arbitrary commands before a PTY can spawn", () => {
+  it("rejects nested arbitrary commands before a PTY can spawn", () => {
     const adapter = new MockPtyAdapter();
     const proof = new ProofRunner();
     const transport = launcher(adapter, proof);
     const canonical = input();
-    const hostile: TmuxAttachmentClientTransportInput = {
+    const hostile = {
       ...canonical,
-      command: { executable: "tmux", argv: ["run-shell", "touch /tmp/not-owned"] },
-    };
+      command: {
+        executable: "tmux",
+        argv: ["if-shell", "-F", "-t", "$12:@34.%56", "1", "run-shell 'touch /tmp/not-owned'"],
+      },
+    } as unknown as TmuxAttachmentClientTransportInput;
 
     expect(() => transport.beginGuardedAttach(hostile)).toThrow(/invalid/u);
     expect(adapter.spawnCount).toBe(0);
@@ -126,18 +129,10 @@ describe("PtyTmuxAttachmentLauncher", () => {
     const attempt = transport.beginGuardedAttach(input(selectedPlan));
 
     expect(adapter.spawnCount).toBe(1);
+    const canonical = planCanonicalTmuxAttachmentClientCommand(input(selectedPlan));
     expect(adapter.spawnLog[0]).toEqual({
       shell: "/trusted/bin/tmux",
-      args: [
-        "-L",
-        "owned-socket",
-        "if-shell",
-        "-F",
-        "-t",
-        "$12:@34.%56",
-        "trusted-proof",
-        "attach",
-      ],
+      args: ["-L", "owned-socket", ...canonical.argv],
       cwd: "/daemon/project",
       cols: 120,
       rows: 40,
@@ -158,6 +153,47 @@ describe("PtyTmuxAttachmentLauncher", () => {
       expect.stringContaining(`=${selectedPlan.identity.viewSessionName}`),
     );
     expect(proof.calls[0]?.join(" ")).toContain(selectedPlan.identity.markerValue);
+    transport.disposeAll();
+  });
+
+  it("pins proof execution to the exact resolved binary despite hostile PATH", async () => {
+    const adapter = new MockPtyAdapter();
+    const selectedPlan = plan();
+    const proofCalls: Array<{
+      executable: string;
+      argv: readonly string[];
+      cwd: string;
+      env: NodeJS.ProcessEnv;
+    }> = [];
+    const transport = new PtyTmuxAttachmentLauncher({
+      socketSelector: { kind: "name", name: "owned-socket" },
+      trustedCwd: "/daemon/project",
+      tmuxExecutable: "/trusted/bin/tmux",
+      ptyAdapter: adapter,
+      environment: {
+        PATH: "/hostile/bin",
+        TERM: "screen-256color",
+        TMUX_TMPDIR: "/hostile/socket-root",
+        SECRET_TOKEN: "must-not-cross",
+      },
+      proofCommandExecutor(executable, argv, options) {
+        proofCalls.push({ executable, argv: [...argv], cwd: options.cwd, env: options.env });
+        return `${adapter.lastSpawned()!.pid}\t${selectedPlan.identity.viewSessionName}\n`;
+      },
+    });
+
+    const attempt = transport.beginGuardedAttach(input(selectedPlan));
+    await expect(attempt.outcome).resolves.toEqual({ status: "executed" });
+    expect(proofCalls).toHaveLength(1);
+    expect(proofCalls[0]).toMatchObject({
+      executable: "/trusted/bin/tmux",
+      cwd: "/daemon/project",
+      env: { TERM: "screen-256color" },
+    });
+    expect(proofCalls[0]!.env).not.toHaveProperty("PATH");
+    expect(proofCalls[0]!.env).not.toHaveProperty("TMUX_TMPDIR");
+    expect(proofCalls[0]!.env).not.toHaveProperty("SECRET_TOKEN");
+    expect(proofCalls[0]!.argv.slice(0, 2)).toEqual(["-L", "owned-socket"]);
     transport.disposeAll();
   });
 
@@ -313,6 +349,36 @@ describe("PtyTmuxAttachmentLauncher", () => {
     await expect(second.outcome).resolves.toEqual({ status: "executed" });
     expect(exitEvents).toEqual([{ exitCode: 0, signal: null }]);
     expect(() => firstClient.resize(90, 30)).not.toThrow();
+    transport.disposeAll();
+  });
+
+  it("expires a proof-ready attempt that is never claimed and releases capacity", async () => {
+    const adapter = new MockPtyAdapter();
+    const proof = new ProofRunner();
+    const scheduled: Array<{ callback: () => void; delayMs: number }> = [];
+    const firstPlan = plan(FIRST_ID);
+    proveCurrentAttached(proof, adapter, firstPlan);
+    const transport = launcher(adapter, proof, {
+      maxOwnedAttempts: 1,
+      claimTimeoutMs: 25,
+      schedule: (callback, delayMs) => {
+        scheduled.push({ callback, delayMs });
+        return () => undefined;
+      },
+    });
+    const first = transport.beginGuardedAttach(input(firstPlan));
+    await first.outcome;
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0]!.delayMs).toBe(25);
+
+    scheduled.shift()!.callback();
+    expect(adapter.spawned[0]!.killed).toBe("SIGTERM");
+    expect(transport.claim(first)).toBeNull();
+
+    const secondPlan = plan(SECOND_ID);
+    proveCurrentAttached(proof, adapter, secondPlan);
+    const second = transport.beginGuardedAttach(input(secondPlan));
+    await expect(second.outcome).resolves.toEqual({ status: "executed" });
     transport.disposeAll();
   });
 

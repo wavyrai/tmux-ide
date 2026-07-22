@@ -15,6 +15,7 @@ import {
   TmuxAttachmentClientTransportError,
   TmuxAttachmentViewExecutor,
   TmuxAttachmentViewExecutorError,
+  planCanonicalTmuxAttachmentClientCommand,
   type TmuxAttachmentClientTransportInput,
   type TmuxAttachmentClientTransportOutcome,
   type TmuxAttachmentCommandResult,
@@ -162,7 +163,7 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
         }
         return {
           status: "ok",
-          stdout: `${this.sessionId(target.slice(1))}\t${view.windows[0] ?? "@0"}\t%91\t${view.windows.length === 1 ? "1" : "2"}\t1\n`,
+          stdout: `${this.sessionId(target.slice(1))}\t${view.windows[0] ?? "@0"}\t%56\t${view.windows.length === 1 ? "1" : "2"}\t1\n`,
         };
       }
       case "list-sessions":
@@ -256,7 +257,7 @@ function seed(runner: FakeRunner, selectedPlan = plan(), overrides: Partial<Fake
 function clientTransport(runner: FakeRunner) {
   return {
     beginGuardedAttach: (input: TmuxAttachmentClientTransportInput) => {
-      const result = runner.run(input.command);
+      const result = runner.run(planCanonicalTmuxAttachmentClientCommand(input));
       let outcome: TmuxAttachmentClientTransportOutcome = { status: "executed" };
       if (result.status !== "ok") {
         outcome = { status: "failed" };
@@ -347,7 +348,14 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
 
     await expect(
       executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
-    ).resolves.toBe("executed");
+    ).resolves.toMatchObject({
+      status: "executed",
+      clientClaim: {
+        attachmentId,
+        generation: 0,
+        attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
+      },
+    });
     const proofCall = runner.calls.find(
       (argv) => argv[0] === "list-panes" && argv[2] === "$12:@34",
     );
@@ -481,6 +489,8 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
         beginGuardedAttach(input) {
           began = true;
           expect(yielded).toBe(false);
+          expect(input).not.toHaveProperty("command");
+          expect(planCanonicalTmuxAttachmentClientCommand(input).argv[0]).toBe("if-shell");
           return {
             status: "claimed",
             attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
@@ -495,7 +505,10 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
 
     await expect(
       executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
-    ).resolves.toBe("executed");
+    ).resolves.toMatchObject({
+      status: "executed",
+      clientClaim: { attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea" },
+    });
     expect(began).toBe(true);
     expect(yielded).toBe(true);
   });

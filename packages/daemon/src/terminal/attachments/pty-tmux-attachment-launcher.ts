@@ -1,18 +1,17 @@
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { runTmux, TmuxError } from "@tmux-ide/tmux-bridge";
-import { z } from "zod";
+import { execFileSync } from "node:child_process";
 import { defaultNodePtyAdapter } from "../NodePtyAdapter.ts";
 import type { PtyAdapter, PtyExitEvent, PtyProcess } from "../PtyAdapter.ts";
 import {
   GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
-  groupedTmuxViewSessionName,
   type GroupedTmuxAttachmentPlan,
   type TmuxArgvPlan,
 } from "./grouped-tmux.ts";
 import {
   TmuxAttachmentClientTransportError,
+  planCanonicalTmuxAttachmentClientCommand,
   type TmuxAttachmentClientTransport,
   type TmuxAttachmentClientTransportAttempt,
   type TmuxAttachmentClientTransportInput,
@@ -24,8 +23,6 @@ import {
 const MAX_PROOF_OUTPUT_BYTES = 64 * 1024;
 const MAX_PROOF_CLIENTS = 256;
 const PROOF_MISMATCH_SENTINEL = "__tmux_ide_pty_view_proof_mismatch_v1__";
-const RuntimeWindowIdSchemaZ = z.string().regex(/^@(?:0|[1-9][0-9]*)$/u);
-const RuntimePaneIdSchemaZ = z.string().regex(/^%(?:0|[1-9][0-9]*)$/u);
 const SafeTerminalValue = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
 const SafeColorTerminalValue = /^(?:truecolor|24bit)$/u;
 const SafeLocaleValue = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
@@ -65,10 +62,17 @@ export interface PtyTmuxAttachmentLauncherOptions {
   readonly trustedCwd: string;
   readonly ptyAdapter?: PtyAdapter;
   readonly proofRunner?: TmuxAttachmentCommandRunner;
+  /** Testable exact-binary seam used only by the production proof runner. */
+  readonly proofCommandExecutor?: (
+    executable: string,
+    argv: readonly string[],
+    options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv },
+  ) => string | Buffer;
   readonly tmuxExecutable?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly readinessTimeoutMs?: number;
   readonly readinessPollIntervalMs?: number;
+  readonly claimTimeoutMs?: number;
   readonly maxEarlyOutputBytes?: number;
   readonly maxEarlyOutputFrames?: number;
   readonly maxOwnedAttempts?: number;
@@ -98,6 +102,7 @@ interface OwnedAttempt {
   outcomeSettled: boolean;
   exitEvent: PtyExitEvent | null;
   cancelPoll: (() => void) | null;
+  cancelClaimDeadline: (() => void) | null;
 }
 
 function defaultSchedule(callback: () => void, delayMs: number): () => void {
@@ -178,18 +183,42 @@ function tmuxCommandString(argv: readonly string[]): string {
   return argv.map(quoteTmuxArgument).join(" ");
 }
 
-function productionProofRunner(): TmuxAttachmentCommandRunner {
+function productionProofRunner(
+  tmuxExecutable: string,
+  trustedCwd: string,
+  environment: NodeJS.ProcessEnv,
+  execute: (
+    executable: string,
+    argv: readonly string[],
+    options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv },
+  ) => string | Buffer = (executable, argv, options) =>
+    execFileSync(executable, [...argv], {
+      cwd: options.cwd,
+      encoding: "utf8",
+      env: options.env,
+      maxBuffer: MAX_PROOF_OUTPUT_BYTES,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+): TmuxAttachmentCommandRunner {
   return {
     run(command) {
+      if (command.executable !== "tmux") return { status: "failed" };
       try {
-        const stdout = runTmux([...command.argv], {
-          encoding: "utf8",
-          maxBuffer: MAX_PROOF_OUTPUT_BYTES,
-          stdio: ["ignore", "pipe", "pipe"],
+        const stdout = execute(tmuxExecutable, command.argv, {
+          cwd: trustedCwd,
+          env: { ...environment },
         });
         return { status: "ok", stdout: String(stdout) };
       } catch (error) {
-        if (error instanceof TmuxError && error.code === "SESSION_NOT_FOUND") {
+        const stderr = (error as { stderr?: string | Buffer }).stderr;
+        const detail = (Buffer.isBuffer(stderr) ? stderr.toString("utf8") : (stderr ?? ""))
+          .toLowerCase()
+          .slice(0, 4_096);
+        if (
+          ["can't find session", "can't find window", "unknown target"].some((value) =>
+            detail.includes(value),
+          )
+        ) {
           return { status: "not-found" };
         }
         return { status: "failed" };
@@ -198,33 +227,17 @@ function productionProofRunner(): TmuxAttachmentCommandRunner {
   };
 }
 
-function validateIdentity(input: TmuxAttachmentClientTransportInput): void {
-  const identity = input.identity;
-  if (
-    !z.uuid().safeParse(identity.attachmentId).success ||
-    groupedTmuxViewSessionName(identity.attachmentId, identity.generation) !==
-      identity.viewSessionName ||
-    identity.markerValue !== `v1:${identity.attachmentId.toLowerCase()}:${identity.generation}` ||
-    !RuntimeWindowIdSchemaZ.safeParse(identity.expectedWindowId).success ||
-    !RuntimePaneIdSchemaZ.safeParse(identity.expectedPaneId).success ||
-    input.command.executable !== "tmux" ||
-    input.command.argv.length === 0 ||
-    input.command.argv[0] !== "if-shell" ||
-    input.command.argv.includes("-C") ||
-    input.command.argv.includes("run-shell") ||
-    input.command.argv.length > 128 ||
-    input.command.argv.some(
-      (argument) =>
-        typeof argument !== "string" ||
-        Buffer.byteLength(argument, "utf8") > 16 * 1024 ||
-        /[\0\r\n]/u.test(argument),
-    ) ||
-    !Number.isInteger(input.viewport.cols) ||
-    input.viewport.cols <= 0 ||
-    !Number.isInteger(input.viewport.rows) ||
-    input.viewport.rows <= 0 ||
-    !["interactive", "read-only"].includes(input.viewerMode)
-  ) {
+function canonicalRequest(input: TmuxAttachmentClientTransportInput): {
+  readonly input: TmuxAttachmentClientTransportInput;
+  readonly command: TmuxArgvPlan;
+} {
+  try {
+    const snapshot = structuredClone(input);
+    return {
+      input: snapshot,
+      command: planCanonicalTmuxAttachmentClientCommand(snapshot),
+    };
+  } catch {
     throw new TypeError("guarded PTY attachment input is invalid");
   }
 }
@@ -242,6 +255,7 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
   readonly #environment: NodeJS.ProcessEnv;
   readonly #timeoutMs: number;
   readonly #pollIntervalMs: number;
+  readonly #claimTimeoutMs: number;
   readonly #maxEarlyBytes: number;
   readonly #maxEarlyFrames: number;
   readonly #maxOwnedAttempts: number;
@@ -253,7 +267,6 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
 
   constructor(options: PtyTmuxAttachmentLauncherOptions) {
     this.#ptyAdapter = options.ptyAdapter ?? defaultNodePtyAdapter;
-    this.#proofRunner = options.proofRunner ?? productionProofRunner();
     this.#tmuxExecutable = validateTmuxExecutable(
       options.tmuxExecutable ?? resolveTmuxExecutable(options.environment?.PATH),
     );
@@ -263,8 +276,20 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
     }
     this.#trustedCwd = options.trustedCwd;
     this.#environment = terminalEnvironment(options.environment ?? process.env);
+    if (options.proofRunner && options.proofCommandExecutor) {
+      throw new TypeError("proof runner and proof command executor are mutually exclusive");
+    }
+    this.#proofRunner =
+      options.proofRunner ??
+      productionProofRunner(
+        this.#tmuxExecutable,
+        this.#trustedCwd,
+        this.#environment,
+        options.proofCommandExecutor,
+      );
     this.#timeoutMs = boundedPositiveInteger(options.readinessTimeoutMs, 2_000, 30_000);
     this.#pollIntervalMs = boundedPositiveInteger(options.readinessPollIntervalMs, 20, 1_000);
+    this.#claimTimeoutMs = boundedPositiveInteger(options.claimTimeoutMs, 2_000, 30_000);
     this.#maxEarlyBytes = boundedPositiveInteger(
       options.maxEarlyOutputBytes,
       256 * 1024,
@@ -279,18 +304,19 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
   beginGuardedAttach(
     input: TmuxAttachmentClientTransportInput,
   ): TmuxAttachmentClientTransportAttempt {
-    validateIdentity(input);
-    if (input.viewerMode === "read-only") {
+    const canonical = canonicalRequest(input);
+    const request = canonical.input;
+    if (request.viewerMode === "read-only") {
       // Read-only tmux clients are not geometry-neutral without a proven
       // installed-version gate and continuously held interactive size owner.
       // This slice owns neither dependency, so it fails before PTY spawn.
       throw new TmuxAttachmentClientTransportError("read_only_unavailable");
     }
-    const existing = this.#ownedByAttachment.get(input.identity.attachmentId);
-    if (existing && input.identity.generation <= existing.generation) {
+    const existing = this.#ownedByAttachment.get(request.identity.attachmentId);
+    if (existing && request.identity.generation <= existing.generation) {
       throw new TypeError("attachment generation is stale or already owned");
     }
-    if (this.#reservedAttachments.has(input.identity.attachmentId)) {
+    if (this.#reservedAttachments.has(request.identity.attachmentId)) {
       throw new TypeError("attachment is already being synchronously claimed");
     }
     if (
@@ -300,7 +326,7 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
       throw new TypeError("PTY attachment capacity is exhausted");
     }
     if (existing) this.#dispose(existing);
-    this.#reservedAttachments.add(input.identity.attachmentId);
+    this.#reservedAttachments.add(request.identity.attachmentId);
     const lifecycleEpoch = this.#lifecycleEpoch;
 
     const attemptId = randomUUID();
@@ -343,10 +369,10 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
       process = this.#ptyAdapter.spawnSync(
         {
           shell: this.#tmuxExecutable,
-          args: [...this.#socketArgv, ...input.command.argv],
+          args: [...this.#socketArgv, ...canonical.command.argv],
           cwd: this.#trustedCwd,
-          cols: input.viewport.cols,
-          rows: input.viewport.rows,
+          cols: request.viewport.cols,
+          rows: request.viewport.rows,
           env: { ...this.#environment },
           name: this.#environment.TERM,
           encoding: null,
@@ -354,11 +380,11 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
         { onData: receiveData, onExit: receiveExit },
       );
     } catch (error) {
-      this.#reservedAttachments.delete(input.identity.attachmentId);
+      this.#reservedAttachments.delete(request.identity.attachmentId);
       throw error;
     }
     if (lifecycleEpoch !== this.#lifecycleEpoch) {
-      this.#reservedAttachments.delete(input.identity.attachmentId);
+      this.#reservedAttachments.delete(request.identity.attachmentId);
       try {
         process.kill("SIGTERM");
       } catch {
@@ -367,7 +393,7 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
       throw new TypeError("PTY attachment launch was cancelled");
     }
     if (!Number.isSafeInteger(process.pid) || process.pid <= 0) {
-      this.#reservedAttachments.delete(input.identity.attachmentId);
+      this.#reservedAttachments.delete(request.identity.attachmentId);
       try {
         process.kill("SIGTERM");
       } catch {
@@ -378,13 +404,13 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
 
     state = {
       attemptId,
-      attachmentId: input.identity.attachmentId,
-      generation: input.identity.generation,
-      viewSessionName: input.identity.viewSessionName,
-      markerValue: input.identity.markerValue,
-      expectedWindowId: input.identity.expectedWindowId,
-      expectedPaneId: input.identity.expectedPaneId,
-      viewerMode: input.viewerMode,
+      attachmentId: request.identity.attachmentId,
+      generation: request.identity.generation,
+      viewSessionName: request.identity.viewSessionName,
+      markerValue: request.identity.markerValue,
+      expectedWindowId: request.identity.expectedWindowId,
+      expectedPaneId: request.identity.expectedPaneId,
+      viewerMode: request.viewerMode,
       process,
       outcome,
       resolveOutcome,
@@ -398,6 +424,7 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
       outcomeSettled: false,
       exitEvent: synchronousExit,
       cancelPoll: null,
+      cancelClaimDeadline: null,
     };
     this.#ownedByAttachment.set(state.attachmentId, state);
     this.#reservedAttachments.delete(state.attachmentId);
@@ -432,6 +459,8 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
       return null;
     }
     state.claimed = true;
+    state.cancelClaimDeadline?.();
+    state.cancelClaimDeadline = null;
     return this.#clientHandle(state);
   }
 
@@ -534,6 +563,8 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
     state.closed = true;
     state.cancelPoll?.();
     state.cancelPoll = null;
+    state.cancelClaimDeadline?.();
+    state.cancelClaimDeadline = null;
     state.dataListeners.clear();
     state.earlyFrames.length = 0;
     state.earlyBytes = 0;
@@ -567,6 +598,10 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
       }
       state.ready = true;
       this.#settle(state, { status: "executed" });
+      state.cancelClaimDeadline = this.#schedule(() => {
+        state.cancelClaimDeadline = null;
+        if (!state.claimed && !state.closed) this.#dispose(state);
+      }, this.#claimTimeoutMs);
       return;
     }
     if (proof === "view-proof-mismatch") {
@@ -647,6 +682,8 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
     state.outcomeSettled = true;
     state.cancelPoll?.();
     state.cancelPoll = null;
+    state.cancelClaimDeadline?.();
+    state.cancelClaimDeadline = null;
     state.resolveOutcome(outcome);
   }
 
@@ -665,6 +702,8 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
     state.closed = true;
     state.cancelPoll?.();
     state.cancelPoll = null;
+    state.cancelClaimDeadline?.();
+    state.cancelClaimDeadline = null;
     if (!state.outcomeSettled) this.#settle(state, { status: "failed" });
     if (this.#ownedByAttachment.get(state.attachmentId) === state) {
       this.#ownedByAttachment.delete(state.attachmentId);
