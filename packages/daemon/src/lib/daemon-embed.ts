@@ -14,6 +14,8 @@ import { WebSocket, WebSocketServer } from "ws";
 import {
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
+  TERMINAL_ATTACHMENT_REDEEM_PATH,
+  TerminalAttachmentLoopbackWebSocketUrlSchemaZ,
   type DaemonInstanceIdentity,
 } from "@tmux-ide/contracts";
 import { computeAgentStates, computePortPanes } from "./session-monitor.ts";
@@ -23,8 +25,19 @@ import { handleWsEventsConnection } from "../command-center/ws-events.ts";
 import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
 import { readAppSettings } from "./app-settings.ts";
-import { getDefaultWorkspaceRegistry } from "./workspace-registry.ts";
-import { WorkspacePaneCreationAuthority } from "./workspace-pane-creation.ts";
+import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
+import {
+  resolveWorkspacePaneTmuxAuthority,
+  WorkspacePaneCreationAuthority,
+} from "./workspace-pane-creation.ts";
+import {
+  createNativeTerminalAttachmentRuntime,
+  type NativeTerminalAttachmentRuntime,
+} from "../terminal/attachments/native-runtime.ts";
+import {
+  attachTerminalAttachmentWebSocket,
+  type TerminalAttachmentWebSocketBoundary,
+} from "../server/terminal-attachment-upgrade.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import {
   canonicalDaemonUrl,
@@ -152,6 +165,50 @@ function validatePort(port: number): void {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new DaemonStartupError(`Invalid daemon port: ${port}`, "port_invalid");
   }
+}
+
+/**
+ * Renderer descriptors are always local capabilities, even when the HTTP
+ * server listens on a wildcard. Explicit remote-only binds are deliberately
+ * unsupported rather than leaking an unreachable or remotely addressable URL.
+ */
+export function terminalAttachmentWebSocketUrl(bindHostname: string, port: number): string {
+  const descriptorHostname =
+    bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname === "::" ? "::1" : bindHostname;
+  if (!["127.0.0.1", "localhost", "::1"].includes(descriptorHostname)) {
+    throw new TypeError("Terminal attachment listener must include a canonical loopback address.");
+  }
+  return TerminalAttachmentLoopbackWebSocketUrlSchemaZ.parse(
+    canonicalDaemonUrl("ws", descriptorHostname, port, TERMINAL_ATTACHMENT_REDEEM_PATH),
+  );
+}
+
+/**
+ * Start both direct-terminal retirement barriers before awaiting either one.
+ * The runtime call closes admission and PTYs; the boundary call detaches the
+ * upgrade listener. Returning failures lets the outer daemon shutdown keep
+ * retiring legacy transports, HTTP, and canonical publication.
+ */
+export async function retireTerminalAttachmentTransport(
+  runtime: Pick<NativeTerminalAttachmentRuntime, "dispose">,
+  boundary: Pick<TerminalAttachmentWebSocketBoundary, "close">,
+): Promise<readonly unknown[]> {
+  let runtimeDisposal: Promise<void>;
+  try {
+    runtimeDisposal = runtime.dispose();
+  } catch (error) {
+    runtimeDisposal = Promise.reject(error);
+  }
+
+  let boundaryClose: Promise<void>;
+  try {
+    boundaryClose = boundary.close();
+  } catch (error) {
+    boundaryClose = Promise.reject(error);
+  }
+
+  const results = await Promise.allSettled([runtimeDisposal, boundaryClose]);
+  return results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 }
 
 async function pickFreePort(hostname: string): Promise<number> {
@@ -583,6 +640,8 @@ async function startHttpServer({
   readProjectAuth,
   daemonIdentity,
   workspacePaneCreationBackend,
+  workspaceRegistry,
+  terminalAttachmentRuntime,
 }: {
   sessionName: string;
   requestedPort: number;
@@ -598,11 +657,14 @@ async function startHttpServer({
     startedAt: string;
   };
   workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
+  workspaceRegistry: WorkspaceRegistry;
+  terminalAttachmentRuntime: NativeTerminalAttachmentRuntime;
 }): Promise<{
   server: Server;
   sockets: Set<Socket>;
   closeClients: () => void;
   closeWsServers: () => Promise<void>;
+  terminalAttachmentBoundary: TerminalAttachmentWebSocketBoundary;
 }> {
   const { createApp } = await import("../command-center/server.ts");
   const { getRequestListener } = await import(requireFromHere.resolve("@hono/node-server"));
@@ -633,6 +695,8 @@ async function startHttpServer({
     },
     daemonIdentity,
     workspacePaneCreationBackend,
+    workspaceRegistry,
+    terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({ ok: true, session: sessionName });
@@ -654,43 +718,60 @@ async function startHttpServer({
       ...daemonIdentity,
     }),
   });
+  const terminalAttachmentBoundary = attachTerminalAttachmentWebSocket(
+    server,
+    terminalAttachmentRuntime.admission,
+  );
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (err: NodeJS.ErrnoException) => {
-      server.off("listening", onListening);
-      if (err.code === "EADDRINUSE") {
-        reject(
-          new DaemonStartupError(`Port ${requestedPort} is already in use`, "port_in_use", {
-            cause: err,
-          }),
-        );
-      } else {
-        reject(
-          new DaemonStartupError(`Failed to bind daemon on port ${requestedPort}`, "bind_failed", {
-            cause: err,
-          }),
-        );
-      }
-    };
-    const onListening = () => {
-      server.off("error", onError);
-      if (!silent) {
-        console.log(
-          `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`,
-        );
-      }
-      resolve();
-    };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    server.listen(requestedPort, bindHostname);
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: NodeJS.ErrnoException) => {
+        server.off("listening", onListening);
+        if (err.code === "EADDRINUSE") {
+          reject(
+            new DaemonStartupError(`Port ${requestedPort} is already in use`, "port_in_use", {
+              cause: err,
+            }),
+          );
+        } else {
+          reject(
+            new DaemonStartupError(
+              `Failed to bind daemon on port ${requestedPort}`,
+              "bind_failed",
+              { cause: err },
+            ),
+          );
+        }
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        if (!silent) {
+          console.log(
+            `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`,
+          );
+        }
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(requestedPort, bindHostname);
+    });
+  } catch (error) {
+    await Promise.allSettled([
+      Promise.resolve().then(() => terminalAttachmentBoundary.close()),
+      Promise.resolve().then(() => closeClients()),
+      ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
+      Promise.resolve().then(() => closeWsServers()),
+    ]);
+    throw error;
+  }
 
   return {
     server,
     sockets,
     closeClients,
     closeWsServers,
+    terminalAttachmentBoundary,
   };
 }
 
@@ -802,12 +883,31 @@ export async function startEmbeddedDaemon(
         // Already added or persistence failed; non-fatal.
       }
     }
+    // Resolve the executable/socket authority once per daemon generation so
+    // pane creation and direct attachment can never drift to different tmux
+    // servers after startup.
+    const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
     const workspacePaneCreation = new WorkspacePaneCreationAuthority({
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
+      tmuxAuthority,
     });
+    let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
+      terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
+        daemonInstanceId: instanceId,
+        webSocketUrl: terminalAttachmentWebSocketUrl(bindHostname, port),
+        registry: workspaceRegistry,
+        tmuxAuthority: {
+          executablePath: tmuxAuthority.executablePath,
+          socketSelector: tmuxAuthority.socketSelector,
+          trustedCwd: dir,
+        },
+      });
+      // Orphan reconciliation is a hard startup barrier: neither the HTTP
+      // mutation nor direct WebSocket redemption is exposed before it passes.
+      await terminalAttachmentRuntime.whenReady();
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,
@@ -819,19 +919,37 @@ export async function startEmbeddedDaemon(
         readProjectAuth: !sessionless,
         daemonIdentity: { productVersion, instanceId, startedAt },
         workspacePaneCreationBackend: workspacePaneCreation,
+        workspaceRegistry,
+        terminalAttachmentRuntime,
       });
     } catch (error) {
-      await workspacePaneCreation.dispose();
+      await Promise.allSettled([
+        terminalAttachmentRuntime?.dispose() ?? Promise.resolve(),
+        workspacePaneCreation.dispose(),
+      ]);
       throw error;
     }
-    const { server, sockets, closeClients, closeWsServers } = startedServer;
+    const { server, sockets, closeClients, closeWsServers, terminalAttachmentBoundary } =
+      startedServer;
     const abortStartedServer = async (): Promise<void> => {
-      await workspacePaneCreation.dispose();
-      closeClients();
-      const closePromise = waitForServerClose(server).catch(() => undefined);
-      for (const socket of sockets) socket.destroy();
-      await Promise.race([closePromise, delay(100)]);
-      await closeWsServers().catch(() => undefined);
+      const terminalFailures = await retireTerminalAttachmentTransport(
+        terminalAttachmentRuntime,
+        terminalAttachmentBoundary,
+      );
+      const paneDisposal = Promise.resolve().then(() => workspacePaneCreation.dispose());
+      const closePromise = Promise.resolve()
+        .then(() => waitForServerClose(server))
+        .catch(() => undefined);
+      await Promise.allSettled([
+        paneDisposal,
+        Promise.resolve().then(() => closeClients()),
+        ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
+        Promise.race([closePromise, delay(100)]),
+        Promise.resolve().then(() => closeWsServers()),
+      ]);
+      if (terminalFailures.length > 0 && !opts.silent) {
+        console.error("[daemon] Direct terminal startup rollback reported cleanup failures.");
+      }
     };
     try {
       writeCanonicalDaemonInfo(
@@ -962,27 +1080,60 @@ export async function startEmbeddedDaemon(
         if (stopping) return stopping;
         if (stopped) return;
         stopping = (async () => {
+          const failures: unknown[] = [];
+          const capture = async (operation: () => void | Promise<void>): Promise<void> => {
+            try {
+              await operation();
+            } catch (error) {
+              failures.push(error);
+            }
+          };
           try {
             stopped = true;
-            setActivationBackend(null);
-            await workspacePaneCreation.dispose();
+            await capture(() => setActivationBackend(null));
             clearInterval(monitorInterval);
 
-            const closePromise = waitForServerClose(server);
-            closeClients();
+            // Retire direct-ticket admission, live PTYs, and the direct upgrade
+            // listener before touching the legacy WS or HTTP surfaces.
+            failures.push(
+              ...(await retireTerminalAttachmentTransport(
+                terminalAttachmentRuntime,
+                terminalAttachmentBoundary,
+              )),
+            );
+            await capture(() => workspacePaneCreation.dispose());
+
+            let closePromise: Promise<void>;
+            try {
+              closePromise = waitForServerClose(server);
+            } catch (error) {
+              failures.push(error);
+              closePromise = Promise.resolve();
+            }
+            await capture(() => closeClients());
             for (const stop of activeProjectStops.values()) {
-              stop.stop();
+              await capture(() => stop.stop());
             }
             activeProjectStops.clear();
-            shutdownPtyBridges();
-            await Promise.race([closePromise, delay(gracefulMs)]);
-            for (const socket of sockets) socket.destroy();
-            await Promise.race([closePromise.catch(() => undefined), delay(100)]);
-            await closeWsServers();
-            setRemoteAccessRestartBackend(null);
-            setDaemonShutdownBackend(null);
-          } catch (err) {
-            throw new DaemonShutdownError("Daemon shutdown failed", { cause: err as Error });
+            await capture(() => shutdownPtyBridges());
+            await capture(() => Promise.race([closePromise, delay(gracefulMs)]));
+            for (const socket of sockets) {
+              await capture(() => {
+                socket.destroy();
+              });
+            }
+            await capture(() => Promise.race([closePromise, delay(100)]));
+            await capture(() => closeWsServers());
+            await capture(() => setRemoteAccessRestartBackend(null));
+            await capture(() => setDaemonShutdownBackend(null));
+
+            if (failures.length > 0) {
+              const cause =
+                failures.length === 1
+                  ? failures[0]
+                  : new AggregateError(failures, "Daemon resources reported shutdown failures");
+              throw new DaemonShutdownError("Daemon shutdown failed", { cause: cause as Error });
+            }
           } finally {
             try {
               clearCanonicalDaemonInfoIfOwned(instanceId, claim);

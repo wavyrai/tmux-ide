@@ -109,6 +109,10 @@ import { isAbsolute, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { projectApplicationShellResource } from "./resources/application-shell.ts";
+import {
+  mountTerminalAttachmentIssueRoute,
+  type TerminalAttachmentIssueBackend,
+} from "./terminal-attachment-issue.ts";
 export interface CreateAppOptions {
   authService?: AuthService;
   authConfig?: AuthConfig;
@@ -125,6 +129,8 @@ export interface CreateAppOptions {
     startedAt: string;
   };
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
+  workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
+  terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
 }
 
 let projectStreamConnections = 0;
@@ -302,6 +308,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   // Allow cross-origin (Next.js dashboard, Tailscale, etc.)
   app.use("/*", cors());
+
+  // This exact route carries its own owner-only bearer and correlation gate.
+  // Mount it before remote and project auth so a valid host capability is
+  // neither rejected nor confused with any remotely shared user credential.
+  mountTerminalAttachmentIssueRoute(app, {
+    daemonInstanceId: daemonIdentity.instanceId,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    workspaceRegistry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+    backend: options.terminalAttachmentIssueBackend ?? null,
+  });
 
   // Remote access bearer gate. Local Electron access uses a per-daemon
   // bypass token from preload; loopback IPs are not implicitly trusted.

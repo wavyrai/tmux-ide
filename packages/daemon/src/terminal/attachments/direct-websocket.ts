@@ -1,8 +1,11 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
+  TERMINAL_ATTACHMENT_REDEEM_PATH,
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+  TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
   TerminalAttachRequestSchemaZ,
+  TerminalAttachmentLoopbackWebSocketUrlSchemaZ,
   TerminalAttachmentViewportSchemaZ,
   type TerminalAttachRequest,
   type TerminalAttachmentViewport,
@@ -21,8 +24,9 @@ import type {
   PtyTmuxAttachmentClaimKey,
 } from "./pty-tmux-attachment-launcher.ts";
 
-export const TERMINAL_ATTACHMENT_REDEEM_PATH = "/v1/terminal/attachments/redeem";
-export const TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL = "tmux-ide-terminal.v1";
+export { TERMINAL_ATTACHMENT_REDEEM_PATH };
+/** @deprecated Import the authoritative shared subprotocol constant from contracts. */
+export const TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL = TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL;
 export const TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES = 4 * 1024;
 export const TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES = 4 * 1024;
 export const TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS = 1_000;
@@ -264,28 +268,11 @@ function canonicalRendererOrigin(value: string): string {
 }
 
 function validateWebSocketUrl(value: string): string {
-  let parsed: URL;
   try {
-    parsed = new URL(value);
+    return TerminalAttachmentLoopbackWebSocketUrlSchemaZ.parse(value);
   } catch {
     throw new TypeError("Terminal attachment WebSocket URL is invalid.");
   }
-  if (
-    (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") ||
-    parsed.username ||
-    parsed.password ||
-    parsed.pathname !== TERMINAL_ATTACHMENT_REDEEM_PATH ||
-    parsed.search ||
-    parsed.hash ||
-    !(
-      parsed.hostname === "localhost" ||
-      parsed.hostname.startsWith("127.") ||
-      parsed.hostname === "[::1]"
-    )
-  ) {
-    throw new TypeError("Terminal attachment WebSocket URL is invalid.");
-  }
-  return parsed.toString();
 }
 
 function rawDataToBuffer(data: string | Buffer | ArrayBuffer | readonly Buffer[]): Buffer {
