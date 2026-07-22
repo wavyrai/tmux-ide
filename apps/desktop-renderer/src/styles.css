@@ -1785,6 +1785,9 @@ kbd {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  /* The xterm renderer copies this computed family into the terminal; without an
+     explicit mono stack the container inherits the shell's sans UI font. */
+  font-family: var(--desktop-mono-font);
   background: var(--tmux-ide-surface-terminal);
 }
 
