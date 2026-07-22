@@ -394,10 +394,14 @@ describe("TerminalSurface", () => {
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
     dispose();
 
-    (listener as ((event: NativeTerminalEvent) => void) | null)?.({
-      type: "output",
-      bytes: new Uint8Array([1]),
-    });
+    await expect(
+      Promise.resolve(
+        (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+          type: "output",
+          bytes: new Uint8Array([1]),
+        }),
+      ),
+    ).rejects.toThrow("Terminal output was not consumed by the renderer.");
     renderer.emitInput(new Uint8Array([2]));
     ResizeObserverHarness.active[0]!.trigger();
     connection.resolve({ status: "connected", attachment });
@@ -407,7 +411,7 @@ describe("TerminalSurface", () => {
     expect(attachment.resize).not.toHaveBeenCalled();
   });
 
-  it("releases a pending renderer acknowledgement during unmount", async () => {
+  it("rejects a pending renderer acknowledgement during unmount", async () => {
     const blockedWrite = deferred<void>();
     const attachment = attachmentHarness();
     let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
@@ -430,12 +434,14 @@ describe("TerminalSurface", () => {
       root,
     );
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
-    const acknowledgment = Promise.resolve(
-      (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
-        type: "output",
-        bytes: new Uint8Array([1]),
-      }),
-    );
+    const acknowledgment = expect(
+      Promise.resolve(
+        (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+          type: "output",
+          bytes: new Uint8Array([1]),
+        }),
+      ),
+    ).rejects.toThrow("Terminal output was not consumed by the renderer.");
     await vi.waitFor(() => expect(renderer.renderer.write).toHaveBeenCalledOnce());
     dispose();
     await acknowledgment;
@@ -467,9 +473,9 @@ describe("TerminalSurface", () => {
       root,
     );
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
-    const oldAcknowledgment = Promise.resolve(
-      listeners[0]!({ type: "output", bytes: new Uint8Array([1]) }),
-    );
+    const oldAcknowledgment = expect(
+      Promise.resolve(listeners[0]!({ type: "output", bytes: new Uint8Array([1]) })),
+    ).rejects.toThrow("Terminal output was not consumed by the renderer.");
     await vi.waitFor(() => expect(renderer.renderer.write).toHaveBeenCalledOnce());
     setTarget(TARGET_B);
     await oldAcknowledgment;
@@ -479,6 +485,103 @@ describe("TerminalSurface", () => {
       expect.objectContaining({ target: TARGET_B }),
       expect.any(Function),
     );
+    blockedWrite.resolve();
+    dispose();
+  });
+
+  it("rejects failed renderer output without validating a frame", async () => {
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    vi.mocked(renderer.renderer.write).mockRejectedValue(new Error("renderer failed"));
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected"),
+    );
+
+    await expect(
+      Promise.resolve(
+        (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+          type: "output",
+          bytes: new Uint8Array([1]),
+        }),
+      ),
+    ).rejects.toThrow("Terminal output was not consumed by the renderer.");
+
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-preserves-frame")).toBe(
+      "false",
+    );
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error");
+    expect(attachment.dispose).toHaveBeenCalledOnce();
+    dispose();
+  });
+
+  it("rejects every unconsumed output acknowledgement when the queue overloads", async () => {
+    const blockedWrite = deferred<void>();
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    vi.mocked(renderer.renderer.write).mockImplementation(async () => blockedWrite.promise);
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+
+    const acknowledgements = Array.from({ length: 65 }, (_, index) =>
+      Promise.resolve(
+        (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+          type: "output",
+          bytes: new Uint8Array([index]),
+        }),
+      ).then(
+        () => null,
+        (error: unknown) => error,
+      ),
+    );
+    const outcomes = await Promise.all(acknowledgements);
+
+    expect(outcomes).toHaveLength(65);
+    for (const outcome of outcomes) {
+      expect(outcome).toEqual(
+        expect.objectContaining({
+          message: "Terminal output was not consumed by the renderer.",
+        }),
+      );
+    }
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-preserves-frame")).toBe(
+      "false",
+    );
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error");
+    expect(attachment.dispose).toHaveBeenCalledOnce();
     blockedWrite.resolve();
     dispose();
   });

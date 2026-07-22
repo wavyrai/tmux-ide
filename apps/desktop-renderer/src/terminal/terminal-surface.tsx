@@ -80,6 +80,8 @@ function outputEpoch(): OutputEpoch {
   return { retired, retire, pending: 0 };
 }
 
+const OUTPUT_NOT_CONSUMED = new Error("Terminal output was not consumed by the renderer.");
+
 /**
  * Native Solid terminal leaf. This component renders bytes and forwards input;
  * it never creates a process, resolves a tmux target, or opens a network path.
@@ -175,7 +177,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       setPhase("error");
       generation += 1;
       disposeAttachment();
-      return Promise.resolve();
+      return Promise.reject(OUTPUT_NOT_CONSUMED);
     }
     epoch.pending += 1;
     const payload = bytes.slice();
@@ -188,13 +190,13 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           renderer !== activeRenderer ||
           epoch !== activeOutputEpoch
         ) {
-          return;
+          throw OUTPUT_NOT_CONSUMED;
         }
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          await Promise.race([
-            activeRenderer.write(payload),
-            epoch.retired,
+          const outcome = await Promise.race([
+            activeRenderer.write(payload).then(() => "written" as const),
+            epoch.retired.then(() => "retired" as const),
             new Promise<never>((_resolve, reject) => {
               timer = setTimeout(
                 () => reject(new Error("terminal renderer write timed out")),
@@ -202,23 +204,24 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
               );
             }),
           ]);
+          if (outcome === "retired") throw OUTPUT_NOT_CONSUMED;
         } finally {
           if (timer !== undefined) clearTimeout(timer);
         }
       })
       .catch(() => {
-        if (
+        const retiredOrStale =
           disposed ||
           generation !== activeGeneration ||
           renderer !== activeRenderer ||
-          epoch !== activeOutputEpoch
-        ) {
-          return;
+          epoch !== activeOutputEpoch;
+        if (!retiredOrStale) {
+          setReason("The terminal renderer could not consume native output.");
+          setPhase("error");
+          generation += 1;
+          disposeAttachment();
         }
-        setReason("The terminal renderer could not consume native output.");
-        setPhase("error");
-        generation += 1;
-        disposeAttachment();
+        throw OUTPUT_NOT_CONSUMED;
       })
       .finally(() => {
         epoch.pending -= 1;
@@ -231,7 +234,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     event: NativeTerminalEvent,
     activeGeneration: number,
   ): void | Promise<void> => {
-    if (disposed || activeGeneration !== generation) return;
+    if (disposed || activeGeneration !== generation) {
+      return event.type === "output" ? Promise.reject(OUTPUT_NOT_CONSUMED) : undefined;
+    }
     if (isNativeTerminalOutput(event)) {
       return queueOutput(event.bytes, activeGeneration).then(() => {
         if (!disposed && activeGeneration === generation) setHasValidatedFrame(true);
@@ -289,7 +294,6 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         }
         attachment = result.attachment;
         currentViewport = viewport;
-        setHasValidatedFrame(true);
         setPhase("connected");
         if (props.focused) renderer?.focus();
       })
