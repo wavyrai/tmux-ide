@@ -3,8 +3,10 @@ import type { Socket } from "node:net";
 import { WebSocketServer } from "ws";
 import {
   TERMINAL_ATTACHMENT_REDEEM_PATH,
+  TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
+} from "@tmux-ide/contracts";
+import {
   TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES,
-  TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL,
   type DirectTerminalSocket,
   type TerminalAttachmentAdmissionCoordinator,
 } from "../terminal/attachments/direct-websocket.ts";
@@ -62,8 +64,8 @@ export function attachTerminalAttachmentWebSocket(
     perMessageDeflate: false,
     maxPayload: TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES,
     handleProtocols(offered) {
-      return offered.size === 1 && offered.has(TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL)
-        ? TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL
+      return offered.size === 1 && offered.has(TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL)
+        ? TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL
         : false;
     },
   });

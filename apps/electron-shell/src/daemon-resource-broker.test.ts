@@ -1,6 +1,7 @@
 import {
   APPLICATION_SHELL_RESOURCE_VERSION,
   COHESION_FIXTURE_V1,
+  TERMINAL_ATTACHMENT_ISSUE_PATH,
   type DesktopDaemonEvent,
   type DesktopDaemonHostState,
 } from "@tmux-ide/contracts";
@@ -174,7 +175,7 @@ describe("Electron main daemon resource broker", () => {
     ).resolves.toEqual({ status: "issued", descriptor });
     expect(requests).toHaveLength(1);
     const sent = requests[0]!;
-    expect(sent.url).toBe("http://127.0.0.1:6060/api/v1/terminal/attachments/issue");
+    expect(sent.url).toBe(`${CONNECTED.descriptor.apiBaseUrl}${TERMINAL_ATTACHMENT_ISSUE_PATH}`);
     expect(sent.init).toMatchObject({
       method: "POST",
       credentials: "omit",
