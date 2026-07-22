@@ -30,6 +30,7 @@ import {
   resolveWorkspacePaneTmuxAuthority,
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
+import { WorkspaceOpenAuthority } from "./workspace-open.ts";
 import {
   createNativeTerminalAttachmentRuntime,
   type NativeTerminalAttachmentRuntime,
@@ -640,6 +641,7 @@ async function startHttpServer({
   readProjectAuth,
   daemonIdentity,
   workspacePaneCreationBackend,
+  workspaceOpenBackend,
   workspaceRegistry,
   terminalAttachmentRuntime,
 }: {
@@ -657,6 +659,7 @@ async function startHttpServer({
     startedAt: string;
   };
   workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
+  workspaceOpenBackend: WorkspaceOpenAuthority;
   workspaceRegistry: WorkspaceRegistry;
   terminalAttachmentRuntime: NativeTerminalAttachmentRuntime;
 }): Promise<{
@@ -695,6 +698,7 @@ async function startHttpServer({
     },
     daemonIdentity,
     workspacePaneCreationBackend,
+    workspaceOpenBackend,
     workspaceRegistry,
     terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
     applicationShellInventoryBackend: terminalAttachmentRuntime,
@@ -893,6 +897,11 @@ export async function startEmbeddedDaemon(
       registry: workspaceRegistry,
       tmuxAuthority,
     });
+    const workspaceOpen = new WorkspaceOpenAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
+      tmuxAuthority,
+    });
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
@@ -920,6 +929,7 @@ export async function startEmbeddedDaemon(
         readProjectAuth: !sessionless,
         daemonIdentity: { productVersion, instanceId, startedAt },
         workspacePaneCreationBackend: workspacePaneCreation,
+        workspaceOpenBackend: workspaceOpen,
         workspaceRegistry,
         terminalAttachmentRuntime,
       });
@@ -927,6 +937,7 @@ export async function startEmbeddedDaemon(
       await Promise.allSettled([
         terminalAttachmentRuntime?.dispose() ?? Promise.resolve(),
         workspacePaneCreation.dispose(),
+        workspaceOpen.dispose(),
       ]);
       throw error;
     }
@@ -938,11 +949,13 @@ export async function startEmbeddedDaemon(
         terminalAttachmentBoundary,
       );
       const paneDisposal = Promise.resolve().then(() => workspacePaneCreation.dispose());
+      const workspaceOpenDisposal = Promise.resolve().then(() => workspaceOpen.dispose());
       const closePromise = Promise.resolve()
         .then(() => waitForServerClose(server))
         .catch(() => undefined);
       await Promise.allSettled([
         paneDisposal,
+        workspaceOpenDisposal,
         Promise.resolve().then(() => closeClients()),
         ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
         Promise.race([closePromise, delay(100)]),
@@ -1103,6 +1116,7 @@ export async function startEmbeddedDaemon(
               )),
             );
             await capture(() => workspacePaneCreation.dispose());
+            await capture(() => workspaceOpen.dispose());
 
             let closePromise: Promise<void>;
             try {

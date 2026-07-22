@@ -22,6 +22,10 @@ import {
   WorkspacePaneCreateArgumentsSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
 } from "./workspace-pane-creation.ts";
+import {
+  WorkspaceOpenArgumentsSchemaZ,
+  WorkspaceOpenMutationResultSchemaZ,
+} from "./workspace-open.ts";
 
 // ---------------------------------------------------------------------------
 // project.openTerminal
@@ -204,6 +208,13 @@ export const WorkspacePaneCreateInputZ = WorkspacePaneCreateArgumentsSchemaZ;
 export const WorkspacePaneCreateResultZ = WorkspacePaneCreateMutationResultSchemaZ;
 
 // ---------------------------------------------------------------------------
+// workspace.open
+// ---------------------------------------------------------------------------
+
+export const WorkspaceOpenInputZ = WorkspaceOpenArgumentsSchemaZ;
+export const WorkspaceOpenResultZ = WorkspaceOpenMutationResultSchemaZ;
+
+// ---------------------------------------------------------------------------
 // Registry of action contracts (name → input/output schemas)
 // ---------------------------------------------------------------------------
 
@@ -271,6 +282,10 @@ export const ActionContractsZ = {
   "workspace.pane.create": {
     input: WorkspacePaneCreateInputZ,
     result: WorkspacePaneCreateResultZ,
+  },
+  "workspace.open": {
+    input: WorkspaceOpenInputZ,
+    result: WorkspaceOpenResultZ,
   },
 } as const;
 

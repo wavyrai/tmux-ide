@@ -138,8 +138,14 @@ export class WorkspaceRegistry {
       hasWorkspaceConfig: input.hasWorkspaceConfig,
       addedAt: now.toISOString(),
     };
-    this.workspaces = [...this.workspaces, workspace];
-    this.writeDisk();
+    const previous = this.workspaces;
+    this.workspaces = [...previous, workspace];
+    try {
+      this.writeDisk();
+    } catch (error) {
+      this.workspaces = previous;
+      throw error;
+    }
     this.emitter.emit("workspace.added", workspace);
     return workspace;
   }

@@ -135,6 +135,7 @@ export interface CreateAppOptions {
     startedAt: string;
   };
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
+  workspaceOpenBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
   applicationShellInventoryBackend?: {
@@ -166,7 +167,10 @@ function requireAuth(token: string | null, localBypassToken: string | null): Mid
 
 function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
   return async (c, next) => {
-    if (c.req.param("name") !== "workspace.pane.create") return next();
+    const actionName = c.req.param("name");
+    if (actionName !== "workspace.pane.create" && actionName !== "workspace.open") {
+      return next();
+    }
     if (!ownerToken) {
       return c.json({ error: "Host mutation capability is unavailable" }, 503);
     }
@@ -385,6 +389,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     createActionDispatcher({
       daemonInstanceId: daemonIdentity.instanceId,
       workspacePaneCreationBackend: options.workspacePaneCreationBackend,
+      workspaceOpenBackend: options.workspaceOpenBackend,
     }),
   );
 

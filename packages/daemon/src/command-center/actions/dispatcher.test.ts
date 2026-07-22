@@ -4,10 +4,12 @@ import { ActionContractsZ } from "./contract.ts";
 import { createActionDispatcher } from "./dispatcher.ts";
 import { setDaemonShutdownBackend } from "./handlers/daemon-shutdown.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
+import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
 
 const actionApp = (
   broadcast = vi.fn(),
   workspacePaneCreationBackend?: WorkspacePaneCreationBackend,
+  workspaceOpenBackend?: WorkspaceOpenBackend,
 ) => {
   const app = new Hono();
   app.post(
@@ -16,6 +18,7 @@ const actionApp = (
       broadcast,
       daemonInstanceId: "20000000-0000-4000-8000-000000000002",
       workspacePaneCreationBackend,
+      workspaceOpenBackend,
     }),
   );
   return { app, broadcast };
@@ -184,5 +187,67 @@ describe("command-backed action dispatcher compatibility", () => {
       error: { code: "validation_failed" },
     });
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("adapts owner-selected project intent and broadcasts only the semantic workspace resource", async () => {
+    const open = vi.fn(async (input) => ({
+      operationId: input.operationId,
+      daemonInstanceId: input.expectedDaemonInstanceId,
+      outcome: "created" as const,
+      resource: {
+        resourceVersion: 1 as const,
+        workspaceName: "project-00112233445566778899aabbccddeeff",
+        initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+      },
+    }));
+    const { app, broadcast } = actionApp(vi.fn(), undefined, { open });
+    const response = await app.request("http://localhost/api/v2/action/workspace.open", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": "10000000-0000-4000-8000-000000000001",
+      },
+      body: JSON.stringify({ projectDir: "/tmp/project" }),
+    });
+
+    expect(response.status).toBe(200);
+    const envelope = await response.json();
+    expect(envelope).toMatchObject({
+      ok: true,
+      result: {
+        operationId: "10000000-0000-4000-8000-000000000001",
+        outcome: "created",
+        resource: { workspaceName: "project-00112233445566778899aabbccddeeff" },
+      },
+    });
+    expect(JSON.stringify(envelope)).not.toMatch(/projectDir|sessionName|paneId|tmux/u);
+    expect(open).toHaveBeenCalledWith({
+      operationId: "10000000-0000-4000-8000-000000000001",
+      expectedDaemonInstanceId: "20000000-0000-4000-8000-000000000002",
+      intent: { projectDir: "/tmp/project" },
+    });
+    expect(broadcast).toHaveBeenCalledWith(
+      "workspace.open",
+      expect.objectContaining({ operationId: "10000000-0000-4000-8000-000000000001" }),
+    );
+  });
+
+  it("rejects renderer-authored tmux identities before workspace admission", async () => {
+    const open = vi.fn();
+    const { app } = actionApp(vi.fn(), undefined, { open });
+    const response = await app.request("http://localhost/api/v2/action/workspace.open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectDir: "/tmp/project",
+        sessionName: "renderer-owned",
+        paneId: "%42",
+      }),
+    });
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: { code: "validation_failed" },
+    });
+    expect(open).not.toHaveBeenCalled();
   });
 });
