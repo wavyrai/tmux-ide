@@ -108,6 +108,14 @@ export function createBrowserHostCapabilities(): HostCapabilities {
       onChanged: subscribeMedia,
     },
     daemon: {
+      refreshConnection: async () => ({
+        outcome: "unchanged",
+        daemon: {
+          status: "unavailable",
+          code: "preview-only",
+          reason: "Browser preview does not attach to the desktop daemon.",
+        },
+      }),
       listWorkspaces: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
       fetchApplicationShell: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
       subscribe: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
@@ -132,6 +140,7 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
     typeof candidate.dialog?.selectProjectDirectory === "function" &&
     typeof candidate.theme?.getState === "function" &&
     typeof candidate.theme?.onChanged === "function" &&
+    typeof candidate.daemon?.refreshConnection === "function" &&
     typeof candidate.daemon?.listWorkspaces === "function" &&
     typeof candidate.daemon?.fetchApplicationShell === "function" &&
     typeof candidate.daemon?.subscribe === "function"

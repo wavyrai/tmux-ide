@@ -5,8 +5,10 @@ import {
   DesktopApplicationShellTargetSchemaZ,
   DesktopDaemonCapabilityStateSchemaZ,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
+  DesktopDaemonEventSchemaZ,
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
+  DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonPreflightSchemaZ,
   DesktopDaemonHostDescriptorSchemaZ,
   DesktopHostBootstrapSchemaZ,
@@ -24,7 +26,7 @@ describe("desktop host contract", () => {
         window: { maximized: false, fullscreen: false, focused: true },
         daemon: { status: "unavailable", code: "record-missing", reason: "owner not installed" },
       }),
-    ).toMatchObject({ apiVersion: 3, runtime: "electron" });
+    ).toMatchObject({ apiVersion: 4, runtime: "electron" });
   });
 
   it("does not permit unversioned daemon metadata to leak into the facade", () => {
@@ -143,6 +145,41 @@ describe("desktop host contract", () => {
           startedAt: "2026-07-21T00:00:00.000Z",
         },
         workspaces: [{ workspaceName: "product", projectDir: "/private/leak" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("models daemon replacement without exposing main-process connection material", () => {
+    const identity = {
+      protocolVersion: 1,
+      productVersion: "2.8.0",
+      instanceId: "3371dd7b-f76f-44e9-aefe-0e357a066056",
+      startedAt: "2026-07-22T00:00:00.000Z",
+    };
+    const result = {
+      outcome: "generation-replaced",
+      previousIdentity: null,
+      daemon: { status: "connected", identity },
+    };
+    expect(DesktopDaemonRefreshConnectionResultSchemaZ.parse(result)).toEqual(result);
+    expect(
+      DesktopDaemonRefreshConnectionResultSchemaZ.safeParse({
+        ...result,
+        apiBaseUrl: "http://127.0.0.1:6060",
+      }).success,
+    ).toBe(false);
+    expect(
+      DesktopDaemonEventSchemaZ.parse({
+        type: "daemon-generation.changed",
+        previousIdentity: identity,
+        daemon: { status: "unavailable", code: "record-missing", reason: "not running" },
+      }),
+    ).toMatchObject({ type: "daemon-generation.changed" });
+    expect(
+      DesktopDaemonEventSchemaZ.safeParse({
+        type: "daemon-generation.changed",
+        previousIdentity: identity,
+        daemon: { status: "connected", identity, sessionName: "raw-session" },
       }).success,
     ).toBe(false);
   });

@@ -34,6 +34,10 @@ describe("renderer host capabilities", () => {
     await expect(
       host.daemon.subscribe({ workspaceNames: ["preview"] }, vi.fn()),
     ).resolves.toMatchObject({ status: "error", error: { code: "preview-only" } });
+    await expect(host.daemon.refreshConnection()).resolves.toMatchObject({
+      outcome: "unchanged",
+      daemon: { status: "unavailable", code: "preview-only" },
+    });
   });
 
   it("does not silently downgrade a present incompatible preload object", () => {

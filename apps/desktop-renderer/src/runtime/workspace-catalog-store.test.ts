@@ -92,6 +92,10 @@ function fakeDaemonHost(
     return subscribeResult ? subscribeResult() : ({ status: "subscribed", unsubscribe } as const);
   });
   const daemon: HostCapabilities["daemon"] = {
+    refreshConnection: async () => ({
+      outcome: "unchanged",
+      daemon: { status: "connected", identity: DAEMON },
+    }),
     listWorkspaces: list as HostCapabilities["daemon"]["listWorkspaces"],
     fetchApplicationShell: async () => ({
       status: "error",
@@ -777,6 +781,6 @@ describe("desktop live workspace catalog and selection store", () => {
 
 describe("workspace catalog host contract seam", () => {
   it("uses the current versioned facade without exposing a generic transport", () => {
-    expect(DESKTOP_HOST_API_VERSION).toBe(3);
+    expect(DESKTOP_HOST_API_VERSION).toBe(4);
   });
 });
