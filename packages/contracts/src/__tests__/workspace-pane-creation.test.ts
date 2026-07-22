@@ -4,6 +4,7 @@ import {
   WORKSPACE_PANE_CREATE_COMMAND_DESCRIPTOR,
   WORKSPACE_PANE_CREATE_COMMAND_ID,
   WorkspacePaneCreateInvocationSchemaZ,
+  WorkspacePaneCreateHostResultSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
   WorkspacePaneCreationReferenceSchemaZ,
@@ -72,6 +73,10 @@ describe("semantic workspace pane creation command", () => {
     for (const forbidden of ["paneId", "windowId", "sessionName", "cwd", "argv", "env"]) {
       expect(JSON.stringify(result)).not.toContain(`"${forbidden}"`);
     }
+    expect(WorkspacePaneCreateHostResultSchemaZ.parse({ status: "ok", result })).toEqual({
+      status: "ok",
+      result,
+    });
   });
 
   it("round-trips a terminal request containing presentation identity only", () => {

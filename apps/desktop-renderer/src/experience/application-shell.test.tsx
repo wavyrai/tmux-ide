@@ -63,6 +63,14 @@ function host(): HostCapabilities {
       onChanged: () => () => undefined,
     },
     daemon: {
+      createWorkspacePane: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      issueTerminalAttachment: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only", retryable: false },
+      }),
       refreshConnection: async () => ({
         outcome: "unchanged",
         daemon: { status: "unavailable", code: "preview-only", reason: "fixture only" },

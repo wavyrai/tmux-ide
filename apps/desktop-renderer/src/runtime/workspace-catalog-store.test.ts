@@ -92,6 +92,14 @@ function fakeDaemonHost(
     return subscribeResult ? subscribeResult() : ({ status: "subscribed", unsubscribe } as const);
   });
   const daemon: HostCapabilities["daemon"] = {
+    createWorkspacePane: async () => ({
+      status: "error",
+      error: { code: "preview-only", reason: "fixture only" },
+    }),
+    issueTerminalAttachment: async () => ({
+      status: "error",
+      error: { code: "preview-only", reason: "fixture only", retryable: false },
+    }),
     refreshConnection: async () => ({
       outcome: "unchanged",
       daemon: { status: "connected", identity: DAEMON },
@@ -781,6 +789,6 @@ describe("desktop live workspace catalog and selection store", () => {
 
 describe("workspace catalog host contract seam", () => {
   it("uses the current versioned facade without exposing a generic transport", () => {
-    expect(DESKTOP_HOST_API_VERSION).toBe(4);
+    expect(DESKTOP_HOST_API_VERSION).toBe(5);
   });
 });

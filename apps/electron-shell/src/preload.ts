@@ -13,12 +13,18 @@ import {
   DesktopMenuResultSchemaZ,
   DesktopThemeStateSchemaZ,
   DesktopWindowStateSchemaZ,
+  TerminalAttachRequestSchemaZ,
+  TerminalAttachmentIssueResultSchemaZ,
+  WorkspacePaneCreateHostResultSchemaZ,
+  WorkspacePaneCreateInvocationSchemaZ,
   type DesktopDaemonEvent,
   type DesktopDaemonEventSubscriptionRequest,
   type DesktopDaemonFetchApplicationShellRequest,
   type DesktopThemeState,
   type DesktopWindowState,
   type HostCapabilities,
+  type TerminalAttachRequest,
+  type WorkspacePaneCreateInvocation,
 } from "@tmux-ide/contracts";
 
 import { HOST_IPC } from "./ipc-channels.ts";
@@ -109,6 +115,18 @@ const capabilities: HostCapabilities = Object.freeze({
       ),
   }),
   daemon: Object.freeze({
+    createWorkspacePane: async (invocation: WorkspacePaneCreateInvocation) => {
+      const parsed = WorkspacePaneCreateInvocationSchemaZ.parse(invocation);
+      return WorkspacePaneCreateHostResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonCreateWorkspacePane, parsed),
+      );
+    },
+    issueTerminalAttachment: async (request: TerminalAttachRequest) => {
+      const parsed = TerminalAttachRequestSchemaZ.parse(request);
+      return TerminalAttachmentIssueResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonIssueTerminalAttachment, parsed),
+      );
+    },
     refreshConnection: async () =>
       DesktopDaemonRefreshConnectionResultSchemaZ.parse(
         await ipcRenderer.invoke(HOST_IPC.daemonRefreshConnection),

@@ -108,6 +108,15 @@ export function createBrowserHostCapabilities(): HostCapabilities {
       onChanged: subscribeMedia,
     },
     daemon: {
+      createWorkspacePane: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
+      issueTerminalAttachment: async () => ({
+        status: "error",
+        error: {
+          code: "preview-only",
+          reason: "Terminal attachments are unavailable in browser preview.",
+          retryable: false,
+        },
+      }),
       refreshConnection: async () => ({
         outcome: "unchanged",
         daemon: {
@@ -140,6 +149,8 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
     typeof candidate.dialog?.selectProjectDirectory === "function" &&
     typeof candidate.theme?.getState === "function" &&
     typeof candidate.theme?.onChanged === "function" &&
+    typeof candidate.daemon?.createWorkspacePane === "function" &&
+    typeof candidate.daemon?.issueTerminalAttachment === "function" &&
     typeof candidate.daemon?.refreshConnection === "function" &&
     typeof candidate.daemon?.listWorkspaces === "function" &&
     typeof candidate.daemon?.fetchApplicationShell === "function" &&

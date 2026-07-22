@@ -1,9 +1,17 @@
 import { z } from "zod";
 import { ApplicationShellResourceV1SchemaZ } from "./application-shell-resource.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
+import type {
+  TerminalAttachRequest,
+  TerminalAttachmentIssueResult,
+} from "./terminal-attachments.ts";
+import type {
+  WorkspacePaneCreateHostResult,
+  WorkspacePaneCreateInvocation,
+} from "./workspace-pane-creation.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 4 as const;
+export const DESKTOP_HOST_API_VERSION = 5 as const;
 
 export const DesktopRuntimeKindSchemaZ = z.enum(["browser", "electron"]);
 export const DesktopPlatformSchemaZ = z.enum(["darwin", "linux", "win32", "unknown"]);
@@ -368,6 +376,10 @@ export interface HostCapabilities {
     onChanged(listener: (state: DesktopThemeState) => void): DesktopHostUnsubscribe;
   };
   readonly daemon: {
+    createWorkspacePane(
+      invocation: WorkspacePaneCreateInvocation,
+    ): Promise<WorkspacePaneCreateHostResult>;
+    issueTerminalAttachment(request: TerminalAttachRequest): Promise<TerminalAttachmentIssueResult>;
     refreshConnection(): Promise<DesktopDaemonRefreshConnectionResult>;
     listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
     fetchApplicationShell(

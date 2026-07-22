@@ -31,6 +31,60 @@ beforeAll(async () => {
 });
 
 describe("desktop preload daemon bridge", () => {
+  it("exposes only named, schema-validated semantic create and attachment issue calls", async () => {
+    const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
+    const callsBefore = electron.invoke.mock.calls.length;
+    const invocation = {
+      version: 1 as const,
+      id: "workspace.pane.create" as const,
+      source: { kind: "mouse" as const, surface: "create-pane-dialog" },
+      args: { kind: "terminal" as const, workspaceName: "product" },
+    };
+    electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
+      expect(channel).toBe(HOST_IPC.daemonCreateWorkspacePane);
+      expect(value).toEqual(invocation);
+      return {
+        status: "error",
+        error: { code: "daemon-unavailable", reason: "The canonical daemon is unavailable." },
+      };
+    });
+    await expect(capabilities.daemon.createWorkspacePane(invocation)).resolves.toMatchObject({
+      status: "error",
+      error: { code: "daemon-unavailable" },
+    });
+
+    const attachment = {
+      protocolVersion: 1 as const,
+      target: { workspaceName: "product", semanticPaneId: "pane.worker" },
+      viewerMode: "interactive" as const,
+      viewport: { cols: 120, rows: 40 },
+    };
+    electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
+      expect(channel).toBe(HOST_IPC.daemonIssueTerminalAttachment);
+      expect(value).toEqual(attachment);
+      return {
+        status: "error",
+        error: {
+          code: "attachment-unavailable",
+          reason: "The terminal attachment is unavailable.",
+          retryable: true,
+        },
+      };
+    });
+    await expect(capabilities.daemon.issueTerminalAttachment(attachment)).resolves.toMatchObject({
+      status: "error",
+      error: { code: "attachment-unavailable" },
+    });
+
+    await expect(
+      capabilities.daemon.createWorkspacePane({
+        ...invocation,
+        ownerToken: "renderer-secret",
+      } as typeof invocation),
+    ).rejects.toThrow();
+    expect(electron.invoke.mock.calls).toHaveLength(callsBefore + 2);
+  });
+
   it("exposes and validates the semantic daemon refresh result", async () => {
     electron.invoke.mockImplementationOnce(async (channel: string) => {
       expect(channel).toBe(HOST_IPC.daemonRefreshConnection);

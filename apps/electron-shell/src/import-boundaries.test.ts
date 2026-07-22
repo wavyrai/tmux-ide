@@ -58,6 +58,8 @@ describe("desktop process boundaries", () => {
       HOST_IPC.dialogSelectProjectDirectory,
       HOST_IPC.themeGetState,
       HOST_IPC.daemonRefreshConnection,
+      HOST_IPC.daemonCreateWorkspacePane,
+      HOST_IPC.daemonIssueTerminalAttachment,
       HOST_IPC.daemonListWorkspaces,
       HOST_IPC.daemonFetchApplicationShell,
       HOST_IPC.daemonSubscribe,
@@ -66,6 +68,9 @@ describe("desktop process boundaries", () => {
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/send");
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/eval");
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/command");
+    expect(
+      Object.values(HOST_IPC).some((channel) => /byte|pty|terminal-data/iu.test(channel)),
+    ).toBe(false);
   });
 
   it("keeps canonical daemon attachment in Electron main and out of preload", async () => {

@@ -5,8 +5,13 @@ import {
   TERMINAL_ATTACHMENT_MIN_COLS,
   TERMINAL_ATTACHMENT_MIN_ROWS,
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+  TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
   TerminalAttachRequestSchemaZ,
   TerminalAttachmentErrorSchemaZ,
+  TerminalAttachmentIssueDescriptorSchemaZ,
+  TerminalAttachmentIssueErrorSchemaZ,
+  TerminalAttachmentIssueMutationRequestSchemaZ,
+  TerminalAttachmentIssueResultSchemaZ,
   TerminalAttachmentPlanResponseSchemaZ,
 } from "../terminal-attachments.ts";
 
@@ -148,5 +153,88 @@ describe("terminal attachment contracts", () => {
         retryable: false,
       }).success,
     ).toBe(true);
+  });
+
+  it("accepts one strict, bounded, loopback-only issue descriptor", () => {
+    const descriptor = {
+      protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+      webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
+      subprotocol: TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
+      redemptionTicket: `ta1_${"A".repeat(43)}`,
+      daemonInstanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+      requestId: "10000000-0000-4000-8000-000000000001",
+      expiresAt: 1_784_662_860_000,
+      effectiveViewerMode: "interactive" as const,
+    };
+    expect(TerminalAttachmentIssueDescriptorSchemaZ.parse(descriptor)).toEqual(descriptor);
+    expect(TerminalAttachmentIssueResultSchemaZ.parse({ status: "issued", descriptor })).toEqual({
+      status: "issued",
+      descriptor,
+    });
+
+    for (const webSocketUrl of [
+      "wss://127.0.0.1:6060/v1/terminal/attachments/redeem",
+      "ws://192.0.2.1:6060/v1/terminal/attachments/redeem",
+      "ws://secret@127.0.0.1:6060/v1/terminal/attachments/redeem",
+      "ws://127.0.0.1/v1/terminal/attachments/redeem",
+      "ws://127.0.0.1:6060/v1/terminal/attachments/redeem?token=secret",
+      "ws://127.0.0.1:6060/another-path",
+    ]) {
+      expect(
+        TerminalAttachmentIssueDescriptorSchemaZ.safeParse({ ...descriptor, webSocketUrl }).success,
+      ).toBe(false);
+    }
+
+    for (const forbidden of [
+      { tmuxPaneId: "%7" },
+      { sessionName: "raw-session" },
+      { cwd: "/private/project" },
+      { argv: ["codex", "--yolo"] },
+      { env: { SECRET: "value" } },
+      { ownerToken: "secret" },
+    ]) {
+      expect(
+        TerminalAttachmentIssueDescriptorSchemaZ.safeParse({ ...descriptor, ...forbidden }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps host-authored issue metadata outside renderer intent", () => {
+    const mutation = TerminalAttachmentIssueMutationRequestSchemaZ.parse({
+      requestId: "10000000-0000-4000-8000-000000000001",
+      expectedDaemonInstanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+      attachment: request(),
+    });
+    expect(mutation.attachment).not.toHaveProperty("requestId");
+    expect(mutation.attachment).not.toHaveProperty("expectedDaemonInstanceId");
+    expect(
+      TerminalAttachmentIssueMutationRequestSchemaZ.safeParse({
+        ...mutation,
+        origin: "https://renderer.example",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects credential-bearing public error text", () => {
+    expect(
+      TerminalAttachmentIssueErrorSchemaZ.parse({
+        code: "attachment-unavailable",
+        reason: "The terminal attachment is unavailable.",
+        retryable: true,
+      }),
+    ).toMatchObject({ code: "attachment-unavailable" });
+    for (const reason of [
+      "Authorization was Bearer owner-secret",
+      `The redemptionTicket was ta1_${"A".repeat(43)}`,
+      "ownerToken=secret",
+    ]) {
+      expect(
+        TerminalAttachmentIssueErrorSchemaZ.safeParse({
+          code: "request-failed",
+          reason,
+          retryable: false,
+        }).success,
+      ).toBe(false);
+    }
   });
 });

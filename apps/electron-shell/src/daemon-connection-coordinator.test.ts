@@ -2,6 +2,7 @@ import {
   DesktopDaemonRefreshConnectionResultSchemaZ,
   type DesktopDaemonEvent,
   type DesktopDaemonHostState,
+  type TerminalAttachmentIssueResult,
 } from "@tmux-ide/contracts";
 import { describe, expect, it, vi } from "vitest";
 
@@ -82,19 +83,27 @@ function brokerHarness(
   };
   return {
     authority: {
-      createWorkspacePane: async (intent, operationId) => ({
-        operationId,
+      createWorkspacePane: async (request) => ({
+        operationId: request.operationId,
         daemonInstanceId: identity.instanceId,
         outcome: "created",
         resource: {
           resourceVersion: 1,
-          workspaceName: intent.workspaceName,
-          semanticPaneId: `pane.${operationId.replaceAll("-", "")}`,
+          workspaceName: request.intent.workspaceName,
+          semanticPaneId: `pane.${request.operationId.replaceAll("-", "")}`,
           kind: "terminal",
           displayTitle: "Terminal",
           harnessProfileId: null,
           role: null,
           missionId: null,
+        },
+      }),
+      issueTerminalAttachment: async () => ({
+        status: "error",
+        error: {
+          code: "attachment-unavailable",
+          reason: "The terminal attachment is unavailable.",
+          retryable: true,
         },
       }),
       listWorkspaces: async () => {
@@ -367,6 +376,49 @@ describe("main-process daemon connection coordinator", () => {
       status: "error",
       error: { code: "disposed" },
     });
+  });
+
+  it("discards a one-use ticket completed after renderer release", async () => {
+    const late = deferred<TerminalAttachmentIssueResult>();
+    const first = brokerHarness(A);
+    const authority: DaemonResourceAuthority = {
+      ...first.authority,
+      issueTerminalAttachment: async () => late.promise,
+    };
+    const coordinator = new DaemonConnectionCoordinator({
+      initialDaemon: A,
+      preflight: preflight(async () => A),
+      createBroker: () => authority,
+    });
+    const mutation = {
+      requestId: "10000000-0000-4000-8000-000000000001",
+      expectedDaemonInstanceId: A.descriptor.instanceId,
+      attachment: {
+        protocolVersion: 1 as const,
+        target: { workspaceName: "product", semanticPaneId: "pane.worker" },
+        viewerMode: "interactive" as const,
+        viewport: { cols: 120, rows: 40 },
+      },
+    };
+    const result = coordinator.issueTerminalAttachment(mutation, "http://127.0.0.1:5173");
+    coordinator.releaseRenderer();
+    const ticket = `ta1_${"A".repeat(43)}`;
+    late.resolve({
+      status: "issued",
+      descriptor: {
+        protocolVersion: 1,
+        webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
+        subprotocol: "tmux-ide-terminal.v1",
+        redemptionTicket: ticket,
+        daemonInstanceId: A.descriptor.instanceId,
+        requestId: mutation.requestId,
+        expiresAt: Date.now() + 30_000,
+        effectiveViewerMode: "interactive",
+      },
+    });
+
+    await expect(result).resolves.toMatchObject({ status: "error", error: { code: "disposed" } });
+    expect(JSON.stringify(await result)).not.toContain(ticket);
   });
 
   it("does not install a replacement resolved after app disposal", async () => {
