@@ -26,7 +26,8 @@ import {
 } from "./contract.ts";
 import { ActionError, wrapInternalError } from "./errors.ts";
 import { getLooseActionEntry } from "./registry.ts";
-import { broadcastActionComplete } from "../ws-events.ts";
+import { broadcastActionComplete, broadcastWorkspacePromotionCompleted } from "../ws-events.ts";
+import { WorkspacePromoteMutationResultSchemaZ } from "@tmux-ide/contracts";
 import { daemonActionCommandRegistry } from "./command-definitions.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
 import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
@@ -36,6 +37,8 @@ import type { AppWindowMutationBackend } from "./handlers/app-window-mutate.ts";
 export interface DispatcherDeps {
   /** Override the WS broadcaster (tests / non-default daemons). */
   broadcast?: (name: string, result: unknown) => void;
+  /** Override the typed promotion-completed receipt broadcaster (tests). */
+  broadcastPromotionCompleted?: (workspaceName: string, outcome: "promoted" | "replayed") => void;
   /** Trusted daemon generation; never accepted from an HTTP request body. */
   daemonInstanceId?: string;
   /** Instance-owned privileged mutation authority; never module-global. */
@@ -89,6 +92,8 @@ function outputZodErrorEnvelope(err: ZodError): ActionErrorEnvelope {
  */
 export function createActionDispatcher(deps: DispatcherDeps = {}) {
   const broadcast = deps.broadcast ?? broadcastActionComplete;
+  const broadcastPromotionCompleted =
+    deps.broadcastPromotionCompleted ?? broadcastWorkspacePromotionCompleted;
 
   return async function dispatcher(c: Context): Promise<Response> {
     const name = c.req.param("name");
@@ -201,6 +206,23 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       } catch (err) {
         // Broadcast failure must not turn a successful action into a failure.
         console.error("[actions] broadcast failed:", err);
+      }
+    }
+
+    if (actionName === "workspace.promote") {
+      // Typed completion receipt alongside the generic action.complete frame.
+      // Re-narrowing through the result schema (already validated above) keeps
+      // this cast-free; a mismatch is an internal drift worth logging, not a
+      // client failure.
+      const promoted = WorkspacePromoteMutationResultSchemaZ.safeParse(outputParsed.data);
+      if (promoted.success) {
+        try {
+          broadcastPromotionCompleted(promoted.data.resource.workspaceName, promoted.data.outcome);
+        } catch (err) {
+          console.error("[actions] promotion receipt broadcast failed:", err);
+        }
+      } else {
+        console.error("[actions] workspace.promote result did not match the mutation schema");
       }
     }
 

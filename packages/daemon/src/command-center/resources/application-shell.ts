@@ -131,6 +131,17 @@ function semanticId(namespace: string, value: string): string {
   return `${namespace}.${digest(value)}`;
 }
 
+/**
+ * The wire-safe agent identity minted from a pane's durable `@tmux_ide_pane_id`
+ * stamp — the SAME value the sidebar projection publishes as an agent's `id`
+ * (there, via the pane's resource id, which equals the stamp whenever the stamp
+ * is valid and unique). Exported so the agent turn-completed receipt correlates
+ * with the application-shell without a second minting scheme.
+ */
+export function agentIdForPaneStamp(stamp: string): string {
+  return semanticId("agent", stamp);
+}
+
 function label(value: string | null | undefined, fallback: string): string {
   const withoutControls = Array.from(value ?? "", (character) => {
     const codePoint = character.codePointAt(0)!;

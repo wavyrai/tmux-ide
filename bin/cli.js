@@ -6510,12 +6510,13 @@ var init_daemon_resources = __esm({
 
 // packages/contracts/src/daemon-events.ts
 import { z as z39 } from "zod";
-var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventAgentStatusChangedFrameSchemaZ, DaemonEventFleetChangedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
+var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventAgentStatusChangedFrameSchemaZ, DaemonEventFleetChangedFrameSchemaZ, DaemonEventAgentTurnCompletedFrameSchemaZ, DaemonEventWorkspacePromotionCompletedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
 var init_daemon_events = __esm({
   "packages/contracts/src/daemon-events.ts"() {
     "use strict";
     init_daemon_resources();
     init_daemon_wire();
+    init_desktop_host();
     SessionNamesSchemaZ = z39.array(z39.string());
     DaemonEventSubscribeFrameSchemaZ = z39.object({
       type: z39.literal("subscribe"),
@@ -6576,6 +6577,20 @@ var init_daemon_events = __esm({
       sessionName: z39.string()
     }).strict();
     DaemonEventFleetChangedFrameSchemaZ = z39.object({ type: z39.literal("fleet.changed") }).strict();
+    DaemonEventAgentTurnCompletedFrameSchemaZ = z39.object({
+      type: z39.literal("agent.turn-completed"),
+      sessionName: z39.string(),
+      agentId: z39.string().regex(/^agent\.[0-9a-f]{20}$/u).nullable(),
+      fromStatus: z39.literal("working"),
+      toStatus: z39.enum(["done", "idle"]),
+      at: z39.iso.datetime({ offset: true })
+    }).strict();
+    DaemonEventWorkspacePromotionCompletedFrameSchemaZ = z39.object({
+      type: z39.literal("workspace.promotion-completed"),
+      workspaceName: DesktopWorkspaceNameSchemaZ,
+      outcome: z39.enum(["promoted", "replayed"]),
+      at: z39.iso.datetime({ offset: true })
+    }).strict();
     DaemonEventWorkspaceAddedFrameSchemaZ = z39.object({
       type: z39.literal("workspace.added"),
       workspace: DaemonWorkspaceSchemaZ
@@ -6602,7 +6617,9 @@ var init_daemon_events = __esm({
       DaemonEventConfigChangedFrameSchemaZ,
       DaemonEventTerminalsChangedFrameSchemaZ,
       DaemonEventAgentStatusChangedFrameSchemaZ,
+      DaemonEventAgentTurnCompletedFrameSchemaZ,
       DaemonEventFleetChangedFrameSchemaZ,
+      DaemonEventWorkspacePromotionCompletedFrameSchemaZ,
       DaemonEventWorkspaceAddedFrameSchemaZ,
       DaemonEventWorkspaceRemovedFrameSchemaZ,
       DaemonEventProtocolErrorFrameSchemaZ
@@ -16487,7 +16504,12 @@ function listTmuxSessions() {
 function readAgentStatesBySession() {
   let raw;
   try {
-    raw = _tmuxRunner(["list-panes", "-a", "-F", "#{session_name}	#{pane_id}	#{@agent_state}"]);
+    raw = _tmuxRunner([
+      "list-panes",
+      "-a",
+      "-F",
+      "#{session_name}	#{pane_id}	#{@tmux_ide_pane_id}	#{@agent_state}"
+    ]);
   } catch {
     return null;
   }
@@ -16498,13 +16520,14 @@ function readAgentStatesBySession() {
     if (!match) continue;
     const sessionName = match[1];
     const paneId = match[2];
-    const state = match[3];
+    const paneStamp = match[3];
+    const state = match[4];
     let panes = bySession.get(sessionName);
     if (!panes) {
       panes = /* @__PURE__ */ new Map();
       bySession.set(sessionName, panes);
     }
-    panes.set(paneId, state);
+    panes.set(paneId, { state, paneStamp: paneStamp.length > 0 ? paneStamp : null });
   }
   return bySession;
 }
@@ -16629,7 +16652,7 @@ var init_discovery = __esm({
       maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
-    AGENT_STATE_LINE = /^([^\t]+)\t(%[0-9]+)\t(.*)$/u;
+    AGENT_STATE_LINE = /^([^\t]+)\t(%[0-9]+)\t([^\t]*)\t(.*)$/u;
     FLEET_FIELD_SEPARATOR = "|tmux-ide-fleet-field-v1|";
     FLEET_LINE_SENTINEL = "tmux-ide-fleet-v1";
     FLEET_PANE_FORMAT = [
@@ -16653,9 +16676,11 @@ function agentStateWord(raw) {
 }
 function sessionStateWordsChanged(previous, next) {
   if (previous.size !== next.size) return true;
-  for (const [paneId, raw] of next) {
+  for (const [paneId, reading] of next) {
     const prior = previous.get(paneId);
-    if (prior === void 0 || agentStateWord(prior) !== agentStateWord(raw)) return true;
+    if (prior === void 0 || agentStateWord(prior.state) !== agentStateWord(reading.state)) {
+      return true;
+    }
   }
   return false;
 }
@@ -16670,6 +16695,27 @@ function diffChangedSessions(previous, next) {
   }
   return [...changed].sort();
 }
+function diffTurnCompletions(previous, next) {
+  const completions = [];
+  for (const sessionName of [...next.keys()].sort()) {
+    const before = previous.get(sessionName);
+    if (!before) continue;
+    const panes = next.get(sessionName);
+    for (const paneId of [...panes.keys()].sort()) {
+      const prior = before.get(paneId);
+      if (prior === void 0 || agentStateWord(prior.state) !== "working") continue;
+      const word = agentStateWord(panes.get(paneId).state);
+      if (word !== "done" && word !== "idle") continue;
+      completions.push({
+        sessionName,
+        paneStamp: panes.get(paneId).paneStamp,
+        fromStatus: "working",
+        toStatus: word
+      });
+    }
+  }
+  return completions;
+}
 var AGENT_STATUS_POLL_MS, AgentStatusWatcher;
 var init_agent_status_watch = __esm({
   "packages/daemon/src/command-center/agent-status-watch.ts"() {
@@ -16678,6 +16724,7 @@ var init_agent_status_watch = __esm({
     AgentStatusWatcher = class {
       #read;
       #emit;
+      #emitTurnCompleted;
       #setTimer;
       #clearTimer;
       #intervalMs;
@@ -16686,6 +16733,7 @@ var init_agent_status_watch = __esm({
       constructor(deps2) {
         this.#read = deps2.read;
         this.#emit = deps2.emit;
+        this.#emitTurnCompleted = deps2.emitTurnCompleted ?? null;
         this.#setTimer = deps2.setTimer ?? ((fn, ms) => {
           const handle = setInterval(fn, ms);
           handle.unref?.();
@@ -16719,9 +16767,590 @@ var init_agent_status_watch = __esm({
         for (const sessionName of diffChangedSessions(this.#previous, next)) {
           this.#emit(sessionName);
         }
+        if (this.#emitTurnCompleted) {
+          for (const completion of diffTurnCompletions(this.#previous, next)) {
+            this.#emitTurnCompleted(completion);
+          }
+        }
         this.#previous = next;
       }
     };
+  }
+});
+
+// packages/daemon/src/command-center/resources/fleet-catalog.ts
+import { createHash as createHash5 } from "node:crypto";
+import { basename as basename8 } from "node:path";
+function digest(value) {
+  return createHash5("sha256").update(value).digest("hex").slice(0, 20);
+}
+function fleetSessionIdForName(sessionName) {
+  return `session.${digest(sessionName)}`;
+}
+function fleetLabel(value, fallback) {
+  const stripped = Array.from(value ?? "", (character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint <= 31 || codePoint >= 127 && codePoint <= 159 ? " " : character;
+  }).join("");
+  const normalized = stripped.replace(/\s+/gu, " ").trim().slice(0, FLEET_LABEL_MAX_LENGTH);
+  return normalized || fallback;
+}
+function fleetProjectLabel(cwd, fallback) {
+  const base = basename8(cwd).replace(/[/\\]/gu, "");
+  return fleetLabel(base, fallback);
+}
+function toPresentationPane(pane, index) {
+  return {
+    semanticPaneId: null,
+    index,
+    title: "",
+    currentCommand: pane.currentCommand,
+    active: pane.active,
+    role: null,
+    name: null,
+    type: null,
+    agentStateRaw: pane.agentStateRaw,
+    agentStatusTextRaw: pane.agentStatusTextRaw,
+    agentDisplayNameRaw: pane.agentDisplayNameRaw,
+    // Authority-only: the fleet never scrapes an unopened session. `null` (not
+    // `undefined`) keeps `resolveAgentPresentation` on the ground-truth path
+    // while its scrape verdict resolves to `unknown` without any capture.
+    agentScrapeState: null
+  };
+}
+function projectSession(session, nowSec, remainingAgentBudget) {
+  const agents = [];
+  for (const [index, pane] of session.panes.entries()) {
+    if (agents.length >= FLEET_MAX_AGENTS_PER_SESSION || agents.length >= remainingAgentBudget) {
+      break;
+    }
+    const presentationPane = toPresentationPane(pane, index);
+    if (!isAgentPane(presentationPane)) continue;
+    const presentation = resolveAgentPresentation(presentationPane, nowSec);
+    agents.push({
+      agentId: `agent.${digest(`${session.name}\0${pane.runtimePaneId}`)}`,
+      name: fleetLabel(presentation.displayName ?? pane.currentCommand, `Agent ${index + 1}`),
+      harness: harnessForPane(presentationPane),
+      activity: presentation.activity,
+      attention: presentation.attention,
+      statusSource: presentation.statusSource
+    });
+  }
+  return {
+    sessionId: fleetSessionIdForName(session.name),
+    label: fleetLabel(session.name, "session"),
+    projectLabel: fleetProjectLabel(session.cwd, fleetLabel(session.name, "workspace")),
+    appCreated: session.appCreated,
+    paneCount: Math.min(session.panes.length, FLEET_MAX_PANES_PER_SESSION),
+    agents
+  };
+}
+function projectFleetCatalog(sessions, daemon, nowSec) {
+  const projected = [];
+  let totalAgents = 0;
+  for (const session of sessions) {
+    if (projected.length >= FLEET_MAX_SESSIONS) break;
+    const entry = projectSession(session, nowSec, FLEET_MAX_TOTAL_AGENTS - totalAgents);
+    totalAgents += entry.agents.length;
+    projected.push(entry);
+  }
+  return FleetCatalogResourceV1SchemaZ.parse({
+    version: FLEET_CATALOG_RESOURCE_VERSION,
+    daemon,
+    sessions: projected
+  });
+}
+var init_fleet_catalog2 = __esm({
+  "packages/daemon/src/command-center/resources/fleet-catalog.ts"() {
+    "use strict";
+    init_src();
+    init_application_shell2();
+  }
+});
+
+// packages/daemon/src/command-center/resources/application-shell.ts
+import { createHash as createHash6 } from "node:crypto";
+import { basename as basename9 } from "node:path";
+function digest2(value) {
+  return createHash6("sha256").update(value).digest("hex").slice(0, 20);
+}
+function semanticId(namespace, value) {
+  return `${namespace}.${digest2(value)}`;
+}
+function agentIdForPaneStamp(stamp) {
+  return semanticId("agent", stamp);
+}
+function label(value, fallback) {
+  const withoutControls = Array.from(value ?? "", (character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint <= 31 || codePoint >= 127 && codePoint <= 159 ? " " : character;
+  }).join("");
+  const normalized = withoutControls.replace(/\s+/gu, " ").trim().slice(0, 160);
+  return normalized || fallback;
+}
+function fallbackPaneId(session, pane) {
+  return semanticId(
+    "terminal.discovered",
+    JSON.stringify({
+      session: session.name,
+      runtimeSessionId: session.runtimeSessionId,
+      runtimePaneId: pane.runtimePaneId
+    })
+  );
+}
+function validWindowStamp(value) {
+  return value != null && TerminalAttachmentSemanticWindowIdSchemaZ.safeParse(value).success ? value : null;
+}
+function proveWindow(windowId, panes, stampToWindowIds) {
+  const group = panes.filter((pane) => pane.windowId === windowId);
+  const paneCount = Math.max(...group.map((pane) => pane.windowPaneCount));
+  const stampedCount = group.filter((pane) => validWindowStamp(pane.windowStamp) !== null).length;
+  const distinctStamps = new Set(
+    group.map((pane) => validWindowStamp(pane.windowStamp)).filter((s) => s !== null)
+  );
+  if (distinctStamps.size > 1) return { ok: false, reason: "window-stamp-inconsistent" };
+  const stamp = distinctStamps.size === 1 ? [...distinctStamps][0] : null;
+  if (paneCount > 1) {
+    if (stamp === null) return { ok: false, reason: "missing-window-stamp" };
+    if (stampedCount !== group.length) return { ok: false, reason: "window-stamp-inconsistent" };
+  }
+  if (stamp !== null) {
+    if ((stampToWindowIds.get(stamp)?.size ?? 0) > 1) {
+      return { ok: false, reason: "duplicate-window-stamp" };
+    }
+    return { ok: true, windowResourceId: semanticId("terminal-window", stamp) };
+  }
+  return { ok: true, windowResourceId: null };
+}
+function paneIdentities(session) {
+  const panes = session.panes;
+  const validCounts = /* @__PURE__ */ new Map();
+  for (const pane of panes) {
+    if (!TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
+    validCounts.set(pane.semanticPaneId, (validCounts.get(pane.semanticPaneId) ?? 0) + 1);
+  }
+  const stampToWindowIds = /* @__PURE__ */ new Map();
+  for (const pane of panes) {
+    const stamp = validWindowStamp(pane.windowStamp);
+    if (stamp === null || pane.windowId === void 0) continue;
+    const windows = stampToWindowIds.get(stamp) ?? /* @__PURE__ */ new Set();
+    windows.add(pane.windowId);
+    stampToWindowIds.set(stamp, windows);
+  }
+  const windowVerdicts = /* @__PURE__ */ new Map();
+  const verdictFor = (windowId) => {
+    const cached2 = windowVerdicts.get(windowId);
+    if (cached2 !== void 0) return cached2;
+    const verdict = proveWindow(windowId, panes, stampToWindowIds);
+    windowVerdicts.set(windowId, verdict);
+    return verdict;
+  };
+  const claimed = /* @__PURE__ */ new Set();
+  return panes.map((pane) => {
+    const stamped = pane.semanticPaneId;
+    const locallyValid = stamped !== null && TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(stamped).success && validCounts.get(stamped) === 1;
+    if (locallyValid && !claimed.has(stamped)) {
+      claimed.add(stamped);
+      if (session.catalogIssue !== null) {
+        return {
+          resourceId: stamped,
+          attachability: { status: "unavailable", reason: session.catalogIssue }
+        };
+      }
+      if (pane.windowId === void 0) {
+        return {
+          resourceId: stamped,
+          attachability: pane.windowPaneCount === 1 ? { status: "available", semanticPaneId: stamped } : { status: "unavailable", reason: "not-single-pane-window" }
+        };
+      }
+      const verdict = verdictFor(pane.windowId);
+      if (!verdict.ok) {
+        return {
+          resourceId: stamped,
+          attachability: { status: "unavailable", reason: verdict.reason }
+        };
+      }
+      return {
+        resourceId: stamped,
+        attachability: { status: "available", semanticPaneId: stamped },
+        ...verdict.windowResourceId !== null ? { windowResourceId: verdict.windowResourceId } : {}
+      };
+    }
+    const base = fallbackPaneId(session, pane);
+    let candidate = base;
+    let suffix = 1;
+    while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
+    claimed.add(candidate);
+    return {
+      resourceId: candidate,
+      attachability: {
+        status: "unavailable",
+        reason: session.catalogIssue ?? (stamped === null || stamped.length === 0 ? "missing-semantic-stamp" : !TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(stamped).success ? "invalid-runtime-proof" : "duplicate-semantic-stamp")
+      }
+    };
+  });
+}
+function legacyFallbackPaneId(pane) {
+  return semanticId(
+    "pane.discovered",
+    JSON.stringify({
+      index: pane.index,
+      title: pane.title,
+      command: pane.currentCommand,
+      role: pane.role,
+      name: pane.name,
+      type: pane.type
+    })
+  );
+}
+function legacyPaneIdentities(panes) {
+  const validCounts = /* @__PURE__ */ new Map();
+  for (const pane of panes) {
+    if (!SemanticProductIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
+    validCounts.set(pane.semanticPaneId, (validCounts.get(pane.semanticPaneId) ?? 0) + 1);
+  }
+  const claimed = /* @__PURE__ */ new Set();
+  return panes.map((pane) => {
+    const stamped = pane.semanticPaneId;
+    if (stamped !== null && SemanticProductIdSchemaZ.safeParse(stamped).success && validCounts.get(stamped) === 1 && !claimed.has(stamped)) {
+      claimed.add(stamped);
+      return stamped;
+    }
+    const base = legacyFallbackPaneId(pane);
+    let candidate = base;
+    let suffix = 1;
+    while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
+    claimed.add(candidate);
+    return candidate;
+  });
+}
+function harnessForPane(pane) {
+  const executable = `${pane.currentCommand} ${pane.type ?? ""} ${pane.name ?? ""}`.toLowerCase();
+  if (executable.includes("codex")) return "codex";
+  if (executable.includes("claude")) return "claude-code";
+  return "custom";
+}
+function isAgentPane(pane) {
+  if (pane.agentStateRaw != null && AGENT_STATE_STAMP.test(pane.agentStateRaw.trim())) {
+    return true;
+  }
+  const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
+  return metadata.includes("codex") || metadata.includes("claude") || metadata.includes("opencode") || pane.type === "agent" || pane.role === "lead" || pane.role === "teammate" || pane.role === "planner" || pane.role === "validator" || pane.role === "researcher";
+}
+function legacyAgentActivity(pane) {
+  return /^(?:ba|z|fi)?sh$/u.test(pane.currentCommand.trim().toLowerCase()) ? "idle" : "running";
+}
+function resolveAgentPresentation(pane, nowSec) {
+  const authorityRaw = pane.agentStateRaw ?? void 0;
+  if (pane.agentScrapeState === void 0 && parseAuthority(authorityRaw, nowSec) === null) {
+    const legacy = legacyAgentActivity(pane);
+    return {
+      activity: legacy,
+      attention: false,
+      statusSource: "unknown",
+      detectStatus: legacy === "idle" ? "idle" : "working"
+    };
+  }
+  const resolution = resolveAgentStatus({
+    authorityRaw,
+    nowSec,
+    scrape: () => pane.agentScrapeState ?? "unknown"
+  });
+  const presentation = resolveAgentStatusPresentation({
+    status: resolution.status,
+    stale: false
+  });
+  const metadata = agentDisplayMetadata(
+    pane.agentStatusTextRaw ?? void 0,
+    pane.agentDisplayNameRaw ?? void 0,
+    resolution.source === "authority"
+  );
+  return {
+    activity: presentation.activity,
+    attention: presentation.attention,
+    statusSource: resolution.source,
+    detectStatus: resolution.status,
+    ...metadata.displayName !== void 0 ? { displayName: metadata.displayName } : {},
+    ...metadata.statusText !== void 0 ? { statusText: metadata.statusText } : {}
+  };
+}
+function dockTools(projectId) {
+  const tools = [];
+  for (const surface of CANONICAL_SURFACE_REGISTRY) {
+    if (surface.kind !== "dock-tool") continue;
+    const unavailable = `${surface.label} capability is not available from the daemon application-shell resource yet`;
+    const common = (id) => ({
+      id,
+      label: surface.label,
+      shortcut: surface.shortcut,
+      unreadCount: 0,
+      disabledReason: unavailable
+    });
+    switch (surface.id) {
+      case "files":
+        tools.push({
+          ...common("files"),
+          data: { kind: "files", selectedResourceId: null, fileCount: 0 }
+        });
+        break;
+      case "changes":
+        tools.push({
+          ...common("changes"),
+          data: { kind: "changes", selectedResourceId: null, changeCount: 0 }
+        });
+        break;
+      case "missions":
+        tools.push({
+          ...common("missions"),
+          data: {
+            kind: "missions",
+            missionId: `mission.unavailable.${digest2(projectId)}`,
+            title: "Missions unavailable",
+            status: "disconnected",
+            goalCount: 0,
+            taskCount: 0
+          }
+        });
+        break;
+      case "activity":
+        tools.push({
+          ...common("activity"),
+          data: { kind: "activity", eventCount: 0, latestEventLabel: null }
+        });
+        break;
+    }
+  }
+  return tools;
+}
+function deepFreeze4(value) {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze4(child);
+  return Object.freeze(value);
+}
+function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
+  const sessionName = label(session.name, "tmux session");
+  const rootLabel = label(basename9(session.dir), sessionName);
+  const projectId = semanticId("project", session.dir);
+  const sessionId = semanticId("session", session.name);
+  const focusedIndex = session.panes.findIndex((pane) => pane.active);
+  const focusedPaneId = focusedIndex < 0 ? null : paneIds[focusedIndex] ?? null;
+  const agents = session.panes.flatMap((pane, index) => {
+    if (!isAgentPane(pane)) return [];
+    const paneId = paneIds[index];
+    const presentation = resolveAgentPresentation(pane, nowSec);
+    return [
+      {
+        id: semanticId("agent", paneId),
+        // A fresh authority stamp's sanitized display name outranks the raw pane
+        // title; both pass through label()'s control-strip/clamp before the wire.
+        name: label(presentation.displayName ?? pane.name ?? pane.title, `Agent ${index + 1}`),
+        harness: harnessForPane(pane),
+        activity: presentation.activity,
+        paneId,
+        attention: presentation.attention
+      }
+    ];
+  });
+  const hasPanes = session.panes.length > 0;
+  const paneFact = `${session.panes.length} live terminal pane${session.panes.length === 1 ? "" : "s"} discovered`;
+  const agentFact = `${agents.length} agent pane${agents.length === 1 ? "" : "s"} discovered`;
+  const parsed = ApplicationShellProjectionInputV1WireSchemaZ.parse({
+    project: {
+      id: projectId,
+      name: sessionName,
+      rootLabel,
+      readiness: {
+        state: hasPanes ? "ready" : "warning",
+        facts: ["Live tmux session discovered", paneFact, agentFact],
+        warnings: hasPanes ? [] : ["No live terminal panes were discovered"]
+      }
+    },
+    workspace: {
+      id: semanticId("workspace", session.dir),
+      name: `${sessionName} workspace`.slice(0, 160),
+      activeMode: "terminals",
+      session: {
+        id: sessionId,
+        label: sessionName,
+        state: hasPanes ? "connected" : "reconnecting",
+        active: true
+      },
+      sidebar: {
+        sessions: [
+          {
+            id: sessionId,
+            label: sessionName,
+            state: hasPanes ? "connected" : "reconnecting",
+            active: true
+          }
+        ],
+        agents
+      }
+    },
+    dock: {
+      mode: "collapsed",
+      activeTool: "files",
+      tools: dockTools(projectId)
+    },
+    focus: {
+      // The daemon only knows whether tmux marks a pane active. Desktop host
+      // window activity remains renderer-owned and can replace this
+      // conservative snapshot once live host wiring is present.
+      windowActivity: focusedPaneId === null ? "inactive" : "active",
+      focusZone: focusedPaneId === null ? "primary-navigation" : "canvas",
+      appFocusedPaneId: focusedPaneId,
+      terminalInputPaneId: null,
+      layoutSelectedPaneId: null,
+      overlays: []
+    },
+    connection: hasPanes ? {
+      state: "connected",
+      message: "Live tmux session discovered",
+      safeState: "No desktop terminal attachment is open",
+      nextAction: "Choose a terminal pane"
+    } : {
+      state: "recovering",
+      message: "The tmux session has no discoverable panes",
+      safeState: "No terminal attachment was attempted",
+      nextAction: "Wait for tmux pane discovery to recover"
+    }
+  });
+  projectApplicationShellV1(parsed);
+  return parsed;
+}
+function projectApplicationShellResource(session, opts = {}) {
+  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1e3);
+  const identities = paneIdentities(session);
+  const core = projectApplicationShellResourceV1Core(
+    session,
+    identities.map(({ resourceId }) => resourceId),
+    nowSec
+  );
+  const focusedPaneId = core.focus.appFocusedPaneId;
+  const terminalResources = session.panes.map((pane, index) => {
+    const identity = identities[index];
+    return {
+      id: identity.resourceId,
+      title: label(pane.name ?? pane.title, `Terminal ${index + 1}`),
+      kind: isAgentPane(pane) ? "agent" : "terminal",
+      active: identity.resourceId === focusedPaneId,
+      attachability: identity.attachability,
+      ...identity.windowResourceId !== void 0 ? { windowResourceId: identity.windowResourceId } : {}
+    };
+  });
+  const parsed = ApplicationShellProjectionInputV2SchemaZ.parse({
+    ...core,
+    terminalInventory: {
+      activeResourceId: focusedPaneId,
+      resources: terminalResources
+    }
+  });
+  projectApplicationShellV1(parsed);
+  return deepFreeze4(parsed);
+}
+function projectApplicationShellResourceV3(session, appWindows, missionWorkspace, dockSummary, agentGraphOverlay, opts = {}) {
+  const resource3 = projectApplicationShellResource(session, opts);
+  const withMissions = missionWorkspace ? dockWithMissionWorkspace(resource3.dock, missionWorkspace) : resource3.dock;
+  const dock = dockWithWorkspaceSurfaces(
+    withMissions,
+    dockSummary ?? { fileCount: 0, changeCount: 0 }
+  );
+  const parsed = ApplicationShellProjectionInputV3SchemaZ.parse({
+    ...resource3,
+    dock,
+    appWindows,
+    ...missionWorkspace === void 0 ? {} : { missionWorkspace },
+    ...agentGraphOverlay === void 0 ? {} : { agentGraphOverlay },
+    // Correlation key: the open workspace's own fleet id, minted by the SAME
+    // authority the catalog and promotion reversal use, so the renderer can mark
+    // this session open in the sidebar and exclude it from the graph merge.
+    fleetSessionId: fleetSessionIdForName(session.name)
+  });
+  projectApplicationShellV1(parsed);
+  return deepFreeze4(parsed);
+}
+function dockWithWorkspaceSurfaces(dock, summary) {
+  return {
+    ...dock,
+    tools: dock.tools.map((tool) => {
+      if (tool.id === "files" && tool.data.kind === "files") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: { ...tool.data, fileCount: summary.fileCount }
+        };
+      }
+      if (tool.id === "changes" && tool.data.kind === "changes") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: { ...tool.data, changeCount: summary.changeCount }
+        };
+      }
+      return tool;
+    })
+  };
+}
+function dockWithMissionWorkspace(dock, missionWorkspace) {
+  const primary = missionWorkspace.status === "ready" ? missionWorkspace.missions[0] ?? null : null;
+  const latestActivity = missionWorkspace.status === "ready" ? missionWorkspace.activity[0] ?? null : null;
+  return {
+    ...dock,
+    tools: dock.tools.map((tool) => {
+      if (tool.id === "missions") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: {
+            kind: "missions",
+            missionId: primary?.id ?? null,
+            title: missionWorkspace.status === "degraded" ? "Mission history needs attention" : primary?.title ?? "No missions yet",
+            status: missionWorkspace.status === "degraded" ? "recovering" : missionStatusForDock(primary?.status),
+            goalCount: primary?.progress.total ?? 0,
+            taskCount: primary?.progress.total ?? 0
+          }
+        };
+      }
+      if (tool.id === "activity") {
+        return {
+          ...tool,
+          disabledReason: null,
+          data: {
+            kind: "activity",
+            eventCount: missionWorkspace.status === "ready" ? missionWorkspace.counts.activity : 0,
+            latestEventLabel: latestActivity?.label ?? null
+          }
+        };
+      }
+      return tool;
+    })
+  };
+}
+function missionStatusForDock(status2) {
+  if (status2 === "started") return "running";
+  if (status2 === "blocked") return "blocked";
+  if (status2 === "review") return "review";
+  if (status2 === "completed" || status2 === "failed" || status2 === "cancelled") return "done";
+  return "idle";
+}
+function projectLegacyApplicationShellResourceV1(session) {
+  return deepFreeze4(
+    projectApplicationShellResourceV1Core(
+      session,
+      legacyPaneIdentities(session.panes),
+      Math.floor(Date.now() / 1e3)
+    )
+  );
+}
+var AGENT_STATE_STAMP;
+var init_application_shell2 = __esm({
+  "packages/daemon/src/command-center/resources/application-shell.ts"() {
+    "use strict";
+    init_src();
+    init_classify();
+    init_agent_resolution();
+    init_fleet_catalog2();
+    AGENT_STATE_STAMP = /^(?:working|blocked|done|idle):\d+$/u;
   }
 });
 
@@ -16764,12 +17393,27 @@ function maybeStopProjectRegistryListener() {
   projectRegistryEmitter.off("change", projectRegistryListener);
   projectRegistryListener = null;
 }
+function agentTurnCompletedFrame(completion) {
+  const stampValid = completion.paneStamp !== null && TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(completion.paneStamp).success;
+  return {
+    type: "agent.turn-completed",
+    sessionName: completion.sessionName,
+    agentId: stampValid ? agentIdForPaneStamp(completion.paneStamp) : null,
+    fromStatus: completion.fromStatus,
+    toStatus: completion.toStatus,
+    at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
 function ensureAgentStatusWatcher() {
   if (agentStatusWatcher) return;
   agentStatusWatcher = new AgentStatusWatcher({
     read: () => readAgentStatesBySession(),
     emit: (sessionName) => {
       for (const client of allClients) client.broadcastAgentStatusChanged(sessionName);
+    },
+    emitTurnCompleted: (completion) => {
+      const frame = agentTurnCompletedFrame(completion);
+      for (const client of allClients) client.broadcastAgentTurnCompleted(frame);
     }
   });
   agentStatusWatcher.start();
@@ -16812,6 +17456,15 @@ function broadcastActionComplete(name, result) {
 }
 function broadcastConfigChanged(sessionName) {
   for (const client of allClients) client.broadcastConfigChanged(sessionName);
+}
+function broadcastWorkspacePromotionCompleted(workspaceName, outcome) {
+  const frame = {
+    type: "workspace.promotion-completed",
+    workspaceName,
+    outcome,
+    at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  for (const client of allClients) client.broadcastWorkspacePromotionCompleted(frame);
 }
 function broadcastTerminalsChanged(sessionName) {
   for (const client of allClients) client.broadcastTerminalsChanged(sessionName);
@@ -16864,6 +17517,12 @@ function handleWsEventsConnection(socket, daemonIdentity) {
   const broadcastAgentStatusChangedForClient = (sessionName) => {
     send2({ type: "agent-status.changed", sessionName });
   };
+  const broadcastAgentTurnCompletedForClient = (frame) => {
+    send2(frame);
+  };
+  const broadcastWorkspacePromotionCompletedForClient = (frame) => {
+    send2(frame);
+  };
   const broadcastFleetChangedForClient = () => {
     send2({ type: "fleet.changed" });
   };
@@ -16885,6 +17544,8 @@ function handleWsEventsConnection(socket, daemonIdentity) {
     broadcastConfigChanged: broadcastConfigChangedForClient,
     broadcastTerminalsChanged: broadcastTerminalsChangedForClient,
     broadcastAgentStatusChanged: broadcastAgentStatusChangedForClient,
+    broadcastAgentTurnCompleted: broadcastAgentTurnCompletedForClient,
+    broadcastWorkspacePromotionCompleted: broadcastWorkspacePromotionCompletedForClient,
     broadcastFleetChanged: broadcastFleetChangedForClient
   };
   allClients.add(clientHandle);
@@ -16974,6 +17635,7 @@ var init_ws_events = __esm({
     "use strict";
     init_discovery();
     init_agent_status_watch();
+    init_application_shell2();
     init_project_registry();
     init_workspace_registry();
     init_src();
@@ -17219,7 +17881,7 @@ var init_project_readiness = __esm({
 // packages/daemon/src/lib/project-readiness-probe.ts
 import { execFile as execFile2 } from "node:child_process";
 import { accessSync as accessSync2, constants as constants3, existsSync as existsSync28, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
-import { delimiter, isAbsolute as isAbsolute4, basename as basename8, resolve as resolve21, sep as sep2 } from "node:path";
+import { delimiter, isAbsolute as isAbsolute4, basename as basename10, resolve as resolve21, sep as sep2 } from "node:path";
 function errorCode(error) {
   if (!error || typeof error !== "object" || !("code" in error)) return void 0;
   const code = error.code;
@@ -17435,7 +18097,7 @@ async function probeProjectReadiness(requestedPath, options = {}) {
   const identityKey = validResolution?.identityKey ?? null;
   const identitySource = validResolution?.identitySource ?? null;
   const projectNameSource = projectRoot ?? validCanonicalInput ?? absoluteRequestedPath;
-  const sanitizedName = sanitizeName(basename8(projectNameSource));
+  const sanitizedName = sanitizeName(basename10(projectNameSource));
   const [gitVersion, tmuxVersion, repositoryResult, ...harnesses] = await Promise.all([
     probeVersion(io, gitLocated, ["--version"], commandOptions),
     probeVersion(io, tmuxLocated, ["-V"], commandOptions),
@@ -17596,7 +18258,7 @@ var init_project_readiness_probe = __esm({
 });
 
 // packages/daemon/src/lib/project-runtime-repository.ts
-import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash7, randomUUID as randomUUID2 } from "node:crypto";
 import {
   closeSync as closeSync3,
   fsyncSync,
@@ -17646,7 +18308,7 @@ function parseDocumentEnvelope(path2, raw) {
   };
 }
 function sha256(value) {
-  return createHash5("sha256").update(value).digest("hex");
+  return createHash7("sha256").update(value).digest("hex");
 }
 function encodeUtf8(value) {
   return Buffer.from(value, "utf-8");
@@ -20495,9 +21157,9 @@ var init_semantic_pane_catalog = __esm({
 });
 
 // packages/daemon/src/lib/workspace-open.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import { realpathSync as realpathSync6, statSync as statSync7 } from "node:fs";
-import { basename as basename9, isAbsolute as isAbsolute7 } from "node:path";
+import { basename as basename11, isAbsolute as isAbsolute7 } from "node:path";
 function boundedAuthorityLimit2(value, fallback) {
   if (value === void 0) return fallback;
   if (!Number.isInteger(value) || value < 1 || value > MAX_OPERATIONS) {
@@ -20512,11 +21174,11 @@ function boundedTmuxOutput(value) {
   return value.replace(/(?:\r?\n)+$/u, "");
 }
 function safeBaseName(projectDir) {
-  const value = basename9(projectDir).normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/-+/gu, "-").replace(/^[-_]+|[-_]+$/gu, "").slice(0, 72);
+  const value = basename11(projectDir).normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/-+/gu, "-").replace(/^[-_]+|[-_]+$/gu, "").slice(0, 72);
   return value || "workspace";
 }
 function deriveWorkspaceOpenIdentity(canonicalProjectDir2) {
-  const projectKey = createHash6("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir2, "utf8").digest("hex").slice(0, 32);
+  const projectKey = createHash8("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir2, "utf8").digest("hex").slice(0, 32);
   const name = `${safeBaseName(canonicalProjectDir2).slice(0, 64)}-${projectKey}`;
   return Object.freeze({
     workspaceName: name,
@@ -21221,579 +21883,6 @@ var init_workspace_open2 = __esm({
         });
       }
     };
-  }
-});
-
-// packages/daemon/src/command-center/resources/application-shell.ts
-import { createHash as createHash7 } from "node:crypto";
-import { basename as basename10 } from "node:path";
-function digest(value) {
-  return createHash7("sha256").update(value).digest("hex").slice(0, 20);
-}
-function semanticId(namespace, value) {
-  return `${namespace}.${digest(value)}`;
-}
-function label(value, fallback) {
-  const withoutControls = Array.from(value ?? "", (character) => {
-    const codePoint = character.codePointAt(0);
-    return codePoint <= 31 || codePoint >= 127 && codePoint <= 159 ? " " : character;
-  }).join("");
-  const normalized = withoutControls.replace(/\s+/gu, " ").trim().slice(0, 160);
-  return normalized || fallback;
-}
-function fallbackPaneId(session, pane) {
-  return semanticId(
-    "terminal.discovered",
-    JSON.stringify({
-      session: session.name,
-      runtimeSessionId: session.runtimeSessionId,
-      runtimePaneId: pane.runtimePaneId
-    })
-  );
-}
-function validWindowStamp(value) {
-  return value != null && TerminalAttachmentSemanticWindowIdSchemaZ.safeParse(value).success ? value : null;
-}
-function proveWindow(windowId, panes, stampToWindowIds) {
-  const group = panes.filter((pane) => pane.windowId === windowId);
-  const paneCount = Math.max(...group.map((pane) => pane.windowPaneCount));
-  const stampedCount = group.filter((pane) => validWindowStamp(pane.windowStamp) !== null).length;
-  const distinctStamps = new Set(
-    group.map((pane) => validWindowStamp(pane.windowStamp)).filter((s) => s !== null)
-  );
-  if (distinctStamps.size > 1) return { ok: false, reason: "window-stamp-inconsistent" };
-  const stamp = distinctStamps.size === 1 ? [...distinctStamps][0] : null;
-  if (paneCount > 1) {
-    if (stamp === null) return { ok: false, reason: "missing-window-stamp" };
-    if (stampedCount !== group.length) return { ok: false, reason: "window-stamp-inconsistent" };
-  }
-  if (stamp !== null) {
-    if ((stampToWindowIds.get(stamp)?.size ?? 0) > 1) {
-      return { ok: false, reason: "duplicate-window-stamp" };
-    }
-    return { ok: true, windowResourceId: semanticId("terminal-window", stamp) };
-  }
-  return { ok: true, windowResourceId: null };
-}
-function paneIdentities(session) {
-  const panes = session.panes;
-  const validCounts = /* @__PURE__ */ new Map();
-  for (const pane of panes) {
-    if (!TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
-    validCounts.set(pane.semanticPaneId, (validCounts.get(pane.semanticPaneId) ?? 0) + 1);
-  }
-  const stampToWindowIds = /* @__PURE__ */ new Map();
-  for (const pane of panes) {
-    const stamp = validWindowStamp(pane.windowStamp);
-    if (stamp === null || pane.windowId === void 0) continue;
-    const windows = stampToWindowIds.get(stamp) ?? /* @__PURE__ */ new Set();
-    windows.add(pane.windowId);
-    stampToWindowIds.set(stamp, windows);
-  }
-  const windowVerdicts = /* @__PURE__ */ new Map();
-  const verdictFor = (windowId) => {
-    const cached2 = windowVerdicts.get(windowId);
-    if (cached2 !== void 0) return cached2;
-    const verdict = proveWindow(windowId, panes, stampToWindowIds);
-    windowVerdicts.set(windowId, verdict);
-    return verdict;
-  };
-  const claimed = /* @__PURE__ */ new Set();
-  return panes.map((pane) => {
-    const stamped = pane.semanticPaneId;
-    const locallyValid = stamped !== null && TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(stamped).success && validCounts.get(stamped) === 1;
-    if (locallyValid && !claimed.has(stamped)) {
-      claimed.add(stamped);
-      if (session.catalogIssue !== null) {
-        return {
-          resourceId: stamped,
-          attachability: { status: "unavailable", reason: session.catalogIssue }
-        };
-      }
-      if (pane.windowId === void 0) {
-        return {
-          resourceId: stamped,
-          attachability: pane.windowPaneCount === 1 ? { status: "available", semanticPaneId: stamped } : { status: "unavailable", reason: "not-single-pane-window" }
-        };
-      }
-      const verdict = verdictFor(pane.windowId);
-      if (!verdict.ok) {
-        return {
-          resourceId: stamped,
-          attachability: { status: "unavailable", reason: verdict.reason }
-        };
-      }
-      return {
-        resourceId: stamped,
-        attachability: { status: "available", semanticPaneId: stamped },
-        ...verdict.windowResourceId !== null ? { windowResourceId: verdict.windowResourceId } : {}
-      };
-    }
-    const base = fallbackPaneId(session, pane);
-    let candidate = base;
-    let suffix = 1;
-    while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
-    claimed.add(candidate);
-    return {
-      resourceId: candidate,
-      attachability: {
-        status: "unavailable",
-        reason: session.catalogIssue ?? (stamped === null || stamped.length === 0 ? "missing-semantic-stamp" : !TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(stamped).success ? "invalid-runtime-proof" : "duplicate-semantic-stamp")
-      }
-    };
-  });
-}
-function legacyFallbackPaneId(pane) {
-  return semanticId(
-    "pane.discovered",
-    JSON.stringify({
-      index: pane.index,
-      title: pane.title,
-      command: pane.currentCommand,
-      role: pane.role,
-      name: pane.name,
-      type: pane.type
-    })
-  );
-}
-function legacyPaneIdentities(panes) {
-  const validCounts = /* @__PURE__ */ new Map();
-  for (const pane of panes) {
-    if (!SemanticProductIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
-    validCounts.set(pane.semanticPaneId, (validCounts.get(pane.semanticPaneId) ?? 0) + 1);
-  }
-  const claimed = /* @__PURE__ */ new Set();
-  return panes.map((pane) => {
-    const stamped = pane.semanticPaneId;
-    if (stamped !== null && SemanticProductIdSchemaZ.safeParse(stamped).success && validCounts.get(stamped) === 1 && !claimed.has(stamped)) {
-      claimed.add(stamped);
-      return stamped;
-    }
-    const base = legacyFallbackPaneId(pane);
-    let candidate = base;
-    let suffix = 1;
-    while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
-    claimed.add(candidate);
-    return candidate;
-  });
-}
-function harnessForPane(pane) {
-  const executable = `${pane.currentCommand} ${pane.type ?? ""} ${pane.name ?? ""}`.toLowerCase();
-  if (executable.includes("codex")) return "codex";
-  if (executable.includes("claude")) return "claude-code";
-  return "custom";
-}
-function isAgentPane(pane) {
-  if (pane.agentStateRaw != null && AGENT_STATE_STAMP.test(pane.agentStateRaw.trim())) {
-    return true;
-  }
-  const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
-  return metadata.includes("codex") || metadata.includes("claude") || metadata.includes("opencode") || pane.type === "agent" || pane.role === "lead" || pane.role === "teammate" || pane.role === "planner" || pane.role === "validator" || pane.role === "researcher";
-}
-function legacyAgentActivity(pane) {
-  return /^(?:ba|z|fi)?sh$/u.test(pane.currentCommand.trim().toLowerCase()) ? "idle" : "running";
-}
-function resolveAgentPresentation(pane, nowSec) {
-  const authorityRaw = pane.agentStateRaw ?? void 0;
-  if (pane.agentScrapeState === void 0 && parseAuthority(authorityRaw, nowSec) === null) {
-    const legacy = legacyAgentActivity(pane);
-    return {
-      activity: legacy,
-      attention: false,
-      statusSource: "unknown",
-      detectStatus: legacy === "idle" ? "idle" : "working"
-    };
-  }
-  const resolution = resolveAgentStatus({
-    authorityRaw,
-    nowSec,
-    scrape: () => pane.agentScrapeState ?? "unknown"
-  });
-  const presentation = resolveAgentStatusPresentation({
-    status: resolution.status,
-    stale: false
-  });
-  const metadata = agentDisplayMetadata(
-    pane.agentStatusTextRaw ?? void 0,
-    pane.agentDisplayNameRaw ?? void 0,
-    resolution.source === "authority"
-  );
-  return {
-    activity: presentation.activity,
-    attention: presentation.attention,
-    statusSource: resolution.source,
-    detectStatus: resolution.status,
-    ...metadata.displayName !== void 0 ? { displayName: metadata.displayName } : {},
-    ...metadata.statusText !== void 0 ? { statusText: metadata.statusText } : {}
-  };
-}
-function dockTools(projectId) {
-  const tools = [];
-  for (const surface of CANONICAL_SURFACE_REGISTRY) {
-    if (surface.kind !== "dock-tool") continue;
-    const unavailable = `${surface.label} capability is not available from the daemon application-shell resource yet`;
-    const common = (id) => ({
-      id,
-      label: surface.label,
-      shortcut: surface.shortcut,
-      unreadCount: 0,
-      disabledReason: unavailable
-    });
-    switch (surface.id) {
-      case "files":
-        tools.push({
-          ...common("files"),
-          data: { kind: "files", selectedResourceId: null, fileCount: 0 }
-        });
-        break;
-      case "changes":
-        tools.push({
-          ...common("changes"),
-          data: { kind: "changes", selectedResourceId: null, changeCount: 0 }
-        });
-        break;
-      case "missions":
-        tools.push({
-          ...common("missions"),
-          data: {
-            kind: "missions",
-            missionId: `mission.unavailable.${digest(projectId)}`,
-            title: "Missions unavailable",
-            status: "disconnected",
-            goalCount: 0,
-            taskCount: 0
-          }
-        });
-        break;
-      case "activity":
-        tools.push({
-          ...common("activity"),
-          data: { kind: "activity", eventCount: 0, latestEventLabel: null }
-        });
-        break;
-    }
-  }
-  return tools;
-}
-function deepFreeze4(value) {
-  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze4(child);
-  return Object.freeze(value);
-}
-function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
-  const sessionName = label(session.name, "tmux session");
-  const rootLabel = label(basename10(session.dir), sessionName);
-  const projectId = semanticId("project", session.dir);
-  const sessionId = semanticId("session", session.name);
-  const focusedIndex = session.panes.findIndex((pane) => pane.active);
-  const focusedPaneId = focusedIndex < 0 ? null : paneIds[focusedIndex] ?? null;
-  const agents = session.panes.flatMap((pane, index) => {
-    if (!isAgentPane(pane)) return [];
-    const paneId = paneIds[index];
-    const presentation = resolveAgentPresentation(pane, nowSec);
-    return [
-      {
-        id: semanticId("agent", paneId),
-        // A fresh authority stamp's sanitized display name outranks the raw pane
-        // title; both pass through label()'s control-strip/clamp before the wire.
-        name: label(presentation.displayName ?? pane.name ?? pane.title, `Agent ${index + 1}`),
-        harness: harnessForPane(pane),
-        activity: presentation.activity,
-        paneId,
-        attention: presentation.attention
-      }
-    ];
-  });
-  const hasPanes = session.panes.length > 0;
-  const paneFact = `${session.panes.length} live terminal pane${session.panes.length === 1 ? "" : "s"} discovered`;
-  const agentFact = `${agents.length} agent pane${agents.length === 1 ? "" : "s"} discovered`;
-  const parsed = ApplicationShellProjectionInputV1WireSchemaZ.parse({
-    project: {
-      id: projectId,
-      name: sessionName,
-      rootLabel,
-      readiness: {
-        state: hasPanes ? "ready" : "warning",
-        facts: ["Live tmux session discovered", paneFact, agentFact],
-        warnings: hasPanes ? [] : ["No live terminal panes were discovered"]
-      }
-    },
-    workspace: {
-      id: semanticId("workspace", session.dir),
-      name: `${sessionName} workspace`.slice(0, 160),
-      activeMode: "terminals",
-      session: {
-        id: sessionId,
-        label: sessionName,
-        state: hasPanes ? "connected" : "reconnecting",
-        active: true
-      },
-      sidebar: {
-        sessions: [
-          {
-            id: sessionId,
-            label: sessionName,
-            state: hasPanes ? "connected" : "reconnecting",
-            active: true
-          }
-        ],
-        agents
-      }
-    },
-    dock: {
-      mode: "collapsed",
-      activeTool: "files",
-      tools: dockTools(projectId)
-    },
-    focus: {
-      // The daemon only knows whether tmux marks a pane active. Desktop host
-      // window activity remains renderer-owned and can replace this
-      // conservative snapshot once live host wiring is present.
-      windowActivity: focusedPaneId === null ? "inactive" : "active",
-      focusZone: focusedPaneId === null ? "primary-navigation" : "canvas",
-      appFocusedPaneId: focusedPaneId,
-      terminalInputPaneId: null,
-      layoutSelectedPaneId: null,
-      overlays: []
-    },
-    connection: hasPanes ? {
-      state: "connected",
-      message: "Live tmux session discovered",
-      safeState: "No desktop terminal attachment is open",
-      nextAction: "Choose a terminal pane"
-    } : {
-      state: "recovering",
-      message: "The tmux session has no discoverable panes",
-      safeState: "No terminal attachment was attempted",
-      nextAction: "Wait for tmux pane discovery to recover"
-    }
-  });
-  projectApplicationShellV1(parsed);
-  return parsed;
-}
-function projectApplicationShellResource(session, opts = {}) {
-  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1e3);
-  const identities = paneIdentities(session);
-  const core = projectApplicationShellResourceV1Core(
-    session,
-    identities.map(({ resourceId }) => resourceId),
-    nowSec
-  );
-  const focusedPaneId = core.focus.appFocusedPaneId;
-  const terminalResources = session.panes.map((pane, index) => {
-    const identity = identities[index];
-    return {
-      id: identity.resourceId,
-      title: label(pane.name ?? pane.title, `Terminal ${index + 1}`),
-      kind: isAgentPane(pane) ? "agent" : "terminal",
-      active: identity.resourceId === focusedPaneId,
-      attachability: identity.attachability,
-      ...identity.windowResourceId !== void 0 ? { windowResourceId: identity.windowResourceId } : {}
-    };
-  });
-  const parsed = ApplicationShellProjectionInputV2SchemaZ.parse({
-    ...core,
-    terminalInventory: {
-      activeResourceId: focusedPaneId,
-      resources: terminalResources
-    }
-  });
-  projectApplicationShellV1(parsed);
-  return deepFreeze4(parsed);
-}
-function projectApplicationShellResourceV3(session, appWindows, missionWorkspace, dockSummary, agentGraphOverlay, opts = {}) {
-  const resource3 = projectApplicationShellResource(session, opts);
-  const withMissions = missionWorkspace ? dockWithMissionWorkspace(resource3.dock, missionWorkspace) : resource3.dock;
-  const dock = dockWithWorkspaceSurfaces(
-    withMissions,
-    dockSummary ?? { fileCount: 0, changeCount: 0 }
-  );
-  const parsed = ApplicationShellProjectionInputV3SchemaZ.parse({
-    ...resource3,
-    dock,
-    appWindows,
-    ...missionWorkspace === void 0 ? {} : { missionWorkspace },
-    ...agentGraphOverlay === void 0 ? {} : { agentGraphOverlay },
-    // Correlation key: the open workspace's own fleet id, minted by the SAME
-    // authority the catalog and promotion reversal use, so the renderer can mark
-    // this session open in the sidebar and exclude it from the graph merge.
-    fleetSessionId: fleetSessionIdForName(session.name)
-  });
-  projectApplicationShellV1(parsed);
-  return deepFreeze4(parsed);
-}
-function dockWithWorkspaceSurfaces(dock, summary) {
-  return {
-    ...dock,
-    tools: dock.tools.map((tool) => {
-      if (tool.id === "files" && tool.data.kind === "files") {
-        return {
-          ...tool,
-          disabledReason: null,
-          data: { ...tool.data, fileCount: summary.fileCount }
-        };
-      }
-      if (tool.id === "changes" && tool.data.kind === "changes") {
-        return {
-          ...tool,
-          disabledReason: null,
-          data: { ...tool.data, changeCount: summary.changeCount }
-        };
-      }
-      return tool;
-    })
-  };
-}
-function dockWithMissionWorkspace(dock, missionWorkspace) {
-  const primary = missionWorkspace.status === "ready" ? missionWorkspace.missions[0] ?? null : null;
-  const latestActivity = missionWorkspace.status === "ready" ? missionWorkspace.activity[0] ?? null : null;
-  return {
-    ...dock,
-    tools: dock.tools.map((tool) => {
-      if (tool.id === "missions") {
-        return {
-          ...tool,
-          disabledReason: null,
-          data: {
-            kind: "missions",
-            missionId: primary?.id ?? null,
-            title: missionWorkspace.status === "degraded" ? "Mission history needs attention" : primary?.title ?? "No missions yet",
-            status: missionWorkspace.status === "degraded" ? "recovering" : missionStatusForDock(primary?.status),
-            goalCount: primary?.progress.total ?? 0,
-            taskCount: primary?.progress.total ?? 0
-          }
-        };
-      }
-      if (tool.id === "activity") {
-        return {
-          ...tool,
-          disabledReason: null,
-          data: {
-            kind: "activity",
-            eventCount: missionWorkspace.status === "ready" ? missionWorkspace.counts.activity : 0,
-            latestEventLabel: latestActivity?.label ?? null
-          }
-        };
-      }
-      return tool;
-    })
-  };
-}
-function missionStatusForDock(status2) {
-  if (status2 === "started") return "running";
-  if (status2 === "blocked") return "blocked";
-  if (status2 === "review") return "review";
-  if (status2 === "completed" || status2 === "failed" || status2 === "cancelled") return "done";
-  return "idle";
-}
-function projectLegacyApplicationShellResourceV1(session) {
-  return deepFreeze4(
-    projectApplicationShellResourceV1Core(
-      session,
-      legacyPaneIdentities(session.panes),
-      Math.floor(Date.now() / 1e3)
-    )
-  );
-}
-var AGENT_STATE_STAMP;
-var init_application_shell2 = __esm({
-  "packages/daemon/src/command-center/resources/application-shell.ts"() {
-    "use strict";
-    init_src();
-    init_classify();
-    init_agent_resolution();
-    init_fleet_catalog2();
-    AGENT_STATE_STAMP = /^(?:working|blocked|done|idle):\d+$/u;
-  }
-});
-
-// packages/daemon/src/command-center/resources/fleet-catalog.ts
-import { createHash as createHash8 } from "node:crypto";
-import { basename as basename11 } from "node:path";
-function digest2(value) {
-  return createHash8("sha256").update(value).digest("hex").slice(0, 20);
-}
-function fleetSessionIdForName(sessionName) {
-  return `session.${digest2(sessionName)}`;
-}
-function fleetLabel(value, fallback) {
-  const stripped = Array.from(value ?? "", (character) => {
-    const codePoint = character.codePointAt(0);
-    return codePoint <= 31 || codePoint >= 127 && codePoint <= 159 ? " " : character;
-  }).join("");
-  const normalized = stripped.replace(/\s+/gu, " ").trim().slice(0, FLEET_LABEL_MAX_LENGTH);
-  return normalized || fallback;
-}
-function fleetProjectLabel(cwd, fallback) {
-  const base = basename11(cwd).replace(/[/\\]/gu, "");
-  return fleetLabel(base, fallback);
-}
-function toPresentationPane(pane, index) {
-  return {
-    semanticPaneId: null,
-    index,
-    title: "",
-    currentCommand: pane.currentCommand,
-    active: pane.active,
-    role: null,
-    name: null,
-    type: null,
-    agentStateRaw: pane.agentStateRaw,
-    agentStatusTextRaw: pane.agentStatusTextRaw,
-    agentDisplayNameRaw: pane.agentDisplayNameRaw,
-    // Authority-only: the fleet never scrapes an unopened session. `null` (not
-    // `undefined`) keeps `resolveAgentPresentation` on the ground-truth path
-    // while its scrape verdict resolves to `unknown` without any capture.
-    agentScrapeState: null
-  };
-}
-function projectSession(session, nowSec, remainingAgentBudget) {
-  const agents = [];
-  for (const [index, pane] of session.panes.entries()) {
-    if (agents.length >= FLEET_MAX_AGENTS_PER_SESSION || agents.length >= remainingAgentBudget) {
-      break;
-    }
-    const presentationPane = toPresentationPane(pane, index);
-    if (!isAgentPane(presentationPane)) continue;
-    const presentation = resolveAgentPresentation(presentationPane, nowSec);
-    agents.push({
-      agentId: `agent.${digest2(`${session.name}\0${pane.runtimePaneId}`)}`,
-      name: fleetLabel(presentation.displayName ?? pane.currentCommand, `Agent ${index + 1}`),
-      harness: harnessForPane(presentationPane),
-      activity: presentation.activity,
-      attention: presentation.attention,
-      statusSource: presentation.statusSource
-    });
-  }
-  return {
-    sessionId: fleetSessionIdForName(session.name),
-    label: fleetLabel(session.name, "session"),
-    projectLabel: fleetProjectLabel(session.cwd, fleetLabel(session.name, "workspace")),
-    appCreated: session.appCreated,
-    paneCount: Math.min(session.panes.length, FLEET_MAX_PANES_PER_SESSION),
-    agents
-  };
-}
-function projectFleetCatalog(sessions, daemon, nowSec) {
-  const projected = [];
-  let totalAgents = 0;
-  for (const session of sessions) {
-    if (projected.length >= FLEET_MAX_SESSIONS) break;
-    const entry = projectSession(session, nowSec, FLEET_MAX_TOTAL_AGENTS - totalAgents);
-    totalAgents += entry.agents.length;
-    projected.push(entry);
-  }
-  return FleetCatalogResourceV1SchemaZ.parse({
-    version: FLEET_CATALOG_RESOURCE_VERSION,
-    daemon,
-    sessions: projected
-  });
-}
-var init_fleet_catalog2 = __esm({
-  "packages/daemon/src/command-center/resources/fleet-catalog.ts"() {
-    "use strict";
-    init_src();
-    init_application_shell2();
   }
 });
 
@@ -29655,6 +29744,7 @@ function outputZodErrorEnvelope(err) {
 }
 function createActionDispatcher(deps2 = {}) {
   const broadcast = deps2.broadcast ?? broadcastActionComplete;
+  const broadcastPromotionCompleted = deps2.broadcastPromotionCompleted ?? broadcastWorkspacePromotionCompleted;
   return async function dispatcher(c) {
     const name = c.req.param("name");
     if (!name || !isActionName(name)) {
@@ -29745,6 +29835,18 @@ function createActionDispatcher(deps2 = {}) {
         console.error("[actions] broadcast failed:", err);
       }
     }
+    if (actionName === "workspace.promote") {
+      const promoted = WorkspacePromoteMutationResultSchemaZ.safeParse(outputParsed.data);
+      if (promoted.success) {
+        try {
+          broadcastPromotionCompleted(promoted.data.resource.workspaceName, promoted.data.outcome);
+        } catch (err) {
+          console.error("[actions] promotion receipt broadcast failed:", err);
+        }
+      } else {
+        console.error("[actions] workspace.promote result did not match the mutation schema");
+      }
+    }
     return c.json({ ok: true, result: outputParsed.data }, 200);
   };
 }
@@ -29755,6 +29857,7 @@ var init_dispatcher = __esm({
     init_errors3();
     init_registry2();
     init_ws_events();
+    init_src();
     init_command_definitions();
   }
 });
@@ -36568,6 +36671,121 @@ var init_client = __esm({
   }
 });
 
+// packages/daemon/src/tui/team/wait-receipts.ts
+var wait_receipts_exports = {};
+__export(wait_receipts_exports, {
+  RECEIPT_CONNECT_TIMEOUT_MS: () => RECEIPT_CONNECT_TIMEOUT_MS,
+  isReceiptCoveredStatus: () => isReceiptCoveredStatus,
+  waitForAgentStatusViaReceipts: () => waitForAgentStatusViaReceipts
+});
+import { WebSocket as WsWebSocket } from "ws";
+function isReceiptCoveredStatus(want) {
+  return want === "done" || want === "idle";
+}
+function messageText(data) {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  return String(data);
+}
+async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
+  if (!isReceiptCoveredStatus(want)) return null;
+  const readInfo = opts.readDaemonInfo ?? readCanonicalDaemonInfo;
+  let info;
+  try {
+    info = readInfo();
+  } catch {
+    return null;
+  }
+  if (!info) return null;
+  const probeAlive = opts.probeAlive ?? isCanonicalDaemonAlive;
+  if (!await probeAlive(info)) return null;
+  const timeoutMs = opts.timeoutMs ?? WAIT_DEFAULT_TIMEOUT_MS;
+  const connectTimeoutMs = opts.connectTimeoutMs ?? RECEIPT_CONNECT_TIMEOUT_MS;
+  const authToken = info.authToken;
+  const openSocket = opts.openSocket ?? ((url2) => new WsWebSocket(
+    url2,
+    authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : void 0
+  ));
+  const currentStatus = opts.currentStatus ?? (() => findSessionStatus(listTeamSessions(createStatusTracker()), session));
+  const url = canonicalDaemonUrl("ws", info.bindHostname, info.port, "/ws/events");
+  let socket;
+  try {
+    socket = openSocket(url);
+  } catch {
+    return null;
+  }
+  return new Promise((resolve31) => {
+    let settled = false;
+    let lastStatus = null;
+    let deadlineTimer = null;
+    let connectTimer = null;
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      if (connectTimer !== null) clearTimeout(connectTimer);
+      if (deadlineTimer !== null) clearTimeout(deadlineTimer);
+      try {
+        socket.close();
+      } catch {
+      }
+      resolve31(result);
+    };
+    connectTimer = setTimeout(() => settle(null), connectTimeoutMs);
+    connectTimer.unref?.();
+    socket.on("error", () => settle(null));
+    socket.on("close", () => settle(null));
+    socket.on("open", () => {
+      if (settled) return;
+      if (connectTimer !== null) clearTimeout(connectTimer);
+      deadlineTimer = setTimeout(
+        () => settle({ ok: false, session, want, status: lastStatus, timedOutAfterMs: timeoutMs }),
+        timeoutMs
+      );
+      deadlineTimer.unref?.();
+      try {
+        lastStatus = currentStatus();
+      } catch {
+        lastStatus = null;
+      }
+      if (lastStatus === want) {
+        settle({ ok: true, session, want, status: want });
+      }
+    });
+    socket.on("message", (data) => {
+      if (settled) return;
+      let raw;
+      try {
+        raw = JSON.parse(messageText(data));
+      } catch {
+        return;
+      }
+      const parsed = DaemonEventServerFrameSchemaZ.safeParse(raw);
+      if (!parsed.success) return;
+      const frame = parsed.data;
+      if (frame.type !== "agent.turn-completed" || frame.sessionName !== session) return;
+      lastStatus = frame.toStatus;
+      if (frame.toStatus === want) {
+        settle({ ok: true, session, want, status: want });
+      }
+    });
+  });
+}
+var RECEIPT_CONNECT_TIMEOUT_MS;
+var init_wait_receipts = __esm({
+  "packages/daemon/src/tui/team/wait-receipts.ts"() {
+    "use strict";
+    init_src();
+    init_canonical_daemon();
+    init_classify();
+    init_report();
+    init_sessions2();
+    init_wait();
+    RECEIPT_CONNECT_TIMEOUT_MS = 1500;
+  }
+});
+
 // packages/daemon/src/lib/worktree.ts
 var worktree_exports = {};
 __export(worktree_exports, {
@@ -38900,6 +39118,28 @@ try {
         }
         if (json) console.log(JSON.stringify({ session: sessionName, status: want, ok: true }));
         else console.log(`${sessionName} reached status: ${want}`);
+        process.exit(0);
+      }
+      const { waitForAgentStatusViaReceipts: waitForAgentStatusViaReceipts2 } = await Promise.resolve().then(() => (init_wait_receipts(), wait_receipts_exports));
+      const viaReceipts = await waitForAgentStatusViaReceipts2(
+        sessionName,
+        want,
+        { timeoutMs: timeout }
+      );
+      if (viaReceipts) {
+        if (!viaReceipts.ok) {
+          console.error(
+            `Timed out after ${timeout}ms waiting for ${sessionName} to reach status "${want}" (last: ${viaReceipts.status ?? "absent"})`
+          );
+          process.exit(1);
+        }
+        if (json) {
+          console.log(
+            JSON.stringify({ session: sessionName, status: viaReceipts.status, ok: true })
+          );
+        } else {
+          console.log(`${sessionName} reached status: ${viaReceipts.status}`);
+        }
         process.exit(0);
       }
       const { waitForAgentStatus: waitForAgentStatus2 } = await Promise.resolve().then(() => (init_wait(), wait_exports));

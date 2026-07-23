@@ -83,6 +83,20 @@ describe("daemon event contracts", () => {
       { type: "terminals.changed", sessionName: "tmux-ide" },
       { type: "agent-status.changed", sessionName: "tmux-ide" },
       {
+        type: "agent.turn-completed",
+        sessionName: "tmux-ide",
+        agentId: "agent.0123456789abcdef0123",
+        fromStatus: "working",
+        toStatus: "done",
+        at: "2026-07-23T12:00:00.000Z",
+      },
+      {
+        type: "workspace.promotion-completed",
+        workspaceName: "tmux-ide",
+        outcome: "promoted",
+        at: "2026-07-23T12:00:00.000Z",
+      },
+      {
         type: "workspace.added",
         workspace: {
           name: "tmux-ide",
@@ -114,6 +128,65 @@ describe("daemon event contracts", () => {
         sessions: [],
       }).success,
     ).toBe(false);
+  });
+
+  it("strictly parses agent.turn-completed and rejects unsafe or unbounded shapes", () => {
+    const receipt = {
+      type: "agent.turn-completed",
+      sessionName: "tmux-ide",
+      agentId: "agent.0123456789abcdef0123",
+      fromStatus: "working",
+      toStatus: "idle",
+      at: "2026-07-23T12:00:00.000Z",
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(receipt)).toEqual(receipt);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, agentId: null }).success).toBe(
+      true,
+    );
+
+    // A raw tmux pane id, a raw durable stamp, or any non-digest value is
+    // rejected — only the minted `agent.<digest>` identity crosses the wire.
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, agentId: "%1" }).success).toBe(
+      false,
+    );
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        ...receipt,
+        agentId: "pane.promoted.0123456789abcdef0123",
+      }).success,
+    ).toBe(false);
+    // Completion is bounded to a finished turn: from working, to done|idle.
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, fromStatus: "blocked" }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, toStatus: "blocked" }).success,
+    ).toBe(false);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, at: "yesterday" }).success).toBe(
+      false,
+    );
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, unexpected: true }).success).toBe(
+      false,
+    );
+  });
+
+  it("strictly parses workspace.promotion-completed", () => {
+    const receipt = {
+      type: "workspace.promotion-completed",
+      workspaceName: "tmux-ide",
+      outcome: "replayed",
+      at: "2026-07-23T12:00:00.000Z",
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(receipt)).toEqual(receipt);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, outcome: "failed" }).success).toBe(
+      false,
+    );
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, workspaceName: "" }).success).toBe(
+      false,
+    );
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, unexpected: true }).success).toBe(
+      false,
+    );
   });
 
   it("strictly parses agent-status.changed and rejects missing or extra fields", () => {

@@ -19,13 +19,17 @@ import {
   readAdoptedSessionNames,
   readAgentStatesBySession,
 } from "./discovery.ts";
-import { AgentStatusWatcher } from "./agent-status-watch.ts";
+import { AgentStatusWatcher, type AgentTurnCompletion } from "./agent-status-watch.ts";
+import { agentIdForPaneStamp } from "./resources/application-shell.ts";
 import { projectRegistryEmitter } from "../lib/project-registry.ts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
 import {
   DaemonEventClientFrameSchemaZ,
+  TerminalAttachmentSemanticPaneIdSchemaZ,
+  type DaemonEventAgentTurnCompletedFrame,
   type DaemonEventClientFrame,
   type DaemonEventServerFrame,
+  type DaemonEventWorkspacePromotionCompletedFrame,
   type DaemonInstanceIdentity,
   type DaemonSessionSnapshot,
   type Workspace,
@@ -57,6 +61,8 @@ interface ClientHandle {
   broadcastConfigChanged(sessionName: string): void;
   broadcastTerminalsChanged(sessionName: string): void;
   broadcastAgentStatusChanged(sessionName: string): void;
+  broadcastAgentTurnCompleted(frame: DaemonEventAgentTurnCompletedFrame): void;
+  broadcastWorkspacePromotionCompleted(frame: DaemonEventWorkspacePromotionCompletedFrame): void;
   broadcastFleetChanged(): void;
 }
 const allClients = new Set<ClientHandle>();
@@ -119,9 +125,33 @@ function maybeStopProjectRegistryListener(): void {
 }
 
 /**
+ * Build the wire receipt for one observed turn completion. The durable pane
+ * stamp is validated against the semantic grammar before minting the wire-safe
+ * `agent.<digest>` id — an unstamped (or garbage-stamped) pane still yields a
+ * receipt, with `agentId: null`, because "an agent finished in this session"
+ * is useful even without per-agent correlation.
+ */
+function agentTurnCompletedFrame(
+  completion: AgentTurnCompletion,
+): DaemonEventAgentTurnCompletedFrame {
+  const stampValid =
+    completion.paneStamp !== null &&
+    TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(completion.paneStamp).success;
+  return {
+    type: "agent.turn-completed",
+    sessionName: completion.sessionName,
+    agentId: stampValid ? agentIdForPaneStamp(completion.paneStamp!) : null,
+    fromStatus: completion.fromStatus,
+    toStatus: completion.toStatus,
+    at: new Date().toISOString(),
+  };
+}
+
+/**
  * Start (lazily) the agent-status watcher on the first connected client. It
- * polls every pane's `@agent_state` and fans a session-scoped
- * `agent-status.changed` frame to every client on each transition. Runs only
+ * polls every pane's `@agent_state` and, on each transition, fans a
+ * session-scoped `agent-status.changed` invalidation plus a typed
+ * `agent.turn-completed` receipt per pane whose turn finished. Runs only
  * while at least one client is connected, so there is no background cost
  * otherwise.
  */
@@ -131,6 +161,10 @@ function ensureAgentStatusWatcher(): void {
     read: () => readAgentStatesBySession(),
     emit: (sessionName) => {
       for (const client of allClients) client.broadcastAgentStatusChanged(sessionName);
+    },
+    emitTurnCompleted: (completion) => {
+      const frame = agentTurnCompletedFrame(completion);
+      for (const client of allClients) client.broadcastAgentTurnCompleted(frame);
     },
   });
   agentStatusWatcher.start();
@@ -209,6 +243,24 @@ export function broadcastActionComplete(name: string, result: unknown): void {
 
 export function broadcastConfigChanged(sessionName: string): void {
   for (const client of allClients) client.broadcastConfigChanged(sessionName);
+}
+
+/**
+ * Push a `workspace.promotion-completed` receipt to every connected client.
+ * Called by the v2 action dispatcher after a successful `workspace.promote` —
+ * the typed, bounded twin of that action's generic `action.complete` frame.
+ */
+export function broadcastWorkspacePromotionCompleted(
+  workspaceName: string,
+  outcome: "promoted" | "replayed",
+): void {
+  const frame: DaemonEventWorkspacePromotionCompletedFrame = {
+    type: "workspace.promotion-completed",
+    workspaceName,
+    outcome,
+    at: new Date().toISOString(),
+  };
+  for (const client of allClients) client.broadcastWorkspacePromotionCompleted(frame);
 }
 
 export function broadcastTerminalsChanged(sessionName: string): void {
@@ -290,6 +342,18 @@ export function handleWsEventsConnection(
     send({ type: "agent-status.changed", sessionName });
   };
 
+  const broadcastAgentTurnCompletedForClient = (
+    frame: DaemonEventAgentTurnCompletedFrame,
+  ): void => {
+    send(frame);
+  };
+
+  const broadcastWorkspacePromotionCompletedForClient = (
+    frame: DaemonEventWorkspacePromotionCompletedFrame,
+  ): void => {
+    send(frame);
+  };
+
   const broadcastFleetChangedForClient = (): void => {
     send({ type: "fleet.changed" });
   };
@@ -312,6 +376,8 @@ export function handleWsEventsConnection(
     broadcastConfigChanged: broadcastConfigChangedForClient,
     broadcastTerminalsChanged: broadcastTerminalsChangedForClient,
     broadcastAgentStatusChanged: broadcastAgentStatusChangedForClient,
+    broadcastAgentTurnCompleted: broadcastAgentTurnCompletedForClient,
+    broadcastWorkspacePromotionCompleted: broadcastWorkspacePromotionCompletedForClient,
     broadcastFleetChanged: broadcastFleetChangedForClient,
   };
   allClients.add(clientHandle);

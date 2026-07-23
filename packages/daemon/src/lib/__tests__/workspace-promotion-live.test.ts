@@ -5,9 +5,12 @@ import { join } from "node:path";
 
 import {
   ApplicationShellResourceV3SchemaZ,
+  DaemonEventServerFrameSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
+  type DaemonEventWorkspacePromotionCompletedFrame,
 } from "@tmux-ide/contracts";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { WebSocket } from "ws";
 
 import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "../daemon-embed.ts";
 import { _setDefaultWorkspaceRegistryForTests, WorkspaceRegistry } from "../workspace-registry.ts";
@@ -120,6 +123,34 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     ]);
     run(["split-window", "-d", "-t", workPaneId, "-c", projectDir, "exec sleep 300"]);
     run(["set-option", "-t", targetSession, "@tmux_ide_adopted", "1"]);
+
+    // A live /ws/events client observing the typed promotion receipts the
+    // dispatcher emits alongside action.complete (m42/receipts).
+    const receiptSocket = new WebSocket(`${handle.apiBaseUrl.replace(/^http/u, "ws")}/ws/events`, {
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    });
+    const promotionReceipts: DaemonEventWorkspacePromotionCompletedFrame[] = [];
+    receiptSocket.on("message", (data: unknown) => {
+      const parsed = DaemonEventServerFrameSchemaZ.safeParse(
+        JSON.parse(typeof data === "string" ? data : String(data)),
+      );
+      if (parsed.success && parsed.data.type === "workspace.promotion-completed") {
+        promotionReceipts.push(parsed.data);
+      }
+    });
+    await new Promise<void>((resolve, reject) => {
+      receiptSocket.once("open", () => resolve());
+      receiptSocket.once("error", reject);
+    });
+    const waitForReceiptCount = async (count: number): Promise<void> => {
+      const deadline = Date.now() + 10_000;
+      while (promotionReceipts.length < count) {
+        if (Date.now() > deadline) {
+          throw new Error(`saw ${promotionReceipts.length}/${count} promotion receipts in 10s`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    };
 
     const sessionId = fleetSessionIdForName(targetSession);
     const dispatch = async (operationId: string) => {
@@ -238,6 +269,16 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     expect(shell.resource.fleetSessionId).toMatch(/^session\.[A-Za-z0-9_-]{16,64}$/u);
     expect(shell.resource.fleetSessionId).not.toContain(targetSession);
 
+    // The typed receipt for the first promotion arrived on the push bus.
+    await waitForReceiptCount(1);
+    expect(promotionReceipts[0]).toMatchObject({
+      type: "workspace.promotion-completed",
+      workspaceName,
+      outcome: "promoted",
+    });
+    expect(JSON.stringify(promotionReceipts[0])).not.toContain(projectDir);
+    expect(JSON.stringify(promotionReceipts[0])).not.toMatch(/[$%@][0-9]+/u);
+
     // Re-promote under a fresh operation id, then under the same one: replayed.
     const rePromoted = await promote(randomUUID());
     expect(rePromoted.outcome).toBe("replayed");
@@ -245,6 +286,14 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     const replayed = await promote(firstOperation);
     expect(replayed.outcome).toBe("replayed");
     expect(replayed.resource.workspaceName).toBe(workspaceName);
+
+    // Each replay yields its own typed receipt with the honest outcome.
+    await waitForReceiptCount(3);
+    expect(promotionReceipts.slice(1).map((receipt) => receipt.outcome)).toEqual([
+      "replayed",
+      "replayed",
+    ]);
+    receiptSocket.close();
 
     // A non-owner request is refused by the host-capability gate.
     const unauthorized = await fetch(`${handle.apiBaseUrl}/api/v2/action/workspace.promote`, {

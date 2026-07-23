@@ -5,6 +5,7 @@ import {
   DaemonWorkspaceSchemaZ,
 } from "./daemon-resources.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
+import { DesktopWorkspaceNameSchemaZ } from "./desktop-host.ts";
 
 /** Shared, browser-safe protocol for the daemon's unified /ws/events socket. */
 
@@ -135,6 +136,61 @@ export const DaemonEventFleetChangedFrameSchemaZ = z
   .object({ type: z.literal("fleet.changed") })
   .strict();
 
+/**
+ * RECEIPT — a pane's ground-truth agent authority (`@agent_state`) completed a
+ * turn: the daemon's agent-status watcher observed `working` transition to
+ * `done` or `idle`. Unlike the `agent-status.changed` invalidation (a re-fetch
+ * hint), this is a typed completion event a consumer can WAIT on without
+ * polling: the dock chip, the fleet sidebar, and `tmux-ide wait agent-status`
+ * all want exactly "an agent finished".
+ *
+ * `agentId` is the wire-safe durable agent identity — the same
+ * `agent.<digest>` id the application-shell sidebar mints from the pane's
+ * durable `@tmux_ide_pane_id` stamp — or `null` when the pane carries no valid
+ * stamp (receipts still fire; correlation is best-effort). No raw tmux
+ * runtime id or path ever crosses this frame. `at` is the daemon's
+ * observation time (the watcher polls, so it trails the hook stamp by at most
+ * one poll interval). One receipt per completing pane per poll tick; the poll
+ * interval is a hard emission floor, so a flapping pane cannot storm clients.
+ */
+export const DaemonEventAgentTurnCompletedFrameSchemaZ = z
+  .object({
+    type: z.literal("agent.turn-completed"),
+    sessionName: z.string(),
+    agentId: z
+      .string()
+      .regex(/^agent\.[0-9a-f]{20}$/u)
+      .nullable(),
+    fromStatus: z.literal("working"),
+    toStatus: z.enum(["done", "idle"]),
+    at: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+export type DaemonEventAgentTurnCompletedFrame = z.infer<
+  typeof DaemonEventAgentTurnCompletedFrameSchemaZ
+>;
+
+/**
+ * RECEIPT — a workspace promotion action finished successfully. Emitted by the
+ * action dispatcher after `workspace.promote` succeeds, alongside the generic
+ * `action.complete` frame: `action.complete` carries an untyped result for
+ * cache invalidation, while this frame is the bounded, typed completion event
+ * (`promoted` = first promotion, `replayed` = idempotent re-dispatch). Carries
+ * only the catalog-visible workspace name — no path, tmux session name, or
+ * runtime id.
+ */
+export const DaemonEventWorkspacePromotionCompletedFrameSchemaZ = z
+  .object({
+    type: z.literal("workspace.promotion-completed"),
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    outcome: z.enum(["promoted", "replayed"]),
+    at: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+export type DaemonEventWorkspacePromotionCompletedFrame = z.infer<
+  typeof DaemonEventWorkspacePromotionCompletedFrameSchemaZ
+>;
+
 export const DaemonEventWorkspaceAddedFrameSchemaZ = z
   .object({
     type: z.literal("workspace.added"),
@@ -172,7 +228,9 @@ export const DaemonEventServerFrameSchemaZ = z.discriminatedUnion("type", [
   DaemonEventConfigChangedFrameSchemaZ,
   DaemonEventTerminalsChangedFrameSchemaZ,
   DaemonEventAgentStatusChangedFrameSchemaZ,
+  DaemonEventAgentTurnCompletedFrameSchemaZ,
   DaemonEventFleetChangedFrameSchemaZ,
+  DaemonEventWorkspacePromotionCompletedFrameSchemaZ,
   DaemonEventWorkspaceAddedFrameSchemaZ,
   DaemonEventWorkspaceRemovedFrameSchemaZ,
   DaemonEventProtocolErrorFrameSchemaZ,

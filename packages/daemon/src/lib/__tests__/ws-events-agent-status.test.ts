@@ -9,12 +9,14 @@ import {
   handleWsEventsConnection,
 } from "../../command-center/ws-events.ts";
 import { _setTmuxRunner } from "../../command-center/discovery.ts";
+import { agentIdForPaneStamp } from "../../command-center/resources/application-shell.ts";
 
 // Hermetic like ws-events-protocol.test.ts: the connection eagerly discovers
 // sessions and starts pollers that would otherwise spawn `tmux` against the
 // caller's real socket. This runner answers only the watcher's agent-state
-// query and returns "" for everything else (empty session discovery), so no
-// real tmux server is ever touched.
+// query (session \t %pane \t @tmux_ide_pane_id \t @agent_state) and returns ""
+// for everything else (empty session discovery), so no real tmux server is
+// ever touched.
 function pinAgentStates(rows: () => string): () => void {
   return _setTmuxRunner((args) => {
     if (args[0] === "list-panes" && args[1] === "-a") return rows();
@@ -59,15 +61,15 @@ afterEach(() => {
 
 describe("/ws/events agent-status invalidation", () => {
   it("emits exactly one agent-status.changed frame when a pane state transitions", () => {
-    let agentRows = "zz-fleet\t%1\tworking:1000";
+    let agentRows = "zz-fleet\t%1\t\tworking:1000";
     restoreTmuxRunner = pinAgentStates(() => agentRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity); // primes the baseline (working)
     socket.sent.length = 0;
 
-    // A genuine transition: working -> done on the same pane.
-    agentRows = "zz-fleet\t%1\tdone:1001";
+    // A genuine transition: working -> blocked on the same pane.
+    agentRows = "zz-fleet\t%1\t\tblocked:1001";
     _tickAgentStatusWatcherForTests();
 
     const agentFrames = frames(socket).filter((frame) => frame.type === "agent-status.changed");
@@ -77,30 +79,31 @@ describe("/ws/events agent-status invalidation", () => {
   });
 
   it("does not emit for an epoch-only re-stamp of the same state word", () => {
-    let agentRows = "zz-fleet\t%1\tworking:1000";
+    let agentRows = "zz-fleet\t%1\t\tworking:1000";
     restoreTmuxRunner = pinAgentStates(() => agentRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     socket.sent.length = 0;
 
-    agentRows = "zz-fleet\t%1\tworking:2000"; // same word, new epoch
+    agentRows = "zz-fleet\t%1\t\tworking:2000"; // same word, new epoch
     _tickAgentStatusWatcherForTests();
 
     expect(frames(socket).filter((frame) => frame.type === "agent-status.changed")).toEqual([]);
+    expect(frames(socket).filter((frame) => frame.type === "agent.turn-completed")).toEqual([]);
 
     socket.disconnect();
   });
 
   it("coalesces multiple panes flipping in one tick into a single frame per session", () => {
-    let agentRows = ["zz-fleet\t%1\tidle:1", "zz-fleet\t%2\tidle:1"].join("\n");
+    let agentRows = ["zz-fleet\t%1\t\tidle:1", "zz-fleet\t%2\t\tidle:1"].join("\n");
     restoreTmuxRunner = pinAgentStates(() => agentRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     socket.sent.length = 0;
 
-    agentRows = ["zz-fleet\t%1\tworking:2", "zz-fleet\t%2\tblocked:2"].join("\n");
+    agentRows = ["zz-fleet\t%1\t\tworking:2", "zz-fleet\t%2\t\tblocked:2"].join("\n");
     _tickAgentStatusWatcherForTests();
 
     expect(frames(socket).filter((frame) => frame.type === "agent-status.changed")).toEqual([
@@ -111,7 +114,7 @@ describe("/ws/events agent-status invalidation", () => {
   });
 
   it("stops the watcher after the last client disconnects", () => {
-    restoreTmuxRunner = pinAgentStates(() => "zz-fleet\t%1\tworking:1");
+    restoreTmuxRunner = pinAgentStates(() => "zz-fleet\t%1\t\tworking:1");
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
@@ -121,5 +124,98 @@ describe("/ws/events agent-status invalidation", () => {
     socket.sent.length = 0;
     _tickAgentStatusWatcherForTests();
     expect(socket.sent).toEqual([]);
+  });
+});
+
+describe("/ws/events agent.turn-completed receipts", () => {
+  it("emits a typed receipt with the minted durable agent id on working -> done", () => {
+    const stamp = "pane.promoted.aaaaaaaaaaaaaaaaaaaa";
+    let agentRows = `zz-fleet\t%1\t${stamp}\tworking:1000`;
+    restoreTmuxRunner = pinAgentStates(() => agentRows);
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    socket.sent.length = 0;
+
+    agentRows = `zz-fleet\t%1\t${stamp}\tdone:1001`;
+    _tickAgentStatusWatcherForTests();
+
+    const receipts = frames(socket).filter((frame) => frame.type === "agent.turn-completed");
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      type: "agent.turn-completed",
+      sessionName: "zz-fleet",
+      agentId: agentIdForPaneStamp(stamp),
+      fromStatus: "working",
+      toStatus: "done",
+    });
+    // The invalidation still fires alongside the receipt — receipts are
+    // additive, not a replacement for the re-fetch hint.
+    expect(frames(socket).filter((frame) => frame.type === "agent-status.changed")).toEqual([
+      { type: "agent-status.changed", sessionName: "zz-fleet" },
+    ]);
+
+    socket.disconnect();
+  });
+
+  it("emits a receipt with a null agent id for an unstamped pane on working -> idle", () => {
+    let agentRows = "zz-fleet\t%1\t\tworking:1000";
+    restoreTmuxRunner = pinAgentStates(() => agentRows);
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    socket.sent.length = 0;
+
+    agentRows = "zz-fleet\t%1\t\tidle:1001";
+    _tickAgentStatusWatcherForTests();
+
+    const receipts = frames(socket).filter((frame) => frame.type === "agent.turn-completed");
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      sessionName: "zz-fleet",
+      agentId: null,
+      fromStatus: "working",
+      toStatus: "idle",
+    });
+
+    socket.disconnect();
+  });
+
+  it("emits no receipt for a non-completing transition", () => {
+    let agentRows = "zz-fleet\t%1\t\tworking:1000";
+    restoreTmuxRunner = pinAgentStates(() => agentRows);
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    socket.sent.length = 0;
+
+    agentRows = "zz-fleet\t%1\t\tblocked:1001"; // needs attention, turn not over
+    _tickAgentStatusWatcherForTests();
+
+    expect(frames(socket).filter((frame) => frame.type === "agent.turn-completed")).toEqual([]);
+
+    socket.disconnect();
+  });
+
+  it("wire audit: a receipt never carries a raw tmux id, a raw stamp, or a path", () => {
+    const stamp = "pane.promoted.bbbbbbbbbbbbbbbbbbbb";
+    let agentRows = `zz-fleet\t%7\t${stamp}\tworking:1000`;
+    restoreTmuxRunner = pinAgentStates(() => agentRows);
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    socket.sent.length = 0;
+
+    agentRows = `zz-fleet\t%7\t${stamp}\tdone:1001`;
+    _tickAgentStatusWatcherForTests();
+
+    const receipts = socket.sent.filter((raw) => raw.includes("agent.turn-completed"));
+    expect(receipts).toHaveLength(1);
+    // No tmux runtime id (%7, $N, @N), no raw pane stamp, no filesystem path.
+    expect(receipts[0]).not.toMatch(/[$%@][0-9]+/u);
+    expect(receipts[0]).not.toContain(stamp);
+    expect(receipts[0]).not.toContain("/");
+
+    socket.disconnect();
   });
 });

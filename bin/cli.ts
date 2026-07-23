@@ -806,6 +806,37 @@ try {
         process.exit(0);
       }
 
+      // Receipt fast path: a running daemon pushes a typed `agent.turn-completed`
+      // receipt on /ws/events the moment its watcher observes the transition —
+      // one idle socket instead of re-scraping the fleet every poll. Only
+      // `done`/`idle` are receipt-covered; anything it cannot answer (no
+      // daemon, connect failure, socket drop, other target status) returns
+      // null and the polling below takes over. A receipt-path timeout is a
+      // real timeout, not a fallback.
+      const { waitForAgentStatusViaReceipts } =
+        await import("../packages/daemon/src/tui/team/wait-receipts.ts");
+      const viaReceipts = await waitForAgentStatusViaReceipts(
+        sessionName!,
+        want as import("../packages/daemon/src/tui/detect/classify.ts").AgentStatus,
+        { timeoutMs: timeout },
+      );
+      if (viaReceipts) {
+        if (!viaReceipts.ok) {
+          console.error(
+            `Timed out after ${timeout}ms waiting for ${sessionName} to reach status "${want}" (last: ${viaReceipts.status ?? "absent"})`,
+          );
+          process.exit(1);
+        }
+        if (json) {
+          console.log(
+            JSON.stringify({ session: sessionName, status: viaReceipts.status, ok: true }),
+          );
+        } else {
+          console.log(`${sessionName} reached status: ${viaReceipts.status}`);
+        }
+        process.exit(0);
+      }
+
       const { waitForAgentStatus } = await import("../packages/daemon/src/tui/team/wait.ts");
       const result = await waitForAgentStatus(
         sessionName!,
