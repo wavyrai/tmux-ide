@@ -4311,7 +4311,11 @@ var init_workspace_files_resource = __esm({
     }).superRefine((resource2, ctx) => {
       const breadcrumbIds = resource2.breadcrumbs.map(({ id }) => id);
       if (new Set(breadcrumbIds).size !== breadcrumbIds.length) {
-        ctx.addIssue({ code: "custom", path: ["breadcrumbs"], message: "breadcrumb ids must be unique" });
+        ctx.addIssue({
+          code: "custom",
+          path: ["breadcrumbs"],
+          message: "breadcrumb ids must be unique"
+        });
       }
       if (resource2.breadcrumbs[0]?.id !== resource2.rootId) {
         ctx.addIssue({
@@ -4338,7 +4342,11 @@ var init_workspace_files_resource = __esm({
       const entryPaths = /* @__PURE__ */ new Set();
       for (const [index, entry] of resource2.entries.entries()) {
         if (entryIds.has(entry.id)) {
-          ctx.addIssue({ code: "custom", path: ["entries", index, "id"], message: "entry ids must be unique" });
+          ctx.addIssue({
+            code: "custom",
+            path: ["entries", index, "id"],
+            message: "entry ids must be unique"
+          });
         }
         if (entryPaths.has(entry.relativePath)) {
           ctx.addIssue({
@@ -4423,7 +4431,11 @@ var init_workspace_files_resource = __esm({
       truncated: z24.boolean()
     }).superRefine((preview, ctx) => {
       if (preview.content.includes("\0")) {
-        ctx.addIssue({ code: "custom", path: ["content"], message: "text previews cannot contain NUL bytes" });
+        ctx.addIssue({
+          code: "custom",
+          path: ["content"],
+          message: "text previews cannot contain NUL bytes"
+        });
       }
       const renderedLines = preview.content.length === 0 ? 0 : preview.content.split("\n").length;
       if (renderedLines > WORKSPACE_FILE_PREVIEW_MAX_LINES) {
@@ -9208,7 +9220,11 @@ var init_classify = __esm({
 function resolveAgentStatus(input) {
   const authority = parseAuthority(input.authorityRaw, input.nowSec);
   if (authority !== null) {
-    return { status: authority, source: "authority", since: parseAuthorityEpoch(input.authorityRaw) };
+    return {
+      status: authority,
+      source: "authority",
+      since: parseAuthorityEpoch(input.authorityRaw)
+    };
   }
   const status2 = input.scrape();
   return { status: status2, source: status2 === "unknown" ? "unknown" : "scrape", since: null };
@@ -28370,6 +28386,9 @@ function harnessForPane(pane) {
   return "custom";
 }
 function isAgentPane(pane) {
+  if (pane.agentStateRaw != null && AGENT_STATE_STAMP.test(pane.agentStateRaw.trim())) {
+    return true;
+  }
   const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
   return metadata.includes("codex") || metadata.includes("claude") || metadata.includes("opencode") || pane.type === "agent" || pane.role === "lead" || pane.role === "teammate" || pane.role === "planner" || pane.role === "validator" || pane.role === "researcher";
 }
@@ -28673,12 +28692,14 @@ function projectLegacyApplicationShellResourceV1(session) {
     )
   );
 }
+var AGENT_STATE_STAMP;
 var init_application_shell2 = __esm({
   "packages/daemon/src/command-center/resources/application-shell.ts"() {
     "use strict";
     init_src();
     init_classify();
     init_agent_resolution();
+    AGENT_STATE_STAMP = /^(?:working|blocked|done|idle):\d+$/u;
   }
 });
 
@@ -33975,8 +33996,8 @@ var require_package = __commonJS({
         prepublishOnly: "pnpm build:cli && pnpm check && node scripts/prepublish-check.mjs",
         typecheck: 'echo "root typecheck deferred to per-package turbo run"',
         dev: "node bin/cli.js",
-        test: "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
-        "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
+        test: "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
+        "test:unit": "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
         "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts ./packages/daemon/src/command-center/resources/application-shell.test.ts ./packages/daemon/src/command-center/resources/agent-graph-overlay.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",

@@ -13,6 +13,7 @@ import { _setExecutor } from "../../widgets/lib/pane-comms.ts";
 import {
   projectApplicationShellResource,
   projectApplicationShellResourceV3,
+  isAgentPane,
   resolveAgentPresentation,
 } from "./application-shell.ts";
 import { projectApplicationShellAgentGraphOverlay } from "./agent-graph-overlay.ts";
@@ -404,6 +405,24 @@ describe("agent status composition (facts -> presentation)", () => {
     name: "Fable",
     type: "agent" as const,
   };
+
+  it("treats a self-reporting shell pane as an agent pane on the stamp alone", () => {
+    // The documented contract: ANY agent can self-report via @agent_state with
+    // no integration metadata. A bare shell with a stamp must classify.
+    const bareShell = {
+      ...presentationPane,
+      currentCommand: "zsh",
+      role: null,
+      type: null,
+      agentStateRaw: `working:${NOW}`,
+      agentScrapeState: null,
+    };
+    expect(isAgentPane(bareShell)).toBe(true);
+    expect(isAgentPane({ ...bareShell, agentStateRaw: `done:${NOW - 900}` })).toBe(true);
+    // Garbage stamps do not classify.
+    expect(isAgentPane({ ...bareShell, agentStateRaw: "working" })).toBe(false);
+    expect(isAgentPane({ ...bareShell, agentStateRaw: null })).toBe(false);
+  });
 
   it("takes fresh authority over everything and maps each state through the shared table", () => {
     const working = resolveAgentPresentation(

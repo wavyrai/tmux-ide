@@ -226,7 +226,16 @@ function harnessForPane(
   return "custom";
 }
 
+const AGENT_STATE_STAMP = /^(?:working|blocked|done|idle):\d+$/u;
+
 export function isAgentPane(pane: ApplicationShellPanePresentationFacts): boolean {
+  // A well-formed @agent_state stamp IS the agent contract: any pane that
+  // self-reports is an agent pane, even when its command is a bare shell and
+  // no @ide_type/role metadata exists. Staleness only affects the status, not
+  // the pane's agent-ness.
+  if (pane.agentStateRaw != null && AGENT_STATE_STAMP.test(pane.agentStateRaw.trim())) {
+    return true;
+  }
   const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
   return (
     metadata.includes("codex") ||
