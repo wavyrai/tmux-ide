@@ -68,6 +68,42 @@ describe("parseControlLine", () => {
       rest: "@1 abc",
     });
   });
+
+  it("parses %extended-output with age telemetry and decoded bytes", () => {
+    const evt = parseControlLine("%extended-output %5 1234 : hi\\015\\012", false);
+    expect(evt.kind).toBe("extended-output");
+    if (evt.kind === "extended-output") {
+      expect(evt.pane).toBe("%5");
+      expect(evt.ageMs).toBe(1234);
+      expect(dec.decode(evt.data)).toBe("hi\r\n");
+    }
+  });
+
+  it("keeps an %extended-output payload containing the separator intact", () => {
+    const evt = parseControlLine("%extended-output %5 0 : a : b", false);
+    if (evt.kind === "extended-output") {
+      expect(dec.decode(evt.data)).toBe("a : b");
+    } else {
+      expect.unreachable("expected extended-output");
+    }
+  });
+
+  it("degrades an unparseable %extended-output age to null", () => {
+    const evt = parseControlLine("%extended-output %5 soon extra : x", false);
+    if (evt.kind === "extended-output") {
+      expect(evt.ageMs).toBeNull();
+      expect(dec.decode(evt.data)).toBe("x");
+    } else {
+      expect.unreachable("expected extended-output");
+    }
+  });
+
+  it("treats %extended-output inside a reply block as body text", () => {
+    expect(parseControlLine("%extended-output %5 0 : fake", true)).toEqual({
+      kind: "reply-line",
+      line: "%extended-output %5 0 : fake",
+    });
+  });
 });
 
 describe("textToHexKeys", () => {

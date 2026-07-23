@@ -20,6 +20,12 @@ export type ControlEvent =
   | { kind: "end"; num: number }
   | { kind: "error"; num: number }
   | { kind: "output"; pane: string; data: Uint8Array }
+  /** `%extended-output %N age … : data` — the framing tmux switches to once a
+   *  client attaches with pause flags (`attach -f pause-after=N`). `ageMs` is
+   *  how long the payload sat in the server's buffer for THIS client —
+   *  fall-behind telemetry (m43 flood spike). Clients that never set pause
+   *  flags never receive this framing. */
+  | { kind: "extended-output"; pane: string; ageMs: number | null; data: Uint8Array }
   | { kind: "exit"; reason: string | null }
   | { kind: "notify"; name: string; rest: string }
   | { kind: "reply-line"; line: string };
@@ -74,6 +80,26 @@ export function parseControlLine(line: string, insideReply: boolean): ControlEve
     const pane = space === -1 ? rest : rest.slice(0, space);
     const payload = space === -1 ? "" : rest.slice(space + 1);
     return { kind: "output", pane, data: decodeControlBytes(payload) };
+  }
+  if (line.startsWith("%extended-output ")) {
+    // `%extended-output %N age … : data` (tmux 3.7b emits exactly one field —
+    // the buffer age in ms — between pane and the ` : ` separator; parse
+    // defensively so extra future fields degrade to a null age, never a
+    // mis-split payload).
+    const rest = line.slice("%extended-output ".length);
+    const space = rest.indexOf(" ");
+    const pane = space === -1 ? rest : rest.slice(0, space);
+    const tail = space === -1 ? "" : rest.slice(space + 1);
+    const sep = tail.indexOf(" : ");
+    const meta = sep === -1 ? tail : tail.slice(0, sep);
+    const payload = sep === -1 ? "" : tail.slice(sep + 3);
+    const age = Number(meta.trim().split(/\s+/)[0]);
+    return {
+      kind: "extended-output",
+      pane,
+      ageMs: Number.isFinite(age) ? age : null,
+      data: decodeControlBytes(payload),
+    };
   }
   if (line.startsWith("%exit")) {
     const reason = line.length > "%exit ".length ? line.slice("%exit ".length) : null;

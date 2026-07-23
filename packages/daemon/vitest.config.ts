@@ -26,6 +26,7 @@ export default defineConfig({
       "src/restore.test.ts",
       "src/doctor.test.ts",
       "src/terminal/__tests__/*.test.ts",
+      "src/terminal/mirror/*.test.ts",
       "src/lib/app-config.test.ts",
       "src/lib/cli-action-bridge.test.ts",
       "src/lib/__tests__/*.test.ts",
