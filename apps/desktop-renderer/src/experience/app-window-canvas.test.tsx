@@ -51,6 +51,7 @@ function installTerminalLifecycleHarness() {
     write: vi.fn(async () => undefined),
     focus: vi.fn(),
     fit: vi.fn(() => ({ cols: 80, rows: 24 })),
+    resizeGrid: vi.fn(),
     refreshTheme: vi.fn(),
     setReducedMotion: vi.fn(),
     onInput: vi.fn(() => ({ dispose: vi.fn() })),
@@ -170,6 +171,70 @@ const inventory: ApplicationShellTerminalInventory = {
   ],
 };
 
+const WINDOW_GROUP_ID = "terminal-window.0123456789abcdef0123";
+
+function multiPaneDocument(): AppWindowDocumentV1 {
+  return AppWindowDocumentV1SchemaZ.parse({
+    version: 1,
+    revision: 3,
+    updatedAt: "2026-07-22T10:00:00.000Z",
+    windows: {
+      "window.pane.0": {
+        id: "window.pane.0",
+        source: { kind: "terminal", terminalSourceId: "terminal.pane.0" },
+        title: null,
+        placement: {
+          mode: "floating",
+          docked: null,
+          floating: { x: 40, y: 30, width: 360, height: 220 },
+        },
+      },
+      "window.pane.1": {
+        id: "window.pane.1",
+        source: { kind: "terminal", terminalSourceId: "terminal.pane.1" },
+        title: null,
+        placement: {
+          mode: "floating",
+          docked: null,
+          floating: { x: 80, y: 60, width: 360, height: 220 },
+        },
+      },
+    },
+    dockRoot: null,
+    dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+    floatingOrder: ["window.pane.0", "window.pane.1"],
+    focusedWindowId: null,
+    activeLayoutId: null,
+    layouts: {},
+  });
+}
+
+function paneFrame(sourceId: string, title: string): PaneFrameModel {
+  return { ...frame(), pane: { id: sourceId, kind: "terminal" }, title };
+}
+
+const multiPaneInventory: ApplicationShellTerminalInventory = {
+  activeResourceId: "terminal.pane.1",
+  resources: [
+    {
+      id: "terminal.pane.0",
+      title: "Pane 0",
+      kind: "agent",
+      active: false,
+      attachability: { status: "available", semanticPaneId: "terminal.pane.0" },
+      windowResourceId: WINDOW_GROUP_ID,
+    },
+    {
+      id: "terminal.pane.1",
+      title: "Pane 1",
+      kind: "terminal",
+      active: true,
+      attachability: { status: "available", semanticPaneId: "terminal.pane.1" },
+      windowResourceId: WINDOW_GROUP_ID,
+    },
+  ],
+};
+
 describe("AppWindowCanvas", () => {
   it("publishes honest semantic availability for placement, maximize, and close", () => {
     expect(
@@ -256,6 +321,42 @@ describe("AppWindowCanvas", () => {
     expect(card?.querySelector(".terminal-surface")).not.toBeNull();
     expect(root.querySelector(".agent-grid")).toBeNull();
     expect(root.innerHTML).toMatchSnapshot();
+  });
+
+  it("renders a multi-pane window as one size-passive card attached via one pane", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={multiPaneDocument()}
+            paneFrames={[
+              paneFrame("terminal.pane.0", "Pane 0"),
+              paneFrame("terminal.pane.1", "Pane 1"),
+            ]}
+            terminalInventory={multiPaneInventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+          />
+        ),
+        root,
+      ),
+    );
+
+    const cards = root.querySelectorAll(".app-window-card");
+    expect(cards).toHaveLength(1);
+    const card = cards[0] as HTMLElement;
+    // The representative is the smallest window id; the other pane is coalesced.
+    expect(card.dataset.windowId).toBe("window.pane.0");
+    expect(card.dataset.terminalSourceId).toBe("terminal.pane.0");
+    expect(card.dataset.windowPaneCount).toBe("2");
+    expect(root.querySelector('[data-window-id="window.pane.1"]')).toBeNull();
+    const surface = card.querySelector<HTMLElement>(".terminal-surface");
+    expect(surface?.dataset.sizePassive).toBe("true");
+    expect(surface?.querySelector(".terminal-surface__viewport")?.getAttribute("aria-label")).toBe(
+      "Pane 0 terminal",
+    );
   });
 
   it("emits canonical focus commands from window chrome interaction", () => {

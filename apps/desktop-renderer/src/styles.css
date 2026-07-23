@@ -2244,6 +2244,41 @@ kbd {
   height: 100%;
 }
 
+/*
+ * Size-passive letterbox (m41 attach-5). A multi-pane window is attached as ONE
+ * card that never drives the origin window size, so once CONNECTED the surface
+ * renders the window's own grid at its natural pixel size and CENTERS it — the
+ * surrounding gutter paints the terminal background as letterbox bars. No CSS
+ * transform is used: scaling would desync xterm's pointer-to-cell mapping and
+ * blur glyphs, so a card smaller than the window clips (overflow: hidden, always
+ * inherited from `.terminal-surface`) around the centered grid rather than
+ * shrinking it. The letterbox applies ONLY to a live grid: the unavailable,
+ * measuring, connecting, and disconnected states have no grid, so they keep the
+ * default absolute-fill and cover the whole card on the terminal background.
+ */
+.terminal-surface[data-size-passive="true"][data-phase="connected"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-surface[data-size-passive="true"][data-phase="connected"] .terminal-surface__viewport {
+  position: relative;
+  inset: auto;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  padding: 0;
+}
+
+.terminal-surface[data-size-passive="true"][data-phase="connected"]
+  .terminal-surface__viewport
+  .xterm {
+  width: auto;
+  height: auto;
+}
+
 .terminal-surface__viewport .xterm-viewport {
   scrollbar-color: var(--tmux-ide-border-default) transparent;
   scrollbar-width: thin;

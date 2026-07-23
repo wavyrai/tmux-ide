@@ -414,7 +414,20 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   });
 
   const viewport = createMemo(() => props.viewport ?? measured());
-  const projection = createMemo(() => projectAppWindowCanvas(props.document, viewport()));
+  // Panes of one durable tmux window share a `windowResourceId` (m41 attach-5).
+  // Feeding that grouping to the presenter coalesces them into ONE card.
+  const windowGroupBySourceId = createMemo(() => {
+    const map = new Map<string, string>();
+    for (const resource of props.terminalInventory?.resources ?? []) {
+      if (resource.windowResourceId) map.set(resource.id, resource.windowResourceId);
+    }
+    return map;
+  });
+  const projection = createMemo(() =>
+    projectAppWindowCanvas(props.document, viewport(), {
+      windowGroupBySourceId: windowGroupBySourceId(),
+    }),
+  );
   const windowRecords = createAppWindowRecords(() => projection().windows);
   const framesByTerminalSource = createMemo(
     () => new Map(props.paneFrames.map((frame) => [frame.pane.id, frame])),
@@ -1116,6 +1129,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                 class="app-window-card"
                 data-window-id={window().windowId}
                 data-terminal-source-id={terminalSourceId() ?? ""}
+                data-window-pane-count={window().windowGroupPaneCount ?? 1}
                 data-placement={window().placement}
                 data-selected={window().selected}
                 data-active={window().active}
@@ -1179,6 +1193,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                               title={model().title}
                               transport={props.transport}
                               focused={model().appearance.accessibility.terminalInputOwner}
+                              sizePassive={(window().windowGroupPaneCount ?? 1) > 1}
                               reducedMotion={props.reducedMotion}
                               themeKey={props.terminalThemeKey}
                               rendererFactory={props.rendererFactory}

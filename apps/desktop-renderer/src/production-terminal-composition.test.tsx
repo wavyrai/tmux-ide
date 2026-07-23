@@ -39,6 +39,7 @@ const xtermHarness = vi.hoisted(() => ({
     write: vi.fn(async () => undefined),
     focus: vi.fn(),
     fit: vi.fn(() => ({ cols: 80, rows: 24 })),
+    resizeGrid: vi.fn(),
     refreshTheme: vi.fn(),
     setReducedMotion: vi.fn(),
     onInput: vi.fn(() => ({ dispose: vi.fn() })),

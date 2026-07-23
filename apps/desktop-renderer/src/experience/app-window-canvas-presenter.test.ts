@@ -161,6 +161,125 @@ function manyDockWindowsScene(count: number): AppWindowDocumentV1 {
   });
 }
 
+const WINDOW_GROUP_ID = "terminal-window.0123456789abcdef0123";
+
+/** A window whose `count` panes are separate floating AppWindows (the daemon
+ *  still projects one per pane), plus one lone single-pane window for contrast. */
+function multiPaneScene(count: number, focusedIndex: number): AppWindowDocumentV1 {
+  const windows: Record<string, AppWindowInstance> = {};
+  const floatingOrder: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const windowId = `window.pane.${index}`;
+    windows[windowId] = {
+      id: windowId,
+      source: { kind: "terminal", terminalSourceId: `terminal.pane.${index}` },
+      title: null,
+      placement: {
+        mode: "floating",
+        docked: null,
+        floating: { x: 40 + index * 30, y: 30 + index * 26, width: 360, height: 220 },
+      },
+    };
+    floatingOrder.push(windowId);
+  }
+  windows["window.solo"] = {
+    id: "window.solo",
+    source: { kind: "terminal", terminalSourceId: "terminal.solo" },
+    title: "Solo",
+    placement: {
+      mode: "floating",
+      docked: null,
+      floating: { x: 600, y: 400, width: 320, height: 200 },
+    },
+  };
+  floatingOrder.push("window.solo");
+  // A focused floating window must be top-most (last in the stacking order).
+  const focusedWindowId = `window.pane.${focusedIndex}`;
+  return AppWindowDocumentV1SchemaZ.parse({
+    version: 1,
+    revision: 4,
+    updatedAt: NOW,
+    windows,
+    dockRoot: null,
+    dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+    floatingOrder: [...floatingOrder.filter((id) => id !== focusedWindowId), focusedWindowId],
+    focusedWindowId,
+    activeLayoutId: null,
+    layouts: {},
+  });
+}
+
+function paneGroup(count: number): Map<string, string> {
+  const map = new Map<string, string>();
+  for (let index = 0; index < count; index += 1) {
+    map.set(`terminal.pane.${index}`, WINDOW_GROUP_ID);
+  }
+  return map;
+}
+
+describe("projectAppWindowCanvas window coalescing", () => {
+  it("collapses the panes of one durable window into a single representative card", () => {
+    const projection = projectAppWindowCanvas(
+      multiPaneScene(9, 0),
+      { width: 1_200, height: 720 },
+      { windowGroupBySourceId: paneGroup(9) },
+    );
+    const cards = projection.windows.map(({ windowId }) => windowId).sort();
+    // Nine panes + the solo window collapse to one representative card + solo.
+    expect(cards).toEqual(["window.pane.0", "window.solo"]);
+    const representative = projection.windows.find(({ windowId }) => windowId === "window.pane.0")!;
+    expect(representative.windowGroupPaneCount).toBe(9);
+    expect(representative.rect).toEqual({ x: 40, y: 30, width: 360, height: 220 });
+    expect([...projection.hiddenWindowIds].sort()).toEqual([
+      "window.pane.1",
+      "window.pane.2",
+      "window.pane.3",
+      "window.pane.4",
+      "window.pane.5",
+      "window.pane.6",
+      "window.pane.7",
+      "window.pane.8",
+    ]);
+    const solo = projection.windows.find(({ windowId }) => windowId === "window.solo")!;
+    expect(solo.windowGroupPaneCount).toBeUndefined();
+  });
+
+  it("folds selection and remaps a focus that landed on a coalesced-away pane", () => {
+    const projection = projectAppWindowCanvas(
+      multiPaneScene(3, 2),
+      { width: 1_200, height: 720 },
+      { windowGroupBySourceId: paneGroup(3) },
+    );
+    // Focus was on window.pane.2 (a hidden member); it resolves to the card.
+    expect(projection.focusedWindowId).toBe("window.pane.0");
+    const representative = projection.windows.find(({ windowId }) => windowId === "window.pane.0")!;
+    expect(representative.selected).toBe(true);
+    expect(representative.active).toBe(true);
+  });
+
+  it("leaves a single-pane window untouched even when it carries a window id", () => {
+    const projection = projectAppWindowCanvas(
+      multiPaneScene(1, 0),
+      { width: 1_200, height: 720 },
+      { windowGroupBySourceId: paneGroup(1) },
+    );
+    expect(projection.windows.map(({ windowId }) => windowId).sort()).toEqual([
+      "window.pane.0",
+      "window.solo",
+    ]);
+    expect(
+      projection.windows.every(({ windowGroupPaneCount }) => windowGroupPaneCount === undefined),
+    ).toBe(true);
+    expect(projection.hiddenWindowIds).toEqual([]);
+  });
+
+  it("is a no-op without a grouping map (single card per pane)", () => {
+    const projection = projectAppWindowCanvas(multiPaneScene(3, 0), { width: 1_200, height: 720 });
+    expect(projection.windows).toHaveLength(4);
+    expect(projection.hiddenWindowIds).toEqual([]);
+  });
+});
+
 describe("projectAppWindowCanvas", () => {
   it("projects canonical dock, tab, floating, focus, and z-order state at 800x500", () => {
     expect(

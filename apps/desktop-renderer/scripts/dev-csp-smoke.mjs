@@ -189,9 +189,9 @@ try {
       globalThis.document.body.append(mountRoot);
       const { mountControlledTabsSmokeFixture, mountUiSystemShowcaseFixture } =
         await import("/src/ui-system/showcase.fixture.tsx");
-      const { mountAppWindowCanvasSmokeFixture } =
+      const { mountAppWindowCanvasSmokeFixture, mountAppWindowCanvasGroupedFixture } =
         await import("/src/experience/app-window-canvas.fixture.tsx");
-      const { mountTerminalSurfaceSmokeFixture } =
+      const { mountTerminalSurfaceSmokeFixture, mountTerminalLetterboxFixture } =
         await import("/src/terminal/terminal-surface.fixture.tsx");
       const dispose = mountUiSystemShowcaseFixture(mountRoot);
       const trigger = mountRoot.querySelector('[aria-label="Add pane"]');
@@ -241,6 +241,63 @@ try {
           // Ignore opaque stylesheets.
         }
       }
+      // attach-5: a nine-pane window coalesces into ONE size-passive card.
+      const groupedRoot = globalThis.document.createElement("div");
+      globalThis.document.body.append(groupedRoot);
+      const disposeGrouped = mountAppWindowCanvasGroupedFixture(groupedRoot);
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const groupedCard = groupedRoot.querySelector('[data-window-id="window.grid.0"]');
+      const groupedSummary = {
+        cardCount: groupedRoot.querySelectorAll(".app-window-card").length,
+        paneCount: groupedCard?.getAttribute("data-window-pane-count") ?? null,
+        sizePassive: groupedCard
+          ?.querySelector(".terminal-surface")
+          ?.getAttribute("data-size-passive"),
+        soloVisible: Boolean(groupedRoot.querySelector('[data-window-id="window.solo"]')),
+        hiddenPaneVisible: Boolean(groupedRoot.querySelector('[data-window-id="window.grid.1"]')),
+      };
+      disposeGrouped();
+      groupedRoot.remove();
+
+      // attach-5 size-passive letterbox containment: a size-passive surface must
+      // never paint outside its card. The invariant that guards the bleed is that
+      // the unavailable/letterbox state's offsetParent stays the surface (so the
+      // card's overflow:hidden clips it) — a bare DOM rect check misses this.
+      const letterboxRoot = globalThis.document.createElement("div");
+      globalThis.document.body.append(letterboxRoot);
+      const disposeLetterbox = mountTerminalLetterboxFixture(letterboxRoot);
+      const letterboxDeadline = Date.now() + 5_000;
+      while (Date.now() < letterboxDeadline) {
+        const surfaces = [...letterboxRoot.querySelectorAll(".terminal-surface")];
+        if (surfaces.length >= 2 && letterboxRoot.querySelectorAll(".xterm").length >= 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const letterboxSummary = [...letterboxRoot.querySelectorAll("[data-letterbox-case]")].map(
+        (box) => {
+          const surface = box.querySelector(".terminal-surface");
+          const state = box.querySelector(".terminal-surface__state");
+          const surfaceRect = surface?.getBoundingClientRect();
+          const boxRect = box.getBoundingClientRect();
+          const within = (child) =>
+            !!child &&
+            child.left >= boxRect.left - 1 &&
+            child.top >= boxRect.top - 1 &&
+            child.right <= boxRect.right + 1 &&
+            child.bottom <= boxRect.bottom + 1;
+          return {
+            case: box.dataset.letterboxCase,
+            surfaceWithinBox: within(surfaceRect),
+            // The state's containing block stays inside the box, so the box's
+            // overflow:hidden clips it; if it ever escaped to <body>/viewport it
+            // would bleed across the canvas (the defect this guards against).
+            stateContained: !state || box.contains(state.offsetParent ?? state),
+          };
+        },
+      );
+      disposeLetterbox();
+      letterboxRoot.remove();
+
       const terminalRoot = globalThis.document.createElement("div");
       const baselineStyles = new Set(globalThis.document.querySelectorAll("style"));
       globalThis.document.body.append(terminalRoot);
@@ -308,6 +365,8 @@ try {
           ),
           runtimeRules: canvasRuntimeRules,
           inlineAttributes: canvasRoot.querySelectorAll("[style]").length,
+          grouped: groupedSummary,
+          letterbox: letterboxSummary,
         },
         terminal: {
           phase: terminalSurface?.getAttribute("data-phase"),
@@ -407,6 +466,13 @@ try {
       primitiveResult.canvas.floating?.top !== 36 ||
       primitiveResult.canvas.floating?.width !== 360 ||
       primitiveResult.canvas.floating?.height !== 220 ||
+      primitiveResult.canvas.grouped.cardCount !== 2 ||
+      primitiveResult.canvas.grouped.paneCount !== "9" ||
+      primitiveResult.canvas.grouped.sizePassive !== "true" ||
+      !primitiveResult.canvas.grouped.soloVisible ||
+      primitiveResult.canvas.grouped.hiddenPaneVisible ||
+      primitiveResult.canvas.letterbox.length !== 2 ||
+      primitiveResult.canvas.letterbox.some((c) => !c.surfaceWithinBox || !c.stateContained) ||
       primitiveResult.terminal.phase !== "connected" ||
       primitiveResult.terminal.preservesFrame !== "true" ||
       !primitiveResult.terminal.hasXterm ||
@@ -1487,9 +1553,8 @@ try {
         const mixedRoot = globalThis.document.createElement("div");
         mixedRoot.id = "root";
         globalThis.document.body.append(mixedRoot);
-        const { mountFleetSidebarSmokeFixture, mountFleetSidebarStatesSmokeFixture } = await import(
-          "/src/experience/fleet-sidebar.fixture.tsx"
-        );
+        const { mountFleetSidebarSmokeFixture, mountFleetSidebarStatesSmokeFixture } =
+          await import("/src/experience/fleet-sidebar.fixture.tsx");
         const disposeMixed = mountFleetSidebarSmokeFixture(mixedRoot);
         await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
         const sessions = mixedRoot.querySelectorAll(".fleet-sidebar__session").length;
@@ -1537,9 +1602,8 @@ try {
           const shotRoot = globalThis.document.createElement("div");
           shotRoot.id = "root";
           globalThis.document.body.append(shotRoot);
-          const { mountFleetSidebarSmokeFixture } = await import(
-            "/src/experience/fleet-sidebar.fixture.tsx"
-          );
+          const { mountFleetSidebarSmokeFixture } =
+            await import("/src/experience/fleet-sidebar.fixture.tsx");
           mountFleetSidebarSmokeFixture(shotRoot);
           await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
         });

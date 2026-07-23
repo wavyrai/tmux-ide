@@ -24,6 +24,14 @@ export interface AppWindowCanvasItem {
   readonly selected: boolean;
   readonly active: boolean;
   readonly zIndex: number;
+  /**
+   * Number of terminal resources this card represents (m41 attach-5). It is >1
+   * only on the representative of a coalesced multi-pane window — the panes of
+   * one durable tmux window, grouped by their shared `windowResourceId`, render
+   * as ONE card. Absent (treated as 1) for an ordinary single-resource window.
+   * A value >1 is what makes the card attach size-passive and letterbox.
+   */
+  readonly windowGroupPaneCount?: number;
 }
 
 export interface AppWindowCanvasProjection {
@@ -163,15 +171,96 @@ function projectDockNode(
   }
 }
 
+function terminalGroupKey(
+  window: AppWindowCanvasItem,
+  groupBySourceId: ReadonlyMap<string, string>,
+): string | null {
+  return window.source.kind === "terminal"
+    ? (groupBySourceId.get(window.source.terminalSourceId) ?? null)
+    : null;
+}
+
+/**
+ * PURE — coalesce the panes of one durable tmux window into a single card
+ * (m41 attach-5). The daemon still projects one AppWindow per pane resource, so
+ * a multi-pane window arrives as N terminal windows that share one
+ * `windowResourceId` (minted by attach-4 from the durable window stamp). Every
+ * group of >1 collapses to ONE representative card — chosen by the smallest
+ * window id so the card identity, geometry, and attach pane stay STABLE as the
+ * active pane changes inside tmux — and the rest are hidden. Selection folds
+ * across the whole group, and a focus that pointed at a hidden member is
+ * remapped to the representative so focus/selection resolve through the group.
+ */
+function coalesceWindowGroups(
+  windows: readonly AppWindowCanvasItem[],
+  hiddenWindowIds: string[],
+  focusedWindowId: string | null,
+  groupBySourceId: ReadonlyMap<string, string>,
+): { readonly windows: AppWindowCanvasItem[]; readonly focusedWindowId: string | null } {
+  if (groupBySourceId.size === 0) return { windows: [...windows], focusedWindowId };
+  const members = new Map<string, AppWindowCanvasItem[]>();
+  for (const window of windows) {
+    const key = terminalGroupKey(window, groupBySourceId);
+    if (key === null) continue;
+    (members.get(key) ?? members.set(key, []).get(key)!).push(window);
+  }
+  const representativeByGroup = new Map<string, string>();
+  const coalescedAway = new Set<string>();
+  for (const [key, group] of members) {
+    if (group.length < 2) continue;
+    const representative = [...group].sort((left, right) =>
+      left.windowId.localeCompare(right.windowId),
+    )[0]!;
+    representativeByGroup.set(key, representative.windowId);
+    for (const window of group) {
+      if (window.windowId !== representative.windowId) coalescedAway.add(window.windowId);
+    }
+  }
+  if (coalescedAway.size === 0) return { windows: [...windows], focusedWindowId };
+  let nextFocused = focusedWindowId;
+  if (focusedWindowId !== null && coalescedAway.has(focusedWindowId)) {
+    const focused = windows.find((window) => window.windowId === focusedWindowId);
+    const key = focused ? terminalGroupKey(focused, groupBySourceId) : null;
+    nextFocused = (key !== null ? representativeByGroup.get(key) : undefined) ?? focusedWindowId;
+  }
+  const nextWindows: AppWindowCanvasItem[] = [];
+  for (const window of windows) {
+    if (coalescedAway.has(window.windowId)) {
+      hiddenWindowIds.push(window.windowId);
+      continue;
+    }
+    const key = terminalGroupKey(window, groupBySourceId);
+    if (key !== null && representativeByGroup.get(key) === window.windowId) {
+      const group = members.get(key)!;
+      nextWindows.push({
+        ...window,
+        selected: group.some((member) => member.selected || member.windowId === focusedWindowId),
+        active: group.some((member) => member.active),
+        windowGroupPaneCount: group.length,
+      });
+      continue;
+    }
+    nextWindows.push(window);
+  }
+  return { windows: nextWindows, focusedWindowId: nextFocused };
+}
+
 /**
  * Pure durable-scene -> terminal canvas projection. Native dock/window nodes
  * are pruned before split allocation because those surfaces remain owned by
  * the native workbench in this first canvas slice.
+ *
+ * `windowGroupBySourceId` maps a terminal source id to the `windowResourceId`
+ * it shares with the other panes of its durable tmux window (m41 attach-5).
+ * When supplied, panes of one window coalesce into a single representative card.
  */
 export function projectAppWindowCanvas(
   value: AppWindowDocumentV1,
   requestedViewport: AppWindowCanvasViewport,
-  options: { readonly gap?: number } = {},
+  options: {
+    readonly gap?: number;
+    readonly windowGroupBySourceId?: ReadonlyMap<string, string>;
+  } = {},
 ): AppWindowCanvasProjection {
   const document = AppWindowDocumentV1SchemaZ.parse(value);
   const viewport = normalizedViewport(requestedViewport);
@@ -209,11 +298,18 @@ export function projectAppWindowCanvas(
     });
   }
 
+  const coalesced = coalesceWindowGroups(
+    windows,
+    hiddenWindowIds,
+    document.focusedWindowId,
+    options.windowGroupBySourceId ?? new Map(),
+  );
+
   return Object.freeze({
     revision: document.revision,
     viewport: Object.freeze(viewport),
-    windows: Object.freeze(windows.map((window) => Object.freeze(window))),
+    windows: Object.freeze(coalesced.windows.map((window) => Object.freeze(window))),
     hiddenWindowIds: Object.freeze(hiddenWindowIds),
-    focusedWindowId: document.focusedWindowId,
+    focusedWindowId: coalesced.focusedWindowId,
   });
 }

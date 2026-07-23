@@ -77,6 +77,7 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
     }),
     focus: vi.fn(),
     fit: vi.fn(() => viewport),
+    resizeGrid: vi.fn(),
     refreshTheme: vi.fn(),
     setReducedMotion: vi.fn(),
     onInput: vi.fn((listener) => {
@@ -156,6 +157,54 @@ describe("TerminalSurface", () => {
     expect(root.innerHTML).toMatchSnapshot();
     dispose();
     expect(renderer.renderer.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("mirrors the origin window grid and never reflows tmux when size-passive", async () => {
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+          sizePassive
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    // Size-passive attaches with a provisional viewport tmux ignores, not a DOM fit.
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ viewport: { cols: 80, rows: 24 } }),
+      expect.any(Function),
+    );
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected"),
+    );
+
+    (listener as ((event: NativeTerminalEvent) => void) | null)?.({
+      type: "geometry",
+      sourceGrid: { cols: 200, rows: 50 },
+      clientViewport: { cols: 200, rows: 50 },
+    });
+    expect(renderer.renderer.resizeGrid).toHaveBeenCalledWith({ cols: 200, rows: 50 });
+
+    // A DOM resize must re-assert the window grid, never resize the origin window.
+    for (const observer of ResizeObserverHarness.active) observer.trigger();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(attachment.resize).not.toHaveBeenCalled();
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-size-passive")).toBe("true");
+    dispose();
   });
 
   it("forwards early binary output and serializes terminal input writes", async () => {

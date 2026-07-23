@@ -11,6 +11,13 @@ export interface TerminalRenderer {
   write(bytes: Uint8Array): Promise<void>;
   focus(): void;
   fit(): TerminalAttachmentViewport | null;
+  /**
+   * Resize the local grid to an explicit window-level viewport WITHOUT measuring
+   * the DOM. Size-passive cards (m41 attach-5) render the origin window's own
+   * grid — reported by the transport — and letterbox the remainder, so the
+   * renderer must be sized from that grid rather than fit to the card.
+   */
+  resizeGrid(viewport: TerminalAttachmentViewport): void;
   refreshTheme(): void;
   setReducedMotion(reducedMotion: boolean): void;
   onInput(listener: (bytes: Uint8Array) => void): TerminalRendererDisposable;
@@ -176,6 +183,12 @@ export const createXtermRenderer: TerminalRendererFactory = ({ reducedMotion, la
         return { cols: dimensions.cols, rows: dimensions.rows };
       } catch {
         return null;
+      }
+    },
+    resizeGrid(viewport) {
+      if (viewport.cols < 1 || viewport.rows < 1) return;
+      if (viewport.cols !== terminal.cols || viewport.rows !== terminal.rows) {
+        terminal.resize(viewport.cols, viewport.rows);
       }
     },
     refreshTheme() {

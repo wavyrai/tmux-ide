@@ -25,6 +25,15 @@ export type TerminalSurfacePhase =
   | "disconnected"
   | "error";
 
+/**
+ * Provisional viewport for a size-passive attach (m41 attach-5). The origin
+ * window is attached size-passive (`-f ignore-size`), so tmux discards the
+ * client viewport when sizing the window; the request only needs a valid grid.
+ * The window's real grid arrives on the connected/geometry event and drives the
+ * renderer through {@link TerminalRenderer.resizeGrid}.
+ */
+const SIZE_PASSIVE_CONNECT_VIEWPORT: TerminalAttachmentViewport = { cols: 80, rows: 24 };
+
 const MAX_PENDING_OUTPUT_WRITES = 64;
 const OUTPUT_WRITE_TIMEOUT_MS = 15_000;
 const MAX_PENDING_INPUT_WRITES = 64;
@@ -39,6 +48,14 @@ export interface TerminalSurfaceProps {
   readonly themeKey?: string;
   readonly onFocus?: (source: "keyboard" | "mouse") => void;
   readonly rendererFactory?: TerminalRendererFactory;
+  /**
+   * Render the origin window's own grid and letterbox the remainder instead of
+   * reflowing tmux to the card (m41 attach-5). A multi-pane window is attached
+   * as ONE size-passive card: the desktop never drives the window size, so DOM
+   * measurements must not resize the origin. The renderer is sized from the
+   * transport-reported window grid, and the surface centers it inside the card.
+   */
+  readonly sizePassive?: boolean;
 }
 
 function sameViewport(
@@ -308,6 +325,11 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       currentViewport = event.clientViewport;
       setSourceGrid(event.sourceGrid);
       setClientViewport(event.clientViewport);
+      if (props.sizePassive) {
+        // Size-passive card: mirror the origin window's grid; never resize tmux.
+        renderer?.resizeGrid(event.sourceGrid);
+        return;
+      }
       const measured = latestMeasuredViewport;
       if (attachment && measured && !sameViewport(event.clientViewport, measured)) {
         pendingResize = measured;
@@ -323,6 +345,11 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       if (attachment) {
         setReason(null);
         setPhase("connected");
+        if (props.sizePassive) {
+          // Size-passive card: mirror the origin window's grid; never resize tmux.
+          renderer?.resizeGrid(event.sourceGrid);
+          return;
+        }
         const measured = latestMeasuredViewport;
         if (measured && !sameViewport(event.clientViewport, measured)) {
           pendingResize = measured;
@@ -396,6 +423,21 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const fit = (): void => {
     animationFrame = null;
     if (disposed) return;
+    if (props.sizePassive) {
+      // Size-passive card: the origin window owns its size, so a DOM measurement
+      // must never reflow tmux. Re-assert the window grid on an existing
+      // attachment; otherwise open one with a provisional (ignored) viewport.
+      if (attachment) {
+        const grid = sourceGrid();
+        if (grid) renderer?.resizeGrid(grid);
+        return;
+      }
+      if (phase() === "measuring") {
+        latestMeasuredViewport = SIZE_PASSIVE_CONNECT_VIEWPORT;
+        connect(SIZE_PASSIVE_CONNECT_VIEWPORT);
+      }
+      return;
+    }
     const viewport = usableViewport(renderer?.fit() ?? null);
     if (!viewport) {
       if (!attachment && props.transport) setPhase("measuring");
@@ -618,6 +660,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       class="terminal-surface"
       data-phase={phase()}
       data-focused={props.focused ?? false}
+      data-size-passive={props.sizePassive ?? false}
       data-reduced-motion={props.reducedMotion ?? false}
       data-preserves-frame={hasValidatedFrame()}
       data-source-grid={sourceGrid() ? `${sourceGrid()!.cols}x${sourceGrid()!.rows}` : undefined}

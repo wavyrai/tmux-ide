@@ -94,6 +94,84 @@ export function mountTerminalSurfaceSmokeFixture(root: HTMLElement): () => void 
   );
 }
 
+interface LetterboxCase {
+  readonly label: string;
+  readonly grid: { readonly cols: number; readonly rows: number };
+}
+
+/** A replay transport that reports a fixed window grid (m41 attach-5 size-passive). */
+function gridReplayTransport(grid: { cols: number; rows: number }): NativeTerminalTransport {
+  let screen = `${sgr("1")}${sgr("34")}window ${grid.cols}x${grid.rows}${RESET}\r\n`;
+  for (let row = 0; row < grid.rows - 2; row += 1) {
+    screen += `row ${row} ${sgr("32")}██${RESET} ${sgr("33")}││${RESET} box\r\n`;
+  }
+  return {
+    async connect(request, listener) {
+      // A fresh attachment per connect — never shared across surfaces.
+      const ownAttachment: NativeTerminalAttachment = {
+        write: async () => ({ status: "ok" }),
+        resize: async () => ({ status: "ok" }),
+        dispose: () => undefined,
+      };
+      setTimeout(() => {
+        void listener({
+          type: "state",
+          state: "connected",
+          error: null,
+          sourceGrid: grid,
+          clientViewport: grid,
+        });
+        void listener({ type: "output", bytes: encoder.encode(screen) });
+      }, 0);
+      return { status: "connected", attachment: ownAttachment };
+    },
+  };
+}
+
+/**
+ * Size-passive letterbox probe (m41 attach-5): a fixed card-sized box holds a
+ * single size-passive surface. One case's window grid FITS (letterbox bars); the
+ * other is far LARGER than the box (must clip, never bleed past the box border).
+ * Never mounted by the product shell.
+ */
+export function mountTerminalLetterboxFixture(root: HTMLElement): () => void {
+  root.className = "tmi-terminal-letterbox-fixture";
+  const cases: readonly LetterboxCase[] = [
+    { label: "fits", grid: { cols: 34, rows: 10 } },
+    { label: "oversized", grid: { cols: 160, rows: 48 } },
+  ];
+  return render(
+    () => (
+      <div style={{ display: "flex", gap: "24px", padding: "24px" }}>
+        <For each={cases}>
+          {(entry) => (
+            <div
+              data-letterbox-case={entry.label}
+              style={{
+                width: "360px",
+                height: "220px",
+                border: "2px solid #e0483a",
+                "border-radius": "10px",
+                overflow: "hidden",
+                position: "relative",
+                background: "var(--tmux-ide-terminal-background, #12131a)",
+              }}
+            >
+              <TerminalSurface
+                target={{ workspaceName: "letterbox", semanticPaneId: `terminal.${entry.label}` }}
+                title={entry.label}
+                transport={gridReplayTransport(entry.grid)}
+                sizePassive
+              />
+            </div>
+          )}
+        </For>
+      </div>
+    ),
+    root,
+  );
+}
+
 interface GalleryCase {
   readonly appearance: "dark" | "light";
   readonly label: string;
