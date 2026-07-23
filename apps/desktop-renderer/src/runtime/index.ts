@@ -1,3 +1,4 @@
+export * from "./connection-health.ts";
 export * from "./connection-state.ts";
 export { DaemonTransportError } from "./daemon-transport.ts";
 export type {

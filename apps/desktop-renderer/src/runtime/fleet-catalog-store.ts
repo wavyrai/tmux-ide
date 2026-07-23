@@ -6,9 +6,12 @@ import {
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityError,
   type DesktopDaemonEvent,
+  type DesktopDaemonTransportState,
   type FleetCatalogResourceV1,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
+
+import { transportStateReason } from "./connection-health.ts";
 
 /**
  * Generation-bound renderer store for the read-only fleet catalog.
@@ -268,6 +271,13 @@ export function createDesktopFleetCatalogStore(
   let eventRetryTimer: unknown | null = null;
   let eventRetryAttempts = 0;
   let eventLive = false;
+  /**
+   * Non-null once the host pushed a supervisor-derived transport state. From
+   * then on the main-process supervisor is the ONE retry owner: a degraded
+   * connection keeps this logical subscription (no teardown-and-resubscribe
+   * loop) and this store's status derives from the pushed states.
+   */
+  let hostTransport: DesktopDaemonTransportState | null = null;
 
   const notify = (
     listener: DesktopFleetCatalogStateListener,
@@ -323,6 +333,7 @@ export function createDesktopFleetCatalogStore(
     subscriptionId += 1;
     if (forgetPending) pendingSubscriptionId = null;
     eventLive = false;
+    hostTransport = null;
     const active = unsubscribeHost;
     unsubscribeHost = null;
     try {
@@ -564,6 +575,30 @@ export function createDesktopFleetCatalogStore(
         fetchCatalog(expectedGeneration, expectedDaemonGeneration);
         return;
       }
+      if (event.type === "transport.changed") {
+        const previous = hostTransport;
+        hostTransport = event.transport;
+        if (event.transport.phase === "connected") {
+          // Missed invalidations cannot hide in the reconnect gap: a verified
+          // recovery refetches before trusting the retained snapshot as live.
+          if (
+            previous !== null &&
+            (previous.phase === "reconnecting" ||
+              previous.phase === "stopped" ||
+              previous.phase === "degraded")
+          ) {
+            fetchCatalog(expectedGeneration, expectedDaemonGeneration);
+          }
+          return;
+        }
+        if (event.transport.phase === "reconnecting" || event.transport.phase === "stopped") {
+          emitEventFailure({
+            code: "event-unavailable",
+            reason: transportStateReason(event.transport) ?? "Daemon fleet events are unavailable.",
+          });
+        }
+        return;
+      }
       if (event.type !== "connection.changed") return;
       if (event.state === "live") {
         eventLive = true;
@@ -572,6 +607,17 @@ export function createDesktopFleetCatalogStore(
         eventRetryRequested = false;
         const snapshot = snapshotFromState(state);
         if (snapshot && daemon) emit({ status: "live", generation, daemon, snapshot });
+        return;
+      }
+      if (hostTransport !== null) {
+        // Supervisor-owned transport: derive the degraded status but keep the
+        // logical subscription; the ONE retry owner recovers the socket.
+        emitEventFailure(
+          event.error ?? {
+            code: "event-unavailable",
+            reason: "Daemon fleet events are unavailable.",
+          },
+        );
         return;
       }
       recoverEvents(

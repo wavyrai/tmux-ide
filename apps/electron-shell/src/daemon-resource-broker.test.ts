@@ -622,7 +622,11 @@ describe("Electron main daemon resource broker", () => {
     socket.emit("open");
     socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
     expect(socket.sent).toEqual([]);
-    expect(events).toEqual([{ type: "connection.changed", state: "live", error: null }]);
+    expect(events).toEqual([
+      { type: "transport.changed", transport: { phase: "connecting" } },
+      { type: "transport.changed", transport: { phase: "connected" } },
+      { type: "connection.changed", state: "live", error: null },
+    ]);
 
     socket.emit(
       "message",
@@ -1078,7 +1082,10 @@ describe("Electron main daemon resource broker", () => {
     expect((await broker.subscribe(["docs"], (event) => second.push(event))).status).toBe(
       "subscribed",
     );
-    expect(second).toEqual([{ type: "connection.changed", state: "live", error: null }]);
+    expect(second).toEqual([
+      { type: "transport.changed", transport: { phase: "connected" } },
+      { type: "connection.changed", state: "live", error: null },
+    ]);
     expect(first.filter((event) => event.type === "connection.changed")).toHaveLength(1);
   });
 
@@ -1136,10 +1143,13 @@ describe("Electron main daemon resource broker", () => {
 
       originalSocket.emit("message", JSON.stringify(frame));
       expect(originalSocket.close).toHaveBeenCalledWith(1002, expect.any(String));
-      expect(events.at(-1)).toMatchObject({
-        type: "connection.changed",
+      expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
         state: "degraded",
         error: { code: "invalid-response" },
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "transport.changed",
+        transport: { phase: "reconnecting", attempt: 1 },
       });
       await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
       await vi.waitFor(() => expect(createWebSocket).toHaveBeenCalledTimes(2));
@@ -1257,10 +1267,13 @@ describe("Electron main daemon resource broker", () => {
         );
         if (opened) socket.emit("open");
         await vi.advanceTimersByTimeAsync(10);
-        expect(events.at(-1)).toMatchObject({
-          type: "connection.changed",
+        expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
           state: "degraded",
           error: { code: "event-unavailable" },
+        });
+        expect(events.at(-1)).toMatchObject({
+          type: "transport.changed",
+          transport: { phase: "reconnecting", attempt: 1 },
         });
         expect(socket.close).toHaveBeenCalledWith(1008, "event handshake timeout");
 
@@ -1274,6 +1287,7 @@ describe("Electron main daemon resource broker", () => {
         });
         await released.subscribe(["docs"], (event) => releasedEvents.push(event));
         released.releaseRenderer();
+        releasedEvents.length = 0;
         await vi.advanceTimersByTimeAsync(10);
         expect(releasedEvents).toEqual([]);
       } finally {
@@ -1293,7 +1307,13 @@ describe("Electron main daemon resource broker", () => {
     await broker.subscribe(["docs"], (event) => events.push(event));
     socket.emit("error");
     expect(socket.close).toHaveBeenCalledWith(1011, "event connection failed");
-    expect(events.at(-1)).toMatchObject({ error: { code: "event-unavailable" } });
+    expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
+      error: { code: "event-unavailable" },
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "transport.changed",
+      transport: { phase: "reconnecting", attempt: 1, maximumAttempts: 4 },
+    });
   });
 
   it("recovers a retained logical subscriber over one physical socket at a time", async () => {
@@ -1395,6 +1415,121 @@ describe("Electron main daemon resource broker", () => {
     }
   });
 
+  it("surfaces the fatal retry ceiling as a stopped transport instead of dying silently", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const createWebSocket = vi.fn(() => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      });
+      const events: DesktopDaemonEvent[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 10,
+        eventReconnectMaximumDelayMs: 10,
+        eventReconnectMaximumAttempts: 1,
+      });
+      const result = await broker.subscribe([], (event) => events.push(event));
+      sockets[0]!.emit("close");
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[1]!.emit("close");
+      expect(events.at(-1)).toEqual({
+        type: "transport.changed",
+        transport: {
+          phase: "stopped",
+          error: { code: "event-unavailable", reason: expect.any(String) },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("wakes a stopped transport on an explicit retry and reconnects immediately", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const createWebSocket = vi.fn(() => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      });
+      const events: DesktopDaemonEvent[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 10,
+        eventReconnectMaximumDelayMs: 10,
+        eventReconnectMaximumAttempts: 1,
+      });
+      const result = await broker.subscribe([], (event) => events.push(event));
+      sockets[0]!.emit("close");
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[1]!.emit("close");
+      expect(events.at(-1)).toMatchObject({
+        type: "transport.changed",
+        transport: { phase: "stopped" },
+      });
+
+      broker.retryTransport();
+      expect(createWebSocket).toHaveBeenCalledTimes(3);
+      sockets[2]!.emit("open");
+      sockets[2]!.emit(
+        "message",
+        JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }),
+      );
+      expect(events.at(-1)).toEqual({ type: "connection.changed", state: "live", error: null });
+      expect(broker.transportState()).toEqual({ phase: "connected" });
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("interrupts a scheduled backoff on an explicit transport wakeup", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const createWebSocket = vi.fn(() => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      });
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 5_000,
+        eventReconnectMaximumDelayMs: 5_000,
+        eventReconnectMaximumAttempts: 2,
+      });
+      const result = await broker.subscribe([], vi.fn());
+      sockets[0]!.emit("close");
+      expect(broker.transportState()).toMatchObject({ phase: "reconnecting", attempt: 1 });
+      broker.retryTransport();
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      sockets[1]!.emit("open");
+      sockets[1]!.emit(
+        "message",
+        JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }),
+      );
+      // The interrupted backoff timer never spawns a parallel socket.
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     {
       label: "protocol error",
@@ -1431,7 +1566,13 @@ describe("Electron main daemon resource broker", () => {
       first.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
       first.emit("message", JSON.stringify(frame));
       expect(first.close).toHaveBeenCalledWith(...close);
-      expect(events.at(-1)).toMatchObject({ type: "connection.changed", state: "degraded" });
+      expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
+        state: "degraded",
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "transport.changed",
+        transport: { phase: "reconnecting", attempt: 1 },
+      });
       expect(JSON.stringify(events)).not.toMatch(/must\/not\/leak|private/iu);
       await vi.advanceTimersByTimeAsync(10);
       expect(createWebSocket).toHaveBeenCalledTimes(2);
@@ -1470,10 +1611,13 @@ describe("Electron main daemon resource broker", () => {
       );
       expect(first.sent).toEqual([]);
       expect(first.close).toHaveBeenCalledWith(1008, "daemon generation mismatch");
-      expect(events.at(-1)).toMatchObject({
-        type: "connection.changed",
+      expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
         state: "degraded",
         error: { code: "daemon-identity-mismatch" },
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "transport.changed",
+        transport: { phase: "reconnecting", attempt: 1 },
       });
       await vi.advanceTimersByTimeAsync(10);
       expect(createWebSocket).toHaveBeenCalledTimes(2);

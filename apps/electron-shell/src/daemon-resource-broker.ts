@@ -67,10 +67,13 @@ import {
   type WorkspacePromoteMutationRequest,
   type WorkspacePromoteMutationResult,
   type DesktopDaemonFetchFleetCatalogResult,
+  type DesktopDaemonTransportState,
   type AppWindowMutationRequest,
   type AppWindowMutationResult,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
+
+import { DaemonEventSupervisor } from "./daemon-event-supervisor.ts";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 // Promotion is a heavier mutation than open/pane-create: it captures the pane
@@ -432,9 +435,8 @@ export class DaemonResourceBroker {
   #sentSessions = new Set<string>();
   #socketPeerVerified = false;
   #socketOpened = false;
-  #socketHandshakeTimer: ReturnType<typeof setTimeout> | null = null;
-  #socketReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  #socketReconnectAttempts = 0;
+  /** The single owner of event-transport retry, backoff, and the fatal ceiling. */
+  readonly #supervisor: DaemonEventSupervisor;
 
   constructor(dependencies: DaemonResourceBrokerDependencies) {
     this.#daemon = DesktopDaemonHostStateSchemaZ.parse(dependencies.daemon);
@@ -484,6 +486,35 @@ export class DaemonResourceBroker {
     );
     this.#now = dependencies.now ?? Date.now;
     this.#ownerToken = dependencies.ownerToken ?? null;
+    this.#supervisor = new DaemonEventSupervisor({
+      policy: {
+        initialDelayMs: this.#eventReconnectInitialDelayMs,
+        maximumDelayMs: this.#eventReconnectMaximumDelayMs,
+        maximumAttempts: this.#eventReconnectMaximumAttempts,
+        handshakeTimeoutMs: this.#eventHandshakeTimeoutMs,
+      },
+      hooks: {
+        demand: () =>
+          !this.#disposed && this.#subscriptions.size > 0 && this.#daemon.status === "connected",
+        openSocket: () => this.#openSocket(),
+        closeSocket: (code, reason) => this.#closePhysicalSocket(code, reason),
+        onStateChanged: (state) => this.#transportStateChanged(state),
+      },
+      now: this.#now,
+    });
+  }
+
+  /** Renderer-safe view of the supervisor's derived transport state. */
+  transportState(): DesktopDaemonTransportState {
+    return this.#supervisor.state();
+  }
+
+  /**
+   * Explicit wakeup — a user retry or a daemon-record revalidation. Interrupts
+   * a scheduled backoff and restarts a transport stopped at the fatal ceiling.
+   */
+  retryTransport(): void {
+    this.#supervisor.retry();
   }
 
   async openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult> {
@@ -978,12 +1009,17 @@ export class DaemonResourceBroker {
         workspaceNames: new Set(parsed.data.workspaceNames),
         listener,
       });
-      try {
-        this.#synchronizeSocket();
-      } catch {
-        this.#subscriptions.delete(id);
-        this.#scheduleSocketReconnect();
-        return { status: "error", error: daemonCapabilityError("event-unavailable") };
+      const transportBefore = this.#supervisor.state();
+      this.#synchronizeSocket();
+      // A late joiner immediately learns the derived transport state instead
+      // of inferring health from whether events happen to arrive. When the
+      // subscription itself woke the supervisor, the broadcast transition
+      // already reached it, so only an unchanged state is snapshotted.
+      if (this.#supervisor.state() === transportBefore) {
+        this.#deliver(this.#subscriptions.get(id), {
+          type: "transport.changed",
+          transport: transportBefore,
+        });
       }
       if (this.#socket?.readyState === WS_OPEN && this.#socketPeerVerified) {
         this.#deliver(this.#subscriptions.get(id), {
@@ -999,11 +1035,7 @@ export class DaemonResourceBroker {
           if (!active) return;
           active = false;
           this.#subscriptions.delete(id);
-          try {
-            this.#synchronizeSocket();
-          } catch {
-            this.#scheduleSocketReconnect();
-          }
+          this.#synchronizeSocket();
         },
       };
     } catch (error) {
@@ -1017,14 +1049,15 @@ export class DaemonResourceBroker {
     for (const controller of this.#controllers) controller.abort();
     this.#controllers.clear();
     this.#subscriptions.clear();
-    this.#clearSocketReconnect(true);
-    this.#closeSocket();
+    this.#closePhysicalSocket(1000, "renderer released");
+    this.#supervisor.release();
   }
 
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
     this.releaseRenderer();
+    this.#supervisor.dispose();
   }
 
   #disconnectedResult(): { status: "error"; error: DesktopDaemonCapabilityError } {
@@ -1259,81 +1292,76 @@ export class DaemonResourceBroker {
   }
 
   #synchronizeSocket(): void {
-    const required = this.#requiredSessions();
     if (this.#subscriptions.size === 0) {
-      this.#clearSocketReconnect(true);
-      this.#closeSocket();
+      this.#closePhysicalSocket(1000, "renderer released");
+      this.#supervisor.release();
       return;
     }
     if (!this.#socket) {
-      if (this.#daemon.status !== "connected") return;
-      this.#clearSocketReconnect(false);
-      const url = new URL("/ws/events", this.#daemon.descriptor.apiBaseUrl);
-      url.protocol = "ws:";
-      const socket = this.#createWebSocket(url.toString());
-      this.#socket = socket;
-      this.#socketPeerVerified = false;
-      this.#socketOpened = false;
-      this.#sentSessions.clear();
-      this.#startSocketHandshakeTimer(socket);
-      socket.addEventListener("open", () => {
-        if (this.#socket !== socket) return;
-        this.#socketOpened = true;
-        // The first frame must authenticate the non-secret daemon generation.
-      });
-      socket.addEventListener("message", (event) => this.#receiveSocketEvent(socket, event.data));
-      socket.addEventListener("close", () => this.#socketClosed(socket));
-      socket.addEventListener("error", () => this.#socketErrored(socket));
+      // The supervisor is the ONLY caller allowed to open a socket; demand
+      // merely wakes an idle machine, never bypasses backoff or the fatal stop.
+      this.#supervisor.ensure();
       return;
     }
     if (this.#socket.readyState === WS_OPEN && this.#socketPeerVerified) {
-      this.#sendSubscriptionDelta(required);
+      this.#sendSubscriptionDelta(this.#requiredSessions());
+    }
+  }
+
+  /** Supervisor hook: create the physical socket for one connection attempt. */
+  #openSocket(): void {
+    if (this.#daemon.status !== "connected") {
+      throw new Error("the daemon is not connected");
+    }
+    const url = new URL("/ws/events", this.#daemon.descriptor.apiBaseUrl);
+    url.protocol = "ws:";
+    const socket = this.#createWebSocket(url.toString());
+    this.#socket = socket;
+    this.#socketPeerVerified = false;
+    this.#socketOpened = false;
+    this.#sentSessions.clear();
+    socket.addEventListener("open", () => {
+      if (this.#socket !== socket) return;
+      this.#socketOpened = true;
+      // The first frame must authenticate the non-secret daemon generation.
+    });
+    socket.addEventListener("message", (event) => this.#receiveSocketEvent(socket, event.data));
+    socket.addEventListener("close", () => this.#socketClosed(socket));
+    socket.addEventListener("error", () => this.#socketErrored(socket));
+  }
+
+  #transportStateChanged(state: DesktopDaemonTransportState): void {
+    this.#emit({ type: "transport.changed", transport: state });
+    if (state.phase === "connected") {
+      this.#emit({ type: "connection.changed", state: "live", error: null });
+    } else if (state.phase === "degraded") {
+      this.#emit({ type: "connection.changed", state: "degraded", error: state.error });
     }
   }
 
   #receiveSocketEvent(socket: BrokerEventSocket, data: unknown): void {
     if (this.#socket !== socket) return;
     if (!this.#socketOpened) {
-      this.#emit({
-        type: "connection.changed",
-        state: "degraded",
-        error: daemonCapabilityError("invalid-response"),
-      });
-      this.#closeSocket(1002, "event frame before open", true);
+      this.#failSocket(daemonCapabilityError("invalid-response"), 1002, "event frame before open");
       return;
     }
     if (
       typeof data !== "string" ||
       new TextEncoder().encode(data).byteLength > this.#maxEventBytes
     ) {
-      this.#emit({
-        type: "connection.changed",
-        state: "degraded",
-        error: daemonCapabilityError("invalid-response"),
-      });
-      this.#closeSocket(1009, "invalid event frame", true);
+      this.#failSocket(daemonCapabilityError("invalid-response"), 1009, "invalid event frame");
       return;
     }
     let raw: unknown;
     try {
       raw = JSON.parse(data);
     } catch {
-      this.#emit({
-        type: "connection.changed",
-        state: "degraded",
-        error: daemonCapabilityError("invalid-response"),
-      });
-      this.#closeSocket(1002, "invalid event frame", true);
+      this.#failSocket(daemonCapabilityError("invalid-response"), 1002, "invalid event frame");
       return;
     }
     const parsed = DaemonEventServerFrameSchemaZ.safeParse(raw);
     if (!parsed.success) {
-      this.#emit({
-        type: "connection.changed",
-        state: "degraded",
-        error: daemonCapabilityError("invalid-response"),
-      });
-      this.#closeSocket(1002, "invalid event frame", true);
+      this.#failSocket(daemonCapabilityError("invalid-response"), 1002, "invalid event frame");
       return;
     }
     if (!this.#socketPeerVerified) {
@@ -1342,28 +1370,20 @@ export class DaemonResourceBroker {
         this.#daemon.status !== "connected" ||
         !sameIdentity(parsed.data.daemon, daemonIdentity(this.#daemon))
       ) {
-        this.#emit({
-          type: "connection.changed",
-          state: "degraded",
-          error: daemonCapabilityError("daemon-identity-mismatch"),
-        });
-        this.#closeSocket(1008, "daemon generation mismatch", true);
+        this.#failSocket(
+          daemonCapabilityError("daemon-identity-mismatch"),
+          1008,
+          "daemon generation mismatch",
+        );
         return;
       }
       this.#socketPeerVerified = true;
-      this.#clearSocketHandshakeTimer();
-      this.#clearSocketReconnect(true);
       this.#sendSubscriptionDelta(this.#requiredSessions());
-      this.#emit({ type: "connection.changed", state: "live", error: null });
+      this.#supervisor.verified();
       return;
     }
     if (parsed.data.type === "hello") {
-      this.#emit({
-        type: "connection.changed",
-        state: "degraded",
-        error: daemonCapabilityError("invalid-response"),
-      });
-      this.#closeSocket(1002, "duplicate hello frame", true);
+      this.#failSocket(daemonCapabilityError("invalid-response"), 1002, "duplicate hello frame");
       return;
     }
     this.#projectServerFrame(parsed.data);
@@ -1450,12 +1470,7 @@ export class DaemonResourceBroker {
         }
         return;
       case "protocol.error":
-        this.#emit({
-          type: "connection.changed",
-          state: "degraded",
-          error: daemonCapabilityError("protocol-error"),
-        });
-        this.#closeSocket(1002, "daemon protocol error", true);
+        this.#failSocket(daemonCapabilityError("protocol-error"), 1002, "daemon protocol error");
         return;
       default:
         // init output and protocol keepalives are not renderer resources.
@@ -1517,94 +1532,17 @@ export class DaemonResourceBroker {
 
   #socketClosed(socket: BrokerEventSocket): void {
     if (this.#socket !== socket) return;
-    this.#clearSocketHandshakeTimer();
-    this.#socket = null;
-    this.#socketPeerVerified = false;
-    this.#socketOpened = false;
-    this.#sentSessions.clear();
-    this.#emit({
-      type: "connection.changed",
-      state: "degraded",
-      error: daemonCapabilityError("event-unavailable"),
-    });
-    this.#scheduleSocketReconnect();
+    this.#detachSocket();
+    this.#supervisor.failed(daemonCapabilityError("event-unavailable"));
   }
 
   #socketErrored(socket: BrokerEventSocket): void {
     if (this.#socket !== socket) return;
-    this.#emit({
-      type: "connection.changed",
-      state: "degraded",
-      error: daemonCapabilityError("event-unavailable"),
-    });
-    this.#closeSocket(1011, "event connection failed", true);
-  }
-
-  #startSocketHandshakeTimer(socket: BrokerEventSocket): void {
-    this.#clearSocketHandshakeTimer();
-    this.#socketHandshakeTimer = setTimeout(() => {
-      if (this.#socket !== socket || this.#socketPeerVerified) return;
-      this.#emit({
-        type: "connection.changed",
-        state: "degraded",
-        error: daemonCapabilityError("event-unavailable"),
-      });
-      this.#closeSocket(1008, "event handshake timeout", true);
-    }, this.#eventHandshakeTimeoutMs);
-    this.#socketHandshakeTimer.unref?.();
-  }
-
-  #clearSocketHandshakeTimer(): void {
-    if (!this.#socketHandshakeTimer) return;
-    clearTimeout(this.#socketHandshakeTimer);
-    this.#socketHandshakeTimer = null;
-  }
-
-  #scheduleSocketReconnect(): void {
-    if (
-      this.#disposed ||
-      this.#subscriptions.size === 0 ||
-      this.#socket !== null ||
-      this.#socketReconnectTimer !== null ||
-      this.#socketReconnectAttempts >= this.#eventReconnectMaximumAttempts
-    ) {
-      return;
-    }
-    const delay = Math.min(
-      this.#eventReconnectMaximumDelayMs,
-      this.#eventReconnectInitialDelayMs * 2 ** this.#socketReconnectAttempts,
-    );
-    this.#socketReconnectAttempts += 1;
-    this.#socketReconnectTimer = setTimeout(() => {
-      this.#socketReconnectTimer = null;
-      if (this.#disposed || this.#subscriptions.size === 0 || this.#socket !== null) return;
-      try {
-        this.#synchronizeSocket();
-      } catch {
-        this.#emit({
-          type: "connection.changed",
-          state: "degraded",
-          error: daemonCapabilityError("event-unavailable"),
-        });
-        this.#scheduleSocketReconnect();
-      }
-    }, delay);
-    this.#socketReconnectTimer.unref?.();
-  }
-
-  #clearSocketReconnect(resetAttempts: boolean): void {
-    if (this.#socketReconnectTimer) clearTimeout(this.#socketReconnectTimer);
-    this.#socketReconnectTimer = null;
-    if (resetAttempts) this.#socketReconnectAttempts = 0;
+    this.#failSocket(daemonCapabilityError("event-unavailable"), 1011, "event connection failed");
   }
 
   #rejectSocketFrame(reason: string): void {
-    this.#emit({
-      type: "connection.changed",
-      state: "degraded",
-      error: daemonCapabilityError("invalid-response"),
-    });
-    this.#closeSocket(1002, reason, true);
+    this.#failSocket(daemonCapabilityError("invalid-response"), 1002, reason);
   }
 
   #rejectWorkspaceUpdate(reason: string): void {
@@ -1627,16 +1565,24 @@ export class DaemonResourceBroker {
     }
   }
 
-  #closeSocket(code = 1000, reason = "renderer released", reconnect = false): void {
-    const socket = this.#socket;
-    this.#clearSocketHandshakeTimer();
+  #detachSocket(): void {
     this.#socket = null;
     this.#socketPeerVerified = false;
     this.#socketOpened = false;
     this.#sentSessions.clear();
+  }
+
+  /** Physical teardown only; what happens next is the supervisor's decision. */
+  #closePhysicalSocket(code: number, reason: string): void {
+    const socket = this.#socket;
+    this.#detachSocket();
     if (socket && (socket.readyState === WS_CONNECTING || socket.readyState === WS_OPEN)) {
       socket.close(code, reason);
     }
-    if (reconnect) this.#scheduleSocketReconnect();
+  }
+
+  #failSocket(error: DesktopDaemonCapabilityError, code: number, reason: string): void {
+    this.#closePhysicalSocket(code, reason);
+    this.#supervisor.failed(error);
   }
 }

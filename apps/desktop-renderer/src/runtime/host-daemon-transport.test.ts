@@ -179,6 +179,7 @@ describe("HostCapabilities-backed daemon transport", () => {
       onMalformedFrame: vi.fn(),
       onClose: vi.fn(),
       onError: vi.fn(),
+      onTransportStateChanged: vi.fn(),
     };
     const connection = transport.connectEvents(
       { daemon: DAEMON, workspaceName: "product" },
@@ -217,6 +218,23 @@ describe("HostCapabilities-backed daemon transport", () => {
       error: { code: "protocol-error", reason: "The subscription was rejected." },
     });
     expect(handlers.onProtocolError).toHaveBeenCalledOnce();
+
+    // A supervisor transport push is forwarded verbatim to the typed handler
+    // and never misread as a generic transport error.
+    publish?.({
+      type: "transport.changed",
+      transport: {
+        phase: "reconnecting",
+        attempt: 1,
+        maximumAttempts: 4,
+        nextRetryAt: 1_753_000_000_000,
+        error: { code: "event-unavailable", reason: "The daemon event connection is unavailable." },
+      },
+    });
+    expect(handlers.onTransportStateChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "reconnecting", attempt: 1 }),
+    );
+    expect(handlers.onError).not.toHaveBeenCalled();
 
     connection.close();
     expect(unsubscribe).toHaveBeenCalledOnce();

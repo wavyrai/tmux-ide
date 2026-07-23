@@ -1,10 +1,14 @@
 import { createSignal, onCleanup, type Accessor } from "solid-js";
-import type { ApplicationShellProjectionInputV1 } from "@tmux-ide/contracts";
+import type {
+  ApplicationShellProjectionInputV1,
+  DesktopDaemonTransportState,
+} from "@tmux-ide/contracts";
 import {
   DesktopApplicationShellTargetSchemaZ,
   isDaemonWireProtocolCompatible,
 } from "@tmux-ide/contracts";
 
+import { transportStateReason } from "./connection-health.ts";
 import {
   daemonGenerationKey,
   type DesktopApplicationShellResourceState,
@@ -210,11 +214,22 @@ export function createDesktopApplicationShellResourceStore(
   let reconnectTimer: unknown | null = null;
   let stabilityTimer: unknown | null = null;
   let targetIsValid = false;
+  /**
+   * Non-null once the transport pushed a supervisor-derived state. From then
+   * on the main-process supervisor is the ONE retry owner: the logical host
+   * subscription stays valid across its physical reconnects, this store stops
+   * scheduling reconnects of its own, and its status derives from the pushes.
+   */
+  let hostTransport: DesktopDaemonTransportState | null = null;
+  /** A verified reconnect must refetch so the gap cannot hide missed events. */
+  let resyncNeeded = false;
 
   const emit = (next: DesktopApplicationShellResourceState): void => {
     if (disposed) return;
-    state = next;
-    for (const listener of listeners) listener(next);
+    // Every published state carries the transport axis so consumers derive
+    // compound health (connected-but-sync-failed vs reconnecting) directly.
+    state = { ...next, transport: hostTransport };
+    for (const listener of listeners) listener(state);
   };
 
   const current = (expectedGeneration: number, expectedKey: string): boolean =>
@@ -235,6 +250,7 @@ export function createDesktopApplicationShellResourceStore(
   const retireConnection = (): void => {
     connectionId += 1;
     eventConnected = false;
+    hostTransport = null;
     clearStabilityTimer();
     const active = connection;
     connection = null;
@@ -423,6 +439,14 @@ export function createDesktopApplicationShellResourceStore(
       return;
     }
     abortRequest();
+    if (hostTransport !== null) {
+      // Supervisor-owned transport: the logical subscription survives the
+      // physical reconnect, so derive the status and let the ONE owner retry.
+      eventConnected = false;
+      resyncNeeded = true;
+      emitDisconnected(reason);
+      return;
+    }
     retireConnection();
     emitDisconnected(reason);
     scheduleReconnect(expectedGeneration, expectedKey);
@@ -441,6 +465,23 @@ export function createDesktopApplicationShellResourceStore(
     const wasReconnect = reconnectAttempts > 0;
     try {
       connection = transport.connectEvents(connectionTarget, {
+        onTransportStateChanged: (transportState) => {
+          if (activeConnectionId !== connectionId || !current(expectedGeneration, expectedKey)) {
+            return;
+          }
+          hostTransport = transportState;
+          if (transportState.phase === "reconnecting" || transportState.phase === "stopped") {
+            eventConnected = false;
+            resyncNeeded = true;
+            abortRequest();
+            emitDisconnected(
+              transportStateReason(transportState) ?? "Daemon event socket disconnected.",
+              transportState.phase === "stopped",
+            );
+          }
+          // connected is handled by onVerifiedOpen; degraded is transient and
+          // immediately followed by a reconnecting or stopped push.
+        },
         onVerifiedOpen: () => {
           if (activeConnectionId !== connectionId || !current(expectedGeneration, expectedKey)) {
             return;
@@ -459,7 +500,8 @@ export function createDesktopApplicationShellResourceStore(
               }
             }, reconnect.stabilityWindowMs);
           }
-          if (wasReconnect) {
+          if (wasReconnect || resyncNeeded) {
+            resyncNeeded = false;
             fetchResource(expectedGeneration, expectedKey);
           } else if (state.status === "stale") {
             emit({
@@ -492,6 +534,11 @@ export function createDesktopApplicationShellResourceStore(
             reason: `Daemon rejected the event subscription: ${reason}`,
           });
           abortRequest();
+          if (hostTransport !== null) {
+            eventConnected = false;
+            resyncNeeded = true;
+            return;
+          }
           retireConnection();
           scheduleReconnect(expectedGeneration, expectedKey);
         },
@@ -528,6 +575,11 @@ export function createDesktopApplicationShellResourceStore(
             reason,
           });
           abortRequest();
+          if (hostTransport !== null) {
+            eventConnected = false;
+            resyncNeeded = true;
+            return;
+          }
           retireConnection();
           scheduleReconnect(expectedGeneration, expectedKey);
         },
@@ -572,6 +624,7 @@ export function createDesktopApplicationShellResourceStore(
       target = null;
       targetKey = `invalid:${generation}`;
       reconnectAttempts = 0;
+      resyncNeeded = false;
       targetIsValid = false;
       emit({ status: "loading", generation, target: null, data: null });
       emitTransportError(error);
@@ -586,6 +639,7 @@ export function createDesktopApplicationShellResourceStore(
     target = nextTarget;
     targetKey = nextKey;
     reconnectAttempts = 0;
+    resyncNeeded = false;
     targetIsValid = true;
     emit({ status: "loading", generation, target, data: null });
     fetchResource(generation, targetKey);

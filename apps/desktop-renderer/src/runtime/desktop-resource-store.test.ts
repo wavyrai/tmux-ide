@@ -777,6 +777,126 @@ describe("desktop application-shell resource store", () => {
     expect(observed).toHaveBeenCalledTimes(callsBeforeDispose);
   });
 
+  describe("supervisor-owned transport (host-pushed states)", () => {
+    const EVENT_ERROR = {
+      code: "event-unavailable",
+      reason: "The daemon event connection is unavailable.",
+    } as const;
+
+    it("derives its status from pushed states and never schedules its own retry", async () => {
+      const broker = brokerHarness();
+      const clock = new FakeClock();
+      const store = createDesktopApplicationShellResourceStore({
+        target: target(),
+        transport: broker.transport,
+        clock,
+      });
+      const connection = broker.connections[0]!;
+      connection.handlers.onTransportStateChanged?.({ phase: "connected" });
+      connection.handlers.onVerifiedOpen();
+      broker.requests[0]!.resolve(resource("supervised"));
+      await settle();
+      expect(store.getState()).toMatchObject({
+        status: "live",
+        data: { project: { name: "supervised" } },
+      });
+
+      // The broker's real order on a socket loss: degraded push, the coarse
+      // close signal, then the scheduled reconnecting push.
+      connection.handlers.onTransportStateChanged?.({ phase: "degraded", error: EVENT_ERROR });
+      connection.handlers.onClose();
+      connection.handlers.onTransportStateChanged?.({
+        phase: "reconnecting",
+        attempt: 2,
+        maximumAttempts: 6,
+        nextRetryAt: 2_000,
+        error: EVENT_ERROR,
+      });
+      expect(store.getState()).toMatchObject({
+        status: "stale",
+        data: { project: { name: "supervised" } },
+        reason: "Reconnecting to the engine (attempt 2 of 6).",
+        // The transport axis is exposed on the state so displays derive
+        // compound health instead of inferring it.
+        transport: { phase: "reconnecting", attempt: 2, maximumAttempts: 6 },
+      });
+      // The supervisor is the ONE retry owner: no local timers, the logical
+      // subscription is kept, and no replacement connection is opened.
+      expect(clock.pendingCount).toBe(0);
+      expect(connection.closed).toBe(false);
+      expect(broker.connections).toHaveLength(1);
+      store.dispose();
+    });
+
+    it("reports a pushed fatal stop as reconnect-exhausted", async () => {
+      const broker = brokerHarness();
+      const store = createDesktopApplicationShellResourceStore({
+        target: target(),
+        transport: broker.transport,
+        clock: new FakeClock(),
+      });
+      const connection = broker.connections[0]!;
+      connection.handlers.onTransportStateChanged?.({ phase: "stopped", error: EVENT_ERROR });
+      expect(store.getState()).toMatchObject({
+        status: "unavailable",
+        code: "reconnect-exhausted",
+      });
+      expect(broker.signals[0]!.aborted).toBe(true);
+      expect(broker.connections).toHaveLength(1);
+      store.dispose();
+    });
+
+    it("resyncs on the verified recovery and drops an older in-flight snapshot", async () => {
+      const broker = brokerHarness();
+      const clock = new FakeClock();
+      const store = createDesktopApplicationShellResourceStore({
+        target: target(),
+        transport: broker.transport,
+        clock,
+      });
+      const connection = broker.connections[0]!;
+      connection.handlers.onTransportStateChanged?.({ phase: "connected" });
+      connection.handlers.onVerifiedOpen();
+      broker.requests[0]!.resolve(resource("first"));
+      await settle();
+      expect(store.getState()).toMatchObject({ status: "live" });
+
+      // A refresh hangs mid-flight while the socket dies and recovers.
+      connection.handlers.onInvalidate();
+      expect(broker.requests).toHaveLength(2);
+      connection.handlers.onTransportStateChanged?.({ phase: "degraded", error: EVENT_ERROR });
+      connection.handlers.onClose();
+      connection.handlers.onTransportStateChanged?.({
+        phase: "reconnecting",
+        attempt: 1,
+        maximumAttempts: 6,
+        nextRetryAt: 2_000,
+        error: EVENT_ERROR,
+      });
+      connection.handlers.onTransportStateChanged?.({ phase: "connected" });
+      connection.handlers.onVerifiedOpen();
+      // The verified recovery refetches so the gap cannot hide missed events.
+      expect(broker.requests).toHaveLength(3);
+      broker.requests[2]!.resolve(resource("fresh"));
+      await settle();
+      expect(store.getState()).toMatchObject({
+        status: "live",
+        data: { project: { name: "fresh" } },
+      });
+
+      // The pre-reconnect snapshot resolves late and must never clobber the
+      // newer resynced data.
+      expect(broker.signals[1]!.aborted).toBe(true);
+      broker.requests[1]!.resolve(resource("older"));
+      await settle();
+      expect(store.getState()).toMatchObject({
+        status: "live",
+        data: { project: { name: "fresh" } },
+      });
+      store.dispose();
+    });
+  });
+
   it("exposes the store as a Solid signal and follows owner cleanup", async () => {
     const runtime = harness(async () => jsonResponse(resource("solid-live")));
     let solidStore!: ReturnType<typeof createSolidDesktopApplicationShellResourceStore>;

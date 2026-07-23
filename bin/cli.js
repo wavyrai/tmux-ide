@@ -5016,7 +5016,7 @@ var init_workspace_changes_resource = __esm({
 
 // packages/contracts/src/desktop-host.ts
 import { z as z27 } from "zod";
-var DESKTOP_HOST_API_VERSION, DESKTOP_PACKAGED_RENDERER_SCHEME, DESKTOP_PACKAGED_RENDERER_HOST, DESKTOP_PACKAGED_RENDERER_ORIGIN, DESKTOP_PACKAGED_RENDERER_ENTRY_URL, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonLoopbackUrlSchemaZ, DesktopDaemonHostDescriptorSchemaZ, DesktopDaemonHostIssueCodeSchemaZ, DesktopDaemonSupervisorFatalReasonSchemaZ, DesktopDaemonHostIssueSchemaFields, DesktopDaemonCapabilityIssueSchemaFields, DesktopDaemonHostStateSchemaZ, DesktopDaemonCapabilityStateSchemaZ, DesktopWorkspaceNameSchemaZ, DesktopDaemonCapabilityErrorCodeSchemaZ, DesktopDaemonCapabilityErrorSchemaZ, DesktopDaemonWorkspaceSummarySchemaZ, DesktopDaemonListWorkspacesResultSchemaZ, DesktopDaemonCapabilitiesResultSchemaZ, DesktopDaemonFetchApplicationShellRequestSchemaZ, DesktopApplicationShellTargetSchemaZ, DesktopDaemonFetchApplicationShellResultSchemaZ, DesktopDaemonFetchWorkspaceFilesRequestSchemaZ, DesktopDaemonFetchWorkspaceFilesResultSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ, DesktopDaemonFetchWorkspaceChangesRequestSchemaZ, DesktopDaemonFetchWorkspaceChangesResultSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ, DesktopDaemonFetchFleetCatalogResultSchemaZ, DesktopDaemonEventSubscriptionRequestSchemaZ, DesktopDaemonSubscriptionIdSchemaZ, DesktopDaemonEventSchemaZ, DesktopDaemonDisconnectedCapabilityStateSchemaZ, DesktopDaemonConnectedCapabilityStateSchemaZ, DesktopDaemonRefreshConnectionResultSchemaZ, DesktopDaemonSubscribeWireResultSchemaZ, DesktopDaemonEventWireEnvelopeSchemaZ, DesktopOnboardingStateSchemaZ, DesktopHostBootstrapSchemaZ, DesktopMenuResultSchemaZ, DesktopDirectorySelectionSchemaZ;
+var DESKTOP_HOST_API_VERSION, DESKTOP_PACKAGED_RENDERER_SCHEME, DESKTOP_PACKAGED_RENDERER_HOST, DESKTOP_PACKAGED_RENDERER_ORIGIN, DESKTOP_PACKAGED_RENDERER_ENTRY_URL, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonLoopbackUrlSchemaZ, DesktopDaemonHostDescriptorSchemaZ, DesktopDaemonHostIssueCodeSchemaZ, DesktopDaemonSupervisorFatalReasonSchemaZ, DesktopDaemonHostIssueSchemaFields, DesktopDaemonCapabilityIssueSchemaFields, DesktopDaemonHostStateSchemaZ, DesktopDaemonCapabilityStateSchemaZ, DesktopWorkspaceNameSchemaZ, DesktopDaemonCapabilityErrorCodeSchemaZ, DesktopDaemonCapabilityErrorSchemaZ, DesktopDaemonWorkspaceSummarySchemaZ, DesktopDaemonListWorkspacesResultSchemaZ, DesktopDaemonCapabilitiesResultSchemaZ, DesktopDaemonFetchApplicationShellRequestSchemaZ, DesktopApplicationShellTargetSchemaZ, DesktopDaemonFetchApplicationShellResultSchemaZ, DesktopDaemonFetchWorkspaceFilesRequestSchemaZ, DesktopDaemonFetchWorkspaceFilesResultSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ, DesktopDaemonFetchWorkspaceChangesRequestSchemaZ, DesktopDaemonFetchWorkspaceChangesResultSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ, DesktopDaemonFetchFleetCatalogResultSchemaZ, DesktopDaemonEventSubscriptionRequestSchemaZ, DesktopDaemonSubscriptionIdSchemaZ, DesktopDaemonTransportStateSchemaZ, DesktopDaemonEventSchemaZ, DesktopDaemonDisconnectedCapabilityStateSchemaZ, DesktopDaemonConnectedCapabilityStateSchemaZ, DesktopDaemonRefreshConnectionResultSchemaZ, DesktopDaemonSubscribeWireResultSchemaZ, DesktopDaemonEventWireEnvelopeSchemaZ, DesktopOnboardingStateSchemaZ, DesktopHostBootstrapSchemaZ, DesktopMenuResultSchemaZ, DesktopDirectorySelectionSchemaZ;
 var init_desktop_host = __esm({
   "packages/contracts/src/desktop-host.ts"() {
     "use strict";
@@ -5214,6 +5214,20 @@ var init_desktop_host = __esm({
       }
     });
     DesktopDaemonSubscriptionIdSchemaZ = z27.string().regex(/^desktop-subscription-[1-9][0-9]{0,9}$/u);
+    DesktopDaemonTransportStateSchemaZ = z27.discriminatedUnion("phase", [
+      z27.object({ phase: z27.literal("idle") }).strict(),
+      z27.object({ phase: z27.literal("connecting") }).strict(),
+      z27.object({ phase: z27.literal("connected") }).strict(),
+      z27.object({ phase: z27.literal("degraded"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+      z27.object({
+        phase: z27.literal("reconnecting"),
+        attempt: z27.number().int().min(1).max(1e3),
+        maximumAttempts: z27.number().int().min(1).max(1e3),
+        nextRetryAt: z27.number().int().nonnegative(),
+        error: DesktopDaemonCapabilityErrorSchemaZ
+      }).strict(),
+      z27.object({ phase: z27.literal("stopped"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    ]);
     DesktopDaemonEventSchemaZ = z27.discriminatedUnion("type", [
       z27.object({ type: z27.literal("workspaces.changed") }).strict(),
       /**
@@ -5233,6 +5247,16 @@ var init_desktop_host = __esm({
         type: z27.literal("connection.changed"),
         state: z27.enum(["live", "degraded"]),
         error: DesktopDaemonCapabilityErrorSchemaZ.nullable()
+      }).strict(),
+      /**
+       * The supervisor-derived transport state changed. Additive companion to
+       * `connection.changed`: that event stays the coarse live/degraded signal,
+       * while this one carries the full typed machine state (retry attempt,
+       * next-retry time, fatal stop) so status displays derive rather than infer.
+       */
+      z27.object({
+        type: z27.literal("transport.changed"),
+        transport: DesktopDaemonTransportStateSchemaZ
       }).strict(),
       z27.object({
         type: z27.literal("daemon-generation.changed"),

@@ -12,6 +12,7 @@ import {
   type DaemonEventServerFrame,
   type DaemonInstanceIdentity,
   type DesktopDaemonHostDescriptor,
+  type DesktopDaemonTransportState,
 } from "@tmux-ide/contracts";
 
 import type { DesktopApplicationShellTarget } from "./connection-state.ts";
@@ -69,6 +70,14 @@ export interface DaemonEventHandlers {
   readonly onMalformedFrame: (reason: string) => void;
   readonly onClose: () => void;
   readonly onError: (reason: string) => void;
+  /**
+   * Pushed by transports whose physical socket is owned by the main-process
+   * connection supervisor. Once a state arrives, the supervisor is the ONE
+   * retry owner: the store derives its status from these states and must not
+   * run its own reconnect loop. Transports that own their socket directly
+   * (the loopback development transport) never call this.
+   */
+  readonly onTransportStateChanged?: (transport: DesktopDaemonTransportState) => void;
 }
 
 export interface DaemonEventConnection {

@@ -218,4 +218,40 @@ describe("desktop host contract", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("carries the supervisor-derived transport state as a typed event", () => {
+    const error = {
+      code: "event-unavailable",
+      reason: "The daemon event connection is unavailable.",
+    };
+    for (const transport of [
+      { phase: "idle" },
+      { phase: "connecting" },
+      { phase: "connected" },
+      { phase: "degraded", error },
+      {
+        phase: "reconnecting",
+        attempt: 2,
+        maximumAttempts: 4,
+        nextRetryAt: 1_753_000_000_000,
+        error,
+      },
+      { phase: "stopped", error },
+    ]) {
+      const event = { type: "transport.changed", transport };
+      expect(DesktopDaemonEventSchemaZ.parse(event)).toEqual(event);
+    }
+    expect(
+      DesktopDaemonEventSchemaZ.safeParse({
+        type: "transport.changed",
+        transport: { phase: "reconnecting", attempt: 0, maximumAttempts: 4, nextRetryAt: 1, error },
+      }).success,
+    ).toBe(false);
+    expect(
+      DesktopDaemonEventSchemaZ.safeParse({
+        type: "transport.changed",
+        transport: { phase: "connected", endpoint: "http://127.0.0.1:1" },
+      }).success,
+    ).toBe(false);
+  });
 });

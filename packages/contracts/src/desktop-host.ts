@@ -343,6 +343,39 @@ export const DesktopDaemonSubscriptionIdSchemaZ = z
   .string()
   .regex(/^desktop-subscription-[1-9][0-9]{0,9}$/u);
 
+/**
+ * Derived transport health of the single daemon event connection, published by
+ * the main-process connection supervisor — the ONE owner of transport retry.
+ * Renderer surfaces derive their connection status from these states instead
+ * of inferring health from the presence of a transport object or from their
+ * own retry bookkeeping.
+ *
+ * - `idle`         — no live subscription requires a socket.
+ * - `connecting`   — a socket exists but its hello handshake has not verified.
+ * - `connected`    — the socket is open and generation-verified.
+ * - `degraded`     — a transport fault was observed; recovery is being decided.
+ * - `reconnecting` — the supervisor owns a scheduled retry (`attempt` of
+ *                    `maximumAttempts`, firing at `nextRetryAt` epoch ms).
+ * - `stopped`      — the bounded retry budget is exhausted; only an explicit
+ *                    retry or a daemon-generation change restarts it.
+ */
+export const DesktopDaemonTransportStateSchemaZ = z.discriminatedUnion("phase", [
+  z.object({ phase: z.literal("idle") }).strict(),
+  z.object({ phase: z.literal("connecting") }).strict(),
+  z.object({ phase: z.literal("connected") }).strict(),
+  z.object({ phase: z.literal("degraded"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+  z
+    .object({
+      phase: z.literal("reconnecting"),
+      attempt: z.number().int().min(1).max(1_000),
+      maximumAttempts: z.number().int().min(1).max(1_000),
+      nextRetryAt: z.number().int().nonnegative(),
+      error: DesktopDaemonCapabilityErrorSchemaZ,
+    })
+    .strict(),
+  z.object({ phase: z.literal("stopped"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
 export const DesktopDaemonEventSchemaZ = z.discriminatedUnion("type", [
   z.object({ type: z.literal("workspaces.changed") }).strict(),
   /**
@@ -365,6 +398,18 @@ export const DesktopDaemonEventSchemaZ = z.discriminatedUnion("type", [
       type: z.literal("connection.changed"),
       state: z.enum(["live", "degraded"]),
       error: DesktopDaemonCapabilityErrorSchemaZ.nullable(),
+    })
+    .strict(),
+  /**
+   * The supervisor-derived transport state changed. Additive companion to
+   * `connection.changed`: that event stays the coarse live/degraded signal,
+   * while this one carries the full typed machine state (retry attempt,
+   * next-retry time, fatal stop) so status displays derive rather than infer.
+   */
+  z
+    .object({
+      type: z.literal("transport.changed"),
+      transport: DesktopDaemonTransportStateSchemaZ,
     })
     .strict(),
   z
@@ -526,6 +571,7 @@ export type DesktopDaemonFetchFleetCatalogResult = z.infer<
 export type DesktopDaemonEventSubscriptionRequest = z.infer<
   typeof DesktopDaemonEventSubscriptionRequestSchemaZ
 >;
+export type DesktopDaemonTransportState = z.infer<typeof DesktopDaemonTransportStateSchemaZ>;
 export type DesktopDaemonEvent = z.infer<typeof DesktopDaemonEventSchemaZ>;
 export type DesktopDaemonRefreshConnectionResult = z.infer<
   typeof DesktopDaemonRefreshConnectionResultSchemaZ

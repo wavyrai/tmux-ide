@@ -213,6 +213,23 @@ describe("main-process daemon connection coordinator", () => {
     ]);
   });
 
+  it("wakes the retained broker transport when revalidation verifies the same authority", async () => {
+    const first = brokerHarness(A);
+    const retryTransport = vi.fn();
+    const createBroker = vi.fn(() => ({ ...first.authority, retryTransport }));
+    const coordinator = new DaemonConnectionCoordinator({
+      initialDaemon: A,
+      preflight: preflight(async () => A),
+      createBroker,
+    });
+
+    await expect(coordinator.refreshConnection()).resolves.toMatchObject({
+      outcome: "unchanged",
+    });
+    expect(retryTransport).toHaveBeenCalledOnce();
+    expect(first.dispose).not.toHaveBeenCalled();
+  });
+
   it("replaces the broker and publishes policy state when the verified endpoint changes", async () => {
     const movedA = {
       ...A,

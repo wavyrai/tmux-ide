@@ -233,6 +233,75 @@ describe("createDesktopFleetCatalogStore", () => {
     expect(store.getState().status).toBe("disposed");
   });
 
+  it("derives its status from pushed transport states and keeps one logical subscription", async () => {
+    const EVENT_ERROR = {
+      code: "event-unavailable" as const,
+      reason: "The daemon event connection is unavailable.",
+    };
+    const fake = fakeDaemonHost(async () => ({ status: "ok", envelope: mixedFleetCatalog() }));
+    const store = createDesktopFleetCatalogStore({ host: fake.host, daemon: CONNECTED });
+    await vi.waitFor(() => expect(fake.subscribe).toHaveBeenCalledOnce());
+    fake.publish({ type: "transport.changed", transport: { phase: "connected" } });
+    fake.publish({ type: "connection.changed", state: "live", error: null });
+    await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+
+    // The broker's real order on a socket loss: degraded push, coarse degraded
+    // signal, then the scheduled reconnecting push.
+    fake.publish({
+      type: "transport.changed",
+      transport: { phase: "degraded", error: EVENT_ERROR },
+    });
+    fake.publish({ type: "connection.changed", state: "degraded", error: EVENT_ERROR });
+    fake.publish({
+      type: "transport.changed",
+      transport: {
+        phase: "reconnecting",
+        attempt: 3,
+        maximumAttempts: 4,
+        nextRetryAt: 1_753_000_000_000,
+        error: EVENT_ERROR,
+      },
+    });
+    const reconnectingState = store.getState();
+    expect(reconnectingState.status).toBe("stale");
+    expect(reconnectingState.status === "stale" && reconnectingState.reason).toBe(
+      "Reconnecting to the engine (attempt 3 of 4).",
+    );
+    // The supervisor is the ONE retry owner: no teardown-and-resubscribe loop.
+    expect(fake.subscribe).toHaveBeenCalledOnce();
+    expect(fake.unsubscribe).not.toHaveBeenCalled();
+
+    // A verified recovery refetches before trusting the retained snapshot.
+    fake.publish({ type: "transport.changed", transport: { phase: "connected" } });
+    fake.publish({ type: "connection.changed", state: "live", error: null });
+    await vi.waitFor(() => expect(fake.fetchFleetCatalog).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+    store.dispose();
+  });
+
+  it("surfaces the pushed fatal transport stop while retaining the last snapshot", async () => {
+    const fake = fakeDaemonHost(async () => ({ status: "ok", envelope: mixedFleetCatalog() }));
+    const store = createDesktopFleetCatalogStore({ host: fake.host, daemon: CONNECTED });
+    await vi.waitFor(() => expect(fake.subscribe).toHaveBeenCalledOnce());
+    fake.publish({ type: "transport.changed", transport: { phase: "connected" } });
+    fake.publish({ type: "connection.changed", state: "live", error: null });
+    await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+
+    fake.publish({
+      type: "transport.changed",
+      transport: {
+        phase: "stopped",
+        error: { code: "event-unavailable", reason: "budget exhausted" },
+      },
+    });
+    const state = store.getState();
+    expect(state.status).toBe("stale");
+    expect(state.status === "stale" && state.reason).toContain("exhausted");
+    expect(state.snapshot?.catalog.sessions).toHaveLength(3);
+    expect(fake.subscribe).toHaveBeenCalledOnce();
+    store.dispose();
+  });
+
   it("notifies every subscriber and stops after dispose", async () => {
     const fake = fakeDaemonHost(async () => ({ status: "ok", envelope: mixedFleetCatalog() }));
     const store = createDesktopFleetCatalogStore({ host: fake.host, daemon: CONNECTED });

@@ -767,6 +767,51 @@ describe("desktop live workspace catalog and selection store", () => {
     }
   });
 
+  it("derives its status from pushed transport states and keeps one logical subscription", async () => {
+    const EVENT_ERROR = {
+      code: "event-unavailable" as const,
+      reason: "The daemon event connection is unavailable.",
+    };
+    const fake = fakeDaemonHost(async () => catalog(["alpha", "beta"]));
+    const store = createDesktopWorkspaceCatalogStore({ host: fake.host, daemon: CONNECTED });
+    await vi.waitFor(() => expect(fake.subscribe).toHaveBeenCalledOnce());
+    fake.publish({ type: "transport.changed", transport: { phase: "connected" } });
+    fake.publish({ type: "connection.changed", state: "live", error: null });
+    await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+
+    fake.publish({
+      type: "transport.changed",
+      transport: { phase: "degraded", error: EVENT_ERROR },
+    });
+    fake.publish({ type: "connection.changed", state: "degraded", error: EVENT_ERROR });
+    fake.publish({
+      type: "transport.changed",
+      transport: {
+        phase: "reconnecting",
+        attempt: 1,
+        maximumAttempts: 4,
+        nextRetryAt: 1_753_000_000_000,
+        error: EVENT_ERROR,
+      },
+    });
+    const reconnectingState = store.getState();
+    expect(reconnectingState.status).toBe("stale");
+    expect(reconnectingState.status === "stale" && reconnectingState.reason).toBe(
+      "Reconnecting to the engine (attempt 1 of 4).",
+    );
+    // The supervisor is the ONE retry owner: no teardown-and-resubscribe loop.
+    expect(fake.subscribe).toHaveBeenCalledOnce();
+    expect(fake.unsubscribe).not.toHaveBeenCalled();
+
+    // A verified recovery refetches before trusting the retained snapshot.
+    fake.publish({ type: "transport.changed", transport: { phase: "connected" } });
+    fake.publish({ type: "connection.changed", state: "live", error: null });
+    await vi.waitFor(() => expect(fake.listWorkspaces).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+    expect(fake.subscribe).toHaveBeenCalledOnce();
+    store.dispose();
+  });
+
   it("isolates observer and host teardown exceptions after making disposal irrevocable", async () => {
     const unsubscribe = vi.fn(() => {
       throw new Error("private host teardown failure");

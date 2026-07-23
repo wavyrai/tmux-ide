@@ -80,6 +80,12 @@ export interface DaemonResourceAuthority {
     workspaceNames: readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
   ): Promise<BrokerSubscriptionResult>;
+  /**
+   * Explicit transport wakeup: interrupts a scheduled event-socket backoff and
+   * restarts a transport stopped at its fatal ceiling. Optional so bespoke
+   * test authorities without an event supervisor remain valid.
+   */
+  retryTransport?(): void;
   releaseRenderer(): void;
   dispose(): void;
 }
@@ -628,6 +634,14 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
         sameIdentity(previousIdentity, nextIdentity) &&
         previousDaemon.descriptor.apiBaseUrl === candidate.descriptor.apiBaseUrl
       ) {
+        // An explicit revalidation against an unchanged generation is a
+        // transport wakeup: it interrupts a scheduled event-socket backoff and
+        // restarts a transport stopped at its fatal ceiling.
+        try {
+          this.#broker?.retryTransport?.();
+        } catch {
+          // The wakeup is advisory; connection authority is unchanged.
+        }
         return this.#parseResult({ outcome: "unchanged", daemon: this.state() });
       }
 

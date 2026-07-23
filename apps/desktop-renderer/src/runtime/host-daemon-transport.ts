@@ -78,6 +78,13 @@ function eventToHandler(
     handlers.onPeerMismatch("The desktop daemon generation changed.");
     return;
   }
+  if (event.type === "transport.changed") {
+    // The supervisor-derived transport state. Consumers that understand it
+    // derive their status from it; the legacy connection.changed events keep
+    // driving the coarse open/close handlers either way.
+    handlers.onTransportStateChanged?.(event.transport);
+    return;
+  }
   if (event.type === "fleet.changed") {
     // Fleet composition/status invalidations belong to the fleet-catalog store,
     // not this per-workspace application-shell transport.

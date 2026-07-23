@@ -43,6 +43,7 @@ import { FirstRunIntro } from "../experience/first-run-intro.tsx";
 import type { ChangesSurfaceProps } from "../experience/workspace-changes-surface.tsx";
 import type { FilesSurfaceProps } from "../experience/workspace-files-surface.tsx";
 import { Button } from "../ui-system/index.ts";
+import { deriveConnectionHealth } from "./connection-health.ts";
 import {
   reasonIndicatesMissingTmux,
   recoveryForWorkspaceOpenError,
@@ -973,6 +974,20 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
       props.onDaemonIdentityMismatch?.();
     }
   });
+  // The one derived compound connection shape: transport health from the
+  // main-process supervisor (pushed through the store) crossed with the last
+  // sync result. A failed read on a healthy socket reads "connected, sync
+  // degraded"; a supervisor retry shows its real attempt position.
+  const connectionHealth = createMemo(() => {
+    const resource = store.state();
+    const transport = resource.transport ?? null;
+    const syncHealthy = resource.status === "live" || resource.status === "loading";
+    return deriveConnectionHealth(
+      transport,
+      syncHealthy ? { ok: true } : { ok: false, reason: resourceReason(resource) },
+    );
+  });
+
   const notice = createMemo(() => {
     const resource = store.state();
     if (resource.status === "stale") {
@@ -1111,6 +1126,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
               (appWindowMutationAvailable() ? mutateAppWindow : undefined)
             }
             appWindowMutationUnavailableReason={appWindowMutationUnavailableReason()}
+            connectionHealth={connectionHealth()}
             onRefreshResource={() => store.refresh()}
             filesSurface={filesSurface()}
             changesSurface={changesSurface()}

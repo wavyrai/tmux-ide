@@ -1,6 +1,7 @@
 import type {
   ApplicationShellProjectionInputV1,
   DesktopApplicationShellTarget as DesktopApplicationShellTargetContract,
+  DesktopDaemonTransportState,
 } from "@tmux-ide/contracts";
 
 export type DesktopApplicationShellTarget = DesktopApplicationShellTargetContract;
@@ -9,6 +10,12 @@ interface DesktopResourceStateBase {
   readonly generation: number;
   /** Null until an untrusted caller target has passed strict validation. */
   readonly target: DesktopApplicationShellTarget | null;
+  /**
+   * The supervisor-derived transport state when the host transport pushes one;
+   * null before the first push and for transports that own their own socket.
+   * Status displays derive from this instead of inferring connection health.
+   */
+  readonly transport?: DesktopDaemonTransportState | null;
 }
 
 export type DesktopApplicationShellResourceState =

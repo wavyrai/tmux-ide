@@ -58,6 +58,10 @@ import {
   createSolidDesktopFleetCatalogStore,
   type DesktopFleetCatalogState,
 } from "../runtime/fleet-catalog-store.ts";
+import {
+  statusStripFromConnectionHealth,
+  type DesktopConnectionHealth,
+} from "../runtime/connection-health.ts";
 import { UpdateChip } from "./update-chip.tsx";
 import { MissionActivitySurface } from "./mission-activity-surface.tsx";
 import { WorkspaceFilesSurface, type FilesSurfaceProps } from "./workspace-files-surface.tsx";
@@ -117,6 +121,14 @@ export interface DomApplicationShellProps {
   ) => void | Promise<void>;
   readonly appWindowMutationUnavailableReason?: string;
   readonly onRefreshResource?: () => void;
+  /**
+   * Supervisor-derived compound connection health. When present and not
+   * healthy, the runtime status strip renders this derived state instead of
+   * the projection's own connection segment, so transport retries show their
+   * real attempt position and a sync failure on a healthy socket never
+   * masquerades as a reconnect.
+   */
+  readonly connectionHealth?: DesktopConnectionHealth;
   readonly filesSurface?: FilesSurfaceProps;
   readonly changesSurface?: ChangesSurfaceProps;
   /** Fixture/preview override of the live fleet-catalog store state. */
@@ -460,7 +472,12 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   );
   const paletteEntries = createMemo(() => createDomPaletteEntries(shell()));
   const statusStrip = createMemo(() => {
-    if (dataMode() !== "preview") return shell().statusStrip;
+    if (dataMode() !== "preview") {
+      const derived = props.connectionHealth
+        ? statusStripFromConnectionHealth(props.connectionHealth)
+        : null;
+      return derived ?? shell().statusStrip;
+    }
     if (props.daemonState?.status === "connected") {
       return {
         state: "connected" as const,
