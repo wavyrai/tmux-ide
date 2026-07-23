@@ -28,6 +28,7 @@ export * from "./actions-contract.ts";
 export * from "./actions-errors.ts";
 export * from "./terminals.ts";
 export * from "./terminal-attachments.ts";
+export * from "./pane-stream.ts";
 export * from "./control.ts";
 export * from "./commands.ts";
 export * from "./desktop-host.ts";

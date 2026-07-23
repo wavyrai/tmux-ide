@@ -161,6 +161,10 @@ export interface MirrorControlChannelOptions {
   handlers: MirrorChannelHandlers;
   /** `tmux -L <name>` — isolated servers in tests; omit for the default. */
   socketName?: string;
+  /** `tmux -S <path>` — an explicit socket authority (wins over socketName). */
+  socketPath?: string;
+  /** Absolute tmux executable; defaults to `tmux` on PATH. */
+  executable?: string;
   /** `tmux -f <file>` (server config, only honored when the server is born
    *  from this attach) — tests pass /dev/null. */
   configFile?: string;
@@ -187,10 +191,10 @@ export class MirrorControlChannel implements MirrorChannelIo {
   }
 
   start(): Promise<void> {
-    const { session, socketName, configFile } = this.opts;
+    const { session, socketName, socketPath, configFile } = this.opts;
     const pauseAfter = this.opts.pauseAfterSeconds ?? DEFAULT_PAUSE_AFTER_SECONDS;
     const args = [
-      ...(socketName ? ["-L", socketName] : []),
+      ...(socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : []),
       ...(configFile ? ["-f", configFile] : []),
       "-C",
       "attach",
@@ -199,7 +203,7 @@ export class MirrorControlChannel implements MirrorChannelIo {
       "-f",
       `pause-after=${pauseAfter}`,
     ];
-    const proc = spawn("tmux", args, {
+    const proc = spawn(this.opts.executable ?? "tmux", args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, TMUX: "" },
     });

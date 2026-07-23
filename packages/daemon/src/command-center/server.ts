@@ -133,6 +133,7 @@ import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
 } from "./terminal-attachment-issue.ts";
+import { mountPaneStreamIssueRoute, type PaneStreamIssueBackend } from "./pane-stream-issue.ts";
 import { mountWorkspaceResourceRoutes } from "./resources/workspace-resource-routes.ts";
 import { mountFleetResourceRoute } from "./resources/fleet-resource-route.ts";
 export interface CreateAppOptions {
@@ -158,6 +159,7 @@ export interface CreateAppOptions {
   appWindowMutationBackend?: import("./actions/handlers/app-window-mutate.ts").AppWindowMutationBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
+  paneStreamIssueBackend?: PaneStreamIssueBackend | null;
   applicationShellInventoryBackend?: {
     discoverApplicationShellSession(
       requestedSessionName: string,
@@ -427,6 +429,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     ownerToken: options.remoteAccess?.ownerToken ?? null,
     workspaceRegistry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
     backend: options.terminalAttachmentIssueBackend ?? null,
+  });
+  mountPaneStreamIssueRoute(app, {
+    daemonInstanceId: daemonIdentity.instanceId,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    workspaceRegistry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+    backend: options.paneStreamIssueBackend ?? null,
   });
 
   // Remote access bearer gate. Local Electron access uses a per-daemon

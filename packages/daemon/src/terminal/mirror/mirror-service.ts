@@ -21,6 +21,10 @@ import { SessionChannel } from "./session-channel.ts";
 export interface MirrorServiceOptions {
   /** `tmux -L <name>` for every channel — isolated servers in tests. */
   socketName?: string;
+  /** `tmux -S <path>` for every channel — the daemon's socket authority. */
+  socketPath?: string;
+  /** Absolute tmux executable; defaults to `tmux` on PATH. */
+  executable?: string;
   /** `tmux -f <file>` — tests pass /dev/null. */
   configFile?: string;
   pauseAfterSeconds?: number;
@@ -144,6 +148,8 @@ export class MirrorService {
             session,
             handlers,
             socketName: this.opts.socketName,
+            socketPath: this.opts.socketPath,
+            executable: this.opts.executable,
             configFile: this.opts.configFile,
             pauseAfterSeconds: this.opts.pauseAfterSeconds,
           }),

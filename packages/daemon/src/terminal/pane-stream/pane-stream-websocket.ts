@@ -1,0 +1,1293 @@
+import { z } from "zod";
+import {
+  PANE_STREAM_MAX_HELD_DELTAS,
+  PANE_STREAM_MAX_OUTPUT_BYTES,
+  PANE_STREAM_MAX_SEED_BYTES,
+  PANE_STREAM_PROTOCOL_VERSION,
+  PANE_STREAM_REDEEM_PATH,
+  PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
+  PaneStreamClientFrameSchemaZ,
+  PaneStreamLoopbackWebSocketUrlSchemaZ,
+  PaneStreamRedeemFrameSchemaZ,
+  PaneStreamServerFrameSchemaZ,
+  type PaneStreamErrorFrameCode,
+  type PaneStreamLeaseRequest,
+  type PaneStreamRedeemFrame,
+  type PaneStreamViewerMode,
+} from "@tmux-ide/contracts";
+import type {
+  MirrorLayoutEvent,
+  MirrorPaneEvent,
+  MirrorSessionDescription,
+} from "../mirror/events.ts";
+import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
+import {
+  canonicalOriginOrNull,
+  digestSecret,
+  digestsEqual,
+  rawDataByteLength,
+  rawDataToBuffer,
+  safeCloseSocket,
+  strictJsonParse,
+} from "../attachments/admission-util.ts";
+import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
+import {
+  PaneStreamLeaseError,
+  type IssuedPaneStreamLease,
+  type PaneStreamLeaseBinding,
+  type PaneStreamLeaseDescriptor,
+} from "./lease-manager.ts";
+import {
+  DEFAULT_PANE_STREAM_FLOW_BUDGETS,
+  PaneStreamWireLedger,
+  type PaneStreamFlowBudgets,
+} from "./wire-ledger.ts";
+
+/**
+ * The pane-stream WebSocket endpoint (m43 card 2): redeems a one-time `ps1_`
+ * ticket and bridges MirrorService subscriptions to wire frames. Admission is
+ * the direct-websocket discipline verbatim — Origin-gated upgrade reservation,
+ * digest-only pending tickets, one text redemption frame, delivery-bound TTL —
+ * applied to a session-scoped lease whose pane set was enumerated at issue.
+ *
+ * Flow control at the wire is a LEDGER per (client x pane x owner): a stalled
+ * client freezes ONLY its own MirrorService subscription for the exhausted
+ * pane (siblings and other clients keep flowing; the upstream control-mode
+ * pause engages only when every subscriber of a pane is parked, which the
+ * session channel already models), tickets force-return on WS close within
+ * one tick, and thaw rides the service's atomic reseed.
+ */
+export { PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL };
+export const PANE_STREAM_MAX_REDEMPTION_BYTES = 4 * 1024;
+export const PANE_STREAM_MAX_CONTROL_BYTES = 4 * 1024;
+export const PANE_STREAM_MAX_REDEMPTION_MS = 1_000;
+
+const WS_OPEN = 1;
+const TicketPattern = /^ps1_[A-Za-z0-9_-]{43}$/u;
+const BindingIdSchemaZ = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((value) => !value.includes("\0"));
+
+/** The mirror surface the endpoint consumes (MirrorService satisfies it). */
+export interface PaneStreamMirror {
+  describeSession(session: string): Promise<MirrorSessionDescription>;
+  subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription>;
+}
+
+export interface PaneStreamLeaseAuthority {
+  issue(
+    request: PaneStreamLeaseRequest,
+    context: { requestId: string; projectIdentity: string; sessionName: string },
+  ): Promise<IssuedPaneStreamLease>;
+  redeem(
+    ticket: string,
+    binding: PaneStreamLeaseBinding,
+    receivedAt?: number,
+  ): Promise<{ descriptor: PaneStreamLeaseDescriptor }>;
+  release(leaseId: string, binding: PaneStreamLeaseBinding): Promise<{ released: boolean }>;
+}
+
+export type PaneStreamAdmissionErrorCode =
+  | "daemon-shutting-down"
+  | "invalid-origin"
+  | "origin-rejected"
+  | "invalid-path"
+  | "invalid-subprotocol"
+  | "pending-capacity-exhausted"
+  | "preauth-capacity-exhausted"
+  | "live-capacity-exhausted"
+  | "pane-not-found"
+  | "redemption-rejected"
+  | "stream-unavailable";
+
+export class PaneStreamAdmissionError extends Error {
+  readonly code: PaneStreamAdmissionErrorCode;
+
+  constructor(code: PaneStreamAdmissionErrorCode, message: string) {
+    super(message);
+    this.name = "PaneStreamAdmissionError";
+    this.code = code;
+  }
+}
+
+export interface PaneStreamIssueContext {
+  readonly requestId: string;
+  readonly projectIdentity: string;
+  readonly sessionName: string;
+  /** Canonical trusted renderer Origin supplied by the host, never the renderer body. */
+  readonly rendererOrigin: string;
+}
+
+export interface PaneStreamDescriptor {
+  readonly protocolVersion: typeof PANE_STREAM_PROTOCOL_VERSION;
+  readonly webSocketUrl: string;
+  readonly redemptionTicket: string;
+  readonly daemonInstanceId: string;
+  readonly requestId: string;
+  readonly expiresAt: number;
+  readonly panes: readonly string[];
+  readonly effectiveViewerMode: PaneStreamViewerMode;
+}
+
+export type PaneStreamUpgradeDecision =
+  | { readonly accepted: true; readonly admission: PaneStreamPreAuthAdmission }
+  | {
+      readonly accepted: false;
+      readonly code: PaneStreamAdmissionErrorCode;
+      readonly httpStatus: 403 | 404 | 426 | 503;
+    };
+
+export interface PaneStreamPreAuthAdmission {
+  bind(socket: DirectTerminalSocket): void;
+  cancelBeforeBind(): void;
+}
+
+export interface PaneStreamAdmissionSnapshot {
+  readonly pendingTickets: number;
+  readonly preAuthSockets: number;
+  readonly liveConnections: number;
+  readonly shuttingDown: boolean;
+}
+
+export interface PaneStreamAdmissionCoordinatorOptions {
+  readonly daemonInstanceId: string;
+  readonly webSocketUrl: string;
+  readonly leaseManager: PaneStreamLeaseAuthority;
+  readonly mirror: PaneStreamMirror;
+  readonly maxPendingTickets?: number;
+  readonly maxPreAuthSockets?: number;
+  readonly maxLiveConnections?: number;
+  readonly redemptionTimeoutMs?: number;
+  readonly flowBudgets?: PaneStreamFlowBudgets;
+  /** Cadence of the send-buffer drain check while frames are in flight. */
+  readonly drainTickMs?: number;
+  /** Hard whole-socket ceiling; the ledger should stall panes far earlier. */
+  readonly maxSocketBufferedBytes?: number;
+  readonly maxInputFramesPerConnection?: number;
+  readonly maxInputBytesPerConnection?: number;
+  readonly now?: () => number;
+  readonly schedule?: (callback: () => void, delayMs: number) => () => void;
+}
+
+interface PendingTicket {
+  readonly leaseId: string;
+  readonly requestId: string;
+  readonly projectIdentity: string;
+  readonly origin: string;
+  readonly ticketDigest: Buffer;
+  readonly descriptor: PaneStreamLeaseDescriptor;
+  cancelExpiry: (() => void) | null;
+}
+
+function defaultSchedule(callback: () => void, delayMs: number): () => void {
+  const timer = setTimeout(callback, delayMs);
+  timer.unref?.();
+  return () => clearTimeout(timer);
+}
+
+function boundedInteger(value: number | undefined, fallback: number, maximum: number): number {
+  const selected = value ?? fallback;
+  if (!Number.isSafeInteger(selected) || selected <= 0 || selected > maximum) {
+    throw new TypeError("Pane-stream admission limit is invalid.");
+  }
+  return selected;
+}
+
+function sendControl(socket: DirectTerminalSocket, frame: Readonly<Record<string, unknown>>): void {
+  if (socket.readyState !== WS_OPEN) return;
+  const encoded = JSON.stringify(frame);
+  if (Buffer.byteLength(encoded, "utf8") > PANE_STREAM_MAX_CONTROL_BYTES) {
+    throw new TypeError("Pane-stream control frame exceeded its bound.");
+  }
+  socket.send(encoded, { binary: false });
+}
+
+function errorFrameCode(error: unknown): PaneStreamErrorFrameCode {
+  if (error instanceof PaneStreamLeaseError && error.code === "ticket-expired") {
+    return "ticket-expired";
+  }
+  if (error instanceof PaneStreamAdmissionError) {
+    switch (error.code) {
+      case "live-capacity-exhausted":
+        return "live-capacity-exhausted";
+      case "pane-not-found":
+      case "stream-unavailable":
+        return "stream-unavailable";
+      default:
+        return "redemption-rejected";
+    }
+  }
+  return "stream-unavailable";
+}
+
+/**
+ * In-memory admission authority for one daemon instance. It retains only
+ * ticket digests; a daemon restart makes every prior descriptor inert.
+ */
+export class PaneStreamAdmissionCoordinator {
+  readonly #instanceId: string;
+  readonly #webSocketUrl: string;
+  readonly #leaseManager: PaneStreamLeaseAuthority;
+  readonly #mirror: PaneStreamMirror;
+  readonly #maxPending: number;
+  readonly #maxPreAuth: number;
+  readonly #maxLive: number;
+  readonly #redemptionTimeoutMs: number;
+  readonly #flowBudgets: PaneStreamFlowBudgets;
+  readonly #drainTickMs: number;
+  readonly #maxSocketBufferedBytes: number;
+  readonly #maxInputFrames: number;
+  readonly #maxInputBytes: number;
+  readonly #now: () => number;
+  readonly #schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly #ledger: PaneStreamWireLedger;
+  readonly #pending = new Map<string, PendingTicket>();
+  readonly #preAuth = new Set<PreAuthAdmission>();
+  readonly #live = new Set<PaneStreamLiveConnection>();
+  readonly #retiringReleases = new Set<Promise<void>>();
+  #clientCounter = 0;
+  #operationTail: Promise<void> = Promise.resolve();
+  #shuttingDown = false;
+  #shutdownPromise: Promise<void> | null = null;
+
+  constructor(options: PaneStreamAdmissionCoordinatorOptions) {
+    this.#instanceId = BindingIdSchemaZ.parse(options.daemonInstanceId);
+    this.#webSocketUrl = PaneStreamLoopbackWebSocketUrlSchemaZ.parse(options.webSocketUrl);
+    this.#leaseManager = options.leaseManager;
+    this.#mirror = options.mirror;
+    this.#maxPending = boundedInteger(options.maxPendingTickets, 32, 1_024);
+    this.#maxPreAuth = boundedInteger(options.maxPreAuthSockets, 16, 1_024);
+    this.#maxLive = boundedInteger(options.maxLiveConnections, 16, 1_024);
+    this.#redemptionTimeoutMs = boundedInteger(
+      options.redemptionTimeoutMs,
+      PANE_STREAM_MAX_REDEMPTION_MS,
+      PANE_STREAM_MAX_REDEMPTION_MS,
+    );
+    this.#flowBudgets = options.flowBudgets ?? DEFAULT_PANE_STREAM_FLOW_BUDGETS;
+    this.#ledger = new PaneStreamWireLedger(this.#flowBudgets);
+    this.#drainTickMs = boundedInteger(options.drainTickMs, 15, 1_000);
+    this.#maxSocketBufferedBytes = boundedInteger(options.maxSocketBufferedBytes, 32 << 20, 256 << 20);
+    this.#maxInputFrames = boundedInteger(options.maxInputFramesPerConnection, 16_384, 1 << 20);
+    this.#maxInputBytes = boundedInteger(options.maxInputBytesPerConnection, 4 << 20, 64 << 20);
+    this.#now = options.now ?? Date.now;
+    this.#schedule = options.schedule ?? defaultSchedule;
+  }
+
+  issue(request: PaneStreamLeaseRequest, context: PaneStreamIssueContext): Promise<PaneStreamDescriptor> {
+    return this.#exclusive(async () => {
+      if (this.#shuttingDown) {
+        throw new PaneStreamAdmissionError(
+          "daemon-shutting-down",
+          "Pane-stream admission is shutting down.",
+        );
+      }
+      const origin = canonicalOriginOrNull(context.rendererOrigin);
+      if (origin === null) {
+        throw new PaneStreamAdmissionError("invalid-origin", "Renderer Origin is invalid.");
+      }
+      const requestId = z.uuid().parse(context.requestId);
+      const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);
+      if (this.#pending.size >= this.#maxPending) {
+        throw new PaneStreamAdmissionError(
+          "pending-capacity-exhausted",
+          "Pane-stream ticket capacity is exhausted.",
+        );
+      }
+
+      // The pane set is enumerated at issue: every requested pane must exist
+      // under verified semantic identity NOW. A describe failure is a probe
+      // failure and never reads as absence.
+      let described: MirrorSessionDescription;
+      try {
+        described = await this.#mirror.describeSession(context.sessionName);
+      } catch {
+        throw new PaneStreamAdmissionError(
+          "stream-unavailable",
+          "The workspace session could not be described.",
+        );
+      }
+      const known = new Set(described.panes.map((pane) => pane.semanticPaneId));
+      for (const pane of request.panes) {
+        if (!known.has(pane)) {
+          throw new PaneStreamAdmissionError(
+            "pane-not-found",
+            `The pane ${pane} is not present in the workspace session.`,
+          );
+        }
+      }
+
+      const issued = await this.#leaseManager.issue(request, {
+        requestId,
+        projectIdentity,
+        sessionName: context.sessionName,
+      });
+      const descriptor = issued.descriptor;
+      const ticket = issued.redemptionTicket;
+      const valid =
+        TicketPattern.test(ticket) &&
+        z.uuid().safeParse(descriptor.leaseId).success &&
+        descriptor.requestId === requestId &&
+        descriptor.status === "awaiting-redemption" &&
+        descriptor.viewerMode === request.viewerMode &&
+        descriptor.workspaceName === request.workspaceName &&
+        descriptor.panes.length === request.panes.length &&
+        descriptor.panes.every((pane, index) => pane === request.panes[index]) &&
+        descriptor.expiresAt > this.#now();
+      const ticketDigest = digestSecret(ticket);
+      const duplicate = [...this.#pending.values()].some((pending) =>
+        digestsEqual(pending.ticketDigest, ticketDigest),
+      );
+      if (!valid || duplicate) {
+        ticketDigest.fill(0);
+        await this.#releaseLease(descriptor.leaseId, {
+          daemonInstanceId: this.#instanceId,
+          requestId,
+          projectIdentity,
+        });
+        throw new PaneStreamAdmissionError(
+          "stream-unavailable",
+          "Pane-stream ticket generation failed.",
+        );
+      }
+      const pending: PendingTicket = {
+        leaseId: descriptor.leaseId,
+        requestId,
+        projectIdentity,
+        origin,
+        ticketDigest,
+        descriptor: structuredClone(descriptor),
+        cancelExpiry: null,
+      };
+      pending.cancelExpiry = this.#schedule(
+        () => {
+          void this.#exclusive(() => this.#retirePending(pending));
+        },
+        Math.max(1, descriptor.expiresAt - this.#now()),
+      );
+      this.#pending.set(pending.leaseId, pending);
+      return Object.freeze({
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        webSocketUrl: this.#webSocketUrl,
+        redemptionTicket: ticket,
+        daemonInstanceId: this.#instanceId,
+        requestId,
+        expiresAt: descriptor.expiresAt,
+        panes: [...descriptor.panes],
+        effectiveViewerMode: descriptor.viewerMode,
+      });
+    });
+  }
+
+  reserveUpgrade(input: {
+    readonly path: string;
+    readonly protocols: readonly string[];
+    readonly origin: string | null | undefined;
+  }): PaneStreamUpgradeDecision {
+    if (this.#shuttingDown) {
+      return { accepted: false, code: "daemon-shutting-down", httpStatus: 503 };
+    }
+    if (input.path !== PANE_STREAM_REDEEM_PATH) {
+      return { accepted: false, code: "invalid-path", httpStatus: 404 };
+    }
+    if (input.protocols.length !== 1 || input.protocols[0] !== PANE_STREAM_WEBSOCKET_SUBPROTOCOL) {
+      return { accepted: false, code: "invalid-subprotocol", httpStatus: 426 };
+    }
+    const origin = canonicalOriginOrNull(input.origin ?? "");
+    if (origin === null) {
+      return { accepted: false, code: "invalid-origin", httpStatus: 403 };
+    }
+    if (![...this.#pending.values()].some((pending) => pending.origin === origin)) {
+      return { accepted: false, code: "origin-rejected", httpStatus: 403 };
+    }
+    if (this.#preAuth.size >= this.#maxPreAuth) {
+      return { accepted: false, code: "preauth-capacity-exhausted", httpStatus: 503 };
+    }
+    const admission = new PreAuthAdmission({
+      origin,
+      timeoutMs: this.#redemptionTimeoutMs,
+      schedule: this.#schedule,
+      onRelease: (released) => this.#preAuth.delete(released),
+      onRedeem: (active, frame, socket) => this.#redeem(active, frame, socket),
+    });
+    this.#preAuth.add(admission);
+    return { accepted: true, admission };
+  }
+
+  snapshot(): PaneStreamAdmissionSnapshot {
+    return Object.freeze({
+      pendingTickets: this.#pending.size,
+      preAuthSockets: this.#preAuth.size,
+      liveConnections: this.#live.size,
+      shuttingDown: this.#shuttingDown,
+    });
+  }
+
+  /** Detached (client x pane x owner) outstanding-ticket snapshot. */
+  flowSnapshot(): ReturnType<PaneStreamWireLedger["snapshot"]> {
+    return this.#ledger.snapshot();
+  }
+
+  shutdown(): Promise<void> {
+    if (this.#shutdownPromise) return this.#shutdownPromise;
+    this.#shuttingDown = true;
+    this.#shutdownPromise = this.#finishShutdown();
+    return this.#shutdownPromise;
+  }
+
+  async #finishShutdown(): Promise<void> {
+    for (const admission of [...this.#preAuth]) admission.close(1001, "daemon-shutdown");
+    await this.#exclusive(async () => {
+      for (const connection of [...this.#live]) connection.close(1001, "daemon-shutdown");
+      for (const pending of [...this.#pending.values()]) await this.#retirePending(pending);
+    });
+    await Promise.all([...this.#retiringReleases]);
+  }
+
+  #redeem(
+    admission: PreAuthAdmission,
+    frame: PaneStreamRedeemFrame,
+    socket: DirectTerminalSocket,
+  ): Promise<PaneStreamLiveConnection> {
+    // Stamp authenticated frame arrival BEFORE queueing: a queue wait must not
+    // consume the ticket's delivery TTL (execution has its own budget).
+    const receivedAt = this.#now();
+    return this.#exclusive(async () => {
+      if (this.#shuttingDown || frame.daemonInstanceId !== this.#instanceId) {
+        throw new PaneStreamAdmissionError(
+          "redemption-rejected",
+          "Pane-stream redemption was rejected.",
+        );
+      }
+      const candidateDigest = digestSecret(frame.ticket);
+      let pending: PendingTicket | undefined;
+      for (const entry of this.#pending.values()) {
+        if (digestsEqual(entry.ticketDigest, candidateDigest)) pending = entry;
+      }
+      candidateDigest.fill(0);
+      if (!pending || pending.origin !== admission.origin || pending.requestId !== frame.requestId) {
+        throw new PaneStreamAdmissionError(
+          "redemption-rejected",
+          "Pane-stream redemption was rejected.",
+        );
+      }
+      const binding: PaneStreamLeaseBinding = {
+        daemonInstanceId: this.#instanceId,
+        requestId: pending.requestId,
+        projectIdentity: pending.projectIdentity,
+      };
+      if (!admission.isOpen()) {
+        this.#removePending(pending);
+        await this.#releaseLease(pending.leaseId, binding);
+        throw new PaneStreamAdmissionError(
+          "redemption-rejected",
+          "Pane-stream redemption was rejected.",
+        );
+      }
+      this.#removePending(pending);
+      if (this.#live.size >= this.#maxLive) {
+        await this.#releaseLease(pending.leaseId, binding);
+        throw new PaneStreamAdmissionError(
+          "live-capacity-exhausted",
+          "Pane-stream live capacity is exhausted.",
+        );
+      }
+      try {
+        const redeemed = await this.#leaseManager.redeem(frame.ticket, binding, receivedAt);
+        const descriptor = redeemed.descriptor;
+        if (
+          descriptor.leaseId !== pending.leaseId ||
+          descriptor.requestId !== pending.requestId ||
+          descriptor.status !== "active" ||
+          descriptor.viewerMode !== pending.descriptor.viewerMode ||
+          descriptor.panes.length !== pending.descriptor.panes.length
+        ) {
+          throw new PaneStreamAdmissionError(
+            "stream-unavailable",
+            "Pane-stream lease identity was unavailable.",
+          );
+        }
+        if (!admission.isOpen()) {
+          throw new PaneStreamAdmissionError(
+            "redemption-rejected",
+            "Pane-stream redemption was rejected.",
+          );
+        }
+        this.#clientCounter += 1;
+        const live = new PaneStreamLiveConnection({
+          clientId: `psc-${this.#clientCounter}`,
+          socket,
+          descriptor: structuredClone(descriptor),
+          binding,
+          deliveryAcks: frame.deliveryAcks === true,
+          mirror: this.#mirror,
+          leaseManager: this.#leaseManager,
+          ledger: this.#ledger,
+          drainTickMs: this.#drainTickMs,
+          maxSocketBufferedBytes: this.#maxSocketBufferedBytes,
+          maxInputFrames: this.#maxInputFrames,
+          maxInputBytes: this.#maxInputBytes,
+          schedule: this.#schedule,
+          onRetire: (connection) => this.#trackRetiringRelease(connection),
+        });
+        this.#live.add(live);
+        admission.promote();
+        live.start();
+        return live;
+      } catch (error) {
+        await this.#releaseLease(pending.leaseId, binding);
+        throw error;
+      }
+    });
+  }
+
+  #removePending(pending: PendingTicket): void {
+    if (this.#pending.get(pending.leaseId) !== pending) return;
+    this.#pending.delete(pending.leaseId);
+    pending.cancelExpiry?.();
+    pending.cancelExpiry = null;
+    pending.ticketDigest.fill(0);
+  }
+
+  async #retirePending(pending: PendingTicket): Promise<void> {
+    if (this.#pending.get(pending.leaseId) !== pending) return;
+    const binding: PaneStreamLeaseBinding = {
+      daemonInstanceId: this.#instanceId,
+      requestId: pending.requestId,
+      projectIdentity: pending.projectIdentity,
+    };
+    this.#removePending(pending);
+    await this.#releaseLease(pending.leaseId, binding);
+  }
+
+  async #releaseLease(leaseId: string, binding: PaneStreamLeaseBinding): Promise<void> {
+    try {
+      await this.#leaseManager.release(leaseId, binding);
+    } catch {
+      // The lease manager may already have retired the one-use lease.
+    }
+  }
+
+  #trackRetiringRelease(connection: PaneStreamLiveConnection): void {
+    this.#live.delete(connection);
+    const release = connection.waitForRelease();
+    this.#retiringReleases.add(release);
+    void release.then(
+      () => this.#retiringReleases.delete(release),
+      () => this.#retiringReleases.delete(release),
+    );
+  }
+
+  #exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.#operationTail.then(operation, operation);
+    this.#operationTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+}
+
+interface PreAuthAdmissionOptions {
+  readonly origin: string;
+  readonly timeoutMs: number;
+  readonly schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly onRelease: (admission: PreAuthAdmission) => void;
+  readonly onRedeem: (
+    admission: PreAuthAdmission,
+    frame: PaneStreamRedeemFrame,
+    socket: DirectTerminalSocket,
+  ) => Promise<PaneStreamLiveConnection>;
+}
+
+class PreAuthAdmission implements PaneStreamPreAuthAdmission {
+  readonly origin: string;
+  readonly #onRelease: PreAuthAdmissionOptions["onRelease"];
+  readonly #onRedeem: PreAuthAdmissionOptions["onRedeem"];
+  readonly #cancelDeadline: () => void;
+  #socket: DirectTerminalSocket | null = null;
+  #frameReceived = false;
+  #open = true;
+  #promoted = false;
+
+  constructor(options: PreAuthAdmissionOptions) {
+    this.origin = options.origin;
+    this.#onRelease = options.onRelease;
+    this.#onRedeem = options.onRedeem;
+    this.#cancelDeadline = options.schedule(
+      () => this.close(1008, "redemption-timeout"),
+      options.timeoutMs,
+    );
+  }
+
+  isOpen(): boolean {
+    return this.#open && !this.#promoted;
+  }
+
+  bind(socket: DirectTerminalSocket): void {
+    if (!this.#open || this.#socket) {
+      safeCloseSocket(socket, 1008, "redemption-rejected");
+      return;
+    }
+    this.#socket = socket;
+    socket.on("message", this.#onMessage);
+    socket.on("close", this.#onClose);
+    socket.on("error", this.#onClose);
+  }
+
+  cancelBeforeBind(): void {
+    this.close(1008, "upgrade-rejected");
+  }
+
+  promote(): void {
+    if (!this.#open) return;
+    this.#promoted = true;
+    this.#open = false;
+    this.#cancelDeadline();
+    this.#detach();
+    this.#onRelease(this);
+  }
+
+  close(code = 1008, reason = "redemption-rejected"): void {
+    if (!this.#open) return;
+    this.#open = false;
+    this.#cancelDeadline();
+    const socket = this.#socket;
+    this.#detach();
+    this.#onRelease(this);
+    if (socket) safeCloseSocket(socket, code, reason);
+  }
+
+  readonly #onMessage = (
+    data: string | Buffer | ArrayBuffer | readonly Buffer[],
+    isBinary: boolean,
+  ): void => {
+    if (!this.#open || this.#frameReceived) {
+      this.close(1008, "redemption-frame-rejected");
+      return;
+    }
+    this.#frameReceived = true;
+    const byteLength = rawDataByteLength(data, PANE_STREAM_MAX_REDEMPTION_BYTES);
+    if (isBinary || byteLength === 0 || byteLength > PANE_STREAM_MAX_REDEMPTION_BYTES) {
+      this.close(1009, "redemption-frame-rejected");
+      return;
+    }
+    let frame: PaneStreamRedeemFrame;
+    try {
+      frame = PaneStreamRedeemFrameSchemaZ.parse(strictJsonParse(rawDataToBuffer(data)));
+    } catch {
+      this.close(1008, "redemption-frame-rejected");
+      return;
+    }
+    const socket = this.#socket;
+    if (!socket) {
+      this.close(1008, "redemption-rejected");
+      return;
+    }
+    this.#cancelDeadline();
+    void this.#onRedeem(this, frame, socket).catch((error: unknown) => {
+      if (!this.#open) return;
+      const code = errorFrameCode(error);
+      try {
+        sendControl(socket, {
+          type: "error",
+          protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+          code,
+          retryable: code === "live-capacity-exhausted" || code === "ticket-expired",
+        });
+      } catch {
+        // Closing below is the fail-closed response.
+      }
+      this.close(code === "live-capacity-exhausted" ? 1013 : 1008, "redemption-rejected");
+    });
+  };
+
+  readonly #onClose = (): void => this.close(1008, "redemption-rejected");
+
+  #detach(): void {
+    const socket = this.#socket;
+    this.#socket = null;
+    if (!socket) return;
+    socket.off("message", this.#onMessage);
+    socket.off("close", this.#onClose);
+    socket.off("error", this.#onClose);
+  }
+}
+
+interface LiveConnectionOptions {
+  readonly clientId: string;
+  readonly socket: DirectTerminalSocket;
+  readonly descriptor: PaneStreamLeaseDescriptor;
+  readonly binding: PaneStreamLeaseBinding;
+  readonly deliveryAcks: boolean;
+  readonly mirror: PaneStreamMirror;
+  readonly leaseManager: PaneStreamLeaseAuthority;
+  readonly ledger: PaneStreamWireLedger;
+  readonly drainTickMs: number;
+  readonly maxSocketBufferedBytes: number;
+  readonly maxInputFrames: number;
+  readonly maxInputBytes: number;
+  readonly schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly onRetire: (connection: PaneStreamLiveConnection) => void;
+}
+
+interface SeedBatch {
+  reset: { cols: number; rows: number } | null;
+  seed: Uint8Array | null;
+  held: Uint8Array[];
+  guardArmed: boolean;
+}
+
+interface PaneChannel {
+  readonly semanticPaneId: string;
+  sub: MirrorSubscription | null;
+  serverSeq: number;
+  sentPaneFrames: number;
+  consumedSeq: number;
+  nextInputSeq: number;
+  frozenByWire: boolean;
+  closed: boolean;
+  batch: SeedBatch | null;
+}
+
+interface QueuedSend {
+  readonly pane: string | null;
+  remaining: number;
+}
+
+export class PaneStreamLiveConnection {
+  readonly #clientId: string;
+  readonly #socket: DirectTerminalSocket;
+  readonly #descriptor: PaneStreamLeaseDescriptor;
+  readonly #binding: PaneStreamLeaseBinding;
+  readonly #deliveryAcks: boolean;
+  readonly #mirror: PaneStreamMirror;
+  readonly #leaseManager: PaneStreamLeaseAuthority;
+  readonly #ledger: PaneStreamWireLedger;
+  readonly #drainTickMs: number;
+  readonly #maxSocketBufferedBytes: number;
+  readonly #maxInputFrames: number;
+  readonly #maxInputBytes: number;
+  readonly #schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly #onRetire: (connection: PaneStreamLiveConnection) => void;
+  readonly #panes = new Map<string, PaneChannel>();
+  readonly #sendQueue: QueuedSend[] = [];
+  #sentBytesTotal = 0;
+  #drainedBytesTotal = 0;
+  #cancelDrainTick: (() => void) | null = null;
+  #acceptedInputFrames = 0;
+  #acceptedInputBytes = 0;
+  #closed = false;
+  #releasePromise: Promise<unknown> | null = null;
+
+  constructor(options: LiveConnectionOptions) {
+    this.#clientId = options.clientId;
+    this.#socket = options.socket;
+    this.#descriptor = options.descriptor;
+    this.#binding = options.binding;
+    this.#deliveryAcks = options.deliveryAcks;
+    this.#mirror = options.mirror;
+    this.#leaseManager = options.leaseManager;
+    this.#ledger = options.ledger;
+    this.#drainTickMs = options.drainTickMs;
+    this.#maxSocketBufferedBytes = options.maxSocketBufferedBytes;
+    this.#maxInputFrames = options.maxInputFrames;
+    this.#maxInputBytes = options.maxInputBytes;
+    this.#schedule = options.schedule;
+    this.#onRetire = options.onRetire;
+    for (const pane of options.descriptor.panes) {
+      this.#panes.set(pane, {
+        semanticPaneId: pane,
+        sub: null,
+        serverSeq: 0,
+        sentPaneFrames: 0,
+        consumedSeq: 0,
+        nextInputSeq: 1,
+        frozenByWire: false,
+        closed: false,
+        batch: null,
+      });
+    }
+  }
+
+  get clientId(): string {
+    return this.#clientId;
+  }
+
+  start(): void {
+    if (this.#closed || this.#socket.readyState !== WS_OPEN) {
+      this.close(1008, "stream-retired");
+      return;
+    }
+    this.#socket.on("message", this.#onMessage);
+    this.#socket.on("close", this.#onSocketClose);
+    this.#socket.on("error", this.#onSocketClose);
+    try {
+      sendControl(this.#socket, {
+        type: "ready",
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        daemonInstanceId: this.#binding.daemonInstanceId,
+        requestId: this.#binding.requestId,
+        panes: [...this.#descriptor.panes],
+        effectiveViewerMode: this.#descriptor.viewerMode,
+      });
+    } catch {
+      this.close(1011, "stream-unavailable");
+      return;
+    }
+    void this.#subscribeAll();
+  }
+
+  close(code = 1000, reason = "stream-closed"): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#cancelDrainTick?.();
+    this.#cancelDrainTick = null;
+    // Departure force-returns every ticket within this same tick.
+    this.#ledger.forceReturnClient(this.#clientId);
+    this.#sendQueue.length = 0;
+    this.#socket.off("message", this.#onMessage);
+    this.#socket.off("close", this.#onSocketClose);
+    this.#socket.off("error", this.#onSocketClose);
+    const closures: Promise<unknown>[] = [];
+    for (const channel of this.#panes.values()) {
+      const sub = channel.sub;
+      channel.sub = null;
+      channel.closed = true;
+      if (sub) closures.push(sub.close().catch(() => undefined));
+    }
+    this.#releasePromise = Promise.allSettled([
+      ...closures,
+      this.#leaseManager.release(this.#descriptor.leaseId, this.#binding).catch(() => undefined),
+    ]);
+    this.#onRetire(this);
+    safeCloseSocket(this.#socket, code, reason);
+  }
+
+  async waitForRelease(): Promise<void> {
+    await this.#releasePromise;
+  }
+
+  /** TESTS ONLY — run one drain evaluation without waiting for the tick. */
+  drainNowForTest(): void {
+    this.#drainNow();
+  }
+
+  async #subscribeAll(): Promise<void> {
+    // Fresh truth once for the whole set: a pane listed at issue but gone by
+    // redeem gets an honest `closed` frame (a successful describe omitting it
+    // is absence; a describe FAILURE is not and fails the connection).
+    let described: MirrorSessionDescription;
+    try {
+      described = await this.#mirror.describeSession(this.#descriptor.sessionName);
+    } catch {
+      this.close(1011, "stream-unavailable");
+      return;
+    }
+    if (this.#closed) return;
+    const known = new Set(described.panes.map((pane) => pane.semanticPaneId));
+    let layoutAttached = false;
+    for (const channel of this.#panes.values()) {
+      if (this.#closed) return;
+      if (!known.has(channel.semanticPaneId)) {
+        this.#emitClosed(channel);
+        continue;
+      }
+      try {
+        const sub = await this.#mirror.subscribe({
+          session: this.#descriptor.sessionName,
+          semanticPaneId: channel.semanticPaneId,
+          onEvent: (event) => this.#onPaneEvent(channel, event),
+          ...(layoutAttached ? {} : { onLayout: (event) => this.#onLayout(event) }),
+        });
+        layoutAttached = true;
+        if (this.#closed || channel.closed) {
+          void sub.close().catch(() => undefined);
+          continue;
+        }
+        channel.sub = sub;
+      } catch {
+        this.close(1011, "stream-unavailable");
+        return;
+      }
+    }
+    this.#closeIfAllPanesGone();
+  }
+
+  // ── Mirror events → frames ────────────────────────────────────────────────
+
+  #onPaneEvent(channel: PaneChannel, event: MirrorPaneEvent): void {
+    if (this.#closed || channel.closed) return;
+    switch (event.type) {
+      case "reset": {
+        channel.batch = { reset: { cols: event.cols, rows: event.rows }, seed: null, held: [], guardArmed: false };
+        this.#armBatchGuard(channel);
+        return;
+      }
+      case "seed": {
+        if (channel.batch) channel.batch.seed = event.data;
+        else {
+          channel.batch = { reset: null, seed: event.data, held: [], guardArmed: false };
+          this.#armBatchGuard(channel);
+        }
+        return;
+      }
+      case "delta": {
+        const batch = channel.batch;
+        if (batch && batch.seed !== null) {
+          batch.held.push(event.data);
+          return;
+        }
+        if (batch) {
+          // A delta cannot precede the capture of an armed reseed (the feed
+          // discards those); treat an impossible ordering as live output.
+          this.#flushBatch(channel, null);
+        }
+        this.#emitOutput(channel, event.data);
+        return;
+      }
+      case "cursor": {
+        if (channel.batch) {
+          this.#flushBatch(channel, { x: event.x, y: event.y });
+          return;
+        }
+        this.#sendPaneFrame(channel, {
+          type: "cursor",
+          pane: channel.semanticPaneId,
+          seq: this.#nextSeq(channel),
+          x: event.x,
+          y: event.y,
+        });
+        return;
+      }
+      case "flow": {
+        if (channel.batch) this.#flushBatch(channel, null);
+        this.#sendPaneFrame(channel, {
+          type: "flow",
+          pane: channel.semanticPaneId,
+          seq: this.#nextSeq(channel),
+          state: event.state,
+          reason: event.reason,
+        });
+        return;
+      }
+      case "closed": {
+        if (channel.batch) this.#flushBatch(channel, null);
+        this.#emitClosed(channel);
+        this.#closeIfAllPanesGone();
+        return;
+      }
+    }
+  }
+
+  /** The atomic batch arrives in ONE synchronous callback burst; a microtask
+   *  guard flushes the degraded no-cursor path without reordering anything. */
+  #armBatchGuard(channel: PaneChannel): void {
+    const batch = channel.batch;
+    if (!batch || batch.guardArmed) return;
+    batch.guardArmed = true;
+    queueMicrotask(() => {
+      if (channel.batch === batch) this.#flushBatch(channel, null);
+    });
+  }
+
+  #flushBatch(channel: PaneChannel, cursor: { x: number; y: number } | null): void {
+    const batch = channel.batch;
+    channel.batch = null;
+    if (!batch || this.#closed || channel.closed) return;
+    let seed = batch.seed ?? new Uint8Array(0);
+    if (seed.byteLength > PANE_STREAM_MAX_SEED_BYTES) {
+      // Pathological guard: keep the tail, resynchronizing at a line seam.
+      let start = seed.byteLength - PANE_STREAM_MAX_SEED_BYTES;
+      while (start < seed.byteLength && seed[start] !== 0x0a) start += 1;
+      seed = seed.subarray(Math.min(start + 1, seed.byteLength));
+    }
+    const held = chunkBytes(concatBytes(batch.held), PANE_STREAM_MAX_OUTPUT_BYTES).slice(
+      0,
+      PANE_STREAM_MAX_HELD_DELTAS,
+    );
+    this.#sendPaneFrame(channel, {
+      type: "seed-batch",
+      pane: channel.semanticPaneId,
+      seq: this.#nextSeq(channel),
+      reset: batch.reset,
+      seed: Buffer.from(seed).toString("base64"),
+      held: held.map((chunk) => Buffer.from(chunk).toString("base64")),
+      cursor,
+    });
+  }
+
+  #emitOutput(channel: PaneChannel, data: Uint8Array): void {
+    for (const chunk of chunkBytes(data, PANE_STREAM_MAX_OUTPUT_BYTES)) {
+      this.#sendPaneFrame(channel, {
+        type: "output",
+        pane: channel.semanticPaneId,
+        seq: this.#nextSeq(channel),
+        data: Buffer.from(chunk).toString("base64"),
+      });
+    }
+  }
+
+  #emitClosed(channel: PaneChannel): void {
+    if (channel.closed) return;
+    channel.closed = true;
+    const sub = channel.sub;
+    channel.sub = null;
+    if (sub) void sub.close().catch(() => undefined);
+    this.#sendPaneFrame(channel, {
+      type: "closed",
+      pane: channel.semanticPaneId,
+      seq: this.#nextSeq(channel),
+    });
+    this.#ledger.forgetPane(this.#clientId, channel.semanticPaneId);
+  }
+
+  #onLayout(event: MirrorLayoutEvent): void {
+    if (this.#closed) return;
+    const leased = event.panes.some(
+      (pane) => pane.semanticPaneId !== null && this.#panes.has(pane.semanticPaneId),
+    );
+    if (!leased) return;
+    const frame = {
+      type: "layout",
+      semanticWindowId: event.semanticWindowId,
+      windowName: event.windowName === null ? null : event.windowName.slice(0, 256),
+      currentWindow: event.currentWindow,
+      cols: event.cols,
+      rows: event.rows,
+      zoomed: event.zoomed,
+      panes: event.panes.map((pane) => ({
+        pane: pane.semanticPaneId,
+        left: pane.left,
+        top: pane.top,
+        width: pane.width,
+        height: pane.height,
+        active: pane.active,
+      })),
+    };
+    // Layout carries user-authored names and unbounded tmux geometry; gate it
+    // through the schema and skip rather than ever sending an invalid frame.
+    if (!PaneStreamServerFrameSchemaZ.safeParse(frame).success) return;
+    this.#sendFrame(null, frame);
+  }
+
+  // ── Send path + flow ledger ───────────────────────────────────────────────
+
+  #nextSeq(channel: PaneChannel): number {
+    channel.serverSeq += 1;
+    return channel.serverSeq;
+  }
+
+  #sendPaneFrame(channel: PaneChannel, frame: Record<string, unknown>): void {
+    channel.sentPaneFrames += 1;
+    this.#sendFrame(channel.semanticPaneId, frame);
+  }
+
+  #sendFrame(pane: string | null, frame: Record<string, unknown>): void {
+    if (this.#closed || this.#socket.readyState !== WS_OPEN) return;
+    const encoded = JSON.stringify(frame);
+    const bytes = Buffer.byteLength(encoded, "utf8");
+    if (pane !== null) {
+      this.#ledger.take(this.#clientId, pane, "ws-send-buffer", bytes);
+      if (this.#deliveryAcks) this.#ledger.take(this.#clientId, pane, "renderer-backlog", 1);
+    }
+    this.#sendQueue.push({ pane, remaining: bytes });
+    this.#sentBytesTotal += bytes;
+    try {
+      this.#socket.send(encoded, { binary: false });
+    } catch {
+      this.close(1011, "stream-unavailable");
+      return;
+    }
+    // Stall is judged on the drain tick, never synchronously at send: the
+    // socket must get its chance to drain first, or a single seed batch
+    // larger than the budget would park even a healthy client.
+    this.#ensureDrainTick();
+  }
+
+  #evaluateStall(pane: string): void {
+    const channel = this.#panes.get(pane);
+    if (!channel || channel.closed || channel.frozenByWire || !channel.sub) return;
+    if (this.#ledger.isStalled(this.#clientId, pane)) {
+      // Park exactly this subscriber: siblings and other clients keep flowing;
+      // upstream %pause only engages when every subscriber of the pane parks.
+      channel.frozenByWire = true;
+      channel.sub.freeze();
+    }
+  }
+
+  #evaluateResume(pane: string): void {
+    const channel = this.#panes.get(pane);
+    if (!channel || channel.closed || !channel.frozenByWire || !channel.sub) return;
+    if (this.#ledger.shouldResume(this.#clientId, pane)) {
+      channel.frozenByWire = false;
+      channel.sub.thaw();
+    }
+  }
+
+  #ensureDrainTick(): void {
+    if (this.#cancelDrainTick || this.#closed || this.#sendQueue.length === 0) return;
+    this.#cancelDrainTick = this.#schedule(() => {
+      this.#cancelDrainTick = null;
+      this.#drainNow();
+      this.#ensureDrainTick();
+    }, this.#drainTickMs);
+  }
+
+  #drainNow(): void {
+    if (this.#closed) return;
+    const buffered = this.#socket.bufferedAmount ?? 0;
+    if (!Number.isSafeInteger(buffered) || buffered < 0) {
+      this.close(1011, "stream-unavailable");
+      return;
+    }
+    if (buffered > this.#maxSocketBufferedBytes) {
+      this.close(1013, "output-backpressure");
+      return;
+    }
+    let newlyDrained = this.#sentBytesTotal - buffered - this.#drainedBytesTotal;
+    while (newlyDrained > 0 && this.#sendQueue.length > 0) {
+      const head = this.#sendQueue[0]!;
+      const applied = Math.min(newlyDrained, head.remaining);
+      head.remaining -= applied;
+      newlyDrained -= applied;
+      this.#drainedBytesTotal += applied;
+      if (head.pane !== null) {
+        this.#ledger.give(this.#clientId, head.pane, "ws-send-buffer", applied);
+      }
+      if (head.remaining === 0) this.#sendQueue.shift();
+    }
+    for (const [pane, channel] of this.#panes) {
+      if (channel.frozenByWire) this.#evaluateResume(pane);
+      else this.#evaluateStall(pane);
+    }
+  }
+
+  // ── Client frames ─────────────────────────────────────────────────────────
+
+  readonly #onMessage = (
+    data: string | Buffer | ArrayBuffer | readonly Buffer[],
+    isBinary: boolean,
+  ): void => {
+    if (this.#closed) return;
+    const byteLength = rawDataByteLength(data, PANE_STREAM_MAX_CONTROL_BYTES);
+    if (isBinary || byteLength === 0 || byteLength > PANE_STREAM_MAX_CONTROL_BYTES) {
+      this.#failProtocol("protocol-error");
+      return;
+    }
+    let frame: z.infer<typeof PaneStreamClientFrameSchemaZ>;
+    try {
+      frame = PaneStreamClientFrameSchemaZ.parse(strictJsonParse(rawDataToBuffer(data)));
+    } catch {
+      this.#failProtocol("protocol-error");
+      return;
+    }
+    if (frame.type === "consumed") {
+      this.#acceptConsumed(frame.pane, frame.seq);
+      return;
+    }
+    this.#acceptInput(frame.pane, frame.seq, frame.kind, frame.data, byteLength);
+  };
+
+  #acceptConsumed(pane: string, seq: number): void {
+    const channel = this.#panes.get(pane);
+    if (
+      !this.#deliveryAcks ||
+      !channel ||
+      seq <= channel.consumedSeq ||
+      seq > channel.sentPaneFrames
+    ) {
+      this.#failProtocol("protocol-error");
+      return;
+    }
+    const returned = seq - channel.consumedSeq;
+    channel.consumedSeq = seq;
+    this.#ledger.give(this.#clientId, pane, "renderer-backlog", returned);
+    this.#evaluateResume(pane);
+  }
+
+  #acceptInput(
+    pane: string,
+    seq: number,
+    kind: "text" | "key",
+    data: string,
+    frameBytes: number,
+  ): void {
+    if (this.#descriptor.viewerMode !== "interactive") {
+      this.#failProtocol("input-rejected");
+      return;
+    }
+    const channel = this.#panes.get(pane);
+    if (!channel || channel.closed || !channel.sub || seq !== channel.nextInputSeq) {
+      this.#failProtocol("input-rejected");
+      return;
+    }
+    if (
+      this.#acceptedInputFrames + 1 > this.#maxInputFrames ||
+      this.#acceptedInputBytes + frameBytes > this.#maxInputBytes
+    ) {
+      this.#failProtocol("input-rejected");
+      return;
+    }
+    this.#acceptedInputFrames += 1;
+    this.#acceptedInputBytes += frameBytes;
+    channel.nextInputSeq += 1;
+    try {
+      if (kind === "text") channel.sub.sendText(data);
+      else channel.sub.sendKey(data);
+      sendControl(this.#socket, { type: "input-ack", pane, seq });
+    } catch {
+      this.close(1011, "stream-unavailable");
+    }
+  }
+
+  #failProtocol(code: PaneStreamErrorFrameCode): void {
+    try {
+      sendControl(this.#socket, {
+        type: "error",
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        code,
+        retryable: false,
+      });
+    } catch {
+      this.close(1011, "stream-unavailable");
+      return;
+    }
+    this.close(1008, code);
+  }
+
+  #closeIfAllPanesGone(): void {
+    if (this.#closed) return;
+    for (const channel of this.#panes.values()) {
+      if (!channel.closed) return;
+    }
+    this.close(1000, "panes-closed");
+  }
+
+  readonly #onSocketClose = (): void => this.close(1000, "peer-closed");
+}
+
+function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) return new Uint8Array(0);
+  if (chunks.length === 1) return chunks[0]!;
+  let total = 0;
+  for (const chunk of chunks) total += chunk.byteLength;
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
+}
+
+function chunkBytes(data: Uint8Array, maxChunk: number): Uint8Array[] {
+  if (data.byteLength === 0) return [];
+  if (data.byteLength <= maxChunk) return [data];
+  const chunks: Uint8Array[] = [];
+  for (let offset = 0; offset < data.byteLength; offset += maxChunk) {
+    chunks.push(data.subarray(offset, Math.min(offset + maxChunk, data.byteLength)));
+  }
+  return chunks;
+}
