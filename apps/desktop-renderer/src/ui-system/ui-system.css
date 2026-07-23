@@ -31,6 +31,26 @@
   --tmi-focus-offset: var(--tmux-ide-focus-outline-offset, 1px);
   --tmi-radius-control: var(--tmux-ide-shape-control-radius, 4px);
   --tmi-radius-panel: var(--tmux-ide-shape-floating-radius, 6px);
+  /*
+   * Shared radius + spacing ladders. Every hardcoded radius/gap in the desktop
+   * shell maps to the nearest step (odd values round down); the ladder keeps the
+   * whole surface on one rhythm instead of a dozen bespoke pixel values.
+   */
+  --tmi-radius-xs: 4px;
+  --tmi-radius-sm: 6px;
+  --tmi-radius-md: 8px;
+  --tmi-radius-lg: 10px;
+  --tmi-radius-xl: 12px;
+  --tmi-radius-pill: 999px;
+  --tmi-space-1: 2px;
+  --tmi-space-2: 4px;
+  --tmi-space-3: 6px;
+  --tmi-space-4: 8px;
+  --tmi-space-5: 10px;
+  --tmi-space-6: 12px;
+  --tmi-space-7: 16px;
+  --tmi-space-8: 24px;
+  --tmi-disabled-opacity: 0.64;
   --tmi-shadow-overlay: var(--tmux-ide-elevation-palette-shadow, 0 10px 28px rgb(0 0 0 / 44%));
   --tmi-motion-fast: var(--tmux-ide-motion-fast, 150ms);
   --tmi-motion-exit: var(--tmux-ide-motion-instant, 100ms);
@@ -170,7 +190,7 @@
   min-width: 0;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: var(--tmi-space-3);
   min-height: 32px;
   padding: 0 12px;
   border-radius: var(--tmi-radius-control);
@@ -178,9 +198,19 @@
 }
 
 .tmi-button[data-size="small"] {
+  gap: var(--tmi-space-2);
   min-height: 28px;
   padding-inline: 9px;
   font-size: 11px;
+}
+
+/* Icons in text buttons track the smaller optical weight; icon-only buttons
+ * keep their 16px glyph. shrink-0 stops long labels from squashing the glyph. */
+.tmi-button > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  pointer-events: none;
 }
 
 .tmi-button[data-variant="primary"] {
@@ -254,11 +284,8 @@
 .tmi-button:disabled,
 .tmi-icon-button:disabled,
 .tmi-tabs__trigger:disabled {
-  color: var(--tmi-disabled-fg);
-  border-color: var(--tmi-border-subtle);
-  background: var(--tmi-disabled-bg);
   cursor: not-allowed;
-  opacity: 1;
+  opacity: var(--tmi-disabled-opacity);
 }
 
 .tmi-button__spinner {
@@ -391,7 +418,7 @@
 .tmi-tabs > [role="tablist"] {
   display: flex;
   min-width: 0;
-  gap: 2px;
+  gap: var(--tmi-space-1);
   border-bottom: 1px solid var(--tmi-border-subtle);
 }
 

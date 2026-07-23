@@ -68,7 +68,7 @@ select:focus-visible,
   --desktop-sidebar-collapsed-width: 48px;
   --desktop-dock-bar-height: 40px;
   --desktop-status-height: 22px;
-  --desktop-panel-radius: 11px;
+  --desktop-panel-radius: var(--tmi-radius-lg);
   --desktop-ui-font:
     "DM Sans", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
     sans-serif;
@@ -85,6 +85,16 @@ select:focus-visible,
   --desktop-active: rgb(255 255 255 / 7.5%);
   --desktop-separator: rgb(255 255 255 / 8%);
   --desktop-shadow: rgb(0 0 0 / 46%);
+  /*
+   * Shared floating-surface recipe. Every overlay card reads the same three
+   * ingredients: a 1px inset hairline highlight on the top edge, a low-opacity
+   * drop shadow, and a translucent blurred scrim behind it. Surfaces stay opaque
+   * — only the scrim is translucent.
+   */
+  --tmi-overlay-hairline: inset 0 1px 0 rgb(255 255 255 / 6%);
+  --tmi-overlay-elevation: 0 18px 48px var(--desktop-shadow);
+  --tmi-overlay-scrim: color-mix(in srgb, var(--desktop-workbench) 60%, transparent);
+  --tmi-overlay-scrim-solid: color-mix(in srgb, var(--desktop-workbench) 82%, transparent);
   --desktop-focus-soft: color-mix(
     in srgb,
     var(--tmux-ide-border-focused) 10%,
@@ -115,6 +125,33 @@ select:focus-visible,
   --desktop-active: rgb(23 25 31 / 8%);
   --desktop-separator: rgb(23 25 31 / 10%);
   --desktop-shadow: rgb(25 28 36 / 18%);
+  /* On light surfaces the top-edge highlight is a brighter, crisper white sheen. */
+  --tmi-overlay-hairline: inset 0 1px 0 rgb(255 255 255 / 60%);
+}
+
+/*
+ * One scrollbar treatment for every scrollable surface inside the shell: a
+ * narrow 6px track with a translucent pill thumb that firms up on hover. The
+ * standard scrollbar-width/color declarations elsewhere cover Firefox; this
+ * covers WebKit/Chromium (the Electron renderer).
+ */
+.app ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.app ::-webkit-scrollbar-thumb {
+  border-radius: var(--tmi-radius-pill);
+  background: color-mix(in srgb, var(--tmux-ide-text-muted) 30%, transparent);
+}
+
+.app ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--tmux-ide-text-muted) 48%, transparent);
+}
+
+.app ::-webkit-scrollbar-track,
+.app ::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /*
@@ -217,7 +254,7 @@ select:focus-visible,
   min-width: 0;
   align-items: center;
   height: 100%;
-  gap: 8px;
+  gap: var(--tmi-space-4);
   padding: 0 12px;
   overflow: hidden;
   color: var(--tmux-ide-text-secondary);
@@ -236,7 +273,7 @@ select:focus-visible,
   height: 26px;
   place-items: center;
   border: 1px solid var(--desktop-separator);
-  border-radius: 7px;
+  border-radius: var(--tmi-radius-sm);
   color: var(--tmux-ide-text-link);
   background: color-mix(in srgb, var(--desktop-raised) 72%, transparent);
   box-shadow: 0 1px 2px var(--desktop-shadow);
@@ -295,7 +332,7 @@ select:focus-visible,
   margin-left: 10px;
   padding: 0 7px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--tmi-radius-pill);
   color: var(--tmux-ide-status-warning);
   background: color-mix(in srgb, var(--tmux-ide-status-warning) 11%, transparent);
   font-size: 10px;
@@ -309,10 +346,10 @@ select:focus-visible,
   align-self: center;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--tmi-space-3);
   margin-right: 8px;
   padding: 0 9px;
-  border-radius: 999px;
+  border-radius: var(--tmi-radius-pill);
   color: var(--tmux-ide-status-success);
   background: color-mix(in srgb, var(--tmux-ide-status-success) 12%, transparent);
   font-size: 10px;
@@ -323,7 +360,7 @@ select:focus-visible,
 .titlebar__update-chip-dot {
   width: 6px;
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--tmi-radius-pill);
   background: var(--tmux-ide-status-success);
 }
 
@@ -337,7 +374,7 @@ select:focus-visible,
   flex: 0 0 auto;
   align-items: center;
   align-self: stretch;
-  gap: 2px;
+  gap: var(--tmi-space-1);
   padding: 7px 5px;
 }
 
@@ -354,10 +391,10 @@ select:focus-visible,
   display: inline-flex;
   height: 36px;
   align-items: center;
-  gap: 6px;
+  gap: var(--tmi-space-3);
   padding: 0 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   font-size: 13px;
   font-weight: 550;
   cursor: pointer;
@@ -404,7 +441,7 @@ select:focus-visible,
   margin: 0 9px 0 0;
   padding: 0;
   border: 1px solid var(--desktop-separator);
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   background: color-mix(in srgb, var(--desktop-raised) 56%, transparent);
   cursor: pointer;
 }
@@ -483,7 +520,7 @@ kbd {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--tmi-space-5);
   color: var(--tmux-ide-text-bright);
   font-size: 13px;
   letter-spacing: -0.01em;
@@ -495,7 +532,7 @@ kbd {
   height: 32px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--tmux-ide-border-focused) 54%, transparent);
-  border-radius: 9px;
+  border-radius: var(--tmi-radius-md);
   color: var(--tmux-ide-text-link);
   background: color-mix(in srgb, var(--tmux-ide-border-focused) 13%, var(--tmux-ide-surface-panel));
   box-shadow: 0 8px 24px color-mix(in srgb, var(--tmux-ide-surface-terminal) 34%, transparent);
@@ -526,10 +563,10 @@ kbd {
 .runtime-launch__skeleton {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--tmi-space-6);
   padding: 18px;
   border: 1px solid var(--tmux-ide-border-subtle);
-  border-radius: 14px;
+  border-radius: var(--tmi-radius-xl);
   background: color-mix(in srgb, var(--tmux-ide-surface-panel) 92%, transparent);
   box-shadow: var(--tmux-ide-elevation-floating-shadow);
 }
@@ -537,7 +574,7 @@ kbd {
 .runtime-launch__skeleton i,
 .runtime-launch__skeleton span {
   display: block;
-  border-radius: 6px;
+  border-radius: var(--tmi-radius-sm);
   background: linear-gradient(
     100deg,
     var(--tmux-ide-surface-panel-raised) 20%,
@@ -614,7 +651,7 @@ kbd {
   /* flex (not inline-flex): the following inline eyebrow must break to its own line. */
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--tmi-space-3);
   margin-bottom: 24px;
   color: var(--tmux-ide-text-muted);
   font-size: 9px;
@@ -679,19 +716,19 @@ kbd {
 .runtime-state-card__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--tmi-space-4);
   margin-top: 20px;
 }
 
 .runtime-state-card__inline-error {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);
-  gap: 8px;
+  gap: var(--tmi-space-4);
   align-items: start;
   margin-top: 14px;
   padding: 9px 10px;
   border: 1px solid color-mix(in srgb, var(--tmux-ide-status-danger) 42%, transparent);
-  border-radius: 7px;
+  border-radius: var(--tmi-radius-sm);
   color: var(--tmux-ide-status-danger);
   background: color-mix(in srgb, var(--tmux-ide-status-danger) 8%, transparent);
   font-size: 11px;
@@ -706,11 +743,11 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--tmi-space-5);
   margin-top: 14px;
   padding: 8px 8px 8px 12px;
   border: 1px solid var(--tmux-ide-border-subtle);
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   background: var(--tmux-ide-surface-panel);
 }
 
@@ -739,10 +776,10 @@ kbd {
   width: min(480px, 100%);
   padding: 18px 20px 16px;
   border: 1px solid var(--tmux-ide-border-default);
-  border-radius: 12px;
+  border-radius: var(--tmi-radius-xl);
   /* Overlay surfaces are OPAQUE; translucency belongs to backdrops only. */
   background: var(--tmux-ide-surface-panel-raised, var(--tmux-ide-surface-panel));
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  box-shadow: var(--tmi-overlay-hairline), var(--tmi-overlay-elevation);
   pointer-events: auto;
 }
 
@@ -760,7 +797,7 @@ kbd {
 
 .first-run-intro__points {
   display: grid;
-  gap: 8px;
+  gap: var(--tmi-space-4);
   margin: 0 0 14px;
   padding: 0;
   list-style: none;
@@ -769,7 +806,7 @@ kbd {
 .first-run-intro__points li {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--tmi-space-5);
   align-items: start;
   color: var(--tmux-ide-text-secondary);
   font-size: 12px;
@@ -783,7 +820,7 @@ kbd {
 .first-run-intro__actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--tmi-space-6);
 }
 
 .first-run-intro__hint {
@@ -808,7 +845,7 @@ kbd {
 
 .runtime-diagnostics ul {
   display: grid;
-  gap: 5px;
+  gap: var(--tmi-space-2);
   margin: 9px 0 0;
   padding-left: 18px;
   line-height: 16px;
@@ -817,7 +854,7 @@ kbd {
 .runtime-onboarding-notes {
   padding: 18px;
   border: 1px solid var(--tmux-ide-border-subtle);
-  border-radius: 10px;
+  border-radius: var(--tmi-radius-lg);
   color: var(--tmux-ide-text-secondary);
   background:
     linear-gradient(
@@ -835,7 +872,7 @@ kbd {
   margin-bottom: 20px;
   place-items: center;
   border: 1px solid var(--tmux-ide-border-default);
-  border-radius: 9px;
+  border-radius: var(--tmi-radius-md);
   color: var(--tmux-ide-text-link);
   background: var(--tmux-ide-surface-terminal);
 }
@@ -861,7 +898,7 @@ kbd {
 
 .runtime-onboarding-notes ul {
   display: grid;
-  gap: 8px;
+  gap: var(--tmi-space-4);
   margin: 17px 0;
   padding: 14px 0;
   border-top: 1px solid var(--tmux-ide-border-subtle);
@@ -872,7 +909,7 @@ kbd {
 .runtime-onboarding-notes li {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr);
-  gap: 7px;
+  gap: var(--tmi-space-3);
   align-items: center;
   color: var(--tmux-ide-text-secondary);
   font-size: 11px;
@@ -915,7 +952,7 @@ kbd {
 
 .workspace-chooser {
   display: grid;
-  gap: 6px;
+  gap: var(--tmi-space-3);
   max-height: min(312px, 38vh);
   margin-top: 7px;
   padding-right: 3px;
@@ -946,7 +983,7 @@ kbd {
   grid-template-columns: 30px minmax(0, 1fr) auto;
   min-height: 48px;
   align-items: center;
-  gap: 10px;
+  gap: var(--tmi-space-5);
   padding: 5px 9px;
   border: 1px solid var(--tmux-ide-border-subtle);
   border-radius: var(--tmux-ide-shape-control);
@@ -1019,7 +1056,7 @@ kbd {
   display: flex;
   max-width: min(680px, calc(100vw - 48px));
   align-items: center;
-  gap: 7px;
+  gap: var(--tmi-space-3);
   padding: 4px 9px;
   overflow: hidden;
   border: 1px solid var(--tmux-ide-border-attention);
@@ -1096,7 +1133,7 @@ kbd {
 .workspace-sidebar__project {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--tmi-space-4);
   min-width: 0;
   height: 50px;
   margin-bottom: 10px;
@@ -1111,7 +1148,7 @@ kbd {
   place-items: center;
   color: var(--tmux-ide-text-bright);
   border: 1px solid var(--desktop-separator);
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   background: linear-gradient(145deg, var(--desktop-raised), var(--desktop-active));
   box-shadow: 0 1px 3px var(--desktop-shadow);
   font-family: var(--desktop-mono-font);
@@ -1178,13 +1215,13 @@ kbd {
   min-height: 40px;
   height: auto;
   align-items: center;
-  gap: 9px;
+  gap: var(--tmi-space-4);
   padding: 5px 8px;
   overflow: hidden;
   border: 1px solid transparent;
   color: var(--tmux-ide-text-secondary);
   background: transparent;
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
@@ -1381,7 +1418,7 @@ kbd {
 .readiness-card {
   padding: 16px;
   border: 1px solid var(--desktop-separator);
-  border-radius: 10px;
+  border-radius: var(--tmi-radius-lg);
   background: var(--desktop-raised);
   box-shadow: 0 8px 22px color-mix(in srgb, var(--desktop-shadow) 36%, transparent);
 }
@@ -1408,7 +1445,7 @@ kbd {
 
 .readiness-card p {
   display: flex;
-  gap: 8px;
+  gap: var(--tmi-space-4);
   margin: 10px 0 0;
   font-size: 11px;
 }
@@ -1435,7 +1472,7 @@ kbd {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(90px, 1fr));
-  gap: 12px;
+  gap: var(--tmi-space-6);
   height: 100%;
 }
 
@@ -1513,7 +1550,7 @@ kbd {
   min-width: 0;
   min-height: 0;
   overflow: visible;
-  border-radius: 11px;
+  border-radius: var(--tmi-radius-lg);
   transition:
     filter 150ms var(--desktop-ease-smooth),
     opacity 150ms var(--desktop-ease-smooth);
@@ -1544,12 +1581,12 @@ kbd {
   --pane-header: color-mix(in srgb, var(--desktop-raised) 88%, var(--desktop-canvas));
   --pane-header-active: color-mix(in srgb, var(--desktop-raised) 82%, var(--desktop-active));
   --pane-body: var(--desktop-raised);
-  border-radius: 11px;
+  border-radius: var(--tmi-radius-lg);
 }
 
 .app-window-card > .web-pane-frame {
   grid-template-rows: 38px minmax(0, 1fr);
-  border-radius: 11px;
+  border-radius: var(--tmi-radius-lg);
 }
 
 .terminal-canvas .web-pane-frame[data-border-role="focused"] {
@@ -1682,15 +1719,15 @@ kbd {
   left: 50%;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--tmi-space-1);
   height: 38px;
   padding: 4px;
   border: 1px solid var(--desktop-separator);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--desktop-raised) 94%, transparent);
+  border-radius: var(--tmi-radius-xl);
+  background: var(--desktop-raised);
   box-shadow:
-    0 14px 34px var(--desktop-shadow),
-    inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 5%, transparent);
+    var(--tmi-overlay-hairline),
+    0 14px 34px var(--desktop-shadow);
   transform: translateX(-50%);
   -webkit-app-region: no-drag;
 }
@@ -1703,7 +1740,7 @@ kbd {
   padding: 0;
   place-items: center;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--tmi-radius-sm);
   color: var(--tmux-ide-text-secondary);
   background: transparent;
   cursor: pointer;
@@ -1772,7 +1809,7 @@ kbd {
 .app-window-canvas__empty {
   display: grid;
   place-content: center;
-  gap: 5px;
+  gap: var(--tmi-space-2);
   height: 100%;
   padding: 16px;
   color: var(--tmux-ide-text-muted);
@@ -1897,7 +1934,7 @@ kbd {
   height: 108px;
   overflow: hidden;
   border: 1px solid var(--desktop-separator);
-  border-radius: 10px;
+  border-radius: var(--tmi-radius-lg);
   background: color-mix(in srgb, var(--desktop-raised) 90%, transparent);
   box-shadow:
     0 14px 34px var(--desktop-shadow),
@@ -1978,7 +2015,7 @@ kbd {
 .terminal-surface--unavailable {
   display: grid;
   place-content: center;
-  gap: 4px;
+  gap: var(--tmi-space-2);
   padding: 14px;
   color: var(--tmux-ide-text-muted);
 }
@@ -2029,7 +2066,7 @@ kbd {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr) auto;
   grid-template-rows: auto auto;
-  gap: 2px 8px;
+  gap: var(--tmi-space-1) var(--tmi-space-4);
   align-content: center;
   padding: 14px;
   color: var(--tmux-ide-text-muted);
@@ -2149,11 +2186,11 @@ kbd {
 }
 
 .app .workbench-dock__tab {
-  gap: 7px;
+  gap: var(--tmi-space-3);
   margin: 4px 2px;
   padding: 0 11px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--tmi-radius-sm);
   font-family: var(--desktop-ui-font);
   font-size: 12px;
   font-weight: 550;
@@ -2224,7 +2261,7 @@ kbd {
 .mission-summary {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--tmi-space-6);
   padding-top: 10px;
 }
 
@@ -2270,7 +2307,7 @@ kbd {
   margin-left: auto;
   padding: 1px 7px;
   border: 1px solid color-mix(in srgb, var(--tmux-ide-status-warning) 36%, transparent);
-  border-radius: 999px;
+  border-radius: var(--tmi-radius-pill);
   color: var(--tmux-ide-status-warning) !important;
   background: color-mix(in srgb, var(--tmux-ide-status-warning) 7%, transparent);
 }
@@ -2296,7 +2333,7 @@ kbd {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: var(--tmi-space-4);
   padding: 6px 8px 6px 16px;
   border-bottom: 1px solid var(--desktop-separator);
 }
@@ -2343,10 +2380,10 @@ kbd {
   min-height: 52px;
   grid-template-columns: 7px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: var(--tmi-space-5);
   padding: 7px 9px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   color: var(--tmux-ide-text-secondary);
   background: transparent;
   text-align: left;
@@ -2379,7 +2416,7 @@ kbd {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--tmi-space-1);
 }
 
 .mission-journey__list button strong,
@@ -2443,7 +2480,7 @@ kbd {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
+  gap: var(--tmi-space-6);
 }
 
 .mission-journey__detail > header > div {
@@ -2455,7 +2492,7 @@ kbd {
   flex: 0 0 auto;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
+  gap: var(--tmi-space-3);
 }
 
 .mission-journey__detail h3 {
@@ -2483,7 +2520,7 @@ kbd {
   align-items: center;
   padding: 1px 7px;
   border: 1px solid var(--desktop-separator);
-  border-radius: 999px;
+  border-radius: var(--tmi-radius-pill);
   color: var(--tmux-ide-text-secondary);
   background: var(--desktop-hover);
   font-family: var(--desktop-mono-font);
@@ -2542,7 +2579,7 @@ kbd {
   appearance: none;
   overflow: hidden;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--tmi-radius-pill);
   background: var(--desktop-separator);
 }
 
@@ -2573,7 +2610,7 @@ kbd {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--tmi-space-2);
   padding: 12px;
 }
 
@@ -2610,7 +2647,7 @@ kbd {
   display: flex;
   max-width: 760px;
   align-items: center;
-  gap: 7px;
+  gap: var(--tmi-space-3);
   margin-top: 12px;
   padding: 8px 10px;
   border-left: 2px solid var(--tmux-ide-status-warning);
@@ -2623,7 +2660,7 @@ kbd {
   display: grid;
   max-width: 760px;
   grid-template-columns: auto 1fr;
-  gap: 4px 12px;
+  gap: var(--tmi-space-2) var(--tmi-space-6);
   margin-top: 12px;
   padding: 10px 12px;
   border-left: 2px solid color-mix(in srgb, var(--tmux-ide-status-success) 60%, transparent);
@@ -2662,7 +2699,7 @@ kbd {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--tmi-space-6);
 }
 
 .mission-journey__timeline h4 {
@@ -2688,7 +2725,7 @@ kbd {
   position: relative;
   display: grid;
   grid-template-columns: 126px minmax(0, 1fr);
-  gap: 14px;
+  gap: var(--tmi-space-6);
   min-height: 46px;
   padding: 6px 0 6px 14px;
   border-left: 1px solid var(--desktop-separator);
@@ -2719,7 +2756,7 @@ kbd {
 .mission-journey__timeline li > span {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: var(--tmi-space-1);
 }
 
 .mission-journey__timeline li strong {
@@ -2744,7 +2781,7 @@ kbd {
   max-width: 760px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--tmi-space-6);
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--desktop-separator);
@@ -2753,7 +2790,7 @@ kbd {
 }
 
 .mission-journey__detail > footer .tmi-button {
-  gap: 6px;
+  gap: var(--tmi-space-3);
 }
 
 .activity-detail__facts {
@@ -2792,7 +2829,7 @@ kbd {
   display: flex;
   max-width: 640px;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--tmi-space-2);
   padding: 10px 12px;
   border-left: 2px solid var(--tmux-ide-status-info);
   background: color-mix(in srgb, var(--tmux-ide-status-info) 6%, transparent);
@@ -2808,7 +2845,7 @@ kbd {
   min-height: 100%;
   grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
+  gap: var(--tmi-space-6);
   padding: 20px;
   background: var(--desktop-raised);
 }
@@ -2823,7 +2860,7 @@ kbd {
   height: 32px;
   place-items: center;
   border: 1px solid var(--desktop-separator);
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   color: var(--tmux-ide-text-link);
   background: var(--desktop-hover);
 }
@@ -2855,7 +2892,7 @@ kbd {
 .mission-journey__state-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--tmi-space-3);
 }
 
 @media (max-width: 980px) {
@@ -2947,7 +2984,7 @@ kbd {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: var(--tmi-space-4);
   padding: 6px 8px 6px 16px;
   border-bottom: 1px solid var(--desktop-separator);
 }
@@ -2985,7 +3022,7 @@ kbd {
   flex: 0 0 auto;
   padding: 1px 7px;
   border: 1px solid color-mix(in srgb, var(--tmux-ide-status-warning) 36%, transparent);
-  border-radius: 999px;
+  border-radius: var(--tmi-radius-pill);
   color: var(--tmux-ide-status-warning) !important;
   background: color-mix(in srgb, var(--tmux-ide-status-warning) 7%, transparent);
 }
@@ -3007,11 +3044,11 @@ kbd {
   width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 4px;
+  gap: var(--tmi-space-2);
   min-height: 26px;
   padding: 2px 8px 2px 4px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--tmi-radius-sm);
   color: var(--tmux-ide-text-secondary);
   background: transparent;
   text-align: left;
@@ -3104,7 +3141,7 @@ kbd {
 .workspace-files__row-loading {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--tmi-space-2);
   min-height: 22px;
   margin: 0;
   padding: 0 8px 0 4px;
@@ -3144,11 +3181,11 @@ kbd {
   min-width: 0;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--tmi-space-4);
   min-height: 34px;
   padding: 4px 9px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--tmi-radius-sm);
   color: var(--tmux-ide-text-secondary);
   background: transparent;
   text-align: left;
@@ -3206,7 +3243,7 @@ kbd {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--tmi-space-1);
 }
 
 .workspace-changes__identity strong {
@@ -3252,7 +3289,7 @@ kbd {
   display: grid;
   min-height: 100%;
   place-items: center;
-  gap: 10px;
+  gap: var(--tmi-space-5);
   padding: 24px;
   color: var(--tmux-ide-text-muted);
   text-align: center;
@@ -3265,7 +3302,7 @@ kbd {
   height: 32px;
   place-items: center;
   border: 1px solid var(--desktop-separator);
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   color: var(--tmux-ide-text-link);
   background: var(--desktop-hover);
 }
@@ -3275,7 +3312,7 @@ kbd {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--tmi-space-4);
   padding: 18px 20px;
   color: var(--tmux-ide-text-secondary);
   font-size: 13px;
@@ -3298,7 +3335,7 @@ kbd {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--tmi-space-6);
   padding: 12px 18px;
   border-bottom: 1px solid var(--desktop-separator);
 }
@@ -3307,7 +3344,7 @@ kbd {
 .workspace-changes__diff-header > div {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: var(--tmi-space-1);
 }
 
 .workspace-files__preview-header strong,
@@ -3372,7 +3409,7 @@ kbd {
 .workspace-files__code li {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--tmi-space-6);
   padding: 0 16px 0 0;
   white-space: pre;
 }
@@ -3405,7 +3442,7 @@ kbd {
 .workspace-changes__line {
   display: grid;
   grid-template-columns: 40px 40px 14px minmax(0, 1fr);
-  gap: 4px;
+  gap: var(--tmi-space-2);
   padding-right: 12px;
   white-space: pre;
 }
@@ -3449,7 +3486,7 @@ kbd {
   min-height: 100%;
   grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
+  gap: var(--tmi-space-6);
   padding: 20px;
   background: var(--desktop-raised);
 }
@@ -3461,7 +3498,7 @@ kbd {
   height: 32px;
   place-items: center;
   border: 1px solid var(--desktop-separator);
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   color: var(--tmux-ide-text-link);
   background: var(--desktop-hover);
 }
@@ -3526,7 +3563,7 @@ kbd {
   min-width: 0;
   height: var(--desktop-status-height);
   align-items: center;
-  gap: 12px;
+  gap: var(--tmi-space-6);
   padding: 0 11px;
   overflow: hidden;
   border-top: 1px solid var(--desktop-separator);
@@ -3543,7 +3580,7 @@ kbd {
   flex: 0 1 auto;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: var(--tmi-space-3);
   color: var(--tmux-ide-text-secondary);
 }
 
@@ -3576,8 +3613,15 @@ kbd {
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
-  background: rgb(0 0 0 / 24%);
-  backdrop-filter: blur(2px);
+  background: var(--tmi-overlay-scrim);
+  backdrop-filter: blur(3px);
+}
+
+/* Without backdrop-filter the scrim carries the whole weight, so make it denser. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .command-palette-overlay {
+    background: var(--tmi-overlay-scrim-solid);
+  }
 }
 
 .command-palette-overlay--open {
@@ -3606,11 +3650,13 @@ kbd {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--desktop-separator);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--desktop-raised) 97%, transparent);
-  box-shadow: 0 24px 64px var(--desktop-shadow);
+  border-radius: var(--tmi-radius-xl);
+  background: var(--desktop-raised);
+  box-shadow:
+    var(--tmi-overlay-hairline),
+    0 24px 64px var(--desktop-shadow);
   opacity: 0;
-  transform: translateY(-6px) scale(0.985);
+  transform: translateY(-6px) scale(0.98);
   transform-origin: 50% 0;
 }
 
@@ -3638,7 +3684,7 @@ kbd {
 
 .command-palette__header {
   display: grid;
-  gap: 2px;
+  gap: var(--tmi-space-1);
   padding: 14px 16px 8px;
 }
 
@@ -3665,11 +3711,11 @@ kbd {
   grid-template-columns: 18px minmax(0, 1fr) auto;
   height: 44px;
   align-items: center;
-  gap: 7px;
+  gap: var(--tmi-space-3);
   margin: 0 10px;
   padding: 0 10px;
   border: 1px solid var(--tmux-ide-border-subtle);
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   background: color-mix(in srgb, var(--tmux-ide-surface-panel) 76%, transparent);
 }
 
@@ -3740,10 +3786,10 @@ kbd {
   grid-template-columns: 30px minmax(110px, 1fr) auto auto;
   min-height: 48px;
   align-items: center;
-  gap: 10px;
+  gap: var(--tmi-space-5);
   padding: 4px 8px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--tmi-radius-md);
   color: var(--tmux-ide-text-secondary);
   cursor: default;
 }
@@ -3770,7 +3816,7 @@ kbd {
   height: 28px;
   place-items: center;
   border: 1px solid var(--tmux-ide-border-subtle);
-  border-radius: 7px;
+  border-radius: var(--tmi-radius-sm);
   color: var(--tmux-ide-text-secondary);
   background: color-mix(in srgb, var(--tmux-ide-surface-panel) 84%, transparent);
 }
@@ -3778,7 +3824,7 @@ kbd {
 .command-palette__copy {
   display: grid;
   min-width: 0;
-  gap: 1px;
+  gap: var(--tmi-space-1);
 }
 
 .command-palette__label {
@@ -3808,14 +3854,14 @@ kbd {
   min-height: 190px;
   margin: 8px;
   border: 1px dashed var(--tmux-ide-border-subtle);
-  border-radius: 9px;
+  border-radius: var(--tmi-radius-md);
 }
 
 .command-palette__footer {
   display: flex;
   min-height: 38px;
   align-items: center;
-  gap: 16px;
+  gap: var(--tmi-space-7);
   padding: 6px 14px;
   border-top: 1px solid var(--tmux-ide-border-subtle);
   color: var(--tmux-ide-text-muted);
@@ -3826,7 +3872,7 @@ kbd {
 .command-palette__footer > span {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--tmi-space-2);
 }
 
 .command-palette__count {
@@ -3873,8 +3919,15 @@ kbd {
   visibility: hidden;
   place-items: start center;
   opacity: 0;
-  background: color-mix(in srgb, var(--tmux-ide-surface-canvas) 54%, transparent);
+  background: var(--tmi-overlay-scrim);
+  backdrop-filter: blur(3px);
   pointer-events: none;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .create-pane-flow__overlay {
+    background: var(--tmi-overlay-scrim-solid);
+  }
 }
 
 .create-pane-flow__overlay--open {
@@ -3905,7 +3958,7 @@ kbd {
   border-radius: var(--tmux-ide-shape-floating);
   color: var(--tmux-ide-text-primary);
   background: var(--tmux-ide-surface-command);
-  box-shadow: var(--tmux-ide-elevation-palette-shadow);
+  box-shadow: var(--tmi-overlay-hairline), var(--tmux-ide-elevation-palette-shadow);
   transform: scale(0.98);
 }
 
@@ -3926,7 +3979,7 @@ kbd {
   min-height: 52px;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: var(--tmi-space-7);
   padding: 8px 10px 8px 16px;
   border-bottom: 1px solid var(--tmux-ide-border-subtle);
   background: var(--tmux-ide-surface-header);
@@ -3990,7 +4043,7 @@ kbd {
 .create-pane-flow__kind-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--tmi-space-5);
   margin-top: 7px;
 }
 
@@ -4001,7 +4054,7 @@ kbd {
   min-height: 104px;
   align-content: start;
   align-items: center;
-  gap: 4px 8px;
+  gap: var(--tmi-space-2) var(--tmi-space-4);
   padding: 13px;
   border: 1px solid var(--tmux-ide-border-default);
   border-radius: var(--tmux-ide-shape-control);
@@ -4049,7 +4102,7 @@ kbd {
 .create-pane-flow__form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--tmi-space-6);
   padding: 13px 16px 0;
 }
 
@@ -4082,7 +4135,7 @@ kbd {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--tmi-space-2);
 }
 
 .create-pane-flow__field > span {
@@ -4153,7 +4206,7 @@ kbd {
 .create-pane-flow__field-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--tmi-space-5);
 }
 
 .create-pane-flow__notice {
@@ -4175,7 +4228,7 @@ kbd {
   min-height: 50px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--tmi-space-6);
   margin: 2px -16px 0;
   padding: 9px 16px;
   border-top: 1px solid var(--tmux-ide-border-subtle);
@@ -4238,7 +4291,7 @@ kbd {
   }
 
   .status-strip {
-    gap: 8px;
+    gap: var(--tmi-space-4);
   }
 
   .status-strip__connection {
