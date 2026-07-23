@@ -1,9 +1,6 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  FleetCatalogResourceV1SchemaZ,
-  type DaemonInstanceIdentity,
-} from "@tmux-ide/contracts";
+import { FleetCatalogResourceV1SchemaZ, type DaemonInstanceIdentity } from "@tmux-ide/contracts";
 import { mountFleetResourceRoute } from "./fleet-resource-route.ts";
 import { _setTmuxRunner } from "../discovery.ts";
 
@@ -81,14 +78,26 @@ describe("GET /api/resources/fleet-catalog", () => {
     restoreRunner = pinRunner(
       ["alpha\t1", "beta\t1", "zz-scratch\t1", "_internal\t1", "gamma\t"].join("\n"),
       [
-        paneLine("alpha", "%1", true, "node", "/home/dev/alpha", `working:${NOW}`, "", "Backend agent"),
+        paneLine(
+          "alpha",
+          "%1",
+          true,
+          "node",
+          "/home/dev/alpha",
+          `working:${NOW}`,
+          "",
+          "Backend agent",
+        ),
         paneLine("beta", "%2", true, "claude", "/home/dev/beta", "", "", ""),
         paneLine("beta", "%3", false, "zsh", "/home/dev/beta", "", "", ""),
         paneLine("zz-scratch", "%4", true, "claude", "/tmp/zz", `working:${NOW}`, "", ""),
         paneLine("gamma", "%5", true, "claude", "/home/dev/gamma", `working:${NOW}`, "", ""),
       ].join("\n"),
     );
-    const app = appWith({ ownerToken: OWNER, registry: { list: () => [{ sessionName: "alpha" }] } });
+    const app = appWith({
+      ownerToken: OWNER,
+      registry: { list: () => [{ sessionName: "alpha" }] },
+    });
 
     const res = await app.request("/api/resources/fleet-catalog", bearer());
     expect(res.status).toBe(200);
@@ -156,7 +165,16 @@ describe("GET /api/resources/fleet-catalog", () => {
   it("sanitizes a hostile self-reported display name", async () => {
     restoreRunner = pinRunner(
       "alpha\t1",
-      paneLine("alpha", "%1", true, "claude", "/home/dev/alpha", `working:${NOW}`, "", "evil\u001b[2Jname"),
+      paneLine(
+        "alpha",
+        "%1",
+        true,
+        "claude",
+        "/home/dev/alpha",
+        `working:${NOW}`,
+        "",
+        "evil\u001b[2Jname",
+      ),
     );
     const app = appWith({ ownerToken: OWNER });
     const res = await app.request("/api/resources/fleet-catalog", bearer());

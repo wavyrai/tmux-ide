@@ -60,12 +60,12 @@ describe("terminal attachment contracts", () => {
 
   it("shares the pane-stamp grammar for the durable window-id stamp", () => {
     expect(WORKSPACE_SEMANTIC_WINDOW_OPTION).toBe("@tmux_ide_window_id");
-    expect(TerminalAttachmentSemanticWindowIdSchemaZ.safeParse("window.workspace.alpha").success).toBe(
-      true,
-    );
-    expect(TerminalAttachmentSemanticWindowIdSchemaZ.safeParse("window.promoted.abc123").success).toBe(
-      true,
-    );
+    expect(
+      TerminalAttachmentSemanticWindowIdSchemaZ.safeParse("window.workspace.alpha").success,
+    ).toBe(true);
+    expect(
+      TerminalAttachmentSemanticWindowIdSchemaZ.safeParse("window.promoted.abc123").success,
+    ).toBe(true);
     for (const invalid of ["terminal.discovered.window", "window:colon", "__proto__", ".dot"]) {
       expect(TerminalAttachmentSemanticWindowIdSchemaZ.safeParse(invalid).success).toBe(false);
     }

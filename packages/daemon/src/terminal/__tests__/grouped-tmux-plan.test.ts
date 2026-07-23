@@ -107,9 +107,9 @@ describe("grouped tmux attachment planner", () => {
       expect(parsed.success).toBe(true);
       // The pane count is a window proof, not part of the durable target, so a
       // multi-pane plan is byte-identical to the single-pane plan otherwise.
-      expect(planGroupedTmuxAttachment(input({ source: { ...input().source, windowPaneCount } }))).toEqual(
-        planGroupedTmuxAttachment(input()),
-      );
+      expect(
+        planGroupedTmuxAttachment(input({ source: { ...input().source, windowPaneCount } })),
+      ).toEqual(planGroupedTmuxAttachment(input()));
     }
   });
 

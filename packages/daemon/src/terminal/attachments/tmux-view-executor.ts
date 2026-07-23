@@ -682,7 +682,13 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
       ) {
         throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
       }
-      return { sessionId: sessionId!, windowId: windowId!, paneId: paneId!, paneCount: paneCount!, sessionWindowCount: sessionWindowCount! };
+      return {
+        sessionId: sessionId!,
+        windowId: windowId!,
+        paneId: paneId!,
+        paneCount: paneCount!,
+        sessionWindowCount: sessionWindowCount!,
+      };
     });
     const sessionIds = new Set(parsed.map((row) => row.sessionId));
     const paneIds = parsed.map((row) => row.paneId);

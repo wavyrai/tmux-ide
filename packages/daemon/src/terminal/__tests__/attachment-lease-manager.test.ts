@@ -432,7 +432,11 @@ describe("AttachmentLeaseManager", () => {
     // A daemon restart drops the lease but leaves its marked view linking the
     // whole (multi-pane) source window — still exactly one linked window id.
     executor.seed(issuedPlan);
-    const restarted = rig({ daemonInstanceId: "daemon-instance-b", executor, discover: () => rows });
+    const restarted = rig({
+      daemonInstanceId: "daemon-instance-b",
+      executor,
+      discover: () => rows,
+    });
     const result = await restarted.manager.reconcileOrphanViews();
     expect(result).toEqual({
       cleaned: [{ attachmentId: issued.descriptor.leaseId, generation: 0 }],

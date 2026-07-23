@@ -95,7 +95,14 @@ describe.skipIf(!hasTmux).sequential("fleet catalog live integration", () => {
       "agent",
       "exec sleep 300",
     ]);
-    run(["set-option", "-p", "-t", agentPaneId, "@agent_state", `working:${Math.floor(Date.now() / 1000)}`]);
+    run([
+      "set-option",
+      "-p",
+      "-t",
+      agentPaneId,
+      "@agent_state",
+      `working:${Math.floor(Date.now() / 1000)}`,
+    ]);
     run(["set-option", "-p", "-t", agentPaneId, "@agent_display_name", "Live Agent"]);
     run([
       "new-window",

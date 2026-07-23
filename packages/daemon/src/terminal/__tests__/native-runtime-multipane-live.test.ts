@@ -123,7 +123,19 @@ describe.skipIf(!hasTmux)("m41 attach-2 multi-pane live acceptance", () => {
     cols: number,
     rows: number,
   ): Promise<void> {
-    run(["-f", "/dev/null", "new-session", "-d", "-s", sessionName, "-x", String(cols), "-y", String(rows), "exec sleep 300"]);
+    run([
+      "-f",
+      "/dev/null",
+      "new-session",
+      "-d",
+      "-s",
+      sessionName,
+      "-x",
+      String(cols),
+      "-y",
+      String(rows),
+      "exec sleep 300",
+    ]);
     for (let index = 1; index < paneCount; index += 1) {
       run(["split-window", "-t", `${sessionName}:0`, "-d", "exec sleep 300"]);
       run(["select-layout", "-t", `${sessionName}:0`, "tiled"]);
@@ -252,16 +264,18 @@ describe.skipIf(!hasTmux)("m41 attach-2 multi-pane live acceptance", () => {
     const before = originSnapshot(sessionName);
     const expectedGrid = windowGrid(sessionName);
 
-    const { runtime, socket, ready } = await driveAttach("workspace.nine", sessionName, "pane.nine.0");
+    const { runtime, socket, ready } = await driveAttach(
+      "workspace.nine",
+      sessionName,
+      "pane.nine.0",
+    );
     try {
       // (a) The render grid is the whole 9-pane window's client size, not one
       // pane and not the small (100x30) size-passive view client.
       expect(ready.sourceGrid).toEqual(expectedGrid);
       expect(ready.clientViewport).toEqual({ cols: 100, rows: 30 });
       const activePane = run(["display-message", "-p", "-t", `=${sessionName}:0`, "#{pane_id}"]);
-      const paneWidth = Number(
-        run(["display-message", "-p", "-t", activePane, "#{pane_width}"]),
-      );
+      const paneWidth = Number(run(["display-message", "-p", "-t", activePane, "#{pane_width}"]));
       expect(paneWidth).toBeLessThan(ready.sourceGrid.cols);
 
       // (b) The origin session is byte-identical after attach.

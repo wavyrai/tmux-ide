@@ -100,7 +100,14 @@ describe.skipIf(!hasTmux).sequential("fleet status push live integration", () =>
       "agent",
       "exec sleep 300",
     ]);
-    run(["set-option", "-p", "-t", agentPaneId, "@agent_state", `working:${Math.floor(Date.now() / 1000)}`]);
+    run([
+      "set-option",
+      "-p",
+      "-t",
+      agentPaneId,
+      "@agent_state",
+      `working:${Math.floor(Date.now() / 1000)}`,
+    ]);
     run(["set-option", "-t", adoptedSession, "@tmux_ide_adopted", "1"]);
 
     // Connect on loopback like the app does; authenticate with the owner token
