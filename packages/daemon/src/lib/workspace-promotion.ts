@@ -77,9 +77,13 @@ const SEMANTIC_WINDOW_OPTION = "@tmux_ide_window_id";
 const FIELD = "|tmux-ide-promote-field-v1|";
 const SENTINEL = "tmux-ide-promote-v1";
 
-const SESSION_FORMAT = ["#{session_name}", "#{session_id}", `#{${ADOPTED_OPTION}}`, SENTINEL].join(
-  FIELD,
-);
+const SESSION_FORMAT = [
+  "#{session_name}",
+  "#{session_id}",
+  "#{session_path}",
+  `#{${ADOPTED_OPTION}}`,
+  SENTINEL,
+].join(FIELD);
 
 const PANE_SCAN_FORMAT = [
   "#{session_id}",
@@ -169,6 +173,7 @@ export interface WorkspacePromotionIo {
 interface SessionRecord {
   readonly sessionName: string;
   readonly sessionId: string;
+  readonly sessionPath: string;
   readonly adopted: boolean;
 }
 
@@ -306,13 +311,14 @@ function parseSessionRecords(output: string): SessionRecord[] {
   const records: SessionRecord[] = [];
   for (const line of normalized.split("\n")) {
     const fields = line.split(FIELD);
-    if (fields.length !== 4 || fields[3] !== SENTINEL || !/^\$[0-9]+$/u.test(fields[1]!)) {
+    if (fields.length !== 5 || fields[4] !== SENTINEL || !/^\$[0-9]+$/u.test(fields[1]!)) {
       continue;
     }
     records.push({
       sessionName: fields[0]!,
       sessionId: fields[1]!,
-      adopted: fields[2] === "1",
+      sessionPath: fields[2]!,
+      adopted: fields[3] === "1",
     });
   }
   return records;
@@ -680,16 +686,38 @@ export class WorkspacePromotionAuthority {
       );
     }
 
-    const cwdSource = scanned.find((pane) => pane.active) ?? scanned[0]!;
-    try {
-      return this.#io.canonicalProjectDir(cwdSource.currentPath);
-    } catch (error) {
-      throw new WorkspacePromotionError(
-        "promotion_verification_failed",
-        { reason: "project_directory_unavailable" },
-        error,
-      );
+    return this.#resolveProjectDir(session, scanned);
+  }
+
+  /**
+   * Resolve a durable project root for the workspace registry. Real fleets
+   * routinely contain panes whose cwd is a DELETED directory (a pruned git
+   * worktree, a removed checkout) — a dead pane cwd must never block promotion.
+   * Resolution walks a bounded candidate list, taking the first that realpaths
+   * to a live directory:
+   *   (a) the tmux `session_path` (stable, session-level, survives pane churn);
+   *   (b) then the active pane's cwd, then the remaining panes in scan order;
+   *   (c) only when NOTHING resolves does promotion fail.
+   */
+  #resolveProjectDir(session: SessionRecord, scanned: readonly ScanPane[]): string {
+    const active = scanned.find((pane) => pane.active);
+    const candidates = [
+      session.sessionPath,
+      active?.currentPath ?? "",
+      ...scanned.filter((pane) => pane !== active).map((pane) => pane.currentPath),
+    ];
+    for (const candidate of candidates) {
+      if (candidate.length === 0) continue;
+      try {
+        return this.#io.canonicalProjectDir(candidate);
+      } catch {
+        // A dead or non-directory cwd (a pruned worktree) is expected; try the
+        // next candidate rather than failing the whole promotion.
+      }
     }
+    throw new WorkspacePromotionError("promotion_verification_failed", {
+      reason: "project_directory_unavailable",
+    });
   }
 
   #ideDefaults(pane: ScanPane, nowSec: number): ReadonlyArray<readonly [string, string | null]> {

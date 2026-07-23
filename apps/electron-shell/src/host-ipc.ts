@@ -45,6 +45,7 @@ import {
   daemonCapabilityError,
   daemonCapabilityErrorFromUnknown,
   terminalAttachmentIssueError,
+  workspacePromotionFailureFromUnknown,
 } from "./daemon-resource-broker.ts";
 import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
 
@@ -699,13 +700,24 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         });
       }
       return WorkspacePromoteHostResultSchemaZ.parse({ status: "ok", result });
-    } catch {
+    } catch (error) {
       try {
         assertRendererAuthority(event, authority.generation);
       } catch {
         return WorkspacePromoteHostResultSchemaZ.parse({
           status: "error",
           error: daemonCapabilityError("disposed"),
+        });
+      }
+      // A typed daemon verdict (session_not_adopted, workspace_conflict, a
+      // promotion_verification_failed reason, …) is forwarded verbatim so the
+      // dialog can render its specific reason; only a genuine transport failure
+      // falls through to the generic request-failed line.
+      const promotionFailure = workspacePromotionFailureFromUnknown(error);
+      if (promotionFailure) {
+        return WorkspacePromoteHostResultSchemaZ.parse({
+          status: "error",
+          error: promotionFailure,
         });
       }
       return WorkspacePromoteHostResultSchemaZ.parse({

@@ -5717,7 +5717,7 @@ var init_workspace_open = __esm({
 
 // packages/contracts/src/workspace-promotion.ts
 import { z as z32 } from "zod";
-var WorkspacePromoteArgumentsSchemaZ, WorkspacePromoteMutationRequestSchemaZ, WorkspacePromotedResourceSchemaZ, WorkspacePromoteMutationResultSchemaZ, WorkspacePromoteHostResultSchemaZ;
+var WorkspacePromoteArgumentsSchemaZ, WorkspacePromoteMutationRequestSchemaZ, WorkspacePromotedResourceSchemaZ, WorkspacePromoteMutationResultSchemaZ, WorkspacePromotionFailureCodeSchemaZ, WorkspacePromotionFailureSchemaZ, WorkspacePromoteHostResultSchemaZ;
 var init_workspace_promotion = __esm({
   "packages/contracts/src/workspace-promotion.ts"() {
     "use strict";
@@ -5741,9 +5741,28 @@ var init_workspace_promotion = __esm({
       outcome: z32.enum(["promoted", "replayed"]),
       resource: WorkspacePromotedResourceSchemaZ
     }).strict();
+    WorkspacePromotionFailureCodeSchemaZ = z32.enum([
+      "daemon_instance_mismatch",
+      "session_not_found",
+      "session_not_adopted",
+      "session_internal",
+      "workspace_conflict",
+      "stamp_failed",
+      "promotion_verification_failed",
+      "operation_conflict",
+      "operation_capacity"
+    ]);
+    WorkspacePromotionFailureSchemaZ = z32.object({
+      kind: z32.literal("promotion"),
+      code: WorkspacePromotionFailureCodeSchemaZ,
+      reason: z32.string().min(1).max(120).optional()
+    }).strict();
     WorkspacePromoteHostResultSchemaZ = z32.discriminatedUnion("status", [
       z32.object({ status: z32.literal("ok"), result: WorkspacePromoteMutationResultSchemaZ }).strict(),
-      z32.object({ status: z32.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+      z32.object({
+        status: z32.literal("error"),
+        error: z32.union([WorkspacePromotionFailureSchemaZ, DesktopDaemonCapabilityErrorSchemaZ])
+      }).strict()
     ]);
   }
 });
@@ -21825,13 +21844,14 @@ function parseSessionRecords2(output) {
   const records = [];
   for (const line of normalized.split("\n")) {
     const fields = line.split(FIELD);
-    if (fields.length !== 4 || fields[3] !== SENTINEL || !/^\$[0-9]+$/u.test(fields[1])) {
+    if (fields.length !== 5 || fields[4] !== SENTINEL || !/^\$[0-9]+$/u.test(fields[1])) {
       continue;
     }
     records.push({
       sessionName: fields[0],
       sessionId: fields[1],
-      adopted: fields[2] === "1"
+      sessionPath: fields[2],
+      adopted: fields[3] === "1"
     });
   }
   return records;
@@ -21923,9 +21943,13 @@ var init_workspace_promotion2 = __esm({
     SEMANTIC_WINDOW_OPTION2 = "@tmux_ide_window_id";
     FIELD = "|tmux-ide-promote-field-v1|";
     SENTINEL = "tmux-ide-promote-v1";
-    SESSION_FORMAT2 = ["#{session_name}", "#{session_id}", `#{${ADOPTED_OPTION2}}`, SENTINEL].join(
-      FIELD
-    );
+    SESSION_FORMAT2 = [
+      "#{session_name}",
+      "#{session_id}",
+      "#{session_path}",
+      `#{${ADOPTED_OPTION2}}`,
+      SENTINEL
+    ].join(FIELD);
     PANE_SCAN_FORMAT = [
       "#{session_id}",
       "#{window_id}",
@@ -22214,16 +22238,35 @@ var init_workspace_promotion2 = __esm({
             error
           );
         }
-        const cwdSource = scanned.find((pane) => pane.active) ?? scanned[0];
-        try {
-          return this.#io.canonicalProjectDir(cwdSource.currentPath);
-        } catch (error) {
-          throw new WorkspacePromotionError(
-            "promotion_verification_failed",
-            { reason: "project_directory_unavailable" },
-            error
-          );
+        return this.#resolveProjectDir(session, scanned);
+      }
+      /**
+       * Resolve a durable project root for the workspace registry. Real fleets
+       * routinely contain panes whose cwd is a DELETED directory (a pruned git
+       * worktree, a removed checkout) — a dead pane cwd must never block promotion.
+       * Resolution walks a bounded candidate list, taking the first that realpaths
+       * to a live directory:
+       *   (a) the tmux `session_path` (stable, session-level, survives pane churn);
+       *   (b) then the active pane's cwd, then the remaining panes in scan order;
+       *   (c) only when NOTHING resolves does promotion fail.
+       */
+      #resolveProjectDir(session, scanned) {
+        const active2 = scanned.find((pane) => pane.active);
+        const candidates = [
+          session.sessionPath,
+          active2?.currentPath ?? "",
+          ...scanned.filter((pane) => pane !== active2).map((pane) => pane.currentPath)
+        ];
+        for (const candidate of candidates) {
+          if (candidate.length === 0) continue;
+          try {
+            return this.#io.canonicalProjectDir(candidate);
+          } catch {
+          }
         }
+        throw new WorkspacePromotionError("promotion_verification_failed", {
+          reason: "project_directory_unavailable"
+        });
       }
       #ideDefaults(pane, nowSec) {
         const facts = {

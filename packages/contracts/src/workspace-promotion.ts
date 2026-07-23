@@ -58,13 +58,52 @@ export const WorkspacePromoteMutationResultSchemaZ = z
 export type WorkspacePromoteMutationResult = z.infer<typeof WorkspacePromoteMutationResultSchemaZ>;
 
 /**
+ * The daemon-side promotion failure taxonomy, mirrored onto the wire so the
+ * desktop can surface a specific, plain-language reason instead of a generic
+ * transport error. `reason` is the bounded sub-token the daemon attaches to a
+ * `promotion_verification_failed` outcome (e.g. `project_directory_unavailable`).
+ */
+export const WorkspacePromotionFailureCodeSchemaZ = z.enum([
+  "daemon_instance_mismatch",
+  "session_not_found",
+  "session_not_adopted",
+  "session_internal",
+  "workspace_conflict",
+  "stamp_failed",
+  "promotion_verification_failed",
+  "operation_conflict",
+  "operation_capacity",
+]);
+
+export type WorkspacePromotionFailureCode = z.infer<typeof WorkspacePromotionFailureCodeSchemaZ>;
+
+export const WorkspacePromotionFailureSchemaZ = z
+  .object({
+    kind: z.literal("promotion"),
+    code: WorkspacePromotionFailureCodeSchemaZ,
+    reason: z.string().min(1).max(120).optional(),
+  })
+  .strict();
+
+export type WorkspacePromotionFailure = z.infer<typeof WorkspacePromotionFailureSchemaZ>;
+
+/**
  * Renderer-safe host result. Electron authors the operation and daemon-generation
  * envelope from an explicit, owner-initiated promotion; no filesystem path or
- * tmux identity crosses to the renderer.
+ * tmux identity crosses to the renderer. A failure is EITHER a typed promotion
+ * outcome (the daemon reached a verdict) OR a generic capability error (the
+ * request never got a typed verdict — a transport, timeout, or identity failure).
+ * The `kind` discriminant on the promotion variant keeps the union unambiguous
+ * against the capability error, which carries no `kind`.
  */
 export const WorkspacePromoteHostResultSchemaZ = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ok"), result: WorkspacePromoteMutationResultSchemaZ }).strict(),
-  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+  z
+    .object({
+      status: z.literal("error"),
+      error: z.union([WorkspacePromotionFailureSchemaZ, DesktopDaemonCapabilityErrorSchemaZ]),
+    })
+    .strict(),
 ]);
 
 export type WorkspacePromoteHostResult = z.infer<typeof WorkspacePromoteHostResultSchemaZ>;

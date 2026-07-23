@@ -20,6 +20,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES,
   DaemonResourceBroker,
+  workspacePromotionFailureFromUnknown,
   type BrokerEventSocket,
 } from "./daemon-resource-broker.ts";
 
@@ -1855,6 +1856,70 @@ describe("Electron main daemon workspace read resources", () => {
         sessionId: "session.aaaaaaaaaaaaaaaa",
       });
     }
+  });
+
+  it("surfaces a typed promotion verdict without retrying it", async () => {
+    const operationId = "40000000-0000-4000-8000-000000000004";
+    let attempts = 0;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () => {
+        attempts += 1;
+        // The daemon's typed `{ ok: false }` verdict is HTTP 200 by contract.
+        return json({
+          ok: false,
+          error: {
+            code: "promotion_verification_failed",
+            message: "The promoted session did not pass admission verification.",
+            details: { reason: "project_directory_unavailable" },
+          },
+        });
+      },
+    });
+
+    const error = await broker
+      .promoteWorkspace({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: { sessionId: "session.aaaaaaaaaaaaaaaa" },
+      })
+      .then(
+        () => null,
+        (rejection: unknown) => rejection,
+      );
+
+    // A deterministic verdict is thrown as a typed promotion failure and never retried.
+    expect(attempts).toBe(1);
+    expect(workspacePromotionFailureFromUnknown(error)).toEqual({
+      kind: "promotion",
+      code: "promotion_verification_failed",
+      reason: "project_directory_unavailable",
+    });
+  });
+
+  it("treats an unknown ok:false code as a generic transport failure, not a typed verdict", async () => {
+    const operationId = "40000000-0000-4000-8000-000000000005";
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () => json({ ok: false, error: { code: "internal", message: "boom" } }),
+    });
+
+    const error = await broker
+      .promoteWorkspace({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: { sessionId: "session.aaaaaaaaaaaaaaaa" },
+      })
+      .then(
+        () => null,
+        (rejection: unknown) => rejection,
+      );
+
+    // An unrecognized code carries no promotion taxonomy — the caller falls back
+    // to the generic transport line rather than inventing a typed reason.
+    expect(workspacePromotionFailureFromUnknown(error)).toBeNull();
   });
 
   it("folds daemon fleet.changed and agent-status.changed frames into one renderer fleet invalidation", async () => {

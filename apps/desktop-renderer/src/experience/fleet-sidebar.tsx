@@ -1,5 +1,9 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
-import type { FleetCatalogAgentEntryV1, FleetCatalogSessionEntryV1 } from "@tmux-ide/contracts";
+import type {
+  FleetCatalogAgentEntryV1,
+  FleetCatalogSessionEntryV1,
+  WorkspacePromoteHostResult,
+} from "@tmux-ide/contracts";
 
 import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 
@@ -14,9 +18,75 @@ import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts
  * callback, and never talks to the host directly.
  */
 
+/** The typed error carried by a failed promotion — a daemon verdict or a transport error. */
+export type FleetPromoteError = Extract<WorkspacePromoteHostResult, { status: "error" }>["error"];
+
 export interface FleetPromoteOutcome {
   readonly ok: boolean;
-  readonly reason?: string;
+  readonly error?: FleetPromoteError;
+}
+
+const GENERIC_PROMOTE_FAILURE = "The session could not be opened as a workspace.";
+
+/**
+ * A plain, bounded sentence for a `promotion_verification_failed` sub-reason.
+ * Unknown sub-reasons fall back to the generic verification line rather than
+ * leaking a raw daemon token into the dialog.
+ */
+function verificationReasonSentence(reason: string | undefined): string {
+  switch (reason) {
+    case "project_directory_unavailable":
+      return "None of the session's directories still exist on disk.";
+    case "empty_or_foreign_pane_inventory":
+    case "invalid_tmux_pane_inventory":
+    case "invalid_tmux_output":
+      return "The session's tmux state could not be read cleanly. Try again.";
+    case "session_vanished_before_stamp":
+    case "session_vanished_during_proof":
+      return "The session closed before it could be opened.";
+    case "inventory_changed_during_proof":
+      return "The session changed while it was being opened. Try again.";
+    default:
+      return "The session did not pass admission checks.";
+  }
+}
+
+/**
+ * Map a failed promotion to one plain sentence. A typed daemon verdict resolves
+ * to a specific, actionable line; a generic capability error surfaces its own
+ * (already plain) reason — the generic transport line is reserved for exactly
+ * those cases where the daemon never reached a verdict.
+ */
+export function promoteFailureSentence(error: FleetPromoteError | undefined): string {
+  if (!error) return GENERIC_PROMOTE_FAILURE;
+  // The promotion variant is the only one carrying `kind`; its presence cleanly
+  // separates a typed daemon verdict from a generic capability error.
+  if ("kind" in error) {
+    switch (error.code) {
+      case "session_not_found":
+        return "This session is no longer in the fleet.";
+      case "session_not_adopted":
+        return "Adopt this session before opening it as a workspace.";
+      case "session_internal":
+        return "Internal tmux-ide sessions cannot be opened as a workspace.";
+      case "workspace_conflict":
+        return "Another workspace already claims this session.";
+      case "stamp_failed":
+        return "tmux could not durably mark the session. Try again.";
+      case "promotion_verification_failed":
+        return verificationReasonSentence(error.reason);
+      case "operation_conflict":
+        return "A different open request is already using this id. Try again.";
+      case "operation_capacity":
+        return "The app is busy opening sessions. Try again in a moment.";
+      case "daemon_instance_mismatch":
+        return "The daemon restarted during the request. Try again.";
+      default:
+        return GENERIC_PROMOTE_FAILURE;
+    }
+  }
+  // Capability errors already carry a plain, human-readable reason string.
+  return error.reason;
 }
 
 export interface FleetSidebarSectionProps {
@@ -97,7 +167,7 @@ export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Elemen
       return;
     }
     setPromoting(false);
-    setPromoteError(outcome.reason ?? "The session could not be opened as a workspace.");
+    setPromoteError(promoteFailureSentence(outcome.error));
   };
 
   return (

@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { Workspace, WorkspacePromoteMutationRequest } from "@tmux-ide/contracts";
 
@@ -39,6 +42,7 @@ interface MockWindow {
 interface MockSession {
   name: string;
   id: string;
+  path: string;
   options: Map<string, string>;
   windows: MockWindow[];
 }
@@ -46,10 +50,11 @@ interface MockSession {
 class MockTmux {
   readonly sessions: MockSession[] = [];
 
-  session(name: string, id: string, options: Record<string, string> = {}): MockSession {
+  session(name: string, id: string, options: Record<string, string> = {}, path = ""): MockSession {
     const session: MockSession = {
       name,
       id,
+      path,
       options: new Map(Object.entries(options)),
       windows: [],
     };
@@ -180,6 +185,8 @@ class MockTmux {
         return session.name;
       case "session_id":
         return session.id;
+      case "session_path":
+        return session.path;
       case "session_windows":
         return String(session.windows.length);
       case "window_id":
@@ -552,5 +559,93 @@ describe("WorkspacePromotionAuthority", () => {
     );
     // Additive-failure contract: no registry admission on a mid-flight failure.
     expect(registry.list()).toHaveLength(0);
+  });
+
+  // Real fleets constantly contain panes whose cwd is a DELETED directory (a
+  // pruned git worktree). A dead pane cwd must never block promotion; the
+  // project root resolves from the first live candidate instead.
+  describe("project directory resolution across dead cwds", () => {
+    const created: string[] = [];
+    const liveDir = (): string => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "promote-cwd-")));
+      created.push(dir);
+      return dir;
+    };
+    const deadDir = (): string => join(tmpdir(), `promote-pruned-${randomUUID()}`);
+    const realCanonical = (path: string): string => {
+      const canonical = realpathSync(path);
+      if (!statSync(canonical).isDirectory()) throw new Error("project root is not a directory");
+      return canonical;
+    };
+    afterEach(() => {
+      while (created.length > 0) rmSync(created.pop()!, { recursive: true, force: true });
+    });
+
+    it("(a) resolves the tmux session_path when a pane cwd is a deleted directory", async () => {
+      const root = liveDir();
+      const mock = new MockTmux();
+      const session = mock.session("fleet-live-root", "$1", { "@tmux_ide_adopted": "1" }, root);
+      const window = mock.window(session, "@1", "editor");
+      mock.pane(window, "%1", { active: true, currentPath: deadDir(), currentCommand: "claude" });
+      const registry = new FakeRegistry();
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock, { canonicalProjectDir: realCanonical }),
+      });
+
+      const result = await authority.promote(request(fleetSessionIdForName("fleet-live-root")));
+
+      expect(result.outcome).toBe("promoted");
+      expect(registry.list()[0]!.projectDir).toBe(root);
+    });
+
+    it("(b) falls back to the first live pane cwd when session_path is dead", async () => {
+      const paneDir = liveDir();
+      const mock = new MockTmux();
+      const session = mock.session(
+        "fleet-dead-root",
+        "$1",
+        { "@tmux_ide_adopted": "1" },
+        deadDir(),
+      );
+      const window = mock.window(session, "@1", "split");
+      // The active pane's cwd is dead too; a later pane still lives.
+      mock.pane(window, "%1", { active: true, currentPath: deadDir(), currentCommand: "zsh" });
+      mock.pane(window, "%2", { currentPath: paneDir, currentCommand: "vim" });
+      const registry = new FakeRegistry();
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock, { canonicalProjectDir: realCanonical }),
+      });
+
+      const result = await authority.promote(request(fleetSessionIdForName("fleet-dead-root")));
+
+      expect(result.outcome).toBe("promoted");
+      expect(registry.list()[0]!.projectDir).toBe(paneDir);
+    });
+
+    it("(c) fails project_directory_unavailable only when nothing resolves", async () => {
+      const mock = new MockTmux();
+      const session = mock.session("fleet-all-dead", "$1", { "@tmux_ide_adopted": "1" }, deadDir());
+      const window = mock.window(session, "@1", "editor");
+      mock.pane(window, "%1", { active: true, currentPath: deadDir(), currentCommand: "zsh" });
+      const registry = new FakeRegistry();
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock, { canonicalProjectDir: realCanonical }),
+      });
+
+      await expect(
+        authority.promote(request(fleetSessionIdForName("fleet-all-dead"))),
+      ).rejects.toMatchObject({
+        code: "promotion_verification_failed",
+        context: { reason: "project_directory_unavailable" },
+      });
+      // Nothing resolved -> harmless: no registry admission.
+      expect(registry.list()).toHaveLength(0);
+    });
   });
 });

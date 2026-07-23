@@ -258,4 +258,95 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     });
     expect(unauthorized.status).toBe(401);
   }, 45_000);
+
+  it("promotes across dead pane cwds and fails typed only when nothing resolves", async () => {
+    handle ??= await startEmbeddedDaemon({
+      authToken: "remote-token-is-not-owner",
+      localBypassToken: ownerToken,
+      silent: true,
+    });
+
+    const liveDir = (label: string): string => {
+      const dir = join(root, `live-${label}-${randomUUID().slice(0, 8)}`);
+      mkdirSync(dir);
+      return dir;
+    };
+    // A directory that exists at pane-creation time, then is pruned — exactly a
+    // removed git worktree. tmux keeps reporting its (now dead) path as the
+    // pane's cwd, so realpath fails on it.
+    const prunedDir = (label: string): string => {
+      const dir = join(root, `pruned-${label}-${randomUUID().slice(0, 8)}`);
+      mkdirSync(dir);
+      return dir;
+    };
+
+    const promoteEnvelope = async (
+      sessionName: string,
+    ): Promise<{
+      ok?: boolean;
+      result?: unknown;
+      error?: { code?: string; details?: unknown };
+    }> => {
+      const response = await fetch(`${handle!.apiBaseUrl}/api/v2/action/workspace.promote`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ownerToken}`,
+          "Content-Type": "application/json",
+          "X-Tmux-Ide-Operation-Id": randomUUID(),
+          Connection: "close",
+        },
+        body: JSON.stringify({ sessionId: fleetSessionIdForName(sessionName) }),
+      });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+
+    // (a) session_path lives, but the active pane's cwd is a pruned worktree.
+    const liveA = liveDir("a");
+    const deadA = prunedDir("a");
+    const nameA = `promote-deadpane-${randomUUID().slice(0, 8)}`;
+    run(["new-session", "-d", "-s", nameA, "-c", liveA, "-n", "editor", "exec sleep 300"]);
+    run(["split-window", "-d", "-t", `${nameA}:`, "-c", deadA, "exec sleep 300"]);
+    // Make the pruned-worktree pane the active one, then prune its directory.
+    run(["select-pane", "-t", `${nameA}:editor.1`]);
+    rmSync(deadA, { recursive: true, force: true });
+    run(["set-option", "-t", nameA, "@tmux_ide_adopted", "1"]);
+
+    const promotedA = await promoteEnvelope(nameA);
+    expect(promotedA.ok).toBe(true);
+    const resultA = WorkspacePromoteMutationResultSchemaZ.parse(promotedA.result);
+    // Resolved from the live session_path, not the dead pane cwd.
+    expect(registry.get(resultA.resource.workspaceName)?.projectDir).toBe(realpathSync(liveA));
+
+    // (b) EVERY pane cwd is dead, but session_path still lives -> resolves via (a).
+    const liveB = liveDir("b");
+    const deadB = prunedDir("b");
+    const nameB = `promote-alldeadpanes-${randomUUID().slice(0, 8)}`;
+    run(["new-session", "-d", "-s", nameB, "-c", liveB, "-n", "keep", "exec sleep 300"]);
+    // A second window whose only pane starts in the soon-to-be-pruned dir; then
+    // drop the original window so no surviving pane has a live cwd.
+    run(["new-window", "-d", "-t", `${nameB}:`, "-c", deadB, "-n", "dead", "exec sleep 300"]);
+    run(["kill-window", "-t", `${nameB}:keep`]);
+    rmSync(deadB, { recursive: true, force: true });
+    run(["set-option", "-t", nameB, "@tmux_ide_adopted", "1"]);
+
+    const promotedB = await promoteEnvelope(nameB);
+    expect(promotedB.ok).toBe(true);
+    const resultB = WorkspacePromoteMutationResultSchemaZ.parse(promotedB.result);
+    expect(registry.get(resultB.resource.workspaceName)?.projectDir).toBe(realpathSync(liveB));
+
+    // (c) session_path AND every pane cwd are dead -> typed verification failure.
+    const deadRootC = prunedDir("c");
+    const nameC = `promote-alldead-${randomUUID().slice(0, 8)}`;
+    run(["new-session", "-d", "-s", nameC, "-c", deadRootC, "-n", "editor", "exec sleep 300"]);
+    run(["set-option", "-t", nameC, "@tmux_ide_adopted", "1"]);
+    rmSync(deadRootC, { recursive: true, force: true });
+
+    const failedC = await promoteEnvelope(nameC);
+    expect(failedC.ok).toBe(false);
+    expect(failedC.error?.code).toBe("promotion_verification_failed");
+    expect(failedC.error?.details).toMatchObject({ reason: "project_directory_unavailable" });
+    // A resolution failure is harmless: the session is never admitted.
+    expect(registry.list().some((workspace) => workspace.sessionName === nameC)).toBe(false);
+  }, 45_000);
 });

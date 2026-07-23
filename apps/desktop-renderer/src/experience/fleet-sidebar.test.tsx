@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { DaemonInstanceIdentity } from "@tmux-ide/contracts";
 
-import { FleetSidebarSection, type FleetPromoteOutcome } from "./fleet-sidebar.tsx";
+import {
+  FleetSidebarSection,
+  promoteFailureSentence,
+  type FleetPromoteOutcome,
+} from "./fleet-sidebar.tsx";
 import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 import { FLEET_FIXTURE_DAEMON, mixedFleetCatalog } from "../runtime/fleet-catalog-fixture.ts";
 
@@ -89,10 +93,10 @@ describe("FleetSidebarSection", () => {
     expect(onPromote).not.toHaveBeenCalled();
   });
 
-  it("keeps the dialog open and shows the reason when promotion fails", async () => {
+  it("keeps the dialog open and shows the capability reason on a transport failure", async () => {
     const onPromote = vi.fn<(id: string) => Promise<FleetPromoteOutcome>>(async () => ({
       ok: false,
-      reason: "The canonical daemon is unavailable.",
+      error: { code: "daemon-unavailable", reason: "The canonical daemon is unavailable." },
     }));
     const host = mount(() => <FleetSidebarSection state={liveState()} onPromote={onPromote} />);
     (host.querySelector('[aria-label="Open web as workspace"]') as HTMLButtonElement).click();
@@ -101,6 +105,75 @@ describe("FleetSidebarSection", () => {
       expect(host.querySelector('[role="alert"]')?.textContent).toContain("daemon is unavailable"),
     );
     expect(host.querySelector('[role="dialog"]')).toBeTruthy();
+  });
+
+  it("shows the specific typed reason when the daemon returns a promotion verdict", async () => {
+    const onPromote = vi.fn<(id: string) => Promise<FleetPromoteOutcome>>(async () => ({
+      ok: false,
+      error: {
+        kind: "promotion",
+        code: "promotion_verification_failed",
+        reason: "project_directory_unavailable",
+      },
+    }));
+    const host = mount(() => <FleetSidebarSection state={liveState()} onPromote={onPromote} />);
+    (host.querySelector('[aria-label="Open web as workspace"]') as HTMLButtonElement).click();
+    (host.querySelector(".fleet-sidebar__dialog-confirm") as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+        "None of the session's directories still exist",
+      ),
+    );
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy();
+  });
+
+  describe("promoteFailureSentence", () => {
+    it("maps each promotion verdict code to a distinct, non-generic sentence", () => {
+      const codes = [
+        "session_not_found",
+        "session_not_adopted",
+        "session_internal",
+        "workspace_conflict",
+        "stamp_failed",
+        "operation_conflict",
+        "operation_capacity",
+        "daemon_instance_mismatch",
+      ] as const;
+      const sentences = codes.map((code) => promoteFailureSentence({ kind: "promotion", code }));
+      for (const sentence of sentences) {
+        expect(sentence.length).toBeGreaterThan(0);
+        expect(sentence).not.toBe("The session could not be opened as a workspace.");
+      }
+      // Each code produces a distinct sentence — the mapping is not a stub.
+      expect(new Set(sentences).size).toBe(codes.length);
+    });
+
+    it("maps known verification sub-reasons and falls back for unknown ones", () => {
+      expect(
+        promoteFailureSentence({
+          kind: "promotion",
+          code: "promotion_verification_failed",
+          reason: "project_directory_unavailable",
+        }),
+      ).toContain("directories still exist");
+      // An unknown sub-reason never leaks the raw token.
+      const unknown = promoteFailureSentence({
+        kind: "promotion",
+        code: "promotion_verification_failed",
+        reason: "some_future_reason",
+      });
+      expect(unknown).not.toContain("some_future_reason");
+      expect(unknown.length).toBeGreaterThan(0);
+    });
+
+    it("passes a capability error's own reason through and defaults when absent", () => {
+      expect(
+        promoteFailureSentence({ code: "request-timeout", reason: "The request timed out." }),
+      ).toBe("The request timed out.");
+      expect(promoteFailureSentence(undefined)).toBe(
+        "The session could not be opened as a workspace.",
+      );
+    });
   });
 
   it("shows an honest empty state and never a broken fleet block", () => {

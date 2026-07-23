@@ -14,6 +14,7 @@ import {
 } from "@tmux-ide/contracts";
 
 import type { DaemonConnectionAuthority } from "./daemon-connection-coordinator.ts";
+import { BrokerPromotionFailure } from "./daemon-resource-broker.ts";
 import { registerHostIpc, rendererLocationIsTrusted } from "./host-ipc.ts";
 import { HOST_IPC } from "./ipc-channels.ts";
 
@@ -285,6 +286,36 @@ describe("host IPC trust boundary", () => {
     expect(
       await handlers.get(HOST_IPC.daemonPromoteWorkspace)?.(trustedEvent, { sessionId: "$3" }),
     ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
+
+    // A typed daemon verdict is forwarded to the renderer verbatim (specific
+    // reason), not flattened into the generic request-failed transport line.
+    vi.mocked(daemonResources.promoteWorkspace).mockRejectedValueOnce(
+      new BrokerPromotionFailure({
+        kind: "promotion",
+        code: "promotion_verification_failed",
+        reason: "project_directory_unavailable",
+      }),
+    );
+    expect(
+      await handlers.get(HOST_IPC.daemonPromoteWorkspace)?.(trustedEvent, {
+        sessionId: "session.aaaaaaaaaaaaaaaa",
+      }),
+    ).toEqual({
+      status: "error",
+      error: {
+        kind: "promotion",
+        code: "promotion_verification_failed",
+        reason: "project_directory_unavailable",
+      },
+    });
+
+    // A plain transport rejection still collapses to the generic line.
+    vi.mocked(daemonResources.promoteWorkspace).mockRejectedValueOnce(new Error("socket reset"));
+    expect(
+      await handlers.get(HOST_IPC.daemonPromoteWorkspace)?.(trustedEvent, {
+        sessionId: "session.aaaaaaaaaaaaaaaa",
+      }),
+    ).toMatchObject({ status: "error", error: { code: "request-failed" } });
 
     const created = await handlers.get(HOST_IPC.daemonCreateWorkspacePane)?.(trustedEvent, {
       version: 1,

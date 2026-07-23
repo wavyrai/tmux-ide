@@ -271,7 +271,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     const result = await props.host.daemon.promoteWorkspace({ sessionId });
     // On success the daemon emits workspace.added, which refreshes the workspace
     // catalog automatically; the new workspace then appears for selection.
-    return result.status === "ok" ? { ok: true } : { ok: false, reason: result.error.reason };
+    return result.status === "ok" ? { ok: true } : { ok: false, error: result.error };
   };
 
   // The open workspace's own fleet session id, when the daemon supplied it (V3+).

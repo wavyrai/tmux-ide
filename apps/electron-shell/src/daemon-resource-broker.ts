@@ -44,7 +44,9 @@ import {
   WorkspacePromoteArgumentsSchemaZ,
   WorkspacePromoteMutationRequestSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
+  WorkspacePromotionFailureSchemaZ,
   FleetCatalogResourceV1SchemaZ,
+  type WorkspacePromotionFailure,
   type DaemonEventServerFrame,
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityError,
@@ -71,6 +73,13 @@ import {
 import { z } from "zod";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
+// Promotion is a heavier mutation than open/pane-create: it captures the pane
+// inventory TWICE (stamp scan + verification proof) and issues an
+// `@tmux_ide_pane_id` set-option per pane plus per-window/session stamps, so a
+// large adopted session can outrun the 3s default. A bounded 15s ceiling — used
+// for this mutation only — keeps a genuinely stuck request from hanging forever
+// while giving a big real fleet room to finish.
+const PROMOTE_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
 /**
  * V3 can carry 33 schema-bounded app-window scenes: the current scene plus
@@ -155,6 +164,49 @@ class BrokerFailure extends Error {
 
 export function daemonCapabilityErrorFromUnknown(error: unknown): DesktopDaemonCapabilityError {
   return error instanceof BrokerFailure ? error.error : daemonCapabilityError("request-failed");
+}
+
+/**
+ * A typed, deterministic promotion verdict returned by the daemon as an
+ * `{ ok: false, error }` envelope. Distinct from a transport `BrokerFailure`:
+ * the daemon reached a decision (e.g. session_not_adopted), so the desktop must
+ * surface the specific reason rather than the generic request-failed line, and
+ * the caller must NOT retry it.
+ */
+export class BrokerPromotionFailure extends Error {
+  constructor(readonly promotion: WorkspacePromotionFailure) {
+    super(`promotion ${promotion.code}`);
+  }
+}
+
+/** The typed promotion verdict carried by an error, or null for a transport failure. */
+export function workspacePromotionFailureFromUnknown(
+  error: unknown,
+): WorkspacePromotionFailure | null {
+  return error instanceof BrokerPromotionFailure ? error.promotion : null;
+}
+
+/**
+ * Parse a daemon `{ ok: false, error: { code, details } }` action envelope into a
+ * typed promotion failure, or null when it is not a recognized promotion verdict
+ * (an unknown code, a malformed body, or the success envelope). `details.reason`
+ * is carried through only when it is a bounded string.
+ */
+function parsePromotionFailureEnvelope(raw: unknown): WorkspacePromotionFailure | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const envelope = raw as { ok?: unknown; error?: unknown };
+  if (envelope.ok !== false || typeof envelope.error !== "object" || envelope.error === null) {
+    return null;
+  }
+  const error = envelope.error as { code?: unknown; details?: unknown };
+  const details =
+    typeof error.details === "object" && error.details !== null
+      ? (error.details as { reason?: unknown })
+      : undefined;
+  const candidate: Record<string, unknown> = { kind: "promotion", code: error.code };
+  if (typeof details?.reason === "string") candidate.reason = details.reason;
+  const parsed = WorkspacePromotionFailureSchemaZ.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
 }
 
 class BrokerHttpFailure extends BrokerFailure {
@@ -472,7 +524,13 @@ export class DaemonResourceBroker {
           "/api/v2/action/workspace.promote",
           WorkspacePromoteArgumentsSchemaZ.parse(parsed.intent),
           { "X-Tmux-Ide-Operation-Id": parsed.operationId },
+          this.#maxResponseBytes,
+          PROMOTE_REQUEST_TIMEOUT_MS,
         );
+        // A typed `{ ok: false }` verdict is a deterministic daemon decision:
+        // surface its specific reason to the desktop and never retry it.
+        const promotionFailure = parsePromotionFailureEnvelope(raw);
+        if (promotionFailure) throw new BrokerPromotionFailure(promotionFailure);
         const envelope = z
           .object({ ok: z.literal(true), result: WorkspacePromoteMutationResultSchemaZ })
           .strict()
@@ -485,6 +543,7 @@ export class DaemonResourceBroker {
         }
         return envelope.result;
       } catch (error) {
+        if (error instanceof BrokerPromotionFailure) throw error;
         lastError = error;
       }
     }
@@ -1114,6 +1173,7 @@ export class DaemonResourceBroker {
     body: unknown,
     correlationHeaders: Readonly<Record<string, string>>,
     maximumResponseBytes = this.#maxResponseBytes,
+    timeoutMs = this.#requestTimeoutMs,
   ): Promise<unknown> {
     if (this.#disposed) throw new BrokerFailure(daemonCapabilityError("disposed"));
     if (this.#daemon.status !== "connected" || !this.#ownerToken) {
@@ -1132,7 +1192,7 @@ export class DaemonResourceBroker {
       timeout = setTimeout(() => {
         controller.abort();
         reject(new BrokerFailure(daemonCapabilityError("request-timeout")));
-      }, this.#requestTimeoutMs);
+      }, timeoutMs);
       timeout.unref?.();
     });
     const operation = (async (): Promise<unknown> => {
