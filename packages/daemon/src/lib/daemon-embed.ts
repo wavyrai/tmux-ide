@@ -43,6 +43,7 @@ import {
   type TerminalAttachmentWebSocketBoundary,
 } from "../server/terminal-attachment-upgrade.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
+import { readOrMintEnvironmentId } from "./environment-identity.ts";
 import {
   canonicalDaemonUrl,
   clearCanonicalDaemonInfoIfOwned,
@@ -662,6 +663,7 @@ async function startHttpServer({
     productVersion: string;
     instanceId: string;
     startedAt: string;
+    environmentId?: string;
   };
   workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
   workspaceOpenBackend: WorkspaceOpenAuthority;
@@ -858,6 +860,9 @@ export async function startEmbeddedDaemon(
     const productVersion = resolveDaemonProductVersion(opts.productVersion);
     const instanceId = randomUUID();
     const startedAt = new Date().toISOString();
+    // Stable across restarts, unlike the per-process nonce above; minted once
+    // per daemon state home and re-minted only if its record disappears.
+    const environmentId = readOrMintEnvironmentId();
 
     // Workspace registry: load + reconcile against live tmux sessions on
     // startup. Backwards-compat: if TMUX_IDE_SESSION is set, auto-add it as
@@ -948,7 +953,7 @@ export async function startEmbeddedDaemon(
         localBypassToken,
         silent: opts.silent,
         readProjectAuth: !sessionless,
-        daemonIdentity: { productVersion, instanceId, startedAt },
+        daemonIdentity: { productVersion, instanceId, startedAt, environmentId },
         workspacePaneCreationBackend: workspacePaneCreation,
         workspaceOpenBackend: workspaceOpen,
         workspacePromotionBackend: workspacePromotion,
@@ -1003,6 +1008,7 @@ export async function startEmbeddedDaemon(
           productVersion,
           instanceId,
           startedAt,
+          environmentId,
           bindHostname,
           authToken: localBypassToken,
         },

@@ -75,6 +75,28 @@ describe("desktop host contract", () => {
     ).toBe(false);
   });
 
+  it("carries the stable environment id additively on the daemon descriptor", () => {
+    const descriptor = {
+      apiBaseUrl: "http://127.0.0.1:6060",
+      protocolVersion: 1,
+      productVersion: "2.8.0",
+      instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+      startedAt: "2026-07-21T00:00:00.000Z",
+    };
+    expect(DesktopDaemonHostDescriptorSchemaZ.parse(descriptor).environmentId).toBeUndefined();
+    const withEnvironment = {
+      ...descriptor,
+      environmentId: "0f4e9a7c-2f4a-4d55-9d2e-1f6cf3a3b210",
+    };
+    expect(DesktopDaemonHostDescriptorSchemaZ.parse(withEnvironment)).toEqual(withEnvironment);
+    expect(
+      DesktopDaemonHostDescriptorSchemaZ.safeParse({
+        ...descriptor,
+        environmentId: "not-a-uuid",
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects malformed or secret-bearing application-shell targets", () => {
     const target = {
       daemon: {

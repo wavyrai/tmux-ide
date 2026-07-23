@@ -39,6 +39,7 @@ import {
   type BrokerSubscriptionResult,
 } from "./daemon-resource-broker.ts";
 import { runDaemonPreflight, type DaemonPreflight } from "./daemon-preflight.ts";
+import type { KnownEnvironmentReconciler } from "./environment-catalog.ts";
 import { inspectCanonicalDaemonInfo } from "../../../packages/daemon/src/canonical.ts";
 
 type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected" }>;
@@ -95,6 +96,12 @@ export interface DaemonConnectionCoordinatorDependencies {
   readonly createBroker?: (daemon: ConnectedDaemonState) => DaemonResourceAuthority;
   /** Main-process-only observer; renderer-safe state remains behind state(). */
   readonly onHostStateChanged?: (daemon: DesktopDaemonHostState) => void;
+  /**
+   * Client-side environment catalog: learns the daemon-minted environmentId
+   * from each verified connect. Observational only — reconcile failures never
+   * disturb connection authority, and no trust decision reads it.
+   */
+  readonly environmentReconciler?: KnownEnvironmentReconciler;
 }
 
 interface RefreshFlight {
@@ -118,8 +125,15 @@ const BROKER_FAILED_STATE: DesktopDaemonHostState = Object.freeze({
 function identityOf(
   daemon: Extract<DesktopDaemonHostState, { status: "connected" }>,
 ): DaemonInstanceIdentity {
-  const { protocolVersion, productVersion, instanceId, startedAt } = daemon.descriptor;
-  return { protocolVersion, productVersion, instanceId, startedAt };
+  const { protocolVersion, productVersion, instanceId, startedAt, environmentId } =
+    daemon.descriptor;
+  return {
+    protocolVersion,
+    productVersion,
+    instanceId,
+    startedAt,
+    ...(environmentId !== undefined ? { environmentId } : {}),
+  };
 }
 
 function sameIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceIdentity): boolean {
@@ -166,6 +180,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   readonly #preflightTimeoutMs: number | undefined;
   readonly #createBroker: (daemon: ConnectedDaemonState) => DaemonResourceAuthority;
   readonly #onHostStateChanged: ((daemon: DesktopDaemonHostState) => void) | undefined;
+  readonly #environmentReconciler: KnownEnvironmentReconciler | undefined;
   readonly #subscriptions = new Map<number, CoordinatorSubscription>();
 
   #daemon: DesktopDaemonHostState;
@@ -182,14 +197,27 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     this.#preflightTimeoutMs = dependencies.preflightTimeoutMs;
     this.#createBroker = dependencies.createBroker ?? defaultBrokerFactory;
     this.#onHostStateChanged = dependencies.onHostStateChanged;
+    this.#environmentReconciler = dependencies.environmentReconciler;
     if (this.#daemon.status === "connected") {
       try {
         this.#broker = this.#createBroker(this.#daemon);
+        this.#reconcileEnvironment(this.#daemon);
       } catch {
         this.#daemon = BROKER_FAILED_STATE;
       }
     }
     this.#publishHostState();
+  }
+
+  /** Learn the stable environment id behind a verified connect; best-effort. */
+  #reconcileEnvironment(daemon: ConnectedDaemonState): void {
+    const environmentId = daemon.descriptor.environmentId;
+    if (environmentId === undefined) return;
+    try {
+      this.#environmentReconciler?.reconcileLocalCanonical(environmentId);
+    } catch {
+      // The catalog is bookkeeping; it can never affect connection authority.
+    }
   }
 
   state(): DesktopDaemonCapabilityState {
@@ -621,6 +649,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       const previousBroker = this.#broker;
       this.#daemon = candidate;
       this.#broker = nextBroker;
+      this.#reconcileEnvironment(candidate);
       this.#publishHostState();
       const daemon = this.state();
       this.#retireSubscriptions({

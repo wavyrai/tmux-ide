@@ -18,7 +18,8 @@ import {
   type DesktopThemeState,
 } from "@tmux-ide/contracts";
 
-import { canonicalDaemonPreflight, type DaemonPreflight } from "./daemon-preflight.ts";
+import type { DaemonPreflight } from "./daemon-preflight.ts";
+import { createCatalogBackedPreflight, KnownEnvironmentCatalog } from "./environment-catalog.ts";
 import {
   acknowledgeOnboardingIntro,
   readOnboardingIntroAcknowledged,
@@ -163,7 +164,13 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   let onThemeUpdated: (() => void) | null = null;
   let desktopUpdater: DesktopUpdater | null = null;
   let releaseUpdateStatus: (() => void) | null = null;
-  const daemonPreflight = deps.daemonPreflight ?? canonicalDaemonPreflight;
+  // The app's own record of known environments and how to reach them. Today it
+  // holds exactly the local canonical daemon; the coordinator reads through it
+  // rather than hardcoding that one endpoint.
+  const environmentCatalog = new KnownEnvironmentCatalog(
+    join(app.getPath("userData"), "known-environments.json"),
+  );
+  const daemonPreflight = deps.daemonPreflight ?? createCatalogBackedPreflight(environmentCatalog);
   const onOwnedDaemonCrash = (_snapshot: DesktopDaemonSupervisorSnapshot): void => {
     void daemonResources?.refreshConnection().catch((error: unknown) => {
       console.error("Failed to retire crashed desktop daemon authority", error);
@@ -301,6 +308,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     daemonResources = new DaemonConnectionCoordinator({
       initialDaemon: daemon,
       preflight: daemonPreflight,
+      environmentReconciler: environmentCatalog,
       onHostStateChanged: (state) => {
         const nextOrigin = state.status === "connected" ? state.descriptor.apiBaseUrl : null;
         if (nextOrigin === daemonHttpOrigin) return;

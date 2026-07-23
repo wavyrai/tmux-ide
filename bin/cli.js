@@ -3527,18 +3527,20 @@ import { z as z20 } from "zod";
 function isDaemonWireProtocolCompatible(protocolVersion) {
   return protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION;
 }
-var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, DaemonInstanceIdSchema, DaemonInstanceIdentitySchemaZ, CanonicalDaemonInfoSchema, DaemonHealthSchema, DaemonHealthzSchema, DaemonIdentitySchema;
+var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, DaemonInstanceIdSchema, EnvironmentIdSchema, DaemonInstanceIdentitySchemaZ, CanonicalDaemonInfoSchema, DaemonHealthSchema, DaemonHealthzSchema, DaemonIdentitySchema;
 var init_daemon_wire = __esm({
   "packages/contracts/src/daemon-wire.ts"() {
     "use strict";
     DAEMON_WIRE_PROTOCOL_VERSION = 1;
     DaemonWireProtocolVersionSchema = z20.number().int().positive();
     DaemonInstanceIdSchema = z20.uuid();
+    EnvironmentIdSchema = z20.uuid();
     DaemonInstanceIdentitySchemaZ = z20.object({
       protocolVersion: DaemonWireProtocolVersionSchema,
       productVersion: z20.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
-      startedAt: z20.iso.datetime({ offset: true })
+      startedAt: z20.iso.datetime({ offset: true }),
+      environmentId: EnvironmentIdSchema.optional()
     }).strict();
     CanonicalDaemonInfoSchema = z20.object({
       pid: z20.number().int().positive(),
@@ -3547,6 +3549,7 @@ var init_daemon_wire = __esm({
       productVersion: z20.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
       startedAt: z20.iso.datetime({ offset: true }),
+      environmentId: EnvironmentIdSchema.optional(),
       bindHostname: z20.string().trim().min(1),
       authToken: z20.string().min(1).nullable()
     });
@@ -3568,7 +3571,8 @@ var init_daemon_wire = __esm({
       protocolVersion: DaemonWireProtocolVersionSchema,
       productVersion: z20.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
-      startedAt: z20.iso.datetime({ offset: true })
+      startedAt: z20.iso.datetime({ offset: true }),
+      environmentId: EnvironmentIdSchema.optional()
     });
   }
 });
@@ -5050,7 +5054,9 @@ var init_desktop_host = __esm({
       protocolVersion: z27.number().int().positive(),
       productVersion: z27.string().trim().min(1),
       instanceId: z27.uuid(),
-      startedAt: z27.iso.datetime({ offset: true })
+      startedAt: z27.iso.datetime({ offset: true }),
+      /** Stable environment identity; absent until a daemon that mints it runs. */
+      environmentId: z27.uuid().optional()
     }).strict();
     DesktopDaemonHostIssueCodeSchemaZ = z27.enum([
       "record-missing",
@@ -14131,6 +14137,7 @@ function writeCanonicalDaemonInfo(info, claim) {
     productVersion: info.productVersion,
     instanceId: info.instanceId,
     startedAt: info.startedAt,
+    ...info.environmentId !== void 0 ? { environmentId: info.environmentId } : {},
     bindHostname: info.bindHostname,
     authToken: info.authToken
   };
@@ -28095,18 +28102,75 @@ var init_active_projects = __esm({
   }
 });
 
-// packages/daemon/src/send.ts
+// packages/daemon/src/lib/environment-identity.ts
 import { randomUUID as randomUUID6 } from "node:crypto";
-import { resolve as resolve23, join as join29 } from "node:path";
-import { existsSync as existsSync29, mkdirSync as mkdirSync20, writeFileSync as writeFileSync19 } from "node:fs";
+import { linkSync as linkSync3, mkdirSync as mkdirSync20, readFileSync as readFileSync23, rmSync as rmSync3, writeFileSync as writeFileSync19 } from "node:fs";
+import { dirname as dirname26, join as join29 } from "node:path";
+function environmentIdentityPath() {
+  return join29(stateHome(), "environment.json");
+}
+function readPersistedEnvironmentId(path2) {
+  try {
+    const parsed = JSON.parse(readFileSync23(path2, "utf-8"));
+    if (!parsed || typeof parsed !== "object") return null;
+    const id = parsed.environmentId;
+    return typeof id === "string" && UUID_PATTERN.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+function persistEnvironmentId(path2, environmentId) {
+  const temporary = `${path2}.${process.pid}.${randomUUID6()}.tmp`;
+  try {
+    mkdirSync20(dirname26(path2), { recursive: true });
+    writeFileSync19(
+      temporary,
+      `${JSON.stringify({ environmentId, mintedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
+`,
+      { encoding: "utf-8", mode: 384 }
+    );
+    linkSync3(temporary, path2);
+  } catch {
+  } finally {
+    try {
+      rmSync3(temporary, { force: true });
+    } catch {
+    }
+  }
+}
+function readOrMintEnvironmentId() {
+  const path2 = environmentIdentityPath();
+  const existing = readPersistedEnvironmentId(path2);
+  if (existing) return existing;
+  try {
+    rmSync3(path2, { force: true });
+  } catch {
+  }
+  const minted = randomUUID6();
+  persistEnvironmentId(path2, minted);
+  return readPersistedEnvironmentId(path2) ?? minted;
+}
+var UUID_PATTERN;
+var init_environment_identity = __esm({
+  "packages/daemon/src/lib/environment-identity.ts"() {
+    "use strict";
+    init_state_home();
+    UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+  }
+});
+
+// packages/daemon/src/send.ts
+import { randomUUID as randomUUID7 } from "node:crypto";
+import { resolve as resolve23, join as join30 } from "node:path";
+import { existsSync as existsSync29, mkdirSync as mkdirSync21, writeFileSync as writeFileSync20 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
-  const dispatchDir = join29(dir, ".tasks", "dispatch");
-  if (!existsSync29(dispatchDir)) mkdirSync20(dispatchDir, { recursive: true });
+  const dispatchDir = join30(dir, ".tasks", "dispatch");
+  if (!existsSync29(dispatchDir)) mkdirSync21(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
-  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID6().slice(0, 8)}.md`;
-  const filePath = join29(dispatchDir, filename);
-  writeFileSync19(filePath, message);
+  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID7().slice(0, 8)}.md`;
+  const filePath = join30(dispatchDir, filename);
+  writeFileSync20(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
 }
 function resolvePane(panes, target) {
@@ -28356,19 +28420,19 @@ var init_schemas = __esm({
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { existsSync as existsSync30, mkdirSync as mkdirSync21, readFileSync as readFileSync23, renameSync as renameSync12, writeFileSync as writeFileSync20 } from "node:fs";
-import { dirname as dirname26, join as join30 } from "node:path";
+import { existsSync as existsSync30, mkdirSync as mkdirSync22, readFileSync as readFileSync24, renameSync as renameSync12, writeFileSync as writeFileSync21 } from "node:fs";
+import { dirname as dirname27, join as join31 } from "node:path";
 function path(dir) {
-  return join30(dir, TERMINALS_FILE);
+  return join31(dir, TERMINALS_FILE);
 }
 function ensureDir(dir) {
-  mkdirSync21(dirname26(path(dir)), { recursive: true });
+  mkdirSync22(dirname27(path(dir)), { recursive: true });
 }
 function loadTerminals(dir) {
   const file = path(dir);
   if (!existsSync30(file)) return [];
   try {
-    const body = readFileSync23(file, "utf-8");
+    const body = readFileSync24(file, "utf-8");
     const parsed = JSON.parse(body);
     if (!parsed.terminals || !Array.isArray(parsed.terminals)) return [];
     return parsed.terminals.filter((t) => isTerminal(t)).map((t) => ({ ...t }));
@@ -28385,7 +28449,7 @@ function writeAtomic(dir, terminals) {
   ensureDir(dir);
   const file = path(dir);
   const tmp = `${file}.tmp`;
-  writeFileSync20(tmp, JSON.stringify({ terminals }, null, 2) + "\n");
+  writeFileSync21(tmp, JSON.stringify({ terminals }, null, 2) + "\n");
   renameSync12(tmp, file);
 }
 function upsertTerminal(dir, input) {
@@ -28447,8 +28511,8 @@ __export(auth_service_exports, {
   AuthService: () => AuthService
 });
 import * as crypto2 from "node:crypto";
-import { readFileSync as readFileSync24, existsSync as existsSync31 } from "node:fs";
-import { join as join31 } from "node:path";
+import { readFileSync as readFileSync25, existsSync as existsSync31 } from "node:fs";
+import { join as join32 } from "node:path";
 import { homedir as homedir18 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
@@ -28592,9 +28656,9 @@ var init_auth_service = __esm({
       checkSSHKeyAuthorization(userId, publicKey) {
         try {
           const home = userId === process.env.USER ? homedir18() : `/home/${userId}`;
-          const authKeysPath = join31(home, ".ssh", "authorized_keys");
+          const authKeysPath = join32(home, ".ssh", "authorized_keys");
           if (!existsSync31(authKeysPath)) return false;
-          const authorizedKeys = readFileSync24(authKeysPath, "utf-8");
+          const authorizedKeys = readFileSync25(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
           const keyData = parts.length > 1 ? parts[1] : parts[0];
           return authorizedKeys.includes(keyData);
@@ -29860,7 +29924,7 @@ var init_inspect = __esm({
 // packages/daemon/src/lib/filesystem-browser.ts
 import { realpathSync as realpathSync10, readdirSync as readdirSync4, statSync as statSync11 } from "node:fs";
 import { homedir as homedir19 } from "node:os";
-import { isAbsolute as isAbsolute10, join as join32, resolve as resolve25, sep as sep5 } from "node:path";
+import { isAbsolute as isAbsolute10, join as join33, resolve as resolve25, sep as sep5 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
   const prefix = root.endsWith(sep5) ? root : root + sep5;
@@ -30086,8 +30150,8 @@ var init_workspace_resource_ids = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-files-authority.ts
-import { lstatSync as lstatSync3, readdirSync as readdirSync5, readFileSync as readFileSync25, realpathSync as realpathSync11 } from "node:fs";
-import { basename as basename12, dirname as dirname27, resolve as resolvePath, sep as sep6 } from "node:path";
+import { lstatSync as lstatSync3, readdirSync as readdirSync5, readFileSync as readFileSync26, realpathSync as realpathSync11 } from "node:fs";
+import { basename as basename12, dirname as dirname28, resolve as resolvePath, sep as sep6 } from "node:path";
 import ignore from "ignore";
 function extensionOf(name) {
   const dot = name.lastIndexOf(".");
@@ -30153,7 +30217,7 @@ function directoryHasChildren(absDir) {
 function buildIgnore(root) {
   const ig = ignore();
   try {
-    ig.add(readFileSync25(resolvePath(root, ".gitignore"), "utf8"));
+    ig.add(readFileSync26(resolvePath(root, ".gitignore"), "utf8"));
   } catch {
   }
   return ig;
@@ -30433,7 +30497,7 @@ var init_workspace_files_authority = __esm({
         }
         let realParent;
         try {
-          realParent = realpathSync11(dirname27(abs));
+          realParent = realpathSync11(dirname28(abs));
         } catch {
           return this.previewUnavailable(
             fileId,
@@ -30468,7 +30532,7 @@ var init_workspace_files_authority = __esm({
         }
         let buffer;
         try {
-          buffer = readFileSync25(abs);
+          buffer = readFileSync26(abs);
         } catch (error) {
           const code = error.code;
           if (code === "EACCES" || code === "EPERM") {
@@ -30758,7 +30822,7 @@ var init_workspace_changes_git = __esm({
 
 // packages/daemon/src/command-center/resources/workspace-changes-authority.ts
 import { spawnSync } from "node:child_process";
-import { readFileSync as readFileSync26, realpathSync as realpathSync12, statSync as statSync12 } from "node:fs";
+import { readFileSync as readFileSync27, realpathSync as realpathSync12, statSync as statSync12 } from "node:fs";
 import { basename as basename13, isAbsolute as isAbsolute12, relative as relative4, resolve as resolvePath2 } from "node:path";
 function runGit(args, cwd) {
   const result = spawnSync("git", args, {
@@ -31020,7 +31084,7 @@ var init_workspace_changes_authority = __esm({
               limitBytes: DIFF_MAX_BYTES
             });
           }
-          buffer = readFileSync26(absPath);
+          buffer = readFileSync27(absPath);
         } catch {
           return this.diffUnavailable(changeId, "io-error", "The file could not be read.");
         }
@@ -31152,7 +31216,7 @@ var init_workspace_changes_authority = __esm({
       countsFor(raw, repoRoot, staged, unstaged) {
         if (raw.group === "untracked") {
           try {
-            const buffer = readFileSync26(resolvePath2(repoRoot, raw.path));
+            const buffer = readFileSync27(resolvePath2(repoRoot, raw.path));
             if (looksBinary(buffer)) return { additions: null, deletions: null, binary: true };
             const text = buffer.toString("utf8");
             const lines = text.length === 0 ? 0 : text.replace(/\n$/u, "").split("\n").length;
@@ -32607,7 +32671,7 @@ __export(server_exports, {
 import { execFile as execFile3 } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync as existsSync33, readdirSync as readdirSync6 } from "node:fs";
-import { join as join33, dirname as dirname28, basename as basename14 } from "node:path";
+import { join as join34, dirname as dirname29, basename as basename14 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -32617,7 +32681,7 @@ import { z as z54 } from "zod";
 import { realpathSync as realpathSync13 } from "node:fs";
 import { homedir as homedir20 } from "node:os";
 import { isAbsolute as isAbsolute13, resolve as pathResolve } from "node:path";
-import { randomUUID as randomUUID8 } from "node:crypto";
+import { randomUUID as randomUUID9 } from "node:crypto";
 import { WebSocketServer as WebSocketServer2 } from "ws";
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -32759,7 +32823,7 @@ function createApp(options = {}) {
   const authService = options.authService ?? new AuthService();
   const daemonIdentity = options.daemonIdentity ?? {
     productVersion: "0.0.0",
-    instanceId: randomUUID8(),
+    instanceId: randomUUID9(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const daemonInstanceIdentity = DaemonInstanceIdentitySchemaZ.parse({
@@ -32894,7 +32958,8 @@ function createApp(options = {}) {
       protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       productVersion: daemonIdentity.productVersion,
       instanceId: daemonIdentity.instanceId,
-      startedAt: daemonIdentity.startedAt
+      startedAt: daemonIdentity.startedAt,
+      ...daemonIdentity.environmentId !== void 0 ? { environmentId: daemonIdentity.environmentId } : {}
     });
   });
   app.get("/api/sessions", (c) => {
@@ -33166,7 +33231,7 @@ function createApp(options = {}) {
         });
         scripted = true;
       }
-      if (!id) id = randomUUID8();
+      if (!id) id = randomUUID9();
       try {
         const upsertInput = {
           id,
@@ -33610,7 +33675,7 @@ function createApp(options = {}) {
     if (!existsSync33(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
-    const jobId = randomUUID8();
+    const jobId = randomUUID9();
     const command2 = process.env.TMUX_IDE_INIT_COMMAND ?? "tmux-ide";
     void (async () => {
       try {
@@ -33713,9 +33778,9 @@ function createApp(options = {}) {
 }
 function listAvailableTemplates() {
   const __filename = fileURLToPath10(import.meta.url);
-  const __dir = dirname28(__filename);
+  const __dir = dirname29(__filename);
   const configuredTemplatesDir = process.env.TMUX_IDE_TEMPLATES_DIR;
-  const templatesDir = configuredTemplatesDir && isAbsolute13(configuredTemplatesDir) ? configuredTemplatesDir : join33(__dir, "..", "..", "..", "..", "templates");
+  const templatesDir = configuredTemplatesDir && isAbsolute13(configuredTemplatesDir) ? configuredTemplatesDir : join34(__dir, "..", "..", "..", "..", "templates");
   if (!existsSync33(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
@@ -33855,7 +33920,7 @@ var init_types = __esm({
 
 // packages/daemon/src/lib/daemon-embed.ts
 import { execFileSync as execFileSync13 } from "node:child_process";
-import { randomBytes as randomBytes4, randomUUID as randomUUID9 } from "node:crypto";
+import { randomBytes as randomBytes4, randomUUID as randomUUID10 } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire as createRequire2 } from "node:module";
 import { WebSocket, WebSocketServer as WebSocketServer3 } from "ws";
@@ -34415,8 +34480,9 @@ async function startEmbeddedDaemon(opts) {
     validatePort(port);
     const dir = process.cwd();
     const productVersion = resolveDaemonProductVersion(opts.productVersion);
-    const instanceId = randomUUID9();
+    const instanceId = randomUUID10();
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const environmentId = readOrMintEnvironmentId();
     const workspaceRegistry = getDefaultWorkspaceRegistry();
     await workspaceRegistry.load();
     const legacySession = process.env.TMUX_IDE_SESSION;
@@ -34486,7 +34552,7 @@ async function startEmbeddedDaemon(opts) {
         localBypassToken,
         silent: opts.silent,
         readProjectAuth: !sessionless,
-        daemonIdentity: { productVersion, instanceId, startedAt },
+        daemonIdentity: { productVersion, instanceId, startedAt, environmentId },
         workspacePaneCreationBackend: workspacePaneCreation,
         workspaceOpenBackend: workspaceOpen,
         workspacePromotionBackend: workspacePromotion,
@@ -34538,6 +34604,7 @@ async function startEmbeddedDaemon(opts) {
           productVersion,
           instanceId,
           startedAt,
+          environmentId,
           bindHostname,
           authToken: localBypassToken
         },
@@ -34761,6 +34828,7 @@ var init_daemon_embed = __esm({
     init_agent_status_probe();
     init_terminal_attachment_upgrade();
     init_active_projects();
+    init_environment_identity();
     init_canonical_daemon();
     requireFromHere = createRequire2(import.meta.url);
     DEFAULT_HOSTNAME = "127.0.0.1";
@@ -34775,7 +34843,7 @@ var init_daemon_embed = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
-import { randomUUID as randomUUID10 } from "node:crypto";
+import { randomUUID as randomUUID11 } from "node:crypto";
 import { z as z55 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
@@ -34857,7 +34925,7 @@ async function tryDispatchAction(name, input, options = {}) {
   if (!daemon) return null;
   const contract = ActionContractsZ[name];
   const parsedInput = contract.input.parse(input);
-  const operationId = RETRY_SAFE_OWNER_ACTIONS.has(name) ? options.operationId ?? randomUUID10() : null;
+  const operationId = RETRY_SAFE_OWNER_ACTIONS.has(name) ? options.operationId ?? randomUUID11() : null;
   if (operationId && !daemon.ownerToken) {
     await stopTransientDaemon(daemon);
     return null;
@@ -36244,11 +36312,11 @@ __export(server_exports2, {
   defaultControlSocketPath: () => defaultControlSocketPath,
   startControlServer: () => startControlServer
 });
-import { chmodSync as chmodSync5, existsSync as existsSync34, mkdirSync as mkdirSync22, statSync as statSync13, unlinkSync as unlinkSync3 } from "node:fs";
+import { chmodSync as chmodSync5, existsSync as existsSync34, mkdirSync as mkdirSync23, statSync as statSync13, unlinkSync as unlinkSync3 } from "node:fs";
 import { createServer as createServer2, connect } from "node:net";
-import { dirname as dirname30, join as join34 } from "node:path";
+import { dirname as dirname31, join as join35 } from "node:path";
 function defaultControlSocketPath() {
-  return join34(tuiStateHome(), "control.sock");
+  return join35(tuiStateHome(), "control.sock");
 }
 async function claimSocketPath(path2) {
   if (!existsSync34(path2)) return;
@@ -36281,7 +36349,7 @@ async function startControlServer(opts = {}) {
   const log = opts.log ?? (() => {
   });
   const tickMs = opts.tickMs ?? TICK_MS;
-  mkdirSync22(dirname30(socketPath), { recursive: true });
+  mkdirSync23(dirname31(socketPath), { recursive: true });
   await claimSocketPath(socketPath);
   const tracker = createStatusTracker();
   const handlers = createVerbHandlers({ tracker });
@@ -36515,7 +36583,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync16 } from "node:child_process";
-import { basename as basename15, dirname as dirname31, isAbsolute as isAbsolute14, join as join35, resolve as resolve29 } from "node:path";
+import { basename as basename15, dirname as dirname32, isAbsolute as isAbsolute14, join as join36, resolve as resolve29 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -36524,11 +36592,11 @@ function worktreeSessionName(project, branch) {
 }
 function defaultWorktreeBaseDir(repoDir) {
   const abs = resolve29(repoDir);
-  return join35(dirname31(abs), `${basename15(abs)}-worktrees`);
+  return join36(dirname32(abs), `${basename15(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
   const base = configuredDir && configuredDir.length > 0 ? isAbsolute14(configuredDir) ? configuredDir : resolve29(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
-  return join35(base, branch);
+  return join36(base, branch);
 }
 function parseWorktreeList(porcelain) {
   const entries = [];
@@ -36673,7 +36741,7 @@ __export(update_exports, {
 });
 import { execSync as execSync4 } from "node:child_process";
 import { existsSync as existsSync35 } from "node:fs";
-import { dirname as dirname32, join as join36 } from "node:path";
+import { dirname as dirname33, join as join37 } from "node:path";
 function detectPackageManager(cliPath) {
   const p = cliPath.toLowerCase();
   if (/(^|\/)\.?bun(\/|$)/.test(p)) return "bun";
@@ -36719,8 +36787,8 @@ function renderPlan(plan, { current, latest, dryRun }) {
 function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
-    if (existsSync35(join36(dir, ".git"))) return dir;
-    const parent = dirname32(dir);
+    if (existsSync35(join37(dir, ".git"))) return dir;
+    const parent = dirname33(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -36852,7 +36920,7 @@ var init_server3 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve30, dirname as dirname33 } from "node:path";
+import { resolve as resolve30, dirname as dirname34 } from "node:path";
 import { execFileSync as execFileSync17 } from "node:child_process";
 import { existsSync as existsSync36 } from "node:fs";
 import { fileURLToPath as fileURLToPath11 } from "node:url";
@@ -37593,7 +37661,7 @@ init_legacy_config_adapter();
 init_project_resolver();
 init_errors2();
 import { execFileSync as execFileSync14 } from "node:child_process";
-import { dirname as dirname29, resolve as resolve28 } from "node:path";
+import { dirname as dirname30, resolve as resolve28 } from "node:path";
 function gitIgnoresWorkspace(dir) {
   try {
     execFileSync14("git", ["-C", dir, "check-ignore", "-q", ".tmux-ide/workspace.yml"], {
@@ -37651,7 +37719,7 @@ async function migrate(targetDir, {
       outputError("No resolved legacy ide.yml found to migrate", "CONFIG_NOT_FOUND");
     }
     const legacyPath = resolution.config.path;
-    const writeRoot = dirname29(legacyPath);
+    const writeRoot = dirname30(legacyPath);
     const workspacePath = workspaceConfigPath(writeRoot);
     const { raw, config: config2 } = readLegacyForMigration(legacyPath);
     await onAfterRead?.();
@@ -38230,7 +38298,7 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
 
 // bin/cli.ts
 init_hosted();
-var __dirname5 = dirname33(fileURLToPath11(import.meta.url));
+var __dirname5 = dirname34(fileURLToPath11(import.meta.url));
 var selfPath = fileURLToPath11(import.meta.url);
 var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve30(__dirname5, "cli.js");
 var { positionals, values } = parseArgs({
@@ -38722,8 +38790,8 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync27 } = await import("node:fs");
-        message = readFileSync27(0, "utf-8").trim();
+        const { readFileSync: readFileSync28 } = await import("node:fs");
+        message = readFileSync28(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
@@ -38855,7 +38923,7 @@ try {
       break;
     }
     case "events": {
-      const { readFileSync: readFileSync27, existsSync: existsSync37, statSync: statSync14, openSync: openSync4, readSync, closeSync: closeSync4 } = await import("node:fs");
+      const { readFileSync: readFileSync28, existsSync: existsSync37, statSync: statSync14, openSync: openSync4, readSync, closeSync: closeSync4 } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
       const paintStatus = (status2, text) => {
@@ -38881,7 +38949,7 @@ try {
         }).catch(() => null);
         if (client) {
           if (existsSync37(path2)) {
-            const backlog = readFileSync27(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+            const backlog = readFileSync28(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
             for (const line of backlog.slice(-50)) printLine(line);
           }
           await client.subscribe((frame) => {
@@ -38899,7 +38967,7 @@ try {
         console.log("no events yet \u2014 is a session adopted? (the chrome updater writes events)");
         break;
       }
-      const allLines = readFileSync27(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+      const allLines = readFileSync28(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
       for (const line of allLines.slice(-50)) printLine(line);
       if (!values.follow) break;
       let offset = statSync14(path2).size;

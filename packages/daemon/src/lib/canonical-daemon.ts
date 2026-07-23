@@ -533,6 +533,7 @@ export function writeCanonicalDaemonInfo(
     productVersion: info.productVersion,
     instanceId: info.instanceId,
     startedAt: info.startedAt,
+    ...(info.environmentId !== undefined ? { environmentId: info.environmentId } : {}),
     bindHostname: info.bindHostname,
     authToken: info.authToken,
   };

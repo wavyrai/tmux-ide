@@ -311,10 +311,17 @@ export function rendererDaemonState(daemon: DesktopDaemonHostState):
       readonly reason: string;
     } {
   if (daemon.status === "connected") {
-    const { protocolVersion, productVersion, instanceId, startedAt } = daemon.descriptor;
+    const { protocolVersion, productVersion, instanceId, startedAt, environmentId } =
+      daemon.descriptor;
     return {
       status: "connected",
-      identity: { protocolVersion, productVersion, instanceId, startedAt },
+      identity: {
+        protocolVersion,
+        productVersion,
+        instanceId,
+        startedAt,
+        ...(environmentId !== undefined ? { environmentId } : {}),
+      },
     };
   }
   return {

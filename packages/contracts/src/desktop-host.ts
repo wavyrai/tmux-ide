@@ -90,6 +90,8 @@ export const DesktopDaemonHostDescriptorSchemaZ = z
     productVersion: z.string().trim().min(1),
     instanceId: z.uuid(),
     startedAt: z.iso.datetime({ offset: true }),
+    /** Stable environment identity; absent until a daemon that mints it runs. */
+    environmentId: z.uuid().optional(),
   })
   .strict();
 

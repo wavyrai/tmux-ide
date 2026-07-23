@@ -26,6 +26,15 @@ export function isDaemonWireProtocolCompatible(protocolVersion: number): boolean
 export const DaemonInstanceIdSchema = z.uuid();
 
 /**
+ * Stable environment identity: minted once per daemon state home and
+ * preserved across restarts, unlike the per-process instance nonce. Clients
+ * keep their own catalog of access endpoints keyed by this id. It is carried
+ * additively (optional everywhere) and plays no part in generation checks —
+ * instanceId/startedAt keep sole authority over those.
+ */
+export const EnvironmentIdSchema = z.uuid();
+
+/**
  * Browser-safe identity stamped onto authenticated REST resources and the
  * unified event socket hello. Clients compare every field with the canonical
  * descriptor supplied by their desktop host before trusting payloads.
@@ -36,6 +45,7 @@ export const DaemonInstanceIdentitySchemaZ = z
     productVersion: z.string().trim().min(1),
     instanceId: DaemonInstanceIdSchema,
     startedAt: z.iso.datetime({ offset: true }),
+    environmentId: EnvironmentIdSchema.optional(),
   })
   .strict();
 export type DaemonInstanceIdentity = z.infer<typeof DaemonInstanceIdentitySchemaZ>;
@@ -47,6 +57,7 @@ export const CanonicalDaemonInfoSchema = z.object({
   productVersion: z.string().trim().min(1),
   instanceId: DaemonInstanceIdSchema,
   startedAt: z.iso.datetime({ offset: true }),
+  environmentId: EnvironmentIdSchema.optional(),
   bindHostname: z.string().trim().min(1),
   authToken: z.string().min(1).nullable(),
 });
@@ -80,5 +91,6 @@ export const DaemonIdentitySchema = z.object({
   productVersion: z.string().trim().min(1),
   instanceId: DaemonInstanceIdSchema,
   startedAt: z.iso.datetime({ offset: true }),
+  environmentId: EnvironmentIdSchema.optional(),
 });
 export type DaemonIdentity = z.infer<typeof DaemonIdentitySchema>;

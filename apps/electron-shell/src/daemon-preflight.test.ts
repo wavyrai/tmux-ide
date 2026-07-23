@@ -207,6 +207,83 @@ describe("canonical Electron daemon attachment", () => {
     expect(JSON.stringify(result)).not.toContain(String(info.pid));
     expect(JSON.stringify(result)).not.toContain(info.authToken);
   });
+
+  describe("stable environment identity", () => {
+    const ENVIRONMENT_ID = "0f4e9a7c-2f4a-4d55-9d2e-1f6cf3a3b210";
+
+    it("carries the environment id from the live identity probe", async () => {
+      const preflight = createCanonicalDaemonPreflight(
+        operations({
+          inspect: () => ({
+            status: "valid",
+            info: { ...info, environmentId: ENVIRONMENT_ID },
+            observation: { dev: 1, ino: 2, size: 3, mtimeMs: 4 },
+          }),
+          probeIdentity: async () => ({ ...identity, environmentId: ENVIRONMENT_ID }),
+        }),
+      );
+
+      await expect(runDaemonPreflight(preflight)).resolves.toMatchObject({
+        status: "connected",
+        descriptor: { environmentId: ENVIRONMENT_ID, instanceId: info.instanceId },
+      });
+    });
+
+    it("tolerates upgrade skew where only one side knows the id", async () => {
+      const recordOnly = createCanonicalDaemonPreflight(
+        operations({
+          inspect: () => ({
+            status: "valid",
+            info: { ...info, environmentId: ENVIRONMENT_ID },
+            observation: { dev: 1, ino: 2, size: 3, mtimeMs: 4 },
+          }),
+        }),
+      );
+      await expect(runDaemonPreflight(recordOnly)).resolves.toMatchObject({
+        status: "connected",
+        descriptor: { environmentId: ENVIRONMENT_ID },
+      });
+
+      const probeOnly = createCanonicalDaemonPreflight(
+        operations({
+          probeIdentity: async () => ({ ...identity, environmentId: ENVIRONMENT_ID }),
+        }),
+      );
+      await expect(runDaemonPreflight(probeOnly)).resolves.toMatchObject({
+        status: "connected",
+        descriptor: { environmentId: ENVIRONMENT_ID },
+      });
+    });
+
+    it("omits the field when neither the record nor the probe declares it", async () => {
+      const result = await runDaemonPreflight(createCanonicalDaemonPreflight(operations()));
+      expect(result.status).toBe("connected");
+      if (result.status === "connected") {
+        expect("environmentId" in result.descriptor).toBe(false);
+      }
+    });
+
+    it("degrades when the record and the endpoint disagree about the id", async () => {
+      const preflight = createCanonicalDaemonPreflight(
+        operations({
+          inspect: () => ({
+            status: "valid",
+            info: { ...info, environmentId: ENVIRONMENT_ID },
+            observation: { dev: 1, ino: 2, size: 3, mtimeMs: 4 },
+          }),
+          probeIdentity: async () => ({
+            ...identity,
+            environmentId: "7be9d0aa-51c3-4a4e-8f6a-2a0d78c58f01",
+          }),
+        }),
+      );
+
+      await expect(runDaemonPreflight(preflight)).resolves.toMatchObject({
+        status: "degraded",
+        code: "identity-mismatch",
+      });
+    });
+  });
 });
 
 describe("runDaemonPreflight", () => {

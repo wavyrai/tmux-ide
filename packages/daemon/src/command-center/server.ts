@@ -149,6 +149,8 @@ export interface CreateAppOptions {
     productVersion: string;
     instanceId: string;
     startedAt: string;
+    /** Stable per-daemon-home identity; absent for pre-environment callers. */
+    environmentId?: string;
   };
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
   workspaceOpenBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenBackend;
@@ -577,6 +579,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       productVersion: daemonIdentity.productVersion,
       instanceId: daemonIdentity.instanceId,
       startedAt: daemonIdentity.startedAt,
+      ...(daemonIdentity.environmentId !== undefined
+        ? { environmentId: daemonIdentity.environmentId }
+        : {}),
     });
   });
 

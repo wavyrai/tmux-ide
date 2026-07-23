@@ -125,13 +125,19 @@ export function createCanonicalDaemonPreflight(
         identity.protocolVersion !== info.protocolVersion ||
         identity.productVersion !== info.productVersion ||
         identity.instanceId !== info.instanceId ||
-        identity.startedAt !== info.startedAt
+        identity.startedAt !== info.startedAt ||
+        (identity.environmentId !== undefined &&
+          info.environmentId !== undefined &&
+          identity.environmentId !== info.environmentId)
       ) {
         return degraded(
           "identity-mismatch",
           "Canonical daemon identity does not match the securely discovered record.",
         );
       }
+      // Upgrade skew tolerance: either side alone may know the stable
+      // environment id; the live endpoint's answer wins when both exist.
+      const environmentId = identity.environmentId ?? info.environmentId;
 
       const abortedBeforeHealth = probeWasAborted(signal);
       if (abortedBeforeHealth) return abortedBeforeHealth;
@@ -166,6 +172,7 @@ export function createCanonicalDaemonPreflight(
           productVersion: info.productVersion,
           instanceId: info.instanceId,
           startedAt: info.startedAt,
+          ...(environmentId !== undefined ? { environmentId } : {}),
         },
       };
     },

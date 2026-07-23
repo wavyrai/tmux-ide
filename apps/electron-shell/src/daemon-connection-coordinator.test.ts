@@ -525,4 +525,81 @@ describe("main-process daemon connection coordinator", () => {
     expect(createBroker).toHaveBeenCalledOnce();
     expect(first.dispose).toHaveBeenCalledOnce();
   });
+
+  describe("environment catalog reconciliation", () => {
+    const ENVIRONMENT_ID = "0f4e9a7c-2f4a-4d55-9d2e-1f6cf3a3b210";
+    const withEnvironment = {
+      ...A,
+      descriptor: { ...A.descriptor, environmentId: ENVIRONMENT_ID },
+    } satisfies Extract<DesktopDaemonHostState, { status: "connected" }>;
+
+    it("reports the daemon-minted id to the catalog on the initial verified connect", () => {
+      const reconcileLocalCanonical = vi.fn();
+      const first = brokerHarness(withEnvironment);
+      new DaemonConnectionCoordinator({
+        initialDaemon: withEnvironment,
+        preflight: preflight(async () => withEnvironment),
+        createBroker: () => first.authority,
+        environmentReconciler: { reconcileLocalCanonical },
+      });
+      expect(reconcileLocalCanonical).toHaveBeenCalledExactlyOnceWith(ENVIRONMENT_ID);
+    });
+
+    it("reports again when a refresh installs a new verified generation", async () => {
+      const reconcileLocalCanonical = vi.fn();
+      const replacement = {
+        ...B,
+        descriptor: { ...B.descriptor, environmentId: ENVIRONMENT_ID },
+      } satisfies Extract<DesktopDaemonHostState, { status: "connected" }>;
+      const first = brokerHarness(A);
+      const second = brokerHarness(replacement);
+      const createBroker = vi
+        .fn<(daemon: typeof A | typeof B) => DaemonResourceAuthority>()
+        .mockReturnValueOnce(first.authority)
+        .mockReturnValueOnce(second.authority);
+      const coordinator = new DaemonConnectionCoordinator({
+        initialDaemon: A,
+        preflight: preflight(async () => replacement),
+        createBroker,
+        environmentReconciler: { reconcileLocalCanonical },
+      });
+      expect(reconcileLocalCanonical).not.toHaveBeenCalled();
+
+      await coordinator.refreshConnection();
+      expect(reconcileLocalCanonical).toHaveBeenCalledExactlyOnceWith(ENVIRONMENT_ID);
+    });
+
+    it("stays silent for a daemon that predates environment identity", () => {
+      const reconcileLocalCanonical = vi.fn();
+      const first = brokerHarness(A);
+      new DaemonConnectionCoordinator({
+        initialDaemon: A,
+        preflight: preflight(async () => A),
+        createBroker: () => first.authority,
+        environmentReconciler: { reconcileLocalCanonical },
+      });
+      expect(reconcileLocalCanonical).not.toHaveBeenCalled();
+    });
+
+    it("never lets catalog bookkeeping disturb connection authority", async () => {
+      const reconcileLocalCanonical = vi.fn(() => {
+        throw new Error("catalog write exploded");
+      });
+      const first = brokerHarness(withEnvironment);
+      const coordinator = new DaemonConnectionCoordinator({
+        initialDaemon: withEnvironment,
+        preflight: preflight(async () => withEnvironment),
+        createBroker: () => first.authority,
+        environmentReconciler: { reconcileLocalCanonical },
+      });
+
+      expect(coordinator.state()).toMatchObject({
+        status: "connected",
+        identity: { instanceId: A.descriptor.instanceId, environmentId: ENVIRONMENT_ID },
+      });
+      await expect(coordinator.refreshConnection()).resolves.toMatchObject({
+        outcome: "unchanged",
+      });
+    });
+  });
 });
