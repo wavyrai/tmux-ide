@@ -21,6 +21,8 @@ export type AgentGraphCanvasScenario =
   | "nodes-only"
   | "spawned-edges"
   | "mission-group"
+  | "inferred-role"
+  | "inferred-mission"
   | "blocked-attention"
   | "missing-windows"
   | "truncated";
@@ -227,6 +229,40 @@ export function agentGraphCanvasOverlay(
           memberWindowIds: ["window.lead", "window.plan", "window.worker"],
         },
       ],
+    }).overlay;
+  }
+
+  if (scenario === "inferred-role") {
+    // No mission resource: a lead pane's role stamp yields dashed inferred edges
+    // to each subordinate pane, distinct from a solid ground-truth spawn edge.
+    return projectAgentGraphOverlay({
+      nodes: [
+        node("window.lead", "working", false, "Lead"),
+        node("window.plan", "working", false, "Planner"),
+        node("window.worker", "done", false, "Worker"),
+      ],
+      edges: [
+        { from: "window.lead", to: "window.plan", kind: "inferred-role" },
+        { from: "window.lead", to: "window.worker", kind: "inferred-role" },
+      ],
+      groups: [],
+    }).overlay;
+  }
+
+  if (scenario === "inferred-mission") {
+    // Panes sharing a mission stamp with no mission resource: dashed inferred
+    // co-membership edges, no labeled group frame.
+    return projectAgentGraphOverlay({
+      nodes: [
+        node("window.lead", "working", false, "Alpha"),
+        node("window.plan", "working", false, "Bravo"),
+        node("window.worker", "blocked", true, "Charlie"),
+      ],
+      edges: [
+        { from: "window.lead", to: "window.plan", kind: "inferred-mission" },
+        { from: "window.lead", to: "window.worker", kind: "inferred-mission" },
+      ],
+      groups: [],
     }).overlay;
   }
 

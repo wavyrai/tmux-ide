@@ -149,14 +149,16 @@ function edgeGeometry(
   const length = Math.hypot(dx, dy);
   const mid = { x: (source.x + target.x) / 2, y: (source.y + target.y) / 2 };
 
-  // A kind-signed perpendicular bow keeps a spawned and a mission edge between
-  // the same pair from overlapping. Fall back to the center axis when the
-  // border anchors coincide (overlapping rects).
+  // A kind-signed perpendicular bow keeps edges of different kinds between the
+  // same pair from overlapping. Fall back to the center axis when the border
+  // anchors coincide (overlapping rects). The two spawn-like kinds bow one way,
+  // the two mission-like kinds the other, so a directed pair never coincides.
   const axisX = length > 0 ? dx : toCenter.x - fromCenter.x;
   const axisY = length > 0 ? dy : toCenter.y - fromCenter.y;
   const axisLength = Math.hypot(axisX, axisY) || 1;
   const bowMagnitude = Math.min(length * EDGE_BOW_RATIO, EDGE_BOW_MAX);
-  const bow = (kind === "spawned" ? 1 : -1) * bowMagnitude;
+  const bowSign = kind === "spawned" || kind === "inferred-role" ? 1 : -1;
+  const bow = bowSign * bowMagnitude;
   const control = {
     x: mid.x + (-axisY / axisLength) * bow,
     y: mid.y + (axisX / axisLength) * bow,

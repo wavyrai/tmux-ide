@@ -99,7 +99,7 @@ function row(overrides: Partial<TrustedSemanticPaneSnapshot> = {}): TrustedSeman
 
 function applicationShellPaneWire(
   sessionName: string,
-  options: { stamp?: string; paneId?: string } = {},
+  options: { stamp?: string; paneId?: string; role?: string; mission?: string } = {},
 ): string {
   return [
     sessionName,
@@ -114,9 +114,10 @@ function applicationShellPaneWire(
     "codex",
     "1",
     "1",
-    "teammate",
+    options.role ?? "teammate",
     "Codex",
     "agent",
+    options.mission ?? "",
     "/repo",
     "tmux-ide-pane-v2",
   ].join(INVENTORY_SEPARATOR);
@@ -198,6 +199,7 @@ describe("workspace-registry semantic pane discovery", () => {
       "teammate",
       "Codex",
       "agent",
+      "",
       "/repo",
       "tmux-ide-pane-v2",
     ].join(INVENTORY_SEPARATOR);

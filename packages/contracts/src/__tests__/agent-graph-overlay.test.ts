@@ -5,13 +5,16 @@ import {
   AGENT_GRAPH_MAX_GROUP_MEMBERS,
   AGENT_GRAPH_MAX_GROUPS,
   AGENT_GRAPH_MAX_NODES,
+  AgentGraphEdgeKindSchemaZ,
   AgentGraphGroupIdSchemaZ,
   AgentGraphLabelSchemaZ,
   AgentGraphNodeSchemaZ,
   AgentGraphOverlaySchemaZ,
+  isInferredEdgeKind,
   projectAgentGraphOverlay,
   resolveAgentStatusPresentation,
   type AgentGraphDetectStatus,
+  type AgentGraphEdgeKind,
   type AgentGraphNode,
   type AgentGraphOverlay,
   type AgentGraphProjectionNode,
@@ -101,6 +104,31 @@ describe("agent-graph node/group id schemas", () => {
     for (const bad of [NUL, BELL, TAB, ESC, DEL, "\n", "\r"]) {
       expect(AgentGraphLabelSchemaZ.safeParse(`label${bad}x`).success).toBe(false);
     }
+  });
+});
+
+describe("agent-graph edge kinds", () => {
+  it("carries the two ground-truth and two inferred kinds", () => {
+    for (const kind of ["spawned", "mission", "inferred-role", "inferred-mission"] as const) {
+      expect(AgentGraphEdgeKindSchemaZ.safeParse(kind).success).toBe(true);
+    }
+    expect(AgentGraphEdgeKindSchemaZ.safeParse("inferred").success).toBe(false);
+    expect(AgentGraphEdgeKindSchemaZ.safeParse("role").success).toBe(false);
+  });
+
+  it("classifies only the stamp-derived kinds as inferred", () => {
+    const kinds: AgentGraphEdgeKind[] = ["spawned", "mission", "inferred-role", "inferred-mission"];
+    expect(kinds.filter(isInferredEdgeKind)).toEqual(["inferred-role", "inferred-mission"]);
+  });
+
+  it("accepts an inferred edge between two known nodes", () => {
+    expect(
+      AgentGraphOverlaySchemaZ.safeParse(
+        overlay([node("terminal.lead"), node("terminal.sub")], {
+          edges: [{ from: "terminal.lead", to: "terminal.sub", kind: "inferred-role" }],
+        }),
+      ).success,
+    ).toBe(true);
   });
 });
 
@@ -314,6 +342,28 @@ describe("projectAgentGraphOverlay", () => {
     });
     expect(truncated).toBe(true);
     expect(result.edges).toHaveLength(1);
+    expect(AgentGraphOverlaySchemaZ.safeParse(result).success).toBe(true);
+  });
+
+  it("keeps inferred edges distinct from ground-truth kinds and dedupes per kind", () => {
+    const { overlay: result, truncated } = projectAgentGraphOverlay({
+      nodes: [pnode("terminal.lead"), pnode("terminal.sub")],
+      edges: [
+        { from: "terminal.lead", to: "terminal.sub", kind: "spawned" },
+        { from: "terminal.lead", to: "terminal.sub", kind: "inferred-role" },
+        { from: "terminal.lead", to: "terminal.sub", kind: "inferred-role" }, // duplicate
+        { from: "terminal.lead", to: "terminal.sub", kind: "inferred-mission" },
+      ],
+      groups: [],
+    });
+    // Dedup is per (kind, from, to): the two distinct inferred kinds and the
+    // spawned edge all survive; only the repeated inferred-role collapses.
+    expect(truncated).toBe(true);
+    expect(result.edges.map((edge) => edge.kind).sort()).toEqual([
+      "inferred-mission",
+      "inferred-role",
+      "spawned",
+    ]);
     expect(AgentGraphOverlaySchemaZ.safeParse(result).success).toBe(true);
   });
 

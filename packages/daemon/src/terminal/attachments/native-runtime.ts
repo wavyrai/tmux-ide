@@ -300,6 +300,8 @@ export interface NativeTerminalInventoryPaneSnapshot extends TrustedSemanticPane
   readonly role: string | null;
   readonly name: string | null;
   readonly type: string | null;
+  /** Durable `@tmux_ide_mission` creation stamp, or null when unset. */
+  readonly missionStamp: string | null;
   readonly dir: string;
 }
 
@@ -339,6 +341,7 @@ const PANE_FORMAT = [
   "#{@ide_role}",
   "#{@ide_name}",
   "#{@ide_type}",
+  "#{@tmux_ide_mission}",
   "#{pane_current_path}",
   PANE_WIRE_SENTINEL,
 ].join(WIRE_SEPARATOR);
@@ -395,7 +398,7 @@ function parsePaneSnapshot(
   const runtimeIds = new Set<string>();
   for (const line of strictLines(stdout, MAX_DISCOVERED_PANES)) {
     const fields = line.split(WIRE_SEPARATOR);
-    if (fields.length !== 17 || fields[16] !== PANE_WIRE_SENTINEL) {
+    if (fields.length !== 18 || fields[17] !== PANE_WIRE_SENTINEL) {
       throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
     }
     const [
@@ -414,8 +417,10 @@ function parsePaneSnapshot(
       role,
       name,
       type,
+      missionStamp,
       dir,
     ] = fields as [
+      string,
       string,
       string,
       string,
@@ -463,6 +468,7 @@ function parsePaneSnapshot(
       role: nullable(role),
       name: nullable(name),
       type: nullable(type),
+      missionStamp: nullable(missionStamp),
       dir: boundedWireValue(dir, 4_096, false),
     });
   }
@@ -538,6 +544,7 @@ export async function discoverWorkspaceRegistryTerminalInventory(
         role: _role,
         name: _name,
         type: _type,
+        missionStamp: _missionStamp,
         dir: _dir,
         ...row
       }) => row,
@@ -562,6 +569,7 @@ export async function discoverWorkspaceRegistrySemanticPanes(
       role: _role,
       name: _name,
       type: _type,
+      missionStamp: _missionStamp,
       dir: _dir,
       ...row
     }) => row,
@@ -807,6 +815,7 @@ export class NativeTerminalAttachmentRuntime {
               role: _role,
               name: _name,
               type: _type,
+              missionStamp: _missionStamp,
               dir: _dir,
               ...row
             }) => row,

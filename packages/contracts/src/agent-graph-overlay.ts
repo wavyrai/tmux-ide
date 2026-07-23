@@ -68,9 +68,30 @@ export type AgentGraphNodeStatus = z.infer<typeof AgentGraphNodeStatusSchemaZ>;
 export const AgentGraphStatusSourceSchemaZ = z.enum(["authority", "scrape", "unknown"]);
 export type AgentGraphStatusSource = z.infer<typeof AgentGraphStatusSourceSchemaZ>;
 
-/** A relation between two agent windows. */
-export const AgentGraphEdgeKindSchemaZ = z.enum(["spawned", "mission"]);
+/**
+ * A relation between two agent windows.
+ *
+ * `spawned` and `mission` are GROUND TRUTH: derived from durable mission records
+ * (an attempt's spawning actor, or co-membership in a real mission). The two
+ * `inferred-*` kinds are weaker: they are read from durable pane stamps alone
+ * (an `@ide_role` lead→teammate relation, or a shared `@tmux_ide_mission` value)
+ * WITHOUT a backing mission resource. Inferred edges must always render as
+ * visually distinct (dashed, reduced opacity) so they are never confusable with
+ * a ground-truth edge, and the daemon never emits an inferred edge that would
+ * duplicate a real one (see `resources/agent-graph-overlay.ts`).
+ */
+export const AgentGraphEdgeKindSchemaZ = z.enum([
+  "spawned",
+  "mission",
+  "inferred-role",
+  "inferred-mission",
+]);
 export type AgentGraphEdgeKind = z.infer<typeof AgentGraphEdgeKindSchemaZ>;
+
+/** True for the two weaker, stamp-derived edge kinds (never ground truth). */
+export function isInferredEdgeKind(kind: AgentGraphEdgeKind): boolean {
+  return kind === "inferred-role" || kind === "inferred-mission";
+}
 
 /** One agent window on the canvas, keyed by its durable AppWindow id. */
 export const AgentGraphNodeSchemaZ = z

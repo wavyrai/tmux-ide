@@ -36,6 +36,14 @@ export interface ApplicationShellPanePresentationFacts {
   readonly name: string | null;
   readonly type: string | null;
   /**
+   * Durable `@tmux_ide_mission` creation stamp gathered by the IO discovery
+   * layer, or null when the pane carries no mission stamp. Optional so legacy
+   * facts sources that never gathered it keep projecting; the native inventory
+   * backend always populates it. Used ONLY to derive inferred mission-membership
+   * edges — its opaque value never crosses the overlay wire.
+   */
+  readonly missionStamp?: string | null;
+  /**
    * Ground-truth agent facts gathered by the IO discovery layer. All four are
    * optional so pre-inventory (legacy) discovery — which never gathered them —
    * keeps its historical shell-vs-active heuristic instead of collapsing to

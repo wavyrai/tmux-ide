@@ -19,7 +19,7 @@ function overlay(input: {
   readonly edges?: ReadonlyArray<{
     readonly from: string;
     readonly to: string;
-    readonly kind: "spawned" | "mission";
+    readonly kind: "spawned" | "mission" | "inferred-role" | "inferred-mission";
   }>;
   readonly groups?: ReadonlyArray<{
     readonly id: string;
@@ -101,6 +101,26 @@ describe("projectAgentGraphScene", () => {
     const mission = scene.edges.find((edge) => edge.kind === "mission")!;
     // Horizontal edge: the perpendicular bow moves the control point in Y.
     expect(controlY(spawned.path)).toBeGreaterThan(40);
+    expect(controlY(mission.path)).toBeLessThan(40);
+  });
+
+  it("carries inferred edge kinds through to the scene and bows them by family", () => {
+    const scene = projectAgentGraphScene(
+      overlay({
+        nodes: [{ windowId: "window.a" }, { windowId: "window.b" }],
+        edges: [
+          { from: "window.a", to: "window.b", kind: "inferred-role" },
+          { from: "window.a", to: "window.b", kind: "inferred-mission" },
+        ],
+      }),
+      [rect("window.a", A), rect("window.b", B)],
+    );
+    const controlY = (path: string) => Number(path.split("Q ")[1]!.split(" ")[1]);
+    const role = scene.edges.find((edge) => edge.kind === "inferred-role")!;
+    const mission = scene.edges.find((edge) => edge.kind === "inferred-mission")!;
+    // inferred-role bows with the spawn family (+), inferred-mission with the
+    // mission family (-), so the two never coincide on the same axis.
+    expect(controlY(role.path)).toBeGreaterThan(40);
     expect(controlY(mission.path)).toBeLessThan(40);
   });
 

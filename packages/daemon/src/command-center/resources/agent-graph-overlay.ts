@@ -34,6 +34,22 @@ export interface AgentGraphOverlayProjectionInput {
   readonly nowSec: number;
 }
 
+/**
+ * The `@ide_role` values (besides `lead`) that a session lead is inferred to
+ * relate to. Kept in lockstep with the roles {@link isAgentPane} recognizes.
+ */
+const INFERRED_SUBORDINATE_ROLES: ReadonlySet<string> = new Set([
+  "teammate",
+  "planner",
+  "validator",
+  "researcher",
+]);
+
+/** Order-independent key for the unordered window pair an edge connects. */
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`;
+}
+
 /** Narrow the detect status union to the four canvas node states. */
 function nodeStatus(detect: AgentGraphDetectStatus): AgentGraphNodeStatus {
   // `unknown` (never a fresh authority stamp; an unrecognized scrape) settles to
@@ -68,13 +84,22 @@ function groupId(missionId: string): string {
  * the shell projection computes via {@link resolveAgentPresentation} — there is
  * one status decision function, not a second classifier here.
  *
- * Relationships come only from missions (never from `@agent_session_id`): a group
- * is a mission (same identity/label the Missions surface reads), a `spawned` edge
- * is a mission attempt whose starting actor is an agent that is itself running a
- * correlated attempt in the mission, and a `mission` edge is co-membership when
- * no spawn relationship is derivable. Every attempt terminal / session reference
- * is correlated to a durable window id here; a correlation that fails simply
- * yields no edge — a raw pane id, session name, or path is never emitted.
+ * Ground-truth relationships come from missions (never from `@agent_session_id`):
+ * a group is a mission (same identity/label the Missions surface reads), a
+ * `spawned` edge is a mission attempt whose starting actor is an agent that is
+ * itself running a correlated attempt in the mission, and a `mission` edge is
+ * co-membership when no spawn relationship is derivable. Every attempt terminal /
+ * session reference is correlated to a durable window id here; a correlation that
+ * fails simply yields no edge — a raw pane id, session name, or path is never
+ * emitted.
+ *
+ * Two weaker INFERRED edge kinds are derived from durable pane stamps alone, so
+ * relationships are visible without a mission resource: an `inferred-role` edge
+ * links a session `lead` pane to each subordinate-role pane (`@ide_role`), and an
+ * `inferred-mission` edge links panes sharing an `@tmux_ide_mission` stamp. These
+ * always yield to ground truth — an inferred edge is never emitted for a pair a
+ * real edge connects, and an inferred mission already covered by a ground-truth
+ * mission group is dropped. A session with neither stamp stays edge-free.
  *
  * PURE and total: the contract folder {@link projectAgentGraphOverlay} degrades
  * (dedupes, drops dangling edges, enforces caps) so the result always satisfies
@@ -99,6 +124,11 @@ export function projectApplicationShellAgentGraphOverlay(
   // resolve mission targets; only the durable window id (the VALUE) is emitted.
   const windowIdByRuntimePaneId = new Map<string, string>();
   const windowIdBySemanticPaneId = new Map<string, string>();
+  // Durable pane stamps captured per node, keyed by the emitted window id, used
+  // ONLY to derive inferred edges below. The stamp values never leave.
+  const leadWindowIds: string[] = [];
+  const subordinateWindowIds: string[] = [];
+  const missionStampMembers = new Map<string, string[]>();
 
   session.panes.forEach((pane, index) => {
     const terminalSourceId = identities[index]!.resourceId;
@@ -116,6 +146,14 @@ export function projectApplicationShellAgentGraphOverlay(
       label: nodeLabel(presentation.displayName ?? pane.name ?? pane.title),
     });
     nodeWindowIds.add(windowId);
+    if (pane.role === "lead") leadWindowIds.push(windowId);
+    else if (INFERRED_SUBORDINATE_ROLES.has(pane.role ?? "")) subordinateWindowIds.push(windowId);
+    const stamp = (pane.missionStamp ?? "").trim();
+    if (stamp.length > 0) {
+      const members = missionStampMembers.get(stamp);
+      if (members) members.push(windowId);
+      else missionStampMembers.set(stamp, [windowId]);
+    }
   });
 
   const edges: AgentGraphProjectionRelation[] = [];
@@ -183,6 +221,49 @@ export function projectApplicationShellAgentGraphOverlay(
         }
       }
     }
+  }
+
+  // Inferred edges — derived from durable pane stamps alone, never confusable
+  // with the ground-truth edges above. Ground-truth PRECEDENCE: an inferred edge
+  // is never emitted for a window pair a real edge already connects, and an
+  // inferred mission whose members are already a ground-truth mission's members
+  // is dropped entirely. Any inferred pair, once emitted, blocks a second
+  // inferred edge on the same pair so role and mission inference cannot overlap.
+  const groundTruthPairs = new Set<string>();
+  for (const edge of edges) groundTruthPairs.add(pairKey(edge.from, edge.to));
+  const groundTruthGroupMembers = groups.map((group) => new Set(group.memberWindowIds));
+  const emittedInferredPairs = new Set<string>();
+
+  const emitInferred = (from: string, to: string, kind: "inferred-role" | "inferred-mission") => {
+    if (from === to) return;
+    const key = pairKey(from, to);
+    if (groundTruthPairs.has(key) || emittedInferredPairs.has(key)) return;
+    emittedInferredPairs.add(key);
+    edges.push({ from, to, kind });
+  };
+
+  // Role inference: within one session, each `lead` pane relates to every
+  // subordinate-role pane. A session with no lead (or no subordinates) yields
+  // nothing — hand-made sessions correctly stay edge-free.
+  for (const lead of leadWindowIds) {
+    for (const subordinate of subordinateWindowIds)
+      emitInferred(lead, subordinate, "inferred-role");
+  }
+
+  // Mission-stamp inference: panes sharing an `@tmux_ide_mission` value are
+  // co-members. Skip a stamp whose members are already covered by a ground-truth
+  // mission group; otherwise link co-members in a star from the first (sorted)
+  // window, mirroring the ground-truth co-membership fallback.
+  for (const members of missionStampMembers.values()) {
+    const unique = [...new Set(members)];
+    if (unique.length < 2) continue;
+    const alreadyGrouped = groundTruthGroupMembers.some((group) =>
+      unique.every((windowId) => group.has(windowId)),
+    );
+    if (alreadyGrouped) continue;
+    const sorted = [...unique].sort((left, right) => left.localeCompare(right));
+    const lead = sorted[0]!;
+    for (const member of sorted.slice(1)) emitInferred(lead, member, "inferred-mission");
   }
 
   return projectAgentGraphOverlay({ nodes, edges, groups }).overlay;

@@ -2027,6 +2027,18 @@ kbd {
   stroke-dasharray: 5 4;
 }
 
+/*
+ * Inferred edges are derived from pane stamps, not mission ground truth, so they
+ * read as the faintest, finely-dotted relations — never confusable with a solid
+ * spawn edge or the medium-dashed ground-truth mission edge.
+ */
+.agent-graph__edge[data-kind="inferred-role"],
+.agent-graph__edge[data-kind="inferred-mission"] {
+  stroke: color-mix(in srgb, var(--tmux-ide-text-muted) 36%, transparent);
+  stroke-dasharray: 2 4;
+  opacity: 0.7;
+}
+
 .agent-graph__edge[data-attention="true"] {
   stroke: color-mix(in srgb, var(--tmux-ide-status-warning) 78%, transparent);
 }
@@ -2034,6 +2046,12 @@ kbd {
 .agent-graph__arrow {
   stroke: none;
   fill: color-mix(in srgb, var(--tmux-ide-text-muted) 62%, transparent);
+}
+
+.agent-graph__arrow[data-kind="inferred-role"],
+.agent-graph__arrow[data-kind="inferred-mission"] {
+  fill: color-mix(in srgb, var(--tmux-ide-text-muted) 44%, transparent);
+  opacity: 0.7;
 }
 
 .agent-graph__arrow[data-attention="true"] {

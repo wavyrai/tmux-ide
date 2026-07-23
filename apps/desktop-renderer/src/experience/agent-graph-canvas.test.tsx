@@ -95,6 +95,32 @@ describe("AppWindowCanvas agent-graph overlay", () => {
     expect(spawned.length).toBeGreaterThan(0);
   });
 
+  it("draws dashed inferred-role edges tagged by their inferred kind", () => {
+    const root = mount("inferred-role");
+    const edges = root.querySelectorAll('.agent-graph__edge[data-kind="inferred-role"]');
+    expect(edges).toHaveLength(2);
+    // No ground-truth kinds are present in a purely-inferred scene.
+    expect(root.querySelector('.agent-graph__edge[data-kind="spawned"]')).toBeNull();
+    expect(root.querySelector('.agent-graph__edge[data-kind="mission"]')).toBeNull();
+    for (const edge of edges) {
+      expect(edge.getAttribute("d")?.startsWith("M ")).toBe(true);
+      expect(edge.closest(".agent-graph__edge-group")?.getAttribute("data-from")).toBe(
+        "window.lead",
+      );
+    }
+    const arrows = root.querySelectorAll('.agent-graph__arrow[data-kind="inferred-role"]');
+    expect(arrows).toHaveLength(2);
+  });
+
+  it("draws inferred-mission edges without a labeled group frame", () => {
+    const root = mount("inferred-mission");
+    expect(root.querySelectorAll('.agent-graph__edge[data-kind="inferred-mission"]')).toHaveLength(
+      2,
+    );
+    // Inferred membership never paints a ground-truth mission group.
+    expect(root.querySelector(".agent-graph__group")).toBeNull();
+  });
+
   it("gives a blocked node a restrained attention treatment on chrome and its edge", () => {
     const root = mount("blocked-attention");
     const worker = root.querySelector<HTMLElement>(

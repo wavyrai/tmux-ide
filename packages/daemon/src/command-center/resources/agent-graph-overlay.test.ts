@@ -38,6 +38,10 @@ interface FakeAgent {
   readonly semanticPaneId: string;
   readonly name: string;
   readonly state: "working" | "blocked" | "done" | "idle";
+  /** Durable `@ide_role` stamp; defaults to "teammate" when unset. */
+  readonly role?: string;
+  /** Durable `@tmux_ide_mission` stamp; omitted (unstamped) by default. */
+  readonly missionStamp?: string;
 }
 
 function agentPane(agent: FakeAgent, index: number) {
@@ -49,9 +53,10 @@ function agentPane(agent: FakeAgent, index: number) {
     currentCommand: "claude",
     active: index === 0,
     windowPaneCount: 1,
-    role: "teammate" as const,
+    role: agent.role ?? "teammate",
     name: agent.name,
     type: "agent" as const,
+    missionStamp: agent.missionStamp ?? null,
     agentStateRaw: `${agent.state}:${NOW}`,
     agentScrapeState: null,
   };
@@ -245,6 +250,168 @@ describe("projectApplicationShellAgentGraphOverlay", () => {
     // The shell pane is not an agent -> no node -> the attempt cannot form a group.
     expect(Object.keys(overlay.nodes)).toHaveLength(0);
     expect(overlay.groups).toEqual([]);
+  });
+
+  it("derives inferred-role edges from a session lead to each subordinate role", () => {
+    const LEAD: FakeAgent = {
+      runtimePaneId: "%20",
+      semanticPaneId: "pane.lead",
+      name: "Lead",
+      state: "working",
+      role: "lead",
+    };
+    const PLANNER: FakeAgent = {
+      runtimePaneId: "%21",
+      semanticPaneId: "pane.planner",
+      name: "Planner",
+      state: "working",
+      role: "planner",
+    };
+    const TEAMMATE: FakeAgent = {
+      runtimePaneId: "%22",
+      semanticPaneId: "pane.mate",
+      name: "Mate",
+      state: "working",
+      role: "teammate",
+    };
+    const agents = [LEAD, PLANNER, TEAMMATE];
+    const overlay = projectApplicationShellAgentGraphOverlay({
+      session: fakeSession(agents),
+      appWindows: appWindowsFor(agents),
+      missionSnapshot: null,
+      nowSec: NOW,
+    });
+    expect(AgentGraphOverlaySchemaZ.safeParse(overlay).success).toBe(true);
+    const leadWindow = windowIdFor("pane.lead");
+    // No mission -> no groups, but role stamps yield dashed inferred edges.
+    expect(overlay.groups).toEqual([]);
+    expect(overlay.edges.every((edge) => edge.kind === "inferred-role")).toBe(true);
+    expect(overlay.edges.every((edge) => edge.from === leadWindow)).toBe(true);
+    expect(overlay.edges.map((edge) => edge.to).sort()).toEqual(
+      [windowIdFor("pane.planner"), windowIdFor("pane.mate")].sort(),
+    );
+  });
+
+  it("infers no edges for a hand-made session with a lead but no subordinates", () => {
+    const LEAD: FakeAgent = {
+      runtimePaneId: "%20",
+      semanticPaneId: "pane.lead",
+      name: "Lead",
+      state: "working",
+      role: "lead",
+    };
+    const overlay = projectApplicationShellAgentGraphOverlay({
+      session: fakeSession([LEAD]),
+      appWindows: appWindowsFor([LEAD]),
+      missionSnapshot: null,
+      nowSec: NOW,
+    });
+    expect(Object.keys(overlay.nodes)).toHaveLength(1);
+    expect(overlay.edges).toEqual([]);
+    expect(overlay.groups).toEqual([]);
+  });
+
+  it("derives inferred-mission edges from a shared mission stamp without a mission resource", () => {
+    const A: FakeAgent = {
+      runtimePaneId: "%20",
+      semanticPaneId: "pane.a",
+      name: "Alpha",
+      state: "working",
+      role: "teammate",
+      missionStamp: "mission.secret-token",
+    };
+    const B: FakeAgent = {
+      runtimePaneId: "%21",
+      semanticPaneId: "pane.b",
+      name: "Bravo",
+      state: "working",
+      role: "teammate",
+      missionStamp: "mission.secret-token",
+    };
+    const agents = [A, B];
+    const overlay = projectApplicationShellAgentGraphOverlay({
+      session: fakeSession(agents),
+      appWindows: appWindowsFor(agents),
+      missionSnapshot: null,
+      nowSec: NOW,
+    });
+    expect(AgentGraphOverlaySchemaZ.safeParse(overlay).success).toBe(true);
+    // No lead -> no role edges; the shared stamp links the co-members.
+    expect(overlay.edges).toHaveLength(1);
+    expect(overlay.edges[0]!.kind).toBe("inferred-mission");
+    const [aWindow, bWindow] = [windowIdFor("pane.a"), windowIdFor("pane.b")];
+    expect([overlay.edges[0]!.from, overlay.edges[0]!.to].sort()).toEqual(
+      [aWindow, bWindow].sort(),
+    );
+    // The opaque stamp value is derivation-only and never crosses the wire.
+    expect(JSON.stringify(overlay)).not.toContain("secret-token");
+  });
+
+  it("suppresses an inferred-role edge that a ground-truth mission edge already draws", async () => {
+    const LEAD: FakeAgent = {
+      runtimePaneId: "%11",
+      semanticPaneId: "pane.pm",
+      name: "Fable",
+      state: "working",
+      role: "lead",
+    };
+    const SUBORDINATE: FakeAgent = {
+      runtimePaneId: "%12",
+      semanticPaneId: "pane.sub",
+      name: "Codex",
+      state: "working",
+      role: "teammate",
+    };
+    // A real mission whose spawned edge is exactly lead -> subordinate.
+    const snapshot = await missionWithAttempts([
+      { agent: "fable", terminal: "%11", actor: { type: "user" } },
+      { agent: "codex", terminal: "%12", actor: { type: "agent", id: "fable" } },
+    ]);
+    const overlay = projectApplicationShellAgentGraphOverlay({
+      session: fakeSession([LEAD, SUBORDINATE]),
+      appWindows: appWindowsFor([LEAD, SUBORDINATE]),
+      missionSnapshot: snapshot,
+      nowSec: NOW,
+    });
+    // Ground truth wins: the pair carries only the spawned edge, no inferred twin.
+    expect(overlay.edges).toEqual([
+      { from: windowIdFor("pane.pm"), to: windowIdFor("pane.sub"), kind: "spawned" },
+    ]);
+  });
+
+  it("drops an inferred mission already represented by a ground-truth mission group", async () => {
+    const A: FakeAgent = {
+      runtimePaneId: "%11",
+      semanticPaneId: "pane.pm",
+      name: "Fable",
+      state: "working",
+      role: "teammate",
+      missionStamp: "mission.shared",
+    };
+    const B: FakeAgent = {
+      runtimePaneId: "%12",
+      semanticPaneId: "pane.sub",
+      name: "Codex",
+      state: "working",
+      role: "teammate",
+      missionStamp: "mission.shared",
+    };
+    // Both correlate into one real mission (co-membership, no spawner).
+    const snapshot = await missionWithAttempts([
+      { agent: "fable", terminal: "%11", actor: { type: "user" } },
+      { agent: "codex", terminal: "%12", actor: { type: "user" } },
+    ]);
+    const overlay = projectApplicationShellAgentGraphOverlay({
+      session: fakeSession([A, B]),
+      appWindows: appWindowsFor([A, B]),
+      missionSnapshot: snapshot,
+      nowSec: NOW,
+    });
+    // The ground-truth group covers both windows, so the inferred mission is
+    // dropped entirely: exactly one co-membership edge, of the ground-truth kind.
+    expect(overlay.groups).toHaveLength(1);
+    expect(overlay.edges).toHaveLength(1);
+    expect(overlay.edges[0]!.kind).toBe("mission");
   });
 
   it("caps mission groups with honest truncation", async () => {

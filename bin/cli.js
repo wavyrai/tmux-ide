@@ -3400,7 +3400,12 @@ var init_agent_graph_overlay = __esm({
     ).refine((value) => !RESERVED_RECORD_KEYS3.has(value), "reserved record key is not allowed");
     AgentGraphNodeStatusSchemaZ = z19.enum(["working", "blocked", "done", "idle"]);
     AgentGraphStatusSourceSchemaZ = z19.enum(["authority", "scrape", "unknown"]);
-    AgentGraphEdgeKindSchemaZ = z19.enum(["spawned", "mission"]);
+    AgentGraphEdgeKindSchemaZ = z19.enum([
+      "spawned",
+      "mission",
+      "inferred-role",
+      "inferred-mission"
+    ]);
     AgentGraphNodeSchemaZ = z19.object({
       windowId: AppWindowIdSchemaZ,
       status: AgentGraphNodeStatusSchemaZ,
@@ -27164,7 +27169,7 @@ function parsePaneSnapshot(stdout, expected) {
   const runtimeIds = /* @__PURE__ */ new Set();
   for (const line of strictLines2(stdout, MAX_DISCOVERED_PANES)) {
     const fields = line.split(WIRE_SEPARATOR);
-    if (fields.length !== 17 || fields[16] !== PANE_WIRE_SENTINEL) {
+    if (fields.length !== 18 || fields[17] !== PANE_WIRE_SENTINEL) {
       throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
     }
     const [
@@ -27183,6 +27188,7 @@ function parsePaneSnapshot(stdout, expected) {
       role,
       name,
       type,
+      missionStamp,
       dir
     ] = fields;
     if (sessionName !== expected.name || sessionId !== expected.id || !RUNTIME_WINDOW_ID.test(windowId) || !RUNTIME_PANE_ID.test(runtimePaneId) || runtimeIds.has(runtimePaneId) || !["0", "1"].includes(windowActive) || !["0", "1"].includes(paneActive)) {
@@ -27205,6 +27211,7 @@ function parsePaneSnapshot(stdout, expected) {
       role: nullable2(role),
       name: nullable2(name),
       type: nullable2(type),
+      missionStamp: nullable2(missionStamp),
       dir: boundedWireValue(dir, 4096, false)
     });
   }
@@ -27265,6 +27272,7 @@ async function discoverWorkspaceRegistryTerminalInventory(registry, runner) {
         role: _role,
         name: _name,
         type: _type,
+        missionStamp: _missionStamp,
         dir: _dir,
         ...row
       }) => row
@@ -27350,6 +27358,7 @@ var init_native_runtime = __esm({
       "#{@ide_role}",
       "#{@ide_name}",
       "#{@ide_type}",
+      "#{@tmux_ide_mission}",
       "#{pane_current_path}",
       PANE_WIRE_SENTINEL
     ].join(WIRE_SEPARATOR);
@@ -27461,6 +27470,7 @@ var init_native_runtime = __esm({
                 role: _role,
                 name: _name,
                 type: _type,
+                missionStamp: _missionStamp,
                 dir: _dir,
                 ...row
               }) => row
@@ -31851,6 +31861,9 @@ var init_desktop_missions2 = __esm({
 
 // packages/daemon/src/command-center/resources/agent-graph-overlay.ts
 import { createHash as createHash13 } from "node:crypto";
+function pairKey(a, b) {
+  return a < b ? `${a}\0${b}` : `${b}\0${a}`;
+}
 function nodeStatus(detect2) {
   return detect2 === "unknown" ? "idle" : detect2;
 }
@@ -31879,6 +31892,9 @@ function projectApplicationShellAgentGraphOverlay(input) {
   const nodeWindowIds = /* @__PURE__ */ new Set();
   const windowIdByRuntimePaneId = /* @__PURE__ */ new Map();
   const windowIdBySemanticPaneId = /* @__PURE__ */ new Map();
+  const leadWindowIds = [];
+  const subordinateWindowIds = [];
+  const missionStampMembers = /* @__PURE__ */ new Map();
   session.panes.forEach((pane, index) => {
     const terminalSourceId = identities[index].resourceId;
     const windowId = windowIdByTerminalSourceId.get(terminalSourceId);
@@ -31895,6 +31911,14 @@ function projectApplicationShellAgentGraphOverlay(input) {
       label: nodeLabel(presentation.displayName ?? pane.name ?? pane.title)
     });
     nodeWindowIds.add(windowId);
+    if (pane.role === "lead") leadWindowIds.push(windowId);
+    else if (INFERRED_SUBORDINATE_ROLES.has(pane.role ?? "")) subordinateWindowIds.push(windowId);
+    const stamp = (pane.missionStamp ?? "").trim();
+    if (stamp.length > 0) {
+      const members = missionStampMembers.get(stamp);
+      if (members) members.push(windowId);
+      else missionStampMembers.set(stamp, [windowId]);
+    }
   });
   const edges = [];
   const groups = [];
@@ -31949,13 +31973,46 @@ function projectApplicationShellAgentGraphOverlay(input) {
       }
     }
   }
+  const groundTruthPairs = /* @__PURE__ */ new Set();
+  for (const edge of edges) groundTruthPairs.add(pairKey(edge.from, edge.to));
+  const groundTruthGroupMembers = groups.map((group) => new Set(group.memberWindowIds));
+  const emittedInferredPairs = /* @__PURE__ */ new Set();
+  const emitInferred = (from, to, kind) => {
+    if (from === to) return;
+    const key = pairKey(from, to);
+    if (groundTruthPairs.has(key) || emittedInferredPairs.has(key)) return;
+    emittedInferredPairs.add(key);
+    edges.push({ from, to, kind });
+  };
+  for (const lead of leadWindowIds) {
+    for (const subordinate of subordinateWindowIds)
+      emitInferred(lead, subordinate, "inferred-role");
+  }
+  for (const members of missionStampMembers.values()) {
+    const unique = [...new Set(members)];
+    if (unique.length < 2) continue;
+    const alreadyGrouped = groundTruthGroupMembers.some(
+      (group) => unique.every((windowId) => group.has(windowId))
+    );
+    if (alreadyGrouped) continue;
+    const sorted = [...unique].sort((left, right) => left.localeCompare(right));
+    const lead = sorted[0];
+    for (const member of sorted.slice(1)) emitInferred(lead, member, "inferred-mission");
+  }
   return projectAgentGraphOverlay({ nodes, edges, groups }).overlay;
 }
+var INFERRED_SUBORDINATE_ROLES;
 var init_agent_graph_overlay2 = __esm({
   "packages/daemon/src/command-center/resources/agent-graph-overlay.ts"() {
     "use strict";
     init_src();
     init_application_shell2();
+    INFERRED_SUBORDINATE_ROLES = /* @__PURE__ */ new Set([
+      "teammate",
+      "planner",
+      "validator",
+      "researcher"
+    ]);
   }
 });
 
