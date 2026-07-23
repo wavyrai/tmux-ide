@@ -19,9 +19,16 @@ import {
  * contract schema at the boundary, and drops any response that resolves against
  * a superseded generation. It subscribes with an empty workspace set — the only
  * subscription that receives the workspace-agnostic `fleet.changed` invalidation
- * — and re-fetches on `fleet.changed` (composition OR ground-truth agent status)
- * and on `workspaces.changed` (a promotion added a workspace-backed session).
- * The daemon endpoint, owner credential, and physical socket never reach here.
+ * — and re-fetches on `fleet.changed` and on `workspaces.changed` (a promotion
+ * added a workspace-backed session). `fleet.changed` reaches this store for BOTH
+ * kinds of change: fleet COMPOSITION (the daemon's adopted-session poller) AND a
+ * ground-truth agent-status transition — the latter arrives at the daemon as a
+ * session-scoped `agent-status.changed` frame that the desktop broker folds into
+ * a fleet-wide `fleet.changed` (see the daemon-resource-broker `#projectServerFrame`
+ * fold; the daemon itself never emits `fleet.changed` on a status flip). So a
+ * pane `@agent_state` flip refreshes this store's status glyphs without opening
+ * the session and without a manual refetch. The daemon endpoint, owner
+ * credential, and physical socket never reach here.
  */
 
 export interface DesktopFleetCatalogSnapshot {

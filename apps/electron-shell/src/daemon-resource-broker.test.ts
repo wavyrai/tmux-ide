@@ -1884,4 +1884,37 @@ describe("Electron main daemon workspace read resources", () => {
     expect(JSON.stringify(events)).not.toMatch(/durable-docs|sessionName/iu);
     if (result.status === "subscribed") result.unsubscribe();
   });
+
+  it("folds agent-status.changed into fleet.changed for an empty-set (fleet catalog) subscription", async () => {
+    // The fleet-catalog store subscribes with an empty workspace set. It receives
+    // NO application-shell.changed (those are workspace-filtered), but MUST still
+    // receive the fleet-wide fleet.changed folded from a session-scoped
+    // agent-status.changed — this is the whole status-push path for the sidebar.
+    const socket = new FakeSocket();
+    const events: DesktopDaemonEvent[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async () => json(WORKSPACE_CATALOG),
+      createWebSocket: () => socket,
+    });
+    const result = await broker.subscribe([], (event) => events.push(event));
+    expect(result.status).toBe("subscribed");
+    socket.emit("open");
+    socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
+    events.length = 0;
+
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "agent-status.changed", sessionName: "durable-docs" }),
+    );
+
+    // The empty-set subscription sees the fleet invalidation but never a
+    // workspace-scoped application-shell.changed, and no raw session name leaks.
+    expect(events).toEqual([{ type: "fleet.changed" }]);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: "application-shell.changed" }),
+    );
+    expect(JSON.stringify(events)).not.toMatch(/durable-docs|sessionName/iu);
+    if (result.status === "subscribed") result.unsubscribe();
+  });
 });
