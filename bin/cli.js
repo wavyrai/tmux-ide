@@ -25163,8 +25163,8 @@ function sameBinding(state, binding, instanceId) {
 function sameLinkedWindow(left, right) {
   return left.source.windowId === right.source.windowId;
 }
-function runtimePaneKey(resolution) {
-  return resolution.source.runtimePaneId;
+function windowOwnerKey(resolution) {
+  return resolution.source.windowId;
 }
 function exactViewSessionTarget(plan) {
   return `=${plan.identity.viewSessionName}`;
@@ -25205,7 +25205,7 @@ var init_lease_manager = __esm({
       #leases = /* @__PURE__ */ new Map();
       #requests = /* @__PURE__ */ new Map();
       #interactiveOwners = /* @__PURE__ */ new Map();
-      #interactiveRuntimeOwners = /* @__PURE__ */ new Map();
+      #interactiveWindowOwners = /* @__PURE__ */ new Map();
       #operationTail = Promise.resolve();
       constructor(options) {
         this.#instanceId = BindingIdSchemaZ2.parse(options.daemonInstanceId);
@@ -25243,12 +25243,12 @@ var init_lease_manager = __esm({
           const resolution = await this.#catalog.resolve(parsedRequest.target);
           await this.#expireAndCleanup(this.#now());
           const targetKey = semanticPaneTargetKey(parsedRequest.target);
-          const runtimeKey = runtimePaneKey(resolution);
+          const windowKey = windowOwnerKey(resolution);
           if (parsedRequest.viewerMode === "interactive") {
-            if (this.#interactiveOwners.has(targetKey) || this.#interactiveRuntimeOwners.has(runtimeKey)) {
+            if (this.#interactiveOwners.has(targetKey) || this.#interactiveWindowOwners.has(windowKey)) {
               throw new AttachmentLeaseError(
                 "interactive-viewer-conflict",
-                "The resolved runtime pane already has an interactive input owner."
+                "The resolved runtime window already has an interactive input owner."
               );
             }
           }
@@ -25275,7 +25275,7 @@ var init_lease_manager = __esm({
             ticketDigest: hashTicket(redemptionTicket),
             ticketExpiresAt: issuedAt + this.#ticketTtlMs,
             resolution,
-            interactiveRuntimeKey: parsedRequest.viewerMode === "interactive" ? runtimeKey : null,
+            interactiveWindowKey: parsedRequest.viewerMode === "interactive" ? windowKey : null,
             viewGeneration: 0,
             plan
           };
@@ -25283,7 +25283,7 @@ var init_lease_manager = __esm({
           this.#requests.set(requestId, leaseId);
           if (parsedRequest.viewerMode === "interactive") {
             this.#interactiveOwners.set(targetKey, leaseId);
-            this.#interactiveRuntimeOwners.set(runtimeKey, leaseId);
+            this.#interactiveWindowOwners.set(windowKey, leaseId);
           }
           this.#audit("issued", state, issuedAt);
           const issued = { descriptor: this.#descriptor(state) };
@@ -25670,14 +25670,14 @@ var init_lease_manager = __esm({
         });
       }
       async #applyResolution(state, resolution) {
-        const oldRuntimeKey = state.interactiveRuntimeKey;
-        const newRuntimeKey = runtimePaneKey(resolution);
-        if (oldRuntimeKey !== null && oldRuntimeKey !== newRuntimeKey) {
-          const owner = this.#interactiveRuntimeOwners.get(newRuntimeKey);
+        const oldWindowKey = state.interactiveWindowKey;
+        const newWindowKey = windowOwnerKey(resolution);
+        if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
+          const owner = this.#interactiveWindowOwners.get(newWindowKey);
           if (owner !== void 0 && owner !== state.leaseId) {
             throw new AttachmentLeaseError(
               "interactive-viewer-conflict",
-              "The rebound runtime pane already has an interactive input owner."
+              "The rebound runtime window already has an interactive input owner."
             );
           }
         }
@@ -25705,12 +25705,12 @@ var init_lease_manager = __esm({
         state.resolution = resolution;
         state.viewGeneration = nextViewGeneration;
         state.plan = nextPlan;
-        if (oldRuntimeKey !== null && oldRuntimeKey !== newRuntimeKey) {
-          if (this.#interactiveRuntimeOwners.get(oldRuntimeKey) === state.leaseId) {
-            this.#interactiveRuntimeOwners.delete(oldRuntimeKey);
+        if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
+          if (this.#interactiveWindowOwners.get(oldWindowKey) === state.leaseId) {
+            this.#interactiveWindowOwners.delete(oldWindowKey);
           }
-          this.#interactiveRuntimeOwners.set(newRuntimeKey, state.leaseId);
-          state.interactiveRuntimeKey = newRuntimeKey;
+          this.#interactiveWindowOwners.set(newWindowKey, state.leaseId);
+          state.interactiveWindowKey = newWindowKey;
         }
         if (changed) this.#audit("rebound", state, this.#now());
       }
@@ -25751,10 +25751,10 @@ var init_lease_manager = __esm({
         if (this.#interactiveOwners.get(targetKey) === state.leaseId) {
           this.#interactiveOwners.delete(targetKey);
         }
-        if (state.interactiveRuntimeKey !== null && this.#interactiveRuntimeOwners.get(state.interactiveRuntimeKey) === state.leaseId) {
-          this.#interactiveRuntimeOwners.delete(state.interactiveRuntimeKey);
+        if (state.interactiveWindowKey !== null && this.#interactiveWindowOwners.get(state.interactiveWindowKey) === state.leaseId) {
+          this.#interactiveWindowOwners.delete(state.interactiveWindowKey);
         }
-        state.interactiveRuntimeKey = null;
+        state.interactiveWindowKey = null;
         state.ticketDigest?.fill(0);
         state.ticketDigest = null;
         state.ticketExpiresAt = null;

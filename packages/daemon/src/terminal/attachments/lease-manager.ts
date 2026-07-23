@@ -248,8 +248,8 @@ interface LeaseState {
   ticketDigest: Buffer | null;
   ticketExpiresAt: number | null;
   resolution: SemanticPaneResolution;
-  /** Exact global tmux pane identity currently reserved by this lease. */
-  interactiveRuntimeKey: string | null;
+  /** Runtime window (`@window_id`) whose interactive input this lease reserves. */
+  interactiveWindowKey: string | null;
   viewGeneration: number;
   plan: GroupedTmuxAttachmentPlan;
 }
@@ -307,17 +307,18 @@ function sameLinkedWindow(left: SemanticPaneResolution, right: SemanticPaneResol
   return left.source.windowId === right.source.windowId;
 }
 
-function runtimePaneKey(resolution: SemanticPaneResolution): string {
-  // `%pane_id` is server-global and remains stable when a window is linked
-  // into another session. Including `$session_id` would permit two writers.
-  //
-  // m41 attach-2 caveat: interactive ownership is still keyed per runtime pane,
-  // but attachment now links the WHOLE window. Two interactive attachments that
-  // target different panes of the same window therefore do not yet register as
-  // conflicting even though they share one linked window. attach-3 re-keys
-  // interactive ownership to the window id (`resolution.source.windowStamp` /
-  // `windowId`) to restore window-granular exclusivity.
-  return resolution.source.runtimePaneId;
+function windowOwnerKey(resolution: SemanticPaneResolution): string {
+  // Interactive input ownership is exclusive per runtime WINDOW, not per pane
+  // (m41 attach-3). Attachment links the whole window, so two interactive
+  // attachments that target different panes of one window must conflict, while
+  // attachments on different windows of a session must not. `@window_id` is
+  // server-global and stays stable when a window is linked into another session
+  // (like `%pane_id`), so a session alias never rotates ownership. This keys on
+  // the same identity as `sameLinkedWindow`, unifying ownership and the view
+  // generation on one window id. `windowStamp` is deliberately not used: it is
+  // null for a legacy single-pane window and only proves durability, whereas
+  // `windowId` is always present and uniquely names one live window this run.
+  return resolution.source.windowId;
 }
 
 function exactViewSessionTarget(plan: GroupedTmuxAttachmentPlan): `=${string}` {
@@ -344,7 +345,7 @@ export class AttachmentLeaseManager {
   readonly #leases = new Map<string, LeaseState>();
   readonly #requests = new Map<string, string>();
   readonly #interactiveOwners = new Map<string, string>();
-  readonly #interactiveRuntimeOwners = new Map<string, string>();
+  readonly #interactiveWindowOwners = new Map<string, string>();
   #operationTail: Promise<void> = Promise.resolve();
 
   constructor(options: AttachmentLeaseManagerOptions) {
@@ -388,15 +389,15 @@ export class AttachmentLeaseManager {
       const resolution = await this.#catalog.resolve(parsedRequest.target);
       await this.#expireAndCleanup(this.#now());
       const targetKey = semanticPaneTargetKey(parsedRequest.target);
-      const runtimeKey = runtimePaneKey(resolution);
+      const windowKey = windowOwnerKey(resolution);
       if (parsedRequest.viewerMode === "interactive") {
         if (
           this.#interactiveOwners.has(targetKey) ||
-          this.#interactiveRuntimeOwners.has(runtimeKey)
+          this.#interactiveWindowOwners.has(windowKey)
         ) {
           throw new AttachmentLeaseError(
             "interactive-viewer-conflict",
-            "The resolved runtime pane already has an interactive input owner.",
+            "The resolved runtime window already has an interactive input owner.",
           );
         }
       }
@@ -424,7 +425,7 @@ export class AttachmentLeaseManager {
         ticketDigest: hashTicket(redemptionTicket),
         ticketExpiresAt: issuedAt + this.#ticketTtlMs,
         resolution,
-        interactiveRuntimeKey: parsedRequest.viewerMode === "interactive" ? runtimeKey : null,
+        interactiveWindowKey: parsedRequest.viewerMode === "interactive" ? windowKey : null,
         viewGeneration: 0,
         plan,
       };
@@ -432,7 +433,7 @@ export class AttachmentLeaseManager {
       this.#requests.set(requestId, leaseId);
       if (parsedRequest.viewerMode === "interactive") {
         this.#interactiveOwners.set(targetKey, leaseId);
-        this.#interactiveRuntimeOwners.set(runtimeKey, leaseId);
+        this.#interactiveWindowOwners.set(windowKey, leaseId);
       }
       this.#audit("issued", state, issuedAt);
       const issued = { descriptor: this.#descriptor(state) } as IssuedAttachmentLease;
@@ -869,14 +870,19 @@ export class AttachmentLeaseManager {
   }
 
   async #applyResolution(state: LeaseState, resolution: SemanticPaneResolution): Promise<void> {
-    const oldRuntimeKey = state.interactiveRuntimeKey;
-    const newRuntimeKey = runtimePaneKey(resolution);
-    if (oldRuntimeKey !== null && oldRuntimeKey !== newRuntimeKey) {
-      const owner = this.#interactiveRuntimeOwners.get(newRuntimeKey);
+    const oldWindowKey = state.interactiveWindowKey;
+    const newWindowKey = windowOwnerKey(resolution);
+    // Ownership only moves when the lease's runtime window changes. Pane churn
+    // inside one window keeps the same window key, so it rebinds the plan and
+    // bumps `bindingGeneration` (below) without touching window ownership. This
+    // key equality tracks `sameLinkedWindow`, so the migration and the view
+    // rotation always fire together on a genuine window relink.
+    if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
+      const owner = this.#interactiveWindowOwners.get(newWindowKey);
       if (owner !== undefined && owner !== state.leaseId) {
         throw new AttachmentLeaseError(
           "interactive-viewer-conflict",
-          "The rebound runtime pane already has an interactive input owner.",
+          "The rebound runtime window already has an interactive input owner.",
         );
       }
     }
@@ -909,12 +915,12 @@ export class AttachmentLeaseManager {
     state.resolution = resolution;
     state.viewGeneration = nextViewGeneration;
     state.plan = nextPlan;
-    if (oldRuntimeKey !== null && oldRuntimeKey !== newRuntimeKey) {
-      if (this.#interactiveRuntimeOwners.get(oldRuntimeKey) === state.leaseId) {
-        this.#interactiveRuntimeOwners.delete(oldRuntimeKey);
+    if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
+      if (this.#interactiveWindowOwners.get(oldWindowKey) === state.leaseId) {
+        this.#interactiveWindowOwners.delete(oldWindowKey);
       }
-      this.#interactiveRuntimeOwners.set(newRuntimeKey, state.leaseId);
-      state.interactiveRuntimeKey = newRuntimeKey;
+      this.#interactiveWindowOwners.set(newWindowKey, state.leaseId);
+      state.interactiveWindowKey = newWindowKey;
     }
     if (changed) this.#audit("rebound", state, this.#now());
   }
@@ -964,12 +970,12 @@ export class AttachmentLeaseManager {
       this.#interactiveOwners.delete(targetKey);
     }
     if (
-      state.interactiveRuntimeKey !== null &&
-      this.#interactiveRuntimeOwners.get(state.interactiveRuntimeKey) === state.leaseId
+      state.interactiveWindowKey !== null &&
+      this.#interactiveWindowOwners.get(state.interactiveWindowKey) === state.leaseId
     ) {
-      this.#interactiveRuntimeOwners.delete(state.interactiveRuntimeKey);
+      this.#interactiveWindowOwners.delete(state.interactiveWindowKey);
     }
-    state.interactiveRuntimeKey = null;
+    state.interactiveWindowKey = null;
     state.ticketDigest?.fill(0);
     state.ticketDigest = null;
     state.ticketExpiresAt = null;

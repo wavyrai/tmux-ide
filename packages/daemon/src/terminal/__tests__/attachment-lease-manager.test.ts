@@ -23,6 +23,7 @@ import {
 const DAEMON_ID = "daemon-instance-a";
 const PROJECT_ID = "project-alpha";
 const target = { workspaceName: "workspace.alpha", semanticPaneId: "pane.worker" };
+const siblingTarget = { workspaceName: target.workspaceName, semanticPaneId: "pane.sibling" };
 
 function uuid(index: number): string {
   return `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
@@ -51,6 +52,13 @@ function row(overrides: Record<string, unknown> = {}) {
     sessionWindowCount: 2,
     ...overrides,
   };
+}
+
+// One pane of a durable-stamped, multi-pane window (@2). A multi-pane window is
+// only resolvable once every pane carries the same `windowStamp` and reports the
+// window's live pane count (m41 attach-1), so the default is a two-pane window.
+function stampedRow(overrides: Record<string, unknown> = {}) {
+  return row({ windowStamp: "window.alpha", windowPaneCount: 2, ...overrides });
 }
 
 function planFor(
@@ -335,6 +343,103 @@ describe("AttachmentLeaseManager", () => {
     ]);
     rows = [row()];
     await expect(manager.issue(request(), context(3))).resolves.toBeDefined();
+  });
+
+  it("conflicts interactive ownership across different panes of one linked window", async () => {
+    const rows = [
+      stampedRow(),
+      stampedRow({ semanticPaneId: siblingTarget.semanticPaneId, runtimePaneId: "%4" }),
+    ];
+    const { manager } = rig({ discover: () => rows });
+    const worker = await manager.issue(request("interactive"), context(1));
+    // A different pane (%4) of the same runtime window (@2): window-granular
+    // ownership rejects it even though the two panes never share a pane id.
+    await errorCode(
+      manager.issue(request("interactive", siblingTarget), context(2)),
+      "interactive-viewer-conflict",
+    );
+    // Read-only viewers never contend for input, even on a sibling pane.
+    await expect(
+      manager.issue(request("read-only", siblingTarget), context(3)),
+    ).resolves.toBeDefined();
+    // Releasing the interactive owner frees the whole window for the sibling.
+    await manager.release(worker.descriptor.leaseId, binding(worker.descriptor.requestId));
+    await expect(
+      manager.issue(request("interactive", siblingTarget), context(4)),
+    ).resolves.toBeDefined();
+  });
+
+  it("allows interactive ownership on distinct windows of one session", async () => {
+    const rows = [
+      row(),
+      row({ semanticPaneId: siblingTarget.semanticPaneId, windowId: "@5", runtimePaneId: "%4" }),
+    ];
+    const { manager } = rig({ discover: () => rows });
+    await expect(manager.issue(request("interactive"), context(1))).resolves.toBeDefined();
+    await expect(
+      manager.issue(request("interactive", siblingTarget), context(2)),
+    ).resolves.toBeDefined();
+    expect(manager.snapshot().leases).toHaveLength(2);
+  });
+
+  it("keeps window ownership through in-window pane churn while bindingGeneration tracks the rebind", async () => {
+    let rows = [
+      stampedRow(),
+      stampedRow({ semanticPaneId: siblingTarget.semanticPaneId, runtimePaneId: "%4" }),
+    ];
+    const { manager } = rig({ discover: () => rows });
+    const worker = await manager.issue(request("interactive"), context(1));
+    const redeemed = await manager.redeem(
+      worker.redemptionTicket,
+      binding(worker.descriptor.requestId),
+    );
+    expect(redeemed.descriptor.bindingGeneration).toBe(0);
+    expect(redeemed.descriptor.viewGeneration).toBe(0);
+
+    // A third pane joins window @2. The worker pane (%3) is unchanged, but the
+    // window proof (pane count) churns: bindingGeneration bumps, the linked
+    // window is the same so viewGeneration holds, and ownership stays on @2.
+    rows = [
+      stampedRow({ windowPaneCount: 3 }),
+      stampedRow({
+        semanticPaneId: siblingTarget.semanticPaneId,
+        runtimePaneId: "%4",
+        windowPaneCount: 3,
+      }),
+      stampedRow({ semanticPaneId: "pane.third", runtimePaneId: "%5", windowPaneCount: 3 }),
+    ];
+    const renewed = await manager.renew(
+      worker.descriptor.leaseId,
+      binding(worker.descriptor.requestId),
+    );
+    expect(renewed.descriptor.bindingGeneration).toBe(1);
+    expect(renewed.descriptor.viewGeneration).toBe(0);
+    await errorCode(
+      manager.issue(request("interactive", siblingTarget), context(2)),
+      "interactive-viewer-conflict",
+    );
+  });
+
+  it("reconciles an orphaned attachment view whose source window holds multiple panes", async () => {
+    const executor = new FakeViewExecutor();
+    const rows = [
+      stampedRow(),
+      stampedRow({ semanticPaneId: siblingTarget.semanticPaneId, runtimePaneId: "%4" }),
+    ];
+    const first = rig({ executor, discover: () => rows });
+    const issued = await first.manager.issue(request("read-only"), context(1));
+    const issuedPlan = planFor(issued.descriptor, stampedRow());
+    // A daemon restart drops the lease but leaves its marked view linking the
+    // whole (multi-pane) source window — still exactly one linked window id.
+    executor.seed(issuedPlan);
+    const restarted = rig({ daemonInstanceId: "daemon-instance-b", executor, discover: () => rows });
+    const result = await restarted.manager.reconcileOrphanViews();
+    expect(result).toEqual({
+      cleaned: [{ attachmentId: issued.descriptor.leaseId, generation: 0 }],
+      failed: [],
+      skippedCount: 0,
+    });
+    expect(executor.views.has(issuedPlan.identity.viewSessionName)).toBe(false);
   });
 
   it("serializes concurrent redeem and release operations without ticket or cleanup replay", async () => {
