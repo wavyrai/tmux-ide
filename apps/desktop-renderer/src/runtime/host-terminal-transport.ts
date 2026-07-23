@@ -4,7 +4,10 @@ import {
   type HostCapabilities,
 } from "@tmux-ide/contracts";
 
-import { createNativeTerminalWebSocketTransport } from "../terminal/native-terminal-websocket-transport.ts";
+import {
+  NativeTerminalIssueError,
+  createNativeTerminalWebSocketTransport,
+} from "../terminal/native-terminal-websocket-transport.ts";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 
 /**
@@ -21,9 +24,19 @@ export function createHostNativeTerminalTransport(
       const result = TerminalAttachmentIssueResultSchemaZ.parse(
         await host.daemon.issueTerminalAttachment(request),
       );
-      if (result.status === "error") throw new Error(result.error.reason);
+      if (result.status === "error") {
+        throw new NativeTerminalIssueError(
+          result.error.code,
+          result.error.reason,
+          result.error.retryable,
+        );
+      }
       if (result.descriptor.daemonInstanceId !== daemon.instanceId) {
-        throw new Error("The terminal attachment belongs to another daemon generation.");
+        throw new NativeTerminalIssueError(
+          "daemon-identity-mismatch",
+          "The terminal attachment belongs to another daemon generation.",
+          true,
+        );
       }
       return result.descriptor;
     },

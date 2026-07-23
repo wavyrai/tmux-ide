@@ -963,6 +963,37 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
+  it("names a held-lease conflict honestly and keeps a retry affordance", async () => {
+    const transport = transportHarness(async () => ({
+      status: "error",
+      error: {
+        code: "interactive-viewer-conflict",
+        reason: "The requested pane already has an interactive viewer.",
+        retryable: true,
+      },
+    }));
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+    );
+    expect(root.textContent).toContain("still releasing");
+    expect(root.textContent).not.toContain("already has an interactive viewer");
+    expect(root.textContent).toContain("Try again");
+    dispose();
+  });
+
   it("retires a rejected connect before rejecting late output", async () => {
     let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
     const transport = transportHarness((_request, nextListener) => {

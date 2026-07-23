@@ -1270,23 +1270,73 @@ class NativeTerminalWebSocketSession {
   }
 }
 
+/**
+ * Structured issue failure a host adapter can throw so the transport surfaces
+ * the daemon's real attachment code/reason instead of a single generic message.
+ * The masked `attachment-issue-failed` code is what made an
+ * `interactive-viewer-conflict` (a held lease from a prior attach) undebuggable.
+ */
+export class NativeTerminalIssueError extends Error {
+  readonly code: string;
+  readonly reason: string;
+  readonly retryable: boolean;
+  constructor(code: string, reason: string, retryable: boolean) {
+    super(reason);
+    this.name = "NativeTerminalIssueError";
+    this.code = code;
+    this.reason = reason;
+    this.retryable = retryable;
+  }
+}
+
+// Card-local bound on a surfaced reason. Issue reasons are already schema-bounded
+// and credential-redacted at the daemon, but the injected host result stays
+// untrusted until this checks it.
+function boundedIssueReason(reason: unknown): string | null {
+  return typeof reason === "string" &&
+    reason.length > 0 &&
+    reason.length <= 240 &&
+    !/[\0\r\n]/u.test(reason)
+    ? reason
+    : null;
+}
+
+const GENERIC_ISSUE_ERROR = transportError(
+  "attachment-issue-failed",
+  "The desktop host could not issue a terminal attachment.",
+  true,
+);
+
+/** Preserve a thrown structured issue error; never let it collapse to generic. */
+function issueErrorToTransportError(error: unknown): NativeTerminalTransportError {
+  if (error instanceof NativeTerminalIssueError && ErrorCodePattern.test(error.code)) {
+    const reason = boundedIssueReason(error.reason);
+    if (reason) return transportError(error.code, reason, error.retryable);
+  }
+  return GENERIC_ISSUE_ERROR;
+}
+
+type IssueOutcome =
+  | { readonly status: "ok"; readonly value: unknown }
+  | { readonly status: "error"; readonly error?: unknown };
+
 function issueWithTimeout(
   issueAttachment: NativeTerminalIssueAttachment,
   request: TerminalAttachRequest,
   timeoutMs: number,
   schedule: (callback: () => void, delayMs: number) => () => void,
-): Promise<{ readonly status: "ok"; readonly value: unknown } | { readonly status: "error" }> {
+): Promise<IssueOutcome> {
   return new Promise((resolve) => {
     let settled = false;
     let cancelTimeout = (): void => undefined;
-    const finish = (
-      result: { readonly status: "ok"; readonly value: unknown } | { readonly status: "error" },
-    ): void => {
+    const finish = (result: IssueOutcome): void => {
       if (settled) return;
       settled = true;
       cancelTimeout();
       resolve(result);
     };
+    // A timeout carries no structured error, so it stays the generic retryable
+    // failure; only an adapter rejection can surface a specific daemon code.
     const scheduledCancellation = schedule(() => finish({ status: "error" }), timeoutMs);
     cancelTimeout = scheduledCancellation;
     if (settled) scheduledCancellation();
@@ -1294,7 +1344,7 @@ function issueWithTimeout(
       .then(() => issueAttachment(request))
       .then(
         (value) => finish({ status: "ok", value }),
-        () => finish({ status: "error" }),
+        (error: unknown) => finish({ status: "error", error }),
       );
   });
 }
@@ -1339,14 +1389,7 @@ export function createNativeTerminalWebSocketTransport(
         schedule,
       );
       if (issued.status === "error") {
-        return {
-          status: "error",
-          error: transportError(
-            "attachment-issue-failed",
-            "The desktop host could not issue a terminal attachment.",
-            true,
-          ),
-        };
+        return { status: "error", error: issueErrorToTransportError(issued.error) };
       }
       const descriptor = validateIssueDescriptor(issued.value, parsedRequest.data, now());
       if (!descriptor) {

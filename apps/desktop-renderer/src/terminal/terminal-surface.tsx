@@ -14,6 +14,7 @@ import {
   type NativeTerminalAttachment,
   type NativeTerminalEvent,
   type NativeTerminalTransport,
+  type NativeTerminalTransportError,
 } from "./native-terminal-transport.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "./xterm-renderer.ts";
 
@@ -83,6 +84,18 @@ function validatedTransportReason(value: string): string {
     return "The native terminal transport reported an invalid error.";
   }
   return reason;
+}
+
+/**
+ * A window-keyed interactive lease from a prior attach releases only after its
+ * grace/ticket window, so an immediate re-attach honestly conflicts rather than
+ * fails. Name that to the user instead of surfacing the raw daemon reason.
+ */
+function connectFailureMessage(error: NativeTerminalTransportError): string {
+  if (error.code === "interactive-viewer-conflict") {
+    return "This terminal's previous session is still releasing. Wait a few seconds, then try again.";
+  }
+  return validatedTransportReason(error.reason);
 }
 
 interface OutputEpoch {
@@ -403,7 +416,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           return;
         }
         if (result.status === "error") {
-          failConnect(validatedTransportReason(result.error.reason), activeGeneration);
+          failConnect(connectFailureMessage(result.error), activeGeneration);
           return;
         }
         attachment = result.attachment;

@@ -99,6 +99,7 @@ export {
   NATIVE_TERMINAL_RATE_WINDOW_MS,
   NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS,
   NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
+  NativeTerminalIssueError,
   createNativeTerminalWebSocketTransport,
   type NativeTerminalIssueAttachment,
   type NativeTerminalSocketEvent,

@@ -16,6 +16,7 @@ import {
   NATIVE_TERMINAL_RATE_WINDOW_MS,
   NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS,
   NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
+  NativeTerminalIssueError,
   createNativeTerminalWebSocketTransport,
   type NativeTerminalSocketEvent,
   type NativeTerminalSocketListener,
@@ -703,6 +704,40 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       error: { code: "attachment-expired" },
     });
     expect(socket.sent).toHaveLength(0);
+  });
+
+  it("surfaces a structured issue rejection code instead of the generic failure", async () => {
+    const conflict = rig({
+      issueAttachment: async () => {
+        throw new NativeTerminalIssueError(
+          "interactive-viewer-conflict",
+          "The requested pane already has an interactive viewer.",
+          true,
+        );
+      },
+    });
+    await expect(conflict.transport.connect(REQUEST, () => undefined)).resolves.toMatchObject({
+      status: "error",
+      error: {
+        code: "interactive-viewer-conflict",
+        reason: "The requested pane already has an interactive viewer.",
+        retryable: true,
+      },
+    });
+    expect(conflict.sockets).toHaveLength(0);
+  });
+
+  it("falls back to the generic failure for an unstructured issue rejection", async () => {
+    const opaque = rig({
+      issueAttachment: async () => {
+        throw new Error("boom");
+      },
+    });
+    await expect(opaque.transport.connect(REQUEST, () => undefined)).resolves.toMatchObject({
+      status: "error",
+      error: { code: "attachment-issue-failed", retryable: true },
+    });
+    expect(opaque.sockets).toHaveLength(0);
   });
 
   it("requires a fresh issue/ticket on reconnect and rejects late retired output", async () => {
