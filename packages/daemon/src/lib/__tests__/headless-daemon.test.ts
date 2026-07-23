@@ -179,6 +179,32 @@ describe("runHeadlessDaemon", () => {
     await expect(running).resolves.toBe("stopped");
   });
 
+  it("mints the bypass token in-process and never writes it to stdout", async () => {
+    // The Electron supervisor consumes this stdout contract: the child mints
+    // its own credentials and publishes them only via the owner-only daemon
+    // record, so nothing secret may appear on the readiness line either.
+    const harness = createHarness();
+    const running = runHeadlessDaemon({ json: true }, harness.deps);
+    await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
+
+    const mintedToken = harness.startOptions[0]?.localBypassToken;
+    expect(typeof mintedToken).toBe("string");
+    expect((mintedToken as string).length).toBeGreaterThanOrEqual(32);
+    expect(Object.keys(JSON.parse(harness.lines[0]!)).sort()).toEqual([
+      "apiBaseUrl",
+      "pid",
+      "port",
+      "status",
+    ]);
+    for (const line of harness.lines) {
+      expect(line).not.toContain(mintedToken as string);
+      expect(line.toLowerCase()).not.toContain("token");
+    }
+
+    harness.signals.get("SIGTERM")?.();
+    await expect(running).resolves.toBe("stopped");
+  });
+
   it("never reports readiness for a handle whose instance identity differs from daemon.json", async () => {
     const harness = createHarness();
     const start = harness.deps.startEmbeddedDaemon;

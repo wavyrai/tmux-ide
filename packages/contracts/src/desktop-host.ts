@@ -109,6 +109,27 @@ export const DesktopDaemonHostIssueCodeSchemaZ = z.enum([
   "probe-timeout",
   "resource-broker-failed",
   "preview-only",
+  // Added on m42/supervision: the Electron supervisor stopped restarting its
+  // bundled daemon child after consecutive fatal failures. Unlike every other
+  // issue code this one is terminal for the session — a recheck will not
+  // recover it. (m42/connection-state rebases over this addition.)
+  "supervisor-halted",
+]);
+
+/**
+ * Why the desktop daemon supervisor stopped its restart loop. Structural
+ * failures only: transient failures (crashes, timeouts, unreachable probes)
+ * never halt the loop and therefore never carry one of these.
+ * Added on m42/supervision (additive; m42/connection-state rebases over this).
+ */
+export const DesktopDaemonSupervisorFatalReasonSchemaZ = z.enum([
+  "protocol-incompatible",
+  "record-invalid",
+  "endpoint-not-loopback",
+  "identity-mismatch",
+  "health-mismatch",
+  "spawn-failed",
+  "child-fatal-exit",
 ]);
 
 const DesktopDaemonHostIssueSchemaFields = {
@@ -452,6 +473,9 @@ export type DesktopThemeState = z.infer<typeof DesktopThemeStateSchemaZ>;
 export type DesktopWindowState = z.infer<typeof DesktopWindowStateSchemaZ>;
 export type DesktopDaemonHostDescriptor = z.infer<typeof DesktopDaemonHostDescriptorSchemaZ>;
 export type DesktopDaemonHostIssueCode = z.infer<typeof DesktopDaemonHostIssueCodeSchemaZ>;
+export type DesktopDaemonSupervisorFatalReason = z.infer<
+  typeof DesktopDaemonSupervisorFatalReasonSchemaZ
+>;
 export type DesktopDaemonHostState = z.infer<typeof DesktopDaemonHostStateSchemaZ>;
 export type DesktopDaemonCapabilityState = z.infer<typeof DesktopDaemonCapabilityStateSchemaZ>;
 export type DesktopDaemonCapabilityErrorCode = z.infer<

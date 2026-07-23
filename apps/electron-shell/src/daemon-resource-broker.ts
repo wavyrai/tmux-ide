@@ -327,10 +327,16 @@ export function rendererDaemonState(daemon: DesktopDaemonHostState):
   return {
     status: daemon.status,
     code: daemon.code,
+    // Reasons are replaced with fixed copy so probe internals never reach the
+    // renderer. The supervisor-halted reason is the one exception: it is
+    // composed by the supervisor from typed parts (bounded, no secrets) and
+    // the recovery screen must show WHY restarts stopped.
     reason:
-      daemon.status === "degraded"
-        ? "Canonical daemon verification is degraded."
-        : "The canonical daemon is unavailable.",
+      daemon.code === "supervisor-halted"
+        ? daemon.reason.slice(0, 240)
+        : daemon.status === "degraded"
+          ? "Canonical daemon verification is degraded."
+          : "The canonical daemon is unavailable.",
   };
 }
 

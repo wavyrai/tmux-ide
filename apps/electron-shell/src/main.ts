@@ -171,10 +171,13 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     join(app.getPath("userData"), "known-environments.json"),
   );
   const daemonPreflight = deps.daemonPreflight ?? createCatalogBackedPreflight(environmentCatalog);
-  const onOwnedDaemonCrash = (_snapshot: DesktopDaemonSupervisorSnapshot): void => {
+  const revalidateDaemonConnection = (context: string): void => {
     void daemonResources?.refreshConnection().catch((error: unknown) => {
-      console.error("Failed to retire crashed desktop daemon authority", error);
+      console.error(`Failed to revalidate desktop daemon authority (${context})`, error);
     });
+  };
+  const onOwnedDaemonCrash = (_snapshot: DesktopDaemonSupervisorSnapshot): void => {
+    revalidateDaemonConnection("owned daemon crash");
   };
   const daemonSupervisor =
     deps.daemonSupervisor ??
@@ -183,7 +186,25 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       childEntryPath: join(__dirname, "daemon-child.cjs"),
       productVersion: app.getVersion(),
       onOwnedDaemonCrash,
+      // Restart attempts and the fatal halt settle in the background; each
+      // one revalidates the renderer-facing connection state.
+      onSupervisedDaemonStateChanged: () => revalidateDaemonConnection("supervised restart"),
     });
+  // A halted supervisor is terminal: rechecking must show the typed halt
+  // reason, not a fresh probe's misleading "engine isn't running yet".
+  const supervisedDaemonPreflight: DaemonPreflight = {
+    probe: (signal) => {
+      const supervised = daemonSupervisor.snapshot();
+      if (
+        supervised.phase === "halted" &&
+        supervised.daemon &&
+        supervised.daemon.status !== "connected"
+      ) {
+        return Promise.resolve(supervised.daemon);
+      }
+      return daemonPreflight.probe(signal);
+    },
+  };
   const teardownDesktopHost = async (): Promise<void> => {
     if (persistTimer) clearTimeout(persistTimer);
     if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
@@ -307,7 +328,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   try {
     daemonResources = new DaemonConnectionCoordinator({
       initialDaemon: daemon,
-      preflight: daemonPreflight,
+      preflight: supervisedDaemonPreflight,
       environmentReconciler: environmentCatalog,
       onHostStateChanged: (state) => {
         const nextOrigin = state.status === "connected" ? state.descriptor.apiBaseUrl : null;
@@ -325,10 +346,17 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     await abortDesktopStartup().catch(() => undefined);
     throw error;
   }
-  if (daemonSupervisor.snapshot().phase === "crashed") {
-    void daemonResources.refreshConnection().catch((error: unknown) => {
-      console.error("Failed to retire daemon authority after an early crash", error);
-    });
+  {
+    // Supervision may have advanced (crash, background restart, halt) between
+    // startup readiness and the coordinator existing to observe it.
+    const supervisedPhase = daemonSupervisor.snapshot().phase;
+    if (
+      supervisedPhase === "crashed" ||
+      supervisedPhase === "restarting" ||
+      supervisedPhase === "halted"
+    ) {
+      revalidateDaemonConnection("supervision advanced during startup");
+    }
   }
   const trustedRendererLocation: TrustedRendererLocation = developmentUrl
     ? { kind: "development-origin", origin: new URL(developmentUrl).origin }

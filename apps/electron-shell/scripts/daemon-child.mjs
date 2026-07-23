@@ -14,5 +14,9 @@ void runHeadlessDaemon({
     "tmux-ide desktop daemon failed",
     error instanceof Error ? error.message : "unknown startup failure",
   );
-  process.exitCode = 1;
+  // IdeError converges structural refusals (protocol/identity mismatch, usage)
+  // on exitCode 2; the supervisor classifies that as fatal instead of retrying.
+  const exitCode = /** @type {{ exitCode?: unknown }} */ (error ?? {}).exitCode;
+  process.exitCode =
+    typeof exitCode === "number" && Number.isInteger(exitCode) && exitCode > 0 ? exitCode : 1;
 });

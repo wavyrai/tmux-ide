@@ -124,6 +124,17 @@ export function recoveryForDaemonCapability(
         guidance: "Open tmux-ide on your desktop for a live workspace",
         command: null,
       };
+    case "supervisor-halted":
+      // The supervisor stopped restarting the engine after consecutive fatal
+      // failures. Unlike the other states, rechecking will not recover this —
+      // the reason carries the structural cause the supervisor measured.
+      return {
+        eyebrow: "Native tmux workspace",
+        title: "The engine was stopped after repeated failures",
+        description: state.reason,
+        guidance: "Reopen tmux-ide. If this returns, the engine's saved state needs attention",
+        command: null,
+      };
     default:
       return {
         eyebrow: "Native tmux workspace",

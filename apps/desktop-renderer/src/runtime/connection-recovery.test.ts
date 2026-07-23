@@ -71,6 +71,22 @@ describe("recoveryForDaemonCapability", () => {
     });
     expect(presentation.description).toBe("health metadata does not match");
   });
+
+  it("presents a halted supervisor as final and carries its typed reason", () => {
+    const presentation = recoveryForDaemonCapability({
+      status: "degraded",
+      code: "supervisor-halted",
+      reason:
+        "The bundled engine stopped after 3 consecutive fatal startup failures (record-invalid).",
+    });
+    expect(presentation.title).toContain("stopped after repeated failures");
+    expect(presentation.description).toContain("record-invalid");
+    // A recheck cannot recover a halted supervisor, so the guidance must not
+    // suggest one — reopening the app is the honest next step.
+    expect(presentation.guidance).toContain("Reopen tmux-ide");
+    expect(presentation.guidance).not.toContain("Recheck");
+    expect(presentation.command).toBeNull();
+  });
 });
 
 describe("recoveryForWorkspaceOpenError", () => {
