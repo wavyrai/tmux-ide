@@ -6207,8 +6207,124 @@ var init_visual_recipes = __esm({
   }
 });
 
-// packages/contracts/src/daemon-resources.ts
+// packages/contracts/src/fleet-catalog.ts
 import { z as z36 } from "zod";
+function isControlFree2(value) {
+  return [...value].every((character) => {
+    const code = character.charCodeAt(0);
+    return code >= 32 && code !== 127;
+  });
+}
+function namespacedIdSchema(namespace) {
+  return z36.string().max(`${namespace}.`.length + FLEET_ID_TOKEN_MAX).regex(
+    new RegExp(
+      `^${namespace}\\.[A-Za-z0-9_-]{${FLEET_ID_TOKEN_MIN},${FLEET_ID_TOKEN_MAX}}$`,
+      "u"
+    )
+  ).refine((value) => !RESERVED_RECORD_KEYS5.has(value), "reserved record key is not allowed");
+}
+var FLEET_CATALOG_RESOURCE_VERSION, FLEET_MAX_SESSIONS, FLEET_MAX_AGENTS_PER_SESSION, FLEET_MAX_TOTAL_AGENTS, FLEET_MAX_PANES_PER_SESSION, FLEET_LABEL_MAX_LENGTH, FLEET_ID_TOKEN_MIN, FLEET_ID_TOKEN_MAX, RESERVED_RECORD_KEYS5, FleetSessionIdSchemaZ, FleetAgentIdSchemaZ, FleetLabelSchemaZ, FleetProjectLabelSchemaZ, FLEET_AGENT_HARNESS_IDS, FleetAgentHarnessSchemaZ, FleetCatalogAgentEntryV1SchemaZ, FleetCatalogSessionEntryV1SchemaZ, FleetCatalogResourceV1SchemaZ;
+var init_fleet_catalog = __esm({
+  "packages/contracts/src/fleet-catalog.ts"() {
+    "use strict";
+    init_agent_graph_overlay();
+    init_daemon_wire();
+    init_pane_appearance();
+    FLEET_CATALOG_RESOURCE_VERSION = 1;
+    FLEET_MAX_SESSIONS = 64;
+    FLEET_MAX_AGENTS_PER_SESSION = 64;
+    FLEET_MAX_TOTAL_AGENTS = 256;
+    FLEET_MAX_PANES_PER_SESSION = 512;
+    FLEET_LABEL_MAX_LENGTH = AGENT_GRAPH_LABEL_MAX_LENGTH;
+    FLEET_ID_TOKEN_MIN = 16;
+    FLEET_ID_TOKEN_MAX = 64;
+    RESERVED_RECORD_KEYS5 = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+    FleetSessionIdSchemaZ = namespacedIdSchema("session");
+    FleetAgentIdSchemaZ = namespacedIdSchema("agent");
+    FleetLabelSchemaZ = z36.string().min(1).max(FLEET_LABEL_MAX_LENGTH).refine(isControlFree2, "label contains control characters");
+    FleetProjectLabelSchemaZ = z36.string().min(1).max(FLEET_LABEL_MAX_LENGTH).refine(isControlFree2, "project label contains control characters").refine(
+      (value) => !value.includes("/") && !value.includes("\\"),
+      "project label must be a basename, not a path"
+    );
+    FLEET_AGENT_HARNESS_IDS = ["codex", "claude-code", "custom"];
+    FleetAgentHarnessSchemaZ = z36.enum(FLEET_AGENT_HARNESS_IDS);
+    FleetCatalogAgentEntryV1SchemaZ = z36.object({
+      agentId: FleetAgentIdSchemaZ,
+      name: FleetLabelSchemaZ,
+      harness: FleetAgentHarnessSchemaZ,
+      activity: AgentActivitySchemaZ,
+      attention: z36.boolean(),
+      statusSource: AgentGraphStatusSourceSchemaZ
+    }).strict();
+    FleetCatalogSessionEntryV1SchemaZ = z36.object({
+      sessionId: FleetSessionIdSchemaZ,
+      label: FleetLabelSchemaZ,
+      projectLabel: FleetProjectLabelSchemaZ,
+      appCreated: z36.boolean(),
+      paneCount: z36.number().int().nonnegative().max(FLEET_MAX_PANES_PER_SESSION),
+      agents: z36.array(FleetCatalogAgentEntryV1SchemaZ).max(FLEET_MAX_AGENTS_PER_SESSION)
+    }).strict();
+    FleetCatalogResourceV1SchemaZ = z36.object({
+      version: z36.literal(FLEET_CATALOG_RESOURCE_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      sessions: z36.array(FleetCatalogSessionEntryV1SchemaZ).max(FLEET_MAX_SESSIONS)
+    }).strict().superRefine((resource2, ctx) => {
+      const sessionIds = /* @__PURE__ */ new Set();
+      const agentIds = /* @__PURE__ */ new Set();
+      let totalAgents = 0;
+      for (const [sessionIndex, session] of resource2.sessions.entries()) {
+        if (sessionIds.has(session.sessionId)) {
+          ctx.addIssue({
+            code: z36.ZodIssueCode.custom,
+            message: "session ids must be unique",
+            path: ["sessions", sessionIndex, "sessionId"]
+          });
+        }
+        sessionIds.add(session.sessionId);
+        for (const [agentIndex, agent] of session.agents.entries()) {
+          if (agentIds.has(agent.agentId)) {
+            ctx.addIssue({
+              code: z36.ZodIssueCode.custom,
+              message: "agent ids must be unique across the fleet",
+              path: ["sessions", sessionIndex, "agents", agentIndex, "agentId"]
+            });
+          }
+          agentIds.add(agent.agentId);
+        }
+        totalAgents += session.agents.length;
+      }
+      if (totalAgents > FLEET_MAX_TOTAL_AGENTS) {
+        ctx.addIssue({
+          code: z36.ZodIssueCode.custom,
+          message: "fleet total agent limit exceeded",
+          path: ["sessions"]
+        });
+      }
+    });
+  }
+});
+
+// packages/contracts/src/fleet-agent-graph.ts
+var ACTIVITY_TO_NODE_STATUS;
+var init_fleet_agent_graph = __esm({
+  "packages/contracts/src/fleet-agent-graph.ts"() {
+    "use strict";
+    init_agent_graph_overlay();
+    init_fleet_catalog();
+    init_semantic_identity();
+    ACTIVITY_TO_NODE_STATUS = Object.freeze({
+      idle: "idle",
+      running: "working",
+      waiting: "blocked",
+      complete: "done",
+      failed: "blocked",
+      disconnected: "idle"
+    });
+  }
+});
+
+// packages/contracts/src/daemon-resources.ts
+import { z as z37 } from "zod";
 var DaemonSessionOverviewSchemaZ, DaemonPaneInfoSchemaZ, DaemonSessionsResponseSchemaZ, DaemonProjectResponseSchemaZ, DaemonPanesResponseSchemaZ, DaemonWorkspaceSchemaZ, DaemonWorkspacesResponseSchemaZ, DaemonWorkspaceResponseSchemaZ, DaemonRegisteredProjectSchemaZ, DaemonProjectsResponseSchemaZ, DaemonRegisteredProjectResponseSchemaZ, DaemonProjectTemplateSchemaZ, DaemonProjectTemplatesResponseSchemaZ;
 var init_daemon_resources = __esm({
   "packages/contracts/src/daemon-resources.ts"() {
@@ -6217,135 +6333,135 @@ var init_daemon_resources = __esm({
     init_workspace();
     DaemonSessionOverviewSchemaZ = SessionOverviewSchemaZ.strict();
     DaemonPaneInfoSchemaZ = PaneInfoSchemaZ.strict();
-    DaemonSessionsResponseSchemaZ = z36.object({
-      sessions: z36.array(DaemonSessionOverviewSchemaZ)
+    DaemonSessionsResponseSchemaZ = z37.object({
+      sessions: z37.array(DaemonSessionOverviewSchemaZ)
     }).strict();
-    DaemonProjectResponseSchemaZ = z36.object({
-      session: z36.string(),
-      dir: z36.string(),
-      panes: z36.array(DaemonPaneInfoSchemaZ)
+    DaemonProjectResponseSchemaZ = z37.object({
+      session: z37.string(),
+      dir: z37.string(),
+      panes: z37.array(DaemonPaneInfoSchemaZ)
     }).strict();
-    DaemonPanesResponseSchemaZ = z36.object({
-      panes: z36.array(DaemonPaneInfoSchemaZ)
+    DaemonPanesResponseSchemaZ = z37.object({
+      panes: z37.array(DaemonPaneInfoSchemaZ)
     }).strict();
     DaemonWorkspaceSchemaZ = WorkspaceSchemaZ.strict();
-    DaemonWorkspacesResponseSchemaZ = z36.object({
-      workspaces: z36.array(DaemonWorkspaceSchemaZ)
+    DaemonWorkspacesResponseSchemaZ = z37.object({
+      workspaces: z37.array(DaemonWorkspaceSchemaZ)
     }).strict();
-    DaemonWorkspaceResponseSchemaZ = z36.object({
+    DaemonWorkspaceResponseSchemaZ = z37.object({
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonRegisteredProjectSchemaZ = z36.object({
-      name: z36.string(),
-      dir: z36.string(),
-      hasIdeYml: z36.boolean(),
-      hasWorkspaceConfig: z36.boolean().optional(),
-      configKind: z36.enum(["workspace", "legacy", "none"]).optional(),
-      configPath: z36.string().nullable().optional(),
-      ideConfigPath: z36.string().nullable().optional(),
-      gitOrigin: z36.string().nullable(),
-      gitBranch: z36.string().nullable(),
-      registeredAt: z36.string()
+    DaemonRegisteredProjectSchemaZ = z37.object({
+      name: z37.string(),
+      dir: z37.string(),
+      hasIdeYml: z37.boolean(),
+      hasWorkspaceConfig: z37.boolean().optional(),
+      configKind: z37.enum(["workspace", "legacy", "none"]).optional(),
+      configPath: z37.string().nullable().optional(),
+      ideConfigPath: z37.string().nullable().optional(),
+      gitOrigin: z37.string().nullable(),
+      gitBranch: z37.string().nullable(),
+      registeredAt: z37.string()
     }).strict();
-    DaemonProjectsResponseSchemaZ = z36.object({
-      projects: z36.array(DaemonRegisteredProjectSchemaZ)
+    DaemonProjectsResponseSchemaZ = z37.object({
+      projects: z37.array(DaemonRegisteredProjectSchemaZ)
     }).strict();
-    DaemonRegisteredProjectResponseSchemaZ = z36.object({
+    DaemonRegisteredProjectResponseSchemaZ = z37.object({
       project: DaemonRegisteredProjectSchemaZ
     }).strict();
-    DaemonProjectTemplateSchemaZ = z36.object({
-      id: z36.string(),
-      label: z36.string(),
-      description: z36.string()
+    DaemonProjectTemplateSchemaZ = z37.object({
+      id: z37.string(),
+      label: z37.string(),
+      description: z37.string()
     }).strict();
-    DaemonProjectTemplatesResponseSchemaZ = z36.object({
-      templates: z36.array(DaemonProjectTemplateSchemaZ)
+    DaemonProjectTemplatesResponseSchemaZ = z37.object({
+      templates: z37.array(DaemonProjectTemplateSchemaZ)
     }).strict();
   }
 });
 
 // packages/contracts/src/daemon-events.ts
-import { z as z37 } from "zod";
+import { z as z38 } from "zod";
 var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventAgentStatusChangedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
 var init_daemon_events = __esm({
   "packages/contracts/src/daemon-events.ts"() {
     "use strict";
     init_daemon_resources();
     init_daemon_wire();
-    SessionNamesSchemaZ = z37.array(z37.string());
-    DaemonEventSubscribeFrameSchemaZ = z37.object({
-      type: z37.literal("subscribe"),
+    SessionNamesSchemaZ = z38.array(z38.string());
+    DaemonEventSubscribeFrameSchemaZ = z38.object({
+      type: z38.literal("subscribe"),
       sessions: SessionNamesSchemaZ
     }).strict();
-    DaemonEventUnsubscribeFrameSchemaZ = z37.object({
-      type: z37.literal("unsubscribe"),
+    DaemonEventUnsubscribeFrameSchemaZ = z38.object({
+      type: z38.literal("unsubscribe"),
       sessions: SessionNamesSchemaZ
     }).strict();
-    DaemonEventPingFrameSchemaZ = z37.object({ type: z37.literal("ping") }).strict();
-    DaemonEventClientFrameSchemaZ = z37.discriminatedUnion("type", [
+    DaemonEventPingFrameSchemaZ = z38.object({ type: z38.literal("ping") }).strict();
+    DaemonEventClientFrameSchemaZ = z38.discriminatedUnion("type", [
       DaemonEventSubscribeFrameSchemaZ,
       DaemonEventUnsubscribeFrameSchemaZ,
       DaemonEventPingFrameSchemaZ
     ]);
-    DaemonSessionSnapshotSchemaZ = z37.object({
+    DaemonSessionSnapshotSchemaZ = z38.object({
       project: DaemonProjectResponseSchemaZ
     }).strict();
-    DaemonEventHelloFrameSchemaZ = z37.object({
-      type: z37.literal("hello"),
+    DaemonEventHelloFrameSchemaZ = z38.object({
+      type: z38.literal("hello"),
       daemon: DaemonInstanceIdentitySchemaZ,
-      sessions: z37.array(DaemonSessionOverviewSchemaZ)
+      sessions: z38.array(DaemonSessionOverviewSchemaZ)
     }).strict();
-    DaemonEventSnapshotFrameSchemaZ = z37.object({
-      type: z37.literal("snapshot"),
-      sessionName: z37.string(),
+    DaemonEventSnapshotFrameSchemaZ = z38.object({
+      type: z38.literal("snapshot"),
+      sessionName: z38.string(),
       data: DaemonSessionSnapshotSchemaZ
     }).strict();
-    DaemonEventSessionsChangedFrameSchemaZ = z37.object({ type: z37.literal("sessions.changed") }).strict();
-    DaemonEventProjectsChangedFrameSchemaZ = z37.object({ type: z37.literal("projects.changed") }).strict();
-    DaemonEventInitOutputFrameSchemaZ = z37.object({
-      type: z37.literal("init.output"),
-      jobId: z37.string(),
-      chunk: z37.string(),
-      done: z37.boolean().optional()
+    DaemonEventSessionsChangedFrameSchemaZ = z38.object({ type: z38.literal("sessions.changed") }).strict();
+    DaemonEventProjectsChangedFrameSchemaZ = z38.object({ type: z38.literal("projects.changed") }).strict();
+    DaemonEventInitOutputFrameSchemaZ = z38.object({
+      type: z38.literal("init.output"),
+      jobId: z38.string(),
+      chunk: z38.string(),
+      done: z38.boolean().optional()
     }).strict();
-    DaemonEventInitErrorFrameSchemaZ = z37.object({
-      type: z37.literal("init.error"),
-      jobId: z37.string(),
-      message: z37.string()
+    DaemonEventInitErrorFrameSchemaZ = z38.object({
+      type: z38.literal("init.error"),
+      jobId: z38.string(),
+      message: z38.string()
     }).strict();
-    DaemonEventPongFrameSchemaZ = z37.object({ type: z37.literal("pong") }).strict();
-    DaemonEventActionCompleteFrameSchemaZ = z37.object({
-      type: z37.literal("action.complete"),
-      name: z37.string(),
-      result: z37.unknown()
+    DaemonEventPongFrameSchemaZ = z38.object({ type: z38.literal("pong") }).strict();
+    DaemonEventActionCompleteFrameSchemaZ = z38.object({
+      type: z38.literal("action.complete"),
+      name: z38.string(),
+      result: z38.unknown()
     }).strict();
-    DaemonEventConfigChangedFrameSchemaZ = z37.object({
-      type: z37.literal("config.changed"),
-      sessionName: z37.string()
+    DaemonEventConfigChangedFrameSchemaZ = z38.object({
+      type: z38.literal("config.changed"),
+      sessionName: z38.string()
     }).strict();
-    DaemonEventTerminalsChangedFrameSchemaZ = z37.object({
-      type: z37.literal("terminals.changed"),
-      sessionName: z37.string()
+    DaemonEventTerminalsChangedFrameSchemaZ = z38.object({
+      type: z38.literal("terminals.changed"),
+      sessionName: z38.string()
     }).strict();
-    DaemonEventAgentStatusChangedFrameSchemaZ = z37.object({
-      type: z37.literal("agent-status.changed"),
-      sessionName: z37.string()
+    DaemonEventAgentStatusChangedFrameSchemaZ = z38.object({
+      type: z38.literal("agent-status.changed"),
+      sessionName: z38.string()
     }).strict();
-    DaemonEventWorkspaceAddedFrameSchemaZ = z37.object({
-      type: z37.literal("workspace.added"),
+    DaemonEventWorkspaceAddedFrameSchemaZ = z38.object({
+      type: z38.literal("workspace.added"),
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonEventWorkspaceRemovedFrameSchemaZ = z37.object({
-      type: z37.literal("workspace.removed"),
-      name: z37.string()
+    DaemonEventWorkspaceRemovedFrameSchemaZ = z38.object({
+      type: z38.literal("workspace.removed"),
+      name: z38.string()
     }).strict();
-    DaemonEventProtocolErrorCodeSchemaZ = z37.enum(["invalid-json", "invalid-frame"]);
-    DaemonEventProtocolErrorFrameSchemaZ = z37.object({
-      type: z37.literal("protocol.error"),
+    DaemonEventProtocolErrorCodeSchemaZ = z38.enum(["invalid-json", "invalid-frame"]);
+    DaemonEventProtocolErrorFrameSchemaZ = z38.object({
+      type: z38.literal("protocol.error"),
       code: DaemonEventProtocolErrorCodeSchemaZ,
-      message: z37.string()
+      message: z38.string()
     }).strict();
-    DaemonEventServerFrameSchemaZ = z37.discriminatedUnion("type", [
+    DaemonEventServerFrameSchemaZ = z38.discriminatedUnion("type", [
       DaemonEventHelloFrameSchemaZ,
       DaemonEventSnapshotFrameSchemaZ,
       DaemonEventSessionsChangedFrameSchemaZ,
@@ -6365,27 +6481,27 @@ var init_daemon_events = __esm({
 });
 
 // packages/contracts/src/desktop-update.ts
-import { z as z38 } from "zod";
+import { z as z39 } from "zod";
 var DesktopUpdatePhaseSchemaZ, DesktopUpdateStatusSchemaZ;
 var init_desktop_update = __esm({
   "packages/contracts/src/desktop-update.ts"() {
     "use strict";
-    DesktopUpdatePhaseSchemaZ = z38.enum([
+    DesktopUpdatePhaseSchemaZ = z39.enum([
       "idle",
       "checking",
       "downloading",
       "ready",
       "applying"
     ]);
-    DesktopUpdateStatusSchemaZ = z38.object({
+    DesktopUpdateStatusSchemaZ = z39.object({
       phase: DesktopUpdatePhaseSchemaZ,
       /** The running version — always known. */
-      currentVersion: z38.string().min(1),
+      currentVersion: z39.string().min(1),
       /**
        * The newer version being downloaded or staged, or null when there is
        * nothing pending. Present from `downloading` through `applying`.
        */
-      availableVersion: z38.string().min(1).nullable()
+      availableVersion: z39.string().min(1).nullable()
     }).strict();
   }
 });
@@ -6430,6 +6546,8 @@ var init_src = __esm({
     init_visual_recipes();
     init_pane_appearance();
     init_agent_graph_overlay();
+    init_fleet_catalog();
+    init_fleet_agent_graph();
     init_focus_overlay();
     init_cohesion_fixture();
     init_daemon_wire();
@@ -11674,20 +11792,20 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z39 } from "zod";
+import { z as z40 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
     init_src();
     RegisteredProjectSchemaZ = DaemonRegisteredProjectSchemaZ;
-    RegisterProjectRequestSchemaZ = z39.object({
-      dir: z39.string().min(1),
-      name: z39.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z40.object({
+      dir: z40.string().min(1),
+      name: z40.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z39.object({
-      dir: z39.string().min(1),
-      template: z39.string().min(1).optional()
+    InitProjectRequestSchemaZ = z40.object({
+      dir: z40.string().min(1),
+      template: z40.string().min(1).optional()
     });
   }
 });
@@ -11749,7 +11867,7 @@ import { EventEmitter } from "node:events";
 import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname15, isAbsolute as isAbsolute3, join as join14, resolve as resolve11 } from "node:path";
-import { z as z40 } from "zod";
+import { z as z41 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -11888,9 +12006,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z40.object({
-      version: z40.literal(1),
-      projects: z40.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z41.object({
+      version: z41.literal(1),
+      projects: z41.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -12662,7 +12780,7 @@ var init_notify_state = __esm({
 import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync7, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname17, join as join18 } from "node:path";
-import { z as z41 } from "zod";
+import { z as z42 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -12834,32 +12952,32 @@ var init_snapshot2 = __esm({
     init_src2();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z41.object({
-      index: z41.number(),
-      cwd: z41.string(),
-      command: z41.string().nullable(),
-      agent: z41.string().nullable(),
-      agentSessionId: z41.string().nullable(),
-      agentState: z41.string().nullable(),
-      title: z41.string()
+    PaneSnapshotSchemaZ = z42.object({
+      index: z42.number(),
+      cwd: z42.string(),
+      command: z42.string().nullable(),
+      agent: z42.string().nullable(),
+      agentSessionId: z42.string().nullable(),
+      agentState: z42.string().nullable(),
+      title: z42.string()
     });
-    WindowSnapshotSchemaZ = z41.object({
-      index: z41.number(),
-      name: z41.string(),
-      active: z41.boolean(),
-      layout: z41.string(),
-      panes: z41.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z42.object({
+      index: z42.number(),
+      name: z42.string(),
+      active: z42.boolean(),
+      layout: z42.string(),
+      panes: z42.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z41.object({
-      name: z41.string(),
-      cwd: z41.string(),
-      adopted: z41.boolean(),
-      windows: z41.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z42.object({
+      name: z42.string(),
+      cwd: z42.string(),
+      adopted: z42.boolean(),
+      windows: z42.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z41.object({
-      version: z41.literal(1),
-      savedAt: z41.string(),
-      sessions: z41.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z42.object({
+      version: z42.literal(1),
+      savedAt: z42.string(),
+      sessions: z42.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -16050,7 +16168,7 @@ import { EventEmitter as EventEmitter3 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { homedir as homedir16 } from "node:os";
 import { dirname as dirname24, join as join24 } from "node:path";
-import { z as z42 } from "zod";
+import { z as z43 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -16073,9 +16191,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z42.object({
-      version: z42.literal(1),
-      workspaces: z42.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z43.object({
+      version: z43.literal(1),
+      workspaces: z43.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -19912,7 +20030,7 @@ var init_workspace_pane_creation2 = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts
-import { z as z43 } from "zod";
+import { z as z44 } from "zod";
 function analyzeTrustedSemanticPaneCatalog(candidates) {
   const rows = [];
   let invalidRuntimeProof = false;
@@ -19959,17 +20077,17 @@ var init_semantic_pane_catalog = __esm({
   "packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts"() {
     "use strict";
     init_src();
-    RuntimeSessionIdSchemaZ = z43.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-    RuntimeWindowIdSchemaZ = z43.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-    RuntimePaneIdSchemaZ = z43.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
-    TrustedSemanticPaneSnapshotSchemaZ = z43.object({
+    RuntimeSessionIdSchemaZ = z44.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+    RuntimeWindowIdSchemaZ = z44.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+    RuntimePaneIdSchemaZ = z44.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+    TrustedSemanticPaneSnapshotSchemaZ = z44.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
       sessionId: RuntimeSessionIdSchemaZ,
       windowId: RuntimeWindowIdSchemaZ,
       runtimePaneId: RuntimePaneIdSchemaZ,
-      windowPaneCount: z43.number().int().positive(),
-      sessionWindowCount: z43.number().int().positive()
+      windowPaneCount: z44.number().int().positive(),
+      sessionWindowCount: z44.number().int().positive()
     }).strict();
     SemanticPaneCatalogError = class extends Error {
       code;
@@ -22408,7 +22526,7 @@ var init_app_window_mutation2 = __esm({
 });
 
 // packages/contracts/src/terminal-attachment-stream.ts
-import { z as z44 } from "zod";
+import { z as z45 } from "zod";
 function decodeTerminalAttachmentInputFrame(frame) {
   if (!(frame instanceof Uint8Array) || frame.byteLength <= TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES || frame.byteLength > TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES || frame[0] !== TERMINAL_ATTACHMENT_INPUT_FRAME_KIND) {
     return null;
@@ -22433,38 +22551,38 @@ var init_terminal_attachment_stream = __esm({
     TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE = 4294967295;
     TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES = 64 * 1024;
     TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES = TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES + TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES;
-    TerminalAttachmentInputLimitsSchemaZ = z44.object({
-      maxFrameBytes: z44.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
-      maxAcceptedBytes: z44.number().int().positive().max(4 * 1024 * 1024),
-      maxAcceptedFrames: z44.number().int().positive().max(16384)
+    TerminalAttachmentInputLimitsSchemaZ = z45.object({
+      maxFrameBytes: z45.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
+      maxAcceptedBytes: z45.number().int().positive().max(4 * 1024 * 1024),
+      maxAcceptedFrames: z45.number().int().positive().max(16384)
     }).strict().refine((limits) => limits.maxFrameBytes <= limits.maxAcceptedBytes, {
       message: "terminal input frame limit cannot exceed its lifetime byte limit"
     });
-    TerminalAttachmentInputCapabilitySchemaZ = z44.union([
-      z44.literal("unavailable"),
-      z44.object({
-        mode: z44.literal("bounded"),
+    TerminalAttachmentInputCapabilitySchemaZ = z45.union([
+      z45.literal("unavailable"),
+      z45.object({
+        mode: z45.literal("bounded"),
         limits: TerminalAttachmentInputLimitsSchemaZ
       }).strict()
     ]);
-    TerminalAttachmentInputAckFrameSchemaZ = z44.object({
-      type: z44.literal("input-ack"),
-      protocolVersion: z44.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z44.number().int().nonnegative(),
-      sequence: z44.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE),
-      byteLength: z44.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
-      state: z44.enum(["open", "exhausted"]),
-      acceptedBytes: z44.number().int().positive().max(4 * 1024 * 1024),
-      acceptedFrames: z44.number().int().positive().max(16384),
-      remainingBytes: z44.number().int().nonnegative().max(4 * 1024 * 1024),
-      remainingFrames: z44.number().int().nonnegative().max(16384)
+    TerminalAttachmentInputAckFrameSchemaZ = z45.object({
+      type: z45.literal("input-ack"),
+      protocolVersion: z45.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z45.number().int().nonnegative(),
+      sequence: z45.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE),
+      byteLength: z45.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
+      state: z45.enum(["open", "exhausted"]),
+      acceptedBytes: z45.number().int().positive().max(4 * 1024 * 1024),
+      acceptedFrames: z45.number().int().positive().max(16384),
+      remainingBytes: z45.number().int().nonnegative().max(4 * 1024 * 1024),
+      remainingFrames: z45.number().int().nonnegative().max(16384)
     }).strict();
   }
 });
 
 // packages/daemon/src/terminal/attachments/direct-websocket.ts
 import { createHash as createHash7, timingSafeEqual } from "node:crypto";
-import { z as z45 } from "zod";
+import { z as z46 } from "zod";
 function defaultSchedule(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
   timer.unref?.();
@@ -22554,7 +22672,7 @@ function sameTarget(left, right) {
   return left.workspaceName === right.workspaceName && left.semanticPaneId === right.semanticPaneId;
 }
 function validDescriptorIdentity(descriptor2) {
-  return z45.uuid().safeParse(descriptor2.leaseId).success && z45.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
+  return z46.uuid().safeParse(descriptor2.leaseId).success && z46.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
 }
 function boundedInputCapability(client, viewerMode) {
   const input = viewerMode === "interactive" ? client.boundedInput : null;
@@ -22591,18 +22709,18 @@ var init_direct_websocket = __esm({
     TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES = 1024;
     WS_OPEN3 = 1;
     TicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
-    BindingIdSchemaZ = z45.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RedemptionFrameSchemaZ = z45.object({
-      type: z45.literal("redeem"),
-      protocolVersion: z45.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      ticket: z45.string().regex(TicketPattern),
-      requestId: z45.uuid(),
+    BindingIdSchemaZ = z46.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RedemptionFrameSchemaZ = z46.object({
+      type: z46.literal("redeem"),
+      protocolVersion: z46.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      ticket: z46.string().regex(TicketPattern),
+      requestId: z46.uuid(),
       daemonInstanceId: BindingIdSchemaZ
     }).strict();
-    ResizeFrameSchemaZ = z45.object({
-      type: z45.literal("resize"),
-      protocolVersion: z45.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z45.number().int().nonnegative(),
+    ResizeFrameSchemaZ = z46.object({
+      type: z46.literal("resize"),
+      protocolVersion: z46.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z46.number().int().nonnegative(),
       viewport: TerminalAttachmentViewportSchemaZ
     }).strict();
     GridSchemaZ = TerminalAttachmentViewportSchemaZ;
@@ -22720,7 +22838,7 @@ var init_direct_websocket = __esm({
             );
           }
           const origin = canonicalRendererOrigin(context.rendererOrigin);
-          const requestId = z45.uuid().parse(context.requestId);
+          const requestId = z46.uuid().parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);
           if (this.#pending.size + this.#pendingReservations >= this.#maxPending) {
             throw new TerminalAttachmentAdmissionError(
@@ -23469,13 +23587,13 @@ var init_direct_websocket = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/grouped-tmux.ts
-import { z as z46 } from "zod";
+import { z as z47 } from "zod";
 function tmux3(argv) {
   return { executable: "tmux", argv };
 }
 function groupedTmuxViewSessionName(attachmentId, generation) {
   const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.shape.attachmentId.parse(attachmentId);
-  const parsedGeneration = z46.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
+  const parsedGeneration = z47.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
   return `${GROUPED_TMUX_VIEW_SESSION_PREFIX}${parsed.replaceAll("-", "").toLowerCase()}-${parsedGeneration.toString(36)}`;
 }
 function markerValue(attachmentId, generation) {
@@ -23598,21 +23716,21 @@ var init_grouped_tmux = __esm({
     GROUPED_TMUX_MAX_GENERATION = 65535;
     GROUPED_TMUX_PLACEHOLDER_WINDOW = "__tmux_ide_attachment_placeholder";
     GROUPED_TMUX_PLACEHOLDER_COMMAND = "exec sleep 2147483647";
-    RuntimeSessionIdSchemaZ2 = z46.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
-    RuntimeWindowIdSchemaZ2 = z46.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
-    RuntimePaneIdSchemaZ2 = z46.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
-    GroupedTmuxAttachmentPlanInputSchemaZ = z46.object({
-      attachmentId: z46.uuid(),
-      generation: z46.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+    RuntimeSessionIdSchemaZ2 = z47.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
+    RuntimeWindowIdSchemaZ2 = z47.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
+    RuntimePaneIdSchemaZ2 = z47.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
+    GroupedTmuxAttachmentPlanInputSchemaZ = z47.object({
+      attachmentId: z47.uuid(),
+      generation: z47.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
       target: TerminalAttachmentSemanticTargetSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ,
       viewport: TerminalAttachmentViewportSchemaZ,
-      source: z46.object({
+      source: z47.object({
         sessionId: RuntimeSessionIdSchemaZ2,
         windowId: RuntimeWindowIdSchemaZ2,
         runtimePaneId: RuntimePaneIdSchemaZ2,
         /** Grouped views are valid only after discovery proves this invariant. */
-        paneCount: z46.literal(1)
+        paneCount: z47.literal(1)
       }).strict()
     }).strict();
   }
@@ -23620,7 +23738,7 @@ var init_grouped_tmux = __esm({
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
 import { createHash as createHash8, randomBytes as randomBytes2, randomUUID as randomUUID4, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
-import { z as z47 } from "zod";
+import { z as z48 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
   if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
@@ -23660,10 +23778,10 @@ var init_lease_manager = __esm({
     init_src();
     init_grouped_tmux();
     init_semantic_pane_catalog();
-    BindingIdSchemaZ2 = z47.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RequestIdSchemaZ = z47.uuid();
+    BindingIdSchemaZ2 = z48.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RequestIdSchemaZ = z48.uuid();
     RuntimeWindowId = /^@(?:0|[1-9][0-9]*)$/u;
-    AttachmentViewOperationSchemaZ = z47.enum(["create", "attach", "recover"]);
+    AttachmentViewOperationSchemaZ = z48.enum(["create", "attach", "recover"]);
     RedemptionTicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
     MarkerPattern = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/iu;
     AttachmentLeaseError = class extends Error {
@@ -23954,7 +24072,7 @@ var init_lease_manager = __esm({
             throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
           }
           const clientClaim = typeof executionResult === "object" && executionResult.status === "executed" ? executionResult.clientClaim : null;
-          if (clientClaim && (!z47.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
+          if (clientClaim && (!z48.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
             this.#removeState(state);
             await this.#cleanupPlan(state);
             throw new AttachmentLeaseError(
@@ -24113,7 +24231,7 @@ var init_lease_manager = __esm({
       #freshId() {
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const candidate = this.#createId();
-          if (z47.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
+          if (z48.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
         }
         throw new AttachmentLeaseError(
           "identity-generation-failed",
@@ -24323,7 +24441,7 @@ var init_lease_manager = __esm({
 
 // packages/daemon/src/terminal/attachments/tmux-view-executor.ts
 import { isDeepStrictEqual } from "node:util";
-import { z as z48 } from "zod";
+import { z as z49 } from "zod";
 function tmux4(argv) {
   return { executable: "tmux", argv };
 }
@@ -24413,7 +24531,7 @@ function parseViewSessionName(value) {
   const match = ViewNamePattern.exec(value);
   if (!match) return null;
   const attachmentId = uuidFromCompactHex(match[1]);
-  if (!z48.uuid().safeParse(attachmentId).success) return null;
+  if (!z49.uuid().safeParse(attachmentId).success) return null;
   const generation = Number.parseInt(match[2], 36);
   if (!Number.isSafeInteger(generation) || generation < 0 || generation > GROUPED_TMUX_MAX_GENERATION || generation.toString(36) !== match[2]) {
     return null;
@@ -24476,9 +24594,9 @@ var init_tmux_view_executor = __esm({
     MAX_MARKER_OUTPUT_ROWS = 1;
     SOURCE_PROOF_MISMATCH_SENTINEL = "__tmux_ide_source_proof_mismatch_v1__";
     VIEW_PROOF_MISMATCH_SENTINEL = "__tmux_ide_view_proof_mismatch_v1__";
-    RuntimeSessionIdSchemaZ3 = z48.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-    RuntimeWindowIdSchemaZ3 = z48.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-    RuntimePaneIdSchemaZ3 = z48.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+    RuntimeSessionIdSchemaZ3 = z49.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+    RuntimeWindowIdSchemaZ3 = z49.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+    RuntimePaneIdSchemaZ3 = z49.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
     MarkerPattern2 = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/u;
     ViewNamePattern = /^_tmux-ide-view-v1-([0-9a-f]{32})-([0-9a-z]+)$/u;
     TmuxAttachmentClientTransportError = class extends Error {
@@ -24540,13 +24658,13 @@ var init_tmux_view_executor = __esm({
         }
       }
     };
-    TmuxAttachmentClientTransportInputSchemaZ = z48.object({
-      operation: z48.enum(["attach", "recover"]),
-      identity: z48.object({
-        attachmentId: z48.uuid(),
-        generation: z48.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
-        viewSessionName: z48.string(),
-        markerValue: z48.string(),
+    TmuxAttachmentClientTransportInputSchemaZ = z49.object({
+      operation: z49.enum(["attach", "recover"]),
+      identity: z49.object({
+        attachmentId: z49.uuid(),
+        generation: z49.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+        viewSessionName: z49.string(),
+        markerValue: z49.string(),
         expectedSourceSessionId: RuntimeSessionIdSchemaZ3,
         expectedViewSessionId: RuntimeSessionIdSchemaZ3,
         expectedWindowId: RuntimeWindowIdSchemaZ3,
@@ -24617,7 +24735,7 @@ var init_tmux_view_executor = __esm({
             throw new TmuxAttachmentViewExecutorError("invalid-request");
           }
           const result = this.#clientTransport.beginGuardedAttach(input);
-          if (result.status !== "claimed" || !z48.uuid().safeParse(result.attemptId).success || result.attachmentId !== plan.identity.attachmentId || result.generation !== plan.identity.generation || !(result.outcome instanceof Promise)) {
+          if (result.status !== "claimed" || !z49.uuid().safeParse(result.attemptId).success || result.attachmentId !== plan.identity.attachmentId || result.generation !== plan.identity.generation || !(result.outcome instanceof Promise)) {
             throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
           }
           return result;
@@ -25547,7 +25665,7 @@ var init_pty_tmux_attachment_launcher = __esm({
 // packages/daemon/src/terminal/attachments/native-runtime.ts
 import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync8, statSync as statSync9 } from "node:fs";
 import { isAbsolute as isAbsolute9 } from "node:path";
-import { z as z49 } from "zod";
+import { z as z50 } from "zod";
 function presentationEnvironment(source) {
   const environment = {
     TERM: SAFE_TERMINAL_VALUE2.test(source.TERM ?? "") ? source.TERM : "xterm-256color"
@@ -25833,7 +25951,7 @@ function commandString(argv) {
   return argv.map((value) => value === ";" ? ";" : quoteArgument(value)).join(" ");
 }
 function geometryDescriptorIsValid(descriptor2, client) {
-  return z49.uuid().safeParse(descriptor2.leaseId).success && z49.uuid().safeParse(descriptor2.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor2.target).success && descriptor2.status === "active" && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0 && descriptor2.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z49.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor2.leaseId && client.generation === descriptor2.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
+  return z50.uuid().safeParse(descriptor2.leaseId).success && z50.uuid().safeParse(descriptor2.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor2.target).success && descriptor2.status === "active" && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0 && descriptor2.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z50.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor2.leaseId && client.generation === descriptor2.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
 }
 function createNativeTerminalAttachmentRuntime(options) {
   return new NativeTerminalAttachmentRuntime(options);
@@ -26589,74 +26707,74 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z50 } from "zod";
+import { z as z51 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z50.object({
-      status: z50.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z50.string().optional(),
-      title: z50.string().optional(),
-      description: z50.string().optional(),
-      priority: z50.number().optional()
+    updateTaskSchema = z51.object({
+      status: z51.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z51.string().optional(),
+      title: z51.string().optional(),
+      description: z51.string().optional(),
+      priority: z51.number().optional()
     });
-    createTaskSchema = z50.object({
-      title: z50.string().trim().min(1, "Title is required"),
-      description: z50.string().optional(),
-      priority: z50.number().optional(),
-      goal: z50.string().optional(),
-      tags: z50.array(z50.string()).optional()
+    createTaskSchema = z51.object({
+      title: z51.string().trim().min(1, "Title is required"),
+      description: z51.string().optional(),
+      priority: z51.number().optional(),
+      goal: z51.string().optional(),
+      tags: z51.array(z51.string()).optional()
     });
-    savePlanSchema = z50.object({
-      content: z50.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z51.object({
+      content: z51.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z50.object({
-      content: z50.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z51.object({
+      content: z51.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z50.object({
-      target: z50.string().min(1, "Target pane is required"),
-      message: z50.string().min(1, "Message is required"),
-      noEnter: z50.boolean().optional()
+    sendCommandSchema = z51.object({
+      target: z51.string().min(1, "Target pane is required"),
+      message: z51.string().min(1, "Message is required"),
+      noEnter: z51.boolean().optional()
     });
-    createMilestoneSchema = z50.object({
-      title: z50.string().trim().min(1, "Title is required"),
-      sequence: z50.number().int().positive(),
-      description: z50.string().optional()
+    createMilestoneSchema = z51.object({
+      title: z51.string().trim().min(1, "Title is required"),
+      sequence: z51.number().int().positive(),
+      description: z51.string().optional()
     });
-    updateMilestoneSchema = z50.object({
-      status: z50.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z50.string().optional(),
-      description: z50.string().optional()
+    updateMilestoneSchema = z51.object({
+      status: z51.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z51.string().optional(),
+      description: z51.string().optional()
     });
-    updateAssertionSchema = z50.object({
-      status: z50.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z50.string().optional(),
-      verifiedBy: z50.string().optional()
+    updateAssertionSchema = z51.object({
+      status: z51.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z51.string().optional(),
+      verifiedBy: z51.string().optional()
     });
-    triggerResearchSchema = z50.object({
-      type: z50.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z51.object({
+      type: z51.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z50.object({
-      attach: z50.boolean().optional()
+    launchSchema = z51.object({
+      attach: z51.boolean().optional()
     }).optional();
-    stopSchema = z50.object({}).optional();
+    stopSchema = z51.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z50.object({
-      name: z50.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z51.object({
+      name: z51.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z50.string().trim().optional(),
-      description: z50.string().optional(),
-      specialties: z50.array(z50.string()).optional(),
-      body: z50.string().optional()
+      role: z51.string().trim().optional(),
+      description: z51.string().optional(),
+      specialties: z51.array(z51.string()).optional(),
+      body: z51.string().optional()
     });
-    updateSkillSchema = z50.object({
-      role: z50.string().trim().optional(),
-      description: z50.string().optional(),
-      specialties: z50.array(z50.string()).optional(),
-      body: z50.string().optional()
+    updateSkillSchema = z51.object({
+      role: z51.string().trim().optional(),
+      description: z51.string().optional(),
+      specialties: z51.array(z51.string()).optional(),
+      body: z51.string().optional()
     });
   }
 });
@@ -28053,64 +28171,64 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z51 } from "zod";
+import { z as z52 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z51.object({
+    ProjectInspectDetectedSchemaZ = z52.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z51.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z52.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z51.array(z51.string()),
+      frameworks: z52.array(z52.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z51.string().nullable(),
+      devCommand: z52.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z51.string().nullable()
+      testCommand: z52.string().nullable()
     });
-    ProjectInspectSchemaZ = z51.object({
+    ProjectInspectSchemaZ = z52.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z51.string(),
+      name: z52.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z51.string(),
+      dir: z52.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z51.boolean(),
+      hasIdeYml: z52.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z51.boolean().optional(),
+      hasWorkspaceConfig: z52.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z51.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z52.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z51.string().nullable().optional(),
+      configPath: z52.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z51.string().nullable().optional(),
+      ideConfigPath: z52.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z51.string().nullable(),
+      gitOrigin: z52.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z51.string().nullable(),
+      gitBranch: z52.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z51.object({
-      dir: z51.string().min(1)
+    InspectFilesystemRequestSchemaZ = z52.object({
+      dir: z52.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z51.object({
-      dir: z51.string().min(1),
+    OnboardProjectRequestSchemaZ = z52.object({
+      dir: z52.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z51.string().min(1).optional(),
+      name: z52.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z51.number().int().min(1).max(3),
+      agents: z52.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z51.array(z51.string().min(1)).optional(),
+      agentNames: z52.array(z52.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z51.string().min(1).nullable().optional(),
+      devCommand: z52.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z51.string().min(1).nullable().optional(),
+      testCommand: z52.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z51.string().min(1).nullable().optional()
+      lintCommand: z52.string().min(1).nullable().optional()
     });
   }
 });
@@ -31195,7 +31313,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
-import { z as z52 } from "zod";
+import { z as z53 } from "zod";
 import { realpathSync as realpathSync12 } from "node:fs";
 import { homedir as homedir20 } from "node:os";
 import { isAbsolute as isAbsolute13, resolve as pathResolve } from "node:path";
@@ -31242,7 +31360,7 @@ function requireHostCapability(ownerToken) {
     if (!supplied || supplied !== ownerToken) {
       return c.json({ error: "Host mutation capability required" }, 401);
     }
-    if (!z52.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+    if (!z53.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
     return next();
@@ -31401,7 +31519,7 @@ function createApp(options = {}) {
       } catch {
         return c.json({ error: "Invalid capability request" }, 400);
       }
-      if (!z52.object({}).strict().safeParse(body).success) {
+      if (!z53.object({}).strict().safeParse(body).success) {
         return c.json({ error: "Invalid capability request" }, 400);
       }
       const appWindowCommandRegistered = daemonActionCommandRegistry.descriptors().some(({ id }) => id === "workspace.app-window.mutate");
@@ -33338,7 +33456,7 @@ var init_daemon_embed = __esm({
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
 import { randomUUID as randomUUID10 } from "node:crypto";
-import { z as z53 } from "zod";
+import { z as z54 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -33452,7 +33570,7 @@ async function tryDispatchAction(name, input, options = {}) {
           details: failure.data.error.details
         });
       }
-      const success = z53.object({ ok: z53.literal(true), result: contract.result }).safeParse(body);
+      const success = z54.object({ ok: z54.literal(true), result: contract.result }).safeParse(body);
       if (success.success) return success.data.result;
     }
     return null;
@@ -33467,12 +33585,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z53.object({
-      ok: z53.literal(false),
-      error: z53.object({
-        code: z53.string(),
-        message: z53.string(),
-        details: z53.unknown().optional()
+    FailureEnvelopeZ = z54.object({
+      ok: z54.literal(false),
+      error: z54.object({
+        code: z54.string(),
+        message: z54.string(),
+        details: z54.unknown().optional()
       })
     });
     RETRY_SAFE_OWNER_ACTIONS = /* @__PURE__ */ new Set([

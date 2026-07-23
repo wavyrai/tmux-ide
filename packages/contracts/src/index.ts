@@ -49,6 +49,8 @@ export * from "./visual-tokens.ts";
 export * from "./visual-recipes.ts";
 export * from "./pane-appearance.ts";
 export * from "./agent-graph-overlay.ts";
+export * from "./fleet-catalog.ts";
+export * from "./fleet-agent-graph.ts";
 export * from "./focus-overlay.ts";
 export * from "./cohesion-fixture.ts";
 export * from "./daemon-wire.ts";
