@@ -43,6 +43,15 @@ export const NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW = 256;
 export const NATIVE_TERMINAL_MAX_CONNECTION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 export const NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS = 5_000;
 export const NATIVE_TERMINAL_INPUT_ACK_TIMEOUT_MS = 5_000;
+/**
+ * Ceiling on the daemon's answer once the redemption frame is on the wire.
+ * The ticket TTL bounds credential DELIVERY; concurrent attachments redeem
+ * through one serialized daemon queue whose execution legitimately outlives a
+ * short ticket, so after send the daemon owns expiry (it stamps frame arrival
+ * and enforces its own bounded processing budget) and this local ceiling only
+ * catches a daemon that never answers at all.
+ */
+export const NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS = 75_000;
 
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
@@ -397,6 +406,7 @@ function controlError(frame: ErrorFrame): NativeTerminalTransportError {
     "attachment-renewal-failed": "The terminal attachment could not renew its lease.",
     "input-backpressure-unavailable": INPUT_UNAVAILABLE.reason,
     "resize-unavailable": "The daemon could not resize this terminal attachment.",
+    "ticket-expired": "The terminal attachment ticket expired before the daemon received it.",
   };
   return transportError(
     frame.code,
@@ -461,6 +471,7 @@ class NativeTerminalWebSocketSession {
   #resolveConnect!: (result: NativeTerminalConnectResult) => void;
   #redemptionFrame: string | null;
   #cancelExpiry: (() => void) | null = null;
+  #cancelRedeemResponse: (() => void) | null = null;
   #cancelLifetime: (() => void) | null = null;
   #phase: "opening" | "redeeming" | "live" | "closed" = "opening";
   #generation: number | null = null;
@@ -570,6 +581,25 @@ class NativeTerminalWebSocketSession {
     this.#phase = "redeeming";
     const sendError = this.#sendControl(frame);
     if (sendError) return;
+    // The ticket bounded delivery and the frame is now on the wire; expiry
+    // authority moves to the daemon, which stamps arrival. Keep only a bounded
+    // local ceiling so a daemon that never answers cannot hold the card open.
+    this.#cancelExpiry?.();
+    this.#cancelExpiry = null;
+    this.#cancelRedeemResponse = this.#schedule(
+      () =>
+        this.#retire(
+          transportError(
+            "redeem-timeout",
+            "The daemon did not answer the terminal redemption in time.",
+            true,
+          ),
+          false,
+          1008,
+          "redeem-timeout",
+        ),
+      NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS,
+    );
   };
 
   readonly #onMessage = (event: NativeTerminalSocketEvent): void => {
@@ -702,6 +732,8 @@ class NativeTerminalWebSocketSession {
       this.#phase = "live";
       this.#cancelExpiry?.();
       this.#cancelExpiry = null;
+      this.#cancelRedeemResponse?.();
+      this.#cancelRedeemResponse = null;
       this.#cancelLifetime = this.#schedule(
         () =>
           this.#retire(
@@ -1230,6 +1262,8 @@ class NativeTerminalWebSocketSession {
     this.#inputLimits = null;
     this.#cancelExpiry?.();
     this.#cancelExpiry = null;
+    this.#cancelRedeemResponse?.();
+    this.#cancelRedeemResponse = null;
     this.#cancelLifetime?.();
     this.#cancelLifetime = null;
     this.#socket.removeEventListener("open", this.#onOpen);

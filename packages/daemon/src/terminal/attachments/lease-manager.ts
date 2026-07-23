@@ -233,6 +233,12 @@ export interface AttachmentLeaseManagerOptions {
   readonly leaseTtlMs?: number;
   readonly maxLeaseTtlMs?: number;
   readonly disconnectGraceMs?: number;
+  /**
+   * Ceiling on redemption execution measured from authenticated frame arrival.
+   * The ticket TTL bounds credential delivery; this bounds how long the
+   * daemon's own serialized redemption work may take after delivery.
+   */
+  readonly redemptionProcessingTtlMs?: number;
   readonly onAudit?: (event: AttachmentLeaseAuditEvent) => void;
 }
 
@@ -341,6 +347,7 @@ export class AttachmentLeaseManager {
   readonly #leaseTtlMs: number;
   readonly #maxLeaseTtlMs: number;
   readonly #disconnectGraceMs: number;
+  readonly #redemptionProcessingTtlMs: number;
   readonly #onAudit: ((event: AttachmentLeaseAuditEvent) => void) | undefined;
   readonly #leases = new Map<string, LeaseState>();
   readonly #requests = new Map<string, string>();
@@ -369,6 +376,11 @@ export class AttachmentLeaseManager {
       options.disconnectGraceMs,
       5_000,
       "disconnectGraceMs",
+    );
+    this.#redemptionProcessingTtlMs = positiveDuration(
+      options.redemptionProcessingTtlMs,
+      60_000,
+      "redemptionProcessingTtlMs",
     );
     this.#onAudit = options.onAudit;
   }
@@ -447,7 +459,19 @@ export class AttachmentLeaseManager {
     });
   }
 
-  redeem(ticket: string, binding: AttachmentLeaseBinding): Promise<RedeemedAttachmentLease> {
+  /**
+   * `receivedAt` is the in-process arrival time of the authenticated
+   * redemption frame, stamped by the admission boundary BEFORE the redemption
+   * queued behind other serialized work. The ticket TTL bounds delivery (the
+   * frame must arrive while the ticket lives); execution after delivery is the
+   * daemon's own latency and gets the separate bounded processing budget, so a
+   * redemption delivered in time cannot be retired by its own queue wait.
+   */
+  redeem(
+    ticket: string,
+    binding: AttachmentLeaseBinding,
+    receivedAt?: number,
+  ): Promise<RedeemedAttachmentLease> {
     return this.#exclusive(async () => {
       const parsedBinding = validateBinding(binding);
       if (!RedemptionTicketPattern.test(ticket)) {
@@ -475,12 +499,18 @@ export class AttachmentLeaseManager {
       }
 
       const now = this.#now();
-      if (now >= state.ticketExpiresAt) {
+      // The caller is trusted in-process code; a claimed future arrival still
+      // never precedes now, and a claimed past arrival only SHRINKS the budget.
+      const deliveredAt =
+        typeof receivedAt === "number" && Number.isSafeInteger(receivedAt) && receivedAt <= now
+          ? receivedAt
+          : now;
+      if (deliveredAt >= state.ticketExpiresAt) {
         this.#removeState(state);
         await this.#cleanupPlan(state);
         throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
       }
-      const ticketDeadline = state.ticketExpiresAt;
+      const processingDeadline = deliveredAt + this.#redemptionProcessingTtlMs;
 
       // Delete before the first await: even concurrent callers cannot replay it.
       state.ticketDigest.fill(0);
@@ -488,21 +518,21 @@ export class AttachmentLeaseManager {
       state.ticketExpiresAt = null;
       try {
         const resolution = await this.#catalog.resolve(state.request.target);
-        await this.#expireTicketOrThrow(state, ticketDeadline);
+        await this.#expireTicketOrThrow(state, processingDeadline);
         await this.#applyResolution(state, resolution);
-        await this.#expireTicketOrThrow(state, ticketDeadline);
+        await this.#expireTicketOrThrow(state, processingDeadline);
       } catch (error) {
         if (this.#leases.get(state.leaseId) === state) {
           this.#removeState(state);
           await this.#cleanupPlan(state);
         }
-        if (this.#now() >= ticketDeadline) {
+        if (this.#now() >= processingDeadline) {
           throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
         }
         throw error;
       }
       const activatedAt = this.#now();
-      if (activatedAt >= ticketDeadline) {
+      if (activatedAt >= processingDeadline) {
         this.#removeState(state);
         await this.#cleanupPlan(state);
         throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");

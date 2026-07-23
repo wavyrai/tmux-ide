@@ -85,8 +85,11 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
     return issued;
   }
 
-  async redeem(ticket: string, _binding: AttachmentLeaseBinding) {
+  readonly receivedAts: Array<number | undefined> = [];
+
+  async redeem(ticket: string, _binding: AttachmentLeaseBinding, receivedAt?: number) {
     this.calls.push("redeem");
+    this.receivedAts.push(receivedAt);
     await this.redeemGate;
     if (this.consumed || ticket !== this.issuedTicket) throw new Error("invalid ticket");
     this.consumed = true;
@@ -526,6 +529,25 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
       acceptedFrames: 1,
     });
     expect(coordinator.snapshot().liveConnections).toBe(1);
+    await coordinator.shutdown();
+  });
+
+  it("stamps redemption arrival before the serialized queue so a queue wait cannot expire delivery", async () => {
+    let now = 1_000;
+    const { coordinator, manager } = rig({ now: () => now });
+    await issue(coordinator);
+    const pending = admission(coordinator);
+    const socket = new FakeSocket();
+    pending.bind(socket);
+    now = 2_000;
+    socket.frame(redemption());
+    // The queue drains much later than the frame arrived; the lease manager
+    // must still see the true arrival time, not the drain time.
+    now = 30_000;
+    await flush();
+    await flush();
+    expect(manager.receivedAts).toEqual([2_000]);
+    expect(manager.calls.slice(0, 2)).toEqual(["issue", "redeem"]);
     await coordinator.shutdown();
   });
 

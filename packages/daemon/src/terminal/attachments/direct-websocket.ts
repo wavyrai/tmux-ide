@@ -18,13 +18,14 @@ import {
   type TerminalAttachmentViewport,
   type TerminalAttachmentViewerMode,
 } from "@tmux-ide/contracts";
-import type {
-  AttachmentIssueContext,
-  AttachmentLeaseBinding,
-  AttachmentLeaseDescriptor,
-  ExecutedAttachmentViewOperation,
-  IssuedAttachmentLease,
-  RedeemedAttachmentLease,
+import {
+  AttachmentLeaseError,
+  type AttachmentIssueContext,
+  type AttachmentLeaseBinding,
+  type AttachmentLeaseDescriptor,
+  type ExecutedAttachmentViewOperation,
+  type IssuedAttachmentLease,
+  type RedeemedAttachmentLease,
 } from "./lease-manager.ts";
 import type {
   ClaimedPtyTmuxAttachment,
@@ -100,7 +101,11 @@ export interface DirectTerminalAttachmentLeaseManager {
     request: TerminalAttachRequest,
     context: AttachmentIssueContext,
   ): Promise<IssuedAttachmentLease>;
-  redeem(ticket: string, binding: AttachmentLeaseBinding): Promise<RedeemedAttachmentLease>;
+  redeem(
+    ticket: string,
+    binding: AttachmentLeaseBinding,
+    receivedAt?: number,
+  ): Promise<RedeemedAttachmentLease>;
   renew(leaseId: string, binding: AttachmentLeaseBinding): Promise<RedeemedAttachmentLease>;
   executeViewOperation(
     leaseId: string,
@@ -646,6 +651,10 @@ export class TerminalAttachmentAdmissionCoordinator {
     frame: RedemptionFrame,
     socket: DirectTerminalSocket,
   ): Promise<TerminalAttachmentLiveConnection> {
+    // Stamp authenticated frame arrival BEFORE queueing: concurrent redemptions
+    // serialize below, and a queue wait must not consume the ticket's delivery
+    // TTL (the lease manager gives execution its own bounded budget).
+    const receivedAt = this.#now();
     return this.#exclusive(async () => {
       if (this.#shuttingDown) {
         throw new TerminalAttachmentAdmissionError(
@@ -695,7 +704,7 @@ export class TerminalAttachmentAdmissionCoordinator {
       let liveReservationHeld = true;
       this.#liveReservations += 1;
       try {
-        const redeemed = await this.#leaseManager.redeem(frame.ticket, binding);
+        const redeemed = await this.#leaseManager.redeem(frame.ticket, binding, receivedAt);
         this.#assertActiveDescriptor(redeemed.descriptor, pending);
         if (!admission.isOpen()) {
           throw new TerminalAttachmentAdmissionError(
@@ -954,14 +963,20 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
     this.beginRedemption();
     void this.#onRedeem(this, frame, socket).catch((error: unknown) => {
       if (!this.#open) return;
+      // A late-delivered or budget-exhausted ticket surfaces its honest code so
+      // the renderer can name the expiry instead of a generic retirement.
       const code =
-        error instanceof TerminalAttachmentAdmissionError ? error.code : "attachment-unavailable";
+        error instanceof TerminalAttachmentAdmissionError
+          ? error.code
+          : error instanceof AttachmentLeaseError && error.code === "ticket-expired"
+            ? "ticket-expired"
+            : "attachment-unavailable";
       try {
         sendControl(socket, {
           type: "error",
           protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
           code,
-          retryable: code === "live-capacity-exhausted",
+          retryable: code === "live-capacity-exhausted" || code === "ticket-expired",
         });
       } catch {
         // Closing below is the fail-closed response.

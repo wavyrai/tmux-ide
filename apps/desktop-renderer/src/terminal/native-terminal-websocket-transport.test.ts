@@ -14,6 +14,7 @@ import {
   NATIVE_TERMINAL_MAX_QUEUED_EVENTS,
   NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES,
   NATIVE_TERMINAL_RATE_WINDOW_MS,
+  NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS,
   NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS,
   NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
   NativeTerminalIssueError,
@@ -704,6 +705,59 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       error: { code: "attachment-expired" },
     });
     expect(socket.sent).toHaveLength(0);
+  });
+
+  it("hands ticket expiry to the daemon once the redemption frame is sent", async () => {
+    const scheduled: Array<{ callback: () => void; active: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, active: true, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.active = false;
+      };
+    };
+    const harness = rig({ schedule });
+    const connecting = harness.transport.connect(REQUEST, () => undefined);
+    const socket = await waitForSocket(harness.sockets);
+    const expiry = scheduled.find((entry) => entry.delay === 15_000);
+    expect(expiry?.active).toBe(true);
+    socket.open();
+    expect(socket.sent).toHaveLength(1);
+    // Delivery is on the wire: the local ticket clock retires and only the
+    // bounded response ceiling remains armed.
+    expect(expiry?.active).toBe(false);
+    const ceiling = scheduled.find(
+      (entry) => entry.delay === NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS,
+    );
+    expect(ceiling?.active).toBe(true);
+    socket.message(ready());
+    await expect(connecting).resolves.toMatchObject({ status: "connected" });
+    expect(ceiling?.active).toBe(false);
+  });
+
+  it("retires a silent daemon at the bounded redemption-response ceiling", async () => {
+    const scheduled: Array<{ callback: () => void; active: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, active: true, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.active = false;
+      };
+    };
+    const harness = rig({ schedule });
+    const connecting = harness.transport.connect(REQUEST, () => undefined);
+    const socket = await waitForSocket(harness.sockets);
+    socket.open();
+    const ceiling = scheduled.find(
+      (entry) => entry.delay === NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS,
+    );
+    expect(ceiling?.active).toBe(true);
+    ceiling!.callback();
+    await expect(connecting).resolves.toMatchObject({
+      status: "error",
+      error: { code: "redeem-timeout", retryable: true },
+    });
+    expect(socket.closes).toEqual([{ code: 1008, reason: "redeem-timeout" }]);
   });
 
   it("surfaces a structured issue rejection code instead of the generic failure", async () => {

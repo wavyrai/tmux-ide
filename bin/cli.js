@@ -24239,9 +24239,882 @@ var init_terminal_attachment_stream = __esm({
   }
 });
 
-// packages/daemon/src/terminal/attachments/direct-websocket.ts
-import { createHash as createHash10, timingSafeEqual } from "node:crypto";
+// packages/daemon/src/terminal/attachments/grouped-tmux.ts
 import { z as z47 } from "zod";
+function tmux3(argv) {
+  return { executable: "tmux", argv };
+}
+function groupedTmuxViewSessionName(attachmentId, generation) {
+  const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.shape.attachmentId.parse(attachmentId);
+  const parsedGeneration = z47.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
+  return `${GROUPED_TMUX_VIEW_SESSION_PREFIX}${parsed.replaceAll("-", "").toLowerCase()}-${parsedGeneration.toString(36)}`;
+}
+function markerValue(attachmentId, generation) {
+  return `v1:${attachmentId.toLowerCase()}:${generation}`;
+}
+function viewWindowTarget(viewSessionName, windowId) {
+  return `${viewSessionName}:${windowId}`;
+}
+function reconcileCommands(args) {
+  const windowTarget = viewWindowTarget(args.viewSessionName, args.sourceWindowId);
+  return [
+    tmux3(["select-window", "-t", windowTarget]),
+    tmux3(["set-option", "-t", args.viewSessionName, "status", "off"]),
+    tmux3(["set-option", "-t", args.viewSessionName, "destroy-unattached", "off"])
+  ];
+}
+function attachCommand(viewSessionName, viewerMode) {
+  const target = `=${viewSessionName}`;
+  return viewerMode === "read-only" ? tmux3(["attach-session", "-E", "-r", "-t", target]) : tmux3(["attach-session", "-E", "-f", "ignore-size", "-t", target]);
+}
+function planGroupedTmuxAttachment(input) {
+  const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.parse(input);
+  const viewSessionName = groupedTmuxViewSessionName(parsed.attachmentId, parsed.generation);
+  const viewMarkerValue = markerValue(parsed.attachmentId, parsed.generation);
+  const exactViewTarget = `=${viewSessionName}`;
+  const existenceProbe = tmux3(["has-session", "-t", exactViewTarget]);
+  const ownership = {
+    query: tmux3(["show-environment", "-t", exactViewTarget, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT]),
+    expectedStdout: `${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}=${viewMarkerValue}`
+  };
+  const topology = {
+    query: tmux3(["list-windows", "-t", exactViewTarget, "-F", "#{window_id}"]),
+    expectedStdout: parsed.source.windowId
+  };
+  const reconcile = reconcileCommands({
+    viewSessionName,
+    sourceWindowId: parsed.source.windowId
+  });
+  const attach2 = attachCommand(viewSessionName, parsed.viewerMode);
+  const createArgv = [
+    "new-session",
+    "-d",
+    "-s",
+    viewSessionName,
+    "-n",
+    GROUPED_TMUX_PLACEHOLDER_WINDOW,
+    GROUPED_TMUX_PLACEHOLDER_COMMAND,
+    ";",
+    "set-environment",
+    "-t",
+    viewSessionName,
+    GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+    viewMarkerValue,
+    ";",
+    "set-option",
+    "-t",
+    viewSessionName,
+    "status",
+    "off",
+    ";",
+    "set-option",
+    "-t",
+    viewSessionName,
+    "destroy-unattached",
+    "off",
+    ";",
+    "link-window",
+    "-ad",
+    "-s",
+    `${parsed.source.sessionId}:${parsed.source.windowId}`,
+    "-t",
+    `${viewSessionName}:`,
+    ";",
+    "unlink-window",
+    "-t",
+    `${viewSessionName}:`
+  ];
+  return {
+    identity: {
+      attachmentId: parsed.attachmentId,
+      generation: parsed.generation,
+      viewSessionName,
+      markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+      markerValue: viewMarkerValue,
+      semanticTarget: parsed.target,
+      durableSource: {
+        sessionId: parsed.source.sessionId,
+        windowId: parsed.source.windowId,
+        runtimePaneId: parsed.source.runtimePaneId
+      }
+    },
+    viewerMode: parsed.viewerMode,
+    viewport: parsed.viewport,
+    create: {
+      absenceProbe: existenceProbe,
+      command: tmux3(createArgv)
+    },
+    attach: attach2,
+    detach: tmux3(["detach-client", "-s", exactViewTarget]),
+    recover: {
+      existenceProbe,
+      ownership,
+      topology,
+      reconcile,
+      attach: attach2
+    },
+    cleanup: {
+      ownership,
+      command: tmux3(["kill-session", "-t", exactViewTarget])
+    }
+  };
+}
+var GROUPED_TMUX_VIEW_SESSION_PREFIX, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT, GROUPED_TMUX_MAX_GENERATION, GROUPED_TMUX_PLACEHOLDER_WINDOW, GROUPED_TMUX_PLACEHOLDER_COMMAND, RuntimeSessionIdSchemaZ2, RuntimeWindowIdSchemaZ2, RuntimePaneIdSchemaZ2, GroupedTmuxAttachmentPlanInputSchemaZ;
+var init_grouped_tmux = __esm({
+  "packages/daemon/src/terminal/attachments/grouped-tmux.ts"() {
+    "use strict";
+    init_src();
+    GROUPED_TMUX_VIEW_SESSION_PREFIX = "_tmux-ide-view-v1-";
+    GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT = "TMUX_IDE_ATTACHMENT_VIEW";
+    GROUPED_TMUX_MAX_GENERATION = 65535;
+    GROUPED_TMUX_PLACEHOLDER_WINDOW = "__tmux_ide_attachment_placeholder";
+    GROUPED_TMUX_PLACEHOLDER_COMMAND = "exec sleep 2147483647";
+    RuntimeSessionIdSchemaZ2 = z47.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
+    RuntimeWindowIdSchemaZ2 = z47.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
+    RuntimePaneIdSchemaZ2 = z47.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
+    GroupedTmuxAttachmentPlanInputSchemaZ = z47.object({
+      attachmentId: z47.uuid(),
+      generation: z47.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+      target: TerminalAttachmentSemanticTargetSchemaZ,
+      viewerMode: TerminalAttachmentViewerModeSchemaZ,
+      viewport: TerminalAttachmentViewportSchemaZ,
+      source: z47.object({
+        sessionId: RuntimeSessionIdSchemaZ2,
+        windowId: RuntimeWindowIdSchemaZ2,
+        runtimePaneId: RuntimePaneIdSchemaZ2,
+        /**
+         * The resolved window's live pane count (m41 attach-2). The planner
+         * links the WHOLE window, so this is a window proof, not a per-pane
+         * gate: any positive count is valid. Single-pane windows keep passing
+         * `1`, so their plans stay byte-identical.
+         */
+        windowPaneCount: z47.number().int().positive()
+      }).strict()
+    }).strict();
+  }
+});
+
+// packages/daemon/src/terminal/attachments/lease-manager.ts
+import { createHash as createHash10, randomBytes as randomBytes2, randomUUID as randomUUID4, timingSafeEqual } from "node:crypto";
+import { z as z48 } from "zod";
+function positiveDuration(value, fallback, label2) {
+  const resolved2 = value ?? fallback;
+  if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
+    throw new TypeError(`${label2} must be a positive safe integer.`);
+  }
+  return resolved2;
+}
+function hashTicket(ticket) {
+  return createHash10("sha256").update(ticket, "utf8").digest();
+}
+function constantTimeDigestMatch(left, right) {
+  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+}
+function validateBinding(binding) {
+  return {
+    daemonInstanceId: BindingIdSchemaZ.parse(binding.daemonInstanceId),
+    requestId: RequestIdSchemaZ.parse(binding.requestId),
+    projectIdentity: BindingIdSchemaZ.parse(binding.projectIdentity)
+  };
+}
+function sameBinding(state, binding, instanceId) {
+  return binding.daemonInstanceId === instanceId && binding.requestId === state.requestId && binding.projectIdentity === state.projectIdentity;
+}
+function sameLinkedWindow(left, right) {
+  return left.source.windowId === right.source.windowId;
+}
+function windowOwnerKey(resolution) {
+  return resolution.source.windowId;
+}
+function exactViewSessionTarget(plan) {
+  return `=${plan.identity.viewSessionName}`;
+}
+var BindingIdSchemaZ, RequestIdSchemaZ, RuntimeWindowId, AttachmentViewOperationSchemaZ, RedemptionTicketPattern, MarkerPattern, AttachmentLeaseError, AttachmentLeaseManager;
+var init_lease_manager = __esm({
+  "packages/daemon/src/terminal/attachments/lease-manager.ts"() {
+    "use strict";
+    init_src();
+    init_grouped_tmux();
+    init_semantic_pane_catalog();
+    BindingIdSchemaZ = z48.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RequestIdSchemaZ = z48.uuid();
+    RuntimeWindowId = /^@(?:0|[1-9][0-9]*)$/u;
+    AttachmentViewOperationSchemaZ = z48.enum(["create", "attach", "recover"]);
+    RedemptionTicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
+    MarkerPattern = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/iu;
+    AttachmentLeaseError = class extends Error {
+      code;
+      constructor(code, message) {
+        super(message);
+        this.name = "AttachmentLeaseError";
+        this.code = code;
+      }
+    };
+    AttachmentLeaseManager = class {
+      #instanceId;
+      #catalog;
+      #viewExecutor;
+      #now;
+      #randomBytes;
+      #createId;
+      #ticketTtlMs;
+      #leaseTtlMs;
+      #maxLeaseTtlMs;
+      #disconnectGraceMs;
+      #redemptionProcessingTtlMs;
+      #onAudit;
+      #leases = /* @__PURE__ */ new Map();
+      #requests = /* @__PURE__ */ new Map();
+      #interactiveOwners = /* @__PURE__ */ new Map();
+      #interactiveWindowOwners = /* @__PURE__ */ new Map();
+      #operationTail = Promise.resolve();
+      constructor(options) {
+        this.#instanceId = BindingIdSchemaZ.parse(options.daemonInstanceId);
+        this.#catalog = options.catalog;
+        this.#viewExecutor = options.viewExecutor;
+        this.#now = options.now ?? Date.now;
+        this.#randomBytes = options.randomBytes ?? randomBytes2;
+        this.#createId = options.createId ?? randomUUID4;
+        this.#ticketTtlMs = positiveDuration(options.ticketTtlMs, 15e3, "ticketTtlMs");
+        this.#leaseTtlMs = positiveDuration(options.leaseTtlMs, 6e4, "leaseTtlMs");
+        this.#maxLeaseTtlMs = positiveDuration(
+          options.maxLeaseTtlMs,
+          this.#leaseTtlMs,
+          "maxLeaseTtlMs"
+        );
+        if (this.#leaseTtlMs > this.#maxLeaseTtlMs) {
+          throw new TypeError("leaseTtlMs must not exceed maxLeaseTtlMs.");
+        }
+        this.#disconnectGraceMs = positiveDuration(
+          options.disconnectGraceMs,
+          5e3,
+          "disconnectGraceMs"
+        );
+        this.#redemptionProcessingTtlMs = positiveDuration(
+          options.redemptionProcessingTtlMs,
+          6e4,
+          "redemptionProcessingTtlMs"
+        );
+        this.#onAudit = options.onAudit;
+      }
+      issue(request, context) {
+        return this.#exclusive(async () => {
+          const parsedRequest = TerminalAttachRequestSchemaZ.parse(request);
+          const requestId = RequestIdSchemaZ.parse(context.requestId);
+          const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);
+          await this.#expireAndCleanup(this.#now());
+          if (this.#requests.has(requestId)) {
+            throw new AttachmentLeaseError("duplicate-request", "The request already owns a lease.");
+          }
+          const resolution = await this.#catalog.resolve(parsedRequest.target);
+          await this.#expireAndCleanup(this.#now());
+          const targetKey = semanticPaneTargetKey(parsedRequest.target);
+          const windowKey = windowOwnerKey(resolution);
+          if (parsedRequest.viewerMode === "interactive") {
+            if (this.#interactiveOwners.has(targetKey) || this.#interactiveWindowOwners.has(windowKey)) {
+              throw new AttachmentLeaseError(
+                "interactive-viewer-conflict",
+                "The resolved runtime window already has an interactive input owner."
+              );
+            }
+          }
+          const leaseId = this.#freshId();
+          const issuedAt = this.#now();
+          const ticketBytes = this.#randomBytes(32);
+          if (ticketBytes.byteLength !== 32) {
+            throw new AttachmentLeaseError(
+              "identity-generation-failed",
+              "The secure random source returned an invalid ticket."
+            );
+          }
+          const redemptionTicket = `ta1_${Buffer.from(ticketBytes).toString("base64url")}`;
+          const plan = this.#buildPlan(leaseId, 0, parsedRequest, resolution);
+          const state = {
+            leaseId,
+            requestId,
+            projectIdentity,
+            request: parsedRequest,
+            status: "awaiting-redemption",
+            issuedAt,
+            expiresAt: issuedAt + this.#ticketTtlMs,
+            graceExpiresAt: null,
+            ticketDigest: hashTicket(redemptionTicket),
+            ticketExpiresAt: issuedAt + this.#ticketTtlMs,
+            resolution,
+            interactiveWindowKey: parsedRequest.viewerMode === "interactive" ? windowKey : null,
+            viewGeneration: 0,
+            plan
+          };
+          this.#leases.set(leaseId, state);
+          this.#requests.set(requestId, leaseId);
+          if (parsedRequest.viewerMode === "interactive") {
+            this.#interactiveOwners.set(targetKey, leaseId);
+            this.#interactiveWindowOwners.set(windowKey, leaseId);
+          }
+          this.#audit("issued", state, issuedAt);
+          const issued = { descriptor: this.#descriptor(state) };
+          Object.defineProperty(issued, "redemptionTicket", {
+            value: redemptionTicket,
+            enumerable: false,
+            configurable: false,
+            writable: false
+          });
+          return issued;
+        });
+      }
+      /**
+       * `receivedAt` is the in-process arrival time of the authenticated
+       * redemption frame, stamped by the admission boundary BEFORE the redemption
+       * queued behind other serialized work. The ticket TTL bounds delivery (the
+       * frame must arrive while the ticket lives); execution after delivery is the
+       * daemon's own latency and gets the separate bounded processing budget, so a
+       * redemption delivered in time cannot be retired by its own queue wait.
+       */
+      redeem(ticket, binding, receivedAt) {
+        return this.#exclusive(async () => {
+          const parsedBinding = validateBinding(binding);
+          if (!RedemptionTicketPattern.test(ticket)) {
+            throw new AttachmentLeaseError("invalid-ticket", "The redemption ticket is invalid.");
+          }
+          const candidateDigest = hashTicket(ticket);
+          let state;
+          for (const candidate of this.#leases.values()) {
+            if (candidate.ticketDigest !== null && constantTimeDigestMatch(candidate.ticketDigest, candidateDigest)) {
+              state = candidate;
+            }
+          }
+          candidateDigest.fill(0);
+          if (!state || state.ticketDigest === null || state.ticketExpiresAt === null) {
+            throw new AttachmentLeaseError("invalid-ticket", "The redemption ticket is invalid.");
+          }
+          if (!sameBinding(state, parsedBinding, this.#instanceId)) {
+            throw new AttachmentLeaseError(
+              "binding-mismatch",
+              "The redemption ticket is bound to a different daemon request or project."
+            );
+          }
+          const now = this.#now();
+          const deliveredAt = typeof receivedAt === "number" && Number.isSafeInteger(receivedAt) && receivedAt <= now ? receivedAt : now;
+          if (deliveredAt >= state.ticketExpiresAt) {
+            this.#removeState(state);
+            await this.#cleanupPlan(state);
+            throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
+          }
+          const processingDeadline = deliveredAt + this.#redemptionProcessingTtlMs;
+          state.ticketDigest.fill(0);
+          state.ticketDigest = null;
+          state.ticketExpiresAt = null;
+          try {
+            const resolution = await this.#catalog.resolve(state.request.target);
+            await this.#expireTicketOrThrow(state, processingDeadline);
+            await this.#applyResolution(state, resolution);
+            await this.#expireTicketOrThrow(state, processingDeadline);
+          } catch (error) {
+            if (this.#leases.get(state.leaseId) === state) {
+              this.#removeState(state);
+              await this.#cleanupPlan(state);
+            }
+            if (this.#now() >= processingDeadline) {
+              throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
+            }
+            throw error;
+          }
+          const activatedAt = this.#now();
+          if (activatedAt >= processingDeadline) {
+            this.#removeState(state);
+            await this.#cleanupPlan(state);
+            throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
+          }
+          state.status = "active";
+          state.graceExpiresAt = null;
+          state.expiresAt = activatedAt + this.#leaseTtlMs;
+          this.#audit("redeemed", state, activatedAt);
+          return { descriptor: this.#descriptor(state) };
+        });
+      }
+      renew(leaseId, binding, ttlMs = this.#leaseTtlMs) {
+        return this.#exclusive(async () => {
+          const parsedBinding = validateBinding(binding);
+          const state = this.#requireLease(leaseId, parsedBinding);
+          const now = this.#now();
+          if (this.#isExpired(state, now)) {
+            this.#removeState(state);
+            await this.#cleanupPlan(state);
+            throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
+          }
+          if (state.status === "awaiting-redemption") {
+            throw new AttachmentLeaseError(
+              "lease-not-active",
+              "The attachment lease has not been redeemed."
+            );
+          }
+          const requestedTtl = this.#validateTtl(ttlMs);
+          try {
+            const resolution = await this.#catalog.resolve(state.request.target);
+            await this.#expireLeaseOrThrow(state);
+            await this.#applyResolution(state, resolution);
+            await this.#expireLeaseOrThrow(state);
+          } catch (error) {
+            if (this.#leases.get(state.leaseId) === state && this.#isExpired(state, this.#now())) {
+              this.#removeState(state);
+              await this.#cleanupPlan(state);
+              throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
+            }
+            throw error;
+          }
+          const renewedAt = this.#now();
+          if (this.#isExpired(state, renewedAt)) {
+            this.#removeState(state);
+            await this.#cleanupPlan(state);
+            throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
+          }
+          state.status = "active";
+          state.graceExpiresAt = null;
+          state.expiresAt = renewedAt + requestedTtl;
+          this.#audit("renewed", state, renewedAt);
+          return { descriptor: this.#descriptor(state) };
+        });
+      }
+      /**
+       * Final server-side boundary for create/attach/recover execution. The
+       * executor owns fresh proof and mutation together; no authorized plan is
+       * returned for a caller to execute later.
+       */
+      executeViewOperation(leaseId, binding, operation) {
+        return this.#exclusive(async () => {
+          const state = this.#requireLease(leaseId, validateBinding(binding));
+          await this.#expireLeaseOrThrow(state);
+          if (state.status === "awaiting-redemption") {
+            throw new AttachmentLeaseError(
+              "lease-not-active",
+              "The attachment lease has not been redeemed."
+            );
+          }
+          const parsedOperation = AttachmentViewOperationSchemaZ.parse(operation);
+          let executionResult;
+          try {
+            const resolution = await this.#catalog.resolve(state.request.target);
+            await this.#expireLeaseOrThrow(state);
+            await this.#applyResolution(state, resolution);
+            await this.#expireLeaseOrThrow(state);
+            try {
+              executionResult = await this.#viewExecutor.executeGuardedViewOperation({
+                operation: parsedOperation,
+                exactViewSessionTarget: exactViewSessionTarget(state.plan),
+                deadline: this.#effectiveDeadline(state),
+                source: {
+                  sessionId: state.resolution.source.sessionId,
+                  windowId: state.resolution.source.windowId,
+                  runtimePaneId: state.resolution.source.runtimePaneId,
+                  windowPaneCount: state.resolution.source.windowPaneCount
+                },
+                plan: structuredClone(state.plan)
+              });
+            } catch (error) {
+              this.#removeState(state);
+              await this.#cleanupPlan(state);
+              if (error instanceof Error && "code" in error && error.code === "read_only_unavailable") {
+                throw new AttachmentLeaseError(
+                  "read_only_unavailable",
+                  "Read-only terminal attachment is not proven safe on this daemon."
+                );
+              }
+              throw new AttachmentLeaseError(
+                "view-operation-failed",
+                "The guarded terminal view operation failed."
+              );
+            }
+            await this.#expireLeaseOrThrow(state);
+          } catch (error) {
+            if (this.#leases.get(state.leaseId) === state && this.#isExpired(state, this.#now())) {
+              this.#removeState(state);
+              await this.#cleanupPlan(state);
+              throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
+            }
+            throw error;
+          }
+          if (executionResult === "source-proof-mismatch") {
+            throw new AttachmentLeaseError(
+              "source-proof-mismatch",
+              "Trusted source topology changed before the attachment operation."
+            );
+          }
+          if (executionResult === "lease-expired") {
+            this.#removeState(state);
+            await this.#cleanupPlan(state);
+            throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
+          }
+          const clientClaim = typeof executionResult === "object" && executionResult.status === "executed" ? executionResult.clientClaim : null;
+          if (clientClaim && (!z48.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
+            this.#removeState(state);
+            await this.#cleanupPlan(state);
+            throw new AttachmentLeaseError(
+              "view-operation-failed",
+              "The guarded terminal view operation failed."
+            );
+          }
+          if (executionResult !== "executed" && !clientClaim) {
+            this.#removeState(state);
+            await this.#cleanupPlan(state);
+            throw new AttachmentLeaseError(
+              "view-operation-failed",
+              "The guarded terminal view operation failed."
+            );
+          }
+          return {
+            descriptor: this.#descriptor(state),
+            operation: parsedOperation,
+            ...clientClaim ? { clientClaim: { ...clientClaim } } : {}
+          };
+        });
+      }
+      disconnect(leaseId, binding) {
+        return this.#exclusive(async () => {
+          const state = this.#requireLease(leaseId, validateBinding(binding));
+          const now = this.#now();
+          if (this.#isExpired(state, now)) {
+            this.#removeState(state);
+            await this.#cleanupPlan(state);
+            throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
+          }
+          if (state.status === "awaiting-redemption") {
+            throw new AttachmentLeaseError(
+              "lease-not-active",
+              "The attachment lease has not been redeemed."
+            );
+          }
+          state.status = "disconnected";
+          state.graceExpiresAt = now + this.#disconnectGraceMs;
+          this.#audit("disconnected", state, now);
+          return this.#descriptor(state);
+        });
+      }
+      release(leaseId, binding) {
+        return this.#exclusive(async () => {
+          const state = this.#leases.get(leaseId);
+          if (!state) return { released: false, cleanup: "absent" };
+          const parsedBinding = validateBinding(binding);
+          if (!sameBinding(state, parsedBinding, this.#instanceId)) {
+            throw new AttachmentLeaseError(
+              "binding-mismatch",
+              "The attachment lease is bound to a different daemon request or project."
+            );
+          }
+          this.#removeState(state);
+          const cleanup = await this.#cleanupPlan(state);
+          this.#audit("released", state, this.#now());
+          return { released: true, cleanup: cleanup.status };
+        });
+      }
+      sweep() {
+        return this.#exclusive(() => this.#expireAndCleanup(this.#now()));
+      }
+      reconcileOrphanViews() {
+        return this.#exclusive(async () => {
+          const activeNames = new Set(
+            [...this.#leases.values()].map((state) => state.plan.identity.viewSessionName)
+          );
+          let candidates;
+          try {
+            const enumerated = await this.#viewExecutor.enumerateMarkedViews(
+              GROUPED_TMUX_VIEW_SESSION_PREFIX,
+              GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT
+            );
+            if (!Array.isArray(enumerated)) throw new TypeError("Invalid marked view enumeration.");
+            candidates = [...enumerated];
+          } catch {
+            throw new AttachmentLeaseError(
+              "orphan-enumeration-failed",
+              "Marked attachment view enumeration failed."
+            );
+          }
+          const cleaned = [];
+          const failed = [];
+          let skippedCount = 0;
+          for (const candidate of candidates) {
+            let parsed;
+            try {
+              parsed = this.#parseOrphanIdentity(candidate);
+            } catch {
+              parsed = null;
+            }
+            if (!parsed) {
+              skippedCount += 1;
+              continue;
+            }
+            const identity = {
+              attachmentId: parsed.attachmentId,
+              generation: parsed.generation
+            };
+            if (activeNames.has(parsed.viewSessionName)) {
+              skippedCount += 1;
+              continue;
+            }
+            try {
+              const result = await this.#viewExecutor.guardedCleanup({
+                exactViewSessionTarget: `=${parsed.viewSessionName}`,
+                markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+                expectedMarkerValue: parsed.markerValue,
+                expectedWindowId: parsed.windowId
+              });
+              switch (result) {
+                case "cleaned":
+                  break;
+                case "absent":
+                case "ownership-mismatch":
+                case "topology-mismatch":
+                  skippedCount += 1;
+                  continue;
+                default:
+                  throw new TypeError("The guarded cleanup executor returned an invalid result.");
+              }
+              cleaned.push(identity);
+              this.#emitAudit({
+                type: "orphan-cleaned",
+                leaseId: identity.attachmentId,
+                requestId: "orphan",
+                target: { workspaceName: "orphan", semanticPaneId: "orphan" },
+                viewerMode: "read-only",
+                at: this.#now()
+              });
+            } catch {
+              failed.push(identity);
+            }
+          }
+          return { cleaned, failed, skippedCount };
+        });
+      }
+      snapshot() {
+        return {
+          daemonInstanceId: this.#instanceId,
+          leases: [...this.#leases.values()].map((state) => this.#descriptor(state))
+        };
+      }
+      toJSON() {
+        return this.snapshot();
+      }
+      #exclusive(operation) {
+        const run = this.#operationTail.then(operation, operation);
+        this.#operationTail = run.then(
+          () => void 0,
+          () => void 0
+        );
+        return run;
+      }
+      #freshId() {
+        for (let attempt = 0; attempt < 16; attempt += 1) {
+          const candidate = this.#createId();
+          if (z48.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
+        }
+        throw new AttachmentLeaseError(
+          "identity-generation-failed",
+          "Could not allocate a unique attachment identity."
+        );
+      }
+      #validateTtl(ttlMs) {
+        if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0 || ttlMs > this.#maxLeaseTtlMs) {
+          throw new AttachmentLeaseError("invalid-ttl", "The requested lease TTL is invalid.");
+        }
+        return ttlMs;
+      }
+      #requireLease(leaseId, binding) {
+        const state = this.#leases.get(leaseId);
+        if (!state)
+          throw new AttachmentLeaseError("lease-not-found", "The attachment lease is absent.");
+        if (!sameBinding(state, binding, this.#instanceId)) {
+          throw new AttachmentLeaseError(
+            "binding-mismatch",
+            "The attachment lease is bound to a different daemon request or project."
+          );
+        }
+        return state;
+      }
+      #buildPlan(leaseId, generation, request, resolution) {
+        return planGroupedTmuxAttachment({
+          attachmentId: leaseId,
+          generation,
+          target: request.target,
+          viewerMode: request.viewerMode,
+          viewport: request.viewport,
+          source: {
+            sessionId: resolution.source.sessionId,
+            windowId: resolution.source.windowId,
+            runtimePaneId: resolution.source.runtimePaneId,
+            windowPaneCount: resolution.source.windowPaneCount
+          }
+        });
+      }
+      async #applyResolution(state, resolution) {
+        const oldWindowKey = state.interactiveWindowKey;
+        const newWindowKey = windowOwnerKey(resolution);
+        if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
+          const owner = this.#interactiveWindowOwners.get(newWindowKey);
+          if (owner !== void 0 && owner !== state.leaseId) {
+            throw new AttachmentLeaseError(
+              "interactive-viewer-conflict",
+              "The rebound runtime window already has an interactive input owner."
+            );
+          }
+        }
+        const linkedWindowChanged = !sameLinkedWindow(state.resolution, resolution);
+        const nextViewGeneration = linkedWindowChanged ? state.viewGeneration + 1 : state.viewGeneration;
+        if (linkedWindowChanged) {
+          if (state.viewGeneration >= GROUPED_TMUX_MAX_GENERATION) {
+            throw new AttachmentLeaseError(
+              "view-generation-exhausted",
+              "The attachment view generation is exhausted."
+            );
+          }
+        }
+        const nextPlan = this.#buildPlan(state.leaseId, nextViewGeneration, state.request, resolution);
+        if (linkedWindowChanged) {
+          const cleanup = await this.#cleanupPlan(state);
+          if (cleanup.status !== "cleaned" && cleanup.status !== "absent") {
+            throw new AttachmentLeaseError(
+              "view-cleanup-failed",
+              "The prior marked attachment view could not be safely cleaned."
+            );
+          }
+        }
+        const changed = state.resolution.bindingGeneration !== resolution.bindingGeneration;
+        state.resolution = resolution;
+        state.viewGeneration = nextViewGeneration;
+        state.plan = nextPlan;
+        if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
+          if (this.#interactiveWindowOwners.get(oldWindowKey) === state.leaseId) {
+            this.#interactiveWindowOwners.delete(oldWindowKey);
+          }
+          this.#interactiveWindowOwners.set(newWindowKey, state.leaseId);
+          state.interactiveWindowKey = newWindowKey;
+        }
+        if (changed) this.#audit("rebound", state, this.#now());
+      }
+      #isExpired(state, now) {
+        return now >= state.expiresAt || state.graceExpiresAt !== null && now >= state.graceExpiresAt;
+      }
+      #effectiveDeadline(state) {
+        return state.graceExpiresAt === null ? state.expiresAt : Math.min(state.expiresAt, state.graceExpiresAt);
+      }
+      async #expireTicketOrThrow(state, deadline) {
+        if (this.#now() < deadline) return;
+        this.#removeState(state);
+        await this.#cleanupPlan(state);
+        throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
+      }
+      async #expireLeaseOrThrow(state) {
+        if (!this.#isExpired(state, this.#now())) return;
+        this.#removeState(state);
+        await this.#cleanupPlan(state);
+        throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
+      }
+      async #expireAndCleanup(now) {
+        const expired = [...this.#leases.values()].filter((state) => this.#isExpired(state, now));
+        const results = [];
+        for (const state of expired) {
+          this.#removeState(state);
+          const cleanup = await this.#cleanupPlan(state);
+          results.push(cleanup);
+          this.#audit("expired", state, now);
+        }
+        return results;
+      }
+      #removeState(state) {
+        if (this.#leases.get(state.leaseId) !== state) return;
+        this.#leases.delete(state.leaseId);
+        this.#requests.delete(state.requestId);
+        const targetKey = semanticPaneTargetKey(state.request.target);
+        if (this.#interactiveOwners.get(targetKey) === state.leaseId) {
+          this.#interactiveOwners.delete(targetKey);
+        }
+        if (state.interactiveWindowKey !== null && this.#interactiveWindowOwners.get(state.interactiveWindowKey) === state.leaseId) {
+          this.#interactiveWindowOwners.delete(state.interactiveWindowKey);
+        }
+        state.interactiveWindowKey = null;
+        state.ticketDigest?.fill(0);
+        state.ticketDigest = null;
+        state.ticketExpiresAt = null;
+      }
+      async #cleanupPlan(state) {
+        const leaseId = state.leaseId;
+        try {
+          const status2 = await this.#viewExecutor.guardedCleanup({
+            exactViewSessionTarget: exactViewSessionTarget(state.plan),
+            markerEnvironment: state.plan.identity.markerEnvironment,
+            expectedMarkerValue: state.plan.identity.markerValue,
+            expectedWindowId: state.plan.recover.topology.expectedStdout
+          });
+          switch (status2) {
+            case "cleaned":
+            case "absent":
+            case "ownership-mismatch":
+            case "topology-mismatch":
+              return { leaseId, status: status2 };
+            default:
+              throw new TypeError("The guarded cleanup executor returned an invalid result.");
+          }
+        } catch {
+          this.#audit("cleanup-failed", state, this.#now(), "executor-failed");
+          return { leaseId, status: "failed" };
+        }
+      }
+      #parseOrphanIdentity(candidate) {
+        if (!candidate.viewSessionName.startsWith(GROUPED_TMUX_VIEW_SESSION_PREFIX) || candidate.markerValue === null || candidate.windowIds.length !== 1 || !RuntimeWindowId.test(candidate.windowIds[0] ?? "")) {
+          return null;
+        }
+        const marker = candidate.markerValue.match(MarkerPattern);
+        if (!marker) return null;
+        const attachmentId = marker[1].toLowerCase();
+        const generation = Number(marker[2]);
+        if (!Number.isSafeInteger(generation) || generation > GROUPED_TMUX_MAX_GENERATION) return null;
+        if (groupedTmuxViewSessionName(attachmentId, generation) !== candidate.viewSessionName) {
+          return null;
+        }
+        return {
+          attachmentId,
+          generation,
+          viewSessionName: candidate.viewSessionName,
+          markerValue: candidate.markerValue,
+          windowId: candidate.windowIds[0]
+        };
+      }
+      #descriptor(state) {
+        return {
+          leaseId: state.leaseId,
+          requestId: state.requestId,
+          target: { ...state.request.target },
+          viewerMode: state.request.viewerMode,
+          status: state.status,
+          issuedAt: state.issuedAt,
+          expiresAt: state.expiresAt,
+          graceExpiresAt: state.graceExpiresAt,
+          bindingGeneration: state.resolution.bindingGeneration,
+          viewGeneration: state.viewGeneration
+        };
+      }
+      #audit(type, state, at, reason) {
+        this.#emitAudit({
+          type,
+          leaseId: state.leaseId,
+          requestId: state.requestId,
+          target: { ...state.request.target },
+          viewerMode: state.request.viewerMode,
+          at,
+          ...reason === void 0 ? {} : { reason }
+        });
+      }
+      #emitAudit(event) {
+        try {
+          this.#onAudit?.(event);
+        } catch {
+        }
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/attachments/direct-websocket.ts
+import { createHash as createHash11, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { z as z49 } from "zod";
 function defaultSchedule(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
   timer.unref?.();
@@ -24255,10 +25128,10 @@ function boundedInteger(value, fallback, maximum) {
   return selected;
 }
 function digestTicket(ticket) {
-  return createHash10("sha256").update(ticket, "utf8").digest();
+  return createHash11("sha256").update(ticket, "utf8").digest();
 }
 function matchesDigest(left, right) {
-  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+  return left.byteLength === right.byteLength && timingSafeEqual2(left, right);
 }
 function canonicalRendererOrigin(value) {
   if (typeof value !== "string" || value.length < 4 || value.length > 2048 || value === "null" || value === "*" || /[\0\r\n\t ]/u.test(value)) {
@@ -24331,7 +25204,7 @@ function sameTarget(left, right) {
   return left.workspaceName === right.workspaceName && left.semanticPaneId === right.semanticPaneId;
 }
 function validDescriptorIdentity(descriptor2) {
-  return z47.uuid().safeParse(descriptor2.leaseId).success && z47.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
+  return z49.uuid().safeParse(descriptor2.leaseId).success && z49.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
 }
 function boundedInputCapability(client, viewerMode) {
   const input = viewerMode === "interactive" ? client.boundedInput : null;
@@ -24355,12 +25228,13 @@ function boundedInputCapability(client, viewerMode) {
     return { input: null, capability: "unavailable", limits: null };
   }
 }
-var TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL, TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES, TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES, TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS, TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES, WS_OPEN3, TicketPattern, BindingIdSchemaZ, RedemptionFrameSchemaZ, ResizeFrameSchemaZ, GridSchemaZ, TerminalAttachmentAdmissionError, TerminalAttachmentAdmissionCoordinator, PreAuthAdmission, TerminalAttachmentLiveConnection;
+var TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL, TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES, TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES, TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS, TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES, WS_OPEN3, TicketPattern, BindingIdSchemaZ2, RedemptionFrameSchemaZ, ResizeFrameSchemaZ, GridSchemaZ, TerminalAttachmentAdmissionError, TerminalAttachmentAdmissionCoordinator, PreAuthAdmission, TerminalAttachmentLiveConnection;
 var init_direct_websocket = __esm({
   "packages/daemon/src/terminal/attachments/direct-websocket.ts"() {
     "use strict";
     init_terminal_attachment_stream();
     init_src();
+    init_lease_manager();
     TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL = TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL;
     TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES = 4 * 1024;
     TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES = 4 * 1024;
@@ -24368,18 +25242,18 @@ var init_direct_websocket = __esm({
     TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES = 1024;
     WS_OPEN3 = 1;
     TicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
-    BindingIdSchemaZ = z47.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RedemptionFrameSchemaZ = z47.object({
-      type: z47.literal("redeem"),
-      protocolVersion: z47.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      ticket: z47.string().regex(TicketPattern),
-      requestId: z47.uuid(),
-      daemonInstanceId: BindingIdSchemaZ
+    BindingIdSchemaZ2 = z49.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RedemptionFrameSchemaZ = z49.object({
+      type: z49.literal("redeem"),
+      protocolVersion: z49.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      ticket: z49.string().regex(TicketPattern),
+      requestId: z49.uuid(),
+      daemonInstanceId: BindingIdSchemaZ2
     }).strict();
-    ResizeFrameSchemaZ = z47.object({
-      type: z47.literal("resize"),
-      protocolVersion: z47.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z47.number().int().nonnegative(),
+    ResizeFrameSchemaZ = z49.object({
+      type: z49.literal("resize"),
+      protocolVersion: z49.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z49.number().int().nonnegative(),
       viewport: TerminalAttachmentViewportSchemaZ
     }).strict();
     GridSchemaZ = TerminalAttachmentViewportSchemaZ;
@@ -24418,7 +25292,7 @@ var init_direct_websocket = __esm({
       #shuttingDown = false;
       #shutdownPromise = null;
       constructor(options) {
-        this.#instanceId = BindingIdSchemaZ.parse(options.daemonInstanceId);
+        this.#instanceId = BindingIdSchemaZ2.parse(options.daemonInstanceId);
         this.#webSocketUrl = validateWebSocketUrl(options.webSocketUrl);
         this.#leaseManager = options.leaseManager;
         this.#launcher = options.launcher;
@@ -24497,8 +25371,8 @@ var init_direct_websocket = __esm({
             );
           }
           const origin = canonicalRendererOrigin(context.rendererOrigin);
-          const requestId = z47.uuid().parse(context.requestId);
-          const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);
+          const requestId = z49.uuid().parse(context.requestId);
+          const projectIdentity = BindingIdSchemaZ2.parse(context.projectIdentity);
           if (this.#pending.size + this.#pendingReservations >= this.#maxPending) {
             throw new TerminalAttachmentAdmissionError(
               "pending-capacity-exhausted",
@@ -24647,6 +25521,7 @@ var init_direct_websocket = __esm({
         await Promise.all([...this.#retiringReleases]);
       }
       #redeem(admission, frame, socket) {
+        const receivedAt = this.#now();
         return this.#exclusive(async () => {
           if (this.#shuttingDown) {
             throw new TerminalAttachmentAdmissionError(
@@ -24692,7 +25567,7 @@ var init_direct_websocket = __esm({
           let liveReservationHeld = true;
           this.#liveReservations += 1;
           try {
-            const redeemed = await this.#leaseManager.redeem(frame.ticket, binding);
+            const redeemed = await this.#leaseManager.redeem(frame.ticket, binding, receivedAt);
             this.#assertActiveDescriptor(redeemed.descriptor, pending);
             if (!admission.isOpen()) {
               throw new TerminalAttachmentAdmissionError(
@@ -24907,13 +25782,13 @@ var init_direct_websocket = __esm({
         this.beginRedemption();
         void this.#onRedeem(this, frame, socket).catch((error) => {
           if (!this.#open) return;
-          const code = error instanceof TerminalAttachmentAdmissionError ? error.code : "attachment-unavailable";
+          const code = error instanceof TerminalAttachmentAdmissionError ? error.code : error instanceof AttachmentLeaseError && error.code === "ticket-expired" ? "ticket-expired" : "attachment-unavailable";
           try {
             sendControl(socket, {
               type: "error",
               protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
               code,
-              retryable: code === "live-capacity-exhausted"
+              retryable: code === "live-capacity-exhausted" || code === "ticket-expired"
             });
           } catch {
           }
@@ -25240,864 +26115,6 @@ var init_direct_websocket = __esm({
         }).finally(() => {
           this.#renewing = false;
         });
-      }
-    };
-  }
-});
-
-// packages/daemon/src/terminal/attachments/grouped-tmux.ts
-import { z as z48 } from "zod";
-function tmux3(argv) {
-  return { executable: "tmux", argv };
-}
-function groupedTmuxViewSessionName(attachmentId, generation) {
-  const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.shape.attachmentId.parse(attachmentId);
-  const parsedGeneration = z48.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
-  return `${GROUPED_TMUX_VIEW_SESSION_PREFIX}${parsed.replaceAll("-", "").toLowerCase()}-${parsedGeneration.toString(36)}`;
-}
-function markerValue(attachmentId, generation) {
-  return `v1:${attachmentId.toLowerCase()}:${generation}`;
-}
-function viewWindowTarget(viewSessionName, windowId) {
-  return `${viewSessionName}:${windowId}`;
-}
-function reconcileCommands(args) {
-  const windowTarget = viewWindowTarget(args.viewSessionName, args.sourceWindowId);
-  return [
-    tmux3(["select-window", "-t", windowTarget]),
-    tmux3(["set-option", "-t", args.viewSessionName, "status", "off"]),
-    tmux3(["set-option", "-t", args.viewSessionName, "destroy-unattached", "off"])
-  ];
-}
-function attachCommand(viewSessionName, viewerMode) {
-  const target = `=${viewSessionName}`;
-  return viewerMode === "read-only" ? tmux3(["attach-session", "-E", "-r", "-t", target]) : tmux3(["attach-session", "-E", "-f", "ignore-size", "-t", target]);
-}
-function planGroupedTmuxAttachment(input) {
-  const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.parse(input);
-  const viewSessionName = groupedTmuxViewSessionName(parsed.attachmentId, parsed.generation);
-  const viewMarkerValue = markerValue(parsed.attachmentId, parsed.generation);
-  const exactViewTarget = `=${viewSessionName}`;
-  const existenceProbe = tmux3(["has-session", "-t", exactViewTarget]);
-  const ownership = {
-    query: tmux3(["show-environment", "-t", exactViewTarget, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT]),
-    expectedStdout: `${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}=${viewMarkerValue}`
-  };
-  const topology = {
-    query: tmux3(["list-windows", "-t", exactViewTarget, "-F", "#{window_id}"]),
-    expectedStdout: parsed.source.windowId
-  };
-  const reconcile = reconcileCommands({
-    viewSessionName,
-    sourceWindowId: parsed.source.windowId
-  });
-  const attach2 = attachCommand(viewSessionName, parsed.viewerMode);
-  const createArgv = [
-    "new-session",
-    "-d",
-    "-s",
-    viewSessionName,
-    "-n",
-    GROUPED_TMUX_PLACEHOLDER_WINDOW,
-    GROUPED_TMUX_PLACEHOLDER_COMMAND,
-    ";",
-    "set-environment",
-    "-t",
-    viewSessionName,
-    GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
-    viewMarkerValue,
-    ";",
-    "set-option",
-    "-t",
-    viewSessionName,
-    "status",
-    "off",
-    ";",
-    "set-option",
-    "-t",
-    viewSessionName,
-    "destroy-unattached",
-    "off",
-    ";",
-    "link-window",
-    "-ad",
-    "-s",
-    `${parsed.source.sessionId}:${parsed.source.windowId}`,
-    "-t",
-    `${viewSessionName}:`,
-    ";",
-    "unlink-window",
-    "-t",
-    `${viewSessionName}:`
-  ];
-  return {
-    identity: {
-      attachmentId: parsed.attachmentId,
-      generation: parsed.generation,
-      viewSessionName,
-      markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
-      markerValue: viewMarkerValue,
-      semanticTarget: parsed.target,
-      durableSource: {
-        sessionId: parsed.source.sessionId,
-        windowId: parsed.source.windowId,
-        runtimePaneId: parsed.source.runtimePaneId
-      }
-    },
-    viewerMode: parsed.viewerMode,
-    viewport: parsed.viewport,
-    create: {
-      absenceProbe: existenceProbe,
-      command: tmux3(createArgv)
-    },
-    attach: attach2,
-    detach: tmux3(["detach-client", "-s", exactViewTarget]),
-    recover: {
-      existenceProbe,
-      ownership,
-      topology,
-      reconcile,
-      attach: attach2
-    },
-    cleanup: {
-      ownership,
-      command: tmux3(["kill-session", "-t", exactViewTarget])
-    }
-  };
-}
-var GROUPED_TMUX_VIEW_SESSION_PREFIX, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT, GROUPED_TMUX_MAX_GENERATION, GROUPED_TMUX_PLACEHOLDER_WINDOW, GROUPED_TMUX_PLACEHOLDER_COMMAND, RuntimeSessionIdSchemaZ2, RuntimeWindowIdSchemaZ2, RuntimePaneIdSchemaZ2, GroupedTmuxAttachmentPlanInputSchemaZ;
-var init_grouped_tmux = __esm({
-  "packages/daemon/src/terminal/attachments/grouped-tmux.ts"() {
-    "use strict";
-    init_src();
-    GROUPED_TMUX_VIEW_SESSION_PREFIX = "_tmux-ide-view-v1-";
-    GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT = "TMUX_IDE_ATTACHMENT_VIEW";
-    GROUPED_TMUX_MAX_GENERATION = 65535;
-    GROUPED_TMUX_PLACEHOLDER_WINDOW = "__tmux_ide_attachment_placeholder";
-    GROUPED_TMUX_PLACEHOLDER_COMMAND = "exec sleep 2147483647";
-    RuntimeSessionIdSchemaZ2 = z48.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
-    RuntimeWindowIdSchemaZ2 = z48.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
-    RuntimePaneIdSchemaZ2 = z48.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
-    GroupedTmuxAttachmentPlanInputSchemaZ = z48.object({
-      attachmentId: z48.uuid(),
-      generation: z48.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
-      target: TerminalAttachmentSemanticTargetSchemaZ,
-      viewerMode: TerminalAttachmentViewerModeSchemaZ,
-      viewport: TerminalAttachmentViewportSchemaZ,
-      source: z48.object({
-        sessionId: RuntimeSessionIdSchemaZ2,
-        windowId: RuntimeWindowIdSchemaZ2,
-        runtimePaneId: RuntimePaneIdSchemaZ2,
-        /**
-         * The resolved window's live pane count (m41 attach-2). The planner
-         * links the WHOLE window, so this is a window proof, not a per-pane
-         * gate: any positive count is valid. Single-pane windows keep passing
-         * `1`, so their plans stay byte-identical.
-         */
-        windowPaneCount: z48.number().int().positive()
-      }).strict()
-    }).strict();
-  }
-});
-
-// packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash11, randomBytes as randomBytes2, randomUUID as randomUUID4, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
-import { z as z49 } from "zod";
-function positiveDuration(value, fallback, label2) {
-  const resolved2 = value ?? fallback;
-  if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
-    throw new TypeError(`${label2} must be a positive safe integer.`);
-  }
-  return resolved2;
-}
-function hashTicket(ticket) {
-  return createHash11("sha256").update(ticket, "utf8").digest();
-}
-function constantTimeDigestMatch(left, right) {
-  return left.byteLength === right.byteLength && timingSafeEqual2(left, right);
-}
-function validateBinding(binding) {
-  return {
-    daemonInstanceId: BindingIdSchemaZ2.parse(binding.daemonInstanceId),
-    requestId: RequestIdSchemaZ.parse(binding.requestId),
-    projectIdentity: BindingIdSchemaZ2.parse(binding.projectIdentity)
-  };
-}
-function sameBinding(state, binding, instanceId) {
-  return binding.daemonInstanceId === instanceId && binding.requestId === state.requestId && binding.projectIdentity === state.projectIdentity;
-}
-function sameLinkedWindow(left, right) {
-  return left.source.windowId === right.source.windowId;
-}
-function windowOwnerKey(resolution) {
-  return resolution.source.windowId;
-}
-function exactViewSessionTarget(plan) {
-  return `=${plan.identity.viewSessionName}`;
-}
-var BindingIdSchemaZ2, RequestIdSchemaZ, RuntimeWindowId, AttachmentViewOperationSchemaZ, RedemptionTicketPattern, MarkerPattern, AttachmentLeaseError, AttachmentLeaseManager;
-var init_lease_manager = __esm({
-  "packages/daemon/src/terminal/attachments/lease-manager.ts"() {
-    "use strict";
-    init_src();
-    init_grouped_tmux();
-    init_semantic_pane_catalog();
-    BindingIdSchemaZ2 = z49.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RequestIdSchemaZ = z49.uuid();
-    RuntimeWindowId = /^@(?:0|[1-9][0-9]*)$/u;
-    AttachmentViewOperationSchemaZ = z49.enum(["create", "attach", "recover"]);
-    RedemptionTicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
-    MarkerPattern = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/iu;
-    AttachmentLeaseError = class extends Error {
-      code;
-      constructor(code, message) {
-        super(message);
-        this.name = "AttachmentLeaseError";
-        this.code = code;
-      }
-    };
-    AttachmentLeaseManager = class {
-      #instanceId;
-      #catalog;
-      #viewExecutor;
-      #now;
-      #randomBytes;
-      #createId;
-      #ticketTtlMs;
-      #leaseTtlMs;
-      #maxLeaseTtlMs;
-      #disconnectGraceMs;
-      #onAudit;
-      #leases = /* @__PURE__ */ new Map();
-      #requests = /* @__PURE__ */ new Map();
-      #interactiveOwners = /* @__PURE__ */ new Map();
-      #interactiveWindowOwners = /* @__PURE__ */ new Map();
-      #operationTail = Promise.resolve();
-      constructor(options) {
-        this.#instanceId = BindingIdSchemaZ2.parse(options.daemonInstanceId);
-        this.#catalog = options.catalog;
-        this.#viewExecutor = options.viewExecutor;
-        this.#now = options.now ?? Date.now;
-        this.#randomBytes = options.randomBytes ?? randomBytes2;
-        this.#createId = options.createId ?? randomUUID4;
-        this.#ticketTtlMs = positiveDuration(options.ticketTtlMs, 15e3, "ticketTtlMs");
-        this.#leaseTtlMs = positiveDuration(options.leaseTtlMs, 6e4, "leaseTtlMs");
-        this.#maxLeaseTtlMs = positiveDuration(
-          options.maxLeaseTtlMs,
-          this.#leaseTtlMs,
-          "maxLeaseTtlMs"
-        );
-        if (this.#leaseTtlMs > this.#maxLeaseTtlMs) {
-          throw new TypeError("leaseTtlMs must not exceed maxLeaseTtlMs.");
-        }
-        this.#disconnectGraceMs = positiveDuration(
-          options.disconnectGraceMs,
-          5e3,
-          "disconnectGraceMs"
-        );
-        this.#onAudit = options.onAudit;
-      }
-      issue(request, context) {
-        return this.#exclusive(async () => {
-          const parsedRequest = TerminalAttachRequestSchemaZ.parse(request);
-          const requestId = RequestIdSchemaZ.parse(context.requestId);
-          const projectIdentity = BindingIdSchemaZ2.parse(context.projectIdentity);
-          await this.#expireAndCleanup(this.#now());
-          if (this.#requests.has(requestId)) {
-            throw new AttachmentLeaseError("duplicate-request", "The request already owns a lease.");
-          }
-          const resolution = await this.#catalog.resolve(parsedRequest.target);
-          await this.#expireAndCleanup(this.#now());
-          const targetKey = semanticPaneTargetKey(parsedRequest.target);
-          const windowKey = windowOwnerKey(resolution);
-          if (parsedRequest.viewerMode === "interactive") {
-            if (this.#interactiveOwners.has(targetKey) || this.#interactiveWindowOwners.has(windowKey)) {
-              throw new AttachmentLeaseError(
-                "interactive-viewer-conflict",
-                "The resolved runtime window already has an interactive input owner."
-              );
-            }
-          }
-          const leaseId = this.#freshId();
-          const issuedAt = this.#now();
-          const ticketBytes = this.#randomBytes(32);
-          if (ticketBytes.byteLength !== 32) {
-            throw new AttachmentLeaseError(
-              "identity-generation-failed",
-              "The secure random source returned an invalid ticket."
-            );
-          }
-          const redemptionTicket = `ta1_${Buffer.from(ticketBytes).toString("base64url")}`;
-          const plan = this.#buildPlan(leaseId, 0, parsedRequest, resolution);
-          const state = {
-            leaseId,
-            requestId,
-            projectIdentity,
-            request: parsedRequest,
-            status: "awaiting-redemption",
-            issuedAt,
-            expiresAt: issuedAt + this.#ticketTtlMs,
-            graceExpiresAt: null,
-            ticketDigest: hashTicket(redemptionTicket),
-            ticketExpiresAt: issuedAt + this.#ticketTtlMs,
-            resolution,
-            interactiveWindowKey: parsedRequest.viewerMode === "interactive" ? windowKey : null,
-            viewGeneration: 0,
-            plan
-          };
-          this.#leases.set(leaseId, state);
-          this.#requests.set(requestId, leaseId);
-          if (parsedRequest.viewerMode === "interactive") {
-            this.#interactiveOwners.set(targetKey, leaseId);
-            this.#interactiveWindowOwners.set(windowKey, leaseId);
-          }
-          this.#audit("issued", state, issuedAt);
-          const issued = { descriptor: this.#descriptor(state) };
-          Object.defineProperty(issued, "redemptionTicket", {
-            value: redemptionTicket,
-            enumerable: false,
-            configurable: false,
-            writable: false
-          });
-          return issued;
-        });
-      }
-      redeem(ticket, binding) {
-        return this.#exclusive(async () => {
-          const parsedBinding = validateBinding(binding);
-          if (!RedemptionTicketPattern.test(ticket)) {
-            throw new AttachmentLeaseError("invalid-ticket", "The redemption ticket is invalid.");
-          }
-          const candidateDigest = hashTicket(ticket);
-          let state;
-          for (const candidate of this.#leases.values()) {
-            if (candidate.ticketDigest !== null && constantTimeDigestMatch(candidate.ticketDigest, candidateDigest)) {
-              state = candidate;
-            }
-          }
-          candidateDigest.fill(0);
-          if (!state || state.ticketDigest === null || state.ticketExpiresAt === null) {
-            throw new AttachmentLeaseError("invalid-ticket", "The redemption ticket is invalid.");
-          }
-          if (!sameBinding(state, parsedBinding, this.#instanceId)) {
-            throw new AttachmentLeaseError(
-              "binding-mismatch",
-              "The redemption ticket is bound to a different daemon request or project."
-            );
-          }
-          const now = this.#now();
-          if (now >= state.ticketExpiresAt) {
-            this.#removeState(state);
-            await this.#cleanupPlan(state);
-            throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
-          }
-          const ticketDeadline = state.ticketExpiresAt;
-          state.ticketDigest.fill(0);
-          state.ticketDigest = null;
-          state.ticketExpiresAt = null;
-          try {
-            const resolution = await this.#catalog.resolve(state.request.target);
-            await this.#expireTicketOrThrow(state, ticketDeadline);
-            await this.#applyResolution(state, resolution);
-            await this.#expireTicketOrThrow(state, ticketDeadline);
-          } catch (error) {
-            if (this.#leases.get(state.leaseId) === state) {
-              this.#removeState(state);
-              await this.#cleanupPlan(state);
-            }
-            if (this.#now() >= ticketDeadline) {
-              throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
-            }
-            throw error;
-          }
-          const activatedAt = this.#now();
-          if (activatedAt >= ticketDeadline) {
-            this.#removeState(state);
-            await this.#cleanupPlan(state);
-            throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
-          }
-          state.status = "active";
-          state.graceExpiresAt = null;
-          state.expiresAt = activatedAt + this.#leaseTtlMs;
-          this.#audit("redeemed", state, activatedAt);
-          return { descriptor: this.#descriptor(state) };
-        });
-      }
-      renew(leaseId, binding, ttlMs = this.#leaseTtlMs) {
-        return this.#exclusive(async () => {
-          const parsedBinding = validateBinding(binding);
-          const state = this.#requireLease(leaseId, parsedBinding);
-          const now = this.#now();
-          if (this.#isExpired(state, now)) {
-            this.#removeState(state);
-            await this.#cleanupPlan(state);
-            throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
-          }
-          if (state.status === "awaiting-redemption") {
-            throw new AttachmentLeaseError(
-              "lease-not-active",
-              "The attachment lease has not been redeemed."
-            );
-          }
-          const requestedTtl = this.#validateTtl(ttlMs);
-          try {
-            const resolution = await this.#catalog.resolve(state.request.target);
-            await this.#expireLeaseOrThrow(state);
-            await this.#applyResolution(state, resolution);
-            await this.#expireLeaseOrThrow(state);
-          } catch (error) {
-            if (this.#leases.get(state.leaseId) === state && this.#isExpired(state, this.#now())) {
-              this.#removeState(state);
-              await this.#cleanupPlan(state);
-              throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
-            }
-            throw error;
-          }
-          const renewedAt = this.#now();
-          if (this.#isExpired(state, renewedAt)) {
-            this.#removeState(state);
-            await this.#cleanupPlan(state);
-            throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
-          }
-          state.status = "active";
-          state.graceExpiresAt = null;
-          state.expiresAt = renewedAt + requestedTtl;
-          this.#audit("renewed", state, renewedAt);
-          return { descriptor: this.#descriptor(state) };
-        });
-      }
-      /**
-       * Final server-side boundary for create/attach/recover execution. The
-       * executor owns fresh proof and mutation together; no authorized plan is
-       * returned for a caller to execute later.
-       */
-      executeViewOperation(leaseId, binding, operation) {
-        return this.#exclusive(async () => {
-          const state = this.#requireLease(leaseId, validateBinding(binding));
-          await this.#expireLeaseOrThrow(state);
-          if (state.status === "awaiting-redemption") {
-            throw new AttachmentLeaseError(
-              "lease-not-active",
-              "The attachment lease has not been redeemed."
-            );
-          }
-          const parsedOperation = AttachmentViewOperationSchemaZ.parse(operation);
-          let executionResult;
-          try {
-            const resolution = await this.#catalog.resolve(state.request.target);
-            await this.#expireLeaseOrThrow(state);
-            await this.#applyResolution(state, resolution);
-            await this.#expireLeaseOrThrow(state);
-            try {
-              executionResult = await this.#viewExecutor.executeGuardedViewOperation({
-                operation: parsedOperation,
-                exactViewSessionTarget: exactViewSessionTarget(state.plan),
-                deadline: this.#effectiveDeadline(state),
-                source: {
-                  sessionId: state.resolution.source.sessionId,
-                  windowId: state.resolution.source.windowId,
-                  runtimePaneId: state.resolution.source.runtimePaneId,
-                  windowPaneCount: state.resolution.source.windowPaneCount
-                },
-                plan: structuredClone(state.plan)
-              });
-            } catch (error) {
-              this.#removeState(state);
-              await this.#cleanupPlan(state);
-              if (error instanceof Error && "code" in error && error.code === "read_only_unavailable") {
-                throw new AttachmentLeaseError(
-                  "read_only_unavailable",
-                  "Read-only terminal attachment is not proven safe on this daemon."
-                );
-              }
-              throw new AttachmentLeaseError(
-                "view-operation-failed",
-                "The guarded terminal view operation failed."
-              );
-            }
-            await this.#expireLeaseOrThrow(state);
-          } catch (error) {
-            if (this.#leases.get(state.leaseId) === state && this.#isExpired(state, this.#now())) {
-              this.#removeState(state);
-              await this.#cleanupPlan(state);
-              throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
-            }
-            throw error;
-          }
-          if (executionResult === "source-proof-mismatch") {
-            throw new AttachmentLeaseError(
-              "source-proof-mismatch",
-              "Trusted source topology changed before the attachment operation."
-            );
-          }
-          if (executionResult === "lease-expired") {
-            this.#removeState(state);
-            await this.#cleanupPlan(state);
-            throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
-          }
-          const clientClaim = typeof executionResult === "object" && executionResult.status === "executed" ? executionResult.clientClaim : null;
-          if (clientClaim && (!z49.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
-            this.#removeState(state);
-            await this.#cleanupPlan(state);
-            throw new AttachmentLeaseError(
-              "view-operation-failed",
-              "The guarded terminal view operation failed."
-            );
-          }
-          if (executionResult !== "executed" && !clientClaim) {
-            this.#removeState(state);
-            await this.#cleanupPlan(state);
-            throw new AttachmentLeaseError(
-              "view-operation-failed",
-              "The guarded terminal view operation failed."
-            );
-          }
-          return {
-            descriptor: this.#descriptor(state),
-            operation: parsedOperation,
-            ...clientClaim ? { clientClaim: { ...clientClaim } } : {}
-          };
-        });
-      }
-      disconnect(leaseId, binding) {
-        return this.#exclusive(async () => {
-          const state = this.#requireLease(leaseId, validateBinding(binding));
-          const now = this.#now();
-          if (this.#isExpired(state, now)) {
-            this.#removeState(state);
-            await this.#cleanupPlan(state);
-            throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
-          }
-          if (state.status === "awaiting-redemption") {
-            throw new AttachmentLeaseError(
-              "lease-not-active",
-              "The attachment lease has not been redeemed."
-            );
-          }
-          state.status = "disconnected";
-          state.graceExpiresAt = now + this.#disconnectGraceMs;
-          this.#audit("disconnected", state, now);
-          return this.#descriptor(state);
-        });
-      }
-      release(leaseId, binding) {
-        return this.#exclusive(async () => {
-          const state = this.#leases.get(leaseId);
-          if (!state) return { released: false, cleanup: "absent" };
-          const parsedBinding = validateBinding(binding);
-          if (!sameBinding(state, parsedBinding, this.#instanceId)) {
-            throw new AttachmentLeaseError(
-              "binding-mismatch",
-              "The attachment lease is bound to a different daemon request or project."
-            );
-          }
-          this.#removeState(state);
-          const cleanup = await this.#cleanupPlan(state);
-          this.#audit("released", state, this.#now());
-          return { released: true, cleanup: cleanup.status };
-        });
-      }
-      sweep() {
-        return this.#exclusive(() => this.#expireAndCleanup(this.#now()));
-      }
-      reconcileOrphanViews() {
-        return this.#exclusive(async () => {
-          const activeNames = new Set(
-            [...this.#leases.values()].map((state) => state.plan.identity.viewSessionName)
-          );
-          let candidates;
-          try {
-            const enumerated = await this.#viewExecutor.enumerateMarkedViews(
-              GROUPED_TMUX_VIEW_SESSION_PREFIX,
-              GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT
-            );
-            if (!Array.isArray(enumerated)) throw new TypeError("Invalid marked view enumeration.");
-            candidates = [...enumerated];
-          } catch {
-            throw new AttachmentLeaseError(
-              "orphan-enumeration-failed",
-              "Marked attachment view enumeration failed."
-            );
-          }
-          const cleaned = [];
-          const failed = [];
-          let skippedCount = 0;
-          for (const candidate of candidates) {
-            let parsed;
-            try {
-              parsed = this.#parseOrphanIdentity(candidate);
-            } catch {
-              parsed = null;
-            }
-            if (!parsed) {
-              skippedCount += 1;
-              continue;
-            }
-            const identity = {
-              attachmentId: parsed.attachmentId,
-              generation: parsed.generation
-            };
-            if (activeNames.has(parsed.viewSessionName)) {
-              skippedCount += 1;
-              continue;
-            }
-            try {
-              const result = await this.#viewExecutor.guardedCleanup({
-                exactViewSessionTarget: `=${parsed.viewSessionName}`,
-                markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
-                expectedMarkerValue: parsed.markerValue,
-                expectedWindowId: parsed.windowId
-              });
-              switch (result) {
-                case "cleaned":
-                  break;
-                case "absent":
-                case "ownership-mismatch":
-                case "topology-mismatch":
-                  skippedCount += 1;
-                  continue;
-                default:
-                  throw new TypeError("The guarded cleanup executor returned an invalid result.");
-              }
-              cleaned.push(identity);
-              this.#emitAudit({
-                type: "orphan-cleaned",
-                leaseId: identity.attachmentId,
-                requestId: "orphan",
-                target: { workspaceName: "orphan", semanticPaneId: "orphan" },
-                viewerMode: "read-only",
-                at: this.#now()
-              });
-            } catch {
-              failed.push(identity);
-            }
-          }
-          return { cleaned, failed, skippedCount };
-        });
-      }
-      snapshot() {
-        return {
-          daemonInstanceId: this.#instanceId,
-          leases: [...this.#leases.values()].map((state) => this.#descriptor(state))
-        };
-      }
-      toJSON() {
-        return this.snapshot();
-      }
-      #exclusive(operation) {
-        const run = this.#operationTail.then(operation, operation);
-        this.#operationTail = run.then(
-          () => void 0,
-          () => void 0
-        );
-        return run;
-      }
-      #freshId() {
-        for (let attempt = 0; attempt < 16; attempt += 1) {
-          const candidate = this.#createId();
-          if (z49.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
-        }
-        throw new AttachmentLeaseError(
-          "identity-generation-failed",
-          "Could not allocate a unique attachment identity."
-        );
-      }
-      #validateTtl(ttlMs) {
-        if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0 || ttlMs > this.#maxLeaseTtlMs) {
-          throw new AttachmentLeaseError("invalid-ttl", "The requested lease TTL is invalid.");
-        }
-        return ttlMs;
-      }
-      #requireLease(leaseId, binding) {
-        const state = this.#leases.get(leaseId);
-        if (!state)
-          throw new AttachmentLeaseError("lease-not-found", "The attachment lease is absent.");
-        if (!sameBinding(state, binding, this.#instanceId)) {
-          throw new AttachmentLeaseError(
-            "binding-mismatch",
-            "The attachment lease is bound to a different daemon request or project."
-          );
-        }
-        return state;
-      }
-      #buildPlan(leaseId, generation, request, resolution) {
-        return planGroupedTmuxAttachment({
-          attachmentId: leaseId,
-          generation,
-          target: request.target,
-          viewerMode: request.viewerMode,
-          viewport: request.viewport,
-          source: {
-            sessionId: resolution.source.sessionId,
-            windowId: resolution.source.windowId,
-            runtimePaneId: resolution.source.runtimePaneId,
-            windowPaneCount: resolution.source.windowPaneCount
-          }
-        });
-      }
-      async #applyResolution(state, resolution) {
-        const oldWindowKey = state.interactiveWindowKey;
-        const newWindowKey = windowOwnerKey(resolution);
-        if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
-          const owner = this.#interactiveWindowOwners.get(newWindowKey);
-          if (owner !== void 0 && owner !== state.leaseId) {
-            throw new AttachmentLeaseError(
-              "interactive-viewer-conflict",
-              "The rebound runtime window already has an interactive input owner."
-            );
-          }
-        }
-        const linkedWindowChanged = !sameLinkedWindow(state.resolution, resolution);
-        const nextViewGeneration = linkedWindowChanged ? state.viewGeneration + 1 : state.viewGeneration;
-        if (linkedWindowChanged) {
-          if (state.viewGeneration >= GROUPED_TMUX_MAX_GENERATION) {
-            throw new AttachmentLeaseError(
-              "view-generation-exhausted",
-              "The attachment view generation is exhausted."
-            );
-          }
-        }
-        const nextPlan = this.#buildPlan(state.leaseId, nextViewGeneration, state.request, resolution);
-        if (linkedWindowChanged) {
-          const cleanup = await this.#cleanupPlan(state);
-          if (cleanup.status !== "cleaned" && cleanup.status !== "absent") {
-            throw new AttachmentLeaseError(
-              "view-cleanup-failed",
-              "The prior marked attachment view could not be safely cleaned."
-            );
-          }
-        }
-        const changed = state.resolution.bindingGeneration !== resolution.bindingGeneration;
-        state.resolution = resolution;
-        state.viewGeneration = nextViewGeneration;
-        state.plan = nextPlan;
-        if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
-          if (this.#interactiveWindowOwners.get(oldWindowKey) === state.leaseId) {
-            this.#interactiveWindowOwners.delete(oldWindowKey);
-          }
-          this.#interactiveWindowOwners.set(newWindowKey, state.leaseId);
-          state.interactiveWindowKey = newWindowKey;
-        }
-        if (changed) this.#audit("rebound", state, this.#now());
-      }
-      #isExpired(state, now) {
-        return now >= state.expiresAt || state.graceExpiresAt !== null && now >= state.graceExpiresAt;
-      }
-      #effectiveDeadline(state) {
-        return state.graceExpiresAt === null ? state.expiresAt : Math.min(state.expiresAt, state.graceExpiresAt);
-      }
-      async #expireTicketOrThrow(state, deadline) {
-        if (this.#now() < deadline) return;
-        this.#removeState(state);
-        await this.#cleanupPlan(state);
-        throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
-      }
-      async #expireLeaseOrThrow(state) {
-        if (!this.#isExpired(state, this.#now())) return;
-        this.#removeState(state);
-        await this.#cleanupPlan(state);
-        throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
-      }
-      async #expireAndCleanup(now) {
-        const expired = [...this.#leases.values()].filter((state) => this.#isExpired(state, now));
-        const results = [];
-        for (const state of expired) {
-          this.#removeState(state);
-          const cleanup = await this.#cleanupPlan(state);
-          results.push(cleanup);
-          this.#audit("expired", state, now);
-        }
-        return results;
-      }
-      #removeState(state) {
-        if (this.#leases.get(state.leaseId) !== state) return;
-        this.#leases.delete(state.leaseId);
-        this.#requests.delete(state.requestId);
-        const targetKey = semanticPaneTargetKey(state.request.target);
-        if (this.#interactiveOwners.get(targetKey) === state.leaseId) {
-          this.#interactiveOwners.delete(targetKey);
-        }
-        if (state.interactiveWindowKey !== null && this.#interactiveWindowOwners.get(state.interactiveWindowKey) === state.leaseId) {
-          this.#interactiveWindowOwners.delete(state.interactiveWindowKey);
-        }
-        state.interactiveWindowKey = null;
-        state.ticketDigest?.fill(0);
-        state.ticketDigest = null;
-        state.ticketExpiresAt = null;
-      }
-      async #cleanupPlan(state) {
-        const leaseId = state.leaseId;
-        try {
-          const status2 = await this.#viewExecutor.guardedCleanup({
-            exactViewSessionTarget: exactViewSessionTarget(state.plan),
-            markerEnvironment: state.plan.identity.markerEnvironment,
-            expectedMarkerValue: state.plan.identity.markerValue,
-            expectedWindowId: state.plan.recover.topology.expectedStdout
-          });
-          switch (status2) {
-            case "cleaned":
-            case "absent":
-            case "ownership-mismatch":
-            case "topology-mismatch":
-              return { leaseId, status: status2 };
-            default:
-              throw new TypeError("The guarded cleanup executor returned an invalid result.");
-          }
-        } catch {
-          this.#audit("cleanup-failed", state, this.#now(), "executor-failed");
-          return { leaseId, status: "failed" };
-        }
-      }
-      #parseOrphanIdentity(candidate) {
-        if (!candidate.viewSessionName.startsWith(GROUPED_TMUX_VIEW_SESSION_PREFIX) || candidate.markerValue === null || candidate.windowIds.length !== 1 || !RuntimeWindowId.test(candidate.windowIds[0] ?? "")) {
-          return null;
-        }
-        const marker = candidate.markerValue.match(MarkerPattern);
-        if (!marker) return null;
-        const attachmentId = marker[1].toLowerCase();
-        const generation = Number(marker[2]);
-        if (!Number.isSafeInteger(generation) || generation > GROUPED_TMUX_MAX_GENERATION) return null;
-        if (groupedTmuxViewSessionName(attachmentId, generation) !== candidate.viewSessionName) {
-          return null;
-        }
-        return {
-          attachmentId,
-          generation,
-          viewSessionName: candidate.viewSessionName,
-          markerValue: candidate.markerValue,
-          windowId: candidate.windowIds[0]
-        };
-      }
-      #descriptor(state) {
-        return {
-          leaseId: state.leaseId,
-          requestId: state.requestId,
-          target: { ...state.request.target },
-          viewerMode: state.request.viewerMode,
-          status: state.status,
-          issuedAt: state.issuedAt,
-          expiresAt: state.expiresAt,
-          graceExpiresAt: state.graceExpiresAt,
-          bindingGeneration: state.resolution.bindingGeneration,
-          viewGeneration: state.viewGeneration
-        };
-      }
-      #audit(type, state, at, reason) {
-        this.#emitAudit({
-          type,
-          leaseId: state.leaseId,
-          requestId: state.requestId,
-          target: { ...state.request.target },
-          viewerMode: state.request.viewerMode,
-          at,
-          ...reason === void 0 ? {} : { reason }
-        });
-      }
-      #emitAudit(event) {
-        try {
-          this.#onAudit?.(event);
-        } catch {
-        }
       }
     };
   }

@@ -189,6 +189,7 @@ function rig(
     daemonInstanceId?: string;
     executor?: FakeViewExecutor;
     discover?: () => ReturnType<typeof row>[] | Promise<ReturnType<typeof row>[]>;
+    redemptionProcessingTtlMs?: number;
   } = {},
 ): Rig {
   let now = 1_000;
@@ -210,6 +211,9 @@ function rig(
     leaseTtlMs: 1_000,
     maxLeaseTtlMs: 2_000,
     disconnectGraceMs: 50,
+    ...(options.redemptionProcessingTtlMs !== undefined
+      ? { redemptionProcessingTtlMs: options.redemptionProcessingTtlMs }
+      : {}),
     onAudit: (event) => audits.push(event),
   });
   return { manager, executor, rows, audits, setNow: (value) => (now = value) };
@@ -568,10 +572,49 @@ describe("AttachmentLeaseManager", () => {
     await expect(manager.issue(request(), context(2))).resolves.toBeDefined();
   });
 
-  it("rechecks ticket expiry after awaited trusted discovery", async () => {
+  it("honors a frame that arrived before ticket expiry even when processing starts late", async () => {
+    const { manager, executor, setNow } = rig();
+    const issued = await manager.issue(request(), context(1));
+    executor.seed(planFor(issued.descriptor));
+    // The admission stamped delivery inside the TTL; the redemption then sat
+    // behind other serialized redemptions until well past the ticket clock.
+    setNow(5_000);
+    const redeemed = await manager.redeem(
+      issued.redemptionTicket,
+      binding(issued.descriptor.requestId),
+      1_099,
+    );
+    expect(redeemed.descriptor.status).toBe("active");
+  });
+
+  it("rejects a claimed delivery time at or past ticket expiry", async () => {
+    const { manager, executor, setNow } = rig();
+    const issued = await manager.issue(request(), context(1));
+    executor.seed(planFor(issued.descriptor));
+    setNow(5_000);
+    await errorCode(
+      manager.redeem(issued.redemptionTicket, binding(issued.descriptor.requestId), 1_100),
+      "ticket-expired",
+    );
+  });
+
+  it("never lets a claimed future delivery time extend the ticket", async () => {
+    const { manager, executor, setNow } = rig();
+    const issued = await manager.issue(request(), context(1));
+    executor.seed(planFor(issued.descriptor));
+    setNow(1_100);
+    // A future receivedAt clamps to now, which is already at the boundary.
+    await errorCode(
+      manager.redeem(issued.redemptionTicket, binding(issued.descriptor.requestId), 9_999),
+      "ticket-expired",
+    );
+  });
+
+  it("rechecks the redemption processing budget after awaited trusted discovery", async () => {
     const discovery = deferred<ReturnType<typeof row>[]>();
     let calls = 0;
     const testRig = rig({
+      redemptionProcessingTtlMs: 1,
       discover: () => {
         calls += 1;
         return calls === 1 ? [row()] : discovery.promise;
@@ -595,9 +638,9 @@ describe("AttachmentLeaseManager", () => {
     );
   });
 
-  it("rechecks ticket expiry after awaited rebound cleanup before activation", async () => {
+  it("rechecks the redemption processing budget after awaited rebound cleanup", async () => {
     const cleanup = deferred<void>();
-    const testRig = rig();
+    const testRig = rig({ redemptionProcessingTtlMs: 1 });
     const issued = await testRig.manager.issue(request(), context(1));
     testRig.executor.seed(planFor(issued.descriptor));
     testRig.executor.cleanupWait = () => cleanup.promise;
