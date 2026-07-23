@@ -1316,6 +1316,148 @@ kbd {
   background: var(--tmux-ide-border-attention);
 }
 
+/* Fleet section — every adopted session, in the shared sidebar language. */
+.fleet-sidebar {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--desktop-separator);
+}
+.fleet-sidebar__quiet {
+  margin: 0;
+  padding: 4px 8px 8px;
+  color: var(--tmux-ide-text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+.fleet-sidebar__session {
+  display: flex;
+  flex-direction: column;
+}
+.fleet-sidebar__session[data-open="true"] {
+  border-radius: var(--tmi-radius-md);
+  background: var(--desktop-hover);
+}
+.fleet-sidebar__session-head {
+  cursor: default;
+}
+.fleet-sidebar__agent {
+  padding-left: 20px;
+  cursor: default;
+}
+.fleet-sidebar__badge {
+  font-family: var(--desktop-ui-font);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.fleet-sidebar__badge--open {
+  color: var(--tmux-ide-status-info);
+}
+.fleet-sidebar__badge--adopted {
+  color: var(--tmux-ide-text-muted);
+}
+.fleet-sidebar__open-action {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 2px 8px;
+  color: var(--tmux-ide-text-secondary);
+  font-size: 11px;
+  font-weight: 550;
+  background: transparent;
+  border: 1px solid var(--desktop-separator);
+  border-radius: var(--tmi-radius-sm);
+  cursor: pointer;
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth),
+    border-color 150ms var(--desktop-ease-smooth);
+}
+.fleet-sidebar__open-action:hover {
+  color: var(--tmux-ide-text-primary);
+  background: var(--desktop-hover);
+  border-color: var(--desktop-focus-soft);
+}
+.shell-workbench[data-sidebar-collapsed="true"] .fleet-sidebar__open-action,
+.shell-workbench[data-sidebar-collapsed="true"] .fleet-sidebar__badge,
+.shell-workbench[data-sidebar-collapsed="true"] .fleet-sidebar__quiet {
+  display: none;
+}
+
+.fleet-sidebar__overlay {
+  position: fixed;
+  z-index: 130;
+  inset: 0;
+  display: grid;
+  padding: 42px 24px;
+  place-items: center;
+  background: var(--tmi-overlay-scrim);
+  backdrop-filter: blur(3px);
+}
+.fleet-sidebar__dialog {
+  width: min(420px, 100%);
+  padding: 20px;
+  color: var(--tmux-ide-text-primary);
+  background: var(--desktop-raised);
+  border: 1px solid var(--desktop-separator);
+  border-radius: var(--desktop-panel-radius);
+  box-shadow: var(--tmi-overlay-elevation);
+}
+.fleet-sidebar__dialog h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.fleet-sidebar__dialog-body {
+  margin: 0 0 12px;
+  color: var(--tmux-ide-text-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+.fleet-sidebar__dialog-error {
+  margin: 0 0 12px;
+  color: var(--tmux-ide-status-warning);
+  font-size: 12px;
+  line-height: 16px;
+}
+.fleet-sidebar__dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.fleet-sidebar__dialog-cancel,
+.fleet-sidebar__dialog-confirm {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--tmi-radius-sm);
+  cursor: pointer;
+  transition:
+    background-color 150ms var(--desktop-ease-smooth),
+    border-color 150ms var(--desktop-ease-smooth),
+    opacity 150ms var(--desktop-ease-smooth);
+}
+.fleet-sidebar__dialog-cancel {
+  color: var(--tmux-ide-text-secondary);
+  background: transparent;
+  border: 1px solid var(--desktop-separator);
+}
+.fleet-sidebar__dialog-cancel:hover {
+  background: var(--desktop-hover);
+}
+.fleet-sidebar__dialog-confirm {
+  color: #fff;
+  background: var(--tmux-ide-status-info);
+  border: 1px solid transparent;
+}
+.fleet-sidebar__dialog-confirm:disabled,
+.fleet-sidebar__dialog-cancel:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .workspace-main {
   grid-row: 1;
   grid-column: 2;

@@ -52,6 +52,12 @@ import type {
 } from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
 import { CommandPalette } from "./command-palette.tsx";
 import { CreatePaneFlow } from "./create-pane-flow.tsx";
+import { FleetSidebarSection, type FleetPromoteOutcome } from "./fleet-sidebar.tsx";
+import { mergeFleetGraphOverlay } from "./fleet-graph-merge.ts";
+import {
+  createSolidDesktopFleetCatalogStore,
+  type DesktopFleetCatalogState,
+} from "../runtime/fleet-catalog-store.ts";
 import { UpdateChip } from "./update-chip.tsx";
 import { MissionActivitySurface } from "./mission-activity-surface.tsx";
 import { WorkspaceFilesSurface, type FilesSurfaceProps } from "./workspace-files-surface.tsx";
@@ -113,6 +119,10 @@ export interface DomApplicationShellProps {
   readonly onRefreshResource?: () => void;
   readonly filesSurface?: FilesSurfaceProps;
   readonly changesSurface?: ChangesSurfaceProps;
+  /** Fixture/preview override of the live fleet-catalog store state. */
+  readonly fleetState?: DesktopFleetCatalogState;
+  /** Fixture/preview override of the promote action (defaults to the host mutation). */
+  readonly onPromoteSession?: (sessionId: string) => Promise<FleetPromoteOutcome>;
 }
 
 export interface PrimaryNavigationProps {
@@ -241,12 +251,41 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     const value = input();
     return "appWindows" in value ? value.missionWorkspace : undefined;
   });
+  // The live fleet-catalog store — every adopted session, not just the open
+  // workspace. Fixtures/preview inject `fleetState` instead of a live store.
+  const fleetStore = props.fleetState
+    ? null
+    : createSolidDesktopFleetCatalogStore({ host: props.host, daemon: props.daemonState });
+  if (fleetStore) {
+    createEffect(() => fleetStore.setDaemon(props.daemonState));
+  }
+  const fleetState = createMemo<DesktopFleetCatalogState>(
+    () => props.fleetState ?? fleetStore!.state(),
+  );
+  const fleetSnapshot = createMemo(() => {
+    const state = fleetState();
+    return "snapshot" in state ? state.snapshot : null;
+  });
+  const promoteSession = async (sessionId: string): Promise<FleetPromoteOutcome> => {
+    if (props.onPromoteSession) return props.onPromoteSession(sessionId);
+    const result = await props.host.daemon.promoteWorkspace({ sessionId });
+    // On success the daemon emits workspace.added, which refreshes the workspace
+    // catalog automatically; the new workspace then appears for selection.
+    return result.status === "ok" ? { ok: true } : { ok: false, reason: result.error.reason };
+  };
+
   // The agent-graph overlay is a non-durable, additive V3 projection. It follows
   // the same generation as the rest of the input, so reading it here keeps it
   // reconciled with the mutation/refresh queue exactly like missionWorkspace.
+  // When a live fleet snapshot is present it is composed in renderer-side so the
+  // canvas shows the whole fleet, not just the open workspace.
   const agentGraphOverlay = createMemo<AgentGraphOverlay | undefined>(() => {
     const value = input();
-    return "appWindows" in value ? value.agentGraphOverlay : undefined;
+    const base = "appWindows" in value ? value.agentGraphOverlay : undefined;
+    if (!base) return base;
+    const snapshot = fleetSnapshot();
+    if (!snapshot) return base;
+    return mergeFleetGraphOverlay({ openOverlay: base, fleet: snapshot.catalog }).overlay;
   });
   const effectiveSidebarWidth = createMemo(() =>
     sidebarCollapsed() ? DOM_SHELL_GEOMETRY.sidebarCollapsedWidth : sidebarWidth(),
@@ -903,6 +942,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               )}
             </Index>
           </section>
+          <FleetSidebarSection state={fleetState()} onPromote={promoteSession} />
         </aside>
 
         <ResizeHandle
