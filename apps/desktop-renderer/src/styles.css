@@ -611,7 +611,8 @@ kbd {
 }
 
 .runtime-state-card__signal {
-  display: inline-flex;
+  /* flex (not inline-flex): the following inline eyebrow must break to its own line. */
+  display: flex;
   align-items: center;
   gap: 7px;
   margin-bottom: 24px;
@@ -710,10 +711,7 @@ kbd {
   padding: 8px 8px 8px 12px;
   border: 1px solid var(--tmux-ide-border-subtle);
   border-radius: 8px;
-  background: var(
-    --tmux-ide-surface-inset,
-    color-mix(in srgb, var(--tmux-ide-text-primary) 6%, transparent)
-  );
+  background: var(--tmux-ide-surface-panel);
 }
 
 .runtime-state-card__command > code {
@@ -740,9 +738,10 @@ kbd {
 .first-run-intro__card {
   width: min(480px, 100%);
   padding: 18px 20px 16px;
-  border: 1px solid var(--tmux-ide-border-strong, var(--tmux-ide-border-subtle));
+  border: 1px solid var(--tmux-ide-border-default);
   border-radius: 12px;
-  background: var(--tmux-ide-surface-raised, var(--tmux-ide-surface-inset));
+  /* Overlay surfaces are OPAQUE; translucency belongs to backdrops only. */
+  background: var(--tmux-ide-surface-panel-raised, var(--tmux-ide-surface-panel));
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
   pointer-events: auto;
 }
