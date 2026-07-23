@@ -7,6 +7,7 @@ import {
   CANONICAL_SURFACE_REGISTRY,
   SemanticProductIdSchemaZ,
   TerminalAttachmentSemanticPaneIdSchemaZ,
+  TerminalAttachmentSemanticWindowIdSchemaZ,
   projectApplicationShellV1,
   resolveAgentStatusPresentation,
   type AgentActivity,
@@ -70,6 +71,24 @@ export interface ApplicationShellPaneFacts extends ApplicationShellPanePresentat
   /** Daemon-only live identity used solely as stable fallback hash input. */
   readonly runtimePaneId: string;
   readonly windowPaneCount: number;
+  /**
+   * Daemon-only live tmux `window_id` (m41 attach-2 gathers it at discovery).
+   * Used SOLELY to group panes into their runtime window during the pure
+   * attachability classification; like {@link runtimePaneId} it never crosses
+   * the resource wire. Optional so pre-attach-4 facts sources that never
+   * gathered it keep their historical single-pane gate; the native inventory
+   * backend always populates it.
+   */
+  readonly windowId?: string;
+  /**
+   * Durable `@tmux_ide_window_id` window stamp (m41 attach-2 gathers it at
+   * discovery), or null when the pane's window carries no stamp. It is a WINDOW
+   * option, so every pane of one window reports the same value. The pure layer
+   * validates it, proves the whole window, and mints the wire-safe
+   * `windowResourceId` grouping key from its digest — the raw value never
+   * crosses the wire. Optional for the same legacy reason as {@link windowId}.
+   */
+  readonly windowStamp?: string | null;
 }
 
 export interface ApplicationShellSessionFacts {
@@ -77,10 +96,18 @@ export interface ApplicationShellSessionFacts {
   /** Daemon-only generation identity; hashed into fallback resource identity. */
   readonly runtimeSessionId: string;
   readonly dir: string;
-  /** Global result from the same catalog analyzer used by live attachment. */
+  /**
+   * Global result from the same catalog analyzer used by live attachment. The
+   * per-pane-stamp reason (`invalid-semantic-stamp`) and every window-level
+   * reason are resolved in the pure projection, never as a global issue.
+   */
   readonly catalogIssue: Exclude<
     TerminalResourceUnavailableReason,
-    "invalid-semantic-stamp" | "not-single-pane-window"
+    | "invalid-semantic-stamp"
+    | "not-single-pane-window"
+    | "missing-window-stamp"
+    | "window-stamp-inconsistent"
+    | "duplicate-window-stamp"
   > | null;
   readonly panes: readonly ApplicationShellPaneFacts[];
 }
@@ -132,6 +159,58 @@ function fallbackPaneId(
 interface PaneIdentity {
   readonly resourceId: string;
   readonly attachability: TerminalResourceAttachability;
+  /**
+   * Wire-safe grouping key (m41 attach-4) shared by every pane of one durable
+   * tmux window. Present only when the pane is attachable through the window
+   * path — i.e. its window carries a valid, unique window stamp. Minted from the
+   * window stamp digest, never the raw stamp.
+   */
+  readonly windowResourceId?: string;
+}
+
+/** A durable window stamp is trusted only once it passes the semantic grammar. */
+function validWindowStamp(value: string | null | undefined): string | null {
+  return value != null && TerminalAttachmentSemanticWindowIdSchemaZ.safeParse(value).success
+    ? value
+    : null;
+}
+
+type WindowVerdict =
+  | { readonly ok: true; readonly windowResourceId: string | null }
+  | { readonly ok: false; readonly reason: TerminalResourceUnavailableReason };
+
+/**
+ * PURE — prove the whole tmux window a pane lives in, mirroring the semantic
+ * pane catalog's own window proof (`#proveWindow`). A single-pane window needs
+ * no stamp (legacy attach path); a multi-pane window is attachable only once
+ * every one of its panes shares one durable, unique `@tmux_ide_window_id`.
+ * `stampToWindowIds` is the session-wide stamp -> runtime-window map used to
+ * fail closed on a stamp claimed by two distinct windows.
+ */
+function proveWindow(
+  windowId: string,
+  panes: readonly ApplicationShellPaneFacts[],
+  stampToWindowIds: ReadonlyMap<string, ReadonlySet<string>>,
+): WindowVerdict {
+  const group = panes.filter((pane) => pane.windowId === windowId);
+  const paneCount = Math.max(...group.map((pane) => pane.windowPaneCount));
+  const stampedCount = group.filter((pane) => validWindowStamp(pane.windowStamp) !== null).length;
+  const distinctStamps = new Set(
+    group.map((pane) => validWindowStamp(pane.windowStamp)).filter((s): s is string => s !== null),
+  );
+  if (distinctStamps.size > 1) return { ok: false, reason: "window-stamp-inconsistent" };
+  const stamp = distinctStamps.size === 1 ? [...distinctStamps][0]! : null;
+  if (paneCount > 1) {
+    if (stamp === null) return { ok: false, reason: "missing-window-stamp" };
+    if (stampedCount !== group.length) return { ok: false, reason: "window-stamp-inconsistent" };
+  }
+  if (stamp !== null) {
+    if ((stampToWindowIds.get(stamp)?.size ?? 0) > 1) {
+      return { ok: false, reason: "duplicate-window-stamp" };
+    }
+    return { ok: true, windowResourceId: semanticId("terminal-window", stamp) };
+  }
+  return { ok: true, windowResourceId: null };
 }
 
 export function paneIdentities(session: ApplicationShellSessionFacts): readonly PaneIdentity[] {
@@ -141,6 +220,23 @@ export function paneIdentities(session: ApplicationShellSessionFacts): readonly 
     if (!TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
     validCounts.set(pane.semanticPaneId!, (validCounts.get(pane.semanticPaneId!) ?? 0) + 1);
   }
+  // Session-wide stamp -> runtime windows, for the catalog's duplicate proof.
+  const stampToWindowIds = new Map<string, Set<string>>();
+  for (const pane of panes) {
+    const stamp = validWindowStamp(pane.windowStamp);
+    if (stamp === null || pane.windowId === undefined) continue;
+    const windows = stampToWindowIds.get(stamp) ?? new Set<string>();
+    windows.add(pane.windowId);
+    stampToWindowIds.set(stamp, windows);
+  }
+  const windowVerdicts = new Map<string, WindowVerdict>();
+  const verdictFor = (windowId: string): WindowVerdict => {
+    const cached = windowVerdicts.get(windowId);
+    if (cached !== undefined) return cached;
+    const verdict = proveWindow(windowId, panes, stampToWindowIds);
+    windowVerdicts.set(windowId, verdict);
+    return verdict;
+  };
   const claimed = new Set<string>();
   return panes.map((pane) => {
     const stamped = pane.semanticPaneId;
@@ -150,14 +246,35 @@ export function paneIdentities(session: ApplicationShellSessionFacts): readonly 
       validCounts.get(stamped) === 1;
     if (locallyValid && !claimed.has(stamped)) {
       claimed.add(stamped);
-      return {
-        resourceId: stamped,
-        attachability:
-          session.catalogIssue !== null
-            ? { status: "unavailable", reason: session.catalogIssue }
-            : pane.windowPaneCount === 1
+      if (session.catalogIssue !== null) {
+        return {
+          resourceId: stamped,
+          attachability: { status: "unavailable", reason: session.catalogIssue },
+        };
+      }
+      // Legacy facts source without window facts: keep the historical gate.
+      if (pane.windowId === undefined) {
+        return {
+          resourceId: stamped,
+          attachability:
+            pane.windowPaneCount === 1
               ? { status: "available", semanticPaneId: stamped }
               : { status: "unavailable", reason: "not-single-pane-window" },
+        };
+      }
+      const verdict = verdictFor(pane.windowId);
+      if (!verdict.ok) {
+        return {
+          resourceId: stamped,
+          attachability: { status: "unavailable", reason: verdict.reason },
+        };
+      }
+      return {
+        resourceId: stamped,
+        attachability: { status: "available", semanticPaneId: stamped },
+        ...(verdict.windowResourceId !== null
+          ? { windowResourceId: verdict.windowResourceId }
+          : {}),
       };
     }
     const base = fallbackPaneId(session, pane);
@@ -530,6 +647,9 @@ export function projectApplicationShellResource(
       kind: isAgentPane(pane) ? ("agent" as const) : ("terminal" as const),
       active: identity.resourceId === focusedPaneId,
       attachability: identity.attachability,
+      ...(identity.windowResourceId !== undefined
+        ? { windowResourceId: identity.windowResourceId }
+        : {}),
     };
   });
   const parsed = ApplicationShellProjectionInputV2SchemaZ.parse({

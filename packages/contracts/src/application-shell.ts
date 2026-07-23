@@ -53,11 +53,37 @@ export const TerminalResourceUnavailableReasonSchemaZ = z.enum([
   "invalid-semantic-stamp",
   "duplicate-semantic-stamp",
   "duplicate-runtime-pane-binding",
+  // Retained for wire compatibility only. m41 attach-4 stopped emitting this from
+  // the window-capable projection: a multi-pane window is attachable once it
+  // carries a durable window stamp. It is still emitted by legacy facts sources
+  // that gathered no window facts at all.
   "not-single-pane-window",
+  // Window-level attachability faults (m41 attach-4). A multi-pane window is
+  // attachable only once every one of its panes shares one durable, unique
+  // `@tmux_ide_window_id` stamp; these mirror the semantic-pane catalog's own
+  // window proof so the projection stays honest with what an attach would do.
+  "missing-window-stamp",
+  "window-stamp-inconsistent",
+  "duplicate-window-stamp",
 ]);
 export type TerminalResourceUnavailableReason = z.infer<
   typeof TerminalResourceUnavailableReasonSchemaZ
 >;
+
+/**
+ * Wire-safe grouping key shared by every terminal resource that belongs to one
+ * durable tmux window (m41 attach-4). It is minted from the window stamp digest
+ * — never the raw `@tmux_ide_window_id` value — so the renderer can see that two
+ * attachable panes live in the same window (and that attaching both conflicts
+ * under the window-keyed interactive ownership proven in attach-3).
+ */
+export const TerminalWindowResourceIdSchemaZ = z
+  .string()
+  .regex(
+    /^terminal-window\.[0-9a-f]{20}$/u,
+    "window grouping key must be a wire-safe window stamp digest",
+  );
+export type TerminalWindowResourceId = z.infer<typeof TerminalWindowResourceIdSchemaZ>;
 
 export const TerminalResourceAttachabilitySchemaZ = z.discriminatedUnion("status", [
   z
@@ -82,8 +108,22 @@ export const ApplicationShellTerminalResourceSchemaZ = z
     kind: z.enum(["agent", "terminal"]),
     active: z.boolean(),
     attachability: TerminalResourceAttachabilitySchemaZ,
+    // Additive (m41 attach-4). Present only on attachable resources whose durable
+    // tmux window carries a valid, unique window stamp; resources sharing it live
+    // in the same window. attach-5's UI consumes it to surface the shared-window
+    // relationship and the resulting single-attach conflict.
+    windowResourceId: TerminalWindowResourceIdSchemaZ.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((resource, ctx) => {
+    if (resource.windowResourceId !== undefined && resource.attachability.status !== "available") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["windowResourceId"],
+        message: "window grouping key is only valid on an attachable terminal resource",
+      });
+    }
+  });
 export type ApplicationShellTerminalResource = z.infer<
   typeof ApplicationShellTerminalResourceSchemaZ
 >;

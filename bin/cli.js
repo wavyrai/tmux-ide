@@ -3869,7 +3869,7 @@ function replayInvocations(initialState, invocations) {
     deepFreeze2(ApplicationShellReplayStateV1SchemaZ.parse(initialState))
   );
 }
-var APPLICATION_SHELL_PROJECTION_VERSION, APPLICATION_SHELL_TRACE_VERSION, TerminalResourceUnavailableReasonSchemaZ, TerminalResourceAttachabilitySchemaZ, ApplicationShellTerminalResourceSchemaZ, ApplicationShellTerminalInventorySchemaZ, ApplicationShellProjectionInputV1Fields, ApplicationShellProjectionInputV1WireSchemaZ, ApplicationShellProjectionInputV1SchemaZ, ApplicationShellProjectionInputV2SchemaZ, ApplicationShellProjectionInputV3SchemaZ, WorkspaceFixtureSchemaZ, ApplicationShellSurfaceProjectionSchemaZ, ApplicationShellProjectionV1SchemaZ, ApplicationShellActivateModeArgumentsSchemaZ, ApplicationShellActivateDockToolArgumentsSchemaZ, ApplicationShellSetDockModeArgumentsSchemaZ, ApplicationShellMoveFocusArgumentsSchemaZ, ApplicationShellOpenPaletteArgumentsSchemaZ, ApplicationShellClosePaletteArgumentsSchemaZ, ApplicationShellSelectResourceArgumentsSchemaZ, APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS, ApplicationShellCommandInvocationSchemaZ, descriptor, APPLICATION_SHELL_COMMAND_DESCRIPTORS, descriptorById, APPLICATION_SHELL_COMMAND_DEFINITIONS, ApplicationShellResourceSelectionSchemaZ, ApplicationShellReplayStateV1SchemaZ, ApplicationShellActionTraceV1BaseSchemaZ, ApplicationShellActionTraceV1SchemaZ;
+var APPLICATION_SHELL_PROJECTION_VERSION, APPLICATION_SHELL_TRACE_VERSION, TerminalResourceUnavailableReasonSchemaZ, TerminalWindowResourceIdSchemaZ, TerminalResourceAttachabilitySchemaZ, ApplicationShellTerminalResourceSchemaZ, ApplicationShellTerminalInventorySchemaZ, ApplicationShellProjectionInputV1Fields, ApplicationShellProjectionInputV1WireSchemaZ, ApplicationShellProjectionInputV1SchemaZ, ApplicationShellProjectionInputV2SchemaZ, ApplicationShellProjectionInputV3SchemaZ, WorkspaceFixtureSchemaZ, ApplicationShellSurfaceProjectionSchemaZ, ApplicationShellProjectionV1SchemaZ, ApplicationShellActivateModeArgumentsSchemaZ, ApplicationShellActivateDockToolArgumentsSchemaZ, ApplicationShellSetDockModeArgumentsSchemaZ, ApplicationShellMoveFocusArgumentsSchemaZ, ApplicationShellOpenPaletteArgumentsSchemaZ, ApplicationShellClosePaletteArgumentsSchemaZ, ApplicationShellSelectResourceArgumentsSchemaZ, APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS, ApplicationShellCommandInvocationSchemaZ, descriptor, APPLICATION_SHELL_COMMAND_DESCRIPTORS, descriptorById, APPLICATION_SHELL_COMMAND_DEFINITIONS, ApplicationShellResourceSelectionSchemaZ, ApplicationShellReplayStateV1SchemaZ, ApplicationShellActionTraceV1BaseSchemaZ, ApplicationShellActionTraceV1SchemaZ;
 var init_application_shell = __esm({
   "packages/contracts/src/application-shell.ts"() {
     "use strict";
@@ -3892,8 +3892,23 @@ var init_application_shell = __esm({
       "invalid-semantic-stamp",
       "duplicate-semantic-stamp",
       "duplicate-runtime-pane-binding",
-      "not-single-pane-window"
+      // Retained for wire compatibility only. m41 attach-4 stopped emitting this from
+      // the window-capable projection: a multi-pane window is attachable once it
+      // carries a durable window stamp. It is still emitted by legacy facts sources
+      // that gathered no window facts at all.
+      "not-single-pane-window",
+      // Window-level attachability faults (m41 attach-4). A multi-pane window is
+      // attachable only once every one of its panes shares one durable, unique
+      // `@tmux_ide_window_id` stamp; these mirror the semantic-pane catalog's own
+      // window proof so the projection stays honest with what an attach would do.
+      "missing-window-stamp",
+      "window-stamp-inconsistent",
+      "duplicate-window-stamp"
     ]);
+    TerminalWindowResourceIdSchemaZ = z22.string().regex(
+      /^terminal-window\.[0-9a-f]{20}$/u,
+      "window grouping key must be a wire-safe window stamp digest"
+    );
     TerminalResourceAttachabilitySchemaZ = z22.discriminatedUnion("status", [
       z22.object({
         status: z22.literal("available"),
@@ -3909,8 +3924,21 @@ var init_application_shell = __esm({
       title: z22.string().min(1).max(160),
       kind: z22.enum(["agent", "terminal"]),
       active: z22.boolean(),
-      attachability: TerminalResourceAttachabilitySchemaZ
-    }).strict();
+      attachability: TerminalResourceAttachabilitySchemaZ,
+      // Additive (m41 attach-4). Present only on attachable resources whose durable
+      // tmux window carries a valid, unique window stamp; resources sharing it live
+      // in the same window. attach-5's UI consumes it to surface the shared-window
+      // relationship and the resulting single-attach conflict.
+      windowResourceId: TerminalWindowResourceIdSchemaZ.optional()
+    }).strict().superRefine((resource3, ctx) => {
+      if (resource3.windowResourceId !== void 0 && resource3.attachability.status !== "available") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["windowResourceId"],
+          message: "window grouping key is only valid on an attachable terminal resource"
+        });
+      }
+    });
     ApplicationShellTerminalInventorySchemaZ = z22.object({
       activeResourceId: SemanticProductIdSchemaZ.nullable(),
       resources: z22.array(ApplicationShellTerminalResourceSchemaZ).max(512)
@@ -21197,6 +21225,30 @@ function fallbackPaneId(session, pane) {
     })
   );
 }
+function validWindowStamp(value) {
+  return value != null && TerminalAttachmentSemanticWindowIdSchemaZ.safeParse(value).success ? value : null;
+}
+function proveWindow(windowId, panes, stampToWindowIds) {
+  const group = panes.filter((pane) => pane.windowId === windowId);
+  const paneCount = Math.max(...group.map((pane) => pane.windowPaneCount));
+  const stampedCount = group.filter((pane) => validWindowStamp(pane.windowStamp) !== null).length;
+  const distinctStamps = new Set(
+    group.map((pane) => validWindowStamp(pane.windowStamp)).filter((s) => s !== null)
+  );
+  if (distinctStamps.size > 1) return { ok: false, reason: "window-stamp-inconsistent" };
+  const stamp = distinctStamps.size === 1 ? [...distinctStamps][0] : null;
+  if (paneCount > 1) {
+    if (stamp === null) return { ok: false, reason: "missing-window-stamp" };
+    if (stampedCount !== group.length) return { ok: false, reason: "window-stamp-inconsistent" };
+  }
+  if (stamp !== null) {
+    if ((stampToWindowIds.get(stamp)?.size ?? 0) > 1) {
+      return { ok: false, reason: "duplicate-window-stamp" };
+    }
+    return { ok: true, windowResourceId: semanticId("terminal-window", stamp) };
+  }
+  return { ok: true, windowResourceId: null };
+}
 function paneIdentities(session) {
   const panes = session.panes;
   const validCounts = /* @__PURE__ */ new Map();
@@ -21204,15 +21256,51 @@ function paneIdentities(session) {
     if (!TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
     validCounts.set(pane.semanticPaneId, (validCounts.get(pane.semanticPaneId) ?? 0) + 1);
   }
+  const stampToWindowIds = /* @__PURE__ */ new Map();
+  for (const pane of panes) {
+    const stamp = validWindowStamp(pane.windowStamp);
+    if (stamp === null || pane.windowId === void 0) continue;
+    const windows = stampToWindowIds.get(stamp) ?? /* @__PURE__ */ new Set();
+    windows.add(pane.windowId);
+    stampToWindowIds.set(stamp, windows);
+  }
+  const windowVerdicts = /* @__PURE__ */ new Map();
+  const verdictFor = (windowId) => {
+    const cached2 = windowVerdicts.get(windowId);
+    if (cached2 !== void 0) return cached2;
+    const verdict = proveWindow(windowId, panes, stampToWindowIds);
+    windowVerdicts.set(windowId, verdict);
+    return verdict;
+  };
   const claimed = /* @__PURE__ */ new Set();
   return panes.map((pane) => {
     const stamped = pane.semanticPaneId;
     const locallyValid = stamped !== null && TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(stamped).success && validCounts.get(stamped) === 1;
     if (locallyValid && !claimed.has(stamped)) {
       claimed.add(stamped);
+      if (session.catalogIssue !== null) {
+        return {
+          resourceId: stamped,
+          attachability: { status: "unavailable", reason: session.catalogIssue }
+        };
+      }
+      if (pane.windowId === void 0) {
+        return {
+          resourceId: stamped,
+          attachability: pane.windowPaneCount === 1 ? { status: "available", semanticPaneId: stamped } : { status: "unavailable", reason: "not-single-pane-window" }
+        };
+      }
+      const verdict = verdictFor(pane.windowId);
+      if (!verdict.ok) {
+        return {
+          resourceId: stamped,
+          attachability: { status: "unavailable", reason: verdict.reason }
+        };
+      }
       return {
         resourceId: stamped,
-        attachability: session.catalogIssue !== null ? { status: "unavailable", reason: session.catalogIssue } : pane.windowPaneCount === 1 ? { status: "available", semanticPaneId: stamped } : { status: "unavailable", reason: "not-single-pane-window" }
+        attachability: { status: "available", semanticPaneId: stamped },
+        ...verdict.windowResourceId !== null ? { windowResourceId: verdict.windowResourceId } : {}
       };
     }
     const base = fallbackPaneId(session, pane);
@@ -21473,7 +21561,8 @@ function projectApplicationShellResource(session, opts = {}) {
       title: label(pane.name ?? pane.title, `Terminal ${index + 1}`),
       kind: isAgentPane(pane) ? "agent" : "terminal",
       active: identity.resourceId === focusedPaneId,
-      attachability: identity.attachability
+      attachability: identity.attachability,
+      ...identity.windowResourceId !== void 0 ? { windowResourceId: identity.windowResourceId } : {}
     };
   });
   const parsed = ApplicationShellProjectionInputV2SchemaZ.parse({

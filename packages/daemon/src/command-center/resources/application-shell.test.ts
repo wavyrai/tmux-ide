@@ -277,6 +277,8 @@ describe("application-shell resource projector", () => {
       { status: "unavailable", reason: "invalid-runtime-proof" },
     ]);
 
+    // Legacy facts source (no window facts gathered): the historical single-pane
+    // gate still emits not-single-pane-window for wire compatibility.
     const multiPane = projectApplicationShellResource({
       ...session,
       catalogIssue: null,
@@ -286,6 +288,149 @@ describe("application-shell resource projector", () => {
       status: "unavailable",
       reason: "not-single-pane-window",
     });
+  });
+
+  it("makes every pane of a stamped multi-pane window attachable with one shared key", () => {
+    const session = liveSession();
+    const windowStamp = "window.abcdef0123456789";
+    const panes = Array.from({ length: 9 }, (_, i) => ({
+      ...session.panes[0],
+      runtimePaneId: `%${100 + i}`,
+      semanticPaneId: `pane.worker-${i}`,
+      index: i,
+      active: i === 0,
+      windowId: "@7",
+      windowStamp,
+      windowPaneCount: 9,
+    }));
+    const result = projectApplicationShellResource({ ...session, catalogIssue: null, panes });
+    const resources = result.terminalInventory.resources;
+
+    expect(resources).toHaveLength(9);
+    for (const [i, resource] of resources.entries()) {
+      expect(resource.attachability).toEqual({
+        status: "available",
+        semanticPaneId: `pane.worker-${i}`,
+      });
+    }
+    const keys = new Set(resources.map((resource) => resource.windowResourceId));
+    expect(keys.size).toBe(1);
+    const key = [...keys][0]!;
+    expect(key).toMatch(/^terminal-window\.[a-f0-9]{20}$/u);
+    // Wire-safety: neither the raw window stamp nor the runtime window/pane ids
+    // ever reach the resource, only the stamp digest grouping key.
+    const encoded = JSON.stringify(result);
+    expect(encoded).not.toContain(windowStamp);
+    expect(encoded).not.toMatch(/@7\b/u);
+    expect(encoded).not.toMatch(/%10[0-8]/u);
+  });
+
+  it("keeps an unstamped multi-pane window honestly unavailable and ungrouped", () => {
+    const session = liveSession();
+    const panes = [0, 1].map((i) => ({
+      ...session.panes[0],
+      runtimePaneId: `%${20 + i}`,
+      semanticPaneId: `pane.member-${i}`,
+      index: i,
+      active: i === 0,
+      windowId: "@9",
+      windowStamp: null,
+      windowPaneCount: 2,
+    }));
+    const result = projectApplicationShellResource({ ...session, catalogIssue: null, panes });
+
+    for (const resource of result.terminalInventory.resources) {
+      expect(resource.attachability).toEqual({
+        status: "unavailable",
+        reason: "missing-window-stamp",
+      });
+      expect(resource.windowResourceId).toBeUndefined();
+    }
+  });
+
+  it("keeps a single-pane window attachable and ungrouped through the window path", () => {
+    const session = liveSession();
+    const result = projectApplicationShellResource({
+      ...session,
+      catalogIssue: null,
+      panes: [
+        {
+          ...session.panes[0],
+          semanticPaneId: "pane.solo",
+          active: true,
+          windowId: "@3",
+          windowStamp: null,
+          windowPaneCount: 1,
+        },
+      ],
+    });
+    const resource = result.terminalInventory.resources[0]!;
+
+    expect(resource.attachability).toEqual({ status: "available", semanticPaneId: "pane.solo" });
+    expect(resource.windowResourceId).toBeUndefined();
+  });
+
+  it("fails a partially stamped multi-pane window closed as inconsistent", () => {
+    const session = liveSession();
+    const panes = [
+      {
+        ...session.panes[0],
+        runtimePaneId: "%30",
+        semanticPaneId: "pane.consistent-a",
+        index: 0,
+        active: true,
+        windowId: "@4",
+        windowStamp: "window.aaaaaaaaaaaaaaaa",
+        windowPaneCount: 2,
+      },
+      {
+        ...session.panes[0],
+        runtimePaneId: "%31",
+        semanticPaneId: "pane.consistent-b",
+        index: 1,
+        active: false,
+        windowId: "@4",
+        windowStamp: null,
+        windowPaneCount: 2,
+      },
+    ];
+    const result = projectApplicationShellResource({ ...session, catalogIssue: null, panes });
+
+    for (const resource of result.terminalInventory.resources) {
+      expect(resource.attachability).toEqual({
+        status: "unavailable",
+        reason: "window-stamp-inconsistent",
+      });
+      expect(resource.windowResourceId).toBeUndefined();
+    }
+  });
+
+  it("fails a window stamp claimed by two runtime windows closed as duplicate", () => {
+    const session = liveSession();
+    const windowStamp = "window.dddddddddddddddd";
+    const panes = [
+      ["@5", "%40", "pane.w1a", true],
+      ["@5", "%41", "pane.w1b", false],
+      ["@6", "%42", "pane.w2a", false],
+      ["@6", "%43", "pane.w2b", false],
+    ].map(([windowId, runtimePaneId, semanticPaneId, active], index) => ({
+      ...session.panes[0],
+      runtimePaneId: runtimePaneId as string,
+      semanticPaneId: semanticPaneId as string,
+      index,
+      active: active as boolean,
+      windowId: windowId as string,
+      windowStamp,
+      windowPaneCount: 2,
+    }));
+    const result = projectApplicationShellResource({ ...session, catalogIssue: null, panes });
+
+    for (const resource of result.terminalInventory.resources) {
+      expect(resource.attachability).toEqual({
+        status: "unavailable",
+        reason: "duplicate-window-stamp",
+      });
+    }
   });
 
   it("never promotes the reserved fallback namespace to attachment authority", () => {

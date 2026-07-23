@@ -52,6 +52,9 @@ export const TERMINAL_RESOURCE_UNAVAILABLE_LABELS: Readonly<
   "duplicate-semantic-stamp": "Terminal identity is duplicated",
   "duplicate-runtime-pane-binding": "Terminal runtime binding is duplicated",
   "not-single-pane-window": "Terminal belongs to a multi-pane tmux window",
+  "missing-window-stamp": "Terminal window has not established a durable identity",
+  "window-stamp-inconsistent": "Terminal window identity is inconsistent across its panes",
+  "duplicate-window-stamp": "Terminal window identity is duplicated",
 });
 
 type ApplicationShellAgent = ApplicationShellProjectionV1["sidebar"]["agents"][number];

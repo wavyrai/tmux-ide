@@ -9,7 +9,10 @@ import {
   ApplicationShellProjectionInputV1SchemaZ,
   ApplicationShellProjectionInputV2SchemaZ,
   ApplicationShellProjectionInputV3SchemaZ,
+  ApplicationShellTerminalResourceSchemaZ,
   TerminalResourceAttachabilitySchemaZ,
+  TerminalResourceUnavailableReasonSchemaZ,
+  TerminalWindowResourceIdSchemaZ,
   applyApplicationShellInvocationV1,
   applicationShellActionTraceV1,
   applicationShellCommandInvocation,
@@ -264,6 +267,54 @@ describe("semantic application shell", () => {
         semanticPaneId: "pane.portable-worker_2",
       }).success,
     ).toBe(true);
+  });
+
+  it("carries the additive window-level reasons and a wire-safe window grouping key", () => {
+    for (const reason of [
+      "missing-window-stamp",
+      "window-stamp-inconsistent",
+      "duplicate-window-stamp",
+      // Retained for wire compatibility.
+      "not-single-pane-window",
+    ]) {
+      expect(TerminalResourceUnavailableReasonSchemaZ.safeParse(reason).success).toBe(true);
+    }
+
+    expect(
+      TerminalWindowResourceIdSchemaZ.safeParse("terminal-window.0123456789abcdef0123").success,
+    ).toBe(true);
+    // Only a namespaced 20-char digest — never a raw window stamp or runtime id.
+    for (const invalid of [
+      "window.abcdef0123456789",
+      "@7",
+      "terminal-window.SHORT",
+      "terminal-window.0123456789abcdef012",
+      "terminal-window.0123456789abcdef01234",
+    ]) {
+      expect(TerminalWindowResourceIdSchemaZ.safeParse(invalid).success).toBe(false);
+    }
+
+    const base = {
+      id: "pane.grouped",
+      title: "Grouped",
+      kind: "terminal" as const,
+      active: true,
+    };
+    expect(
+      ApplicationShellTerminalResourceSchemaZ.safeParse({
+        ...base,
+        attachability: { status: "available", semanticPaneId: "pane.grouped" },
+        windowResourceId: "terminal-window.0123456789abcdef0123",
+      }).success,
+    ).toBe(true);
+    // The grouping key is only valid on an attachable resource.
+    expect(
+      ApplicationShellTerminalResourceSchemaZ.safeParse({
+        ...base,
+        attachability: { status: "unavailable", reason: "missing-window-stamp" },
+        windowResourceId: "terminal-window.0123456789abcdef0123",
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects duplicate non-null agent pane ids at every strict projection boundary", () => {

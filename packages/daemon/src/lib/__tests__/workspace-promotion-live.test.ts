@@ -210,15 +210,25 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     const resources = shell.resource.terminalInventory?.resources ?? [];
     expect(resources).toHaveLength(3);
     const available = resources.filter((entry) => entry.attachability.status === "available");
-    const unavailable = resources.filter((entry) => entry.attachability.status === "unavailable");
-    // The single-pane agent window is attachable; the two split panes are not.
-    expect(available).toHaveLength(1);
-    expect(unavailable).toHaveLength(2);
-    for (const entry of unavailable) {
-      expect(entry.attachability).toMatchObject({ reason: "not-single-pane-window" });
+    // attach-4: every promoted pane is attachable. Promotion stamps the lone
+    // agent window and the two-pane split window with distinct, unique durable
+    // window stamps, so the window-capable projection flips all three panes to
+    // available (no pane ever reports not-single-pane-window here again).
+    expect(available).toHaveLength(3);
+    // Each pane carries a wire-safe window grouping key minted from its window
+    // stamp digest; the two split panes share ONE key, the agent window owns a
+    // distinct one — so attaching two panes of the split window is a visible
+    // shared-window conflict under attach-3's window-keyed ownership.
+    const groupSizes = new Map<string, number>();
+    for (const entry of resources) {
+      expect(entry.windowResourceId).toMatch(/^terminal-window\.[0-9a-f]{20}$/u);
+      const key = entry.windowResourceId!;
+      groupSizes.set(key, (groupSizes.get(key) ?? 0) + 1);
     }
-    // Wire audit: the inventory never leaks a tmux runtime id.
+    expect([...groupSizes.values()].sort()).toEqual([1, 2]);
+    // Wire audit: neither a tmux runtime id nor the raw window stamp ever leaks.
     expect(JSON.stringify(shell.resource.terminalInventory)).not.toMatch(/[$%@][0-9]+/u);
+    expect(JSON.stringify(shell.resource.terminalInventory)).not.toMatch(/window\.promoted\./u);
 
     // The open workspace's V3 resource carries its OWN opaque fleet session id
     // (m40/fleet-live gap 1), minted by the SAME authority the fleet catalog and
