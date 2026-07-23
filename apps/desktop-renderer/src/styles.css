@@ -92,7 +92,18 @@ select:focus-visible,
    * — only the scrim is translucent.
    */
   --tmi-overlay-hairline: inset 0 1px 0 rgb(255 255 255 / 6%);
-  --tmi-overlay-elevation: 0 18px 48px var(--desktop-shadow);
+  /*
+   * Elevation shadow ladder (dark). Tight, low-blur, negative-spread drop shadows
+   * that ground a surface without a wide glow — the 1px hairline is the definition
+   * edge, the shadow only lifts. Three rungs: subtle (cards/chips/inputs), raised
+   * (toolbars/minimap/floating panels), overlay (dialogs, menus, command palette,
+   * selected floating windows). Dark carries higher alpha to read against the
+   * near-black canvas. Keep in sync with the ui-system.css copies.
+   */
+  --tmi-shadow-subtle: 0 1px 2px 0 rgb(0 0 0 / 0.28), 0 1px 1px 0 rgb(0 0 0 / 0.22);
+  --tmi-shadow-raised: 0 2px 5px -1px rgb(0 0 0 / 0.36), 0 1px 3px -1px rgb(0 0 0 / 0.3);
+  --tmi-shadow-overlay: 0 8px 18px -6px rgb(0 0 0 / 0.5), 0 3px 8px -3px rgb(0 0 0 / 0.4);
+  --tmi-overlay-elevation: var(--tmi-shadow-overlay);
   --tmi-overlay-scrim: color-mix(in srgb, var(--desktop-workbench) 60%, transparent);
   --tmi-overlay-scrim-solid: color-mix(in srgb, var(--desktop-workbench) 82%, transparent);
   --desktop-focus-soft: color-mix(
@@ -127,6 +138,10 @@ select:focus-visible,
   --desktop-shadow: rgb(25 28 36 / 18%);
   /* On light surfaces the top-edge highlight is a brighter, crisper white sheen. */
   --tmi-overlay-hairline: inset 0 1px 0 rgb(255 255 255 / 60%);
+  /* Light ladder: same tight geometry, quieter alpha over a bright surface. */
+  --tmi-shadow-subtle: 0 1px 2px 0 rgb(25 28 36 / 0.08), 0 1px 1px 0 rgb(25 28 36 / 0.05);
+  --tmi-shadow-raised: 0 2px 5px -1px rgb(25 28 36 / 0.1), 0 1px 3px -1px rgb(25 28 36 / 0.07);
+  --tmi-shadow-overlay: 0 8px 18px -6px rgb(25 28 36 / 0.16), 0 3px 8px -3px rgb(25 28 36 / 0.1);
 }
 
 /*
@@ -276,7 +291,7 @@ select:focus-visible,
   border-radius: var(--tmi-radius-sm);
   color: var(--tmux-ide-text-link);
   background: color-mix(in srgb, var(--desktop-raised) 72%, transparent);
-  box-shadow: 0 1px 2px var(--desktop-shadow);
+  box-shadow: var(--tmi-shadow-subtle);
 }
 
 .titlebar__product-copy {
@@ -535,7 +550,7 @@ kbd {
   border-radius: var(--tmi-radius-md);
   color: var(--tmux-ide-text-link);
   background: color-mix(in srgb, var(--tmux-ide-border-focused) 13%, var(--tmux-ide-surface-panel));
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--tmux-ide-surface-terminal) 34%, transparent);
+  box-shadow: var(--tmi-shadow-subtle);
 }
 
 .runtime-launch__brand svg {
@@ -568,7 +583,7 @@ kbd {
   border: 1px solid var(--tmux-ide-border-subtle);
   border-radius: var(--tmi-radius-xl);
   background: color-mix(in srgb, var(--tmux-ide-surface-panel) 92%, transparent);
-  box-shadow: var(--tmux-ide-elevation-floating-shadow);
+  box-shadow: var(--tmi-shadow-raised);
 }
 
 .runtime-launch__skeleton i,
@@ -634,7 +649,7 @@ kbd {
   border: 1px solid var(--tmux-ide-border-default);
   border-radius: var(--desktop-panel-radius);
   background: color-mix(in srgb, var(--tmux-ide-surface-panel) 96%, transparent);
-  box-shadow: var(--tmux-ide-elevation-floating-shadow);
+  box-shadow: var(--tmi-shadow-raised);
 }
 
 .runtime-state-surface[data-state="onboarding"] .runtime-state-card {
@@ -1063,7 +1078,7 @@ kbd {
   border-radius: var(--tmux-ide-shape-status-radius);
   color: var(--tmux-ide-text-primary);
   background: var(--tmux-ide-surface-command);
-  box-shadow: var(--tmux-ide-elevation-floating-shadow);
+  box-shadow: var(--tmi-shadow-overlay);
   font-size: 10px;
   transform: translateX(-50%);
 }
@@ -1150,7 +1165,7 @@ kbd {
   border: 1px solid var(--desktop-separator);
   border-radius: var(--tmi-radius-md);
   background: linear-gradient(145deg, var(--desktop-raised), var(--desktop-active));
-  box-shadow: 0 1px 3px var(--desktop-shadow);
+  box-shadow: var(--tmi-shadow-subtle);
   font-family: var(--desktop-mono-font);
   font-size: 9px;
   font-weight: 650;
@@ -1562,7 +1577,7 @@ kbd {
   border: 1px solid var(--desktop-separator);
   border-radius: var(--tmi-radius-lg);
   background: var(--desktop-raised);
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--desktop-shadow) 36%, transparent);
+  box-shadow: var(--tmi-shadow-raised);
 }
 
 .readiness-card header,
@@ -1699,7 +1714,7 @@ kbd {
 }
 
 .app-window-card[data-transient-geometry="true"] {
-  filter: drop-shadow(0 24px 52px var(--desktop-shadow));
+  filter: drop-shadow(0 8px 16px var(--desktop-shadow));
 }
 
 .app-window-card > .web-pane-frame {
@@ -1711,11 +1726,11 @@ kbd {
 }
 
 .app-window-card[data-placement="floating"] {
-  filter: drop-shadow(0 18px 38px var(--desktop-shadow));
+  filter: drop-shadow(0 6px 14px var(--desktop-shadow));
 }
 
 .app-window-card[data-placement="floating"][data-selected="false"] {
-  filter: drop-shadow(0 10px 24px color-mix(in srgb, var(--desktop-shadow) 72%, transparent));
+  filter: drop-shadow(0 3px 9px color-mix(in srgb, var(--desktop-shadow) 72%, transparent));
 }
 
 .terminal-canvas .web-pane-frame {
@@ -1754,7 +1769,7 @@ kbd {
 .app-window-card[data-selected="true"] > .web-pane-frame {
   box-shadow:
     0 0 0 1px var(--desktop-focus-soft),
-    0 18px 44px color-mix(in srgb, var(--desktop-shadow) 82%, transparent);
+    var(--tmi-shadow-overlay);
 }
 
 .terminal-canvas .web-pane-frame__header {
@@ -1884,9 +1899,7 @@ kbd {
   border: 1px solid var(--desktop-separator);
   border-radius: var(--tmi-radius-xl);
   background: var(--desktop-raised);
-  box-shadow:
-    var(--tmi-overlay-hairline),
-    0 14px 34px var(--desktop-shadow);
+  box-shadow: var(--tmi-overlay-hairline), var(--tmi-shadow-raised);
   transform: translateX(-50%);
   -webkit-app-region: no-drag;
 }
@@ -2054,7 +2067,7 @@ kbd {
 .app-window-card[data-agent-attention="true"] > .web-pane-frame {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--tmux-ide-status-warning) 55%, transparent),
-    0 10px 26px color-mix(in srgb, var(--desktop-shadow) 70%, transparent);
+    var(--tmi-shadow-overlay);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -2068,12 +2081,12 @@ kbd {
   100% {
     box-shadow:
       0 0 0 1px color-mix(in srgb, var(--tmux-ide-status-warning) 42%, transparent),
-      0 10px 26px color-mix(in srgb, var(--desktop-shadow) 70%, transparent);
+      var(--tmi-shadow-overlay);
   }
   50% {
     box-shadow:
       0 0 0 1px color-mix(in srgb, var(--tmux-ide-status-warning) 80%, transparent),
-      0 10px 26px color-mix(in srgb, var(--desktop-shadow) 70%, transparent);
+      var(--tmi-shadow-overlay);
   }
 }
 
@@ -2096,7 +2109,7 @@ kbd {
   border-radius: var(--tmi-radius-lg);
   background: color-mix(in srgb, var(--desktop-raised) 90%, transparent);
   box-shadow:
-    0 14px 34px var(--desktop-shadow),
+    var(--tmi-shadow-raised),
     inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 5%, transparent);
   -webkit-app-region: no-drag;
 }
@@ -2237,7 +2250,7 @@ kbd {
   border: 1px solid var(--tmux-ide-border-default);
   border-radius: var(--tmux-ide-shape-panel);
   background: var(--tmux-ide-surface-panel);
-  box-shadow: var(--tmux-ide-elevation-floating-shadow);
+  box-shadow: var(--tmi-shadow-raised);
 }
 
 .terminal-surface__state > i {
@@ -3811,9 +3824,7 @@ kbd {
   border: 1px solid var(--desktop-separator);
   border-radius: var(--tmi-radius-xl);
   background: var(--desktop-raised);
-  box-shadow:
-    var(--tmi-overlay-hairline),
-    0 24px 64px var(--desktop-shadow);
+  box-shadow: var(--tmi-overlay-hairline), var(--tmi-shadow-overlay);
   opacity: 0;
   transform: translateY(-6px) scale(0.98);
   transform-origin: 50% 0;
@@ -4117,7 +4128,7 @@ kbd {
   border-radius: var(--tmux-ide-shape-floating);
   color: var(--tmux-ide-text-primary);
   background: var(--tmux-ide-surface-command);
-  box-shadow: var(--tmi-overlay-hairline), var(--tmux-ide-elevation-palette-shadow);
+  box-shadow: var(--tmi-overlay-hairline), var(--tmi-shadow-overlay);
   transform: scale(0.98);
 }
 

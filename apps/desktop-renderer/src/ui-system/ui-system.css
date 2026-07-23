@@ -51,7 +51,18 @@
   --tmi-space-7: 16px;
   --tmi-space-8: 24px;
   --tmi-disabled-opacity: 0.64;
-  --tmi-shadow-overlay: var(--tmux-ide-elevation-palette-shadow, 0 10px 28px rgb(0 0 0 / 44%));
+  /*
+   * Elevation shadow ladder. Tight, low-blur, near-zero (negative) spread drop
+   * shadows that ground a surface without a wide glow — definition lives in the
+   * 1px hairline, the shadow only lifts. Three rungs: subtle (cards/chips/inputs),
+   * raised (toolbars/minimap/tooltips/floating panels), overlay (dialogs, menus,
+   * command palette, selected floating windows). Dark carries higher alpha to read
+   * against the near-black canvas; light stays quiet. Keep these values in sync
+   * with the .app copies in styles.css.
+   */
+  --tmi-shadow-subtle: 0 1px 2px 0 rgb(0 0 0 / 0.28), 0 1px 1px 0 rgb(0 0 0 / 0.22);
+  --tmi-shadow-raised: 0 2px 5px -1px rgb(0 0 0 / 0.36), 0 1px 3px -1px rgb(0 0 0 / 0.3);
+  --tmi-shadow-overlay: 0 8px 18px -6px rgb(0 0 0 / 0.5), 0 3px 8px -3px rgb(0 0 0 / 0.4);
   --tmi-motion-fast: var(--tmux-ide-motion-fast, 150ms);
   --tmi-motion-exit: var(--tmux-ide-motion-instant, 100ms);
   --tmi-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
@@ -104,7 +115,9 @@
   --tmi-danger: var(--tmux-ide-status-danger, #bf3945);
   --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, #9a9ca5);
   --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, #ececf0);
-  --tmi-shadow-overlay: var(--tmux-ide-elevation-palette-shadow, 0 10px 28px rgb(23 24 31 / 18%));
+  --tmi-shadow-subtle: 0 1px 2px 0 rgb(25 28 36 / 0.08), 0 1px 1px 0 rgb(25 28 36 / 0.05);
+  --tmi-shadow-raised: 0 2px 5px -1px rgb(25 28 36 / 0.1), 0 1px 3px -1px rgb(25 28 36 / 0.07);
+  --tmi-shadow-overlay: 0 8px 18px -6px rgb(25 28 36 / 0.16), 0 3px 8px -3px rgb(25 28 36 / 0.1);
 }
 
 [data-theme],
@@ -361,7 +374,7 @@
   border-radius: var(--tmi-radius-control);
   color: var(--tmi-text-primary);
   background: var(--tmi-surface-overlay);
-  box-shadow: var(--tmi-shadow-overlay);
+  box-shadow: var(--tmi-shadow-raised);
   font-family: var(--tmi-font-chrome);
   font-size: 11px;
   line-height: 15px;
