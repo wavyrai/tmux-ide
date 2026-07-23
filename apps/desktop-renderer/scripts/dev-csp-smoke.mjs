@@ -1463,6 +1463,119 @@ try {
         )}`,
       );
     }
+
+    for (const appearance of ["dark", "light"]) {
+      const fleetPage = await browser.newPage({
+        viewport: { width: 520, height: 900 },
+        colorScheme: appearance,
+      });
+      const fleetConsole = [];
+      fleetPage.on("console", (message) => fleetConsole.push(message.text()));
+      await fleetPage.addInitScript(() => {
+        globalThis.__tmiCspViolations = [];
+        globalThis.document.addEventListener("securitypolicyviolation", (event) => {
+          globalThis.__tmiCspViolations.push({
+            blockedURI: event.blockedURI,
+            directive: event.effectiveDirective,
+          });
+        });
+      });
+      await fleetPage.goto(rendererUrl, { waitUntil: "networkidle" });
+      const fleetEvidence = await fleetPage.evaluate(async (mode) => {
+        globalThis.document.documentElement.setAttribute("data-theme", mode);
+        globalThis.document.getElementById("root")?.remove();
+        const mixedRoot = globalThis.document.createElement("div");
+        mixedRoot.id = "root";
+        globalThis.document.body.append(mixedRoot);
+        const { mountFleetSidebarSmokeFixture, mountFleetSidebarStatesSmokeFixture } = await import(
+          "/src/experience/fleet-sidebar.fixture.tsx"
+        );
+        const disposeMixed = mountFleetSidebarSmokeFixture(mixedRoot);
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const sessions = mixedRoot.querySelectorAll(".fleet-sidebar__session").length;
+        const openSessions = mixedRoot.querySelectorAll(
+          '.fleet-sidebar__session[data-open="true"]',
+        ).length;
+        const openBadges = mixedRoot.querySelectorAll(".fleet-sidebar__badge--open").length;
+        const adoptedBadges = mixedRoot.querySelectorAll(".fleet-sidebar__badge--adopted").length;
+        const promoteActions = mixedRoot.querySelectorAll(".fleet-sidebar__open-action").length;
+        const agentRows = mixedRoot.querySelectorAll(".fleet-sidebar__agent").length;
+        const attention = mixedRoot.querySelectorAll(".fleet-sidebar__agent b").length;
+        disposeMixed();
+        mixedRoot.remove();
+
+        const statesRoot = globalThis.document.createElement("div");
+        statesRoot.id = "root";
+        globalThis.document.body.append(statesRoot);
+        const disposeStates = mountFleetSidebarStatesSmokeFixture(statesRoot);
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const quiet = statesRoot.querySelectorAll(".fleet-sidebar__quiet").length;
+        const quietText = [...statesRoot.querySelectorAll(".fleet-sidebar__quiet")].map(
+          (element) => element.textContent?.trim() ?? "",
+        );
+        disposeStates();
+        statesRoot.remove();
+
+        return {
+          sessions,
+          openSessions,
+          openBadges,
+          adoptedBadges,
+          promoteActions,
+          agentRows,
+          attention,
+          quiet,
+          quietText,
+          styleAttributes: globalThis.document.querySelectorAll("[style]").length,
+          styleElements: globalThis.document.querySelectorAll("style").length,
+          violations: globalThis.__tmiCspViolations ?? [],
+        };
+      }, appearance);
+      if (process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT) {
+        await fleetPage.evaluate(async () => {
+          globalThis.document.getElementById("root")?.remove();
+          const shotRoot = globalThis.document.createElement("div");
+          shotRoot.id = "root";
+          globalThis.document.body.append(shotRoot);
+          const { mountFleetSidebarSmokeFixture } = await import(
+            "/src/experience/fleet-sidebar.fixture.tsx"
+          );
+          mountFleetSidebarSmokeFixture(shotRoot);
+          await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        });
+        const fleetPath = process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT.replace(
+          /(\.[^.]+)$/u,
+          `-fleet-sidebar-${appearance}$1`,
+        );
+        await fleetPage.screenshot({ path: fleetPath, fullPage: true });
+      }
+      await fleetPage.close();
+      const fleetViolations = fleetConsole.filter((message) => cspViolation.test(message));
+      if (
+        fleetViolations.length > 0 ||
+        fleetEvidence.violations.some(({ directive }) => directive.startsWith("style-src")) ||
+        fleetEvidence.styleAttributes !== 0 ||
+        fleetEvidence.styleElements !== 0 ||
+        fleetEvidence.sessions !== 3 ||
+        fleetEvidence.openSessions !== 1 ||
+        fleetEvidence.openBadges !== 1 ||
+        fleetEvidence.adoptedBadges !== 2 ||
+        fleetEvidence.promoteActions !== 2 ||
+        fleetEvidence.agentRows !== 3 ||
+        fleetEvidence.attention !== 1 ||
+        fleetEvidence.quiet !== 2 ||
+        !fleetEvidence.quietText.some((text) => text.includes("No adopted sessions")) ||
+        !fleetEvidence.quietText.some((text) => text.includes("Fleet unavailable"))
+      ) {
+        throw new Error(
+          `Desktop fleet sidebar (${appearance}) acceptance failed: ${JSON.stringify(
+            { ...fleetEvidence, fleetViolations },
+            null,
+            2,
+          )}`,
+        );
+      }
+    }
   } finally {
     await browser.close();
   }

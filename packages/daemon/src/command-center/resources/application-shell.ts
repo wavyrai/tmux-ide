@@ -23,6 +23,7 @@ import {
 } from "@tmux-ide/contracts";
 import { parseAuthority, type InstantState } from "../../tui/detect/classify.ts";
 import { agentDisplayMetadata, resolveAgentStatus } from "../../tui/detect/agent-resolution.ts";
+import { fleetSessionIdForName } from "./fleet-catalog.ts";
 
 export interface ApplicationShellPanePresentationFacts {
   /** Durable tmux-ide pane stamp. A live `%pane_id` is never accepted as identity. */
@@ -579,6 +580,10 @@ export function projectApplicationShellResourceV3(
     appWindows,
     ...(missionWorkspace === undefined ? {} : { missionWorkspace }),
     ...(agentGraphOverlay === undefined ? {} : { agentGraphOverlay }),
+    // Correlation key: the open workspace's own fleet id, minted by the SAME
+    // authority the catalog and promotion reversal use, so the renderer can mark
+    // this session open in the sidebar and exclude it from the graph merge.
+    fleetSessionId: fleetSessionIdForName(session.name),
   });
   projectApplicationShellV1(parsed);
   return deepFreeze(parsed);

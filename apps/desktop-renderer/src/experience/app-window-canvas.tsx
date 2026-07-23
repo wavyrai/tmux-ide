@@ -102,6 +102,13 @@ export interface AppWindowCanvasProps {
    * projected rect degrade silently (they are skipped, never thrown).
    */
   readonly overlay?: AgentGraphOverlay;
+  /**
+   * True when the fleet context could not be fully composed into {@link overlay}
+   * — an over-cap fleet is dropped wholesale rather than half-rendered (see
+   * `fleet-graph-merge.ts`). The canvas surfaces a quiet indicator so the picture
+   * reads as intentionally partial, never silently wrong.
+   */
+  readonly overlayTruncated?: boolean;
 }
 
 const CANVAS_SCALE_RANGE = { min: 0.35, max: 2.4 } as const;
@@ -1225,6 +1232,11 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
           </div>
         </Show>
       </div>
+      <Show when={props.overlayTruncated}>
+        <p class="app-window-canvas__fleet-truncated" role="status" data-overlay-truncated="true">
+          Fleet view is partial
+        </p>
+      </Show>
       <nav class="canvas-controls" aria-label="Canvas view controls">
         <button
           type="button"

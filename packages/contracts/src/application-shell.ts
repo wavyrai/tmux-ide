@@ -42,6 +42,7 @@ import { SemanticProductIdSchemaZ } from "./pane-appearance.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
 import { AppWindowDocumentV1SchemaZ } from "./app-window-state.ts";
 import { AgentGraphOverlaySchemaZ } from "./agent-graph-overlay.ts";
+import { FleetSessionIdSchemaZ } from "./fleet-catalog.ts";
 
 export const APPLICATION_SHELL_PROJECTION_VERSION = 1 as const;
 export const APPLICATION_SHELL_TRACE_VERSION = 1 as const;
@@ -275,6 +276,17 @@ export const ApplicationShellProjectionInputV3SchemaZ = z
      * pane id, session name, or path (see AgentGraphOverlaySchemaZ).
      */
     agentGraphOverlay: AgentGraphOverlaySchemaZ.optional(),
+    /**
+     * The open workspace's OWN opaque fleet session id — the same
+     * `session.<digest>` token the fleet catalog mints for this session (see
+     * {@link ./fleet-catalog.ts} `FleetSessionIdSchemaZ` and the daemon's
+     * `fleetSessionIdForName`). It lets the renderer correlate the open
+     * workspace to its fleet entry so that entry is marked open in the sidebar
+     * and excluded from the renderer-side graph merge (drawn once, not twice).
+     * Additive and optional exactly like {@link missionWorkspace}: it carries no
+     * raw session name, pane id, or path — only the opaque, path-free digest.
+     */
+    fleetSessionId: FleetSessionIdSchemaZ.optional(),
   })
   .strict()
   .superRefine((input, ctx) => {

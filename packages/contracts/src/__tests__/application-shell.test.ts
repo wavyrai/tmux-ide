@@ -220,6 +220,26 @@ describe("semantic application shell", () => {
         },
       }),
     ).toThrow(/fallback/u);
+
+    // The open workspace's own fleet correlation key is additive and optional:
+    // a V3 resource without it still parses, and one carrying a valid opaque
+    // `session.<digest>` token preserves it while a raw name/path is rejected.
+    expect(ApplicationShellProjectionInputV3SchemaZ.parse(v3Envelope.resource).fleetSessionId).toBe(
+      undefined,
+    );
+    const withFleetId = {
+      ...v3Envelope.resource,
+      fleetSessionId: "session.0123456789abcdef0123",
+    };
+    expect(ApplicationShellProjectionInputV3SchemaZ.parse(withFleetId)).toEqual(withFleetId);
+    for (const invalidFleetId of ["my-session", "/tmp/session", "$3", "session.short"]) {
+      expect(
+        ApplicationShellProjectionInputV3SchemaZ.safeParse({
+          ...v3Envelope.resource,
+          fleetSessionId: invalidFleetId,
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("uses terminal attachment admission identity for available resources", () => {

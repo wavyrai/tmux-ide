@@ -17,6 +17,7 @@ import {
   resolveAgentPresentation,
 } from "./application-shell.ts";
 import { projectApplicationShellAgentGraphOverlay } from "./agent-graph-overlay.ts";
+import { fleetSessionIdForName } from "./fleet-catalog.ts";
 import { initialApplicationShellAppWindows } from "../../lib/application-shell-app-windows.ts";
 import { stableAppWindowInstanceId } from "../../tui/mirror/app-window-state.ts";
 import { MissionRepository, type MissionRepositorySnapshot } from "../../lib/mission-repository.ts";
@@ -384,6 +385,14 @@ describe("application-shell resource projector", () => {
 
     const withoutOverlay = projectApplicationShellResourceV3(liveSession(), appWindows);
     expect(Object.hasOwn(withoutOverlay, "agentGraphOverlay")).toBe(false);
+
+    // The open workspace's own fleet correlation key is minted by the SAME
+    // authority the catalog projector and promotion reversal share, so the
+    // renderer can mark this session open and drop it from the graph merge. It
+    // is an opaque digest — never the raw session name.
+    expect(withoutOverlay.fleetSessionId).toBe(fleetSessionIdForName(liveSession().name));
+    expect(withoutOverlay.fleetSessionId).toMatch(/^session\.[A-Za-z0-9_-]{16,64}$/u);
+    expect(JSON.stringify(withoutOverlay)).not.toContain("product\nworkspace");
 
     // The overlay never carries a raw pane id, session name, or absolute path.
     const wire = JSON.stringify(withOverlay.agentGraphOverlay);

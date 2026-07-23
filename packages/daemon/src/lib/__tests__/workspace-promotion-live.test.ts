@@ -220,6 +220,14 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     // Wire audit: the inventory never leaks a tmux runtime id.
     expect(JSON.stringify(shell.resource.terminalInventory)).not.toMatch(/[$%@][0-9]+/u);
 
+    // The open workspace's V3 resource carries its OWN opaque fleet session id
+    // (m40/fleet-live gap 1), minted by the SAME authority the fleet catalog and
+    // this promotion both use, so the renderer can mark this session open and
+    // draw it exactly once. It is the opaque digest — never the raw session name.
+    expect(shell.resource.fleetSessionId).toBe(sessionId);
+    expect(shell.resource.fleetSessionId).toMatch(/^session\.[A-Za-z0-9_-]{16,64}$/u);
+    expect(shell.resource.fleetSessionId).not.toContain(targetSession);
+
     // Re-promote under a fresh operation id, then under the same one: replayed.
     const rePromoted = await promote(randomUUID());
     expect(rePromoted.outcome).toBe("replayed");

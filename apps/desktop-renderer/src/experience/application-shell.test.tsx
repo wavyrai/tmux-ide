@@ -36,6 +36,9 @@ import {
   createDomShellReplayState,
   projectDomApplicationShell,
 } from "./dom-shell.ts";
+import * as fleetGraphMergeModule from "./fleet-graph-merge.ts";
+import { FLEET_FIXTURE_DAEMON, mixedFleetCatalog } from "../runtime/fleet-catalog-fixture.ts";
+import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 import styles from "../styles.css?raw";
 import paneFrameStyles from "../../../../packages/daemon/src/ui/pane-frame/web-host.css?raw";
 import { paneFrameTerminalsFromApplicationShellInventory } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
@@ -1188,6 +1191,116 @@ describe("visible DOM application shell", () => {
         source: { kind: "mouse", surface: "sidebar" },
       }),
     ]);
+  });
+});
+
+describe("DomApplicationShell fleet correlation pass-through", () => {
+  const OPEN_FLEET_SESSION_ID = "session.aaaaaaaaaaaaaaaa";
+
+  function liveFleetState(): DesktopFleetCatalogState {
+    return {
+      status: "live",
+      generation: 1,
+      daemon: FLEET_FIXTURE_DAEMON,
+      snapshot: { daemon: FLEET_FIXTURE_DAEMON, catalog: mixedFleetCatalog(), updatedAt: 0 },
+    };
+  }
+
+  function fleetV3Input(fleetSessionId?: string): ApplicationShellProjectionInputV3 {
+    const base = createDefaultDomShellInput();
+    const inventory = agentGraphCanvasInventory();
+    const agents = inventory.resources.map((resource) => ({
+      id: `agent.${resource.id}`,
+      name: resource.title,
+      harness: "claude-code" as const,
+      activity: "running" as const,
+      paneId: resource.id,
+      attention: false,
+    }));
+    return ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...base,
+      workspace: { ...base.workspace, sidebar: { ...base.workspace.sidebar, agents } },
+      focus: {
+        ...base.focus,
+        appFocusedPaneId: inventory.activeResourceId,
+        terminalInputPaneId: null,
+        layoutSelectedPaneId: null,
+        overlays: [],
+      },
+      terminalInventory: inventory,
+      appWindows: agentGraphCanvasDocument(),
+      agentGraphOverlay: agentGraphCanvasOverlay("nodes-only"),
+      ...(fleetSessionId ? { fleetSessionId } : {}),
+    });
+  }
+
+  function renderFleetShell(
+    input: ApplicationShellProjectionInputV3,
+    fleetState: DesktopFleetCatalogState,
+  ): HTMLElement {
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input}
+            dataMode="runtime"
+            fleetState={fleetState}
+            onPromoteSession={async () => ({ ok: true })}
+            paneFrames={agentGraphCanvasPaneFrames()}
+          />
+        ),
+        root,
+      ),
+    );
+    return root;
+  }
+
+  it("marks the open workspace's fleet session and makes it non-promotable", () => {
+    const root = renderFleetShell(fleetV3Input(OPEN_FLEET_SESSION_ID), liveFleetState());
+    const sessions = [...root.querySelectorAll<HTMLElement>(".fleet-sidebar__session")];
+    const open = sessions.find((session) => session.dataset.open === "true");
+    expect(open).not.toBeUndefined();
+    expect(open!.querySelector(".fleet-sidebar__badge--open")).not.toBeNull();
+    // The open session offers no promote action; the other sessions still do.
+    expect(open!.querySelector(".fleet-sidebar__open-action")).toBeNull();
+    expect(root.querySelectorAll(".fleet-sidebar__open-action").length).toBe(sessions.length - 1);
+  });
+
+  it("leaves every fleet session promotable when the daemon supplies no correlation key", () => {
+    const root = renderFleetShell(fleetV3Input(), liveFleetState());
+    const sessions = root.querySelectorAll(".fleet-sidebar__session");
+    expect(root.querySelectorAll('.fleet-sidebar__session[data-open="true"]').length).toBe(0);
+    expect(root.querySelectorAll(".fleet-sidebar__open-action").length).toBe(sessions.length);
+  });
+
+  it("excludes the open session from the renderer-side fleet graph merge", () => {
+    const mergeSpy = vi.spyOn(fleetGraphMergeModule, "mergeFleetGraphOverlay");
+    try {
+      renderFleetShell(fleetV3Input(OPEN_FLEET_SESSION_ID), liveFleetState());
+      expect(mergeSpy).toHaveBeenCalled();
+      const lastCall = mergeSpy.mock.calls.at(-1)![0];
+      expect([...(lastCall.excludeSessionIds ?? [])]).toEqual([OPEN_FLEET_SESSION_ID]);
+    } finally {
+      mergeSpy.mockRestore();
+    }
+  });
+
+  it("merges the whole fleet when no correlation key excludes the open session", () => {
+    const mergeSpy = vi.spyOn(fleetGraphMergeModule, "mergeFleetGraphOverlay");
+    try {
+      renderFleetShell(fleetV3Input(), liveFleetState());
+      expect(mergeSpy).toHaveBeenCalled();
+      const lastCall = mergeSpy.mock.calls.at(-1)![0];
+      expect(lastCall.excludeSessionIds).toBeUndefined();
+    } finally {
+      mergeSpy.mockRestore();
+    }
   });
 });
 

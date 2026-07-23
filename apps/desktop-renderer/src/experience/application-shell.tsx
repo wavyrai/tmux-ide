@@ -274,19 +274,45 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     return result.status === "ok" ? { ok: true } : { ok: false, reason: result.error.reason };
   };
 
+  // The open workspace's own fleet session id, when the daemon supplied it (V3+).
+  // It is the correlation key that lets the sidebar mark this session open and
+  // keeps the renderer-side graph merge from drawing it twice.
+  const openFleetSessionId = createMemo<string | null>(() => {
+    const value = input();
+    return "appWindows" in value ? (value.fleetSessionId ?? null) : null;
+  });
+  const excludeSessionIds = createMemo<ReadonlySet<string> | undefined>(() => {
+    const id = openFleetSessionId();
+    return id ? new Set([id]) : undefined;
+  });
   // The agent-graph overlay is a non-durable, additive V3 projection. It follows
   // the same generation as the rest of the input, so reading it here keeps it
   // reconciled with the mutation/refresh queue exactly like missionWorkspace.
   // When a live fleet snapshot is present it is composed in renderer-side so the
-  // canvas shows the whole fleet, not just the open workspace.
+  // canvas shows the whole fleet, not just the open workspace — excluding the
+  // open session so it is not drawn once as the real overlay and again as a
+  // display-only fleet group.
+  const fleetGraphMerge = createMemo(() => {
+    const value = input();
+    const base = "appWindows" in value ? value.agentGraphOverlay : undefined;
+    if (!base) return null;
+    const snapshot = fleetSnapshot();
+    if (!snapshot) return null;
+    return mergeFleetGraphOverlay({
+      openOverlay: base,
+      fleet: snapshot.catalog,
+      excludeSessionIds: excludeSessionIds(),
+    });
+  });
   const agentGraphOverlay = createMemo<AgentGraphOverlay | undefined>(() => {
     const value = input();
     const base = "appWindows" in value ? value.agentGraphOverlay : undefined;
     if (!base) return base;
-    const snapshot = fleetSnapshot();
-    if (!snapshot) return base;
-    return mergeFleetGraphOverlay({ openOverlay: base, fleet: snapshot.catalog }).overlay;
+    return fleetGraphMerge()?.overlay ?? base;
   });
+  // Quiet canvas indicator when the fleet could not be fully composed (an
+  // over-cap fleet is dropped wholesale rather than half-rendered).
+  const fleetGraphTruncated = createMemo<boolean>(() => fleetGraphMerge()?.truncated ?? false);
   const effectiveSidebarWidth = createMemo(() =>
     sidebarCollapsed() ? DOM_SHELL_GEOMETRY.sidebarCollapsedWidth : sidebarWidth(),
   );
@@ -942,7 +968,11 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               )}
             </Index>
           </section>
-          <FleetSidebarSection state={fleetState()} onPromote={promoteSession} />
+          <FleetSidebarSection
+            state={fleetState()}
+            openSessionId={openFleetSessionId()}
+            onPromote={promoteSession}
+          />
         </aside>
 
         <ResizeHandle
@@ -1107,6 +1137,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   paneFrames={renderedPaneFrames()}
                   terminalInventory={shell().terminalInventory}
                   overlay={agentGraphOverlay()}
+                  overlayTruncated={fleetGraphTruncated()}
                   workspaceName={props.terminalWorkspaceName ?? input().workspace.id}
                   transport={props.terminalTransport}
                   reducedMotion={props.reducedMotion}

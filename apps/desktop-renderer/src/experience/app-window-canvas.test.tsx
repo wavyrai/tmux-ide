@@ -894,4 +894,34 @@ describe("AppWindowCanvas", () => {
     expect(lifecycle.renderer.dispose).not.toHaveBeenCalled();
     expect(lifecycle.attachment.dispose).not.toHaveBeenCalled();
   });
+
+  it("surfaces a quiet indicator only when the fleet composition is truncated", () => {
+    const [truncated, setTruncated] = createSignal(false);
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={documentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            overlayTruncated={truncated()}
+          />
+        ),
+        root,
+      ),
+    );
+
+    expect(root.querySelector('[data-overlay-truncated="true"]')).toBeNull();
+    setTruncated(true);
+    const indicator = root.querySelector<HTMLElement>('[data-overlay-truncated="true"]');
+    expect(indicator).not.toBeNull();
+    expect(indicator!.getAttribute("role")).toBe("status");
+    expect(indicator!.textContent).toContain("partial");
+    setTruncated(false);
+    expect(root.querySelector('[data-overlay-truncated="true"]')).toBeNull();
+  });
 });

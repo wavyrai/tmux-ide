@@ -3513,8 +3513,156 @@ var init_agent_graph_overlay = __esm({
   }
 });
 
-// packages/contracts/src/application-shell.ts
+// packages/contracts/src/daemon-wire.ts
 import { z as z20 } from "zod";
+function isDaemonWireProtocolCompatible(protocolVersion) {
+  return protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION;
+}
+var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, DaemonInstanceIdSchema, DaemonInstanceIdentitySchemaZ, CanonicalDaemonInfoSchema, DaemonHealthSchema, DaemonHealthzSchema, DaemonIdentitySchema;
+var init_daemon_wire = __esm({
+  "packages/contracts/src/daemon-wire.ts"() {
+    "use strict";
+    DAEMON_WIRE_PROTOCOL_VERSION = 1;
+    DaemonWireProtocolVersionSchema = z20.number().int().positive();
+    DaemonInstanceIdSchema = z20.uuid();
+    DaemonInstanceIdentitySchemaZ = z20.object({
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z20.string().trim().min(1),
+      instanceId: DaemonInstanceIdSchema,
+      startedAt: z20.iso.datetime({ offset: true })
+    }).strict();
+    CanonicalDaemonInfoSchema = z20.object({
+      pid: z20.number().int().positive(),
+      port: z20.number().int().min(1).max(65535),
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z20.string().trim().min(1),
+      instanceId: DaemonInstanceIdSchema,
+      startedAt: z20.iso.datetime({ offset: true }),
+      bindHostname: z20.string().trim().min(1),
+      authToken: z20.string().min(1).nullable()
+    });
+    DaemonHealthSchema = z20.object({
+      ok: z20.literal(true),
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z20.string().trim().min(1),
+      uptime: z20.number().nonnegative()
+    });
+    DaemonHealthzSchema = z20.object({
+      ok: z20.literal(true),
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z20.string().trim().min(1),
+      uptimeMs: z20.number().nonnegative()
+    });
+    DaemonIdentitySchema = z20.object({
+      ok: z20.literal(true),
+      pid: z20.number().int().positive(),
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z20.string().trim().min(1),
+      instanceId: DaemonInstanceIdSchema,
+      startedAt: z20.iso.datetime({ offset: true })
+    });
+  }
+});
+
+// packages/contracts/src/fleet-catalog.ts
+import { z as z21 } from "zod";
+function isControlFree2(value) {
+  return [...value].every((character) => {
+    const code = character.charCodeAt(0);
+    return code >= 32 && code !== 127;
+  });
+}
+function namespacedIdSchema(namespace) {
+  return z21.string().max(`${namespace}.`.length + FLEET_ID_TOKEN_MAX).regex(
+    new RegExp(
+      `^${namespace}\\.[A-Za-z0-9_-]{${FLEET_ID_TOKEN_MIN},${FLEET_ID_TOKEN_MAX}}$`,
+      "u"
+    )
+  ).refine((value) => !RESERVED_RECORD_KEYS4.has(value), "reserved record key is not allowed");
+}
+var FLEET_CATALOG_RESOURCE_VERSION, FLEET_MAX_SESSIONS, FLEET_MAX_AGENTS_PER_SESSION, FLEET_MAX_TOTAL_AGENTS, FLEET_MAX_PANES_PER_SESSION, FLEET_LABEL_MAX_LENGTH, FLEET_ID_TOKEN_MIN, FLEET_ID_TOKEN_MAX, RESERVED_RECORD_KEYS4, FleetSessionIdSchemaZ, FleetAgentIdSchemaZ, FleetLabelSchemaZ, FleetProjectLabelSchemaZ, FLEET_AGENT_HARNESS_IDS, FleetAgentHarnessSchemaZ, FleetCatalogAgentEntryV1SchemaZ, FleetCatalogSessionEntryV1SchemaZ, FleetCatalogResourceV1SchemaZ;
+var init_fleet_catalog = __esm({
+  "packages/contracts/src/fleet-catalog.ts"() {
+    "use strict";
+    init_agent_graph_overlay();
+    init_daemon_wire();
+    init_pane_appearance();
+    FLEET_CATALOG_RESOURCE_VERSION = 1;
+    FLEET_MAX_SESSIONS = 64;
+    FLEET_MAX_AGENTS_PER_SESSION = 64;
+    FLEET_MAX_TOTAL_AGENTS = 256;
+    FLEET_MAX_PANES_PER_SESSION = 512;
+    FLEET_LABEL_MAX_LENGTH = AGENT_GRAPH_LABEL_MAX_LENGTH;
+    FLEET_ID_TOKEN_MIN = 16;
+    FLEET_ID_TOKEN_MAX = 64;
+    RESERVED_RECORD_KEYS4 = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+    FleetSessionIdSchemaZ = namespacedIdSchema("session");
+    FleetAgentIdSchemaZ = namespacedIdSchema("agent");
+    FleetLabelSchemaZ = z21.string().min(1).max(FLEET_LABEL_MAX_LENGTH).refine(isControlFree2, "label contains control characters");
+    FleetProjectLabelSchemaZ = z21.string().min(1).max(FLEET_LABEL_MAX_LENGTH).refine(isControlFree2, "project label contains control characters").refine(
+      (value) => !value.includes("/") && !value.includes("\\"),
+      "project label must be a basename, not a path"
+    );
+    FLEET_AGENT_HARNESS_IDS = ["codex", "claude-code", "custom"];
+    FleetAgentHarnessSchemaZ = z21.enum(FLEET_AGENT_HARNESS_IDS);
+    FleetCatalogAgentEntryV1SchemaZ = z21.object({
+      agentId: FleetAgentIdSchemaZ,
+      name: FleetLabelSchemaZ,
+      harness: FleetAgentHarnessSchemaZ,
+      activity: AgentActivitySchemaZ,
+      attention: z21.boolean(),
+      statusSource: AgentGraphStatusSourceSchemaZ
+    }).strict();
+    FleetCatalogSessionEntryV1SchemaZ = z21.object({
+      sessionId: FleetSessionIdSchemaZ,
+      label: FleetLabelSchemaZ,
+      projectLabel: FleetProjectLabelSchemaZ,
+      appCreated: z21.boolean(),
+      paneCount: z21.number().int().nonnegative().max(FLEET_MAX_PANES_PER_SESSION),
+      agents: z21.array(FleetCatalogAgentEntryV1SchemaZ).max(FLEET_MAX_AGENTS_PER_SESSION)
+    }).strict();
+    FleetCatalogResourceV1SchemaZ = z21.object({
+      version: z21.literal(FLEET_CATALOG_RESOURCE_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      sessions: z21.array(FleetCatalogSessionEntryV1SchemaZ).max(FLEET_MAX_SESSIONS)
+    }).strict().superRefine((resource3, ctx) => {
+      const sessionIds = /* @__PURE__ */ new Set();
+      const agentIds = /* @__PURE__ */ new Set();
+      let totalAgents = 0;
+      for (const [sessionIndex, session] of resource3.sessions.entries()) {
+        if (sessionIds.has(session.sessionId)) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "session ids must be unique",
+            path: ["sessions", sessionIndex, "sessionId"]
+          });
+        }
+        sessionIds.add(session.sessionId);
+        for (const [agentIndex, agent] of session.agents.entries()) {
+          if (agentIds.has(agent.agentId)) {
+            ctx.addIssue({
+              code: z21.ZodIssueCode.custom,
+              message: "agent ids must be unique across the fleet",
+              path: ["sessions", sessionIndex, "agents", agentIndex, "agentId"]
+            });
+          }
+          agentIds.add(agent.agentId);
+        }
+        totalAgents += session.agents.length;
+      }
+      if (totalAgents > FLEET_MAX_TOTAL_AGENTS) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "fleet total agent limit exceeded",
+          path: ["sessions"]
+        });
+      }
+    });
+  }
+});
+
+// packages/contracts/src/application-shell.ts
+import { z as z22 } from "zod";
 function refineUniqueAgentPaneIds(agents, ctx, pathPrefix) {
   const paneIds = /* @__PURE__ */ new Set();
   for (const [index, agent] of agents.entries()) {
@@ -3726,9 +3874,10 @@ var init_application_shell = __esm({
     init_semantic_identity();
     init_app_window_state();
     init_agent_graph_overlay();
+    init_fleet_catalog();
     APPLICATION_SHELL_PROJECTION_VERSION = 1;
     APPLICATION_SHELL_TRACE_VERSION = 1;
-    TerminalResourceUnavailableReasonSchemaZ = z20.enum([
+    TerminalResourceUnavailableReasonSchemaZ = z22.enum([
       "invalid-runtime-proof",
       "missing-semantic-stamp",
       "invalid-semantic-stamp",
@@ -3736,26 +3885,26 @@ var init_application_shell = __esm({
       "duplicate-runtime-pane-binding",
       "not-single-pane-window"
     ]);
-    TerminalResourceAttachabilitySchemaZ = z20.discriminatedUnion("status", [
-      z20.object({
-        status: z20.literal("available"),
+    TerminalResourceAttachabilitySchemaZ = z22.discriminatedUnion("status", [
+      z22.object({
+        status: z22.literal("available"),
         semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
       }).strict(),
-      z20.object({
-        status: z20.literal("unavailable"),
+      z22.object({
+        status: z22.literal("unavailable"),
         reason: TerminalResourceUnavailableReasonSchemaZ
       }).strict()
     ]);
-    ApplicationShellTerminalResourceSchemaZ = z20.object({
+    ApplicationShellTerminalResourceSchemaZ = z22.object({
       id: SemanticProductIdSchemaZ,
-      title: z20.string().min(1).max(160),
-      kind: z20.enum(["agent", "terminal"]),
-      active: z20.boolean(),
+      title: z22.string().min(1).max(160),
+      kind: z22.enum(["agent", "terminal"]),
+      active: z22.boolean(),
       attachability: TerminalResourceAttachabilitySchemaZ
     }).strict();
-    ApplicationShellTerminalInventorySchemaZ = z20.object({
+    ApplicationShellTerminalInventorySchemaZ = z22.object({
       activeResourceId: SemanticProductIdSchemaZ.nullable(),
-      resources: z20.array(ApplicationShellTerminalResourceSchemaZ).max(512)
+      resources: z22.array(ApplicationShellTerminalResourceSchemaZ).max(512)
     }).strict().superRefine((inventory, ctx) => {
       const ids = /* @__PURE__ */ new Set();
       const active2 = inventory.resources.filter((resource3) => resource3.active);
@@ -3805,14 +3954,14 @@ var init_application_shell = __esm({
       focus: FocusOverlayStateV1SchemaZ,
       connection: CohesionFixtureV1SchemaZ.shape.connection
     };
-    ApplicationShellProjectionInputV1WireSchemaZ = z20.object(ApplicationShellProjectionInputV1Fields).strict().superRefine((input, ctx) => {
+    ApplicationShellProjectionInputV1WireSchemaZ = z22.object(ApplicationShellProjectionInputV1Fields).strict().superRefine((input, ctx) => {
       refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
         "workspace",
         "sidebar",
         "agents"
       ]);
     });
-    ApplicationShellProjectionInputV1SchemaZ = z20.object({
+    ApplicationShellProjectionInputV1SchemaZ = z22.object({
       ...ApplicationShellProjectionInputV1Fields,
       terminalInventory: ApplicationShellTerminalInventorySchemaZ.optional()
     }).strict().superRefine((input, ctx) => {
@@ -3837,7 +3986,7 @@ var init_application_shell = __esm({
         }
       }
     });
-    ApplicationShellProjectionInputV2SchemaZ = z20.object({
+    ApplicationShellProjectionInputV2SchemaZ = z22.object({
       ...ApplicationShellProjectionInputV1Fields,
       terminalInventory: ApplicationShellTerminalInventorySchemaZ
     }).strict().superRefine((input, ctx) => {
@@ -3861,7 +4010,7 @@ var init_application_shell = __esm({
         }
       }
     });
-    ApplicationShellProjectionInputV3SchemaZ = z20.object({
+    ApplicationShellProjectionInputV3SchemaZ = z22.object({
       ...ApplicationShellProjectionInputV1Fields,
       terminalInventory: ApplicationShellTerminalInventorySchemaZ,
       appWindows: AppWindowDocumentV1SchemaZ,
@@ -3874,7 +4023,18 @@ var init_application_shell = __esm({
        * assemble it, and consumers that ignore it, are unaffected. It carries no
        * pane id, session name, or path (see AgentGraphOverlaySchemaZ).
        */
-      agentGraphOverlay: AgentGraphOverlaySchemaZ.optional()
+      agentGraphOverlay: AgentGraphOverlaySchemaZ.optional(),
+      /**
+       * The open workspace's OWN opaque fleet session id — the same
+       * `session.<digest>` token the fleet catalog mints for this session (see
+       * {@link ./fleet-catalog.ts} `FleetSessionIdSchemaZ` and the daemon's
+       * `fleetSessionIdForName`). It lets the renderer correlate the open
+       * workspace to its fleet entry so that entry is marked open in the sidebar
+       * and excluded from the renderer-side graph merge (drawn once, not twice).
+       * Additive and optional exactly like {@link missionWorkspace}: it carries no
+       * raw session name, pane id, or path — only the opaque, path-free digest.
+       */
+      fleetSessionId: FleetSessionIdSchemaZ.optional()
     }).strict().superRefine((input, ctx) => {
       refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
         "workspace",
@@ -3897,53 +4057,53 @@ var init_application_shell = __esm({
       }
     });
     WorkspaceFixtureSchemaZ = CohesionFixtureV1SchemaZ.shape.workspace;
-    ApplicationShellSurfaceProjectionSchemaZ = z20.object({
+    ApplicationShellSurfaceProjectionSchemaZ = z22.object({
       id: ProductSurfaceIdSchemaZ,
       icon: SemanticIconIdSchemaZ,
-      label: z20.string().min(1).max(160),
-      kind: z20.enum(["primary-mode", "dock-tool"]),
-      area: z20.enum(["workspace-canvas", "bottom-dock"]),
-      order: z20.number().int().nonnegative(),
+      label: z22.string().min(1).max(160),
+      kind: z22.enum(["primary-mode", "dock-tool"]),
+      area: z22.enum(["workspace-canvas", "bottom-dock"]),
+      order: z22.number().int().nonnegative(),
       owningMode: PrimaryWorkspaceModeIdSchemaZ,
-      shortcut: z20.string().min(1).max(32),
+      shortcut: z22.string().min(1).max(32),
       activation: SurfaceCommandTemplateSchemaZ,
-      active: z20.boolean(),
-      attention: z20.boolean(),
-      disabledReason: z20.string().min(1).max(240).nullable()
+      active: z22.boolean(),
+      attention: z22.boolean(),
+      disabledReason: z22.string().min(1).max(240).nullable()
     }).strict();
-    ApplicationShellProjectionV1SchemaZ = z20.object({
-      version: z20.literal(APPLICATION_SHELL_PROJECTION_VERSION),
+    ApplicationShellProjectionV1SchemaZ = z22.object({
+      version: z22.literal(APPLICATION_SHELL_PROJECTION_VERSION),
       project: CohesionFixtureV1SchemaZ.shape.project,
-      workspace: z20.object({
+      workspace: z22.object({
         id: SemanticProductIdSchemaZ,
-        name: z20.string().min(1).max(160)
+        name: z22.string().min(1).max(160)
       }).strict(),
-      sidebar: z20.object({
+      sidebar: z22.object({
         activeSessionId: SemanticProductIdSchemaZ,
         sessions: WorkspaceFixtureSchemaZ.shape.sidebar.shape.sessions,
         agents: WorkspaceFixtureSchemaZ.shape.sidebar.shape.agents
       }).strict(),
-      primaryNavigation: z20.object({
+      primaryNavigation: z22.object({
         activeMode: PrimaryWorkspaceModeIdSchemaZ,
-        items: z20.array(ApplicationShellSurfaceProjectionSchemaZ)
+        items: z22.array(ApplicationShellSurfaceProjectionSchemaZ)
       }).strict(),
-      workspaceCanvas: z20.object({ activeMode: PrimaryWorkspaceModeIdSchemaZ }).strict(),
-      bottomDock: z20.object({
+      workspaceCanvas: z22.object({ activeMode: PrimaryWorkspaceModeIdSchemaZ }).strict(),
+      bottomDock: z22.object({
         mode: ApplicationShellDockModeSchemaZ,
         activeTool: DockToolIdSchemaZ,
-        tools: z20.array(ApplicationShellSurfaceProjectionSchemaZ)
+        tools: z22.array(ApplicationShellSurfaceProjectionSchemaZ)
       }).strict(),
       statusStrip: CohesionFixtureV1SchemaZ.shape.connection,
       terminalInventory: ApplicationShellTerminalInventorySchemaZ.optional(),
-      focus: z20.object({
-        windowActivity: z20.enum(["active", "inactive"]),
+      focus: z22.object({
+        windowActivity: z22.enum(["active", "inactive"]),
         zone: FocusZoneSchemaZ,
         appFocusedPaneId: SemanticProductIdSchemaZ.nullable(),
         terminalInputPaneId: SemanticProductIdSchemaZ.nullable(),
         layoutSelectedPaneId: SemanticProductIdSchemaZ.nullable(),
-        overlays: z20.array(SemanticOverlaySchemaZ).max(16),
-        palette: z20.object({
-          open: z20.boolean(),
+        overlays: z22.array(SemanticOverlaySchemaZ).max(16),
+        palette: z22.object({
+          open: z22.boolean(),
           overlayId: SemanticProductIdSchemaZ.nullable(),
           focusReturnTarget: SemanticFocusTargetSchemaZ.nullable()
         }).strict()
@@ -3966,16 +4126,16 @@ var init_application_shell = __esm({
         }
       }
     });
-    ApplicationShellActivateModeArgumentsSchemaZ = z20.object({ mode: PrimaryWorkspaceModeIdSchemaZ }).strict();
-    ApplicationShellActivateDockToolArgumentsSchemaZ = z20.object({ tool: DockToolIdSchemaZ }).strict();
-    ApplicationShellSetDockModeArgumentsSchemaZ = z20.object({ mode: ApplicationShellDockModeSchemaZ }).strict();
-    ApplicationShellMoveFocusArgumentsSchemaZ = z20.object({ target: SemanticFocusTargetSchemaZ }).strict();
-    ApplicationShellOpenPaletteArgumentsSchemaZ = z20.object({
+    ApplicationShellActivateModeArgumentsSchemaZ = z22.object({ mode: PrimaryWorkspaceModeIdSchemaZ }).strict();
+    ApplicationShellActivateDockToolArgumentsSchemaZ = z22.object({ tool: DockToolIdSchemaZ }).strict();
+    ApplicationShellSetDockModeArgumentsSchemaZ = z22.object({ mode: ApplicationShellDockModeSchemaZ }).strict();
+    ApplicationShellMoveFocusArgumentsSchemaZ = z22.object({ target: SemanticFocusTargetSchemaZ }).strict();
+    ApplicationShellOpenPaletteArgumentsSchemaZ = z22.object({
       overlayId: SemanticProductIdSchemaZ,
       focusReturnTarget: SemanticFocusTargetSchemaZ
     }).strict();
-    ApplicationShellClosePaletteArgumentsSchemaZ = z20.object({ overlayId: SemanticProductIdSchemaZ }).strict();
-    ApplicationShellSelectResourceArgumentsSchemaZ = z20.object({
+    ApplicationShellClosePaletteArgumentsSchemaZ = z22.object({ overlayId: SemanticProductIdSchemaZ }).strict();
+    ApplicationShellSelectResourceArgumentsSchemaZ = z22.object({
       surface: ProductSurfaceIdSchemaZ,
       resourceId: SemanticProductIdSchemaZ
     }).strict();
@@ -3988,46 +4148,46 @@ var init_application_shell = __esm({
       [APPLICATION_SHELL_COMMAND_IDS.closePalette]: ApplicationShellClosePaletteArgumentsSchemaZ,
       [APPLICATION_SHELL_COMMAND_IDS.selectResource]: ApplicationShellSelectResourceArgumentsSchemaZ
     });
-    ApplicationShellCommandInvocationSchemaZ = z20.discriminatedUnion("id", [
-      z20.object({
-        version: z20.literal(COMMAND_PROTOCOL_VERSION),
-        id: z20.literal(APPLICATION_SHELL_COMMAND_IDS.activateMode),
+    ApplicationShellCommandInvocationSchemaZ = z22.discriminatedUnion("id", [
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.activateMode),
         source: CommandSourceSchemaZ,
         args: ApplicationShellActivateModeArgumentsSchemaZ
       }).strict(),
-      z20.object({
-        version: z20.literal(COMMAND_PROTOCOL_VERSION),
-        id: z20.literal(APPLICATION_SHELL_COMMAND_IDS.activateDockTool),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.activateDockTool),
         source: CommandSourceSchemaZ,
         args: ApplicationShellActivateDockToolArgumentsSchemaZ
       }).strict(),
-      z20.object({
-        version: z20.literal(COMMAND_PROTOCOL_VERSION),
-        id: z20.literal(APPLICATION_SHELL_COMMAND_IDS.setDockMode),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.setDockMode),
         source: CommandSourceSchemaZ,
         args: ApplicationShellSetDockModeArgumentsSchemaZ
       }).strict(),
-      z20.object({
-        version: z20.literal(COMMAND_PROTOCOL_VERSION),
-        id: z20.literal(APPLICATION_SHELL_COMMAND_IDS.moveFocus),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.moveFocus),
         source: CommandSourceSchemaZ,
         args: ApplicationShellMoveFocusArgumentsSchemaZ
       }).strict(),
-      z20.object({
-        version: z20.literal(COMMAND_PROTOCOL_VERSION),
-        id: z20.literal(APPLICATION_SHELL_COMMAND_IDS.openPalette),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.openPalette),
         source: CommandSourceSchemaZ,
         args: ApplicationShellOpenPaletteArgumentsSchemaZ
       }).strict(),
-      z20.object({
-        version: z20.literal(COMMAND_PROTOCOL_VERSION),
-        id: z20.literal(APPLICATION_SHELL_COMMAND_IDS.closePalette),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.closePalette),
         source: CommandSourceSchemaZ,
         args: ApplicationShellClosePaletteArgumentsSchemaZ
       }).strict(),
-      z20.object({
-        version: z20.literal(COMMAND_PROTOCOL_VERSION),
-        id: z20.literal(APPLICATION_SHELL_COMMAND_IDS.selectResource),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.selectResource),
         source: CommandSourceSchemaZ,
         args: ApplicationShellSelectResourceArgumentsSchemaZ
       }).strict()
@@ -4068,13 +4228,13 @@ var init_application_shell = __esm({
         })
       )
     );
-    ApplicationShellResourceSelectionSchemaZ = z20.object({ surface: ProductSurfaceIdSchemaZ, resourceId: SemanticProductIdSchemaZ }).strict();
-    ApplicationShellReplayStateV1SchemaZ = z20.object({
+    ApplicationShellResourceSelectionSchemaZ = z22.object({ surface: ProductSurfaceIdSchemaZ, resourceId: SemanticProductIdSchemaZ }).strict();
+    ApplicationShellReplayStateV1SchemaZ = z22.object({
       activeMode: PrimaryWorkspaceModeIdSchemaZ,
       dockMode: ApplicationShellDockModeSchemaZ,
       activeDockTool: DockToolIdSchemaZ,
       focus: FocusOverlayStateV1SchemaZ,
-      selectedResources: z20.array(ApplicationShellResourceSelectionSchemaZ)
+      selectedResources: z22.array(ApplicationShellResourceSelectionSchemaZ)
     }).strict().superRefine((state, ctx) => {
       const surfaces = state.selectedResources.map(({ surface }) => surface);
       if (new Set(surfaces).size !== surfaces.length) {
@@ -4085,10 +4245,10 @@ var init_application_shell = __esm({
         });
       }
     });
-    ApplicationShellActionTraceV1BaseSchemaZ = z20.object({
-      version: z20.literal(APPLICATION_SHELL_TRACE_VERSION),
+    ApplicationShellActionTraceV1BaseSchemaZ = z22.object({
+      version: z22.literal(APPLICATION_SHELL_TRACE_VERSION),
       initialState: ApplicationShellReplayStateV1SchemaZ,
-      invocations: z20.array(ApplicationShellCommandInvocationSchemaZ),
+      invocations: z22.array(ApplicationShellCommandInvocationSchemaZ),
       finalState: ApplicationShellReplayStateV1SchemaZ
     }).strict();
     ApplicationShellActionTraceV1SchemaZ = ApplicationShellActionTraceV1BaseSchemaZ.superRefine((trace, ctx) => {
@@ -4112,59 +4272,8 @@ var init_application_shell = __esm({
   }
 });
 
-// packages/contracts/src/daemon-wire.ts
-import { z as z21 } from "zod";
-function isDaemonWireProtocolCompatible(protocolVersion) {
-  return protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION;
-}
-var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, DaemonInstanceIdSchema, DaemonInstanceIdentitySchemaZ, CanonicalDaemonInfoSchema, DaemonHealthSchema, DaemonHealthzSchema, DaemonIdentitySchema;
-var init_daemon_wire = __esm({
-  "packages/contracts/src/daemon-wire.ts"() {
-    "use strict";
-    DAEMON_WIRE_PROTOCOL_VERSION = 1;
-    DaemonWireProtocolVersionSchema = z21.number().int().positive();
-    DaemonInstanceIdSchema = z21.uuid();
-    DaemonInstanceIdentitySchemaZ = z21.object({
-      protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z21.string().trim().min(1),
-      instanceId: DaemonInstanceIdSchema,
-      startedAt: z21.iso.datetime({ offset: true })
-    }).strict();
-    CanonicalDaemonInfoSchema = z21.object({
-      pid: z21.number().int().positive(),
-      port: z21.number().int().min(1).max(65535),
-      protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z21.string().trim().min(1),
-      instanceId: DaemonInstanceIdSchema,
-      startedAt: z21.iso.datetime({ offset: true }),
-      bindHostname: z21.string().trim().min(1),
-      authToken: z21.string().min(1).nullable()
-    });
-    DaemonHealthSchema = z21.object({
-      ok: z21.literal(true),
-      protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z21.string().trim().min(1),
-      uptime: z21.number().nonnegative()
-    });
-    DaemonHealthzSchema = z21.object({
-      ok: z21.literal(true),
-      protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z21.string().trim().min(1),
-      uptimeMs: z21.number().nonnegative()
-    });
-    DaemonIdentitySchema = z21.object({
-      ok: z21.literal(true),
-      pid: z21.number().int().positive(),
-      protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z21.string().trim().min(1),
-      instanceId: DaemonInstanceIdSchema,
-      startedAt: z21.iso.datetime({ offset: true })
-    });
-  }
-});
-
 // packages/contracts/src/application-shell-resource.ts
-import { z as z22 } from "zod";
+import { z as z23 } from "zod";
 var APPLICATION_SHELL_RESOURCE_V1_VERSION, APPLICATION_SHELL_RESOURCE_V2_VERSION, APPLICATION_SHELL_RESOURCE_V3_VERSION, ApplicationShellResourceV1SchemaZ, ApplicationShellResourceV2SchemaZ, ApplicationShellResourceV3SchemaZ, ApplicationShellResourceSchemaZ;
 var init_application_shell_resource = __esm({
   "packages/contracts/src/application-shell-resource.ts"() {
@@ -4174,22 +4283,22 @@ var init_application_shell_resource = __esm({
     APPLICATION_SHELL_RESOURCE_V1_VERSION = 1;
     APPLICATION_SHELL_RESOURCE_V2_VERSION = 2;
     APPLICATION_SHELL_RESOURCE_V3_VERSION = 3;
-    ApplicationShellResourceV1SchemaZ = z22.object({
-      version: z22.literal(APPLICATION_SHELL_RESOURCE_V1_VERSION),
+    ApplicationShellResourceV1SchemaZ = z23.object({
+      version: z23.literal(APPLICATION_SHELL_RESOURCE_V1_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: ApplicationShellProjectionInputV1WireSchemaZ
     }).strict();
-    ApplicationShellResourceV2SchemaZ = z22.object({
-      version: z22.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION),
+    ApplicationShellResourceV2SchemaZ = z23.object({
+      version: z23.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: ApplicationShellProjectionInputV2SchemaZ
     }).strict();
-    ApplicationShellResourceV3SchemaZ = z22.object({
-      version: z22.literal(APPLICATION_SHELL_RESOURCE_V3_VERSION),
+    ApplicationShellResourceV3SchemaZ = z23.object({
+      version: z23.literal(APPLICATION_SHELL_RESOURCE_V3_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: ApplicationShellProjectionInputV3SchemaZ
     }).strict();
-    ApplicationShellResourceSchemaZ = z22.discriminatedUnion("version", [
+    ApplicationShellResourceSchemaZ = z23.discriminatedUnion("version", [
       ApplicationShellResourceV1SchemaZ,
       ApplicationShellResourceV2SchemaZ,
       ApplicationShellResourceV3SchemaZ
@@ -4198,17 +4307,17 @@ var init_application_shell_resource = __esm({
 });
 
 // packages/contracts/src/workspace-resource-identity.ts
-import { z as z23 } from "zod";
+import { z as z24 } from "zod";
 function opaqueIdentity(prefix) {
-  return z23.string().max(prefix.length + 64).regex(new RegExp(`^${prefix.replace(".", "\\.")}[A-Za-z0-9_-]{16,64}$`, "u")).refine((value) => !RESERVED_RECORD_KEYS4.has(value), "reserved record key is not allowed");
+  return z24.string().max(prefix.length + 64).regex(new RegExp(`^${prefix.replace(".", "\\.")}[A-Za-z0-9_-]{16,64}$`, "u")).refine((value) => !RESERVED_RECORD_KEYS5.has(value), "reserved record key is not allowed");
 }
-var RESERVED_RECORD_KEYS4, OPAQUE_TOKEN_PATTERN, WorkspaceResourceWorkspaceNameSchemaZ, WorkspaceFileResourceIdSchemaZ, WorkspaceChangeResourceIdSchemaZ, WorkspaceFilesRevisionSchemaZ, WorkspaceChangesRevisionSchemaZ, WorkspaceResourceOpaqueTokenSchemaZ, WorkspaceResourceNameSchemaZ, WorkspaceRelativeDisplayPathSchemaZ;
+var RESERVED_RECORD_KEYS5, OPAQUE_TOKEN_PATTERN, WorkspaceResourceWorkspaceNameSchemaZ, WorkspaceFileResourceIdSchemaZ, WorkspaceChangeResourceIdSchemaZ, WorkspaceFilesRevisionSchemaZ, WorkspaceChangesRevisionSchemaZ, WorkspaceResourceOpaqueTokenSchemaZ, WorkspaceResourceNameSchemaZ, WorkspaceRelativeDisplayPathSchemaZ;
 var init_workspace_resource_identity = __esm({
   "packages/contracts/src/workspace-resource-identity.ts"() {
     "use strict";
-    RESERVED_RECORD_KEYS4 = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+    RESERVED_RECORD_KEYS5 = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
     OPAQUE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,64}$/u;
-    WorkspaceResourceWorkspaceNameSchemaZ = z23.string().trim().min(1).max(160).refine(
+    WorkspaceResourceWorkspaceNameSchemaZ = z24.string().trim().min(1).max(160).refine(
       (value) => [...value].every((character) => {
         const code = character.charCodeAt(0);
         return code >= 32 && code !== 127;
@@ -4219,15 +4328,15 @@ var init_workspace_resource_identity = __esm({
     WorkspaceChangeResourceIdSchemaZ = opaqueIdentity("change.");
     WorkspaceFilesRevisionSchemaZ = opaqueIdentity("files-rev.");
     WorkspaceChangesRevisionSchemaZ = opaqueIdentity("changes-rev.");
-    WorkspaceResourceOpaqueTokenSchemaZ = z23.string().regex(OPAQUE_TOKEN_PATTERN);
-    WorkspaceResourceNameSchemaZ = z23.string().min(1).max(255).refine((value) => value !== "." && value !== "..", "dot path segments are not resources").refine((value) => !/[\\/\0\r\n]/u.test(value), "resource name must be one path segment").refine(
+    WorkspaceResourceOpaqueTokenSchemaZ = z24.string().regex(OPAQUE_TOKEN_PATTERN);
+    WorkspaceResourceNameSchemaZ = z24.string().min(1).max(255).refine((value) => value !== "." && value !== "..", "dot path segments are not resources").refine((value) => !/[\\/\0\r\n]/u.test(value), "resource name must be one path segment").refine(
       (value) => [...value].every((character) => {
         const code = character.charCodeAt(0);
         return code >= 32 && code !== 127;
       }),
       "resource name contains control characters"
     );
-    WorkspaceRelativeDisplayPathSchemaZ = z23.string().min(1).max(1024).refine((value) => !value.startsWith("/"), "workspace display path must be relative").refine((value) => !value.includes("\\"), "workspace display path uses forward slashes").refine(
+    WorkspaceRelativeDisplayPathSchemaZ = z24.string().min(1).max(1024).refine((value) => !value.startsWith("/"), "workspace display path must be relative").refine((value) => !value.includes("\\"), "workspace display path uses forward slashes").refine(
       (value) => [...value].every((character) => {
         const code = character.charCodeAt(0);
         return code >= 32 && code !== 127;
@@ -4241,7 +4350,7 @@ var init_workspace_resource_identity = __esm({
 });
 
 // packages/contracts/src/workspace-files-resource.ts
-import { z as z24 } from "zod";
+import { z as z25 } from "zod";
 var WORKSPACE_FILES_CATALOG_RESOURCE_VERSION, WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION, WORKSPACE_FILES_CATALOG_MAX_ENTRIES, WORKSPACE_FILES_MAX_BREADCRUMBS, WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS, WORKSPACE_FILE_PREVIEW_MAX_LINES, WorkspaceFileGitStatusSchemaZ, WorkspaceFileEntryKindSchemaZ, WorkspaceFileEntrySchemaZ, WorkspaceFileBreadcrumbSchemaZ, WorkspaceFilesCatalogReadySchemaZ, WorkspaceFilesCatalogUnavailableReasonSchemaZ, WorkspaceFilesCatalogUnavailableSchemaZ, WorkspaceFilesCatalogResourceV1SchemaZ, WorkspaceFilesCatalogEnvelopeV1SchemaZ, WorkspaceFilePreviewBase, WorkspaceFilePreviewReadySchemaZ, WorkspaceFilePreviewBinarySchemaZ, WorkspaceFilePreviewTooLargeSchemaZ, WorkspaceFilePreviewUnavailableReasonSchemaZ, WorkspaceFilePreviewUnavailableSchemaZ, WorkspaceFilePreviewResourceV1SchemaZ, WorkspaceFilePreviewEnvelopeV1SchemaZ;
 var init_workspace_files_resource = __esm({
   "packages/contracts/src/workspace-files-resource.ts"() {
@@ -4254,7 +4363,7 @@ var init_workspace_files_resource = __esm({
     WORKSPACE_FILES_MAX_BREADCRUMBS = 64;
     WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS = 512 * 1024;
     WORKSPACE_FILE_PREVIEW_MAX_LINES = 1e4;
-    WorkspaceFileGitStatusSchemaZ = z24.enum([
+    WorkspaceFileGitStatusSchemaZ = z25.enum([
       "modified",
       "added",
       "deleted",
@@ -4262,16 +4371,16 @@ var init_workspace_files_resource = __esm({
       "untracked",
       "conflicted"
     ]);
-    WorkspaceFileEntryKindSchemaZ = z24.enum(["directory", "file", "symlink"]);
-    WorkspaceFileEntrySchemaZ = z24.strictObject({
+    WorkspaceFileEntryKindSchemaZ = z25.enum(["directory", "file", "symlink"]);
+    WorkspaceFileEntrySchemaZ = z25.strictObject({
       id: WorkspaceFileResourceIdSchemaZ,
       parentId: WorkspaceFileResourceIdSchemaZ,
       name: WorkspaceResourceNameSchemaZ,
       relativePath: WorkspaceRelativeDisplayPathSchemaZ,
       kind: WorkspaceFileEntryKindSchemaZ,
-      hidden: z24.boolean(),
-      ignored: z24.boolean(),
-      hasChildren: z24.boolean(),
+      hidden: z25.boolean(),
+      ignored: z25.boolean(),
+      hasChildren: z25.boolean(),
       gitStatus: WorkspaceFileGitStatusSchemaZ.nullable()
     }).superRefine((entry, ctx) => {
       if (entry.relativePath.split("/").at(-1) !== entry.name) {
@@ -4289,25 +4398,25 @@ var init_workspace_files_resource = __esm({
         });
       }
     });
-    WorkspaceFileBreadcrumbSchemaZ = z24.strictObject({
+    WorkspaceFileBreadcrumbSchemaZ = z25.strictObject({
       id: WorkspaceFileResourceIdSchemaZ,
       label: WorkspaceResourceNameSchemaZ
     });
-    WorkspaceFilesCatalogReadySchemaZ = z24.strictObject({
-      status: z24.literal("ready"),
+    WorkspaceFilesCatalogReadySchemaZ = z25.strictObject({
+      status: z25.literal("ready"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       revision: WorkspaceFilesRevisionSchemaZ,
       rootId: WorkspaceFileResourceIdSchemaZ,
-      directory: z24.strictObject({
+      directory: z25.strictObject({
         id: WorkspaceFileResourceIdSchemaZ,
         name: WorkspaceResourceNameSchemaZ,
         relativePath: WorkspaceRelativeDisplayPathSchemaZ.nullable(),
         parentId: WorkspaceFileResourceIdSchemaZ.nullable()
       }),
-      breadcrumbs: z24.array(WorkspaceFileBreadcrumbSchemaZ).min(1).max(WORKSPACE_FILES_MAX_BREADCRUMBS),
-      entries: z24.array(WorkspaceFileEntrySchemaZ).max(WORKSPACE_FILES_CATALOG_MAX_ENTRIES),
-      totalEntries: z24.number().int().nonnegative(),
-      truncated: z24.boolean()
+      breadcrumbs: z25.array(WorkspaceFileBreadcrumbSchemaZ).min(1).max(WORKSPACE_FILES_MAX_BREADCRUMBS),
+      entries: z25.array(WorkspaceFileEntrySchemaZ).max(WORKSPACE_FILES_CATALOG_MAX_ENTRIES),
+      totalEntries: z25.number().int().nonnegative(),
+      truncated: z25.boolean()
     }).superRefine((resource3, ctx) => {
       const breadcrumbIds = resource3.breadcrumbs.map(({ id }) => id);
       if (new Set(breadcrumbIds).size !== breadcrumbIds.length) {
@@ -4388,7 +4497,7 @@ var init_workspace_files_resource = __esm({
         });
       }
     });
-    WorkspaceFilesCatalogUnavailableReasonSchemaZ = z24.enum([
+    WorkspaceFilesCatalogUnavailableReasonSchemaZ = z25.enum([
       "workspace-unavailable",
       "resource-changed",
       "directory-not-found",
@@ -4397,19 +4506,19 @@ var init_workspace_files_resource = __esm({
       "too-many-entries",
       "io-error"
     ]);
-    WorkspaceFilesCatalogUnavailableSchemaZ = z24.strictObject({
-      status: z24.literal("unavailable"),
+    WorkspaceFilesCatalogUnavailableSchemaZ = z25.strictObject({
+      status: z25.literal("unavailable"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       reason: WorkspaceFilesCatalogUnavailableReasonSchemaZ,
-      message: z24.string().min(1).max(240),
-      retryable: z24.boolean()
+      message: z25.string().min(1).max(240),
+      retryable: z25.boolean()
     });
-    WorkspaceFilesCatalogResourceV1SchemaZ = z24.discriminatedUnion("status", [
+    WorkspaceFilesCatalogResourceV1SchemaZ = z25.discriminatedUnion("status", [
       WorkspaceFilesCatalogReadySchemaZ,
       WorkspaceFilesCatalogUnavailableSchemaZ
     ]);
-    WorkspaceFilesCatalogEnvelopeV1SchemaZ = z24.strictObject({
-      version: z24.literal(WORKSPACE_FILES_CATALOG_RESOURCE_VERSION),
+    WorkspaceFilesCatalogEnvelopeV1SchemaZ = z25.strictObject({
+      version: z25.literal(WORKSPACE_FILES_CATALOG_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceFilesCatalogResourceV1SchemaZ
     });
@@ -4420,15 +4529,15 @@ var init_workspace_files_resource = __esm({
       name: WorkspaceResourceNameSchemaZ,
       relativePath: WorkspaceRelativeDisplayPathSchemaZ
     };
-    WorkspaceFilePreviewReadySchemaZ = z24.strictObject({
-      status: z24.literal("ready"),
+    WorkspaceFilePreviewReadySchemaZ = z25.strictObject({
+      status: z25.literal("ready"),
       ...WorkspaceFilePreviewBase,
-      encoding: z24.literal("utf-8"),
-      languageHint: z24.string().min(1).max(64).nullable(),
-      content: z24.string().max(WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS),
-      totalBytes: z24.number().int().nonnegative(),
-      totalLines: z24.number().int().nonnegative(),
-      truncated: z24.boolean()
+      encoding: z25.literal("utf-8"),
+      languageHint: z25.string().min(1).max(64).nullable(),
+      content: z25.string().max(WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS),
+      totalBytes: z25.number().int().nonnegative(),
+      totalLines: z25.number().int().nonnegative(),
+      truncated: z25.boolean()
     }).superRefine((preview, ctx) => {
       if (preview.content.includes("\0")) {
         ctx.addIssue({
@@ -4460,19 +4569,19 @@ var init_workspace_files_resource = __esm({
         });
       }
     });
-    WorkspaceFilePreviewBinarySchemaZ = z24.strictObject({
-      status: z24.literal("binary"),
+    WorkspaceFilePreviewBinarySchemaZ = z25.strictObject({
+      status: z25.literal("binary"),
       ...WorkspaceFilePreviewBase,
-      totalBytes: z24.number().int().nonnegative(),
-      mediaType: z24.string().min(1).max(160).nullable()
+      totalBytes: z25.number().int().nonnegative(),
+      mediaType: z25.string().min(1).max(160).nullable()
     });
-    WorkspaceFilePreviewTooLargeSchemaZ = z24.strictObject({
-      status: z24.literal("too-large"),
+    WorkspaceFilePreviewTooLargeSchemaZ = z25.strictObject({
+      status: z25.literal("too-large"),
       ...WorkspaceFilePreviewBase,
-      totalBytes: z24.number().int().nonnegative(),
-      limitBytes: z24.number().int().positive()
+      totalBytes: z25.number().int().nonnegative(),
+      limitBytes: z25.number().int().positive()
     });
-    WorkspaceFilePreviewUnavailableReasonSchemaZ = z24.enum([
+    WorkspaceFilePreviewUnavailableReasonSchemaZ = z25.enum([
       "workspace-unavailable",
       "resource-changed",
       "file-not-found",
@@ -4483,23 +4592,23 @@ var init_workspace_files_resource = __esm({
       "unsupported-encoding",
       "io-error"
     ]);
-    WorkspaceFilePreviewUnavailableSchemaZ = z24.strictObject({
-      status: z24.literal("unavailable"),
+    WorkspaceFilePreviewUnavailableSchemaZ = z25.strictObject({
+      status: z25.literal("unavailable"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       catalogRevision: WorkspaceFilesRevisionSchemaZ,
       fileId: WorkspaceFileResourceIdSchemaZ,
       reason: WorkspaceFilePreviewUnavailableReasonSchemaZ,
-      message: z24.string().min(1).max(240),
-      retryable: z24.boolean()
+      message: z25.string().min(1).max(240),
+      retryable: z25.boolean()
     });
-    WorkspaceFilePreviewResourceV1SchemaZ = z24.discriminatedUnion("status", [
+    WorkspaceFilePreviewResourceV1SchemaZ = z25.discriminatedUnion("status", [
       WorkspaceFilePreviewReadySchemaZ,
       WorkspaceFilePreviewBinarySchemaZ,
       WorkspaceFilePreviewTooLargeSchemaZ,
       WorkspaceFilePreviewUnavailableSchemaZ
     ]);
-    WorkspaceFilePreviewEnvelopeV1SchemaZ = z24.strictObject({
-      version: z24.literal(WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION),
+    WorkspaceFilePreviewEnvelopeV1SchemaZ = z25.strictObject({
+      version: z25.literal(WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceFilePreviewResourceV1SchemaZ
     });
@@ -4507,7 +4616,7 @@ var init_workspace_files_resource = __esm({
 });
 
 // packages/contracts/src/workspace-changes-resource.ts
-import { z as z25 } from "zod";
+import { z as z26 } from "zod";
 var WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION, WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION, WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES, WORKSPACE_CHANGE_MAX_LINE_DELTA, WORKSPACE_CHANGE_BRANCH_MAX_LENGTH, WORKSPACE_CHANGE_DIFF_MAX_HUNKS, WORKSPACE_CHANGE_DIFF_MAX_LINES, WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH, WorkspaceChangeGroupSchemaZ, WorkspaceChangeStatusSchemaZ, DiffCountSchemaZ, WorkspaceChangeEntrySchemaZ, WorkspaceChangesCatalogReadySchemaZ, WorkspaceChangesCatalogUnavailableReasonSchemaZ, WorkspaceChangesCatalogUnavailableSchemaZ, WorkspaceChangesCatalogResourceV1SchemaZ, WorkspaceChangesCatalogEnvelopeV1SchemaZ, WorkspaceDiffLineKindSchemaZ, WorkspaceDiffLineSchemaZ, WorkspaceDiffHunkSchemaZ, WorkspaceChangeDiffBase, WorkspaceChangeDiffReadySchemaZ, WorkspaceChangeDiffBinarySchemaZ, WorkspaceChangeDiffTooLargeSchemaZ, WorkspaceChangeDiffUnavailableReasonSchemaZ, WorkspaceChangeDiffUnavailableSchemaZ, WorkspaceChangeDiffResourceV1SchemaZ, WorkspaceChangeDiffEnvelopeV1SchemaZ;
 var init_workspace_changes_resource = __esm({
   "packages/contracts/src/workspace-changes-resource.ts"() {
@@ -4522,8 +4631,8 @@ var init_workspace_changes_resource = __esm({
     WORKSPACE_CHANGE_DIFF_MAX_HUNKS = 512;
     WORKSPACE_CHANGE_DIFF_MAX_LINES = 2e4;
     WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH = 4096;
-    WorkspaceChangeGroupSchemaZ = z25.enum(["staged", "unstaged", "untracked"]);
-    WorkspaceChangeStatusSchemaZ = z25.enum([
+    WorkspaceChangeGroupSchemaZ = z26.enum(["staged", "unstaged", "untracked"]);
+    WorkspaceChangeStatusSchemaZ = z26.enum([
       "modified",
       "added",
       "deleted",
@@ -4533,8 +4642,8 @@ var init_workspace_changes_resource = __esm({
       "conflicted",
       "untracked"
     ]);
-    DiffCountSchemaZ = z25.number().int().nonnegative().max(WORKSPACE_CHANGE_MAX_LINE_DELTA);
-    WorkspaceChangeEntrySchemaZ = z25.strictObject({
+    DiffCountSchemaZ = z26.number().int().nonnegative().max(WORKSPACE_CHANGE_MAX_LINE_DELTA);
+    WorkspaceChangeEntrySchemaZ = z26.strictObject({
       id: WorkspaceChangeResourceIdSchemaZ,
       group: WorkspaceChangeGroupSchemaZ,
       status: WorkspaceChangeStatusSchemaZ,
@@ -4542,7 +4651,7 @@ var init_workspace_changes_resource = __esm({
       relativePath: WorkspaceRelativeDisplayPathSchemaZ,
       /** Present only for renames and copies; the pre-change display path. */
       originPath: WorkspaceRelativeDisplayPathSchemaZ.nullable(),
-      binary: z25.boolean(),
+      binary: z26.boolean(),
       additions: DiffCountSchemaZ.nullable(),
       deletions: DiffCountSchemaZ.nullable()
     }).superRefine((entry, ctx) => {
@@ -4600,16 +4709,16 @@ var init_workspace_changes_resource = __esm({
         });
       }
     });
-    WorkspaceChangesCatalogReadySchemaZ = z25.strictObject({
-      status: z25.literal("ready"),
+    WorkspaceChangesCatalogReadySchemaZ = z26.strictObject({
+      status: z26.literal("ready"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       revision: WorkspaceChangesRevisionSchemaZ,
       /** The current branch, or null when the workspace is detached or unborn. */
-      branch: z25.string().min(1).max(WORKSPACE_CHANGE_BRANCH_MAX_LENGTH).nullable(),
-      detached: z25.boolean(),
-      entries: z25.array(WorkspaceChangeEntrySchemaZ).max(WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES),
-      totalEntries: z25.number().int().nonnegative(),
-      truncated: z25.boolean()
+      branch: z26.string().min(1).max(WORKSPACE_CHANGE_BRANCH_MAX_LENGTH).nullable(),
+      detached: z26.boolean(),
+      entries: z26.array(WorkspaceChangeEntrySchemaZ).max(WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES),
+      totalEntries: z26.number().int().nonnegative(),
+      truncated: z26.boolean()
     }).superRefine((resource3, ctx) => {
       if (resource3.detached && resource3.branch !== null) {
         ctx.addIssue({
@@ -4654,7 +4763,7 @@ var init_workspace_changes_resource = __esm({
         });
       }
     });
-    WorkspaceChangesCatalogUnavailableReasonSchemaZ = z25.enum([
+    WorkspaceChangesCatalogUnavailableReasonSchemaZ = z26.enum([
       "workspace-unavailable",
       "resource-changed",
       "not-a-git-repository",
@@ -4662,28 +4771,28 @@ var init_workspace_changes_resource = __esm({
       "too-many-changes",
       "io-error"
     ]);
-    WorkspaceChangesCatalogUnavailableSchemaZ = z25.strictObject({
-      status: z25.literal("unavailable"),
+    WorkspaceChangesCatalogUnavailableSchemaZ = z26.strictObject({
+      status: z26.literal("unavailable"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       reason: WorkspaceChangesCatalogUnavailableReasonSchemaZ,
-      message: z25.string().min(1).max(240),
-      retryable: z25.boolean()
+      message: z26.string().min(1).max(240),
+      retryable: z26.boolean()
     });
-    WorkspaceChangesCatalogResourceV1SchemaZ = z25.discriminatedUnion("status", [
+    WorkspaceChangesCatalogResourceV1SchemaZ = z26.discriminatedUnion("status", [
       WorkspaceChangesCatalogReadySchemaZ,
       WorkspaceChangesCatalogUnavailableSchemaZ
     ]);
-    WorkspaceChangesCatalogEnvelopeV1SchemaZ = z25.strictObject({
-      version: z25.literal(WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION),
+    WorkspaceChangesCatalogEnvelopeV1SchemaZ = z26.strictObject({
+      version: z26.literal(WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceChangesCatalogResourceV1SchemaZ
     });
-    WorkspaceDiffLineKindSchemaZ = z25.enum(["context", "insert", "delete"]);
-    WorkspaceDiffLineSchemaZ = z25.strictObject({
+    WorkspaceDiffLineKindSchemaZ = z26.enum(["context", "insert", "delete"]);
+    WorkspaceDiffLineSchemaZ = z26.strictObject({
       kind: WorkspaceDiffLineKindSchemaZ,
-      content: z25.string().max(WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH),
-      oldLine: z25.number().int().positive().nullable(),
-      newLine: z25.number().int().positive().nullable()
+      content: z26.string().max(WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH),
+      oldLine: z26.number().int().positive().nullable(),
+      newLine: z26.number().int().positive().nullable()
     }).superRefine((line, ctx) => {
       if (/[\0\r\n]/u.test(line.content)) {
         ctx.addIssue({
@@ -4709,13 +4818,13 @@ var init_workspace_changes_resource = __esm({
         });
       }
     });
-    WorkspaceDiffHunkSchemaZ = z25.strictObject({
-      header: z25.string().min(1).max(255),
-      oldStart: z25.number().int().nonnegative(),
-      oldLines: z25.number().int().nonnegative(),
-      newStart: z25.number().int().nonnegative(),
-      newLines: z25.number().int().nonnegative(),
-      lines: z25.array(WorkspaceDiffLineSchemaZ).min(1).max(WORKSPACE_CHANGE_DIFF_MAX_LINES)
+    WorkspaceDiffHunkSchemaZ = z26.strictObject({
+      header: z26.string().min(1).max(255),
+      oldStart: z26.number().int().nonnegative(),
+      oldLines: z26.number().int().nonnegative(),
+      newStart: z26.number().int().nonnegative(),
+      newLines: z26.number().int().nonnegative(),
+      lines: z26.array(WorkspaceDiffLineSchemaZ).min(1).max(WORKSPACE_CHANGE_DIFF_MAX_LINES)
     }).superRefine((hunk, ctx) => {
       if (hunk.oldLines > 0 && hunk.oldStart < 1) {
         ctx.addIssue({
@@ -4782,13 +4891,13 @@ var init_workspace_changes_resource = __esm({
       relativePath: WorkspaceRelativeDisplayPathSchemaZ,
       originPath: WorkspaceRelativeDisplayPathSchemaZ.nullable()
     };
-    WorkspaceChangeDiffReadySchemaZ = z25.strictObject({
-      status: z25.literal("ready"),
+    WorkspaceChangeDiffReadySchemaZ = z26.strictObject({
+      status: z26.literal("ready"),
       ...WorkspaceChangeDiffBase,
-      hunks: z25.array(WorkspaceDiffHunkSchemaZ).max(WORKSPACE_CHANGE_DIFF_MAX_HUNKS),
-      totalHunks: z25.number().int().nonnegative(),
-      totalLines: z25.number().int().nonnegative(),
-      truncated: z25.boolean()
+      hunks: z26.array(WorkspaceDiffHunkSchemaZ).max(WORKSPACE_CHANGE_DIFF_MAX_HUNKS),
+      totalHunks: z26.number().int().nonnegative(),
+      totalLines: z26.number().int().nonnegative(),
+      truncated: z26.boolean()
     }).superRefine((diff, ctx) => {
       if (diff.originPath !== null && diff.originPath === diff.relativePath) {
         ctx.addIssue({
@@ -4821,19 +4930,19 @@ var init_workspace_changes_resource = __esm({
         });
       }
     });
-    WorkspaceChangeDiffBinarySchemaZ = z25.strictObject({
-      status: z25.literal("binary"),
+    WorkspaceChangeDiffBinarySchemaZ = z26.strictObject({
+      status: z26.literal("binary"),
       ...WorkspaceChangeDiffBase,
-      oldBytes: z25.number().int().nonnegative().nullable(),
-      newBytes: z25.number().int().nonnegative().nullable()
+      oldBytes: z26.number().int().nonnegative().nullable(),
+      newBytes: z26.number().int().nonnegative().nullable()
     });
-    WorkspaceChangeDiffTooLargeSchemaZ = z25.strictObject({
-      status: z25.literal("too-large"),
+    WorkspaceChangeDiffTooLargeSchemaZ = z26.strictObject({
+      status: z26.literal("too-large"),
       ...WorkspaceChangeDiffBase,
-      totalBytes: z25.number().int().nonnegative(),
-      limitBytes: z25.number().int().positive()
+      totalBytes: z26.number().int().nonnegative(),
+      limitBytes: z26.number().int().positive()
     });
-    WorkspaceChangeDiffUnavailableReasonSchemaZ = z25.enum([
+    WorkspaceChangeDiffUnavailableReasonSchemaZ = z26.enum([
       "workspace-unavailable",
       "resource-changed",
       "change-not-found",
@@ -4841,122 +4950,25 @@ var init_workspace_changes_resource = __esm({
       "permission-denied",
       "io-error"
     ]);
-    WorkspaceChangeDiffUnavailableSchemaZ = z25.strictObject({
-      status: z25.literal("unavailable"),
+    WorkspaceChangeDiffUnavailableSchemaZ = z26.strictObject({
+      status: z26.literal("unavailable"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       changesRevision: WorkspaceChangesRevisionSchemaZ,
       changeId: WorkspaceChangeResourceIdSchemaZ,
       reason: WorkspaceChangeDiffUnavailableReasonSchemaZ,
-      message: z25.string().min(1).max(240),
-      retryable: z25.boolean()
+      message: z26.string().min(1).max(240),
+      retryable: z26.boolean()
     });
-    WorkspaceChangeDiffResourceV1SchemaZ = z25.discriminatedUnion("status", [
+    WorkspaceChangeDiffResourceV1SchemaZ = z26.discriminatedUnion("status", [
       WorkspaceChangeDiffReadySchemaZ,
       WorkspaceChangeDiffBinarySchemaZ,
       WorkspaceChangeDiffTooLargeSchemaZ,
       WorkspaceChangeDiffUnavailableSchemaZ
     ]);
-    WorkspaceChangeDiffEnvelopeV1SchemaZ = z25.strictObject({
-      version: z25.literal(WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION),
+    WorkspaceChangeDiffEnvelopeV1SchemaZ = z26.strictObject({
+      version: z26.literal(WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceChangeDiffResourceV1SchemaZ
-    });
-  }
-});
-
-// packages/contracts/src/fleet-catalog.ts
-import { z as z26 } from "zod";
-function isControlFree2(value) {
-  return [...value].every((character) => {
-    const code = character.charCodeAt(0);
-    return code >= 32 && code !== 127;
-  });
-}
-function namespacedIdSchema(namespace) {
-  return z26.string().max(`${namespace}.`.length + FLEET_ID_TOKEN_MAX).regex(
-    new RegExp(
-      `^${namespace}\\.[A-Za-z0-9_-]{${FLEET_ID_TOKEN_MIN},${FLEET_ID_TOKEN_MAX}}$`,
-      "u"
-    )
-  ).refine((value) => !RESERVED_RECORD_KEYS5.has(value), "reserved record key is not allowed");
-}
-var FLEET_CATALOG_RESOURCE_VERSION, FLEET_MAX_SESSIONS, FLEET_MAX_AGENTS_PER_SESSION, FLEET_MAX_TOTAL_AGENTS, FLEET_MAX_PANES_PER_SESSION, FLEET_LABEL_MAX_LENGTH, FLEET_ID_TOKEN_MIN, FLEET_ID_TOKEN_MAX, RESERVED_RECORD_KEYS5, FleetSessionIdSchemaZ, FleetAgentIdSchemaZ, FleetLabelSchemaZ, FleetProjectLabelSchemaZ, FLEET_AGENT_HARNESS_IDS, FleetAgentHarnessSchemaZ, FleetCatalogAgentEntryV1SchemaZ, FleetCatalogSessionEntryV1SchemaZ, FleetCatalogResourceV1SchemaZ;
-var init_fleet_catalog = __esm({
-  "packages/contracts/src/fleet-catalog.ts"() {
-    "use strict";
-    init_agent_graph_overlay();
-    init_daemon_wire();
-    init_pane_appearance();
-    FLEET_CATALOG_RESOURCE_VERSION = 1;
-    FLEET_MAX_SESSIONS = 64;
-    FLEET_MAX_AGENTS_PER_SESSION = 64;
-    FLEET_MAX_TOTAL_AGENTS = 256;
-    FLEET_MAX_PANES_PER_SESSION = 512;
-    FLEET_LABEL_MAX_LENGTH = AGENT_GRAPH_LABEL_MAX_LENGTH;
-    FLEET_ID_TOKEN_MIN = 16;
-    FLEET_ID_TOKEN_MAX = 64;
-    RESERVED_RECORD_KEYS5 = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
-    FleetSessionIdSchemaZ = namespacedIdSchema("session");
-    FleetAgentIdSchemaZ = namespacedIdSchema("agent");
-    FleetLabelSchemaZ = z26.string().min(1).max(FLEET_LABEL_MAX_LENGTH).refine(isControlFree2, "label contains control characters");
-    FleetProjectLabelSchemaZ = z26.string().min(1).max(FLEET_LABEL_MAX_LENGTH).refine(isControlFree2, "project label contains control characters").refine(
-      (value) => !value.includes("/") && !value.includes("\\"),
-      "project label must be a basename, not a path"
-    );
-    FLEET_AGENT_HARNESS_IDS = ["codex", "claude-code", "custom"];
-    FleetAgentHarnessSchemaZ = z26.enum(FLEET_AGENT_HARNESS_IDS);
-    FleetCatalogAgentEntryV1SchemaZ = z26.object({
-      agentId: FleetAgentIdSchemaZ,
-      name: FleetLabelSchemaZ,
-      harness: FleetAgentHarnessSchemaZ,
-      activity: AgentActivitySchemaZ,
-      attention: z26.boolean(),
-      statusSource: AgentGraphStatusSourceSchemaZ
-    }).strict();
-    FleetCatalogSessionEntryV1SchemaZ = z26.object({
-      sessionId: FleetSessionIdSchemaZ,
-      label: FleetLabelSchemaZ,
-      projectLabel: FleetProjectLabelSchemaZ,
-      appCreated: z26.boolean(),
-      paneCount: z26.number().int().nonnegative().max(FLEET_MAX_PANES_PER_SESSION),
-      agents: z26.array(FleetCatalogAgentEntryV1SchemaZ).max(FLEET_MAX_AGENTS_PER_SESSION)
-    }).strict();
-    FleetCatalogResourceV1SchemaZ = z26.object({
-      version: z26.literal(FLEET_CATALOG_RESOURCE_VERSION),
-      daemon: DaemonInstanceIdentitySchemaZ,
-      sessions: z26.array(FleetCatalogSessionEntryV1SchemaZ).max(FLEET_MAX_SESSIONS)
-    }).strict().superRefine((resource3, ctx) => {
-      const sessionIds = /* @__PURE__ */ new Set();
-      const agentIds = /* @__PURE__ */ new Set();
-      let totalAgents = 0;
-      for (const [sessionIndex, session] of resource3.sessions.entries()) {
-        if (sessionIds.has(session.sessionId)) {
-          ctx.addIssue({
-            code: z26.ZodIssueCode.custom,
-            message: "session ids must be unique",
-            path: ["sessions", sessionIndex, "sessionId"]
-          });
-        }
-        sessionIds.add(session.sessionId);
-        for (const [agentIndex, agent] of session.agents.entries()) {
-          if (agentIds.has(agent.agentId)) {
-            ctx.addIssue({
-              code: z26.ZodIssueCode.custom,
-              message: "agent ids must be unique across the fleet",
-              path: ["sessions", sessionIndex, "agents", agentIndex, "agentId"]
-            });
-          }
-          agentIds.add(agent.agentId);
-        }
-        totalAgents += session.agents.length;
-      }
-      if (totalAgents > FLEET_MAX_TOTAL_AGENTS) {
-        ctx.addIssue({
-          code: z26.ZodIssueCode.custom,
-          message: "fleet total agent limit exceeded",
-          path: ["sessions"]
-        });
-      }
     });
   }
 });
@@ -21424,7 +21436,11 @@ function projectApplicationShellResourceV3(session, appWindows, missionWorkspace
     dock,
     appWindows,
     ...missionWorkspace === void 0 ? {} : { missionWorkspace },
-    ...agentGraphOverlay === void 0 ? {} : { agentGraphOverlay }
+    ...agentGraphOverlay === void 0 ? {} : { agentGraphOverlay },
+    // Correlation key: the open workspace's own fleet id, minted by the SAME
+    // authority the catalog and promotion reversal use, so the renderer can mark
+    // this session open in the sidebar and exclude it from the graph merge.
+    fleetSessionId: fleetSessionIdForName(session.name)
   });
   projectApplicationShellV1(parsed);
   return deepFreeze4(parsed);
@@ -21509,6 +21525,7 @@ var init_application_shell2 = __esm({
     init_src();
     init_classify();
     init_agent_resolution();
+    init_fleet_catalog2();
     AGENT_STATE_STAMP = /^(?:working|blocked|done|idle):\d+$/u;
   }
 });
