@@ -26499,7 +26499,13 @@ var init_tmux_view_executor = __esm({
           if (!RuntimeSessionIdSchemaZ3.safeParse(sessionId2).success || !RuntimeWindowIdSchemaZ3.safeParse(windowId).success || !RuntimePaneIdSchemaZ3.safeParse(paneId).success || !/^(?:0|[1-9][0-9]*)$/u.test(paneCount) || !/^(?:0|[1-9][0-9]*)$/u.test(sessionWindowCount)) {
             throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
           }
-          return { sessionId: sessionId2, windowId, paneId, paneCount, sessionWindowCount };
+          return {
+            sessionId: sessionId2,
+            windowId,
+            paneId,
+            paneCount,
+            sessionWindowCount
+          };
         });
         const sessionIds = new Set(parsed.map((row) => row.sessionId));
         const paneIds = parsed.map((row) => row.paneId);
@@ -28029,6 +28035,10 @@ function parseAgentOptions(stdout) {
 function createTmuxAgentStatusProbe(deps2) {
   const readProcessTable2 = deps2.readProcessTable ?? readProcessTable;
   const capture = deps2.capture ?? ((runtimePaneId, lines) => deps2.run(["capture-pane", "-p", "-J", "-t", runtimePaneId, "-S", `-${lines}`]));
+  const ttlSeconds = deps2.scrapeCacheTtlSeconds ?? SCRAPE_CACHE_TTL_SECONDS;
+  const captureBudget = deps2.scrapeCaptureBudget ?? SCRAPE_CAPTURE_BUDGET;
+  const verdictCache = /* @__PURE__ */ new Map();
+  let tableCache = null;
   return {
     probe(input) {
       const facts = /* @__PURE__ */ new Map();
@@ -28042,45 +28052,83 @@ function createTmuxAgentStatusProbe(deps2) {
         AGENT_OPTIONS_FORMAT
       ]);
       const options = optionsStdout === null ? /* @__PURE__ */ new Map() : parseAgentOptions(optionsStdout);
-      let processTable = null;
-      const table = () => processTable ??= readProcessTable2();
+      const table = () => {
+        if (tableCache === null || input.nowSec - tableCache.readAtSec > ttlSeconds) {
+          tableCache = { table: readProcessTable2(), readAtSec: input.nowSec };
+        }
+        return tableCache.table;
+      };
+      const candidates = [];
+      const emit = (pane, raw, scrape) => {
+        facts.set(pane.runtimePaneId, {
+          agentStateRaw: raw?.stateRaw ?? null,
+          agentStatusTextRaw: raw?.statusTextRaw ?? null,
+          agentDisplayNameRaw: raw?.displayNameRaw ?? null,
+          agentScrapeState: scrape
+        });
+      };
       for (const pane of input.panes) {
         const raw = options.get(pane.runtimePaneId);
-        const stateRaw = raw?.stateRaw ?? null;
-        const statusTextRaw = raw?.statusTextRaw ?? null;
-        const displayNameRaw = raw?.displayNameRaw ?? null;
-        const authority = parseAuthority(stateRaw ?? void 0, input.nowSec);
+        const authority = parseAuthority(raw?.stateRaw ?? void 0, input.nowSec);
         if (authority !== null) {
-          facts.set(pane.runtimePaneId, {
-            agentStateRaw: stateRaw,
-            agentStatusTextRaw: statusTextRaw,
-            agentDisplayNameRaw: displayNameRaw,
-            agentScrapeState: null
-          });
+          verdictCache.delete(pane.runtimePaneId);
+          emit(pane, raw, null);
           continue;
         }
+        const cached2 = verdictCache.get(pane.runtimePaneId);
+        const priorEntry = cached2 && cached2.command === pane.currentCommand ? cached2 : null;
+        if (priorEntry && input.nowSec - priorEntry.scrapedAtSec <= ttlSeconds) {
+          emit(pane, raw, priorEntry.verdict);
+          continue;
+        }
+        candidates.push({ pane, raw, priorEntry });
+      }
+      candidates.sort(
+        (a, b) => (a.priorEntry?.scrapedAtSec ?? Number.NEGATIVE_INFINITY) - (b.priorEntry?.scrapedAtSec ?? Number.NEGATIVE_INFINITY)
+      );
+      let capturesUsed = 0;
+      for (const { pane, raw, priorEntry } of candidates) {
         const manifest = resolveAgentCommand(pane.currentCommand, raw?.pid ?? 0, table(), {
           ...raw?.hint ? { hint: raw.hint } : {},
           ...deps2.manifests ? { manifests: deps2.manifests } : {}
         }).manifest;
-        let scrapeState = "unknown";
-        if (manifest && manifest.id !== "shell") {
-          const captured = capture(pane.runtimePaneId, SCRAPE_LINES);
-          const snapshot = parseSnapshot(captured ?? "", { lines: SCRAPE_LINES });
-          scrapeState = classifyInstant({ ...snapshot, title: pane.title }, manifest);
+        if (!manifest || manifest.id === "shell") {
+          verdictCache.set(pane.runtimePaneId, {
+            verdict: "unknown",
+            command: pane.currentCommand,
+            scrapedAtSec: input.nowSec
+          });
+          emit(pane, raw, "unknown");
+          continue;
         }
-        facts.set(pane.runtimePaneId, {
-          agentStateRaw: stateRaw,
-          agentStatusTextRaw: statusTextRaw,
-          agentDisplayNameRaw: displayNameRaw,
-          agentScrapeState: scrapeState
+        if (capturesUsed >= captureBudget) {
+          emit(pane, raw, priorEntry?.verdict ?? "unknown");
+          continue;
+        }
+        capturesUsed += 1;
+        const captured = capture(pane.runtimePaneId, SCRAPE_LINES);
+        const snapshot = parseSnapshot(captured ?? "", { lines: SCRAPE_LINES });
+        const verdict = classifyInstant({ ...snapshot, title: pane.title }, manifest);
+        verdictCache.set(pane.runtimePaneId, {
+          verdict,
+          command: pane.currentCommand,
+          scrapedAtSec: input.nowSec
         });
+        emit(pane, raw, verdict);
+      }
+      if (verdictCache.size > SCRAPE_CACHE_MAX_ENTRIES) {
+        const byAge = [...verdictCache.entries()].sort(
+          (a, b) => a[1].scrapedAtSec - b[1].scrapedAtSec
+        );
+        for (const [paneId] of byAge.slice(0, verdictCache.size - SCRAPE_CACHE_MAX_ENTRIES)) {
+          verdictCache.delete(paneId);
+        }
       }
       return facts;
     }
   };
 }
-var AGENT_FIELD_SEPARATOR, AGENT_LINE_SENTINEL, AGENT_OPTIONS_FORMAT, SCRAPE_LINES, RUNTIME_PANE_ID2;
+var AGENT_FIELD_SEPARATOR, AGENT_LINE_SENTINEL, AGENT_OPTIONS_FORMAT, SCRAPE_LINES, SCRAPE_CACHE_TTL_SECONDS, SCRAPE_CAPTURE_BUDGET, SCRAPE_CACHE_MAX_ENTRIES, RUNTIME_PANE_ID2;
 var init_agent_status_probe = __esm({
   "packages/daemon/src/terminal/attachments/agent-status-probe.ts"() {
     "use strict";
@@ -28099,6 +28147,9 @@ var init_agent_status_probe = __esm({
       AGENT_LINE_SENTINEL
     ].join(AGENT_FIELD_SEPARATOR);
     SCRAPE_LINES = 20;
+    SCRAPE_CACHE_TTL_SECONDS = 5;
+    SCRAPE_CAPTURE_BUDGET = 4;
+    SCRAPE_CACHE_MAX_ENTRIES = 1024;
     RUNTIME_PANE_ID2 = /^%(?:0|[1-9][0-9]*)$/u;
   }
 });
