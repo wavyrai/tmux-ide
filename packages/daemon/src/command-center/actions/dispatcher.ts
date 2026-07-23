@@ -30,6 +30,7 @@ import { broadcastActionComplete } from "../ws-events.ts";
 import { daemonActionCommandRegistry } from "./command-definitions.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
 import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
+import type { WorkspacePromotionBackend } from "./handlers/workspace-promote.ts";
 import type { AppWindowMutationBackend } from "./handlers/app-window-mutate.ts";
 
 export interface DispatcherDeps {
@@ -41,6 +42,8 @@ export interface DispatcherDeps {
   workspacePaneCreationBackend?: WorkspacePaneCreationBackend;
   /** Instance-owned config-free admission authority; never renderer-authored. */
   workspaceOpenBackend?: WorkspaceOpenBackend;
+  /** Instance-owned session-promotion admission authority; never renderer-authored. */
+  workspacePromotionBackend?: WorkspacePromotionBackend;
   /** Instance-owned AppWindow authority; renderer never supplies its envelope. */
   appWindowMutationBackend?: AppWindowMutationBackend;
 }
@@ -167,6 +170,7 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
         daemonInstanceId: deps.daemonInstanceId,
         workspacePaneCreationBackend: deps.workspacePaneCreationBackend,
         workspaceOpenBackend: deps.workspaceOpenBackend,
+        workspacePromotionBackend: deps.workspacePromotionBackend,
         appWindowMutationBackend: deps.appWindowMutationBackend,
       };
       result = entry.handlerWithContext

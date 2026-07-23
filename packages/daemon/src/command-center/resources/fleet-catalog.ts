@@ -50,6 +50,17 @@ function digest(value: string): string {
 }
 
 /**
+ * Mint the opaque fleet session id for a live tmux session name. The SINGLE
+ * source of truth for `session.<digest>`: the catalog projector emits it and the
+ * promotion authority reverses it (enumerate live names, mint each, match the
+ * requested id) so a fleet id can be resolved to a session daemon-side without
+ * ever accepting a raw session name from the wire.
+ */
+export function fleetSessionIdForName(sessionName: string): string {
+  return `session.${digest(sessionName)}`;
+}
+
+/**
  * Control-strip, collapse whitespace and clamp a candidate label to a valid
  * {@link FleetLabelSchemaZ} value; falls back when nothing printable remains.
  * Strips code points <= 31 and 127-159 (a superset of the contract's control
@@ -120,7 +131,7 @@ function projectSession(
     });
   }
   return {
-    sessionId: `session.${digest(session.name)}`,
+    sessionId: fleetSessionIdForName(session.name),
     label: fleetLabel(session.name, "session"),
     projectLabel: fleetProjectLabel(session.cwd, fleetLabel(session.name, "workspace")),
     appCreated: session.appCreated,

@@ -60,6 +60,11 @@ export type ActionErrorCode =
   | "workspace_creation_failed"
   | "workspace_cleanup_unproven"
   | "workspace_resource_changed"
+  | "session_not_found"
+  | "session_not_adopted"
+  | "session_internal"
+  | "stamp_failed"
+  | "promotion_verification_failed"
   | "internal";
 
 export class ActionError extends Error {

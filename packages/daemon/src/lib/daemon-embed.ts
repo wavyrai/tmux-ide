@@ -31,6 +31,7 @@ import {
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
+import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
 import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
 import {
   createNativeTerminalAttachmentRuntime,
@@ -644,6 +645,7 @@ async function startHttpServer({
   daemonIdentity,
   workspacePaneCreationBackend,
   workspaceOpenBackend,
+  workspacePromotionBackend,
   appWindowMutationBackend,
   workspaceRegistry,
   terminalAttachmentRuntime,
@@ -663,6 +665,7 @@ async function startHttpServer({
   };
   workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
   workspaceOpenBackend: WorkspaceOpenAuthority;
+  workspacePromotionBackend: WorkspacePromotionAuthority;
   appWindowMutationBackend: AppWindowMutationAuthority;
   workspaceRegistry: WorkspaceRegistry;
   terminalAttachmentRuntime: NativeTerminalAttachmentRuntime;
@@ -703,6 +706,7 @@ async function startHttpServer({
     daemonIdentity,
     workspacePaneCreationBackend,
     workspaceOpenBackend,
+    workspacePromotionBackend,
     appWindowMutationBackend,
     workspaceRegistry,
     terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
@@ -907,6 +911,11 @@ export async function startEmbeddedDaemon(
       registry: workspaceRegistry,
       tmuxAuthority,
     });
+    const workspacePromotion = new WorkspacePromotionAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
+      tmuxAuthority,
+    });
     const appWindowMutation = new AppWindowMutationAuthority({
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
@@ -942,6 +951,7 @@ export async function startEmbeddedDaemon(
         daemonIdentity: { productVersion, instanceId, startedAt },
         workspacePaneCreationBackend: workspacePaneCreation,
         workspaceOpenBackend: workspaceOpen,
+        workspacePromotionBackend: workspacePromotion,
         appWindowMutationBackend: appWindowMutation,
         workspaceRegistry,
         terminalAttachmentRuntime,
@@ -951,6 +961,7 @@ export async function startEmbeddedDaemon(
         terminalAttachmentRuntime?.dispose() ?? Promise.resolve(),
         workspacePaneCreation.dispose(),
         workspaceOpen.dispose(),
+        workspacePromotion.dispose(),
         appWindowMutation.dispose(),
       ]);
       throw error;
@@ -964,6 +975,7 @@ export async function startEmbeddedDaemon(
       );
       const paneDisposal = Promise.resolve().then(() => workspacePaneCreation.dispose());
       const workspaceOpenDisposal = Promise.resolve().then(() => workspaceOpen.dispose());
+      const workspacePromotionDisposal = Promise.resolve().then(() => workspacePromotion.dispose());
       const appWindowMutationDisposal = Promise.resolve().then(() => appWindowMutation.dispose());
       const closePromise = Promise.resolve()
         .then(() => waitForServerClose(server))
@@ -971,6 +983,7 @@ export async function startEmbeddedDaemon(
       await Promise.allSettled([
         paneDisposal,
         workspaceOpenDisposal,
+        workspacePromotionDisposal,
         appWindowMutationDisposal,
         Promise.resolve().then(() => closeClients()),
         ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
@@ -1133,6 +1146,7 @@ export async function startEmbeddedDaemon(
             );
             await capture(() => workspacePaneCreation.dispose());
             await capture(() => workspaceOpen.dispose());
+            await capture(() => workspacePromotion.dispose());
             await capture(() => appWindowMutation.dispose());
 
             let closePromise: Promise<void>;

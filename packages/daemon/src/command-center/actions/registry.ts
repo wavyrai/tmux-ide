@@ -19,6 +19,8 @@ import {
   type WorkspacePaneCreateMutationResult,
   type WorkspaceOpenMutationRequest,
   type WorkspaceOpenMutationResult,
+  type WorkspacePromoteMutationRequest,
+  type WorkspacePromoteMutationResult,
   type ActionInput,
   type ActionName,
   type ActionResult,
@@ -43,6 +45,7 @@ import { appSetRemoteAccessHandler } from "./handlers/app-set-remote-access.ts";
 import { daemonShutdownHandler } from "./handlers/daemon-shutdown.ts";
 import { workspacePaneCreateHandler } from "./handlers/workspace-pane-create.ts";
 import { workspaceOpenHandler } from "./handlers/workspace-open.ts";
+import { workspacePromoteHandler } from "./handlers/workspace-promote.ts";
 
 export interface ActionExecutionContext {
   readonly operationId?: string;
@@ -52,6 +55,9 @@ export interface ActionExecutionContext {
   };
   readonly workspaceOpenBackend?: {
     open(input: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
+  };
+  readonly workspacePromotionBackend?: {
+    promote(input: WorkspacePromoteMutationRequest): Promise<WorkspacePromoteMutationResult>;
   };
   readonly appWindowMutationBackend?: {
     mutate(input: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
@@ -163,6 +169,12 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["workspace.open"].result,
     handler: (input) => workspaceOpenHandler(input),
     handlerWithContext: workspaceOpenHandler,
+  },
+  "workspace.promote": {
+    inputSchema: ActionContractsZ["workspace.promote"].input,
+    resultSchema: ActionContractsZ["workspace.promote"].result,
+    handler: (input) => workspacePromoteHandler(input),
+    handlerWithContext: workspacePromoteHandler,
   },
   "workspace.app-window.mutate": {
     inputSchema: ActionContractsZ["workspace.app-window.mutate"].input,

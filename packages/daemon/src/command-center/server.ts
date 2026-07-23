@@ -152,6 +152,7 @@ export interface CreateAppOptions {
   };
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
   workspaceOpenBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenBackend;
+  workspacePromotionBackend?: import("./actions/handlers/workspace-promote.ts").WorkspacePromotionBackend;
   appWindowMutationBackend?: import("./actions/handlers/app-window-mutate.ts").AppWindowMutationBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
@@ -247,6 +248,7 @@ function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
     if (
       actionName !== "workspace.pane.create" &&
       actionName !== "workspace.open" &&
+      actionName !== "workspace.promote" &&
       actionName !== "workspace.app-window.mutate"
     ) {
       return next();
@@ -513,6 +515,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       daemonInstanceId: daemonIdentity.instanceId,
       workspacePaneCreationBackend: options.workspacePaneCreationBackend,
       workspaceOpenBackend: options.workspaceOpenBackend,
+      workspacePromotionBackend: options.workspacePromotionBackend,
       appWindowMutationBackend: options.appWindowMutationBackend,
     }),
   );

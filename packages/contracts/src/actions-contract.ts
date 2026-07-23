@@ -27,6 +27,10 @@ import {
   WorkspaceOpenMutationResultSchemaZ,
 } from "./workspace-open.ts";
 import {
+  WorkspacePromoteArgumentsSchemaZ,
+  WorkspacePromoteMutationResultSchemaZ,
+} from "./workspace-promotion.ts";
+import {
   AppWindowMutationArgumentsSchemaZ,
   AppWindowMutationResultSchemaZ,
 } from "./app-window-mutation.ts";
@@ -219,6 +223,13 @@ export const WorkspaceOpenInputZ = WorkspaceOpenArgumentsSchemaZ;
 export const WorkspaceOpenResultZ = WorkspaceOpenMutationResultSchemaZ;
 
 // ---------------------------------------------------------------------------
+// workspace.promote
+// ---------------------------------------------------------------------------
+
+export const WorkspacePromoteInputZ = WorkspacePromoteArgumentsSchemaZ;
+export const WorkspacePromoteResultZ = WorkspacePromoteMutationResultSchemaZ;
+
+// ---------------------------------------------------------------------------
 // workspace.app-window.mutate
 // ---------------------------------------------------------------------------
 
@@ -297,6 +308,10 @@ export const ActionContractsZ = {
   "workspace.open": {
     input: WorkspaceOpenInputZ,
     result: WorkspaceOpenResultZ,
+  },
+  "workspace.promote": {
+    input: WorkspacePromoteInputZ,
+    result: WorkspacePromoteResultZ,
   },
   "workspace.app-window.mutate": {
     input: AppWindowMutationInputZ,

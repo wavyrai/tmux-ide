@@ -45,6 +45,7 @@ export * from "./workspace-changes-resource.ts";
 export * from "./workspace-changes-view.ts";
 export * from "./workspace-pane-creation.ts";
 export * from "./workspace-open.ts";
+export * from "./workspace-promotion.ts";
 export * from "./visual-tokens.ts";
 export * from "./visual-recipes.ts";
 export * from "./pane-appearance.ts";
