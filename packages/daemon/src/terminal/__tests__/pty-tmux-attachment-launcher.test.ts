@@ -26,7 +26,7 @@ function plan(
     target: { workspaceName: "workspace.alpha", semanticPaneId: "pane.worker" },
     viewerMode,
     viewport: { cols: 120, rows: 40 },
-    source: { sessionId: "$12", windowId: "@34", runtimePaneId: "%56", paneCount: 1 },
+    source: { sessionId: "$12", windowId: "@34", runtimePaneId: "%56", windowPaneCount: 1 },
   });
 }
 
@@ -42,6 +42,7 @@ function input(selectedPlan = plan()): TmuxAttachmentClientTransportInput {
       expectedViewSessionId: "$90",
       expectedWindowId: selectedPlan.identity.durableSource.windowId,
       expectedPaneId: selectedPlan.identity.durableSource.runtimePaneId,
+      expectedWindowPaneCount: 1,
     },
     viewport: { ...selectedPlan.viewport },
     viewerMode: selectedPlan.viewerMode,
@@ -145,6 +146,11 @@ describe("PtyTmuxAttachmentLauncher", () => {
     expect(attempt.status).toBe("claimed");
     await expect(attempt.outcome).resolves.toEqual({ status: "executed" });
     expect(adapter.lastSpawned()!.paused).toBe(true);
+    // The spawned client is size-passive (m41 attach-2): the embedded attach
+    // carries `-f ignore-size` so it never drives the shared window's size.
+    expect(adapter.spawnLog[0]!.args.join(" ")).toContain("ignore-size");
+    // The launch proof no longer gates on single-pane windows.
+    expect(proof.calls[0]?.join(" ")).not.toContain("window_panes");
     expect(proof.calls[0]?.slice(0, 2)).toEqual(["-L", "owned-socket"]);
     expect(proof.calls[0]).toContainEqual(
       expect.stringContaining(`=${selectedPlan.identity.viewSessionName}`),

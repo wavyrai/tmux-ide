@@ -74,7 +74,8 @@ export interface GuardedAttachmentViewOperation {
     readonly sessionId: string;
     readonly windowId: string;
     readonly runtimePaneId: string;
-    readonly paneCount: 1;
+    /** The resolved window's live pane count (m41 attach-2); no longer pinned to 1. */
+    readonly windowPaneCount: number;
   };
   /** Server-authored plan whose selected operation is executed by this guard. */
   readonly plan: GroupedTmuxAttachmentPlan;
@@ -309,6 +310,13 @@ function sameLinkedWindow(left: SemanticPaneResolution, right: SemanticPaneResol
 function runtimePaneKey(resolution: SemanticPaneResolution): string {
   // `%pane_id` is server-global and remains stable when a window is linked
   // into another session. Including `$session_id` would permit two writers.
+  //
+  // m41 attach-2 caveat: interactive ownership is still keyed per runtime pane,
+  // but attachment now links the WHOLE window. Two interactive attachments that
+  // target different panes of the same window therefore do not yet register as
+  // conflicting even though they share one linked window. attach-3 re-keys
+  // interactive ownership to the window id (`resolution.source.windowStamp` /
+  // `windowId`) to restore window-granular exclusivity.
   return resolution.source.runtimePaneId;
 }
 
@@ -589,7 +597,7 @@ export class AttachmentLeaseManager {
               sessionId: state.resolution.source.sessionId,
               windowId: state.resolution.source.windowId,
               runtimePaneId: state.resolution.source.runtimePaneId,
-              paneCount: 1,
+              windowPaneCount: state.resolution.source.windowPaneCount,
             },
             plan: structuredClone(state.plan),
           });
@@ -855,7 +863,7 @@ export class AttachmentLeaseManager {
         sessionId: resolution.source.sessionId,
         windowId: resolution.source.windowId,
         runtimePaneId: resolution.source.runtimePaneId,
-        paneCount: 1,
+        windowPaneCount: resolution.source.windowPaneCount,
       },
     });
   }

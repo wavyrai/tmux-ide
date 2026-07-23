@@ -49,8 +49,13 @@ export const GroupedTmuxAttachmentPlanInputSchemaZ = z
         sessionId: RuntimeSessionIdSchemaZ,
         windowId: RuntimeWindowIdSchemaZ,
         runtimePaneId: RuntimePaneIdSchemaZ,
-        /** Grouped views are valid only after discovery proves this invariant. */
-        paneCount: z.literal(1),
+        /**
+         * The resolved window's live pane count (m41 attach-2). The planner
+         * links the WHOLE window, so this is a window proof, not a per-pane
+         * gate: any positive count is valid. Single-pane windows keep passing
+         * `1`, so their plans stay byte-identical.
+         */
+        windowPaneCount: z.number().int().positive(),
       })
       .strict(),
   })
@@ -150,9 +155,14 @@ function attachCommand(
   const target = `=${viewSessionName}`;
   // `-E` keeps daemon-client environment values out of the view session by
   // disabling tmux's update-environment behavior during every attachment.
+  //
+  // `-f ignore-size` makes the view client size-passive (m41 attach-2): tmux
+  // excludes an ignore-size client when computing the shared window's size, so
+  // this attachment never reflows the origin window while an interactive size
+  // owner is present. Read-only's `-r` already implies read-only + ignore-size.
   return viewerMode === "read-only"
     ? tmux(["attach-session", "-E", "-r", "-t", target])
-    : tmux(["attach-session", "-E", "-t", target]);
+    : tmux(["attach-session", "-E", "-f", "ignore-size", "-t", target]);
 }
 
 /**

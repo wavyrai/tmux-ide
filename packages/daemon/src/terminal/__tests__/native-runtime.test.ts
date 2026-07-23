@@ -119,6 +119,7 @@ function applicationShellPaneWire(
     "agent",
     options.mission ?? "",
     "/repo",
+    "",
     "tmux-ide-pane-v2",
   ].join(INVENTORY_SEPARATOR);
 }
@@ -180,6 +181,8 @@ describe("workspace-registry semantic pane discovery", () => {
       windowId?: string;
       paneId?: string;
       windows?: number;
+      panes?: number;
+      windowStamp?: string;
       active?: boolean;
     } = {},
   ): string {
@@ -188,7 +191,7 @@ describe("workspace-registry semantic pane discovery", () => {
       "$1",
       options.windowId ?? "@2",
       options.paneId ?? "%3",
-      "1",
+      String(options.panes ?? 1),
       String(options.windows ?? 1),
       options.stamp ?? "pane.agent",
       "0",
@@ -201,6 +204,7 @@ describe("workspace-registry semantic pane discovery", () => {
       "agent",
       "",
       "/repo",
+      options.windowStamp ?? "",
       "tmux-ide-pane-v2",
     ].join(INVENTORY_SEPARATOR);
   }
@@ -240,6 +244,55 @@ describe("workspace-registry semantic pane discovery", () => {
       discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
     });
     await expect(catalog.resolve(request().target)).rejects.toMatchObject({ code });
+  });
+
+  it("resolves a stamped multi-pane window through real discovery (m41 attach-2)", async () => {
+    const sessionName = "multi-session";
+    const { registry } = createRegistry("workspace.alpha", sessionName);
+    const rows = [
+      paneWire(sessionName, {
+        panes: 2,
+        paneId: "%3",
+        stamp: "pane.agent",
+        windowStamp: "window.workspace.alpha",
+      }),
+      paneWire(sessionName, {
+        panes: 2,
+        paneId: "%4",
+        stamp: "pane.worker",
+        windowStamp: "window.workspace.alpha",
+        active: false,
+      }),
+    ].join("\n");
+    const { runner } = inventoryRunner(sessionName, `${rows}\n`);
+    const catalog = new SemanticPaneCatalog({
+      discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
+    });
+    await expect(catalog.resolve(request().target)).resolves.toMatchObject({
+      source: {
+        sessionId: "$1",
+        windowId: "@2",
+        runtimePaneId: "%3",
+        windowPaneCount: 2,
+        windowStamp: "window.workspace.alpha",
+      },
+    });
+  });
+
+  it("refuses an unstamped multi-pane window and fails closed", async () => {
+    const sessionName = "multi-unstamped";
+    const { registry } = createRegistry("workspace.alpha", sessionName);
+    const rows = [
+      paneWire(sessionName, { panes: 2, paneId: "%3", stamp: "pane.agent" }),
+      paneWire(sessionName, { panes: 2, paneId: "%4", stamp: "pane.worker", active: false }),
+    ].join("\n");
+    const { runner } = inventoryRunner(sessionName, `${rows}\n`);
+    const catalog = new SemanticPaneCatalog({
+      discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
+    });
+    await expect(catalog.resolve(request().target)).rejects.toMatchObject({
+      code: "missing-window-stamp",
+    });
   });
 
   it("rejects a pane topology race between exact before/after snapshots", async () => {
@@ -337,6 +390,31 @@ describe("native terminal attachment geometry", () => {
     expect(serialized).toContain("$1:@2.%3");
     expect(serialized).toContain(groupedTmuxViewSessionName(LEASE_ID, 0));
     expect(serialized).toContain(`v1:${LEASE_ID}:0`);
+    // The render grid is the WHOLE window and the guard no longer gates panes.
+    expect(serialized).toContain("#{window_width}");
+    expect(serialized).toContain("#{window_height}");
+    expect(serialized).not.toContain("#{==:#{window_panes},1}");
+  });
+
+  it("resolves a multi-pane window with the window as the render grid (m41 attach-2)", async () => {
+    const rig = geometryRig(
+      (viewName) => `source\t$1\t@2\t%3\t9\t200\t50\nclient\t4321\t${viewName}\t200\t50\n`,
+    );
+    rig.mutate(row({ windowPaneCount: 9, windowStamp: "window.workspace.alpha" }));
+    await expect(rig.resolver.resolve(descriptor(), claim)).resolves.toEqual({
+      sourceGrid: { cols: 200, rows: 50 },
+      clientViewport: { cols: 200, rows: 50 },
+    });
+  });
+
+  it("fails closed when live window_panes disagrees with the resolved windowPaneCount", async () => {
+    const rig = geometryRig(
+      (viewName) => `source\t$1\t@2\t%3\t8\t200\t50\nclient\t4321\t${viewName}\t200\t50\n`,
+    );
+    rig.mutate(row({ windowPaneCount: 9, windowStamp: "window.workspace.alpha" }));
+    await expect(rig.resolver.resolve(descriptor(), claim)).rejects.toBeInstanceOf(
+      NativeTerminalAttachmentRuntimeError,
+    );
   });
 
   it.each([

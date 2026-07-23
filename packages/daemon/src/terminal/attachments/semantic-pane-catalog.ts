@@ -275,14 +275,15 @@ export class SemanticPaneCatalog {
   /**
    * Proves the WHOLE tmux window the resolved pane lives in (m41 attach-1).
    *
-   * This card widens the catalog from a single-pane gate to a durable window
+   * attach-1 widened the catalog from a single-pane gate to a durable window
    * identity: the previous `windowPaneCount !== 1` throw is gone, and a
    * multi-pane window resolves once it carries a valid, unique
-   * `@tmux_ide_window_id` stamp shared by every one of its panes. End-to-end
-   * attachment behavior is intentionally UNCHANGED after this card — the
-   * transport/projection layers still gate on `window_panes == 1` (grouped-tmux
-   * plan-input `literal(1)`, the native-runtime view guard, the pty launcher,
-   * and the application-shell projection) until m41 attach-2/3 widen them.
+   * `@tmux_ide_window_id` stamp shared by every one of its panes. m41 attach-2
+   * then made the transport itself window-capable (grouped-tmux plan input,
+   * native-runtime geometry, the pty launcher and the view executor all dropped
+   * their `window_panes == 1` gates and the view client attaches size-passive).
+   * The application-shell attachability projection still gates end-to-end app
+   * behavior until m41 attach-4 widens it.
    */
   #proveWindow(
     row: TrustedSemanticPaneSnapshot,

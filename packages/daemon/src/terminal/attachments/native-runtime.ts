@@ -343,6 +343,10 @@ const PANE_FORMAT = [
   "#{@ide_type}",
   "#{@tmux_ide_mission}",
   "#{pane_current_path}",
+  // Durable window stamp (m41). It is a WINDOW option, so every pane of a
+  // window reports the same value; the catalog requires it before a multi-pane
+  // window is attachable.
+  "#{@tmux_ide_window_id}",
   PANE_WIRE_SENTINEL,
 ].join(WIRE_SEPARATOR);
 
@@ -398,7 +402,7 @@ function parsePaneSnapshot(
   const runtimeIds = new Set<string>();
   for (const line of strictLines(stdout, MAX_DISCOVERED_PANES)) {
     const fields = line.split(WIRE_SEPARATOR);
-    if (fields.length !== 18 || fields[17] !== PANE_WIRE_SENTINEL) {
+    if (fields.length !== 19 || fields[18] !== PANE_WIRE_SENTINEL) {
       throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
     }
     const [
@@ -419,7 +423,9 @@ function parsePaneSnapshot(
       type,
       missionStamp,
       dir,
+      windowStampValue,
     ] = fields as [
+      string,
       string,
       string,
       string,
@@ -461,6 +467,7 @@ function parsePaneSnapshot(
       windowPaneCount: positiveInteger(paneCountValue),
       sessionWindowCount: positiveInteger(windowCountValue),
       semanticPaneId: nullable(stamp),
+      windowStamp: nullable(windowStampValue),
       index: nonnegativeInteger(indexValue),
       title: boundedWireValue(title, 1_024),
       currentCommand: boundedWireValue(currentCommand, 512),
@@ -657,17 +664,19 @@ export class NativeTerminalAttachmentGeometryResolver {
     const sourceTarget = `${source.sessionId}:${source.windowId}.${source.runtimePaneId}`;
     const viewTarget = `=${viewName}:${source.windowId}.${source.runtimePaneId}`;
     // The `=name` target is exact. The session-local marker then proves that
-    // exact view's ownership while the linked global window id and
-    // one-window/one-pane topology prove its contents. The exact target
-    // already selects the expected global pane id; tmux does not populate
-    // `pane_id` in this if-shell format context on all supported versions.
-    const viewGuard = `#{&&:#{==:#{window_id},${source.windowId}},#{&&:#{==:#{window_panes},1},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${marker}}}}}`;
+    // exact view's ownership while the linked global window id and single-window
+    // topology prove its contents. The exact target already selects the expected
+    // global pane id; tmux does not populate `pane_id` in this if-shell format
+    // context on all supported versions. m41 attach-2 drops the former
+    // `window_panes == 1` gate so a multi-pane linked window resolves; the
+    // render grid is the WHOLE window, so the payload reports window dimensions.
+    const viewGuard = `#{&&:#{==:#{window_id},${source.windowId}},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${marker}}}}`;
     const payload = commandString([
       "display-message",
       "-p",
       "-t",
       sourceTarget,
-      "source\t#{session_id}\t#{window_id}\t#{pane_id}\t#{window_panes}\t#{pane_width}\t#{pane_height}",
+      "source\t#{session_id}\t#{window_id}\t#{pane_id}\t#{window_panes}\t#{window_width}\t#{window_height}",
       ";",
       "list-clients",
       "-t",
@@ -695,13 +704,17 @@ export class NativeTerminalAttachmentGeometryResolver {
       throw new NativeTerminalAttachmentRuntimeError("geometry-mismatch");
     }
     const sourceFields = lines[0]!.split("\t");
+    // `window_panes` is now bound to the resolved windowPaneCount instead of the
+    // literal 1, so a live topology change between resolution and geometry fails
+    // closed. `sourceGrid` is the window's dimensions (the render grid), not one
+    // pane's; the client viewport below is already window-level.
     if (
       sourceFields.length !== 7 ||
       sourceFields[0] !== "source" ||
       sourceFields[1] !== source.sessionId ||
       sourceFields[2] !== source.windowId ||
       sourceFields[3] !== source.runtimePaneId ||
-      sourceFields[4] !== "1"
+      sourceFields[4] !== String(source.windowPaneCount)
     ) {
       throw new NativeTerminalAttachmentRuntimeError("geometry-mismatch");
     }

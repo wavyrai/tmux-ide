@@ -113,7 +113,7 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
       target: { workspaceName: "workspace.live", semanticPaneId: "pane.authorized" },
       viewerMode,
       viewport: { cols: 120, rows: 40 },
-      source: { sessionId, windowId, runtimePaneId: paneId, paneCount: 1 },
+      source: { sessionId, windowId, runtimePaneId: paneId, windowPaneCount: 1 },
     });
   }
 
@@ -125,7 +125,7 @@ describe.skipIf(!hasTmux)("TmuxAttachmentViewExecutor live server guards", () =>
       operation,
       exactViewSessionTarget: `=${selectedPlan.identity.viewSessionName}` as const,
       deadline: 10_000,
-      source: { sessionId, windowId, runtimePaneId: paneId, paneCount: 1 as const },
+      source: { sessionId, windowId, runtimePaneId: paneId, windowPaneCount: 1 },
       plan: selectedPlan,
     };
   }

@@ -67,7 +67,7 @@ function planFor(
       sessionId: source.sessionId as string,
       windowId: source.windowId as string,
       runtimePaneId: source.runtimePaneId as string,
-      paneCount: 1,
+      windowPaneCount: source.windowPaneCount as number,
     },
   });
 }
@@ -668,10 +668,10 @@ describe("AttachmentLeaseManager", () => {
         operation,
         source:
           operation === "create"
-            ? { sessionId: "$1", windowId: "@2", runtimePaneId: "%3", paneCount: 1 }
+            ? { sessionId: "$1", windowId: "@2", runtimePaneId: "%3", windowPaneCount: 1 }
             : operation === "attach"
-              ? { sessionId: "$1", windowId: "@2", runtimePaneId: "%7", paneCount: 1 }
-              : { sessionId: "$8", windowId: "@9", runtimePaneId: "%10", paneCount: 1 },
+              ? { sessionId: "$1", windowId: "@2", runtimePaneId: "%7", windowPaneCount: 1 }
+              : { sessionId: "$8", windowId: "@9", runtimePaneId: "%10", windowPaneCount: 1 },
       });
       expect(guardedOperation.exactViewSessionTarget).toBe(
         `=${guardedOperation.plan.identity.viewSessionName}`,

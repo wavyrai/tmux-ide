@@ -23,7 +23,7 @@ function input(overrides: Record<string, unknown> = {}) {
       sessionId: "$12",
       windowId: "@34",
       runtimePaneId: "%56",
-      paneCount: 1 as const,
+      windowPaneCount: 1,
     },
     ...overrides,
   };
@@ -93,18 +93,37 @@ describe("grouped tmux attachment planner", () => {
     expect(
       GroupedTmuxAttachmentPlanInputSchemaZ.safeParse(
         input({
-          source: { sessionId: "$0", windowId: "@0", runtimePaneId: "%0", paneCount: 1 },
+          source: { sessionId: "$0", windowId: "@0", runtimePaneId: "%0", windowPaneCount: 1 },
         }),
       ).success,
     ).toBe(true);
   });
 
+  it("accepts a multi-pane linked window (m41 attach-2) and keeps single-pane plans identical", () => {
+    for (const windowPaneCount of [2, 9, 64]) {
+      const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.safeParse(
+        input({ source: { ...input().source, windowPaneCount } }),
+      );
+      expect(parsed.success).toBe(true);
+      // The pane count is a window proof, not part of the durable target, so a
+      // multi-pane plan is byte-identical to the single-pane plan otherwise.
+      expect(planGroupedTmuxAttachment(input({ source: { ...input().source, windowPaneCount } }))).toEqual(
+        planGroupedTmuxAttachment(input()),
+      );
+    }
+  });
+
   it("uses exact safe interactive and read-only client argv for attach and recovery", () => {
     const interactive = planGroupedTmuxAttachment(input());
     const readOnly = planGroupedTmuxAttachment(input({ viewerMode: "read-only" }));
+    // The interactive client is size-passive (`-f ignore-size`, m41 attach-2)
+    // so it never drives the shared window's size. Read-only's `-r` already
+    // implies read-only + ignore-size.
     const interactiveAttachArgv = [
       "attach-session",
       "-E",
+      "-f",
+      "ignore-size",
       "-t",
       `=${interactive.identity.viewSessionName}`,
     ];
@@ -118,6 +137,12 @@ describe("grouped tmux attachment planner", () => {
     expect(interactive.attach.argv).toEqual(interactiveAttachArgv);
     expect(interactive.recover.attach.argv).toEqual(interactiveAttachArgv);
     expect(readOnly.attach.argv).toEqual(readOnlyAttachArgv);
+    // Size passivity must come only from the client flag; the plan never writes
+    // window-size or issues a resize.
+    for (const argv of everyArgv(interactive)) {
+      expect(argv).not.toContain("resize-window");
+      expect(argv).not.toContain("window-size");
+    }
     expect(readOnly.recover.attach.argv).toEqual(readOnlyAttachArgv);
     for (const argv of everyArgv(readOnly)) {
       expect(argv).not.toContain("set-window-option");
@@ -185,7 +210,10 @@ describe("grouped tmux attachment planner", () => {
       { ...input().source, sessionId: "owner:@34" },
       { ...input().source, windowId: "@34;run-shell" },
       { ...input().source, runtimePaneId: "%56 $(touch-pwned)" },
-      { ...input().source, paneCount: 2 },
+      // A window pane count is a positive integer; zero and fractional counts
+      // are still rejected even though the single-pane gate is gone.
+      { ...input().source, windowPaneCount: 0 },
+      { ...input().source, windowPaneCount: 1.5 },
     ]) {
       expect(GroupedTmuxAttachmentPlanInputSchemaZ.safeParse(input({ source })).success).toBe(
         false,

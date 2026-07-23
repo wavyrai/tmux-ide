@@ -181,7 +181,7 @@ describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration",
         sessionId: sourceSessionId,
         windowId: sourceWindowId,
         runtimePaneId: sourcePaneId,
-        paneCount: 1,
+        windowPaneCount: 1,
       },
     });
     // This is the durable tmux state a daemon process crash leaves behind:

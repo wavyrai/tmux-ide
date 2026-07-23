@@ -84,7 +84,7 @@ describe.skipIf(!hasTmux)("grouped tmux attachment live isolation", () => {
         sessionId: sourceSessionId,
         windowId: authorizedWindowId,
         runtimePaneId: authorizedPaneId,
-        paneCount: 1,
+        windowPaneCount: 1,
       },
     });
 
