@@ -120,6 +120,21 @@ export const DaemonEventAgentStatusChangedFrameSchemaZ = z
   })
   .strict();
 
+/**
+ * The adopted-session fleet composition changed — a session was adopted or a
+ * tmux session disappeared. Fleet-wide (no `sessionName`) like `sessions.changed`:
+ * clients re-fetch the whole fleet-catalog resource to pick up the new set of
+ * sessions. This is the ONLY frame that covers an adopted-only session (one the
+ * app never created, absent from the workspace registry) appearing or vanishing:
+ * `workspace.added` / `workspace.removed` are registry-scoped, and
+ * `sessions.changed` is derived from registry-gated discovery, so neither fires
+ * for the adopted-only fleet. tmux has no push for the session list, so the
+ * daemon polls the adopted-session set and coalesces bursts into one frame.
+ */
+export const DaemonEventFleetChangedFrameSchemaZ = z
+  .object({ type: z.literal("fleet.changed") })
+  .strict();
+
 export const DaemonEventWorkspaceAddedFrameSchemaZ = z
   .object({
     type: z.literal("workspace.added"),
@@ -157,6 +172,7 @@ export const DaemonEventServerFrameSchemaZ = z.discriminatedUnion("type", [
   DaemonEventConfigChangedFrameSchemaZ,
   DaemonEventTerminalsChangedFrameSchemaZ,
   DaemonEventAgentStatusChangedFrameSchemaZ,
+  DaemonEventFleetChangedFrameSchemaZ,
   DaemonEventWorkspaceAddedFrameSchemaZ,
   DaemonEventWorkspaceRemovedFrameSchemaZ,
   DaemonEventProtocolErrorFrameSchemaZ,

@@ -32,6 +32,8 @@ export default defineConfig({
       "src/command-center/actions/*.test.ts",
       "src/command-center/agent-status-watch.test.ts",
       "src/command-center/resources/desktop-missions.test.ts",
+      "src/command-center/resources/fleet-catalog.test.ts",
+      "src/command-center/resources/fleet-resource-route.test.ts",
       "src/command-center/workspace-pane-create-auth.test.ts",
       "src/command-center/resources/workspace-changes-git.test.ts",
       "src/command-center/resources/workspace-files-authority.test.ts",

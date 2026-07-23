@@ -16,6 +16,7 @@ import {
   discoverSessions,
   buildOverviews,
   buildProjectDetail,
+  readAdoptedSessionNames,
   readAgentStatesBySession,
 } from "./discovery.ts";
 import { AgentStatusWatcher } from "./agent-status-watch.ts";
@@ -56,6 +57,7 @@ interface ClientHandle {
   broadcastConfigChanged(sessionName: string): void;
   broadcastTerminalsChanged(sessionName: string): void;
   broadcastAgentStatusChanged(sessionName: string): void;
+  broadcastFleetChanged(): void;
 }
 const allClients = new Set<ClientHandle>();
 
@@ -63,6 +65,8 @@ let sessionsPollTimer: ReturnType<typeof setInterval> | null = null;
 let lastSessionsHash = "";
 let projectRegistryListener: (() => void) | null = null;
 let agentStatusWatcher: AgentStatusWatcher | null = null;
+let fleetPollTimer: ReturnType<typeof setInterval> | null = null;
+let lastFleetHash = "";
 
 function snapshotSessionsHash(): string {
   try {
@@ -136,6 +140,47 @@ function maybeStopAgentStatusWatcher(): void {
   if (allClients.size > 0 || !agentStatusWatcher) return;
   agentStatusWatcher.stop();
   agentStatusWatcher = null;
+}
+
+/**
+ * Hash the visible adopted-session set. A `null` read (transient tmux failure)
+ * holds the current baseline so a hiccup never looks like the whole fleet
+ * vanishing. This tracks fleet COMPOSITION only (which sessions are adopted),
+ * which is what a `fleet.changed` frame signals — agent-status transitions are
+ * carried separately by the agent-status watcher.
+ */
+function snapshotFleetHash(): string {
+  const names = readAdoptedSessionNames();
+  if (names === null) return lastFleetHash;
+  return JSON.stringify([...names].sort());
+}
+
+/** One fleet-composition poll cycle. Exposed for deterministic tests. */
+function pollFleetComposition(): void {
+  const hash = snapshotFleetHash();
+  if (hash === lastFleetHash) return;
+  lastFleetHash = hash;
+  for (const client of allClients) client.broadcastFleetChanged();
+}
+
+/**
+ * Start (lazily) the fleet-composition poller on the first connected client. It
+ * polls the adopted-session set — the ONLY signal that covers an adopted-only
+ * session (one absent from the workspace registry) appearing or disappearing —
+ * and fans a fleet-wide `fleet.changed` frame on each change. Runs only while a
+ * client is connected.
+ */
+function ensureFleetPoller(): void {
+  if (fleetPollTimer) return;
+  lastFleetHash = snapshotFleetHash();
+  fleetPollTimer = setInterval(pollFleetComposition, SESSIONS_POLL_MS);
+  fleetPollTimer.unref?.();
+}
+
+function maybeStopFleetPoller(): void {
+  if (allClients.size > 0 || !fleetPollTimer) return;
+  clearInterval(fleetPollTimer);
+  fleetPollTimer = null;
 }
 
 /**
@@ -245,6 +290,10 @@ export function handleWsEventsConnection(
     send({ type: "agent-status.changed", sessionName });
   };
 
+  const broadcastFleetChangedForClient = (): void => {
+    send({ type: "fleet.changed" });
+  };
+
   // Per-connection subscription to the current workspace-registry singleton.
   const workspaceRegistry = getDefaultWorkspaceRegistry();
   const unsubWorkspaceAdded = workspaceRegistry.on("workspace.added", (workspace) =>
@@ -263,11 +312,13 @@ export function handleWsEventsConnection(
     broadcastConfigChanged: broadcastConfigChangedForClient,
     broadcastTerminalsChanged: broadcastTerminalsChangedForClient,
     broadcastAgentStatusChanged: broadcastAgentStatusChangedForClient,
+    broadcastFleetChanged: broadcastFleetChangedForClient,
   };
   allClients.add(clientHandle);
   ensureSessionsPoller();
   ensureProjectRegistryListener();
   ensureAgentStatusWatcher();
+  ensureFleetPoller();
 
   // Server-initiated keepalive — mirrors the SSE behavior so middle-boxes
   // don't reap the connection.
@@ -303,6 +354,7 @@ export function handleWsEventsConnection(
     maybeStopSessionsPoller();
     maybeStopProjectRegistryListener();
     maybeStopAgentStatusWatcher();
+    maybeStopFleetPoller();
   };
 
   ws.on("message", (data) => {
@@ -389,4 +441,22 @@ export function _stopAgentStatusWatcherForTests(): void {
  */
 export function _tickAgentStatusWatcherForTests(): void {
   agentStatusWatcher?.tick();
+}
+
+/**
+ * Test-only hook to shut down the global fleet-composition poller.
+ */
+export function _stopFleetPollerForTests(): void {
+  if (!fleetPollTimer) return;
+  clearInterval(fleetPollTimer);
+  fleetPollTimer = null;
+  lastFleetHash = "";
+}
+
+/**
+ * Test-only hook to drive one fleet-composition poll cycle deterministically,
+ * bypassing the real interval.
+ */
+export function _pollFleetCompositionForTests(): void {
+  pollFleetComposition();
 }

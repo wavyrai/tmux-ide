@@ -24,7 +24,7 @@ import {
 import { parseAuthority, type InstantState } from "../../tui/detect/classify.ts";
 import { agentDisplayMetadata, resolveAgentStatus } from "../../tui/detect/agent-resolution.ts";
 
-interface ApplicationShellPanePresentationFacts {
+export interface ApplicationShellPanePresentationFacts {
   /** Durable tmux-ide pane stamp. A live `%pane_id` is never accepted as identity. */
   readonly semanticPaneId: string | null;
   readonly index: number;
@@ -217,7 +217,7 @@ function legacyPaneIdentities(
   });
 }
 
-function harnessForPane(
+export function harnessForPane(
   pane: ApplicationShellPanePresentationFacts,
 ): "codex" | "claude-code" | "custom" {
   const executable = `${pane.currentCommand} ${pane.type ?? ""} ${pane.name ?? ""}`.toLowerCase();

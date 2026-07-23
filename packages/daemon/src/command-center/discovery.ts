@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
 import type { PaneInfo } from "@tmux-ide/contracts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
+import { ADOPTED_OPTION } from "../tui/chrome/front-door.ts";
 
 export interface SessionInfo {
   name: string;
@@ -111,6 +112,150 @@ export function readAgentStatesBySession(): Map<string, Map<string, string>> | n
 
 export function getSessionCwd(session: string): string {
   return tmuxSilent(["display-message", "-t", session, "-p", "#{pane_current_path}"]);
+}
+
+/**
+ * Whether a session belongs in the visible fleet. Mirrors the cockpit's
+ * `isListableSession`: `_`-prefixed sessions are internal plumbing (the chrome
+ * updater, the app host) and `zz-`-prefixed sessions are development scratch —
+ * both are filtered so the fleet catalog never lists infrastructure.
+ */
+export function isVisibleFleetSession(name: string): boolean {
+  return !name.startsWith("_") && !name.startsWith("zz-");
+}
+
+/**
+ * Read the visible, adopted tmux session names (those stamped with
+ * {@link ADOPTED_OPTION}). Runs through the injectable tmux runner, so tests
+ * stay hermetic. Returns `null` when the underlying `list-sessions` call fails
+ * (e.g. no server) so a caller — the fleet-composition watcher — can hold its
+ * baseline across a transient hiccup instead of reporting the whole fleet gone.
+ */
+export function readAdoptedSessionNames(): string[] | null {
+  let raw: string;
+  try {
+    raw = _tmuxRunner(["list-sessions", "-F", `#{session_name}\t#{${ADOPTED_OPTION}}`]);
+  } catch {
+    return null;
+  }
+  const names: string[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const separator = line.indexOf("\t");
+    if (separator < 0) continue;
+    const name = line.slice(0, separator);
+    const flag = line.slice(separator + 1);
+    if (name && flag === "1" && isVisibleFleetSession(name)) names.push(name);
+  }
+  return names;
+}
+
+/** One live pane, with the raw agent-authority options gathered for the fleet. */
+export interface FleetPaneFacts {
+  readonly runtimePaneId: string;
+  readonly active: boolean;
+  readonly currentCommand: string;
+  readonly currentPath: string;
+  readonly agentStateRaw: string | null;
+  readonly agentStatusTextRaw: string | null;
+  readonly agentDisplayNameRaw: string | null;
+}
+
+/** One adopted session in the fleet, with its live panes. */
+export interface FleetSessionFacts {
+  readonly name: string;
+  /** True when the workspace registry backs this session (the app created it). */
+  readonly appCreated: boolean;
+  /** Session working directory (a full path; the projector emits only its basename). */
+  readonly cwd: string;
+  readonly panes: readonly FleetPaneFacts[];
+}
+
+// Distinctive multi-char field/line delimiters — collision-resistant against
+// arbitrary pane paths and user-controlled `@agent_status_text` values, matching
+// the agent-status probe idiom. A value carrying a newline splits into a line
+// without the trailing sentinel, which the parser drops (that pane degrades to
+// "no facts") rather than corrupting a neighbour.
+const FLEET_FIELD_SEPARATOR = "|tmux-ide-fleet-field-v1|";
+const FLEET_LINE_SENTINEL = "tmux-ide-fleet-v1";
+const FLEET_PANE_FORMAT = [
+  "#{session_name}",
+  "#{pane_id}",
+  "#{pane_active}",
+  "#{pane_current_command}",
+  "#{pane_current_path}",
+  "#{@agent_state}",
+  "#{@agent_status_text}",
+  "#{@agent_display_name}",
+  FLEET_LINE_SENTINEL,
+].join(FLEET_FIELD_SEPARATOR);
+
+function emptyToNull(value: string): string | null {
+  return value.length === 0 ? null : value;
+}
+
+/**
+ * Enumerate the visible, adopted fleet — every adopted tmux session (registry-
+ * backed OR adopted-only) and the live panes inside it, with each pane's raw
+ * `@agent_state` / `@agent_status_text` / `@agent_display_name` authority
+ * options gathered in ONE batched `list-panes -a` call. All IO runs through the
+ * injectable tmux runner (hermetic tests, silent degrade). Returns `null` only
+ * when the session listing fails; a failed pane read degrades every session to
+ * empty panes rather than dropping the sessions, and the pure projector turns
+ * either into an honest, valid resource.
+ */
+export function readAdoptedFleet(
+  registry: { list(): { sessionName: string }[] } = getDefaultWorkspaceRegistry(),
+): FleetSessionFacts[] | null {
+  const adopted = readAdoptedSessionNames();
+  if (adopted === null) return null;
+  const adoptedSet = new Set(adopted);
+  if (adoptedSet.size === 0) return [];
+
+  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
+
+  const panesBySession = new Map<string, FleetPaneFacts[]>();
+  let panesRaw: string;
+  try {
+    panesRaw = _tmuxRunner(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
+  } catch {
+    panesRaw = "";
+  }
+  for (const line of panesRaw.split("\n")) {
+    if (!line) continue;
+    const fields = line.split(FLEET_FIELD_SEPARATOR);
+    // session, pane, active, command, path, state, statusText, displayName, sentinel
+    if (fields.length !== 9 || fields[8] !== FLEET_LINE_SENTINEL) continue;
+    const sessionName = fields[0]!;
+    if (!adoptedSet.has(sessionName)) continue;
+    const runtimePaneId = fields[1]!;
+    if (!/^%[0-9]+$/u.test(runtimePaneId)) continue;
+    let panes = panesBySession.get(sessionName);
+    if (!panes) {
+      panes = [];
+      panesBySession.set(sessionName, panes);
+    }
+    panes.push({
+      runtimePaneId,
+      active: fields[2] === "1",
+      currentCommand: fields[3]!,
+      currentPath: fields[4]!,
+      agentStateRaw: emptyToNull(fields[5]!),
+      agentStatusTextRaw: emptyToNull(fields[6]!),
+      agentDisplayNameRaw: emptyToNull(fields[7]!),
+    });
+  }
+
+  return adopted.map((name) => {
+    const panes = panesBySession.get(name) ?? [];
+    const active = panes.find((pane) => pane.active) ?? panes[0];
+    return {
+      name,
+      appCreated: appCreatedSessions.has(name),
+      cwd: active?.currentPath ?? "",
+      panes,
+    };
+  });
 }
 
 export function discoverSessions(): SessionInfo[] {

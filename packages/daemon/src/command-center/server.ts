@@ -134,6 +134,7 @@ import {
   type TerminalAttachmentIssueBackend,
 } from "./terminal-attachment-issue.ts";
 import { mountWorkspaceResourceRoutes } from "./resources/workspace-resource-routes.ts";
+import { mountFleetResourceRoute } from "./resources/fleet-resource-route.ts";
 export interface CreateAppOptions {
   authService?: AuthService;
   authConfig?: AuthConfig;
@@ -806,6 +807,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // The route param is a semantic workspace name resolved through the private
   // workspace registry; renderer-supplied ids never decode to a path.
   mountWorkspaceResourceRoutes(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+  });
+
+  // Owner-only, generation-stamped fleet catalog: every ADOPTED tmux session
+  // (registry-backed and adopted-only) with its authority-stamped agents. It
+  // enumerates independently of the registry-gated session discovery so the
+  // app can SEE sessions it never created; the resource is path-free.
+  mountFleetResourceRoute(app, {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
     registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),

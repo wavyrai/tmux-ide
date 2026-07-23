@@ -5786,8 +5786,8 @@ async function createScriptTerminalId(args) {
   }
   const key = `${args.projectId}::${scope}::${args.kind}::${args.script}`;
   const data = new TextEncoder().encode(key);
-  const digest2 = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest2)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  const digest3 = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest3)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
 var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema;
 var init_terminals = __esm({
@@ -6382,7 +6382,7 @@ var init_daemon_resources = __esm({
 
 // packages/contracts/src/daemon-events.ts
 import { z as z38 } from "zod";
-var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventAgentStatusChangedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
+var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventAgentStatusChangedFrameSchemaZ, DaemonEventFleetChangedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
 var init_daemon_events = __esm({
   "packages/contracts/src/daemon-events.ts"() {
     "use strict";
@@ -6447,6 +6447,7 @@ var init_daemon_events = __esm({
       type: z38.literal("agent-status.changed"),
       sessionName: z38.string()
     }).strict();
+    DaemonEventFleetChangedFrameSchemaZ = z38.object({ type: z38.literal("fleet.changed") }).strict();
     DaemonEventWorkspaceAddedFrameSchemaZ = z38.object({
       type: z38.literal("workspace.added"),
       workspace: DaemonWorkspaceSchemaZ
@@ -6473,6 +6474,7 @@ var init_daemon_events = __esm({
       DaemonEventConfigChangedFrameSchemaZ,
       DaemonEventTerminalsChangedFrameSchemaZ,
       DaemonEventAgentStatusChangedFrameSchemaZ,
+      DaemonEventFleetChangedFrameSchemaZ,
       DaemonEventWorkspaceAddedFrameSchemaZ,
       DaemonEventWorkspaceRemovedFrameSchemaZ,
       DaemonEventProtocolErrorFrameSchemaZ
@@ -6679,8 +6681,8 @@ function markedProjectRoot(inputDir, io) {
 }
 function projectIdentityKey(source, anchor) {
   const prefix = source === "git-common-dir" ? "git" : "path";
-  const digest2 = createHash("sha256").update(source).update("\0").update(anchor).digest("hex");
-  return `${prefix}-${digest2}`;
+  const digest3 = createHash("sha256").update(source).update("\0").update(anchor).digest("hex");
+  return `${prefix}-${digest3}`;
 }
 async function resolveProject(dir, options = {}) {
   const io = { ...defaultProjectResolverIo, ...options.io };
@@ -8203,9 +8205,9 @@ function semanticPaneIdForPane(pane) {
       ([left], [right]) => left < right ? -1 : left > right ? 1 : 0
     )
   });
-  const digest2 = createHash2("sha256").update(metadata).digest("hex").slice(0, 16);
+  const digest3 = createHash2("sha256").update(metadata).digest("hex").slice(0, 16);
   const label2 = paneIdentityLabel(pane);
-  return `pane-${label2}-${digest2}`;
+  return `pane-${label2}-${digest3}`;
 }
 function paneIdentityOptions(action) {
   return [
@@ -16379,6 +16381,77 @@ function readAgentStatesBySession() {
 function getSessionCwd2(session) {
   return tmuxSilent(["display-message", "-t", session, "-p", "#{pane_current_path}"]);
 }
+function isVisibleFleetSession(name) {
+  return !name.startsWith("_") && !name.startsWith("zz-");
+}
+function readAdoptedSessionNames() {
+  let raw;
+  try {
+    raw = _tmuxRunner(["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`]);
+  } catch {
+    return null;
+  }
+  const names = [];
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const separator = line.indexOf("	");
+    if (separator < 0) continue;
+    const name = line.slice(0, separator);
+    const flag = line.slice(separator + 1);
+    if (name && flag === "1" && isVisibleFleetSession(name)) names.push(name);
+  }
+  return names;
+}
+function emptyToNull(value) {
+  return value.length === 0 ? null : value;
+}
+function readAdoptedFleet(registry = getDefaultWorkspaceRegistry()) {
+  const adopted = readAdoptedSessionNames();
+  if (adopted === null) return null;
+  const adoptedSet = new Set(adopted);
+  if (adoptedSet.size === 0) return [];
+  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
+  const panesBySession = /* @__PURE__ */ new Map();
+  let panesRaw;
+  try {
+    panesRaw = _tmuxRunner(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
+  } catch {
+    panesRaw = "";
+  }
+  for (const line of panesRaw.split("\n")) {
+    if (!line) continue;
+    const fields = line.split(FLEET_FIELD_SEPARATOR);
+    if (fields.length !== 9 || fields[8] !== FLEET_LINE_SENTINEL) continue;
+    const sessionName = fields[0];
+    if (!adoptedSet.has(sessionName)) continue;
+    const runtimePaneId = fields[1];
+    if (!/^%[0-9]+$/u.test(runtimePaneId)) continue;
+    let panes = panesBySession.get(sessionName);
+    if (!panes) {
+      panes = [];
+      panesBySession.set(sessionName, panes);
+    }
+    panes.push({
+      runtimePaneId,
+      active: fields[2] === "1",
+      currentCommand: fields[3],
+      currentPath: fields[4],
+      agentStateRaw: emptyToNull(fields[5]),
+      agentStatusTextRaw: emptyToNull(fields[6]),
+      agentDisplayNameRaw: emptyToNull(fields[7])
+    });
+  }
+  return adopted.map((name) => {
+    const panes = panesBySession.get(name) ?? [];
+    const active2 = panes.find((pane) => pane.active) ?? panes[0];
+    return {
+      name,
+      appCreated: appCreatedSessions.has(name),
+      cwd: active2?.currentPath ?? "",
+      panes
+    };
+  });
+}
 function discoverSessions() {
   const sessionNames = listTmuxSessions();
   const results = [];
@@ -16414,18 +16487,32 @@ function buildProjectDetail(info) {
     panes: info.panes.map(({ semanticPaneId: _semanticPaneId, ...pane }) => pane)
   };
 }
-var _tmuxRunner, AGENT_STATE_LINE;
+var _tmuxRunner, AGENT_STATE_LINE, FLEET_FIELD_SEPARATOR, FLEET_LINE_SENTINEL, FLEET_PANE_FORMAT;
 var init_discovery = __esm({
   "packages/daemon/src/command-center/discovery.ts"() {
     "use strict";
     init_pane_comms();
     init_workspace_registry();
+    init_front_door();
     _tmuxRunner = (args) => execFileSync11("tmux", args, {
       encoding: "utf-8",
       maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
     AGENT_STATE_LINE = /^([^\t]+)\t(%[0-9]+)\t(.*)$/u;
+    FLEET_FIELD_SEPARATOR = "|tmux-ide-fleet-field-v1|";
+    FLEET_LINE_SENTINEL = "tmux-ide-fleet-v1";
+    FLEET_PANE_FORMAT = [
+      "#{session_name}",
+      "#{pane_id}",
+      "#{pane_active}",
+      "#{pane_current_command}",
+      "#{pane_current_path}",
+      "#{@agent_state}",
+      "#{@agent_status_text}",
+      "#{@agent_display_name}",
+      FLEET_LINE_SENTINEL
+    ].join(FLEET_FIELD_SEPARATOR);
   }
 });
 
@@ -16562,6 +16649,28 @@ function maybeStopAgentStatusWatcher() {
   agentStatusWatcher.stop();
   agentStatusWatcher = null;
 }
+function snapshotFleetHash() {
+  const names = readAdoptedSessionNames();
+  if (names === null) return lastFleetHash;
+  return JSON.stringify([...names].sort());
+}
+function pollFleetComposition() {
+  const hash = snapshotFleetHash();
+  if (hash === lastFleetHash) return;
+  lastFleetHash = hash;
+  for (const client of allClients) client.broadcastFleetChanged();
+}
+function ensureFleetPoller() {
+  if (fleetPollTimer) return;
+  lastFleetHash = snapshotFleetHash();
+  fleetPollTimer = setInterval(pollFleetComposition, SESSIONS_POLL_MS);
+  fleetPollTimer.unref?.();
+}
+function maybeStopFleetPoller() {
+  if (allClients.size > 0 || !fleetPollTimer) return;
+  clearInterval(fleetPollTimer);
+  fleetPollTimer = null;
+}
 function broadcastInitOutput(jobId, chunk, done) {
   for (const client of allClients) client.broadcastInitOutput(jobId, chunk, done);
 }
@@ -16625,6 +16734,9 @@ function handleWsEventsConnection(socket, daemonIdentity) {
   const broadcastAgentStatusChangedForClient = (sessionName) => {
     send2({ type: "agent-status.changed", sessionName });
   };
+  const broadcastFleetChangedForClient = () => {
+    send2({ type: "fleet.changed" });
+  };
   const workspaceRegistry = getDefaultWorkspaceRegistry();
   const unsubWorkspaceAdded = workspaceRegistry.on(
     "workspace.added",
@@ -16642,12 +16754,14 @@ function handleWsEventsConnection(socket, daemonIdentity) {
     broadcastActionComplete: broadcastActionCompleteForClient,
     broadcastConfigChanged: broadcastConfigChangedForClient,
     broadcastTerminalsChanged: broadcastTerminalsChangedForClient,
-    broadcastAgentStatusChanged: broadcastAgentStatusChangedForClient
+    broadcastAgentStatusChanged: broadcastAgentStatusChangedForClient,
+    broadcastFleetChanged: broadcastFleetChangedForClient
   };
   allClients.add(clientHandle);
   ensureSessionsPoller();
   ensureProjectRegistryListener();
   ensureAgentStatusWatcher();
+  ensureFleetPoller();
   const keepalive = setInterval(() => {
     send2({ type: "pong" });
   }, KEEPALIVE_INTERVAL_MS);
@@ -16677,6 +16791,7 @@ function handleWsEventsConnection(socket, daemonIdentity) {
     maybeStopSessionsPoller();
     maybeStopProjectRegistryListener();
     maybeStopAgentStatusWatcher();
+    maybeStopFleetPoller();
   };
   ws.on("message", (data) => {
     if (closed) return;
@@ -16723,7 +16838,7 @@ function handleWsEventsConnection(socket, daemonIdentity) {
     send2({ type: "hello", daemon: daemonIdentity, sessions: [] });
   }
 }
-var WS_OPEN2, KEEPALIVE_INTERVAL_MS, SESSIONS_POLL_MS, allClients, sessionsPollTimer, lastSessionsHash, projectRegistryListener, agentStatusWatcher;
+var WS_OPEN2, KEEPALIVE_INTERVAL_MS, SESSIONS_POLL_MS, allClients, sessionsPollTimer, lastSessionsHash, projectRegistryListener, agentStatusWatcher, fleetPollTimer, lastFleetHash;
 var init_ws_events = __esm({
   "packages/daemon/src/command-center/ws-events.ts"() {
     "use strict";
@@ -16740,6 +16855,8 @@ var init_ws_events = __esm({
     lastSessionsHash = "";
     projectRegistryListener = null;
     agentStatusWatcher = null;
+    fleetPollTimer = null;
+    lastFleetHash = "";
   }
 });
 
@@ -26293,7 +26410,7 @@ var init_native_runtime = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/agent-status-probe.ts
-function emptyToNull(value) {
+function emptyToNull2(value) {
   return value.length === 0 ? null : value;
 }
 function parseAgentOptions(stdout) {
@@ -26307,10 +26424,10 @@ function parseAgentOptions(stdout) {
     const pidText = fields[5];
     const pid = /^[0-9]+$/u.test(pidText) ? Number(pidText) : null;
     result.set(runtimePaneId, {
-      stateRaw: emptyToNull(fields[1]),
-      statusTextRaw: emptyToNull(fields[2]),
-      displayNameRaw: emptyToNull(fields[3]),
-      hint: emptyToNull(fields[4]),
+      stateRaw: emptyToNull2(fields[1]),
+      statusTextRaw: emptyToNull2(fields[2]),
+      displayNameRaw: emptyToNull2(fields[3]),
+      hint: emptyToNull2(fields[4]),
       pid: pid !== null && Number.isSafeInteger(pid) ? pid : null
     });
   }
@@ -31297,6 +31414,139 @@ var init_workspace_resource_routes = __esm({
   }
 });
 
+// packages/daemon/src/command-center/resources/fleet-catalog.ts
+import { createHash as createHash12 } from "node:crypto";
+import { basename as basename13 } from "node:path";
+function digest2(value) {
+  return createHash12("sha256").update(value).digest("hex").slice(0, 20);
+}
+function fleetLabel(value, fallback) {
+  const stripped = Array.from(value ?? "", (character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint <= 31 || codePoint >= 127 && codePoint <= 159 ? " " : character;
+  }).join("");
+  const normalized = stripped.replace(/\s+/gu, " ").trim().slice(0, FLEET_LABEL_MAX_LENGTH);
+  return normalized || fallback;
+}
+function fleetProjectLabel(cwd, fallback) {
+  const base = basename13(cwd).replace(/[/\\]/gu, "");
+  return fleetLabel(base, fallback);
+}
+function toPresentationPane(pane, index) {
+  return {
+    semanticPaneId: null,
+    index,
+    title: "",
+    currentCommand: pane.currentCommand,
+    active: pane.active,
+    role: null,
+    name: null,
+    type: null,
+    agentStateRaw: pane.agentStateRaw,
+    agentStatusTextRaw: pane.agentStatusTextRaw,
+    agentDisplayNameRaw: pane.agentDisplayNameRaw,
+    // Authority-only: the fleet never scrapes an unopened session. `null` (not
+    // `undefined`) keeps `resolveAgentPresentation` on the ground-truth path
+    // while its scrape verdict resolves to `unknown` without any capture.
+    agentScrapeState: null
+  };
+}
+function projectSession(session, nowSec, remainingAgentBudget) {
+  const agents = [];
+  for (const [index, pane] of session.panes.entries()) {
+    if (agents.length >= FLEET_MAX_AGENTS_PER_SESSION || agents.length >= remainingAgentBudget) {
+      break;
+    }
+    const presentationPane = toPresentationPane(pane, index);
+    if (!isAgentPane(presentationPane)) continue;
+    const presentation = resolveAgentPresentation(presentationPane, nowSec);
+    agents.push({
+      agentId: `agent.${digest2(`${session.name}\0${pane.runtimePaneId}`)}`,
+      name: fleetLabel(presentation.displayName ?? pane.currentCommand, `Agent ${index + 1}`),
+      harness: harnessForPane(presentationPane),
+      activity: presentation.activity,
+      attention: presentation.attention,
+      statusSource: presentation.statusSource
+    });
+  }
+  return {
+    sessionId: `session.${digest2(session.name)}`,
+    label: fleetLabel(session.name, "session"),
+    projectLabel: fleetProjectLabel(session.cwd, fleetLabel(session.name, "workspace")),
+    appCreated: session.appCreated,
+    paneCount: Math.min(session.panes.length, FLEET_MAX_PANES_PER_SESSION),
+    agents
+  };
+}
+function projectFleetCatalog(sessions, daemon, nowSec) {
+  const projected = [];
+  let totalAgents = 0;
+  for (const session of sessions) {
+    if (projected.length >= FLEET_MAX_SESSIONS) break;
+    const entry = projectSession(session, nowSec, FLEET_MAX_TOTAL_AGENTS - totalAgents);
+    totalAgents += entry.agents.length;
+    projected.push(entry);
+  }
+  return FleetCatalogResourceV1SchemaZ.parse({
+    version: FLEET_CATALOG_RESOURCE_VERSION,
+    daemon,
+    sessions: projected
+  });
+}
+var init_fleet_catalog2 = __esm({
+  "packages/daemon/src/command-center/resources/fleet-catalog.ts"() {
+    "use strict";
+    init_src();
+    init_application_shell2();
+  }
+});
+
+// packages/daemon/src/command-center/resources/fleet-resource-route.ts
+import { timingSafeEqual as timingSafeEqual6 } from "node:crypto";
+function bearerMatches2(header, ownerToken) {
+  if (!header || !ownerToken) return false;
+  const supplied = Buffer.from(header, "utf8");
+  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
+  return supplied.byteLength === expected.byteLength && timingSafeEqual6(supplied, expected);
+}
+function mountFleetResourceRoute(app, options) {
+  const authorize = (c) => {
+    if (!options.ownerToken) {
+      return c.json({ error: "Fleet catalog capability is unavailable" }, 503);
+    }
+    if (!bearerMatches2(c.req.header("Authorization"), options.ownerToken)) {
+      return c.json({ error: "Fleet catalog access requires owner authority" }, 401);
+    }
+    return null;
+  };
+  app.get("/api/resources/fleet-catalog", (c) => {
+    const gate = authorize(c);
+    if (gate) return gate;
+    let sessions;
+    try {
+      sessions = readAdoptedFleet(options.registry);
+    } catch {
+      sessions = null;
+    }
+    const nowSec = Math.floor(Date.now() / 1e3);
+    let resource2;
+    try {
+      resource2 = projectFleetCatalog(sessions ?? [], options.daemon, nowSec);
+    } catch {
+      resource2 = projectFleetCatalog([], options.daemon, nowSec);
+    }
+    c.header("Cache-Control", "no-store");
+    return c.json(resource2);
+  });
+}
+var init_fleet_resource_route = __esm({
+  "packages/daemon/src/command-center/resources/fleet-resource-route.ts"() {
+    "use strict";
+    init_discovery();
+    init_fleet_catalog2();
+  }
+});
+
 // packages/daemon/src/command-center/server.ts
 var server_exports = {};
 __export(server_exports, {
@@ -31307,7 +31557,7 @@ __export(server_exports, {
 import { execFile as execFile3 } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync as existsSync33, readdirSync as readdirSync6 } from "node:fs";
-import { join as join33, dirname as dirname28, basename as basename13 } from "node:path";
+import { join as join33, dirname as dirname28, basename as basename14 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -31623,7 +31873,7 @@ function createApp(options = {}) {
   app.post("/api/workspaces", zValidator("json", AddWorkspaceRequestSchemaZ), async (c) => {
     const body = c.req.valid("json");
     const registry = getDefaultWorkspaceRegistry();
-    const name = body.name ?? basename13(body.projectDir);
+    const name = body.name ?? basename14(body.projectDir);
     if (!name || name.length === 0) {
       return c.json({ error: "Cannot derive workspace name from projectDir" }, 400);
     }
@@ -31782,6 +32032,11 @@ function createApp(options = {}) {
     });
   });
   mountWorkspaceResourceRoutes(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry()
+  });
+  mountFleetResourceRoute(app, {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
     registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry()
@@ -32511,6 +32766,7 @@ var init_server = __esm({
     init_agent_graph_overlay2();
     init_terminal_attachment_issue();
     init_workspace_resource_routes();
+    init_fleet_resource_route();
     defaultApplicationShellAppWindowBackend = {
       async load(projectDir, terminalSourceIds, focusedTerminalSourceId) {
         return loadApplicationShellAppWindows(projectDir, terminalSourceIds, focusedTerminalSourceId);
@@ -35195,7 +35451,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync16 } from "node:child_process";
-import { basename as basename14, dirname as dirname31, isAbsolute as isAbsolute14, join as join35, resolve as resolve29 } from "node:path";
+import { basename as basename15, dirname as dirname31, isAbsolute as isAbsolute14, join as join35, resolve as resolve29 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -35204,7 +35460,7 @@ function worktreeSessionName(project, branch) {
 }
 function defaultWorktreeBaseDir(repoDir) {
   const abs = resolve29(repoDir);
-  return join35(dirname31(abs), `${basename14(abs)}-worktrees`);
+  return join35(dirname31(abs), `${basename15(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
   const base = configuredDir && configuredDir.length > 0 ? isAbsolute14(configuredDir) ? configuredDir : resolve29(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
