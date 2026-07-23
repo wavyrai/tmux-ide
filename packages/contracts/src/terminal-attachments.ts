@@ -3,6 +3,7 @@ import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import {
   RESERVED_DISCOVERED_TERMINAL_ID_PREFIX,
   TerminalAttachmentSemanticPaneIdSchemaZ,
+  TerminalAttachmentSemanticWindowIdSchemaZ,
 } from "./semantic-identity.ts";
 import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
 
@@ -19,8 +20,11 @@ export const TERMINAL_ATTACHMENT_MIN_ROWS = 5;
 export const TERMINAL_ATTACHMENT_MAX_ROWS = 200;
 
 export const TERMINAL_ATTACHMENT_RESERVED_PANE_ID_PREFIX = RESERVED_DISCOVERED_TERMINAL_ID_PREFIX;
-export { TerminalAttachmentSemanticPaneIdSchemaZ };
-export type { TerminalAttachmentSemanticPaneId } from "./semantic-identity.ts";
+export { TerminalAttachmentSemanticPaneIdSchemaZ, TerminalAttachmentSemanticWindowIdSchemaZ };
+export type {
+  TerminalAttachmentSemanticPaneId,
+  TerminalAttachmentSemanticWindowId,
+} from "./semantic-identity.ts";
 
 /** Durable product identity. Runtime tmux ids are intentionally absent. */
 export const TerminalAttachmentSemanticTargetSchemaZ = z

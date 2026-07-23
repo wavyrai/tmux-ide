@@ -23,3 +23,17 @@ export const TerminalAttachmentSemanticPaneIdSchemaZ = PortableWorkspaceIdSchema
 export type TerminalAttachmentSemanticPaneId = z.infer<
   typeof TerminalAttachmentSemanticPaneIdSchemaZ
 >;
+
+/**
+ * Durable semantic window identity — the `@tmux_ide_window_id` stamp value.
+ * Shares the pane-stamp grammar exactly (portable record id, no discovered
+ * fallback namespace) so a whole tmux window can be named by the same durable
+ * authority a single pane already is.
+ */
+export const TerminalAttachmentSemanticWindowIdSchemaZ = PortableWorkspaceIdSchemaZ.refine(
+  (value) => !value.startsWith(RESERVED_DISCOVERED_TERMINAL_ID_PREFIX),
+  "reserved discovered-terminal identity is a fallback and is not attachable",
+);
+export type TerminalAttachmentSemanticWindowId = z.infer<
+  typeof TerminalAttachmentSemanticWindowIdSchemaZ
+>;

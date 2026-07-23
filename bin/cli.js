@@ -80,7 +80,7 @@ var init_hq = __esm({
 
 // packages/contracts/src/semantic-identity.ts
 import { z as z3 } from "zod";
-var RESERVED_RECORD_KEYS, PORTABLE_WORKSPACE_ID_MAX_LENGTH, PortableWorkspaceIdSchemaZ, RESERVED_DISCOVERED_TERMINAL_ID_PREFIX, TerminalAttachmentSemanticPaneIdSchemaZ;
+var RESERVED_RECORD_KEYS, PORTABLE_WORKSPACE_ID_MAX_LENGTH, PortableWorkspaceIdSchemaZ, RESERVED_DISCOVERED_TERMINAL_ID_PREFIX, TerminalAttachmentSemanticPaneIdSchemaZ, TerminalAttachmentSemanticWindowIdSchemaZ;
 var init_semantic_identity = __esm({
   "packages/contracts/src/semantic-identity.ts"() {
     "use strict";
@@ -89,6 +89,10 @@ var init_semantic_identity = __esm({
     PortableWorkspaceIdSchemaZ = z3.string().min(1).max(PORTABLE_WORKSPACE_ID_MAX_LENGTH).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u).refine((value) => !RESERVED_RECORD_KEYS.has(value), "reserved record key is not allowed");
     RESERVED_DISCOVERED_TERMINAL_ID_PREFIX = "terminal.discovered.";
     TerminalAttachmentSemanticPaneIdSchemaZ = PortableWorkspaceIdSchemaZ.refine(
+      (value) => !value.startsWith(RESERVED_DISCOVERED_TERMINAL_ID_PREFIX),
+      "reserved discovered-terminal identity is a fallback and is not attachable"
+    );
+    TerminalAttachmentSemanticWindowIdSchemaZ = PortableWorkspaceIdSchemaZ.refine(
       (value) => !value.startsWith(RESERVED_DISCOVERED_TERMINAL_ID_PREFIX),
       "reserved discovered-terminal identity is a fallback and is not attachable"
     );
@@ -20252,13 +20256,15 @@ function semanticPaneTargetKey(target) {
   const parsed = TerminalAttachmentSemanticTargetSchemaZ.parse(target);
   return `${parsed.workspaceName}\0${parsed.semanticPaneId}`;
 }
-function proofFingerprint(row) {
+function proofFingerprint(proof) {
   return [
-    row.sessionId,
-    row.windowId,
-    row.runtimePaneId,
-    String(row.windowPaneCount),
-    String(row.sessionWindowCount)
+    proof.sessionId,
+    proof.windowId,
+    proof.runtimePaneId,
+    proof.windowStamp ?? "",
+    String(proof.windowPaneCount),
+    String(proof.windowPaneIndex),
+    String(proof.sessionWindowCount)
   ].join("\0");
 }
 var RuntimeSessionIdSchemaZ, RuntimeWindowIdSchemaZ, RuntimePaneIdSchemaZ, TrustedSemanticPaneSnapshotSchemaZ, SemanticPaneCatalogError, SemanticPaneCatalog;
@@ -20272,6 +20278,7 @@ var init_semantic_pane_catalog = __esm({
     TrustedSemanticPaneSnapshotSchemaZ = z45.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
+      windowStamp: TerminalAttachmentSemanticWindowIdSchemaZ.nullable().optional(),
       sessionId: RuntimeSessionIdSchemaZ,
       windowId: RuntimeWindowIdSchemaZ,
       runtimePaneId: RuntimePaneIdSchemaZ,
@@ -20355,28 +20362,77 @@ var init_semantic_pane_catalog = __esm({
           );
         }
         const row = matches[0];
-        if (row.windowPaneCount !== 1) {
-          throw new SemanticPaneCatalogError(
-            "not-single-pane-window",
-            parsedTarget,
-            "Terminal attachment requires a trusted single-pane tmux window."
-          );
-        }
+        const source = this.#proveWindow(row, rows, parsedTarget);
         const key = semanticPaneTargetKey(parsedTarget);
-        const fingerprint2 = proofFingerprint(row);
+        const fingerprint2 = proofFingerprint(source);
         const previous = this.#generations.get(key);
         const generation = previous === void 0 ? 0 : previous.fingerprint === fingerprint2 ? previous.generation : previous.generation + 1;
         this.#generations.set(key, { fingerprint: fingerprint2, generation });
-        return {
-          target: parsedTarget,
-          bindingGeneration: generation,
-          source: {
-            sessionId: row.sessionId,
-            windowId: row.windowId,
-            runtimePaneId: row.runtimePaneId,
-            paneCount: 1,
-            sessionWindowCount: row.sessionWindowCount
+        return { target: parsedTarget, bindingGeneration: generation, source };
+      }
+      /**
+       * Proves the WHOLE tmux window the resolved pane lives in (m41 attach-1).
+       *
+       * This card widens the catalog from a single-pane gate to a durable window
+       * identity: the previous `windowPaneCount !== 1` throw is gone, and a
+       * multi-pane window resolves once it carries a valid, unique
+       * `@tmux_ide_window_id` stamp shared by every one of its panes. End-to-end
+       * attachment behavior is intentionally UNCHANGED after this card — the
+       * transport/projection layers still gate on `window_panes == 1` (grouped-tmux
+       * plan-input `literal(1)`, the native-runtime view guard, the pty launcher,
+       * and the application-shell projection) until m41 attach-2/3 widen them.
+       */
+      #proveWindow(row, rows, target) {
+        const windowRows = rows.filter((candidate) => candidate.windowId === row.windowId);
+        const stampedRows = windowRows.filter((candidate) => (candidate.windowStamp ?? null) !== null);
+        const distinctStamps = new Set(stampedRows.map((candidate) => candidate.windowStamp));
+        if (distinctStamps.size > 1) {
+          throw new SemanticPaneCatalogError(
+            "window-stamp-inconsistent",
+            target,
+            "The panes of a trusted tmux window disagree on their durable window stamp."
+          );
+        }
+        if (row.windowPaneCount > 1) {
+          if (distinctStamps.size === 0) {
+            throw new SemanticPaneCatalogError(
+              "missing-window-stamp",
+              target,
+              "A multi-pane tmux window is attachable only once it carries a durable window stamp."
+            );
           }
+          if (stampedRows.length !== windowRows.length) {
+            throw new SemanticPaneCatalogError(
+              "window-stamp-inconsistent",
+              target,
+              "Every pane of a multi-pane tmux window must carry the same durable window stamp."
+            );
+          }
+        }
+        const windowStamp = distinctStamps.size === 1 ? [...distinctStamps][0] : null;
+        if (windowStamp !== null) {
+          const windowIds = new Set(
+            rows.filter((candidate) => (candidate.windowStamp ?? null) === windowStamp).map((candidate) => candidate.windowId)
+          );
+          if (windowIds.size > 1) {
+            throw new SemanticPaneCatalogError(
+              "duplicate-window-stamp",
+              target,
+              "A durable window stamp must identify exactly one trusted tmux window."
+            );
+          }
+        }
+        const windowPaneIndex = windowRows.findIndex(
+          (candidate) => candidate.runtimePaneId === row.runtimePaneId
+        );
+        return {
+          sessionId: row.sessionId,
+          windowId: row.windowId,
+          runtimePaneId: row.runtimePaneId,
+          windowStamp,
+          windowPaneCount: row.windowPaneCount,
+          windowPaneIndex,
+          sessionWindowCount: row.sessionWindowCount
         };
       }
     };

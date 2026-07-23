@@ -8,6 +8,8 @@ import {
 export const WORKSPACE_STATE_VERSION = 1 as const;
 /** Durable semantic pane identity stamped as a tmux pane-local user option. */
 export const WORKSPACE_SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id" as const;
+/** Durable semantic window identity stamped as a tmux window-local user option. */
+export const WORKSPACE_SEMANTIC_WINDOW_OPTION = "@tmux_ide_window_id" as const;
 export const WORKSPACE_STATE_MAX_LAYOUTS = 32;
 export const WORKSPACE_STATE_MAX_CHECKOUTS = 16;
 export const WORKSPACE_STATE_MAX_PANES = 128;

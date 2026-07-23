@@ -16,7 +16,9 @@ import {
   TerminalAttachmentIssueResultSchemaZ,
   TerminalAttachmentPlanResponseSchemaZ,
   TerminalAttachmentSemanticPaneIdSchemaZ,
+  TerminalAttachmentSemanticWindowIdSchemaZ,
 } from "../terminal-attachments.ts";
+import { WORKSPACE_SEMANTIC_WINDOW_OPTION } from "../workspace-state.ts";
 
 const target = {
   workspaceName: "workspace.alpha-2",
@@ -54,6 +56,19 @@ describe("terminal attachment contracts", () => {
         target: { ...target, semanticPaneId: reserved },
       }).success,
     ).toBe(false);
+  });
+
+  it("shares the pane-stamp grammar for the durable window-id stamp", () => {
+    expect(WORKSPACE_SEMANTIC_WINDOW_OPTION).toBe("@tmux_ide_window_id");
+    expect(TerminalAttachmentSemanticWindowIdSchemaZ.safeParse("window.workspace.alpha").success).toBe(
+      true,
+    );
+    expect(TerminalAttachmentSemanticWindowIdSchemaZ.safeParse("window.promoted.abc123").success).toBe(
+      true,
+    );
+    for (const invalid of ["terminal.discovered.window", "window:colon", "__proto__", ".dot"]) {
+      expect(TerminalAttachmentSemanticWindowIdSchemaZ.safeParse(invalid).success).toBe(false);
+    }
   });
 
   it("uses the exact portable workspace-id grammar for semantic pane admission", () => {
