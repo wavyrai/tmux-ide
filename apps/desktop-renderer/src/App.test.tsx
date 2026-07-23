@@ -210,6 +210,14 @@ function createHostHarness() {
           workspaces: workspaceNames.map((workspaceName) => ({ workspaceName })),
         }),
       ),
+      fetchFleetCatalog: vi.fn(async () => ({
+        status: "ok" as const,
+        envelope: { version: 1 as const, daemon: activeDaemon, sessions: [] },
+      })),
+      promoteWorkspace: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
       fetchApplicationShell: vi.fn(async ({ workspaceName }) => ({
         status: "ok" as const,
         envelope: {

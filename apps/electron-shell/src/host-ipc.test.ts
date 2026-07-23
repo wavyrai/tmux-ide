@@ -6,6 +6,7 @@ import type {
   TerminalAttachmentIssueResult,
   WorkspaceOpenMutationRequest,
   WorkspacePaneCreateMutationRequest,
+  WorkspacePromoteMutationRequest,
 } from "@tmux-ide/contracts";
 import {
   DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
@@ -132,6 +133,25 @@ describe("host IPC trust boundary", () => {
         status: "error",
         error: { code: "workspace-not-found", reason: "diff sentinel" },
       })),
+      fetchFleetCatalog: vi.fn(async () => ({
+        status: "ok",
+        envelope: {
+          version: 1,
+          daemon: {
+            protocolVersion: 1,
+            productVersion: "2.8.0",
+            instanceId: daemon.descriptor.instanceId,
+            startedAt: daemon.descriptor.startedAt,
+          },
+          sessions: [],
+        },
+      })),
+      promoteWorkspace: vi.fn(async (request: WorkspacePromoteMutationRequest) => ({
+        operationId: request.operationId,
+        daemonInstanceId: request.expectedDaemonInstanceId,
+        outcome: "promoted" as const,
+        resource: { resourceVersion: 1 as const, workspaceName: "web" },
+      })),
       subscribe: vi.fn(async (_names, listener) => {
         publishDaemonEvent = listener;
         return { status: "subscribed", unsubscribe: stopDaemonSubscription };
@@ -247,6 +267,24 @@ describe("host IPC trust boundary", () => {
       workspaceName: "product",
       changeId: "change.changechangechange01",
     });
+
+    expect(await handlers.get(HOST_IPC.daemonFetchFleetCatalog)?.(trustedEvent)).toMatchObject({
+      status: "ok",
+      envelope: { version: 1, sessions: [] },
+    });
+    expect(daemonResources.fetchFleetCatalog).toHaveBeenCalledTimes(1);
+    expect(
+      await handlers.get(HOST_IPC.daemonPromoteWorkspace)?.(trustedEvent, {
+        sessionId: "session.aaaaaaaaaaaaaaaa",
+      }),
+    ).toMatchObject({ status: "ok", result: { outcome: "promoted" } });
+    // The renderer supplies only the opaque session id; main authors the envelope.
+    const authoredPromote = vi.mocked(daemonResources.promoteWorkspace).mock.calls[0]?.[0];
+    expect(authoredPromote?.intent).toEqual({ sessionId: "session.aaaaaaaaaaaaaaaa" });
+    expect(authoredPromote?.expectedDaemonInstanceId).toBe(daemon.descriptor.instanceId);
+    expect(
+      await handlers.get(HOST_IPC.daemonPromoteWorkspace)?.(trustedEvent, { sessionId: "$3" }),
+    ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
 
     const created = await handlers.get(HOST_IPC.daemonCreateWorkspacePane)?.(trustedEvent, {
       version: 1,

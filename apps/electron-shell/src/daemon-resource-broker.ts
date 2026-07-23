@@ -41,6 +41,10 @@ import {
   WorkspacePaneCreateArgumentsSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
+  WorkspacePromoteArgumentsSchemaZ,
+  WorkspacePromoteMutationRequestSchemaZ,
+  WorkspacePromoteMutationResultSchemaZ,
+  FleetCatalogResourceV1SchemaZ,
   type DaemonEventServerFrame,
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityError,
@@ -58,6 +62,9 @@ import {
   type WorkspacePaneCreateMutationResult,
   type WorkspaceOpenMutationRequest,
   type WorkspaceOpenMutationResult,
+  type WorkspacePromoteMutationRequest,
+  type WorkspacePromoteMutationResult,
+  type DesktopDaemonFetchFleetCatalogResult,
   type AppWindowMutationRequest,
   type AppWindowMutationResult,
 } from "@tmux-ide/contracts";
@@ -448,6 +455,42 @@ export class DaemonResourceBroker {
     throw lastError;
   }
 
+  async promoteWorkspace(
+    request: WorkspacePromoteMutationRequest,
+  ): Promise<WorkspacePromoteMutationResult> {
+    if (this.#daemon.status !== "connected" || !this.#ownerToken) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
+    }
+    const parsed = WorkspacePromoteMutationRequestSchemaZ.parse(request);
+    if (parsed.expectedDaemonInstanceId !== this.#daemon.descriptor.instanceId) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+    }
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const raw = await this.#mutationJson(
+          "/api/v2/action/workspace.promote",
+          WorkspacePromoteArgumentsSchemaZ.parse(parsed.intent),
+          { "X-Tmux-Ide-Operation-Id": parsed.operationId },
+        );
+        const envelope = z
+          .object({ ok: z.literal(true), result: WorkspacePromoteMutationResultSchemaZ })
+          .strict()
+          .parse(raw);
+        if (
+          envelope.result.operationId !== parsed.operationId ||
+          envelope.result.daemonInstanceId !== this.#daemon.descriptor.instanceId
+        ) {
+          throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+        }
+        return envelope.result;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
   async capabilities(): Promise<DesktopDaemonCapabilitiesResult> {
     if (this.#capabilityCatalog?.status === "ok") return this.#capabilityCatalog;
     if (this.#daemon.status !== "connected" || !this.#ownerToken) {
@@ -776,6 +819,34 @@ export class DaemonResourceBroker {
       (name) => `/api/project/${name}/change-diff?changeId=${changeId}`,
       WorkspaceChangeDiffEnvelopeV1SchemaZ,
     );
+  }
+
+  /**
+   * Owner-authenticated read of the workspace-free fleet catalog. Unlike the
+   * per-workspace resources this needs no catalog resolution — the endpoint is a
+   * single generation-stamped resource — but the same owner authorization,
+   * bounded read, and daemon-generation check apply.
+   */
+  async fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult> {
+    if (this.#daemon.status !== "connected") return this.#disconnectedResult();
+    if (!this.#ownerToken) {
+      return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
+    }
+    try {
+      const raw = await this.#requestJson(
+        "/api/resources/fleet-catalog",
+        this.#maxResponseBytes,
+        true,
+      );
+      const parsed = FleetCatalogResourceV1SchemaZ.safeParse(raw);
+      if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
+      if (!sameIdentity(parsed.data.daemon, daemonIdentity(this.#daemon))) {
+        throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+      }
+      return { status: "ok", envelope: parsed.data };
+    } catch (error) {
+      return { status: "error", error: this.#boundedError(error) };
+    }
   }
 
   /**
@@ -1231,6 +1302,16 @@ export class DaemonResourceBroker {
       case "config.changed":
       case "terminals.changed":
         this.#emitForSession(frame.sessionName);
+        return;
+      case "agent-status.changed":
+        // Session-scoped ground-truth status: refresh the open workspace's shell
+        // (if that session is one) AND invalidate the whole fleet catalog, whose
+        // opaque session ids the broker cannot map to a raw tmux session name.
+        this.#emitForSession(frame.sessionName);
+        this.#emit({ type: "fleet.changed" });
+        return;
+      case "fleet.changed":
+        this.#emit({ type: "fleet.changed" });
         return;
       case "workspace.added":
         try {

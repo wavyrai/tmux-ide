@@ -55,6 +55,14 @@ function daemonHost(
         daemon: DAEMON,
         workspaces: [{ workspaceName: "product" }],
       }),
+      fetchFleetCatalog: async () => ({
+        status: "ok",
+        envelope: { version: 1, daemon: DAEMON, sessions: [] },
+      }),
+      promoteWorkspace: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
       fetchApplicationShell: async () => ({
         status: "ok",
         envelope: {

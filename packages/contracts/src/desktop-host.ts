@@ -19,6 +19,7 @@ import {
   WorkspaceChangeResourceIdSchemaZ,
   WorkspaceFileResourceIdSchemaZ,
 } from "./workspace-resource-identity.ts";
+import { FleetCatalogResourceV1SchemaZ } from "./fleet-catalog.ts";
 import type {
   TerminalAttachRequest,
   TerminalAttachmentIssueResult,
@@ -29,12 +30,16 @@ import type {
 } from "./workspace-pane-creation.ts";
 import type { WorkspaceOpenHostResult } from "./workspace-open.ts";
 import type {
+  WorkspacePromoteArguments,
+  WorkspacePromoteHostResult,
+} from "./workspace-promotion.ts";
+import type {
   AppWindowMutationArguments,
   AppWindowMutationHostResult,
 } from "./app-window-mutation.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 10 as const;
+export const DESKTOP_HOST_API_VERSION = 11 as const;
 
 /** Stable tuple origin for the packaged, sandboxed Electron renderer. */
 export const DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide" as const;
@@ -285,6 +290,17 @@ export const DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ = z.discriminate
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
+/**
+ * The fleet catalog is a single, workspace-free read: it enumerates the whole
+ * adopted tmux fleet (see {@link ./fleet-catalog.ts}). The renderer supplies no
+ * cursor — there is one catalog per daemon generation — so the host method takes
+ * no request payload and the result is the parsed, generation-stamped resource.
+ */
+export const DesktopDaemonFetchFleetCatalogResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), envelope: FleetCatalogResourceV1SchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
 export const DesktopDaemonEventSubscriptionRequestSchemaZ = z
   .object({
     /**
@@ -306,6 +322,15 @@ export const DesktopDaemonSubscriptionIdSchemaZ = z
 
 export const DesktopDaemonEventSchemaZ = z.discriminatedUnion("type", [
   z.object({ type: z.literal("workspaces.changed") }).strict(),
+  /**
+   * The adopted-session fleet changed — its composition (a session adopted or
+   * gone) OR the ground-truth agent status of some session in it. Workspace-free
+   * like `workspaces.changed`: a fleet-catalog consumer re-fetches the whole
+   * catalog. The daemon carries these as two session-agnostic broadcast frames
+   * (`fleet.changed` / `agent-status.changed`); the main-process broker folds
+   * both into this single renderer-safe invalidation.
+   */
+  z.object({ type: z.literal("fleet.changed") }).strict(),
   z
     .object({
       type: z.literal("application-shell.changed"),
@@ -469,6 +494,9 @@ export type DesktopDaemonFetchWorkspaceChangeDiffRequest = z.infer<
 export type DesktopDaemonFetchWorkspaceChangeDiffResult = z.infer<
   typeof DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ
 >;
+export type DesktopDaemonFetchFleetCatalogResult = z.infer<
+  typeof DesktopDaemonFetchFleetCatalogResultSchemaZ
+>;
 export type DesktopDaemonEventSubscriptionRequest = z.infer<
   typeof DesktopDaemonEventSubscriptionRequestSchemaZ
 >;
@@ -555,6 +583,14 @@ export interface HostCapabilities {
     fetchWorkspaceChangeDiff(
       request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
     ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult>;
+    /** Read the whole adopted fleet (owner-gated, generation-stamped, no cursor). */
+    fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult>;
+    /**
+     * Promote an adopted, catalog-visible session to an attachable workspace.
+     * Owner-gated and idempotent; the renderer supplies only the opaque fleet
+     * session id, and Electron main authors the operation/generation envelope.
+     */
+    promoteWorkspace(intent: WorkspacePromoteArguments): Promise<WorkspacePromoteHostResult>;
     subscribe(
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,

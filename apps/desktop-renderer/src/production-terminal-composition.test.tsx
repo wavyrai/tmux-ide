@@ -283,6 +283,14 @@ function createHostHarness() {
         daemon,
         workspaces: [{ workspaceName: "alpha" }],
       })),
+      fetchFleetCatalog: vi.fn(async () => ({
+        status: "ok" as const,
+        envelope: { version: 1 as const, daemon, sessions: [] },
+      })),
+      promoteWorkspace: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by composition tests" },
+      })),
       fetchApplicationShell: vi.fn(async () =>
         "appWindows" in resource
           ? {
@@ -388,7 +396,7 @@ describe("production terminal composition", () => {
       return value!;
     });
     expect(placement.disabled).toBe(false);
-    expect(harness.host.apiVersion).toBe(10);
+    expect(harness.host.apiVersion).toBe(11);
     dispose();
   });
 

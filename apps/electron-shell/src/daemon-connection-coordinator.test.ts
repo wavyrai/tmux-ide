@@ -132,6 +132,19 @@ function brokerHarness(
         await pending?.promise;
         return { status: "ok", daemon: identity, workspaces: [{ workspaceName: "product" }] };
       },
+      promoteWorkspace: async (request) => ({
+        operationId: request.operationId,
+        daemonInstanceId: identity.instanceId,
+        outcome: "promoted",
+        resource: {
+          resourceVersion: 1,
+          workspaceName: "product",
+        },
+      }),
+      fetchFleetCatalog: async () => ({
+        status: "ok",
+        envelope: { version: 1, daemon: identity, sessions: [] },
+      }),
       fetchApplicationShell: async () => ({
         status: "error",
         error: { code: "workspace-not-found", reason: "not part of this test" },

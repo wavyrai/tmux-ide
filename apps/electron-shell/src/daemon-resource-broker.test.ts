@@ -1747,4 +1747,141 @@ describe("Electron main daemon workspace read resources", () => {
       "http://127.0.0.1:6060/api/project/product%20workspace/change-diff?changeId=change.changechangechange01",
     );
   });
+
+  it("reads the owner-gated fleet catalog and rejects a foreign daemon generation", async () => {
+    const fleetCatalog = {
+      version: 1,
+      daemon: IDENTITY,
+      sessions: [
+        {
+          sessionId: "session.aaaaaaaaaaaaaaaa",
+          label: "web",
+          projectLabel: "web-app",
+          appCreated: true,
+          paneCount: 3,
+          agents: [
+            {
+              agentId: "agent.aaaaaaaaaaaaaaaa",
+              name: "Claude",
+              harness: "claude-code",
+              activity: "running",
+              attention: false,
+              statusSource: "authority",
+            },
+          ],
+        },
+      ],
+    };
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        return json(fleetCatalog);
+      },
+    });
+
+    await expect(broker.fetchFleetCatalog()).resolves.toEqual({
+      status: "ok",
+      envelope: fleetCatalog,
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.url).toBe("http://127.0.0.1:6060/api/resources/fleet-catalog");
+    expect(new Headers(requests[0]!.init?.headers).get("authorization")).toBe(
+      "Bearer owner-only-token",
+    );
+
+    const foreign = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({ ...fleetCatalog, daemon: { ...IDENTITY, instanceId: crypto.randomUUID() } }),
+    });
+    await expect(foreign.fetchFleetCatalog()).resolves.toMatchObject({
+      status: "error",
+      error: { code: "daemon-identity-mismatch" },
+    });
+  });
+
+  it("refuses a fleet catalog read without the owner secret", async () => {
+    const fetch = vi.fn();
+    const broker = new DaemonResourceBroker({ daemon: CONNECTED, fetch });
+    await expect(broker.fetchFleetCatalog()).resolves.toMatchObject({
+      status: "error",
+      error: { code: "daemon-unavailable" },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("replays one host-authored workspace promotion across a transport retry", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const operationId = "30000000-0000-4000-8000-000000000003";
+    let attempt = 0;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        attempt += 1;
+        if (attempt === 1) throw new Error("transport timeout after promotion commit");
+        return json({
+          ok: true,
+          result: {
+            operationId,
+            daemonInstanceId: IDENTITY.instanceId,
+            outcome: "replayed",
+            resource: { resourceVersion: 1, workspaceName: "web" },
+          },
+        });
+      },
+    });
+
+    await expect(
+      broker.promoteWorkspace({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: { sessionId: "session.aaaaaaaaaaaaaaaa" },
+      }),
+    ).resolves.toMatchObject({ operationId, outcome: "replayed" });
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      expect(request.url).toBe("http://127.0.0.1:6060/api/v2/action/workspace.promote");
+      expect(new Headers(request.init?.headers).get("authorization")).toBe(
+        "Bearer owner-only-token",
+      );
+      expect(new Headers(request.init?.headers).get("x-tmux-ide-operation-id")).toBe(operationId);
+      expect(JSON.parse(String(request.init?.body))).toEqual({
+        sessionId: "session.aaaaaaaaaaaaaaaa",
+      });
+    }
+  });
+
+  it("folds daemon fleet.changed and agent-status.changed frames into one renderer fleet invalidation", async () => {
+    const socket = new FakeSocket();
+    const events: DesktopDaemonEvent[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async () => json(WORKSPACE_CATALOG),
+      createWebSocket: () => socket,
+    });
+    const result = await broker.subscribe(["docs"], (event) => events.push(event));
+    expect(result.status).toBe("subscribed");
+    socket.emit("open");
+    socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
+
+    socket.emit("message", JSON.stringify({ type: "fleet.changed" }));
+    expect(events.at(-1)).toEqual({ type: "fleet.changed" });
+
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "agent-status.changed", sessionName: "durable-docs" }),
+    );
+    // Session-scoped status refreshes the open workspace AND the whole fleet.
+    expect(events).toContainEqual({ type: "application-shell.changed", workspaceName: "docs" });
+    expect(events.at(-1)).toEqual({ type: "fleet.changed" });
+    // A raw tmux session name never crosses to the renderer.
+    expect(JSON.stringify(events)).not.toMatch(/durable-docs|sessionName/iu);
+    if (result.status === "subscribed") result.unsubscribe();
+  });
 });

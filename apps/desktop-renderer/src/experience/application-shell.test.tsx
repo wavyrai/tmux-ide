@@ -109,6 +109,14 @@ function host(): HostCapabilities {
         status: "error",
         error: { code: "preview-only", reason: "fixture only" },
       }),
+      fetchFleetCatalog: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      promoteWorkspace: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
       fetchApplicationShell: async () => ({
         status: "error",
         error: { code: "preview-only", reason: "fixture only" },

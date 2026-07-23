@@ -17,6 +17,7 @@ import {
   type DesktopDaemonFetchWorkspaceFilesResult,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
+  type DesktopDaemonFetchFleetCatalogResult,
   type DesktopDaemonRefreshConnectionResult,
   type TerminalAttachmentIssueMutationRequest,
   type TerminalAttachmentIssueResult,
@@ -24,6 +25,8 @@ import {
   type WorkspacePaneCreateMutationResult,
   type WorkspaceOpenMutationRequest,
   type WorkspaceOpenMutationResult,
+  type WorkspacePromoteMutationRequest,
+  type WorkspacePromoteMutationResult,
   type AppWindowMutationRequest,
   type AppWindowMutationResult,
 } from "@tmux-ide/contracts";
@@ -44,6 +47,9 @@ export interface DaemonResourceAuthority {
   capabilities(): Promise<DesktopDaemonCapabilitiesResult>;
   mutateAppWindow(request: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
   openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
+  promoteWorkspace(
+    request: WorkspacePromoteMutationRequest,
+  ): Promise<WorkspacePromoteMutationResult>;
   createWorkspacePane(
     request: WorkspacePaneCreateMutationRequest,
   ): Promise<WorkspacePaneCreateMutationResult>;
@@ -52,6 +58,7 @@ export interface DaemonResourceAuthority {
     rendererOrigin: string,
   ): Promise<TerminalAttachmentIssueResult>;
   listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
+  fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult>;
   fetchApplicationShell(
     workspaceName: string,
     resourceVersion?: DesktopDaemonFetchApplicationShellRequest["resourceVersion"],
@@ -264,6 +271,23 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     return result;
   }
 
+  async promoteWorkspace(
+    request: WorkspacePromoteMutationRequest,
+  ): Promise<WorkspacePromoteMutationResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.promoteWorkspace(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
+  }
+
   async issueTerminalAttachment(
     request: TerminalAttachmentIssueMutationRequest,
     rendererOrigin: string,
@@ -297,6 +321,26 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
     const result = await broker.listWorkspaces();
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchFleetCatalog();
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||

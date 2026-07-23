@@ -17,8 +17,11 @@ import {
   DesktopDaemonFetchWorkspaceFilesRequestSchemaZ,
   DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
+  DesktopDaemonFetchFleetCatalogResultSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
+  WorkspacePromoteArgumentsSchemaZ,
+  WorkspacePromoteHostResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
   DesktopMenuResultSchemaZ,
   DesktopThemeStateSchemaZ,
@@ -42,6 +45,7 @@ import {
   type HostCapabilities,
   type TerminalAttachRequest,
   type WorkspacePaneCreateInvocation,
+  type WorkspacePromoteArguments,
   type AppWindowMutationArguments,
 } from "@tmux-ide/contracts";
 
@@ -178,6 +182,16 @@ const capabilities: HostCapabilities = Object.freeze({
       DesktopDaemonListWorkspacesResultSchemaZ.parse(
         await ipcRenderer.invoke(HOST_IPC.daemonListWorkspaces),
       ),
+    fetchFleetCatalog: async () =>
+      DesktopDaemonFetchFleetCatalogResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonFetchFleetCatalog),
+      ),
+    promoteWorkspace: async (intent: WorkspacePromoteArguments) => {
+      const parsed = WorkspacePromoteArgumentsSchemaZ.parse(intent);
+      return WorkspacePromoteHostResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonPromoteWorkspace, parsed),
+      );
+    },
     fetchApplicationShell: async (request: DesktopDaemonFetchApplicationShellRequest) => {
       const parsed = DesktopDaemonFetchApplicationShellRequestSchemaZ.parse(request);
       return DesktopDaemonFetchApplicationShellResultSchemaZ.parse(

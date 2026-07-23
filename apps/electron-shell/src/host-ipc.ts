@@ -28,6 +28,9 @@ import {
   WorkspacePaneCreateMutationRequestSchemaZ,
   WorkspaceOpenHostResultSchemaZ,
   WorkspaceOpenMutationRequestSchemaZ,
+  WorkspacePromoteArgumentsSchemaZ,
+  WorkspacePromoteHostResultSchemaZ,
+  WorkspacePromoteMutationRequestSchemaZ,
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityState,
   type DesktopHostBootstrap,
@@ -636,6 +639,80 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     const result = await deps.daemonResources.listWorkspaces();
     assertRendererAuthority(event, authority.generation);
     return result;
+  });
+  handle(HOST_IPC.daemonFetchFleetCatalog, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 0) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const result = await deps.daemonResources.fetchFleetCatalog();
+    assertRendererAuthority(event, authority.generation);
+    return result;
+  });
+  handle(HOST_IPC.daemonPromoteWorkspace, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return WorkspacePromoteHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("invalid-request"),
+      });
+    }
+    const intent = WorkspacePromoteArgumentsSchemaZ.safeParse(args[0]);
+    if (!intent.success) {
+      return WorkspacePromoteHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("invalid-request"),
+      });
+    }
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return WorkspacePromoteHostResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedCapabilityError(before),
+      });
+    }
+    const request = WorkspacePromoteMutationRequestSchemaZ.parse({
+      operationId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      intent: intent.data,
+    });
+    try {
+      const result = await deps.daemonResources.promoteWorkspace(request);
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspacePromoteHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        result.operationId !== request.operationId ||
+        result.daemonInstanceId !== request.expectedDaemonInstanceId
+      ) {
+        return WorkspacePromoteHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return WorkspacePromoteHostResultSchemaZ.parse({ status: "ok", result });
+    } catch {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspacePromoteHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      return WorkspacePromoteHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("request-failed"),
+      });
+    }
   });
   handle(HOST_IPC.daemonFetchApplicationShell, async (event, ...args) => {
     const authority = trustedRendererAuthority(event);

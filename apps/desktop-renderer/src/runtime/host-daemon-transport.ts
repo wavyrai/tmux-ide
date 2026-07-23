@@ -78,6 +78,11 @@ function eventToHandler(
     handlers.onPeerMismatch("The desktop daemon generation changed.");
     return;
   }
+  if (event.type === "fleet.changed") {
+    // Fleet composition/status invalidations belong to the fleet-catalog store,
+    // not this per-workspace application-shell transport.
+    return;
+  }
   if (event.state === "live") {
     handlers.onVerifiedOpen();
     return;

@@ -140,6 +140,8 @@ export function createBrowserHostCapabilities(): HostCapabilities {
         },
       }),
       listWorkspaces: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
+      fetchFleetCatalog: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
+      promoteWorkspace: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
       fetchApplicationShell: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
       fetchWorkspaceFiles: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
       fetchWorkspaceFilePreview: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
@@ -176,6 +178,8 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
     typeof candidate.daemon?.issueTerminalAttachment === "function" &&
     typeof candidate.daemon?.refreshConnection === "function" &&
     typeof candidate.daemon?.listWorkspaces === "function" &&
+    typeof candidate.daemon?.fetchFleetCatalog === "function" &&
+    typeof candidate.daemon?.promoteWorkspace === "function" &&
     typeof candidate.daemon?.fetchApplicationShell === "function" &&
     typeof candidate.daemon?.fetchWorkspaceFiles === "function" &&
     typeof candidate.daemon?.fetchWorkspaceFilePreview === "function" &&
