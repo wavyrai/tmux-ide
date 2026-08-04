@@ -121,6 +121,8 @@ function harness(options: HarnessOptions) {
     () => children[Math.min(spawnIndex++, children.length - 1)] as unknown as SpawnedDaemonChild,
   );
   const dependencies: DesktopDaemonSupervisorDependencies = {
+    // Forwarding is off by default; these tests never assert on it.
+    writeChildLog: () => undefined,
     claimAllowsStartupAttempt: () => options.claimAllowsStartupAttempt ?? true,
     inspectCanonical,
     ownerProvenDead,

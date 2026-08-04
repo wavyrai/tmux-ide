@@ -2,6 +2,7 @@ import {
   DesktopDaemonHostStateSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
   type DaemonInstanceIdentity,
+  type DaemonChildOutputTail,
   type DesktopDaemonCapabilityState,
   type DesktopDaemonCapabilitiesResult,
   type DesktopDaemonEvent,
@@ -115,6 +116,12 @@ export interface DaemonConnectionCoordinatorDependencies {
    * disturb connection authority, and no trust decision reads it.
    */
   readonly environmentReconciler?: KnownEnvironmentReconciler;
+  /**
+   * The daemon child's captured stderr tail, read at state() time. Supplied by
+   * the supervisor that owns the child; absent for coordinators with no child
+   * of their own (an attached foreign daemon, tests).
+   */
+  readonly childOutputTail?: () => DaemonChildOutputTail | null;
 }
 
 interface RefreshFlight {
@@ -194,6 +201,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   readonly #createBroker: (daemon: ConnectedDaemonState) => DaemonResourceAuthority;
   readonly #onHostStateChanged: ((daemon: DesktopDaemonHostState) => void) | undefined;
   readonly #environmentReconciler: KnownEnvironmentReconciler | undefined;
+  readonly #childOutputTail: (() => DaemonChildOutputTail | null) | undefined;
   readonly #subscriptions = new Map<number, CoordinatorSubscription>();
 
   #daemon: DesktopDaemonHostState;
@@ -211,6 +219,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     this.#createBroker = dependencies.createBroker ?? defaultBrokerFactory;
     this.#onHostStateChanged = dependencies.onHostStateChanged;
     this.#environmentReconciler = dependencies.environmentReconciler;
+    this.#childOutputTail = dependencies.childOutputTail;
     if (this.#daemon.status === "connected") {
       try {
         this.#broker = this.#createBroker(this.#daemon);
@@ -234,7 +243,14 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   }
 
   state(): DesktopDaemonCapabilityState {
-    return rendererDaemonState(this.#daemon);
+    if (this.#daemon.status === "connected") return rendererDaemonState(this.#daemon);
+    let childOutput: DaemonChildOutputTail | null = null;
+    try {
+      childOutput = this.#childOutputTail?.() ?? null;
+    } catch {
+      // Diagnostics are never allowed to break connection reporting.
+    }
+    return rendererDaemonState(this.#daemon, childOutput);
   }
 
   refreshConnection(): Promise<DesktopDaemonRefreshConnectionResult> {

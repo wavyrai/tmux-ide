@@ -69,7 +69,10 @@ import {
 
 export interface DesktopAppDependencies {
   daemonPreflight?: DaemonPreflight;
-  daemonSupervisor?: Pick<DesktopDaemonSupervisor, "start" | "stopOwned" | "snapshot">;
+  daemonSupervisor?: Pick<
+    DesktopDaemonSupervisor,
+    "start" | "stopOwned" | "snapshot" | "childOutputTail"
+  >;
   loadTimeoutMs?: number;
 }
 
@@ -330,6 +333,8 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       initialDaemon: daemon,
       preflight: supervisedDaemonPreflight,
       environmentReconciler: environmentCatalog,
+      // A disconnected state now carries the daemon child's own last words.
+      childOutputTail: () => daemonSupervisor.childOutputTail(),
       onHostStateChanged: (state) => {
         const nextOrigin = state.status === "connected" ? state.descriptor.apiBaseUrl : null;
         if (nextOrigin === daemonHttpOrigin) return;

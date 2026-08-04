@@ -78,6 +78,7 @@ import {
   type DesktopDaemonTransportState,
   type AppWindowMutationRequest,
   type AppWindowMutationResult,
+  type DaemonChildOutputTail,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
 
@@ -346,7 +347,15 @@ export function daemonCapabilityError(
   return { code, reason: ERROR_REASON[code] };
 }
 
-export function rendererDaemonState(daemon: DesktopDaemonHostState):
+export function rendererDaemonState(
+  daemon: DesktopDaemonHostState,
+  /**
+   * The daemon child's captured last words. Carried on disconnected states so
+   * the renderer can show WHY startup is stuck instead of generic copy; ignored
+   * on a connected state, where there is nothing to explain.
+   */
+  childOutput?: DaemonChildOutputTail | null,
+):
   | { readonly status: "connected"; readonly identity: DaemonInstanceIdentity }
   | {
       readonly status: "unavailable" | "degraded";
@@ -355,6 +364,7 @@ export function rendererDaemonState(daemon: DesktopDaemonHostState):
         { status: "unavailable" | "degraded" }
       >["code"];
       readonly reason: string;
+      readonly childOutput?: DaemonChildOutputTail;
     } {
   if (daemon.status === "connected") {
     const { protocolVersion, productVersion, instanceId, startedAt, environmentId } =
@@ -373,6 +383,7 @@ export function rendererDaemonState(daemon: DesktopDaemonHostState):
   return {
     status: daemon.status,
     code: daemon.code,
+    ...(childOutput ? { childOutput } : {}),
     // Reasons are replaced with fixed copy so probe internals never reach the
     // renderer. The supervisor-halted reason is the one exception: it is
     // composed by the supervisor from typed parts (bounded, no secrets) and

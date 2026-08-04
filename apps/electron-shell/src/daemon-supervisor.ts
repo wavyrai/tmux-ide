@@ -2,10 +2,13 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 
-import type {
-  CanonicalDaemonInfo,
-  DesktopDaemonHostState,
-  DesktopDaemonSupervisorFatalReason,
+import {
+  DAEMON_CHILD_OUTPUT_MAX_LINES,
+  DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH,
+  type CanonicalDaemonInfo,
+  type DaemonChildOutputTail,
+  type DesktopDaemonHostState,
+  type DesktopDaemonSupervisorFatalReason,
 } from "@tmux-ide/contracts";
 
 import {
@@ -96,6 +99,11 @@ export interface DesktopDaemonSupervisorOptions {
    * its daemon connection; never fired after stopOwned() was requested.
    */
   readonly onSupervisedDaemonStateChanged?: (snapshot: DesktopDaemonSupervisorSnapshot) => void;
+  /**
+   * Forward the daemon child's stderr to this process's stderr as it arrives.
+   * Defaults to the `TMUX_IDE_DAEMON_CHILD_LOG=1` environment opt-in.
+   */
+  readonly forwardChildLog?: boolean;
 }
 
 export interface DesktopDaemonSupervisorDependencies {
@@ -108,6 +116,8 @@ export interface DesktopDaemonSupervisorDependencies {
   readonly now: () => number;
   readonly sleep: (milliseconds: number) => Promise<void>;
   readonly random: () => number;
+  /** Where forwarded child stderr goes. Production writes this process's stderr. */
+  readonly writeChildLog: (chunk: string) => void;
 }
 
 interface ChildExit {
@@ -147,6 +157,45 @@ class BoundedStreamCapture {
   truncated(): boolean {
     return this.#truncated;
   }
+
+  /** The last `maxLines` wire-safe lines of what was captured. */
+  lines(maxLines: number): readonly string[] {
+    return sanitizeDaemonChildOutputLines(this.text(), maxLines);
+  }
+}
+
+/**
+ * PURE. Turn raw captured child output into lines the renderer bridge accepts.
+ *
+ * Three guarantees, each matching a rule the contract enforces: control
+ * characters are stripped (a daemon writing ANSI must not corrupt the shell's
+ * UI), every line is bounded, and any line that looks like it carries a
+ * credential is DROPPED rather than truncated — a diagnostic must never become
+ * a credential leak. A leading partial line from a truncated capture is
+ * discarded so no line is shown half-read.
+ */
+export function sanitizeDaemonChildOutputLines(
+  text: string,
+  maxLines: number,
+  options: { readonly dropLeadingPartial?: boolean } = {},
+): readonly string[] {
+  const raw = text.split("\n");
+  if (options.dropLeadingPartial && raw.length > 1) raw.shift();
+  const lines: string[] = [];
+  for (const line of raw) {
+    const cleaned = [...line.replace(/\r/gu, "")]
+      .filter((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 32 && code !== 127;
+      })
+      .join("")
+      .trimEnd()
+      .slice(0, DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH);
+    if (cleaned.length === 0) continue;
+    if (/(?:authorization|bearer\s+|owner.?token|redemptionticket|ta1_)/iu.test(cleaned)) continue;
+    lines.push(cleaned);
+  }
+  return lines.slice(-maxLines);
 }
 
 /**
@@ -178,6 +227,13 @@ const defaultDependencies: DesktopDaemonSupervisorDependencies = {
   now: () => Date.now(),
   sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   random: () => Math.random(),
+  writeChildLog: (chunk) => {
+    try {
+      process.stderr.write(chunk);
+    } catch {
+      // A closed stderr must never destabilize supervision.
+    }
+  },
 };
 
 function startupFailure(reason: string): DesktopDaemonHostState {
@@ -230,6 +286,7 @@ export class DesktopDaemonSupervisor {
   readonly #options: DesktopDaemonSupervisorOptions;
   readonly #dependencies: DesktopDaemonSupervisorDependencies;
   readonly #restartPolicy: DaemonRestartPolicy;
+  readonly #forwardChildLog: boolean;
 
   #stdout = new BoundedStreamCapture();
   #stderr = new BoundedStreamCapture();
@@ -257,6 +314,8 @@ export class DesktopDaemonSupervisor {
     this.#options = options;
     this.#dependencies = { ...defaultDependencies, ...dependencies };
     this.#restartPolicy = { ...DEFAULT_DAEMON_RESTART_POLICY, ...options.restartPolicy };
+    this.#forwardChildLog =
+      options.forwardChildLog ?? process.env.TMUX_IDE_DAEMON_CHILD_LOG === "1";
   }
 
   start(): Promise<DesktopDaemonHostState> {
@@ -266,6 +325,35 @@ export class DesktopDaemonSupervisor {
         : this.#superviseFirstAttempt();
     }
     return this.#startPromise;
+  }
+
+  /**
+   * The daemon child's own last words, bounded and wire-safe, or null when this
+   * generation spawned no child or it printed nothing usable.
+   *
+   * This exists because the capture above used to be write-only: a child that
+   * died with a clear message on stderr reached the user as a blank "connection
+   * failed". The tail travels with the disconnected state so a stuck readiness
+   * rung arrives with the child's explanation attached.
+   */
+  childOutputTail(): DaemonChildOutputTail | null {
+    if (!this.#child) return null;
+    const lines = sanitizeDaemonChildOutputLines(
+      this.#stderr.text(),
+      DAEMON_CHILD_OUTPUT_MAX_LINES,
+      {
+        dropLeadingPartial: this.#stderr.truncated(),
+      },
+    );
+    if (lines.length === 0) return null;
+    const signal = this.#childExit?.signal ?? null;
+    return {
+      stream: "stderr",
+      lines: [...lines],
+      truncated: this.#stderr.truncated(),
+      exitCode: this.#childExit?.code ?? null,
+      signal: signal !== null && /^SIG[A-Z0-9]{1,12}$/u.test(signal) ? signal : null,
+    };
   }
 
   snapshot(): DesktopDaemonSupervisorSnapshot {
@@ -479,7 +567,16 @@ export class DesktopDaemonSupervisor {
       if (this.#child === child) this.#stdout.append(chunk);
     });
     child.stderr.on("data", (chunk: string | Buffer) => {
-      if (this.#child === child) this.#stderr.append(chunk);
+      if (this.#child !== child) return;
+      this.#stderr.append(chunk);
+      // Opt-in live passthrough. The capture below is a bounded tail meant for
+      // the renderer; when a developer needs the child's full running commentary
+      // it has to reach a terminal, and this is the only place that can do it.
+      if (this.#forwardChildLog) {
+        this.#dependencies.writeChildLog(
+          typeof chunk === "string" ? chunk : chunk.toString("utf8"),
+        );
+      }
     });
     this.#childExitPromise = new Promise<ChildExit>((resolve) => {
       let settled = false;
