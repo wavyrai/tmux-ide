@@ -6,11 +6,12 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "lint": "eslint src scripts vite.config.ts vitest.config.ts",
+    "e2e": "playwright test --config e2e/playwright.config.ts",
+    "lint": "eslint e2e src scripts vite.config.ts vitest.config.ts",
     "smoke:dev-csp": "node scripts/dev-csp-smoke.mjs",
     "smoke:dev-web-host": "node scripts/dev-web-host-live-proof.mjs",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e/tsconfig.json"
   },
   "dependencies": {
     "@tmux-ide/contracts": "workspace:*",
@@ -20,6 +21,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "1.59.1",
     "happy-dom": "^20.8.4",
     "playwright": "1.59.1",
     "typescript": "^5.9.3",
