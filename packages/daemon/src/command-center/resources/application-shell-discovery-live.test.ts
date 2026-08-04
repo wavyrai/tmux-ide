@@ -155,7 +155,10 @@ describe.skipIf(!hasTmux)("application-shell pinned all-window discovery", () =>
       expect.arrayContaining([
         { status: "available", semanticPaneId: "pane.live-agent" },
         { status: "available", semanticPaneId: "pane.live-shell" },
-        { status: "unavailable", reason: "not-single-pane-window" },
+        // The split window carries no `@tmux_ide_window_id`, so window proof
+        // fails on the missing stamp. `not-single-pane-window` is now only the
+        // legacy verdict for facts sources that carry no window identity.
+        { status: "unavailable", reason: "missing-window-stamp" },
       ]),
     );
     const encoded = JSON.stringify(projected.terminalInventory);
