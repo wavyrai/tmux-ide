@@ -7,7 +7,10 @@ import type {
   DesktopWindowState,
   HostCapabilities,
 } from "@tmux-ide/contracts";
-import { DesktopDaemonRefreshConnectionResultSchemaZ } from "@tmux-ide/contracts";
+import {
+  DesktopDaemonRefreshConnectionResultSchemaZ,
+  projectDesktopStartupReadiness,
+} from "@tmux-ide/contracts";
 
 import {
   parseThemeState,
@@ -22,7 +25,10 @@ import {
   DesktopLiveApplication,
   type DesktopDaemonRecoveryPhase,
 } from "./runtime/live-app-composition.tsx";
-import { recoveryForDaemonCapability } from "./runtime/connection-recovery.ts";
+import {
+  recoveryForDaemonCapability,
+  startupReadinessDiagnostics,
+} from "./runtime/connection-recovery.ts";
 import { createHostNativeTerminalTransport } from "./runtime/host-terminal-transport.ts";
 import type { NativeTerminalTransport } from "./terminal/native-terminal-transport.ts";
 import type {
@@ -304,6 +310,15 @@ export function App(props: AppProps = {}) {
                               retryLabel="Recheck daemon"
                               diagnostics={[
                                 daemonCapabilityReason(daemon),
+                                // Name the stuck startup rung, its typed reason,
+                                // and the engine child's own last words.
+                                ...startupReadinessDiagnostics(
+                                  projectDesktopStartupReadiness({
+                                    daemon,
+                                    ladder: null,
+                                    observedAt: new Date().toISOString(),
+                                  }),
+                                ),
                                 `Recovery phase: ${daemonRecovery()}`,
                                 "No workspace resource or terminal attachment has been mounted.",
                               ]}

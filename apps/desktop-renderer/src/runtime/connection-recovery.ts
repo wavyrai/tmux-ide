@@ -12,10 +12,13 @@
  * screen falls back to Retry / Reopen, which is the only honest next step for a
  * supervised, bundled daemon.
  */
-import type {
-  DesktopDaemonCapabilityError,
-  DesktopDaemonCapabilityState,
-  DesktopPlatform,
+import {
+  startupReadinessBlockingRung,
+  type DesktopDaemonCapabilityError,
+  type DesktopDaemonCapabilityState,
+  type DesktopPlatform,
+  type DesktopStartupReadiness,
+  type StartupReadinessRungId,
 } from "@tmux-ide/contracts";
 
 export interface ConnectionRecoveryPresentation {
@@ -201,4 +204,87 @@ export function recoveryForWorkspaceOpenError(
         command: null,
       };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Startup readiness (m44.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Human labels for the readiness rungs. Deliberately describes the THING that
+ * is missing rather than the internal rung name, so the diagnostic reads as an
+ * explanation instead of a schema dump.
+ */
+const RUNG_LABEL: Record<StartupReadinessRungId, string> = {
+  "daemon-spawned": "starting the engine",
+  "credential-held": "authorizing this app with the engine",
+  "identity-established": "verifying the engine identity",
+  "catalog-populated": "reading the terminal catalog",
+  "attachment-issuable": "preparing terminal attachment",
+};
+
+const REASON_LABEL: Record<string, string> = {
+  // Host issue codes.
+  "record-missing": "the engine has not published itself yet",
+  "record-invalid": "the engine's record is unreadable",
+  "process-not-running": "the engine process is not running",
+  "probe-timeout": "the engine did not answer in time",
+  "probe-failed": "the engine could not be reached",
+  "protocol-incompatible": "the engine speaks a different protocol",
+  "identity-mismatch": "the engine identity changed",
+  "identity-unreachable": "the engine identity could not be read",
+  "supervisor-halted": "the engine was stopped after repeated failures",
+  "preview-only": "this is a preview window with no engine",
+  // Readiness's own codes.
+  "owner-capability-unavailable": "the engine holds no owner credential",
+  "daemon-identity-unavailable": "no engine identity could be established",
+  "catalog-discovery-failed": "tmux could not be read",
+  "catalog-sessions-unreachable": "the registered sessions are no longer running",
+  "attachment-runtime-unready": "the attachment runtime never became ready",
+  // Catalog faults, in the terminal-resource vocabulary.
+  "missing-semantic-stamp": "a pane is missing its durable tmux-ide identity",
+  "duplicate-semantic-stamp": "two panes claim the same durable identity",
+  "duplicate-runtime-pane-binding": "one pane is bound to two identities",
+  "invalid-runtime-proof": "tmux returned an unusable pane description",
+  "missing-window-stamp": "a multi-pane window has no durable identity",
+  "window-stamp-inconsistent": "a window's panes disagree on their identity",
+  "duplicate-window-stamp": "two windows claim the same durable identity",
+};
+
+/** How many of the child's captured lines a recovery screen shows. */
+const DIAGNOSTIC_CHILD_OUTPUT_LINES = 5;
+
+/**
+ * PURE — the diagnostic lines that name WHICH startup rung is stuck and why.
+ *
+ * This is the honesty wiring m44.3 exists for. A blocked startup used to reach
+ * the user as generic "connection failed" copy; these lines name the rung, the
+ * typed reason, and — when the desktop owned the engine child — the child's own
+ * last words. An unrecognized code is printed rather than swallowed: a reason
+ * this build does not know is still more useful than silence.
+ */
+export function startupReadinessDiagnostics(readiness: DesktopStartupReadiness): readonly string[] {
+  const blocking = startupReadinessBlockingRung(readiness.ladder);
+  const lines: string[] = [];
+  if (!blocking) {
+    lines.push("Startup readiness: every step is satisfied.");
+  } else if (blocking.status === "stuck") {
+    const code = blocking.reason.code;
+    lines.push(`Startup stalled at: ${RUNG_LABEL[blocking.rung]} — ${REASON_LABEL[code] ?? code}.`);
+  } else {
+    lines.push(`Startup is waiting on: ${RUNG_LABEL[blocking.rung]}.`);
+  }
+  const output = readiness.childOutput;
+  if (output) {
+    const shown = output.lines.slice(-DIAGNOSTIC_CHILD_OUTPUT_LINES);
+    if (output.truncated || output.lines.length > shown.length) {
+      lines.push("Engine output (earlier lines trimmed):");
+    } else if (shown.length > 0) {
+      lines.push("Engine output:");
+    }
+    for (const line of shown) lines.push(`  ${line}`);
+    if (output.exitCode !== null) lines.push(`The engine exited with code ${output.exitCode}.`);
+    else if (output.signal !== null) lines.push(`The engine was stopped by ${output.signal}.`);
+  }
+  return lines;
 }
