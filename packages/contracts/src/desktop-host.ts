@@ -138,9 +138,65 @@ const DesktopDaemonHostIssueSchemaFields = {
   reason: z.string().min(1),
 } as const;
 
+/** Hard ceiling on the daemon child's captured last words. Bounded by construction. */
+export const DAEMON_CHILD_OUTPUT_MAX_LINES = 50;
+export const DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH = 500;
+
+/**
+ * One captured line of the daemon child's own output. Control-free and
+ * credential-redacted: a child that logged an Authorization header must not
+ * turn a diagnostic into a credential leak across the renderer bridge.
+ */
+const DaemonChildOutputLineSchemaZ = z
+  .string()
+  .max(DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH)
+  .refine(
+    (line) =>
+      [...line].every((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 32 && code !== 127;
+      }),
+    "daemon child output must be control-character-free",
+  )
+  .refine(
+    (line) => !/(?:authorization|bearer\s+|owner.?token|redemptionticket|ta1_)/iu.test(line),
+    "daemon child output must be credential-redacted",
+  );
+
+/**
+ * The tail of what the bundled daemon child actually printed before it failed.
+ *
+ * The desktop supervisor has always captured the child's stdout/stderr into a
+ * bounded buffer; before m44.3 nothing read it, so a child that died with a
+ * clear message on stderr surfaced to the user as a blank "connection failed".
+ * Carrying the last lines on the disconnected state is the whole fix: a stuck
+ * readiness rung arrives with the child's own words attached.
+ */
+export const DaemonChildOutputTailSchemaZ = z
+  .object({
+    stream: z.literal("stderr"),
+    lines: z.array(DaemonChildOutputLineSchemaZ).max(DAEMON_CHILD_OUTPUT_MAX_LINES),
+    /** Older output was dropped to stay inside the capture bound. */
+    truncated: z.boolean(),
+    exitCode: z.number().int().min(-256).max(256).nullable(),
+    signal: z
+      .string()
+      .max(16)
+      .regex(/^SIG[A-Z0-9]{1,12}$/u)
+      .nullable(),
+  })
+  .strict();
+export type DaemonChildOutputTail = z.infer<typeof DaemonChildOutputTailSchemaZ>;
+
 const DesktopDaemonCapabilityIssueSchemaFields = {
   code: DesktopDaemonHostIssueCodeSchemaZ,
   reason: z.string().min(1).max(240),
+  /**
+   * The daemon child's captured last words, when this desktop generation owned
+   * a child that produced any. Absent when the daemon was never ours to spawn
+   * (an attached foreign daemon) or when it printed nothing.
+   */
+  childOutput: DaemonChildOutputTailSchemaZ.optional(),
 } as const;
 
 export const DesktopDaemonHostStateSchemaZ = z.discriminatedUnion("status", [
