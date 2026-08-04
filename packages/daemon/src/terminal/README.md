@@ -44,17 +44,16 @@ a remote transport.
 ## Why this exists
 
 `node-pty` is a native module compiled against an underlying runtime ABI.
-T085 burned half a day finding out that under Bun, `node-pty`'s `onData`
-callback never fires — the PTY spawns, the child exits, and zero bytes
-flow back. The fix had to live in two places:
+Under Bun, `node-pty`'s `onData` callback never fires — the PTY spawns, the
+child exits, and zero bytes flow back. The fix had to live in two places:
 
-1. **Runtime pinning** (T087 PART 1): every daemon spawn site uses
+1. **Runtime pinning**: every daemon spawn site uses
    `node`/`tsx`, never `bun`. See `daemon-watchdog.ts`,
    `tmux-bridge/src/monitor.ts`, `src/lib/tmux.ts`. The
    `packages/daemon/package.json` `dev`/`start` scripts mirror t3's
    `apps/server/package.json` (`tsx --watch` in dev, `node dist/...` in
    prod).
-2. **Adapter abstraction** (T087 PART 2): a thin interface so the future
+2. **Adapter abstraction**: a thin interface so the future
    doesn't paint us into the same corner. New runtimes get their own
    adapter; tests use `MockPtyAdapter` so we never accidentally spawn a
    real PTY in CI.
@@ -87,16 +86,15 @@ we register there.
   one terminal `onExit` event — subsequent `onExit(...)` subscribers
   receive an inert disposer.
 - No production code outside `NodePtyAdapter.ts` imports `node-pty`.
-  This is enforced by `pty-bridge.ts` now consuming `PtyAdapter` and is
-  the gate G14-T10 will tighten further.
-- Native PTY input is intentionally not exposed by the grouped attachment
-  launcher yet. `PtyProcess.boundedInput` now provides a monotonic fail-closed
-  primitive: it snapshots and accounts a fixed lifetime byte+frame budget
-  before each opaque node-pty call and never reclaims it. That bounds the
-  private queue without reading private fields, but it does not prove delivery.
-  Interactive attachment writes therefore continue to fail with
-  `input-backpressure-unavailable` until the direct stream owns typed
-  exhaustion/re-attach behavior. Legacy `PtyProcess.write()` is explicitly
+  This is enforced by `pty-bridge.ts` consuming `PtyAdapter`.
+- Native PTY input reaches the terminal only through
+  `PtyProcess.boundedInput`, a monotonic fail-closed primitive: it snapshots
+  and accounts a fixed lifetime byte+frame budget before each opaque node-pty
+  call and never reclaims it. That bounds the private queue without reading
+  private fields, but it does not prove delivery. The direct WebSocket stream
+  takes that capability for interactive viewers and rejects input with
+  `input-backpressure-unavailable` when it holds none — a read-only viewer, or
+  a generation whose budget is spent. Legacy `PtyProcess.write()` is explicitly
   non-authoritative and must never reach that stream. See ADR-0003. Output uses
   public `IPty.pause()`/`resume()` and byte+frame caps.
 - Read-only attachment clients are also fail-closed in this first launcher
@@ -110,12 +108,3 @@ we register there.
   Proof-ready clients remain paused and must be claimed within the bounded
   claim deadline (two seconds by default); otherwise the launcher terminates
   only that client and releases capacity.
-
-## Roadmap notes
-
-- **G14-T07** introduces Effect runtime. When that lands, this contract
-  grows an `Effect.Effect<PtyProcess, PtySpawnError>` shape; the plain-
-  TS interface here stays so adapters can implement either side.
-- **G14-T10** moves chat reactor → Effect Stream. PTY bytes will flow
-  through the same Stream pipeline; today's `EventEmitter`-based
-  `pty-bridge` becomes the bottom of that Stream.

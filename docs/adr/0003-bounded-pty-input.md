@@ -1,6 +1,6 @@
 # ADR-0003 — Bounded input for opaque PTY writers
 
-- **Status**: Proposed; primitive implemented, native attachment input remains gated
+- **Status**: Accepted; primitive implemented and wired into the direct WebSocket transport
 - **Date**: 2026-07-22
 - **Decision drivers**: no unbounded native queue, byte fidelity, explicit failure,
   npm-installable distribution, macOS/Linux/WSL2 support, and honest delivery semantics
@@ -25,10 +25,12 @@ We will use two layers:
 
 The monotonic primitive is implemented by
 `packages/daemon/src/terminal/MonotonicPtyInput.ts` and exposed as
-`PtyProcess.boundedInput`. It is not wired into `ClaimedPtyTmuxAttachment.write` in this
-card. The launcher continues to throw `input-backpressure-unavailable` until the direct
-WebSocket transport owns typed retirement/re-attach behavior and is structurally given
-only the bounded capability, never `PtyProcess.write`.
+`PtyProcess.boundedInput`. The direct WebSocket transport now takes that capability for
+interactive viewers (`terminal/attachments/direct-websocket.ts`,
+`boundedInputCapability`) and is structurally given only the bounded capability, never
+`PtyProcess.write`. `input-backpressure-unavailable` is now the typed rejection for a
+socket that holds no capability — a read-only viewer, or a generation whose budget is no
+longer `open` — not a blanket gate on input.
 
 ## Evidence
 
@@ -118,8 +120,8 @@ finds the limit first, it gets a typed rejection and the transport retires immed
 The UI must never silently drop or automatically resend the uncertain frame.
 
 This finite-generation behavior is memory-safe but can require the user to verify the
-last interaction after replacement. That tradeoff is why the native launcher remains
-gated until the direct transport and recovery UX are implemented and reviewed.
+last interaction after replacement. That tradeoff was accepted when the direct transport
+took the capability; the release matrix below is what remains outstanding.
 
 ## Memory bound
 
@@ -148,7 +150,7 @@ separate aggregate capacity review.
 
 ## Direct transport requirements
 
-The future binary WebSocket bridge must:
+The binary WebSocket bridge must:
 
 1. receive only `PtyBoundedInput`, output pause/resume, resize, and dispose capabilities;
    it must not receive `PtyProcess` or legacy `PtyProcess.write`;
@@ -220,9 +222,10 @@ The primitive/card is mergeable when:
 - NUL and high bytes remain byte-exact;
 - invalid policy is rejected at `NodePtyAdapter` construction;
 - source/boundary review confirms native attachment code cannot call legacy `write`; and
-- the launcher still throws `input-backpressure-unavailable` in production.
+- a socket holding no bounded capability rejects input with
+  `input-backpressure-unavailable`.
 
-Before enabling direct input, additionally require:
+Before the supported-platform release matrix, additionally require:
 
 - a live stalled-reader/SIGSTOP stress on macOS arm64/x64 and Linux arm64/x64 (including
   WSL2) that holds the process at its limits, repeatedly refuses more data, forces GC,
@@ -241,9 +244,8 @@ matrix.
 
 ## Risk register
 
-- **Blocker for enabling interactive attachments**: the direct WebSocket retirement and
-  recovery path is not implemented, and the current launcher intentionally exposes no
-  input capability.
+- **High**: interactive attachments ship on the bounded capability, so the stalled-reader
+  stress matrix above is now a release obligation rather than a precondition for wiring.
 - **High**: monotonic fail-closed input bounds memory but cannot prove final-frame
   delivery before retirement. It is not equivalent to completion/drain.
 - **High**: a local package-manager patch would disappear for npm consumers; do not use

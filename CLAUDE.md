@@ -77,7 +77,7 @@ Always `tmux-ide validate --json` after config mutations. When helping a user de
   - `tui/detect/` — two-layer detection: classify (authority parse + tracker), process-tree, manifest(+loader/corpus), snapshot.
   - `tui/team/` — the cockpit app (index.tsx: standalone home screen / picker / popup modes), sessions/projects data layer, home, tree/fuzzy/nav/mouse/keymap, report (fleet JSON), CONTROL.md.
   - `tui/integrations/` — claude.ts (hooks install/uninstall, settings merge; `TMUX_IDE_CLAUDE_SETTINGS` override).
-  - `tui/mirror/` — the control-mode (tmux -C) unified-render spike: proven, parked as the endgame option.
+  - `tui/mirror/` — the control-mode (tmux -C) render layer: ships as `tmux-ide app`, and its protocol library is what `terminal/mirror` builds on.
   - `tui/main.ts` + `tui/compiled.ts` + `scripts/build-tui.mjs` — the single-binary TUI (`bun build --compile` → dist/tui/tmux-ide-tui; resolution order: dev checkout → compiled binary → honest error).
   - `widgets/` — OpenTUI/Solid panels (explorer/changes/preview/config/setup/sidebar) + lib (theme mapped to app-config tokens, grammar, help-overlay); resolve.ts maps workspace `type:` panes (bundle-safe paths, spawns from REPO root for the bunfig preload).
   - `lib/` — app-config (THE typed config: keys/theme/updater/notifications/restore/updates/integrations; `TMUX_IDE_CONFIG` path override), restore, worktree, update(+check), agent-discovery, skill-sync, project-registry.
