@@ -24,12 +24,22 @@ export default defineConfig({
   // per-fixture waits are individually bounded, and this is the outer bound.
   timeout: 180_000,
   expect: { timeout: 15_000 },
+  // Actions are bounded independently of the test.
+  //
+  // Playwright retries a click's actionability check until the TEST timeout, so
+  // one element that never becomes stable or never stops being intercepted
+  // consumes the entire budget in silence — no network traffic, no failing
+  // assertion, just a three-minute stall and a bare "Test timeout exceeded".
+  // Bounding actions turns that into a fast, named failure that says which
+  // element and what intercepted it.
   reporter: process.env.CI
     ? [["list"], ["json", { outputFile: "artifacts/results.json" }]]
     : "list",
   use: {
     ...devices["Desktop Chrome"],
     headless: !headed,
+    actionTimeout: 20_000,
+    navigationTimeout: 30_000,
     viewport: { width: 1_400, height: 900 },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
