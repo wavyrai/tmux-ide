@@ -8,6 +8,7 @@
     "dev": "vite",
     "lint": "eslint src scripts vite.config.ts vitest.config.ts",
     "smoke:dev-csp": "node scripts/dev-csp-smoke.mjs",
+    "smoke:dev-web-host": "node scripts/dev-web-host-live-proof.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
