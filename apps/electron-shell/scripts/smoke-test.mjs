@@ -13,6 +13,11 @@
  *                           daemon's own application-shell resource.
  *   c. byte round-trip      a pane-stream lease redeems, seeds, accepts an
  *                           input frame, and echoes the typed bytes back.
+ *   d. replay repair        the fleet session is killed and recreated under
+ *                           its registered name, re-promoted (outcome
+ *                           `replayed`), and its fresh unstamped panes become
+ *                           attachable again — the path a long-lived registry
+ *                           entry exercises after every tmux server death.
  *
  * Everything it touches is disposable: an isolated tmux socket in a temp dir, a
  * scratch session, temp HOME/registry/settings/daemon-info/user-data, and the
@@ -101,10 +106,17 @@ async function ensureBuild() {
     join(distDir, "daemon-child.cjs"),
     join(distDir, "renderer", "index.html"),
   ];
-  const present = await Promise.all(artifacts.map(exists));
-  if (present.every(Boolean)) {
-    log("build artifacts present; reusing dist/");
-    return;
+  // Build EVERY run by default. A gate over the assembled product is only
+  // honest against the current sources: dist/daemon-child.cjs bundles the
+  // daemon, so a stale dist silently tests bytes that no longer exist in the
+  // tree — a daemon fix can be present in git and absent from the app under
+  // test. Opt out only for fast local iteration on the harness itself.
+  if (process.env.TMUX_IDE_SMOKE_REUSE_BUILD === "1") {
+    const present = await Promise.all(artifacts.map(exists));
+    if (present.every(Boolean)) {
+      log("TMUX_IDE_SMOKE_REUSE_BUILD=1: reusing the existing dist/ (may be stale)");
+      return;
+    }
   }
   log("building the desktop app (renderer + shell)");
   await execFileAsync("pnpm", ["--filter", "@tmux-ide/electron-shell", "build"], {
@@ -285,22 +297,60 @@ async function launchElectron(fleet) {
   return { child, canonical };
 }
 
-function daemonClient(canonical) {
+/**
+ * The daemon generation this run is bound to went away mid-run. Raised instead
+ * of a bare `fetch failed` so the transcript names the product event — the
+ * daemon child died and the supervisor replaced it — rather than the symptom.
+ */
+class DaemonGenerationLost extends Error {}
+
+function daemonClient(canonical, daemonInfoDir) {
   const base = `http://127.0.0.1:${canonical.port}`;
   const owner = { Authorization: `Bearer ${canonical.authToken}`, Connection: "close" };
+  // A connection failure is ambiguous on its own; the canonical record tells us
+  // whether the daemon this run started is simply gone, and what replaced it.
+  const explainUnreachable = async (error) => {
+    let current;
+    try {
+      current = JSON.parse(await readFile(join(daemonInfoDir, "daemon.json"), "utf8"));
+    } catch {
+      current = null;
+    }
+    const died = !processIsAlive(canonical.pid);
+    if (!died && current?.pid === canonical.pid) return error;
+    const replacement = current
+      ? current.pid === canonical.pid
+        ? "the same pid republished"
+        : `replaced by pid ${current.pid} on port ${current.port}`
+      : "no canonical record present";
+    return new DaemonGenerationLost(
+      `the daemon child this run started (pid ${canonical.pid}, port ${canonical.port}) ` +
+        `is gone — ${replacement}`,
+    );
+  };
   return {
     base,
     async get(path) {
-      const response = await fetch(`${base}${path}`, { headers: owner });
+      let response;
+      try {
+        response = await fetch(`${base}${path}`, { headers: owner });
+      } catch (error) {
+        throw await explainUnreachable(error);
+      }
       const body = await response.json().catch(() => null);
       return { status: response.status, body };
     },
     async post(path, payload, extraHeaders = {}) {
-      const response = await fetch(`${base}${path}`, {
-        method: "POST",
-        headers: { ...owner, "Content-Type": "application/json", ...extraHeaders },
-        body: JSON.stringify(payload),
-      });
+      let response;
+      try {
+        response = await fetch(`${base}${path}`, {
+          method: "POST",
+          headers: { ...owner, "Content-Type": "application/json", ...extraHeaders },
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        throw await explainUnreachable(error);
+      }
       const body = await response.json().catch(() => null);
       return { status: response.status, body };
     },
@@ -342,19 +392,25 @@ async function proveAttachability(client) {
   }
   log(`promoted to workspace ${workspaceName} (outcome ${promote.body.result.outcome})`);
 
+  const report = await assertPanesAttachable(client, "b (attachability)");
+  return { workspaceName, paneId: report.available[0], sessionId: session.sessionId };
+}
+
+/** The shared attachability assertion: at least one pane must be available. */
+async function assertPanesAttachable(client, rung) {
   const shell = await client.get(
     `/api/project/${encodeURIComponent(SESSION_NAME)}/application-shell?version=3`,
   );
   if (shell.status !== 200) {
     throw new RungFailure(
-      "b (attachability)",
+      rung,
       `application-shell resource was unavailable (HTTP ${shell.status})`,
     );
   }
   const report = attachabilityReport(shell.body?.resource?.terminalInventory?.resources);
   if (report.available.length === 0) {
     throw new RungFailure(
-      "b (attachability)",
+      rung,
       `no promoted pane reached attachability "available" — ${report.total} pane(s) refused: ` +
         `${dominantRefusalReasons(report).join(", ")}`,
     );
@@ -365,7 +421,74 @@ async function proveAttachability(client) {
         ? ` (refused: ${dominantRefusalReasons(report).join(", ")})`
         : ""),
   );
-  return { workspaceName, paneId: report.available[0] };
+  return report;
+}
+
+/**
+ * Rung d — the registry-replay repair path. The workspace registry is on-disk
+ * and keyed by session NAME, so an entry outlives the panes whose stamps die
+ * with them; a session recreated under a registered name arrives registered
+ * AND unstamped, and promotion's already-registered branch must repair it.
+ * This exact branch shipped broken on 2026-08-04: it resolved `replayed`
+ * without touching tmux, leaving the whole fleet permanently unattachable —
+ * the fresh-promotion rung (b) can never catch that class.
+ */
+async function proveReplayRepair(client, fleet) {
+  // A second, never-adopted session keeps the scratch server (and the daemon's
+  // pinned socket) alive while the fleet session is recreated.
+  fleet.runTmux(["new-session", "-d", "-s", "keepalive", "-c", fleet.projectDir, "exec sh -i"]);
+  fleet.runTmux(["kill-session", "-t", `=${SESSION_NAME}`]);
+  fleet.runTmux([
+    "new-session",
+    "-d",
+    "-s",
+    SESSION_NAME,
+    "-c",
+    fleet.projectDir,
+    "-n",
+    "one",
+    "exec sh -i",
+  ]);
+  fleet.runTmux(["set-option", "-t", SESSION_NAME, "@tmux_ide_adopted", "1"]);
+  log(`recreated ${SESSION_NAME} under its registered name (old stamps died with the panes)`);
+
+  // `session.<digest>` is derived from the session NAME (fleet-catalog.ts), so
+  // the id survives recreation by design. The new incarnation is told apart by
+  // its pane count: the original fleet has two panes, the recreated one has one.
+  const session = await pollUntil({
+    probe: async () => {
+      const { status, body } = await client.get("/api/resources/fleet-catalog");
+      if (status !== 200) return null;
+      const found = selectFleetSession(body, SESSION_NAME);
+      return found && found.paneCount === 1 ? found : null;
+    },
+    detail: `the recreated single-pane incarnation of ${SESSION_NAME} in the fleet catalog`,
+    timeoutMs: FLEET_TIMEOUT_MS,
+    intervalMs: 200,
+  });
+
+  const promote = await client.post(
+    "/api/v2/action/workspace.promote",
+    { sessionId: session.sessionId },
+    { "X-Tmux-Ide-Operation-Id": randomUUID() },
+  );
+  if (promote.status !== 200 || promote.body?.ok !== true) {
+    throw new RungFailure(
+      "d (replay repair)",
+      `re-promotion was refused (HTTP ${promote.status}): ${JSON.stringify(promote.body)}`,
+    );
+  }
+  const outcome = promote.body.result?.outcome;
+  if (outcome !== "replayed") {
+    // If the product stops routing this scenario through the replay branch the
+    // rung would silently stop covering the repair path — fail loudly instead.
+    throw new RungFailure(
+      "d (replay repair)",
+      `expected the already-registered promotion outcome "replayed", got "${outcome}"`,
+    );
+  }
+  log(`re-promoted (outcome ${outcome})`);
+  await assertPanesAttachable(client, "d (replay repair)");
 }
 
 function openPaneStream(descriptor) {
@@ -511,17 +634,32 @@ async function runCleanups() {
   }
 }
 
+/**
+ * Run one rung, and make sure whatever escapes it is attributed to that rung —
+ * an infrastructure error (a dead daemon, a timed-out poll) is a failure OF the
+ * rung that provoked it, not of "setup".
+ */
+async function runRung(rung, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof RungFailure) throw error;
+    throw new RungFailure(rung, error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function main() {
   await ensureBuild();
   const fleet = await createScratchFleet();
   const { child, canonical } = await launchElectron(fleet);
-  const client = daemonClient(canonical);
+  const client = daemonClient(canonical, fleet.daemonInfoDir);
   // Rung a runs first against the startup transcript, and again at the end so a
   // fatal logged DURING the later rungs — or an app that died mid-run — still
   // fails the gate.
   proveNoFatalOutput(child);
-  const attached = await proveAttachability(client);
-  await proveByteRoundTrip(client, canonical, attached);
+  const attached = await runRung("b (attachability)", () => proveAttachability(client));
+  await runRung("c (byte round-trip)", () => proveByteRoundTrip(client, canonical, attached));
+  await runRung("d (replay repair)", () => proveReplayRepair(client, fleet));
   proveNoFatalOutput(child);
 }
 
@@ -534,7 +672,7 @@ budget.unref?.();
 let failure = null;
 try {
   await main();
-  log("PASSED: fatal-pattern scan, attachability and byte round-trip all green");
+  log("PASSED: fatal-pattern scan, attachability, byte round-trip and replay repair all green");
 } catch (error) {
   failure = error;
 } finally {
