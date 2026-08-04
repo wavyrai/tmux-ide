@@ -146,7 +146,9 @@ export async function createScratchFleet(
     },
     listSessions: () =>
       runTmux(["list-sessions", "-F", "#{session_name}"]).split("\n").filter(Boolean),
-    capturePane: (name) => runTmux(["capture-pane", "-p", "-t", `=${name}`]),
+    // `<session>:` is the session's current window, active pane. A bare `=name`
+    // is a SESSION target and tmux rejects it where a pane is required.
+    capturePane: (name) => runTmux(["capture-pane", "-p", "-t", `${name}:`]),
     environment: {
       HOME: home,
       XDG_CONFIG_HOME: join(home, ".config"),

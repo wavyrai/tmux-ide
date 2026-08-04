@@ -30,6 +30,16 @@ export interface ProveVisibleOptions {
   readonly minWidth?: number;
   readonly minHeight?: number;
   readonly timeoutMs?: number;
+  /**
+   * How long to keep re-measuring before reporting a geometry failure.
+   *
+   * Measurement is a two-step conversation with a live page, and some surfaces
+   * re-mount between the steps — the mirror node list rebuilds its DOM on each
+   * stream update — which detaches the handle mid-measurement and yields a null
+   * box. Re-measuring removes that race without weakening anything: a genuinely
+   * collapsed or covered element fails every attempt and still fails here.
+   */
+  readonly settleMs?: number;
 }
 
 interface CentreHit {
@@ -48,14 +58,31 @@ export async function proveVisible(
   what: string,
   options: ProveVisibleOptions = {},
 ): Promise<VisibleProof> {
-  const minWidth = options.minWidth ?? 8;
-  const minHeight = options.minHeight ?? 8;
-
   // Bug this catches: the element never renders at all, or renders and is then
   // removed by a store that treats a refresh as a teardown.
   await expect(locator, `${what} never became visible to the user`).toBeVisible({
     timeout: options.timeoutMs ?? 15_000,
   });
+
+  const deadline = Date.now() + (options.settleMs ?? 5_000);
+  for (;;) {
+    try {
+      return await measureVisible(locator, what, options);
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((done) => setTimeout(done, 150));
+    }
+  }
+}
+
+/** One measurement pass. Every assertion in here is the real, strict one. */
+async function measureVisible(
+  locator: Locator,
+  what: string,
+  options: ProveVisibleOptions,
+): Promise<VisibleProof> {
+  const minWidth = options.minWidth ?? 8;
+  const minHeight = options.minHeight ?? 8;
 
   // Bug this catches: the element renders but collapses — a flex child with no
   // basis, a grid row of 0fr, a panel clipped by an ancestor's overflow.
@@ -120,6 +147,21 @@ export async function proveGone(locator: Locator, what: string, timeoutMs = 20_0
   await expect(locator, `${what} is still on screen after it was destroyed`).toBeHidden({
     timeout: timeoutMs,
   });
+}
+
+/**
+ * Assert that EVERY instance of something is gone — the plural of
+ * {@link proveGone}, for surfaces the app renders more than one of.
+ */
+export async function proveAllGone(
+  locator: Locator,
+  what: string,
+  timeoutMs = 45_000,
+): Promise<void> {
+  await expect(
+    locator,
+    `${what}: instances of it are still on screen after the thing behind them was destroyed`,
+  ).toHaveCount(0, { timeout: timeoutMs });
 }
 
 export interface PaintFingerprint {
