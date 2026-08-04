@@ -989,6 +989,24 @@ export class NativeTerminalAttachmentRuntime {
     });
   }
 
+  /**
+   * The live inventory pass, taken through the same pinned runner and socket
+   * the attachment catalog resolves against. Read by the startup readiness
+   * ladder so its catalog rung reports what an actual attach would find rather
+   * than a second, drifting view of tmux.
+   */
+  discoverTerminalInventory(): Promise<NativeTerminalInventorySnapshot> {
+    return this.#discoverTerminalInventory();
+  }
+
+  /**
+   * The startup-barrier state, observed WITHOUT awaiting it — a readiness read
+   * must never block on the barrier it is reporting on.
+   */
+  lifecycleState(): "initializing" | "ready" | "failed" | "disposing" | "disposed" {
+    return this.#lifecycle;
+  }
+
   snapshot(): TerminalAttachmentAdmissionSnapshot {
     return this.admission.snapshot();
   }

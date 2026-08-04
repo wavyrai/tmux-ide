@@ -36,6 +36,8 @@ export default defineConfig({
       "src/command-center/resources/desktop-missions.test.ts",
       "src/command-center/resources/fleet-catalog.test.ts",
       "src/command-center/resources/fleet-resource-route.test.ts",
+      "src/command-center/resources/startup-readiness.test.ts",
+      "src/command-center/resources/startup-readiness-live.test.ts",
       "src/command-center/workspace-pane-create-auth.test.ts",
       "src/command-center/pane-stream-issue.test.ts",
       "src/command-center/resources/workspace-changes-git.test.ts",

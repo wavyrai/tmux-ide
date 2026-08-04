@@ -136,6 +136,10 @@ import {
 import { mountPaneStreamIssueRoute, type PaneStreamIssueBackend } from "./pane-stream-issue.ts";
 import { mountWorkspaceResourceRoutes } from "./resources/workspace-resource-routes.ts";
 import { mountFleetResourceRoute } from "./resources/fleet-resource-route.ts";
+import {
+  mountStartupReadinessRoute,
+  type StartupReadinessAttachmentAuthority,
+} from "./resources/startup-readiness-route.ts";
 export interface CreateAppOptions {
   authService?: AuthService;
   authConfig?: AuthConfig;
@@ -159,6 +163,8 @@ export interface CreateAppOptions {
   appWindowMutationBackend?: import("./actions/handlers/app-window-mutate.ts").AppWindowMutationBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
+  /** Catalog + startup-barrier facts for the startup readiness ladder. */
+  startupReadinessAttachmentBackend?: StartupReadinessAttachmentAuthority | null;
   paneStreamIssueBackend?: PaneStreamIssueBackend | null;
   applicationShellInventoryBackend?: {
     discoverApplicationShellSession(
@@ -836,6 +842,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
     registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+  });
+
+  // The startup readiness ladder: the ordered, typed answer to "what is this
+  // daemon still missing?", computed from real state on every request.
+  mountStartupReadinessRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+    attachmentRuntime: options.startupReadinessAttachmentBackend ?? null,
   });
 
   app.get("/api/project/:name/panes", (c) => {
