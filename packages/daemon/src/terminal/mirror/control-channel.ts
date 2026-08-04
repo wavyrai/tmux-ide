@@ -208,6 +208,15 @@ export class MirrorControlChannel implements MirrorChannelIo {
       env: { ...process.env, TMUX: "" },
     });
     this.proc = proc;
+    // A control client whose session is killed exits while we may still be
+    // writing to it, and a pipe error on a child stream arrives ASYNCHRONOUSLY
+    // as an 'error' event — no try/catch around `write()` can catch it, and an
+    // unhandled one takes the whole daemon down. Process exit is the only
+    // authority on channel death (it fails every pending sink below), so pipe
+    // errors are inert here by design.
+    proc.stdin?.on("error", () => {});
+    proc.stdout!.on("error", () => {});
+    proc.stderr?.on("error", () => {});
     proc.stdout!.setEncoding("latin1");
     proc.stdout!.on("data", (chunk: string) => this.core.feed(chunk));
     proc.on("exit", () => {

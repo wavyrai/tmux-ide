@@ -30181,6 +30181,12 @@ var init_control_channel = __esm({
           env: { ...process.env, TMUX: "" }
         });
         this.proc = proc;
+        proc.stdin?.on("error", () => {
+        });
+        proc.stdout.on("error", () => {
+        });
+        proc.stderr?.on("error", () => {
+        });
         proc.stdout.setEncoding("latin1");
         proc.stdout.on("data", (chunk) => this.core.feed(chunk));
         proc.on("exit", () => {
@@ -39416,11 +39422,12 @@ var require_package = __commonJS({
         "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps",
+        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
-        "test:tui-smoke": "node scripts/smoke-tui-missions.mjs"
+        "test:tui-smoke": "node scripts/smoke-tui-missions.mjs",
+        "smoke:desktop": "node apps/electron-shell/scripts/smoke-test.mjs"
       },
       keywords: [
         "tmux",
