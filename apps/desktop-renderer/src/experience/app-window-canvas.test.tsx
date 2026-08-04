@@ -16,10 +16,13 @@ import type {
 } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
 import runtimeStyles from "../runtime-styles.css?raw";
+import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/tui/mirror/app-window-state.ts";
+import type { AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
 import {
   APP_WINDOW_CANVAS_ACTION_IDS,
   AppWindowCanvas,
   appWindowCanvasActions,
+  mirrorNodeRects,
 } from "./app-window-canvas.tsx";
 
 const disposers: Array<() => void> = [];
@@ -1024,5 +1027,111 @@ describe("AppWindowCanvas", () => {
     expect(indicator!.textContent).toContain("partial");
     setTruncated(false);
     expect(root.querySelector('[data-overlay-truncated="true"]')).toBeNull();
+  });
+});
+
+describe("mirror pane nodes on the canvas (m43 card 3)", () => {
+  function mirrorProps(
+    overrides: Partial<AppWindowCanvasMirrorProps> = {},
+  ): AppWindowCanvasMirrorProps {
+    return {
+      enabled: true,
+      onToggle: vi.fn(),
+      nodes: [
+        {
+          pane: "terminal.lead",
+          title: "Live terminal title",
+          frame: frame(),
+          state: { kind: "connecting" },
+          registerSink: () => () => undefined,
+        },
+      ],
+      connection: { kind: "connected" },
+      onRetry: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function renderMirrorCanvas(mirror: AppWindowCanvasMirrorProps) {
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={documentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            mirror={mirror}
+          />
+        ),
+        root,
+      ),
+    );
+    return root;
+  }
+
+  it("lays mirror nodes out below every durable window", () => {
+    const rects = mirrorNodeRects(4, [
+      { x: 0, y: 0, width: 400, height: 300 },
+      { x: 420, y: 40, width: 400, height: 360 },
+    ]);
+    expect(rects).toHaveLength(4);
+    const originY = 400 + 48;
+    expect(rects[0]).toMatchObject({ x: 0, y: originY });
+    expect(rects[1]!.x).toBeGreaterThan(rects[0]!.x);
+    expect(rects[2]!.x).toBeGreaterThan(rects[1]!.x);
+    // Column 4 wraps to the second row.
+    expect(rects[3]).toMatchObject({ x: 0 });
+    expect(rects[3]!.y).toBeGreaterThan(originY);
+  });
+
+  it("shows the toggle without nodes until enabled", () => {
+    const onToggle = vi.fn();
+    const root = renderMirrorCanvas(mirrorProps({ enabled: false, nodes: [], onToggle }));
+    const toggle = root.querySelector<HTMLButtonElement>('[data-mirror-toggle="true"]');
+    expect(toggle).not.toBeNull();
+    expect(toggle!.getAttribute("aria-pressed")).toBe("false");
+    expect(root.querySelector(".mirror-pane-card")).toBeNull();
+    toggle!.click();
+    expect(onToggle).toHaveBeenCalledWith(true);
+  });
+
+  it("renders an enabled node under its stable durable identity with read-only chrome", () => {
+    const root = renderMirrorCanvas(mirrorProps());
+    const nodeId = stableAppWindowInstanceId({
+      kind: "terminal",
+      terminalSourceId: "terminal.lead",
+    });
+    const card = root.querySelector<HTMLElement>(
+      `.mirror-pane-card[data-mirror-node-id="${nodeId}"]`,
+    );
+    expect(card).not.toBeNull();
+    expect(card!.dataset.pane).toBe("terminal.lead");
+    // The pane's own chrome (agent glyph carrier) rides along; actions do not.
+    expect(card!.querySelector(".web-pane-frame")).not.toBeNull();
+    expect(card!.textContent).toContain("Live terminal title");
+    expect(card!.textContent).toContain("read-only");
+    expect(card!.querySelectorAll(".web-pane-frame__action")).toHaveLength(0);
+  });
+
+  it("surfaces the stream-level derived status when the connection is not healthy", () => {
+    const root = renderMirrorCanvas(
+      mirrorProps({
+        connection: {
+          kind: "reconnecting",
+          attempt: 2,
+          maximumAttempts: 4,
+          nextRetryAt: 0,
+          reason: "socket dropped",
+        },
+      }),
+    );
+    const status = root.querySelector<HTMLElement>(".app-window-canvas__mirror-status");
+    expect(status).not.toBeNull();
+    expect(status!.dataset.mirrorConnection).toBe("reconnecting");
+    expect(status!.textContent).toContain("Reconnecting");
   });
 });

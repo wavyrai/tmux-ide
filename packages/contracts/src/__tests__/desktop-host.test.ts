@@ -27,7 +27,7 @@ describe("desktop host contract", () => {
         daemon: { status: "unavailable", code: "record-missing", reason: "owner not installed" },
         onboarding: { introAcknowledged: false },
       }),
-    ).toMatchObject({ apiVersion: 11, runtime: "electron" });
+    ).toMatchObject({ apiVersion: 12, runtime: "electron" });
   });
 
   it("does not permit unversioned daemon metadata to leak into the facade", () => {

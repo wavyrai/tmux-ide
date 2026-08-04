@@ -354,6 +354,34 @@ describe("closure (truth-driven, never probe-failure)", () => {
     ).toEqual(["pane.alpha", "pane.beta"]);
     await rig.channel.dispose();
   });
+
+  it("schedules a truth sync when a known pane vanishes from a surviving window's layout", async () => {
+    const rig = await startedRig();
+    const beta = collect();
+    rig.channel.subscribePane("pane.beta", beta.onEvent);
+    rig.sim.reply(["b"]);
+    rig.sim.reply(["0 0 99 50"]);
+    beta.events.length = 0;
+
+    // kill-pane on %2: window @1 survives, so tmux emits ONLY %layout-change
+    // whose leaves are all already known. The truth now omits %2; without a
+    // sync its subscriber would never receive `closed`.
+    rig.state.truthRows.splice(1, 1);
+    rig.state.descriptorRows.splice(1, 1);
+    rig.sim.feedLines("%layout-change @1 cccc,200x50,0,0,1 cccc,200x50,0,0,1 0");
+    expect(rig.pendingSyncs.length).toBeGreaterThan(0);
+    rig.pendingSyncs.pop()!();
+    await vi.waitFor(() => {
+      expect(beta.events).toEqual([{ type: "closed" }]);
+    });
+    expect(
+      rig.channel
+        .describe()
+        .panes.map((pane) => pane.semanticPaneId)
+        .sort(),
+    ).toEqual(["pane.alpha", "pane.mirror.gen1"]);
+    await rig.channel.dispose();
+  });
 });
 
 describe("input path", () => {

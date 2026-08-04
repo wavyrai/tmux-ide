@@ -104,13 +104,42 @@ describe("desktop preload daemon bridge", () => {
       error: { code: "attachment-unavailable" },
     });
 
+    const stream = {
+      protocolVersion: 1 as const,
+      workspaceName: "product",
+      panes: ["pane.worker", "pane.dev"],
+      viewerMode: "read-only" as const,
+    };
+    electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
+      expect(channel).toBe(HOST_IPC.daemonIssuePaneStream);
+      expect(value).toEqual(stream);
+      return {
+        status: "error",
+        error: {
+          code: "stream-unavailable",
+          reason: "Pane streaming is unavailable.",
+          retryable: true,
+        },
+      };
+    });
+    await expect(capabilities.daemon.issuePaneStream(stream)).resolves.toMatchObject({
+      status: "error",
+      error: { code: "stream-unavailable" },
+    });
+
     await expect(
       capabilities.daemon.createWorkspacePane({
         ...invocation,
         ownerToken: "renderer-secret",
       } as typeof invocation),
     ).rejects.toThrow();
-    expect(electron.invoke.mock.calls).toHaveLength(callsBefore + 2);
+    await expect(
+      capabilities.daemon.issuePaneStream({
+        ...stream,
+        redemptionTicket: "renderer-secret",
+      } as typeof stream),
+    ).rejects.toThrow();
+    expect(electron.invoke.mock.calls).toHaveLength(callsBefore + 3);
   });
 
   it("exposes and validates the semantic daemon refresh result", async () => {

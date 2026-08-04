@@ -4581,3 +4581,199 @@ kbd {
   transition-duration: 0ms !important;
   animation-duration: 0ms !important;
 }
+
+/* ── Mirror pane nodes (m43 card 3) ─────────────────────────────────────────
+   Read-only pane-stream nodes on the canvas. Same card silhouette as
+   .app-window-card, visually quieter (dashed separator ring) so a mirror is
+   never mistaken for an interactive window. */
+.mirror-pane-card {
+  position: absolute;
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+  border-radius: var(--tmi-radius-lg);
+  filter: drop-shadow(0 3px 9px color-mix(in srgb, var(--desktop-shadow) 60%, transparent));
+}
+
+.mirror-pane-card > .web-pane-frame {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-style: dashed;
+  border-radius: var(--tmi-radius-lg);
+  grid-template-rows: 38px minmax(0, 1fr);
+}
+
+.agent-pane__body--mirror {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mirror-pane-node {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--tmux-ide-terminal-background, var(--tmux-ide-surface-terminal));
+}
+
+/* Size-passive letterbox: the node renders the pane's own grid and centers it;
+   the surrounding card never votes on the source size. */
+.mirror-pane-node__viewport {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mirror-pane-node__viewport .xterm {
+  max-width: 100%;
+  max-height: 100%;
+  padding: 0;
+}
+
+.mirror-pane-node__viewport .xterm-viewport {
+  scrollbar-color: var(--tmux-ide-border-default) transparent;
+  scrollbar-width: thin;
+}
+
+.mirror-pane-node__flow {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 3;
+  padding: 2px 8px;
+  border: 1px solid var(--tmux-ide-status-warning);
+  border-radius: var(--tmux-ide-shape-control);
+  color: var(--tmux-ide-status-warning);
+  background: color-mix(in srgb, var(--tmux-ide-status-warning) 12%, transparent);
+  font-size: 10px;
+}
+
+.mirror-pane-node__state {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: var(--tmi-space-1) var(--tmi-space-4);
+  align-content: center;
+  padding: 14px;
+  color: var(--tmux-ide-text-muted);
+  background: color-mix(
+    in srgb,
+    var(--tmux-ide-terminal-background, var(--tmux-ide-surface-terminal)) 78%,
+    transparent
+  );
+}
+
+/* Once a frame is painted, honest states dock at the bottom instead of hiding
+   the mirror's last frame (pane ended keeps its final screen visible). */
+.mirror-pane-node[data-painted="true"] .mirror-pane-node__state {
+  inset: auto 8px 8px;
+  border: 1px solid var(--tmux-ide-border-default);
+  border-radius: var(--tmux-ide-shape-panel);
+  background: var(--tmux-ide-surface-panel);
+  box-shadow: var(--tmi-shadow-raised);
+}
+
+.mirror-pane-node__state > i {
+  grid-row: 1 / span 2;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border: 1px solid var(--tmux-ide-text-muted);
+  border-radius: 50%;
+}
+
+.mirror-pane-node[data-state="connecting"] .mirror-pane-node__state > i,
+.mirror-pane-node[data-connection="reconnecting"] .mirror-pane-node__state > i {
+  border-color: var(--tmux-ide-status-info);
+  background: var(--tmux-ide-status-info);
+  animation: terminal-surface-signal 1.4s linear infinite;
+}
+
+.mirror-pane-node[data-state="ended"] .mirror-pane-node__state > i {
+  border-color: var(--tmux-ide-status-warning);
+  background: var(--tmux-ide-status-warning);
+}
+
+.mirror-pane-node[data-connection="stopped"] .mirror-pane-node__state > i,
+.mirror-pane-node[data-state="unavailable"] .mirror-pane-node__state > i {
+  border-color: var(--tmux-ide-status-danger);
+  background: var(--tmux-ide-status-danger);
+}
+
+.mirror-pane-node__state strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tmux-ide-text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mirror-pane-node__state span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tmux-ide-text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mirror-pane-node__state button {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--tmux-ide-border-default);
+  border-radius: var(--tmux-ide-shape-control);
+  color: var(--tmux-ide-text-primary);
+  background: var(--tmux-ide-surface-header);
+  cursor: pointer;
+}
+
+.mirror-pane-node__state button:hover {
+  border-color: var(--tmux-ide-border-focused);
+  background: var(--tmux-ide-selection-hover);
+}
+
+.canvas-controls__mirror-toggle {
+  width: auto !important;
+  padding: 0 10px !important;
+  font-size: 11px;
+}
+
+.canvas-controls__mirror-toggle[aria-pressed="true"] {
+  color: var(--tmux-ide-text-bright);
+  background: var(--tmux-ide-selection-pressed);
+}
+
+.app-window-canvas__mirror-status {
+  position: absolute;
+  z-index: 200;
+  bottom: 62px;
+  left: 50%;
+  margin: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--desktop-separator);
+  border-radius: var(--tmi-radius-xl);
+  color: var(--tmux-ide-text-secondary);
+  background: var(--desktop-raised);
+  box-shadow: var(--tmi-overlay-hairline);
+  font-size: 11px;
+  transform: translateX(-50%);
+}

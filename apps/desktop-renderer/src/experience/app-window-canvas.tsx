@@ -25,9 +25,17 @@ import type {
   PaneFrameAction,
   PaneFrameModel,
 } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/tui/mirror/app-window-state.ts";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
+import { MirrorPaneNode } from "../terminal/mirror-pane-node.tsx";
+import type { MirrorPaneNodeState, MirrorPaneSink } from "../terminal/pane-mirror-controller.ts";
+import type { MirrorTerminalRendererFactory } from "../terminal/mirror-xterm-renderer.ts";
+import {
+  statusStripFromConnectionHealth,
+  type DesktopConnectionHealth,
+} from "../runtime/connection-health.ts";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import {
   beginCanvasMove,
@@ -77,6 +85,27 @@ import {
   type AgentGraphSceneRect,
 } from "./agent-graph-canvas-geometry.ts";
 
+/** One read-only mirror pane node placed on the canvas (m43 card 3). */
+export interface AppWindowMirrorNodeModel {
+  /** Semantic pane identity; equals the terminal source id of its resource. */
+  readonly pane: string;
+  readonly title: string;
+  /** The pane's source chrome (agent-status glyph) when its resource is known. */
+  readonly frame: PaneFrameModel | null;
+  readonly state: MirrorPaneNodeState;
+  readonly registerSink: (sink: MirrorPaneSink) => () => void;
+}
+
+export interface AppWindowCanvasMirrorProps {
+  readonly enabled: boolean;
+  readonly onToggle: (next: boolean) => void;
+  readonly nodes: readonly AppWindowMirrorNodeModel[];
+  /** Stream-level derived connection health (the m42 vocabulary, reused). */
+  readonly connection: DesktopConnectionHealth;
+  readonly onRetry: () => void;
+  readonly rendererFactory?: MirrorTerminalRendererFactory;
+}
+
 export interface AppWindowCanvasProps {
   readonly document: AppWindowDocumentV1;
   readonly paneFrames: readonly PaneFrameModel[];
@@ -109,6 +138,45 @@ export interface AppWindowCanvasProps {
    * reads as intentionally partial, never silently wrong.
    */
   readonly overlayTruncated?: boolean;
+  /**
+   * Dev-facing mirror-panes affordance (m43 card 3): read-only pane nodes
+   * driven by one pane-stream lease, rendered inside the same pan/zoom scene
+   * as the window cards. Absent = the canvas renders exactly as before.
+   * Mirror nodes are presentation-only this card: they never join the durable
+   * document, never vote on size, and never dispatch AppWindow commands.
+   */
+  readonly mirror?: AppWindowCanvasMirrorProps;
+}
+
+const MIRROR_NODE_SIZE = { width: 480, height: 320 } as const;
+const MIRROR_NODE_GAP = 24;
+const MIRROR_NODE_COLUMNS = 3;
+
+/**
+ * PURE — deterministic grid rects for mirror nodes, placed below every durable
+ * window so the dev affordance never covers real cards. Exported for tests.
+ */
+export function mirrorNodeRects(
+  count: number,
+  existing: readonly AppWindowCanvasItem["rect"][],
+): AppWindowCanvasItem["rect"][] {
+  let originY = 0;
+  for (const rect of existing) {
+    originY = Math.max(originY, rect.y + rect.height);
+  }
+  originY += existing.length > 0 ? 2 * MIRROR_NODE_GAP : 0;
+  const rects: AppWindowCanvasItem["rect"][] = [];
+  for (let index = 0; index < count; index += 1) {
+    const column = index % MIRROR_NODE_COLUMNS;
+    const row = Math.floor(index / MIRROR_NODE_COLUMNS);
+    rects.push({
+      x: column * (MIRROR_NODE_SIZE.width + MIRROR_NODE_GAP),
+      y: originY + row * (MIRROR_NODE_SIZE.height + MIRROR_NODE_GAP),
+      width: MIRROR_NODE_SIZE.width,
+      height: MIRROR_NODE_SIZE.height,
+    });
+  }
+  return rects;
 }
 
 const CANVAS_SCALE_RANGE = { min: 0.35, max: 2.4 } as const;
@@ -274,6 +342,62 @@ function windowFrameModel(
       commandsAvailable: options.commandsAvailable,
       unavailableReason: options.unavailableReason,
     }),
+  };
+}
+
+/**
+ * Chrome for a mirror node: the pane's own frame (agent-status glyph intact)
+ * with node-scoped identity, a read-only mode chip, and NO actions — mirror
+ * nodes issue no window mutations this card.
+ */
+function mirrorNodeFrameModel(node: AppWindowMirrorNodeModel, nodeId: string): PaneFrameModel {
+  const base: PaneFrameModel =
+    node.frame ??
+    ({
+      pane: { id: nodeId, kind: "terminal" },
+      appearance: resolvePaneAppearance({
+        structure: "floating",
+        applicationFocus: { pane: false, terminalInput: false, windowActive: true },
+        agentActivity: "waiting",
+        domainStatus: "idle",
+        attention: "none",
+        layoutInteraction: {
+          editable: false,
+          selected: false,
+          dragging: false,
+          resizing: false,
+          previewing: false,
+        },
+        controlInteraction: {
+          hover: false,
+          focusVisible: false,
+          pressed: false,
+          disabled: false,
+          loading: false,
+        },
+      }),
+      title: node.title,
+      subtitle: null,
+      status: null,
+      chips: [],
+      actions: [],
+    } satisfies PaneFrameModel);
+  return {
+    ...base,
+    pane: { ...base.pane, id: nodeId },
+    title: node.title,
+    status: base.status ? { ...base.status, id: `${nodeId}.status` } : null,
+    chips: [
+      ...base.chips.map((chip, index) => ({ ...chip, id: `${nodeId}.chip.${index}` })),
+      {
+        id: `${nodeId}.chip.read-only`,
+        kind: "mode" as const,
+        label: "read-only",
+        description: "Mirror nodes observe the pane; input arrives in a later card.",
+        tone: null,
+      },
+    ],
+    actions: [],
   };
 }
 
@@ -546,7 +670,10 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   };
 
   const pointerRegion = (target: EventTarget | null): CanvasPointerRegion | null => {
-    if (!(target instanceof Element) || target.closest(".canvas-controls, .canvas-minimap")) {
+    if (
+      !(target instanceof Element) ||
+      target.closest(".canvas-controls, .canvas-minimap, .mirror-pane-card")
+    ) {
       return null;
     }
     const card = target.closest<HTMLElement>(".app-window-card");
@@ -954,6 +1081,33 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     onCleanup(() => window.removeEventListener("blur", cancelActivePointer));
   });
 
+  // Mirror nodes live inside the same pan/zoom scene, in a deterministic grid
+  // below every durable card. Their identity is the SAME stable instance id
+  // the daemon mints for a terminal source — card 5 unifies the two worlds.
+  const mirrorScene = createMemo(() => {
+    const mirror = props.mirror;
+    if (!mirror?.enabled || mirror.nodes.length === 0) return null;
+    const rects = mirrorNodeRects(
+      mirror.nodes.length,
+      projection().windows.map((window) => displayedWindow(window).rect),
+    );
+    return {
+      connection: mirror.connection,
+      onRetry: mirror.onRetry,
+      rendererFactory: mirror.rendererFactory,
+      nodes: mirror.nodes.map((node, index) => ({
+        node,
+        nodeId: stableAppWindowInstanceId({ kind: "terminal", terminalSourceId: node.pane }),
+        rect: rects[index]!,
+      })),
+    };
+  });
+  const mirrorStatus = createMemo(() => {
+    const mirror = props.mirror;
+    if (!mirror?.enabled) return null;
+    return statusStripFromConnectionHealth(mirror.connection);
+  });
+
   const terminalTarget = (terminalSourceId: string): string | null => {
     const resource = resourcesById().get(terminalSourceId);
     if (props.terminalInventory !== undefined) {
@@ -1240,6 +1394,55 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
             );
           }}
         </For>
+        <Show when={mirrorScene()}>
+          {(scene) => (
+            <For each={scene().nodes}>
+              {(entry) => {
+                let mirrorStyle: RuntimeStyleBinding | null = null;
+                onCleanup(() => mirrorStyle?.dispose());
+                return (
+                  <article
+                    ref={(element) => {
+                      mirrorStyle = createRuntimeStyleBinding(element);
+                      mirrorStyle.update({
+                        left: `${entry.rect.x}px`,
+                        top: `${entry.rect.y}px`,
+                        width: `${entry.rect.width}px`,
+                        height: `${entry.rect.height}px`,
+                        "z-index": 0,
+                      });
+                    }}
+                    class="mirror-pane-card"
+                    data-mirror-node-id={entry.nodeId}
+                    data-pane={entry.node.pane}
+                    data-state={entry.node.state.kind}
+                  >
+                    <WebPaneFrame
+                      model={mirrorNodeFrameModel(entry.node, entry.nodeId)}
+                      renderPaneIcon={(_pane, icon) => <DomIcon id={icon} usage="pane" />}
+                      renderActionIcon={(action) => <DomIcon id={action.icon} usage="action" />}
+                      renderGripIcon={(icon) => <DomIcon id={icon} usage="action" />}
+                    >
+                      <div class="agent-pane__body agent-pane__body--mirror">
+                        <MirrorPaneNode
+                          pane={entry.node.pane}
+                          title={entry.node.title}
+                          state={entry.node.state}
+                          connection={scene().connection}
+                          registerSink={entry.node.registerSink}
+                          onRetry={scene().onRetry}
+                          reducedMotion={props.reducedMotion}
+                          themeKey={props.terminalThemeKey}
+                          rendererFactory={scene().rendererFactory}
+                        />
+                      </div>
+                    </WebPaneFrame>
+                  </article>
+                );
+              }}
+            </For>
+          )}
+        </Show>
         <Show when={projection().windows.length === 0}>
           <div class="app-window-canvas__empty" role="status">
             <strong>No terminal windows in this saved layout</strong>
@@ -1247,6 +1450,17 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
           </div>
         </Show>
       </div>
+      <Show when={mirrorStatus()}>
+        {(status) => (
+          <p
+            class="app-window-canvas__mirror-status"
+            role="status"
+            data-mirror-connection={props.mirror?.connection.kind}
+          >
+            {status().message}
+          </p>
+        )}
+      </Show>
       <Show when={props.overlayTruncated}>
         <p class="app-window-canvas__fleet-truncated" role="status" data-overlay-truncated="true">
           Fleet view is partial
@@ -1291,6 +1505,21 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
         >
           <CanvasControlIcon id="reset" />
         </button>
+        <Show when={props.mirror}>
+          {(mirror) => (
+            <button
+              type="button"
+              class="canvas-controls__mirror-toggle"
+              aria-label="Toggle mirror panes"
+              aria-pressed={mirror().enabled}
+              title="Mirror this workspace's panes as read-only nodes"
+              data-mirror-toggle="true"
+              onClick={() => mirror().onToggle(!mirror().enabled)}
+            >
+              Mirror
+            </button>
+          )}
+        </Show>
       </nav>
       <Show when={minimap()}>
         {(map) => (

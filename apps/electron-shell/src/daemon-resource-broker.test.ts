@@ -10,6 +10,7 @@ import {
   COHESION_FIXTURE_V1,
   DESKTOP_PACKAGED_RENDERER_ORIGIN,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
+  PANE_STREAM_ISSUE_PATH,
   type DesktopDaemonEvent,
   type DesktopDaemonHostState,
   type AppWindowDockNodeShape,
@@ -2125,5 +2126,185 @@ describe("Electron main daemon workspace read resources", () => {
     );
     expect(JSON.stringify(events)).not.toMatch(/durable-docs|sessionName/iu);
     if (result.status === "subscribed") result.unsubscribe();
+  });
+});
+
+describe("Electron main pane-stream issuance (m43 card 3)", () => {
+  const now = 1_784_662_800_000;
+  const requestId = "10000000-0000-4000-8000-000000000002";
+  const panes = ["pane.workspace.a1", "pane.workspace.b2"] as const;
+
+  function paneStreamDescriptor(overrides: Record<string, unknown> = {}) {
+    return {
+      protocolVersion: 1 as const,
+      webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/pane-streams/redeem",
+      subprotocol: "tmux-ide-pane-stream.v1" as const,
+      redemptionTicket: `ps1_${"B".repeat(43)}`,
+      daemonInstanceId: IDENTITY.instanceId,
+      requestId,
+      expiresAt: now + 15_000,
+      panes: [...panes],
+      effectiveViewerMode: "read-only" as const,
+      ...overrides,
+    };
+  }
+
+  function paneStreamMutation() {
+    return {
+      requestId,
+      expectedDaemonInstanceId: IDENTITY.instanceId,
+      stream: {
+        protocolVersion: 1 as const,
+        workspaceName: "product",
+        panes: [...panes],
+        viewerMode: "read-only" as const,
+      },
+    };
+  }
+
+  it.each(["http://127.0.0.1:5173", DESKTOP_PACKAGED_RENDERER_ORIGIN])(
+    "issues a bounded pane stream for renderer origin %s against the exact owner-authorized endpoint",
+    async (rendererOrigin) => {
+      const requests: Array<{ url: string; init?: RequestInit }> = [];
+      const descriptor = paneStreamDescriptor();
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        ownerToken: "owner-only-token",
+        now: () => now,
+        fetch: async (input, init) => {
+          requests.push({ url: input.toString(), init });
+          return json({ status: "issued", descriptor });
+        },
+      });
+
+      await expect(broker.issuePaneStream(paneStreamMutation(), rendererOrigin)).resolves.toEqual({
+        status: "issued",
+        descriptor,
+      });
+      expect(requests).toHaveLength(1);
+      const sent = requests[0]!;
+      expect(sent.url).toBe(`${CONNECTED.descriptor.apiBaseUrl}${PANE_STREAM_ISSUE_PATH}`);
+      expect(sent.init).toMatchObject({
+        method: "POST",
+        credentials: "omit",
+        redirect: "error",
+        cache: "no-store",
+      });
+      const headers = new Headers(sent.init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer owner-only-token");
+      expect(headers.get("origin")).toBe(rendererOrigin);
+      expect(headers.get("x-tmux-ide-request-id")).toBe(requestId);
+      expect(headers.get("x-tmux-ide-expected-daemon-instance-id")).toBe(IDENTITY.instanceId);
+      expect(JSON.parse(String(sent.init?.body))).toEqual(paneStreamMutation());
+      expect(JSON.stringify(sent)).not.toContain(descriptor.redemptionTicket);
+    },
+  );
+
+  it("requires the canonical owner secret before any request leaves the broker", async () => {
+    const fetch = vi.fn();
+    const broker = new DaemonResourceBroker({ daemon: CONNECTED, fetch });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-unavailable" } });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale expected daemon generation without a network request", async () => {
+    const fetch = vi.fn();
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch,
+    });
+    await expect(
+      broker.issuePaneStream(
+        {
+          ...paneStreamMutation(),
+          expectedDaemonInstanceId: "00000000-0000-4000-8000-00000000dead",
+        },
+        "http://127.0.0.1:5173",
+      ),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["another daemon generation", { daemonInstanceId: "3d1a1f1e-4242-4b3a-9c37-abcabcabcabc" }],
+    ["a foreign request id", { requestId: "10000000-0000-4000-8000-00000000ffff" }],
+    ["a viewer-mode drift", { effectiveViewerMode: "interactive" }],
+    ["a mutated pane set", { panes: [panes[1], panes[0]] }],
+    ["an expired descriptor", { expiresAt: now - 1 }],
+    ["an over-lifetime descriptor", { expiresAt: now + 61_000 }],
+  ])("rejects a descriptor carrying %s", async (_label, overrides) => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      now: () => now,
+      fetch: async () => json({ status: "issued", descriptor: paneStreamDescriptor(overrides) }),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
+  });
+
+  it("passes the daemon's typed pane-stream verdict through with fixed renderer copy", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({
+          status: "error",
+          error: { code: "pane-not-found", reason: "raw daemon words", retryable: false },
+        }),
+    });
+    const result = await broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173");
+    expect(result).toMatchObject({
+      status: "error",
+      error: {
+        code: "pane-not-found",
+        reason: "A requested pane is unavailable.",
+        retryable: false,
+      },
+    });
+  });
+
+  it("collapses an unparseable issue response to a retryable request failure", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () => json({ status: "weird" }),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "request-failed" } });
+  });
+
+  it("applies the narrow response bound to pane-stream issuance", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json(
+          { status: "error", error: { code: "request-failed", reason: "ignored" } },
+          { headers: { "content-length": String(16 * 1024 + 1) } },
+        ),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "request-failed" } });
+  });
+
+  it("rejects an unusable renderer origin before contacting the daemon", async () => {
+    const fetch = vi.fn();
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch,
+    });
+    await expect(broker.issuePaneStream(paneStreamMutation(), "null")).resolves.toMatchObject({
+      status: "error",
+      error: { code: "invalid-request" },
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

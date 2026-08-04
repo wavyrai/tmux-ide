@@ -104,6 +104,10 @@ function host(): HostCapabilities {
         status: "error",
         error: { code: "preview-only", reason: "fixture only", retryable: false },
       }),
+      issuePaneStream: async () => ({
+        status: "error",
+        error: { code: "stream-unavailable", reason: "fixture only", retryable: false },
+      }),
       refreshConnection: async () => ({
         outcome: "unchanged",
         daemon: { status: "unavailable", code: "preview-only", reason: "fixture only" },

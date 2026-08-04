@@ -128,6 +128,14 @@ function brokerHarness(
           retryable: true,
         },
       }),
+      issuePaneStream: async () => ({
+        status: "error",
+        error: {
+          code: "stream-unavailable",
+          reason: "Pane streaming is unavailable.",
+          retryable: true,
+        },
+      }),
       listWorkspaces: async () => {
         await pending?.promise;
         return { status: "ok", daemon: identity, workspaces: [{ workspaceName: "product" }] };

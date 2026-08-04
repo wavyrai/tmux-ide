@@ -64,6 +64,7 @@ describe("desktop process boundaries", () => {
       HOST_IPC.daemonCreateWorkspacePane,
       HOST_IPC.daemonMutateAppWindow,
       HOST_IPC.daemonIssueTerminalAttachment,
+      HOST_IPC.daemonIssuePaneStream,
       HOST_IPC.daemonListWorkspaces,
       HOST_IPC.daemonFetchFleetCatalog,
       HOST_IPC.daemonPromoteWorkspace,

@@ -21,6 +21,8 @@ import {
   type DesktopDaemonRefreshConnectionResult,
   type TerminalAttachmentIssueMutationRequest,
   type TerminalAttachmentIssueResult,
+  type PaneStreamIssueMutationRequest,
+  type PaneStreamIssueResult,
   type WorkspacePaneCreateMutationRequest,
   type WorkspacePaneCreateMutationResult,
   type WorkspaceOpenMutationRequest,
@@ -34,6 +36,7 @@ import {
 import {
   DaemonResourceBroker,
   daemonCapabilityError,
+  paneStreamIssueError,
   rendererDaemonState,
   terminalAttachmentIssueError,
   type BrokerSubscriptionResult,
@@ -58,6 +61,10 @@ export interface DaemonResourceAuthority {
     request: TerminalAttachmentIssueMutationRequest,
     rendererOrigin: string,
   ): Promise<TerminalAttachmentIssueResult>;
+  issuePaneStream(
+    request: PaneStreamIssueMutationRequest,
+    rendererOrigin: string,
+  ): Promise<PaneStreamIssueResult>;
   listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
   fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult>;
   fetchApplicationShell(
@@ -343,6 +350,31 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       return {
         status: "error",
         error: terminalAttachmentIssueError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async issuePaneStream(
+    request: PaneStreamIssueMutationRequest,
+    rendererOrigin: string,
+  ): Promise<PaneStreamIssueResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) {
+      return { status: "error", error: paneStreamIssueError("daemon-unavailable") };
+    }
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.issuePaneStream(request, rendererOrigin);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: paneStreamIssueError(
           this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
         ),
       };

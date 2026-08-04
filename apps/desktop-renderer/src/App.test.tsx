@@ -197,6 +197,14 @@ function createHostHarness() {
           retryable: false,
         },
       })),
+      issuePaneStream: vi.fn(async () => ({
+        status: "error" as const,
+        error: {
+          code: "stream-unavailable" as const,
+          reason: "fixture only",
+          retryable: false,
+        },
+      })),
       refreshConnection: vi.fn(
         async (): Promise<DesktopDaemonRefreshConnectionResult> => ({
           outcome: "unchanged",

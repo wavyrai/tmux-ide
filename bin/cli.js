@@ -5028,7 +5028,7 @@ var init_desktop_host = __esm({
     init_workspace_changes_resource();
     init_workspace_resource_identity();
     init_fleet_catalog();
-    DESKTOP_HOST_API_VERSION = 11;
+    DESKTOP_HOST_API_VERSION = 12;
     DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide";
     DESKTOP_PACKAGED_RENDERER_HOST = "app";
     DESKTOP_PACKAGED_RENDERER_ORIGIN = `${DESKTOP_PACKAGED_RENDERER_SCHEME}://${DESKTOP_PACKAGED_RENDERER_HOST}`;
@@ -31233,7 +31233,13 @@ var init_session_channel = __esm({
             return;
           }
           this.layoutByWindow.set(change.windowId, { ...parsed, zoomed: change.zoomed });
-          if (parsed.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id))) this.scheduleSync();
+          const leafIds = new Set(parsed.leaves.map((leaf) => leaf.id));
+          const knownPaneVanished = [...this.panesByRuntime.values()].some(
+            (pane) => pane.windowRuntimeId === change.windowId && !leafIds.has(pane.runtimeId)
+          );
+          if (parsed.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id)) || knownPaneVanished) {
+            this.scheduleSync();
+          }
           this.emitLayout(change.windowId);
           return;
         }

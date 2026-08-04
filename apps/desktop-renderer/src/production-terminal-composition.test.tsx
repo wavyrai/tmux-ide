@@ -274,6 +274,10 @@ function createHostHarness() {
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "test transport", retryable: false },
       })),
+      issuePaneStream: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "stream-unavailable" as const, reason: "test transport", retryable: false },
+      })),
       refreshConnection: vi.fn(async () => ({
         outcome: "generation-replaced" as const,
         previousIdentity: DAEMON_A,
@@ -397,7 +401,7 @@ describe("production terminal composition", () => {
       return value!;
     });
     expect(placement.disabled).toBe(false);
-    expect(harness.host.apiVersion).toBe(11);
+    expect(harness.host.apiVersion).toBe(12);
     dispose();
   });
 

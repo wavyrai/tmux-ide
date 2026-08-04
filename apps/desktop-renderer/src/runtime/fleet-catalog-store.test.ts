@@ -63,6 +63,10 @@ function fakeDaemonHost(
       status: "error",
       error: { ...preview, retryable: false },
     }),
+    issuePaneStream: async () => ({
+      status: "error",
+      error: { code: "stream-unavailable", reason: "fixture only", retryable: false },
+    }),
     refreshConnection: async () => ({
       outcome: "unchanged",
       daemon: { status: "connected", identity: DAEMON },

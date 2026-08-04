@@ -131,6 +131,14 @@ export function createBrowserHostCapabilities(): HostCapabilities {
           retryable: false,
         },
       }),
+      issuePaneStream: async () => ({
+        status: "error",
+        error: {
+          code: "daemon-unavailable",
+          reason: "Pane streams are unavailable in browser preview.",
+          retryable: false,
+        },
+      }),
       refreshConnection: async () => ({
         outcome: "unchanged",
         daemon: {
@@ -176,6 +184,7 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
     typeof candidate.daemon?.capabilities === "function" &&
     typeof candidate.daemon?.createWorkspacePane === "function" &&
     typeof candidate.daemon?.issueTerminalAttachment === "function" &&
+    typeof candidate.daemon?.issuePaneStream === "function" &&
     typeof candidate.daemon?.refreshConnection === "function" &&
     typeof candidate.daemon?.listWorkspaces === "function" &&
     typeof candidate.daemon?.fetchFleetCatalog === "function" &&

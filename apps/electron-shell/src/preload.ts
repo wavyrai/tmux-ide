@@ -29,6 +29,8 @@ import {
   DesktopWindowStateSchemaZ,
   TerminalAttachRequestSchemaZ,
   TerminalAttachmentIssueResultSchemaZ,
+  PaneStreamIssueResultSchemaZ,
+  PaneStreamLeaseRequestSchemaZ,
   WorkspacePaneCreateHostResultSchemaZ,
   WorkspacePaneCreateInvocationSchemaZ,
   WorkspaceOpenHostResultSchemaZ,
@@ -43,6 +45,7 @@ import {
   type DesktopUpdateStatus,
   type DesktopWindowState,
   type HostCapabilities,
+  type PaneStreamLeaseRequest,
   type TerminalAttachRequest,
   type WorkspacePaneCreateInvocation,
   type WorkspacePromoteArguments,
@@ -172,6 +175,12 @@ const capabilities: HostCapabilities = Object.freeze({
       const parsed = TerminalAttachRequestSchemaZ.parse(request);
       return TerminalAttachmentIssueResultSchemaZ.parse(
         await ipcRenderer.invoke(HOST_IPC.daemonIssueTerminalAttachment, parsed),
+      );
+    },
+    issuePaneStream: async (request: PaneStreamLeaseRequest) => {
+      const parsed = PaneStreamLeaseRequestSchemaZ.parse(request);
+      return PaneStreamIssueResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonIssuePaneStream, parsed),
       );
     },
     refreshConnection: async () =>

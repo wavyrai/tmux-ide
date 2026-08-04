@@ -24,6 +24,7 @@ import type {
   TerminalAttachRequest,
   TerminalAttachmentIssueResult,
 } from "./terminal-attachments.ts";
+import type { PaneStreamIssueResult, PaneStreamLeaseRequest } from "./pane-stream.ts";
 import type {
   WorkspacePaneCreateHostResult,
   WorkspacePaneCreateInvocation,
@@ -39,7 +40,7 @@ import type {
 } from "./app-window-mutation.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 11 as const;
+export const DESKTOP_HOST_API_VERSION = 12 as const;
 
 /** Stable tuple origin for the packaged, sandboxed Electron renderer. */
 export const DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide" as const;
@@ -638,6 +639,12 @@ export interface HostCapabilities {
       invocation: WorkspacePaneCreateInvocation,
     ): Promise<WorkspacePaneCreateHostResult>;
     issueTerminalAttachment(request: TerminalAttachRequest): Promise<TerminalAttachmentIssueResult>;
+    /**
+     * Issue a one-use session-scoped pane-stream lease (m43 card 3). The
+     * renderer authors only the semantic lease request; Electron main owns the
+     * request/generation envelope, the owner bearer, and the trusted Origin.
+     */
+    issuePaneStream(request: PaneStreamLeaseRequest): Promise<PaneStreamIssueResult>;
     refreshConnection(): Promise<DesktopDaemonRefreshConnectionResult>;
     listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
     fetchApplicationShell(

@@ -108,6 +108,10 @@ function fakeDaemonHost(
       status: "error",
       error: { code: "preview-only", reason: "fixture only", retryable: false },
     }),
+    issuePaneStream: async () => ({
+      status: "error",
+      error: { code: "stream-unavailable", reason: "fixture only", retryable: false },
+    }),
     refreshConnection: async () => ({
       outcome: "unchanged",
       daemon: { status: "connected", identity: DAEMON },
@@ -866,6 +870,6 @@ describe("desktop live workspace catalog and selection store", () => {
 
 describe("workspace catalog host contract seam", () => {
   it("uses the current versioned facade without exposing a generic transport", () => {
-    expect(DESKTOP_HOST_API_VERSION).toBe(11);
+    expect(DESKTOP_HOST_API_VERSION).toBe(12);
   });
 });

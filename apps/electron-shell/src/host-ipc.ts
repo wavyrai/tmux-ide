@@ -23,6 +23,9 @@ import {
   TerminalAttachRequestSchemaZ,
   TerminalAttachmentIssueMutationRequestSchemaZ,
   TerminalAttachmentIssueResultSchemaZ,
+  PaneStreamIssueMutationRequestSchemaZ,
+  PaneStreamIssueResultSchemaZ,
+  PaneStreamLeaseRequestSchemaZ,
   WorkspacePaneCreateHostResultSchemaZ,
   WorkspacePaneCreateInvocationSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
@@ -44,6 +47,7 @@ import type { DaemonConnectionAuthority } from "./daemon-connection-coordinator.
 import {
   daemonCapabilityError,
   daemonCapabilityErrorFromUnknown,
+  paneStreamIssueError,
   terminalAttachmentIssueError,
   workspacePromotionFailureFromUnknown,
 } from "./daemon-resource-broker.ts";
@@ -126,6 +130,13 @@ function disconnectedTerminalError(state: DesktopDaemonCapabilityState) {
   return terminalAttachmentIssueError(
     state.status === "degraded" ? "daemon-degraded" : "daemon-unavailable",
   );
+}
+
+function disconnectedPaneStreamError(state: DesktopDaemonCapabilityState) {
+  void state;
+  // The pane-stream error vocabulary has no degraded variant; both disconnected
+  // shapes surface as the retryable daemon-unavailable verdict.
+  return paneStreamIssueError("daemon-unavailable");
 }
 
 function trustedWindow(
@@ -628,6 +639,97 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       return TerminalAttachmentIssueResultSchemaZ.parse({
         status: "error",
         error: terminalAttachmentIssueError("request-failed"),
+      });
+    }
+  });
+
+  handle(HOST_IPC.daemonIssuePaneStream, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: paneStreamIssueError("invalid-request"),
+      });
+    }
+    const stream = PaneStreamLeaseRequestSchemaZ.safeParse(args[0]);
+    if (!stream.success) {
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: paneStreamIssueError("invalid-request"),
+      });
+    }
+    const rendererFrameUrl = authority.mainFrame?.url;
+    if (
+      !rendererFrameUrl ||
+      !rendererLocationIsTrusted(rendererFrameUrl, deps.trustedRendererLocation)
+    ) {
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: paneStreamIssueError("renderer-origin-unavailable"),
+      });
+    }
+    const rendererOrigin =
+      deps.trustedRendererLocation.kind === "development-origin"
+        ? deps.trustedRendererLocation.origin
+        : deps.trustedRendererLocation.kind === "packaged-origin"
+          ? deps.trustedRendererLocation.origin
+          : null;
+    if (!rendererOrigin) {
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: paneStreamIssueError("renderer-origin-unavailable"),
+      });
+    }
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedPaneStreamError(before),
+      });
+    }
+    const request = PaneStreamIssueMutationRequestSchemaZ.parse({
+      requestId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      stream: stream.data,
+    });
+    try {
+      const result = PaneStreamIssueResultSchemaZ.parse(
+        await deps.daemonResources.issuePaneStream(request, rendererOrigin),
+      );
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return PaneStreamIssueResultSchemaZ.parse({
+          status: "error",
+          error: paneStreamIssueError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        (result.status === "issued" &&
+          (result.descriptor.requestId !== request.requestId ||
+            result.descriptor.daemonInstanceId !== request.expectedDaemonInstanceId))
+      ) {
+        return PaneStreamIssueResultSchemaZ.parse({
+          status: "error",
+          error: paneStreamIssueError("daemon-identity-mismatch"),
+        });
+      }
+      return result;
+    } catch {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return PaneStreamIssueResultSchemaZ.parse({
+          status: "error",
+          error: paneStreamIssueError("disposed"),
+        });
+      }
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: paneStreamIssueError("request-failed"),
       });
     }
   });

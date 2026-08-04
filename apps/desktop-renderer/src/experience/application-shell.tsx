@@ -70,7 +70,15 @@ import type { CreatePaneFlowCatalogs } from "./create-pane-flow-presenter.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
-import { AppWindowCanvas } from "./app-window-canvas.tsx";
+import {
+  PaneMirrorController,
+  type PaneMirrorControllerState,
+} from "../terminal/pane-mirror-controller.ts";
+import type { PaneStreamTransport } from "../terminal/pane-stream-transport.ts";
+import { createHostPaneStreamTransport } from "../runtime/host-pane-stream-transport.ts";
+import { deriveConnectionHealth } from "../runtime/connection-health.ts";
+import { PANE_STREAM_MAX_PANES } from "@tmux-ide/contracts";
+import { AppWindowCanvas, type AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
 import { Button, IconButton, ResizeHandle } from "../ui-system/index.ts";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import type { AppWindowCanvasCommandInvocation } from "./app-window-canvas-presenter.ts";
@@ -120,6 +128,12 @@ export interface DomApplicationShellProps {
     invocation: AppWindowCanvasCommandInvocation,
   ) => void | Promise<void>;
   readonly appWindowMutationUnavailableReason?: string;
+  /**
+   * Fixture/test override of the pane-stream transport behind the mirror-panes
+   * affordance. Undefined = derive the production transport from the host when
+   * the daemon is connected; null = the affordance is unavailable.
+   */
+  readonly paneStreamTransport?: PaneStreamTransport | null;
   readonly onRefreshResource?: () => void;
   /**
    * Supervisor-derived compound connection health. When present and not
@@ -467,6 +481,91 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const hasMaximizedPane = createMemo(() =>
     renderedPaneFrames().some(({ appearance }) => appearance.structure === "maximized"),
   );
+
+  // ── Mirror panes (m43 card 3, dev-facing) ─────────────────────────────────
+  // One session-scoped pane-stream lease mirrors the workspace's attachable
+  // panes as read-only canvas nodes. The controller owns connect/reconnect;
+  // this shell owns WHEN a lease exists (toggle, daemon generation, pane set).
+  const [mirrorEnabled, setMirrorEnabled] = createSignal(false);
+  const [mirrorState, setMirrorState] = createSignal<PaneMirrorControllerState | null>(null);
+  const [mirrorController, setMirrorController] = createSignal<PaneMirrorController | null>(null);
+  const mirrorPaneIds = createMemo<readonly string[]>(() => {
+    const inventory = shell().terminalInventory;
+    if (!inventory) return [];
+    return inventory.resources
+      .flatMap((resource) =>
+        resource.attachability.status === "available"
+          ? [resource.attachability.semanticPaneId]
+          : [],
+      )
+      .slice(0, PANE_STREAM_MAX_PANES);
+  });
+  const mirrorTransport = createMemo<PaneStreamTransport | null>(() => {
+    if (props.paneStreamTransport !== undefined) return props.paneStreamTransport;
+    if (dataMode() !== "runtime" || props.daemonState?.status !== "connected") return null;
+    return createHostPaneStreamTransport(props.host, props.daemonState.identity);
+  });
+  let activeMirrorKey = "";
+  createEffect(() => {
+    const transport = mirrorTransport();
+    const panes = mirrorPaneIds();
+    const workspaceName = props.terminalWorkspaceName ?? input().workspace.id;
+    const enabled = mirrorEnabled() && transport !== null && panes.length > 0;
+    const key = enabled ? [workspaceName, ...panes].join("\u0000") : "";
+    if (!enabled) {
+      activeMirrorKey = "";
+      mirrorController()?.dispose();
+      setMirrorController(null);
+      setMirrorState(null);
+      return;
+    }
+    const current = mirrorController();
+    if (current && activeMirrorKey === key) return;
+    if (current && activeMirrorKey.startsWith(`${workspaceName}\u0000`)) {
+      // Same lease scope, new pane set: re-issue through the same controller.
+      activeMirrorKey = key;
+      current.setPanes(panes);
+      return;
+    }
+    current?.dispose();
+    activeMirrorKey = key;
+    const controller = new PaneMirrorController({
+      transport,
+      workspaceName,
+      panes,
+      onStateChanged: (state) => setMirrorState(state),
+    });
+    setMirrorController(controller);
+    setMirrorState(controller.state());
+    controller.start();
+  });
+  onCleanup(() => {
+    mirrorController()?.dispose();
+  });
+  const mirrorCanvasProps = createMemo<AppWindowCanvasMirrorProps | undefined>(() => {
+    if (mirrorTransport() === null || mirrorPaneIds().length === 0) return undefined;
+    const controller = mirrorController();
+    const state = mirrorState();
+    const enabled = mirrorEnabled() && controller !== null && state !== null;
+    const framesById = new Map(renderedPaneFrames().map((frame) => [frame.pane.id, frame]));
+    return {
+      enabled,
+      onToggle: setMirrorEnabled,
+      nodes:
+        enabled && controller && state
+          ? mirrorPaneIds().map((pane) => ({
+              pane,
+              title: framesById.get(pane)?.title ?? pane,
+              frame: framesById.get(pane) ?? null,
+              state: state.panes.get(pane) ?? { kind: "connecting" as const },
+              registerSink: (sink: Parameters<PaneMirrorController["registerPaneSink"]>[1]) =>
+                controller.registerPaneSink(pane, sink),
+            }))
+          : [],
+      connection: deriveConnectionHealth(state?.transport ?? null, { ok: true }),
+      onRetry: () => mirrorController()?.retry(),
+    };
+  });
   const dock = createMemo(() =>
     projectDomWorkbenchDock(shell(), viewport(), { sidebarWidth: effectiveSidebarWidth() }),
   );
@@ -1162,6 +1261,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   onCommand={dispatchAppWindow}
                   mutationsAvailable={props.onAppWindowCommand !== undefined}
                   mutationUnavailableReason={props.appWindowMutationUnavailableReason}
+                  mirror={mirrorCanvasProps()}
                 />
               )}
             </Show>

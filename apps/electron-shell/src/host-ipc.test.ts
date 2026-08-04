@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import type {
   AppWindowMutationRequest,
+  PaneStreamIssueMutationRequest,
+  PaneStreamIssueResult,
   TerminalAttachmentIssueMutationRequest,
   TerminalAttachmentIssueResult,
   WorkspaceOpenMutationRequest,
@@ -83,6 +85,7 @@ describe("host IPC trust boundary", () => {
         },
       })),
       issueTerminalAttachment: vi.fn(),
+      issuePaneStream: vi.fn(),
       state: () => ({
         status: "connected" as const,
         identity: {
@@ -846,5 +849,202 @@ describe("host IPC trust boundary", () => {
       false,
     );
     expect(rendererLocationIsTrusted("file:///trusted/renderer/index.html", trusted)).toBe(false);
+  });
+});
+
+describe("host IPC pane-stream issuance (m43 card 3)", () => {
+  const PANES = ["pane.workspace.a1", "pane.workspace.b2"];
+
+  function paneStreamHarness(options: {
+    readonly frameUrl: string;
+    readonly trustedRendererLocation: Parameters<
+      typeof registerHostIpc
+    >[0]["trustedRendererLocation"];
+    readonly issuePaneStream: ReturnType<typeof vi.fn>;
+  }) {
+    const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
+    const ipcMain = {
+      handle: (
+        channel: string,
+        handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
+      ) => handlers.set(channel, handler),
+      removeHandler: (channel: string) => handlers.delete(channel),
+    } as unknown as IpcMain;
+    const mainFrame = { url: options.frameUrl };
+    const webContents = { id: 23, mainFrame, send: vi.fn() };
+    const window = {
+      isDestroyed: () => false,
+      isMaximized: () => false,
+      isFullScreen: () => false,
+      isFocused: () => true,
+      webContents,
+    } as unknown as BrowserWindow;
+    const identity = {
+      protocolVersion: 1,
+      productVersion: "2.8.0",
+      instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+      startedAt: "2026-07-21T00:00:00.000Z",
+    };
+    const daemonResources = {
+      state: () => ({ status: "connected" as const, identity }),
+      issuePaneStream: options.issuePaneStream,
+      releaseRenderer: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as DaemonConnectionAuthority;
+    const registration = registerHostIpc({
+      ipcMain,
+      getWindow: () => window,
+      appVersion: "test",
+      platform: "darwin",
+      daemonResources,
+      requestQuit: vi.fn(),
+      selectProjectDirectory: async () => null,
+      getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
+      getUpdateStatus: () => ({ phase: "idle", currentVersion: "test", availableVersion: null }),
+      readOnboardingIntroAcknowledged: () => false,
+      acknowledgeOnboardingIntro: () => undefined,
+      trustedRendererLocation: options.trustedRendererLocation,
+    });
+    const event = {
+      sender: webContents,
+      senderFrame: mainFrame,
+    } as unknown as IpcMainInvokeEvent;
+    handlers.get(HOST_IPC.bootstrap)?.(event);
+    return { handlers, event, identity, registration, webContents, mainFrame, daemonResources };
+  }
+
+  function streamDescriptor(request: PaneStreamIssueMutationRequest, instanceId: string) {
+    return {
+      protocolVersion: 1 as const,
+      webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/pane-streams/redeem",
+      subprotocol: "tmux-ide-pane-stream.v1" as const,
+      redemptionTicket: `ps1_${"A".repeat(43)}`,
+      daemonInstanceId: instanceId,
+      requestId: request.requestId,
+      expiresAt: Date.now() + 15_000,
+      panes: [...request.stream.panes],
+      effectiveViewerMode: request.stream.viewerMode,
+    };
+  }
+
+  it("authors the private envelope in main and refuses renderer-authored identity", async () => {
+    const issuePaneStream = vi.fn(
+      async (
+        request: PaneStreamIssueMutationRequest,
+        origin: string,
+      ): Promise<PaneStreamIssueResult> => {
+        expect(origin).toBe("http://127.0.0.1:5173");
+        return {
+          status: "issued",
+          descriptor: streamDescriptor(request, request.expectedDaemonInstanceId),
+        };
+      },
+    );
+    const h = paneStreamHarness({
+      frameUrl: "http://127.0.0.1:5173/src/main.tsx",
+      trustedRendererLocation: { kind: "development-origin", origin: "http://127.0.0.1:5173" },
+      issuePaneStream,
+    });
+    const stream = {
+      protocolVersion: 1,
+      workspaceName: "product",
+      panes: PANES,
+      viewerMode: "read-only",
+    };
+    const issued = await h.handlers.get(HOST_IPC.daemonIssuePaneStream)?.(h.event, stream);
+    expect(issued).toMatchObject({
+      status: "issued",
+      descriptor: { daemonInstanceId: h.identity.instanceId, panes: PANES },
+    });
+    const authored = issuePaneStream.mock.calls[0]?.[0];
+    expect(authored).toMatchObject({
+      expectedDaemonInstanceId: h.identity.instanceId,
+      stream,
+    });
+    expect(authored?.requestId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(JSON.stringify(authored)).not.toMatch(/ownerToken|authorization|rendererOrigin/iu);
+
+    // A renderer-smuggled envelope field is an invalid request, never forwarded.
+    expect(
+      await h.handlers.get(HOST_IPC.daemonIssuePaneStream)?.(h.event, {
+        ...stream,
+        expectedDaemonInstanceId: "spoofed",
+      }),
+    ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
+    expect(issuePaneStream).toHaveBeenCalledOnce();
+    h.registration.dispose();
+  });
+
+  it("rejects an untrusted or origin-less renderer before touching the broker", async () => {
+    const issuePaneStream = vi.fn();
+    const h = paneStreamHarness({
+      frameUrl: "file:///trusted/renderer/index.html",
+      trustedRendererLocation: { kind: "packaged-url", url: "file:///trusted/renderer/index.html" },
+      issuePaneStream,
+    });
+    // packaged-url has no canonical Origin: pane streams are honestly unavailable.
+    expect(
+      await h.handlers.get(HOST_IPC.daemonIssuePaneStream)?.(h.event, {
+        protocolVersion: 1,
+        workspaceName: "product",
+        panes: PANES,
+        viewerMode: "read-only",
+      }),
+    ).toMatchObject({ status: "error", error: { code: "renderer-origin-unavailable" } });
+    expect(issuePaneStream).not.toHaveBeenCalled();
+
+    await expect(
+      h.handlers.get(HOST_IPC.daemonIssuePaneStream)?.(
+        {
+          sender: h.webContents,
+          senderFrame: { url: h.mainFrame.url },
+        } as unknown as IpcMainInvokeEvent,
+        {
+          protocolVersion: 1,
+          workspaceName: "product",
+          panes: PANES,
+          viewerMode: "read-only",
+        },
+      ),
+    ).rejects.toThrow("untrusted renderer");
+    h.registration.dispose();
+  });
+
+  it("discards a one-use stream ticket completed after renderer release", async () => {
+    let finishIssue: ((result: PaneStreamIssueResult) => void) | undefined;
+    let issued: PaneStreamIssueMutationRequest | undefined;
+    const issuePaneStream = vi.fn(
+      async (authored: PaneStreamIssueMutationRequest): Promise<PaneStreamIssueResult> => {
+        issued = authored;
+        return new Promise<PaneStreamIssueResult>((resolve) => {
+          finishIssue = resolve;
+        });
+      },
+    );
+    const h = paneStreamHarness({
+      frameUrl: "http://127.0.0.1:5173/src/main.tsx",
+      trustedRendererLocation: { kind: "development-origin", origin: "http://127.0.0.1:5173" },
+      issuePaneStream,
+    });
+    const pending = h.handlers.get(HOST_IPC.daemonIssuePaneStream)?.(h.event, {
+      protocolVersion: 1,
+      workspaceName: "product",
+      panes: PANES,
+      viewerMode: "read-only",
+    });
+    await vi.waitFor(() => expect(issuePaneStream).toHaveBeenCalledOnce());
+    const request = issued as PaneStreamIssueMutationRequest;
+    h.registration.releaseRenderer();
+    finishIssue?.({
+      status: "issued",
+      descriptor: {
+        ...streamDescriptor(request, h.identity.instanceId),
+        redemptionTicket: `ps1_${"C".repeat(43)}`,
+      },
+    });
+    const retired = await pending;
+    expect(retired).toMatchObject({ status: "error", error: { code: "disposed" } });
+    expect(JSON.stringify(retired)).not.toContain(`ps1_${"C".repeat(43)}`);
+    h.registration.dispose();
   });
 });

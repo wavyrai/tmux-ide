@@ -462,7 +462,18 @@ export class SessionChannel {
         return;
       }
       this.layoutByWindow.set(change.windowId, { ...parsed, zoomed: change.zoomed });
-      if (parsed.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id))) this.scheduleSync();
+      // Resync on BOTH structural deltas: an unknown leaf (new pane) and a
+      // known pane of this window missing from the leaves (a killed pane in a
+      // surviving window emits only %layout-change — without this, its
+      // subscribers never receive `closed`). Closure itself still comes only
+      // from the truth reply; a probe failure never reads as absence.
+      const leafIds = new Set(parsed.leaves.map((leaf) => leaf.id));
+      const knownPaneVanished = [...this.panesByRuntime.values()].some(
+        (pane) => pane.windowRuntimeId === change.windowId && !leafIds.has(pane.runtimeId),
+      );
+      if (parsed.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id)) || knownPaneVanished) {
+        this.scheduleSync();
+      }
       this.emitLayout(change.windowId);
       return;
     }

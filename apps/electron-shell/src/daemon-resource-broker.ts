@@ -33,6 +33,14 @@ import {
   type TerminalAttachmentIssueErrorCode,
   type TerminalAttachmentIssueMutationRequest,
   type TerminalAttachmentIssueResult,
+  PANE_STREAM_ISSUE_PATH,
+  PaneStreamIssueDescriptorSchemaZ,
+  PaneStreamIssueMutationRequestSchemaZ,
+  PaneStreamIssueResultSchemaZ,
+  type PaneStreamIssueError,
+  type PaneStreamIssueErrorCode,
+  type PaneStreamIssueMutationRequest,
+  type PaneStreamIssueResult,
   type DesktopDaemonFetchApplicationShellRequest,
   WorkspaceCatalogResourceV1SchemaZ,
   WorkspaceOpenArgumentsSchemaZ,
@@ -94,6 +102,9 @@ const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
  */
 export const APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_TERMINAL_ATTACHMENT_ISSUE_RESPONSE_BYTES = 16 * 1024;
+const MAX_PANE_STREAM_ISSUE_RESPONSE_BYTES = 16 * 1024;
+/** Local ceiling on a pane-stream delivery ticket; the daemon default is 15s. */
+const MAX_PANE_STREAM_ISSUE_DESCRIPTOR_LIFETIME_MS = 60_000;
 const DEFAULT_MAX_EVENT_BYTES = 512 * 1024;
 const DEFAULT_EVENT_HANDSHAKE_TIMEOUT_MS = 3_000;
 const DEFAULT_EVENT_RECONNECT_INITIAL_DELAY_MS = 250;
@@ -295,6 +306,38 @@ export function terminalAttachmentIssueError(
   retryable = TERMINAL_ISSUE_ERROR[code].retryable,
 ): TerminalAttachmentIssueError {
   return { code, reason: TERMINAL_ISSUE_ERROR[code].reason, retryable };
+}
+
+const PANE_STREAM_ISSUE_ERROR: Record<
+  PaneStreamIssueErrorCode,
+  { readonly reason: string; readonly retryable: boolean }
+> = {
+  "renderer-origin-unavailable": {
+    reason: "The current renderer location cannot authorize pane-stream redemption.",
+    retryable: false,
+  },
+  "daemon-unavailable": { reason: "The canonical daemon is unavailable.", retryable: true },
+  "invalid-request": { reason: "The pane-stream request was invalid.", retryable: false },
+  "workspace-not-found": { reason: "The requested workspace is unavailable.", retryable: false },
+  "pane-not-found": { reason: "A requested pane is unavailable.", retryable: false },
+  "interactive-viewer-conflict": {
+    reason: "A requested pane already has an interactive viewer.",
+    retryable: true,
+  },
+  "daemon-identity-mismatch": {
+    reason: "The daemon generation changed during pane-stream issuance.",
+    retryable: true,
+  },
+  "stream-unavailable": { reason: "Pane streaming is unavailable.", retryable: true },
+  "request-failed": { reason: "The pane-stream request failed.", retryable: true },
+  disposed: { reason: "The pane-stream authority was retired.", retryable: true },
+};
+
+export function paneStreamIssueError(
+  code: PaneStreamIssueErrorCode,
+  retryable = PANE_STREAM_ISSUE_ERROR[code].retryable,
+): PaneStreamIssueError {
+  return { code, reason: PANE_STREAM_ISSUE_ERROR[code].reason, retryable };
 }
 
 export function daemonCapabilityError(
@@ -792,6 +835,73 @@ export class DaemonResourceBroker {
           ? bounded.code
           : "request-failed";
       return { status: "error", error: terminalAttachmentIssueError(code) };
+    }
+  }
+
+  /**
+   * Owner-gated pane-stream lease issuance (m43 card 3). The
+   * terminal-attachment issue discipline verbatim: exact daemon-identity and
+   * correlation headers, trusted-Origin authorship in main, bounded response,
+   * and a descriptor accepted only when it echoes the request exactly.
+   */
+  async issuePaneStream(
+    request: PaneStreamIssueMutationRequest,
+    rendererOrigin: string,
+  ): Promise<PaneStreamIssueResult> {
+    if (this.#daemon.status !== "connected" || !this.#ownerToken) {
+      return { status: "error", error: paneStreamIssueError("daemon-unavailable") };
+    }
+    try {
+      const parsed = PaneStreamIssueMutationRequestSchemaZ.parse(request);
+      if (parsed.expectedDaemonInstanceId !== this.#daemon.descriptor.instanceId) {
+        throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+      }
+      const origin = this.#canonicalRendererOrigin(rendererOrigin);
+      const raw = await this.#mutationJson(
+        PANE_STREAM_ISSUE_PATH,
+        parsed,
+        {
+          Origin: origin,
+          "X-Tmux-Ide-Request-Id": parsed.requestId,
+          "X-Tmux-Ide-Expected-Daemon-Instance-Id": parsed.expectedDaemonInstanceId,
+        },
+        Math.min(this.#maxResponseBytes, MAX_PANE_STREAM_ISSUE_RESPONSE_BYTES),
+      );
+      const parsedResult = PaneStreamIssueResultSchemaZ.safeParse(raw);
+      if (!parsedResult.success) {
+        throw new BrokerFailure(daemonCapabilityError("invalid-response"));
+      }
+      const result = parsedResult.data;
+      if (result.status === "error") {
+        return {
+          status: "error",
+          error: paneStreamIssueError(result.error.code, result.error.retryable),
+        };
+      }
+      const descriptor = PaneStreamIssueDescriptorSchemaZ.parse(result.descriptor);
+      const remainingLifetime = descriptor.expiresAt - this.#now();
+      if (
+        descriptor.daemonInstanceId !== this.#daemon.descriptor.instanceId ||
+        descriptor.requestId !== parsed.requestId ||
+        descriptor.effectiveViewerMode !== parsed.stream.viewerMode ||
+        descriptor.panes.length !== parsed.stream.panes.length ||
+        descriptor.panes.some((pane, index) => pane !== parsed.stream.panes[index]) ||
+        remainingLifetime <= 0 ||
+        remainingLifetime > MAX_PANE_STREAM_ISSUE_DESCRIPTOR_LIFETIME_MS
+      ) {
+        throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+      }
+      return { status: "issued", descriptor };
+    } catch (error) {
+      const bounded = this.#boundedError(error);
+      const code: PaneStreamIssueErrorCode =
+        bounded.code === "daemon-identity-mismatch" ||
+        bounded.code === "disposed" ||
+        bounded.code === "daemon-unavailable" ||
+        bounded.code === "invalid-request"
+          ? bounded.code
+          : "request-failed";
+      return { status: "error", error: paneStreamIssueError(code) };
     }
   }
 
