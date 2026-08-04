@@ -268,14 +268,21 @@ export class PaneStreamAdmissionCoordinator {
     this.#flowBudgets = options.flowBudgets ?? DEFAULT_PANE_STREAM_FLOW_BUDGETS;
     this.#ledger = new PaneStreamWireLedger(this.#flowBudgets);
     this.#drainTickMs = boundedInteger(options.drainTickMs, 15, 1_000);
-    this.#maxSocketBufferedBytes = boundedInteger(options.maxSocketBufferedBytes, 32 << 20, 256 << 20);
+    this.#maxSocketBufferedBytes = boundedInteger(
+      options.maxSocketBufferedBytes,
+      32 << 20,
+      256 << 20,
+    );
     this.#maxInputFrames = boundedInteger(options.maxInputFramesPerConnection, 16_384, 1 << 20);
     this.#maxInputBytes = boundedInteger(options.maxInputBytesPerConnection, 4 << 20, 64 << 20);
     this.#now = options.now ?? Date.now;
     this.#schedule = options.schedule ?? defaultSchedule;
   }
 
-  issue(request: PaneStreamLeaseRequest, context: PaneStreamIssueContext): Promise<PaneStreamDescriptor> {
+  issue(
+    request: PaneStreamLeaseRequest,
+    context: PaneStreamIssueContext,
+  ): Promise<PaneStreamDescriptor> {
     return this.#exclusive(async () => {
       if (this.#shuttingDown) {
         throw new PaneStreamAdmissionError(
@@ -466,7 +473,11 @@ export class PaneStreamAdmissionCoordinator {
         if (digestsEqual(entry.ticketDigest, candidateDigest)) pending = entry;
       }
       candidateDigest.fill(0);
-      if (!pending || pending.origin !== admission.origin || pending.requestId !== frame.requestId) {
+      if (
+        !pending ||
+        pending.origin !== admission.origin ||
+        pending.requestId !== frame.requestId
+      ) {
         throw new PaneStreamAdmissionError(
           "redemption-rejected",
           "Pane-stream redemption was rejected.",
@@ -921,7 +932,12 @@ export class PaneStreamLiveConnection {
     if (this.#closed || channel.closed) return;
     switch (event.type) {
       case "reset": {
-        channel.batch = { reset: { cols: event.cols, rows: event.rows }, seed: null, held: [], guardArmed: false };
+        channel.batch = {
+          reset: { cols: event.cols, rows: event.rows },
+          seed: null,
+          held: [],
+          guardArmed: false,
+        };
         this.#armBatchGuard(channel);
         return;
       }

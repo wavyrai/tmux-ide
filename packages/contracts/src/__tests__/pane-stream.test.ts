@@ -75,9 +75,9 @@ describe("pane-stream lease contracts", () => {
   });
 
   it("bounds and deduplicates the pane set", () => {
-    expect(
-      PaneStreamLeaseRequestSchemaZ.safeParse({ ...leaseRequest(), panes: [] }).success,
-    ).toBe(false);
+    expect(PaneStreamLeaseRequestSchemaZ.safeParse({ ...leaseRequest(), panes: [] }).success).toBe(
+      false,
+    );
     expect(
       PaneStreamLeaseRequestSchemaZ.safeParse({
         ...leaseRequest(),
@@ -163,7 +163,11 @@ describe("pane-stream lease contracts", () => {
     expect(
       PaneStreamIssueResultSchemaZ.safeParse({
         status: "error",
-        error: { code: "pane-not-found", reason: "The requested pane is unavailable.", retryable: false },
+        error: {
+          code: "pane-not-found",
+          reason: "The requested pane is unavailable.",
+          retryable: false,
+        },
       }).success,
     ).toBe(true);
   });
@@ -195,13 +199,12 @@ describe("pane-stream client frames", () => {
       daemonInstanceId: "daemon-instance-1",
     };
     expect(PaneStreamRedeemFrameSchemaZ.safeParse(frame).success).toBe(true);
-    expect(
-      PaneStreamRedeemFrameSchemaZ.safeParse({ ...frame, deliveryAcks: true }).success,
-    ).toBe(true);
+    expect(PaneStreamRedeemFrameSchemaZ.safeParse({ ...frame, deliveryAcks: true }).success).toBe(
+      true,
+    );
     expect(PaneStreamRedeemFrameSchemaZ.safeParse({ ...frame, extra: 1 }).success).toBe(false);
     expect(
-      PaneStreamRedeemFrameSchemaZ.safeParse({ ...frame, ticket: `ta1_${"A".repeat(43)}` })
-        .success,
+      PaneStreamRedeemFrameSchemaZ.safeParse({ ...frame, ticket: `ta1_${"A".repeat(43)}` }).success,
     ).toBe(false);
   });
 
@@ -234,12 +237,12 @@ describe("pane-stream client frames", () => {
       }).success,
     ).toBe(false);
     expect(PaneStreamInputFrameSchemaZ.safeParse({ ...base, data: "a\0b" }).success).toBe(false);
-    expect(
-      PaneStreamInputFrameSchemaZ.safeParse({ ...base, seq: 0, data: "x" }).success,
-    ).toBe(false);
-    expect(
-      PaneStreamInputFrameSchemaZ.safeParse({ ...base, pane: "%5", data: "x" }).success,
-    ).toBe(false);
+    expect(PaneStreamInputFrameSchemaZ.safeParse({ ...base, seq: 0, data: "x" }).success).toBe(
+      false,
+    );
+    expect(PaneStreamInputFrameSchemaZ.safeParse({ ...base, pane: "%5", data: "x" }).success).toBe(
+      false,
+    );
   });
 
   it("validates consumed frames and the client union", () => {
@@ -299,8 +302,13 @@ describe("pane-stream server frames", () => {
           .success,
       ).toBe(false);
       expect(
-        PaneStreamServerFrameSchemaZ.safeParse({ type: "flow", pane, seq: 1, state: "paused", reason: "backpressure" })
-          .success,
+        PaneStreamServerFrameSchemaZ.safeParse({
+          type: "flow",
+          pane,
+          seq: 1,
+          state: "paused",
+          reason: "backpressure",
+        }).success,
       ).toBe(false);
     }
     expect(
@@ -338,9 +346,9 @@ describe("pane-stream server frames", () => {
         panes: Array.from({ length: PANE_STREAM_MAX_LAYOUT_PANES + 1 }, () => layout.panes[0]),
       }).success,
     ).toBe(false);
-    expect(
-      PaneStreamServerFrameSchemaZ.safeParse({ ...layout, windowName: "a\nb" }).success,
-    ).toBe(false);
+    expect(PaneStreamServerFrameSchemaZ.safeParse({ ...layout, windowName: "a\nb" }).success).toBe(
+      false,
+    );
   });
 
   it("validates flow, closed, input-ack, and error frames", () => {
@@ -358,8 +366,13 @@ describe("pane-stream server frames", () => {
       expect(PaneStreamServerFrameSchemaZ.safeParse(frame).success).toBe(true);
     }
     expect(
-      PaneStreamServerFrameSchemaZ.safeParse({ type: "flow", pane: "pane.editor", seq: 1, state: "gone", reason: "backpressure" })
-        .success,
+      PaneStreamServerFrameSchemaZ.safeParse({
+        type: "flow",
+        pane: "pane.editor",
+        seq: 1,
+        state: "gone",
+        reason: "backpressure",
+      }).success,
     ).toBe(false);
     expect(PaneStreamServerFrameSchemaZ.safeParse({ type: "shutdown" }).success).toBe(false);
   });

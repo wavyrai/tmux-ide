@@ -159,8 +159,18 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
       const requestId = randomUUID();
       return coordinator
         .issue(
-          { protocolVersion: PANE_STREAM_PROTOCOL_VERSION, workspaceName: "workspace.zz", panes, viewerMode },
-          { requestId, projectIdentity: "workspace.zz", sessionName: session, rendererOrigin: ORIGIN },
+          {
+            protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+            workspaceName: "workspace.zz",
+            panes,
+            viewerMode,
+          },
+          {
+            requestId,
+            projectIdentity: "workspace.zz",
+            sessionName: session,
+            rendererOrigin: ORIGIN,
+          },
         )
         .then((descriptor) => ({ descriptor, requestId }));
     };
@@ -210,7 +220,7 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
       () => {
         const snapshot = coordinator.flowSnapshot();
         const stalled = Object.values(snapshot).some(
-          (panes) => (panes[floodPane]?.["ws-send-buffer"] ?? 0) > (256 << 10),
+          (panes) => (panes[floodPane]?.["ws-send-buffer"] ?? 0) > 256 << 10,
         );
         expect(stalled).toBe(true);
       },
@@ -252,7 +262,13 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
 
     // ── Live interactive input through the wire ────────────────────────────
     clientH.ws.send(
-      JSON.stringify({ type: "input", kind: "text", pane: quietC, seq: 1, data: "echo LIVE_INPUT_$((6*7))" }),
+      JSON.stringify({
+        type: "input",
+        kind: "text",
+        pane: quietC,
+        seq: 1,
+        data: "echo LIVE_INPUT_$((6*7))",
+      }),
     );
     clientH.ws.send(
       JSON.stringify({ type: "input", kind: "key", pane: quietC, seq: 2, data: "Enter" }),
@@ -271,9 +287,7 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
     await vi.waitFor(
       () => {
         const snapshot = coordinator.flowSnapshot();
-        expect(
-          Object.values(snapshot).some((panes) => Object.keys(panes).length > 2),
-        ).toBe(false);
+        expect(Object.values(snapshot).some((panes) => Object.keys(panes).length > 2)).toBe(false);
         expect(Object.keys(snapshot).length).toBeLessThanOrEqual(1);
       },
       { timeout: 10_000 },

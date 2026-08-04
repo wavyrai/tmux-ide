@@ -16,7 +16,10 @@ function request(overrides: Partial<PaneStreamLeaseRequest> = {}): PaneStreamLea
   };
 }
 
-function manager(now: () => number, overrides: { ticketTtlMs?: number; redemptionProcessingTtlMs?: number } = {}) {
+function manager(
+  now: () => number,
+  overrides: { ticketTtlMs?: number; redemptionProcessingTtlMs?: number } = {},
+) {
   return new PaneStreamLeaseManager({
     daemonInstanceId: INSTANCE,
     now,
@@ -55,12 +58,12 @@ describe("PaneStreamLeaseManager", () => {
   it("rejects duplicate requests and mismatched bindings", async () => {
     const lease = manager(() => 1_000);
     const issued = await lease.issue(request(), context());
-    await expect(lease.issue(request({ panes: ["pane.other"] }), context())).rejects.toMatchObject(
-      { code: "duplicate-request" },
-    );
-    await expect(
-      lease.redeem(issued.redemptionTicket, binding(REQUEST_B)),
-    ).rejects.toMatchObject({ code: "binding-mismatch" });
+    await expect(lease.issue(request({ panes: ["pane.other"] }), context())).rejects.toMatchObject({
+      code: "duplicate-request",
+    });
+    await expect(lease.redeem(issued.redemptionTicket, binding(REQUEST_B))).rejects.toMatchObject({
+      code: "binding-mismatch",
+    });
     await expect(
       lease.redeem(issued.redemptionTicket, { ...binding(), projectIdentity: "workspace.other" }),
     ).rejects.toMatchObject({ code: "binding-mismatch" });
@@ -109,9 +112,9 @@ describe("PaneStreamLeaseManager", () => {
     now = 2_500;
     await expect(reissue()).rejects.toMatchObject({ code: "interactive-viewer-conflict" });
     // Late delivery is rejected at the TTL regardless of the grace...
-    await expect(
-      lease.redeem(issued.redemptionTicket, binding(), 2_400),
-    ).rejects.toMatchObject({ code: "ticket-expired" });
+    await expect(lease.redeem(issued.redemptionTicket, binding(), 2_400)).rejects.toMatchObject({
+      code: "ticket-expired",
+    });
     // ...and the failed redemption freed the grant immediately.
     await expect(reissue()).resolves.toBeTruthy();
   });
@@ -134,9 +137,9 @@ describe("PaneStreamLeaseManager", () => {
     const issued = await lease.issue(request(), context());
     const receivedAt = 1_500;
     now = 4_000; // deliveredAt + processing budget = 3_500 < now
-    await expect(lease.redeem(issued.redemptionTicket, binding(), receivedAt)).rejects.toMatchObject(
-      { code: "ticket-expired" },
-    );
+    await expect(
+      lease.redeem(issued.redemptionTicket, binding(), receivedAt),
+    ).rejects.toMatchObject({ code: "ticket-expired" });
   });
 
   it("rejects late delivery even when claimed early", async () => {
@@ -145,9 +148,9 @@ describe("PaneStreamLeaseManager", () => {
     const issued = await lease.issue(request(), context());
     now = 2_500;
     // A claimed FUTURE arrival never precedes now.
-    await expect(
-      lease.redeem(issued.redemptionTicket, binding(), 10_000),
-    ).rejects.toMatchObject({ code: "ticket-expired" });
+    await expect(lease.redeem(issued.redemptionTicket, binding(), 10_000)).rejects.toMatchObject({
+      code: "ticket-expired",
+    });
   });
 
   it("is a PaneStreamLeaseError for every failure", async () => {

@@ -250,7 +250,10 @@ export class PaneStreamLeaseManager {
     const candidateDigest = hashTicket(ticket);
     let state: LeaseState | undefined;
     for (const candidate of this.#leases.values()) {
-      if (candidate.ticketDigest !== null && digestsMatch(candidate.ticketDigest, candidateDigest)) {
+      if (
+        candidate.ticketDigest !== null &&
+        digestsMatch(candidate.ticketDigest, candidateDigest)
+      ) {
         state = candidate;
       }
     }
@@ -295,10 +298,7 @@ export class PaneStreamLeaseManager {
     return { descriptor: this.#descriptor(state) };
   }
 
-  async release(
-    leaseId: string,
-    binding: PaneStreamLeaseBinding,
-  ): Promise<{ released: boolean }> {
+  async release(leaseId: string, binding: PaneStreamLeaseBinding): Promise<{ released: boolean }> {
     const state = this.#leases.get(leaseId);
     if (!state) return { released: false };
     const parsedBinding = validateBinding(binding);

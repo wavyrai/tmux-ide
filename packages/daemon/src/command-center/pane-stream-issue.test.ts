@@ -133,9 +133,7 @@ describe("owner pane-stream issue route", () => {
     const issue = vi.fn(async () => descriptor());
     const app = appWith({ issue });
     for (const authorization of [`Bearer ${REMOTE_TOKEN}`, ""]) {
-      const result = await parsed(
-        await post(app, mutation(), { Authorization: authorization }),
-      );
+      const result = await parsed(await post(app, mutation(), { Authorization: authorization }));
       expect(result.status).toBe("error");
       if (result.status === "error") expect(result.error.code).toBe("invalid-request");
     }
@@ -154,10 +152,7 @@ describe("owner pane-stream issue route", () => {
     );
     expect(mismatch.status === "error" && mismatch.error.code).toBe("daemon-identity-mismatch");
     const missing = await parsed(
-      await post(
-        app,
-        mutation({ stream: { ...mutation().stream, workspaceName: "ghost" } }),
-      ),
+      await post(app, mutation({ stream: { ...mutation().stream, workspaceName: "ghost" } })),
     );
     expect(missing.status === "error" && missing.error.code).toBe("workspace-not-found");
     expect(issue).not.toHaveBeenCalled();

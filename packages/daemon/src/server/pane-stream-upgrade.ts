@@ -1,10 +1,7 @@
 import type { Server } from "node:http";
 import type { Socket } from "node:net";
 import { WebSocketServer } from "ws";
-import {
-  PANE_STREAM_REDEEM_PATH,
-  PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
-} from "@tmux-ide/contracts";
+import { PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL } from "@tmux-ide/contracts";
 import type { DirectTerminalSocket } from "../terminal/attachments/direct-websocket.ts";
 import {
   PANE_STREAM_MAX_CONTROL_BYTES,

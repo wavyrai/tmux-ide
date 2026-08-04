@@ -9,10 +9,7 @@ import type { MirrorPaneEvent, MirrorSessionDescription } from "../mirror/events
 import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
 import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
-import {
-  PaneStreamAdmissionCoordinator,
-  type PaneStreamMirror,
-} from "./pane-stream-websocket.ts";
+import { PaneStreamAdmissionCoordinator, type PaneStreamMirror } from "./pane-stream-websocket.ts";
 
 const INSTANCE = "daemon-instance-1";
 const ORIGIN = "tmux-ide://app";
@@ -196,12 +193,14 @@ function testScheduler() {
   return { schedule, runDue, timers };
 }
 
-function harness(options: {
-  panes?: string[];
-  budgets?: ConstructorParameters<typeof PaneStreamAdmissionCoordinator>[0]["flowBudgets"];
-  ticketTtlMs?: number;
-  now?: () => number;
-} = {}) {
+function harness(
+  options: {
+    panes?: string[];
+    budgets?: ConstructorParameters<typeof PaneStreamAdmissionCoordinator>[0]["flowBudgets"];
+    ticketTtlMs?: number;
+    now?: () => number;
+  } = {},
+) {
   const mirror = new FakeMirror(options.panes ?? ["pane.editor", "pane.shell"]);
   const now = options.now ?? Date.now;
   const leaseManager = new PaneStreamLeaseManager({
@@ -368,7 +367,9 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(
       two.socket
         .framesOfType("output")
-        .some((frame) => Buffer.from(frame.data as string, "base64").toString() === "STILL_FLOWING"),
+        .some(
+          (frame) => Buffer.from(frame.data as string, "base64").toString() === "STILL_FLOWING",
+        ),
     ).toBe(true);
 
     // Drain both sockets; the tick returns tickets and thaws the pane.
@@ -420,7 +421,9 @@ describe("PaneStreamAdmissionCoordinator", () => {
       ),
     ).rejects.toMatchObject({ code: "interactive-viewer-conflict" });
     // Read-only over the same pane still streams.
-    await expect(connect(h, { viewerMode: "read-only", panes: ["pane.editor"] })).resolves.toBeTruthy();
+    await expect(
+      connect(h, { viewerMode: "read-only", panes: ["pane.editor"] }),
+    ).resolves.toBeTruthy();
   });
 
   it("honors the delivery TTL for a redeem queued behind slow admission work", async () => {
@@ -434,7 +437,12 @@ describe("PaneStreamAdmissionCoordinator", () => {
         panes: ["pane.editor"],
         viewerMode: "read-only",
       },
-      { requestId, projectIdentity: "workspace.alpha", sessionName: SESSION, rendererOrigin: ORIGIN },
+      {
+        requestId,
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+      },
     );
     // Occupy the serialized admission queue with a gated issue.
     let releaseGate!: () => void;
@@ -497,7 +505,12 @@ describe("PaneStreamAdmissionCoordinator", () => {
         panes: ["pane.editor"],
         viewerMode: "read-only",
       },
-      { requestId, projectIdentity: "workspace.alpha", sessionName: SESSION, rendererOrigin: ORIGIN },
+      {
+        requestId,
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+      },
     );
     const decision = h.coordinator.reserveUpgrade({
       path: PANE_STREAM_REDEEM_PATH,
@@ -526,15 +539,33 @@ describe("PaneStreamAdmissionCoordinator", () => {
     const h = harness();
     const interactive = await connect(h, { viewerMode: "interactive" });
     await vi.waitFor(() => expect(h.mirror.subs).toHaveLength(2));
-    interactive.socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "echo hi" });
-    interactive.socket.message({ type: "input", kind: "key", pane: "pane.editor", seq: 2, data: "Enter" });
+    interactive.socket.message({
+      type: "input",
+      kind: "text",
+      pane: "pane.editor",
+      seq: 1,
+      data: "echo hi",
+    });
+    interactive.socket.message({
+      type: "input",
+      kind: "key",
+      pane: "pane.editor",
+      seq: 2,
+      data: "Enter",
+    });
     expect(h.mirror.subFor("pane.editor").texts).toEqual(["echo hi"]);
     expect(h.mirror.subFor("pane.editor").keys).toEqual(["Enter"]);
     const acks = interactive.socket.framesOfType("input-ack");
     expect(acks.map((frame) => frame.seq)).toEqual([1, 2]);
 
     // Out-of-order input closes the connection.
-    interactive.socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 9, data: "x" });
+    interactive.socket.message({
+      type: "input",
+      kind: "text",
+      pane: "pane.editor",
+      seq: 9,
+      data: "x",
+    });
     expect(interactive.socket.framesOfType("error")[0]!.code).toBe("input-rejected");
     expect(interactive.socket.closed).not.toBeNull();
 
@@ -583,7 +614,12 @@ describe("PaneStreamAdmissionCoordinator", () => {
         panes: ["pane.editor", "pane.shell"],
         viewerMode: "read-only",
       },
-      { requestId, projectIdentity: "workspace.alpha", sessionName: SESSION, rendererOrigin: ORIGIN },
+      {
+        requestId,
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+      },
     );
     // Both panes vanish before redemption (a successful describe omitting
     // them IS absence — unlike a describe failure).

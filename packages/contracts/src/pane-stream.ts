@@ -128,7 +128,8 @@ const RendererSafePaneStreamReasonSchemaZ = z
   .min(1)
   .max(240)
   .refine(
-    (reason) => !/(?:authorization|bearer\s+|owner.?token|redemptionticket|ps1_|ta1_)/iu.test(reason),
+    (reason) =>
+      !/(?:authorization|bearer\s+|owner.?token|redemptionticket|ps1_|ta1_)/iu.test(reason),
     "pane-stream error reason must be credential-redacted",
   );
 
@@ -277,10 +278,7 @@ export const PaneStreamSeedBatchFrameSchemaZ = z
     held: z
       .array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS))
       .max(PANE_STREAM_MAX_HELD_DELTAS),
-    cursor: z
-      .object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ })
-      .strict()
-      .nullable(),
+    cursor: z.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable(),
   })
   .strict();
 

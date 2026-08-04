@@ -138,9 +138,7 @@ export class PaneStreamWireLedger {
       const paneOut: Record<string, Partial<Record<PaneStreamFlowOwner, number>>> = {};
       for (const [pane, owners] of panes) {
         if (owners.size === 0) continue;
-        paneOut[pane] = Object.fromEntries(owners) as Partial<
-          Record<PaneStreamFlowOwner, number>
-        >;
+        paneOut[pane] = Object.fromEntries(owners) as Partial<Record<PaneStreamFlowOwner, number>>;
       }
       if (Object.keys(paneOut).length > 0) out[client] = paneOut;
     }
