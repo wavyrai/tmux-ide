@@ -22467,6 +22467,13 @@ var init_workspace_promotion2 = __esm({
           const session = this.#resolveSession(request.intent.sessionId);
           const alreadyRegistered = this.#registry.list().find((workspace) => workspace.sessionName === session.sessionName);
           if (alreadyRegistered) {
+            const registeredIdentity = {
+              workspaceName: alreadyRegistered.name,
+              sessionName: session.sessionName
+            };
+            this.#stampPaneInventory(request, session, registeredIdentity);
+            this.#assertActive(request.operationId);
+            this.#verifyPromotedInventory(session.sessionId, registeredIdentity);
             return this.#succeed(request, fingerprint2, alreadyRegistered.name, session.sessionName, {
               replayed: true
             });
@@ -22550,6 +22557,32 @@ var init_workspace_promotion2 = __esm({
        * the registry, so a failure here leaves the session harmless.
        */
       #stampSession(request, session, identity) {
+        const scanned = this.#stampPaneInventory(request, session, identity);
+        try {
+          for (const [option, value] of [
+            [SESSION_OPERATION_OPTION2, request.operationId],
+            [SESSION_WORKSPACE_OPTION2, identity.workspaceName],
+            [SESSION_PROMOTED_MARKER_OPTION, "1"]
+          ]) {
+            this.#io.runTmux(["set-option", "-t", session.sessionId, option, value]);
+          }
+        } catch (error) {
+          throw new WorkspacePromotionError(
+            "stamp_failed",
+            { operationId: request.operationId, workspaceName: identity.workspaceName },
+            error
+          );
+        }
+        return this.#resolveProjectDir(session, scanned);
+      }
+      /**
+       * Stamp every pane and window of the session — additive, never overwriting a
+       * valid pane stamp — and return the scanned inventory. Session-level options
+       * are deliberately NOT written here: this also runs for an already-registered
+       * session, which may be an m32-open workspace whose provenance must never
+       * acquire the promotion marker.
+       */
+      #stampPaneInventory(request, session, identity) {
         let scanned;
         try {
           scanned = parseScanPanes(
@@ -22601,13 +22634,6 @@ var init_workspace_promotion2 = __esm({
               ]);
             }
           }
-          for (const [option, value] of [
-            [SESSION_OPERATION_OPTION2, request.operationId],
-            [SESSION_WORKSPACE_OPTION2, identity.workspaceName],
-            [SESSION_PROMOTED_MARKER_OPTION, "1"]
-          ]) {
-            this.#io.runTmux(["set-option", "-t", session.sessionId, option, value]);
-          }
         } catch (error) {
           throw new WorkspacePromotionError(
             "stamp_failed",
@@ -22615,7 +22641,7 @@ var init_workspace_promotion2 = __esm({
             error
           );
         }
-        return this.#resolveProjectDir(session, scanned);
+        return scanned;
       }
       /**
        * Resolve a durable project root for the workspace registry. Real fleets
@@ -29006,7 +29032,11 @@ var init_pane_stream_websocket = __esm({
         this.#flowBudgets = options.flowBudgets ?? DEFAULT_PANE_STREAM_FLOW_BUDGETS;
         this.#ledger = new PaneStreamWireLedger(this.#flowBudgets);
         this.#drainTickMs = boundedInteger2(options.drainTickMs, 15, 1e3);
-        this.#maxSocketBufferedBytes = boundedInteger2(options.maxSocketBufferedBytes, 32 << 20, 256 << 20);
+        this.#maxSocketBufferedBytes = boundedInteger2(
+          options.maxSocketBufferedBytes,
+          32 << 20,
+          256 << 20
+        );
         this.#maxInputFrames = boundedInteger2(options.maxInputFramesPerConnection, 16384, 1 << 20);
         this.#maxInputBytes = boundedInteger2(options.maxInputBytesPerConnection, 4 << 20, 64 << 20);
         this.#now = options.now ?? Date.now;
@@ -29535,7 +29565,12 @@ var init_pane_stream_websocket = __esm({
         if (this.#closed || channel.closed) return;
         switch (event.type) {
           case "reset": {
-            channel.batch = { reset: { cols: event.cols, rows: event.rows }, seed: null, held: [], guardArmed: false };
+            channel.batch = {
+              reset: { cols: event.cols, rows: event.rows },
+              seed: null,
+              held: [],
+              guardArmed: false
+            };
             this.#armBatchGuard(channel);
             return;
           }

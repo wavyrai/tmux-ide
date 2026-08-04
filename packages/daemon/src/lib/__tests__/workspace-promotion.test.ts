@@ -360,6 +360,156 @@ describe("WorkspacePromotionAuthority", () => {
     expect(registry.list()).toHaveLength(1);
   });
 
+  // ---------------------------------------------------------------------------
+  // Reconciliation. A registry entry is keyed by session NAME and lives on disk,
+  // so it outlives the tmux server; the pane-local stamps do not. A session
+  // re-created under a registered name is therefore registered AND unstamped —
+  // every pane resolves to `missing-semantic-stamp` and no attachment path
+  // works. Promotion is the app's only repair verb for that state.
+  // ---------------------------------------------------------------------------
+  describe("already-registered session reconciliation", () => {
+    /** A registered workspace whose live session carries no pane/window stamps. */
+    function registeredButUnstamped(
+      mock: MockTmux,
+      registry: FakeRegistry,
+      name = "fleet-revived",
+    ) {
+      const session = mock.session(name, "$1", { "@tmux_ide_adopted": "1" });
+      const w1 = mock.window(session, "@1", "agent");
+      mock.pane(w1, "%0", { active: true, currentCommand: "claude" });
+      const w2 = mock.window(session, "@2", "work");
+      mock.pane(w2, "%1", { currentCommand: "zsh" });
+      mock.pane(w2, "%2", { currentCommand: "vim" });
+      const workspace = registry.add({
+        name: `${name}-existing`,
+        sessionName: name,
+        projectDir: "/tmp/promote-project",
+        ideConfigPath: null,
+        configKind: "none",
+        configPath: null,
+        hasWorkspaceConfig: false,
+      });
+      return { name, workspace };
+    }
+
+    it("re-stamps the panes and windows of a registered session that lost its stamps", async () => {
+      const mock = new MockTmux();
+      const registry = new FakeRegistry();
+      const { name, workspace } = registeredButUnstamped(mock, registry);
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock),
+      });
+
+      const result = await authority.promote(request(fleetSessionIdForName(name)));
+
+      // Idempotent outcome against the EXISTING workspace, no second admission.
+      expect(result.outcome).toBe("replayed");
+      expect(result.resource.workspaceName).toBe(workspace.name);
+      expect(registry.list()).toHaveLength(1);
+
+      // Every pane now carries a durable stamp and `@ide_*` presentation.
+      for (const paneId of ["%0", "%1", "%2"]) {
+        expect(mock.paneOption(paneId)!.options.get("@tmux_ide_pane_id")).toMatch(
+          /^pane\.promoted\.[0-9a-f]{20}$/u,
+        );
+      }
+      expect(mock.paneOption("%0")!.options.get("@ide_type")).toBe("agent");
+      expect(mock.paneOption("%1")!.options.get("@ide_name")).toBe("Terminal");
+      // Stamps are unique per pane, so the catalog sees no duplicate binding.
+      const stamps = ["%0", "%1", "%2"].map(
+        (paneId) => mock.paneOption(paneId)!.options.get("@tmux_ide_pane_id")!,
+      );
+      expect(new Set(stamps).size).toBe(3);
+
+      // Both windows carry a durable, distinct window stamp — the multi-pane
+      // window is unattachable without one.
+      const windowStamps = ["@1", "@2"].map(
+        (windowId) => mock.windowOf(windowId)!.window.options.get("@tmux_ide_window_id")!,
+      );
+      for (const stamp of windowStamps) expect(stamp).toMatch(/^window\.promoted\.[0-9a-f]{20}$/u);
+      expect(new Set(windowStamps).size).toBe(2);
+    });
+
+    it("never writes promotion provenance onto an already-registered session", async () => {
+      const mock = new MockTmux();
+      const registry = new FakeRegistry();
+      const { name } = registeredButUnstamped(mock, registry);
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock),
+      });
+
+      await authority.promote(request(fleetSessionIdForName(name)));
+
+      // The workspace was admitted by another path (m32 open, or an earlier
+      // promotion). Reconciliation repairs pane identity only; it must not
+      // claim the session's provenance or rewrite its workspace name.
+      const session = mock.sessionOf("$1")!;
+      expect(session.options.has("@tmux_ide_workspace_promoted_v1")).toBe(false);
+      expect(session.options.has("@tmux_ide_workspace_name")).toBe(false);
+      expect(session.options.has("@tmux_ide_workspace_promote_operation")).toBe(false);
+    });
+
+    it("leaves an already-stamped registered session byte-identical", async () => {
+      const mock = new MockTmux();
+      const { name } = adoptedAgentSession(mock);
+      const registry = new FakeRegistry();
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock),
+      });
+
+      const first = await authority.promote(request(fleetSessionIdForName(name)));
+      const stamp = mock.paneOption("%1")!.options.get("@tmux_ide_pane_id");
+      const second = await authority.promote(request(fleetSessionIdForName(name)));
+
+      expect(second.outcome).toBe("replayed");
+      expect(mock.paneOption("%1")!.options.get("@tmux_ide_pane_id")).toBe(stamp);
+      expect(first.resource.workspaceName).toBe(second.resource.workspaceName);
+    });
+
+    it("surfaces a typed verdict when reconciliation cannot make the session attachable", async () => {
+      const mock = new MockTmux();
+      const registry = new FakeRegistry();
+      const session = mock.session("fleet-collided", "$1", { "@tmux_ide_adopted": "1" });
+      const window = mock.window(session, "@1", "split");
+      // Two panes claiming ONE semantic identity: both stamps are locally valid,
+      // so reconciliation preserves them and the catalog rejects the inventory.
+      for (const paneId of ["%1", "%2"]) {
+        mock.pane(window, paneId, {
+          active: paneId === "%1",
+          currentCommand: "zsh",
+          options: { "@tmux_ide_pane_id": "pane.workspace.collision" },
+        });
+      }
+      registry.add({
+        name: "fleet-collided-existing",
+        sessionName: "fleet-collided",
+        projectDir: "/tmp/promote-project",
+        ideConfigPath: null,
+        configKind: "none",
+        configPath: null,
+        hasWorkspaceConfig: false,
+      });
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock),
+      });
+
+      await expect(
+        authority.promote(request(fleetSessionIdForName("fleet-collided"))),
+      ).rejects.toMatchObject({
+        code: "promotion_verification_failed",
+        context: { reason: "semantic_pane_catalog_rejected_inventory" },
+      });
+    });
+  });
+
   it("preserves an existing valid pane stamp and only stamps the unstamped pane", async () => {
     const mock = new MockTmux();
     const session = mock.session("fleet-mixed", "$1", { "@tmux_ide_adopted": "1" });

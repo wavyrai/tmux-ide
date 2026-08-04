@@ -308,6 +308,140 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     expect(unauthorized.status).toBe(401);
   }, 45_000);
 
+  it("re-stamps a registered session whose panes lost their stamps and restores attachability", async () => {
+    handle ??= await startEmbeddedDaemon({
+      authToken: "remote-token-is-not-owner",
+      localBypassToken: ownerToken,
+      silent: true,
+    });
+
+    // The live defect: the on-disk registry entry is keyed by session NAME and
+    // outlives the tmux server, but pane-local stamps die with their panes. A
+    // session re-created under a registered name is therefore registered AND
+    // unstamped. This models it exactly — a real, unstamped multi-window session
+    // plus a pre-existing registry entry the promotion did not create.
+    const revivedSession = `fleet-revived-${randomUUID().slice(0, 8)}`;
+    const revivedDir = join(root, `revived-${randomUUID().slice(0, 8)}`);
+    mkdirSync(revivedDir);
+    run([
+      "new-session",
+      "-d",
+      "-s",
+      revivedSession,
+      "-c",
+      revivedDir,
+      "-n",
+      "agent",
+      "exec sleep 300",
+    ]);
+    run([
+      "new-window",
+      "-d",
+      "-t",
+      `${revivedSession}:`,
+      "-c",
+      revivedDir,
+      "-n",
+      "work",
+      "exec sleep 300",
+    ]);
+    run(["split-window", "-d", "-t", `${revivedSession}:work`, "-c", revivedDir, "exec sleep 300"]);
+    run(["set-option", "-t", revivedSession, "@tmux_ide_adopted", "1"]);
+    const revivedWorkspace = registry.add({
+      name: `revived-${randomUUID().replace(/-/gu, "")}`,
+      sessionName: revivedSession,
+      projectDir: realpathSync(revivedDir),
+      ideConfigPath: null,
+      configKind: "none",
+      configPath: null,
+      hasWorkspaceConfig: false,
+    });
+
+    const stampsOf = (sessionName: string): string[][] =>
+      run([
+        "list-panes",
+        "-s",
+        "-t",
+        sessionName,
+        "-F",
+        "#{pane_id}\t#{@tmux_ide_pane_id}\t#{@tmux_ide_window_id}",
+      ])
+        .split("\n")
+        .map((line) => line.split("\t"));
+    const shellResources = async (sessionName: string) => {
+      const response = await fetch(
+        `${handle!.apiBaseUrl}/api/project/${encodeURIComponent(sessionName)}/application-shell?version=3`,
+        { headers: { Authorization: `Bearer ${ownerToken}`, Connection: "close" } },
+      );
+      expect(response.status).toBe(200);
+      const shell = ApplicationShellResourceV3SchemaZ.parse(await response.json());
+      return shell.resource.terminalInventory?.resources ?? [];
+    };
+
+    // Before: three unstamped panes, and the app reports the exact live symptom.
+    expect(stampsOf(revivedSession).map((fields) => [fields[1], fields[2]])).toEqual([
+      ["", ""],
+      ["", ""],
+      ["", ""],
+    ]);
+    const before = await shellResources(revivedSession);
+    expect(before).toHaveLength(3);
+    expect(before.map((entry) => entry.attachability)).toEqual([
+      { status: "unavailable", reason: "missing-semantic-stamp" },
+      { status: "unavailable", reason: "missing-semantic-stamp" },
+      { status: "unavailable", reason: "missing-semantic-stamp" },
+    ]);
+
+    // Promotion is the app's repair verb: it reconciles the stamps in place and
+    // resolves idempotently against the EXISTING workspace (no new admission).
+    const response = await fetch(`${handle.apiBaseUrl}/api/v2/action/workspace.promote`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ownerToken}`,
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": randomUUID(),
+        Connection: "close",
+      },
+      body: JSON.stringify({ sessionId: fleetSessionIdForName(revivedSession) }),
+    });
+    expect(response.status).toBe(200);
+    const envelope = (await response.json()) as { ok?: boolean; result?: unknown };
+    expect(envelope.ok).toBe(true);
+    const repaired = WorkspacePromoteMutationResultSchemaZ.parse(envelope.result);
+    expect(repaired.outcome).toBe("replayed");
+    expect(repaired.resource.workspaceName).toBe(revivedWorkspace.name);
+    expect(
+      registry.list().filter((workspace) => workspace.sessionName === revivedSession),
+    ).toHaveLength(1);
+
+    // After: every pane carries a durable pane stamp and every window a durable
+    // window stamp — the two-pane split window shares one.
+    const after = stampsOf(revivedSession);
+    for (const [, paneStamp, windowStamp] of after) {
+      expect(paneStamp).toMatch(/^pane\.promoted\.[0-9a-f]{20}$/u);
+      expect(windowStamp).toMatch(/^window\.promoted\.[0-9a-f]{20}$/u);
+    }
+    expect(new Set(after.map((fields) => fields[1])).size).toBe(3);
+    expect(new Set(after.map((fields) => fields[2])).size).toBe(2);
+
+    // Reconciliation repairs pane identity only — it never claims provenance
+    // for a workspace another admission path created.
+    const sessionOptions = run([
+      "list-sessions",
+      "-F",
+      "#{session_name}\t#{@tmux_ide_workspace_promoted_v1}\t#{@tmux_ide_workspace_name}",
+    ])
+      .split("\n")
+      .map((line) => line.split("\t"))
+      .find((fields) => fields[0] === revivedSession);
+    expect(sessionOptions).toEqual([revivedSession, "", ""]);
+
+    // The defect is gone end to end: every tile is attachable.
+    const afterResources = await shellResources(revivedSession);
+    expect(afterResources).toHaveLength(3);
+    expect(afterResources.every((entry) => entry.attachability.status === "available")).toBe(true);
+  }, 45_000);
+
   it("promotes across dead pane cwds and fails typed only when nothing resolves", async () => {
     handle ??= await startEmbeddedDaemon({
       authToken: "remote-token-is-not-owner",

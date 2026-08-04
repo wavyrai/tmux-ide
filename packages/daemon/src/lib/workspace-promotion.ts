@@ -512,12 +512,25 @@ export class WorkspacePromotionAuthority {
       const session = this.#resolveSession(request.intent.sessionId);
 
       // Already a registry workspace — including an app-created (m32) session —
-      // is idempotent, not an error: it is already attachable. Resolve to a
-      // `replayed` outcome against the existing workspace name.
+      // is idempotent, not an error. It is NOT automatically attachable though:
+      // the registry entry is keyed by session NAME and outlives the tmux
+      // server, so a session re-created under a registered name carries none of
+      // the pane-local stamps (tmux options die with the panes that held them).
+      // Such a workspace resolves every pane to `missing-semantic-stamp`, and
+      // promotion is the app's only repair verb — so reconcile the stamps here
+      // before resolving to a `replayed` outcome. Stamping is additive and never
+      // overwrites a valid stamp, so a healthy session is untouched.
       const alreadyRegistered = this.#registry
         .list()
         .find((workspace) => workspace.sessionName === session.sessionName);
       if (alreadyRegistered) {
+        const registeredIdentity: PromotionIdentity = {
+          workspaceName: alreadyRegistered.name,
+          sessionName: session.sessionName,
+        };
+        this.#stampPaneInventory(request, session, registeredIdentity);
+        this.#assertActive(request.operationId);
+        this.#verifyPromotedInventory(session.sessionId, registeredIdentity);
         return this.#succeed(request, fingerprint, alreadyRegistered.name, session.sessionName, {
           replayed: true,
         });
@@ -618,6 +631,38 @@ export class WorkspacePromotionAuthority {
     session: SessionRecord,
     identity: PromotionIdentity,
   ): string {
+    const scanned = this.#stampPaneInventory(request, session, identity);
+    try {
+      for (const [option, value] of [
+        [SESSION_OPERATION_OPTION, request.operationId],
+        [SESSION_WORKSPACE_OPTION, identity.workspaceName],
+        [SESSION_PROMOTED_MARKER_OPTION, "1"],
+      ] as const) {
+        this.#io.runTmux(["set-option", "-t", session.sessionId, option, value]);
+      }
+    } catch (error) {
+      throw new WorkspacePromotionError(
+        "stamp_failed",
+        { operationId: request.operationId, workspaceName: identity.workspaceName },
+        error,
+      );
+    }
+
+    return this.#resolveProjectDir(session, scanned);
+  }
+
+  /**
+   * Stamp every pane and window of the session — additive, never overwriting a
+   * valid pane stamp — and return the scanned inventory. Session-level options
+   * are deliberately NOT written here: this also runs for an already-registered
+   * session, which may be an m32-open workspace whose provenance must never
+   * acquire the promotion marker.
+   */
+  #stampPaneInventory(
+    request: WorkspacePromoteMutationRequest,
+    session: SessionRecord,
+    identity: PromotionIdentity,
+  ): ScanPane[] {
     let scanned: ScanPane[];
     try {
       scanned = parseScanPanes(
@@ -671,13 +716,6 @@ export class WorkspacePromotionAuthority {
           ]);
         }
       }
-      for (const [option, value] of [
-        [SESSION_OPERATION_OPTION, request.operationId],
-        [SESSION_WORKSPACE_OPTION, identity.workspaceName],
-        [SESSION_PROMOTED_MARKER_OPTION, "1"],
-      ] as const) {
-        this.#io.runTmux(["set-option", "-t", session.sessionId, option, value]);
-      }
     } catch (error) {
       throw new WorkspacePromotionError(
         "stamp_failed",
@@ -686,7 +724,7 @@ export class WorkspacePromotionAuthority {
       );
     }
 
-    return this.#resolveProjectDir(session, scanned);
+    return scanned;
   }
 
   /**
