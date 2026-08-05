@@ -6269,12 +6269,167 @@ var init_workspace_promotion = __esm({
   }
 });
 
-// packages/contracts/src/actions-contract.ts
+// packages/contracts/src/workspace-multiplexer.ts
 import { z as z37 } from "zod";
+var WorkspaceMultiplexerWindowTargetSchemaZ, WorkspaceSplitDirectionSchemaZ, WorkspaceMultiplexerNameSchemaZ, WorkspaceScopedSchemaZ, WorkspaceWindowSplitArgumentsSchemaZ, WorkspaceWindowKillArgumentsSchemaZ, WorkspacePaneKillArgumentsSchemaZ, WorkspaceSessionKillArgumentsSchemaZ, WorkspaceRenameArgumentsSchemaZ, WorkspacePaneZoomToggleArgumentsSchemaZ, WorkspacePaneSelectArgumentsSchemaZ, WorkspaceMultiplexerIntentSchemaZ, WorkspaceMultiplexerMutationRequestSchemaZ, MutationEnvelopeSchemaZ, WorkspaceWindowSplitResultSchemaZ, WorkspaceWindowKillResultSchemaZ, WorkspacePaneKillResultSchemaZ, WorkspaceSessionKillResultSchemaZ, WorkspaceRenameResultSchemaZ, WorkspacePaneZoomToggleResultSchemaZ, WorkspacePaneSelectResultSchemaZ, WorkspaceMultiplexerMutationResultSchemaZ, WorkspaceMultiplexerHostResultSchemaZ;
+var init_workspace_multiplexer = __esm({
+  "packages/contracts/src/workspace-multiplexer.ts"() {
+    "use strict";
+    init_desktop_host();
+    init_semantic_identity();
+    init_workspace_pane_creation();
+    WorkspaceMultiplexerWindowTargetSchemaZ = z37.discriminatedUnion("by", [
+      z37.object({
+        by: z37.literal("window"),
+        semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ
+      }).strict(),
+      z37.object({ by: z37.literal("pane"), semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ }).strict()
+    ]);
+    WorkspaceSplitDirectionSchemaZ = z37.enum(["right", "down"]);
+    WorkspaceMultiplexerNameSchemaZ = WorkspacePaneDisplayTitleSchemaZ;
+    WorkspaceScopedSchemaZ = z37.object({
+      workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ
+    });
+    WorkspaceWindowSplitArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      direction: WorkspaceSplitDirectionSchemaZ,
+      displayTitle: WorkspacePaneDisplayTitleSchemaZ.optional()
+    }).strict();
+    WorkspaceWindowKillArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+      target: WorkspaceMultiplexerWindowTargetSchemaZ
+    }).strict();
+    WorkspacePaneKillArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+    }).strict();
+    WorkspaceSessionKillArgumentsSchemaZ = WorkspaceScopedSchemaZ.strict();
+    WorkspaceRenameArgumentsSchemaZ = z37.discriminatedUnion("scope", [
+      WorkspaceScopedSchemaZ.extend({
+        scope: z37.literal("session"),
+        name: WorkspaceMultiplexerNameSchemaZ
+      }).strict(),
+      WorkspaceScopedSchemaZ.extend({
+        scope: z37.literal("window"),
+        target: WorkspaceMultiplexerWindowTargetSchemaZ,
+        name: WorkspaceMultiplexerNameSchemaZ
+      }).strict()
+    ]);
+    WorkspacePaneZoomToggleArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      /**
+       * `toggle` flips whatever tmux currently reports. The absolute forms exist so
+       * a surface that renders a zoom state as a checkbox can be idempotent: a
+       * double-delivered `zoomed` leaves the window zoomed rather than flipping it
+       * back, which a blind toggle cannot promise.
+       */
+      desired: z37.enum(["toggle", "zoomed", "unzoomed"]).default("toggle")
+    }).strict();
+    WorkspacePaneSelectArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+    }).strict();
+    WorkspaceMultiplexerIntentSchemaZ = z37.discriminatedUnion("verb", [
+      WorkspaceWindowSplitArgumentsSchemaZ.extend({
+        verb: z37.literal("workspace.window.split")
+      }).strict(),
+      WorkspaceWindowKillArgumentsSchemaZ.extend({ verb: z37.literal("workspace.window.kill") }).strict(),
+      WorkspacePaneKillArgumentsSchemaZ.extend({ verb: z37.literal("workspace.pane.kill") }).strict(),
+      WorkspaceSessionKillArgumentsSchemaZ.extend({
+        verb: z37.literal("workspace.session.kill")
+      }).strict(),
+      z37.discriminatedUnion("scope", [
+        WorkspaceScopedSchemaZ.extend({
+          verb: z37.literal("workspace.rename"),
+          scope: z37.literal("session"),
+          name: WorkspaceMultiplexerNameSchemaZ
+        }).strict(),
+        WorkspaceScopedSchemaZ.extend({
+          verb: z37.literal("workspace.rename"),
+          scope: z37.literal("window"),
+          target: WorkspaceMultiplexerWindowTargetSchemaZ,
+          name: WorkspaceMultiplexerNameSchemaZ
+        }).strict()
+      ]),
+      WorkspacePaneZoomToggleArgumentsSchemaZ.extend({
+        verb: z37.literal("workspace.pane.zoom.toggle")
+      }).strict(),
+      WorkspacePaneSelectArgumentsSchemaZ.extend({
+        verb: z37.literal("workspace.pane.select")
+      }).strict()
+    ]);
+    WorkspaceMultiplexerMutationRequestSchemaZ = z37.object({
+      operationId: z37.uuid(),
+      expectedDaemonInstanceId: z37.uuid(),
+      intent: WorkspaceMultiplexerIntentSchemaZ
+    }).strict();
+    MutationEnvelopeSchemaZ = z37.object({
+      operationId: z37.uuid(),
+      daemonInstanceId: z37.uuid(),
+      /**
+       * `applied` mutated tmux now; `unchanged` found the world already in the
+       * requested state; `replayed` answered a repeat of an operation id that had
+       * already been performed. A surface that reports "done" for all three is
+       * telling the truth, and one that wants to explain why nothing moved has the
+       * distinction available.
+       */
+      outcome: z37.enum(["applied", "unchanged", "replayed"]),
+      workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ
+    });
+    WorkspaceWindowSplitResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+      verb: z37.literal("workspace.window.split"),
+      direction: WorkspaceSplitDirectionSchemaZ,
+      /** The pane the split produced, stamped and addressable like any created pane. */
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      displayTitle: WorkspacePaneDisplayTitleSchemaZ
+    }).strict();
+    WorkspaceWindowKillResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+      verb: z37.literal("workspace.window.kill"),
+      /** Windows remaining in the session after the kill. Never zero: see the refusal. */
+      remainingWindowCount: z37.number().int().positive()
+    }).strict();
+    WorkspacePaneKillResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+      verb: z37.literal("workspace.pane.kill"),
+      /** True when that pane was its window's last, so tmux closed the window too. */
+      windowClosed: z37.boolean(),
+      remainingWindowCount: z37.number().int().positive()
+    }).strict();
+    WorkspaceSessionKillResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+      verb: z37.literal("workspace.session.kill")
+    }).strict();
+    WorkspaceRenameResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+      verb: z37.literal("workspace.rename"),
+      scope: z37.enum(["session", "window"]),
+      name: WorkspaceMultiplexerNameSchemaZ
+    }).strict();
+    WorkspacePaneZoomToggleResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+      verb: z37.literal("workspace.pane.zoom.toggle"),
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      zoomed: z37.boolean()
+    }).strict();
+    WorkspacePaneSelectResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+      verb: z37.literal("workspace.pane.select"),
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+    }).strict();
+    WorkspaceMultiplexerMutationResultSchemaZ = z37.discriminatedUnion("verb", [
+      WorkspaceWindowSplitResultSchemaZ,
+      WorkspaceWindowKillResultSchemaZ,
+      WorkspacePaneKillResultSchemaZ,
+      WorkspaceSessionKillResultSchemaZ,
+      WorkspaceRenameResultSchemaZ,
+      WorkspacePaneZoomToggleResultSchemaZ,
+      WorkspacePaneSelectResultSchemaZ
+    ]);
+    WorkspaceMultiplexerHostResultSchemaZ = z37.discriminatedUnion("status", [
+      z37.object({ status: z37.literal("ok"), result: WorkspaceMultiplexerMutationResultSchemaZ }).strict(),
+      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    ]);
+  }
+});
+
+// packages/contracts/src/actions-contract.ts
+import { z as z38 } from "zod";
 function isActionName(name) {
   return name in ActionContractsZ;
 }
-var ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, WorkspacePaneCreateInputZ, WorkspacePaneCreateResultZ, WorkspaceOpenInputZ, WorkspaceOpenResultZ, WorkspacePromoteInputZ, WorkspacePromoteResultZ, AppWindowMutationInputZ, AppWindowMutationResultZ, ActionContractsZ, ACTION_NAMES;
+var ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, WorkspacePaneCreateInputZ, WorkspacePaneCreateResultZ, WorkspaceOpenInputZ, WorkspaceOpenResultZ, WorkspacePromoteInputZ, WorkspacePromoteResultZ, AppWindowMutationInputZ, AppWindowMutationResultZ, WorkspaceWindowSplitInputZ, WorkspaceWindowSplitResultZ, WorkspaceWindowKillInputZ, WorkspaceWindowKillResultZ, WorkspacePaneKillInputZ, WorkspacePaneKillResultZ, WorkspaceSessionKillInputZ, WorkspaceSessionKillResultZ, WorkspaceRenameInputZ, WorkspaceRenameResultZ, WorkspacePaneZoomToggleInputZ, WorkspacePaneZoomToggleResultZ, WorkspacePaneSelectInputZ, WorkspacePaneSelectResultZ, ActionContractsZ, ACTION_NAMES;
 var init_actions_contract = __esm({
   "packages/contracts/src/actions-contract.ts"() {
     "use strict";
@@ -6283,123 +6438,124 @@ var init_actions_contract = __esm({
     init_workspace_open();
     init_workspace_promotion();
     init_app_window_mutation();
-    ProjectOpenTerminalInputZ = z37.object({
-      name: z37.string().min(1)
+    init_workspace_multiplexer();
+    ProjectOpenTerminalInputZ = z38.object({
+      name: z38.string().min(1)
     });
-    ProjectOpenTerminalResultZ = z37.object({
-      sessionName: z37.string(),
-      cwd: z37.string().min(1),
-      terminalTabId: z37.string(),
+    ProjectOpenTerminalResultZ = z38.object({
+      sessionName: z38.string(),
+      cwd: z38.string().min(1),
+      terminalTabId: z38.string(),
       /**
        * `true` when the dispatcher had to launch the tmux session as part of
        * resolving the terminal. `false` when the session was already running.
        */
-      launched: z37.boolean()
+      launched: z38.boolean()
     });
-    ProjectLaunchInputZ = z37.object({
-      name: z37.string().min(1)
+    ProjectLaunchInputZ = z38.object({
+      name: z38.string().min(1)
     });
-    ProjectLaunchResultZ = z37.object({
-      sessionName: z37.string(),
+    ProjectLaunchResultZ = z38.object({
+      sessionName: z38.string(),
       /**
        * `false` when the session was already running (idempotent no-op),
        * `true` when this call started a fresh session.
        */
-      started: z37.boolean()
+      started: z38.boolean()
     });
-    ProjectStopInputZ = z37.object({
-      name: z37.string().min(1)
+    ProjectStopInputZ = z38.object({
+      name: z38.string().min(1)
     });
-    ProjectStopResultZ = z37.object({
-      sessionName: z37.string(),
+    ProjectStopResultZ = z38.object({
+      sessionName: z38.string(),
       /**
        * `false` when no session was running (idempotent no-op),
        * `true` when this call killed a session.
        */
-      stopped: z37.boolean()
+      stopped: z38.boolean()
     });
-    ProjectRestartInputZ = z37.object({
-      name: z37.string().min(1)
+    ProjectRestartInputZ = z38.object({
+      name: z38.string().min(1)
     });
-    ProjectRestartResultZ = z37.object({
-      sessionName: z37.string(),
-      restarted: z37.literal(true)
+    ProjectRestartResultZ = z38.object({
+      sessionName: z38.string(),
+      restarted: z38.literal(true)
     });
-    ProjectActivateInputZ = z37.object({
-      name: z37.string().min(1)
+    ProjectActivateInputZ = z38.object({
+      name: z38.string().min(1)
     });
-    ProjectActivateResultZ = z37.object({
-      active: z37.boolean(),
-      projectName: z37.string()
+    ProjectActivateResultZ = z38.object({
+      active: z38.boolean(),
+      projectName: z38.string()
     });
-    TerminalRespawnInputZ = z37.object({
-      sessionName: z37.string().min(1),
-      terminalId: z37.string().min(1),
+    TerminalRespawnInputZ = z38.object({
+      sessionName: z38.string().min(1),
+      terminalId: z38.string().min(1),
       /**
        * Optional cwd override. Omit to respawn at the bridge's current cwd
        * (re-using the `lastCwd` recorded by the PTY bridge).
        */
-      cwd: z37.string().min(1).optional()
+      cwd: z38.string().min(1).optional()
     });
-    TerminalRespawnResultZ = z37.object({
-      respawned: z37.literal(true),
-      cwd: z37.string().min(1)
+    TerminalRespawnResultZ = z38.object({
+      respawned: z38.literal(true),
+      cwd: z38.string().min(1)
     });
-    TerminalStopInputZ = z37.object({
-      sessionName: z37.string().min(1),
-      terminalId: z37.string().min(1)
+    TerminalStopInputZ = z38.object({
+      sessionName: z38.string().min(1),
+      terminalId: z38.string().min(1)
     });
-    TerminalStopResultZ = z37.object({
-      stopped: z37.literal(true)
+    TerminalStopResultZ = z38.object({
+      stopped: z38.literal(true)
     });
-    ConfigSetInputZ = z37.object({
-      projectName: z37.string().min(1).optional(),
-      path: z37.string().min(1),
-      value: z37.unknown()
+    ConfigSetInputZ = z38.object({
+      projectName: z38.string().min(1).optional(),
+      path: z38.string().min(1),
+      value: z38.unknown()
     });
-    ConfigResultZ = z37.object({
+    ConfigResultZ = z38.object({
       config: IdeConfigSchema
     });
     ConfigAddPaneInputZ = PaneSchema.partial().extend({
-      projectName: z37.string().min(1).optional(),
-      rowIndex: z37.number().int().min(0)
+      projectName: z38.string().min(1).optional(),
+      rowIndex: z38.number().int().min(0)
     });
     ConfigAddPaneResultZ = ConfigResultZ;
-    ConfigRemovePaneInputZ = z37.object({
-      projectName: z37.string().min(1).optional(),
-      rowIndex: z37.number().int().min(0),
-      paneIndex: z37.number().int().min(0)
+    ConfigRemovePaneInputZ = z38.object({
+      projectName: z38.string().min(1).optional(),
+      rowIndex: z38.number().int().min(0),
+      paneIndex: z38.number().int().min(0)
     });
     ConfigRemovePaneResultZ = ConfigResultZ;
-    ConfigAddRowInputZ = z37.object({
-      projectName: z37.string().min(1).optional(),
-      size: z37.string().optional()
+    ConfigAddRowInputZ = z38.object({
+      projectName: z38.string().min(1).optional(),
+      size: z38.string().optional()
     });
     ConfigAddRowResultZ = ConfigResultZ;
-    ConfigEnableTeamInputZ = z37.object({
-      projectName: z37.string().min(1).optional(),
-      name: z37.string().min(1).optional()
+    ConfigEnableTeamInputZ = z38.object({
+      projectName: z38.string().min(1).optional(),
+      name: z38.string().min(1).optional()
     });
     ConfigEnableTeamResultZ = ConfigResultZ;
-    ConfigDisableTeamInputZ = z37.object({
-      projectName: z37.string().min(1).optional()
+    ConfigDisableTeamInputZ = z38.object({
+      projectName: z38.string().min(1).optional()
     });
     ConfigDisableTeamResultZ = ConfigResultZ;
-    AppSetRemoteAccessInputZ = z37.object({
-      enabled: z37.boolean()
+    AppSetRemoteAccessInputZ = z38.object({
+      enabled: z38.boolean()
     });
-    AppSetRemoteAccessResultZ = z37.object({
-      enabled: z37.boolean(),
-      url: z37.string().nullable(),
-      token: z37.string().nullable(),
-      qrPayload: z37.string().nullable()
+    AppSetRemoteAccessResultZ = z38.object({
+      enabled: z38.boolean(),
+      url: z38.string().nullable(),
+      token: z38.string().nullable(),
+      qrPayload: z38.string().nullable()
     });
-    DaemonShutdownInputZ = z37.object({
-      reason: z37.string().optional(),
-      expectedInstanceId: z37.uuid().optional()
+    DaemonShutdownInputZ = z38.object({
+      reason: z38.string().optional(),
+      expectedInstanceId: z38.uuid().optional()
     });
-    DaemonShutdownResultZ = z37.object({
-      stopping: z37.literal(true)
+    DaemonShutdownResultZ = z38.object({
+      stopping: z38.literal(true)
     });
     WorkspacePaneCreateInputZ = WorkspacePaneCreateArgumentsSchemaZ;
     WorkspacePaneCreateResultZ = WorkspacePaneCreateMutationResultSchemaZ;
@@ -6409,6 +6565,20 @@ var init_actions_contract = __esm({
     WorkspacePromoteResultZ = WorkspacePromoteMutationResultSchemaZ;
     AppWindowMutationInputZ = AppWindowMutationArgumentsSchemaZ;
     AppWindowMutationResultZ = AppWindowMutationResultSchemaZ;
+    WorkspaceWindowSplitInputZ = WorkspaceWindowSplitArgumentsSchemaZ;
+    WorkspaceWindowSplitResultZ = WorkspaceWindowSplitResultSchemaZ;
+    WorkspaceWindowKillInputZ = WorkspaceWindowKillArgumentsSchemaZ;
+    WorkspaceWindowKillResultZ = WorkspaceWindowKillResultSchemaZ;
+    WorkspacePaneKillInputZ = WorkspacePaneKillArgumentsSchemaZ;
+    WorkspacePaneKillResultZ = WorkspacePaneKillResultSchemaZ;
+    WorkspaceSessionKillInputZ = WorkspaceSessionKillArgumentsSchemaZ;
+    WorkspaceSessionKillResultZ = WorkspaceSessionKillResultSchemaZ;
+    WorkspaceRenameInputZ = WorkspaceRenameArgumentsSchemaZ;
+    WorkspaceRenameResultZ = WorkspaceRenameResultSchemaZ;
+    WorkspacePaneZoomToggleInputZ = WorkspacePaneZoomToggleArgumentsSchemaZ;
+    WorkspacePaneZoomToggleResultZ = WorkspacePaneZoomToggleResultSchemaZ;
+    WorkspacePaneSelectInputZ = WorkspacePaneSelectArgumentsSchemaZ;
+    WorkspacePaneSelectResultZ = WorkspacePaneSelectResultSchemaZ;
     ActionContractsZ = {
       "project.openTerminal": {
         input: ProjectOpenTerminalInputZ,
@@ -6485,6 +6655,34 @@ var init_actions_contract = __esm({
       "workspace.app-window.mutate": {
         input: AppWindowMutationInputZ,
         result: AppWindowMutationResultZ
+      },
+      "workspace.window.split": {
+        input: WorkspaceWindowSplitInputZ,
+        result: WorkspaceWindowSplitResultZ
+      },
+      "workspace.window.kill": {
+        input: WorkspaceWindowKillInputZ,
+        result: WorkspaceWindowKillResultZ
+      },
+      "workspace.pane.kill": {
+        input: WorkspacePaneKillInputZ,
+        result: WorkspacePaneKillResultZ
+      },
+      "workspace.session.kill": {
+        input: WorkspaceSessionKillInputZ,
+        result: WorkspaceSessionKillResultZ
+      },
+      "workspace.rename": {
+        input: WorkspaceRenameInputZ,
+        result: WorkspaceRenameResultZ
+      },
+      "workspace.pane.zoom.toggle": {
+        input: WorkspacePaneZoomToggleInputZ,
+        result: WorkspacePaneZoomToggleResultZ
+      },
+      "workspace.pane.select": {
+        input: WorkspacePaneSelectInputZ,
+        result: WorkspacePaneSelectResultZ
       }
     };
     ACTION_NAMES = Object.keys(ActionContractsZ);
@@ -6499,7 +6697,7 @@ var init_actions_errors = __esm({
 });
 
 // packages/contracts/src/terminals.ts
-import { z as z38 } from "zod";
+import { z as z39 } from "zod";
 async function createScriptTerminalId(args) {
   const scope = args.scopeId ?? args.taskId;
   if (!scope) {
@@ -6514,28 +6712,28 @@ var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema
 var init_terminals = __esm({
   "packages/contracts/src/terminals.ts"() {
     "use strict";
-    terminalKindSchema = z38.enum(["shell", "setup", "run", "teardown"]);
-    terminalCreateRequestSchema = z38.object({
-      scopeId: z38.string().trim().min(1).max(256),
-      name: z38.string().trim().min(1).max(120),
+    terminalKindSchema = z39.enum(["shell", "setup", "run", "teardown"]);
+    terminalCreateRequestSchema = z39.object({
+      scopeId: z39.string().trim().min(1).max(256),
+      name: z39.string().trim().min(1).max(120),
       kind: terminalKindSchema.optional(),
       /** Provide for script tabs to opt into deterministic id collapse. */
-      script: z38.string().max(2048).optional(),
+      script: z39.string().max(2048).optional(),
       /** Explicit id wins. Used by the dashboard to reserve a known id
        *  (e.g. the default shell tab derived from session.dir). */
-      id: z38.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
+      id: z39.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
     }).refine((v) => v.kind !== void 0 || v.script === void 0, {
       message: "script requires kind",
       path: ["script"]
     });
-    terminalRenameRequestSchema = z38.object({
-      name: z38.string().trim().min(1).max(120)
+    terminalRenameRequestSchema = z39.object({
+      name: z39.string().trim().min(1).max(120)
     });
   }
 });
 
 // packages/contracts/src/pane-stream.ts
-import { z as z39 } from "zod";
+import { z as z40 } from "zod";
 var PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_TEXT_CHARS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamKeyNameSchemaZ, InputTextSchemaZ, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
@@ -6561,156 +6759,156 @@ var init_pane_stream = __esm({
     PANE_STREAM_MAX_INPUT_SEQUENCE = 4294967295;
     PaneStreamSemanticPaneIdSchemaZ = TerminalAttachmentSemanticPaneIdSchemaZ;
     PaneStreamViewerModeSchemaZ = TerminalAttachmentViewerModeSchemaZ;
-    PaneSetSchemaZ = z39.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane");
-    PaneStreamLeaseRequestSchemaZ = z39.object({
-      protocolVersion: z39.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneSetSchemaZ = z40.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane");
+    PaneStreamLeaseRequestSchemaZ = z40.object({
+      protocolVersion: z40.literal(PANE_STREAM_PROTOCOL_VERSION),
       workspaceName: WorkspaceIdSchemaZ,
       panes: PaneSetSchemaZ,
       viewerMode: PaneStreamViewerModeSchemaZ
     }).strict();
-    PaneStreamRedemptionTicketSchemaZ = z39.string().regex(/^ps1_[A-Za-z0-9_-]{43}$/u);
-    PaneStreamLoopbackWebSocketUrlSchemaZ = z39.url().max(2048).refine((value) => {
+    PaneStreamRedemptionTicketSchemaZ = z40.string().regex(/^ps1_[A-Za-z0-9_-]{43}$/u);
+    PaneStreamLoopbackWebSocketUrlSchemaZ = z40.url().max(2048).refine((value) => {
       const url = new URL(value);
       return url.protocol === "ws:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.port.length > 0 && url.username.length === 0 && url.password.length === 0 && url.pathname === PANE_STREAM_REDEEM_PATH && url.search.length === 0 && url.hash.length === 0 && url.toString() === value;
     }, "pane-stream URL must be the canonical uncredentialed loopback redemption endpoint");
-    PaneStreamIssueDescriptorSchemaZ = z39.object({
-      protocolVersion: z39.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamIssueDescriptorSchemaZ = z40.object({
+      protocolVersion: z40.literal(PANE_STREAM_PROTOCOL_VERSION),
       webSocketUrl: PaneStreamLoopbackWebSocketUrlSchemaZ,
-      subprotocol: z39.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
+      subprotocol: z40.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
       redemptionTicket: PaneStreamRedemptionTicketSchemaZ,
       daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
-      requestId: z39.uuid(),
-      expiresAt: z39.number().int().positive(),
+      requestId: z40.uuid(),
+      expiresAt: z40.number().int().positive(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ
     }).strict();
     PaneStreamIssueErrorSchemaZ = TerminalIssueErrorCompatSchemaZ;
-    PaneStreamIssueResultSchemaZ = z39.discriminatedUnion("status", [
-      z39.object({ status: z39.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
-      z39.object({ status: z39.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
+    PaneStreamIssueResultSchemaZ = z40.discriminatedUnion("status", [
+      z40.object({ status: z40.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
+      z40.object({ status: z40.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
     ]);
-    PaneStreamIssueMutationRequestSchemaZ = z39.object({
-      requestId: z39.uuid(),
+    PaneStreamIssueMutationRequestSchemaZ = z40.object({
+      requestId: z40.uuid(),
       expectedDaemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
       stream: PaneStreamLeaseRequestSchemaZ
     }).strict();
-    BoundedIdentitySchemaZ = z39.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    PaneStreamRedeemFrameSchemaZ = z39.object({
-      type: z39.literal("redeem"),
-      protocolVersion: z39.literal(PANE_STREAM_PROTOCOL_VERSION),
+    BoundedIdentitySchemaZ = z40.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    PaneStreamRedeemFrameSchemaZ = z40.object({
+      type: z40.literal("redeem"),
+      protocolVersion: z40.literal(PANE_STREAM_PROTOCOL_VERSION),
       ticket: PaneStreamRedemptionTicketSchemaZ,
-      requestId: z39.uuid(),
+      requestId: z40.uuid(),
       daemonInstanceId: BoundedIdentitySchemaZ,
       /**
        * The client commits to sending `consumed` frames, activating the
        * renderer-backlog flow owner from the first delivered frame. Card 3's
        * renderer sets this; simple transcript clients omit it.
        */
-      deliveryAcks: z39.boolean().optional()
+      deliveryAcks: z40.boolean().optional()
     }).strict();
-    PaneStreamKeyNameSchemaZ = z39.string().regex(
+    PaneStreamKeyNameSchemaZ = z40.string().regex(
       /^(?:C-|M-|S-){0,3}(?:F1[0-2]|F[1-9]|Enter|Escape|Space|Tab|BTab|BSpace|Home|End|NPage|PPage|PgUp|PgDn|DC|IC|Up|Down|Left|Right|[A-Za-z0-9])$/u
     );
-    InputTextSchemaZ = z39.string().min(1).max(PANE_STREAM_MAX_INPUT_TEXT_CHARS).refine((value) => !value.includes("\0"), "input text must not contain NUL");
-    PaneStreamInputFrameSchemaZ = z39.discriminatedUnion("kind", [
-      z39.object({
-        type: z39.literal("input"),
-        kind: z39.literal("text"),
+    InputTextSchemaZ = z40.string().min(1).max(PANE_STREAM_MAX_INPUT_TEXT_CHARS).refine((value) => !value.includes("\0"), "input text must not contain NUL");
+    PaneStreamInputFrameSchemaZ = z40.discriminatedUnion("kind", [
+      z40.object({
+        type: z40.literal("input"),
+        kind: z40.literal("text"),
         pane: PaneStreamSemanticPaneIdSchemaZ,
-        seq: z39.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+        seq: z40.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
         data: InputTextSchemaZ
       }).strict(),
-      z39.object({
-        type: z39.literal("input"),
-        kind: z39.literal("key"),
+      z40.object({
+        type: z40.literal("input"),
+        kind: z40.literal("key"),
         pane: PaneStreamSemanticPaneIdSchemaZ,
-        seq: z39.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+        seq: z40.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
         data: PaneStreamKeyNameSchemaZ
       }).strict()
     ]);
-    PaneStreamConsumedFrameSchemaZ = z39.object({
-      type: z39.literal("consumed"),
+    PaneStreamConsumedFrameSchemaZ = z40.object({
+      type: z40.literal("consumed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z39.number().int().positive()
+      seq: z40.number().int().positive()
     }).strict();
-    PaneStreamClientFrameSchemaZ = z39.union([
+    PaneStreamClientFrameSchemaZ = z40.union([
       PaneStreamInputFrameSchemaZ,
       PaneStreamConsumedFrameSchemaZ
     ]);
-    Base64SchemaZ = (maxChars) => z39.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
-    ServerSeqSchemaZ = z39.number().int().positive();
-    GridCellSchemaZ = z39.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS);
-    CellCoordinateSchemaZ = z39.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS);
-    PaneStreamReadyFrameSchemaZ = z39.object({
-      type: z39.literal("ready"),
-      protocolVersion: z39.literal(PANE_STREAM_PROTOCOL_VERSION),
+    Base64SchemaZ = (maxChars) => z40.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
+    ServerSeqSchemaZ = z40.number().int().positive();
+    GridCellSchemaZ = z40.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS);
+    CellCoordinateSchemaZ = z40.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS);
+    PaneStreamReadyFrameSchemaZ = z40.object({
+      type: z40.literal("ready"),
+      protocolVersion: z40.literal(PANE_STREAM_PROTOCOL_VERSION),
       daemonInstanceId: BoundedIdentitySchemaZ,
-      requestId: z39.uuid(),
+      requestId: z40.uuid(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ
     }).strict();
-    PaneStreamSeedBatchFrameSchemaZ = z39.object({
-      type: z39.literal("seed-batch"),
+    PaneStreamSeedBatchFrameSchemaZ = z40.object({
+      type: z40.literal("seed-batch"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      reset: z39.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
+      reset: z40.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
       seed: Base64SchemaZ(PANE_STREAM_MAX_SEED_BASE64_CHARS),
-      held: z39.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
-      cursor: z39.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
+      held: z40.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
+      cursor: z40.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
     }).strict();
-    PaneStreamOutputFrameSchemaZ = z39.object({
-      type: z39.literal("output"),
+    PaneStreamOutputFrameSchemaZ = z40.object({
+      type: z40.literal("output"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       data: Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)
     }).strict();
-    PaneStreamCursorFrameSchemaZ = z39.object({
-      type: z39.literal("cursor"),
+    PaneStreamCursorFrameSchemaZ = z40.object({
+      type: z40.literal("cursor"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       x: CellCoordinateSchemaZ,
       y: CellCoordinateSchemaZ
     }).strict();
-    BoundedDisplayNameSchemaZ = z39.string().max(256).refine((value) => !/[\0\r\n]/u.test(value));
-    PaneStreamLayoutFrameSchemaZ = z39.object({
-      type: z39.literal("layout"),
+    BoundedDisplayNameSchemaZ = z40.string().max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    PaneStreamLayoutFrameSchemaZ = z40.object({
+      type: z40.literal("layout"),
       /** Durable `@tmux_ide_window_id` stamp; null while the join is unverified. */
       semanticWindowId: WorkspaceIdSchemaZ.nullable(),
       windowName: BoundedDisplayNameSchemaZ.nullable(),
-      currentWindow: z39.boolean(),
+      currentWindow: z40.boolean(),
       cols: GridCellSchemaZ,
       rows: GridCellSchemaZ,
-      zoomed: z39.boolean(),
-      panes: z39.array(
-        z39.object({
+      zoomed: z40.boolean(),
+      panes: z40.array(
+        z40.object({
           /** Null while the pane's semantic identity join is unverified. */
           pane: PaneStreamSemanticPaneIdSchemaZ.nullable(),
           left: CellCoordinateSchemaZ,
           top: CellCoordinateSchemaZ,
           width: GridCellSchemaZ,
           height: GridCellSchemaZ,
-          active: z39.boolean()
+          active: z40.boolean()
         }).strict()
       ).max(PANE_STREAM_MAX_LAYOUT_PANES)
     }).strict();
-    PaneStreamFlowFrameSchemaZ = z39.object({
-      type: z39.literal("flow"),
+    PaneStreamFlowFrameSchemaZ = z40.object({
+      type: z40.literal("flow"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      state: z39.enum(["paused", "resumed"]),
-      reason: z39.enum(["backpressure", "requested"])
+      state: z40.enum(["paused", "resumed"]),
+      reason: z40.enum(["backpressure", "requested"])
     }).strict();
-    PaneStreamClosedFrameSchemaZ = z39.object({
-      type: z39.literal("closed"),
+    PaneStreamClosedFrameSchemaZ = z40.object({
+      type: z40.literal("closed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ
     }).strict();
-    PaneStreamInputAckFrameSchemaZ = z39.object({
-      type: z39.literal("input-ack"),
+    PaneStreamInputAckFrameSchemaZ = z40.object({
+      type: z40.literal("input-ack"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z39.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
+      seq: z40.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
     }).strict();
-    PaneStreamErrorFrameCodeSchemaZ = z39.enum([
+    PaneStreamErrorFrameCodeSchemaZ = z40.enum([
       "redemption-rejected",
       "ticket-expired",
       "live-capacity-exhausted",
@@ -6718,13 +6916,13 @@ var init_pane_stream = __esm({
       "input-rejected",
       "protocol-error"
     ]);
-    PaneStreamErrorFrameSchemaZ = z39.object({
-      type: z39.literal("error"),
-      protocolVersion: z39.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamErrorFrameSchemaZ = z40.object({
+      type: z40.literal("error"),
+      protocolVersion: z40.literal(PANE_STREAM_PROTOCOL_VERSION),
       code: PaneStreamErrorFrameCodeSchemaZ,
-      retryable: z39.boolean()
+      retryable: z40.boolean()
     }).strict();
-    PaneStreamServerFrameSchemaZ = z39.discriminatedUnion("type", [
+    PaneStreamServerFrameSchemaZ = z40.discriminatedUnion("type", [
       PaneStreamReadyFrameSchemaZ,
       PaneStreamSeedBatchFrameSchemaZ,
       PaneStreamOutputFrameSchemaZ,
@@ -6739,84 +6937,84 @@ var init_pane_stream = __esm({
 });
 
 // packages/contracts/src/control.ts
-import { z as z40 } from "zod";
+import { z as z41 } from "zod";
 var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
 var init_control = __esm({
   "packages/contracts/src/control.ts"() {
     "use strict";
     CONTROL_PROTOCOL_VERSION = 1;
-    controlIdSchema = z40.union([z40.string(), z40.number()]);
-    agentStatusSchema = z40.enum(["blocked", "working", "done", "idle", "unknown"]);
-    controlRequestSchema = z40.object({
-      v: z40.literal(CONTROL_PROTOCOL_VERSION),
+    controlIdSchema = z41.union([z41.string(), z41.number()]);
+    agentStatusSchema = z41.enum(["blocked", "working", "done", "idle", "unknown"]);
+    controlRequestSchema = z41.object({
+      v: z41.literal(CONTROL_PROTOCOL_VERSION),
       id: controlIdSchema,
-      verb: z40.string().min(1),
-      params: z40.record(z40.string(), z40.unknown()).optional()
+      verb: z41.string().min(1),
+      params: z41.record(z41.string(), z41.unknown()).optional()
     });
-    controlErrorSchema = z40.object({
-      code: z40.string(),
-      message: z40.string()
+    controlErrorSchema = z41.object({
+      code: z41.string(),
+      message: z41.string()
     });
-    controlResponseSchema = z40.discriminatedUnion("ok", [
-      z40.object({
-        v: z40.literal(CONTROL_PROTOCOL_VERSION),
+    controlResponseSchema = z41.discriminatedUnion("ok", [
+      z41.object({
+        v: z41.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z40.literal(true),
-        data: z40.unknown()
+        ok: z41.literal(true),
+        data: z41.unknown()
       }),
-      z40.object({
-        v: z40.literal(CONTROL_PROTOCOL_VERSION),
+      z41.object({
+        v: z41.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z40.literal(false),
+        ok: z41.literal(false),
         error: controlErrorSchema
       })
     ]);
-    controlEventSchema = z40.object({
-      v: z40.literal(CONTROL_PROTOCOL_VERSION),
-      event: z40.string().min(1),
-      data: z40.unknown()
+    controlEventSchema = z41.object({
+      v: z41.literal(CONTROL_PROTOCOL_VERSION),
+      event: z41.string().min(1),
+      data: z41.unknown()
     });
-    agentStatusEventSchema = z40.object({
-      ts: z40.string(),
-      session: z40.string(),
+    agentStatusEventSchema = z41.object({
+      ts: z41.string(),
+      session: z41.string(),
       from: agentStatusSchema.nullable(),
       to: agentStatusSchema
     });
-    agentsParamsSchema = z40.object({
-      session: z40.string().optional()
+    agentsParamsSchema = z41.object({
+      session: z41.string().optional()
     });
-    sendParamsSchema = z40.object({
-      session: z40.string().min(1),
-      target: z40.string().min(1),
-      message: z40.string().min(1),
-      noEnter: z40.boolean().optional(),
-      dir: z40.string().optional()
+    sendParamsSchema = z41.object({
+      session: z41.string().min(1),
+      target: z41.string().min(1),
+      message: z41.string().min(1),
+      noEnter: z41.boolean().optional(),
+      dir: z41.string().optional()
     });
     CONTROL_WAIT_MAX_TIMEOUT_MS = 6e5;
-    waitTimeoutSchema = z40.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
-    waitParamsSchema = z40.discriminatedUnion("kind", [
-      z40.object({
-        kind: z40.literal("agent-status"),
-        session: z40.string().min(1),
+    waitTimeoutSchema = z41.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
+    waitParamsSchema = z41.discriminatedUnion("kind", [
+      z41.object({
+        kind: z41.literal("agent-status"),
+        session: z41.string().min(1),
         status: agentStatusSchema,
         timeoutMs: waitTimeoutSchema
       }),
-      z40.object({
-        kind: z40.literal("output"),
-        target: z40.string().min(1),
-        match: z40.string().min(1),
+      z41.object({
+        kind: z41.literal("output"),
+        target: z41.string().min(1),
+        match: z41.string().min(1),
         timeoutMs: waitTimeoutSchema
       })
     ]);
-    spawnPlacementSchema = z40.enum(["window", "split-h", "split-v"]);
-    spawnParamsSchema = z40.object({
-      kind: z40.string().min(1).optional(),
-      command: z40.string().min(1).optional(),
-      session: z40.string().min(1).optional(),
-      sessionName: z40.string().min(1).optional(),
-      dir: z40.string().optional(),
+    spawnPlacementSchema = z41.enum(["window", "split-h", "split-v"]);
+    spawnParamsSchema = z41.object({
+      kind: z41.string().min(1).optional(),
+      command: z41.string().min(1).optional(),
+      session: z41.string().min(1).optional(),
+      sessionName: z41.string().min(1).optional(),
+      dir: z41.string().optional(),
       placement: spawnPlacementSchema.optional(),
-      paneId: z40.string().optional()
+      paneId: z41.string().optional()
     }).refine((p) => Boolean(p.kind) !== Boolean(p.command), {
       message: "exactly one of `kind` or `command` is required"
     }).refine((p) => Boolean(p.session) || Boolean(p.sessionName), {
@@ -6824,25 +7022,259 @@ var init_control = __esm({
     }).refine((p) => !(p.placement && p.placement !== "window") || Boolean(p.paneId), {
       message: "split placements need `paneId`"
     });
-    restartAgentParamsSchema = z40.object({
-      paneId: z40.string().min(1),
-      kind: z40.string().min(1).optional(),
-      command: z40.string().min(1).optional()
+    restartAgentParamsSchema = z41.object({
+      paneId: z41.string().min(1),
+      kind: z41.string().min(1).optional(),
+      command: z41.string().min(1).optional()
     }).refine((p) => Boolean(p.kind) || Boolean(p.command), {
       message: "`kind` or `command` is required"
     });
-    stopAgentParamsSchema = z40.object({
-      paneId: z40.string().min(1)
+    stopAgentParamsSchema = z41.object({
+      paneId: z41.string().min(1)
     });
-    explainParamsSchema = z40.object({
-      target: z40.string().min(1)
+    explainParamsSchema = z41.object({
+      target: z41.string().min(1)
     });
-    subscribeParamsSchema = z40.object({}).loose();
+    subscribeParamsSchema = z41.object({}).loose();
+  }
+});
+
+// packages/contracts/src/multiplexer-verbs.ts
+import { z as z42 } from "zod";
+function deepFreeze4(value) {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const nested of Object.values(value)) deepFreeze4(nested);
+  }
+  return value;
+}
+var MULTIPLEXER_VERB_TABLE_VERSION, MultiplexerVerbIdSchemaZ, MultiplexerVerbScopeSchemaZ, ActionNameSchemaZ, AppWindowCommandTypeSchemaZ, MultiplexerVerbExecutionSchemaZ, MultiplexerVerbAvailabilityInputSchemaZ, MultiplexerVerbEntrySchemaZ, ENTRIES, MULTIPLEXER_VERB_TABLE, BY_ID, MULTIPLEXER_VERB_IDS, AVAILABLE, MultiplexerVerbInvocationSchemaZ;
+var init_multiplexer_verbs = __esm({
+  "packages/contracts/src/multiplexer-verbs.ts"() {
+    "use strict";
+    init_actions_contract();
+    init_app_window_mutation();
+    init_workspace_multiplexer();
+    MULTIPLEXER_VERB_TABLE_VERSION = 1;
+    MultiplexerVerbIdSchemaZ = z42.string().min(3).max(64).regex(/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/u, "verb id must be a dot-namespaced identifier");
+    MultiplexerVerbScopeSchemaZ = z42.enum(["session", "window", "pane"]);
+    ActionNameSchemaZ = z42.enum(
+      Object.keys(ActionContractsZ)
+    );
+    AppWindowCommandTypeSchemaZ = z42.enum(
+      AppWindowMutationCommandSchemaZ.options.map((option) => option.shape.type.value)
+    );
+    MultiplexerVerbExecutionSchemaZ = z42.discriminatedUnion("kind", [
+      z42.object({ kind: z42.literal("daemon-action"), action: ActionNameSchemaZ }).strict(),
+      z42.object({ kind: z42.literal("app-window"), command: AppWindowCommandTypeSchemaZ }).strict(),
+      z42.object({ kind: z42.literal("renderer") }).strict()
+    ]);
+    MultiplexerVerbAvailabilityInputSchemaZ = z42.enum([
+      "workspaceConnected",
+      "sessionWindowCount",
+      "windowPaneCount",
+      "windowZoomed",
+      "targetIsActivePane",
+      "targetIsDockedStackMember"
+    ]);
+    MultiplexerVerbEntrySchemaZ = z42.object({
+      version: z42.literal(MULTIPLEXER_VERB_TABLE_VERSION),
+      id: MultiplexerVerbIdSchemaZ,
+      label: z42.string().min(1).max(80),
+      description: z42.string().min(1).max(240),
+      scope: MultiplexerVerbScopeSchemaZ,
+      execution: MultiplexerVerbExecutionSchemaZ,
+      availabilityInputs: z42.array(MultiplexerVerbAvailabilityInputSchemaZ).readonly(),
+      /** Destructive verbs must be confirmed before dispatch; no surface may skip it. */
+      destructive: z42.boolean(),
+      /**
+       * The user's real tmux binding, when the keybinding bridge can read it.
+       * Null everywhere today — see the module comment on why a guess is worse.
+       */
+      tmuxKeyHint: z42.string().min(1).max(40).nullable()
+    }).strict();
+    ENTRIES = [
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "session.new",
+        label: "New session",
+        description: "Open a project directory as a new tmux-backed workspace session.",
+        scope: "session",
+        execution: { kind: "daemon-action", action: "workspace.open" },
+        availabilityInputs: [],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "session.kill",
+        label: "Close session",
+        description: "Kill the workspace's tmux session and every window and process inside it.",
+        scope: "session",
+        execution: { kind: "daemon-action", action: "workspace.session.kill" },
+        availabilityInputs: ["workspaceConnected"],
+        destructive: true,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "session.rename",
+        label: "Rename session",
+        description: "Give the workspace's tmux session a new name.",
+        scope: "session",
+        execution: { kind: "daemon-action", action: "workspace.rename" },
+        availabilityInputs: ["workspaceConnected"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "session.detach",
+        label: "Detach from session",
+        description: "Stop viewing the session here. The session and its processes keep running.",
+        scope: "session",
+        // Detaching is the client's own business: the session is untouched, so
+        // there is nothing for the daemon to authorise. m49.2 gives it a surface.
+        execution: { kind: "renderer" },
+        availabilityInputs: ["workspaceConnected"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "window.new",
+        label: "New terminal or agent",
+        description: "Create a tmux window in this session running a shell or a harness.",
+        scope: "session",
+        execution: { kind: "daemon-action", action: "workspace.pane.create" },
+        availabilityInputs: ["workspaceConnected"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "window.kill",
+        label: "Close window",
+        description: "Kill this tmux window and every pane in it. Refused for a session's last window.",
+        scope: "window",
+        execution: { kind: "daemon-action", action: "workspace.window.kill" },
+        availabilityInputs: ["workspaceConnected", "sessionWindowCount"],
+        destructive: true,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "window.rename",
+        label: "Rename window",
+        description: "Give this tmux window a new name.",
+        scope: "window",
+        execution: { kind: "daemon-action", action: "workspace.rename" },
+        availabilityInputs: ["workspaceConnected"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "window.zoom.toggle",
+        label: "Zoom pane",
+        description: "Toggle tmux's own pane zoom for this window. Not the canvas card's maximize.",
+        scope: "window",
+        execution: { kind: "daemon-action", action: "workspace.pane.zoom.toggle" },
+        availabilityInputs: ["workspaceConnected", "windowPaneCount", "windowZoomed"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "pane.split.right",
+        label: "Split right",
+        description: "Split this pane vertically, placing a new shell pane to its right.",
+        scope: "pane",
+        execution: { kind: "daemon-action", action: "workspace.window.split" },
+        availabilityInputs: ["workspaceConnected"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "pane.split.down",
+        label: "Split down",
+        description: "Split this pane horizontally, placing a new shell pane below it.",
+        scope: "pane",
+        execution: { kind: "daemon-action", action: "workspace.window.split" },
+        availabilityInputs: ["workspaceConnected"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "pane.kill",
+        label: "Close pane",
+        description: "Kill this pane and its process. Refused for the last pane of a session's last window.",
+        scope: "pane",
+        execution: { kind: "daemon-action", action: "workspace.pane.kill" },
+        availabilityInputs: ["workspaceConnected", "windowPaneCount", "sessionWindowCount"],
+        destructive: true,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "pane.select",
+        label: "Focus pane",
+        description: "Make this pane tmux's active pane, so an attached client's cursor follows.",
+        scope: "pane",
+        execution: { kind: "daemon-action", action: "workspace.pane.select" },
+        availabilityInputs: ["workspaceConnected", "targetIsActivePane"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "stack.activate",
+        label: "Show in stack",
+        description: "Bring this window to the front of its docked stack. The app's layout only.",
+        scope: "window",
+        execution: { kind: "app-window", command: "stack.activate" },
+        availabilityInputs: ["targetIsDockedStackMember"],
+        destructive: false,
+        tmuxKeyHint: null
+      }
+    ];
+    MULTIPLEXER_VERB_TABLE = deepFreeze4(
+      ENTRIES.map((entry) => MultiplexerVerbEntrySchemaZ.parse(entry))
+    );
+    BY_ID = new Map(
+      MULTIPLEXER_VERB_TABLE.map((entry) => [entry.id, entry])
+    );
+    MULTIPLEXER_VERB_IDS = Object.freeze(
+      MULTIPLEXER_VERB_TABLE.map((entry) => entry.id)
+    );
+    AVAILABLE = Object.freeze({ available: true });
+    MultiplexerVerbInvocationSchemaZ = z42.object({
+      verbId: MultiplexerVerbIdSchemaZ,
+      intent: WorkspaceMultiplexerIntentSchemaZ
+    }).strict().superRefine((value, context) => {
+      const entry = BY_ID.get(value.verbId);
+      if (!entry) {
+        context.addIssue({ code: "custom", message: "unknown multiplexer verb" });
+        return;
+      }
+      if (entry.execution.kind !== "daemon-action") {
+        context.addIssue({ code: "custom", message: "this verb is not a daemon action" });
+        return;
+      }
+      if (entry.execution.action !== value.intent.verb) {
+        context.addIssue({
+          code: "custom",
+          message: "the verb id and its intent name different routes"
+        });
+      }
+    });
   }
 });
 
 // packages/contracts/src/daemon-resource-request.ts
-import { z as z41 } from "zod";
+import { z as z43 } from "zod";
 var DaemonResourceRequestSchemaZ, DAEMON_RESOURCE_RESULT_SCHEMAS, DAEMON_RESOURCE_KINDS, DAEMON_RESOURCE_KIND_SET;
 var init_daemon_resource_request = __esm({
   "packages/contracts/src/daemon-resource-request.ts"() {
@@ -6852,44 +7284,50 @@ var init_daemon_resource_request = __esm({
     init_workspace_pane_creation();
     init_workspace_promotion();
     init_terminal_attachments();
+    init_multiplexer_verbs();
+    init_workspace_multiplexer();
     init_pane_stream();
-    DaemonResourceRequestSchemaZ = z41.discriminatedUnion("resource", [
-      z41.object({ resource: z41.literal("capabilities") }).strict(),
-      z41.object({ resource: z41.literal("refreshConnection") }).strict(),
-      z41.object({ resource: z41.literal("listWorkspaces") }).strict(),
-      z41.object({ resource: z41.literal("fetchFleetCatalog") }).strict(),
-      z41.object({ resource: z41.literal("startupReadiness") }).strict(),
-      z41.object({
-        resource: z41.literal("fetchApplicationShell"),
+    DaemonResourceRequestSchemaZ = z43.discriminatedUnion("resource", [
+      z43.object({ resource: z43.literal("capabilities") }).strict(),
+      z43.object({ resource: z43.literal("refreshConnection") }).strict(),
+      z43.object({ resource: z43.literal("listWorkspaces") }).strict(),
+      z43.object({ resource: z43.literal("fetchFleetCatalog") }).strict(),
+      z43.object({ resource: z43.literal("startupReadiness") }).strict(),
+      z43.object({
+        resource: z43.literal("fetchApplicationShell"),
         request: DesktopDaemonFetchApplicationShellRequestSchemaZ
       }).strict(),
-      z41.object({
-        resource: z41.literal("fetchWorkspaceFiles"),
+      z43.object({
+        resource: z43.literal("fetchWorkspaceFiles"),
         request: DesktopDaemonFetchWorkspaceFilesRequestSchemaZ
       }).strict(),
-      z41.object({
-        resource: z41.literal("fetchWorkspaceFilePreview"),
+      z43.object({
+        resource: z43.literal("fetchWorkspaceFilePreview"),
         request: DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ
       }).strict(),
-      z41.object({
-        resource: z41.literal("fetchWorkspaceChanges"),
+      z43.object({
+        resource: z43.literal("fetchWorkspaceChanges"),
         request: DesktopDaemonFetchWorkspaceChangesRequestSchemaZ
       }).strict(),
-      z41.object({
-        resource: z41.literal("fetchWorkspaceChangeDiff"),
+      z43.object({
+        resource: z43.literal("fetchWorkspaceChangeDiff"),
         request: DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ
       }).strict(),
-      z41.object({ resource: z41.literal("promoteWorkspace"), request: WorkspacePromoteArgumentsSchemaZ }).strict(),
-      z41.object({
-        resource: z41.literal("createWorkspacePane"),
+      z43.object({ resource: z43.literal("promoteWorkspace"), request: WorkspacePromoteArgumentsSchemaZ }).strict(),
+      z43.object({
+        resource: z43.literal("createWorkspacePane"),
         request: WorkspacePaneCreateInvocationSchemaZ
       }).strict(),
-      z41.object({ resource: z41.literal("mutateAppWindow"), request: AppWindowMutationArgumentsSchemaZ }).strict(),
-      z41.object({
-        resource: z41.literal("issueTerminalAttachment"),
+      z43.object({ resource: z43.literal("mutateAppWindow"), request: AppWindowMutationArgumentsSchemaZ }).strict(),
+      // One resource for every tmux verb rather than one per route: see
+      // MultiplexerVerbInvocation for why the invocation carries both the verb the
+      // user clicked and the intent the daemon executes.
+      z43.object({ resource: z43.literal("invokeVerb"), request: MultiplexerVerbInvocationSchemaZ }).strict(),
+      z43.object({
+        resource: z43.literal("issueTerminalAttachment"),
         request: TerminalAttachRequestSchemaZ
       }).strict(),
-      z41.object({ resource: z41.literal("issuePaneStream"), request: PaneStreamLeaseRequestSchemaZ }).strict()
+      z43.object({ resource: z43.literal("issuePaneStream"), request: PaneStreamLeaseRequestSchemaZ }).strict()
     ]);
     DAEMON_RESOURCE_RESULT_SCHEMAS = {
       capabilities: DesktopDaemonCapabilitiesResultSchemaZ,
@@ -6905,6 +7343,7 @@ var init_daemon_resource_request = __esm({
       promoteWorkspace: WorkspacePromoteHostResultSchemaZ,
       createWorkspacePane: WorkspacePaneCreateHostResultSchemaZ,
       mutateAppWindow: AppWindowMutationHostResultSchemaZ,
+      invokeVerb: WorkspaceMultiplexerHostResultSchemaZ,
       issueTerminalAttachment: TerminalAttachmentIssueResultSchemaZ,
       issuePaneStream: PaneStreamIssueResultSchemaZ
     };
@@ -6916,21 +7355,21 @@ var init_daemon_resource_request = __esm({
 });
 
 // packages/contracts/src/workspace-catalog-resource.ts
-import { z as z42 } from "zod";
+import { z as z44 } from "zod";
 var WORKSPACE_CATALOG_RESOURCE_VERSION, WorkspaceCatalogEntryV1SchemaZ, WorkspaceCatalogResourceV1SchemaZ;
 var init_workspace_catalog_resource = __esm({
   "packages/contracts/src/workspace-catalog-resource.ts"() {
     "use strict";
     init_daemon_wire();
     WORKSPACE_CATALOG_RESOURCE_VERSION = 1;
-    WorkspaceCatalogEntryV1SchemaZ = z42.object({
-      workspaceName: z42.string().min(1),
-      sessionName: z42.string().min(1)
+    WorkspaceCatalogEntryV1SchemaZ = z44.object({
+      workspaceName: z44.string().min(1),
+      sessionName: z44.string().min(1)
     }).strict();
-    WorkspaceCatalogResourceV1SchemaZ = z42.object({
-      version: z42.literal(WORKSPACE_CATALOG_RESOURCE_VERSION),
+    WorkspaceCatalogResourceV1SchemaZ = z44.object({
+      version: z44.literal(WORKSPACE_CATALOG_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
-      workspaces: z42.array(WorkspaceCatalogEntryV1SchemaZ)
+      workspaces: z44.array(WorkspaceCatalogEntryV1SchemaZ)
     }).strict();
   }
 });
@@ -7071,7 +7510,7 @@ var init_fleet_agent_graph = __esm({
 });
 
 // packages/contracts/src/daemon-resources.ts
-import { z as z43 } from "zod";
+import { z as z45 } from "zod";
 var DaemonSessionOverviewSchemaZ, DaemonPaneInfoSchemaZ, DaemonSessionsResponseSchemaZ, DaemonProjectResponseSchemaZ, DaemonPanesResponseSchemaZ, DaemonWorkspaceSchemaZ, DaemonWorkspacesResponseSchemaZ, DaemonWorkspaceResponseSchemaZ, DaemonRegisteredProjectSchemaZ, DaemonProjectsResponseSchemaZ, DaemonRegisteredProjectResponseSchemaZ, DaemonProjectTemplateSchemaZ, DaemonProjectTemplatesResponseSchemaZ;
 var init_daemon_resources = __esm({
   "packages/contracts/src/daemon-resources.ts"() {
@@ -7080,55 +7519,55 @@ var init_daemon_resources = __esm({
     init_workspace();
     DaemonSessionOverviewSchemaZ = SessionOverviewSchemaZ.strict();
     DaemonPaneInfoSchemaZ = PaneInfoSchemaZ.strict();
-    DaemonSessionsResponseSchemaZ = z43.object({
-      sessions: z43.array(DaemonSessionOverviewSchemaZ)
+    DaemonSessionsResponseSchemaZ = z45.object({
+      sessions: z45.array(DaemonSessionOverviewSchemaZ)
     }).strict();
-    DaemonProjectResponseSchemaZ = z43.object({
-      session: z43.string(),
-      dir: z43.string(),
-      panes: z43.array(DaemonPaneInfoSchemaZ)
+    DaemonProjectResponseSchemaZ = z45.object({
+      session: z45.string(),
+      dir: z45.string(),
+      panes: z45.array(DaemonPaneInfoSchemaZ)
     }).strict();
-    DaemonPanesResponseSchemaZ = z43.object({
-      panes: z43.array(DaemonPaneInfoSchemaZ)
+    DaemonPanesResponseSchemaZ = z45.object({
+      panes: z45.array(DaemonPaneInfoSchemaZ)
     }).strict();
     DaemonWorkspaceSchemaZ = WorkspaceSchemaZ.strict();
-    DaemonWorkspacesResponseSchemaZ = z43.object({
-      workspaces: z43.array(DaemonWorkspaceSchemaZ)
+    DaemonWorkspacesResponseSchemaZ = z45.object({
+      workspaces: z45.array(DaemonWorkspaceSchemaZ)
     }).strict();
-    DaemonWorkspaceResponseSchemaZ = z43.object({
+    DaemonWorkspaceResponseSchemaZ = z45.object({
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonRegisteredProjectSchemaZ = z43.object({
-      name: z43.string(),
-      dir: z43.string(),
-      hasIdeYml: z43.boolean(),
-      hasWorkspaceConfig: z43.boolean().optional(),
-      configKind: z43.enum(["workspace", "legacy", "none"]).optional(),
-      configPath: z43.string().nullable().optional(),
-      ideConfigPath: z43.string().nullable().optional(),
-      gitOrigin: z43.string().nullable(),
-      gitBranch: z43.string().nullable(),
-      registeredAt: z43.string()
+    DaemonRegisteredProjectSchemaZ = z45.object({
+      name: z45.string(),
+      dir: z45.string(),
+      hasIdeYml: z45.boolean(),
+      hasWorkspaceConfig: z45.boolean().optional(),
+      configKind: z45.enum(["workspace", "legacy", "none"]).optional(),
+      configPath: z45.string().nullable().optional(),
+      ideConfigPath: z45.string().nullable().optional(),
+      gitOrigin: z45.string().nullable(),
+      gitBranch: z45.string().nullable(),
+      registeredAt: z45.string()
     }).strict();
-    DaemonProjectsResponseSchemaZ = z43.object({
-      projects: z43.array(DaemonRegisteredProjectSchemaZ)
+    DaemonProjectsResponseSchemaZ = z45.object({
+      projects: z45.array(DaemonRegisteredProjectSchemaZ)
     }).strict();
-    DaemonRegisteredProjectResponseSchemaZ = z43.object({
+    DaemonRegisteredProjectResponseSchemaZ = z45.object({
       project: DaemonRegisteredProjectSchemaZ
     }).strict();
-    DaemonProjectTemplateSchemaZ = z43.object({
-      id: z43.string(),
-      label: z43.string(),
-      description: z43.string()
+    DaemonProjectTemplateSchemaZ = z45.object({
+      id: z45.string(),
+      label: z45.string(),
+      description: z45.string()
     }).strict();
-    DaemonProjectTemplatesResponseSchemaZ = z43.object({
-      templates: z43.array(DaemonProjectTemplateSchemaZ)
+    DaemonProjectTemplatesResponseSchemaZ = z45.object({
+      templates: z45.array(DaemonProjectTemplateSchemaZ)
     }).strict();
   }
 });
 
 // packages/contracts/src/daemon-events.ts
-import { z as z44 } from "zod";
+import { z as z46 } from "zod";
 var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventAgentStatusChangedFrameSchemaZ, DaemonEventFleetChangedFrameSchemaZ, DaemonEventAgentTurnCompletedFrameSchemaZ, DaemonEventWorkspacePromotionCompletedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
 var init_daemon_events = __esm({
   "packages/contracts/src/daemon-events.ts"() {
@@ -7136,95 +7575,95 @@ var init_daemon_events = __esm({
     init_daemon_resources();
     init_daemon_wire();
     init_desktop_host();
-    SessionNamesSchemaZ = z44.array(z44.string());
-    DaemonEventSubscribeFrameSchemaZ = z44.object({
-      type: z44.literal("subscribe"),
+    SessionNamesSchemaZ = z46.array(z46.string());
+    DaemonEventSubscribeFrameSchemaZ = z46.object({
+      type: z46.literal("subscribe"),
       sessions: SessionNamesSchemaZ
     }).strict();
-    DaemonEventUnsubscribeFrameSchemaZ = z44.object({
-      type: z44.literal("unsubscribe"),
+    DaemonEventUnsubscribeFrameSchemaZ = z46.object({
+      type: z46.literal("unsubscribe"),
       sessions: SessionNamesSchemaZ
     }).strict();
-    DaemonEventPingFrameSchemaZ = z44.object({ type: z44.literal("ping") }).strict();
-    DaemonEventClientFrameSchemaZ = z44.discriminatedUnion("type", [
+    DaemonEventPingFrameSchemaZ = z46.object({ type: z46.literal("ping") }).strict();
+    DaemonEventClientFrameSchemaZ = z46.discriminatedUnion("type", [
       DaemonEventSubscribeFrameSchemaZ,
       DaemonEventUnsubscribeFrameSchemaZ,
       DaemonEventPingFrameSchemaZ
     ]);
-    DaemonSessionSnapshotSchemaZ = z44.object({
+    DaemonSessionSnapshotSchemaZ = z46.object({
       project: DaemonProjectResponseSchemaZ
     }).strict();
-    DaemonEventHelloFrameSchemaZ = z44.object({
-      type: z44.literal("hello"),
+    DaemonEventHelloFrameSchemaZ = z46.object({
+      type: z46.literal("hello"),
       daemon: DaemonInstanceIdentitySchemaZ,
-      sessions: z44.array(DaemonSessionOverviewSchemaZ)
+      sessions: z46.array(DaemonSessionOverviewSchemaZ)
     }).strict();
-    DaemonEventSnapshotFrameSchemaZ = z44.object({
-      type: z44.literal("snapshot"),
-      sessionName: z44.string(),
+    DaemonEventSnapshotFrameSchemaZ = z46.object({
+      type: z46.literal("snapshot"),
+      sessionName: z46.string(),
       data: DaemonSessionSnapshotSchemaZ
     }).strict();
-    DaemonEventSessionsChangedFrameSchemaZ = z44.object({ type: z44.literal("sessions.changed") }).strict();
-    DaemonEventProjectsChangedFrameSchemaZ = z44.object({ type: z44.literal("projects.changed") }).strict();
-    DaemonEventInitOutputFrameSchemaZ = z44.object({
-      type: z44.literal("init.output"),
-      jobId: z44.string(),
-      chunk: z44.string(),
-      done: z44.boolean().optional()
+    DaemonEventSessionsChangedFrameSchemaZ = z46.object({ type: z46.literal("sessions.changed") }).strict();
+    DaemonEventProjectsChangedFrameSchemaZ = z46.object({ type: z46.literal("projects.changed") }).strict();
+    DaemonEventInitOutputFrameSchemaZ = z46.object({
+      type: z46.literal("init.output"),
+      jobId: z46.string(),
+      chunk: z46.string(),
+      done: z46.boolean().optional()
     }).strict();
-    DaemonEventInitErrorFrameSchemaZ = z44.object({
-      type: z44.literal("init.error"),
-      jobId: z44.string(),
-      message: z44.string()
+    DaemonEventInitErrorFrameSchemaZ = z46.object({
+      type: z46.literal("init.error"),
+      jobId: z46.string(),
+      message: z46.string()
     }).strict();
-    DaemonEventPongFrameSchemaZ = z44.object({ type: z44.literal("pong") }).strict();
-    DaemonEventActionCompleteFrameSchemaZ = z44.object({
-      type: z44.literal("action.complete"),
-      name: z44.string(),
-      result: z44.unknown()
+    DaemonEventPongFrameSchemaZ = z46.object({ type: z46.literal("pong") }).strict();
+    DaemonEventActionCompleteFrameSchemaZ = z46.object({
+      type: z46.literal("action.complete"),
+      name: z46.string(),
+      result: z46.unknown()
     }).strict();
-    DaemonEventConfigChangedFrameSchemaZ = z44.object({
-      type: z44.literal("config.changed"),
-      sessionName: z44.string()
+    DaemonEventConfigChangedFrameSchemaZ = z46.object({
+      type: z46.literal("config.changed"),
+      sessionName: z46.string()
     }).strict();
-    DaemonEventTerminalsChangedFrameSchemaZ = z44.object({
-      type: z44.literal("terminals.changed"),
-      sessionName: z44.string()
+    DaemonEventTerminalsChangedFrameSchemaZ = z46.object({
+      type: z46.literal("terminals.changed"),
+      sessionName: z46.string()
     }).strict();
-    DaemonEventAgentStatusChangedFrameSchemaZ = z44.object({
-      type: z44.literal("agent-status.changed"),
-      sessionName: z44.string()
+    DaemonEventAgentStatusChangedFrameSchemaZ = z46.object({
+      type: z46.literal("agent-status.changed"),
+      sessionName: z46.string()
     }).strict();
-    DaemonEventFleetChangedFrameSchemaZ = z44.object({ type: z44.literal("fleet.changed") }).strict();
-    DaemonEventAgentTurnCompletedFrameSchemaZ = z44.object({
-      type: z44.literal("agent.turn-completed"),
-      sessionName: z44.string(),
-      agentId: z44.string().regex(/^agent\.[0-9a-f]{20}$/u).nullable(),
-      fromStatus: z44.literal("working"),
-      toStatus: z44.enum(["done", "idle"]),
-      at: z44.iso.datetime({ offset: true })
+    DaemonEventFleetChangedFrameSchemaZ = z46.object({ type: z46.literal("fleet.changed") }).strict();
+    DaemonEventAgentTurnCompletedFrameSchemaZ = z46.object({
+      type: z46.literal("agent.turn-completed"),
+      sessionName: z46.string(),
+      agentId: z46.string().regex(/^agent\.[0-9a-f]{20}$/u).nullable(),
+      fromStatus: z46.literal("working"),
+      toStatus: z46.enum(["done", "idle"]),
+      at: z46.iso.datetime({ offset: true })
     }).strict();
-    DaemonEventWorkspacePromotionCompletedFrameSchemaZ = z44.object({
-      type: z44.literal("workspace.promotion-completed"),
+    DaemonEventWorkspacePromotionCompletedFrameSchemaZ = z46.object({
+      type: z46.literal("workspace.promotion-completed"),
       workspaceName: DesktopWorkspaceNameSchemaZ,
-      outcome: z44.enum(["promoted", "replayed"]),
-      at: z44.iso.datetime({ offset: true })
+      outcome: z46.enum(["promoted", "replayed"]),
+      at: z46.iso.datetime({ offset: true })
     }).strict();
-    DaemonEventWorkspaceAddedFrameSchemaZ = z44.object({
-      type: z44.literal("workspace.added"),
+    DaemonEventWorkspaceAddedFrameSchemaZ = z46.object({
+      type: z46.literal("workspace.added"),
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonEventWorkspaceRemovedFrameSchemaZ = z44.object({
-      type: z44.literal("workspace.removed"),
-      name: z44.string()
+    DaemonEventWorkspaceRemovedFrameSchemaZ = z46.object({
+      type: z46.literal("workspace.removed"),
+      name: z46.string()
     }).strict();
-    DaemonEventProtocolErrorCodeSchemaZ = z44.enum(["invalid-json", "invalid-frame"]);
-    DaemonEventProtocolErrorFrameSchemaZ = z44.object({
-      type: z44.literal("protocol.error"),
+    DaemonEventProtocolErrorCodeSchemaZ = z46.enum(["invalid-json", "invalid-frame"]);
+    DaemonEventProtocolErrorFrameSchemaZ = z46.object({
+      type: z46.literal("protocol.error"),
       code: DaemonEventProtocolErrorCodeSchemaZ,
-      message: z44.string()
+      message: z46.string()
     }).strict();
-    DaemonEventServerFrameSchemaZ = z44.discriminatedUnion("type", [
+    DaemonEventServerFrameSchemaZ = z46.discriminatedUnion("type", [
       DaemonEventHelloFrameSchemaZ,
       DaemonEventSnapshotFrameSchemaZ,
       DaemonEventSessionsChangedFrameSchemaZ,
@@ -7247,27 +7686,27 @@ var init_daemon_events = __esm({
 });
 
 // packages/contracts/src/desktop-update.ts
-import { z as z45 } from "zod";
+import { z as z47 } from "zod";
 var DesktopUpdatePhaseSchemaZ, DesktopUpdateStatusSchemaZ;
 var init_desktop_update = __esm({
   "packages/contracts/src/desktop-update.ts"() {
     "use strict";
-    DesktopUpdatePhaseSchemaZ = z45.enum([
+    DesktopUpdatePhaseSchemaZ = z47.enum([
       "idle",
       "checking",
       "downloading",
       "ready",
       "applying"
     ]);
-    DesktopUpdateStatusSchemaZ = z45.object({
+    DesktopUpdateStatusSchemaZ = z47.object({
       phase: DesktopUpdatePhaseSchemaZ,
       /** The running version — always known. */
-      currentVersion: z45.string().min(1),
+      currentVersion: z47.string().min(1),
       /**
        * The newer version being downloaded or staged, or null when there is
        * nothing pending. Present from `downloading` through `applying`.
        */
-      availableVersion: z45.string().min(1).nullable()
+      availableVersion: z47.string().min(1).nullable()
     }).strict();
   }
 });
@@ -7312,6 +7751,8 @@ var init_src = __esm({
     init_workspace_pane_creation();
     init_workspace_open();
     init_workspace_promotion();
+    init_workspace_multiplexer();
+    init_multiplexer_verbs();
     init_visual_tokens();
     init_visual_recipes();
     init_pane_appearance();
@@ -12563,20 +13004,20 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z46 } from "zod";
+import { z as z48 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
     init_src();
     RegisteredProjectSchemaZ = DaemonRegisteredProjectSchemaZ;
-    RegisterProjectRequestSchemaZ = z46.object({
-      dir: z46.string().min(1),
-      name: z46.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z48.object({
+      dir: z48.string().min(1),
+      name: z48.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z46.object({
-      dir: z46.string().min(1),
-      template: z46.string().min(1).optional()
+    InitProjectRequestSchemaZ = z48.object({
+      dir: z48.string().min(1),
+      template: z48.string().min(1).optional()
     });
   }
 });
@@ -12638,7 +13079,7 @@ import { EventEmitter } from "node:events";
 import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname15, isAbsolute as isAbsolute3, join as join14, resolve as resolve11 } from "node:path";
-import { z as z47 } from "zod";
+import { z as z49 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -12777,9 +13218,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z47.object({
-      version: z47.literal(1),
-      projects: z47.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z49.object({
+      version: z49.literal(1),
+      projects: z49.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -13551,7 +13992,7 @@ var init_notify_state = __esm({
 import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync7, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname17, join as join18 } from "node:path";
-import { z as z48 } from "zod";
+import { z as z50 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -13723,32 +14164,32 @@ var init_snapshot2 = __esm({
     init_src2();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z48.object({
-      index: z48.number(),
-      cwd: z48.string(),
-      command: z48.string().nullable(),
-      agent: z48.string().nullable(),
-      agentSessionId: z48.string().nullable(),
-      agentState: z48.string().nullable(),
-      title: z48.string()
+    PaneSnapshotSchemaZ = z50.object({
+      index: z50.number(),
+      cwd: z50.string(),
+      command: z50.string().nullable(),
+      agent: z50.string().nullable(),
+      agentSessionId: z50.string().nullable(),
+      agentState: z50.string().nullable(),
+      title: z50.string()
     });
-    WindowSnapshotSchemaZ = z48.object({
-      index: z48.number(),
-      name: z48.string(),
-      active: z48.boolean(),
-      layout: z48.string(),
-      panes: z48.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z50.object({
+      index: z50.number(),
+      name: z50.string(),
+      active: z50.boolean(),
+      layout: z50.string(),
+      panes: z50.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z48.object({
-      name: z48.string(),
-      cwd: z48.string(),
-      adopted: z48.boolean(),
-      windows: z48.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z50.object({
+      name: z50.string(),
+      cwd: z50.string(),
+      adopted: z50.boolean(),
+      windows: z50.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z48.object({
-      version: z48.literal(1),
-      savedAt: z48.string(),
-      sessions: z48.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z50.object({
+      version: z50.literal(1),
+      savedAt: z50.string(),
+      sessions: z50.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -16940,7 +17381,7 @@ import { EventEmitter as EventEmitter3 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { homedir as homedir16 } from "node:os";
 import { dirname as dirname24, join as join24 } from "node:path";
-import { z as z49 } from "zod";
+import { z as z51 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -16963,9 +17404,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z49.object({
-      version: z49.literal(1),
-      workspaces: z49.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z51.object({
+      version: z51.literal(1),
+      workspaces: z51.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -17048,6 +17489,31 @@ var init_workspace_registry = __esm({
         }
         this.emitter.emit("workspace.added", workspace);
         return workspace;
+      }
+      /**
+       * Follow a tmux session rename.
+       *
+       * The workspace NAME is the desktop catalog's identity and never moves —
+       * every renderer reference, route parameter and persisted layout document is
+       * keyed on it. Only the tmux session name changes. Without this, a rename
+       * would orphan the entry: `load()` reconciles against `tmux list-sessions`
+       * and drops any workspace whose session name is not live, so the workspace
+       * would silently vanish on the next daemon start.
+       */
+      renameSession(name, sessionName) {
+        const existing = this.get(name);
+        if (!existing) throw new WorkspaceNotFoundError(name);
+        if (existing.sessionName === sessionName) return existing;
+        const renamed = { ...existing, sessionName };
+        const previous = this.workspaces;
+        this.workspaces = previous.map((w) => w.name === name ? renamed : w);
+        try {
+          this.writeDisk();
+        } catch (error) {
+          this.workspaces = previous;
+          throw error;
+        }
+        return renamed;
       }
       remove(name) {
         if (!this.has(name)) {
@@ -17752,9 +18218,9 @@ function dockTools(projectId) {
   }
   return tools;
 }
-function deepFreeze4(value) {
+function deepFreeze5(value) {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze4(child);
+  for (const child of Object.values(value)) deepFreeze5(child);
   return Object.freeze(value);
 }
 function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
@@ -17879,7 +18345,7 @@ function projectApplicationShellResource(session, opts = {}) {
     }
   });
   projectApplicationShellV1(parsed);
-  return deepFreeze4(parsed);
+  return deepFreeze5(parsed);
 }
 function projectApplicationShellResourceV3(session, appWindows, missionWorkspace, dockSummary, agentGraphOverlay, opts = {}) {
   const resource3 = projectApplicationShellResource(session, opts);
@@ -17900,7 +18366,7 @@ function projectApplicationShellResourceV3(session, appWindows, missionWorkspace
     fleetSessionId: fleetSessionIdForName(session.name)
   });
   projectApplicationShellV1(parsed);
-  return deepFreeze4(parsed);
+  return deepFreeze5(parsed);
 }
 function dockWithWorkspaceSurfaces(dock, summary) {
   return {
@@ -17967,7 +18433,7 @@ function missionStatusForDock(status2) {
   return "idle";
 }
 function projectLegacyApplicationShellResourceV1(session) {
-  return deepFreeze4(
+  return deepFreeze5(
     projectApplicationShellResourceV1Core(
       session,
       legacyPaneIdentities(session.panes),
@@ -20994,8 +21460,11 @@ function assertBoundedLaunch(launch2) {
     });
   }
 }
-function semanticPaneId(operationId) {
+function semanticPaneIdForOperation(operationId) {
   return `pane.${operationId.replaceAll("-", "")}`;
+}
+function semanticPaneId(operationId) {
+  return semanticPaneIdForOperation(operationId);
 }
 function provisionalWindowName(operationId) {
   return `tmux-ide-${operationId.replaceAll("-", "").slice(0, 24)}`;
@@ -21572,7 +22041,7 @@ var init_workspace_pane_creation2 = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts
-import { z as z50 } from "zod";
+import { z as z52 } from "zod";
 function analyzeTrustedSemanticPaneCatalog(candidates) {
   const rows = [];
   let invalidRuntimeProof = false;
@@ -21621,18 +22090,18 @@ var init_semantic_pane_catalog = __esm({
   "packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts"() {
     "use strict";
     init_src();
-    RuntimeSessionIdSchemaZ = z50.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-    RuntimeWindowIdSchemaZ = z50.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-    RuntimePaneIdSchemaZ = z50.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
-    TrustedSemanticPaneSnapshotSchemaZ = z50.object({
+    RuntimeSessionIdSchemaZ = z52.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+    RuntimeWindowIdSchemaZ = z52.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+    RuntimePaneIdSchemaZ = z52.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+    TrustedSemanticPaneSnapshotSchemaZ = z52.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
       windowStamp: TerminalAttachmentSemanticWindowIdSchemaZ.nullable().optional(),
       sessionId: RuntimeSessionIdSchemaZ,
       windowId: RuntimeWindowIdSchemaZ,
       runtimePaneId: RuntimePaneIdSchemaZ,
-      windowPaneCount: z50.number().int().positive(),
-      sessionWindowCount: z50.number().int().positive()
+      windowPaneCount: z52.number().int().positive(),
+      sessionWindowCount: z52.number().int().positive()
     }).strict();
     SemanticPaneCatalogError = class extends Error {
       code;
@@ -21810,9 +22279,9 @@ function safeBaseName(projectDir) {
   const value = basename11(projectDir).normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/-+/gu, "-").replace(/^[-_]+|[-_]+$/gu, "").slice(0, 72);
   return value || "workspace";
 }
-function deriveWorkspaceOpenIdentity(canonicalProjectDir2) {
-  const projectKey = createHash8("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir2, "utf8").digest("hex").slice(0, 32);
-  const name = `${safeBaseName(canonicalProjectDir2).slice(0, 64)}-${projectKey}`;
+function deriveWorkspaceOpenIdentity(canonicalProjectDir3) {
+  const projectKey = createHash8("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir3, "utf8").digest("hex").slice(0, 32);
+  const name = `${safeBaseName(canonicalProjectDir3).slice(0, 64)}-${projectKey}`;
   return Object.freeze({
     workspaceName: name,
     sessionName: name,
@@ -24805,6 +25274,605 @@ var init_app_window_mutation2 = __esm({
   }
 });
 
+// packages/daemon/src/lib/workspace-multiplexer-verbs.ts
+import { realpathSync as realpathSync8, statSync as statSync9 } from "node:fs";
+function parseMultiplexerPaneRows(output) {
+  if (output === "") return [];
+  const rows = [];
+  for (const line of output.split("\n")) {
+    const fields = line.split("	");
+    if (fields.length !== 8) {
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "pane_listing_shape"
+      });
+    }
+    const [paneId, windowId, paneStamp, windowStamp, paneCount, zoomed, active2, creationId] = fields;
+    if (!RUNTIME_PANE.test(paneId) || !RUNTIME_WINDOW.test(windowId)) {
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "pane_listing_shape"
+      });
+    }
+    const count = Number(paneCount);
+    if (!Number.isInteger(count) || count < 1) {
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "pane_listing_shape"
+      });
+    }
+    rows.push({
+      paneId,
+      windowId,
+      semanticPaneId: paneStamp === "" ? null : paneStamp,
+      semanticWindowId: windowStamp === "" ? null : windowStamp,
+      windowPaneCount: count,
+      windowZoomed: zoomed === "1",
+      paneActive: active2 === "1",
+      creationId: creationId === "" ? null : creationId
+    });
+  }
+  return rows;
+}
+function windowIdsOf(rows) {
+  return [...new Set(rows.map((row) => row.windowId))];
+}
+function resolvePaneRow(rows, semanticPaneId2) {
+  const matches = rows.filter((row) => row.semanticPaneId === semanticPaneId2);
+  if (matches.length === 0) {
+    throw new WorkspaceMultiplexerError("pane_not_found", { semanticPaneId: semanticPaneId2 });
+  }
+  if (matches.length > 1) {
+    throw new WorkspaceMultiplexerError("ambiguous_target", { semanticPaneId: semanticPaneId2 });
+  }
+  return matches[0];
+}
+function resolveWindowId(rows, target) {
+  if (target.by === "pane") {
+    return resolvePaneRow(rows, target.semanticPaneId).windowId;
+  }
+  const matches = new Set(
+    rows.filter((row) => row.semanticWindowId === target.semanticWindowId).map((row) => row.windowId)
+  );
+  if (matches.size === 0) {
+    throw new WorkspaceMultiplexerError("window_not_found", {
+      semanticWindowId: target.semanticWindowId
+    });
+  }
+  if (matches.size > 1) {
+    throw new WorkspaceMultiplexerError("ambiguous_target", {
+      semanticWindowId: target.semanticWindowId
+    });
+  }
+  return [...matches][0];
+}
+function tmuxFormatLiteral2(value) {
+  return value.replaceAll("#", "##");
+}
+function canonicalProjectDir2(path2) {
+  const canonical = realpathSync8(path2);
+  if (!statSync9(canonical).isDirectory()) throw new Error("project root is not a directory");
+  return canonical;
+}
+var MAX_OPERATIONS4, CREATION_OPTION2, SEMANTIC_PANE_OPTION4, SEMANTIC_WINDOW_OPTION3, DISPLAY_TITLE_OPTION, ERROR_MESSAGES5, WorkspaceMultiplexerError, PANE_FIELDS, RUNTIME_PANE, RUNTIME_WINDOW, DEFAULT_IO4, WorkspaceMultiplexerAuthority;
+var init_workspace_multiplexer_verbs = __esm({
+  "packages/daemon/src/lib/workspace-multiplexer-verbs.ts"() {
+    "use strict";
+    init_src();
+    init_src2();
+    init_workspace_pane_creation2();
+    init_workspace_registry();
+    MAX_OPERATIONS4 = 128;
+    CREATION_OPTION2 = "@tmux_ide_creation_id";
+    SEMANTIC_PANE_OPTION4 = "@tmux_ide_pane_id";
+    SEMANTIC_WINDOW_OPTION3 = "@tmux_ide_window_id";
+    DISPLAY_TITLE_OPTION = "@ide_name";
+    ERROR_MESSAGES5 = {
+      daemon_instance_mismatch: "The daemon generation changed before the verb ran.",
+      workspace_not_found: "The requested workspace is not registered.",
+      workspace_unavailable: "The requested workspace is not available for multiplexer verbs.",
+      pane_not_found: "No pane in this workspace carries the requested semantic identity.",
+      window_not_found: "No window in this workspace carries the requested identity.",
+      ambiguous_target: "The requested identity names more than one live tmux object.",
+      operation_conflict: "The operation id was already used for a different intent.",
+      operation_capacity: "The daemon has reached its bounded multiplexer operation capacity.",
+      last_window_refused: "This is the session's last window. Close the session instead if that is what you mean.",
+      last_pane_refused: "This is the session's last pane. Close the session instead if that is what you mean.",
+      mutation_failed: "tmux refused the requested change.",
+      mutation_unverified: "tmux accepted the change but the result could not be verified."
+    };
+    WorkspaceMultiplexerError = class extends Error {
+      code;
+      context;
+      constructor(code, context = {}, cause) {
+        super(ERROR_MESSAGES5[code], cause === void 0 ? void 0 : { cause });
+        this.name = "WorkspaceMultiplexerError";
+        this.code = code;
+        this.context = Object.freeze({ ...context });
+      }
+    };
+    PANE_FIELDS = [
+      "#{pane_id}",
+      "#{window_id}",
+      `#{${SEMANTIC_PANE_OPTION4}}`,
+      `#{${SEMANTIC_WINDOW_OPTION3}}`,
+      "#{window_panes}",
+      "#{?window_zoomed_flag,1,0}",
+      "#{?pane_active,1,0}",
+      `#{${CREATION_OPTION2}}`
+    ].join("	");
+    RUNTIME_PANE = /^%(?:0|[1-9][0-9]*)$/u;
+    RUNTIME_WINDOW = /^@(?:0|[1-9][0-9]*)$/u;
+    DEFAULT_IO4 = {
+      canonicalProjectDir: canonicalProjectDir2,
+      isMissingTmuxTarget: (error) => error instanceof TmuxError && (error.code === "SESSION_NOT_FOUND" || error.code === "TMUX_UNAVAILABLE")
+    };
+    WorkspaceMultiplexerAuthority = class {
+      #daemonInstanceId;
+      #registry;
+      #io;
+      #operations = /* @__PURE__ */ new Map();
+      #tail = Promise.resolve();
+      #disposed = false;
+      constructor(options) {
+        this.#daemonInstanceId = options.daemonInstanceId;
+        this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
+        this.#io = {
+          ...DEFAULT_IO4,
+          ...options.io,
+          runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxRunner(
+            options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority()
+          )
+        };
+      }
+      /** Serialized: two verbs must never interleave their read-decide-mutate. */
+      mutate(raw) {
+        const run = this.#tail.then(
+          () => this.#mutate(raw),
+          () => this.#mutate(raw)
+        );
+        this.#tail = run.then(
+          () => void 0,
+          () => void 0
+        );
+        return run;
+      }
+      dispose() {
+        this.#disposed = true;
+        return this.#tail.then(() => {
+          this.#operations.clear();
+        });
+      }
+      async #mutate(raw) {
+        if (this.#disposed) {
+          throw new WorkspaceMultiplexerError("workspace_unavailable", {
+            reason: "authority_disposed"
+          });
+        }
+        const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
+        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
+          throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
+            operationId: request.operationId
+          });
+        }
+        const requestFingerprint3 = JSON.stringify(request);
+        const existing = this.#operations.get(request.operationId);
+        if (existing) {
+          if (existing.fingerprint !== requestFingerprint3) {
+            throw new WorkspaceMultiplexerError("operation_conflict", {
+              operationId: request.operationId
+            });
+          }
+          if (existing.status === "error") throw existing.error;
+          return WorkspaceMultiplexerMutationResultSchemaZ.parse({
+            ...existing.result,
+            outcome: "replayed"
+          });
+        }
+        if (this.#operations.size >= MAX_OPERATIONS4) {
+          const oldest = this.#operations.keys().next().value;
+          if (oldest !== void 0) this.#operations.delete(oldest);
+        }
+        const workspace = this.#registry.get(request.intent.workspaceName);
+        if (!workspace) {
+          const error = new WorkspaceMultiplexerError("workspace_not_found", {
+            operationId: request.operationId,
+            workspaceName: request.intent.workspaceName
+          });
+          this.#operations.set(request.operationId, {
+            fingerprint: requestFingerprint3,
+            status: "error",
+            error
+          });
+          throw error;
+        }
+        try {
+          const result = await this.#perform(request, workspace);
+          const parsed = WorkspaceMultiplexerMutationResultSchemaZ.parse(result);
+          this.#operations.set(request.operationId, {
+            fingerprint: requestFingerprint3,
+            status: "success",
+            result: parsed
+          });
+          return parsed;
+        } catch (error) {
+          const mapped = error instanceof WorkspaceMultiplexerError ? error : new WorkspaceMultiplexerError(
+            "mutation_failed",
+            {
+              operationId: request.operationId,
+              workspaceName: request.intent.workspaceName
+            },
+            error
+          );
+          this.#operations.set(request.operationId, {
+            fingerprint: requestFingerprint3,
+            status: "error",
+            error: mapped
+          });
+          throw mapped;
+        }
+      }
+      #panes(sessionName) {
+        let output;
+        try {
+          output = this.#io.runTmux(["list-panes", "-s", "-t", `=${sessionName}`, "-F", PANE_FIELDS]);
+        } catch (cause) {
+          throw new WorkspaceMultiplexerError(
+            "workspace_unavailable",
+            { sessionName, reason: "session_unreachable" },
+            cause
+          );
+        }
+        return parseMultiplexerPaneRows(output);
+      }
+      async #perform(request, workspace) {
+        const intent = request.intent;
+        const sessionName = workspace.sessionName;
+        const envelope = {
+          operationId: request.operationId,
+          daemonInstanceId: this.#daemonInstanceId,
+          workspaceName: intent.workspaceName
+        };
+        switch (intent.verb) {
+          case "workspace.window.split":
+            return this.#split(request, workspace, envelope);
+          case "workspace.window.kill":
+            return this.#killWindow(intent, sessionName, envelope);
+          case "workspace.pane.kill":
+            return this.#killPane(intent, sessionName, envelope);
+          case "workspace.session.kill":
+            return this.#killSession(sessionName, envelope);
+          case "workspace.rename":
+            return this.#rename(intent, workspace, envelope);
+          case "workspace.pane.zoom.toggle":
+            return this.#zoom(intent, sessionName, envelope);
+          case "workspace.pane.select":
+            return this.#select(intent, sessionName, envelope);
+        }
+      }
+      // -------------------------------------------------------------------------
+      // split
+      // -------------------------------------------------------------------------
+      #split(request, workspace, envelope) {
+        const intent = request.intent;
+        if (intent.verb !== "workspace.window.split") throw new TypeError("wrong intent");
+        const sessionName = workspace.sessionName;
+        const semanticPaneId2 = semanticPaneIdForOperation(request.operationId);
+        const displayTitle = intent.displayTitle ?? "Terminal";
+        const rows = this.#panes(sessionName);
+        const already = rows.find((row) => row.creationId === request.operationId);
+        if (already) {
+          return {
+            ...envelope,
+            verb: "workspace.window.split",
+            outcome: "replayed",
+            direction: intent.direction,
+            semanticPaneId: semanticPaneId2,
+            displayTitle
+          };
+        }
+        const source = resolvePaneRow(rows, intent.semanticPaneId);
+        const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
+        const created = this.#io.runTmux([
+          "split-window",
+          intent.direction === "right" ? "-h" : "-v",
+          "-d",
+          "-P",
+          "-F",
+          "#{pane_id}	#{window_id}",
+          "-t",
+          source.paneId,
+          "-c",
+          canonicalRoot
+        ]);
+        const match = /^(%[0-9]+)\t(@[0-9]+)$/u.exec(created);
+        if (!match) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: request.operationId,
+            reason: "split_output_unparseable"
+          });
+        }
+        const paneId = match[1];
+        try {
+          for (const [option, value] of [
+            [CREATION_OPTION2, request.operationId],
+            [SEMANTIC_PANE_OPTION4, semanticPaneId2],
+            ["@ide_type", "shell"],
+            ["@ide_role", "shell"],
+            [DISPLAY_TITLE_OPTION, displayTitle]
+          ]) {
+            this.#io.runTmux(["set-option", "-p", "-t", paneId, option, value]);
+          }
+          const inspected = this.#io.runTmux([
+            "display-message",
+            "-p",
+            "-t",
+            paneId,
+            [
+              "#{pane_id}",
+              `#{${SEMANTIC_PANE_OPTION4}}`,
+              `#{${CREATION_OPTION2}}`,
+              `#{${DISPLAY_TITLE_OPTION}}`
+            ].join("	")
+          ]);
+          if (inspected !== [paneId, semanticPaneId2, request.operationId, displayTitle].join("	")) {
+            throw new WorkspaceMultiplexerError("mutation_unverified", {
+              operationId: request.operationId,
+              reason: "split_stamp_mismatch"
+            });
+          }
+        } catch (error) {
+          this.#cleanupOwnedPane(paneId, request.operationId);
+          throw error;
+        }
+        return {
+          ...envelope,
+          verb: "workspace.window.split",
+          outcome: "applied",
+          direction: intent.direction,
+          semanticPaneId: semanticPaneId2,
+          displayTitle
+        };
+      }
+      #cleanupOwnedPane(paneId, operationId) {
+        try {
+          const proof = this.#io.runTmux([
+            "display-message",
+            "-p",
+            "-t",
+            paneId,
+            `#{pane_id}	#{${CREATION_OPTION2}}`
+          ]);
+          if (proof !== `${paneId}	${operationId}`) return;
+          this.#io.runTmux(["kill-pane", "-t", paneId]);
+        } catch {
+        }
+      }
+      // -------------------------------------------------------------------------
+      // kill
+      // -------------------------------------------------------------------------
+      #killWindow(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const windowId = resolveWindowId(rows, intent.target);
+        const windows = windowIdsOf(rows);
+        if (windows.length <= 1) {
+          throw new WorkspaceMultiplexerError("last_window_refused", {
+            operationId: envelope.operationId,
+            workspaceName: envelope.workspaceName
+          });
+        }
+        this.#io.runTmux(["kill-window", "-t", windowId]);
+        const after = windowIdsOf(this.#panes(sessionName));
+        if (after.includes(windowId)) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "window_still_present"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.window.kill",
+          outcome: "applied",
+          remainingWindowCount: after.length
+        };
+      }
+      #killPane(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const pane = resolvePaneRow(rows, intent.semanticPaneId);
+        const windows = windowIdsOf(rows);
+        const closesWindow = pane.windowPaneCount === 1;
+        if (closesWindow && windows.length <= 1) {
+          throw new WorkspaceMultiplexerError("last_pane_refused", {
+            operationId: envelope.operationId,
+            workspaceName: envelope.workspaceName
+          });
+        }
+        this.#io.runTmux(["kill-pane", "-t", pane.paneId]);
+        const after = this.#panes(sessionName);
+        if (after.some((row) => row.paneId === pane.paneId)) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "pane_still_present"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.pane.kill",
+          outcome: "applied",
+          windowClosed: closesWindow,
+          remainingWindowCount: windowIdsOf(after).length
+        };
+      }
+      #killSession(sessionName, envelope) {
+        let existed = true;
+        try {
+          this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
+        } catch (error) {
+          if (!this.#io.isMissingTmuxTarget(error)) throw error;
+          existed = false;
+        }
+        if (existed) {
+          this.#io.runTmux(["kill-session", "-t", `=${sessionName}`]);
+          let stillPresent = true;
+          try {
+            this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
+          } catch {
+            stillPresent = false;
+          }
+          if (stillPresent) {
+            throw new WorkspaceMultiplexerError("mutation_unverified", {
+              operationId: envelope.operationId,
+              reason: "session_still_present"
+            });
+          }
+        }
+        return {
+          ...envelope,
+          verb: "workspace.session.kill",
+          // `unchanged` is the honest answer for a session that was already gone:
+          // the user's goal holds, but this call is not what achieved it.
+          outcome: existed ? "applied" : "unchanged"
+        };
+      }
+      // -------------------------------------------------------------------------
+      // rename
+      // -------------------------------------------------------------------------
+      #rename(intent, workspace, envelope) {
+        const sessionName = workspace.sessionName;
+        if (intent.scope === "session") {
+          if (sessionName === intent.name) {
+            return {
+              ...envelope,
+              verb: "workspace.rename",
+              outcome: "unchanged",
+              scope: "session",
+              name: intent.name
+            };
+          }
+          this.#io.runTmux(["rename-session", "-t", `=${sessionName}`, tmuxFormatLiteral2(intent.name)]);
+          const observed2 = this.#io.runTmux([
+            "display-message",
+            "-p",
+            "-t",
+            `=${intent.name}:`,
+            "#{session_name}"
+          ]);
+          if (observed2 !== intent.name) {
+            throw new WorkspaceMultiplexerError("mutation_unverified", {
+              operationId: envelope.operationId,
+              reason: "session_name_mismatch"
+            });
+          }
+          this.#registry.renameSession(workspace.name, intent.name);
+          return {
+            ...envelope,
+            verb: "workspace.rename",
+            outcome: "applied",
+            scope: "session",
+            name: intent.name
+          };
+        }
+        const rows = this.#panes(sessionName);
+        const windowId = resolveWindowId(rows, intent.target);
+        this.#io.runTmux(["rename-window", "-t", windowId, tmuxFormatLiteral2(intent.name)]);
+        const observed = this.#io.runTmux(["display-message", "-p", "-t", windowId, "#{window_name}"]);
+        if (observed !== intent.name) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "window_name_mismatch"
+          });
+        }
+        const panesOfWindow = rows.filter((row) => row.windowId === windowId);
+        if (panesOfWindow.length === 1) {
+          this.#io.runTmux([
+            "set-option",
+            "-p",
+            "-t",
+            panesOfWindow[0].paneId,
+            DISPLAY_TITLE_OPTION,
+            intent.name
+          ]);
+        }
+        return {
+          ...envelope,
+          verb: "workspace.rename",
+          outcome: "applied",
+          scope: "window",
+          name: intent.name
+        };
+      }
+      // -------------------------------------------------------------------------
+      // zoom / select
+      // -------------------------------------------------------------------------
+      #zoom(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const pane = resolvePaneRow(rows, intent.semanticPaneId);
+        const target = intent.desired === "toggle" ? !pane.windowZoomed : intent.desired === "zoomed";
+        if (target === pane.windowZoomed) {
+          return {
+            ...envelope,
+            verb: "workspace.pane.zoom.toggle",
+            outcome: "unchanged",
+            semanticPaneId: intent.semanticPaneId,
+            zoomed: pane.windowZoomed
+          };
+        }
+        this.#io.runTmux(["resize-pane", "-Z", "-t", pane.paneId]);
+        const observed = this.#io.runTmux([
+          "display-message",
+          "-p",
+          "-t",
+          pane.paneId,
+          "#{?window_zoomed_flag,1,0}"
+        ]);
+        const zoomed = observed === "1";
+        if (zoomed !== target) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "zoom_state_mismatch"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.pane.zoom.toggle",
+          outcome: "applied",
+          semanticPaneId: intent.semanticPaneId,
+          zoomed
+        };
+      }
+      #select(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const pane = resolvePaneRow(rows, intent.semanticPaneId);
+        const wasActive = this.#io.runTmux([
+          "display-message",
+          "-p",
+          "-t",
+          pane.paneId,
+          "#{?pane_active,1,0}	#{?window_active,1,0}"
+        ]) === "1	1";
+        this.#io.runTmux(["select-window", "-t", pane.windowId]);
+        this.#io.runTmux(["select-pane", "-t", pane.paneId]);
+        const observed = this.#io.runTmux([
+          "display-message",
+          "-p",
+          "-t",
+          pane.paneId,
+          "#{?pane_active,1,0}	#{?window_active,1,0}"
+        ]);
+        if (observed !== "1	1") {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "pane_not_active"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.pane.select",
+          outcome: wasActive ? "unchanged" : "applied",
+          semanticPaneId: intent.semanticPaneId
+        };
+      }
+    };
+  }
+});
+
 // packages/daemon/src/terminal/attachments/admission-util.ts
 import { createHash as createHash10, timingSafeEqual } from "node:crypto";
 function canonicalOriginOrNull(value) {
@@ -24868,7 +25936,7 @@ var init_admission_util = __esm({
 });
 
 // packages/contracts/src/terminal-attachment-stream.ts
-import { z as z51 } from "zod";
+import { z as z53 } from "zod";
 function decodeTerminalAttachmentInputFrame(frame) {
   if (!(frame instanceof Uint8Array) || frame.byteLength <= TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES || frame.byteLength > TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES || frame[0] !== TERMINAL_ATTACHMENT_INPUT_FRAME_KIND) {
     return null;
@@ -24893,43 +25961,43 @@ var init_terminal_attachment_stream = __esm({
     TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE = 4294967295;
     TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES = 64 * 1024;
     TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES = TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES + TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES;
-    TerminalAttachmentInputLimitsSchemaZ = z51.object({
-      maxFrameBytes: z51.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
-      maxAcceptedBytes: z51.number().int().positive().max(4 * 1024 * 1024),
-      maxAcceptedFrames: z51.number().int().positive().max(16384)
+    TerminalAttachmentInputLimitsSchemaZ = z53.object({
+      maxFrameBytes: z53.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
+      maxAcceptedBytes: z53.number().int().positive().max(4 * 1024 * 1024),
+      maxAcceptedFrames: z53.number().int().positive().max(16384)
     }).strict().refine((limits) => limits.maxFrameBytes <= limits.maxAcceptedBytes, {
       message: "terminal input frame limit cannot exceed its lifetime byte limit"
     });
-    TerminalAttachmentInputCapabilitySchemaZ = z51.union([
-      z51.literal("unavailable"),
-      z51.object({
-        mode: z51.literal("bounded"),
+    TerminalAttachmentInputCapabilitySchemaZ = z53.union([
+      z53.literal("unavailable"),
+      z53.object({
+        mode: z53.literal("bounded"),
         limits: TerminalAttachmentInputLimitsSchemaZ
       }).strict()
     ]);
-    TerminalAttachmentInputAckFrameSchemaZ = z51.object({
-      type: z51.literal("input-ack"),
-      protocolVersion: z51.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z51.number().int().nonnegative(),
-      sequence: z51.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE),
-      byteLength: z51.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
-      state: z51.enum(["open", "exhausted"]),
-      acceptedBytes: z51.number().int().positive().max(4 * 1024 * 1024),
-      acceptedFrames: z51.number().int().positive().max(16384),
-      remainingBytes: z51.number().int().nonnegative().max(4 * 1024 * 1024),
-      remainingFrames: z51.number().int().nonnegative().max(16384)
+    TerminalAttachmentInputAckFrameSchemaZ = z53.object({
+      type: z53.literal("input-ack"),
+      protocolVersion: z53.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z53.number().int().nonnegative(),
+      sequence: z53.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE),
+      byteLength: z53.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
+      state: z53.enum(["open", "exhausted"]),
+      acceptedBytes: z53.number().int().positive().max(4 * 1024 * 1024),
+      acceptedFrames: z53.number().int().positive().max(16384),
+      remainingBytes: z53.number().int().nonnegative().max(4 * 1024 * 1024),
+      remainingFrames: z53.number().int().nonnegative().max(16384)
     }).strict();
   }
 });
 
 // packages/daemon/src/terminal/attachments/grouped-tmux.ts
-import { z as z52 } from "zod";
+import { z as z54 } from "zod";
 function tmux3(argv) {
   return { executable: "tmux", argv };
 }
 function groupedTmuxViewSessionName(attachmentId, generation) {
   const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.shape.attachmentId.parse(attachmentId);
-  const parsedGeneration = z52.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
+  const parsedGeneration = z54.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
   return `${GROUPED_TMUX_VIEW_SESSION_PREFIX}${parsed.replaceAll("-", "").toLowerCase()}-${parsedGeneration.toString(36)}`;
 }
 function markerValue(attachmentId, generation) {
@@ -25052,16 +26120,16 @@ var init_grouped_tmux = __esm({
     GROUPED_TMUX_MAX_GENERATION = 65535;
     GROUPED_TMUX_PLACEHOLDER_WINDOW = "__tmux_ide_attachment_placeholder";
     GROUPED_TMUX_PLACEHOLDER_COMMAND = "exec sleep 2147483647";
-    RuntimeSessionIdSchemaZ2 = z52.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
-    RuntimeWindowIdSchemaZ2 = z52.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
-    RuntimePaneIdSchemaZ2 = z52.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
-    GroupedTmuxAttachmentPlanInputSchemaZ = z52.object({
-      attachmentId: z52.uuid(),
-      generation: z52.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+    RuntimeSessionIdSchemaZ2 = z54.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
+    RuntimeWindowIdSchemaZ2 = z54.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
+    RuntimePaneIdSchemaZ2 = z54.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
+    GroupedTmuxAttachmentPlanInputSchemaZ = z54.object({
+      attachmentId: z54.uuid(),
+      generation: z54.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
       target: TerminalAttachmentSemanticTargetSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ,
       viewport: TerminalAttachmentViewportSchemaZ,
-      source: z52.object({
+      source: z54.object({
         sessionId: RuntimeSessionIdSchemaZ2,
         windowId: RuntimeWindowIdSchemaZ2,
         runtimePaneId: RuntimePaneIdSchemaZ2,
@@ -25071,7 +26139,7 @@ var init_grouped_tmux = __esm({
          * gate: any positive count is valid. Single-pane windows keep passing
          * `1`, so their plans stay byte-identical.
          */
-        windowPaneCount: z52.number().int().positive()
+        windowPaneCount: z54.number().int().positive()
       }).strict()
     }).strict();
   }
@@ -25079,7 +26147,7 @@ var init_grouped_tmux = __esm({
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
 import { createHash as createHash11, randomBytes as randomBytes2, randomUUID as randomUUID4, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
-import { z as z53 } from "zod";
+import { z as z55 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
   if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
@@ -25119,10 +26187,10 @@ var init_lease_manager = __esm({
     init_src();
     init_grouped_tmux();
     init_semantic_pane_catalog();
-    BindingIdSchemaZ = z53.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RequestIdSchemaZ = z53.uuid();
+    BindingIdSchemaZ = z55.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RequestIdSchemaZ = z55.uuid();
     RuntimeWindowId = /^@(?:0|[1-9][0-9]*)$/u;
-    AttachmentViewOperationSchemaZ = z53.enum(["create", "attach", "recover"]);
+    AttachmentViewOperationSchemaZ = z55.enum(["create", "attach", "recover"]);
     RedemptionTicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
     MarkerPattern = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/iu;
     AttachmentLeaseError = class extends Error {
@@ -25428,7 +26496,7 @@ var init_lease_manager = __esm({
             throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
           }
           const clientClaim = typeof executionResult === "object" && executionResult.status === "executed" ? executionResult.clientClaim : null;
-          if (clientClaim && (!z53.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
+          if (clientClaim && (!z55.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
             this.#removeState(state);
             await this.#cleanupPlan(state);
             throw new AttachmentLeaseError(
@@ -25587,7 +26655,7 @@ var init_lease_manager = __esm({
       #freshId() {
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const candidate = this.#createId();
-          if (z53.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
+          if (z55.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
         }
         throw new AttachmentLeaseError(
           "identity-generation-failed",
@@ -25796,7 +26864,7 @@ var init_lease_manager = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/direct-websocket.ts
-import { z as z54 } from "zod";
+import { z as z56 } from "zod";
 function defaultSchedule(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
   timer.unref?.();
@@ -25847,7 +26915,7 @@ function sameTarget(left, right) {
   return left.workspaceName === right.workspaceName && left.semanticPaneId === right.semanticPaneId;
 }
 function validDescriptorIdentity(descriptor2) {
-  return z54.uuid().safeParse(descriptor2.leaseId).success && z54.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
+  return z56.uuid().safeParse(descriptor2.leaseId).success && z56.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
 }
 function boundedInputCapability(client, viewerMode) {
   const input = viewerMode === "interactive" ? client.boundedInput : null;
@@ -25886,18 +26954,18 @@ var init_direct_websocket = __esm({
     TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES = 1024;
     WS_OPEN4 = 1;
     TicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
-    BindingIdSchemaZ2 = z54.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RedemptionFrameSchemaZ = z54.object({
-      type: z54.literal("redeem"),
-      protocolVersion: z54.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      ticket: z54.string().regex(TicketPattern),
-      requestId: z54.uuid(),
+    BindingIdSchemaZ2 = z56.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RedemptionFrameSchemaZ = z56.object({
+      type: z56.literal("redeem"),
+      protocolVersion: z56.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      ticket: z56.string().regex(TicketPattern),
+      requestId: z56.uuid(),
       daemonInstanceId: BindingIdSchemaZ2
     }).strict();
-    ResizeFrameSchemaZ = z54.object({
-      type: z54.literal("resize"),
-      protocolVersion: z54.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z54.number().int().nonnegative(),
+    ResizeFrameSchemaZ = z56.object({
+      type: z56.literal("resize"),
+      protocolVersion: z56.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z56.number().int().nonnegative(),
       viewport: TerminalAttachmentViewportSchemaZ
     }).strict();
     GridSchemaZ = TerminalAttachmentViewportSchemaZ;
@@ -26015,7 +27083,7 @@ var init_direct_websocket = __esm({
             );
           }
           const origin = canonicalRendererOrigin(context.rendererOrigin);
-          const requestId = z54.uuid().parse(context.requestId);
+          const requestId = z56.uuid().parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ2.parse(context.projectIdentity);
           if (this.#pending.size + this.#pendingReservations >= this.#maxPending) {
             throw new TerminalAttachmentAdmissionError(
@@ -26766,7 +27834,7 @@ var init_direct_websocket = __esm({
 
 // packages/daemon/src/terminal/attachments/tmux-view-executor.ts
 import { isDeepStrictEqual } from "node:util";
-import { z as z55 } from "zod";
+import { z as z57 } from "zod";
 function tmux4(argv) {
   return { executable: "tmux", argv };
 }
@@ -26856,7 +27924,7 @@ function parseViewSessionName(value) {
   const match = ViewNamePattern.exec(value);
   if (!match) return null;
   const attachmentId = uuidFromCompactHex(match[1]);
-  if (!z55.uuid().safeParse(attachmentId).success) return null;
+  if (!z57.uuid().safeParse(attachmentId).success) return null;
   const generation = Number.parseInt(match[2], 36);
   if (!Number.isSafeInteger(generation) || generation < 0 || generation > GROUPED_TMUX_MAX_GENERATION || generation.toString(36) !== match[2]) {
     return null;
@@ -26905,7 +27973,7 @@ function canonicalPlanFor(operation) {
     throw new TmuxAttachmentViewExecutorError("invalid-request");
   }
 }
-var MAX_TMUX_OUTPUT_BYTES3, MAX_ENUMERATED_VIEWS, MAX_ENUMERATED_WINDOWS_PER_VIEW, MAX_WINDOW_PANES, MAX_MARKER_OUTPUT_ROWS, SOURCE_PROOF_MISMATCH_SENTINEL, VIEW_PROOF_MISMATCH_SENTINEL, RuntimeSessionIdSchemaZ3, RuntimeWindowIdSchemaZ3, RuntimePaneIdSchemaZ3, MarkerPattern2, ViewNamePattern, TmuxAttachmentClientTransportError, ERROR_MESSAGES5, TmuxAttachmentViewExecutorError, TmuxAttachmentOperationSerializer, productionRunner, TmuxAttachmentClientTransportInputSchemaZ, TmuxAttachmentViewExecutor;
+var MAX_TMUX_OUTPUT_BYTES3, MAX_ENUMERATED_VIEWS, MAX_ENUMERATED_WINDOWS_PER_VIEW, MAX_WINDOW_PANES, MAX_MARKER_OUTPUT_ROWS, SOURCE_PROOF_MISMATCH_SENTINEL, VIEW_PROOF_MISMATCH_SENTINEL, RuntimeSessionIdSchemaZ3, RuntimeWindowIdSchemaZ3, RuntimePaneIdSchemaZ3, MarkerPattern2, ViewNamePattern, TmuxAttachmentClientTransportError, ERROR_MESSAGES6, TmuxAttachmentViewExecutorError, TmuxAttachmentOperationSerializer, productionRunner, TmuxAttachmentClientTransportInputSchemaZ, TmuxAttachmentViewExecutor;
 var init_tmux_view_executor = __esm({
   "packages/daemon/src/terminal/attachments/tmux-view-executor.ts"() {
     "use strict";
@@ -26919,9 +27987,9 @@ var init_tmux_view_executor = __esm({
     MAX_MARKER_OUTPUT_ROWS = 1;
     SOURCE_PROOF_MISMATCH_SENTINEL = "__tmux_ide_source_proof_mismatch_v1__";
     VIEW_PROOF_MISMATCH_SENTINEL = "__tmux_ide_view_proof_mismatch_v1__";
-    RuntimeSessionIdSchemaZ3 = z55.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-    RuntimeWindowIdSchemaZ3 = z55.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-    RuntimePaneIdSchemaZ3 = z55.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+    RuntimeSessionIdSchemaZ3 = z57.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+    RuntimeWindowIdSchemaZ3 = z57.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+    RuntimePaneIdSchemaZ3 = z57.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
     MarkerPattern2 = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/u;
     ViewNamePattern = /^_tmux-ide-view-v1-([0-9a-f]{32})-([0-9a-z]+)$/u;
     TmuxAttachmentClientTransportError = class extends Error {
@@ -26932,7 +28000,7 @@ var init_tmux_view_executor = __esm({
         this.code = code;
       }
     };
-    ERROR_MESSAGES5 = {
+    ERROR_MESSAGES6 = {
       "invalid-request": "The guarded tmux attachment request is invalid.",
       "invalid-tmux-output": "Trusted tmux attachment discovery returned invalid output.",
       "tmux-command-failed": "The guarded tmux attachment command failed.",
@@ -26944,7 +28012,7 @@ var init_tmux_view_executor = __esm({
     TmuxAttachmentViewExecutorError = class extends Error {
       code;
       constructor(code) {
-        super(ERROR_MESSAGES5[code]);
+        super(ERROR_MESSAGES6[code]);
         this.name = "TmuxAttachmentViewExecutorError";
         this.code = code;
       }
@@ -26983,18 +28051,18 @@ var init_tmux_view_executor = __esm({
         }
       }
     };
-    TmuxAttachmentClientTransportInputSchemaZ = z55.object({
-      operation: z55.enum(["attach", "recover"]),
-      identity: z55.object({
-        attachmentId: z55.uuid(),
-        generation: z55.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
-        viewSessionName: z55.string(),
-        markerValue: z55.string(),
+    TmuxAttachmentClientTransportInputSchemaZ = z57.object({
+      operation: z57.enum(["attach", "recover"]),
+      identity: z57.object({
+        attachmentId: z57.uuid(),
+        generation: z57.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+        viewSessionName: z57.string(),
+        markerValue: z57.string(),
         expectedSourceSessionId: RuntimeSessionIdSchemaZ3,
         expectedViewSessionId: RuntimeSessionIdSchemaZ3,
         expectedWindowId: RuntimeWindowIdSchemaZ3,
         expectedPaneId: RuntimePaneIdSchemaZ3,
-        expectedWindowPaneCount: z55.number().int().positive()
+        expectedWindowPaneCount: z57.number().int().positive()
       }).strict(),
       viewport: TerminalAttachmentViewportSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ
@@ -27062,7 +28130,7 @@ var init_tmux_view_executor = __esm({
             throw new TmuxAttachmentViewExecutorError("invalid-request");
           }
           const result = this.#clientTransport.beginGuardedAttach(input);
-          if (result.status !== "claimed" || !z55.uuid().safeParse(result.attemptId).success || result.attachmentId !== plan.identity.attachmentId || result.generation !== plan.identity.generation || !(result.outcome instanceof Promise)) {
+          if (result.status !== "claimed" || !z57.uuid().safeParse(result.attemptId).success || result.attachmentId !== plan.identity.attachmentId || result.generation !== plan.identity.generation || !(result.outcome instanceof Promise)) {
             throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
           }
           return result;
@@ -27481,7 +28549,7 @@ var init_tmux_view_executor = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/pty-tmux-attachment-launcher.ts
-import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync8, statSync as statSync9 } from "node:fs";
+import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync9, statSync as statSync10 } from "node:fs";
 import { delimiter as delimiter3, isAbsolute as isAbsolute8, join as join28 } from "node:path";
 import { randomUUID as randomUUID5 } from "node:crypto";
 import { execFileSync as execFileSync12 } from "node:child_process";
@@ -27514,8 +28582,8 @@ function resolveTmuxExecutable2(pathValue = process.env.PATH) {
     const candidate = join28(directory, "tmux");
     try {
       accessSync4(candidate, constants5.X_OK);
-      if (!statSync9(candidate).isFile()) continue;
-      return realpathSync8(candidate);
+      if (!statSync10(candidate).isFile()) continue;
+      return realpathSync9(candidate);
     } catch {
     }
   }
@@ -28029,9 +29097,9 @@ var init_pty_tmux_attachment_launcher = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/native-runtime.ts
-import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync9, statSync as statSync10 } from "node:fs";
+import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync10, statSync as statSync11 } from "node:fs";
 import { isAbsolute as isAbsolute9 } from "node:path";
-import { z as z56 } from "zod";
+import { z as z58 } from "zod";
 function presentationEnvironment(source) {
   const environment = {
     TERM: SAFE_TERMINAL_VALUE2.test(source.TERM ?? "") ? source.TERM : "xterm-256color"
@@ -28048,17 +29116,17 @@ function presentationEnvironment(source) {
 function canonicalAuthority(input) {
   try {
     if (!isAbsolute9(input.executablePath) || !isAbsolute9(input.trustedCwd)) throw new Error();
-    const executablePath = realpathSync9(input.executablePath);
-    const trustedCwd = realpathSync9(input.trustedCwd);
+    const executablePath = realpathSync10(input.executablePath);
+    const trustedCwd = realpathSync10(input.trustedCwd);
     accessSync5(executablePath, constants6.X_OK);
-    if (!statSync10(executablePath).isFile() || !statSync10(trustedCwd).isDirectory())
+    if (!statSync11(executablePath).isFile() || !statSync11(trustedCwd).isDirectory())
       throw new Error();
     let socketSelector;
     let socketArgv;
     if (input.socketSelector.kind === "path") {
       if (!isAbsolute9(input.socketSelector.path)) throw new Error();
-      const path2 = realpathSync9(input.socketSelector.path);
-      if (!statSync10(path2).isSocket()) throw new Error();
+      const path2 = realpathSync10(input.socketSelector.path);
+      if (!statSync11(path2).isSocket()) throw new Error();
       socketSelector = { kind: "path", path: path2 };
       socketArgv = ["-S", path2];
     } else {
@@ -28322,12 +29390,12 @@ function commandString(argv) {
   return argv.map((value) => value === ";" ? ";" : quoteArgument(value)).join(" ");
 }
 function geometryDescriptorIsValid(descriptor2, client) {
-  return z56.uuid().safeParse(descriptor2.leaseId).success && z56.uuid().safeParse(descriptor2.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor2.target).success && descriptor2.status === "active" && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0 && descriptor2.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z56.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor2.leaseId && client.generation === descriptor2.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
+  return z58.uuid().safeParse(descriptor2.leaseId).success && z58.uuid().safeParse(descriptor2.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor2.target).success && descriptor2.status === "active" && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0 && descriptor2.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z58.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor2.leaseId && client.generation === descriptor2.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
 }
 function createNativeTerminalAttachmentRuntime(options) {
   return new NativeTerminalAttachmentRuntime(options);
 }
-var MAX_TMUX_OUTPUT_BYTES4, MAX_DISCOVERED_WORKSPACES, MAX_DISCOVERED_PANES, MAX_GEOMETRY_CLIENTS, SAFE_SESSION_NAME, SAFE_TERMINAL_VALUE2, SAFE_COLOR_TERMINAL_VALUE2, SAFE_LOCALE_VALUE2, INTEGER, VIEW_MISMATCH, SESSION_WIRE_SENTINEL, PANE_WIRE_SENTINEL, WIRE_SEPARATOR, RUNTIME_SESSION_ID, RUNTIME_WINDOW_ID, RUNTIME_PANE_ID, ERROR_MESSAGES6, NativeTerminalAttachmentRuntimeError, SESSION_FORMAT3, PANE_FORMAT2, NativeTerminalAttachmentGeometryResolver, NativeTerminalAttachmentRuntime;
+var MAX_TMUX_OUTPUT_BYTES4, MAX_DISCOVERED_WORKSPACES, MAX_DISCOVERED_PANES, MAX_GEOMETRY_CLIENTS, SAFE_SESSION_NAME, SAFE_TERMINAL_VALUE2, SAFE_COLOR_TERMINAL_VALUE2, SAFE_LOCALE_VALUE2, INTEGER, VIEW_MISMATCH, SESSION_WIRE_SENTINEL, PANE_WIRE_SENTINEL, WIRE_SEPARATOR, RUNTIME_SESSION_ID, RUNTIME_WINDOW_ID, RUNTIME_PANE_ID, ERROR_MESSAGES7, NativeTerminalAttachmentRuntimeError, SESSION_FORMAT3, PANE_FORMAT2, NativeTerminalAttachmentGeometryResolver, NativeTerminalAttachmentRuntime;
 var init_native_runtime = __esm({
   "packages/daemon/src/terminal/attachments/native-runtime.ts"() {
     "use strict";
@@ -28355,7 +29423,7 @@ var init_native_runtime = __esm({
     RUNTIME_SESSION_ID = /^\$(?:0|[1-9][0-9]*)$/u;
     RUNTIME_WINDOW_ID = /^@(?:0|[1-9][0-9]*)$/u;
     RUNTIME_PANE_ID = /^%(?:0|[1-9][0-9]*)$/u;
-    ERROR_MESSAGES6 = {
+    ERROR_MESSAGES7 = {
       "invalid-authority": "The daemon tmux authority is invalid.",
       "discovery-failed": "Trusted semantic pane discovery failed.",
       "invalid-tmux-output": "Trusted tmux discovery returned invalid output.",
@@ -28366,7 +29434,7 @@ var init_native_runtime = __esm({
     NativeTerminalAttachmentRuntimeError = class extends Error {
       code;
       constructor(code) {
-        super(ERROR_MESSAGES6[code]);
+        super(ERROR_MESSAGES7[code]);
         this.name = "NativeTerminalAttachmentRuntimeError";
         this.code = code;
       }
@@ -28937,7 +30005,7 @@ var init_terminal_attachment_upgrade = __esm({
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
 import { createHash as createHash12, randomBytes as randomBytes3, randomUUID as randomUUID6, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
-import { z as z57 } from "zod";
+import { z as z59 } from "zod";
 function positiveDuration2(value, fallback, label2) {
   const resolved2 = value ?? fallback;
   if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
@@ -28966,9 +30034,9 @@ var init_lease_manager2 = __esm({
   "packages/daemon/src/terminal/pane-stream/lease-manager.ts"() {
     "use strict";
     init_src();
-    BindingIdSchemaZ3 = z57.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RequestIdSchemaZ2 = z57.uuid();
-    SessionNameSchemaZ = z57.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    BindingIdSchemaZ3 = z59.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RequestIdSchemaZ2 = z59.uuid();
+    SessionNameSchemaZ = z59.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
     TicketPattern2 = /^ps1_[A-Za-z0-9_-]{43}$/u;
     PaneStreamLeaseError = class extends Error {
       code;
@@ -29132,7 +30200,7 @@ var init_lease_manager2 = __esm({
       #freshId() {
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const candidate = this.#createId();
-          if (z57.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
+          if (z59.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
         }
         throw new PaneStreamLeaseError(
           "identity-generation-failed",
@@ -29277,7 +30345,7 @@ var init_wire_ledger = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts
-import { z as z58 } from "zod";
+import { z as z60 } from "zod";
 function defaultSchedule3(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
   timer.unref?.();
@@ -29350,7 +30418,7 @@ var init_pane_stream_websocket = __esm({
     PANE_STREAM_MAX_REDEMPTION_MS = 1e3;
     WS_OPEN5 = 1;
     TicketPattern3 = /^ps1_[A-Za-z0-9_-]{43}$/u;
-    BindingIdSchemaZ4 = z58.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    BindingIdSchemaZ4 = z60.string().min(1).max(4096).refine((value) => !value.includes("\0"));
     PaneStreamAdmissionError = class extends Error {
       code;
       constructor(code, message) {
@@ -29422,7 +30490,7 @@ var init_pane_stream_websocket = __esm({
           if (origin === null) {
             throw new PaneStreamAdmissionError("invalid-origin", "Renderer Origin is invalid.");
           }
-          const requestId = z58.uuid().parse(context.requestId);
+          const requestId = z60.uuid().parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ4.parse(context.projectIdentity);
           if (this.#pending.size >= this.#maxPending) {
             throw new PaneStreamAdmissionError(
@@ -29455,7 +30523,7 @@ var init_pane_stream_websocket = __esm({
           });
           const descriptor2 = issued.descriptor;
           const ticket = issued.redemptionTicket;
-          const valid = TicketPattern3.test(ticket) && z58.uuid().safeParse(descriptor2.leaseId).success && descriptor2.requestId === requestId && descriptor2.status === "awaiting-redemption" && descriptor2.viewerMode === request.viewerMode && descriptor2.workspaceName === request.workspaceName && descriptor2.panes.length === request.panes.length && descriptor2.panes.every((pane, index) => pane === request.panes[index]) && descriptor2.expiresAt > this.#now();
+          const valid = TicketPattern3.test(ticket) && z60.uuid().safeParse(descriptor2.leaseId).success && descriptor2.requestId === requestId && descriptor2.status === "awaiting-redemption" && descriptor2.viewerMode === request.viewerMode && descriptor2.workspaceName === request.workspaceName && descriptor2.panes.length === request.panes.length && descriptor2.panes.every((pane, index) => pane === request.panes[index]) && descriptor2.expiresAt > this.#now();
           const ticketDigest = digestSecret(ticket);
           const duplicate = [...this.#pending.values()].some(
             (pending2) => digestsEqual(pending2.ticketDigest, ticketDigest)
@@ -32403,74 +33471,74 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z59 } from "zod";
+import { z as z61 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z59.object({
-      status: z59.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z59.string().optional(),
-      title: z59.string().optional(),
-      description: z59.string().optional(),
-      priority: z59.number().optional()
+    updateTaskSchema = z61.object({
+      status: z61.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z61.string().optional(),
+      title: z61.string().optional(),
+      description: z61.string().optional(),
+      priority: z61.number().optional()
     });
-    createTaskSchema = z59.object({
-      title: z59.string().trim().min(1, "Title is required"),
-      description: z59.string().optional(),
-      priority: z59.number().optional(),
-      goal: z59.string().optional(),
-      tags: z59.array(z59.string()).optional()
+    createTaskSchema = z61.object({
+      title: z61.string().trim().min(1, "Title is required"),
+      description: z61.string().optional(),
+      priority: z61.number().optional(),
+      goal: z61.string().optional(),
+      tags: z61.array(z61.string()).optional()
     });
-    savePlanSchema = z59.object({
-      content: z59.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z61.object({
+      content: z61.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z59.object({
-      content: z59.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z61.object({
+      content: z61.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z59.object({
-      target: z59.string().min(1, "Target pane is required"),
-      message: z59.string().min(1, "Message is required"),
-      noEnter: z59.boolean().optional()
+    sendCommandSchema = z61.object({
+      target: z61.string().min(1, "Target pane is required"),
+      message: z61.string().min(1, "Message is required"),
+      noEnter: z61.boolean().optional()
     });
-    createMilestoneSchema = z59.object({
-      title: z59.string().trim().min(1, "Title is required"),
-      sequence: z59.number().int().positive(),
-      description: z59.string().optional()
+    createMilestoneSchema = z61.object({
+      title: z61.string().trim().min(1, "Title is required"),
+      sequence: z61.number().int().positive(),
+      description: z61.string().optional()
     });
-    updateMilestoneSchema = z59.object({
-      status: z59.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z59.string().optional(),
-      description: z59.string().optional()
+    updateMilestoneSchema = z61.object({
+      status: z61.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z61.string().optional(),
+      description: z61.string().optional()
     });
-    updateAssertionSchema = z59.object({
-      status: z59.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z59.string().optional(),
-      verifiedBy: z59.string().optional()
+    updateAssertionSchema = z61.object({
+      status: z61.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z61.string().optional(),
+      verifiedBy: z61.string().optional()
     });
-    triggerResearchSchema = z59.object({
-      type: z59.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z61.object({
+      type: z61.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z59.object({
-      attach: z59.boolean().optional()
+    launchSchema = z61.object({
+      attach: z61.boolean().optional()
     }).optional();
-    stopSchema = z59.object({}).optional();
+    stopSchema = z61.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z59.object({
-      name: z59.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z61.object({
+      name: z61.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z59.string().trim().optional(),
-      description: z59.string().optional(),
-      specialties: z59.array(z59.string()).optional(),
-      body: z59.string().optional()
+      role: z61.string().trim().optional(),
+      description: z61.string().optional(),
+      specialties: z61.array(z61.string()).optional(),
+      body: z61.string().optional()
     });
-    updateSkillSchema = z59.object({
-      role: z59.string().trim().optional(),
-      description: z59.string().optional(),
-      specialties: z59.array(z59.string()).optional(),
-      body: z59.string().optional()
+    updateSkillSchema = z61.object({
+      role: z61.string().trim().optional(),
+      description: z61.string().optional(),
+      specialties: z61.array(z61.string()).optional(),
+      body: z61.string().optional()
     });
   }
 });
@@ -33384,6 +34452,56 @@ var init_workspace_promote = __esm({
   }
 });
 
+// packages/daemon/src/command-center/actions/handlers/workspace-multiplexer.ts
+async function runVerb(verb, input, context, deps2) {
+  const authority = deps2.authority ?? context.workspaceMultiplexerBackend;
+  if (!authority) {
+    throw new ActionError({
+      code: "workspace_unavailable",
+      message: "Multiplexer verbs are not available from this daemon."
+    });
+  }
+  if (!context.operationId || !context.daemonInstanceId) {
+    throw new ActionError({
+      code: "bad_request",
+      message: "Multiplexer verbs require trusted host retry and generation metadata."
+    });
+  }
+  try {
+    return await authority.mutate({
+      operationId: context.operationId,
+      expectedDaemonInstanceId: context.daemonInstanceId,
+      intent: { ...input, verb }
+    });
+  } catch (error) {
+    if (!(error instanceof WorkspaceMultiplexerError)) throw error;
+    throw new ActionError({
+      code: error.code,
+      message: error.message,
+      details: error.context,
+      cause: error
+    });
+  }
+}
+function verbHandler(verb) {
+  return async (input, context = {}, deps2 = {}) => await runVerb(verb, input, context, deps2);
+}
+var workspaceWindowSplitHandler, workspaceWindowKillHandler, workspacePaneKillHandler, workspaceSessionKillHandler, workspaceRenameHandler, workspacePaneZoomToggleHandler, workspacePaneSelectHandler;
+var init_workspace_multiplexer2 = __esm({
+  "packages/daemon/src/command-center/actions/handlers/workspace-multiplexer.ts"() {
+    "use strict";
+    init_workspace_multiplexer_verbs();
+    init_errors3();
+    workspaceWindowSplitHandler = verbHandler("workspace.window.split");
+    workspaceWindowKillHandler = verbHandler("workspace.window.kill");
+    workspacePaneKillHandler = verbHandler("workspace.pane.kill");
+    workspaceSessionKillHandler = verbHandler("workspace.session.kill");
+    workspaceRenameHandler = verbHandler("workspace.rename");
+    workspacePaneZoomToggleHandler = verbHandler("workspace.pane.zoom.toggle");
+    workspacePaneSelectHandler = verbHandler("workspace.pane.select");
+  }
+});
+
 // packages/daemon/src/command-center/actions/registry.ts
 function getLooseActionEntry(name) {
   return actionRegistry[name];
@@ -33407,6 +34525,7 @@ var init_registry2 = __esm({
     init_workspace_pane_create();
     init_workspace_open3();
     init_workspace_promote();
+    init_workspace_multiplexer2();
     actionRegistry = {
       "project.openTerminal": {
         inputSchema: ActionContractsZ["project.openTerminal"].input,
@@ -33506,6 +34625,48 @@ var init_registry2 = __esm({
         resultSchema: ActionContractsZ["workspace.app-window.mutate"].result,
         handler: (input) => appWindowMutateHandler(input),
         handlerWithContext: appWindowMutateHandler
+      },
+      "workspace.window.split": {
+        inputSchema: ActionContractsZ["workspace.window.split"].input,
+        resultSchema: ActionContractsZ["workspace.window.split"].result,
+        handler: (input) => workspaceWindowSplitHandler(input),
+        handlerWithContext: workspaceWindowSplitHandler
+      },
+      "workspace.window.kill": {
+        inputSchema: ActionContractsZ["workspace.window.kill"].input,
+        resultSchema: ActionContractsZ["workspace.window.kill"].result,
+        handler: (input) => workspaceWindowKillHandler(input),
+        handlerWithContext: workspaceWindowKillHandler
+      },
+      "workspace.pane.kill": {
+        inputSchema: ActionContractsZ["workspace.pane.kill"].input,
+        resultSchema: ActionContractsZ["workspace.pane.kill"].result,
+        handler: (input) => workspacePaneKillHandler(input),
+        handlerWithContext: workspacePaneKillHandler
+      },
+      "workspace.session.kill": {
+        inputSchema: ActionContractsZ["workspace.session.kill"].input,
+        resultSchema: ActionContractsZ["workspace.session.kill"].result,
+        handler: (input) => workspaceSessionKillHandler(input),
+        handlerWithContext: workspaceSessionKillHandler
+      },
+      "workspace.rename": {
+        inputSchema: ActionContractsZ["workspace.rename"].input,
+        resultSchema: ActionContractsZ["workspace.rename"].result,
+        handler: (input) => workspaceRenameHandler(input),
+        handlerWithContext: workspaceRenameHandler
+      },
+      "workspace.pane.zoom.toggle": {
+        inputSchema: ActionContractsZ["workspace.pane.zoom.toggle"].input,
+        resultSchema: ActionContractsZ["workspace.pane.zoom.toggle"].result,
+        handler: (input) => workspacePaneZoomToggleHandler(input),
+        handlerWithContext: workspacePaneZoomToggleHandler
+      },
+      "workspace.pane.select": {
+        inputSchema: ActionContractsZ["workspace.pane.select"].input,
+        resultSchema: ActionContractsZ["workspace.pane.select"].result,
+        handler: (input) => workspacePaneSelectHandler(input),
+        handlerWithContext: workspacePaneSelectHandler
       }
     };
   }
@@ -33669,7 +34830,14 @@ var init_command_definitions = __esm({
       "workspace.pane.create": { label: "Create workspace pane", category: "workspace" },
       "workspace.open": { label: "Open config-free workspace", category: "workspace" },
       "workspace.promote": { label: "Promote adopted session to workspace", category: "workspace" },
-      "workspace.app-window.mutate": { label: "Mutate application window", category: "workspace" }
+      "workspace.app-window.mutate": { label: "Mutate application window", category: "workspace" },
+      "workspace.window.split": { label: "Split pane", category: "workspace" },
+      "workspace.window.kill": { label: "Close window", category: "workspace", dangerous: true },
+      "workspace.pane.kill": { label: "Close pane", category: "workspace", dangerous: true },
+      "workspace.session.kill": { label: "Close session", category: "workspace", dangerous: true },
+      "workspace.rename": { label: "Rename session or window", category: "workspace" },
+      "workspace.pane.zoom.toggle": { label: "Toggle pane zoom", category: "workspace" },
+      "workspace.pane.select": { label: "Focus pane", category: "workspace" }
     };
     DAEMON_ACTION_COMMAND_DEFINITIONS = Object.freeze(
       ACTION_NAMES.map(
@@ -33781,7 +34949,8 @@ function createActionDispatcher(deps2 = {}) {
         workspacePaneCreationBackend: deps2.workspacePaneCreationBackend,
         workspaceOpenBackend: deps2.workspaceOpenBackend,
         workspacePromotionBackend: deps2.workspacePromotionBackend,
-        appWindowMutationBackend: deps2.appWindowMutationBackend
+        appWindowMutationBackend: deps2.appWindowMutationBackend,
+        workspaceMultiplexerBackend: deps2.workspaceMultiplexerBackend
       };
       result = entry.handlerWithContext ? await entry.handlerWithContext(commandResolution.command.input, context) : await entry.handler(commandResolution.command.input);
     } catch (err) {
@@ -33929,70 +35098,70 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z60 } from "zod";
+import { z as z62 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z60.object({
+    ProjectInspectDetectedSchemaZ = z62.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z60.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z62.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z60.array(z60.string()),
+      frameworks: z62.array(z62.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z60.string().nullable(),
+      devCommand: z62.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z60.string().nullable()
+      testCommand: z62.string().nullable()
     });
-    ProjectInspectSchemaZ = z60.object({
+    ProjectInspectSchemaZ = z62.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z60.string(),
+      name: z62.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z60.string(),
+      dir: z62.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z60.boolean(),
+      hasIdeYml: z62.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z60.boolean().optional(),
+      hasWorkspaceConfig: z62.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z60.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z62.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z60.string().nullable().optional(),
+      configPath: z62.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z60.string().nullable().optional(),
+      ideConfigPath: z62.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z60.string().nullable(),
+      gitOrigin: z62.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z60.string().nullable(),
+      gitBranch: z62.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z60.object({
-      dir: z60.string().min(1)
+    InspectFilesystemRequestSchemaZ = z62.object({
+      dir: z62.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z60.object({
-      dir: z60.string().min(1),
+    OnboardProjectRequestSchemaZ = z62.object({
+      dir: z62.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z60.string().min(1).optional(),
+      name: z62.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z60.number().int().min(1).max(3),
+      agents: z62.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z60.array(z60.string().min(1)).optional(),
+      agentNames: z62.array(z62.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z60.string().min(1).nullable().optional(),
+      devCommand: z62.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z60.string().min(1).nullable().optional(),
+      testCommand: z62.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z60.string().min(1).nullable().optional()
+      lintCommand: z62.string().min(1).nullable().optional()
     });
   }
 });
 
 // packages/daemon/src/lib/filesystem-browser.ts
-import { realpathSync as realpathSync10, readdirSync as readdirSync4, statSync as statSync11 } from "node:fs";
+import { realpathSync as realpathSync11, readdirSync as readdirSync4, statSync as statSync12 } from "node:fs";
 import { homedir as homedir19 } from "node:os";
 import { isAbsolute as isAbsolute10, join as join33, resolve as resolve25, sep as sep5 } from "node:path";
 function isUnderRoot(canonical, root) {
@@ -34220,7 +35389,7 @@ var init_workspace_resource_ids = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-files-authority.ts
-import { lstatSync as lstatSync3, readdirSync as readdirSync5, readFileSync as readFileSync26, realpathSync as realpathSync11 } from "node:fs";
+import { lstatSync as lstatSync3, readdirSync as readdirSync5, readFileSync as readFileSync26, realpathSync as realpathSync12 } from "node:fs";
 import { basename as basename12, dirname as dirname28, resolve as resolvePath, sep as sep6 } from "node:path";
 import ignore from "ignore";
 function extensionOf(name) {
@@ -34387,7 +35556,7 @@ var init_workspace_files_authority = __esm({
       catalog(directoryId) {
         let realRoot;
         try {
-          realRoot = realpathSync11(this.root);
+          realRoot = realpathSync12(this.root);
         } catch {
           return this.catalogUnavailable(
             "workspace-unavailable",
@@ -34413,7 +35582,7 @@ var init_workspace_files_authority = __esm({
         const absCandidate = relPath === "" ? realRoot : resolvePath(realRoot, relPath);
         let absReal;
         try {
-          absReal = realpathSync11(absCandidate);
+          absReal = realpathSync12(absCandidate);
         } catch (error) {
           const code = error.code;
           if (code === "EACCES" || code === "EPERM") {
@@ -34512,7 +35681,7 @@ var init_workspace_files_authority = __esm({
       rootEntryCount() {
         let realRoot;
         try {
-          realRoot = realpathSync11(this.root);
+          realRoot = realpathSync12(this.root);
         } catch {
           return null;
         }
@@ -34535,7 +35704,7 @@ var init_workspace_files_authority = __esm({
       preview(fileId) {
         let realRoot;
         try {
-          realRoot = realpathSync11(this.root);
+          realRoot = realpathSync12(this.root);
         } catch {
           return this.previewWorkspaceUnavailable(fileId);
         }
@@ -34567,7 +35736,7 @@ var init_workspace_files_authority = __esm({
         }
         let realParent;
         try {
-          realParent = realpathSync11(dirname28(abs));
+          realParent = realpathSync12(dirname28(abs));
         } catch {
           return this.previewUnavailable(
             fileId,
@@ -34892,7 +36061,7 @@ var init_workspace_changes_git = __esm({
 
 // packages/daemon/src/command-center/resources/workspace-changes-authority.ts
 import { spawnSync } from "node:child_process";
-import { readFileSync as readFileSync27, realpathSync as realpathSync12, statSync as statSync12 } from "node:fs";
+import { readFileSync as readFileSync27, realpathSync as realpathSync13, statSync as statSync13 } from "node:fs";
 import { basename as basename13, isAbsolute as isAbsolute12, relative as relative4, resolve as resolvePath2 } from "node:path";
 function runGit(args, cwd) {
   const result = spawnSync("git", args, {
@@ -35145,7 +36314,7 @@ var init_workspace_changes_authority = __esm({
       untrackedDiff(changeId, base, absPath) {
         let buffer;
         try {
-          const stat = statSync12(absPath);
+          const stat = statSync13(absPath);
           if (stat.size > DIFF_MAX_BYTES) {
             return this.diffParse(changeId, {
               status: "too-large",
@@ -35197,7 +36366,7 @@ var init_workspace_changes_authority = __esm({
       resolveRepo() {
         let realRoot;
         try {
-          realRoot = realpathSync12(this.root);
+          realRoot = realpathSync13(this.root);
         } catch {
           return {
             reason: "workspace-unavailable",
@@ -37200,8 +38369,8 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
-import { z as z61 } from "zod";
-import { realpathSync as realpathSync13 } from "node:fs";
+import { z as z63 } from "zod";
+import { realpathSync as realpathSync14 } from "node:fs";
 import { homedir as homedir20 } from "node:os";
 import { isAbsolute as isAbsolute13, resolve as pathResolve } from "node:path";
 import { randomUUID as randomUUID10 } from "node:crypto";
@@ -37242,12 +38411,11 @@ function requireHostCapability(ownerToken) {
   });
   return async (c, next) => {
     const actionName = c.req.param("name");
-    if (actionName !== "workspace.pane.create" && actionName !== "workspace.open" && actionName !== "workspace.promote" && actionName !== "workspace.app-window.mutate") {
-      return next();
-    }
+    const requirement = actionName ? GATED_ACTIONS[actionName] : void 0;
+    if (!requirement) return next();
     const denied = gate(c);
     if (denied) return denied;
-    if (!z61.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+    if (requirement === "owner-and-operation-id" && !z63.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
     return next();
@@ -37309,7 +38477,7 @@ function sandboxResolveDir(rawDir) {
   const resolved2 = pathResolve(candidate);
   let canonical;
   try {
-    canonical = realpathSync13(resolved2);
+    canonical = realpathSync14(resolved2);
   } catch (err) {
     const code = err.code;
     if (code === "ENOENT" || code === "ENOTDIR") {
@@ -37402,7 +38570,7 @@ function createApp(options = {}) {
       } catch {
         return c.json({ error: "Invalid capability request" }, 400);
       }
-      if (!z61.object({}).strict().safeParse(body).success) {
+      if (!z63.object({}).strict().safeParse(body).success) {
         return c.json({ error: "Invalid capability request" }, 400);
       }
       const appWindowCommandRegistered = daemonActionCommandRegistry.descriptors().some(({ id }) => id === "workspace.app-window.mutate");
@@ -37426,7 +38594,8 @@ function createApp(options = {}) {
       workspacePaneCreationBackend: options.workspacePaneCreationBackend,
       workspaceOpenBackend: options.workspaceOpenBackend,
       workspacePromotionBackend: options.workspacePromotionBackend,
-      appWindowMutationBackend: options.appWindowMutationBackend
+      appWindowMutationBackend: options.appWindowMutationBackend,
+      workspaceMultiplexerBackend: options.workspaceMultiplexerBackend
     })
   );
   app.get("/api/widget/:name/spawn", async (c) => {
@@ -38366,7 +39535,7 @@ function attachWsEvents(server, daemonIdentity) {
     }
   };
 }
-var defaultApplicationShellAppWindowBackend, defaultApplicationShellMissionBackend, projectStreamConnections, requireOwnerCapability, sseMetrics;
+var defaultApplicationShellAppWindowBackend, defaultApplicationShellMissionBackend, projectStreamConnections, GATED_ACTIONS, requireOwnerCapability, sseMetrics;
 var init_server = __esm({
   "packages/daemon/src/command-center/server.ts"() {
     "use strict";
@@ -38427,6 +39596,24 @@ var init_server = __esm({
       }
     };
     projectStreamConnections = 0;
+    GATED_ACTIONS = {
+      "workspace.pane.create": "owner-and-operation-id",
+      "workspace.open": "owner-and-operation-id",
+      "workspace.promote": "owner-and-operation-id",
+      "workspace.app-window.mutate": "owner-and-operation-id",
+      "workspace.window.split": "owner-and-operation-id",
+      "workspace.window.kill": "owner-and-operation-id",
+      "workspace.pane.kill": "owner-and-operation-id",
+      "workspace.session.kill": "owner-and-operation-id",
+      "workspace.rename": "owner-and-operation-id",
+      "workspace.pane.zoom.toggle": "owner-and-operation-id",
+      "workspace.pane.select": "owner-and-operation-id",
+      "project.launch": "owner",
+      "project.stop": "owner",
+      "project.restart": "owner",
+      "project.activate": "owner",
+      "project.openTerminal": "owner"
+    };
     requireOwnerCapability = (ownerToken) => requireOwnerAuthority(ownerToken, {
       whenOwnerless: "unavailable",
       unavailableMessage: "Host capability discovery is unavailable",
@@ -39074,6 +40261,11 @@ async function startEmbeddedDaemon(opts) {
       daemonInstanceId: instanceId,
       registry: workspaceRegistry
     });
+    const workspaceMultiplexer = new WorkspaceMultiplexerAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
+      tmuxAuthority
+    });
     let terminalAttachmentRuntime = null;
     let paneStreamRuntime = null;
     let startedServer;
@@ -39112,6 +40304,7 @@ async function startEmbeddedDaemon(opts) {
         workspaceOpenBackend: workspaceOpen,
         workspacePromotionBackend: workspacePromotion,
         appWindowMutationBackend: appWindowMutation,
+        workspaceMultiplexerBackend: workspaceMultiplexer,
         workspaceRegistry,
         terminalAttachmentRuntime,
         paneStreamRuntime
@@ -39123,7 +40316,8 @@ async function startEmbeddedDaemon(opts) {
         workspacePaneCreation.dispose(),
         workspaceOpen.dispose(),
         workspacePromotion.dispose(),
-        appWindowMutation.dispose()
+        appWindowMutation.dispose(),
+        workspaceMultiplexer.dispose()
       ]);
       throw error;
     }
@@ -39399,6 +40593,7 @@ var init_daemon_embed = __esm({
     init_workspace_open2();
     init_workspace_promotion2();
     init_app_window_mutation2();
+    init_workspace_multiplexer_verbs();
     init_native_runtime();
     init_agent_status_probe();
     init_terminal_attachment_upgrade();
@@ -39421,7 +40616,7 @@ var init_daemon_embed = __esm({
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
 import { randomUUID as randomUUID12 } from "node:crypto";
-import { z as z62 } from "zod";
+import { z as z64 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -39535,7 +40730,7 @@ async function tryDispatchAction(name, input, options = {}) {
           details: failure.data.error.details
         });
       }
-      const success = z62.object({ ok: z62.literal(true), result: contract.result }).safeParse(body);
+      const success = z64.object({ ok: z64.literal(true), result: contract.result }).safeParse(body);
       if (success.success) return success.data.result;
     }
     return null;
@@ -39550,12 +40745,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z62.object({
-      ok: z62.literal(false),
-      error: z62.object({
-        code: z62.string(),
-        message: z62.string(),
-        details: z62.unknown().optional()
+    FailureEnvelopeZ = z64.object({
+      ok: z64.literal(false),
+      error: z64.object({
+        code: z64.string(),
+        message: z64.string(),
+        details: z64.unknown().optional()
       })
     });
     RETRY_SAFE_OWNER_ACTIONS = /* @__PURE__ */ new Set([
@@ -40892,7 +42087,7 @@ __export(server_exports2, {
   defaultControlSocketPath: () => defaultControlSocketPath,
   startControlServer: () => startControlServer
 });
-import { chmodSync as chmodSync5, existsSync as existsSync34, mkdirSync as mkdirSync23, statSync as statSync13, unlinkSync as unlinkSync3 } from "node:fs";
+import { chmodSync as chmodSync5, existsSync as existsSync34, mkdirSync as mkdirSync23, statSync as statSync14, unlinkSync as unlinkSync3 } from "node:fs";
 import { createServer as createServer2, connect } from "node:net";
 import { dirname as dirname31, join as join35 } from "node:path";
 function defaultControlSocketPath() {
@@ -40900,7 +42095,7 @@ function defaultControlSocketPath() {
 }
 async function claimSocketPath(path2) {
   if (!existsSync34(path2)) return;
-  if (!statSync13(path2).isSocket()) {
+  if (!statSync14(path2).isSocket()) {
     throw new IdeError(
       `${path2} exists and is not a socket \u2014 refusing to remove it. Pass a different --socket path.`,
       { code: "USAGE", exitCode: 1 }
@@ -43640,7 +44835,7 @@ try {
       break;
     }
     case "events": {
-      const { readFileSync: readFileSync28, existsSync: existsSync37, statSync: statSync14, openSync: openSync4, readSync, closeSync: closeSync4 } = await import("node:fs");
+      const { readFileSync: readFileSync28, existsSync: existsSync37, statSync: statSync15, openSync: openSync4, readSync, closeSync: closeSync4 } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
       const paintStatus = (status2, text) => {
@@ -43687,12 +44882,12 @@ try {
       const allLines = readFileSync28(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
       for (const line of allLines.slice(-50)) printLine(line);
       if (!values.follow) break;
-      let offset = statSync14(path2).size;
+      let offset = statSync15(path2).size;
       let leftover = "";
       const timer = setInterval(() => {
         let size;
         try {
-          size = statSync14(path2).size;
+          size = statSync15(path2).size;
         } catch {
           return;
         }
