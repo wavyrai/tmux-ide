@@ -40108,6 +40108,7 @@ async function startHttpServer({
   workspaceOpenBackend,
   workspacePromotionBackend,
   appWindowMutationBackend,
+  workspaceMultiplexerBackend,
   workspaceRegistry,
   terminalAttachmentRuntime,
   paneStreamRuntime
@@ -40140,6 +40141,11 @@ async function startHttpServer({
     workspaceOpenBackend,
     workspacePromotionBackend,
     appWindowMutationBackend,
+    // Named in this function's parameter type since the verb routes shipped and
+    // never forwarded, so every multiplexer verb answered "not available from
+    // this daemon" in every real process. Only the in-test dispatcher, which is
+    // handed the authority directly, ever reached it.
+    workspaceMultiplexerBackend,
     workspaceRegistry,
     terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
     paneStreamIssueBackend: paneStreamRuntime.coordinator,
