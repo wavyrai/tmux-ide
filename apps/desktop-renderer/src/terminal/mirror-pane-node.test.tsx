@@ -8,6 +8,11 @@ import { deriveConnectionHealth } from "../runtime/connection-health.ts";
 import { terminalIssueFaultLabel } from "../runtime/connection-recovery.ts";
 import type { DesktopConnectionHealth } from "../runtime/connection-health.ts";
 import { MirrorPaneNode } from "./mirror-pane-node.tsx";
+import {
+  WIDGET_MARKER_CONCEAL_PREFIX,
+  WIDGET_MARKER_CONCEAL_SUFFIX,
+  widgetMarkerAnnouncement,
+} from "@tmux-ide/contracts";
 import { PaneMirrorController, type PaneMirrorControllerState } from "./pane-mirror-controller.ts";
 import {
   createRecordingMirrorRendererFactory,
@@ -106,6 +111,50 @@ describe("mirror pane node", () => {
     expect(node.getAttribute("data-state")).toBe("live");
     expect(node.getAttribute("data-grid")).toBe("100x30");
     expect(node.getAttribute("data-painted")).toBe("true");
+  });
+
+  /*
+   * The mirror's own detection point (m49.7).
+   *
+   * A mirror pane is repainted from `capture-pane` whenever its lease is
+   * renewed, so on this path a marker can arrive inside a SEED with no delta
+   * behind it at all. Bug this catches: detection wired only to live output, so
+   * a widget renders while a pane streams and then vanishes — or never appears
+   * — the moment the stream re-seeds, which is exactly when a user reconnects.
+   */
+  it("renders a widget from a marker that arrived in a seed batch", async () => {
+    const h = mountNodeHarness();
+    await flush();
+    const renderer = h.rendering.renderers[0]!;
+    const announcement = widgetMarkerAnnouncement("markdown", { text: "# Seeded\n\nBody." });
+    renderer.setCellRows([
+      {
+        cells: [
+          ...announcement
+            .replaceAll(WIDGET_MARKER_CONCEAL_PREFIX, "")
+            .replaceAll(WIDGET_MARKER_CONCEAL_SUFFIX, "")
+            .trimEnd(),
+        ],
+        wrapped: false,
+      },
+    ]);
+    await h.stream.latest().emit(PANE_A, {
+      type: "seed-batch",
+      batch: seedBatch(announcement),
+    });
+    await flush();
+
+    const node = h.host.querySelector(".mirror-pane-node")!;
+    await vi.waitFor(() => expect(node.getAttribute("data-widget")).toBe("markdown"));
+    expect(node.querySelector(".widget-surface h1")?.textContent).toBe("Seeded");
+    // The emulator is still mounted and still streaming underneath it.
+    expect(node.querySelector(".mirror-pane-node__viewport")).not.toBeNull();
+
+    // A later seed without the marker takes the widget away again.
+    renderer.setCellRows([{ cells: [..."$ "], wrapped: false }]);
+    await h.stream.latest().emit(PANE_A, { type: "seed-batch", batch: seedBatch("$ ") });
+    await flush();
+    await vi.waitFor(() => expect(node.getAttribute("data-widget")).toBe(null));
   });
 
   it("writes live deltas and cursor moves after the seed", async () => {

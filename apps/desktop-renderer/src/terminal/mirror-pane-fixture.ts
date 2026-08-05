@@ -79,6 +79,8 @@ export type MirrorRendererCommit =
 
 export interface RecordingMirrorRenderer extends MirrorTerminalRenderer {
   readonly commits: MirrorRendererCommit[];
+  /** Stand in for the emulator's grid, so widget detection can be exercised. */
+  setCellRows(rows: readonly WidgetCellRow[]): void;
 }
 
 export function createRecordingMirrorRendererFactory(): {
@@ -113,6 +115,10 @@ export function createRecordingMirrorRendererFactory(): {
       },
       resizeGrid: () => undefined,
       readCellRows: () => cellRows,
+      setCellRows: (rows) => {
+        cellRows.length = 0;
+        cellRows.push(...rows);
+      },
       gridOverlayGeometry: () => gridOverlay,
       refreshTheme: () => undefined,
       fitToContainer: () => {
