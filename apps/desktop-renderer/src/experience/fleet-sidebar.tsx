@@ -5,6 +5,9 @@ import type {
   WorkspacePromoteHostResult,
 } from "@tmux-ide/contracts";
 
+import { DashboardSquare01Icon } from "@hugeicons/core-free-icons";
+
+import { Icon } from "../ui-system/index.ts";
 import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 
 /**
@@ -173,6 +176,7 @@ export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Elemen
   return (
     <section aria-labelledby="fleet-heading" class="fleet-sidebar" data-focus-zone="fleet">
       <h2 id="fleet-heading">
+        <Icon icon={DashboardSquare01Icon} size="dense" />
         Fleet <span>{sessions().length}</span>
       </h2>
 

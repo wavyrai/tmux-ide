@@ -1256,9 +1256,37 @@ kbd {
 
 .runtime-diagnostics summary,
 .runtime-onboarding-notes summary {
+  display: flex;
   width: fit-content;
+  align-items: center;
+  gap: var(--tmi-space-3);
   color: var(--tmux-ide-text-secondary);
   cursor: pointer;
+  list-style: none;
+}
+
+/* The native disclosure triangle is not part of the icon system; the chevron
+ * in the markup is, and it turns to point at what it opened. */
+.runtime-diagnostics summary::-webkit-details-marker,
+.runtime-onboarding-notes summary::-webkit-details-marker {
+  display: none;
+}
+
+.runtime-diagnostics summary > svg,
+.runtime-onboarding-notes summary > svg {
+  transition: transform var(--tmi-motion-fast) var(--desktop-ease-smooth);
+}
+
+.runtime-diagnostics[open] summary > svg,
+.runtime-onboarding-notes details[open] summary > svg {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-diagnostics summary > svg,
+  .runtime-onboarding-notes summary > svg {
+    transition: none;
+  }
 }
 
 .runtime-diagnostics ul {
@@ -1626,7 +1654,8 @@ kbd {
 /* Source-list section headers: caption-2, uppercase, muted, quiet in weight. */
 .workspace-sidebar h2 {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: var(--tmi-space-3);
   margin: 0;
   padding: 0 8px 4px;
   color: var(--tmux-ide-text-muted);
@@ -1637,7 +1666,14 @@ kbd {
   text-transform: uppercase;
 }
 
+.workspace-sidebar h2 > svg {
+  flex: none;
+  color: var(--tmux-ide-text-muted);
+}
+
+/* The count sits at the far edge; the glyph and label stay together. */
 .workspace-sidebar h2 span {
+  margin-left: auto;
   font-family: var(--desktop-mono-font);
   font-weight: var(--sf-weight-medium);
   letter-spacing: 0;

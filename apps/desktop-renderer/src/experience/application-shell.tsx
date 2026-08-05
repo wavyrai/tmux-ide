@@ -84,7 +84,8 @@ import {
   type AppWindowCanvasMirrorProps,
   type AppWindowMirrorNodeModel,
 } from "./app-window-canvas.tsx";
-import { Button, IconButton, ResizeHandle } from "../ui-system/index.ts";
+import { Button, Icon, IconButton, ResizeHandle, WorkspaceIdentity } from "../ui-system/index.ts";
+import { ComputerTerminal01Icon, UserGroupIcon } from "@hugeicons/core-free-icons";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import type { AppWindowCanvasCommandInvocation } from "./app-window-canvas-presenter.ts";
 import {
@@ -1016,8 +1017,16 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       >
         <aside class="workspace-sidebar" aria-label="Workspace overview" data-focus-zone="sidebar">
           <div class="workspace-sidebar__project">
+            {/*
+              The workspace glyph. Nothing in the shell projection carries a
+              chosen emoji or color yet, so this resolves to the folder
+              fallback — which is the point of the component: the tile is
+              correct today and becomes richer the moment the model can say
+              more, without this call site changing. The two initials it
+              replaces were redundant with the name printed beside them.
+            */}
             <span class="project-monogram" aria-hidden="true">
-              {shell().project.name.slice(0, 2)}
+              <WorkspaceIdentity size="surface" />
             </span>
             <span>
               <strong>{shell().project.name}</strong>
@@ -1033,7 +1042,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
             </IconButton>
           </div>
           <section aria-labelledby="sessions-heading">
-            <h2 id="sessions-heading">Sessions</h2>
+            <h2 id="sessions-heading">
+              <Icon icon={ComputerTerminal01Icon} size="dense" />
+              Sessions
+            </h2>
             <Index each={shell().sidebar.sessions}>
               {(session) => {
                 const selected = () =>
@@ -1072,6 +1084,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           </section>
           <section aria-labelledby="agents-heading">
             <h2 id="agents-heading">
+              <Icon icon={UserGroupIcon} size="dense" />
               Agents <span>{shell().sidebar.agents.length}</span>
             </h2>
             <Index each={shell().sidebar.agents}>

@@ -44,7 +44,9 @@ import { DomIcon } from "../experience/dom-icon.tsx";
 import { FirstRunIntro } from "../experience/first-run-intro.tsx";
 import type { ChangesSurfaceProps } from "../experience/workspace-changes-surface.tsx";
 import type { FilesSurfaceProps } from "../experience/workspace-files-surface.tsx";
-import { Button } from "../ui-system/index.ts";
+import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
+
+import { Button, Icon } from "../ui-system/index.ts";
 import { deriveConnectionHealth } from "./connection-health.ts";
 import {
   reasonIndicatesMissingTmux,
@@ -409,7 +411,10 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
 
                 <Show when={props.diagnostics && props.diagnostics.length > 0}>
                   <details class="runtime-diagnostics">
-                    <summary>Connection details</summary>
+                    <summary>
+                      <Icon icon={ArrowRight01Icon} size="dense" />
+                      Connection details
+                    </summary>
                     <ul>
                       <For each={props.diagnostics}>{(item) => <li>{item}</li>}</For>
                     </ul>
@@ -451,7 +456,10 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
                     </li>
                   </ul>
                   <details>
-                    <summary>Advanced configuration</summary>
+                    <summary>
+                      <Icon icon={ArrowRight01Icon} size="dense" />
+                      Advanced configuration
+                    </summary>
                     <p>
                       Add <code>.tmux-ide/workspace.yml</code> later only when you want a saved
                       layout, custom commands, or project theme overrides.
