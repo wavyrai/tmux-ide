@@ -47,43 +47,23 @@ import {
   WorkspacePaneCreateMutationResultSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
   WorkspacePromotionFailureSchemaZ,
-  type AppWindowMutationArguments,
-  type AppWindowMutationHostResult,
+  createDaemonResourceMethods,
+  daemonWorkspaceRouteName,
   type DaemonEventServerFrame,
   type DaemonInstanceIdentity,
-  type DesktopDaemonCapabilitiesResult,
+  type DaemonResourceRequest,
+  type DaemonWorkspaceResourceKind,
   type DesktopDaemonCapabilityError,
   type DesktopDaemonCapabilityErrorCode,
   type DesktopDaemonEvent,
   type DesktopDaemonEventSubscriptionRequest,
-  type DesktopDaemonFetchApplicationShellRequest,
-  type DesktopDaemonFetchApplicationShellResult,
-  type DesktopDaemonFetchFleetCatalogResult,
-  type DesktopDaemonFetchWorkspaceChangeDiffRequest,
-  type DesktopDaemonFetchWorkspaceChangeDiffResult,
-  type DesktopDaemonFetchWorkspaceChangesRequest,
-  type DesktopDaemonFetchWorkspaceChangesResult,
-  type DesktopDaemonFetchWorkspaceFilePreviewRequest,
-  type DesktopDaemonFetchWorkspaceFilePreviewResult,
-  type DesktopDaemonFetchWorkspaceFilesRequest,
-  type DesktopDaemonFetchWorkspaceFilesResult,
   type DesktopDaemonHostSubscriptionResult,
-  type DesktopDaemonListWorkspacesResult,
-  type DesktopDaemonRefreshConnectionResult,
   type DesktopHostBootstrap,
   type DesktopPlatform,
   type DesktopThemeState,
   type DesktopWindowState,
   type HostCapabilities,
-  type PaneStreamIssueResult,
-  type PaneStreamLeaseRequest,
   type StartupReadinessLadder,
-  type TerminalAttachRequest,
-  type TerminalAttachmentIssueResult,
-  type WorkspacePaneCreateHostResult,
-  type WorkspacePaneCreateInvocation,
-  type WorkspacePromoteArguments,
-  type WorkspacePromoteHostResult,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
 
@@ -368,15 +348,17 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   }
 
   /**
-   * Read one per-workspace resource. `segment` picks which name the route is
-   * keyed on — the daemon is NOT uniform here: `application-shell` is addressed
-   * by raw tmux session name, while files/changes and their detail routes are
-   * addressed by workspace name. Getting this wrong is a silent 404, not a
-   * typed refusal, so both callers name their choice explicitly.
+   * Read one per-workspace resource.
+   *
+   * Which catalog name the route is keyed on is NOT decided here. The daemon is
+   * not uniform — `application-shell` takes a raw tmux session name while
+   * files/changes take a workspace name — and a wrong choice is a silent 404,
+   * not a typed refusal. That choice lives once, in the contracts route-key
+   * table, and this host reads it by resource rather than restating it.
    */
   async function workspaceResource<Schema extends z.ZodType>(
+    resource: DaemonWorkspaceResourceKind,
     workspaceName: string,
-    segment: "sessionName" | "workspaceName",
     pathname: (encodedName: string) => string,
     schema: Schema,
   ): Promise<
@@ -386,8 +368,9 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     try {
       await loadIdentity();
       const entry = await catalogEntryFor(workspaceName);
+      const routeName = daemonWorkspaceRouteName(resource, entry);
       const parsed = schema.safeParse(
-        await request(pathname(encodeURIComponent(entry[segment])), { method: "GET" }),
+        await request(pathname(encodeURIComponent(routeName)), { method: "GET" }),
       );
       if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
       return { status: "ok", envelope: parsed.data };
@@ -480,6 +463,238 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     current?.close(1000, "no subscribers");
   }
 
+  /**
+   * The whole daemon surface, as one dispatch over the request union.
+   *
+   * This replaces fifteen hand-written methods that between them re-derived the
+   * identity check, the failure mapping, and the route keying. The production
+   * broker answers the same union in Electron main; the two hosts now differ in
+   * transport and credential custody, which is the honest difference, rather
+   * than in how many resources each of them remembered to implement.
+   */
+  async function dispatchDaemonResource(daemonRequest: DaemonResourceRequest): Promise<unknown> {
+    switch (daemonRequest.resource) {
+      case "capabilities":
+        try {
+          const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
+            await request("/api/v2/capabilities", { method: "POST", body: {} }),
+          );
+          if (result.status === "ok") identity = result.daemon;
+          return result;
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      case "refreshConnection": {
+        const previous = identity;
+        identity = null;
+        try {
+          const next = await loadIdentity();
+          if (previous && !sameIdentity(previous, next)) {
+            return {
+              outcome: "generation-replaced",
+              previousIdentity: previous,
+              daemon: { status: "connected", identity: next },
+            };
+          }
+          return { outcome: "unchanged", daemon: { status: "connected", identity: next } };
+        } catch (error) {
+          const failure = failureOf(error);
+          const daemon = {
+            status: "unavailable" as const,
+            code: "probe-failed" as const,
+            reason: failure.reason,
+          };
+          return previous
+            ? { outcome: "authority-retired", previousIdentity: previous, daemon }
+            : { outcome: "state-changed", daemon };
+        }
+      }
+      case "startupReadiness": {
+        const ladder = await readStartupReadinessLadder();
+        return ladder === null
+          ? {
+              status: "error",
+              error: capabilityError("daemon-unavailable", "No readiness ladder was readable."),
+            }
+          : { status: "ok", ladder };
+      }
+      case "listWorkspaces":
+        try {
+          await loadIdentity();
+          const workspaces = (await workspaceCatalog()).map(({ workspaceName }) => ({
+            workspaceName,
+          }));
+          return { status: "ok", daemon: requireIdentity(), workspaces };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      case "fetchFleetCatalog":
+        try {
+          await loadIdentity();
+          const parsed = FleetCatalogResourceV1SchemaZ.safeParse(
+            await request("/api/resources/fleet-catalog", { method: "GET" }),
+          );
+          if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
+          if (!sameIdentity(parsed.data.daemon, requireIdentity())) {
+            throw new DevHostFailure(
+              capabilityError("daemon-identity-mismatch", "The daemon generation changed."),
+            );
+          }
+          return { status: "ok", envelope: parsed.data };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      case "fetchApplicationShell": {
+        try {
+          await loadIdentity();
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+        const version =
+          daemonRequest.request.resourceVersion ?? APPLICATION_SHELL_RESOURCE_V3_VERSION;
+        return workspaceResource(
+          "fetchApplicationShell",
+          daemonRequest.request.workspaceName,
+          (name) => `/api/project/${name}/application-shell?version=${version}`,
+          ApplicationShellResourceV3SchemaZ,
+        );
+      }
+      case "fetchWorkspaceFiles": {
+        const query = daemonRequest.request.directoryId
+          ? `?directoryId=${encodeURIComponent(daemonRequest.request.directoryId)}`
+          : "";
+        return workspaceResource(
+          "fetchWorkspaceFiles",
+          daemonRequest.request.workspaceName,
+          (name) => `/api/project/${name}/files${query}`,
+          WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+        );
+      }
+      case "fetchWorkspaceFilePreview": {
+        const fileId = encodeURIComponent(daemonRequest.request.fileId);
+        return workspaceResource(
+          "fetchWorkspaceFilePreview",
+          daemonRequest.request.workspaceName,
+          (name) => `/api/project/${name}/file-preview?fileId=${fileId}`,
+          WorkspaceFilePreviewEnvelopeV1SchemaZ,
+        );
+      }
+      case "fetchWorkspaceChanges":
+        return workspaceResource(
+          "fetchWorkspaceChanges",
+          daemonRequest.request.workspaceName,
+          (name) => `/api/project/${name}/changes`,
+          WorkspaceChangesCatalogEnvelopeV1SchemaZ,
+        );
+      case "fetchWorkspaceChangeDiff": {
+        const changeId = encodeURIComponent(daemonRequest.request.changeId);
+        return workspaceResource(
+          "fetchWorkspaceChangeDiff",
+          daemonRequest.request.workspaceName,
+          (name) => `/api/project/${name}/change-diff?changeId=${changeId}`,
+          WorkspaceChangeDiffEnvelopeV1SchemaZ,
+        );
+      }
+      case "promoteWorkspace":
+        try {
+          const raw = await action("workspace.promote", daemonRequest.request, PROMOTE_TIMEOUT_MS);
+          const refusal = z
+            .object({ ok: z.literal(false), error: WorkspacePromotionFailureSchemaZ })
+            .safeParse(raw);
+          if (refusal.success) return { status: "error", error: refusal.data.error };
+          const envelope = z
+            .object({ ok: z.literal(true), result: WorkspacePromoteMutationResultSchemaZ })
+            .strict()
+            .parse(raw);
+          return { status: "ok", result: envelope.result };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      case "createWorkspacePane":
+        try {
+          const envelope = z
+            .object({ ok: z.literal(true), result: WorkspacePaneCreateMutationResultSchemaZ })
+            .strict()
+            .parse(await action("workspace.pane.create", daemonRequest.request));
+          return { status: "ok", result: envelope.result };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      case "mutateAppWindow":
+        try {
+          const envelope = z
+            .object({ ok: z.literal(true), result: AppWindowMutationResultSchemaZ })
+            .strict()
+            .parse(await action("workspace.app-window.mutate", daemonRequest.request));
+          return { status: "ok", result: envelope.result };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      case "issueTerminalAttachment":
+        try {
+          const requestId = crypto.randomUUID();
+          const daemonInstanceId = (await loadIdentity()).instanceId;
+          return TerminalAttachmentIssueResultSchemaZ.parse(
+            await request(
+              TERMINAL_ATTACHMENT_ISSUE_PATH,
+              {
+                method: "POST",
+                body: {
+                  requestId,
+                  expectedDaemonInstanceId: daemonInstanceId,
+                  attachment: daemonRequest.request,
+                },
+              },
+              {
+                "X-Tmux-Ide-Request-Id": requestId,
+                "X-Tmux-Ide-Expected-Daemon-Instance-Id": daemonInstanceId,
+              },
+            ),
+          );
+        } catch {
+          return {
+            status: "error",
+            error: {
+              code: "attachment-unavailable",
+              reason: "The terminal attachment issue failed.",
+              retryable: true,
+            },
+          };
+        }
+      case "issuePaneStream":
+        try {
+          const stream = PaneStreamLeaseRequestSchemaZ.parse({
+            ...daemonRequest.request,
+            protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+          });
+          const requestId = crypto.randomUUID();
+          const daemonInstanceId = (await loadIdentity()).instanceId;
+          return PaneStreamIssueResultSchemaZ.parse(
+            await request(
+              PANE_STREAM_ISSUE_PATH,
+              {
+                method: "POST",
+                body: { requestId, expectedDaemonInstanceId: daemonInstanceId, stream },
+              },
+              {
+                "X-Tmux-Ide-Request-Id": requestId,
+                "X-Tmux-Ide-Expected-Daemon-Instance-Id": daemonInstanceId,
+              },
+            ),
+          );
+        } catch {
+          return {
+            status: "error",
+            error: {
+              code: "attachment-unavailable",
+              reason: "The pane-stream issue failed.",
+              retryable: true,
+            },
+          };
+        }
+    }
+  }
+
   const capabilities: DevWebHost = {
     apiVersion: DESKTOP_HOST_API_VERSION,
     bootstrap: async (): Promise<DesktopHostBootstrap> => {
@@ -510,18 +725,11 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         onboarding: { introAcknowledged: true },
       };
     },
-    lifecycle: {
-      requestQuit: async () => undefined,
-    },
     window: {
-      getState: async () => browserWindowState(),
       minimize: async () => browserWindowState(),
       toggleMaximized: async () => browserWindowState(),
       close: async () => undefined,
       onStateChanged: () => () => undefined,
-    },
-    menu: {
-      showApplicationMenu: async () => ({ status: "unavailable" }),
     },
     workspace: {
       // A browser tab has no native directory picker with a real filesystem
@@ -532,7 +740,6 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       acknowledgeIntro: async () => undefined,
     },
     theme: {
-      getState: async () => browserTheme(),
       onChanged: subscribeMedia,
     },
     update: {
@@ -544,242 +751,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       onStatusChanged: () => () => undefined,
     },
     daemon: {
-      capabilities: async (): Promise<DesktopDaemonCapabilitiesResult> => {
-        try {
-          const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
-            await request("/api/v2/capabilities", { method: "POST", body: {} }),
-          );
-          if (result.status === "ok") identity = result.daemon;
-          return result;
-        } catch (error) {
-          return { status: "error", error: failureOf(error) };
-        }
-      },
-      mutateAppWindow: async (
-        intent: AppWindowMutationArguments,
-      ): Promise<AppWindowMutationHostResult> => {
-        try {
-          const envelope = z
-            .object({ ok: z.literal(true), result: AppWindowMutationResultSchemaZ })
-            .strict()
-            .parse(await action("workspace.app-window.mutate", intent));
-          return { status: "ok", result: envelope.result };
-        } catch (error) {
-          return { status: "error", error: failureOf(error) };
-        }
-      },
-      createWorkspacePane: async (
-        invocation: WorkspacePaneCreateInvocation,
-      ): Promise<WorkspacePaneCreateHostResult> => {
-        try {
-          const envelope = z
-            .object({ ok: z.literal(true), result: WorkspacePaneCreateMutationResultSchemaZ })
-            .strict()
-            .parse(await action("workspace.pane.create", invocation));
-          return { status: "ok", result: envelope.result };
-        } catch (error) {
-          return { status: "error", error: failureOf(error) };
-        }
-      },
-      promoteWorkspace: async (
-        intent: WorkspacePromoteArguments,
-      ): Promise<WorkspacePromoteHostResult> => {
-        try {
-          const raw = await action("workspace.promote", intent, PROMOTE_TIMEOUT_MS);
-          const refusal = z
-            .object({ ok: z.literal(false), error: WorkspacePromotionFailureSchemaZ })
-            .safeParse(raw);
-          if (refusal.success) return { status: "error", error: refusal.data.error };
-          const envelope = z
-            .object({ ok: z.literal(true), result: WorkspacePromoteMutationResultSchemaZ })
-            .strict()
-            .parse(raw);
-          return { status: "ok", result: envelope.result };
-        } catch (error) {
-          return { status: "error", error: failureOf(error) };
-        }
-      },
-      issueTerminalAttachment: async (
-        attachRequest: TerminalAttachRequest,
-      ): Promise<TerminalAttachmentIssueResult> => {
-        try {
-          const requestId = crypto.randomUUID();
-          const daemonInstanceId = (await loadIdentity()).instanceId;
-          return TerminalAttachmentIssueResultSchemaZ.parse(
-            await request(
-              TERMINAL_ATTACHMENT_ISSUE_PATH,
-              {
-                method: "POST",
-                body: {
-                  requestId,
-                  expectedDaemonInstanceId: daemonInstanceId,
-                  attachment: attachRequest,
-                },
-              },
-              {
-                "X-Tmux-Ide-Request-Id": requestId,
-                "X-Tmux-Ide-Expected-Daemon-Instance-Id": daemonInstanceId,
-              },
-            ),
-          );
-        } catch {
-          return {
-            status: "error",
-            error: {
-              code: "attachment-unavailable",
-              reason: "The terminal attachment issue failed.",
-              retryable: true,
-            },
-          };
-        }
-      },
-      issuePaneStream: async (
-        leaseRequest: PaneStreamLeaseRequest,
-      ): Promise<PaneStreamIssueResult> => {
-        try {
-          const stream = PaneStreamLeaseRequestSchemaZ.parse({
-            ...leaseRequest,
-            protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
-          });
-          const requestId = crypto.randomUUID();
-          const daemonInstanceId = (await loadIdentity()).instanceId;
-          return PaneStreamIssueResultSchemaZ.parse(
-            await request(
-              PANE_STREAM_ISSUE_PATH,
-              {
-                method: "POST",
-                body: { requestId, expectedDaemonInstanceId: daemonInstanceId, stream },
-              },
-              {
-                "X-Tmux-Ide-Request-Id": requestId,
-                "X-Tmux-Ide-Expected-Daemon-Instance-Id": daemonInstanceId,
-              },
-            ),
-          );
-        } catch {
-          return {
-            status: "error",
-            error: {
-              code: "attachment-unavailable",
-              reason: "The pane-stream issue failed.",
-              retryable: true,
-            },
-          };
-        }
-      },
-      refreshConnection: async (): Promise<DesktopDaemonRefreshConnectionResult> => {
-        const previous = identity;
-        identity = null;
-        try {
-          const next = await loadIdentity();
-          if (previous && !sameIdentity(previous, next)) {
-            return {
-              outcome: "generation-replaced",
-              previousIdentity: previous,
-              daemon: { status: "connected", identity: next },
-            };
-          }
-          return { outcome: "unchanged", daemon: { status: "connected", identity: next } };
-        } catch (error) {
-          const failure = failureOf(error);
-          const daemon = {
-            status: "unavailable" as const,
-            code: "probe-failed" as const,
-            reason: failure.reason,
-          };
-          return previous
-            ? { outcome: "authority-retired", previousIdentity: previous, daemon }
-            : { outcome: "state-changed", daemon };
-        }
-      },
-      listWorkspaces: async (): Promise<DesktopDaemonListWorkspacesResult> => {
-        try {
-          await loadIdentity();
-          const workspaces = (await workspaceCatalog()).map(({ workspaceName }) => ({
-            workspaceName,
-          }));
-          return { status: "ok", daemon: requireIdentity(), workspaces };
-        } catch (error) {
-          return { status: "error", error: failureOf(error) };
-        }
-      },
-      fetchFleetCatalog: async (): Promise<DesktopDaemonFetchFleetCatalogResult> => {
-        try {
-          await loadIdentity();
-          const parsed = FleetCatalogResourceV1SchemaZ.safeParse(
-            await request("/api/resources/fleet-catalog", { method: "GET" }),
-          );
-          if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
-          if (!sameIdentity(parsed.data.daemon, requireIdentity())) {
-            throw new DevHostFailure(
-              capabilityError("daemon-identity-mismatch", "The daemon generation changed."),
-            );
-          }
-          return { status: "ok", envelope: parsed.data };
-        } catch (error) {
-          return { status: "error", error: failureOf(error) };
-        }
-      },
-      fetchApplicationShell: async (
-        shellRequest: DesktopDaemonFetchApplicationShellRequest,
-      ): Promise<DesktopDaemonFetchApplicationShellResult> => {
-        const parsed = DesktopDaemonFetchApplicationShellRequestSchemaZ.safeParse(shellRequest);
-        if (!parsed.success) return { status: "error", error: INVALID_REQUEST };
-        try {
-          await loadIdentity();
-        } catch (error) {
-          return { status: "error", error: failureOf(error) };
-        }
-        const version = parsed.data.resourceVersion ?? APPLICATION_SHELL_RESOURCE_V3_VERSION;
-        return workspaceResource(
-          parsed.data.workspaceName,
-          "sessionName",
-          (name) => `/api/project/${name}/application-shell?version=${version}`,
-          ApplicationShellResourceV3SchemaZ,
-        );
-      },
-      fetchWorkspaceFiles: async (
-        filesRequest: DesktopDaemonFetchWorkspaceFilesRequest,
-      ): Promise<DesktopDaemonFetchWorkspaceFilesResult> => {
-        const query = filesRequest.directoryId
-          ? `?directoryId=${encodeURIComponent(filesRequest.directoryId)}`
-          : "";
-        return workspaceResource(
-          filesRequest.workspaceName,
-          "workspaceName",
-          (name) => `/api/project/${name}/files${query}`,
-          WorkspaceFilesCatalogEnvelopeV1SchemaZ,
-        );
-      },
-      fetchWorkspaceFilePreview: async (
-        previewRequest: DesktopDaemonFetchWorkspaceFilePreviewRequest,
-      ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult> =>
-        workspaceResource(
-          previewRequest.workspaceName,
-          "workspaceName",
-          (name) =>
-            `/api/project/${name}/file-preview?fileId=${encodeURIComponent(previewRequest.fileId)}`,
-          WorkspaceFilePreviewEnvelopeV1SchemaZ,
-        ),
-      fetchWorkspaceChanges: async (
-        changesRequest: DesktopDaemonFetchWorkspaceChangesRequest,
-      ): Promise<DesktopDaemonFetchWorkspaceChangesResult> =>
-        workspaceResource(
-          changesRequest.workspaceName,
-          "workspaceName",
-          (name) => `/api/project/${name}/changes`,
-          WorkspaceChangesCatalogEnvelopeV1SchemaZ,
-        ),
-      fetchWorkspaceChangeDiff: async (
-        diffRequest: DesktopDaemonFetchWorkspaceChangeDiffRequest,
-      ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult> =>
-        workspaceResource(
-          diffRequest.workspaceName,
-          "workspaceName",
-          (name) =>
-            `/api/project/${name}/change-diff?changeId=${encodeURIComponent(diffRequest.changeId)}`,
-          WorkspaceChangeDiffEnvelopeV1SchemaZ,
-        ),
+      ...createDaemonResourceMethods(dispatchDaemonResource),
       subscribe: async (
         subscriptionRequest: DesktopDaemonEventSubscriptionRequest,
         listener: (event: DesktopDaemonEvent) => void,
