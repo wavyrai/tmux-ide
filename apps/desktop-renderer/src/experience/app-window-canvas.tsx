@@ -3,6 +3,7 @@ import {
   type AgentGraphOverlay,
   type AppWindowDocumentV1,
   type ApplicationShellTerminalInventory,
+  multiplexerVerb,
   type MultiplexerVerbFacts,
   type MultiplexerVerbId,
   type PaneAppearance,
@@ -348,6 +349,8 @@ interface CanvasTombstone {
 
 /** How long a killed card's "ended" marker stays on the canvas. */
 const TOMBSTONE_MS = 2_400;
+/** How long a refused verb's message stays on screen. */
+const VERB_ERROR_MS = 8_000;
 
 interface LocalMaximizedWindow {
   readonly restoreRect: AppWindowCanvasItem["rect"];
@@ -659,11 +662,35 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     { equals: false },
   );
   const [contextMenu, setContextMenu] = createSignal<CanvasContextMenu | null>(null);
+  /**
+   * The open inline rename.
+   *
+   * It carries the TARGET it was opened against, not just a window id to look
+   * up later. The AppWindow document is rebuilt as panes come and go, so a
+   * commit that re-resolved the id could find nothing and abandon the user's
+   * typing without a word — which is what a rename must never do.
+   */
   const [renaming, setRenaming] = createSignal<{
     readonly windowId: string;
     readonly initial: string;
+    /**
+     * What has been typed so far, held HERE rather than only in the field.
+     *
+     * The canvas rebuilds a card when its terminal resource churns, which
+     * replaces the editor's input element mid-edit. With the text in the DOM
+     * alone that silently discards what the user typed and commits the old name
+     * instead; held in state, the remounted field comes back with the edit
+     * intact and Enter commits what is on screen.
+     */
+    readonly value: string;
+    readonly target: MultiplexerVerbTarget;
   } | null>(null);
   const [closeConfirmId, setCloseConfirmId] = createSignal<string | null>(null);
+  const [verbError, setVerbError] = createSignal<string | null>(null);
+  let verbErrorTimer: ReturnType<typeof setTimeout> | null = null;
+  onCleanup(() => {
+    if (verbErrorTimer !== null) clearTimeout(verbErrorTimer);
+  });
   const [tombstones, setTombstones] = createSignal(new Map<string, CanvasTombstone>(), {
     equals: false,
   });
@@ -1252,32 +1279,84 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     );
   };
 
+  /**
+   * Report a refused verb where the user asked for it.
+   *
+   * A verb that fails silently is the worst of the three outcomes: the user has
+   * no way to tell "it worked" from "the daemon said no" from "the click missed",
+   * and will try again on an object that may already have changed. The line is
+   * transient rather than a dialog — the failure is informational, and there is
+   * nothing to confirm.
+   */
+  const reportVerbFailure = (message: string): void => {
+    setVerbError(message);
+    if (verbErrorTimer !== null) clearTimeout(verbErrorTimer);
+    verbErrorTimer = setTimeout(() => {
+      verbErrorTimer = null;
+      setVerbError(null);
+    }, VERB_ERROR_MS);
+  };
+
+  const invokeVerb = (
+    verbId: MultiplexerVerbId,
+    target: MultiplexerVerbTarget,
+    args?: MultiplexerVerbArguments,
+    onApplied?: () => void,
+  ): void => {
+    const verbs = props.verbs;
+    if (!verbs) return;
+    const label = multiplexerVerb(verbId).label;
+    void verbs.invoke(verbId, target, args).then(
+      (result) => {
+        if (result.status === "ok") {
+          onApplied?.();
+          return;
+        }
+        reportVerbFailure(`${label} failed: ${result.error.reason}`);
+      },
+      (error: unknown) => {
+        reportVerbFailure(
+          `${label} failed: ${error instanceof Error ? error.message : "the request did not complete"}`,
+        );
+      },
+    );
+  };
+
   const runVerb = (
     verbId: MultiplexerVerbId,
     window: AppWindowCanvasItem,
     args?: MultiplexerVerbArguments,
   ): void => {
-    const verbs = props.verbs;
     const target = verbTarget(window);
-    if (!verbs || !target) return;
+    if (!props.verbs) return;
+    if (!target) {
+      reportVerbFailure(
+        `${multiplexerVerb(verbId).label} needs an attachable pane, and this window has none.`,
+      );
+      return;
+    }
     const destroys = verbId === "pane.kill" || verbId === "window.kill";
-    void verbs.invoke(verbId, target, args).then((result) => {
-      if (result.status === "ok" && destroys) recordTombstone(window);
-    });
+    invokeVerb(verbId, target, args, destroys ? () => recordTombstone(window) : undefined);
   };
 
   const beginRename = (window: AppWindowCanvasItem): void => {
+    const target = verbTarget(window);
     if (!props.verbs) return;
-    setRenaming({ windowId: window.windowId, initial: window.title ?? "" });
+    if (!target) {
+      reportVerbFailure("This window has no attachable pane, so it cannot be renamed.");
+      return;
+    }
+    const initial = window.title ?? "";
+    setRenaming({ windowId: window.windowId, initial, value: initial, target });
   };
 
-  const commitRename = (name: string): void => {
+  const commitRename = (): void => {
     const pending = renaming();
     setRenaming(null);
-    const trimmed = name.trim();
-    const window = pending ? windowById(pending.windowId) : null;
-    if (!pending || !window || trimmed.length === 0 || trimmed === (window.title ?? "")) return;
-    runVerb("window.rename", window, { name: trimmed });
+    if (!pending) return;
+    const trimmed = pending.value.trim();
+    if (trimmed.length === 0 || trimmed === pending.initial) return;
+    invokeVerb("window.rename", pending.target, { name: trimmed });
   };
 
   const activateMenuItem = (itemId: string): void => {
@@ -1843,27 +1922,40 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                     class="app-window-card__rename"
                     onSubmit={(event) => {
                       event.preventDefault();
-                      const field = event.currentTarget.elements.namedItem("name");
-                      commitRename(field instanceof HTMLInputElement ? field.value : "");
+                      commitRename();
                     }}
                   >
                     <input
                       name="name"
                       class="app-window-card__rename-field"
                       aria-label={`Rename ${window().title ?? "this window"}`}
-                      value={renaming()?.initial ?? ""}
+                      value={renaming()?.value ?? ""}
                       autocomplete="off"
                       spellcheck={false}
                       data-focus-ring="field"
                       ref={(element) => queueMicrotask(() => element.select())}
                       onKeyDown={(event) => {
+                        // Enter is committed HERE rather than left to the form's
+                        // implicit submission: that mechanism depends on the
+                        // field count and on the browser, and a rename that
+                        // silently does nothing on Enter is indistinguishable
+                        // from one the daemon refused.
                         event.stopPropagation();
                         if (event.key === "Escape") {
                           event.preventDefault();
                           setRenaming(null);
+                          return;
+                        }
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          commitRename();
                         }
                       }}
-                      onBlur={(event) => commitRename(event.currentTarget.value)}
+                      onInput={(event) => {
+                        const typed = event.currentTarget.value;
+                        setRenaming((current) => (current ? { ...current, value: typed } : null));
+                      }}
+                      onBlur={commitRename}
                     />
                   </form>
                 </Show>
@@ -2080,6 +2172,13 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
             data-mirror-connection={props.mirror?.connection.kind}
           >
             {status().message}
+          </p>
+        )}
+      </Show>
+      <Show when={verbError()}>
+        {(message) => (
+          <p class="app-window-canvas__verb-error" role="alert" data-verb-error="true">
+            {message()}
           </p>
         )}
       </Show>

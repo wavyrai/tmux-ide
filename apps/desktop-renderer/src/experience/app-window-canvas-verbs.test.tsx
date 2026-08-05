@@ -252,6 +252,15 @@ describe("canvas context menus", () => {
     );
   });
 
+  it("opens the inline rename field from the menu's rename item", () => {
+    const { root } = mountCanvas();
+    rightClick(card(root, "window.lead").querySelector(".web-pane-frame__header")!);
+    click(menuItem("window.rename"));
+    expect(
+      card(root, "window.lead").querySelector(".app-window-card__rename-field"),
+    ).not.toBeNull();
+  });
+
   it("docks a window into another window's stack", () => {
     const { root, onCommand } = mountCanvas();
     rightClick(card(root, "window.lead").querySelector(".web-pane-frame__header")!);
@@ -335,7 +344,34 @@ describe("pane chrome as the handle", () => {
     )!;
     expect(field.value).toBe("Lead terminal");
     field.value = "build";
-    field.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(invoke).toHaveBeenCalledWith(
+      "window.rename",
+      { workspaceName: "workspace.product", semanticPaneId: "terminal.lead" },
+      { name: "build" },
+    );
+  });
+
+  it("commits what was typed, not what the field happens to hold", () => {
+    const { root, invoke } = mountCanvas();
+    card(root, "window.lead")
+      .querySelector(".web-pane-frame__title")!
+      .dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const field = card(root, "window.lead").querySelector<HTMLInputElement>(
+      ".app-window-card__rename-field",
+    )!;
+    field.value = "build";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    /*
+     * The editor's text lives in state, not in the element. A card rebuilt
+     * mid-edit — which happens whenever its terminal resource churns — replaces
+     * this input with a fresh one holding the OLD name; reading the DOM at
+     * commit time would then silently rename the window back to itself and give
+     * the user no sign that their typing was thrown away.
+     */
+    field.value = "the stale element's value";
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(invoke).toHaveBeenCalledWith(
       "window.rename",
       { workspaceName: "workspace.product", semanticPaneId: "terminal.lead" },
@@ -351,7 +387,7 @@ describe("pane chrome as the handle", () => {
     const field = card(root, "window.lead").querySelector<HTMLInputElement>(
       ".app-window-card__rename-field",
     )!;
-    field.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(invoke).not.toHaveBeenCalled();
   });
 });

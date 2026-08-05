@@ -283,9 +283,19 @@ export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Elemen
                       data-focus-ring="field"
                       ref={(element) => queueMicrotask(() => element.select())}
                       onKeyDown={(event) => {
+                        // Committed here, not by the form's implicit submission
+                        // — see the canvas card's editor for why.
                         if (event.key === "Escape") {
                           event.preventDefault();
                           setRenamingSessionId(null);
+                          return;
+                        }
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        const name = event.currentTarget.value.trim();
+                        setRenamingSessionId(null);
+                        if (name.length > 0 && name !== session.label) {
+                          void props.onSessionVerb?.("session.rename", session, { name });
                         }
                       }}
                       onBlur={() => setRenamingSessionId(null)}

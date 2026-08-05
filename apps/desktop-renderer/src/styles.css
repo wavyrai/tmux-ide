@@ -2262,6 +2262,25 @@ kbd {
   filter: drop-shadow(0 8px 16px var(--desktop-shadow));
 }
 
+/* A refused verb, said where it was asked for. Transient and non-modal: there
+   is nothing to confirm, only something to know. */
+.app-window-canvas__verb-error {
+  position: absolute;
+  z-index: 210;
+  right: 16px;
+  bottom: 64px;
+  max-width: min(420px, calc(100% - 32px));
+  margin: 0;
+  padding: var(--tmi-space-3) var(--tmi-space-5);
+  border: 1px solid var(--tmi-danger);
+  border-radius: var(--tmi-radius-control);
+  color: var(--tmi-text-primary);
+  background: var(--tmi-danger-surface);
+  box-shadow: var(--tmi-shadow-overlay);
+  font-size: var(--tmi-text-body-2);
+  line-height: var(--tmi-leading-body-2);
+}
+
 /* Inline rename. The editor sits over the card's own header rather than in a
    dialog: the title being changed stays where the user double-clicked it, and
    the surrounding card is still the thing being named. */

@@ -379,6 +379,11 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     }
   }
 
+  const ActionErrorEnvelopeSchemaZ = z.object({
+    ok: z.literal(false),
+    error: z.object({ code: z.string().min(1), message: z.string().min(1) }).loose(),
+  });
+
   async function action(
     command: string,
     intent: unknown,
@@ -635,10 +640,28 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           // The intent names its own route, so the development host needs no
           // per-verb branch either.
           const { verb, ...args } = daemonRequest.request.intent;
+          const answer = await action(verb, args);
+          /*
+           * A refused verb answers 200 with `{ok:false, error}`, so without this
+           * branch the refusal fell through to the envelope parse and reached
+           * the user as the generic transport line — the daemon's own sentence,
+           * which is the only actionable part, was discarded on the way.
+           */
+          const refusal = ActionErrorEnvelopeSchemaZ.safeParse(answer);
+          if (refusal.success) {
+            return {
+              status: "error",
+              error: {
+                code:
+                  refusal.data.error.code === "bad_request" ? "invalid-request" : "request-failed",
+                reason: refusal.data.error.message.slice(0, 240),
+              },
+            };
+          }
           const envelope = z
             .object({ ok: z.literal(true), result: WorkspaceMultiplexerMutationResultSchemaZ })
             .strict()
-            .parse(await action(verb, args));
+            .parse(answer);
           return { status: "ok", result: envelope.result };
         } catch (error) {
           return { status: "error", error: failureOf(error) };
