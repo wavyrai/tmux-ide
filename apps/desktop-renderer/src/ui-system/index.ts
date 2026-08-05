@@ -1,4 +1,21 @@
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from "./button.tsx";
+export {
+  ContextMenu,
+  type ContextMenuItem,
+  type ContextMenuOpenSource,
+  type ContextMenuProps,
+  type ContextMenuSection,
+} from "./context-menu.tsx";
+export {
+  CONTEXT_MENU_VIEWPORT_MARGIN,
+  initialContextMenuIndex,
+  nextContextMenuIndex,
+  resolveContextMenuPlacement,
+  type ContextMenuNavigationKey,
+  type ContextMenuPlacement,
+  type ContextMenuPoint,
+  type ContextMenuSize,
+} from "./context-menu-geometry.ts";
 export { EmptyState, type EmptyStateProps } from "./empty-state.tsx";
 export {
   Icon,
