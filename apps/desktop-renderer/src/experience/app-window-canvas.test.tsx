@@ -52,6 +52,7 @@ function installTerminalLifecycleHarness() {
 
   const renderer: TerminalRenderer = {
     open: vi.fn(),
+    readCellRows: vi.fn(() => []),
     write: vi.fn(async () => undefined),
     focus: vi.fn(),
     fit: vi.fn(() => ({ cols: 80, rows: 24 })),

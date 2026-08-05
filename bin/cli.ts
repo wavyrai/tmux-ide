@@ -157,6 +157,7 @@ const knownCommands = new Set([
   "worktree",
   "update",
   "skill-sync",
+  "widget",
   "serve",
   "command-center",
   "server",
@@ -239,6 +240,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan("tmux-ide update --manifests")} ${dim("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan("tmux-ide skill-sync")}         ${dim("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
+  ${cyan("tmux-ide widget <name> [file]")} ${dim("Render markdown or an image inside this pane (Ctrl-C restores it)")}
   ${cyan("tmux-ide validate")} [--json]  ${dim("Validate workspace config")}
   ${cyan("tmux-ide detect")} [--json]    ${dim("Detect project stack")}
   ${cyan("tmux-ide detect --write")}     ${dim("Detect and write .tmux-ide/workspace.yml")}
@@ -1776,6 +1778,81 @@ try {
             : ` (v${result.to})`;
         console.log(`skill ${result.action}${detail}: ${result.path}`);
       }
+      break;
+    }
+
+    case "widget": {
+      /*
+       * Opt this pane into rich rendering (m49.7).
+       *
+       *   tmux-ide widget markdown [file]     # or stdin
+       *   tmux-ide widget image <file>
+       *
+       * The marker line carries the content, so the helper prints ONE line and
+       * then simply holds the pane: there is nothing to stream afterwards, and
+       * a pane that returned to its prompt would scroll the marker away. Ctrl-C
+       * clears the screen, which is what takes the widget down — the renderer
+       * shows one for exactly as long as the marker is in the grid.
+       *
+       * Outside a tmux-ide window this prints a concealed line and waits, which
+       * is why the marker is wrapped in SGR 8 rather than left bare.
+       */
+      const {
+        PaneWidgetRefusal,
+        PANE_WIDGET_RESTORE_SEQUENCE,
+        buildImageAnnouncement,
+        buildMarkdownAnnouncement,
+        paneWidgetId,
+      } = await import("../packages/daemon/src/lib/pane-widget.ts");
+      const { readFileSync } = await import("node:fs");
+
+      const readStdin = async (): Promise<string> => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+        return Buffer.concat(chunks).toString("utf8");
+      };
+
+      let announcement: string;
+      try {
+        const id = paneWidgetId(positionals[1] ?? "");
+        const file = positionals[2];
+        if (id === "markdown") {
+          const text = file ? readFileSync(file, "utf8") : await readStdin();
+          announcement = buildMarkdownAnnouncement(text);
+        } else {
+          if (!file) throw new PaneWidgetRefusal("empty", "The image widget needs a file path.");
+          announcement = buildImageAnnouncement(readFileSync(file), file);
+        }
+      } catch (error) {
+        const message =
+          error instanceof PaneWidgetRefusal
+            ? error.message
+            : `The widget input could not be read: ${(error as Error).message}`;
+        if (json) {
+          console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+        } else {
+          console.error(message);
+        }
+        process.exit(1);
+      }
+
+      if (json) {
+        // Machine callers want the line to emit themselves, not a held pane.
+        console.log(JSON.stringify({ ok: true, announcement }, null, 2));
+        break;
+      }
+
+      process.stdout.write(announcement);
+      // Hold the pane. The process is doing nothing, but it is what Ctrl-C has
+      // to reach for the restore to be the user's own action rather than ours.
+      const hold = setInterval(() => undefined, 1 << 30);
+      const restore = (): void => {
+        clearInterval(hold);
+        process.stdout.write(PANE_WIDGET_RESTORE_SEQUENCE);
+        process.exit(0);
+      };
+      process.on("SIGINT", restore);
+      process.on("SIGTERM", restore);
       break;
     }
 

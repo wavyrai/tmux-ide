@@ -2,6 +2,9 @@ import { Terminal } from "@xterm/xterm";
 import type { TerminalAttachmentViewport } from "@tmux-ide/contracts";
 
 import type { PaneMirrorSeedBatch } from "./pane-stream-transport.ts";
+import type { WidgetCellRow } from "@tmux-ide/contracts";
+import { readWidgetCellRows } from "./widgets/xterm-cell-rows.ts";
+import { gridOverlayBox, type GridOverlayBox } from "../experience/grid-overlay.ts";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import {
   TERMINAL_FONT_FAMILY,
@@ -36,6 +39,16 @@ export interface MirrorTerminalRenderer {
    */
   fitToContainer(): void;
   setReducedMotion(reducedMotion: boolean): void;
+  /** The most recent `maxRows` grid rows, as cells — see the interactive twin. */
+  readCellRows(maxRows: number): WidgetCellRow[];
+  /**
+   * Where the letterboxed grid sits inside the card, and at what scale (m49.7).
+   *
+   * Anything painted over a mirror pane positions itself from THIS, never from
+   * the container's own box: the render is scaled down to fit, so container
+   * pixels and grid pixels are the same thing only at scale 1.
+   */
+  gridOverlayGeometry(): { box: GridOverlayBox; scale: number } | null;
   dispose(): void;
 }
 
@@ -184,6 +197,24 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
     },
     setReducedMotion() {
       // Mirror cursors never blink; reduced motion changes nothing here.
+    },
+    readCellRows(maxRows) {
+      return readWidgetCellRows(terminal, maxRows);
+    },
+    gridOverlayGeometry() {
+      const element = terminal.element;
+      if (!container || !element) return null;
+      const screen = element.querySelector<HTMLElement>(".xterm-screen") ?? element;
+      return {
+        // The SAME scale the render was committed at, not a fresh derivation:
+        // recomputing here is a second chance to disagree with the pixels.
+        box: gridOverlayBox(
+          { width: screen.offsetWidth, height: screen.offsetHeight },
+          { width: container.clientWidth, height: container.clientHeight },
+          appliedScale,
+        ),
+        scale: appliedScale,
+      };
     },
     dispose() {
       container = null;

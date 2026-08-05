@@ -2,6 +2,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import type { TerminalAttachmentViewport } from "@tmux-ide/contracts";
 
+import type { WidgetCellRow } from "@tmux-ide/contracts";
+import { readWidgetCellRows } from "./widgets/xterm-cell-rows.ts";
+
 export interface TerminalRendererDisposable {
   dispose(): void;
 }
@@ -21,6 +24,14 @@ export interface TerminalRenderer {
   refreshTheme(): void;
   setReducedMotion(reducedMotion: boolean): void;
   onInput(listener: (bytes: Uint8Array) => void): TerminalRendererDisposable;
+  /**
+   * The most recent `maxRows` grid rows, as cells (m49.7).
+   *
+   * Widget detection has to read the grid AFTER the emulator has parsed it —
+   * cells are the only place a wrapped, multi-code-unit line exists correctly —
+   * so the renderer is the only thing that can answer this.
+   */
+  readCellRows(maxRows: number): WidgetCellRow[];
   dispose(): void;
 }
 
@@ -199,6 +210,9 @@ export const createXtermRenderer: TerminalRendererFactory = ({ reducedMotion, la
     },
     onInput(listener) {
       return terminal.onData((data) => listener(encoder.encode(data)));
+    },
+    readCellRows(maxRows) {
+      return readWidgetCellRows(terminal, maxRows);
     },
     dispose() {
       container = null;

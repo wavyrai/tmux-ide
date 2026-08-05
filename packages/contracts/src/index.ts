@@ -64,3 +64,4 @@ export * from "./daemon-resources.ts";
 export * from "./daemon-events.ts";
 export * from "./desktop-update.ts";
 export * from "./startup-readiness.ts";
+export * from "./pane-widget-marker.ts";

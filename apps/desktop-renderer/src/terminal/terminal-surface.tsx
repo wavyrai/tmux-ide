@@ -16,6 +16,10 @@ import {
   type NativeTerminalTransport,
   type NativeTerminalTransportError,
 } from "./native-terminal-transport.ts";
+import { WidgetSurface } from "./widgets/widget-surface.tsx";
+import { createWidgetMarkerByteWatcher, detectWidgetMarker } from "@tmux-ide/contracts";
+import { resolveWidget, type WidgetResolution } from "./widgets/widget-registry.ts";
+import { WIDGET_SCAN_MAX_ROWS } from "./widgets/xterm-cell-rows.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "./xterm-renderer.ts";
 
 export type TerminalSurfacePhase =
@@ -39,6 +43,13 @@ const MAX_PENDING_OUTPUT_WRITES = 64;
 const OUTPUT_WRITE_TIMEOUT_MS = 15_000;
 const MAX_PENDING_INPUT_WRITES = 64;
 const MAX_PENDING_INPUT_BYTES = 256 * 1024;
+
+/**
+ * How long writes are allowed to accumulate before the grid is scanned for a
+ * widget marker. A marker arrives as one burst of output, so coalescing costs
+ * the user nothing visible and saves a full-buffer scan per chunk.
+ */
+const WIDGET_SCAN_DEBOUNCE_MS = 40;
 
 export interface TerminalSurfaceProps {
   readonly target: TerminalAttachmentSemanticTarget;
@@ -146,6 +157,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const [hasValidatedFrame, setHasValidatedFrame] = createSignal(false);
   const [sourceGrid, setSourceGrid] = createSignal<TerminalAttachmentViewport | null>(null);
   const [clientViewport, setClientViewport] = createSignal<TerminalAttachmentViewport | null>(null);
+  const [widget, setWidget] = createSignal<WidgetResolution | null>(null);
   let mount: HTMLDivElement | undefined;
   let renderer: TerminalRenderer | null = null;
   let attachment: NativeTerminalAttachment | null = null;
@@ -165,6 +177,56 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let resizeFlight: Promise<void> | null = null;
   let pointerFocus = false;
   let rendererLoadGeneration = 0;
+  let markerWatcher = createWidgetMarkerByteWatcher();
+  let widgetScan: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Read the grid and decide what this pane is showing (m49.7).
+   *
+   * Runs after the emulator has committed the write, because cells — not bytes
+   * — are where a wrapped marker line exists as one logical line.
+   */
+  const scanForWidget = (): void => {
+    widgetScan = null;
+    const active = renderer;
+    if (disposed || !active) return;
+    const marker = detectWidgetMarker(active.readCellRows(WIDGET_SCAN_MAX_ROWS));
+    setWidget(marker ? resolveWidget(marker) : null);
+  };
+
+  const scheduleWidgetScan = (): void => {
+    if (disposed || widgetScan !== null) return;
+    widgetScan = setTimeout(scanForWidget, WIDGET_SCAN_DEBOUNCE_MS);
+  };
+
+  const cancelWidgetScan = (): void => {
+    if (widgetScan !== null) clearTimeout(widgetScan);
+    widgetScan = null;
+  };
+
+  /**
+   * Should this write trigger a scan?
+   *
+   * Two reasons it might. Either the bytes carry the sentinel token, or a widget
+   * is ALREADY showing — in which case every write is a candidate for taking it
+   * away, since the Ctrl-C path clears the screen and the marker simply stops
+   * existing. Without the second case a pane could never stop being a widget.
+   */
+  const widgetScanCandidate = (bytes: Uint8Array): boolean =>
+    markerWatcher.observe(bytes) || widget() !== null;
+
+  /** The pane's widget identity for the DOM: a widget id, "invalid", or absent. */
+  const widgetTag = (): string | undefined => {
+    const resolution = widget();
+    if (!resolution) return undefined;
+    return resolution.status === "ready" ? resolution.definition.id : "invalid";
+  };
+
+  const resetWidgetState = (): void => {
+    cancelWidgetScan();
+    markerWatcher = createWidgetMarkerByteWatcher();
+    setWidget(null);
+  };
 
   const retireInput = (): void => {
     const epoch = activeInputEpoch;
@@ -201,6 +263,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
 
   const disposeRenderer = (): void => {
     rendererLoadGeneration += 1;
+    resetWidgetState();
     if (animationFrame !== null) cancelAnimationFrame(animationFrame);
     animationFrame = null;
     const activeObserver = observer;
@@ -273,6 +336,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
     epoch.pending += 1;
     const payload = bytes.slice();
+    const scanAfterWrite = widgetScanCandidate(payload);
     const operation = outputTail
       .catch(() => undefined)
       .then(async () => {
@@ -297,6 +361,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
             }),
           ]);
           if (outcome === "retired") throw OUTPUT_NOT_CONSUMED;
+          if (scanAfterWrite) scheduleWidgetScan();
         } finally {
           if (timer !== undefined) clearTimeout(timer);
         }
@@ -676,6 +741,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       data-size-passive={props.sizePassive ?? false}
       data-reduced-motion={props.reducedMotion ?? false}
       data-preserves-frame={hasValidatedFrame()}
+      data-widget={widgetTag()}
       data-source-grid={sourceGrid() ? `${sourceGrid()!.cols}x${sourceGrid()!.rows}` : undefined}
       data-client-viewport={
         clientViewport() ? `${clientViewport()!.cols}x${clientViewport()!.rows}` : undefined
@@ -698,6 +764,16 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         class="terminal-surface__viewport"
         aria-label={`${props.title} terminal`}
       />
+      {/*
+       * The widget overlay (m49.7). It covers the grid; it does not replace it.
+       * The emulator stays mounted and focusable underneath so Ctrl-C still
+       * reaches the process, which is what returns the pane to a shell.
+       */}
+      <Show when={widget()} keyed>
+        {(resolution) => (
+          <WidgetSurface resolution={resolution} onRequestFocus={() => renderer?.focus()} />
+        )}
+      </Show>
       <Show when={phase() !== "connected"}>
         <div
           class="terminal-surface__state"

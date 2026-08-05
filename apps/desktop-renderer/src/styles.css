@@ -7,6 +7,7 @@
  */
 @import "../../../packages/daemon/src/ui/pane-frame/web-host.css";
 @import "../../../packages/daemon/src/ui/workbench-dock/web-host.css";
+@import "./terminal/widgets/widgets.css";
 
 :root {
   /*

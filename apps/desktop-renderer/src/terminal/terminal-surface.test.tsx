@@ -15,6 +15,12 @@ import type {
   NativeTerminalTransport,
 } from "./native-terminal-transport.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "./xterm-renderer.ts";
+import {
+  WIDGET_MARKER_CONCEAL_PREFIX,
+  WIDGET_MARKER_CONCEAL_SUFFIX,
+  widgetMarkerAnnouncement,
+  type WidgetCellRow,
+} from "@tmux-ide/contracts";
 import surfaceSource from "./terminal-surface.tsx?raw";
 import transportSource from "./native-terminal-transport.ts?raw";
 import xtermSource from "./xterm-renderer.ts?raw";
@@ -70,8 +76,10 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
   let input: ((bytes: Uint8Array) => void) | null = null;
   const writes: Uint8Array[] = [];
   const disposeInput = vi.fn(() => (input = null));
+  const cellRows: WidgetCellRow[] = [];
   const renderer: TerminalRenderer = {
     open: vi.fn(),
+    readCellRows: vi.fn(() => cellRows),
     write: vi.fn(async (bytes) => {
       writes.push(bytes);
     }),
@@ -98,6 +106,11 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
     setViewport(next: TerminalAttachmentViewport) {
       viewport = next;
     },
+    /** Replace what the emulator would report as its grid, for widget detection. */
+    setCellRows(rows: readonly WidgetCellRow[]) {
+      cellRows.length = 0;
+      cellRows.push(...rows);
+    },
   };
 }
 
@@ -111,6 +124,19 @@ function rendererFleetHarness(
     return instance.renderer;
   });
   return { factory, instances };
+}
+
+/**
+ * The grid an emulator would hold after printing `announcement`: the conceal
+ * codes are consumed by the parser and never reach a cell, so what the rows
+ * carry is the marker text alone.
+ */
+function markerCellRows(announcement: string): WidgetCellRow[] {
+  const line = announcement
+    .replaceAll(WIDGET_MARKER_CONCEAL_PREFIX, "")
+    .replaceAll(WIDGET_MARKER_CONCEAL_SUFFIX, "")
+    .trimEnd();
+  return [{ cells: [...line], wrapped: false }];
 }
 
 function attachmentHarness(overrides: Partial<NativeTerminalAttachment> = {}) {
@@ -1079,6 +1105,126 @@ describe("TerminalSurface", () => {
     blockedWrite.resolve();
     await Promise.resolve();
     expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
+    dispose();
+  });
+
+  /*
+   * The whole widget contract, in one chain (m49.7).
+   *
+   * A pane that prints a marker renders a document; it does NOT stop being a
+   * pane. The emulator stays mounted, keys still reach the process, and the
+   * Ctrl-C the user presses is what takes the widget away — because the trap on
+   * the other end clears the screen, and the marker stops existing.
+   */
+  it("swaps a marked pane to a widget, keeps its keyboard path, and restores on Ctrl-C", async () => {
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    const emit = (bytes: Uint8Array): Promise<unknown> =>
+      Promise.resolve(
+        (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+          type: "output",
+          bytes,
+        }),
+      ).catch(() => undefined);
+
+    const surface = (): Element => root.querySelector(".terminal-surface")!;
+    await vi.waitFor(() => expect(surface().getAttribute("data-phase")).toBe("connected"));
+
+    // The pane prints the marker. The emulator parses it; the grid is what
+    // detection reads, so the harness reports the row the emulator would hold.
+    const announcement = widgetMarkerAnnouncement("markdown", {
+      text: "# Plan\n\nRun `pnpm test`, then ship.",
+    });
+    renderer.setCellRows(markerCellRows(announcement));
+    await emit(new TextEncoder().encode(announcement));
+
+    await vi.waitFor(() => expect(surface().getAttribute("data-widget")).toBe("markdown"));
+    const widget = root.querySelector(".widget-surface")!;
+    expect(widget).not.toBeNull();
+
+    // Bug this catches: the widget renders the document as escaped text, or
+    // renders nothing, and the pane shows a blank panel where a plan should be.
+    expect(widget.querySelector("h1")?.textContent).toBe("Plan");
+    expect(widget.querySelector("code")?.textContent).toBe("pnpm test");
+
+    /*
+     * Bug this catches: the swap REPLACES the grid instead of covering it. The
+     * emulator unmounts, its textarea leaves the focus order, and the user is
+     * trapped inside a widget with no way to signal the process behind it.
+     */
+    expect(root.querySelector(".terminal-surface__viewport")).not.toBeNull();
+    expect(renderer.renderer.dispose).not.toHaveBeenCalled();
+
+    // Clicking the document focuses the PANE, not the overlay.
+    widget.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true }));
+    await vi.waitFor(() => expect(renderer.renderer.focus).toHaveBeenCalled());
+
+    // Ctrl-C, from the keyboard, while the widget is on screen.
+    renderer.emitInput(new Uint8Array([3]));
+    await vi.waitFor(() => expect(attachment.write).toHaveBeenCalledWith(new Uint8Array([3])));
+
+    // What the helper's trap does on SIGINT: clear the screen and exec a shell.
+    renderer.setCellRows([{ cells: [..."$ "], wrapped: false }]);
+    await emit(new TextEncoder().encode("\u001b[2J\u001b[H$ "));
+
+    await vi.waitFor(() => expect(surface().getAttribute("data-widget")).toBe(null));
+    expect(root.querySelector(".widget-surface")).toBeNull();
+    expect(root.querySelector(".terminal-surface__viewport")).not.toBeNull();
+    dispose();
+  });
+
+  it("names a widget it cannot render instead of silently staying a terminal", async () => {
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    const announcement = widgetMarkerAnnouncement("flowchart", { nodes: 3 });
+    renderer.setCellRows(markerCellRows(announcement));
+    await Promise.resolve(
+      (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+        type: "output",
+        bytes: new TextEncoder().encode(announcement),
+      }),
+    ).catch(() => undefined);
+
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-widget")).toBe("invalid"),
+    );
+    expect(root.querySelector(".widget-surface__refusal")?.textContent).toContain("flowchart");
     dispose();
   });
 

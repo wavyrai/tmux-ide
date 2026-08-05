@@ -10,6 +10,8 @@ import type {
   MirrorTerminalRenderer,
   MirrorTerminalRendererFactory,
 } from "./mirror-xterm-renderer.ts";
+import type { WidgetCellRow } from "@tmux-ide/contracts";
+import type { GridOverlayBox } from "../experience/grid-overlay.ts";
 
 /**
  * Scripted pane-stream fixture (m43 card 3): a deterministic transport whose
@@ -87,6 +89,10 @@ export function createRecordingMirrorRendererFactory(): {
   const factory: MirrorTerminalRendererFactory = () => {
     const commits: MirrorRendererCommit[] = [];
     const decoder = new TextDecoder();
+    // Widget detection reads CELLS, so a fixture that wants to exercise it
+    // hands the rows over directly rather than pretending to be an emulator.
+    const cellRows: WidgetCellRow[] = [];
+    let gridOverlay: { box: GridOverlayBox; scale: number } | null = null;
     const renderer: RecordingMirrorRenderer = {
       commits,
       open: () => undefined,
@@ -106,6 +112,8 @@ export function createRecordingMirrorRendererFactory(): {
         commits.push({ kind: "cursor", x, y });
       },
       resizeGrid: () => undefined,
+      readCellRows: () => cellRows,
+      gridOverlayGeometry: () => gridOverlay,
       refreshTheme: () => undefined,
       fitToContainer: () => {
         commits.push({ kind: "fit" });
