@@ -249,6 +249,7 @@ export class SessionChannel {
     if (this.ledger.isRequested(pane.runtimeId)) this.ledger.clearRequest(pane.runtimeId);
     if (this.ledger.isBackpressured(pane.runtimeId)) this.continuePane(pane.runtimeId);
     this.reseed(sub);
+    this.emitLayoutSnapshot(sub);
     return {
       semanticPaneId,
       freeze: () => this.freeze(sub),
@@ -511,8 +512,34 @@ export class SessionChannel {
   }
 
   private emitLayout(windowRuntimeId: string): void {
+    const event = this.layoutEventFor(windowRuntimeId);
+    if (!event) return;
+    for (const pane of this.panesByRuntime.values()) {
+      for (const sub of pane.subs) {
+        if (!sub.closed && sub.onLayout) sub.onLayout(event);
+      }
+    }
+  }
+
+  /**
+   * Hand ONE new subscriber the geometry of every window this session has.
+   *
+   * Without it a subscriber's first layout frame arrives only when a layout
+   * happens to change, so a view built from these frames opens empty and stays
+   * empty until the user moves something — which reads as the app failing to
+   * find the session's windows at all.
+   */
+  private emitLayoutSnapshot(sub: SubRecord): void {
+    if (!sub.onLayout) return;
+    for (const windowRuntimeId of this.layoutByWindow.keys()) {
+      const event = this.layoutEventFor(windowRuntimeId);
+      if (!sub.closed && event) sub.onLayout(event);
+    }
+  }
+
+  private layoutEventFor(windowRuntimeId: string): MirrorLayoutEvent | null {
     const layout = this.layoutByWindow.get(windowRuntimeId);
-    if (!layout) return;
+    if (!layout) return null;
     const windowRecord = this.windowsByRuntime.get(windowRuntimeId) ?? null;
     const activePane = this.activePaneByWindow.get(windowRuntimeId) ?? "";
     const event: MirrorLayoutEvent = {
@@ -533,11 +560,7 @@ export class SessionChannel {
         active: leaf.id === activePane,
       })),
     };
-    for (const pane of this.panesByRuntime.values()) {
-      for (const sub of pane.subs) {
-        if (!sub.closed && sub.onLayout) sub.onLayout(event);
-      }
-    }
+    return event;
   }
 
   // ── Truth sync + identity join ───────────────────────────────────────────
@@ -676,8 +699,22 @@ export class SessionChannel {
       }
       next.set(row.runtimeId, { runtimeId: row.runtimeId, semanticId, name: row.name });
     }
+    const changed = [...next].some(([runtimeId, record]) => {
+      const previous = this.windowsByRuntime.get(runtimeId);
+      return (
+        !previous || previous.name !== record.name || previous.semanticId !== record.semanticId
+      );
+    });
     this.windowsByRuntime.clear();
     for (const [key, value] of next) this.windowsByRuntime.set(key, value);
+    /*
+     * A rename arrives as %window-renamed, which is a structural notification:
+     * it triggers this sync and emits no layout of its own. Without a re-emit
+     * the window NAME on every layout frame stays as it was, so a view whose
+     * tabs are labelled from these frames keeps showing the old name after the
+     * rename it just performed reached tmux.
+     */
+    if (changed) for (const runtimeId of next.keys()) this.emitLayout(runtimeId);
   }
 
   private async reconcileIdentity(

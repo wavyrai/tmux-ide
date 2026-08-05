@@ -1061,10 +1061,20 @@ export class PaneStreamLiveConnection {
 
   #onLayout(event: MirrorLayoutEvent): void {
     if (this.#closed) return;
-    const leased = event.panes.some(
-      (pane) => pane.semanticPaneId !== null && this.#panes.has(pane.semanticPaneId),
-    );
-    if (!leased) return;
+    /*
+     * Every window of the session, not only the leased panes' own.
+     *
+     * The lease is SESSION-scoped by design — one socket for one workspace —
+     * and layout is that session's geometry rather than a per-pane stream. A
+     * client that saw only its leased window could not render a window LIST at
+     * all, which is what the layout-faithful view is built from (m50), and it
+     * would have to lease every pane in the session to get one.
+     *
+     * Nothing new crosses the boundary: the frame carries semantic pane ids and
+     * cell rectangles, and the same renderer is already told every pane's
+     * semantic identity by the application-shell inventory. No runtime tmux id,
+     * command, cwd or credential appears here.
+     */
     const frame = {
       type: "layout",
       semanticWindowId: event.semanticWindowId,

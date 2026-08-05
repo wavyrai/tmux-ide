@@ -577,6 +577,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
 
   /** A pointer-anchored menu owned by the shell rather than by the canvas. */
   const [terminalAttached, setTerminalAttached] = createSignal(false);
+  /** The window being renamed in the tab strip, named by a pane inside it. */
+  const [renamingPane, setRenamingPane] = createSignal<string | null>(null);
   const [shellMenu, setShellMenu] = createSignal<{
     readonly kind: "workspace" | "pane";
     readonly paneId: string | null;
@@ -654,6 +656,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     }
     if (itemId === "pane.select" || itemId === "pane.kill" || itemId === "window.kill") {
       void verbAccess.invoke(itemId, target);
+      return;
+    }
+    if (itemId === "window.rename") {
+      setRenamingPane(semanticPaneId);
       return;
     }
     if (itemId === "window.zoom.toggle") void verbAccess.invoke(itemId, target);
@@ -808,14 +814,67 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     );
   });
   /**
-   * The tiled view renders tmux's geometry, so it needs geometry: until the
-   * first layout frame arrives there is nothing to be faithful to, and the
-   * pane-grid fallback keeps the terminals surface honest in the meantime
-   * (including in preview, which has no lease at all).
+   * The tiled view IS the runtime terminals surface; the pane grid below it is
+   * the preview/fixture path only.
+   *
+   * The condition is whether a pane-stream transport EXISTS, never whether its
+   * frames have arrived yet. Attachment ownership
+   * is window-keyed with a grace period, so a grid that attaches for the second
+   * before the first layout frame lands leaves a lease still releasing when the
+   * tiled view attaches — and the user is shown "this terminal's previous
+   * session is still releasing" for a window nothing else is using. The tiled
+   * surface states its own waiting-for-geometry case instead.
    */
   const tiledViewAvailable = createMemo<boolean>(
-    () => dataMode() === "runtime" && (mirrorState()?.layouts.length ?? 0) > 0,
+    () => dataMode() === "runtime" && mirrorTransport() !== null,
   );
+  /**
+   * The session's windows as the inventory groups them: panes sharing a
+   * `windowResourceId` are one tmux window, and a pane without one is its own.
+   * It is the tab strip's source until layout frames arrive.
+   */
+  const inventoryWindows = createMemo(() => {
+    const inventory = shell().terminalInventory;
+    const groups = new Map<
+      string,
+      { key: string; label: string; panes: string[]; active: boolean }
+    >();
+    for (const resource of inventory?.resources ?? []) {
+      if (resource.attachability.status !== "available") continue;
+      const key = resource.windowResourceId ?? resource.id;
+      const group = groups.get(key) ?? { key, label: resource.title, panes: [], active: false };
+      group.panes.push(resource.attachability.semanticPaneId);
+      if (resource.active) group.active = true;
+      groups.set(key, group);
+    }
+    return [...groups.values()];
+  });
+  /** Every attachable pane's title, as the daemon's inventory records it. */
+  const paneTitles = createMemo<ReadonlyMap<string, string>>(() => {
+    const inventory = shell().terminalInventory;
+    const titles = new Map<string, string>();
+    for (const resource of inventory?.resources ?? []) {
+      if (resource.attachability.status === "available") {
+        titles.set(resource.attachability.semanticPaneId, resource.title);
+      }
+    }
+    return titles;
+  });
+  /**
+   * The inventory's own active pane — what the tiled view shows before (or
+   * without) any layout frame, so late geometry never costs the user a terminal.
+   */
+  const activeSemanticPaneId = createMemo<string | null>(() => {
+    const inventory = shell().terminalInventory;
+    if (!inventory) return null;
+    const attachable = inventory.resources.filter(
+      (resource) => resource.attachability.status === "available",
+    );
+    const active = attachable.find((resource) => resource.active) ?? attachable[0];
+    return active?.attachability.status === "available"
+      ? active.attachability.semanticPaneId
+      : null;
+  });
   /** Panes in the window the shell menu's target belongs to, per tmux. */
   const windowPaneCountFor = (semanticPaneId: string | null): number => {
     if (!semanticPaneId) return 1;
@@ -1577,10 +1636,23 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                     transport={props.terminalTransport}
                     paneFrames={renderedPaneFrames()}
                     livePanes={livePaneIds()}
+                    fallbackPane={activeSemanticPaneId()}
+                    paneTitles={paneTitles()}
+                    fallbackWindows={inventoryWindows()}
                     reducedMotion={props.reducedMotion}
                     terminalThemeKey={props.terminalThemeKey}
                     mirror={mirrorCanvasProps()}
                     onAttachmentChanged={setTerminalAttached}
+                    renamingPane={renamingPane()}
+                    onRenameCancel={() => setRenamingPane(null)}
+                    onRenameCommit={(semanticPaneId, name) => {
+                      setRenamingPane(null);
+                      void verbAccess.invoke(
+                        "window.rename",
+                        { workspaceName: verbWorkspaceName(), semanticPaneId },
+                        { name },
+                      );
+                    }}
                     verbs={{
                       workspaceConnected: workspaceConnected(),
                       onCreateWindow: props.createPaneFlow

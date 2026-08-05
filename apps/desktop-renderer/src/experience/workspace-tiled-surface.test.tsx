@@ -124,22 +124,20 @@ describe("the layout-faithful workspace view", () => {
     expect(renderSurface([layout()]).root.querySelectorAll(".pane-border")).toHaveLength(0);
   });
 
-  it("focuses a pane in tmux when its tile is clicked", () => {
-    const { root, invoke } = renderSurface([SPLIT]);
-    const inactive = root.querySelector<HTMLElement>('.pane-tile[data-pane="pane.b"]')!;
-    inactive.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
-    expect(invoke).toHaveBeenCalledWith("pane.select", "pane.b");
-  });
-
-  it("opens the pane menu on right-click without moving tmux's active pane", () => {
-    // Bug this catches: the right-click also selects, so the menu that opens
-    // acts on a pane the user has already been moved off.
-    const onOpenPaneMenu = vi.fn();
-    const { root, invoke } = renderSurface([SPLIT], { onOpenPaneMenu });
-    const tile = root.querySelector<HTMLElement>('.pane-tile[data-pane="pane.b"]')!;
-    tile.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
-    expect(onOpenPaneMenu).toHaveBeenCalledWith("pane.b", expect.anything());
-    expect(invoke).not.toHaveBeenCalled();
+  it("leaves the pointer to the terminal underneath", () => {
+    /*
+     * Bug this catches, and it cost a live e2e run: the tiles took the pointer,
+     * so a click aimed at the terminal landed on an overlay instead and every
+     * keystroke after it went nowhere. Pane hit testing lives on the pane AREA,
+     * which follows the click without swallowing it — and the terminal beneath
+     * is a real tmux client, so tmux selects the pane itself either way.
+     */
+    const { root } = renderSurface([SPLIT]);
+    for (const tile of root.querySelectorAll<HTMLElement>(".pane-tile")) {
+      expect(tile.getAttribute("data-pane")).toBeTruthy();
+      expect(tile.onpointerdown).toBeNull();
+      expect(tile.oncontextmenu).toBeNull();
+    }
   });
 
   it("prunes a window whose panes the daemon no longer reports as attachable", () => {

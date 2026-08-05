@@ -311,6 +311,27 @@ describe("layout push", () => {
     await rig.channel.dispose();
   });
 
+  it("hands a new subscriber every window's geometry immediately", async () => {
+    /*
+     * Bug this catches — and it did, on the first live run of the layout-faithful
+     * view: layout frames were emitted only when a layout CHANGED, so a view
+     * built from them opened empty and stayed empty until the user moved
+     * something. It read as the app failing to find the session's windows.
+     */
+    const rig = await startedRig();
+    const layouts: MirrorLayoutEvent[] = [];
+    rig.channel.subscribePane(
+      "pane.alpha",
+      () => {},
+      (event) => layouts.push(event),
+    );
+    expect(layouts.map((event) => event.semanticWindowId).sort()).toEqual([
+      "window.test.one",
+      "window.test.two",
+    ]);
+    await rig.channel.dispose();
+  });
+
   it("re-flags the active pane from %window-pane-changed", async () => {
     const rig = await startedRig();
     const layouts: MirrorLayoutEvent[] = [];

@@ -1,19 +1,21 @@
 /**
- * Chain: the mouse reaches tmux.
+ * Chain: the mouse reaches tmux, through the layout-faithful view.
  *
- *   right-click a window card → the verb menu, in sections → rename it and see
- *   BOTH the card title and the tmux window name change → dock it into another
- *   window's stack → the tab strip appears and its inactive tab activates →
- *   close the window with the destructive confirm → tmux has one window fewer.
+ *   the window tabs show the session's real windows → clicking an inactive tab
+ *   moves tmux's OWN current window → right-click a pane tile for the verb menu,
+ *   in sections → rename the window and see both the tab and `tmux list-windows`
+ *   change → split from the menu and watch the view re-tile to match the layout
+ *   frame → drag the new border and watch the tmux pane actually resize → close
+ *   the pane with the destructive confirm.
  *
- * One chain, because these are not independent claims. A menu that renders and
- * a rename that reaches tmux can each pass while the path between them — click
- * the item, get a field, commit it — is broken.
+ * One chain, because these are not independent claims. A tab that renders and a
+ * rename that reaches tmux can each pass while the path between them is broken.
  *
- * Every mutation here is performed the way a person performs it. tmux is read
- * directly ONLY to check the world afterwards, which is the whole point: the
- * m48 audit's finding was that the app's controls moved the app's own document
- * and said nothing about not moving tmux.
+ * The point of every step is the same one m48 found missing and m50 rebuilt
+ * around: the app's controls must move TMUX, not a second layout beside it. So
+ * tmux is read directly only to check the world afterwards, and the geometry
+ * assertions compare the view's own rectangles against the proportions tmux
+ * reports — which is the claim "layout-faithful" actually makes.
  */
 import { test, expect } from "./fixtures/live-app.ts";
 import { proveGone, proveVisible } from "./fixtures/visible.ts";
@@ -22,7 +24,7 @@ test.use({ scratchSessions: 1, promoteSessions: 1 });
 
 const RENAMED = "e2e-renamed";
 
-test("right-click reaches the multiplexer: rename, dock into a stack, and close a window", async ({
+test("the mouse reaches the multiplexer: switch windows, rename, split, resize, close", async ({
   page,
   liveApp,
 }, testInfo) => {
@@ -41,227 +43,206 @@ test("right-click reaches the multiplexer: rename, dock into a stack, and close 
     "opening a workspace no longer lands on the terminal canvas",
   ).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
 
-  const cards = page.locator("article.app-window-card:not(.app-window-card--ended)");
+  // --- The window tabs are the session's real windows ----------------------
+  const tabs = page.locator(".window-tabs__tab");
   await expect(
-    cards,
-    "the canvas did not render a card per tmux window of the promoted session",
+    tabs,
+    "the tab strip did not render a tab per tmux window of the promoted session",
   ).toHaveCount(2, { timeout: 60_000 });
+  await proveVisible(tabs.first(), "the first window tab", { minWidth: 30, minHeight: 16 });
 
   /*
-   * Address cards by their DURABLE window id, never by DOM position.
-   *
-   * Focusing a card raises it, and the canvas paints in z-order, so the card a
-   * user just right-clicked is very often no longer the first one in the DOM.
-   * A positional locator here would silently act on the other window.
+   * Bug this catches — the m48 finding this whole view exists to remove: six
+   * indistinguishable "Terminal" tabs, because the labels came from the app's
+   * own document instead of from the live window names.
    */
-  const windowIds = await cards.evaluateAll((nodes) =>
-    nodes.map((node) => ({
-      id: node.getAttribute("data-window-id") ?? "",
-      active: node.getAttribute("data-active") === "true",
-    })),
+  const startingWindows = liveApp.fleet.listWindows(session);
+  expect(startingWindows.length, "the scratch session did not start with two windows").toBe(2);
+  await expect
+    .poll(async () => (await tabs.allInnerTexts()).map((text) => text.trim()).sort(), {
+      message: "the window tabs do not carry the live tmux window names",
+      timeout: 30_000,
+    })
+    .toEqual([...startingWindows].sort());
+
+  // --- Clicking an inactive tab moves tmux's current window ----------------
+  const inactiveTab = page.locator('.window-tabs__tab[data-active="false"]').first();
+  await proveVisible(inactiveTab, "the inactive window tab", { minWidth: 30, minHeight: 16 });
+  const targetWindow = (await inactiveTab.innerText()).trim();
+  const startingCurrent = liveApp.fleet.currentWindow(session);
+  expect(targetWindow, "the inactive tab names the window that is already current").not.toBe(
+    startingCurrent,
   );
-  // The subject is the ACTIVE window: it is the one a user is working in, and
-  // it is the one whose terminal is attached rather than retrying, so its card
-  // is not being torn down and rebuilt under the pointer.
-  const subjectId = (windowIds.find((entry) => entry.active) ?? windowIds[0])?.id;
-  const otherId = windowIds.find((entry) => entry.id !== subjectId)?.id;
-  expect(subjectId, "the canvas rendered a card with no durable window id").toBeTruthy();
-  expect(otherId, "the canvas rendered only one card for a two-window session").toBeTruthy();
-  const cardFor = (windowId: string) =>
-    page.locator(`article.app-window-card[data-window-id="${windowId}"]`);
+  await inactiveTab.click();
 
-  const menu = page.locator('[role="menu"][data-context-menu="true"]');
-
-  /**
-   * A viewport point where this card's header is the topmost thing.
-   *
-   * Cards cascade, so the centre of the back card's header is under the front
-   * card. A `position` guess would be a bet on the offset; this asks the page
-   * which pixels of the header actually belong to it, which is the same
-   * question a user answers with their eyes before aiming.
+  /*
+   * Bug this catches: the tab switches which window the APP shows and never
+   * tells tmux, so a client attached over ssh stays on the old window and the
+   * two views of one session disagree about where the user is.
    */
-  const headerPoint = async (windowId: string): Promise<{ x: number; y: number }> => {
-    const point = await page.evaluate((id) => {
-      const header = document
-        .querySelector(`article.app-window-card[data-window-id="${id}"]`)
-        ?.querySelector(".web-pane-frame__header");
-      if (!header) return null;
-      const rect = header.getBoundingClientRect();
-      for (let ratioX = 0.1; ratioX <= 0.9; ratioX += 0.1) {
-        for (let ratioY = 0.3; ratioY <= 0.8; ratioY += 0.25) {
-          const x = Math.round(rect.left + rect.width * ratioX);
-          const y = Math.round(rect.top + rect.height * ratioY);
-          const hit = document.elementFromPoint(x, y);
-          if (hit && header.contains(hit)) return { x, y };
-        }
-      }
-      return null;
-    }, windowId);
-    expect(
-      point,
-      `no pixel of the ${windowId} card's header is reachable — it is entirely under another card`,
-    ).not.toBeNull();
-    return point!;
-  };
+  await expect
+    .poll(() => liveApp.fleet.currentWindow(session), {
+      message: "clicking the window tab did not change tmux's own current window",
+      timeout: 30_000,
+    })
+    .toBe(targetWindow);
+  await expect(
+    page.locator('.window-tabs__tab[data-active="true"]'),
+    "tmux switched windows but the tab strip still marks the old one",
+  ).toHaveText(targetWindow, { timeout: 30_000 });
+  await page.screenshot({ path: testInfo.outputPath("1-window-tabs.png") });
 
-  const openMenuOn = async (windowId: string): Promise<void> => {
-    const point = await headerPoint(windowId);
-    await page.mouse.click(point.x, point.y, { button: "right" });
+  // --- The verb menu, on a pane tile ---------------------------------------
+  const menu = page.locator('[role="menu"][data-context-menu="true"]');
+  const item = (id: string) => menu.locator(`[data-context-menu-item="${id}"]`);
+  /*
+   * Right-click INSIDE a tile, but aimed at the pane area.
+   *
+   * The tiles take no pointer events — a left click has to reach the terminal
+   * underneath, which is a real tmux client — so the menu is opened by pointing
+   * at the pixels a tile covers rather than at the tile element.
+   */
+  const openTileMenu = async (): Promise<void> => {
+    const box = (await page.locator(".pane-tile").first().boundingBox())!;
+    await page.mouse.click(box.x + Math.min(24, box.width / 3), box.y + box.height / 2, {
+      button: "right",
+    });
     await proveVisible(menu, "the verb context menu", { minWidth: 180, minHeight: 100 });
   };
-  const item = (id: string) => menu.locator(`[data-context-menu-item="${id}"]`);
+  await openTileMenu();
 
-  // --- Right-click on a window card ---------------------------------------
-  await openMenuOn(subjectId!);
-
-  /*
-   * Bug this catches: the menu renders as one undifferentiated list, so the
-   * items that move the app's own canvas sit beside the items that change tmux
-   * and a user cannot tell which of their arrangements an ssh client will see.
-   * That indistinguishability IS m48 gap 1.
-   */
+  // Bug this catches: the menu renders as one undifferentiated list, so verbs
+  // that change tmux sit beside ones that do not and a user cannot tell which.
   await expect(
     menu.locator("[data-section-id]"),
     "the verb menu no longer separates pane, window, session and app-layout verbs",
   ).toHaveCount(4);
   await proveVisible(item("pane.split.right"), "the split-right item", { minHeight: 16 });
-  await expect(
-    menu.locator('[data-section-id="arrange"] .tmi-context-menu__section-note'),
-    "the app-layout section no longer says that it does not touch the tmux layout",
-  ).toContainText("tmux layout is unchanged");
-  // Bug this catches: unavailable verbs are hidden rather than refused, so a
-  // person who cannot find "close pane" learns nothing about why.
-  await expect(
-    menu.locator('[data-context-menu-item="pane.select"]'),
-    "the already-active pane's focus verb is missing instead of refused with its reason",
-  ).toHaveAttribute("aria-disabled", /true|false/u);
-  await page.screenshot({ path: testInfo.outputPath("1-window-menu.png") });
 
-  // --- Rename, and prove it reached tmux ----------------------------------
-  const beforeWindows = liveApp.fleet.listWindows(session);
-  expect(
-    beforeWindows.length,
-    "the scratch session did not start with two windows to rename between",
-  ).toBe(2);
-
+  // --- Rename, and prove it reached tmux -----------------------------------
   await item("window.rename").click();
   await proveGone(menu, "the verb menu after choosing rename");
-  const field = cardFor(subjectId!).locator(".app-window-card__rename-field");
-  await proveVisible(field, "the inline rename field on the card header", { minHeight: 20 });
+  const field = page.locator(".window-tabs__rename-field");
+  await proveVisible(field, "the inline rename field on the window tab", { minHeight: 16 });
   // Typed, not filled: real key events are what a user produces, and they are
   // the only way to prove the editor's own input handling works.
-  await field.click();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+a" : "Control+a");
   await page.keyboard.type(RENAMED);
-  // Bug this catches: the card is rebuilt under the editor, so the field the
-  // user typed into is replaced by a fresh one and their typing is gone before
-  // they press Enter.
+  // Bug this catches: the tab is rebuilt under the editor by an incoming layout
+  // frame, so what the user typed is gone before they press Enter.
   expect(
     await field.inputValue(),
     "the rename field lost what was typed into it before it could be committed",
   ).toBe(RENAMED);
   await page.keyboard.press("Enter");
-  // Bug this catches: Enter never reaches the editor's handler, so the field
-  // just sits there and the user presses it again on an unchanged window.
   await proveGone(field, "the rename editor after Enter");
 
   /*
-   * Bug this catches: the rename edits the app's own title and never reaches
+   * Bug this catches: the rename edits the app's own label and never reaches
    * tmux, so the name is invisible to `tmux ls` and to any attached client.
-   *
-   * The poll also reads the app's own refusal line, so a rename the daemon
-   * declined fails with the daemon's sentence rather than with "the name is
-   * still 'one'" — and a refusal that appears with no line at all is itself the
-   * regression, because a silently swallowed verb is the worst of the outcomes.
    */
-  const verbError = page.locator("[data-verb-error]");
-  const observed: string[] = [];
+  await expect
+    .poll(() => liveApp.fleet.listWindows(session).join(","), {
+      message: "the inline rename did not reach tmux",
+      timeout: 20_000,
+    })
+    .toContain(RENAMED);
+  // …and the tab says the same thing the server does.
+  await expect(
+    page.locator(".window-tabs__tab", { hasText: RENAMED }),
+    "tmux renamed the window but the tab kept the old label",
+  ).toHaveCount(1, { timeout: 30_000 });
+  await page.screenshot({ path: testInfo.outputPath("2-menu-and-rename.png") });
+
+  // --- Split, and prove the view re-tiles to tmux's own layout -------------
+  const panesBeforeSplit = liveApp.fleet.countPanes(session);
+  await openTileMenu();
+  await item("pane.split.right").click();
+  await proveGone(menu, "the verb menu after choosing split");
+
+  await expect
+    .poll(() => liveApp.fleet.countPanes(session), {
+      message: "the split never reached tmux — the session has the same pane count",
+      timeout: 30_000,
+    })
+    .toBe(panesBeforeSplit + 1);
+  /*
+   * Bug this catches: the split reaches tmux and the view does not follow, so
+   * the app shows one pane where the server has two. In the parked canvas that
+   * was a whole class of defect; here the view is a pure function of the layout
+   * frame, and this is the assertion that says so.
+   */
+  const tiles = page.locator(".pane-tile");
+  await expect(tiles, "the view did not re-tile after the split").toHaveCount(2, {
+    timeout: 30_000,
+  });
+
+  /*
+   * The proportions, compared against tmux's own.
+   *
+   * The tiles are rendered from the layout frame's cell rectangles, so the ratio
+   * of the two tiles' widths must match the ratio of the two tmux panes' widths.
+   * Bug this catches: the view renders two panes at a convenient 50/50 while
+   * tmux's layout is something else entirely — visually plausible, and wrong.
+   */
   await expect
     .poll(
       async () => {
-        const names = liveApp.fleet.listWindows(session).join(",");
-        const refusal = (await verbError.count()) > 0 ? (await verbError.innerText()).trim() : "";
-        observed.push(refusal ? `${names} | ${refusal}` : names);
-        if (names.split(",").includes(RENAMED)) return RENAMED;
-        return `observed: ${[...new Set(observed)].join(" >> ")}`;
+        const widths = await tiles.evaluateAll((nodes) =>
+          nodes
+            .map((node) => node.getBoundingClientRect().width)
+            .sort((left, right) => left - right),
+        );
+        const cells = liveApp.fleet
+          .paneSizes(session)
+          .map((size) => Number(size.split("x")[0]))
+          .sort((left, right) => left - right);
+        if (widths.length !== 2 || cells.length !== 2 || widths[0]! === 0) return "not measurable";
+        const rendered = widths[0]! / widths[1]!;
+        const actual = cells[0]! / cells[1]!;
+        return Math.abs(rendered - actual) < 0.06
+          ? "matches"
+          : `rendered ${rendered.toFixed(3)} vs tmux ${actual.toFixed(3)}`;
       },
-      { message: "the inline rename did not reach tmux", timeout: 20_000, intervals: [50, 50, 50] },
-    )
-    .toBe(RENAMED);
-  // …and the card says the same thing the server does.
-  await expect(
-    page.locator("article.app-window-card .web-pane-frame__title", { hasText: RENAMED }),
-    "tmux renamed the window but the card kept the old title",
-  ).toHaveCount(1, { timeout: 30_000 });
-  await page.screenshot({ path: testInfo.outputPath("2-renamed.png") });
-
-  // --- Dock into another window's stack ------------------------------------
-  // The dock destinations are the OTHER windows' stacks, so the two cards have
-  // to be in different placements first. Whichever way the saved layout starts,
-  // this puts one card on the canvas and leaves the other docked.
-  const placementItem = '[data-context-menu-item="app-layout:placement"]';
-  const placementOf = (windowId: string) => cardFor(windowId).getAttribute("data-placement");
-  if ((await placementOf(otherId!)) !== "docked") {
-    await openMenuOn(otherId!);
-    await menu.locator(placementItem).click();
-    await expect
-      .poll(() => placementOf(otherId!), { message: "docking the other card did nothing" })
-      .toBe("docked");
-  }
-  if ((await placementOf(subjectId!)) !== "floating") {
-    await openMenuOn(subjectId!);
-    await menu.locator(placementItem).click();
-    await expect
-      .poll(() => placementOf(subjectId!), { message: "floating the subject card did nothing" })
-      .toBe("floating");
-  }
-
-  await openMenuOn(subjectId!);
-  const dockInto = menu.locator('[data-context-menu-item^="app-layout:dock-into:"]').first();
-  await proveVisible(dockInto, "the dock-into-stack item", { minHeight: 16 });
-  await dockInto.click();
-
-  /*
-   * Bug this catches — m48 gap 10: `stack.activate` has been implemented and
-   * tested in the daemon kernel since the stack model shipped, and the renderer
-   * had no affordance that could produce a stack with two members, so the tab
-   * strip that dispatches it never appeared for anyone.
-   */
-  const tabs = page.locator(".app-window-card__stack-tab");
-  await expect(
-    tabs,
-    "docking one window into another window's stack did not produce a two-tab strip",
-  ).toHaveCount(2, { timeout: 30_000 });
-  await proveVisible(tabs.first(), "the first stack tab", { minWidth: 40, minHeight: 14 });
-  const inactiveTab = page.locator('.app-window-card__stack-tab[data-active="false"]');
-  await proveVisible(inactiveTab, "the inactive stack tab", { minWidth: 40, minHeight: 14 });
-  const inactiveLabel = (await inactiveTab.innerText()).trim();
-  await inactiveTab.click();
-  // Bug this catches: the tab strip renders and its clicks go nowhere, which is
-  // the state the app shipped in — the command existed, the dispatch did not.
-  await expect
-    .poll(
-      async () =>
-        (await page.locator('.app-window-card__stack-tab[data-active="true"]').innerText()).trim(),
       {
-        message: `clicking the "${inactiveLabel}" tab did not bring its window to the front of the stack`,
+        message: "the tiles' proportions do not match the proportions tmux reports",
         timeout: 30_000,
       },
     )
-    .toBe(inactiveLabel);
-  // Only a stack's active member renders as a card, which is exactly why the
-  // tab strip has to exist: without it the other window is unreachable.
-  await expect(
-    cards,
-    "docking two windows into one stack did not collapse them to a single card",
-  ).toHaveCount(1, { timeout: 30_000 });
-  await page.screenshot({ path: testInfo.outputPath("3-stack-tabs.png") });
+    .toBe("matches");
+  await page.screenshot({ path: testInfo.outputPath("3-split-retiled.png") });
 
-  // --- Close a window, with the destructive confirm ------------------------
+  // --- Drag the border, and prove tmux resized ----------------------------
+  const border = page.locator(".pane-border").first();
+  await proveVisible(border, "the draggable pane border", { minWidth: 1, minHeight: 20 });
+  const borderBox = (await border.boundingBox())!;
+  const sizesBefore = liveApp.fleet.paneSizes(session).join(",");
+
+  await page.mouse.move(borderBox.x + borderBox.width / 2, borderBox.y + borderBox.height / 2);
+  await page.mouse.down();
+  // Two moves, then a release. The verb is dispatched on RELEASE only — a
+  // resize per pointermove would spend a serialized daemon round trip per frame
+  // of mouse movement, every one of them superseded before it landed.
+  await page.mouse.move(borderBox.x - 60, borderBox.y + borderBox.height / 2, { steps: 8 });
+  await page.mouse.move(borderBox.x - 120, borderBox.y + borderBox.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  /*
+   * Bug this catches: the border drags visibly and changes only the app's own
+   * rectangle, so the pane an ssh client sees is untouched — the m48 divergence
+   * in its purest form, since a resize has no other observable effect.
+   */
+  await expect
+    .poll(() => liveApp.fleet.paneSizes(session).join(","), {
+      message: "the border drag never reached tmux — the panes are the same size",
+      timeout: 30_000,
+    })
+    .not.toBe(sizesBefore);
+  await page.screenshot({ path: testInfo.outputPath("4-border-dragged.png") });
+
+  // --- Close a pane, with the destructive confirm --------------------------
   const panesBefore = liveApp.fleet.countPanes(session);
-  // After docking, only the stack's active member renders; open its menu.
-  const activeCardId = (await cards.first().getAttribute("data-window-id"))!;
-  await openMenuOn(activeCardId);
+  await openTileMenu();
   const kill = item("pane.kill");
   await proveVisible(kill, "the close-pane item", { minHeight: 16 });
   await expect(
@@ -283,30 +264,18 @@ test("right-click reaches the multiplexer: rename, dock into a stack, and close 
   await kill.click();
   await proveGone(menu, "the verb menu after confirming the kill");
 
-  // Bug this catches: the confirmed kill changes the app's own document and
-  // leaves the tmux pane running — the exact divergence this milestone is about.
   await expect
     .poll(() => liveApp.fleet.countPanes(session), {
       message: "the confirmed close never reached tmux — the pane is still in the server",
       timeout: 30_000,
     })
     .toBe(panesBefore - 1);
-  /*
-   * The killed window stops showing a live terminal.
-   *
-   * Bug this catches: the card keeps painting the last bytes of a pane that no
-   * longer exists, so a user reads a dead terminal as a live one. The window's
-   * entry in the app's own layout document outlives the pane — the daemon
-   * prunes that on its own schedule — which is why this asserts the terminal
-   * rather than the card.
-   */
+  // …and the view follows it back down, from the next layout frame.
   await expect(
-    page.locator(
-      `article.app-window-card[data-window-id="${activeCardId}"] .terminal-surface[data-phase="connected"]`,
-    ),
-    "the killed window still shows a connected terminal",
-  ).toHaveCount(0, { timeout: 30_000 });
-  await page.screenshot({ path: testInfo.outputPath("4-window-closed.png") });
+    page.locator(".pane-tile"),
+    "the killed pane still has a tile — the view is no longer following the layout frame",
+  ).toHaveCount(1, { timeout: 30_000 });
+  await page.screenshot({ path: testInfo.outputPath("5-pane-closed.png") });
 
   expect(
     crashes,

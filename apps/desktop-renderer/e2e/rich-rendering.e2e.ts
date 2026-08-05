@@ -106,10 +106,10 @@ test("a pane renders markdown from one printed line, and Ctrl-C gives the shell 
     "the app did not boot against the live daemon, so nothing below tests real tmux",
   ).toHaveAttribute("data-shell-source", "runtime", { timeout: 60_000 });
 
+  // One terminal per current window in the tiled view (m50): tmux paints the
+  // whole window into it, so there is no second tile to pick between.
   const terminal = page
-    .locator(
-      "article.app-window-card[data-active='true'] .terminal-surface[data-phase='connected']",
-    )
+    .locator(".tiled-pane-area .terminal-surface[data-phase='connected']")
     .first();
   await proveVisible(terminal, "the connected terminal tile", { minWidth: 200, minHeight: 120 });
   const beforeWidget = await paintFingerprint(terminal);

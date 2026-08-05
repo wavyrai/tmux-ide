@@ -61,14 +61,50 @@ export interface WorkspaceTiledSurfaceProps {
   readonly layouts: readonly PaneStreamLayoutEvent[];
   readonly workspaceName: string;
   readonly transport?: NativeTerminalTransport | null;
-  /** Pane chrome models by semantic pane id, for titles and status glyphs. */
+  /** Pane chrome models by semantic pane id, for status glyphs. */
   readonly paneFrames: readonly PaneFrameModel[];
+  /**
+   * Titles by semantic pane id, from the daemon's terminal inventory.
+   *
+   * The inventory is where a pane's name lives for every pane; the chrome models
+   * cover only the ones that are agents. Reading the title from the inventory
+   * first is what stops a plain shell from being labelled "Terminal" while the
+   * daemon knows perfectly well what it is called.
+   */
+  readonly paneTitles?: ReadonlyMap<string, string>;
   /**
    * The panes the daemon currently reports as attachable. A window with none of
    * them left has been closed — the pane-stream wire carries no "window closed"
    * frame, so this is what prunes a dead tab rather than a timeout.
    */
   readonly livePanes?: ReadonlySet<string>;
+  /**
+   * The pane to show before any layout frame has arrived — the inventory's own
+   * active pane.
+   *
+   * Geometry can be late (the lease is still connecting) or absent (a daemon
+   * whose control channel cannot report layouts). Waiting for it would leave a
+   * user staring at a placeholder while a perfectly attachable terminal exists,
+   * so the view degrades to the one thing it can be sure of: a single pane,
+   * full bleed, no borders. It is the same view a single-pane window gets.
+   */
+  readonly fallbackPane?: string | null;
+  /**
+   * The session's windows as the daemon's inventory groups them, used until
+   * layout frames arrive.
+   *
+   * The inventory already knows which panes share a tmux window, so the tab
+   * strip can exist before any geometry does — which matters because creating a
+   * window is one of the first things a user does, and a strip that appears
+   * only once a layout frame happens to arrive would leave the new window with
+   * nowhere to show up.
+   */
+  readonly fallbackWindows?: readonly {
+    readonly key: string;
+    readonly label: string;
+    readonly panes: readonly string[];
+    readonly active: boolean;
+  }[];
   readonly reducedMotion?: boolean;
   readonly terminalThemeKey?: string;
   readonly verbs: TiledSurfaceVerbs;
@@ -81,6 +117,15 @@ export interface WorkspaceTiledSurfaceProps {
     pointer: { readonly x: number; readonly y: number },
   ) => void;
   readonly onFocusPane?: (semanticPaneId: string, source: "keyboard" | "mouse") => void;
+  /**
+   * The window whose tab is being renamed, named by a pane inside it. The tab
+   * is where a rename belongs: it is where the name is READ, so it is where a
+   * user looks to change it, and editing in place means the old name is visible
+   * until the moment the new one is committed.
+   */
+  readonly renamingPane?: string | null;
+  readonly onRenameCommit?: (semanticPaneId: string, name: string) => void;
+  readonly onRenameCancel?: () => void;
   /** Reports whether a terminal attachment is currently open (see the status strip). */
   readonly onAttachmentChanged?: (attached: boolean) => void;
   /**
@@ -118,19 +163,41 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       return joined.length === 0 || joined.some((pane) => live.has(pane.pane!));
     });
   });
-  const tabs = createMemo<readonly WindowTab[]>(() => windowTabs(frames()));
+  const tabs = createMemo<readonly WindowTab[]>(() => {
+    const fromFrames = windowTabs(frames());
+    if (fromFrames.length > 0) return fromFrames;
+    return (props.fallbackWindows ?? []).map((window) => ({
+      semanticWindowId: null,
+      label: window.label,
+      active: window.active,
+      paneCount: window.panes.length,
+      zoomed: false,
+      addressPane: window.panes[0] ?? null,
+    }));
+  });
   const currentFrame = createMemo<LayoutFrame | null>(
     () => frames().find((frame) => frame.currentWindow) ?? frames()[0] ?? null,
   );
   const tiles = createMemo(() => {
     const frame = currentFrame();
-    return frame ? layoutTiles(frame) : [];
+    if (frame) return layoutTiles(frame);
+    const fallback = props.fallbackPane;
+    return fallback
+      ? [
+          {
+            pane: fallback,
+            active: true,
+            cells: { cols: 0, rows: 0 },
+            rect: { left: 0, top: 0, width: 1, height: 1 },
+          },
+        ]
+      : [];
   });
   const borders = createMemo(() => {
     const frame = currentFrame();
     return frame ? layoutBorders(frame) : [];
   });
-  const paneCount = createMemo(() => currentFrame()?.panes.length ?? 0);
+  const paneCount = createMemo(() => currentFrame()?.panes.length ?? (props.fallbackPane ? 1 : 0));
 
   /**
    * The pane the attachment is addressed by, chosen for STABILITY rather than
@@ -142,17 +209,32 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
    * still releasing" conflict. So clicking a tile moves tmux's active pane and
    * this does not move at all; the cursor follows because tmux drew it there.
    */
+  let chosenAttachPane: string | null = null;
   const attachPane = createMemo<string | null>(() => {
     const frame = currentFrame();
-    if (!frame) return null;
-    const joined = frame.panes
+    const joined = (frame?.panes ?? [])
       .map((pane) => pane.pane)
       .filter((pane): pane is string => pane !== null);
-    return [...joined].sort()[0] ?? null;
+    if (joined.length === 0) {
+      chosenAttachPane = props.fallbackPane ?? null;
+      return chosenAttachPane;
+    }
+    // STICKY: keep the pane already attached while it is still in this window.
+    // Every change here is a teardown and a re-attach into a window-keyed lease
+    // whose grace period has not expired, so churn costs the user their
+    // terminal — and geometry arriving a moment after the fallback was chosen
+    // must not count as a reason to move.
+    if (chosenAttachPane && joined.includes(chosenAttachPane)) return chosenAttachPane;
+    const fallback = props.fallbackPane;
+    chosenAttachPane =
+      fallback && joined.includes(fallback) ? fallback : ([...joined].sort()[0] ?? null);
+    return chosenAttachPane;
   });
 
   const frameFor = (semanticPaneId: string): PaneFrameModel | undefined =>
     props.paneFrames.find((model) => model.pane.id === semanticPaneId);
+  const titleFor = (semanticPaneId: string): string =>
+    props.paneTitles?.get(semanticPaneId) ?? frameFor(semanticPaneId)?.title ?? "Terminal";
 
   // ── Aligning the overlay to the grid the terminal actually rendered ────────
   //
@@ -207,12 +289,49 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
 
   const observeArea = (element: HTMLDivElement): void => {
     areaElement = element;
+    /*
+     * The context menu listens in the CAPTURE phase.
+     *
+     * The terminal underneath is xterm, which handles `contextmenu` itself; a
+     * bubbling listener would run after it and, where it stops propagation,
+     * never at all. Capturing means the pane menu opens wherever the user
+     * right-clicks in the pane area, which is the only rule worth having.
+     */
+    const onContextMenu = (event: MouseEvent): void => {
+      const pane = tileAtPointer(event);
+      if (!pane) return;
+      event.preventDefault();
+      props.onOpenPaneMenu?.(pane, { x: event.clientX, y: event.clientY });
+    };
+    element.addEventListener("contextmenu", onContextMenu, true);
+    onCleanup(() => element.removeEventListener("contextmenu", onContextMenu, true));
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => positionOverlay());
     observer.observe(element);
     onCleanup(() => observer.disconnect());
   };
   onCleanup(() => overlayStyle?.dispose());
+
+  /**
+   * Which tile a pointer is over, from the overlay's own box and the tile
+   * fractions. It is the same arithmetic the tiles are drawn with, so a hit can
+   * never disagree with what the user sees.
+   */
+  const tileAtPointer = (event: PointerEvent | MouseEvent): string | null => {
+    if (!overlayElement) return null;
+    const box = overlayElement.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) return null;
+    const x = (event.clientX - box.left) / box.width;
+    const y = (event.clientY - box.top) / box.height;
+    const hit = tiles().find(
+      (tile) =>
+        x >= tile.rect.left &&
+        x < tile.rect.left + tile.rect.width &&
+        y >= tile.rect.top &&
+        y < tile.rect.top + tile.rect.height,
+    );
+    return hit?.pane ?? null;
+  };
 
   // ── Border drag ───────────────────────────────────────────────────────────
   //
@@ -291,7 +410,32 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                 props.onOpenWindowMenu?.(pane, { x: event.clientX, y: event.clientY });
               }}
             >
-              <span class="window-tabs__label">{tab().label}</span>
+              <Show
+                when={props.renamingPane !== null && props.renamingPane === tab().addressPane}
+                fallback={<span class="window-tabs__label">{tab().label}</span>}
+              >
+                <input
+                  class="window-tabs__rename-field"
+                  aria-label="Window name"
+                  value={tab().label}
+                  ref={(element) => queueMicrotask(() => element.select())}
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      props.onRenameCancel?.();
+                      return;
+                    }
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    const pane = tab().addressPane;
+                    const typed = event.currentTarget.value.trim();
+                    if (pane && typed) props.onRenameCommit?.(pane, typed);
+                    else props.onRenameCancel?.();
+                  }}
+                  onBlur={() => props.onRenameCancel?.()}
+                />
+              </Show>
               <Show when={tab().paneCount > 1}>
                 <span class="window-tabs__count" aria-hidden="true">
                   {tab().paneCount}
@@ -326,6 +470,21 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         data-pane-count={paneCount()}
         data-zoomed={currentFrame()?.zoomed ?? false}
         data-focus-zone="canvas"
+        /*
+         * Pane hit testing lives on the AREA, not on the tiles.
+         *
+         * The tiles are `pointer-events: none` so a left click reaches the
+         * terminal underneath — which is a real tmux client, so tmux selects the
+         * pane itself, exactly as it would for an ssh client. Listening here
+         * lets the view follow along (and cover a tmux with mouse mode off)
+         * without ever swallowing the click that types.
+         */
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          const pane = tileAtPointer(event);
+          const active = tiles().find((tile) => tile.active)?.pane;
+          if (pane && pane !== active) props.verbs.invoke("pane.select", pane);
+        }}
       >
         <Show
           when={attachPane()}
@@ -343,7 +502,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
           {(semanticPaneId) => (
             <TerminalSurface
               target={{ workspaceName: props.workspaceName, semanticPaneId: semanticPaneId() }}
-              title={frameFor(semanticPaneId())?.title ?? currentFrame()?.windowName ?? "Terminal"}
+              title={titleFor(semanticPaneId())}
               transport={props.transport}
               focused
               // A multi-pane window is one size-passive card: the desktop never
@@ -372,20 +531,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   width: percent(tile.rect.width),
                   height: percent(tile.rect.height),
                 }}
-                onPointerDown={(event) => {
-                  // Left button only: a right-click opens the menu, and making
-                  // it also move tmux's active pane would mean the menu acts on
-                  // a pane the user has already been moved off.
-                  if (event.button !== 0 || tile.active) return;
-                  props.verbs.invoke("pane.select", tile.pane);
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  props.onOpenPaneMenu?.(tile.pane, { x: event.clientX, y: event.clientY });
-                }}
               >
                 <span class="pane-tile__chrome" aria-hidden="true">
-                  <span class="pane-tile__title">{frameFor(tile.pane)?.title ?? "Terminal"}</span>
+                  <span class="pane-tile__title">{titleFor(tile.pane)}</span>
                   <Show when={frameFor(tile.pane)?.status}>
                     {(status) => (
                       <i
@@ -397,7 +545,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   </Show>
                 </span>
                 <span class="sr-only">
-                  {frameFor(tile.pane)?.title ?? "Terminal"}
+                  {titleFor(tile.pane)}
                   {tile.active ? ", active pane" : ""}
                 </span>
               </div>

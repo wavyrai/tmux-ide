@@ -565,10 +565,21 @@ describe("production terminal composition", () => {
       expect.objectContaining({ workspaceName: "alpha", semanticPaneId: "pane.shell" }),
     );
     expect(JSON.stringify(requests)).not.toMatch(/tmuxPaneId|sessionName|%\d+/u);
-    expect(root.querySelectorAll(".web-pane-frame").length).toBeGreaterThanOrEqual(3);
-    expect(root.querySelectorAll(".terminal-surface__viewport").length).toBeGreaterThanOrEqual(2);
-    expect(root.textContent).toContain("Logs shell");
-    expect(root.textContent).toContain("Unavailable shell");
+    /*
+     * The layout-faithful view attaches ONE terminal per window (m50), because
+     * interactive attachment ownership is window-keyed and a single attach
+     * paints the whole window anyway. So the inventory shows up as the window
+     * tab strip rather than as a card per pane.
+     */
+    expect(root.querySelectorAll(".terminal-surface__viewport").length).toBe(1);
+    const tabLabels = [...root.querySelectorAll(".window-tabs__tab")].map(
+      (tab) => tab.textContent ?? "",
+    );
+    expect(tabLabels.length).toBeGreaterThanOrEqual(2);
+    expect(tabLabels.join(" ")).toContain("Logs shell");
+    // Bug this catches: an unattachable pane is offered as though it were a
+    // window a click could reach, and the click can only fail.
+    expect(tabLabels.join(" ")).not.toContain("Unavailable shell");
     expect(requests).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ target: { semanticPaneId: "pane.unavailable" } }),

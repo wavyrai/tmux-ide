@@ -244,7 +244,7 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
    * where it meets the plane behind it; run with E2E_DEVICE_SCALE=3 for a
    * capture at the density the app actually ships at.
    */
-  const cardBox = await page.locator("article.app-window-card").last().boundingBox();
+  const cardBox = await page.locator(".tiled-pane-area").last().boundingBox();
   if (cardBox) {
     await page.screenshot({
       path: testInfo.outputPath("2b-card-ring-closeup.png"),
@@ -258,13 +258,11 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
   }
 
   // --- The terminal paints REAL bytes ------------------------------------
-  // Scoped to the ACTIVE window card, not merely the first terminal in the
-  // DOM: the canvas cascades floating windows, so the DOM-first tile is the one
-  // underneath and is largely covered by the window in front of it.
+  // The tiled view holds ONE terminal for the current window: tmux paints that
+  // whole window into it, borders and all, so there is no second tile to pick
+  // between and nothing cascading over it.
   const terminal = page
-    .locator(
-      "article.app-window-card[data-active='true'] .terminal-surface[data-phase='connected']",
-    )
+    .locator(".tiled-pane-area .terminal-surface[data-phase='connected']")
     .first();
   const terminalProof = await proveVisible(terminal, "the connected terminal tile", {
     minWidth: 200,
@@ -278,60 +276,68 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
     "the connected terminal reports no client viewport, so it attached without measuring itself",
   ).toHaveAttribute("data-client-viewport", /^\d+x\d+$/u);
 
-  // Bug this catches: a header that says the same word twice ("Terminal
-  // Terminal") because the subtitle restates the title instead of adding to it.
-  const activeHeader = page.locator("article.app-window-card[data-active='true']").first();
-  const headerTitle = (await activeHeader.locator(".web-pane-frame__title").first().innerText())
-    .trim()
-    .toLowerCase();
-  const headerSubtitles = await activeHeader
-    .locator(".web-pane-frame__subtitle")
-    .allInnerTexts()
-    .then((values) => values.map((value) => value.trim().toLowerCase()));
-  const restating = headerSubtitles.filter((subtitle) => headerTitle.startsWith(subtitle));
+  /*
+   * The window tab carries the LIVE tmux window name.
+   *
+   * Bug this catches — the m48 finding the layout-faithful view exists to
+   * remove: every tab labelled "Terminal", because the labels came from the
+   * app's own document instead of from the window names tmux actually has.
+   */
+  const activeTab = page.locator('.window-tabs__tab[data-active="true"]');
+  await proveVisible(activeTab, "the active window tab", { minWidth: 30, minHeight: 16 });
+  const tabLabel = (await activeTab.innerText()).trim();
   expect(
-    restating,
-    `the pane header titled "${headerTitle}" also subtitles it ${restating.join(", ")} — the ` +
-      "subtitle restates the title, which reads as a bug in the app and spends a line of chrome " +
-      "saying nothing",
-  ).toEqual([]);
+    tabLabel,
+    "the active window tab carries no label, so the strip says nothing about where the user is",
+  ).toMatch(/\S/u);
+  expect(
+    tabLabel.toLowerCase(),
+    "the window tab is labelled with the app's generic word instead of tmux's window name",
+  ).not.toBe("terminal");
 
-  // Bug this catches: the window title is the machine's own hostname, which
-  // tmux seeds pane_title with. It is the same string on every pane, says
-  // nothing about the pane, and puts the user's machine name in every
-  // screenshot they share.
+  // Bug this catches: the window is titled with the machine's own hostname,
+  // which tmux seeds pane_title with. It is the same string on every pane, says
+  // nothing about it, and puts the user's machine name in every shared screenshot.
   const hostFirstLabel = hostname().split(".")[0]!.toLowerCase();
   expect(
-    headerTitle.split(".")[0],
-    `the window is titled with this machine's name ("${headerTitle}") instead of a pane title`,
+    tabLabel.toLowerCase().split(".")[0],
+    `the window is titled with this machine's name ("${tabLabel}") instead of a window name`,
   ).not.toBe(hostFirstLabel);
 
-  // Bug this catches: the cascade offsets windows by so little that everything
-  // behind the front one is a shadow artifact with no grab target of its own.
-  const cards = await page.locator("article.app-window-card").evaluateAll((nodes) =>
+  /*
+   * The tiles do not overlap.
+   *
+   * Bug this catches — the defect class the canvas model carried: cards
+   * cascading over each other, so the thing behind the front one is a shadow
+   * artifact with no grab target of its own. tmux's layout has no overlap by
+   * construction, and a view that renders it faithfully cannot invent one.
+   */
+  const tileRects = await page.locator(".pane-tile").evaluateAll((nodes) =>
     nodes.map((node) => {
       const box = node.getBoundingClientRect();
       return { x: box.x, y: box.y, width: box.width, height: box.height };
     }),
   );
-  if (cards.length >= 2) {
-    const [first, second] = [cards[0]!, cards[1]!];
-    const overlapWidth = Math.max(
-      0,
-      Math.min(first.x + first.width, second.x + second.width) - Math.max(first.x, second.x),
-    );
-    const overlapHeight = Math.max(
-      0,
-      Math.min(first.y + first.height, second.y + second.height) - Math.max(first.y, second.y),
-    );
-    const smaller = Math.min(first.width * first.height, second.width * second.height);
-    const covered = smaller === 0 ? 1 : (overlapWidth * overlapHeight) / smaller;
-    expect(
-      covered,
-      `cascaded windows cover ${Math.round(covered * 100)}% of each other — the window behind is ` +
-        "a shadow artifact rather than something the user can see or aim at " +
-        `(${cards.map((card) => `${Math.round(card.width)}x${Math.round(card.height)}@${Math.round(card.x)},${Math.round(card.y)}`).join(" | ")})`,
-    ).toBeLessThan(0.9);
+  expect(
+    tileRects.length,
+    "the tiled view rendered no pane tiles for a live window",
+  ).toBeGreaterThan(0);
+  for (const [index, first] of tileRects.entries()) {
+    for (const second of tileRects.slice(index + 1)) {
+      const overlapWidth = Math.max(
+        0,
+        Math.min(first.x + first.width, second.x + second.width) - Math.max(first.x, second.x),
+      );
+      const overlapHeight = Math.max(
+        0,
+        Math.min(first.y + first.height, second.y + second.height) - Math.max(first.y, second.y),
+      );
+      expect(
+        overlapWidth * overlapHeight,
+        `two pane tiles overlap by ${Math.round(overlapWidth * overlapHeight)}px\u00b2 — the view ` +
+          "is no longer rendering tmux's own non-overlapping layout",
+      ).toBe(0);
+    }
   }
 
   // Bug this catches: the terminal ground does not follow the app's appearance,
@@ -402,7 +408,7 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
 
   // --- User path: mirror the workspace's panes ---------------------------
   const mirrorToggle = page.locator("[data-mirror-toggle]");
-  await proveVisible(mirrorToggle, "the mirror toggle in the canvas controls", { minHeight: 16 });
+  await proveVisible(mirrorToggle, "the mirror toggle on the mirror deck", { minHeight: 16 });
   // Bug this catches: the control loses its pressed state, so a user cannot
   // tell whether mirroring is on without hunting for the nodes themselves.
   await expect(

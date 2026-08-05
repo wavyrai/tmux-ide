@@ -33,6 +33,10 @@ export interface ScratchFleet {
   readonly listWindows: (name: string) => readonly string[];
   /** Total panes across a session's windows — the proof a kill landed. */
   readonly countPanes: (name: string) => number;
+  /** The session's CURRENT window name — what a window tab click must change. */
+  readonly currentWindow: (name: string) => string;
+  /** Every pane of the session's current window, as `width x height` cells. */
+  readonly paneSizes: (name: string) => readonly string[];
   /** Raw pane text, for proving the app is showing what tmux actually holds. */
   readonly capturePane: (name: string) => string;
   readonly dispose: () => Promise<void>;
@@ -158,6 +162,11 @@ export async function createScratchFleet(
       runTmux(["list-panes", "-s", "-t", `=${name}`, "-F", "#{pane_id}"])
         .split("\n")
         .filter(Boolean).length,
+    currentWindow: (name) => runTmux(["display-message", "-p", "-t", `${name}:`, "#{window_name}"]),
+    paneSizes: (name) =>
+      runTmux(["list-panes", "-t", `${name}:`, "-F", "#{pane_width}x#{pane_height}"])
+        .split("\n")
+        .filter(Boolean),
     // `<session>:` is the session's current window, active pane. A bare `=name`
     // is a SESSION target and tmux rejects it where a pane is required.
     capturePane: (name) => runTmux(["capture-pane", "-p", "-t", `${name}:`]),

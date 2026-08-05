@@ -5596,12 +5596,31 @@ kbd {
  * drawing a border, so nothing here covers a character of output.
  * ========================================================================== */
 
+/*
+ * The tiled view must be given a DEFINITE height, not asked to compute one.
+ *
+ * `height: 100%` inside an auto-height parent resolves to the content height,
+ * which for a terminal that sizes itself from its box is zero — so the surface
+ * measures nothing, stays in "measuring" forever, and never attaches. Making
+ * the terminals canvas a flex column and this a flex child is what gives the
+ * pane area a real box to fit into.
+ */
+/*
+ * The tiled view is given a DEFINITE box, not asked to compute one.
+ *
+ * A terminal sizes itself from its container and then drives tmux to match, so
+ * a container whose height comes from its content is a feedback loop: the grid
+ * grows, tmux repaints a bigger screen, the content grows again. Pinning to the
+ * terminals canvas (which is already `position: relative; overflow: hidden`)
+ * ends the loop before it starts.
+ */
 .tiled-workspace {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  height: 100%;
 }
 
 .window-tabs {
@@ -5698,9 +5717,18 @@ kbd {
   pointer-events: none;
 }
 
+/*
+ * The tiles do not take the pointer.
+ *
+ * A left click has to reach the terminal underneath: it is a real tmux client,
+ * so tmux selects the pane itself and the keystrokes that follow go where the
+ * user aimed. The view hit-tests on the pane AREA instead, which follows the
+ * click without swallowing it. Only the border handles take the pointer, and
+ * they sit on cells tmux spends on a border rather than on output.
+ */
 .pane-tile {
   position: absolute;
-  pointer-events: auto;
+  pointer-events: none;
   background: transparent;
   outline-offset: -2px;
 }
