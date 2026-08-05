@@ -35,27 +35,14 @@ import {
   WorkspaceFileResourceIdSchemaZ,
 } from "./workspace-resource-identity.ts";
 import { FleetCatalogResourceV1SchemaZ } from "./fleet-catalog.ts";
-import type {
-  TerminalAttachRequest,
-  TerminalAttachmentIssueResult,
-} from "./terminal-attachments.ts";
-import type { PaneStreamIssueResult, PaneStreamLeaseRequest } from "./pane-stream.ts";
-import type {
-  WorkspacePaneCreateHostResult,
-  WorkspacePaneCreateInvocation,
-} from "./workspace-pane-creation.ts";
 import type { WorkspaceOpenHostResult } from "./workspace-open.ts";
-import type {
-  WorkspacePromoteArguments,
-  WorkspacePromoteHostResult,
-} from "./workspace-promotion.ts";
-import type {
-  AppWindowMutationArguments,
-  AppWindowMutationHostResult,
-} from "./app-window-mutation.ts";
+// Type-only, and deliberately so: `daemon-resource-request.ts` imports the
+// result schemas declared below, so a value import here would close a module
+// cycle. Types are erased, this edge is not.
+import type { DaemonResourceMethods } from "./daemon-resource-request.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 12 as const;
+export const DESKTOP_HOST_API_VERSION = 13 as const;
 
 /** Stable tuple origin for the packaged, sandboxed Electron renderer. */
 export const DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide" as const;
@@ -338,6 +325,21 @@ export const DesktopDaemonFetchFleetCatalogResultSchemaZ = z.discriminatedUnion(
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
+/**
+ * The daemon's own startup readiness ladder, read on demand.
+ *
+ * A disconnected capability state already carries the ladder the host read
+ * while composing it. This resource covers the other case: the daemon IS
+ * connected and some surface below it is degraded, where the ladder's two
+ * daemon-only rungs (`credential-held`, `attachment-issuable`) are the only
+ * account of the stuck step. Diagnostics — an error here means no ladder was
+ * readable, never that the daemon is unusable.
+ */
+export const DesktopDaemonStartupReadinessResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), ladder: StartupReadinessLadderSchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
 export const DesktopDaemonEventSubscriptionRequestSchemaZ = z
   .object({
     /**
@@ -523,7 +525,6 @@ export const DesktopHostBootstrapSchemaZ = z
   })
   .strict();
 
-export const DesktopMenuResultSchemaZ = z.object({ status: z.literal("unavailable") }).strict();
 export const DesktopDirectorySelectionSchemaZ = z.object({ path: z.string().min(1) }).strict();
 
 export type DesktopRuntimeKind = z.infer<typeof DesktopRuntimeKindSchemaZ>;
@@ -592,11 +593,13 @@ export type DesktopDaemonRefreshConnectionResult = z.infer<
 export type DesktopDaemonSubscribeWireResult = z.infer<
   typeof DesktopDaemonSubscribeWireResultSchemaZ
 >;
+export type DesktopDaemonStartupReadinessResult = z.infer<
+  typeof DesktopDaemonStartupReadinessResultSchemaZ
+>;
 /** @deprecated Compatibility name for existing host bootstrap consumers. */
 export type DesktopDaemonPreflight = DesktopDaemonHostState;
 export type DesktopOnboardingState = z.infer<typeof DesktopOnboardingStateSchemaZ>;
 export type DesktopHostBootstrap = z.infer<typeof DesktopHostBootstrapSchemaZ>;
-export type DesktopMenuResult = z.infer<typeof DesktopMenuResultSchemaZ>;
 export type DesktopDirectorySelection = z.infer<typeof DesktopDirectorySelectionSchemaZ>;
 export type DesktopHostUnsubscribe = () => void;
 export type DesktopDaemonHostSubscriptionResult =
@@ -605,24 +608,19 @@ export type DesktopDaemonHostSubscriptionResult =
 
 /**
  * The complete renderer-visible desktop surface. It intentionally has no
- * generic send/invoke/eval/command escape hatch. Every new capability must be
- * named and reviewed here first.
+ * generic send/invoke/eval/command escape hatch: `daemon` is generic in shape
+ * but not in reach — every reachable resource is a named variant of
+ * {@link DaemonResourceRequest}, so a new capability is still declared and
+ * reviewed in the contract before any client can ask for it.
  */
 export interface HostCapabilities {
   readonly apiVersion: typeof DESKTOP_HOST_API_VERSION;
   bootstrap(): Promise<DesktopHostBootstrap>;
-  readonly lifecycle: {
-    requestQuit(): Promise<void>;
-  };
   readonly window: {
-    getState(): Promise<DesktopWindowState>;
     minimize(): Promise<DesktopWindowState>;
     toggleMaximized(): Promise<DesktopWindowState>;
     close(): Promise<void>;
     onStateChanged(listener: (state: DesktopWindowState) => void): DesktopHostUnsubscribe;
-  };
-  readonly menu: {
-    showApplicationMenu(): Promise<DesktopMenuResult>;
   };
   readonly workspace: {
     openProjectDirectory(): Promise<WorkspaceOpenHostResult | null>;
@@ -632,7 +630,6 @@ export interface HostCapabilities {
     acknowledgeIntro(): Promise<void>;
   };
   readonly theme: {
-    getState(): Promise<DesktopThemeState>;
     onChanged(listener: (state: DesktopThemeState) => void): DesktopHostUnsubscribe;
   };
   /**
@@ -644,44 +641,15 @@ export interface HostCapabilities {
     getStatus(): Promise<DesktopUpdateStatus>;
     onStatusChanged(listener: (status: DesktopUpdateStatus) => void): DesktopHostUnsubscribe;
   };
-  readonly daemon: {
-    capabilities(): Promise<DesktopDaemonCapabilitiesResult>;
-    mutateAppWindow(intent: AppWindowMutationArguments): Promise<AppWindowMutationHostResult>;
-    createWorkspacePane(
-      invocation: WorkspacePaneCreateInvocation,
-    ): Promise<WorkspacePaneCreateHostResult>;
-    issueTerminalAttachment(request: TerminalAttachRequest): Promise<TerminalAttachmentIssueResult>;
-    /**
-     * Issue a one-use session-scoped pane-stream lease (m43 card 3). The
-     * renderer authors only the semantic lease request; Electron main owns the
-     * request/generation envelope, the owner bearer, and the trusted Origin.
-     */
-    issuePaneStream(request: PaneStreamLeaseRequest): Promise<PaneStreamIssueResult>;
-    refreshConnection(): Promise<DesktopDaemonRefreshConnectionResult>;
-    listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
-    fetchApplicationShell(
-      request: DesktopDaemonFetchApplicationShellRequest,
-    ): Promise<DesktopDaemonFetchApplicationShellResult>;
-    fetchWorkspaceFiles(
-      request: DesktopDaemonFetchWorkspaceFilesRequest,
-    ): Promise<DesktopDaemonFetchWorkspaceFilesResult>;
-    fetchWorkspaceFilePreview(
-      request: DesktopDaemonFetchWorkspaceFilePreviewRequest,
-    ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult>;
-    fetchWorkspaceChanges(
-      request: DesktopDaemonFetchWorkspaceChangesRequest,
-    ): Promise<DesktopDaemonFetchWorkspaceChangesResult>;
-    fetchWorkspaceChangeDiff(
-      request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
-    ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult>;
-    /** Read the whole adopted fleet (owner-gated, generation-stamped, no cursor). */
-    fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult>;
-    /**
-     * Promote an adopted, catalog-visible session to an attachable workspace.
-     * Owner-gated and idempotent; the renderer supplies only the opaque fleet
-     * session id, and Electron main authors the operation/generation envelope.
-     */
-    promoteWorkspace(intent: WorkspacePromoteArguments): Promise<WorkspacePromoteHostResult>;
+  /**
+   * Every daemon read and mutation, plus the one push registration.
+   *
+   * The named methods are DERIVED from {@link DaemonResourceRequestSchemaZ} —
+   * adding a variant there adds the method here, and no hand-maintained mirror
+   * of this list can drift from it. `subscribe` stays declared by hand because
+   * it is not a request: it registers a listener and hands back a teardown.
+   */
+  readonly daemon: DaemonResourceMethods & {
     subscribe(
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,
