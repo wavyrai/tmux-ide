@@ -58,6 +58,12 @@ import {
   packagedRendererContentSecurityPolicy,
   registerPackagedRendererScheme,
 } from "./packaged-renderer-protocol.ts";
+import {
+  parseVibrancySetting,
+  resolveWindowAppearance,
+  withVibrancyParam,
+  type WindowVibrancy,
+} from "./window-appearance.ts";
 import { loadHiddenWindow } from "./window-loader.ts";
 import { denyRendererEscapes, secureWebPreferences } from "./window-security.ts";
 import {
@@ -154,6 +160,9 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     return;
   }
 
+  // Read once at startup: vibrancy is a window-construction material, so a
+  // mid-session change could not take effect without rebuilding the window.
+  const vibrancy: WindowVibrancy = parseVibrancySetting(process.env.TMUX_IDE_DESKTOP_VIBRANCY);
   let currentWindow: BrowserWindow | null = null;
   let hostIpc: RegisteredHostIpc | null = null;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -400,12 +409,19 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     const savedBounds = await stateStore.read();
     const bounds = restoreDesktopWindowBounds(savedBounds, displayWorkAreas());
     latestNormalBounds = bounds;
+    const appearance = resolveWindowAppearance({
+      platform: platform(),
+      theme: themeState(),
+      vibrancy,
+    });
     const window = new BrowserWindow({
       ...bounds,
       show: false,
       minWidth: 720,
       minHeight: 480,
-      backgroundColor: "#101116",
+      backgroundColor: appearance.backgroundColor,
+      vibrancy: appearance.vibrancy,
+      transparent: appearance.transparent,
       title: "tmux-ide",
       titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
       trafficLightPosition: process.platform === "darwin" ? { x: 14, y: 16 } : undefined,
@@ -437,8 +453,8 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         reveal: !smokeTest,
         rendererReady,
         load: async () => {
-          if (developmentUrl) await window.loadURL(developmentUrl);
-          else await window.loadURL(DESKTOP_PACKAGED_RENDERER_ENTRY_URL);
+          const entry = developmentUrl ?? DESKTOP_PACKAGED_RENDERER_ENTRY_URL;
+          await window.loadURL(withVibrancyParam(entry, appearance));
         },
       });
     } finally {
@@ -479,7 +495,15 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     throw error;
   }
 
-  onThemeUpdated = (): void => publishTheme(currentWindow, themeState());
+  onThemeUpdated = (): void => {
+    const theme = themeState();
+    publishTheme(currentWindow, theme);
+    // The window ground is painted outside the renderer's frames, so it has to
+    // follow the appearance switch too or a light window keeps a dark edge.
+    currentWindow?.setBackgroundColor(
+      resolveWindowAppearance({ platform: platform(), theme, vibrancy }).backgroundColor,
+    );
+  };
   nativeTheme.on("updated", onThemeUpdated);
 
   app.on("second-instance", () => {

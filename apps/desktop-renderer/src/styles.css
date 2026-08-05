@@ -1427,6 +1427,12 @@ kbd {
   background: var(--desktop-workbench);
 }
 
+/*
+ * The source list, on the deepest plane. macOS sidebars are a plane, a hairline
+ * and tight rows — the CSS treatment is the DEFAULT here, not a degraded mode:
+ * with vibrancy off (the shipped default) this is the whole thing, and it looks
+ * like itself rather than like something missing.
+ */
 .workspace-sidebar {
   grid-row: 1;
   grid-column: 1;
@@ -1434,10 +1440,19 @@ kbd {
   min-height: 0;
   padding: 10px 8px 14px;
   overflow: hidden auto;
-  border-right: 1px solid var(--desktop-separator);
+  border-right: var(--paper-hairline) solid var(--sf-sidebar-border);
   background: var(--desktop-sidebar);
-  scrollbar-color: color-mix(in srgb, var(--tmux-ide-text-muted) 30%, transparent) transparent;
+  scrollbar-color: color-mix(in oklab, var(--sf-foreground) 28%, transparent) transparent;
   scrollbar-width: thin;
+}
+
+/*
+ * With vibrancy on, the sidebar hands its plane to the material behind the
+ * window. Only this region goes translucent; everything else stays opaque, and
+ * terminal surfaces are never in the blur's path.
+ */
+.app[data-vibrancy="sidebar"] .workspace-sidebar {
+  background: color-mix(in oklab, var(--sf-sidebar) 60%, transparent);
 }
 
 .shell-workbench > .workspace-sidebar__resize {
@@ -1519,15 +1534,16 @@ kbd {
   margin: 0 0 16px;
 }
 
+/* Source-list section headers: caption-2, uppercase, muted, quiet in weight. */
 .workspace-sidebar h2 {
   display: flex;
   justify-content: space-between;
   margin: 0;
   padding: 0 8px 4px;
   color: var(--tmux-ide-text-muted);
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
+  font-size: var(--sf-text-caption-2);
+  font-weight: 590;
+  letter-spacing: 0.06em;
   line-height: 20px;
   text-transform: uppercase;
 }
@@ -1563,16 +1579,26 @@ kbd {
     opacity 150ms var(--desktop-ease-smooth);
 }
 
-.sidebar-row:hover,
-.sidebar-row--active {
+.sidebar-row:hover {
   color: var(--tmux-ide-text-primary);
   background: var(--desktop-hover);
 }
 
+/*
+ * The selected row is the lit-blue gradient — the Board-UI nav signature. It is
+ * a full-row rounded rect, not a border and not a grey box, and it is the one
+ * place the blue gradient appears: the anchor accent stays on focus rings and
+ * text selection so the two blues never blur into one meaning.
+ */
 .sidebar-row--active {
-  color: var(--tmux-ide-text-bright);
-  background: var(--desktop-active);
-  box-shadow: inset 0 0 0 1px var(--desktop-separator);
+  color: oklch(100% 0 0);
+  background: linear-gradient(to bottom, var(--sf-accent-blue), var(--sf-accent-blue-dark));
+  box-shadow: none;
+}
+
+.sidebar-row--active .sidebar-row__identity > small,
+.sidebar-row--active .fleet-sidebar__badge {
+  color: color-mix(in oklab, oklch(100% 0 0) 82%, transparent);
 }
 
 .sidebar-row i,

@@ -160,6 +160,17 @@ export function App(props: AppProps = {}) {
     void host?.onboarding.acknowledgeIntro().catch(() => undefined);
   };
   const experience = createMemo(() => createDomExperience({ hostTheme: effectiveTheme() }));
+  /*
+   * Vibrancy is decided when the native window is built, and travels here on
+   * the entry URL. The renderer's half of the effect is letting the sidebar go
+   * translucent; without this it would sit opaque over the material and the
+   * blur would never be seen. Absent (the default) means the sidebar keeps its
+   * CSS wash.
+   */
+  const vibrancyRequest = (): "sidebar" | undefined =>
+    new URLSearchParams(window.location.search).get("vibrancy") === "sidebar"
+      ? "sidebar"
+      : undefined;
   createEffect(() => {
     const variables = experience().variables;
     appRuntimeStyle?.update(variables);
@@ -197,6 +208,7 @@ export function App(props: AppProps = {}) {
       class="app"
       data-theme={experience().appearance}
       data-platform={bootstrap()?.platform}
+      data-vibrancy={vibrancyRequest()}
       data-reduced-motion={String(experience().accessibility.reducedMotion)}
       data-increased-contrast={String(experience().accessibility.increasedContrast)}
       data-accessibility-conflicts={experience().accessibility.conflicts.join(" ") || undefined}
