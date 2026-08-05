@@ -7711,6 +7711,64 @@ var init_desktop_update = __esm({
   }
 });
 
+// packages/contracts/src/pane-widget-marker.ts
+function widgetMarkerDigest(id, payload) {
+  const subject = `${WIDGET_MARKER_SENTINEL}:${id}:${payload}`;
+  let hash = 2166136261;
+  for (let index = 0; index < subject.length; index += 1) {
+    hash ^= subject.charCodeAt(index) & 255;
+    hash = hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24)) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+function bytesToBinaryString(bytes) {
+  const CHUNK = 8192;
+  let out = "";
+  for (let offset = 0; offset < bytes.length; offset += CHUNK) {
+    out += String.fromCharCode(...bytes.subarray(offset, offset + CHUNK));
+  }
+  return out;
+}
+function encodeBase64Url(text) {
+  const bytes = new TextEncoder().encode(text);
+  return btoa(bytesToBinaryString(bytes)).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+}
+function encodeWidgetMarkerLine(id, args) {
+  if (!WIDGET_ID_PATTERN.test(id)) {
+    throw new Error(`"${id}" is not a valid widget id.`);
+  }
+  const payload = args === void 0 ? EMPTY_PAYLOAD : encodeBase64Url(JSON.stringify(args));
+  if (payload.length > WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS) {
+    throw new WidgetMarkerTooLargeError(payload.length);
+  }
+  return `${WIDGET_MARKER_SENTINEL} ${id} ${payload} ${widgetMarkerDigest(id, payload)}`;
+}
+function widgetMarkerAnnouncement(id, args) {
+  return `${WIDGET_MARKER_CONCEAL_PREFIX}${encodeWidgetMarkerLine(id, args)}${WIDGET_MARKER_CONCEAL_SUFFIX}
+`;
+}
+var WIDGET_MARKER_SENTINEL, WIDGET_MARKER_CONCEAL_PREFIX, WIDGET_MARKER_CONCEAL_SUFFIX, WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS, WIDGET_ID_PATTERN, EMPTY_PAYLOAD, WidgetMarkerTooLargeError;
+var init_pane_widget_marker = __esm({
+  "packages/contracts/src/pane-widget-marker.ts"() {
+    "use strict";
+    WIDGET_MARKER_SENTINEL = "TMUXIDE-WIDGET/1";
+    WIDGET_MARKER_CONCEAL_PREFIX = "\x1B[8m";
+    WIDGET_MARKER_CONCEAL_SUFFIX = "\x1B[0m";
+    WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS = 96 * 1024;
+    WIDGET_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/u;
+    EMPTY_PAYLOAD = "-";
+    WidgetMarkerTooLargeError = class extends Error {
+      constructor(payloadCharacters) {
+        super(
+          `The widget payload encodes to ${payloadCharacters} characters, over the ${WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS}-character marker limit.`
+        );
+        this.payloadCharacters = payloadCharacters;
+        this.name = "WidgetMarkerTooLargeError";
+      }
+    };
+  }
+});
+
 // packages/contracts/src/index.ts
 var init_src = __esm({
   "packages/contracts/src/index.ts"() {
@@ -7766,6 +7824,7 @@ var init_src = __esm({
     init_daemon_events();
     init_desktop_update();
     init_startup_readiness();
+    init_pane_widget_marker();
   }
 });
 
@@ -42708,6 +42767,94 @@ var init_update = __esm({
   }
 });
 
+// packages/daemon/src/lib/pane-widget.ts
+var pane_widget_exports = {};
+__export(pane_widget_exports, {
+  PANE_WIDGET_IDS: () => PANE_WIDGET_IDS,
+  PANE_WIDGET_IMAGE_MAX_BYTES: () => PANE_WIDGET_IMAGE_MAX_BYTES,
+  PANE_WIDGET_RESTORE_SEQUENCE: () => PANE_WIDGET_RESTORE_SEQUENCE,
+  PaneWidgetRefusal: () => PaneWidgetRefusal,
+  buildImageAnnouncement: () => buildImageAnnouncement,
+  buildMarkdownAnnouncement: () => buildMarkdownAnnouncement,
+  imageMediaTypeFor: () => imageMediaTypeFor,
+  paneWidgetId: () => paneWidgetId
+});
+import { basename as basename16, extname } from "node:path";
+function imageMediaTypeFor(fileName) {
+  return IMAGE_MEDIA_BY_EXTENSION.get(extname(fileName).toLowerCase()) ?? null;
+}
+function buildMarkdownAnnouncement(text, title) {
+  if (text.trim().length === 0) {
+    throw new PaneWidgetRefusal("empty", "There is no markdown to render: the input was empty.");
+  }
+  try {
+    return widgetMarkerAnnouncement("markdown", title === void 0 ? { text } : { text, title });
+  } catch {
+    throw new PaneWidgetRefusal(
+      "too-large",
+      `The markdown is too large to render in a pane (the marker holds about ${Math.floor(WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS / 1024)} KB of encoded arguments).`
+    );
+  }
+}
+function buildImageAnnouncement(bytes, filePath) {
+  const name = basename16(filePath);
+  const media = imageMediaTypeFor(name);
+  if (media === null) {
+    throw new PaneWidgetRefusal(
+      "unsupported-media",
+      `"${name}" is not an image this pane can render. Supported: ${[...IMAGE_MEDIA_BY_EXTENSION.keys()].join(", ")}. SVG is deliberately excluded \u2014 it is a document that can carry script, not a picture.`
+    );
+  }
+  if (bytes.byteLength === 0) {
+    throw new PaneWidgetRefusal("empty", `"${name}" is empty.`);
+  }
+  if (bytes.byteLength > PANE_WIDGET_IMAGE_MAX_BYTES) {
+    throw new PaneWidgetRefusal(
+      "too-large",
+      `"${name}" is ${Math.round(bytes.byteLength / 1024)} KB, over the ${Math.round(PANE_WIDGET_IMAGE_MAX_BYTES / 1024)} KB limit for an in-pane image. The bytes travel inside the pane's own output, so the ceiling is the marker's.`
+    );
+  }
+  return widgetMarkerAnnouncement("image", {
+    media,
+    data: Buffer.from(bytes).toString("base64"),
+    name
+  });
+}
+function paneWidgetId(value) {
+  if (PANE_WIDGET_IDS.includes(value)) return value;
+  throw new PaneWidgetRefusal(
+    "unknown-widget",
+    `"${value}" is not a widget. Available: ${PANE_WIDGET_IDS.join(", ")}.`
+  );
+}
+var PaneWidgetRefusal, IMAGE_MEDIA_BY_EXTENSION, PANE_WIDGET_IMAGE_MAX_BYTES, PANE_WIDGET_IDS, PANE_WIDGET_RESTORE_SEQUENCE;
+var init_pane_widget = __esm({
+  "packages/daemon/src/lib/pane-widget.ts"() {
+    "use strict";
+    init_src();
+    PaneWidgetRefusal = class extends Error {
+      constructor(reason, message) {
+        super(message);
+        this.reason = reason;
+        this.name = "PaneWidgetRefusal";
+      }
+    };
+    IMAGE_MEDIA_BY_EXTENSION = /* @__PURE__ */ new Map([
+      [".png", "image/png"],
+      [".jpg", "image/jpeg"],
+      [".jpeg", "image/jpeg"],
+      [".gif", "image/gif"],
+      [".webp", "image/webp"],
+      [".avif", "image/avif"]
+    ]);
+    PANE_WIDGET_IMAGE_MAX_BYTES = Math.floor(
+      WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS / 1.78 * 0.94
+    );
+    PANE_WIDGET_IDS = ["markdown", "image"];
+    PANE_WIDGET_RESTORE_SEQUENCE = "\x1B[2J\x1B[3J\x1B[H";
+  }
+});
+
 // packages/daemon/src/command-center/index.ts
 var command_center_exports = {};
 __export(command_center_exports, {
@@ -44292,6 +44439,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "worktree",
   "update",
   "skill-sync",
+  "widget",
   "serve",
   "command-center",
   "server",
@@ -44367,6 +44515,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide update")} [--dry-run] ${dim3("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan2("tmux-ide update --manifests")} ${dim3("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan2("tmux-ide skill-sync")}         ${dim3("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
+  ${cyan2("tmux-ide widget <name> [file]")} ${dim3("Render markdown or an image inside this pane (Ctrl-C restores it)")}
   ${cyan2("tmux-ide validate")} [--json]  ${dim3("Validate workspace config")}
   ${cyan2("tmux-ide detect")} [--json]    ${dim3("Detect project stack")}
   ${cyan2("tmux-ide detect --write")}     ${dim3("Detect and write .tmux-ide/workspace.yml")}
@@ -45541,6 +45690,55 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         const detail = result.action === "updated" && result.from ? ` (v${result.from} \u2192 v${result.to})` : ` (v${result.to})`;
         console.log(`skill ${result.action}${detail}: ${result.path}`);
       }
+      break;
+    }
+    case "widget": {
+      const {
+        PaneWidgetRefusal: PaneWidgetRefusal2,
+        PANE_WIDGET_RESTORE_SEQUENCE: PANE_WIDGET_RESTORE_SEQUENCE2,
+        buildImageAnnouncement: buildImageAnnouncement2,
+        buildMarkdownAnnouncement: buildMarkdownAnnouncement2,
+        paneWidgetId: paneWidgetId2
+      } = await Promise.resolve().then(() => (init_pane_widget(), pane_widget_exports));
+      const { readFileSync: readFileSync28 } = await import("node:fs");
+      const readStdin = async () => {
+        const chunks = [];
+        for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+        return Buffer.concat(chunks).toString("utf8");
+      };
+      let announcement;
+      try {
+        const id = paneWidgetId2(positionals[1] ?? "");
+        const file = positionals[2];
+        if (id === "markdown") {
+          const text = file ? readFileSync28(file, "utf8") : await readStdin();
+          announcement = buildMarkdownAnnouncement2(text);
+        } else {
+          if (!file) throw new PaneWidgetRefusal2("empty", "The image widget needs a file path.");
+          announcement = buildImageAnnouncement2(readFileSync28(file), file);
+        }
+      } catch (error) {
+        const message = error instanceof PaneWidgetRefusal2 ? error.message : `The widget input could not be read: ${error.message}`;
+        if (json) {
+          console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+        } else {
+          console.error(message);
+        }
+        process.exit(1);
+      }
+      if (json) {
+        console.log(JSON.stringify({ ok: true, announcement }, null, 2));
+        break;
+      }
+      process.stdout.write(announcement);
+      const hold = setInterval(() => void 0, 1 << 30);
+      const restore2 = () => {
+        clearInterval(hold);
+        process.stdout.write(PANE_WIDGET_RESTORE_SEQUENCE2);
+        process.exit(0);
+      };
+      process.on("SIGINT", restore2);
+      process.on("SIGTERM", restore2);
       break;
     }
     case "serve": {
