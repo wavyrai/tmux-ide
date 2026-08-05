@@ -150,6 +150,32 @@ export class WorkspaceRegistry {
     return workspace;
   }
 
+  /**
+   * Follow a tmux session rename.
+   *
+   * The workspace NAME is the desktop catalog's identity and never moves —
+   * every renderer reference, route parameter and persisted layout document is
+   * keyed on it. Only the tmux session name changes. Without this, a rename
+   * would orphan the entry: `load()` reconciles against `tmux list-sessions`
+   * and drops any workspace whose session name is not live, so the workspace
+   * would silently vanish on the next daemon start.
+   */
+  renameSession(name: string, sessionName: string): Workspace {
+    const existing = this.get(name);
+    if (!existing) throw new WorkspaceNotFoundError(name);
+    if (existing.sessionName === sessionName) return existing;
+    const renamed: Workspace = { ...existing, sessionName };
+    const previous = this.workspaces;
+    this.workspaces = previous.map((w) => (w.name === name ? renamed : w));
+    try {
+      this.writeDisk();
+    } catch (error) {
+      this.workspaces = previous;
+      throw error;
+    }
+    return renamed;
+  }
+
   remove(name: string): void {
     if (!this.has(name)) {
       throw new WorkspaceNotFoundError(name);

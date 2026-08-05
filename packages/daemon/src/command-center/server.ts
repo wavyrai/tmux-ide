@@ -162,6 +162,7 @@ export interface CreateAppOptions {
   workspaceOpenBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenBackend;
   workspacePromotionBackend?: import("./actions/handlers/workspace-promote.ts").WorkspacePromotionBackend;
   appWindowMutationBackend?: import("./actions/handlers/app-window-mutate.ts").AppWindowMutationBackend;
+  workspaceMultiplexerBackend?: import("./actions/handlers/workspace-multiplexer.ts").WorkspaceMultiplexerBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
   /** Catalog + startup-barrier facts for the startup readiness ladder. */
@@ -253,9 +254,46 @@ function requireAuth(token: string | null, localBypassToken: string | null): Mid
   };
 }
 
+/**
+ * Every action that changes a user's tmux world, and what each one demands.
+ *
+ * `owner-and-operation-id` is the full m44 discipline: owner authority plus a
+ * stable operation id, so a retried request replays rather than repeats. The
+ * multiplexer verbs join it because they destroy things — a `kill-pane`
+ * delivered twice must not take a second pane with it.
+ *
+ * `owner` is the same authority gate without the idempotency requirement. The
+ * `project.*` lifecycle actions sit here rather than in the list above: they
+ * predate the operation-id envelope and are reached by the CLI, which has no
+ * host to mint one, so demanding an id would break `tmux-ide stop` rather than
+ * secure it. What they must not keep doing is bypassing the owner check
+ * entirely — `project.stop` kills a tmux session, and it was open to any caller
+ * that could reach the port. For GUI use `workspace.session.kill` supersedes
+ * it: same effect, owner-gated, idempotent, and it answers with a verified
+ * result instead of a boolean.
+ *
+ * Anything absent from this table is a read or a query and passes through.
+ */
+const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">> = {
+  "workspace.pane.create": "owner-and-operation-id",
+  "workspace.open": "owner-and-operation-id",
+  "workspace.promote": "owner-and-operation-id",
+  "workspace.app-window.mutate": "owner-and-operation-id",
+  "workspace.window.split": "owner-and-operation-id",
+  "workspace.window.kill": "owner-and-operation-id",
+  "workspace.pane.kill": "owner-and-operation-id",
+  "workspace.session.kill": "owner-and-operation-id",
+  "workspace.rename": "owner-and-operation-id",
+  "workspace.pane.zoom.toggle": "owner-and-operation-id",
+  "workspace.pane.select": "owner-and-operation-id",
+  "project.launch": "owner",
+  "project.stop": "owner",
+  "project.restart": "owner",
+  "project.activate": "owner",
+  "project.openTerminal": "owner",
+};
+
 function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
-  // Owner-only, but only for the mutating actions; every other action name is
-  // this dispatcher's own business and passes straight through.
   const gate = ownerAuthorityGate(ownerToken, {
     whenOwnerless: "unavailable",
     unavailableMessage: "Host mutation capability is unavailable",
@@ -263,17 +301,14 @@ function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
   });
   return async (c, next) => {
     const actionName = c.req.param("name");
-    if (
-      actionName !== "workspace.pane.create" &&
-      actionName !== "workspace.open" &&
-      actionName !== "workspace.promote" &&
-      actionName !== "workspace.app-window.mutate"
-    ) {
-      return next();
-    }
+    const requirement = actionName ? GATED_ACTIONS[actionName] : undefined;
+    if (!requirement) return next();
     const denied = gate(c);
     if (denied) return denied;
-    if (!z.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+    if (
+      requirement === "owner-and-operation-id" &&
+      !z.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success
+    ) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
     return next();
@@ -534,6 +569,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       workspaceOpenBackend: options.workspaceOpenBackend,
       workspacePromotionBackend: options.workspacePromotionBackend,
       appWindowMutationBackend: options.appWindowMutationBackend,
+      workspaceMultiplexerBackend: options.workspaceMultiplexerBackend,
     }),
   );
 

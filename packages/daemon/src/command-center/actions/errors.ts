@@ -65,6 +65,16 @@ export type ActionErrorCode =
   | "session_internal"
   | "stamp_failed"
   | "promotion_verification_failed"
+  // Multiplexer verbs. The two refusals are policy, not failure: a client that
+  // receives them asked for something the daemon declines to do, and the honest
+  // response is to say which rule stopped it.
+  | "pane_not_found"
+  | "window_not_found"
+  | "ambiguous_target"
+  | "last_window_refused"
+  | "last_pane_refused"
+  | "mutation_failed"
+  | "mutation_unverified"
   | "internal";
 
 export class ActionError extends Error {

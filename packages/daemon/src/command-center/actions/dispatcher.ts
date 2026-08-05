@@ -30,6 +30,7 @@ import { broadcastActionComplete, broadcastWorkspacePromotionCompleted } from ".
 import { WorkspacePromoteMutationResultSchemaZ } from "@tmux-ide/contracts";
 import { daemonActionCommandRegistry } from "./command-definitions.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
+import type { WorkspaceMultiplexerBackend } from "./handlers/workspace-multiplexer.ts";
 import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
 import type { WorkspacePromotionBackend } from "./handlers/workspace-promote.ts";
 import type { AppWindowMutationBackend } from "./handlers/app-window-mutate.ts";
@@ -49,6 +50,8 @@ export interface DispatcherDeps {
   workspacePromotionBackend?: WorkspacePromotionBackend;
   /** Instance-owned AppWindow authority; renderer never supplies its envelope. */
   appWindowMutationBackend?: AppWindowMutationBackend;
+  /** Instance-owned multiplexer verb authority; never module-global. */
+  workspaceMultiplexerBackend?: WorkspaceMultiplexerBackend;
 }
 
 interface DispatchOk {
@@ -177,6 +180,7 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
         workspaceOpenBackend: deps.workspaceOpenBackend,
         workspacePromotionBackend: deps.workspacePromotionBackend,
         appWindowMutationBackend: deps.appWindowMutationBackend,
+        workspaceMultiplexerBackend: deps.workspaceMultiplexerBackend,
       };
       result = entry.handlerWithContext
         ? await entry.handlerWithContext(commandResolution.command.input, context)

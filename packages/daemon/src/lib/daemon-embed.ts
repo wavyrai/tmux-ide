@@ -35,6 +35,7 @@ import {
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
 import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
 import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
+import { WorkspaceMultiplexerAuthority } from "./workspace-multiplexer-verbs.ts";
 import {
   createNativeTerminalAttachmentRuntime,
   type NativeTerminalAttachmentRuntime,
@@ -692,6 +693,7 @@ async function startHttpServer({
   workspaceOpenBackend: WorkspaceOpenAuthority;
   workspacePromotionBackend: WorkspacePromotionAuthority;
   appWindowMutationBackend: AppWindowMutationAuthority;
+  workspaceMultiplexerBackend: WorkspaceMultiplexerAuthority;
   workspaceRegistry: WorkspaceRegistry;
   terminalAttachmentRuntime: NativeTerminalAttachmentRuntime;
   paneStreamRuntime: PaneStreamRuntime;
@@ -955,6 +957,11 @@ export async function startEmbeddedDaemon(
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
     });
+    const workspaceMultiplexer = new WorkspaceMultiplexerAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
+      tmuxAuthority,
+    });
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
@@ -995,6 +1002,7 @@ export async function startEmbeddedDaemon(
         workspaceOpenBackend: workspaceOpen,
         workspacePromotionBackend: workspacePromotion,
         appWindowMutationBackend: appWindowMutation,
+        workspaceMultiplexerBackend: workspaceMultiplexer,
         workspaceRegistry,
         terminalAttachmentRuntime,
         paneStreamRuntime,
@@ -1007,6 +1015,7 @@ export async function startEmbeddedDaemon(
         workspaceOpen.dispose(),
         workspacePromotion.dispose(),
         appWindowMutation.dispose(),
+        workspaceMultiplexer.dispose(),
       ]);
       throw error;
     }

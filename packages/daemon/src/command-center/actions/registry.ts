@@ -21,6 +21,8 @@ import {
   type WorkspaceOpenMutationResult,
   type WorkspacePromoteMutationRequest,
   type WorkspacePromoteMutationResult,
+  type WorkspaceMultiplexerMutationRequest,
+  type WorkspaceMultiplexerMutationResult,
   type ActionInput,
   type ActionName,
   type ActionResult,
@@ -46,6 +48,15 @@ import { daemonShutdownHandler } from "./handlers/daemon-shutdown.ts";
 import { workspacePaneCreateHandler } from "./handlers/workspace-pane-create.ts";
 import { workspaceOpenHandler } from "./handlers/workspace-open.ts";
 import { workspacePromoteHandler } from "./handlers/workspace-promote.ts";
+import {
+  workspacePaneKillHandler,
+  workspacePaneSelectHandler,
+  workspacePaneZoomToggleHandler,
+  workspaceRenameHandler,
+  workspaceSessionKillHandler,
+  workspaceWindowKillHandler,
+  workspaceWindowSplitHandler,
+} from "./handlers/workspace-multiplexer.ts";
 
 export interface ActionExecutionContext {
   readonly operationId?: string;
@@ -61,6 +72,11 @@ export interface ActionExecutionContext {
   };
   readonly appWindowMutationBackend?: {
     mutate(input: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
+  };
+  readonly workspaceMultiplexerBackend?: {
+    mutate(
+      input: WorkspaceMultiplexerMutationRequest,
+    ): Promise<WorkspaceMultiplexerMutationResult>;
   };
 }
 
@@ -181,6 +197,48 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["workspace.app-window.mutate"].result,
     handler: (input) => appWindowMutateHandler(input),
     handlerWithContext: appWindowMutateHandler,
+  },
+  "workspace.window.split": {
+    inputSchema: ActionContractsZ["workspace.window.split"].input,
+    resultSchema: ActionContractsZ["workspace.window.split"].result,
+    handler: (input) => workspaceWindowSplitHandler(input),
+    handlerWithContext: workspaceWindowSplitHandler,
+  },
+  "workspace.window.kill": {
+    inputSchema: ActionContractsZ["workspace.window.kill"].input,
+    resultSchema: ActionContractsZ["workspace.window.kill"].result,
+    handler: (input) => workspaceWindowKillHandler(input),
+    handlerWithContext: workspaceWindowKillHandler,
+  },
+  "workspace.pane.kill": {
+    inputSchema: ActionContractsZ["workspace.pane.kill"].input,
+    resultSchema: ActionContractsZ["workspace.pane.kill"].result,
+    handler: (input) => workspacePaneKillHandler(input),
+    handlerWithContext: workspacePaneKillHandler,
+  },
+  "workspace.session.kill": {
+    inputSchema: ActionContractsZ["workspace.session.kill"].input,
+    resultSchema: ActionContractsZ["workspace.session.kill"].result,
+    handler: (input) => workspaceSessionKillHandler(input),
+    handlerWithContext: workspaceSessionKillHandler,
+  },
+  "workspace.rename": {
+    inputSchema: ActionContractsZ["workspace.rename"].input,
+    resultSchema: ActionContractsZ["workspace.rename"].result,
+    handler: (input) => workspaceRenameHandler(input),
+    handlerWithContext: workspaceRenameHandler,
+  },
+  "workspace.pane.zoom.toggle": {
+    inputSchema: ActionContractsZ["workspace.pane.zoom.toggle"].input,
+    resultSchema: ActionContractsZ["workspace.pane.zoom.toggle"].result,
+    handler: (input) => workspacePaneZoomToggleHandler(input),
+    handlerWithContext: workspacePaneZoomToggleHandler,
+  },
+  "workspace.pane.select": {
+    inputSchema: ActionContractsZ["workspace.pane.select"].input,
+    resultSchema: ActionContractsZ["workspace.pane.select"].result,
+    handler: (input) => workspacePaneSelectHandler(input),
+    handlerWithContext: workspacePaneSelectHandler,
   },
 };
 

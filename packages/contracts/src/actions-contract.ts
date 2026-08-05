@@ -34,6 +34,22 @@ import {
   AppWindowMutationArgumentsSchemaZ,
   AppWindowMutationResultSchemaZ,
 } from "./app-window-mutation.ts";
+import {
+  WorkspacePaneKillArgumentsSchemaZ,
+  WorkspacePaneKillResultSchemaZ,
+  WorkspacePaneSelectArgumentsSchemaZ,
+  WorkspacePaneSelectResultSchemaZ,
+  WorkspacePaneZoomToggleArgumentsSchemaZ,
+  WorkspacePaneZoomToggleResultSchemaZ,
+  WorkspaceRenameArgumentsSchemaZ,
+  WorkspaceRenameResultSchemaZ,
+  WorkspaceSessionKillArgumentsSchemaZ,
+  WorkspaceSessionKillResultSchemaZ,
+  WorkspaceWindowKillArgumentsSchemaZ,
+  WorkspaceWindowKillResultSchemaZ,
+  WorkspaceWindowSplitArgumentsSchemaZ,
+  WorkspaceWindowSplitResultSchemaZ,
+} from "./workspace-multiplexer.ts";
 
 // ---------------------------------------------------------------------------
 // project.openTerminal
@@ -237,6 +253,34 @@ export const AppWindowMutationInputZ = AppWindowMutationArgumentsSchemaZ;
 export const AppWindowMutationResultZ = AppWindowMutationResultSchemaZ;
 
 // ---------------------------------------------------------------------------
+// The multiplexer verbs: split, kill, rename, zoom, select
+//
+// Each input is verb-less. The route name is the verb, so there is no second
+// copy of it on the wire that could disagree with the URL that carried it.
+// ---------------------------------------------------------------------------
+
+export const WorkspaceWindowSplitInputZ = WorkspaceWindowSplitArgumentsSchemaZ;
+export const WorkspaceWindowSplitResultZ = WorkspaceWindowSplitResultSchemaZ;
+
+export const WorkspaceWindowKillInputZ = WorkspaceWindowKillArgumentsSchemaZ;
+export const WorkspaceWindowKillResultZ = WorkspaceWindowKillResultSchemaZ;
+
+export const WorkspacePaneKillInputZ = WorkspacePaneKillArgumentsSchemaZ;
+export const WorkspacePaneKillResultZ = WorkspacePaneKillResultSchemaZ;
+
+export const WorkspaceSessionKillInputZ = WorkspaceSessionKillArgumentsSchemaZ;
+export const WorkspaceSessionKillResultZ = WorkspaceSessionKillResultSchemaZ;
+
+export const WorkspaceRenameInputZ = WorkspaceRenameArgumentsSchemaZ;
+export const WorkspaceRenameResultZ = WorkspaceRenameResultSchemaZ;
+
+export const WorkspacePaneZoomToggleInputZ = WorkspacePaneZoomToggleArgumentsSchemaZ;
+export const WorkspacePaneZoomToggleResultZ = WorkspacePaneZoomToggleResultSchemaZ;
+
+export const WorkspacePaneSelectInputZ = WorkspacePaneSelectArgumentsSchemaZ;
+export const WorkspacePaneSelectResultZ = WorkspacePaneSelectResultSchemaZ;
+
+// ---------------------------------------------------------------------------
 // Registry of action contracts (name → input/output schemas)
 // ---------------------------------------------------------------------------
 
@@ -316,6 +360,34 @@ export const ActionContractsZ = {
   "workspace.app-window.mutate": {
     input: AppWindowMutationInputZ,
     result: AppWindowMutationResultZ,
+  },
+  "workspace.window.split": {
+    input: WorkspaceWindowSplitInputZ,
+    result: WorkspaceWindowSplitResultZ,
+  },
+  "workspace.window.kill": {
+    input: WorkspaceWindowKillInputZ,
+    result: WorkspaceWindowKillResultZ,
+  },
+  "workspace.pane.kill": {
+    input: WorkspacePaneKillInputZ,
+    result: WorkspacePaneKillResultZ,
+  },
+  "workspace.session.kill": {
+    input: WorkspaceSessionKillInputZ,
+    result: WorkspaceSessionKillResultZ,
+  },
+  "workspace.rename": {
+    input: WorkspaceRenameInputZ,
+    result: WorkspaceRenameResultZ,
+  },
+  "workspace.pane.zoom.toggle": {
+    input: WorkspacePaneZoomToggleInputZ,
+    result: WorkspacePaneZoomToggleResultZ,
+  },
+  "workspace.pane.select": {
+    input: WorkspacePaneSelectInputZ,
+    result: WorkspacePaneSelectResultZ,
   },
 } as const;
 
