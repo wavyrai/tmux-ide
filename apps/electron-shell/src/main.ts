@@ -455,7 +455,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       platform: platform(),
       daemonResources,
       rendererDidBootstrap: () => rendererDidBootstrap?.(),
-      requestQuit: () => app.quit(),
+      readStartupReadiness: () => readDaemonStartupReadinessLadder(),
       selectProjectDirectory: async (window) => {
         const result = await dialog.showOpenDialog(window, {
           title: "Open project",

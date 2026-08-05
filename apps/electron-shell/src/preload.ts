@@ -1,55 +1,24 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
-  AppWindowMutationArgumentsSchemaZ,
-  AppWindowMutationHostResultSchemaZ,
+  DAEMON_RESOURCE_RESULT_SCHEMAS,
   DESKTOP_HOST_API_VERSION,
+  DaemonResourceRequestSchemaZ,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
-  DesktopDaemonCapabilitiesResultSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
-  DesktopDaemonFetchApplicationShellRequestSchemaZ,
-  DesktopDaemonFetchApplicationShellResultSchemaZ,
-  DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ,
-  DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ,
-  DesktopDaemonFetchWorkspaceChangesRequestSchemaZ,
-  DesktopDaemonFetchWorkspaceChangesResultSchemaZ,
-  DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ,
-  DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ,
-  DesktopDaemonFetchWorkspaceFilesRequestSchemaZ,
-  DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
-  DesktopDaemonListWorkspacesResultSchemaZ,
-  DesktopDaemonFetchFleetCatalogResultSchemaZ,
-  DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
-  WorkspacePromoteArgumentsSchemaZ,
-  WorkspacePromoteHostResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
-  DesktopMenuResultSchemaZ,
   DesktopThemeStateSchemaZ,
   DesktopUpdateStatusSchemaZ,
   DesktopWindowStateSchemaZ,
-  TerminalAttachRequestSchemaZ,
-  TerminalAttachmentIssueResultSchemaZ,
-  PaneStreamIssueResultSchemaZ,
-  PaneStreamLeaseRequestSchemaZ,
-  WorkspacePaneCreateHostResultSchemaZ,
-  WorkspacePaneCreateInvocationSchemaZ,
   WorkspaceOpenHostResultSchemaZ,
+  createDaemonResourceMethods,
+  type DaemonResourceRequest,
   type DesktopDaemonEvent,
   type DesktopDaemonEventSubscriptionRequest,
-  type DesktopDaemonFetchApplicationShellRequest,
-  type DesktopDaemonFetchWorkspaceChangeDiffRequest,
-  type DesktopDaemonFetchWorkspaceChangesRequest,
-  type DesktopDaemonFetchWorkspaceFilePreviewRequest,
-  type DesktopDaemonFetchWorkspaceFilesRequest,
   type DesktopThemeState,
   type DesktopUpdateStatus,
   type DesktopWindowState,
   type HostCapabilities,
-  type PaneStreamLeaseRequest,
-  type TerminalAttachRequest,
-  type WorkspacePaneCreateInvocation,
-  type WorkspacePromoteArguments,
-  type AppWindowMutationArguments,
 } from "@tmux-ide/contracts";
 
 import { HOST_IPC } from "./ipc-channels.ts";
@@ -93,18 +62,23 @@ function onValidatedEvent<T>(
   return () => ipcRenderer.removeListener(channel, receive);
 }
 
+/**
+ * The single daemon hop. Both directions are validated here — the request
+ * against the union before it leaves the renderer process, the answer against
+ * the schema its own variant declares — so a malformed request never reaches
+ * main and a malformed answer never reaches application code.
+ */
+async function requestDaemonResource(request: DaemonResourceRequest): Promise<unknown> {
+  const parsed = DaemonResourceRequestSchemaZ.parse(request);
+  const result = await ipcRenderer.invoke(HOST_IPC.daemonRequest, parsed);
+  return DAEMON_RESOURCE_RESULT_SCHEMAS[parsed.resource].parse(result);
+}
+
 const capabilities: HostCapabilities = Object.freeze({
   apiVersion: DESKTOP_HOST_API_VERSION,
   bootstrap: async () =>
     DesktopHostBootstrapSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.bootstrap)),
-  lifecycle: Object.freeze({
-    requestQuit: async () => {
-      await ipcRenderer.invoke(HOST_IPC.lifecycleQuit);
-    },
-  }),
   window: Object.freeze({
-    getState: async () =>
-      DesktopWindowStateSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.windowGetState)),
     minimize: async () =>
       DesktopWindowStateSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.windowMinimize)),
     toggleMaximized: async () =>
@@ -119,10 +93,6 @@ const capabilities: HostCapabilities = Object.freeze({
         listener,
       ),
   }),
-  menu: Object.freeze({
-    showApplicationMenu: async () =>
-      DesktopMenuResultSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.menuShowApplication)),
-  }),
   workspace: Object.freeze({
     openProjectDirectory: async () =>
       WorkspaceOpenHostResultSchemaZ.nullable().parse(
@@ -135,8 +105,6 @@ const capabilities: HostCapabilities = Object.freeze({
     },
   }),
   theme: Object.freeze({
-    getState: async () =>
-      DesktopThemeStateSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.themeGetState)),
     onChanged: (listener: (state: DesktopThemeState) => void) =>
       onValidatedEvent(
         HOST_IPC.themeChanged,
@@ -155,82 +123,7 @@ const capabilities: HostCapabilities = Object.freeze({
       ),
   }),
   daemon: Object.freeze({
-    capabilities: async () =>
-      DesktopDaemonCapabilitiesResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonCapabilities),
-      ),
-    mutateAppWindow: async (intent: AppWindowMutationArguments) => {
-      const parsed = AppWindowMutationArgumentsSchemaZ.parse(intent);
-      return AppWindowMutationHostResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonMutateAppWindow, parsed),
-      );
-    },
-    createWorkspacePane: async (invocation: WorkspacePaneCreateInvocation) => {
-      const parsed = WorkspacePaneCreateInvocationSchemaZ.parse(invocation);
-      return WorkspacePaneCreateHostResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonCreateWorkspacePane, parsed),
-      );
-    },
-    issueTerminalAttachment: async (request: TerminalAttachRequest) => {
-      const parsed = TerminalAttachRequestSchemaZ.parse(request);
-      return TerminalAttachmentIssueResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonIssueTerminalAttachment, parsed),
-      );
-    },
-    issuePaneStream: async (request: PaneStreamLeaseRequest) => {
-      const parsed = PaneStreamLeaseRequestSchemaZ.parse(request);
-      return PaneStreamIssueResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonIssuePaneStream, parsed),
-      );
-    },
-    refreshConnection: async () =>
-      DesktopDaemonRefreshConnectionResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonRefreshConnection),
-      ),
-    listWorkspaces: async () =>
-      DesktopDaemonListWorkspacesResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonListWorkspaces),
-      ),
-    fetchFleetCatalog: async () =>
-      DesktopDaemonFetchFleetCatalogResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonFetchFleetCatalog),
-      ),
-    promoteWorkspace: async (intent: WorkspacePromoteArguments) => {
-      const parsed = WorkspacePromoteArgumentsSchemaZ.parse(intent);
-      return WorkspacePromoteHostResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonPromoteWorkspace, parsed),
-      );
-    },
-    fetchApplicationShell: async (request: DesktopDaemonFetchApplicationShellRequest) => {
-      const parsed = DesktopDaemonFetchApplicationShellRequestSchemaZ.parse(request);
-      return DesktopDaemonFetchApplicationShellResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonFetchApplicationShell, parsed),
-      );
-    },
-    fetchWorkspaceFiles: async (request: DesktopDaemonFetchWorkspaceFilesRequest) => {
-      const parsed = DesktopDaemonFetchWorkspaceFilesRequestSchemaZ.parse(request);
-      return DesktopDaemonFetchWorkspaceFilesResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonFetchWorkspaceFiles, parsed),
-      );
-    },
-    fetchWorkspaceFilePreview: async (request: DesktopDaemonFetchWorkspaceFilePreviewRequest) => {
-      const parsed = DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ.parse(request);
-      return DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonFetchWorkspaceFilePreview, parsed),
-      );
-    },
-    fetchWorkspaceChanges: async (request: DesktopDaemonFetchWorkspaceChangesRequest) => {
-      const parsed = DesktopDaemonFetchWorkspaceChangesRequestSchemaZ.parse(request);
-      return DesktopDaemonFetchWorkspaceChangesResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonFetchWorkspaceChanges, parsed),
-      );
-    },
-    fetchWorkspaceChangeDiff: async (request: DesktopDaemonFetchWorkspaceChangeDiffRequest) => {
-      const parsed = DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ.parse(request);
-      return DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonFetchWorkspaceChangeDiff, parsed),
-      );
-    },
+    ...createDaemonResourceMethods(requestDaemonResource),
     subscribe: async (
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,
