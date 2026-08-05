@@ -327,6 +327,37 @@ describe("layout push", () => {
     expect(layout.panes.find((pane) => pane.semanticPaneId === "pane.beta")!.active).toBe(true);
     await rig.channel.dispose();
   });
+
+  it("re-emits BOTH windows when the session's current window changes", async () => {
+    /*
+     * Bug this catches: `currentWindow` is carried on the layout frame and only
+     * %session-window-changed moves it, so without a re-emit a view whose window
+     * tabs come from these frames keeps marking the window the user just left as
+     * the one they are in — until something unrelated happens to change a layout.
+     */
+    const rig = await startedRig();
+    const layouts: MirrorLayoutEvent[] = [];
+    rig.channel.subscribePane(
+      "pane.alpha",
+      () => {},
+      (event) => layouts.push(event),
+    );
+    rig.sim.reply(["s"]);
+    rig.sim.reply(["0 0 100 50"]);
+    // Seed a layout for both windows so each has geometry to re-emit.
+    rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+    rig.sim.feedLines(`%layout-change @2 ${FIXTURE.layoutW2} ${FIXTURE.layoutW2} 0`);
+    layouts.length = 0;
+
+    rig.sim.feedLines("%session-window-changed $0 @2");
+
+    const byWindow = new Map(layouts.map((event) => [event.semanticWindowId, event.currentWindow]));
+    expect(byWindow.get("window.test.two")).toBe(true);
+    // The window that was left says so in the same burst, so no tab is left
+    // claiming to be current alongside the new one.
+    expect(byWindow.get("window.test.one")).toBe(false);
+    await rig.channel.dispose();
+  });
 });
 
 describe("closure (truth-driven, never probe-failure)", () => {

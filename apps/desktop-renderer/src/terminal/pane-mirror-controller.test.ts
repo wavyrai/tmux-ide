@@ -4,6 +4,7 @@ import { PaneMirrorController, type MirrorPaneSink } from "./pane-mirror-control
 import type {
   PaneMirrorSeedBatch,
   PaneStreamConnectResult,
+  PaneStreamLayoutEvent,
   PaneStreamRequest,
   PaneStreamSessionListeners,
   PaneStreamTransport,
@@ -368,5 +369,76 @@ describe("pane mirror controller lifecycle", () => {
     session.listeners.onEnd({ code: "stream-closed", reason: "late", retryable: true });
     expect(h.controller.state().transport).toEqual({ phase: "connected" });
     expect(h.transport.sessions).toHaveLength(1);
+  });
+});
+
+describe("layout frames", () => {
+  const layout = (
+    overrides: Partial<PaneStreamLayoutEvent> & { semanticWindowId: string | null },
+  ): PaneStreamLayoutEvent => ({
+    windowName: "editor",
+    currentWindow: false,
+    cols: 200,
+    rows: 50,
+    zoomed: false,
+    panes: [{ pane: PANE_A, left: 0, top: 0, width: 200, height: 50, active: true }],
+    ...overrides,
+  });
+
+  it("keeps one entry per window, in first-seen order, replaced in place", async () => {
+    // Bug this catches: each frame appends, so a tab strip built from these
+    // grows a new tab every time tmux repaints a layout.
+    const h = controllerHarness();
+    h.controller.start();
+    await flush();
+    const { onLayout } = h.transport.sessions[0]!.listeners;
+    onLayout!(layout({ semanticWindowId: "win.one" }));
+    onLayout!(layout({ semanticWindowId: "win.two", windowName: "shell" }));
+    onLayout!(layout({ semanticWindowId: "win.one", windowName: "renamed" }));
+    expect(h.controller.state().layouts.map((frame) => frame.windowName)).toEqual([
+      "renamed",
+      "shell",
+    ]);
+  });
+
+  it("lets exactly one window claim to be the current one", async () => {
+    // Bug this catches: the previous window's stale `currentWindow: true` frame
+    // survives, so two tabs are painted as the one the user is in.
+    const h = controllerHarness();
+    h.controller.start();
+    await flush();
+    const { onLayout } = h.transport.sessions[0]!.listeners;
+    onLayout!(layout({ semanticWindowId: "win.one", currentWindow: true }));
+    onLayout!(layout({ semanticWindowId: "win.two", currentWindow: true }));
+    expect(h.controller.state().layouts.map((frame) => frame.currentWindow)).toEqual([false, true]);
+  });
+
+  it("keeps the known windows across a reconnect", async () => {
+    /*
+     * Bug this catches: a recoverable stream drop blanks the tab strip, so the
+     * session momentarily reads as having lost every window it has.
+     */
+    const h = controllerHarness();
+    h.controller.start();
+    await flush();
+    h.transport.sessions[0]!.listeners.onLayout!(layout({ semanticWindowId: "win.one" }));
+    h.transport.sessions[0]!.listeners.onEnd({
+      code: "stream-closed",
+      reason: "dropped",
+      retryable: true,
+    });
+    await h.clock.advance(1_000);
+    expect(h.controller.state().layouts).toHaveLength(1);
+  });
+
+  it("keys an unstamped window by its pane set rather than appending forever", async () => {
+    const h = controllerHarness();
+    h.controller.start();
+    await flush();
+    const { onLayout } = h.transport.sessions[0]!.listeners;
+    onLayout!(layout({ semanticWindowId: null }));
+    onLayout!(layout({ semanticWindowId: null, windowName: "later" }));
+    expect(h.controller.state().layouts).toHaveLength(1);
+    expect(h.controller.state().layouts[0]!.windowName).toBe("later");
   });
 });

@@ -490,7 +490,21 @@ export class SessionChannel {
     }
     if (name === "session-window-changed") {
       const change = parseSessionWindowChanged(rest);
-      if (change) this.currentWindow = change.windowId;
+      if (!change) return;
+      const previous = this.currentWindow;
+      this.currentWindow = change.windowId;
+      if (previous === change.windowId) return;
+      /*
+       * Re-emit BOTH windows.
+       *
+       * `currentWindow` is carried on the layout frame, and this notification is
+       * the only thing that changes it. Without a re-emit the flag stays as it
+       * was until something else about a layout happens to move — so a view
+       * whose window tabs come from these frames (m50) would keep marking the
+       * window the user just left as the one they are in, indefinitely.
+       */
+      if (previous) this.emitLayout(previous);
+      this.emitLayout(change.windowId);
       return;
     }
     if (STRUCTURAL_NOTIFICATIONS.has(name)) this.scheduleSync();

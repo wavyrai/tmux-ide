@@ -3,6 +3,7 @@ import type { DesktopDaemonTransportState } from "@tmux-ide/contracts";
 import type {
   PaneMirrorEvent,
   PaneMirrorSeedBatch,
+  PaneStreamLayoutEvent,
   PaneStreamSessionHandle,
   PaneStreamTransport,
   PaneStreamTransportError,
@@ -19,7 +20,11 @@ import type {
  *  - per-pane node states (connecting → live → ended), including the
  *    flow-paused indicator;
  *  - fan-out of decoded mirror events to registered pane sinks. The sink's
- *    settled promise is what releases the cumulative `consumed` ack upstream.
+ *    settled promise is what releases the cumulative `consumed` ack upstream;
+ *  - the session's LAYOUT frames, one per window, kept in first-seen order.
+ *    They are the geometry the tiled view is a pure function of (m50), and they
+ *    arrive on the lease whether or not any pane is being mirrored — which is
+ *    why a view that only wants geometry can hold a one-pane lease.
  *
  * Changing the pane set means a NEW lease (the set is enumerated at issue), so
  * `setPanes` retires the current session and reconnects.
@@ -41,6 +46,15 @@ export type MirrorPaneNodeState =
 export interface PaneMirrorControllerState {
   readonly transport: DesktopDaemonTransportState;
   readonly panes: ReadonlyMap<string, MirrorPaneNodeState>;
+  /**
+   * The session's windows as tmux last reported them, in first-seen order so a
+   * tab strip built from them does not reshuffle on every frame. A window is
+   * replaced in place by its newer frame. Nothing here removes a window: the
+   * wire carries no "window closed" frame, so a surface prunes against the
+   * attachable inventory the daemon already keeps honest rather than against a
+   * timeout this controller would have to invent.
+   */
+  readonly layouts: readonly PaneStreamLayoutEvent[];
   /**
    * The last stream fault with its ORIGINAL code. `transport.error` must be a
    * daemon-capability error (that is the vocabulary `DesktopDaemonTransportState`
@@ -115,6 +129,7 @@ export class PaneMirrorController {
   readonly #channels = new Map<string, SinkChannel>();
   #panes: readonly string[];
   #paneStates = new Map<string, MirrorPaneNodeState>();
+  #layouts: PaneStreamLayoutEvent[] = [];
   #transportState: DesktopDaemonTransportState = { phase: "idle" };
   #fault: PaneStreamTransportError | null = null;
   #session: PaneStreamSessionHandle | null = null;
@@ -145,8 +160,34 @@ export class PaneMirrorController {
     return {
       transport: this.#transportState,
       panes: new Map(this.#paneStates),
+      layouts: [...this.#layouts],
       fault: this.#fault,
     };
+  }
+
+  /**
+   * Record one window's geometry.
+   *
+   * Keyed by the durable window stamp when there is one, and by the window's
+   * own pane set when there is not: an unstamped window still has to hold ONE
+   * place in the tab strip rather than appending a new tab per frame.
+   */
+  #onLayout(generation: number, layout: PaneStreamLayoutEvent): void {
+    if (this.#disposed || generation !== this.#generation) return;
+    const key = layoutWindowKey(layout);
+    const index = this.#layouts.findIndex((known) => layoutWindowKey(known) === key);
+    if (index >= 0) this.#layouts[index] = layout;
+    else this.#layouts.push(layout);
+    if (layout.currentWindow) {
+      // tmux has exactly one current window; a stale flag on another frame would
+      // make two tabs claim to be the one the user is in.
+      this.#layouts = this.#layouts.map((known) =>
+        layoutWindowKey(known) === key || !known.currentWindow
+          ? known
+          : { ...known, currentWindow: false },
+      );
+    }
+    this.#emit();
   }
 
   /**
@@ -261,6 +302,9 @@ export class PaneMirrorController {
     if (this.#disposed || this.#panes.length === 0) return;
     const generation = ++this.#generation;
     // A new lease reseeds every pane; bytes buffered for the old one are stale.
+    // The layouts are NOT cleared: tmux re-sends a frame per window on
+    // subscribe, and blanking the tab strip for the width of a reconnect would
+    // make a recoverable stream drop look like the session losing its windows.
     for (const channel of this.#channels.values()) channel.buffer.length = 0;
     for (const [pane, state] of this.#paneStates) {
       if (state.kind !== "ended") this.#paneStates.set(pane, { kind: "connecting" });
@@ -271,6 +315,7 @@ export class PaneMirrorController {
         { workspaceName: this.#workspaceName, panes: this.#panes },
         {
           onPaneEvent: (pane, event) => this.#onPaneEvent(generation, pane, event),
+          onLayout: (layout) => this.#onLayout(generation, layout),
           onEnd: (error) => this.#onEnd(generation, error),
         },
       )
@@ -373,4 +418,14 @@ export class PaneMirrorController {
       this.#connect();
     }, delay);
   }
+}
+
+/** The stable identity of one window across frames. */
+export function layoutWindowKey(layout: PaneStreamLayoutEvent): string {
+  if (layout.semanticWindowId) return layout.semanticWindowId;
+  const panes = layout.panes
+    .map((pane) => pane.pane)
+    .filter((pane): pane is string => pane !== null)
+    .sort();
+  return `unstamped:${panes.join(",")}`;
 }
