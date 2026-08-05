@@ -136,7 +136,11 @@ describe("development web host route keying", () => {
       paths.push(`${url.pathname}${url.search}`);
       const body =
         url.pathname === "/api/v2/capabilities"
-          ? { status: "ok", daemon: IDENTITY, capabilities: { appWindowMutation: { available: true } } }
+          ? {
+              status: "ok",
+              daemon: IDENTITY,
+              capabilities: { appWindowMutation: { available: true } },
+            }
           : url.pathname === "/api/resources/workspace-catalog"
             ? { version: 1, daemon: IDENTITY, workspaces: [...CATALOG] }
             : { unreadable: true };
