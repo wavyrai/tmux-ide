@@ -511,9 +511,24 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               title={titleFor(semanticPaneId())}
               transport={props.transport}
               focused
-              // A multi-pane window is one size-passive card: the desktop never
-              // drives the window's size, tmux does, and the grid is centered.
-              sizePassive={paneCount() > 1}
+              /*
+               * ALWAYS size-passive, whatever the pane count.
+               *
+               * The daemon attaches its view client with `-f ignore-size`, so
+               * tmux excludes it when sizing the window — by design, because the
+               * desktop must never reflow a window a user also has open
+               * elsewhere. A surface that tries to drive the size anyway does
+               * not get a bigger window; it gets a client bigger than its
+               * window, which tmux paints into the corner with a divider down
+               * the middle, and any output wide enough to wrap wraps at the
+               * WINDOW's width inside a card that is wider — breaking a long
+               * logical line into rows nothing downstream can rejoin.
+               *
+               * So the card renders the window's own grid and letterboxes the
+               * remainder. That is also what makes the view faithful: the
+               * proportions on screen are the ones tmux computed.
+               */
+              sizePassive
               reducedMotion={props.reducedMotion}
               themeKey={props.terminalThemeKey}
               onFocus={(source) => {

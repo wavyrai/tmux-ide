@@ -102,11 +102,19 @@ test("the mouse reaches the multiplexer: switch windows, rename, split, resize, 
    * underneath, which is a real tmux client — so the menu is opened by pointing
    * at the pixels a tile covers rather than at the tile element.
    */
+  /*
+   * Aim inside the first TILE, not at the pane area's own edge.
+   *
+   * Once a window has more than one pane the surface letterboxes — it renders
+   * the window's natural grid centred, and the margins around it belong to no
+   * pane at all. A point measured from the area would land in that margin and
+   * open nothing, which is exactly what a user aiming at a pane would not do.
+   */
   const openTileMenu = async (): Promise<void> => {
-    // Aimed at the pane AREA, near its left edge so the leftmost pane is the
-    // one under the pointer whether the window has been split yet or not.
-    const box = (await page.locator(".tiled-pane-area").boundingBox())!;
-    await page.mouse.click(box.x + 30, box.y + box.height / 2, { button: "right" });
+    const box = (await page.locator(".pane-tile").first().boundingBox())!;
+    await page.mouse.click(box.x + Math.min(24, box.width / 3), box.y + box.height / 2, {
+      button: "right",
+    });
     await proveVisible(menu, "the verb context menu", { minWidth: 180, minHeight: 100 });
   };
   await openTileMenu();
