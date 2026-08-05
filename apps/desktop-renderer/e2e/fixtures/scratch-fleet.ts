@@ -29,6 +29,10 @@ export interface ScratchFleet {
   /** Kill a session. The tmux server survives; only this session goes. */
   readonly killSession: (name: string) => void;
   readonly listSessions: () => readonly string[];
+  /** Window names of one session, in tmux order — the proof a rename landed. */
+  readonly listWindows: (name: string) => readonly string[];
+  /** Total panes across a session's windows — the proof a kill landed. */
+  readonly countPanes: (name: string) => number;
   /** Raw pane text, for proving the app is showing what tmux actually holds. */
   readonly capturePane: (name: string) => string;
   readonly dispose: () => Promise<void>;
@@ -146,6 +150,14 @@ export async function createScratchFleet(
     },
     listSessions: () =>
       runTmux(["list-sessions", "-F", "#{session_name}"]).split("\n").filter(Boolean),
+    listWindows: (name) =>
+      runTmux(["list-windows", "-t", `=${name}`, "-F", "#{window_name}"])
+        .split("\n")
+        .filter(Boolean),
+    countPanes: (name) =>
+      runTmux(["list-panes", "-s", "-t", `=${name}`, "-F", "#{pane_id}"])
+        .split("\n")
+        .filter(Boolean).length,
     // `<session>:` is the session's current window, active pane. A bare `=name`
     // is a SESSION target and tmux rejects it where a pane is required.
     capturePane: (name) => runTmux(["capture-pane", "-p", "-t", `${name}:`]),

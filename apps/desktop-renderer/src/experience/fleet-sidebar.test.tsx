@@ -8,6 +8,7 @@ import {
   promoteFailureSentence,
   type FleetPromoteOutcome,
 } from "./fleet-sidebar.tsx";
+import { SURFACE_MENU_IDS } from "./multiplexer-verb-menu.ts";
 import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 import { FLEET_FIXTURE_DAEMON, mixedFleetCatalog } from "../runtime/fleet-catalog-fixture.ts";
 
@@ -207,5 +208,104 @@ describe("FleetSidebarSection", () => {
     ));
     expect(text(host)).toContain("Fleet unavailable");
     expect(host.querySelector(".fleet-sidebar__session")).toBeNull();
+  });
+});
+
+describe("FleetSidebarSection row menu", () => {
+  const OPEN_ID = "session.aaaaaaaaaaaaaaaa";
+
+  function rightClick(row: Element): void {
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 30, clientY: 40 }));
+    // The release that ends the opening gesture arms the menu.
+    document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  }
+
+  function rowFor(host: HTMLElement, label: string): Element {
+    const row = Array.from(host.querySelectorAll(".fleet-sidebar__session-head")).find(
+      (candidate) => candidate.textContent?.includes(label),
+    );
+    if (!row) throw new Error(`no fleet row for ${label}`);
+    return row;
+  }
+
+  function menuItem(id: string): HTMLButtonElement {
+    const element = document.querySelector<HTMLButtonElement>(`[data-context-menu-item="${id}"]`);
+    if (!element) throw new Error(`no menu item ${id}`);
+    return element;
+  }
+
+  function click(element: Element): void {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+  }
+
+  it("refuses a closed session's verbs with the one action that fixes it", () => {
+    const host = mount(() => (
+      <FleetSidebarSection
+        state={liveState()}
+        openSessionId={OPEN_ID}
+        workspaceConnected
+        onPromote={async () => ({ ok: true })}
+      />
+    ));
+    rightClick(rowFor(host, "api"));
+    expect(menuItem(SURFACE_MENU_IDS.openSession).dataset.disabled).toBe("false");
+    expect(menuItem("session.kill").dataset.disabled).toBe("true");
+    expect(menuItem("session.kill").textContent).toContain(
+      "Open this session as a workspace first",
+    );
+  });
+
+  it("kills the open session only after a second click", () => {
+    const onSessionVerb = vi.fn();
+    const host = mount(() => (
+      <FleetSidebarSection
+        state={liveState()}
+        openSessionId={OPEN_ID}
+        workspaceConnected
+        onPromote={async () => ({ ok: true })}
+        onSessionVerb={onSessionVerb}
+      />
+    ));
+    rightClick(rowFor(host, "web"));
+    click(menuItem("session.kill"));
+    expect(onSessionVerb).not.toHaveBeenCalled();
+    click(menuItem("session.kill"));
+    expect(onSessionVerb).toHaveBeenCalledWith(
+      "session.kill",
+      expect.objectContaining({ sessionId: OPEN_ID }),
+    );
+  });
+
+  it("renames the open session through an inline field on its own row", () => {
+    const onSessionVerb = vi.fn();
+    const host = mount(() => (
+      <FleetSidebarSection
+        state={liveState()}
+        openSessionId={OPEN_ID}
+        workspaceConnected
+        onPromote={async () => ({ ok: true })}
+        onSessionVerb={onSessionVerb}
+      />
+    ));
+    rightClick(rowFor(host, "web"));
+    click(menuItem("session.rename"));
+    const field = host.querySelector<HTMLInputElement>(".fleet-sidebar__rename input")!;
+    expect(field.value).toBe("web");
+    field.value = "frontend";
+    field.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    expect(onSessionVerb).toHaveBeenCalledWith(
+      "session.rename",
+      expect.objectContaining({ sessionId: OPEN_ID }),
+      { name: "frontend" },
+    );
+  });
+
+  it("opens the promote dialog from the menu's own open item", () => {
+    const host = mount(() => (
+      <FleetSidebarSection state={liveState()} onPromote={async () => ({ ok: true })} />
+    ));
+    rightClick(rowFor(host, "web"));
+    click(menuItem(SURFACE_MENU_IDS.openSession));
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy();
   });
 });

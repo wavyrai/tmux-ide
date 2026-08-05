@@ -42,7 +42,11 @@ import { FLEET_FIXTURE_DAEMON, mixedFleetCatalog } from "../runtime/fleet-catalo
 import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 import styles from "../styles.css?raw";
 import paneFrameStyles from "../../../../packages/daemon/src/ui/pane-frame/web-host.css?raw";
-import { paneFrameTerminalsFromApplicationShellInventory } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+import {
+  APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS,
+  applicationShellAgentTerminalActions,
+  paneFrameTerminalsFromApplicationShellInventory,
+} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 
 const disposers: Array<() => void> = [];
 
@@ -1420,5 +1424,69 @@ describe("DomApplicationShell GUI-first scope", () => {
       ),
     ).toEqual(["files", "changes", "missions", "activity"]);
     expect(root.querySelector("#workbench-dock-panel-missions")).not.toBeNull();
+  });
+});
+
+describe("the two dead affordances the GUI map found", () => {
+  function menuItem(id: string): HTMLButtonElement {
+    const element = document.querySelector<HTMLButtonElement>(`[data-context-menu-item="${id}"]`);
+    if (!element) throw new Error(`no menu item ${id}`);
+    return element;
+  }
+
+  it("opens the session verb menu from the sidebar's Workspace actions button", () => {
+    const root = renderShell();
+    const more = root.querySelector<HTMLButtonElement>(".workspace-sidebar__more")!;
+    // It had a label, a tooltip and no handler; clicking it changed nothing.
+    pointerClick(more);
+    const menu = document.querySelector('[role="menu"]');
+    expect(menu?.getAttribute("aria-label")).toBe("Workspace actions");
+    expect(menuItem("session.kill").dataset.destructive).toBe("true");
+    // The daemon is unavailable in this fixture, so tmux verbs are refused —
+    // visibly, with the reason, rather than hidden.
+    expect(menuItem("session.kill").textContent).toContain("workspace is not connected");
+  });
+
+  it("opens the pane verb menu from the grid path's Pane actions button", () => {
+    const onPaneAction = vi.fn<NonNullable<DomApplicationShellProps["onPaneAction"]>>();
+    // The live grid renders the shared agent-terminal action set, whose
+    // overflow button is the affordance under test.
+    const frames = createDefaultDomPaneFrames().map((frame) => ({
+      ...frame,
+      actions: applicationShellAgentTerminalActions("docked"),
+    }));
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={createDefaultDomShellInput()}
+            dataMode="runtime"
+            paneFrames={frames}
+            onPaneAction={onPaneAction}
+            experimentalSurfaces
+          />
+        ),
+        root,
+      ),
+    );
+    const overflow = root.querySelector<HTMLButtonElement>(
+      `[data-action-id="${APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS.menu}"]`,
+    )!;
+    pointerClick(overflow);
+    // It used to emit `workspace.pane.menu.open`, which no surface consumed.
+    expect(onPaneAction).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="menu"]')?.getAttribute("aria-label")).toBe(
+      "Pane actions",
+    );
+    expect(menuItem("pane.split.right")).toBeTruthy();
+    // The grid layout has no float, dock or stack, and the menu says so rather
+    // than offering an arrangement that would do nothing.
+    expect(menuItem("app-layout:placement").textContent).toContain("grid layout");
   });
 });
