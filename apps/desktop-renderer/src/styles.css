@@ -377,10 +377,8 @@ select:focus-visible,
   --sf-leading-body-2: 18px;
   --sf-text-caption-1: 12px;
   --sf-leading-caption-1: 16px;
-  --sf-tracking-caption-1: 0.15px;
   --sf-text-caption-2: 11px;
   --sf-leading-caption-2: 15px;
-  --sf-tracking-caption-2: 0.2px;
   /*
    * caption-3 extends the ramp below its usual floor, for the dense chrome a
    * terminal app genuinely has: status strip cells, count badges, state
@@ -390,7 +388,6 @@ select:focus-visible,
    */
   --sf-text-caption-3: 10px;
   --sf-leading-caption-3: 14px;
-  --sf-tracking-caption-3: 0.25px;
   /*
    * Display type: the launch, onboarding and degraded surfaces, which are
    * poster layouts rather than chrome. title is the step between chrome and
@@ -407,9 +404,9 @@ select:focus-visible,
    * more so the larger it gets. The shell had eleven tracking values, several
    * within 0.01em of each other.
    */
-  --sf-tracking-eyebrow: 0.08em;
-  --sf-tracking-tight: -0.01em;
-  --sf-tracking-display: -0.04em;
+  --sf-tracking-eyebrow: 0.04em;
+  --sf-tracking-tight: -0.015em;
+  --sf-tracking-display: -0.02em;
   --sf-weight-regular: 400;
   --sf-weight-medium: 500;
   --sf-weight-semibold: 600;
@@ -735,7 +732,6 @@ select:focus-visible,
   color: var(--tmux-ide-text-bright);
   font-size: var(--sf-text-body-2);
   font-weight: var(--sf-weight-semibold);
-  letter-spacing: var(--sf-tracking-tight);
 }
 
 .titlebar__product-copy small {
@@ -957,7 +953,6 @@ kbd {
   gap: var(--tmi-space-5);
   color: var(--tmux-ide-text-bright);
   font-size: var(--sf-text-body-2);
-  letter-spacing: var(--sf-tracking-tight);
 }
 
 .runtime-launch__brand > span {
@@ -1213,6 +1208,7 @@ kbd {
   margin: 4px 0 2px;
   color: var(--tmux-ide-text-primary);
   font-size: var(--sf-text-headline);
+  letter-spacing: var(--sf-tracking-tight);
 }
 
 .first-run-intro__card > p {
@@ -1652,7 +1648,6 @@ kbd {
   color: var(--tmux-ide-text-bright);
   font-size: var(--sf-text-body-2);
   font-weight: var(--sf-weight-medium);
-  letter-spacing: var(--sf-tracking-tight);
 }
 
 .workspace-sidebar section {
@@ -1936,6 +1931,7 @@ kbd {
 .fleet-sidebar__dialog h3 {
   margin: 0 0 8px;
   font-size: var(--sf-text-headline);
+  letter-spacing: var(--sf-tracking-tight);
   font-weight: var(--sf-weight-semibold);
 }
 .fleet-sidebar__dialog-body {
@@ -2395,7 +2391,6 @@ kbd {
   background: var(--desktop-raised);
   box-shadow: var(--tmi-shadow-subtle);
   font-size: var(--sf-text-caption-2);
-  letter-spacing: var(--sf-tracking-caption-1);
   pointer-events: none;
 }
 
@@ -3240,6 +3235,7 @@ kbd {
   overflow: hidden;
   color: var(--tmux-ide-text-bright);
   font-size: var(--sf-text-title);
+  letter-spacing: var(--sf-tracking-tight);
   font-weight: var(--sf-weight-semibold);
   line-height: 1.3;
   text-overflow: ellipsis;
@@ -3619,6 +3615,7 @@ kbd {
 .mission-journey__state h3 {
   margin: 4px 0 5px;
   font-size: var(--sf-text-headline);
+  letter-spacing: var(--sf-tracking-tight);
 }
 
 .mission-journey__state p,
@@ -4267,6 +4264,7 @@ kbd {
 .workspace-changes__state h3 {
   margin: 4px 0 5px;
   font-size: var(--sf-text-headline);
+  letter-spacing: var(--sf-tracking-tight);
 }
 
 .workspace-files__state p,
@@ -4442,7 +4440,6 @@ kbd {
   color: var(--tmux-ide-text-bright);
   font-size: var(--sf-text-body-2);
   font-weight: var(--sf-weight-semibold);
-  letter-spacing: var(--sf-tracking-tight);
 }
 
 .command-palette__header p {
@@ -4644,6 +4641,7 @@ kbd {
 
 .create-pane-flow__trigger > span:first-child {
   font-size: var(--sf-text-title);
+  letter-spacing: var(--sf-tracking-tight);
   font-weight: var(--sf-weight-medium);
   line-height: 1;
   transform: translateY(-1px);
