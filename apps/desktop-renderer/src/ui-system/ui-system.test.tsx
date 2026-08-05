@@ -459,6 +459,29 @@ describe("desktop UI foundation styles", () => {
     expect(styles).not.toContain("var(--tmux-ide-shape-panel,");
   });
 
+  it("expresses disabled as a flat color pair rather than an opacity multiplier", () => {
+    // A faded control reads as "loading" and shows whatever is behind it. The
+    // multiplier token is gone, and filled variants drop their gradient so
+    // nothing survives to suggest the object is still pressable.
+    expect(styles).not.toContain("--tmi-disabled-opacity");
+    expect(styles).toMatch(
+      /\.tmi-button:disabled,[^{]*\{[^}]*color: var\(--tmi-disabled-fg\);[^}]*background-color: var\(--tmi-disabled-bg\);/su,
+    );
+    expect(styles).toMatch(/\.tmi-button:disabled,[^{]*\{[^}]*background: none;/su);
+  });
+
+  it("draws every focus ring from one recipe, keyboard-only", () => {
+    // One ring declaration, reading the shared tokens. `outline: none` resets
+    // are allowed because each one has a :focus-visible replacement below it;
+    // a second *drawn* ring is how a system drifts back into four of them.
+    const rings = [...styles.matchAll(/outline:\s*[^;]+;/g)]
+      .map((match) => match[0])
+      .filter((rule) => !/outline:\s*(none|0);/.test(rule));
+    expect(rings).toEqual(["outline: var(--tmi-focus-width) solid var(--tmi-accent);"]);
+    expect(styles).toContain("[data-focus-ring]:focus-visible");
+    expect(styles).toContain("outline-offset: var(--tmi-focus-offset-field);");
+  });
+
   it.each(["dark", "light"] as const)(
     "keeps filled action states above 4.5:1 with emitted %s product tokens",
     (mode) => {
@@ -483,14 +506,30 @@ describe("desktop UI foundation styles", () => {
       expect(styles).toContain("--tmi-accent: var(--tmux-ide-border-focused");
       expect(styles).toContain("--tmi-accent-strong: var(--tmux-ide-text-link");
       expect(styles).toContain("--tmi-danger: var(--tmux-ide-status-danger");
+      /*
+       * The filled recipe keeps the contrast floor above.
+       *
+       * The gradient runs from the accent to a step mixed toward black, and
+       * text stays the on-accent token — so every pixel of the fill is at
+       * least as dark as the accent the ratios were measured against, and the
+       * bottom of the gradient is darker still. Checking the accent is
+       * therefore checking the worst case.
+       */
       expect(styles).toMatch(
-        /\.tmi-button\[data-variant="primary"\][^{]*\{[^}]*color: var\(--tmi-text-on-accent\);[^}]*background: var\(--tmi-accent\);/su,
+        /\.tmi-button\[data-variant="primary"\][^{]*\{[^}]*color: var\(--tmi-text-on-accent\);[^}]*background: linear-gradient\(\s*to bottom,\s*var\(--tmi-accent\),\s*var\(--tmi-accent-dark\)\s*\);/su,
       );
       expect(styles).toMatch(
-        /\.tmi-button\[data-variant="danger"\][^{]*\{[^}]*color: var\(--tmi-text-on-accent\);[^}]*background: var\(--tmi-danger\);/su,
+        /--tmi-accent-dark: color-mix\(in oklab, var\(--tmi-accent\) \d+%, oklch\(0% 0 0\)\)/,
       );
       expect(styles).toMatch(
-        /\.tmi-button\[data-variant="primary"\]:hover:not\(:disabled\)[^{]*\{[^}]*background: var\(--tmi-accent-strong\);/su,
+        /\.tmi-button\[data-variant="danger"\][^{]*\{[^}]*color: var\(--tmi-text-on-accent\);[^}]*background: linear-gradient\(/su,
+      );
+      // Hover brightens the gradient; pressed flattens to the dark stop.
+      expect(styles).toMatch(
+        /\.tmi-button\[data-variant="primary"\]:hover:not\(:disabled\)[^{]*\{[^}]*background: linear-gradient\(\s*to bottom,\s*var\(--tmi-accent-bright\),\s*var\(--tmi-accent\)\s*\);/su,
+      );
+      expect(styles).toMatch(
+        /\.tmi-button\[data-variant="primary"\]:active:not\(:disabled\)[^{]*\{[^}]*background: var\(--tmi-accent-dark\);/su,
       );
     },
   );
