@@ -157,7 +157,10 @@ class FakeTmux {
         const pane =
           this.panes.find((p) => p.id === args[3]) ??
           this.panes.find((p) => p.windowId === args[3]) ??
-          (args[3] === `=${this.sessionName}` ? this.panes[0] : undefined);
+          // tmux resolves a bare `=name` as a PANE target, not a session; only
+          // the trailing-colon form names a session. The fake enforces that so
+          // a verb that drops the colon fails here as well as live.
+          (args[3] === `=${this.sessionName}:` ? this.panes[0] : undefined);
         if (!pane) throw new Error(`no such target: ${args[3]}`);
         return args[4]!
           .split("\t")

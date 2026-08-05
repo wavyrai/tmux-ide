@@ -663,11 +663,14 @@ export class WorkspaceMultiplexerAuthority {
         };
       }
       this.#io.runTmux(["rename-session", "-t", `=${sessionName}`, tmuxFormatLiteral(intent.name)]);
+      // The trailing colon matters: `-t "=name"` is read as a pane target and
+      // resolves to nothing, so the verification would fail on a rename that
+      // actually succeeded. `-t "=name:"` is the session form.
       const observed = this.#io.runTmux([
         "display-message",
         "-p",
         "-t",
-        `=${intent.name}`,
+        `=${intent.name}:`,
         "#{session_name}",
       ]);
       if (observed !== intent.name) {
