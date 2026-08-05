@@ -522,6 +522,40 @@ describe("desktop UI foundation styles", () => {
     },
   );
 
+  it("reserves semibold for titles and lets medium carry the interface", () => {
+    /*
+     * Medium is the interface weight — every interactive label, row title and
+     * tab. Semibold is for panel, dialog and display titles only.
+     *
+     * This is the rule a named-weight pass cannot enforce on its own: the
+     * previous pass mapped eleven numeric weights onto three names by
+     * proximity, so everything that had been 600-or-above stayed "semibold"
+     * and the drift survived under a better name. The guard is therefore about
+     * WHICH SELECTORS may carry semibold, not about how many names exist.
+     */
+    const declarations = [...shellStyles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .map(([, selector, body]) => ({ selector: selector.trim().replaceAll(/\s+/gu, " "), body }))
+      .filter(({ selector }) => !selector.startsWith("@") && !selector.startsWith("/*"));
+
+    const weightOf = (body: string): string | undefined =>
+      /font-weight: var\(--sf-weight-([a-z]+)\)/u.exec(body)?.[1];
+
+    const semibold = declarations.filter(({ body }) => weightOf(body) === "semibold");
+    const medium = declarations.filter(({ body }) => weightOf(body) === "medium");
+
+    // A heading, or the product wordmark — the one non-heading carrying the
+    // strongest emphasis in the chrome, reviewed and kept deliberately.
+    const titleLike = /\bh[1-4]\b|titlebar__product-copy strong/u;
+    const offRecipe = semibold
+      .map(({ selector }) => selector)
+      .filter((selector) => !titleLike.test(selector));
+    expect(offRecipe).toEqual([]);
+
+    // The source runs roughly three mediums to every semibold. A shell that
+    // inverts that is shouting, whatever its tokens are called.
+    expect(medium.length).toBeGreaterThan(semibold.length * 2);
+  });
+
   it("draws every focus ring from one recipe, keyboard-only", () => {
     // One ring declaration, reading the shared tokens. `outline: none` resets
     // are allowed because each one has a :focus-visible replacement below it;
