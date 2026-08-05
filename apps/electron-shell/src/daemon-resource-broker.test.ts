@@ -2268,7 +2268,40 @@ describe("Electron main pane-stream issuance (m43 card 3)", () => {
     });
   });
 
-  it("collapses an unparseable issue response to a retryable request failure", async () => {
+  it("accepts a pre-merge daemon's legacy pane-stream code", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({
+          status: "error",
+          error: { code: "stream-unavailable", reason: "old daemon words", retryable: true },
+        }),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({
+      status: "error",
+      error: { code: "attachment-unavailable", reason: "Pane streaming is unavailable." },
+    });
+  });
+
+  it("forwards a timed-out broker fault instead of flattening it", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      requestTimeoutMs: 5,
+      fetch: async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "request-timeout" } });
+  });
+
+  it("names an unparseable issue response for what it is", async () => {
     const broker = new DaemonResourceBroker({
       daemon: CONNECTED,
       ownerToken: "owner-only-token",
@@ -2276,7 +2309,7 @@ describe("Electron main pane-stream issuance (m43 card 3)", () => {
     });
     await expect(
       broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
-    ).resolves.toMatchObject({ status: "error", error: { code: "request-failed" } });
+    ).resolves.toMatchObject({ status: "error", error: { code: "invalid-response" } });
   });
 
   it("applies the narrow response bound to pane-stream issuance", async () => {
@@ -2291,7 +2324,7 @@ describe("Electron main pane-stream issuance (m43 card 3)", () => {
     });
     await expect(
       broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
-    ).resolves.toMatchObject({ status: "error", error: { code: "request-failed" } });
+    ).resolves.toMatchObject({ status: "error", error: { code: "response-too-large" } });
   });
 
   it("rejects an unusable renderer origin before contacting the daemon", async () => {

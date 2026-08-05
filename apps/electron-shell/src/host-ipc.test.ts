@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import type {
   AppWindowMutationRequest,
+  DesktopDaemonCapabilityState,
   PaneStreamIssueMutationRequest,
   PaneStreamIssueResult,
   TerminalAttachmentIssueMutationRequest,
@@ -861,6 +862,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       typeof registerHostIpc
     >[0]["trustedRendererLocation"];
     readonly issuePaneStream: ReturnType<typeof vi.fn>;
+    readonly daemonState?: DesktopDaemonCapabilityState;
   }) {
     const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
     const ipcMain = {
@@ -886,7 +888,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       startedAt: "2026-07-21T00:00:00.000Z",
     };
     const daemonResources = {
-      state: () => ({ status: "connected" as const, identity }),
+      state: () => options.daemonState ?? { status: "connected" as const, identity },
       issuePaneStream: options.issuePaneStream,
       releaseRenderer: vi.fn(),
       dispose: vi.fn(),
@@ -973,6 +975,29 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
     ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
     expect(issuePaneStream).toHaveBeenCalledOnce();
     h.registration.dispose();
+  });
+
+  it("reports a degraded daemon as degraded, not merely unavailable", async () => {
+    const issuePaneStream = vi.fn();
+    const h = paneStreamHarness({
+      frameUrl: "http://127.0.0.1:5173/src/main.tsx",
+      trustedRendererLocation: { kind: "development-origin", origin: "http://127.0.0.1:5173" },
+      issuePaneStream,
+      daemonState: {
+        status: "degraded",
+        code: "identity-mismatch",
+        reason: "The canonical daemon record names another instance.",
+      },
+    });
+    expect(
+      await h.handlers.get(HOST_IPC.daemonIssuePaneStream)?.(h.event, {
+        protocolVersion: 1,
+        workspaceName: "product",
+        panes: PANES,
+        viewerMode: "read-only",
+      }),
+    ).toMatchObject({ status: "error", error: { code: "daemon-degraded" } });
+    expect(issuePaneStream).not.toHaveBeenCalled();
   });
 
   it("rejects an untrusted or origin-less renderer before touching the broker", async () => {

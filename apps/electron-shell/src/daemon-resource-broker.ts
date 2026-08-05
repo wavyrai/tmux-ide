@@ -39,6 +39,7 @@ import {
   PaneStreamIssueResultSchemaZ,
   type PaneStreamIssueError,
   type PaneStreamIssueErrorCode,
+  type TerminalIssueErrorCode,
   type PaneStreamIssueMutationRequest,
   type PaneStreamIssueResult,
   type DesktopDaemonFetchApplicationShellRequest,
@@ -310,30 +311,77 @@ export function terminalAttachmentIssueError(
   return { code, reason: TERMINAL_ISSUE_ERROR[code].reason, retryable };
 }
 
+/**
+ * The same vocabulary, worded for the pane-stream product surface. Two tables
+ * rather than one because the noun the user reads differs; the KEYS are the one
+ * merged enum, so a code can no longer exist on one path and not the other.
+ */
 const PANE_STREAM_ISSUE_ERROR: Record<
   PaneStreamIssueErrorCode,
   { readonly reason: string; readonly retryable: boolean }
 > = {
+  "preview-only": {
+    reason: "Pane streams are unavailable in browser preview.",
+    retryable: false,
+  },
   "renderer-origin-unavailable": {
     reason: "The current renderer location cannot authorize pane-stream redemption.",
     retryable: false,
   },
   "daemon-unavailable": { reason: "The canonical daemon is unavailable.", retryable: true },
+  "daemon-degraded": { reason: "The canonical daemon could not be trusted.", retryable: true },
   "invalid-request": { reason: "The pane-stream request was invalid.", retryable: false },
   "workspace-not-found": { reason: "The requested workspace is unavailable.", retryable: false },
   "pane-not-found": { reason: "A requested pane is unavailable.", retryable: false },
+  "pane-not-attachable": {
+    reason: "A requested pane cannot be streamed.",
+    retryable: false,
+  },
   "interactive-viewer-conflict": {
     reason: "A requested pane already has an interactive viewer.",
     retryable: true,
+  },
+  "request-timeout": { reason: "The pane-stream request timed out.", retryable: true },
+  "response-too-large": {
+    reason: "The pane-stream response exceeded its size limit.",
+    retryable: false,
+  },
+  "invalid-response": {
+    reason: "The daemon returned an invalid pane-stream response.",
+    retryable: false,
   },
   "daemon-identity-mismatch": {
     reason: "The daemon generation changed during pane-stream issuance.",
     retryable: true,
   },
-  "stream-unavailable": { reason: "Pane streaming is unavailable.", retryable: true },
+  "attachment-unavailable": { reason: "Pane streaming is unavailable.", retryable: true },
   "request-failed": { reason: "The pane-stream request failed.", retryable: true },
   disposed: { reason: "The pane-stream authority was retired.", retryable: true },
 };
+
+/**
+ * Broker faults that name themselves honestly in the issue vocabulary and are
+ * therefore forwarded rather than flattened. ONE list for both lease families:
+ * pane-streams used to forward four of these and collapse the rest, so an
+ * identical broker fault reached the user as two different verdicts depending
+ * on which pipeline observed it.
+ */
+const PASS_THROUGH_ISSUE_CODES: ReadonlySet<string> = new Set<TerminalIssueErrorCode>([
+  "request-timeout",
+  "response-too-large",
+  "invalid-response",
+  "daemon-identity-mismatch",
+  "disposed",
+  "daemon-unavailable",
+  "daemon-degraded",
+  "invalid-request",
+]);
+
+function issueCodeForBrokerFailure(error: DesktopDaemonCapabilityError): TerminalIssueErrorCode {
+  return PASS_THROUGH_ISSUE_CODES.has(error.code)
+    ? (error.code as TerminalIssueErrorCode)
+    : "request-failed";
+}
 
 export function paneStreamIssueError(
   code: PaneStreamIssueErrorCode,
@@ -842,18 +890,7 @@ export class DaemonResourceBroker {
       }
       return { status: "issued", descriptor };
     } catch (error) {
-      const bounded = this.#boundedError(error);
-      const code: TerminalAttachmentIssueErrorCode =
-        bounded.code === "request-timeout" ||
-        bounded.code === "response-too-large" ||
-        bounded.code === "invalid-response" ||
-        bounded.code === "daemon-identity-mismatch" ||
-        bounded.code === "disposed" ||
-        bounded.code === "daemon-unavailable" ||
-        bounded.code === "daemon-degraded" ||
-        bounded.code === "invalid-request"
-          ? bounded.code
-          : "request-failed";
+      const code = issueCodeForBrokerFailure(this.#boundedError(error));
       return { status: "error", error: terminalAttachmentIssueError(code) };
     }
   }
@@ -913,14 +950,7 @@ export class DaemonResourceBroker {
       }
       return { status: "issued", descriptor };
     } catch (error) {
-      const bounded = this.#boundedError(error);
-      const code: PaneStreamIssueErrorCode =
-        bounded.code === "daemon-identity-mismatch" ||
-        bounded.code === "disposed" ||
-        bounded.code === "daemon-unavailable" ||
-        bounded.code === "invalid-request"
-          ? bounded.code
-          : "request-failed";
+      const code = issueCodeForBrokerFailure(this.#boundedError(error));
       return { status: "error", error: paneStreamIssueError(code) };
     }
   }

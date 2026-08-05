@@ -660,7 +660,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           return {
             status: "error",
             error: {
-              code: "stream-unavailable",
+              code: "attachment-unavailable",
               reason: "The pane-stream issue failed.",
               retryable: true,
             },

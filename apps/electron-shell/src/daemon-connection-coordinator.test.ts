@@ -131,7 +131,7 @@ function brokerHarness(
       issuePaneStream: async () => ({
         status: "error",
         error: {
-          code: "stream-unavailable",
+          code: "attachment-unavailable",
           reason: "Pane streaming is unavailable.",
           retryable: true,
         },

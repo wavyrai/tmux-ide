@@ -133,10 +133,9 @@ function disconnectedTerminalError(state: DesktopDaemonCapabilityState) {
 }
 
 function disconnectedPaneStreamError(state: DesktopDaemonCapabilityState) {
-  void state;
-  // The pane-stream error vocabulary has no degraded variant; both disconnected
-  // shapes surface as the retryable daemon-unavailable verdict.
-  return paneStreamIssueError("daemon-unavailable");
+  return paneStreamIssueError(
+    state.status === "degraded" ? "daemon-degraded" : "daemon-unavailable",
+  );
 }
 
 function trustedWindow(

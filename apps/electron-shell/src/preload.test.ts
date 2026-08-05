@@ -116,7 +116,7 @@ describe("desktop preload daemon bridge", () => {
       return {
         status: "error",
         error: {
-          code: "stream-unavailable",
+          code: "attachment-unavailable",
           reason: "Pane streaming is unavailable.",
           retryable: true,
         },
@@ -124,7 +124,7 @@ describe("desktop preload daemon bridge", () => {
     });
     await expect(capabilities.daemon.issuePaneStream(stream)).resolves.toMatchObject({
       status: "error",
-      error: { code: "stream-unavailable" },
+      error: { code: "attachment-unavailable" },
     });
 
     await expect(
