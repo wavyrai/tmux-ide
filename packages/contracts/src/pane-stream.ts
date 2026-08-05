@@ -1,5 +1,11 @@
 import { z } from "zod";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
+import {
+  TerminalIssueErrorCodeCompatSchemaZ,
+  TerminalIssueErrorCompatSchemaZ,
+  type TerminalIssueError,
+  type TerminalIssueErrorCode,
+} from "./issue-error.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
 import { TerminalAttachmentViewerModeSchemaZ } from "./terminal-attachments.ts";
 import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
@@ -109,38 +115,20 @@ export const PaneStreamIssueDescriptorSchemaZ = z
   .strict();
 export type PaneStreamIssueDescriptor = z.infer<typeof PaneStreamIssueDescriptorSchemaZ>;
 
-export const PaneStreamIssueErrorCodeSchemaZ = z.enum([
-  "renderer-origin-unavailable",
-  "daemon-unavailable",
-  "invalid-request",
-  "workspace-not-found",
-  "pane-not-found",
-  "interactive-viewer-conflict",
-  "daemon-identity-mismatch",
-  "stream-unavailable",
-  "request-failed",
-  "disposed",
-]);
-export type PaneStreamIssueErrorCode = z.infer<typeof PaneStreamIssueErrorCodeSchemaZ>;
+/**
+ * The shared issue-error vocabulary (`issue-error.ts`) under its pane-stream
+ * name. Pane streams used to carry a ten-member subset with one renamed member;
+ * the merge means a broker fault on this path now surfaces with the same code it
+ * would have on the attachment path instead of being flattened.
+ *
+ * `PaneStreamIssueErrorSchemaZ` parses the pre-merge `stream-unavailable`
+ * literal from an older daemon and normalizes it to `attachment-unavailable`.
+ */
+export const PaneStreamIssueErrorCodeSchemaZ = TerminalIssueErrorCodeCompatSchemaZ;
+export type PaneStreamIssueErrorCode = TerminalIssueErrorCode;
 
-const RendererSafePaneStreamReasonSchemaZ = z
-  .string()
-  .min(1)
-  .max(240)
-  .refine(
-    (reason) =>
-      !/(?:authorization|bearer\s+|owner.?token|redemptionticket|ps1_|ta1_)/iu.test(reason),
-    "pane-stream error reason must be credential-redacted",
-  );
-
-export const PaneStreamIssueErrorSchemaZ = z
-  .object({
-    code: PaneStreamIssueErrorCodeSchemaZ,
-    reason: RendererSafePaneStreamReasonSchemaZ,
-    retryable: z.boolean(),
-  })
-  .strict();
-export type PaneStreamIssueError = z.infer<typeof PaneStreamIssueErrorSchemaZ>;
+export const PaneStreamIssueErrorSchemaZ = TerminalIssueErrorCompatSchemaZ;
+export type PaneStreamIssueError = TerminalIssueError;
 
 export const PaneStreamIssueResultSchemaZ = z.discriminatedUnion("status", [
   z.object({ status: z.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),

@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import {
+  TerminalIssueErrorCodeSchemaZ,
+  TerminalIssueErrorSchemaZ,
+  type TerminalIssueError,
+  type TerminalIssueErrorCode,
+} from "./issue-error.ts";
+import {
   RESERVED_DISCOVERED_TERMINAL_ID_PREFIX,
   TerminalAttachmentSemanticPaneIdSchemaZ,
   TerminalAttachmentSemanticWindowIdSchemaZ,
@@ -219,45 +225,16 @@ export type TerminalAttachmentIssueDescriptor = z.infer<
   typeof TerminalAttachmentIssueDescriptorSchemaZ
 >;
 
-export const TerminalAttachmentIssueErrorCodeSchemaZ = z.enum([
-  "preview-only",
-  "renderer-origin-unavailable",
-  "daemon-unavailable",
-  "daemon-degraded",
-  "invalid-request",
-  "workspace-not-found",
-  "pane-not-found",
-  "pane-not-attachable",
-  "interactive-viewer-conflict",
-  "request-timeout",
-  "response-too-large",
-  "invalid-response",
-  "daemon-identity-mismatch",
-  "attachment-unavailable",
-  "request-failed",
-  "disposed",
-]);
-export type TerminalAttachmentIssueErrorCode = z.infer<
-  typeof TerminalAttachmentIssueErrorCodeSchemaZ
->;
+/**
+ * The shared issue-error vocabulary under its attachment-path name. The enum
+ * itself lives in `issue-error.ts`, which pane-stream leases cite too — see the
+ * header there for why `attachment-unavailable` is the surviving spelling.
+ */
+export const TerminalAttachmentIssueErrorCodeSchemaZ = TerminalIssueErrorCodeSchemaZ;
+export type TerminalAttachmentIssueErrorCode = TerminalIssueErrorCode;
 
-const RendererSafeTerminalAttachmentReasonSchemaZ = z
-  .string()
-  .min(1)
-  .max(240)
-  .refine(
-    (reason) => !/(?:authorization|bearer\s+|owner.?token|redemptionticket|ta1_)/iu.test(reason),
-    "terminal attachment error reason must be credential-redacted",
-  );
-
-export const TerminalAttachmentIssueErrorSchemaZ = z
-  .object({
-    code: TerminalAttachmentIssueErrorCodeSchemaZ,
-    reason: RendererSafeTerminalAttachmentReasonSchemaZ,
-    retryable: z.boolean(),
-  })
-  .strict();
-export type TerminalAttachmentIssueError = z.infer<typeof TerminalAttachmentIssueErrorSchemaZ>;
+export const TerminalAttachmentIssueErrorSchemaZ = TerminalIssueErrorSchemaZ;
+export type TerminalAttachmentIssueError = TerminalIssueError;
 
 /** Strict renderer-facing result. Daemon response detail is never forwarded. */
 export const TerminalAttachmentIssueResultSchemaZ = z.discriminatedUnion("status", [

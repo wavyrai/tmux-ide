@@ -154,7 +154,7 @@ describe("pane-stream lease contracts", () => {
     ]) {
       expect(
         PaneStreamIssueErrorSchemaZ.safeParse({
-          code: "stream-unavailable",
+          code: "attachment-unavailable",
           reason,
           retryable: false,
         }).success,
