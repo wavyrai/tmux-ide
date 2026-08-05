@@ -28,11 +28,22 @@ export const WIDGET_MARKER_CONCEAL_SUFFIX = "\u001b[0m";
 /**
  * Ceiling on the encoded payload field, in characters.
  *
- * The marker has to survive the whole delivery path, and the narrowest point is
- * the mirror seed: the daemon reseeds a pane with `capture-pane -S -2000`, so
- * anything that has scrolled past 2000 rows is gone after a re-lease. At an
- * 80-column grid this cap wraps to roughly 1200 rows, which leaves the seed
- * window most of its depth for the pane's real scrollback.
+ * The binding constraint is the mirror SEED, not the emulator's scrollback. A
+ * pane is reseeded with `capture-pane -p -e -J -S -2000` (DEFAULT_HISTORY_LINES
+ * in terminal/mirror/session-channel.ts), so a marker that has scrolled past
+ * 2,000 grid rows comes back beheaded after any reseed — a flow thaw, a
+ * reconnect, a re-lease. xterm's own 10,000-line scrollback never binds; it is
+ * four times larger.
+ *
+ * 98,304 characters wrap to 1,229 rows at a reference 80 columns, leaving 771
+ * rows (39%) of margin inside the seed window. The image widget's source cap is
+ * derived FROM this through two encoding steps, which is the easy thing to get
+ * wrong — see PANE_WIDGET_IMAGE_MAX_BYTES and the derivation table in
+ * apps/desktop-renderer/src/terminal/widgets/WIDGETS.md.
+ *
+ * A marker that IS truncated fails closed: all five grammar conditions are
+ * checked against the whole line, so the pane stays an ordinary terminal rather
+ * than rendering half a widget.
  */
 export const WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS = 96 * 1024;
 

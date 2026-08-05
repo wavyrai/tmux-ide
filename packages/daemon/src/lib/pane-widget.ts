@@ -47,12 +47,22 @@ export function imageMediaTypeFor(fileName: string): string | null {
 /**
  * The largest file the image widget can carry.
  *
- * The bytes travel inside the marker line, so the ceiling is the marker's, less
- * the JSON envelope and the two encoding steps (base64 into the argument
- * object, then base64url over the whole object): 1.34 x 1.34 is a little over
- * 1.78, so a source file gets a little over half the budget. Serving image
- * bytes over a daemon route instead — which lifts this entirely — is the
- * documented follow-up.
+ * The bytes ride inside the marker line, so the ceiling is the marker's — less
+ * TWO encoding steps, which is the part that is easy to miscount: the file is
+ * base64 into the JSON argument object, and then the whole object is base64url
+ * into the payload field. Each costs 4/3, so the round trip is 1.78, and the
+ * 0.94 covers the JSON envelope and the field names.
+ *
+ * 98,304 / 1.78 x 0.94 = 51,913 bytes (~50 KB). Sizing this at 96 KB instead —
+ * the figure that falls out if only one encoding step is counted — would
+ * produce a 174,816-character payload, or 2,186 wrapped rows at 80 columns,
+ * which overflows the 2,000-row mirror seed window and would silently break
+ * re-detection after every reconnect. The full derivation, including the
+ * ~50-column floor below which even a legal marker can be truncated, is the
+ * table in apps/desktop-renderer/src/terminal/widgets/WIDGETS.md.
+ *
+ * Serving image bytes over a daemon route instead — which lifts this entirely —
+ * is the documented follow-up.
  */
 export const PANE_WIDGET_IMAGE_MAX_BYTES = Math.floor(
   (WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS / 1.78) * 0.94,

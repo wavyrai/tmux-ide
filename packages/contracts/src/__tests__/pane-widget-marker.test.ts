@@ -224,6 +224,58 @@ describe("detectWidgetMarker", () => {
   });
 });
 
+/*
+ * Truncation fails CLOSED.
+ *
+ * The marker can be longer than the pane's whole seed window, and the mirror
+ * path reseeds from `capture-pane -S -2000`: a marker that has scrolled partly
+ * out of that window comes back with its head missing. Every one of these must
+ * read as ordinary terminal output. A widget rendered from half a payload is
+ * strictly worse than no widget — the user loses the pane AND the text that was
+ * in it, with nothing on screen saying why.
+ */
+describe("a truncated marker", () => {
+  const marker = encodeWidgetMarkerLine("markdown", { text: "a document long enough to wrap" });
+
+  it("fails closed when the seed window cut off its head", () => {
+    const rows = wrappedRows(marker, 40);
+    expect(rows.length).toBeGreaterThan(2);
+    // What a reseed delivers when the marker started above the window: the
+    // first surviving row is a continuation, and has nothing to continue.
+    const survived = rows.slice(2);
+    expect(survived[0]!.wrapped).toBe(true);
+    expect(detectWidgetMarker(survived)).toBe(null);
+  });
+
+  it("fails closed when only its tail survives", () => {
+    expect(detectWidgetMarker(wrappedRows(marker, 40).slice(-1))).toBe(null);
+  });
+
+  it("fails closed while it is still arriving", () => {
+    // Mid-stream: the digest has not been written yet, so there is no fourth
+    // field and nothing to verify the first three against.
+    const partial = marker.slice(0, marker.length - 9);
+    expect(decodeWidgetMarkerLine(partial)).toBe(null);
+    expect(detectWidgetMarker(wrappedRows(partial, 40))).toBe(null);
+  });
+
+  it("fails closed on a digest that survived but a payload that did not", () => {
+    const [sentinel, id, payload, digest] = marker.split(" ");
+    const clipped = `${sentinel} ${id} ${payload!.slice(0, payload!.length - 200)} ${digest}`;
+    expect(decodeWidgetMarkerLine(clipped)).toBe(null);
+  });
+
+  /*
+   * The head-truncation case has one more shape worth naming: the survivor is a
+   * base64url fragment, and base64url is a subset of the characters a marker's
+   * own fields use. It must not be mistaken for a marker even so.
+   */
+  it("does not mistake a surviving payload fragment for a marker of its own", () => {
+    const payload = marker.split(" ")[2]!;
+    expect(decodeWidgetMarkerLine(payload.slice(500, 900))).toBe(null);
+  });
+});
+
 describe("the byte watcher that gates the scan", () => {
   const encoder = new TextEncoder();
 

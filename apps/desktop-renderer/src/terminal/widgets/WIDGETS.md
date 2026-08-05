@@ -96,11 +96,34 @@ between the parser and the screen. Links are restricted to `http`, `https`,
 `mailto` and same-document targets; anything else keeps its label and loses its
 href.
 
-Dialect: headings, paragraphs, fenced code, blockquotes, ordered/unordered and
-task lists with nesting, horizontal rules, GFM tables, and inline
-strong/emphasis/strike/code/links. Code spans win over every other inline rule
-and their contents are never re-scanned, so a documented shell command survives
-being documented.
+#### The supported subset
+
+This is **not** CommonMark, and it is not trying to be. It is the subset an
+agent actually emits, and the list is exhaustive — anything absent renders as
+the literal text the author typed, which is the honest failure mode for a
+parser this size.
+
+**Blocks:** ATX headings (`#` through `######`, closing hashes tolerated) ·
+paragraphs · fenced code (```or`~~~`, optional language, unterminated fence
+runs to the end) · blockquotes · unordered lists (`-`, `\*`, `+`) · ordered lists
+(`1.`or`1)`, starting at the author's number) · task list items
+(`- [x]`/`- [ ]`, rendered as a real disabled checkbox) · nested lists by
+indentation · horizontal rules · GFM tables with per-column alignment.
+
+**Inline:** code spans · `**strong**` / `__strong__` · `*emphasis*` /
+`_emphasis_` · `~~strikethrough~~` · `[text](href)` links · `<https://…>`
+autolinks · backslash escapes · soft line breaks.
+
+**Deliberately absent:** setext headings (`===` underlines) · indented (four
+space) code blocks · reference-style links and footnotes · inline HTML, which is
+absent by construction rather than by omission — this renderer creates elements
+and never parses markup, so there is no code path that could honour it ·
+`![alt](src)` inline images, which parse as their alt text because a document
+may not fetch bytes (the `image` widget is the supported way to show one) ·
+mermaid and other diagram fences, which render as ordinary code blocks.
+
+Code spans win over every other inline rule and their contents are never
+re-scanned, so a documented shell command survives being documented.
 
 No markdown library was added. There is none anywhere in this repo — the docs
 site is fumadocs/MDX, which is React- and Next-only — and a parser we own is
@@ -138,18 +161,63 @@ and no workspace-boundary question in the renderer.
 
 The cost is a ceiling, and the helper refuses rather than truncating:
 
-| Refusal             | When                                                                                                             |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `unsupported-media` | Not one of the raster extensions above (this is where SVG lands).                                                |
-| `too-large`         | Over `PANE_WIDGET_IMAGE_MAX_BYTES` — the marker's ceiling, less the two encoding steps. Roughly 50 KB of source. |
-| `empty`             | A zero-byte file, or empty stdin.                                                                                |
-| `unknown-widget`    | A widget id this build does not have.                                                                            |
+| Refusal             | When                                                                       |
+| ------------------- | -------------------------------------------------------------------------- |
+| `unsupported-media` | Not one of the raster extensions above (this is where SVG lands).          |
+| `too-large`         | Over `PANE_WIDGET_IMAGE_MAX_BYTES` — about 50 KB of source; derived below. |
+| `empty`             | A zero-byte file, or empty stdin.                                          |
+| `unknown-widget`    | A widget id this build does not have.                                      |
 
-The ceiling exists because the marker has to survive a mirror **re-seed**, and
-the daemon reseeds with `capture-pane -S -2000`: anything scrolled past 2000
-rows is gone after a re-lease. Serving image bytes over a daemon route — which
-lifts the ceiling entirely and is the right long-term shape — is a follow-up
-card, blocked only on contract work another branch owns.
+#### Where the ceiling comes from
+
+The binding constraint is the **mirror seed**, not the emulator's scrollback.
+`SessionChannel` reseeds a pane with `capture-pane -p -e -J -S -2000`
+(`DEFAULT_HISTORY_LINES` in
+`packages/daemon/src/terminal/mirror/session-channel.ts`), so a marker that has
+scrolled past 2,000 grid rows comes back with its head missing after any
+reseed — a flow thaw, a reconnect, a re-lease. xterm's own 10,000-line
+scrollback is irrelevant: it is four times larger, so it never binds.
+
+Working backwards from 2,000 rows, at a reference width of 80 columns:
+
+| Step                                    | Value                     |
+| --------------------------------------- | ------------------------- |
+| `WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS`  | 96 KB = 98,304 characters |
+| Worst-case wrapped rows at 80 cols      | 98,304 / 80 = **1,229**   |
+| Margin inside the 2,000-row seed window | 771 rows (39%)            |
+
+The image source cap then follows from the payload cap through **two** encoding
+steps, which is the part that is easy to get wrong: the file's bytes are base64
+into the JSON argument object, and then the whole object is base64url into the
+payload field. Each step costs 4/3, so the round trip is 4/3 x 4/3 = 1.78, and
+`PANE_WIDGET_IMAGE_MAX_BYTES` is `(98,304 / 1.78) x 0.94` = **51,913 bytes**
+(~50 KB), the 0.94 covering the JSON envelope and the field names.
+
+Sizing the source at 96 KB instead — the figure that falls out if only one
+encoding step is counted — would produce a 174,816-character payload, or 2,186
+rows at 80 columns, which **overflows** the seed window. That is the number this
+derivation exists to rule out.
+
+One honest limit: the row arithmetic is width-dependent. A maximum-size marker
+needs about **50 columns** to fit 2,000 rows at all, so in a pane narrower than
+that a reseed can truncate one. It degrades safely rather than badly — see
+below — but it is a real edge, and the daemon byte route is what removes it.
+
+#### Truncation fails closed
+
+A partial marker is **never** rendered as a partial widget. All five grammar
+conditions are checked against the whole line, so a marker missing its head
+(scrolled out of the seed window), its tail (still arriving), or any span in the
+middle simply is not a marker, and the pane renders as an ordinary terminal
+showing whatever text survived. This matters more than it sounds: a widget built
+from half a payload would cost the user both the pane and the text that was in
+it, with nothing on screen saying why. `pane-widget-marker.test.ts` covers each
+truncation shape, and `mirror-pane-node.test.tsx` covers it where it actually
+happens — a seed batch carrying a beheaded marker.
+
+Serving image bytes over a daemon route — which lifts the ceiling entirely, and
+is the right long-term shape — is a follow-up card, blocked only on contract
+work another branch owns.
 
 ## Adding a widget
 

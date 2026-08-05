@@ -157,6 +157,48 @@ describe("mirror pane node", () => {
     await vi.waitFor(() => expect(node.getAttribute("data-widget")).toBe(null));
   });
 
+  /*
+   * A reseed that truncated the marker leaves the pane a PANE (m49.7).
+   *
+   * The marker can outrun the seed window — `capture-pane -S -2000` — so a
+   * reconnect can deliver its tail without its head. Bug this catches: a
+   * detector that recovers "enough" of a marker to render something. Half a
+   * payload is strictly worse than none: the user loses the pane and the text
+   * that was in it, with nothing on screen saying why.
+   */
+  it("stays a plain terminal when a seed delivered only part of a marker", async () => {
+    const h = mountNodeHarness();
+    await flush();
+    const renderer = h.rendering.renderers[0]!;
+    const announcement = widgetMarkerAnnouncement("markdown", {
+      text: "a document long enough that its marker wraps well past one row",
+    });
+    const line = announcement
+      .replaceAll(WIDGET_MARKER_CONCEAL_PREFIX, "")
+      .replaceAll(WIDGET_MARKER_CONCEAL_SUFFIX, "")
+      .trimEnd();
+    const characters = [...line];
+    const columns = 40;
+    const rows = [];
+    for (let offset = 0; offset < characters.length; offset += columns) {
+      rows.push({ cells: characters.slice(offset, offset + columns), wrapped: offset > 0 });
+    }
+    expect(rows.length).toBeGreaterThan(2);
+    // Head gone: exactly what a window that scrolled past the marker returns.
+    renderer.setCellRows(rows.slice(2));
+
+    await h.stream.latest().emit(PANE_A, { type: "seed-batch", batch: seedBatch(line) });
+    await flush();
+
+    const node = h.host.querySelector(".mirror-pane-node")!;
+    // Give the debounced scan the same room the passing case gets, so this
+    // cannot pass merely by being asserted too early.
+    await new Promise((done) => setTimeout(done, 80));
+    expect(node.getAttribute("data-widget")).toBe(null);
+    expect(node.querySelector(".widget-surface")).toBeNull();
+    expect(node.getAttribute("data-painted")).toBe("true");
+  });
+
   it("writes live deltas and cursor moves after the seed", async () => {
     const h = mountNodeHarness();
     await flush();
