@@ -78,7 +78,11 @@ import type { PaneStreamTransport } from "../terminal/pane-stream-transport.ts";
 import { createHostPaneStreamTransport } from "../runtime/host-pane-stream-transport.ts";
 import { deriveConnectionHealth } from "../runtime/connection-health.ts";
 import { PANE_STREAM_MAX_PANES } from "@tmux-ide/contracts";
-import { AppWindowCanvas, type AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
+import {
+  AppWindowCanvas,
+  type AppWindowCanvasMirrorProps,
+  type AppWindowMirrorNodeModel,
+} from "./app-window-canvas.tsx";
 import { Button, IconButton, ResizeHandle } from "../ui-system/index.ts";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import type { AppWindowCanvasCommandInvocation } from "./app-window-canvas-presenter.ts";
@@ -542,6 +546,26 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   onCleanup(() => {
     mirrorController()?.dispose();
   });
+  // A mirror node registers its sink ONCE per lease, so the registrar it is
+  // handed must not change identity on every tick — only when the controller
+  // behind it is genuinely replaced (a new lease needs a re-registration).
+  let mirrorRegistrars = new Map<string, AppWindowMirrorNodeModel["registerSink"]>();
+  let mirrorRegistrarOwner: PaneMirrorController | null = null;
+  const mirrorRegistrar = (
+    controller: PaneMirrorController,
+    pane: string,
+  ): AppWindowMirrorNodeModel["registerSink"] => {
+    if (mirrorRegistrarOwner !== controller) {
+      mirrorRegistrarOwner = controller;
+      mirrorRegistrars = new Map();
+    }
+    const existing = mirrorRegistrars.get(pane);
+    if (existing) return existing;
+    const registrar: AppWindowMirrorNodeModel["registerSink"] = (sink) =>
+      controller.registerPaneSink(pane, sink);
+    mirrorRegistrars.set(pane, registrar);
+    return registrar;
+  };
   const mirrorCanvasProps = createMemo<AppWindowCanvasMirrorProps | undefined>(() => {
     if (mirrorTransport() === null || mirrorPaneIds().length === 0) return undefined;
     const controller = mirrorController();
@@ -558,8 +582,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               title: framesById.get(pane)?.title ?? pane,
               frame: framesById.get(pane) ?? null,
               state: state.panes.get(pane) ?? { kind: "connecting" as const },
-              registerSink: (sink: Parameters<PaneMirrorController["registerPaneSink"]>[1]) =>
-                controller.registerPaneSink(pane, sink),
+              registerSink: mirrorRegistrar(controller, pane),
             }))
           : [],
       connection: deriveConnectionHealth(state?.transport ?? null, { ok: true }),

@@ -45,6 +45,16 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
     renderer = next;
     renderer.open(mount);
     renderer.refreshTheme();
+    attachSink(next);
+  };
+
+  /**
+   * Bind the stream sink to the live renderer. The node mounts ONCE and streams
+   * for its whole life, so a new lease arrives as a new registrar rather than
+   * as a remount: re-attaching here is what keeps a re-leased pane painting.
+   */
+  const attachSink = (next: MirrorTerminalRenderer): void => {
+    unregister?.();
     unregister = props.registerSink({
       applySeedBatch: (batch: PaneMirrorSeedBatch) => {
         if (disposed || renderer !== next) return;
@@ -106,6 +116,15 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
     const themeKey = props.themeKey;
     renderer?.refreshTheme();
     return themeKey;
+  });
+
+  let boundRegistrar = props.registerSink;
+  createEffect(() => {
+    const registrar = props.registerSink;
+    if (registrar === boundRegistrar) return;
+    boundRegistrar = registrar;
+    const active = renderer;
+    if (!disposed && active) attachSink(active);
   });
 
   const streamInterrupted = () =>

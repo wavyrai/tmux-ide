@@ -17,6 +17,7 @@ import type {
 import type { TerminalRenderer, TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
 import runtimeStyles from "../runtime-styles.css?raw";
 import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/tui/mirror/app-window-state.ts";
+import { createRecordingMirrorRendererFactory } from "../terminal/mirror-pane-fixture.ts";
 import type { AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
 import {
   APP_WINDOW_CANVAS_ACTION_IDS,
@@ -1115,6 +1116,61 @@ describe("mirror pane nodes on the canvas (m43 card 3)", () => {
     expect(card!.textContent).toContain("Live terminal title");
     expect(card!.textContent).toContain("read-only");
     expect(card!.querySelectorAll(".web-pane-frame__action")).toHaveLength(0);
+  });
+
+  it("keeps a pane's node, its style rule, and its renderer across stream updates", () => {
+    const { factory, renderers } = createRecordingMirrorRendererFactory();
+    const [mirror, setMirror] = createSignal(mirrorProps({ rendererFactory: factory }));
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={documentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            mirror={mirror()}
+          />
+        ),
+        root,
+      ),
+    );
+    const card = () => root.querySelector<HTMLElement>(".mirror-pane-card");
+    const first = card();
+    expect(first).not.toBeNull();
+    const styleKey = first!.getAttribute("data-tmi-runtime-style");
+    expect(renderers).toHaveLength(1);
+
+    // Ten ticks of exactly what a live stream changes: node state, flow, and
+    // stream health. Each one rebuilds the props object the shell hands down.
+    for (let tick = 0; tick < 10; tick += 1) {
+      setMirror(
+        mirrorProps({
+          rendererFactory: factory,
+          nodes: [
+            {
+              pane: "terminal.lead",
+              title: "Live terminal title",
+              frame: frame(),
+              state: { kind: "live", flowPaused: tick % 2 === 0 },
+              registerSink: () => () => undefined,
+            },
+          ],
+          connection: { kind: "connected" },
+        }),
+      );
+      expect(
+        card(),
+        "the mirror node was replaced by a stream update — its xterm re-initializes every tick",
+      ).toBe(first);
+    }
+    expect(root.querySelectorAll(".mirror-pane-card")).toHaveLength(1);
+    expect(first!.getAttribute("data-tmi-runtime-style")).toBe(styleKey);
+    expect(renderers, "a stream update built a second mirror renderer").toHaveLength(1);
+    expect(first!.dataset.state).toBe("live");
   });
 
   it("surfaces the stream-level derived status when the connection is not healthy", () => {

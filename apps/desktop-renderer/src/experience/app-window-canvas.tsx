@@ -148,6 +148,13 @@ export interface AppWindowCanvasProps {
   readonly mirror?: AppWindowCanvasMirrorProps;
 }
 
+/** One placed mirror node: its model, its durable node identity, its rect. */
+interface MirrorSceneEntry {
+  readonly node: AppWindowMirrorNodeModel;
+  readonly nodeId: string;
+  readonly rect: AppWindowCanvasItem["rect"];
+}
+
 const MIRROR_NODE_SIZE = { width: 480, height: 320 } as const;
 const MIRROR_NODE_GAP = 24;
 const MIRROR_NODE_COLUMNS = 3;
@@ -1102,6 +1109,20 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
       })),
     };
   });
+  // The scene memo re-runs on EVERY stream tick and mints fresh entry objects.
+  // Rendering it through `<For>` directly keyed each row by object identity, so
+  // a tick disposed and rebuilt every mirror row — remounting xterm per update.
+  // These two derivations split the list into a value-stable key order (pane
+  // ids compare by value, so `For` reuses the row) and a lookup the row reads
+  // through an accessor. Nothing in the row is keyed on per-tick identity.
+  const mirrorPaneOrder = createMemo<readonly string[]>(
+    () => mirrorScene()?.nodes.map((entry) => entry.node.pane) ?? [],
+  );
+  const mirrorEntries = createMemo<ReadonlyMap<string, MirrorSceneEntry>>(() => {
+    const entries = new Map<string, MirrorSceneEntry>();
+    for (const entry of mirrorScene()?.nodes ?? []) entries.set(entry.node.pane, entry);
+    return entries;
+  });
   const mirrorStatus = createMemo(() => {
     const mirror = props.mirror;
     if (!mirror?.enabled) return null;
@@ -1396,40 +1417,55 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
         </For>
         <Show when={mirrorScene()}>
           {(scene) => (
-            <For each={scene().nodes}>
-              {(entry) => {
+            <For each={mirrorPaneOrder()}>
+              {(pane) => {
+                // Row identity law: this row is keyed by the semantic pane id,
+                // so its DOM node, its runtime-style rule, and the xterm
+                // instance inside it survive every stream tick. Everything that
+                // changes per tick reaches the row through `entry()`.
+                const entry = createMemo<MirrorSceneEntry>(
+                  (previous) => mirrorEntries().get(pane) ?? previous,
+                  mirrorEntries().get(pane)!,
+                );
                 let mirrorStyle: RuntimeStyleBinding | null = null;
                 onCleanup(() => mirrorStyle?.dispose());
+                const applyRect = (): void => {
+                  const rect = entry().rect;
+                  mirrorStyle?.update({
+                    left: `${rect.x}px`,
+                    top: `${rect.y}px`,
+                    width: `${rect.width}px`,
+                    height: `${rect.height}px`,
+                    "z-index": 0,
+                  });
+                };
+                // Placement now moves the SAME element instead of arriving with
+                // a replacement one, so the rect needs its own effect.
+                createEffect(applyRect);
                 return (
                   <article
                     ref={(element) => {
                       mirrorStyle = createRuntimeStyleBinding(element);
-                      mirrorStyle.update({
-                        left: `${entry.rect.x}px`,
-                        top: `${entry.rect.y}px`,
-                        width: `${entry.rect.width}px`,
-                        height: `${entry.rect.height}px`,
-                        "z-index": 0,
-                      });
+                      applyRect();
                     }}
                     class="mirror-pane-card"
-                    data-mirror-node-id={entry.nodeId}
-                    data-pane={entry.node.pane}
-                    data-state={entry.node.state.kind}
+                    data-mirror-node-id={entry().nodeId}
+                    data-pane={pane}
+                    data-state={entry().node.state.kind}
                   >
                     <WebPaneFrame
-                      model={mirrorNodeFrameModel(entry.node, entry.nodeId)}
+                      model={mirrorNodeFrameModel(entry().node, entry().nodeId)}
                       renderPaneIcon={(_pane, icon) => <DomIcon id={icon} usage="pane" />}
                       renderActionIcon={(action) => <DomIcon id={action.icon} usage="action" />}
                       renderGripIcon={(icon) => <DomIcon id={icon} usage="action" />}
                     >
                       <div class="agent-pane__body agent-pane__body--mirror">
                         <MirrorPaneNode
-                          pane={entry.node.pane}
-                          title={entry.node.title}
-                          state={entry.node.state}
+                          pane={pane}
+                          title={entry().node.title}
+                          state={entry().node.state}
                           connection={scene().connection}
-                          registerSink={entry.node.registerSink}
+                          registerSink={entry().node.registerSink}
                           onRetry={scene().onRetry}
                           reducedMotion={props.reducedMotion}
                           themeKey={props.terminalThemeKey}
