@@ -79,6 +79,7 @@ import {
   type AppWindowMutationRequest,
   type AppWindowMutationResult,
   type DaemonChildOutputTail,
+  type StartupReadinessLadder,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
 
@@ -355,6 +356,12 @@ export function rendererDaemonState(
    * on a connected state, where there is nothing to explain.
    */
   childOutput?: DaemonChildOutputTail | null,
+  /**
+   * The daemon's own readiness ladder, read while this state was composed. A
+   * daemon can answer while this desktop cannot use it, and then the ladder is
+   * the only thing that knows which rung startup actually stopped at.
+   */
+  startupReadiness?: StartupReadinessLadder | null,
 ):
   | { readonly status: "connected"; readonly identity: DaemonInstanceIdentity }
   | {
@@ -365,6 +372,7 @@ export function rendererDaemonState(
       >["code"];
       readonly reason: string;
       readonly childOutput?: DaemonChildOutputTail;
+      readonly startupReadiness?: StartupReadinessLadder;
     } {
   if (daemon.status === "connected") {
     const { protocolVersion, productVersion, instanceId, startedAt, environmentId } =
@@ -384,6 +392,7 @@ export function rendererDaemonState(
     status: daemon.status,
     code: daemon.code,
     ...(childOutput ? { childOutput } : {}),
+    ...(startupReadiness ? { startupReadiness } : {}),
     // Reasons are replaced with fixed copy so probe internals never reach the
     // renderer. The supervisor-halted reason is the one exception: it is
     // composed by the supervisor from typed parts (bounded, no secrets) and

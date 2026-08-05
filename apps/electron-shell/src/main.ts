@@ -25,6 +25,7 @@ import {
   readOnboardingIntroAcknowledged,
 } from "../../../packages/daemon/src/lib/onboarding-marker.ts";
 import { DaemonConnectionCoordinator } from "./daemon-connection-coordinator.ts";
+import { readDaemonStartupReadinessLadder } from "./startup-readiness-probe.ts";
 import { shutdownDesktopDaemonRuntime } from "./daemon-runtime-shutdown.ts";
 import {
   DesktopDaemonSupervisor,
@@ -335,6 +336,8 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       environmentReconciler: environmentCatalog,
       // A disconnected state now carries the daemon child's own last words.
       childOutputTail: () => daemonSupervisor.childOutputTail(),
+      // …and, when the daemon answers anyway, its own readiness ladder.
+      readStartupReadiness: () => readDaemonStartupReadinessLadder(),
       onHostStateChanged: (state) => {
         const nextOrigin = state.status === "connected" ? state.descriptor.apiBaseUrl : null;
         if (nextOrigin === daemonHttpOrigin) return;

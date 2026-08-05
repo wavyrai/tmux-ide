@@ -3,6 +3,7 @@ import {
   DesktopDaemonRefreshConnectionResultSchemaZ,
   type DaemonInstanceIdentity,
   type DaemonChildOutputTail,
+  type StartupReadinessLadder,
   type DesktopDaemonCapabilityState,
   type DesktopDaemonCapabilitiesResult,
   type DesktopDaemonEvent,
@@ -122,6 +123,14 @@ export interface DaemonConnectionCoordinatorDependencies {
    * of their own (an attached foreign daemon, tests).
    */
   readonly childOutputTail?: () => DaemonChildOutputTail | null;
+  /**
+   * Reads the daemon's own startup readiness ladder. Called only while a
+   * DISCONNECTED state is being composed — the daemon may still be answering,
+   * and then its ladder names the rung the host cannot see. Must be bounded and
+   * must resolve to null rather than reject; a diagnostic read never delays or
+   * changes a connection verdict.
+   */
+  readonly readStartupReadiness?: () => Promise<StartupReadinessLadder | null>;
 }
 
 interface RefreshFlight {
@@ -202,7 +211,10 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   readonly #onHostStateChanged: ((daemon: DesktopDaemonHostState) => void) | undefined;
   readonly #environmentReconciler: KnownEnvironmentReconciler | undefined;
   readonly #childOutputTail: (() => DaemonChildOutputTail | null) | undefined;
+  readonly #readStartupReadiness: (() => Promise<StartupReadinessLadder | null>) | undefined;
   readonly #subscriptions = new Map<number, CoordinatorSubscription>();
+  /** The last ladder read while disconnected; cleared the moment we connect. */
+  #startupReadiness: StartupReadinessLadder | null = null;
 
   #daemon: DesktopDaemonHostState;
   #broker: DaemonResourceAuthority | null = null;
@@ -220,6 +232,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     this.#onHostStateChanged = dependencies.onHostStateChanged;
     this.#environmentReconciler = dependencies.environmentReconciler;
     this.#childOutputTail = dependencies.childOutputTail;
+    this.#readStartupReadiness = dependencies.readStartupReadiness;
     if (this.#daemon.status === "connected") {
       try {
         this.#broker = this.#createBroker(this.#daemon);
@@ -228,7 +241,28 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
         this.#daemon = BROKER_FAILED_STATE;
       }
     }
+    if (this.#daemon.status !== "connected") {
+      // The first bootstrap can arrive before any refresh runs, and a desktop
+      // that starts disconnected is exactly when the user needs the diagnosis.
+      // Nothing waits on this: it resolves into the cache or it does not.
+      void this.#refreshStartupReadiness();
+    }
     this.#publishHostState();
+  }
+
+  /**
+   * Read the daemon's ladder into the cache. Never throws, never rejects, and
+   * is only meaningful while disconnected — a connected state is served by the
+   * broker, which already sees everything the ladder would report.
+   */
+  async #refreshStartupReadiness(): Promise<void> {
+    if (!this.#readStartupReadiness) return;
+    try {
+      const ladder = await this.#readStartupReadiness();
+      this.#startupReadiness = ladder ?? null;
+    } catch {
+      this.#startupReadiness = null;
+    }
   }
 
   /** Learn the stable environment id behind a verified connect; best-effort. */
@@ -250,7 +284,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     } catch {
       // Diagnostics are never allowed to break connection reporting.
     }
-    return rendererDaemonState(this.#daemon, childOutput);
+    return rendererDaemonState(this.#daemon, childOutput, this.#startupReadiness);
   }
 
   refreshConnection(): Promise<DesktopDaemonRefreshConnectionResult> {
@@ -670,6 +704,19 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       return this.#superseded();
     }
 
+    if (candidate.status === "connected") {
+      // A usable daemon needs no ladder: the broker reads everything directly.
+      this.#startupReadiness = null;
+    } else {
+      // Bounded, failure-tolerant, and read BEFORE the disconnected state is
+      // composed so the state the renderer receives already carries the
+      // daemon's own account of the stuck rung.
+      await this.#refreshStartupReadiness();
+      if (this.#disposed || expectedRendererGeneration !== this.#rendererGeneration) {
+        return this.#superseded();
+      }
+    }
+
     const previousDaemon = this.#daemon;
     const previousIdentity =
       previousDaemon.status === "connected" ? identityOf(previousDaemon) : null;
@@ -697,6 +744,13 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       try {
         nextBroker = this.#createBroker(candidate);
       } catch {
+        // The daemon answered, but no authority can be built over it. This is
+        // the one disconnected outcome reached from a CONNECTED probe, and so
+        // the case where the daemon's own ladder is most likely readable.
+        await this.#refreshStartupReadiness();
+        if (this.#disposed || expectedRendererGeneration !== this.#rendererGeneration) {
+          return this.#superseded();
+        }
         return this.#transitionToDisconnected(BROKER_FAILED_STATE, previousIdentity);
       }
       if (this.#disposed || expectedRendererGeneration !== this.#rendererGeneration) {
