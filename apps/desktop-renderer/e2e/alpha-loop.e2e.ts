@@ -167,6 +167,26 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
 
   await page.screenshot({ path: testInfo.outputPath("2-second-session-opened.png") });
 
+  /*
+   * The edge, close up. Elevation in this system is a crisp 1px ring rather
+   * than a blur, and at 1x with a full-window screenshot that claim is
+   * unfalsifiable. This clips the top-left corner of the front window card
+   * where it meets the plane behind it; run with E2E_DEVICE_SCALE=3 for a
+   * capture at the density the app actually ships at.
+   */
+  const cardBox = await page.locator("article.app-window-card").last().boundingBox();
+  if (cardBox) {
+    await page.screenshot({
+      path: testInfo.outputPath("2b-card-ring-closeup.png"),
+      clip: {
+        x: Math.max(0, cardBox.x - 12),
+        y: Math.max(0, cardBox.y - 12),
+        width: 150,
+        height: 90,
+      },
+    });
+  }
+
   // --- The terminal paints REAL bytes ------------------------------------
   // Scoped to the ACTIVE window card, not merely the first terminal in the
   // DOM: the canvas cascades floating windows, so the DOM-first tile is the one

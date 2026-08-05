@@ -20,6 +20,16 @@ const headed = process.env.E2E_HEADED === "1";
  */
 const colorScheme = process.env.E2E_COLOR_SCHEME === "dark" ? "dark" : "light";
 
+/*
+ * Pixel density the run renders at.
+ *
+ * The device descriptor is 1x, where a retina hairline (0.5px) and the 1px
+ * elevation ring cannot be told apart from anything else. `E2E_DEVICE_SCALE=3`
+ * renders the way the app actually ships on a Mac, which is the only way a
+ * screenshot can be evidence about an edge treatment.
+ */
+const deviceScaleFactor = Number(process.env.E2E_DEVICE_SCALE ?? "1") || 1;
+
 export default defineConfig({
   testDir: ".",
   // Not `*.spec.ts`: vitest's default glob claims both `.test.` and `.spec.`,
@@ -59,6 +69,7 @@ export default defineConfig({
      */
     userAgent: undefined,
     colorScheme,
+    deviceScaleFactor,
     headless: !headed,
     actionTimeout: 20_000,
     navigationTimeout: 30_000,
