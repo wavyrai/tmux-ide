@@ -64,8 +64,25 @@ test("a pane renders markdown from one printed line, and Ctrl-C gives the shell 
     });
   });
 
-  const documentPath = `${liveApp.fleet.root}/plan.md`;
+  /*
+   * The command is a two-character name, deliberately.
+   *
+   * `page.keyboard.type` delivers one keystroke per character, and each becomes
+   * its own forwarded input write; a full absolute path to node, to the bin and
+   * to the document is ~180 of them and overruns the surface's input queue
+   * before the daemon can drain it, which fails the pane rather than the
+   * feature. A user types `tmux-ide widget markdown plan.md`, which is short —
+   * so the chain types something short too, and the long paths live in a script
+   * next to the document, in the directory the pane is already sitting in.
+   */
+  const paneDirectory = `${liveApp.fleet.root}/project`;
+  const documentPath = `${paneDirectory}/plan.md`;
   await writeFile(documentPath, DOCUMENT, "utf8");
+  await writeFile(
+    `${paneDirectory}/w`,
+    `exec "${process.execPath}" "${CLI}" widget markdown "${documentPath}"\n`,
+    "utf8",
+  );
 
   await page.goto(liveApp.pageUrl, { waitUntil: "domcontentloaded" });
   await expect(
@@ -87,7 +104,7 @@ test("a pane renders markdown from one printed line, and Ctrl-C gives the shell 
     terminal,
     "clicking the terminal did not focus it, so the command below would go nowhere",
   ).toHaveAttribute("data-focused", "true");
-  await page.keyboard.type(`${process.execPath} ${CLI} widget markdown ${documentPath}`);
+  await page.keyboard.type("sh w");
   await page.keyboard.press("Enter");
 
   /*

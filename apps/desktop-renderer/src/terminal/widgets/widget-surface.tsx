@@ -37,9 +37,24 @@ export function WidgetSurface(props: WidgetSurfaceProps): JSX.Element {
       class="widget-surface"
       data-widget={props.resolution.status === "ready" ? props.resolution.definition.id : "invalid"}
       data-status={props.resolution.status}
-      // Pointer-down focuses the pane rather than the overlay: clicking a
-      // rendered document must not be the thing that makes Ctrl-C stop working.
+      /*
+       * Clicking the document must not be the thing that makes Ctrl-C stop
+       * working — and by default it is. A mousedown on ordinary content moves
+       * focus off the emulator's textarea to the body, so the pane silently
+       * stops receiving keys the moment the user touches what it is showing.
+       * An e2e run caught exactly that: the document rendered, and the pane
+       * could no longer be interrupted.
+       *
+       * Focus is therefore restored on mouse-UP, and only when the user did not
+       * leave a selection behind. A completed drag-select keeps focus where it
+       * is so the selection survives long enough to be copied; a plain click
+       * hands the pane back its keyboard.
+       */
       onPointerDown={() => props.onRequestFocus?.()}
+      onMouseUp={() => {
+        const selection = document.getSelection();
+        if (!selection || selection.isCollapsed) props.onRequestFocus?.();
+      }}
     >
       <div class="widget-surface__bar">
         <span class="widget-surface__label">{label()}</span>

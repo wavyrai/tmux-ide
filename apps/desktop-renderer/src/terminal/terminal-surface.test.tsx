@@ -1173,9 +1173,15 @@ describe("TerminalSurface", () => {
     expect(root.querySelector(".terminal-surface__viewport")).not.toBeNull();
     expect(renderer.renderer.dispose).not.toHaveBeenCalled();
 
-    // Clicking the document focuses the PANE, not the overlay.
+    /*
+     * Clicking the document focuses the PANE, not the overlay — and the focus
+     * is handed back on mouse-UP, because a mousedown on ordinary content is
+     * what blurs the emulator in the first place. A live run proved that a
+     * pointerdown-only handler leaves the pane unable to be interrupted.
+     */
     widget.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true }));
-    await vi.waitFor(() => expect(renderer.renderer.focus).toHaveBeenCalled());
+    widget.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true }));
+    await vi.waitFor(() => expect(renderer.renderer.focus).toHaveBeenCalledTimes(2));
 
     // Ctrl-C, from the keyboard, while the widget is on screen.
     renderer.emitInput(new Uint8Array([3]));
