@@ -14878,9 +14878,9 @@ function connectHostname(bindHostname) {
   return bindHostname;
 }
 function urlHostname(bindHostname) {
-  const hostname2 = connectHostname(bindHostname).replace(/^\[|\]$/gu, "");
-  if (/[/?#@]/u.test(hostname2)) throw new TypeError("Invalid daemon bind hostname");
-  const escaped = hostname2.replace(/%/gu, "%25");
+  const hostname3 = connectHostname(bindHostname).replace(/^\[|\]$/gu, "");
+  if (/[/?#@]/u.test(hostname3)) throw new TypeError("Invalid daemon bind hostname");
+  const escaped = hostname3.replace(/%/gu, "%25");
   return escaped.includes(":") ? `[${escaped}]` : escaped;
 }
 function canonicalDaemonUrl(protocol, bindHostname, port, path2 = "") {
@@ -17493,6 +17493,7 @@ var init_fleet_catalog2 = __esm({
 
 // packages/daemon/src/command-center/resources/application-shell.ts
 import { createHash as createHash6 } from "node:crypto";
+import { hostname } from "node:os";
 import { basename as basename9 } from "node:path";
 function digest2(value) {
   return createHash6("sha256").update(value).digest("hex").slice(0, 20);
@@ -17502,6 +17503,12 @@ function semanticId(namespace, value) {
 }
 function agentIdForPaneStamp(stamp) {
   return semanticId("agent", stamp);
+}
+function isHostNameTitle(title, hostName) {
+  if (!title) return false;
+  const firstLabel = (value) => value.trim().toLowerCase().split(".")[0] ?? "";
+  const host = firstLabel(hostName);
+  return host.length > 0 && firstLabel(title) === host;
 }
 function label(value, fallback) {
   const withoutControls = Array.from(value ?? "", (character) => {
@@ -17854,7 +17861,10 @@ function projectApplicationShellResource(session, opts = {}) {
     const identity = identities[index];
     return {
       id: identity.resourceId,
-      title: label(pane.name ?? pane.title, `Terminal ${index + 1}`),
+      title: label(
+        pane.name ?? (isHostNameTitle(pane.title, hostname()) ? null : pane.title),
+        `Terminal ${index + 1}`
+      ),
       kind: isAgentPane(pane) ? "agent" : "terminal",
       active: identity.resourceId === focusedPaneId,
       attachability: identity.attachability,
@@ -18336,7 +18346,7 @@ var init_app_settings = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/app-set-remote-access.ts
-import { hostname, networkInterfaces } from "node:os";
+import { hostname as hostname2, networkInterfaces } from "node:os";
 function setRemoteAccessRestartBackend(backend2) {
   remoteAccessRestartBackend = backend2;
 }
@@ -18351,7 +18361,7 @@ function primaryLanHost() {
       if (entry.family === "IPv4" && !entry.internal) return entry.address;
     }
   }
-  return hostname();
+  return hostname2();
 }
 function buildUrl(host, port) {
   return `http://${host}:${port}`;
@@ -35324,8 +35334,8 @@ import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 function firstRunFloatingRect(index) {
   const offset = index % FIRST_RUN_CASCADE_COLUMNS;
   return {
-    x: 48 + offset * 32,
-    y: 40 + offset * 28,
+    x: 48 + offset * FIRST_RUN_CASCADE_STEP_X,
+    y: 40 + offset * FIRST_RUN_CASCADE_STEP_Y,
     width: FIRST_RUN_WINDOW_WIDTH,
     height: FIRST_RUN_WINDOW_HEIGHT
   };
@@ -35484,6 +35494,7 @@ function reconcileApplicationShellAppWindows(document, terminalSourceIds, focuse
   const windows = structuredClone(current.windows);
   const floatingOrder = [...current.floatingOrder];
   const nextSourceMap = new Map(sourceMap);
+  const existingWindowCount = Object.keys(current.windows).length;
   for (const [index, terminalSourceId] of admittedSourceIds.entries()) {
     const source = { kind: "terminal", terminalSourceId };
     const windowId = stableAppWindowInstanceId(source);
@@ -35495,12 +35506,7 @@ function reconcileApplicationShellAppWindows(document, terminalSourceIds, focuse
       placement: {
         mode: "floating",
         docked: null,
-        floating: {
-          x: 32 + index % 6 * 28,
-          y: 32 + index % 6 * 24,
-          width: 720,
-          height: 440
-        }
+        floating: firstRunFloatingRect(existingWindowCount + index)
       }
     };
     floatingOrder.push(windowId);
@@ -35561,7 +35567,7 @@ function reconcileApplicationShellAppWindowRepository(runtime, terminalSourceIds
   }
   return service.load().document;
 }
-var MAX_SPLIT_CHILDREN, FIRST_RUN_WINDOW_WIDTH, FIRST_RUN_WINDOW_HEIGHT, FIRST_RUN_CASCADE_COLUMNS;
+var MAX_SPLIT_CHILDREN, FIRST_RUN_WINDOW_WIDTH, FIRST_RUN_WINDOW_HEIGHT, FIRST_RUN_CASCADE_COLUMNS, FIRST_RUN_CASCADE_STEP_X, FIRST_RUN_CASCADE_STEP_Y;
 var init_application_shell_app_windows = __esm({
   "packages/daemon/src/lib/application-shell-app-windows.ts"() {
     "use strict";
@@ -35572,7 +35578,9 @@ var init_application_shell_app_windows = __esm({
     MAX_SPLIT_CHILDREN = 8;
     FIRST_RUN_WINDOW_WIDTH = 840;
     FIRST_RUN_WINDOW_HEIGHT = 520;
-    FIRST_RUN_CASCADE_COLUMNS = 8;
+    FIRST_RUN_CASCADE_COLUMNS = 4;
+    FIRST_RUN_CASCADE_STEP_X = 96;
+    FIRST_RUN_CASCADE_STEP_Y = 72;
   }
 });
 
@@ -38532,11 +38540,11 @@ async function retireTerminalAttachmentTransport(runtime, boundary) {
   const results = await Promise.allSettled([runtimeDisposal, boundaryClose]);
   return results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
 }
-async function pickFreePort(hostname2) {
+async function pickFreePort(hostname3) {
   const probe = createServer();
   return await new Promise((resolve31, reject) => {
     probe.once("error", reject);
-    probe.listen(0, hostname2, () => {
+    probe.listen(0, hostname3, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
@@ -41514,7 +41522,7 @@ import { createServer as createServer3 } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 async function startCommandCenter(options = {}) {
   const port = options.port ?? 6060;
-  const hostname2 = options.hostname ?? "0.0.0.0";
+  const hostname3 = options.hostname ?? "0.0.0.0";
   const appOpts = {};
   if (options.authService) appOpts.authService = options.authService;
   if (options.authConfig) appOpts.authConfig = options.authConfig;
@@ -41522,8 +41530,8 @@ async function startCommandCenter(options = {}) {
   const listener = getRequestListener(app.fetch);
   const server = createServer3(listener);
   return new Promise((resolve31) => {
-    server.listen(port, hostname2, () => {
-      console.log(`Command Center API on http://${hostname2}:${port}`);
+    server.listen(port, hostname3, () => {
+      console.log(`Command Center API on http://${hostname3}:${port}`);
       resolve31(server);
     });
   });
