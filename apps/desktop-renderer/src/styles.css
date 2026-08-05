@@ -824,10 +824,15 @@ kbd {
   place-items: center;
   padding: clamp(22px, 5vw, 64px);
   overflow: auto;
+  /*
+   * A plane, not a glow. Colour means focus, selection, a primary action or a
+   * status; spending an accent on decoration is what makes it stop meaning
+   * anything. The lift is a lighter plane over the canvas.
+   */
   background:
     radial-gradient(
       circle at 50% 35%,
-      color-mix(in srgb, var(--tmux-ide-border-focused) 9%, transparent),
+      color-mix(in oklab, var(--sf-card) 70%, transparent),
       transparent 42%
     ),
     var(--tmux-ide-surface-canvas);
@@ -1181,10 +1186,11 @@ kbd {
   border: 1px solid var(--tmux-ide-border-subtle);
   border-radius: var(--tmi-radius-lg);
   color: var(--tmux-ide-text-secondary);
+  /* Plane on plane, for the same reason the launch surface no longer glows. */
   background:
     linear-gradient(
       145deg,
-      color-mix(in srgb, var(--tmux-ide-border-focused) 10%, transparent),
+      color-mix(in oklab, var(--sf-background) 80%, transparent),
       transparent 64%
     ),
     var(--tmux-ide-surface-panel-raised);
@@ -1710,9 +1716,21 @@ kbd {
 .fleet-sidebar__badge--adopted {
   color: var(--tmux-ide-text-muted);
 }
+/*
+ * The trailing slot every fleet row reserves, whether it holds the Open button
+ * or the open badge. A fixed basis is the point: it is what makes two rows of
+ * equal width truncate their session names at the same place.
+ */
+.fleet-sidebar__affordance {
+  display: flex;
+  flex: 0 0 56px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
 .fleet-sidebar__open-action {
   flex: 0 0 auto;
-  margin-left: auto;
   padding: 2px 8px;
   color: var(--tmux-ide-text-secondary);
   font-size: 11px;
@@ -1731,6 +1749,7 @@ kbd {
   background: var(--desktop-hover);
   border-color: var(--desktop-focus-soft);
 }
+.shell-workbench[data-sidebar-collapsed="true"] .fleet-sidebar__affordance,
 .shell-workbench[data-sidebar-collapsed="true"] .fleet-sidebar__open-action,
 .shell-workbench[data-sidebar-collapsed="true"] .fleet-sidebar__badge,
 .shell-workbench[data-sidebar-collapsed="true"] .fleet-sidebar__quiet {
@@ -1880,11 +1899,16 @@ kbd {
   padding-top: 4px;
 }
 
+/*
+ * An eyebrow labels the section under it; nothing happens when you click it, so
+ * it does not get the link colour. Caption-2, muted, like every other label of
+ * its kind. Section accents exist for identity, but not on a plain eyebrow.
+ */
 .eyebrow {
-  color: var(--tmux-ide-text-link);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  color: var(--tmux-ide-text-muted);
+  font-size: var(--sf-text-caption-2);
+  font-weight: 590;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -1993,15 +2017,14 @@ kbd {
   overflow: hidden;
   border: 0;
   border-radius: var(--desktop-panel-radius);
+  /*
+   * The inset content plane. The dot grid is neutral texture; the blue centre
+   * glow is gone — terminals sit on this, and nothing under them carries a hue.
+   */
   background:
     radial-gradient(
-      circle at 50% 38%,
-      color-mix(in srgb, var(--tmux-ide-border-focused) 7%, transparent),
-      transparent 46%
-    ),
-    radial-gradient(
       circle,
-      color-mix(in srgb, var(--tmux-ide-text-muted) 20%, transparent) 0.7px,
+      color-mix(in oklab, var(--sf-foreground) 12%, transparent) 0.7px,
       transparent 0.85px
     ),
     var(--desktop-canvas);
@@ -2761,6 +2784,30 @@ kbd {
   color: var(--tmux-ide-text-bright);
   background: var(--desktop-active);
   box-shadow: none;
+}
+
+/*
+ * A collapsed dock is a BAR, not a tab strip with its panel missing.
+ *
+ * With the panel at zero height, a selected tab still painted its "this panel
+ * is open" treatment, so the dock read as four tabs sitting above a hole where
+ * their content should be. Collapsed, the tabs are what they actually are — the
+ * way to open a panel — and the strip gets a top rule so it terminates the
+ * canvas instead of floating under it. Selecting any tab opens the dock, which
+ * restores the selected treatment along with the panel it refers to.
+ */
+.workspace-main[data-dock-mode="collapsed"] .workspace-dock {
+  border-top: var(--paper-hairline) solid var(--desktop-separator);
+}
+
+.workspace-main[data-dock-mode="collapsed"] .workbench-dock__tab[aria-selected="true"] {
+  color: var(--tmux-ide-text-secondary);
+  background: transparent;
+}
+
+.workspace-main[data-dock-mode="collapsed"] .workbench-dock__tab[aria-selected="true"]:hover {
+  color: var(--tmux-ide-text-primary);
+  background: var(--desktop-hover);
 }
 
 .app .workbench-dock__shortcut {

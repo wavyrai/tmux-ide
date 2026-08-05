@@ -192,6 +192,21 @@
   white-space: nowrap;
 }
 
+/*
+ * The status LABEL has to be the thing that ellipsises.
+ *
+ * `text-overflow` on the status container does nothing for a label that lives
+ * in its own child element, so a long status ("Terminal identity has not been
+ * established") was sheared off mid-word at the header's edge — which reads as
+ * a rendering fault rather than as text that did not fit.
+ */
+.web-pane-frame__status > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .web-pane-frame__status i {
   display: block;
   flex: 0 0 5px;

@@ -138,6 +138,8 @@ describe("WebPaneFrame", () => {
     expect(frame.dataset.terminalInputOwner).toBe("true");
     expect(frame.getAttribute("aria-label")).toContain("terminal input owner");
     expect(root.querySelector(".web-pane-frame__title")?.textContent).toBe("Implementer");
+    // A subtitle that adds a fact the title does not carry is kept: this pane
+    // is called "Implementer" and the harness behind it is Codex.
     expect(root.querySelector(".web-pane-frame__subtitle")?.textContent).toBe("Codex");
     expect(root.querySelector('[data-pane-icon="terminals"]')).not.toBeNull();
     expect(root.querySelector('[data-grip-icon="move"]')).not.toBeNull();
@@ -261,7 +263,11 @@ describe("WebPaneFrame", () => {
 
     expect(frame.dataset.paneId).toBe("pane.implementer");
     expect(frame.dataset.terminalInputOwner).toBe("true");
-    expect(root.querySelector(".web-pane-frame__subtitle")?.textContent).toBe("Codex");
+    // This agent is named "Codex" and runs the Codex harness, so a subtitle
+    // would only repeat the title. A header that says the same word twice
+    // reads as a bug in the app, so the subtitle is dropped rather than shown.
+    expect(root.querySelector(".web-pane-frame__title")?.textContent).toBe("Codex");
+    expect(root.querySelector(".web-pane-frame__subtitle")).toBeNull();
     expect(root.querySelector('[data-item-kind="status"]')?.textContent).toContain("Running");
     expect(zoom.getAttribute("aria-pressed")).toBe("false");
     expect(zoom.getAttribute("aria-label")).toBe("Maximize this pane");

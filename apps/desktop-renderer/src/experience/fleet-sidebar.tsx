@@ -197,12 +197,7 @@ export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Elemen
             >
               <i data-state={sessionTone(session)} />
               <span class="sidebar-row__identity">
-                <span>
-                  {session.label}
-                  <Show when={isOpen(session)}>
-                    <small class="fleet-sidebar__badge fleet-sidebar__badge--open"> open</small>
-                  </Show>
-                </span>
+                <span>{session.label}</span>
                 <small>
                   {session.projectLabel} · {agentSummary(session)}
                   <Show when={!session.appCreated}>
@@ -210,19 +205,35 @@ export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Elemen
                   </Show>
                 </small>
               </span>
-              <Show when={!isOpen(session)}>
-                <button
-                  type="button"
-                  class="fleet-sidebar__open-action"
-                  aria-label={`Open ${session.label} as workspace`}
-                  onClick={() => {
-                    setPromoteError(null);
-                    setPendingSession(session);
-                  }}
+              {/*
+               * One trailing slot, one width, for every row.
+               *
+               * The open badge used to live INSIDE the identity column while the
+               * Open button lived outside it, so two rows of identical width gave
+               * their session names different amounts of room and truncated at
+               * different points — which reads as the list being unable to make
+               * up its mind rather than as a name being too long.
+               */}
+              <span class="fleet-sidebar__affordance">
+                <Show
+                  when={!isOpen(session)}
+                  fallback={
+                    <small class="fleet-sidebar__badge fleet-sidebar__badge--open">open</small>
+                  }
                 >
-                  Open
-                </button>
-              </Show>
+                  <button
+                    type="button"
+                    class="fleet-sidebar__open-action"
+                    aria-label={`Open ${session.label} as workspace`}
+                    onClick={() => {
+                      setPromoteError(null);
+                      setPendingSession(session);
+                    }}
+                  >
+                    Open
+                  </button>
+                </Show>
+              </span>
             </div>
 
             <For each={session.agents}>

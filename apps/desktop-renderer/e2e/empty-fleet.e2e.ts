@@ -81,5 +81,41 @@ test("a cold start with nothing adopted shows the onboarding invitation, not a f
     "the status strip contradicts the onboarding surface it sits under",
   ).toHaveAttribute("data-state", "onboarding");
 
+  // Bug this catches: a bullet whose copy is split across several grid items
+  // gets placed into the dot column and onto the next row, so the line paints
+  // on top of itself — "No ide.yml required" rendered as overlapping text.
+  // Each bullet's copy must occupy exactly one line box.
+  const bulletOverlaps = await page.locator(".runtime-onboarding-notes li").evaluateAll((nodes) =>
+    nodes.map((node) => {
+      // The COPY element's own line boxes. A Range over the whole <li> would
+      // also enumerate nested inline elements (the <code>), whose rect sits
+      // inside its parent's line box and would read as a false overlap.
+      const copy = node.querySelector("span");
+      const lines = [...(copy?.getClientRects() ?? [])].filter((rect) => rect.width > 0);
+      let overlapping = 0;
+      for (let left = 0; left < lines.length; left += 1) {
+        for (let right = left + 1; right < lines.length; right += 1) {
+          const a = lines[left]!;
+          const b = lines[right]!;
+          const sharedY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+          const sharedX = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+          if (sharedY > 2 && sharedX > 2) overlapping += 1;
+        }
+      }
+      return { text: node.textContent?.trim() ?? "", overlapping };
+    }),
+  );
+  expect(
+    bulletOverlaps.length,
+    "the onboarding aside rendered no bullets, so its copy could not be checked",
+  ).toBeGreaterThan(0);
+  for (const bullet of bulletOverlaps) {
+    expect(
+      bullet.overlapping,
+      `the onboarding bullet "${bullet.text}" paints ${bullet.overlapping} of its line boxes on ` +
+        "top of each other — the words are stacked over one another and unreadable",
+    ).toBe(0);
+  }
+
   await page.screenshot({ path: testInfo.outputPath("empty-fleet-onboarding.png") });
 });

@@ -8,6 +8,7 @@ import {
   projectApplicationShellV1,
 } from "@tmux-ide/contracts";
 import { createApp } from "../server.ts";
+import { isHostNameTitle } from "./application-shell.ts";
 import { _setTmuxRunner } from "../discovery.ts";
 import { _setExecutor } from "../../widgets/lib/pane-comms.ts";
 import {
@@ -974,5 +975,32 @@ describe("GET /api/project/:name/application-shell", () => {
     }).request("/api/project/product/application-shell?version=2");
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "Session discovery unavailable" });
+  });
+});
+
+describe("pane titles", () => {
+  it("refuses to present the machine's own name as a pane title", () => {
+    // Bug this catches: tmux seeds pane_title with the hostname, so a pane
+    // nobody titled shows the user's machine name as its window title — the
+    // same useless string on every pane, and their hostname in every
+    // screenshot they share.
+    expect(isHostNameTitle("Thijs-MacBook-Pro-M4-Pro.fritz.box", "Thijs-MacBook-Pro-M4-Pro")).toBe(
+      true,
+    );
+    expect(isHostNameTitle("Thijs-MacBook-Pro-M4-Pro", "Thijs-MacBook-Pro-M4-Pro.fritz.box")).toBe(
+      true,
+    );
+    expect(isHostNameTitle("build-box", "BUILD-BOX")).toBe(true);
+  });
+
+  it("leaves a title a human or a program actually set", () => {
+    // The other half: a pane genuinely called something must keep its name,
+    // including one that merely starts with the host name.
+    expect(isHostNameTitle("claude", "build-box")).toBe(false);
+    expect(isHostNameTitle("build-box-worker", "build-box")).toBe(false);
+    expect(isHostNameTitle(null, "build-box")).toBe(false);
+    expect(isHostNameTitle("", "build-box")).toBe(false);
+    // An empty hostname must never make every title vanish.
+    expect(isHostNameTitle("anything", "")).toBe(false);
   });
 });

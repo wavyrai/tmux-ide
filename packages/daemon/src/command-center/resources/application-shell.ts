@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { hostname } from "node:os";
 import { basename } from "node:path";
 import {
   ApplicationShellProjectionInputV1WireSchemaZ,
@@ -140,6 +141,25 @@ function semanticId(namespace: string, value: string): string {
  */
 export function agentIdForPaneStamp(stamp: string): string {
   return semanticId("agent", stamp);
+}
+
+/**
+ * Whether a `pane_title` is the machine talking rather than the pane.
+ *
+ * tmux seeds `pane_title` with the host's own name, so a pane nobody has
+ * titled reports something like `Thijs-MacBook-Pro-M4-Pro.fritz.box`. Shown as
+ * a window title that is worse than useless: it is the same string on every
+ * pane, it says nothing about what the pane is, and it puts the user's machine
+ * name (and local domain) on screen and into every screenshot they share.
+ *
+ * The comparison is on the first DNS label so a fully qualified title matches
+ * the bare hostname it came from, and vice versa.
+ */
+export function isHostNameTitle(title: string | null | undefined, hostName: string): boolean {
+  if (!title) return false;
+  const firstLabel = (value: string): string => value.trim().toLowerCase().split(".")[0] ?? "";
+  const host = firstLabel(hostName);
+  return host.length > 0 && firstLabel(title) === host;
 }
 
 function label(value: string | null | undefined, fallback: string): string {
@@ -654,7 +674,10 @@ export function projectApplicationShellResource(
     const identity = identities[index]!;
     return {
       id: identity.resourceId,
-      title: label(pane.name ?? pane.title, `Terminal ${index + 1}`),
+      title: label(
+        pane.name ?? (isHostNameTitle(pane.title, hostname()) ? null : pane.title),
+        `Terminal ${index + 1}`,
+      ),
       kind: isAgentPane(pane) ? ("agent" as const) : ("terminal" as const),
       active: identity.resourceId === focusedPaneId,
       attachability: identity.attachability,

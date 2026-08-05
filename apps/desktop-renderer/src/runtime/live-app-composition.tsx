@@ -427,18 +427,27 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
                     tmux-ide opens a native tmux workspace, detects the project context, and keeps
                     agent terminals attached to the real session.
                   </p>
+                  {/*
+                   * Each bullet's copy is ONE grid item. The list is a two-column
+                   * grid (dot, text); an inline <code> in the middle of a bare text
+                   * run split this bullet into three items, so "ide.yml" was placed
+                   * into the 8px dot column and "required" onto the next row — the
+                   * line painted on top of itself.
+                   */}
                   <ul>
                     <li>
                       <i />
-                      No <code>ide.yml</code> required
+                      <span>
+                        No <code>ide.yml</code> required
+                      </span>
                     </li>
                     <li>
                       <i />
-                      Available harnesses are discovered after opening
+                      <span>Available harnesses are discovered after opening</span>
                     </li>
                     <li>
                       <i />
-                      Your tmux session stays the source of truth
+                      <span>Your tmux session stays the source of truth</span>
                     </li>
                   </ul>
                   <details>

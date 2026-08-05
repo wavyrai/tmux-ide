@@ -14,6 +14,8 @@
  * the TRIGGER, not the assertion: what is asserted is the app's reaction to a
  * session disappearing, which no in-app affordance can cause.
  */
+import { hostname } from "node:os";
+
 import { test, expect } from "./fixtures/live-app.ts";
 import {
   paintFingerprint,
@@ -76,6 +78,32 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
     sidebar.locator("h2 span"),
     "the fleet heading count disagrees with the two sessions the daemon can see",
   ).toHaveText("2");
+
+  // Bug this catches: two fleet rows of the SAME width give their session names
+  // different amounts of room, so one name truncates and the other does not and
+  // the list looks unable to make up its mind. Every row reserves the same
+  // trailing slot, so every name column measures the same.
+  const identityWidths = await sidebar
+    .locator(".fleet-sidebar__session-head .sidebar-row__identity")
+    .evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().width)));
+  expect(
+    identityWidths.length,
+    "the fleet rows disappeared before their name columns could be measured",
+  ).toBeGreaterThanOrEqual(2);
+  expect(
+    new Set(identityWidths).size,
+    `fleet rows truncate at different widths (${identityWidths.join(", ")}px) despite being the ` +
+      "same width — the trailing affordance is stealing a different amount of room per row",
+  ).toBe(1);
+
+  // Bug this catches: the app renders Windows chrome on a Mac because it read a
+  // platform from a spoofed user agent. The suite no longer lies about the
+  // browser it drives, so this is now a real fact about a real macOS run.
+  await expect(
+    page.locator(".app"),
+    "the app reports a platform that is not the one it is running on",
+  ).toHaveAttribute("data-platform", process.platform);
+
   await page.screenshot({ path: testInfo.outputPath("1-fleet-visible.png") });
 
   // --- User path: open the second session as a workspace ------------------
@@ -110,6 +138,33 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
     `confirming the dialog did not register ${secondSession} — the row still reads as merely ` +
       "adopted, so the action reported success it did not achieve",
   ).not.toContainText("adopted", { timeout: 30_000 });
+  // Bug this catches: the bottom dock shows a strip of tabs painted as though
+  // their panel were open, above a panel of zero height — four tabs sitting
+  // over a hole. Collapsed, no tab may claim the open-panel treatment.
+  const dockMode = await page.locator(".workspace-main").getAttribute("data-dock-mode");
+  if (dockMode === "collapsed") {
+    const panelHeight = await page
+      .locator(".workspace-main .dock-surface")
+      .first()
+      .boundingBox()
+      .then((box) => box?.height ?? 0)
+      .catch(() => 0);
+    const selectedBackgrounds = await page
+      .locator('.workbench-dock__tab[aria-selected="true"]')
+      .evaluateAll((nodes) =>
+        nodes.map((node) => getComputedStyle(node).backgroundColor.replace(/\s/gu, "")),
+      );
+    const opaque = selectedBackgrounds.filter(
+      (color) => color !== "rgba(0,0,0,0)" && color !== "transparent",
+    );
+    expect(
+      opaque,
+      `the collapsed dock paints ${opaque.length} tab(s) as an open panel above a ${Math.round(
+        panelHeight,
+      )}px panel — the tabs read as broken content rather than as the way to open one`,
+    ).toEqual([]);
+  }
+
   await page.screenshot({ path: testInfo.outputPath("2-second-session-opened.png") });
 
   // --- The terminal paints REAL bytes ------------------------------------
@@ -132,6 +187,92 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
     terminal,
     "the connected terminal reports no client viewport, so it attached without measuring itself",
   ).toHaveAttribute("data-client-viewport", /^\d+x\d+$/u);
+
+  // Bug this catches: a header that says the same word twice ("Terminal
+  // Terminal") because the subtitle restates the title instead of adding to it.
+  const activeHeader = page.locator("article.app-window-card[data-active='true']").first();
+  const headerTitle = (await activeHeader.locator(".web-pane-frame__title").first().innerText())
+    .trim()
+    .toLowerCase();
+  const headerSubtitles = await activeHeader
+    .locator(".web-pane-frame__subtitle")
+    .allInnerTexts()
+    .then((values) => values.map((value) => value.trim().toLowerCase()));
+  const restating = headerSubtitles.filter((subtitle) => headerTitle.startsWith(subtitle));
+  expect(
+    restating,
+    `the pane header titled "${headerTitle}" also subtitles it ${restating.join(", ")} — the ` +
+      "subtitle restates the title, which reads as a bug in the app and spends a line of chrome " +
+      "saying nothing",
+  ).toEqual([]);
+
+  // Bug this catches: the window title is the machine's own hostname, which
+  // tmux seeds pane_title with. It is the same string on every pane, says
+  // nothing about the pane, and puts the user's machine name in every
+  // screenshot they share.
+  const hostFirstLabel = hostname().split(".")[0]!.toLowerCase();
+  expect(
+    headerTitle.split(".")[0],
+    `the window is titled with this machine's name ("${headerTitle}") instead of a pane title`,
+  ).not.toBe(hostFirstLabel);
+
+  // Bug this catches: the cascade offsets windows by so little that everything
+  // behind the front one is a shadow artifact with no grab target of its own.
+  const cards = await page.locator("article.app-window-card").evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const box = node.getBoundingClientRect();
+      return { x: box.x, y: box.y, width: box.width, height: box.height };
+    }),
+  );
+  if (cards.length >= 2) {
+    const [first, second] = [cards[0]!, cards[1]!];
+    const overlapWidth = Math.max(
+      0,
+      Math.min(first.x + first.width, second.x + second.width) - Math.max(first.x, second.x),
+    );
+    const overlapHeight = Math.max(
+      0,
+      Math.min(first.y + first.height, second.y + second.height) - Math.max(first.y, second.y),
+    );
+    const smaller = Math.min(first.width * first.height, second.width * second.height);
+    const covered = smaller === 0 ? 1 : (overlapWidth * overlapHeight) / smaller;
+    expect(
+      covered,
+      `cascaded windows cover ${Math.round(covered * 100)}% of each other — the window behind is ` +
+        "a shadow artifact rather than something the user can see or aim at " +
+        `(${cards.map((card) => `${Math.round(card.width)}x${Math.round(card.height)}@${Math.round(card.x)},${Math.round(card.y)}`).join(" | ")})`,
+    ).toBeLessThan(0.9);
+  }
+
+  // Bug this catches: the terminal ground does not follow the app's appearance,
+  // so a dark app renders a glaring white terminal (or the reverse). The pane
+  // ground may warm with the paper palette; it may never disagree with the
+  // appearance the rest of the chrome is drawn in.
+  const groundLuminance = await terminal.evaluate((element) => {
+    const color = getComputedStyle(element).backgroundColor;
+    // Rasterise the computed colour rather than parsing it. The token layer is
+    // authored in oklch, so a regex over rgb() channels reads a lightness of
+    // 1.0 as "almost black" — the browser is the only thing that reliably
+    // converts an arbitrary CSS colour space to pixels.
+    const canvas = element.ownerDocument.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d");
+    if (!context) return { color, value: 255 };
+    context.fillStyle = color;
+    context.fillRect(0, 0, 1, 1);
+    const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+    return { color, value: (red! + green! + blue!) / 3 };
+  });
+  const appIsDark = await page
+    .locator(".app")
+    .getAttribute("data-theme")
+    .then((theme) => theme === "dark");
+  expect(
+    appIsDark ? groundLuminance.value < 128 : groundLuminance.value > 128,
+    `the app is in ${appIsDark ? "dark" : "light"} mode but its terminal ground is ` +
+      `${groundLuminance.color} — the terminal disagrees with the appearance around it`,
+  ).toBe(true);
 
   const beforeTyping = await paintFingerprint(terminal);
 
@@ -250,7 +391,17 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
   const mirrorHandle = (await firstMirror.elementHandle())!;
   for (let tick = 0; tick < 3; tick += 1) {
     const echo = `MIRROR-TICK-${tick}`;
-    await terminal.locator(".xterm-screen").click();
+    /*
+     * Click near the TOP of the terminal body, not its centre.
+     *
+     * The mirror deck is placed below the durable windows and then pulled back
+     * into the visible canvas, and it is explicitly allowed to land over a
+     * window — a mirror the user turned on has to be the thing they can read.
+     * So the bottom of the terminal may be under the deck, and a centre click
+     * is a bet on how much of it is covered. The first line of the screen is
+     * where a user aims to focus a terminal anyway, and it is above the deck.
+     */
+    await terminal.locator(".xterm-screen").click({ position: { x: 24, y: 12 } });
     await page.keyboard.type(`echo ${echo}`);
     await page.keyboard.press("Enter");
     await expect

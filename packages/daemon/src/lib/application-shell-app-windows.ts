@@ -21,13 +21,25 @@ import { focusAppWindow, stableAppWindowInstanceId } from "./app-window-state.ts
 const MAX_SPLIT_CHILDREN = 8;
 const FIRST_RUN_WINDOW_WIDTH = 840;
 const FIRST_RUN_WINDOW_HEIGHT = 520;
-const FIRST_RUN_CASCADE_COLUMNS = 8;
+/*
+ * The cascade has to leave every window recognisable as a window.
+ *
+ * A 32x28 step across an 840x520 window hid 96% of everything behind the front
+ * one: the back windows read as a shadow artifact, and there was nothing of
+ * them to aim at. The step is now wide enough to reveal a strip of title and
+ * tall enough to clear the whole header row, so each window shows its own name
+ * and offers its own grab target. Four columns rather than eight keeps the
+ * deepest window on the canvas instead of walking it off the right edge.
+ */
+const FIRST_RUN_CASCADE_COLUMNS = 4;
+const FIRST_RUN_CASCADE_STEP_X = 96;
+const FIRST_RUN_CASCADE_STEP_Y = 72;
 
 function firstRunFloatingRect(index: number) {
   const offset = index % FIRST_RUN_CASCADE_COLUMNS;
   return {
-    x: 48 + offset * 32,
-    y: 40 + offset * 28,
+    x: 48 + offset * FIRST_RUN_CASCADE_STEP_X,
+    y: 40 + offset * FIRST_RUN_CASCADE_STEP_Y,
     width: FIRST_RUN_WINDOW_WIDTH,
     height: FIRST_RUN_WINDOW_HEIGHT,
   };
@@ -243,6 +255,10 @@ export function reconcileApplicationShellAppWindows(
   const windows = structuredClone(current.windows);
   const floatingOrder = [...current.floatingOrder];
   const nextSourceMap = new Map(sourceMap);
+  // Continue the cascade from what is already on the canvas. Restarting the
+  // offset at zero drops every newly opened window exactly on top of the first
+  // one, so opening a second session looked like nothing happened.
+  const existingWindowCount = Object.keys(current.windows).length;
   for (const [index, terminalSourceId] of admittedSourceIds.entries()) {
     const source = { kind: "terminal" as const, terminalSourceId };
     const windowId = stableAppWindowInstanceId(source);
@@ -254,12 +270,7 @@ export function reconcileApplicationShellAppWindows(
       placement: {
         mode: "floating",
         docked: null,
-        floating: {
-          x: 32 + (index % 6) * 28,
-          y: 32 + (index % 6) * 24,
-          width: 720,
-          height: 440,
-        },
+        floating: firstRunFloatingRect(existingWindowCount + index),
       },
     };
     floatingOrder.push(windowId);

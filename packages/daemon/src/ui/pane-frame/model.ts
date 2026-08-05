@@ -106,6 +106,21 @@ function harnessLabel(harness: ApplicationShellAgent["harness"]): string {
 }
 
 /**
+ * A subtitle earns its place by saying something the title does not.
+ *
+ * A pane titled "Terminal" was rendering "Terminal Terminal", and one titled
+ * "Terminal 1" rendered "Terminal 1 Terminal" — the eye reads both as a bug in
+ * the app, and both spend a line of header saying nothing. A subtitle the title
+ * already opens with is dropped; one that adds a fact is kept.
+ */
+function distinctSubtitle(title: string, subtitle: string | null): string | null {
+  if (subtitle === null) return null;
+  const normalise = (value: string): string => value.trim().toLowerCase();
+  const [normalisedTitle, normalisedSubtitle] = [normalise(title), normalise(subtitle)];
+  return normalisedTitle.startsWith(normalisedSubtitle) ? null : subtitle;
+}
+
+/**
  * Product status precedence for an agent-backed terminal tile.
  *
  * Explicit attention comes first, followed by reconnect/error safety state,
@@ -252,7 +267,7 @@ function paneFrameModelFromApplicationShellAgent(
     pane: { id: paneId, kind: "terminal" },
     appearance,
     title: agent.name,
-    subtitle: harness,
+    subtitle: distinctSubtitle(agent.name, harness),
     status: {
       // The status value changes; its semantic slot identity never does.
       id: paneChildId(paneId, "status"),
@@ -314,7 +329,10 @@ function paneFrameModelFromTerminalResource(
     pane: { id: resource.id, kind: "terminal" },
     appearance,
     title: resource.title,
-    subtitle: resource.kind === "agent" ? "Agent terminal" : "Terminal",
+    subtitle: distinctSubtitle(
+      resource.title,
+      resource.kind === "agent" ? "Agent terminal" : "Terminal",
+    ),
     status: {
       id: paneChildId(resource.id, "status"),
       label: statusLabel,
