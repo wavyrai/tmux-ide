@@ -49,17 +49,32 @@
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--pane-selected) 48%, transparent);
 }
 
+/*
+ * A floating pane is a lifted surface, so it takes the OVERLAY token: a crisp
+ * 1px ring drawing the silhouette plus the layered float behind it. The ring is
+ * the point — a soft-only drop shadow leaves the card's edge dissolving into
+ * whatever plane it is over. The fallback is the light-mode ladder, for hosts
+ * that mount this frame without the app's token layer.
+ */
 .web-pane-frame[data-structure="floating"] {
-  border-radius: 7px;
-  box-shadow:
-    0 14px 34px rgb(0 0 0 / 28%),
-    0 0 0 1px rgb(255 255 255 / 3%);
+  border-radius: 10px;
+  box-shadow: var(
+    --tmi-shadow-overlay,
+    0 0 1px 0 rgb(0 0 0 / 30%),
+    0 4px 12px -2px rgb(0 0 0 / 8%),
+    0 12px 32px -8px rgb(0 0 0 / 14%)
+  );
 }
 
 .web-pane-frame[data-structure="floating"][data-layout-selected="true"] {
   box-shadow:
     0 0 0 2px var(--pane-selected),
-    0 14px 34px rgb(0 0 0 / 28%);
+    var(
+      --tmi-shadow-overlay,
+      0 0 1px 0 rgb(0 0 0 / 30%),
+      0 4px 12px -2px rgb(0 0 0 / 8%),
+      0 12px 32px -8px rgb(0 0 0 / 14%)
+    );
 }
 
 .web-pane-frame[data-structure="maximized"] {

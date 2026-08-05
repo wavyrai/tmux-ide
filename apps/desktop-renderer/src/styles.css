@@ -559,7 +559,6 @@ select:focus-visible,
   align-items: center;
   border-bottom: 1px solid var(--desktop-separator);
   background: var(--desktop-chrome);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 2%, transparent);
   user-select: none;
 }
 
@@ -748,10 +747,6 @@ select:focus-visible,
   color: var(--tmux-ide-control-disabled-foreground);
   background: var(--tmux-ide-control-disabled-background);
   cursor: not-allowed;
-}
-
-.primary-tabs__tab--active {
-  box-shadow: inset 0 0 0 1px var(--desktop-separator);
 }
 
 .titlebar__spacer {
@@ -1109,7 +1104,7 @@ kbd {
   border-radius: var(--tmi-radius-xl);
   /* Overlay surfaces are OPAQUE; translucency belongs to backdrops only. */
   background: var(--tmux-ide-surface-panel-raised, var(--tmux-ide-surface-panel));
-  box-shadow: var(--tmi-overlay-hairline), var(--tmi-overlay-elevation);
+  box-shadow: var(--tmi-overlay-elevation);
   pointer-events: auto;
 }
 
@@ -2014,16 +2009,14 @@ kbd {
     auto,
     20px 20px,
     auto;
-  box-shadow:
-    inset 0 0 0 1px var(--desktop-separator),
-    inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 3%, transparent);
+  box-shadow: var(--tmi-shadow-inset-track);
   outline: none;
 }
 
 .app-window-canvas:focus-visible {
   box-shadow:
-    inset 0 0 0 1px var(--desktop-focus-soft),
-    inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 3%, transparent);
+    var(--tmi-shadow-inset-track),
+    inset 0 0 0 1px var(--tmux-ide-border-focused);
 }
 
 .app-window-canvas__scene {
@@ -2108,9 +2101,7 @@ kbd {
 }
 
 .app-window-card[data-selected="true"] > .web-pane-frame {
-  box-shadow:
-    0 0 0 1px var(--desktop-focus-soft),
-    var(--tmi-shadow-overlay);
+  box-shadow: var(--tmi-shadow-overlay);
 }
 
 .terminal-canvas .web-pane-frame__header {
@@ -2221,7 +2212,7 @@ kbd {
   border-radius: var(--tmi-radius-lg);
   color: var(--tmux-ide-text-muted);
   background: var(--desktop-raised);
-  box-shadow: var(--tmi-overlay-hairline);
+  box-shadow: var(--tmi-shadow-subtle);
   font-size: 11px;
   letter-spacing: 0.01em;
   pointer-events: none;
@@ -2240,7 +2231,7 @@ kbd {
   border: 1px solid var(--desktop-separator);
   border-radius: var(--tmi-radius-xl);
   background: var(--desktop-raised);
-  box-shadow: var(--tmi-overlay-hairline), var(--tmi-shadow-raised);
+  box-shadow: var(--tmi-shadow-raised);
   transform: translateX(-50%);
   -webkit-app-region: no-drag;
 }
@@ -2467,9 +2458,7 @@ kbd {
   border: 1px solid var(--desktop-separator);
   border-radius: var(--tmi-radius-lg);
   background: color-mix(in srgb, var(--desktop-raised) 90%, transparent);
-  box-shadow:
-    var(--tmi-shadow-raised),
-    inset 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 5%, transparent);
+  box-shadow: var(--tmi-shadow-raised);
   -webkit-app-region: no-drag;
 }
 
@@ -2771,7 +2760,7 @@ kbd {
 .app .workbench-dock__tab[aria-selected="true"] {
   color: var(--tmux-ide-text-bright);
   background: var(--desktop-active);
-  box-shadow: inset 0 0 0 1px var(--desktop-separator);
+  box-shadow: none;
 }
 
 .app .workbench-dock__shortcut {
@@ -4218,7 +4207,7 @@ kbd {
   border: 1px solid var(--desktop-separator);
   border-radius: var(--tmi-radius-xl);
   background: var(--desktop-raised);
-  box-shadow: var(--tmi-overlay-hairline), var(--tmi-shadow-overlay);
+  box-shadow: var(--tmi-shadow-overlay);
   opacity: 0;
   transform: translateY(-6px) scale(0.98);
   transform-origin: 50% 0;
@@ -4522,7 +4511,7 @@ kbd {
   border-radius: var(--tmux-ide-shape-floating);
   color: var(--tmux-ide-text-primary);
   background: var(--tmux-ide-surface-command);
-  box-shadow: var(--tmi-overlay-hairline), var(--tmi-shadow-overlay);
+  box-shadow: var(--tmi-shadow-overlay);
   transform: scale(0.98);
 }
 
@@ -5122,7 +5111,7 @@ kbd {
   border-radius: var(--tmi-radius-xl);
   color: var(--tmux-ide-text-secondary);
   background: var(--desktop-raised);
-  box-shadow: var(--tmi-overlay-hairline);
+  box-shadow: var(--tmi-shadow-subtle);
   font-size: 11px;
   transform: translateX(-50%);
 }
