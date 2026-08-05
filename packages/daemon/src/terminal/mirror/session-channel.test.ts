@@ -329,6 +329,10 @@ describe("layout push", () => {
       "window.test.one",
       "window.test.two",
     ]);
+    // Every pane names an identity. A frame that arrives before the stamp-back
+    // carries nulls, and a consumer that renders semantic ids draws nothing for
+    // them — which is how a freshly split pane goes missing from the view.
+    expect(layouts.every((event) => event.panes.every((pane) => pane.semanticPaneId))).toBe(true);
     await rig.channel.dispose();
   });
 

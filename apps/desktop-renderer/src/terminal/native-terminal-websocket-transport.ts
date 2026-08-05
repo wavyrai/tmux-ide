@@ -33,6 +33,22 @@ export const NATIVE_TERMINAL_MAX_CONTROL_BYTES = 4 * 1024;
 export const NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES = 256 * 1024;
 export const NATIVE_TERMINAL_MAX_QUEUED_EVENT_BYTES = 1024 * 1024;
 export const NATIVE_TERMINAL_MAX_QUEUED_EVENTS = 32;
+/**
+ * The ceiling on ONE coalesced output entry.
+ *
+ * Adjacent output frames waiting in the queue are merged into a single write
+ * rather than delivered one at a time. The count bound above is the wrong
+ * shape for output on its own: a full-window repaint arrives as ~1 KiB frames,
+ * so a 200x50 terminal's FIRST paint is more than thirty of them and overflows
+ * a thirty-two entry queue while using three per cent of the byte budget —
+ * which is precisely how a correctly-behaving terminal killed its own
+ * attachment the moment the app started rendering whole windows (m50).
+ *
+ * Merging also makes the delivery cheaper: the consumer is awaited once per
+ * entry, so thirty-two awaited 1 KiB writes become one awaited 32 KiB write.
+ * The byte budget is untouched and remains the real safety property.
+ */
+export const NATIVE_TERMINAL_MAX_COALESCED_OUTPUT_BYTES = 256 * 1024;
 export const NATIVE_TERMINAL_MAX_CONTROL_FRAMES = 1_024;
 export const NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES = 128 * 1024;
 export const NATIVE_TERMINAL_MAX_DESCRIPTOR_LIFETIME_MS = 60_000;
@@ -1165,6 +1181,7 @@ class NativeTerminalWebSocketSession {
 
   #queueEvent(event: NativeTerminalEvent, byteLength: number): void {
     if (this.#phase === "closed" && event.type === "output") return;
+    if (this.#coalesceOutput(event, byteLength)) return;
     if (
       this.#eventCount >= NATIVE_TERMINAL_MAX_QUEUED_EVENTS ||
       byteLength > NATIVE_TERMINAL_MAX_QUEUED_EVENT_BYTES - this.#eventBytes
@@ -1185,6 +1202,30 @@ class NativeTerminalWebSocketSession {
     this.#eventCount += 1;
     this.#eventBytes += byteLength;
     this.#drainEvents();
+  }
+
+  /**
+   * Merge one output event into the queue's tail when both are output.
+   *
+   * Only entries still in the array are candidates — `#drainEvents` shifts an
+   * entry off before awaiting it, so the one in flight is never reachable here
+   * and cannot be mutated underneath its consumer.
+   */
+  #coalesceOutput(event: NativeTerminalEvent, byteLength: number): boolean {
+    if (event.type !== "output") return false;
+    const tail = this.#eventQueue.at(-1);
+    if (!tail || tail.event.type !== "output") return false;
+    const merged = tail.byteLength + byteLength;
+    if (merged > NATIVE_TERMINAL_MAX_COALESCED_OUTPUT_BYTES) return false;
+    const bytes = new Uint8Array(merged);
+    bytes.set(tail.event.bytes, 0);
+    bytes.set(event.bytes, tail.event.bytes.byteLength);
+    this.#eventQueue[this.#eventQueue.length - 1] = {
+      event: { type: "output", bytes },
+      byteLength: merged,
+    };
+    this.#eventBytes += byteLength;
+    return true;
   }
 
   #drainEvents(): void {

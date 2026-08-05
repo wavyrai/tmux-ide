@@ -103,10 +103,10 @@ test("the mouse reaches the multiplexer: switch windows, rename, split, resize, 
    * at the pixels a tile covers rather than at the tile element.
    */
   const openTileMenu = async (): Promise<void> => {
-    const box = (await page.locator(".pane-tile").first().boundingBox())!;
-    await page.mouse.click(box.x + Math.min(24, box.width / 3), box.y + box.height / 2, {
-      button: "right",
-    });
+    // Aimed at the pane AREA, near its left edge so the leftmost pane is the
+    // one under the pointer whether the window has been split yet or not.
+    const box = (await page.locator(".tiled-pane-area").boundingBox())!;
+    await page.mouse.click(box.x + 30, box.y + box.height / 2, { button: "right" });
     await proveVisible(menu, "the verb context menu", { minWidth: 180, minHeight: 100 });
   };
   await openTileMenu();

@@ -425,7 +425,18 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     await expect(latest).resolves.toEqual({ status: "ok" });
   });
 
-  it("bounds asynchronous output delivery and retires instead of growing an event queue", async () => {
+  it("coalesces queued output behind a stalled consumer instead of retiring the attachment", async () => {
+    /*
+     * Bug this catches, and it cost a whole milestone's live runs: the count
+     * bound is the wrong shape for output. A full-window repaint arrives as
+     * ~1 KiB frames, so a 200x50 terminal's FIRST paint is more than thirty of
+     * them — it overflowed a thirty-two entry queue while using three per cent
+     * of the byte budget, and a correctly-behaving terminal killed its own
+     * attachment the moment the app started rendering whole windows.
+     *
+     * Adjacent output merges into one entry instead, which also means the
+     * consumer is awaited once for the burst rather than once per kilobyte.
+     */
     let releaseOutput!: () => void;
     const outputGate = new Promise<void>((resolve) => {
       releaseOutput = resolve;
@@ -442,9 +453,49 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       }
     });
 
-    for (let index = 0; index <= NATIVE_TERMINAL_MAX_QUEUED_EVENTS; index += 1) {
+    for (let index = 0; index <= NATIVE_TERMINAL_MAX_QUEUED_EVENTS * 4; index += 1) {
       socket.message(Uint8Array.of(index & 0xff).buffer);
     }
+    expect(
+      socket.closes.at(-1),
+      "a burst of small output frames still retires the attachment on the count bound",
+    ).toBeUndefined();
+
+    releaseOutput();
+    // The whole burst arrives as ONE further write: the first frame was already
+    // in flight, and everything behind it merged into a single queued entry.
+    await vi.waitFor(() =>
+      expect(events.filter((event) => event.type === "output")).toHaveLength(2),
+    );
+    const delivered = events.filter((event) => event.type === "output");
+    expect(
+      delivered[1]!.type === "output" ? delivered[1]!.bytes.byteLength : 0,
+      "the coalesced write does not carry every byte that was queued behind the stall",
+    ).toBe(NATIVE_TERMINAL_MAX_QUEUED_EVENTS * 4);
+    expect(socket.closes).toEqual([]);
+  });
+
+  it("still retires when a stalled consumer lets the queue exceed its BYTE budget", async () => {
+    // The byte budget is the real safety property, and it is the one that has
+    // to bite: coalescing bounds the entry COUNT, never the memory behind it.
+    let releaseOutput!: () => void;
+    const outputGate = new Promise<void>((resolve) => {
+      releaseOutput = resolve;
+    });
+    const events: NativeTerminalEvent[] = [];
+    const harness = rig();
+    const { socket } = await connectLive(harness, async (event) => {
+      events.push(event);
+      if (
+        event.type === "output" &&
+        events.filter((entry) => entry.type === "output").length === 1
+      ) {
+        await outputGate;
+      }
+    });
+
+    const chunk = new Uint8Array(NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES);
+    for (let index = 0; index < 8; index += 1) socket.message(chunk.buffer.slice(0));
     expect(socket.closes.at(-1)).toEqual({ code: 1013, reason: "renderer-backpressure" });
     releaseOutput();
     await vi.waitFor(() =>
@@ -454,7 +505,6 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
         error: expect.objectContaining({ code: "renderer-backpressure" }),
       }),
     );
-    expect(events.filter((event) => event.type === "output")).toHaveLength(1);
   });
 
   it("rejects oversized text and binary frames before encoding or copying payloads", async () => {

@@ -824,6 +824,17 @@ export class SessionChannel {
       degraded: diagnostic.degraded,
     }));
     this.degraded = reconciliation.degraded;
+    /*
+     * Re-emit every window's layout now that panes carry semantic identity.
+     *
+     * A pane created by a split appears in the %layout-change frame BEFORE its
+     * `@tmux_ide_pane_id` stamp exists, so the frame names it null — and a
+     * consumer that renders semantic identities has nothing to draw for it. The
+     * stamp-back lands here, in a sync, which emits no layout of its own; so
+     * without this the new pane stays invisible until something else happens to
+     * move a layout, and a split looks like it did not reach the view.
+     */
+    for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
     this.settleFirstJoin();
   }
 

@@ -33,6 +33,7 @@ import type { NativeTerminalTransport } from "../terminal/native-terminal-transp
 import type { PaneStreamLayoutEvent } from "../terminal/pane-stream-transport.ts";
 import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
+import { gridOverlayBox } from "./grid-overlay.ts";
 import { MirrorPaneNode } from "../terminal/mirror-pane-node.tsx";
 import type { AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
 import {
@@ -240,9 +241,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   //
   // A multi-pane window attaches size-passive: the surface renders the window's
   // own grid at its natural pixel size and CENTERS it, so the grid box is not
-  // the pane area's box. Measuring `.xterm-screen` is how the overlay follows it
-  // without the renderer having to expose a new geometry API — and it is the
-  // same box the user is looking at, which no computed guess can promise.
+  // the pane area's box. The overlay follows the measured grid through the
+  // rule-10 helper in `grid-overlay.ts`, which is where that invariant lives.
   let areaElement: HTMLDivElement | undefined;
   let overlayElement: HTMLDivElement | undefined;
   let overlayStyle: RuntimeStyleBinding | null = null;
@@ -253,26 +253,32 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
 
   const positionOverlay = (): void => {
     if (!overlayElement || !areaElement) return;
-    const screen = areaElement.querySelector<HTMLElement>(".xterm-screen");
+    /*
+     * Align to the terminal's VIEWPORT element, never to `.xterm-screen`.
+     *
+     * The screen element lives inside xterm's scroll area, so its rect moves
+     * with the scrollback — measured against it the overlay drifted hundreds of
+     * pixels below the terminal, which is how a right-click in the pane area
+     * hit no pane at all. The viewport element is the grid's own box in both
+     * modes: it fills the card when the surface drives tmux, and it shrinks to
+     * the window's natural grid and centres when the card is size-passive.
+     */
+    const viewport = areaElement.querySelector<HTMLElement>(".terminal-surface__viewport");
     const area = areaElement.getBoundingClientRect();
-    const box = screen?.getBoundingClientRect();
+    const natural = viewport?.getBoundingClientRect();
     overlayStyle ??= createRuntimeStyleBinding(overlayElement);
-    if (!box || box.width === 0 || box.height === 0) {
-      // No grid to align to yet: the overlay fills the area so a single-pane
-      // window is still hit-testable while its terminal is still measuring.
-      overlayStyle.update({
-        inset: "0",
-        right: "auto",
-        bottom: "auto",
-        width: "100%",
-        height: "100%",
-      });
-      setGridBox({ width: area.width, height: area.height });
-      return;
-    }
+    // Scale 1 on purpose: the interactive surface letterboxes by CENTRING, with
+    // no CSS transform (a transform would desync xterm's pointer-to-cell map),
+    // so the rule-10 box collapses to the centred rectangle. Degenerate input
+    // falls back to the whole area, which is what the helper already promises.
+    const box = gridOverlayBox(
+      { width: natural?.width ?? 0, height: natural?.height ?? 0 },
+      { width: area.width, height: area.height },
+      1,
+    );
     overlayStyle.update({
-      left: `${box.left - area.left}px`,
-      top: `${box.top - area.top}px`,
+      left: `${box.left}px`,
+      top: `${box.top}px`,
       width: `${box.width}px`,
       height: `${box.height}px`,
       right: "auto",
