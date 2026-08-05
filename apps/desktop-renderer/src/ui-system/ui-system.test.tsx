@@ -55,6 +55,26 @@ function parseEmittedColor(value: string): RendererNeutralColor {
   };
 }
 
+/**
+ * The rules in a stylesheet, as {selector, body} pairs.
+ *
+ * Leading comments are stripped from the selector: a rule preceded by an
+ * explanatory comment would otherwise be keyed by the comment text, which
+ * silently excludes exactly the rules someone thought worth explaining.
+ * Nested at-rules are skipped — their inner rules are matched on their own.
+ */
+function cssRules(sheet: string): Array<{ selector: string; body: string }> {
+  return [...sheet.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+    .map((match) => ({
+      selector: (match[1] ?? "")
+        .replaceAll(/\/\*[\s\S]*?\*\//gu, "")
+        .trim()
+        .replaceAll(/\s+/gu, " "),
+      body: match[2] ?? "",
+    }))
+    .filter(({ selector }) => selector.length > 0 && !selector.startsWith("@"));
+}
+
 /** Flatten an emitted color that may carry alpha onto an opaque backdrop. */
 function compositeOver(value: string, backdrop: RendererNeutralColor): RendererNeutralColor {
   const match = /^rgb\((\d+) (\d+) (\d+)(?: \/ ([\d.]+))?\)$/u.exec(value);
@@ -533,12 +553,7 @@ describe("desktop UI foundation styles", () => {
      * and the drift survived under a better name. The guard is therefore about
      * WHICH SELECTORS may carry semibold, not about how many names exist.
      */
-    const declarations = [...shellStyles.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
-      .map((match) => ({
-        selector: (match[1] ?? "").trim().replaceAll(/\s+/gu, " "),
-        body: match[2] ?? "",
-      }))
-      .filter(({ selector }) => !selector.startsWith("@") && !selector.startsWith("/*"));
+    const declarations = cssRules(shellStyles);
 
     const weightOf = (body: string): string | undefined =>
       /font-weight: var\(--sf-weight-([a-z]+)\)/u.exec(body)?.[1];
@@ -574,6 +589,37 @@ describe("desktop UI foundation styles", () => {
     const tabularRules = shellStyles.match(/font-variant-numeric: tabular-nums;/g) ?? [];
     expect(tabularRules.length).toBeGreaterThanOrEqual(14);
     expect(styles).toMatch(/\.tmi-tabular\s*\{[^}]*font-variant-numeric: tabular-nums;/su);
+  });
+
+  it("never leaves single-line chrome able to wrap", () => {
+    /*
+     * `text-overflow: ellipsis` without `white-space: nowrap` is inert: the
+     * text wraps instead of ellipsizing, and inside a 22px status strip the
+     * second line is simply cut off. Any rule that asks for an ellipsis must
+     * also hold the text on one line.
+     *
+     * Judged across the cascade rather than rule by rule — a responsive
+     * override that only narrows a width inherits `nowrap` from the base rule
+     * and should not have to restate it.
+     *
+     * The sibling failure (nowrap + hidden with no ellipsis, which clips
+     * mid-word) is deliberately NOT asserted here. That shape is also what
+     * every clipping CONTAINER looks like, and what `.sr-only` looks like,
+     * and CSS alone cannot tell a container from a text leaf. Asserting it
+     * would mean maintaining an exemption list longer than the rule, so the
+     * two real cases — the update chip and the dock tab — were found by
+     * reading and fixed by hand.
+     */
+    const ellipsis = new Set<string>();
+    const nowrap = new Set<string>();
+    const clamped = new Set<string>();
+    for (const { selector, body } of cssRules(shellStyles)) {
+      if (body.includes("text-overflow: ellipsis")) ellipsis.add(selector);
+      if (body.includes("white-space: nowrap")) nowrap.add(selector);
+      if (body.includes("line-clamp")) clamped.add(selector);
+    }
+    const wrapping = [...ellipsis].filter((s) => !nowrap.has(s) && !clamped.has(s));
+    expect(wrapping).toEqual([]);
   });
 
   it("draws every focus ring from one recipe, keyboard-only", () => {

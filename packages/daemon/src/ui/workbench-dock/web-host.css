@@ -71,6 +71,11 @@
   color: var(--dock-muted);
   border-right: 1px solid transparent;
   border-left: 1px solid transparent;
+  /* nowrap alone turns a long label into a hard clip mid-word; the tab strip
+   * already scrolls, so the tab shrinks and ellipsizes instead. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

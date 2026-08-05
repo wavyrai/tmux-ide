@@ -755,6 +755,9 @@ select:focus-visible,
 }
 
 .titlebar__update-chip {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   -webkit-app-region: no-drag;
   align-self: center;
   display: inline-flex;
@@ -4344,17 +4347,26 @@ kbd {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-strip__safe {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   text-align: right;
 }
 
+/* Allowed to shrink: a long next-action must ellipsize rather than push the
+ * segments beside it out of a 22px strip that cannot grow. */
 .status-strip__guidance {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--tmux-ide-text-link);
   font-size: var(--sf-text-caption-3);
 }
