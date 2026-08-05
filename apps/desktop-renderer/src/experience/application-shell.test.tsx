@@ -426,6 +426,8 @@ describe("visible DOM application shell", () => {
             windowState={WINDOW_STATE}
             input={v3}
             dataMode="runtime"
+            // A canvas test, so the parked canvas is turned on (m50).
+            experimentalSurfaces
             onCommand={onCommand}
             onAppWindowCommand={onAppWindowCommand}
             paneFrames={paneFrames}
@@ -1316,6 +1318,10 @@ describe("DomApplicationShell agent-graph overlay pass-through", () => {
             windowState={WINDOW_STATE}
             input={input()}
             dataMode="runtime"
+            // The canvas is parked behind the flag (m50); these tests are about
+            // the canvas, so they turn it on rather than asserting against the
+            // tiled view that replaced it as the default.
+            experimentalSurfaces
             paneFrames={agentGraphCanvasPaneFrames()}
           />
         ),

@@ -5583,3 +5583,255 @@ kbd {
   font-size: var(--sf-text-caption-2);
   transform: translateX(-50%);
 }
+
+/* ==========================================================================
+ * The layout-faithful workspace view (m50)
+ *
+ * Window tabs over tmux's own tiling. The pane area holds ONE terminal — the
+ * whole tmux window as tmux painted it — and an overlay that carries the
+ * chrome. The overlay is deliberately transparent: it exists to be aimed at,
+ * not to be looked at, because everything worth looking at is the terminal
+ * underneath it. Its only visible parts are a tile's hover header and the
+ * border handles, and the handles sit on the single cell tmux already spends
+ * drawing a border, so nothing here covers a character of output.
+ * ========================================================================== */
+
+.tiled-workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.window-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--tmi-space-1);
+  padding: var(--tmi-space-2) var(--tmi-space-2) 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.window-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* The primary-tab recipe, reused: a tab in this strip has to feel like a tab
+   in the application bar, because to a reader they are the same gesture. */
+.window-tabs__tab,
+.window-tabs__create {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--tmi-space-1);
+  align-items: center;
+  padding: var(--tmi-space-1) var(--tmi-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--tmi-radius-control);
+  color: var(--tmux-ide-text-muted);
+  background: transparent;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    background-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    border-color var(--tmi-motion-fast) var(--desktop-ease-smooth);
+}
+
+@media (hover: hover) {
+  .window-tabs__tab:hover:not(:disabled),
+  .window-tabs__create:hover {
+    color: var(--tmux-ide-text-bright);
+    background: var(--desktop-hover);
+  }
+}
+
+.window-tabs__tab[data-active="true"] {
+  color: var(--tmux-ide-text-bright);
+  background: var(--desktop-active);
+  border-color: var(--tmux-ide-border-default);
+}
+
+.window-tabs__tab:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.window-tabs__count,
+.window-tabs__zoom {
+  font-size: 0.8em;
+  color: var(--tmux-ide-text-muted);
+}
+
+.tiled-pane-area {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  margin: var(--tmi-space-2);
+  border: 1px solid var(--tmux-ide-border-default);
+  border-radius: var(--tmi-radius-control);
+  overflow: hidden;
+}
+
+.tiled-pane-area__empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tmi-space-1);
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--tmux-ide-text-muted);
+  text-align: center;
+}
+
+/*
+ * Positioned by the renderer against the grid the terminal actually rendered
+ * (a size-passive multi-pane window centers its grid, so the box is not the
+ * area's box). `pointer-events: none` on the layer and `auto` on its children
+ * is what keeps the gaps between tiles clickable by the terminal beneath.
+ */
+.tiled-pane-area__overlay {
+  position: absolute;
+  pointer-events: none;
+}
+
+.pane-tile {
+  position: absolute;
+  pointer-events: auto;
+  background: transparent;
+  outline-offset: -2px;
+}
+
+.pane-tile[data-active="true"] {
+  outline: 1px solid var(--tmux-ide-border-strong, var(--tmux-ide-border-default));
+}
+
+.pane-tile__chrome {
+  position: absolute;
+  inset: 0 0 auto 0;
+  display: flex;
+  gap: var(--tmi-space-2);
+  align-items: center;
+  padding: 0 var(--tmi-space-2);
+  color: var(--tmux-ide-text-bright);
+  background: color-mix(in oklab, var(--tmux-ide-surface-raised) 88%, transparent);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  opacity: 0;
+  transition: opacity var(--tmi-motion-fast) var(--desktop-ease-smooth);
+}
+
+/* The header appears on approach and is gone the rest of the time: a title bar
+   pinned over every pane would cost a line of everyone's output permanently. */
+@media (hover: hover) {
+  .pane-tile:hover .pane-tile__chrome {
+    opacity: 1;
+  }
+}
+
+.pane-tile__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-tile__status {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tmux-ide-text-muted);
+}
+
+.pane-tile__status[data-tone="running"] {
+  background: var(--tmux-ide-status-running, currentColor);
+}
+
+.pane-tile__status[data-tone="attention"] {
+  background: var(--tmux-ide-status-attention, currentColor);
+}
+
+.pane-border {
+  position: absolute;
+  pointer-events: auto;
+  background: transparent;
+  /* The handle is one cell wide, which is thinner than a comfortable grab
+     target, so the hit area is widened outward without moving what is drawn. */
+  outline: 3px solid transparent;
+}
+
+.pane-border[data-orientation="vertical"] {
+  cursor: col-resize;
+}
+
+.pane-border[data-orientation="horizontal"] {
+  cursor: row-resize;
+}
+
+@media (hover: hover) {
+  .pane-border:hover,
+  .pane-border[data-dragging="true"] {
+    background: var(--tmux-ide-border-strong, var(--tmux-ide-border-default));
+  }
+}
+
+.mirror-deck {
+  flex: 0 0 auto;
+  padding: 0 var(--tmi-space-2) var(--tmi-space-2);
+}
+
+.mirror-deck__controls {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mirror-deck__toggle {
+  padding: var(--tmi-space-1) var(--tmi-space-3);
+  border: 1px solid var(--tmux-ide-border-default);
+  border-radius: var(--tmi-radius-control);
+  color: var(--tmux-ide-text-muted);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mirror-deck__toggle[aria-pressed="true"] {
+  color: var(--tmux-ide-text-bright);
+  background: var(--desktop-active);
+}
+
+.mirror-deck__nodes {
+  display: flex;
+  gap: var(--tmi-space-2);
+  margin-top: var(--tmi-space-2);
+  overflow-x: auto;
+}
+
+.mirror-deck__node {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  width: 320px;
+  height: 200px;
+  border: 1px solid var(--tmux-ide-border-default);
+  border-radius: var(--tmi-radius-control);
+  overflow: hidden;
+}
+
+.mirror-deck__title {
+  flex: 0 0 auto;
+  padding: 0 var(--tmi-space-2);
+  color: var(--tmux-ide-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.8;
+}
+
+.mirror-deck__node .mirror-pane-node {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}

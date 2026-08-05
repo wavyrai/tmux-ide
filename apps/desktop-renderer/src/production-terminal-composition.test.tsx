@@ -363,6 +363,13 @@ function click(element: Element | null): void {
 }
 
 beforeEach(() => {
+  /*
+   * These are AppWindow CANVAS tests, and the canvas is parked behind the
+   * experimental-surfaces flag since m50. `<App />` reads the flag from
+   * storage, so turning it on here is exactly the switch a user would flip —
+   * which is also what keeps proving the canvas is parked rather than deleted.
+   */
+  window.localStorage.setItem("tmux-ide.experimental-surfaces", "1");
   terminalHarness.generations.length = 0;
   vi.clearAllMocks();
   vi.stubGlobal("ResizeObserver", ResizeObserverHarness);
@@ -387,6 +394,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.localStorage.removeItem("tmux-ide.experimental-surfaces");
   delete window.tmuxIdeHost;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
