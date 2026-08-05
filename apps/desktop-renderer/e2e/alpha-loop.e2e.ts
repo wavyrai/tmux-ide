@@ -61,6 +61,27 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
       "below would be testing real tmux",
   ).toHaveAttribute("data-shell-source", "runtime", { timeout: 60_000 });
 
+  /*
+   * Terminals are the landing surface, not a place you navigate to.
+   *
+   * The whole GUI-first premise is that opening a workspace puts you in front
+   * of your terminals. Bug this catches: the shell lands on Home and a user who
+   * opened a project sees a readiness card where their panes should be, with
+   * the terminals one click away and no reason given.
+   */
+  await expect(
+    page.locator("#primary-tab-terminals"),
+    "opening a workspace no longer lands on the terminal canvas",
+  ).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+  await proveVisible(page.locator("#workspace-panel-terminals"), "the terminal canvas on landing", {
+    minWidth: 400,
+    minHeight: 200,
+  });
+  await expect(
+    page.locator("#workspace-panel-home"),
+    "the Home canvas is showing under the terminal canvas on landing",
+  ).toBeHidden();
+
   // --- The fleet is on screen --------------------------------------------
   const sidebar = page.locator(".fleet-sidebar");
   await proveVisible(sidebar, "the fleet sidebar", { minWidth: 120, minHeight: 40 });
