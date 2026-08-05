@@ -87,6 +87,7 @@ describe("KnownEnvironmentCatalog", () => {
     catalog.reconcileLocalCanonical(ENVIRONMENT_A);
     expect(catalog.reconcileLocalCanonical("not-a-uuid")).toBe("unchanged");
     expect(catalog.localCanonical().environmentId).toBe(ENVIRONMENT_A);
+    await catalog.flush();
   });
 
   it("survives an unwritable state path as pure bookkeeping", async () => {
