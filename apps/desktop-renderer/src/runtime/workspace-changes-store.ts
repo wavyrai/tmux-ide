@@ -10,20 +10,28 @@ import {
 } from "@tmux-ide/contracts";
 
 import {
-  defaultWorkspaceResourceClock,
+  createTargetPinnedStore,
   sameDaemonGeneration,
-  validateWorkspaceResourceTarget,
+  type TargetPinnedFetchResult,
+  type TargetPinnedView,
   type WorkspaceResourceClock,
+  type WorkspaceResourceSnapshot,
   type WorkspaceResourceTarget,
-} from "./workspace-resource-store.ts";
+} from "./target-pinned-store.ts";
 
-type DaemonReads = Pick<HostCapabilities, "daemon">["daemon"];
+/**
+ * The Changes catalog and the change Diff, both on the shared target-pinned
+ * engine in {@link ./target-pinned-store.ts}. What is unique to each is its
+ * envelope schema, its wording, and the projection onto its public state.
+ */
 
 interface WorkspaceChangesStoreOptionsBase {
   readonly host: Pick<HostCapabilities, "daemon">;
   readonly target: unknown;
   readonly clock?: WorkspaceResourceClock;
 }
+
+const CATALOG_KEY = "__changes__";
 
 /* ------------------------------------------------------------------------- *
  * Changes catalog — a single target-driven slot                              *
@@ -38,11 +46,15 @@ export type WorkspaceChangesCatalogState = {
       readonly status: "loaded";
       readonly resource: WorkspaceChangesCatalogResourceV1;
       readonly updatedAt: number;
+      /** A read is in flight that will replace this one; the content stands. */
+      readonly refreshing: boolean;
     }
   | {
       readonly status: "error";
       readonly code: DesktopDaemonCapabilityErrorCode;
       readonly reason: string;
+      /** The last good read, retained so a transient failure blanks nothing. */
+      readonly stale: WorkspaceResourceSnapshot<WorkspaceChangesCatalogResourceV1> | null;
     }
 );
 
@@ -64,152 +76,94 @@ export interface SolidWorkspaceChangesCatalogStore {
 export function createWorkspaceChangesCatalogStore(
   options: WorkspaceChangesStoreOptionsBase,
 ): WorkspaceChangesCatalogStore {
-  const daemon: DaemonReads = options.host.daemon;
-  const clock = options.clock ?? defaultWorkspaceResourceClock;
-  const listeners = new Set<(state: WorkspaceChangesCatalogState) => void>();
-
-  let disposed = false;
-  let generation = 0;
-  let target: WorkspaceResourceTarget | null = null;
-  let targetKey = "";
-  let activeRequest: symbol | null = null;
-  let state: WorkspaceChangesCatalogState = { generation, target: null, status: "loading" };
-
-  const emit = (next: WorkspaceChangesCatalogState): void => {
-    if (disposed) return;
-    state = next;
-    for (const listener of [...listeners]) {
-      try {
-        listener(next);
-      } catch {
-        // one observer cannot break another
-      }
-    }
-  };
-
-  const fetchCatalog = (expectedGeneration: number): void => {
-    if (disposed || generation !== expectedGeneration || target === null) return;
-    const token = Symbol("changes-request");
-    activeRequest = token;
-    const expectedTarget = target;
-    emit({ generation, target, status: "loading" });
-    void daemon
-      .fetchWorkspaceChanges({ workspaceName: target.workspaceName })
-      .then((result) => {
-        if (disposed || generation !== expectedGeneration || activeRequest !== token) return;
-        activeRequest = null;
+  const store = createTargetPinnedStore<
+    WorkspaceChangesCatalogResourceV1,
+    WorkspaceChangesCatalogState
+  >(
+    {
+      host: options.host,
+      eagerKey: CATALOG_KEY,
+      invalidatesOn: ["workspaces.changed"],
+      async fetch(target): Promise<TargetPinnedFetchResult<WorkspaceChangesCatalogResourceV1>> {
+        const result = await options.host.daemon.fetchWorkspaceChanges({
+          workspaceName: target.workspaceName,
+        });
         if (result.status === "error") {
-          emit({
-            generation,
-            target,
-            status: "error",
-            code: result.error.code,
-            reason: result.error.reason,
-          });
-          return;
+          return { status: "failed", code: result.error.code, reason: result.error.reason };
         }
         const parsed = WorkspaceChangesCatalogEnvelopeV1SchemaZ.safeParse(result.envelope);
         if (!parsed.success) {
-          emit({
-            generation,
-            target,
-            status: "error",
+          return {
+            status: "failed",
             code: "invalid-response",
             reason: "Daemon returned an invalid changes catalog.",
-          });
-          return;
+          };
         }
-        if (!sameDaemonGeneration(expectedTarget.daemon, parsed.data.daemon)) {
-          emit({
-            generation,
-            target,
-            status: "error",
+        if (!sameDaemonGeneration(target.daemon, parsed.data.daemon)) {
+          return {
+            status: "failed",
             code: "daemon-identity-mismatch",
             reason: "Changes catalog came from another daemon generation.",
-          });
-          return;
+          };
         }
-        emit({
-          generation,
-          target,
-          status: "loaded",
-          resource: parsed.data.resource,
-          updatedAt: clock.now(),
-        });
-      })
-      .catch(() => {
-        if (disposed || generation !== expectedGeneration || activeRequest !== token) return;
-        activeRequest = null;
-        emit({
+        return { status: "ok", resource: parsed.data.resource };
+      },
+      project(view) {
+        const { generation, target } = view;
+        if (view.disposed) {
+          return {
+            generation,
+            target: null,
+            status: "error",
+            code: "disposed",
+            reason: "The changes catalog store was disposed.",
+            stale: null,
+          };
+        }
+        if (view.targetError !== null) {
+          return {
+            generation,
+            target: null,
+            status: "error",
+            code: "invalid-request",
+            reason: view.targetError.reason,
+            stale: null,
+          };
+        }
+        const slot = view.slots.get(CATALOG_KEY);
+        if (slot === undefined || slot.status === "loading") {
+          return { generation, target, status: "loading" };
+        }
+        if (slot.status === "loaded") {
+          return {
+            generation,
+            target,
+            status: "loaded",
+            resource: slot.resource,
+            updatedAt: slot.updatedAt,
+            refreshing: slot.refreshing,
+          };
+        }
+        return {
           generation,
           target,
           status: "error",
-          code: "request-failed",
-          reason: "The changes catalog request failed.",
-        });
-      });
+          code: slot.code,
+          reason: slot.reason,
+          stale: slot.stale,
+        };
+      },
+    },
+    options.target,
+    { clock: options.clock },
+  );
+  return {
+    getState: () => store.getState(),
+    subscribe: (listener) => store.subscribe(listener),
+    setTarget: (next) => store.setTarget(next),
+    refresh: () => store.refresh(),
+    dispose: () => store.dispose(),
   };
-
-  const startTarget = (untrusted: unknown): void => {
-    const validation = validateWorkspaceResourceTarget(untrusted);
-    if (validation.ok && target !== null && validation.key === targetKey) return;
-    generation += 1;
-    activeRequest = null;
-    if (!validation.ok) {
-      target = null;
-      targetKey = `invalid:${generation}`;
-      emit({
-        generation,
-        target: null,
-        status: "error",
-        code: "invalid-request",
-        reason: validation.reason,
-      });
-      return;
-    }
-    target = validation.target;
-    targetKey = validation.key;
-    emit({ generation, target, status: "loading" });
-    fetchCatalog(generation);
-  };
-
-  const store: WorkspaceChangesCatalogStore = {
-    getState: () => state,
-    subscribe(listener) {
-      if (disposed) {
-        try {
-          listener(state);
-        } catch {
-          // ignore
-        }
-        return () => undefined;
-      }
-      listeners.add(listener);
-      try {
-        listener(state);
-      } catch {
-        // ignore
-      }
-      return () => listeners.delete(listener);
-    },
-    setTarget(next) {
-      if (disposed) return;
-      startTarget(next);
-    },
-    refresh() {
-      if (disposed || target === null) return;
-      fetchCatalog(generation);
-    },
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      activeRequest = null;
-      listeners.clear();
-    },
-  };
-
-  startTarget(options.target);
-  return store;
 }
 
 export function createSolidWorkspaceChangesCatalogStore(
@@ -249,6 +203,7 @@ export type WorkspaceChangeDiffState = {
       readonly changeId: WorkspaceChangeResourceId;
       readonly resource: WorkspaceChangeDiffResourceV1;
       readonly updatedAt: number;
+      readonly refreshing: boolean;
     }
   | {
       readonly status: "error";
@@ -256,6 +211,7 @@ export type WorkspaceChangeDiffState = {
       readonly changeId: WorkspaceChangeResourceId | null;
       readonly code: DesktopDaemonCapabilityErrorCode;
       readonly reason: string;
+      readonly stale: WorkspaceResourceSnapshot<WorkspaceChangeDiffResourceV1> | null;
     }
 );
 
@@ -276,169 +232,159 @@ export interface SolidWorkspaceChangeDiffStore {
   dispose(): void;
 }
 
+/**
+ * The projection shared by the diff and the file preview: one id-driven slot,
+ * where the absence of a slot is the surface's idle state and a target-level
+ * failure is an error with no id.
+ */
+export type SingleIdSlotProjection<TResource, TId extends string> =
+  | { readonly kind: "idle" }
+  | {
+      readonly kind: "target-error";
+      readonly code: DesktopDaemonCapabilityErrorCode;
+      readonly reason: string;
+    }
+  | { readonly kind: "loading"; readonly id: TId }
+  | {
+      readonly kind: "loaded";
+      readonly id: TId;
+      readonly resource: TResource;
+      readonly updatedAt: number;
+      readonly refreshing: boolean;
+    }
+  | {
+      readonly kind: "error";
+      readonly id: TId;
+      readonly code: DesktopDaemonCapabilityErrorCode;
+      readonly reason: string;
+      readonly stale: WorkspaceResourceSnapshot<TResource> | null;
+    };
+
+export function projectSingleIdSlot<TResource, TId extends string>(
+  view: TargetPinnedView<TResource>,
+  disposedReason: string,
+): SingleIdSlotProjection<TResource, TId> {
+  if (view.disposed) {
+    return { kind: "target-error", code: "disposed", reason: disposedReason };
+  }
+  if (view.targetError !== null) {
+    return { kind: "target-error", code: "invalid-request", reason: view.targetError.reason };
+  }
+  const entry = [...view.slots.entries()][0];
+  if (entry === undefined) return { kind: "idle" };
+  const [rawId, slot] = entry;
+  const id = rawId as TId;
+  if (slot.status === "loading") return { kind: "loading", id };
+  if (slot.status === "loaded") {
+    return {
+      kind: "loaded",
+      id,
+      resource: slot.resource,
+      updatedAt: slot.updatedAt,
+      refreshing: slot.refreshing,
+    };
+  }
+  return { kind: "error", id, code: slot.code, reason: slot.reason, stale: slot.stale };
+}
+
 export function createWorkspaceChangeDiffStore(
   options: WorkspaceChangesStoreOptionsBase,
 ): WorkspaceChangeDiffStore {
-  const daemon: DaemonReads = options.host.daemon;
-  const clock = options.clock ?? defaultWorkspaceResourceClock;
-  const listeners = new Set<(state: WorkspaceChangeDiffState) => void>();
-
-  let disposed = false;
-  let generation = 0;
-  let target: WorkspaceResourceTarget | null = null;
-  let targetKey = "";
-  let activeRequest: symbol | null = null;
-  let state: WorkspaceChangeDiffState = {
-    generation,
-    target: null,
-    status: "idle",
-    changeId: null,
-  };
-
-  const emit = (next: WorkspaceChangeDiffState): void => {
-    if (disposed) return;
-    state = next;
-    for (const listener of [...listeners]) {
-      try {
-        listener(next);
-      } catch {
-        // one observer cannot break another
-      }
-    }
-  };
-
-  const startTarget = (untrusted: unknown): void => {
-    const validation = validateWorkspaceResourceTarget(untrusted);
-    if (validation.ok && target !== null && validation.key === targetKey) return;
-    generation += 1;
-    activeRequest = null;
-    if (!validation.ok) {
-      target = null;
-      targetKey = `invalid:${generation}`;
-      emit({
-        generation,
-        target: null,
-        status: "error",
-        changeId: null,
-        code: "invalid-request",
-        reason: validation.reason,
-      });
-      return;
-    }
-    target = validation.target;
-    targetKey = validation.key;
-    emit({ generation, target, status: "idle", changeId: null });
-  };
-
-  const store: WorkspaceChangeDiffStore = {
-    getState: () => state,
-    subscribe(listener) {
-      if (disposed) {
-        try {
-          listener(state);
-        } catch {
-          // ignore
-        }
-        return () => undefined;
-      }
-      listeners.add(listener);
-      try {
-        listener(state);
-      } catch {
-        // ignore
-      }
-      return () => listeners.delete(listener);
-    },
-    setTarget(next) {
-      if (disposed) return;
-      startTarget(next);
-    },
-    load(rawChangeId) {
-      if (disposed || target === null || typeof rawChangeId !== "string" || rawChangeId === "") {
-        return;
-      }
-      const changeId = rawChangeId as WorkspaceChangeResourceId;
-      const expectedGeneration = generation;
-      const expectedTarget = target;
-      const token = Symbol("diff-request");
-      activeRequest = token;
-      emit({ generation, target, status: "loading", changeId });
-      void daemon
-        .fetchWorkspaceChangeDiff({ workspaceName: target.workspaceName, changeId })
-        .then((result) => {
-          if (disposed || generation !== expectedGeneration || activeRequest !== token) return;
-          activeRequest = null;
-          if (result.status === "error") {
-            emit({
-              generation,
-              target,
-              status: "error",
-              changeId,
-              code: result.error.code,
-              reason: result.error.reason,
-            });
-            return;
-          }
-          const parsed = WorkspaceChangeDiffEnvelopeV1SchemaZ.safeParse(result.envelope);
-          if (!parsed.success) {
-            emit({
-              generation,
-              target,
-              status: "error",
-              changeId,
-              code: "invalid-response",
-              reason: "Daemon returned an invalid change diff.",
-            });
-            return;
-          }
-          if (!sameDaemonGeneration(expectedTarget.daemon, parsed.data.daemon)) {
-            emit({
-              generation,
-              target,
-              status: "error",
-              changeId,
-              code: "daemon-identity-mismatch",
-              reason: "Change diff came from another daemon generation.",
-            });
-            return;
-          }
-          emit({
-            generation,
-            target,
-            status: "loaded",
-            changeId,
-            resource: parsed.data.resource,
-            updatedAt: clock.now(),
-          });
-        })
-        .catch(() => {
-          if (disposed || generation !== expectedGeneration || activeRequest !== token) return;
-          activeRequest = null;
-          emit({
-            generation,
-            target,
-            status: "error",
-            changeId,
-            code: "request-failed",
-            reason: "The change diff request failed.",
-          });
+  const store = createTargetPinnedStore<WorkspaceChangeDiffResourceV1, WorkspaceChangeDiffState>(
+    {
+      host: options.host,
+      singleSlot: true,
+      async fetch(
+        target,
+        changeId,
+      ): Promise<TargetPinnedFetchResult<WorkspaceChangeDiffResourceV1>> {
+        const result = await options.host.daemon.fetchWorkspaceChangeDiff({
+          workspaceName: target.workspaceName,
+          changeId: changeId as WorkspaceChangeResourceId,
         });
+        if (result.status === "error") {
+          return { status: "failed", code: result.error.code, reason: result.error.reason };
+        }
+        const parsed = WorkspaceChangeDiffEnvelopeV1SchemaZ.safeParse(result.envelope);
+        if (!parsed.success) {
+          return {
+            status: "failed",
+            code: "invalid-response",
+            reason: "Daemon returned an invalid change diff.",
+          };
+        }
+        if (!sameDaemonGeneration(target.daemon, parsed.data.daemon)) {
+          return {
+            status: "failed",
+            code: "daemon-identity-mismatch",
+            reason: "Change diff came from another daemon generation.",
+          };
+        }
+        return { status: "ok", resource: parsed.data.resource };
+      },
+      project(view): WorkspaceChangeDiffState {
+        const generation = view.generation;
+        const projected = projectSingleIdSlot<
+          WorkspaceChangeDiffResourceV1,
+          WorkspaceChangeResourceId
+        >(view, "The change diff store was disposed.");
+        switch (projected.kind) {
+          case "target-error":
+            return {
+              generation,
+              target: null,
+              status: "error",
+              changeId: null,
+              code: projected.code,
+              reason: projected.reason,
+              stale: null,
+            };
+          case "idle":
+            return { generation, target: view.target, status: "idle", changeId: null };
+          case "loading":
+            return {
+              generation,
+              target: view.target,
+              status: "loading",
+              changeId: projected.id,
+            };
+          case "loaded":
+            return {
+              generation,
+              target: view.target,
+              status: "loaded",
+              changeId: projected.id,
+              resource: projected.resource,
+              updatedAt: projected.updatedAt,
+              refreshing: projected.refreshing,
+            };
+          case "error":
+            return {
+              generation,
+              target: view.target,
+              status: "error",
+              changeId: projected.id,
+              code: projected.code,
+              reason: projected.reason,
+              stale: projected.stale,
+            };
+        }
+      },
     },
-    clear() {
-      if (disposed || target === null) return;
-      activeRequest = null;
-      emit({ generation, target, status: "idle", changeId: null });
+    options.target,
+    { clock: options.clock },
+  );
+  return {
+    getState: () => store.getState(),
+    subscribe: (listener) => store.subscribe(listener),
+    setTarget: (next) => store.setTarget(next),
+    load: (changeId) => store.load(changeId),
+    clear: () => {
+      const changeId = store.getState().changeId;
+      if (changeId !== null) store.drop(changeId);
     },
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      activeRequest = null;
-      listeners.clear();
-    },
+    dispose: () => store.dispose(),
   };
-
-  startTarget(options.target);
-  return store;
 }
 
 export function createSolidWorkspaceChangeDiffStore(

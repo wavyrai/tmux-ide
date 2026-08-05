@@ -910,11 +910,15 @@ describe("desktop App live composition", () => {
     await vi.waitFor(() =>
       expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledTimes(1),
     );
+    // Three workspace-scoped subscriptions per open workspace: the shell
+    // resource, and the Files and Changes catalogs, which now take their
+    // invalidations from the wire instead of waiting for a manual refresh.
     await vi.waitFor(() =>
       expect(
         harness.subscriptions.filter(({ workspaceNames }) => workspaceNames[0] === "alpha"),
-      ).toHaveLength(1),
+      ).toHaveLength(3),
     );
+    // The shell resource's, which is opened first.
     const retired = harness.subscriptions.find(
       ({ workspaceNames }) => workspaceNames[0] === "alpha",
     )!;

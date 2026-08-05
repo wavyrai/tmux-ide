@@ -9,28 +9,28 @@ import {
   type WorkspaceFilesCatalogResourceV1,
 } from "@tmux-ide/contracts";
 
+import { projectSingleIdSlot } from "./workspace-changes-store.ts";
 import {
-  defaultWorkspaceResourceClock,
+  createTargetPinnedStore,
   sameDaemonGeneration,
-  validateWorkspaceResourceTarget,
+  type TargetPinnedFetchResult,
   type WorkspaceResourceClock,
   type WorkspaceResourceSlot,
+  type WorkspaceResourceSnapshot,
   type WorkspaceResourceTarget,
-} from "./workspace-resource-store.ts";
+} from "./target-pinned-store.ts";
 
-type DaemonReads = Pick<HostCapabilities, "daemon">["daemon"];
+/**
+ * The Files catalog and the file Preview, both on the shared target-pinned
+ * engine in {@link ./target-pinned-store.ts}. The Files catalog is the one
+ * store that keeps MANY slots at once: one per directory, so tree expansion
+ * loads incrementally instead of refetching the whole tree.
+ */
 
 interface WorkspaceFilesStoreOptionsBase {
   readonly host: Pick<HostCapabilities, "daemon">;
   readonly target: unknown;
   readonly clock?: WorkspaceResourceClock;
-}
-
-function errorSlot(
-  code: DesktopDaemonCapabilityErrorCode,
-  reason: string,
-): WorkspaceResourceSlot<never> {
-  return { status: "error", code, reason };
 }
 
 /* ------------------------------------------------------------------------- *
@@ -77,177 +77,112 @@ export interface SolidWorkspaceFilesCatalogStore {
 
 const ROOT_KEY = "__root__";
 
+function errorSlot(
+  code: DesktopDaemonCapabilityErrorCode,
+  reason: string,
+): WorkspaceFilesCatalogSlot {
+  return { status: "error", code, reason, stale: null };
+}
+
+/** The root id survives a failed refresh, because the retained read still names it. */
+function rootIdOf(slot: WorkspaceFilesCatalogSlot | undefined): WorkspaceFileResourceId | null {
+  const resource =
+    slot?.status === "loaded"
+      ? slot.resource
+      : slot?.status === "error"
+        ? (slot.stale?.resource ?? null)
+        : null;
+  return resource !== null && resource.status === "ready" ? resource.rootId : null;
+}
+
 export function createWorkspaceFilesCatalogStore(
   options: WorkspaceFilesStoreOptionsBase,
 ): WorkspaceFilesCatalogStore {
-  const daemon: DaemonReads = options.host.daemon;
-  const clock = options.clock ?? defaultWorkspaceResourceClock;
-  const listeners = new Set<(state: WorkspaceFilesCatalogState) => void>();
-
-  let disposed = false;
-  let generation = 0;
-  let target: WorkspaceResourceTarget | null = null;
-  let targetKey = "";
-  let rootId: WorkspaceFileResourceId | null = null;
-  let root: WorkspaceFilesCatalogSlot | null = null;
-  const directories = new Map<WorkspaceFileResourceId, WorkspaceFilesCatalogSlot>();
-  // Latest request token per directory key (ROOT_KEY for the workspace root).
-  const activeRequests = new Map<string, symbol>();
-
-  const snapshot = (): WorkspaceFilesCatalogState => ({
-    generation,
-    target,
-    rootId,
-    root,
-    directories: new Map(directories),
-  });
-
-  const emit = (): void => {
-    if (disposed) return;
-    const state = snapshot();
-    for (const listener of [...listeners]) {
-      try {
-        listener(state);
-      } catch {
-        // Store observers are untrusted application code; one cannot break another.
-      }
-    }
-  };
-
-  const setSlot = (key: string, slot: WorkspaceFilesCatalogSlot): void => {
-    if (key === ROOT_KEY) root = slot;
-    else directories.set(key, slot);
-  };
-
-  const fetchDirectory = (key: string, expectedGeneration: number): void => {
-    if (disposed || generation !== expectedGeneration || target === null) return;
-    const token = Symbol("files-request");
-    activeRequests.set(key, token);
-    setSlot(key, { status: "loading" });
-    emit();
-    const request =
-      key === ROOT_KEY
-        ? { workspaceName: target.workspaceName }
-        : { workspaceName: target.workspaceName, directoryId: key };
-    const expectedTarget = target;
-    void daemon
-      .fetchWorkspaceFiles(request)
-      .then((result) => {
-        if (disposed || generation !== expectedGeneration || activeRequests.get(key) !== token) {
-          return;
-        }
-        activeRequests.delete(key);
+  const store = createTargetPinnedStore<
+    WorkspaceFilesCatalogResourceV1,
+    WorkspaceFilesCatalogState
+  >(
+    {
+      host: options.host,
+      eagerKey: ROOT_KEY,
+      invalidatesOn: ["workspaces.changed"],
+      async fetch(target, key): Promise<TargetPinnedFetchResult<WorkspaceFilesCatalogResourceV1>> {
+        const result = await options.host.daemon.fetchWorkspaceFiles(
+          key === ROOT_KEY
+            ? { workspaceName: target.workspaceName }
+            : { workspaceName: target.workspaceName, directoryId: key },
+        );
         if (result.status === "error") {
-          setSlot(key, errorSlot(result.error.code, result.error.reason));
-          emit();
-          return;
+          return { status: "failed", code: result.error.code, reason: result.error.reason };
         }
         const parsed = WorkspaceFilesCatalogEnvelopeV1SchemaZ.safeParse(result.envelope);
         if (!parsed.success) {
-          setSlot(key, errorSlot("invalid-response", "Daemon returned an invalid files catalog."));
-          emit();
-          return;
+          return {
+            status: "failed",
+            code: "invalid-response",
+            reason: "Daemon returned an invalid files catalog.",
+          };
         }
-        if (!sameDaemonGeneration(expectedTarget.daemon, parsed.data.daemon)) {
-          setSlot(
-            key,
-            errorSlot(
-              "daemon-identity-mismatch",
-              "Files catalog came from another daemon generation.",
-            ),
-          );
-          emit();
-          return;
+        if (!sameDaemonGeneration(target.daemon, parsed.data.daemon)) {
+          return {
+            status: "failed",
+            code: "daemon-identity-mismatch",
+            reason: "Files catalog came from another daemon generation.",
+          };
         }
-        const resource = parsed.data.resource;
-        if (key === ROOT_KEY && resource.status === "ready") rootId = resource.rootId;
-        setSlot(key, { status: "loaded", resource, updatedAt: clock.now() });
-        emit();
-      })
-      .catch(() => {
-        if (disposed || generation !== expectedGeneration || activeRequests.get(key) !== token) {
-          return;
+        return { status: "ok", resource: parsed.data.resource };
+      },
+      project(view): WorkspaceFilesCatalogState {
+        const generation = view.generation;
+        if (view.disposed) {
+          return {
+            generation,
+            target: null,
+            rootId: null,
+            root: errorSlot("disposed", "The files catalog store was disposed."),
+            directories: new Map(),
+          };
         }
-        activeRequests.delete(key);
-        setSlot(key, errorSlot("request-failed", "The files catalog request failed."));
-        emit();
-      });
+        if (view.targetError !== null) {
+          return {
+            generation,
+            target: null,
+            rootId: null,
+            root: errorSlot("invalid-request", view.targetError.reason),
+            directories: new Map(),
+          };
+        }
+        const directories = new Map<WorkspaceFileResourceId, WorkspaceFilesCatalogSlot>();
+        for (const [key, slot] of view.slots) {
+          if (key === ROOT_KEY) continue;
+          directories.set(key as WorkspaceFileResourceId, slot);
+        }
+        const root = view.slots.get(ROOT_KEY) ?? null;
+        return {
+          generation,
+          target: view.target,
+          rootId: rootIdOf(root ?? undefined),
+          root,
+          directories,
+        };
+      },
+    },
+    options.target,
+    { clock: options.clock },
+  );
+  return {
+    getState: () => store.getState(),
+    subscribe: (listener) => store.subscribe(listener),
+    setTarget: (next) => store.setTarget(next),
+    loadRoot: () => store.load(ROOT_KEY),
+    loadDirectory: (directoryId) => store.load(directoryId),
+    dropDirectory: (directoryId) => {
+      if (directoryId === ROOT_KEY) return;
+      store.drop(directoryId);
+    },
+    refresh: () => store.refresh(),
+    dispose: () => store.dispose(),
   };
-
-  const startTarget = (untrusted: unknown): void => {
-    const validation = validateWorkspaceResourceTarget(untrusted);
-    if (validation.ok && target !== null && validation.key === targetKey) return;
-    generation += 1;
-    directories.clear();
-    activeRequests.clear();
-    rootId = null;
-    if (!validation.ok) {
-      target = null;
-      targetKey = `invalid:${generation}`;
-      root = errorSlot("invalid-request", validation.reason);
-      emit();
-      return;
-    }
-    target = validation.target;
-    targetKey = validation.key;
-    root = { status: "loading" };
-    emit();
-    fetchDirectory(ROOT_KEY, generation);
-  };
-
-  const store: WorkspaceFilesCatalogStore = {
-    getState: snapshot,
-    subscribe(listener) {
-      if (disposed) {
-        try {
-          listener(snapshot());
-        } catch {
-          // ignore observer failure on a disposed store
-        }
-        return () => undefined;
-      }
-      listeners.add(listener);
-      try {
-        listener(snapshot());
-      } catch {
-        // ignore observer failure
-      }
-      return () => listeners.delete(listener);
-    },
-    setTarget(next) {
-      if (disposed) return;
-      startTarget(next);
-    },
-    loadRoot() {
-      if (disposed || target === null) return;
-      fetchDirectory(ROOT_KEY, generation);
-    },
-    loadDirectory(directoryId) {
-      if (disposed || target === null || typeof directoryId !== "string" || directoryId === "") {
-        return;
-      }
-      fetchDirectory(directoryId, generation);
-    },
-    dropDirectory(directoryId) {
-      if (disposed) return;
-      activeRequests.delete(directoryId);
-      if (directories.delete(directoryId as WorkspaceFileResourceId)) emit();
-    },
-    refresh() {
-      if (disposed || target === null) return;
-      const keys = [ROOT_KEY, ...directories.keys()];
-      for (const key of keys) fetchDirectory(key, generation);
-    },
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      activeRequests.clear();
-      listeners.clear();
-    },
-  };
-
-  startTarget(options.target);
-  return store;
 }
 
 export function createSolidWorkspaceFilesCatalogStore(
@@ -290,6 +225,7 @@ export type WorkspaceFilePreviewState = {
       readonly fileId: WorkspaceFileResourceId;
       readonly resource: WorkspaceFilePreviewResourceV1;
       readonly updatedAt: number;
+      readonly refreshing: boolean;
     }
   | {
       readonly status: "error";
@@ -297,6 +233,7 @@ export type WorkspaceFilePreviewState = {
       readonly fileId: WorkspaceFileResourceId | null;
       readonly code: DesktopDaemonCapabilityErrorCode;
       readonly reason: string;
+      readonly stale: WorkspaceResourceSnapshot<WorkspaceFilePreviewResourceV1> | null;
     }
 );
 
@@ -320,165 +257,96 @@ export interface SolidWorkspaceFilePreviewStore {
 export function createWorkspaceFilePreviewStore(
   options: WorkspaceFilesStoreOptionsBase,
 ): WorkspaceFilePreviewStore {
-  const daemon: DaemonReads = options.host.daemon;
-  const clock = options.clock ?? defaultWorkspaceResourceClock;
-  const listeners = new Set<(state: WorkspaceFilePreviewState) => void>();
-
-  let disposed = false;
-  let generation = 0;
-  let target: WorkspaceResourceTarget | null = null;
-  let targetKey = "";
-  let activeRequest: symbol | null = null;
-  let state: WorkspaceFilePreviewState = {
-    generation,
-    target: null,
-    status: "idle",
-    fileId: null,
-  };
-
-  const emit = (next: WorkspaceFilePreviewState): void => {
-    if (disposed) return;
-    state = next;
-    for (const listener of [...listeners]) {
-      try {
-        listener(next);
-      } catch {
-        // one observer cannot break another
-      }
-    }
-  };
-
-  const startTarget = (untrusted: unknown): void => {
-    const validation = validateWorkspaceResourceTarget(untrusted);
-    activeRequest = null;
-    if (!validation.ok) {
-      generation += 1;
-      target = null;
-      targetKey = `invalid:${generation}`;
-      emit({
-        generation,
-        target: null,
-        status: "error",
-        fileId: null,
-        code: "invalid-request",
-        reason: validation.reason,
-      });
-      return;
-    }
-    if (target !== null && validation.key === targetKey) return;
-    generation += 1;
-    target = validation.target;
-    targetKey = validation.key;
-    emit({ generation, target, status: "idle", fileId: null });
-  };
-
-  const store: WorkspaceFilePreviewStore = {
-    getState: () => state,
-    subscribe(listener) {
-      if (disposed) {
-        try {
-          listener(state);
-        } catch {
-          // ignore
-        }
-        return () => undefined;
-      }
-      listeners.add(listener);
-      try {
-        listener(state);
-      } catch {
-        // ignore
-      }
-      return () => listeners.delete(listener);
-    },
-    setTarget(next) {
-      if (disposed) return;
-      startTarget(next);
-    },
-    load(rawFileId) {
-      if (disposed || target === null || typeof rawFileId !== "string" || rawFileId === "") return;
-      const fileId = rawFileId as WorkspaceFileResourceId;
-      const expectedGeneration = generation;
-      const expectedTarget = target;
-      const token = Symbol("preview-request");
-      activeRequest = token;
-      emit({ generation, target, status: "loading", fileId });
-      void daemon
-        .fetchWorkspaceFilePreview({ workspaceName: target.workspaceName, fileId })
-        .then((result) => {
-          if (disposed || generation !== expectedGeneration || activeRequest !== token) return;
-          activeRequest = null;
-          if (result.status === "error") {
-            emit({
-              generation,
-              target,
-              status: "error",
-              fileId,
-              code: result.error.code,
-              reason: result.error.reason,
-            });
-            return;
-          }
-          const parsed = WorkspaceFilePreviewEnvelopeV1SchemaZ.safeParse(result.envelope);
-          if (!parsed.success) {
-            emit({
-              generation,
-              target,
-              status: "error",
-              fileId,
-              code: "invalid-response",
-              reason: "Daemon returned an invalid file preview.",
-            });
-            return;
-          }
-          if (!sameDaemonGeneration(expectedTarget.daemon, parsed.data.daemon)) {
-            emit({
-              generation,
-              target,
-              status: "error",
-              fileId,
-              code: "daemon-identity-mismatch",
-              reason: "File preview came from another daemon generation.",
-            });
-            return;
-          }
-          emit({
-            generation,
-            target,
-            status: "loaded",
-            fileId,
-            resource: parsed.data.resource,
-            updatedAt: clock.now(),
-          });
-        })
-        .catch(() => {
-          if (disposed || generation !== expectedGeneration || activeRequest !== token) return;
-          activeRequest = null;
-          emit({
-            generation,
-            target,
-            status: "error",
-            fileId,
-            code: "request-failed",
-            reason: "The file preview request failed.",
-          });
+  const store = createTargetPinnedStore<WorkspaceFilePreviewResourceV1, WorkspaceFilePreviewState>(
+    {
+      host: options.host,
+      singleSlot: true,
+      async fetch(
+        target,
+        fileId,
+      ): Promise<TargetPinnedFetchResult<WorkspaceFilePreviewResourceV1>> {
+        const result = await options.host.daemon.fetchWorkspaceFilePreview({
+          workspaceName: target.workspaceName,
+          fileId: fileId as WorkspaceFileResourceId,
         });
+        if (result.status === "error") {
+          return { status: "failed", code: result.error.code, reason: result.error.reason };
+        }
+        const parsed = WorkspaceFilePreviewEnvelopeV1SchemaZ.safeParse(result.envelope);
+        if (!parsed.success) {
+          return {
+            status: "failed",
+            code: "invalid-response",
+            reason: "Daemon returned an invalid file preview.",
+          };
+        }
+        if (!sameDaemonGeneration(target.daemon, parsed.data.daemon)) {
+          return {
+            status: "failed",
+            code: "daemon-identity-mismatch",
+            reason: "File preview came from another daemon generation.",
+          };
+        }
+        return { status: "ok", resource: parsed.data.resource };
+      },
+      project(view): WorkspaceFilePreviewState {
+        const generation = view.generation;
+        const projected = projectSingleIdSlot<
+          WorkspaceFilePreviewResourceV1,
+          WorkspaceFileResourceId
+        >(view, "The file preview store was disposed.");
+        switch (projected.kind) {
+          case "target-error":
+            return {
+              generation,
+              target: null,
+              status: "error",
+              fileId: null,
+              code: projected.code,
+              reason: projected.reason,
+              stale: null,
+            };
+          case "idle":
+            return { generation, target: view.target, status: "idle", fileId: null };
+          case "loading":
+            return { generation, target: view.target, status: "loading", fileId: projected.id };
+          case "loaded":
+            return {
+              generation,
+              target: view.target,
+              status: "loaded",
+              fileId: projected.id,
+              resource: projected.resource,
+              updatedAt: projected.updatedAt,
+              refreshing: projected.refreshing,
+            };
+          case "error":
+            return {
+              generation,
+              target: view.target,
+              status: "error",
+              fileId: projected.id,
+              code: projected.code,
+              reason: projected.reason,
+              stale: projected.stale,
+            };
+        }
+      },
     },
-    clear() {
-      if (disposed || target === null) return;
-      activeRequest = null;
-      emit({ generation, target, status: "idle", fileId: null });
+    options.target,
+    { clock: options.clock },
+  );
+  return {
+    getState: () => store.getState(),
+    subscribe: (listener) => store.subscribe(listener),
+    setTarget: (next) => store.setTarget(next),
+    load: (fileId) => store.load(fileId),
+    clear: () => {
+      const fileId = store.getState().fileId;
+      if (fileId !== null) store.drop(fileId);
     },
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      activeRequest = null;
-      listeners.clear();
-    },
+    dispose: () => store.dispose(),
   };
-
-  startTarget(options.target);
-  return store;
 }
 
 export function createSolidWorkspaceFilePreviewStore(

@@ -8,10 +8,12 @@ export type {
   DesktopDaemonTransport,
 } from "./daemon-transport.ts";
 export { createHostDaemonTransport } from "./host-daemon-transport.ts";
+export * from "./generation-bound-store.ts";
+export * from "./daemon-catalog-store.ts";
 export * from "./desktop-resource-store.ts";
 export * from "./workspace-catalog-store.ts";
 export * from "./fleet-catalog-store.ts";
-export * from "./workspace-resource-store.ts";
+export * from "./target-pinned-store.ts";
 export * from "./workspace-files-store.ts";
 export * from "./workspace-changes-store.ts";
 export * from "./workspace-surface-model.ts";

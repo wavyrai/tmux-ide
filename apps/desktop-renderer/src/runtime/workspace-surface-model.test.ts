@@ -88,14 +88,19 @@ describe("filesSurfaceModel", () => {
 
   it("maps a transport error to an honest, code-driven retryable state", () => {
     const model = filesSurfaceModel(
-      filesState({ status: "error", code: "request-failed", reason: "boom" }),
+      filesState({ status: "error", code: "request-failed", reason: "boom", stale: null }),
       "alpha",
       new Set(),
       null,
     );
     expect(model).toEqual({ kind: "unavailable", reason: "boom", retryable: true });
     const mismatch = filesSurfaceModel(
-      filesState({ status: "error", code: "daemon-identity-mismatch", reason: "stale" }),
+      filesState({
+        status: "error",
+        code: "daemon-identity-mismatch",
+        reason: "stale",
+        stale: null,
+      }),
       "alpha",
       new Set(),
       null,
@@ -112,7 +117,7 @@ describe("filesSurfaceModel", () => {
       retryable: false,
     } as unknown as WorkspaceFilesCatalogResourceV1;
     const model = filesSurfaceModel(
-      filesState({ status: "loaded", resource, updatedAt: 0 }),
+      filesState({ status: "loaded", resource, updatedAt: 0, refreshing: false }),
       "alpha",
       new Set(),
       null,
@@ -159,8 +164,10 @@ describe("filesSurfaceModel", () => {
       generation: 1,
       target: null,
       rootId: ROOT_ID,
-      root: { status: "loaded", resource: root, updatedAt: 0 },
-      directories: new Map([[SRC_ID, { status: "loaded", resource: childResource, updatedAt: 0 }]]),
+      root: { status: "loaded", resource: root, updatedAt: 0, refreshing: false },
+      directories: new Map([
+        [SRC_ID, { status: "loaded", resource: childResource, updatedAt: 0, refreshing: false }],
+      ]),
     };
     const model = filesSurfaceModel(state, "alpha", new Set([SRC_ID]), INDEX_ID);
     expect(model.kind).toBe("ready");
@@ -179,8 +186,10 @@ describe("filesSurfaceModel", () => {
       generation: 1,
       target: null,
       rootId: ROOT_ID,
-      root: { status: "loaded", resource: root, updatedAt: 0 },
-      directories: new Map([[SRC_ID, { status: "error", code: "request-failed", reason: "no" }]]),
+      root: { status: "loaded", resource: root, updatedAt: 0, refreshing: false },
+      directories: new Map([
+        [SRC_ID, { status: "error", code: "request-failed", reason: "no", stale: null }],
+      ]),
     };
     const collected = collectFileCatalogs(state);
     expect(collected.catalogs).toHaveLength(1);
@@ -224,6 +233,7 @@ describe("filePreviewSurfaceModel", () => {
       status: "loaded",
       fileId: INDEX_ID,
       updatedAt: 0,
+      refreshing: false,
       resource: {
         status: "ready",
         workspaceName: "alpha",
@@ -258,6 +268,7 @@ describe("filePreviewSurfaceModel", () => {
       fileId: INDEX_ID,
       code: "request-failed",
       reason: "The file preview request failed.",
+      stale: null,
     };
     expect(filePreviewSurfaceModel(state, entries)).toEqual({
       kind: "unavailable",
@@ -305,7 +316,14 @@ describe("changesSurfaceModel", () => {
     );
     expect(
       changesSurfaceModel(
-        { generation: 1, target: null, status: "error", code: "request-failed", reason: "x" },
+        {
+          generation: 1,
+          target: null,
+          status: "error",
+          code: "request-failed",
+          reason: "x",
+          stale: null,
+        },
         null,
       ),
     ).toEqual({ kind: "unavailable", reason: "x", retryable: true });
@@ -325,6 +343,7 @@ describe("changesSurfaceModel", () => {
       status: "loaded",
       resource,
       updatedAt: 0,
+      refreshing: false,
     };
     expect(changesSurfaceModel(state, null)).toEqual({
       kind: "unavailable",
@@ -340,6 +359,7 @@ describe("changesSurfaceModel", () => {
       status: "loaded",
       resource: changesReady(),
       updatedAt: 0,
+      refreshing: false,
     };
     const model = changesSurfaceModel(state, CHANGE_ID);
     expect(model.kind).toBe("ready");
@@ -379,6 +399,7 @@ describe("changeDiffSurfaceModel", () => {
       status: "loaded",
       changeId: CHANGE_ID,
       updatedAt: 0,
+      refreshing: false,
       resource: {
         status: "ready",
         workspaceName: "alpha",
@@ -412,6 +433,7 @@ describe("changeDiffSurfaceModel", () => {
       changeId: CHANGE_ID,
       code: "daemon-identity-mismatch",
       reason: "stale generation",
+      stale: null,
     };
     expect(changeDiffSurfaceModel(state, entries)).toEqual({
       kind: "unavailable",
