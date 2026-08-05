@@ -622,6 +622,46 @@ describe("desktop UI foundation styles", () => {
     expect(wrapping).toEqual([]);
   });
 
+  it("disables ligatures wherever the technical voice is used, and nowhere else", () => {
+    /*
+     * This is a tmux front-end: its chrome labels carry paths, commands and
+     * box-drawing. A ligating mono face turns `-->` into an arrow and splits
+     * `─` into two narrow halves, so the label stops matching the terminal it
+     * describes.
+     *
+     * Scoped to the technical voice on purpose. The sans chrome keeps its
+     * ligatures, and the terminal surface is excluded entirely — xterm derives
+     * its own font and owns its own rendering.
+     */
+    const technical = cssRules(shellStyles).filter(({ body }) =>
+      /font-family: var\(--(?:desktop-mono-font|tmux-ide-font-mono)\);/u.test(body),
+    );
+    expect(technical.length).toBeGreaterThan(0);
+    // Prettier wraps a multi-value declaration across lines, so match loosely.
+    const ligaturesOff = /font-feature-settings:\s*"liga"\s*0,\s*"calt"\s*0/u;
+    const ligating = technical
+      .filter(({ body }) => !ligaturesOff.test(body))
+      .map(({ selector }) => selector);
+    expect(ligating).toEqual([]);
+
+    // The xterm host must NOT be in that set — it resolves the terminal font
+    // token first, and its rendering is not the shell's to configure.
+    const terminalSurface = cssRules(shellStyles).find(
+      ({ selector }) => selector === ".terminal-surface",
+    );
+    expect(terminalSurface?.body).not.toContain("font-feature-settings");
+
+    // Root rendering: both smoothing engines, kerning on. The shell declares
+    // `.app` more than once, so this reads the union rather than the first.
+    const root = cssRules(shellStyles)
+      .filter(({ selector }) => selector === ".app")
+      .map(({ body }) => body)
+      .join("\n");
+    expect(root).toContain("-webkit-font-smoothing: antialiased;");
+    expect(root).toContain("-moz-osx-font-smoothing: grayscale;");
+    expect(root).toContain('font-feature-settings: "kern";');
+  });
+
   it("draws every focus ring from one recipe, keyboard-only", () => {
     // One ring declaration, reading the shared tokens. `outline: none` resets
     // are allowed because each one has a :focus-visible replacement below it;

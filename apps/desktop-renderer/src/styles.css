@@ -518,7 +518,16 @@ select:focus-visible,
   font-family: var(--desktop-ui-font);
   font-size: var(--sf-text-body-2);
   line-height: 20px;
+  /*
+   * Rendering. Antialiased on both engines — WebKit's default subpixel
+   * rendering thickens light-on-dark chrome, which is most of this app. Kerning
+   * stays on everywhere; ligatures are switched OFF per-rule wherever the
+   * technical voice is used (see below), never here, because the sans chrome
+   * has no reason to lose them.
+   */
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "kern";
 }
 
 /*
@@ -737,6 +746,10 @@ select:focus-visible,
 .titlebar__product-copy small {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
 }
 
@@ -1623,6 +1636,10 @@ kbd {
   background: linear-gradient(145deg, var(--desktop-raised), var(--desktop-active));
   box-shadow: var(--tmi-shadow-subtle);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
   text-transform: uppercase;
 }
@@ -1645,6 +1662,10 @@ kbd {
 .workspace-sidebar__project small {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
 }
 
@@ -1682,6 +1703,10 @@ kbd {
 .workspace-sidebar h2 span {
   margin-left: auto;
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-weight: var(--sf-weight-medium);
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
@@ -1821,6 +1846,10 @@ kbd {
 .sidebar-row__identity > small {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
 }
 
@@ -2302,6 +2331,10 @@ kbd {
 
 .terminal-canvas .web-pane-frame__subtitle {
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
 }
 
@@ -2448,6 +2481,10 @@ kbd {
   min-width: 43px;
   color: var(--tmux-ide-text-muted);
   font-family: var(--tmux-ide-font-mono);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -3098,6 +3135,10 @@ kbd {
   overflow: hidden;
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3179,6 +3220,10 @@ kbd {
 .mission-journey__list button code {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
 }
 
@@ -3254,6 +3299,10 @@ kbd {
   padding-top: 2px;
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -3268,6 +3317,10 @@ kbd {
   color: var(--tmux-ide-text-secondary);
   background: var(--desktop-hover);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   letter-spacing: var(--sf-tracking-eyebrow);
   text-transform: uppercase;
@@ -3339,6 +3392,10 @@ kbd {
 .mission-progress small {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   font-variant-numeric: tabular-nums;
 }
@@ -3422,6 +3479,10 @@ kbd {
 .mission-journey__history > strong {
   color: var(--tmux-ide-status-success);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
   text-transform: uppercase;
 }
@@ -3459,6 +3520,10 @@ kbd {
 .mission-journey__timeline > header span {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
   font-variant-numeric: tabular-nums;
 }
@@ -3498,6 +3563,10 @@ kbd {
 .mission-journey__timeline li time {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
   font-variant-numeric: tabular-nums;
 }
@@ -3569,6 +3638,10 @@ kbd {
   overflow: hidden;
   color: var(--tmux-ide-text-primary);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3619,6 +3692,10 @@ kbd {
 .mission-journey__state small {
   color: var(--tmux-ide-status-warning);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   letter-spacing: var(--sf-tracking-eyebrow);
   text-transform: uppercase;
@@ -3764,6 +3841,10 @@ kbd {
   overflow: hidden;
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3873,6 +3954,10 @@ kbd {
 .workspace-files__git {
   flex: 0 0 auto;
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   font-weight: var(--sf-weight-medium);
   color: var(--tmux-ide-status-info);
@@ -3916,6 +4001,10 @@ kbd {
   padding: 0 8px;
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
   letter-spacing: var(--sf-tracking-eyebrow);
   text-transform: uppercase;
@@ -3972,6 +4061,10 @@ kbd {
   place-items: center;
   width: 16px;
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   font-weight: var(--sf-weight-medium);
   color: var(--tmux-ide-status-info);
@@ -4014,6 +4107,10 @@ kbd {
   overflow: hidden;
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4023,6 +4120,10 @@ kbd {
   flex: 0 0 auto;
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   font-variant-numeric: tabular-nums;
 }
@@ -4084,6 +4185,10 @@ kbd {
 .workspace-changes__diff-state small {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
 }
 
@@ -4119,6 +4224,10 @@ kbd {
   overflow: hidden;
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4129,6 +4238,10 @@ kbd {
   flex: 0 0 auto;
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -4160,6 +4273,10 @@ kbd {
   list-style: none;
   counter-reset: preview-line;
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-1);
   line-height: 18px;
 }
@@ -4186,6 +4303,10 @@ kbd {
   min-width: 0;
   padding: 6px 0 12px;
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-1);
   line-height: 18px;
 }
@@ -4265,6 +4386,10 @@ kbd {
 .workspace-changes__state small {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-2);
   letter-spacing: var(--sf-tracking-eyebrow);
   text-transform: uppercase;
@@ -4329,6 +4454,10 @@ kbd {
   color: var(--tmux-ide-text-muted);
   background: var(--desktop-chrome);
   font-family: var(--desktop-mono-font);
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
   font-size: var(--sf-text-caption-3);
   line-height: calc(var(--desktop-status-height) - 1px);
   white-space: nowrap;
