@@ -47,8 +47,8 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
-  outline: var(--tmux-ide-focus-outline) solid var(--tmux-ide-border-focused);
-  outline-offset: calc(-1 * var(--tmux-ide-focus-outline-offset));
+  outline: var(--tmi-focus-width) solid var(--tmi-accent);
+  outline-offset: var(--tmi-focus-offset-field);
 }
 
 .sr-only {
@@ -432,6 +432,40 @@ select:focus-visible,
   --tmi-shadow-tooltip: var(--sf-shadow-tooltip);
   --tmi-shadow-inset-track: var(--sf-shadow-inset-track);
   --tmi-overlay-elevation: var(--sf-shadow-overlay);
+  /*
+   * Rings and rails: the named indicators.
+   *
+   * The ladder above is about ELEVATION — where a surface sits. These are
+   * about STATE, and they are the only other shadows the shell may draw. Each
+   * takes its color from a variable the call site sets, so there is one recipe
+   * per indicator rather than one per surface that wanted it.
+   *
+   * The rail replaces what used to be a 2px border-left. Drawn as an inset
+   * ring it marks the leading edge without joining the box model, so turning
+   * emphasis on and off never moves the content beside it.
+   */
+  --tmi-rail-color: var(--tmux-ide-border-focused);
+  --tmi-rail: inset 2px 0 0 var(--tmi-rail-color);
+  --tmi-ring-color: var(--tmux-ide-border-focused);
+  --tmi-ring-selected: 0 0 0 1px var(--tmi-ring-color);
+  --tmi-ring-inset: inset 0 0 0 1px var(--tmi-ring-color);
+  /* A field's focus: a crisp edge from the border plus this soft outer wash. */
+  --tmi-ring-field-focus: 0 0 0 2px color-mix(in srgb, var(--tmi-ring-color) 16%, transparent);
+  /*
+   * The attention ring, at rest and at the two ends of its pulse. Three named
+   * strengths rather than one token, because box-shadow interpolates between
+   * resolved values — driving the pulse through a custom property would step
+   * it instead of breathing it.
+   */
+  --tmi-ring-attention: 0 0 0 1px
+    color-mix(in srgb, var(--tmux-ide-status-warning) 55%, transparent);
+  --tmi-ring-attention-low: 0 0 0 1px
+    color-mix(in srgb, var(--tmux-ide-status-warning) 42%, transparent);
+  --tmi-ring-attention-high: 0 0 0 1px
+    color-mix(in srgb, var(--tmux-ide-status-warning) 80%, transparent);
+  /* The keycap's bottom edge — a hairline, drawn where a border cannot go. */
+  --tmi-shadow-keycap: inset 0 -1px 0
+    color-mix(in srgb, var(--tmux-ide-text-muted) 12%, transparent);
   --tmi-overlay-scrim: color-mix(in srgb, var(--desktop-workbench) 60%, transparent);
   --tmi-overlay-scrim-solid: color-mix(in srgb, var(--desktop-workbench) 82%, transparent);
   --desktop-focus-soft: color-mix(
@@ -2054,9 +2088,7 @@ kbd {
 }
 
 .app-window-canvas:focus-visible {
-  box-shadow:
-    var(--tmi-shadow-inset-track),
-    inset 0 0 0 1px var(--tmux-ide-border-focused);
+  box-shadow: var(--tmi-shadow-inset-track), var(--tmi-ring-inset);
 }
 
 .app-window-canvas__scene {
@@ -2129,7 +2161,8 @@ kbd {
 }
 
 .terminal-canvas .web-pane-frame[data-border-role="focused"] > .web-pane-frame__header {
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--tmux-ide-border-focused) 42%, transparent);
+  --tmi-rail-color: color-mix(in srgb, var(--tmux-ide-border-focused) 42%, transparent);
+  box-shadow: var(--tmi-rail);
 }
 
 .terminal-canvas .web-pane-frame[data-border-strength="decisive"] {
@@ -2137,7 +2170,8 @@ kbd {
 }
 
 .terminal-canvas .web-pane-frame[data-layout-selected="true"] {
-  box-shadow: 0 0 0 1px var(--desktop-focus-soft);
+  --tmi-ring-color: var(--desktop-focus-soft);
+  box-shadow: var(--tmi-ring-selected);
 }
 
 .app-window-card[data-selected="true"] > .web-pane-frame {
@@ -2308,7 +2342,7 @@ kbd {
 }
 
 .canvas-controls button:focus-visible {
-  outline: var(--tmux-ide-focus-outline) solid var(--tmux-ide-border-focused);
+  outline: var(--tmi-focus-width) solid var(--tmi-accent);
   outline-offset: var(--tmux-ide-focus-outline-offset);
 }
 
@@ -2455,9 +2489,7 @@ kbd {
 
 /* A blocked node earns a restrained amber ring on its window chrome. */
 .app-window-card[data-agent-attention="true"] > .web-pane-frame {
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--tmux-ide-status-warning) 55%, transparent),
-    var(--tmi-shadow-overlay);
+  box-shadow: var(--tmi-ring-attention), var(--tmi-shadow-overlay);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -2469,14 +2501,10 @@ kbd {
 @keyframes agent-attention-pulse {
   0%,
   100% {
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--tmux-ide-status-warning) 42%, transparent),
-      var(--tmi-shadow-overlay);
+    box-shadow: var(--tmi-ring-attention-low), var(--tmi-shadow-overlay);
   }
   50% {
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--tmux-ide-status-warning) 80%, transparent),
-      var(--tmi-shadow-overlay);
+    box-shadow: var(--tmi-ring-attention-high), var(--tmi-shadow-overlay);
   }
 }
 
@@ -3023,12 +3051,13 @@ kbd {
   border-color: var(--desktop-separator);
   color: var(--tmux-ide-text-bright);
   background: var(--desktop-active);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--tmux-ide-border-focused) 36%, transparent);
+  --tmi-rail-color: color-mix(in srgb, var(--tmux-ide-border-focused) 36%, transparent);
+  box-shadow: var(--tmi-rail);
 }
 
 .mission-journey__list button:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--tmux-ide-border-focused) 52%, transparent);
-  outline-offset: -1px;
+  outline: var(--tmi-focus-width) solid var(--tmi-accent);
+  outline-offset: var(--tmi-focus-offset-field);
 }
 
 .mission-journey__list button > span:nth-child(2) {
@@ -3268,8 +3297,9 @@ kbd {
   align-items: center;
   gap: var(--tmi-space-3);
   margin-top: 12px;
-  padding: 8px 10px;
-  border-left: 2px solid var(--tmux-ide-status-warning);
+  padding: 8px 10px 8px 12px;
+  --tmi-rail-color: var(--tmux-ide-status-warning);
+  box-shadow: var(--tmi-rail);
   color: var(--tmux-ide-text-secondary);
   background: color-mix(in srgb, var(--tmux-ide-status-warning) 7%, transparent);
   font-size: 12px;
@@ -3281,8 +3311,9 @@ kbd {
   grid-template-columns: auto 1fr;
   gap: var(--tmi-space-2) var(--tmi-space-6);
   margin-top: 12px;
-  padding: 10px 12px;
-  border-left: 2px solid color-mix(in srgb, var(--tmux-ide-status-success) 60%, transparent);
+  padding: 10px 12px 10px 14px;
+  --tmi-rail-color: var(--tmux-ide-status-success);
+  box-shadow: var(--tmi-rail);
   background: var(--desktop-hover);
 }
 
@@ -3449,8 +3480,9 @@ kbd {
   max-width: 640px;
   flex-direction: column;
   gap: var(--tmi-space-2);
-  padding: 10px 12px;
-  border-left: 2px solid var(--tmux-ide-status-info);
+  padding: 10px 12px 10px 14px;
+  --tmi-rail-color: var(--tmux-ide-status-info);
+  box-shadow: var(--tmi-rail);
   background: color-mix(in srgb, var(--tmux-ide-status-info) 6%, transparent);
   font-size: 12px;
 }
@@ -3685,12 +3717,13 @@ kbd {
 .workspace-files__row[aria-selected="true"] {
   color: var(--tmux-ide-text-bright);
   background: var(--desktop-active);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--tmux-ide-border-focused) 36%, transparent);
+  --tmi-rail-color: color-mix(in srgb, var(--tmux-ide-border-focused) 36%, transparent);
+  box-shadow: var(--tmi-rail);
 }
 
 .workspace-files__row:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--tmux-ide-border-focused) 52%, transparent);
-  outline-offset: -1px;
+  outline: var(--tmi-focus-width) solid var(--tmi-accent);
+  outline-offset: var(--tmi-focus-offset-field);
 }
 
 .workspace-files__row[data-hidden="true"],
@@ -3823,12 +3856,13 @@ kbd {
   border-color: var(--desktop-separator);
   color: var(--tmux-ide-text-bright);
   background: var(--desktop-active);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--tmux-ide-border-focused) 36%, transparent);
+  --tmi-rail-color: color-mix(in srgb, var(--tmux-ide-border-focused) 36%, transparent);
+  box-shadow: var(--tmi-rail);
 }
 
 .workspace-changes__row:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--tmux-ide-border-focused) 52%, transparent);
-  outline-offset: -1px;
+  outline: var(--tmi-focus-width) solid var(--tmi-accent);
+  outline-offset: var(--tmi-focus-offset-field);
 }
 
 .workspace-changes__status {
@@ -3939,7 +3973,8 @@ kbd {
 
 .workspace-files__preview-state[data-tone="attention"],
 .workspace-changes__diff-state[data-tone="attention"] {
-  border-left: 2px solid var(--tmux-ide-status-warning);
+  --tmi-rail-color: var(--tmux-ide-status-warning);
+  box-shadow: var(--tmi-rail);
 }
 
 .workspace-files__preview-state small,
@@ -4338,7 +4373,7 @@ kbd {
 
 .command-palette__query:focus-within {
   border-color: var(--tmux-ide-border-focused);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tmux-ide-border-focused) 16%, transparent);
+  box-shadow: var(--tmi-ring-field-focus);
 }
 
 .command-palette__query svg {
@@ -4373,7 +4408,7 @@ kbd {
   font-size: 10px;
   font-family: inherit;
   line-height: 18px;
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--tmux-ide-text-muted) 12%, transparent);
+  box-shadow: var(--tmi-shadow-keycap);
 }
 
 .command-palette__rule {
@@ -4419,7 +4454,8 @@ kbd {
 
 .command-palette__option--selected:not([aria-disabled="true"]) {
   border-color: var(--desktop-separator);
-  box-shadow: inset 2px 0 0 var(--desktop-focus-soft);
+  --tmi-rail-color: var(--desktop-focus-soft);
+  box-shadow: var(--tmi-rail);
 }
 
 .command-palette__option[aria-disabled="true"] {
@@ -4815,7 +4851,8 @@ kbd {
 
 .create-pane-flow__field > .create-pane-flow__empty {
   padding: 6px 8px;
-  border-left: 2px solid var(--tmux-ide-border-attention);
+  --tmi-rail-color: var(--tmux-ide-border-attention);
+  box-shadow: var(--tmi-rail);
   color: var(--tmux-ide-text-secondary);
   background: var(--tmux-ide-surface-panel);
 }
