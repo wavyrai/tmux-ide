@@ -1050,14 +1050,14 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .runtime-launch__skeleton i,
   .runtime-launch__skeleton span,
-  .runtime-state-card__signal i {
+  .runtime-state-card__signal > svg {
     animation: none !important;
   }
 }
 
 [data-reduced-motion="true"] .runtime-launch__skeleton i,
 [data-reduced-motion="true"] .runtime-launch__skeleton span,
-[data-reduced-motion="true"] .runtime-state-card__signal i {
+[data-reduced-motion="true"] .runtime-state-card__signal > svg {
   animation: none !important;
 }
 
@@ -1093,36 +1093,28 @@ kbd {
   text-transform: uppercase;
 }
 
-.runtime-state-card__signal i {
-  width: 7px;
-  height: 7px;
-  border: 1px solid var(--tmux-ide-status-info);
-  border-radius: 50%;
+.runtime-state-card__signal > svg {
+  flex: none;
+  color: var(--tmux-ide-status-info);
 }
 
-.runtime-state-surface[data-state="pending"] .runtime-state-card__signal i,
-.runtime-state-surface[data-state="loading"] .runtime-state-card__signal i {
-  background: var(--tmux-ide-status-info);
+.runtime-state-surface[data-state="pending"] .runtime-state-card__signal > svg,
+.runtime-state-surface[data-state="loading"] .runtime-state-card__signal > svg {
   animation: runtime-signal 1.4s linear infinite;
 }
 
-.runtime-state-surface[data-state="onboarding"] .runtime-state-card__signal i,
-.runtime-state-surface[data-state="chooser"] .runtime-state-card__signal i {
-  border-color: var(--tmux-ide-status-success);
-  background: var(--tmux-ide-status-success);
+.runtime-state-surface[data-state="onboarding"] .runtime-state-card__signal > svg,
+.runtime-state-surface[data-state="chooser"] .runtime-state-card__signal > svg {
+  color: var(--tmux-ide-status-success);
 }
 
-.runtime-state-surface[data-state="degraded"] .runtime-state-card__signal i,
-.runtime-state-surface[data-state="error"] .runtime-state-card__signal i,
-.runtime-state-surface[data-state="hard-error"] .runtime-state-card__signal i {
-  border-color: var(--tmux-ide-status-warning);
-  background: var(--tmux-ide-status-warning);
+.runtime-state-surface[data-state="degraded"] .runtime-state-card__signal > svg {
+  color: var(--tmux-ide-status-warning);
 }
 
-.runtime-state-surface[data-state="error"] .runtime-state-card__signal i,
-.runtime-state-surface[data-state="hard-error"] .runtime-state-card__signal i {
-  border-color: var(--tmux-ide-status-danger);
-  background: var(--tmux-ide-status-danger);
+.runtime-state-surface[data-state="error"] .runtime-state-card__signal > svg,
+.runtime-state-surface[data-state="hard-error"] .runtime-state-card__signal > svg {
+  color: var(--tmux-ide-status-danger);
 }
 
 @keyframes runtime-signal {
@@ -1378,11 +1370,10 @@ kbd {
   font-size: var(--sf-text-caption-2);
 }
 
-.runtime-onboarding-notes li i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--tmux-ide-status-success);
+.runtime-onboarding-notes li > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--tmux-ide-status-success);
 }
 
 .runtime-onboarding-notes code,

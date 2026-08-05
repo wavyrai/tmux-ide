@@ -44,9 +44,24 @@ import { DomIcon } from "../experience/dom-icon.tsx";
 import { FirstRunIntro } from "../experience/first-run-intro.tsx";
 import type { ChangesSurfaceProps } from "../experience/workspace-changes-surface.tsx";
 import type { FilesSurfaceProps } from "../experience/workspace-files-surface.tsx";
-import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
+import {
+  Alert02Icon,
+  ArrowRight01Icon,
+  CheckmarkCircle02Icon,
+  Loading03Icon,
+} from "@hugeicons/core-free-icons";
 
 import { Button, Icon } from "../ui-system/index.ts";
+
+/**
+ * The runtime state as a glyph, in the same three shapes the status strip uses
+ * so a degraded workspace looks the same wherever it is reported.
+ */
+function runtimeStateGlyph(state: string) {
+  if (state === "onboarding" || state === "chooser") return CheckmarkCircle02Icon;
+  if (state === "degraded" || state === "error" || state === "hard-error") return Alert02Icon;
+  return Loading03Icon;
+}
 import { deriveConnectionHealth } from "./connection-health.ts";
 import {
   reasonIndicatesMissingTmux,
@@ -329,7 +344,7 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
             <section class="runtime-state-card" aria-labelledby="runtime-state-title">
               <div class="runtime-state-card__main">
                 <div class="runtime-state-card__signal" aria-hidden="true">
-                  <i />
+                  <Icon icon={runtimeStateGlyph(props.state)} size="dense" />
                   <span>{props.state}</span>
                 </div>
                 <span class="eyebrow">{props.eyebrow}</span>
@@ -441,17 +456,17 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
                    */}
                   <ul>
                     <li>
-                      <i />
+                      <Icon icon={CheckmarkCircle02Icon} size="dense" />
                       <span>
                         No <code>ide.yml</code> required
                       </span>
                     </li>
                     <li>
-                      <i />
+                      <Icon icon={CheckmarkCircle02Icon} size="dense" />
                       <span>Available harnesses are discovered after opening</span>
                     </li>
                     <li>
-                      <i />
+                      <Icon icon={CheckmarkCircle02Icon} size="dense" />
                       <span>Your tmux session stays the source of truth</span>
                     </li>
                   </ul>
