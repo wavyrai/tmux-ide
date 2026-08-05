@@ -106,6 +106,37 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
 
   await page.screenshot({ path: testInfo.outputPath("1-fleet-visible.png") });
 
+  /*
+   * The GUI-first scope call: the parked surfaces are parked, not deleted.
+   *
+   * A second page against the same live daemon, opened with the flag on, shows
+   * all four dock tools. Bug this catches: the "flag" was a deletion wearing a
+   * flag's name, so there is nothing left to turn back on — which is the whole
+   * difference between a scope decision and an amputation. It runs here, while
+   * exactly one workspace is promoted and a fresh page therefore lands on the
+   * shell, and on its own page so the chain's own page is never reloaded.
+   */
+  const flagged = await page.context().newPage();
+  try {
+    // The dev host's page URL already carries `?devHost=1`, so the flag is
+    // appended through URL rather than by string concatenation — a second `?`
+    // would land inside the devHost value and the flag would silently not exist.
+    const flaggedUrl = new URL(liveApp.pageUrl);
+    flaggedUrl.searchParams.set("tmux-ide.experimental-surfaces", "1");
+    await flagged.goto(flaggedUrl.toString(), { waitUntil: "domcontentloaded" });
+    await expect(
+      flagged.locator('.workbench-dock [role="tab"]'),
+      "the experimental-surfaces flag no longer restores the parked dock tabs",
+    ).toHaveCount(4, { timeout: 60_000 });
+    await proveVisible(
+      flagged.locator("#workbench-dock-tab-missions"),
+      "the Missions tab with the flag on",
+      { minHeight: 20 },
+    );
+  } finally {
+    await flagged.close();
+  }
+
   // --- User path: open the second session as a workspace ------------------
   const openAction = page.getByRole("button", { name: `Open ${secondSession} as workspace` });
   await proveVisible(openAction, `the Open action on the ${secondSession} row`, { minHeight: 16 });
@@ -164,6 +195,24 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
       )}px panel — the tabs read as broken content rather than as the way to open one`,
     ).toEqual([]);
   }
+
+  /*
+   * The GUI-first scope call, on the live shell.
+   *
+   * Withheld means ABSENT — count, not visibility. A zero-height or off-screen
+   * tab still answers a click and still takes a tab stop, so the only assertion
+   * that can tell "parked" apart from "shipped badly" is that the node does not
+   * exist. Bug this catches: the flag hides the surfaces with CSS and ships the
+   * parked orchestration UI to every keyboard user anyway.
+   */
+  await expect(
+    page.locator("#workbench-dock-tab-missions, #workbench-dock-tab-activity"),
+    "the parked Missions/Activity dock tabs are in the live DOM with the flag off",
+  ).toHaveCount(0);
+  await expect(
+    page.locator('.workbench-dock [role="tab"]'),
+    "the reduced dock does not show exactly its two remaining tools",
+  ).toHaveCount(2);
 
   await page.screenshot({ path: testInfo.outputPath("2-second-session-opened.png") });
 
