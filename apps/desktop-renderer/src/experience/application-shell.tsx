@@ -108,6 +108,7 @@ import {
   type DomPaletteEntry,
   type DomViewport,
 } from "./dom-shell.ts";
+import { experimentalSurfacesEnabled, hiddenDockTools } from "./experimental-surfaces.ts";
 
 const PALETTE_OVERLAY_ID = "overlay.palette.trace";
 
@@ -173,6 +174,13 @@ export interface DomApplicationShellProps {
   readonly fleetState?: DesktopFleetCatalogState;
   /** Fixture/preview override of the promote action (defaults to the host mutation). */
   readonly onPromoteSession?: (sessionId: string) => Promise<FleetPromoteOutcome>;
+  /**
+   * Override the GUI-first scope flag (see `experimental-surfaces.ts`). Read
+   * once at construction — it is a startup setting, not a live control — so
+   * fixtures state it as a constant rather than toggling it under a mounted
+   * shell.
+   */
+  readonly experimentalSurfaces?: boolean;
 }
 
 export interface PrimaryNavigationProps {
@@ -281,7 +289,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const dataMode = createMemo<"runtime" | "preview">(() =>
     props.input === undefined ? "preview" : (props.dataMode ?? "runtime"),
   );
-  const [state, setState] = createSignal(createDomShellReplayState(input()));
+  const experimentalSurfaces = props.experimentalSurfaces ?? experimentalSurfacesEnabled();
+  const hiddenTools = hiddenDockTools(experimentalSurfaces);
+  const [state, setState] = createSignal(createDomShellReplayState(input(), hiddenTools));
   const [viewport, setViewport] = createSignal(initialViewport());
   const [createPaneOpen, setCreatePaneOpen] = createSignal(false);
   const [sidebarWidth, setSidebarWidth] = createSignal<number>(DOM_SHELL_GEOMETRY.sidebarWidth);
@@ -296,7 +306,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   let returnFocusElement: HTMLElement | null = null;
   let returnFocusId: string | null = null;
 
-  const shell = createMemo(() => projectDomApplicationShell(input(), state()));
+  const shell = createMemo(() => projectDomApplicationShell(input(), state(), hiddenTools));
   const missionWorkspace = createMemo(() => {
     const value = input();
     return "appWindows" in value ? value.missionWorkspace : undefined;
@@ -670,8 +680,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     previousDataMode = nextDataMode;
     setState((current) =>
       currentDataMode === nextDataMode
-        ? reconcileDomShellReplayState(currentInput, nextInput, current)
-        : createDomShellReplayState(nextInput),
+        ? reconcileDomShellReplayState(currentInput, nextInput, current, hiddenTools)
+        : createDomShellReplayState(nextInput, hiddenTools),
     );
   });
 
@@ -840,6 +850,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     const tool = input().dock.tools.find(
       (candidate) => candidate.id === shell().bottomDock.activeTool,
     )!;
+    // Belt to the projection's braces: a withheld tool has no tab to reach it
+    // by, and no body either, even if a hand-built input names it active.
+    if (hiddenTools.has(tool.id)) return null;
     return (
       <div class="dock-surface" data-surface={tool.id}>
         <div class="dock-surface__rail" aria-hidden="true">

@@ -22,6 +22,7 @@ import type {
 } from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
 import { paneFrameModelFromCohesionPane } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import { NO_HIDDEN_DOCK_TOOLS } from "./experimental-surfaces.ts";
 
 export interface DomViewport {
   readonly width: number;
@@ -94,11 +95,12 @@ export function createDefaultDomPaneFrames(): readonly PaneFrameModel[] {
 
 export function createDomShellReplayState(
   input: ApplicationShellProjectionInputV1,
+  hiddenDockTools: ReadonlySet<ProductSurfaceId> = NO_HIDDEN_DOCK_TOOLS,
 ): ApplicationShellReplayStateV1 {
   return ApplicationShellReplayStateV1SchemaZ.parse({
     activeMode: input.workspace.activeMode,
     dockMode: input.dock.mode,
-    activeDockTool: input.dock.activeTool,
+    activeDockTool: visibleDockTool(input.dock.activeTool, input, hiddenDockTools),
     focus: input.focus,
     selectedResources: [],
   });
@@ -159,6 +161,22 @@ function availableDockTool(
   return input.dock.tools.find((tool) => tool.disabledReason === null)?.id ?? input.dock.activeTool;
 }
 
+/**
+ * Redirect a withheld dock tool onto one the reader can actually see. Identity
+ * when nothing is hidden, so an unflagged shell keeps the exact selection the
+ * snapshot asked for — including a tool the daemon marked unavailable, which
+ * still has an honest disabled body to show.
+ */
+function visibleDockTool(
+  preferred: DockToolId,
+  input: ApplicationShellProjectionInputV1,
+  hiddenDockTools: ReadonlySet<ProductSurfaceId>,
+): DockToolId {
+  if (!hiddenDockTools.has(preferred)) return preferred;
+  const visible = input.dock.tools.filter((tool) => !hiddenDockTools.has(tool.id));
+  return visible.find((tool) => tool.disabledReason === null)?.id ?? visible[0]?.id ?? preferred;
+}
+
 function reconcileResourceSelections(
   state: ApplicationShellReplayStateV1,
   input: ApplicationShellProjectionInputV1,
@@ -183,17 +201,26 @@ export function reconcileDomShellReplayState(
   previousInput: ApplicationShellProjectionInputV1,
   nextInput: ApplicationShellProjectionInputV1,
   current: ApplicationShellReplayStateV1,
+  hiddenDockTools: ReadonlySet<ProductSurfaceId> = NO_HIDDEN_DOCK_TOOLS,
 ): ApplicationShellReplayStateV1 {
-  const snapshotState = createDomShellReplayState(nextInput);
+  const snapshotState = createDomShellReplayState(nextInput, hiddenDockTools);
   if (!sameDomShellIdentity(previousInput, nextInput)) {
     return ApplicationShellReplayStateV1SchemaZ.parse({
       ...snapshotState,
-      activeDockTool: availableDockTool(snapshotState.activeDockTool, nextInput),
+      activeDockTool: visibleDockTool(
+        availableDockTool(snapshotState.activeDockTool, nextInput),
+        nextInput,
+        hiddenDockTools,
+      ),
     });
   }
   return ApplicationShellReplayStateV1SchemaZ.parse({
     ...current,
-    activeDockTool: availableDockTool(current.activeDockTool, nextInput),
+    activeDockTool: visibleDockTool(
+      availableDockTool(current.activeDockTool, nextInput),
+      nextInput,
+      hiddenDockTools,
+    ),
     focus: focusIsAvailable(current.focus, nextInput) ? current.focus : snapshotState.focus,
     selectedResources: reconcileResourceSelections(current, nextInput),
   });
@@ -202,6 +229,7 @@ export function reconcileDomShellReplayState(
 export function projectDomApplicationShell(
   input: ApplicationShellProjectionInputV1,
   state: ApplicationShellReplayStateV1,
+  hiddenDockTools: ReadonlySet<ProductSurfaceId> = NO_HIDDEN_DOCK_TOOLS,
 ): DomApplicationShellProjection {
   const shell = projectApplicationShellV1({
     ...input,
@@ -209,8 +237,19 @@ export function projectDomApplicationShell(
     dock: { ...input.dock, mode: state.dockMode, activeTool: state.activeDockTool },
     focus: state.focus,
   });
+  /*
+   * The canonical projection is registry-driven: it always emits every dock
+   * tool the product knows about, and placement is the host's business. Hiding
+   * withheld tools here — once, at the renderer's own projection seam — is what
+   * makes the dock strip, the command palette and the surface shortcuts agree,
+   * because all three read this one list.
+   */
   return Object.freeze({
     ...shell,
+    bottomDock: Object.freeze({
+      ...shell.bottomDock,
+      tools: shell.bottomDock.tools.filter((tool) => !hiddenDockTools.has(tool.id)),
+    }),
     sidebar: Object.freeze({
       ...shell.sidebar,
       selectedResourceId:

@@ -143,11 +143,18 @@ function withMissionWorkspace(): ApplicationShellProjectionInputV3 {
   });
 }
 
+/**
+ * Most chains here assert the canonical product surface — every dock tool, its
+ * disabled reason, the full action trace — so they render with the m48
+ * experimental surfaces ON. The GUI-first default (off) has its own chain
+ * below, which is where the reduced dock is asserted.
+ */
 function renderShell(
   input: ApplicationShellProjectionInputV1 = createDefaultDomShellInput(),
   onCommand?: (invocation: ApplicationShellCommandInvocation) => void,
   platform = "darwin",
   onPaneAction?: DomApplicationShellProps["onPaneAction"],
+  experimentalSurfaces = true,
 ) {
   const root = document.createElement("div");
   document.body.append(root);
@@ -164,6 +171,7 @@ function renderShell(
           onCommand={onCommand}
           paneFrames={createDefaultDomPaneFrames()}
           onPaneAction={onPaneAction}
+          experimentalSurfaces={experimentalSurfaces}
         />
       ),
       root,
@@ -1348,5 +1356,69 @@ describe("DomApplicationShell agent-graph overlay pass-through", () => {
       '.app-window-card[data-window-id="window.lead"]',
     )!;
     expect(leadAfter.getAttribute("data-agent-status")).toBeNull();
+  });
+});
+
+/*
+ * The m48 GUI-first scope call, asserted at the surface a user meets it on.
+ *
+ * The point of these is that "hidden" means gone: not a zero-height tab, not a
+ * tab pushed past the strip, not a disabled tab with a euphemism on it. A
+ * withheld surface has no button to press and no palette row to find, and the
+ * dock still lands somewhere real.
+ */
+describe("DomApplicationShell GUI-first scope", () => {
+  it("withholds the Missions and Activity tabs from the DOM entirely", () => {
+    const root = renderShell(createDefaultDomShellInput(), undefined, "darwin", undefined, false);
+
+    expect(root.querySelector("#workbench-dock-tab-missions")).toBeNull();
+    expect(root.querySelector("#workbench-dock-tab-activity")).toBeNull();
+    expect(
+      [...root.querySelectorAll('.workbench-dock [role="tab"]')].map((tab) =>
+        tab.getAttribute("data-tab-id"),
+      ),
+    ).toEqual(["files", "changes"]);
+    // The dock's own body panels go with the tabs — a tabpanel with no tab is
+    // exactly the orphan the reduction must not leave behind.
+    expect(root.querySelector("#workbench-dock-panel-missions")).toBeNull();
+    expect(root.querySelector("#workbench-dock-panel-activity")).toBeNull();
+    // Both workspace modes survive: this reduces the dock, not the product.
+    expect(root.querySelectorAll('.primary-tabs [role="tab"]')).toHaveLength(2);
+  });
+
+  it("redirects a snapshot that opens on a withheld tool onto one that exists", () => {
+    // The preview fixture's dock opens on Missions, so this is the default
+    // browser-host path, not a contrived input.
+    expect(createDefaultDomShellInput().dock.activeTool).toBe("missions");
+
+    const root = renderShell(createDefaultDomShellInput(), undefined, "darwin", undefined, false);
+    const body = root.querySelector<HTMLElement>(".dock-surface");
+    expect(body?.dataset.surface).toBe("files");
+    expect(root.querySelector('#workbench-dock-tab-files[aria-selected="true"]')).not.toBeNull();
+    expect(root.textContent).not.toContain("Missions");
+  });
+
+  it("keeps the withheld surfaces out of the command palette too", async () => {
+    const root = renderShell(createDefaultDomShellInput(), undefined, "darwin", undefined, false);
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }),
+    );
+    const paletteInput = root.querySelector<HTMLInputElement>('[role="combobox"]')!;
+    await vi.waitFor(() => expect(document.activeElement).toBe(paletteInput));
+
+    expect(root.querySelector("#palette-option-missions")).toBeNull();
+    expect(root.querySelector("#palette-option-activity")).toBeNull();
+    expect(root.querySelector("#palette-option-files")).not.toBeNull();
+    expect(root.querySelector("#palette-option-terminals")).not.toBeNull();
+  });
+
+  it("restores both tabs when the flag is on, so this is a setting and not a deletion", () => {
+    const root = renderShell(createDefaultDomShellInput(), undefined, "darwin", undefined, true);
+    expect(
+      [...root.querySelectorAll('.workbench-dock [role="tab"]')].map((tab) =>
+        tab.getAttribute("data-tab-id"),
+      ),
+    ).toEqual(["files", "changes", "missions", "activity"]);
+    expect(root.querySelector("#workbench-dock-panel-missions")).not.toBeNull();
   });
 });
