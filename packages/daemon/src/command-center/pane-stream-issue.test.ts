@@ -178,6 +178,16 @@ describe("owner pane-stream issue route", () => {
     const nullApp = appWith(null);
     const unavailable = await parsed(await post(nullApp, mutation()));
     expect(unavailable.status === "error" && unavailable.error.code).toBe("daemon-unavailable");
+
+    // The merged vocabulary's word for it: capacity exhaustion is reported the
+    // same way whichever lease family asked (m45 — was `stream-unavailable`).
+    const capacityApp = appWith({
+      issue: vi.fn(async () => {
+        throw new PaneStreamAdmissionError("live-capacity-exhausted", "full");
+      }),
+    });
+    const capacity = await parsed(await post(capacityApp, mutation()));
+    expect(capacity.status === "error" && capacity.error.code).toBe("attachment-unavailable");
   });
 
   it("rejects malformed envelopes and query strings", async () => {

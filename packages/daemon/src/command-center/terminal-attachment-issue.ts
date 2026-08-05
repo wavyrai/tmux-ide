@@ -6,8 +6,8 @@ import {
   TerminalAttachmentIssueMutationRequestSchemaZ,
   TerminalAttachmentIssueResultSchemaZ,
   type TerminalAttachRequest,
-  type TerminalAttachmentIssueErrorCode,
   type TerminalAttachmentIssueResult,
+  type TerminalIssueErrorCode,
 } from "@tmux-ide/contracts";
 
 import type { WorkspaceRegistry } from "../lib/workspace-registry.ts";
@@ -38,8 +38,9 @@ export interface TerminalAttachmentIssueRouteOptions {
   readonly backend: TerminalAttachmentIssueBackend | null;
 }
 
+/** One issue-error vocabulary for both lease families — see issue-error.ts. */
 function issueError(
-  code: TerminalAttachmentIssueErrorCode,
+  code: TerminalIssueErrorCode,
   reason: string,
   retryable = false,
 ): TerminalAttachmentIssueResult {

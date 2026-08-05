@@ -5,8 +5,8 @@ import {
   PaneStreamIssueDescriptorSchemaZ,
   PaneStreamIssueMutationRequestSchemaZ,
   PaneStreamIssueResultSchemaZ,
-  type PaneStreamIssueErrorCode,
   type PaneStreamIssueResult,
+  type TerminalIssueErrorCode,
   type PaneStreamLeaseRequest,
 } from "@tmux-ide/contracts";
 
@@ -39,8 +39,9 @@ export interface PaneStreamIssueRouteOptions {
   readonly backend: PaneStreamIssueBackend | null;
 }
 
+/** One issue-error vocabulary for both lease families — see issue-error.ts. */
 function issueError(
-  code: PaneStreamIssueErrorCode,
+  code: TerminalIssueErrorCode,
   reason: string,
   retryable = false,
 ): PaneStreamIssueResult {
@@ -139,7 +140,7 @@ function mapBackendError(error: unknown): PaneStreamIssueResult {
       case "invalid-request":
         return issueError("invalid-request", "Pane-stream request is invalid.");
       default:
-        return issueError("stream-unavailable", "Pane streaming is unavailable.", true);
+        return issueError("attachment-unavailable", "Pane streaming is unavailable.", true);
     }
   }
   if (error instanceof PaneStreamAdmissionError) {
@@ -153,12 +154,12 @@ function mapBackendError(error: unknown): PaneStreamIssueResult {
       case "pending-capacity-exhausted":
       case "preauth-capacity-exhausted":
       case "live-capacity-exhausted":
-        return issueError("stream-unavailable", "Pane streaming is unavailable.", true);
+        return issueError("attachment-unavailable", "Pane streaming is unavailable.", true);
       default:
-        return issueError("stream-unavailable", "Pane streaming is unavailable.");
+        return issueError("attachment-unavailable", "Pane streaming is unavailable.");
     }
   }
-  return issueError("stream-unavailable", "Pane streaming is unavailable.", true);
+  return issueError("attachment-unavailable", "Pane streaming is unavailable.", true);
 }
 
 /**
