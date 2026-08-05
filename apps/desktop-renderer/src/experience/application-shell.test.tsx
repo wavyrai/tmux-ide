@@ -729,7 +729,9 @@ describe("visible DOM application shell", () => {
     const root = renderShell();
     const experience = installApplicationStyles(root);
     const connection = root.querySelector<HTMLElement>(".status-strip__connection")!;
-    const connectionIndicator = connection.querySelector<HTMLElement>("i")!;
+    // The strip's indicator is a stroked glyph, so its tone lives on `color`
+    // rather than a fill — it states the connection in shape as well as hue.
+    const connectionIndicator = connection.querySelector<SVGSVGElement>("svg")!;
     const runningPane = root.querySelector<HTMLElement>(
       '.web-pane-frame[data-pane-id="pane.implementer"]',
     )!;
@@ -741,7 +743,7 @@ describe("visible DOM application shell", () => {
       '[data-item-kind="status"] i',
     )!;
 
-    expect(getComputedStyle(connectionIndicator).backgroundColor).toBe(
+    expect(getComputedStyle(connectionIndicator).color).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.status.warning],
     );
     expect(getComputedStyle(connection).backgroundColor).not.toBe(

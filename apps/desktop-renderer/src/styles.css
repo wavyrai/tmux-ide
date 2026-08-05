@@ -774,11 +774,12 @@ select:focus-visible,
   white-space: nowrap;
 }
 
-.titlebar__update-chip-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--tmi-radius-pill);
-  background: var(--tmux-ide-status-success);
+/* The staged update reads as a direction, not a dot: the chip says something
+ * is waiting to be applied, and an arrow says that where a dot only says
+ * "green". */
+.titlebar__update-chip-glyph {
+  flex: none;
+  color: var(--tmux-ide-status-success);
 }
 
 .titlebar__update-chip-hint {
@@ -1758,6 +1759,32 @@ kbd {
 .status-strip__connection[data-state="connected"] > i {
   border-color: var(--tmux-ide-status-success) !important;
   background: var(--tmux-ide-status-success);
+}
+
+/*
+ * The strip states itself in shape as well as color. A dot can only say
+ * "green"; a check, an alert and a spinner say which state without the reader
+ * having to have learned the palette — and survive a color-blind viewer.
+ */
+.status-strip__connection > svg {
+  flex: none;
+}
+
+.status-strip__connection[data-state="connected"] > svg,
+.status-strip__connection[data-state="complete"] > svg {
+  color: var(--tmux-ide-status-success);
+}
+
+.status-strip__connection[data-state="running"] > svg {
+  color: var(--tmux-ide-status-info);
+}
+
+.status-strip__connection[data-state="reconnecting"] > svg,
+.status-strip__connection[data-state="recovery"] > svg,
+.status-strip__connection[data-state="recovering"] > svg,
+.status-strip__connection[data-state="warning"] > svg,
+.status-strip__connection[data-state="disconnected"] > svg {
+  color: var(--tmux-ide-status-warning);
 }
 
 .sidebar-row i[data-state="running"],

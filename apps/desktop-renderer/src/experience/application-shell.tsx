@@ -85,7 +85,13 @@ import {
   type AppWindowMirrorNodeModel,
 } from "./app-window-canvas.tsx";
 import { Button, Icon, IconButton, ResizeHandle, WorkspaceIdentity } from "../ui-system/index.ts";
-import { ComputerTerminal01Icon, UserGroupIcon } from "@hugeicons/core-free-icons";
+import {
+  Alert02Icon,
+  CheckmarkCircle02Icon,
+  ComputerTerminal01Icon,
+  Loading03Icon,
+  UserGroupIcon,
+} from "@hugeicons/core-free-icons";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import type { AppWindowCanvasCommandInvocation } from "./app-window-canvas-presenter.ts";
 import {
@@ -104,6 +110,18 @@ import {
 } from "./dom-shell.ts";
 
 const PALETTE_OVERLAY_ID = "overlay.palette.trace";
+
+/**
+ * The connection state as a glyph. The strip already carried the state in
+ * color; shape says it a second way, which is the difference between a status
+ * a reader recognises and one they have to have learned — and it survives a
+ * viewer who cannot separate the palette.
+ */
+function connectionGlyph(state: string) {
+  if (state === "connected" || state === "complete") return CheckmarkCircle02Icon;
+  if (state === "warning" || state === "disconnected" || state === "blocked") return Alert02Icon;
+  return Loading03Icon;
+}
 
 export interface DomApplicationShellProps {
   readonly host: HostCapabilities;
@@ -1350,7 +1368,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           data-state={statusStrip().state}
           title={statusStrip().message}
         >
-          <i />
+          <Icon icon={connectionGlyph(statusStrip().state)} size="dense" />
           <span>{statusStrip().message}</span>
         </span>
         <span class="status-strip__safe" title={statusStrip().safeState}>

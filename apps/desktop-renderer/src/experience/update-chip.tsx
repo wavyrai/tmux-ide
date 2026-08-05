@@ -1,4 +1,7 @@
+import { ArrowUp01Icon } from "@hugeicons/core-free-icons";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
+
+import { Icon } from "../ui-system/index.ts";
 import type { DesktopUpdateStatus, HostCapabilities } from "@tmux-ide/contracts";
 
 /**
@@ -38,7 +41,7 @@ export function UpdateChip(props: { readonly host: HostCapabilities }): ReturnTy
           aria-live="polite"
           title={`Version ${current().availableVersion ?? ""} is staged. Restart tmux-ide to apply it.`.trim()}
         >
-          <span class="titlebar__update-chip-dot" aria-hidden="true" />
+          <Icon icon={ArrowUp01Icon} size="dense" class="titlebar__update-chip-glyph" />
           <span class="titlebar__update-chip-label">
             Update ready
             <Show when={current().availableVersion}>

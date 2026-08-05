@@ -1,18 +1,16 @@
+import { PlusSignIcon } from "@hugeicons/core-free-icons";
 import { createSignal, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 
 import { Button } from "./button.tsx";
+import { Icon } from "./icon.tsx";
 import { EmptyState } from "./empty-state.tsx";
 import { IconButton } from "./icon-button.tsx";
 import { ResizeHandle } from "./resize-handle.tsx";
 import { Tabs } from "./tabs.tsx";
 
 function PlusIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-linecap="round" />
-    </svg>
-  );
+  return <Icon icon={PlusSignIcon} />;
 }
 
 /** Static review fixture; deliberately not wired into the production shell. */
