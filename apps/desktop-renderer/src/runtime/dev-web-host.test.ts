@@ -1,11 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonEventServerFrame, DaemonInstanceIdentity } from "@tmux-ide/contracts";
 
 import {
+  createDevWebHostCapabilities,
   projectDaemonServerFrame,
   sameIdentity,
   type DevWorkspaceCatalogEntry,
 } from "./dev-web-host.ts";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const CATALOG: readonly DevWorkspaceCatalogEntry[] = [
   { workspaceName: "alpha", sessionName: "alpha-session" },
@@ -107,5 +112,64 @@ describe("projectDaemonServerFrame", () => {
     expect(projectDaemonServerFrame(frame({ type: "hello", daemon: IDENTITY }), CATALOG)).toEqual(
       [],
     );
+  });
+});
+
+describe("development web host route keying", () => {
+  const CONFIG = {
+    daemonOrigin: "http://127.0.0.1:6060",
+    daemonWebSocketOrigin: "ws://127.0.0.1:6060",
+    ownerToken: "owner-token",
+  };
+
+  /**
+   * Records every path the host asks for, answering the identity and catalog
+   * reads it needs to get there. The resource read itself answers a shape the
+   * envelope schema rejects, which is fine: the assertion is the URL, and a
+   * wrong route key is a silent 404 rather than a typed refusal — exactly the
+   * failure this proves cannot be chosen per call site any more.
+   */
+  function recordingHost() {
+    const paths: string[] = [];
+    const fetchImpl = vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      paths.push(`${url.pathname}${url.search}`);
+      const body =
+        url.pathname === "/api/v2/capabilities"
+          ? { status: "ok", daemon: IDENTITY, capabilities: { appWindowMutation: { available: true } } }
+          : url.pathname === "/api/resources/workspace-catalog"
+            ? { version: 1, daemon: IDENTITY, workspaces: [...CATALOG] }
+            : { unreadable: true };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+      } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    return { paths, host: createDevWebHostCapabilities(CONFIG) };
+  }
+
+  it("keys the application shell on the tmux session name", async () => {
+    const { paths, host } = recordingHost();
+    await host.daemon.fetchApplicationShell({ workspaceName: "alpha" });
+    expect(
+      paths.some((path) => path.startsWith("/api/project/alpha-session/application-shell")),
+    ).toBe(true);
+    expect(paths.some((path) => path.startsWith("/api/project/alpha/application-shell"))).toBe(
+      false,
+    );
+    host.dispose();
+  });
+
+  it("keys files, previews, changes and diffs on the workspace name", async () => {
+    const { paths, host } = recordingHost();
+    await host.daemon.fetchWorkspaceFiles({ workspaceName: "alpha" });
+    await host.daemon.fetchWorkspaceChanges({ workspaceName: "alpha" });
+    for (const suffix of ["/files", "/changes"]) {
+      expect(paths).toContain(`/api/project/alpha${suffix}`);
+    }
+    expect(paths.some((path) => path.includes("alpha-session"))).toBe(false);
+    host.dispose();
   });
 });

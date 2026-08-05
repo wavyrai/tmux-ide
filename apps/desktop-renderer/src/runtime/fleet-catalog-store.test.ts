@@ -6,6 +6,7 @@ import type {
   DesktopDaemonHostSubscriptionResult,
   HostCapabilities,
 } from "@tmux-ide/contracts";
+import { createDaemonResourceMethods } from "@tmux-ide/contracts";
 
 import {
   createDesktopFleetCatalogStore,
@@ -56,29 +57,14 @@ function fakeDaemonHost(
   });
   const preview = { code: "preview-only" as const, reason: "fixture only" };
   const daemon: HostCapabilities["daemon"] = {
-    capabilities: async () => ({ status: "error", error: preview }),
-    mutateAppWindow: async () => ({ status: "error", error: preview }),
-    createWorkspacePane: async () => ({ status: "error", error: preview }),
-    issueTerminalAttachment: async () => ({
-      status: "error",
-      error: { ...preview, retryable: false },
-    }),
-    issuePaneStream: async () => ({
-      status: "error",
-      error: { code: "attachment-unavailable", reason: "fixture only", retryable: false },
-    }),
-    refreshConnection: async () => ({
-      outcome: "unchanged",
-      daemon: { status: "connected", identity: DAEMON },
-    }),
-    listWorkspaces: async () => ({ status: "error", error: preview }),
+    // Every resource this fixture does not care about refuses identically, and
+    // a resource added to the union never breaks the fixture again.
+    ...createDaemonResourceMethods(async (request) =>
+      request.resource === "refreshConnection"
+        ? { outcome: "unchanged", daemon: { status: "connected", identity: DAEMON } }
+        : { status: "error", error: preview },
+    ),
     fetchFleetCatalog: fetch as HostCapabilities["daemon"]["fetchFleetCatalog"],
-    promoteWorkspace: async () => ({ status: "error", error: preview }),
-    fetchApplicationShell: async () => ({ status: "error", error: preview }),
-    fetchWorkspaceFiles: async () => ({ status: "error", error: preview }),
-    fetchWorkspaceFilePreview: async () => ({ status: "error", error: preview }),
-    fetchWorkspaceChanges: async () => ({ status: "error", error: preview }),
-    fetchWorkspaceChangeDiff: async () => ({ status: "error", error: preview }),
     subscribe,
   };
   return {

@@ -236,4 +236,60 @@ describe("startup readiness diagnostics", () => {
     expect(lines).not.toContain("  line 3");
     expect(lines.at(-1)).toBe("The engine was stopped by SIGKILL.");
   });
+
+  it("names the daemon's stuck rung while the daemon itself is CONNECTED", () => {
+    // The ladder reached the disconnected screens by riding on the capability
+    // state. This is the other half (m45.3): a connected daemon that cannot
+    // serve a workspace, where `credential-held` and `attachment-issuable` are
+    // rungs only the daemon can answer for. The composition below is exactly
+    // what the workspace-degraded surface performs.
+    const lines = startupReadinessDiagnostics(
+      projectDesktopStartupReadiness({
+        daemon: {
+          status: "connected",
+          identity: {
+            protocolVersion: 1,
+            productVersion: "2.8.0",
+            instanceId: "11111111-1111-4111-8111-111111111111",
+            startedAt: OBSERVED_AT,
+          },
+        },
+        ladder: buildStartupReadinessLadder(
+          [
+            { status: "satisfied" },
+            { status: "satisfied" },
+            { status: "satisfied" },
+            { status: "satisfied" },
+            {
+              status: "stuck",
+              reason: { vocabulary: "startup-readiness", code: "attachment-runtime-unready" },
+            },
+          ],
+          OBSERVED_AT,
+        ),
+        observedAt: OBSERVED_AT,
+      }),
+    );
+    expect(lines[0]).toBe(
+      "Startup stalled at: preparing terminal attachment — the attachment runtime never became ready.",
+    );
+  });
+
+  it("falls back to the three rungs a connection proves when no ladder was read", () => {
+    const lines = startupReadinessDiagnostics(
+      projectDesktopStartupReadiness({
+        daemon: {
+          status: "connected",
+          identity: {
+            protocolVersion: 1,
+            productVersion: "2.8.0",
+            instanceId: "11111111-1111-4111-8111-111111111111",
+            startedAt: OBSERVED_AT,
+          },
+        },
+        observedAt: OBSERVED_AT,
+      }),
+    );
+    expect(lines[0]).toBe("Startup is waiting on: reading the terminal catalog.");
+  });
 });

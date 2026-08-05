@@ -69,8 +69,8 @@ describe("desktop preload daemon bridge", () => {
       args: { kind: "terminal" as const, workspaceName: "product" },
     };
     electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
-      expect(channel).toBe(HOST_IPC.daemonCreateWorkspacePane);
-      expect(value).toEqual(invocation);
+      expect(channel).toBe(HOST_IPC.daemonRequest);
+      expect(value).toEqual({ resource: "createWorkspacePane", request: invocation });
       return {
         status: "error",
         error: { code: "daemon-unavailable", reason: "The canonical daemon is unavailable." },
@@ -88,8 +88,8 @@ describe("desktop preload daemon bridge", () => {
       viewport: { cols: 120, rows: 40 },
     };
     electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
-      expect(channel).toBe(HOST_IPC.daemonIssueTerminalAttachment);
-      expect(value).toEqual(attachment);
+      expect(channel).toBe(HOST_IPC.daemonRequest);
+      expect(value).toEqual({ resource: "issueTerminalAttachment", request: attachment });
       return {
         status: "error",
         error: {
@@ -111,8 +111,8 @@ describe("desktop preload daemon bridge", () => {
       viewerMode: "read-only" as const,
     };
     electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
-      expect(channel).toBe(HOST_IPC.daemonIssuePaneStream);
-      expect(value).toEqual(stream);
+      expect(channel).toBe(HOST_IPC.daemonRequest);
+      expect(value).toEqual({ resource: "issuePaneStream", request: stream });
       return {
         status: "error",
         error: {
@@ -143,8 +143,9 @@ describe("desktop preload daemon bridge", () => {
   });
 
   it("exposes and validates the semantic daemon refresh result", async () => {
-    electron.invoke.mockImplementationOnce(async (channel: string) => {
-      expect(channel).toBe(HOST_IPC.daemonRefreshConnection);
+    electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
+      expect(channel).toBe(HOST_IPC.daemonRequest);
+      expect(value).toEqual({ resource: "refreshConnection" });
       return {
         outcome: "generation-replaced",
         previousIdentity: null,

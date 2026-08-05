@@ -5,6 +5,7 @@ import {
   type DesktopDaemonEvent,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
+import { createDaemonResourceMethods } from "@tmux-ide/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { createHostDaemonTransport } from "./host-daemon-transport.ts";
@@ -29,67 +30,32 @@ function daemonHost(
 ): Pick<HostCapabilities, "daemon"> {
   return {
     daemon: {
-      capabilities: async () => ({
-        status: "ok",
-        daemon: DAEMON,
-        capabilities: { appWindowMutation: { available: true } },
-      }),
-      mutateAppWindow: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      createWorkspacePane: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      issueTerminalAttachment: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only", retryable: false },
-      }),
-      issuePaneStream: async () => ({
-        status: "error",
-        error: { code: "attachment-unavailable", reason: "fixture only", retryable: false },
-      }),
-      refreshConnection: async () => ({
-        outcome: "unchanged",
-        daemon: { status: "connected", identity: DAEMON },
-      }),
-      listWorkspaces: async () => ({
-        status: "ok",
-        daemon: DAEMON,
-        workspaces: [{ workspaceName: "product" }],
-      }),
-      fetchFleetCatalog: async () => ({
-        status: "ok",
-        envelope: { version: 1, daemon: DAEMON, sessions: [] },
-      }),
-      promoteWorkspace: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchApplicationShell: async () => ({
-        status: "ok",
-        envelope: {
-          version: APPLICATION_SHELL_RESOURCE_VERSION,
-          daemon: DAEMON,
-          resource: RESOURCE,
-        },
-      }),
-      fetchWorkspaceFiles: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchWorkspaceFilePreview: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchWorkspaceChanges: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchWorkspaceChangeDiff: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
+      ...createDaemonResourceMethods(async (request) => {
+        switch (request.resource) {
+          case "capabilities":
+            return {
+              status: "ok",
+              daemon: DAEMON,
+              capabilities: { appWindowMutation: { available: true } },
+            };
+          case "refreshConnection":
+            return { outcome: "unchanged", daemon: { status: "connected", identity: DAEMON } };
+          case "listWorkspaces":
+            return { status: "ok", daemon: DAEMON, workspaces: [{ workspaceName: "product" }] };
+          case "fetchFleetCatalog":
+            return { status: "ok", envelope: { version: 1, daemon: DAEMON, sessions: [] } };
+          case "fetchApplicationShell":
+            return {
+              status: "ok",
+              envelope: {
+                version: APPLICATION_SHELL_RESOURCE_VERSION,
+                daemon: DAEMON,
+                resource: RESOURCE,
+              },
+            };
+          default:
+            return { status: "error", error: { code: "preview-only", reason: "fixture only" } };
+        }
       }),
       subscribe: async () => ({ status: "subscribed", unsubscribe: () => undefined }),
       ...overrides,

@@ -219,19 +219,15 @@ function createHostHarness() {
       daemon: { status: "connected" as const, identity: daemon },
       onboarding: { introAcknowledged: true as const },
     })),
-    lifecycle: { requestQuit: async () => undefined },
     window: {
-      getState: async () => ({ maximized: false, fullscreen: false, focused: true }),
       minimize: async () => ({ maximized: false, fullscreen: false, focused: true }),
       toggleMaximized: async () => ({ maximized: true, fullscreen: false, focused: true }),
       close: async () => undefined,
       onStateChanged: () => () => undefined,
     },
-    menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
     workspace: { openProjectDirectory: async () => null },
     onboarding: { acknowledgeIntro: async () => undefined },
     theme: {
-      getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,
     },
     update: {
@@ -243,6 +239,10 @@ function createHostHarness() {
       onStatusChanged: () => () => undefined,
     },
     daemon: {
+      startupReadiness: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
       capabilities: vi.fn(async () => ({
         status: "ok" as const,
         daemon,
@@ -405,7 +405,7 @@ describe("production terminal composition", () => {
       return value!;
     });
     expect(placement.disabled).toBe(false);
-    expect(harness.host.apiVersion).toBe(12);
+    expect(harness.host.apiVersion).toBe(13);
     dispose();
   });
 

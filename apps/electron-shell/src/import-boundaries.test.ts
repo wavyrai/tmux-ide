@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { DAEMON_RESOURCE_KINDS } from "@tmux-ide/contracts";
+
 import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -49,30 +51,13 @@ describe("desktop process boundaries", () => {
   it("exposes only the reviewed invoke vocabulary", () => {
     expect(HOST_INVOKE_CHANNELS).toEqual([
       HOST_IPC.bootstrap,
-      HOST_IPC.lifecycleQuit,
-      HOST_IPC.windowGetState,
       HOST_IPC.windowMinimize,
       HOST_IPC.windowToggleMaximized,
       HOST_IPC.windowClose,
-      HOST_IPC.menuShowApplication,
       HOST_IPC.workspaceOpenProjectDirectory,
       HOST_IPC.onboardingAcknowledgeIntro,
-      HOST_IPC.themeGetState,
       HOST_IPC.updateGetStatus,
-      HOST_IPC.daemonRefreshConnection,
-      HOST_IPC.daemonCapabilities,
-      HOST_IPC.daemonCreateWorkspacePane,
-      HOST_IPC.daemonMutateAppWindow,
-      HOST_IPC.daemonIssueTerminalAttachment,
-      HOST_IPC.daemonIssuePaneStream,
-      HOST_IPC.daemonListWorkspaces,
-      HOST_IPC.daemonFetchFleetCatalog,
-      HOST_IPC.daemonPromoteWorkspace,
-      HOST_IPC.daemonFetchApplicationShell,
-      HOST_IPC.daemonFetchWorkspaceFiles,
-      HOST_IPC.daemonFetchWorkspaceFilePreview,
-      HOST_IPC.daemonFetchWorkspaceChanges,
-      HOST_IPC.daemonFetchWorkspaceChangeDiff,
+      HOST_IPC.daemonRequest,
       HOST_IPC.daemonSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);
@@ -82,6 +67,19 @@ describe("desktop process boundaries", () => {
     expect(
       Object.values(HOST_IPC).some((channel) => /byte|pty|terminal-data/iu.test(channel)),
     ).toBe(false);
+  });
+
+  it("reaches every daemon resource over exactly one request channel", () => {
+    // The channel is one; the reachable surface is still the closed union, so
+    // "generic channel" and "generic capability" stay different things.
+    const daemonChannels = HOST_INVOKE_CHANNELS.filter((channel) => channel.includes("/daemon/"));
+    expect(daemonChannels).toEqual([
+      HOST_IPC.daemonRequest,
+      HOST_IPC.daemonSubscribe,
+      HOST_IPC.daemonUnsubscribe,
+    ]);
+    expect(DAEMON_RESOURCE_KINDS.length).toBe(15);
+    expect(new Set(DAEMON_RESOURCE_KINDS).size).toBe(DAEMON_RESOURCE_KINDS.length);
   });
 
   it("keeps canonical daemon attachment in Electron main and out of preload", async () => {

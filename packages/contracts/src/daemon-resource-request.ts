@@ -211,8 +211,14 @@ export const DAEMON_RESOURCE_KINDS = Object.keys(
   DAEMON_RESOURCE_RESULT_SCHEMAS,
 ) as readonly DaemonResourceKind[];
 
+/**
+ * Own keys only. `"toString" in record` is true for every object, and this
+ * guard decides whether a renderer-supplied string names a resource at all.
+ */
+const DAEMON_RESOURCE_KIND_SET: ReadonlySet<string> = new Set(DAEMON_RESOURCE_KINDS);
+
 export function isDaemonResourceKind(value: unknown): value is DaemonResourceKind {
-  return typeof value === "string" && value in DAEMON_RESOURCE_RESULT_SCHEMAS;
+  return typeof value === "string" && DAEMON_RESOURCE_KIND_SET.has(value);
 }
 
 /**

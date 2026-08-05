@@ -426,9 +426,13 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       ladder = null;
     }
     assertRendererAuthority(event, expectedGeneration);
-    return ladder === null
-      ? { status: "error" as const, error: daemonCapabilityError("daemon-unavailable") }
-      : DesktopDaemonStartupReadinessResultSchemaZ.parse({ status: "ok", ladder });
+    // safeParse, not parse: a daemon that answers with a ladder this build
+    // cannot read leaves the surface without a diagnostic, which is the same
+    // outcome as no ladder at all. It must not fail the request.
+    const parsed = DesktopDaemonStartupReadinessResultSchemaZ.safeParse({ status: "ok", ladder });
+    return parsed.success
+      ? parsed.data
+      : { status: "error" as const, error: daemonCapabilityError("invalid-response") };
   };
 
   const createWorkspacePane = async (

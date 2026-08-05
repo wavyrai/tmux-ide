@@ -147,9 +147,7 @@ function createHostHarness() {
   const host: HostCapabilities = {
     apiVersion: DESKTOP_HOST_API_VERSION,
     bootstrap: vi.fn(async () => activeBootstrap),
-    lifecycle: { requestQuit: async () => undefined },
     window: {
-      getState: async () => INITIAL_WINDOW,
       minimize: async () => INITIAL_WINDOW,
       toggleMaximized: async () => INITIAL_WINDOW,
       close: async () => undefined,
@@ -158,11 +156,9 @@ function createHostHarness() {
         return stopWindow;
       },
     },
-    menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
     workspace: { openProjectDirectory: vi.fn(async () => null) },
     onboarding: { acknowledgeIntro: vi.fn(async () => undefined) },
     theme: {
-      getState: async () => ({ mode: "light", highContrast: false, reducedMotion: false }),
       onChanged(listener) {
         publishTheme = listener;
         return stopTheme;
@@ -177,6 +173,10 @@ function createHostHarness() {
       onStatusChanged: () => () => undefined,
     },
     daemon: {
+      startupReadiness: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
       capabilities: vi.fn(async () => ({
         status: "ok" as const,
         daemon: activeDaemon,

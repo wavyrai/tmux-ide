@@ -1,6 +1,8 @@
 import {
   AppWindowMutationArgumentsSchemaZ,
   AppWindowMutationRequestSchemaZ,
+  daemonWorkspaceRouteName,
+  type DaemonWorkspaceResourceKind,
   AppWindowMutationResultSchemaZ,
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
@@ -990,7 +992,7 @@ export class DaemonResourceBroker {
       let raw: unknown;
       try {
         raw = await this.#requestJson(
-          `/api/project/${encodeURIComponent(workspace.sessionName)}/application-shell?version=${negotiatedVersion}`,
+          `/api/project/${encodeURIComponent(daemonWorkspaceRouteName("fetchApplicationShell", workspace))}/application-shell?version=${negotiatedVersion}`,
           negotiatedVersion === APPLICATION_SHELL_RESOURCE_V3_VERSION
             ? APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES
             : this.#maxResponseBytes,
@@ -1005,7 +1007,7 @@ export class DaemonResourceBroker {
         }
         negotiatedVersion = APPLICATION_SHELL_RESOURCE_V2_VERSION;
         raw = await this.#requestJson(
-          `/api/project/${encodeURIComponent(workspace.sessionName)}/application-shell?version=${negotiatedVersion}`,
+          `/api/project/${encodeURIComponent(daemonWorkspaceRouteName("fetchApplicationShell", workspace))}/application-shell?version=${negotiatedVersion}`,
           this.#maxResponseBytes,
         );
       }
@@ -1036,6 +1038,7 @@ export class DaemonResourceBroker {
       ? `?directoryId=${encodeURIComponent(parsed.data.directoryId)}`
       : "";
     return this.#fetchWorkspaceResource(
+      "fetchWorkspaceFiles",
       parsed.data.workspaceName,
       (name) => `/api/project/${name}/files${query}`,
       WorkspaceFilesCatalogEnvelopeV1SchemaZ,
@@ -1051,6 +1054,7 @@ export class DaemonResourceBroker {
     }
     const fileId = encodeURIComponent(parsed.data.fileId);
     return this.#fetchWorkspaceResource(
+      "fetchWorkspaceFilePreview",
       parsed.data.workspaceName,
       (name) => `/api/project/${name}/file-preview?fileId=${fileId}`,
       WorkspaceFilePreviewEnvelopeV1SchemaZ,
@@ -1063,6 +1067,7 @@ export class DaemonResourceBroker {
       return { status: "error", error: daemonCapabilityError("invalid-request") };
     }
     return this.#fetchWorkspaceResource(
+      "fetchWorkspaceChanges",
       parsed.data.workspaceName,
       (name) => `/api/project/${name}/changes`,
       WorkspaceChangesCatalogEnvelopeV1SchemaZ,
@@ -1078,6 +1083,7 @@ export class DaemonResourceBroker {
     }
     const changeId = encodeURIComponent(parsed.data.changeId);
     return this.#fetchWorkspaceResource(
+      "fetchWorkspaceChangeDiff",
       parsed.data.workspaceName,
       (name) => `/api/project/${name}/change-diff?changeId=${changeId}`,
       WorkspaceChangeDiffEnvelopeV1SchemaZ,
@@ -1113,13 +1119,19 @@ export class DaemonResourceBroker {
   }
 
   /**
-   * Owner-authenticated read of a generation-stamped workspace resource. The
-   * semantic workspace name is resolved through the private catalog and used as
-   * the route parameter; a stale daemon generation on the envelope is rejected.
+   * Owner-authenticated read of a generation-stamped workspace resource.
+   *
+   * The route parameter is resolved through the private catalog, and WHICH of
+   * the entry's two names it is comes from the contracts route-key table rather
+   * than from this method or its callers. That fork used to be implicit here —
+   * this helper always interpolated the workspace name, while
+   * `fetchApplicationShell` separately interpolated the session name — and a
+   * wrong choice is a silent 404 rather than a typed refusal.
    */
   async #fetchWorkspaceResource<TEnvelope extends { daemon: DaemonInstanceIdentity }>(
+    resource: DaemonWorkspaceResourceKind,
     workspaceName: string,
-    buildPath: (encodedWorkspaceName: string) => string,
+    buildPath: (encodedRouteName: string) => string,
     envelopeSchema: z.ZodType<TEnvelope>,
   ): Promise<
     { status: "ok"; envelope: TEnvelope } | { status: "error"; error: DesktopDaemonCapabilityError }
@@ -1133,7 +1145,7 @@ export class DaemonResourceBroker {
       const workspace = workspaces.find((candidate) => candidate.workspaceName === workspaceName);
       if (!workspace) throw new BrokerFailure(daemonCapabilityError("workspace-not-found"));
       const raw = await this.#requestJson(
-        buildPath(encodeURIComponent(workspace.workspaceName)),
+        buildPath(encodeURIComponent(daemonWorkspaceRouteName(resource, workspace))),
         this.#maxResponseBytes,
         true,
       );

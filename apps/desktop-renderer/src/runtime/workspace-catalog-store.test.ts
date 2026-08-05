@@ -8,6 +8,7 @@ import {
   type DesktopDaemonListWorkspacesResult,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
+import { createDaemonResourceMethods } from "@tmux-ide/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -92,59 +93,13 @@ function fakeDaemonHost(
     return subscribeResult ? subscribeResult() : ({ status: "subscribed", unsubscribe } as const);
   });
   const daemon: HostCapabilities["daemon"] = {
-    capabilities: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "fixture only" },
-    }),
-    mutateAppWindow: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "fixture only" },
-    }),
-    createWorkspacePane: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "fixture only" },
-    }),
-    issueTerminalAttachment: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "fixture only", retryable: false },
-    }),
-    issuePaneStream: async () => ({
-      status: "error",
-      error: { code: "attachment-unavailable", reason: "fixture only", retryable: false },
-    }),
-    refreshConnection: async () => ({
-      outcome: "unchanged",
-      daemon: { status: "connected", identity: DAEMON },
-    }),
+    // One refusal for every resource these tests do not exercise.
+    ...createDaemonResourceMethods(async (request) =>
+      request.resource === "refreshConnection"
+        ? { outcome: "unchanged", daemon: { status: "connected", identity: DAEMON } }
+        : { status: "error", error: { code: "preview-only", reason: "fixture only" } },
+    ),
     listWorkspaces: list as HostCapabilities["daemon"]["listWorkspaces"],
-    fetchFleetCatalog: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "not used by catalog tests" },
-    }),
-    promoteWorkspace: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "not used by catalog tests" },
-    }),
-    fetchApplicationShell: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "not used by catalog tests" },
-    }),
-    fetchWorkspaceFiles: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "not used by catalog tests" },
-    }),
-    fetchWorkspaceFilePreview: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "not used by catalog tests" },
-    }),
-    fetchWorkspaceChanges: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "not used by catalog tests" },
-    }),
-    fetchWorkspaceChangeDiff: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "not used by catalog tests" },
-    }),
     subscribe,
   };
   return {
@@ -875,6 +830,6 @@ describe("desktop live workspace catalog and selection store", () => {
 
 describe("workspace catalog host contract seam", () => {
   it("uses the current versioned facade without exposing a generic transport", () => {
-    expect(DESKTOP_HOST_API_VERSION).toBe(12);
+    expect(DESKTOP_HOST_API_VERSION).toBe(13);
   });
 });

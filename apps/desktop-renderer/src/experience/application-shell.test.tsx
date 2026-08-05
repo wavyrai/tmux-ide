@@ -12,6 +12,7 @@ import {
   type DesktopWindowState,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
+import { createDaemonResourceMethods } from "@tmux-ide/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
@@ -64,19 +65,15 @@ function host(): HostCapabilities {
       daemon: { status: "unavailable", code: "preview-only", reason: "fixture only" },
       onboarding: { introAcknowledged: true },
     }),
-    lifecycle: { requestQuit: async () => undefined },
     window: {
-      getState: async () => WINDOW_STATE,
       minimize: async () => WINDOW_STATE,
       toggleMaximized: async () => WINDOW_STATE,
       close: async () => undefined,
       onStateChanged: () => () => undefined,
     },
-    menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
     workspace: { openProjectDirectory: async () => null },
     onboarding: { acknowledgeIntro: async () => undefined },
     theme: {
-      getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,
     },
     update: {
@@ -88,65 +85,13 @@ function host(): HostCapabilities {
       onStatusChanged: () => () => undefined,
     },
     daemon: {
-      capabilities: async () => ({
+      ...createDaemonResourceMethods(async () => ({
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "fixture only" },
-      }),
-      mutateAppWindow: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      createWorkspacePane: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      issueTerminalAttachment: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only", retryable: false },
-      }),
-      issuePaneStream: async () => ({
-        status: "error",
-        error: { code: "attachment-unavailable", reason: "fixture only", retryable: false },
-      }),
-      refreshConnection: async () => ({
-        outcome: "unchanged",
-        daemon: { status: "unavailable", code: "preview-only", reason: "fixture only" },
-      }),
-      listWorkspaces: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchFleetCatalog: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      promoteWorkspace: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchApplicationShell: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchWorkspaceFiles: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchWorkspaceFilePreview: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchWorkspaceChanges: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchWorkspaceChangeDiff: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
+      })),
       subscribe: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
       }),
     },
   };
