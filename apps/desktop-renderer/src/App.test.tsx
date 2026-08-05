@@ -5,6 +5,7 @@ import {
   APPLICATION_SHELL_RESOURCE_VERSION,
   ApplicationShellProjectionInputV1SchemaZ,
   DESKTOP_HOST_API_VERSION,
+  buildStartupReadinessLadder,
   type ApplicationShellProjectionInputV1,
   type DaemonInstanceIdentity,
   type DesktopDaemonEvent,
@@ -420,6 +421,47 @@ describe("desktop App live composition", () => {
     );
     expect(root.querySelector(".titlebar__preview-badge")).toBeNull();
     expect(root.querySelector(".shell-workbench")).toBeNull();
+    dispose();
+  });
+
+  it("shows the engine's own stalled rung instead of re-deriving one locally", async () => {
+    // The host reached a daemon that answered with its ladder while refusing to
+    // be used. Re-deriving locally would say only "the engine could not be
+    // reached"; the daemon knows the catalog is what actually stalled.
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.bootstrap).mockResolvedValueOnce({
+      ...bootstrap(),
+      daemon: {
+        status: "degraded",
+        code: "identity-mismatch",
+        reason: "Canonical daemon verification is degraded.",
+        startupReadiness: buildStartupReadinessLadder(
+          [
+            { status: "satisfied" },
+            { status: "satisfied" },
+            { status: "satisfied" },
+            {
+              status: "stuck",
+              reason: { vocabulary: "startup-readiness", code: "catalog-sessions-unreachable" },
+            },
+          ],
+          "2026-08-05T09:00:00.000Z",
+        ),
+      },
+    });
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+
+    await vi.waitFor(() => {
+      expect(root.querySelector(".runtime-state-surface")?.getAttribute("data-state")).toBe(
+        "degraded",
+      );
+    });
+    const diagnostics = root.querySelector(".runtime-diagnostics")?.textContent ?? "";
+    expect(diagnostics).toContain(
+      "Startup stalled at: reading the terminal catalog — the registered sessions are no longer running.",
+    );
+    expect(diagnostics).not.toContain("Startup stalled at: starting the engine");
     dispose();
   });
 

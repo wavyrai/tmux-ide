@@ -107,6 +107,8 @@ describe("startup readiness diagnostics", () => {
   });
 
   it("prints an unrecognized reason code rather than swallowing it", () => {
+    // A newer daemon reporting a code this build has no copy for: the raw code
+    // is still more useful to a user than silence.
     const lines = startupReadinessDiagnostics({
       ladder: buildStartupReadinessLadder(
         [
@@ -114,14 +116,99 @@ describe("startup readiness diagnostics", () => {
             status: "stuck",
             reason: {
               vocabulary: "desktop-daemon-host-issue",
-              code: "endpoint-not-loopback",
+              code: "a-code-from-a-later-build" as "probe-failed",
             },
           },
         ],
         OBSERVED_AT,
       ),
     });
-    expect(lines[0]).toContain("endpoint-not-loopback");
+    expect(lines[0]).toContain("a-code-from-a-later-build");
+  });
+
+  it("labels a code by the vocabulary that owns it, not by the code alone", () => {
+    // `preview-only` is a real code in TWO vocabularies. Keyed on the code alone,
+    // a refused attachment would be reported as though no engine existed at all.
+    const attachment = startupReadinessDiagnostics({
+      ladder: buildStartupReadinessLadder(
+        [
+          { status: "satisfied" },
+          { status: "satisfied" },
+          { status: "satisfied" },
+          { status: "satisfied" },
+          {
+            status: "stuck",
+            reason: { vocabulary: "terminal-attachment-issue", code: "preview-only" },
+          },
+        ],
+        OBSERVED_AT,
+      ),
+    });
+    expect(attachment[0]).toBe(
+      "Startup stalled at: preparing terminal attachment — attachment is disabled in a preview window.",
+    );
+    const host = startupReadinessDiagnostics({
+      ladder: buildStartupReadinessLadder(
+        [
+          {
+            status: "stuck",
+            reason: { vocabulary: "desktop-daemon-host-issue", code: "preview-only" },
+          },
+        ],
+        OBSERVED_AT,
+      ),
+    });
+    expect(host[0]).toBe(
+      "Startup stalled at: starting the engine — this is a preview window with no engine.",
+    );
+  });
+
+  it("shows the daemon's own stuck rung in preference to the local derivation", () => {
+    // The defect this replaces: the renderer re-derived the ladder from the host
+    // state alone and reported "the engine could not be reached" while the daemon
+    // was answering and knew exactly which rung had stalled.
+    const daemonLadder = buildStartupReadinessLadder(
+      [
+        { status: "satisfied" },
+        { status: "satisfied" },
+        { status: "satisfied" },
+        {
+          status: "stuck",
+          reason: { vocabulary: "terminal-resource-unavailable", code: "missing-semantic-stamp" },
+        },
+      ],
+      OBSERVED_AT,
+    );
+    const lines = startupReadinessDiagnostics(
+      projectDesktopStartupReadiness({
+        daemon: {
+          status: "degraded",
+          code: "identity-mismatch",
+          reason: "Canonical daemon verification is degraded.",
+          startupReadiness: daemonLadder,
+        },
+        observedAt: OBSERVED_AT,
+      }),
+    );
+    expect(lines[0]).toBe(
+      "Startup stalled at: reading the terminal catalog — a pane is missing its durable tmux-ide identity.",
+    );
+  });
+
+  it("keeps the local derivation when the daemon could not be read at all", () => {
+    const lines = startupReadinessDiagnostics(
+      projectDesktopStartupReadiness({
+        daemon: {
+          status: "unavailable",
+          code: "probe-failed",
+          reason: "The canonical daemon is unavailable.",
+        },
+        observedAt: OBSERVED_AT,
+      }),
+    );
+    expect(lines[0]).toBe(
+      "Startup stalled at: starting the engine — the engine could not be reached.",
+    );
   });
 
   it("marks a trimmed tail and reports a terminating signal", () => {

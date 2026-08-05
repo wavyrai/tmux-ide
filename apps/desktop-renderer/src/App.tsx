@@ -311,11 +311,13 @@ export function App(props: AppProps = {}) {
                               diagnostics={[
                                 daemonCapabilityReason(daemon),
                                 // Name the stuck startup rung, its typed reason,
-                                // and the engine child's own last words.
+                                // and the engine child's own last words. The
+                                // ladder the host read from the engine travels
+                                // on `daemon` and is preferred over anything
+                                // re-derived here.
                                 ...startupReadinessDiagnostics(
                                   projectDesktopStartupReadiness({
                                     daemon,
-                                    ladder: null,
                                     observedAt: new Date().toISOString(),
                                   }),
                                 ),

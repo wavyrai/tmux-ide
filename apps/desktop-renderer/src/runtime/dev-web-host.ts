@@ -36,6 +36,7 @@ import {
   PANE_STREAM_PROTOCOL_VERSION,
   PaneStreamIssueResultSchemaZ,
   PaneStreamLeaseRequestSchemaZ,
+  StartupReadinessResourceSchemaZ,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
   TerminalAttachmentIssueResultSchemaZ,
   WorkspaceCatalogResourceV1SchemaZ,
@@ -76,6 +77,7 @@ import {
   type HostCapabilities,
   type PaneStreamIssueResult,
   type PaneStreamLeaseRequest,
+  type StartupReadinessLadder,
   type TerminalAttachRequest,
   type TerminalAttachmentIssueResult,
   type WorkspacePaneCreateHostResult,
@@ -288,6 +290,24 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     }
   }
 
+  /**
+   * The daemon's own startup readiness ladder, or null.
+   *
+   * Diagnostics only, and treated as such: it is bounded by the shared request
+   * timeout, every failure answers null, and a null simply leaves the renderer
+   * with what it could observe for itself.
+   */
+  async function readStartupReadinessLadder(): Promise<StartupReadinessLadder | null> {
+    try {
+      const parsed = StartupReadinessResourceSchemaZ.safeParse(
+        await request("/api/resources/startup-readiness", { method: "GET" }),
+      );
+      return parsed.success ? parsed.data.ladder : null;
+    } catch {
+      return null;
+    }
+  }
+
   function failureOf(error: unknown): DesktopDaemonCapabilityError {
     if (error instanceof DevHostFailure) return error.error;
     return disposed ? DISPOSED : REQUEST_FAILED;
@@ -468,10 +488,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         daemon = { status: "connected", identity: await loadIdentity() };
       } catch (error) {
         const failure = failureOf(error);
+        // Browser mode carries the daemon's own readiness ladder for the same
+        // reason the Electron shell does: the daemon may be answering while the
+        // app still cannot use it, and only its ladder knows which rung stalled.
+        const startupReadiness = await readStartupReadinessLadder();
         daemon = {
           status: "unavailable",
           code: "probe-failed",
           reason: failure.reason,
+          ...(startupReadiness ? { startupReadiness } : {}),
         };
       }
       return {

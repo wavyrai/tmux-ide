@@ -19,6 +19,7 @@ import {
   type DesktopPlatform,
   type DesktopStartupReadiness,
   type StartupReadinessRungId,
+  type StartupReadinessStuckVocabulary,
 } from "@tmux-ide/contracts";
 
 export interface ConnectionRecoveryPresentation {
@@ -223,32 +224,63 @@ const RUNG_LABEL: Record<StartupReadinessRungId, string> = {
   "attachment-issuable": "preparing terminal attachment",
 };
 
-const REASON_LABEL: Record<string, string> = {
-  // Host issue codes.
-  "record-missing": "the engine has not published itself yet",
-  "record-invalid": "the engine's record is unreadable",
-  "process-not-running": "the engine process is not running",
-  "probe-timeout": "the engine did not answer in time",
-  "probe-failed": "the engine could not be reached",
-  "protocol-incompatible": "the engine speaks a different protocol",
-  "identity-mismatch": "the engine identity changed",
-  "identity-unreachable": "the engine identity could not be read",
-  "supervisor-halted": "the engine was stopped after repeated failures",
-  "preview-only": "this is a preview window with no engine",
-  // Readiness's own codes.
-  "owner-capability-unavailable": "the engine holds no owner credential",
-  "daemon-identity-unavailable": "no engine identity could be established",
-  "catalog-discovery-failed": "tmux could not be read",
-  "catalog-sessions-unreachable": "the registered sessions are no longer running",
-  "attachment-runtime-unready": "the attachment runtime never became ready",
-  // Catalog faults, in the terminal-resource vocabulary.
-  "missing-semantic-stamp": "a pane is missing its durable tmux-ide identity",
-  "duplicate-semantic-stamp": "two panes claim the same durable identity",
-  "duplicate-runtime-pane-binding": "one pane is bound to two identities",
-  "invalid-runtime-proof": "tmux returned an unusable pane description",
-  "missing-window-stamp": "a multi-pane window has no durable identity",
-  "window-stamp-inconsistent": "a window's panes disagree on their identity",
-  "duplicate-window-stamp": "two windows claim the same durable identity",
+/**
+ * Human labels for stuck reasons, keyed by the VOCABULARY that owns the code and
+ * then the code itself. The tag is load-bearing: `preview-only` is a real code
+ * in two vocabularies at once, and a flat table would have labelled a refused
+ * attachment as though the whole engine were missing.
+ */
+const REASON_LABEL: Record<StartupReadinessStuckVocabulary, Record<string, string>> = {
+  "desktop-daemon-host-issue": {
+    "record-missing": "the engine has not published itself yet",
+    "record-invalid": "the engine's record is unreadable",
+    "endpoint-not-loopback": "the engine published an address we will not trust",
+    "process-not-running": "the engine process is not running",
+    "probe-timeout": "the engine did not answer in time",
+    "probe-failed": "the engine could not be reached",
+    "protocol-incompatible": "the engine speaks a different protocol",
+    "identity-mismatch": "the engine identity changed",
+    "identity-unreachable": "the engine identity could not be read",
+    "health-mismatch": "the engine health check answered for another engine",
+    "health-unreachable": "the engine health check could not be read",
+    "resource-broker-failed": "no authority could be established over the engine",
+    "supervisor-halted": "the engine was stopped after repeated failures",
+    "preview-only": "this is a preview window with no engine",
+  },
+  "startup-readiness": {
+    "owner-capability-unavailable": "the engine holds no owner credential",
+    "daemon-identity-unavailable": "no engine identity could be established",
+    "catalog-discovery-failed": "tmux could not be read",
+    "catalog-sessions-unreachable": "the registered sessions are no longer running",
+    "attachment-runtime-unready": "the attachment runtime never became ready",
+  },
+  "terminal-resource-unavailable": {
+    "missing-semantic-stamp": "a pane is missing its durable tmux-ide identity",
+    "invalid-semantic-stamp": "a pane carries an unusable durable identity",
+    "duplicate-semantic-stamp": "two panes claim the same durable identity",
+    "duplicate-runtime-pane-binding": "one pane is bound to two identities",
+    "invalid-runtime-proof": "tmux returned an unusable pane description",
+    "not-single-pane-window": "a window holds more panes than this build can attach",
+    "missing-window-stamp": "a multi-pane window has no durable identity",
+    "window-stamp-inconsistent": "a window's panes disagree on their identity",
+    "duplicate-window-stamp": "two windows claim the same durable identity",
+  },
+  "terminal-attachment-issue": {
+    "preview-only": "attachment is disabled in a preview window",
+    "renderer-origin-unavailable": "this window cannot be authorized to attach",
+    "daemon-unavailable": "the engine was unavailable when the attachment was requested",
+    "daemon-degraded": "the engine was degraded when the attachment was requested",
+    "daemon-identity-mismatch": "the engine generation changed mid-attachment",
+    "invalid-request": "the attachment request was rejected as invalid",
+    "workspace-not-found": "the workspace to attach to is gone",
+    "pane-not-found": "the pane to attach to is gone",
+    "pane-not-attachable": "the pane cannot be attached to",
+    "interactive-viewer-conflict": "another viewer already holds that pane",
+    "request-timeout": "the attachment request timed out",
+    "attachment-unavailable": "no attachment could be issued",
+    "request-failed": "the attachment request failed",
+    disposed: "the attachment authority was retired",
+  },
 };
 
 /** How many of the child's captured lines a recovery screen shows. */
@@ -269,8 +301,9 @@ export function startupReadinessDiagnostics(readiness: DesktopStartupReadiness):
   if (!blocking) {
     lines.push("Startup readiness: every step is satisfied.");
   } else if (blocking.status === "stuck") {
-    const code = blocking.reason.code;
-    lines.push(`Startup stalled at: ${RUNG_LABEL[blocking.rung]} — ${REASON_LABEL[code] ?? code}.`);
+    const code: string = blocking.reason.code;
+    const label = REASON_LABEL[blocking.reason.vocabulary][code] ?? code;
+    lines.push(`Startup stalled at: ${RUNG_LABEL[blocking.rung]} — ${label}.`);
   } else {
     lines.push(`Startup is waiting on: ${RUNG_LABEL[blocking.rung]}.`);
   }
