@@ -8,9 +8,11 @@
  * and the product agree on what "up" means — and a harness that hangs reports
  * the rung it is stuck at instead of a bare timeout.
  */
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import {
   pollUntil,
@@ -22,6 +24,7 @@ import type { ScratchFleet } from "./scratch-fleet.ts";
 
 const DAEMON_READY_TIMEOUT_MS = 45_000;
 const LADDER_TIMEOUT_MS = 45_000;
+const BUNDLE_BUILD_TIMEOUT_MS = 120_000;
 
 export const repoRoot = resolve(import.meta.dirname, "..", "..", "..", "..");
 export const rendererRoot = resolve(import.meta.dirname, "..", "..");
@@ -60,7 +63,34 @@ export interface RunningDaemon {
   readonly stop: () => Promise<void>;
 }
 
+const execFileAsync = promisify(execFile);
+let bundleBuild: Promise<void> | null = null;
+
+/**
+ * Rebuild `bin/cli.js` before the first daemon of a run starts.
+ *
+ * The daemon under test is not the source tree — it is the esbuild bundle, so
+ * every daemon-side change is invisible here until that bundle is rebuilt. A
+ * stale bundle does not fail loudly; it silently tests the PREVIOUS commit's
+ * daemon and reports whatever that code does, which is worse than a red suite
+ * because it looks like a real verdict.
+ *
+ * This is not hypothetical. A rebase rewrites the tracked bundle to the target
+ * branch's build, so the suite ran main's daemon against this branch's
+ * assertions and reported a fix as broken. mtime cannot catch that — the rebase
+ * makes the stale bundle NEWER than the sources it disagrees with — so the only
+ * honest answer is to build it. It costs about a second, once per run.
+ */
+async function ensureDaemonBundle(): Promise<void> {
+  bundleBuild ??= execFileAsync("node", [join(repoRoot, "scripts", "build-cli.mjs")], {
+    cwd: repoRoot,
+    timeout: BUNDLE_BUILD_TIMEOUT_MS,
+  }).then(() => undefined);
+  await bundleBuild;
+}
+
 export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
+  await ensureDaemonBundle();
   const environment: NodeJS.ProcessEnv = { ...process.env, ...fleet.environment };
   // Inherited runtime hooks and a stale pane id would follow the daemon into
   // the scratch world and point it back at the developer's real tmux server.
