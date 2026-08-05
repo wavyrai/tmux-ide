@@ -13070,24 +13070,6 @@ function tmuxPassthrough(seq) {
   const doubled = seq.split("\x1B").join("\x1B\x1B");
   return `\x1BPtmux;${doubled}\x1B\\`;
 }
-function chunkByBytes(text, maxBytes) {
-  const enc = new TextEncoder();
-  const chunks = [];
-  let cur = "";
-  let curBytes = 0;
-  for (const ch of text) {
-    const b = enc.encode(ch).length;
-    if (curBytes + b > maxBytes && cur.length > 0) {
-      chunks.push(cur);
-      cur = "";
-      curBytes = 0;
-    }
-    cur += ch;
-    curBytes += b;
-  }
-  if (cur.length > 0) chunks.push(cur);
-  return chunks;
-}
 var init_selection = __esm({
   "packages/daemon/src/tui/mirror/selection.ts"() {
     "use strict";
@@ -23212,7 +23194,7 @@ var init_workspace_promotion2 = __esm({
   }
 });
 
-// packages/daemon/src/tui/mirror/app-window-state.ts
+// packages/daemon/src/lib/app-window-state.ts
 function emptyAppWindowDocument(updatedAt) {
   const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
   return AppWindowDocumentV1SchemaZ.parse({
@@ -23643,7 +23625,7 @@ function fnv1a(value) {
 }
 var NATIVE_DOCK_ORDER, LEGACY_DOCK_TABS, LEGACY_PANELS;
 var init_app_window_state2 = __esm({
-  "packages/daemon/src/tui/mirror/app-window-state.ts"() {
+  "packages/daemon/src/lib/app-window-state.ts"() {
     "use strict";
     init_src();
     NATIVE_DOCK_ORDER = ["files", "changes", "missions", "activity"];
@@ -30346,7 +30328,7 @@ var init_pane_stream_upgrade = __esm({
   }
 });
 
-// packages/daemon/src/tui/mirror/control.ts
+// packages/daemon/src/terminal/protocol/control.ts
 function decodeControlBytes(escaped) {
   const out = new Uint8Array(escaped.length);
   let n = 0;
@@ -30416,7 +30398,7 @@ function textToHexKeys(text) {
   return hex;
 }
 var init_control2 = __esm({
-  "packages/daemon/src/tui/mirror/control.ts"() {
+  "packages/daemon/src/terminal/protocol/control.ts"() {
     "use strict";
   }
 });
@@ -30653,12 +30635,37 @@ var init_control_channel = __esm({
   }
 });
 
-// packages/daemon/src/tui/mirror/input-coalescer.ts
+// packages/daemon/src/terminal/protocol/chunk-bytes.ts
+function chunkByBytes(text, maxBytes) {
+  const enc = new TextEncoder();
+  const chunks = [];
+  let cur = "";
+  let curBytes = 0;
+  for (const ch of text) {
+    const b = enc.encode(ch).length;
+    if (curBytes + b > maxBytes && cur.length > 0) {
+      chunks.push(cur);
+      cur = "";
+      curBytes = 0;
+    }
+    cur += ch;
+    curBytes += b;
+  }
+  if (cur.length > 0) chunks.push(cur);
+  return chunks;
+}
+var init_chunk_bytes = __esm({
+  "packages/daemon/src/terminal/protocol/chunk-bytes.ts"() {
+    "use strict";
+  }
+});
+
+// packages/daemon/src/terminal/protocol/input-coalescer.ts
 var SEND_KEYS_CHUNK_BYTES, InputCoalescer;
 var init_input_coalescer = __esm({
-  "packages/daemon/src/tui/mirror/input-coalescer.ts"() {
+  "packages/daemon/src/terminal/protocol/input-coalescer.ts"() {
     "use strict";
-    init_selection();
+    init_chunk_bytes();
     SEND_KEYS_CHUNK_BYTES = 256;
     InputCoalescer = class {
       constructor(emit, schedule, maxChunkBytes = SEND_KEYS_CHUNK_BYTES) {
@@ -30711,7 +30718,7 @@ var init_input_coalescer = __esm({
   }
 });
 
-// packages/daemon/src/tui/mirror/layout-parse.ts
+// packages/daemon/src/terminal/protocol/layout-parse.ts
 function parseLayout(layout) {
   if (!/^[0-9a-fA-F]{4},/.test(layout)) return null;
   const s = layout.slice(5);
@@ -30783,12 +30790,12 @@ function parseSessionWindowChanged(rest) {
   return { windowId };
 }
 var init_layout_parse = __esm({
-  "packages/daemon/src/tui/mirror/layout-parse.ts"() {
+  "packages/daemon/src/terminal/protocol/layout-parse.ts"() {
     "use strict";
   }
 });
 
-// packages/daemon/src/tui/mirror/session-descriptor-discovery.ts
+// packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts
 function decodeTmuxArgument(value) {
   const encoded = value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) ? value.slice(1, -1) : value;
   let decoded = "";
@@ -30880,7 +30887,7 @@ function positiveInteger4(value, fallback) {
 }
 var SESSION_PANE_DESCRIPTOR_FORMAT, SessionDescriptorDiscovery, STRICT_UTF8_DECODER;
 var init_session_descriptor_discovery = __esm({
-  "packages/daemon/src/tui/mirror/session-descriptor-discovery.ts"() {
+  "packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts"() {
     "use strict";
     SESSION_PANE_DESCRIPTOR_FORMAT = [
       "#{pane_id}",
@@ -30996,7 +31003,7 @@ var init_session_descriptor_discovery = __esm({
   }
 });
 
-// packages/daemon/src/tui/mirror/workspace-tmux-adapter.ts
+// packages/daemon/src/terminal/protocol/workspace-tmux-adapter.ts
 function planWorkspaceTmuxReconciliation(input) {
   const diagnostics = [];
   const panes = [];
@@ -31191,7 +31198,7 @@ function diagnostic3(code, runtimePaneId, semanticPaneId2, message, degraded) {
 }
 var RUNTIME_PANE_ID3, DEFAULT_GENERATION_ATTEMPTS;
 var init_workspace_tmux_adapter = __esm({
-  "packages/daemon/src/tui/mirror/workspace-tmux-adapter.ts"() {
+  "packages/daemon/src/terminal/protocol/workspace-tmux-adapter.ts"() {
     "use strict";
     init_src();
     RUNTIME_PANE_ID3 = /^%[0-9]+$/u;
