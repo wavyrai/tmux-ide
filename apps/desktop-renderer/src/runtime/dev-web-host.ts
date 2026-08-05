@@ -30,7 +30,6 @@ import {
   DESKTOP_HOST_API_VERSION,
   DesktopDaemonCapabilitiesResultSchemaZ,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
-  DesktopDaemonFetchApplicationShellRequestSchemaZ,
   FleetCatalogResourceV1SchemaZ,
   PANE_STREAM_ISSUE_PATH,
   PANE_STREAM_PROTOCOL_VERSION,
