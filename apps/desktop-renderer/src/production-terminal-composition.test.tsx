@@ -276,7 +276,7 @@ function createHostHarness() {
       })),
       issuePaneStream: vi.fn(async () => ({
         status: "error" as const,
-        error: { code: "stream-unavailable" as const, reason: "test transport", retryable: false },
+        error: { code: "attachment-unavailable" as const, reason: "test transport", retryable: false },
       })),
       refreshConnection: vi.fn(async () => ({
         outcome: "generation-replaced" as const,

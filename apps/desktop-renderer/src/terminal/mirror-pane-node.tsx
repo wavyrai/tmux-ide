@@ -15,6 +15,8 @@ export interface MirrorPaneNodeProps {
   readonly state: MirrorPaneNodeState;
   /** Stream-level derived health; a ws drop reads as reconnecting, never blank. */
   readonly connection: DesktopConnectionHealth;
+  /** The typed cause behind a stopped stream, when the vocabulary named one. */
+  readonly faultLabel?: string | null;
   readonly registerSink: (sink: MirrorPaneSink) => () => void;
   readonly onRetry?: () => void;
   readonly reducedMotion?: boolean;
@@ -196,6 +198,9 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
             <Match when={props.connection.kind === "stopped"}>
               <strong>Pane stream stopped</strong>
               <span>{props.connection.kind === "stopped" ? props.connection.reason : ""}</span>
+              <Show when={props.faultLabel}>
+                <span class="mirror-pane-node__cause">{`Cause: ${props.faultLabel}.`}</span>
+              </Show>
               <Show when={props.onRetry}>
                 <button type="button" onClick={() => props.onRetry?.()}>
                   Reconnect

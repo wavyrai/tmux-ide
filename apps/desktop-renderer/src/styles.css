@@ -4735,6 +4735,12 @@ kbd {
   white-space: nowrap;
 }
 
+/* The typed cause of a stop, under its reason and in the same column. */
+.mirror-pane-node__state .mirror-pane-node__cause {
+  grid-column: 2;
+  grid-row: 3;
+}
+
 .mirror-pane-node__state button {
   grid-column: 3;
   grid-row: 1 / span 2;

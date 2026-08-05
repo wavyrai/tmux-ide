@@ -246,7 +246,7 @@ describe("pane mirror controller lifecycle", () => {
     const h = controllerHarness();
     const failure = {
       status: "error",
-      error: { code: "stream-unavailable", reason: "daemon busy", retryable: true },
+      error: { code: "attachment-unavailable", reason: "daemon busy", retryable: true },
     } as const;
     h.transport.failAllWith = failure;
     h.controller.start();
@@ -282,6 +282,33 @@ describe("pane mirror controller lifecycle", () => {
       phase: "stopped",
       error: { code: "event-unavailable", reason: "protocol violated" },
     });
+  });
+
+  it("keeps the fault's own code, which the transport state cannot carry", async () => {
+    const h = controllerHarness();
+    h.controller.start();
+    await flush();
+    h.transport.latest().listeners.onEnd({
+      code: "interactive-viewer-conflict",
+      reason: "A requested pane already has an interactive viewer.",
+      retryable: false,
+    });
+    const state = h.controller.state();
+    // The transport state is typed in the capability vocabulary and narrows...
+    expect(state.transport).toMatchObject({
+      phase: "stopped",
+      error: { code: "event-unavailable" },
+    });
+    // ...so the issue-vocabulary code rides alongside it instead of dying here.
+    expect(state.fault).toMatchObject({
+      code: "interactive-viewer-conflict",
+      reason: "A requested pane already has an interactive viewer.",
+    });
+
+    h.transport.failAllWith = null;
+    h.controller.retry();
+    await flush();
+    expect(h.controller.state().fault).toBeNull();
   });
 
   it("reads a clean end (every pane closed) as idle, not a fault", async () => {

@@ -77,6 +77,7 @@ import {
 import type { PaneStreamTransport } from "../terminal/pane-stream-transport.ts";
 import { createHostPaneStreamTransport } from "../runtime/host-pane-stream-transport.ts";
 import { deriveConnectionHealth } from "../runtime/connection-health.ts";
+import { terminalIssueFaultLabel } from "../runtime/connection-recovery.ts";
 import { PANE_STREAM_MAX_PANES } from "@tmux-ide/contracts";
 import {
   AppWindowCanvas,
@@ -586,6 +587,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
             }))
           : [],
       connection: deriveConnectionHealth(state?.transport ?? null, { ok: true }),
+      // The stream fault keeps its own code (the merged issue vocabulary), so a
+      // refused pane or a degraded engine reads as itself instead of as the
+      // generic transport error the connection health is typed in.
+      faultLabel: state?.fault ? terminalIssueFaultLabel(state.fault.code) : null,
       onRetry: () => mirrorController()?.retry(),
     };
   });

@@ -48,7 +48,7 @@ function daemonHost(
       }),
       issuePaneStream: async () => ({
         status: "error",
-        error: { code: "stream-unavailable", reason: "fixture only", retryable: false },
+        error: { code: "attachment-unavailable", reason: "fixture only", retryable: false },
       }),
       refreshConnection: async () => ({
         outcome: "unchanged",

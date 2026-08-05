@@ -5,6 +5,7 @@ import { render } from "solid-js/web";
 
 import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/tui/mirror/app-window-state.ts";
 import { deriveConnectionHealth } from "../runtime/connection-health.ts";
+import { terminalIssueFaultLabel } from "../runtime/connection-recovery.ts";
 import type { DesktopConnectionHealth } from "../runtime/connection-health.ts";
 import { MirrorPaneNode } from "./mirror-pane-node.tsx";
 import { PaneMirrorController, type PaneMirrorControllerState } from "./pane-mirror-controller.ts";
@@ -37,7 +38,9 @@ function seedBatch(text: string, held: readonly string[] = []) {
   };
 }
 
-function mountNodeHarness() {
+function mountNodeHarness(
+  options: { readonly faultLabelFor?: (code: string) => string | null } = {},
+) {
   const stream = createScriptedPaneStream();
   const rendering = createRecordingMirrorRendererFactory();
   const [controllerState, setControllerState] = createSignal<PaneMirrorControllerState | null>(
@@ -61,6 +64,10 @@ function mountNodeHarness() {
         title="Agent A"
         state={controllerState()?.panes.get(PANE_A) ?? { kind: "connecting" }}
         connection={connection()}
+        faultLabel={(() => {
+          const fault = controllerState()?.fault;
+          return fault && options.faultLabelFor ? options.faultLabelFor(fault.code) : null;
+        })()}
         registerSink={(sink) => controller.registerPaneSink(PANE_A, sink)}
         onRetry={() => controller.retry()}
         rendererFactory={rendering.factory}
@@ -178,5 +185,20 @@ describe("mirror node identity", () => {
     const id = stableAppWindowInstanceId({ kind: "terminal", terminalSourceId: PANE_A });
     expect(id).toBe(stableAppWindowInstanceId({ kind: "terminal", terminalSourceId: PANE_A }));
     expect(id).toMatch(/^window-terminal-pane\.workspace\.a1-0-/u);
+  });
+
+  it("names the cause behind a stopped stream when the vocabulary knows it", async () => {
+    const h = mountNodeHarness({ faultLabelFor: terminalIssueFaultLabel });
+    await flush();
+    h.stream.latest().end({
+      code: "interactive-viewer-conflict",
+      reason: "A requested pane already has an interactive viewer.",
+      retryable: false,
+    });
+    await flush();
+    const text = h.host.querySelector(".mirror-pane-node__state")!.textContent ?? "";
+    expect(text).toContain("Pane stream stopped");
+    expect(text).toContain("A requested pane already has an interactive viewer.");
+    expect(text).toContain("Cause: another viewer already holds that pane.");
   });
 });

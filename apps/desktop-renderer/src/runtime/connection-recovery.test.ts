@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   reasonIndicatesMissingTmux,
+  terminalIssueFaultLabel,
   recoveryForDaemonCapability,
   recoveryForWorkspaceOpenError,
   tmuxInstallCommand,
@@ -106,5 +107,25 @@ describe("recoveryForWorkspaceOpenError", () => {
     });
     expect(presentation.description).toBe("project directory is not a directory");
     expect(presentation.command).toBeNull();
+  });
+});
+
+describe("terminalIssueFaultLabel", () => {
+  it("labels the codes a lease issue can fail with, on either lease family", () => {
+    expect(terminalIssueFaultLabel("interactive-viewer-conflict")).toBe(
+      "another viewer already holds that pane",
+    );
+    expect(terminalIssueFaultLabel("daemon-degraded")).toBe(
+      "the engine was degraded when the attachment was requested",
+    );
+    expect(terminalIssueFaultLabel("response-too-large")).toBe(
+      "the engine's answer was too large to trust",
+    );
+  });
+
+  it("returns null for a code it does not own, so the caller keeps the raw reason", () => {
+    // A pane-stream FRAME code — a different vocabulary that was never merged.
+    expect(terminalIssueFaultLabel("stream-closed")).toBeNull();
+    expect(terminalIssueFaultLabel("event-unavailable")).toBeNull();
   });
 });

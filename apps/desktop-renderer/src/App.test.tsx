@@ -201,7 +201,7 @@ function createHostHarness() {
       issuePaneStream: vi.fn(async () => ({
         status: "error" as const,
         error: {
-          code: "stream-unavailable" as const,
+          code: "attachment-unavailable" as const,
           reason: "fixture only",
           retryable: false,
         },

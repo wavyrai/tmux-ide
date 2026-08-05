@@ -277,11 +277,26 @@ const REASON_LABEL: Record<StartupReadinessStuckVocabulary, Record<string, strin
     "pane-not-attachable": "the pane cannot be attached to",
     "interactive-viewer-conflict": "another viewer already holds that pane",
     "request-timeout": "the attachment request timed out",
+    "response-too-large": "the engine's answer was too large to trust",
+    "invalid-response": "the engine's answer could not be read",
     "attachment-unavailable": "no attachment could be issued",
     "request-failed": "the attachment request failed",
     disposed: "the attachment authority was retired",
   },
 };
+
+/**
+ * PURE — the label for a code drawn from the shared issue-error vocabulary, or
+ * null when this build does not know the code.
+ *
+ * The table above exists for the readiness ladder, but the vocabulary is the
+ * same one every lease issue answers in, so a pane-stream fault gets the same
+ * words as the attachment fault it is. Null means the caller should fall back
+ * to the fault's own reason text rather than print a code at the user.
+ */
+export function terminalIssueFaultLabel(code: string): string | null {
+  return REASON_LABEL["terminal-attachment-issue"][code] ?? null;
+}
 
 /** How many of the child's captured lines a recovery screen shows. */
 const DIAGNOSTIC_CHILD_OUTPUT_LINES = 5;

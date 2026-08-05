@@ -41,6 +41,14 @@ export type MirrorPaneNodeState =
 export interface PaneMirrorControllerState {
   readonly transport: DesktopDaemonTransportState;
   readonly panes: ReadonlyMap<string, MirrorPaneNodeState>;
+  /**
+   * The last stream fault with its ORIGINAL code. `transport.error` must be a
+   * daemon-capability error (that is the vocabulary `DesktopDaemonTransportState`
+   * is typed in), so the code that explains WHY — `interactive-viewer-conflict`,
+   * `daemon-degraded`, `pane-not-found` — used to die at that boundary. It is
+   * carried here instead, and the surface labels it.
+   */
+  readonly fault: PaneStreamTransportError | null;
 }
 
 export interface PaneMirrorControllerDependencies {
@@ -83,7 +91,11 @@ function boundedReason(reason: string): string {
   return trimmed.length > 0 ? trimmed : "The pane stream is unavailable.";
 }
 
-/** The stream fault as the renderer-safe capability-error vocabulary. */
+/**
+ * The stream fault as the daemon-capability vocabulary the transport state is
+ * typed in. The reason survives verbatim; the original code survives too, on
+ * `PaneMirrorControllerState.fault`, so no honesty is lost at this narrowing.
+ */
 function transportFault(error: PaneStreamTransportError): {
   readonly code: "event-unavailable";
   readonly reason: string;
@@ -104,6 +116,7 @@ export class PaneMirrorController {
   #panes: readonly string[];
   #paneStates = new Map<string, MirrorPaneNodeState>();
   #transportState: DesktopDaemonTransportState = { phase: "idle" };
+  #fault: PaneStreamTransportError | null = null;
   #session: PaneStreamSessionHandle | null = null;
   #cancelRetry: (() => void) | null = null;
   #attempt = 0;
@@ -129,7 +142,11 @@ export class PaneMirrorController {
   }
 
   state(): PaneMirrorControllerState {
-    return { transport: this.#transportState, panes: new Map(this.#paneStates) };
+    return {
+      transport: this.#transportState,
+      panes: new Map(this.#paneStates),
+      fault: this.#fault,
+    };
   }
 
   /**
@@ -228,8 +245,9 @@ export class PaneMirrorController {
     }
   }
 
-  #setTransport(state: DesktopDaemonTransportState): void {
+  #setTransport(state: DesktopDaemonTransportState, fault: PaneStreamTransportError | null): void {
     this.#transportState = state;
+    this.#fault = fault;
     this.#emit();
   }
 
@@ -247,7 +265,7 @@ export class PaneMirrorController {
     for (const [pane, state] of this.#paneStates) {
       if (state.kind !== "ended") this.#paneStates.set(pane, { kind: "connecting" });
     }
-    this.#setTransport({ phase: "connecting" });
+    this.#setTransport({ phase: "connecting" }, this.#fault);
     void this.#transport
       .connect(
         { workspaceName: this.#workspaceName, panes: this.#panes },
@@ -267,12 +285,12 @@ export class PaneMirrorController {
         }
         this.#session = result.session;
         this.#attempt = 0;
-        this.#setTransport({ phase: "connected" });
+        this.#setTransport({ phase: "connected" }, null);
       })
       .catch(() => {
         if (this.#disposed || generation !== this.#generation) return;
         this.#scheduleReconnect({
-          code: "stream-unavailable",
+          code: "attachment-unavailable",
           reason: "The pane stream could not be established.",
           retryable: true,
         });
@@ -321,7 +339,7 @@ export class PaneMirrorController {
     this.#session = null;
     if (error === null) {
       // Clean end: every leased pane closed in tmux. Nothing to reconnect to.
-      this.#setTransport({ phase: "idle" });
+      this.#setTransport({ phase: "idle" }, null);
       return;
     }
     this.#scheduleReconnect(error);
@@ -330,7 +348,7 @@ export class PaneMirrorController {
   #scheduleReconnect(error: PaneStreamTransportError): void {
     this.#retireSession();
     if (!error.retryable || this.#attempt >= this.#reconnectMaximumAttempts) {
-      this.#setTransport({ phase: "stopped", error: transportFault(error) });
+      this.#setTransport({ phase: "stopped", error: transportFault(error) }, error);
       return;
     }
     this.#attempt += 1;
@@ -339,13 +357,16 @@ export class PaneMirrorController {
       this.#reconnectInitialDelayMs * 2 ** (this.#attempt - 1),
     );
     const generation = this.#generation;
-    this.#setTransport({
-      phase: "reconnecting",
-      attempt: this.#attempt,
-      maximumAttempts: this.#reconnectMaximumAttempts,
-      nextRetryAt: this.#now() + delay,
-      error: transportFault(error),
-    });
+    this.#setTransport(
+      {
+        phase: "reconnecting",
+        attempt: this.#attempt,
+        maximumAttempts: this.#reconnectMaximumAttempts,
+        nextRetryAt: this.#now() + delay,
+        error: transportFault(error),
+      },
+      error,
+    );
     this.#cancelRetry = this.#schedule(() => {
       this.#cancelRetry = null;
       if (this.#disposed || generation !== this.#generation) return;

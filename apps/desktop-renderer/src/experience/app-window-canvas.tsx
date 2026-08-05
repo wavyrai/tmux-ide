@@ -102,6 +102,12 @@ export interface AppWindowCanvasMirrorProps {
   readonly nodes: readonly AppWindowMirrorNodeModel[];
   /** Stream-level derived connection health (the m42 vocabulary, reused). */
   readonly connection: DesktopConnectionHealth;
+  /**
+   * What the stream fault was, in words, when the issue vocabulary named a
+   * cause the connection health cannot carry (a conflicting interactive viewer,
+   * a degraded engine). Null when there is no fault or none this build knows.
+   */
+  readonly faultLabel?: string | null;
   readonly onRetry: () => void;
   readonly rendererFactory?: MirrorTerminalRendererFactory;
 }
@@ -1171,6 +1177,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     );
     return {
       connection: mirror.connection,
+      faultLabel: mirror.faultLabel ?? null,
       onRetry: mirror.onRetry,
       rendererFactory: mirror.rendererFactory,
       nodes: mirror.nodes.map((node, index) => ({
@@ -1536,6 +1543,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                           title={entry().node.title}
                           state={entry().node.state}
                           connection={scene().connection}
+                          faultLabel={scene().faultLabel ?? null}
                           registerSink={entry().node.registerSink}
                           onRetry={scene().onRetry}
                           reducedMotion={props.reducedMotion}
