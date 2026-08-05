@@ -533,8 +533,11 @@ describe("desktop UI foundation styles", () => {
      * and the drift survived under a better name. The guard is therefore about
      * WHICH SELECTORS may carry semibold, not about how many names exist.
      */
-    const declarations = [...shellStyles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-      .map(([, selector, body]) => ({ selector: selector.trim().replaceAll(/\s+/gu, " "), body }))
+    const declarations = [...shellStyles.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+      .map((match) => ({
+        selector: (match[1] ?? "").trim().replaceAll(/\s+/gu, " "),
+        body: match[2] ?? "",
+      }))
       .filter(({ selector }) => !selector.startsWith("@") && !selector.startsWith("/*"));
 
     const weightOf = (body: string): string | undefined =>
@@ -554,6 +557,23 @@ describe("desktop UI foundation styles", () => {
     // The source runs roughly three mediums to every semibold. A shell that
     // inverts that is shouting, whatever its tokens are called.
     expect(medium.length).toBeGreaterThan(semibold.length * 2);
+  });
+
+  it("fixes the digit width on figures that align or update in place", () => {
+    /*
+     * The canvas zoom readout is the anchor: it changes under the pointer while
+     * the buttons either side of it stay put, so proportional digits make the
+     * whole pill twitch as 100% becomes 110%. If this one regresses, the rule
+     * has been forgotten everywhere.
+     */
+    expect(shellStyles).toMatch(
+      /\.canvas-controls output[^{]*\{[^}]*font-variant-numeric: tabular-nums;/su,
+    );
+    // The counts, timers and diff deltas the audit found, plus the utility the
+    // markup reaches for when a figure has no rule of its own.
+    const tabularRules = shellStyles.match(/font-variant-numeric: tabular-nums;/g) ?? [];
+    expect(tabularRules.length).toBeGreaterThanOrEqual(14);
+    expect(styles).toMatch(/\.tmi-tabular\s*\{[^}]*font-variant-numeric: tabular-nums;/su);
   });
 
   it("draws every focus ring from one recipe, keyboard-only", () => {

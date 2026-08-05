@@ -211,6 +211,17 @@
   font-variant-ligatures: none;
 }
 
+/*
+ * Tabular numerals. Proportional digits are set to look right in a sentence,
+ * which means a 1 is narrower than a 0 — so a number that updates in place
+ * jitters, and a column of numbers does not line up. Any figure that counts,
+ * ticks, or stacks reads better with fixed-width digits, and nothing else
+ * about the text changes.
+ */
+.tmi-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
 .tmi-showcase {
   display: grid;
   gap: 20px;

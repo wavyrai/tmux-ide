@@ -45,7 +45,9 @@ export function UpdateChip(props: { readonly host: HostCapabilities }): ReturnTy
           <span class="titlebar__update-chip-label">
             Update ready
             <Show when={current().availableVersion}>
-              {(version) => <span class="titlebar__update-chip-version"> · v{version()}</span>}
+              {(version) => (
+                <span class="titlebar__update-chip-version tmi-tabular"> · v{version()}</span>
+              )}
             </Show>
           </span>
           <span class="titlebar__update-chip-hint">restart to apply</span>

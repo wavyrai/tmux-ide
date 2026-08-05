@@ -1375,6 +1375,7 @@ kbd {
 .runtime-onboarding-notes code,
 .runtime-diagnostics li {
   font-family: var(--tmi-font-technical);
+  font-variant-numeric: tabular-nums;
 }
 
 .runtime-action {
@@ -1680,6 +1681,7 @@ kbd {
   font-family: var(--desktop-mono-font);
   font-weight: var(--sf-weight-medium);
   letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .sidebar-row {
@@ -1727,6 +1729,7 @@ kbd {
 .sidebar-row--active .sidebar-row__identity > small,
 .sidebar-row--active .fleet-sidebar__badge {
   color: color-mix(in oklab, var(--sf-on-lit-blue) 82%, transparent);
+  font-variant-numeric: tabular-nums;
 }
 
 .sidebar-row i,
@@ -3159,6 +3162,7 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .mission-journey__list button strong {
@@ -3249,6 +3253,7 @@ kbd {
   font-family: var(--desktop-mono-font);
   font-size: var(--sf-text-caption-2);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .mission-journey__status {
@@ -3332,6 +3337,7 @@ kbd {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
   font-size: var(--sf-text-caption-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .mission-proof-grid {
@@ -3451,6 +3457,7 @@ kbd {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
   font-size: var(--sf-text-caption-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .mission-journey__timeline ol {
@@ -3489,6 +3496,7 @@ kbd {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
   font-size: var(--sf-text-caption-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .mission-journey__timeline li > span {
@@ -3561,6 +3569,7 @@ kbd {
   font-size: var(--sf-text-caption-2);
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .activity-detail__proof {
@@ -3755,6 +3764,7 @@ kbd {
   font-size: var(--sf-text-caption-3);
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .workspace-files__bounded,
@@ -4011,6 +4021,7 @@ kbd {
   color: var(--tmux-ide-text-muted);
   font-family: var(--desktop-mono-font);
   font-size: var(--sf-text-caption-2);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Read-only preview and diff panes */
@@ -4117,6 +4128,7 @@ kbd {
   font-family: var(--desktop-mono-font);
   font-size: var(--sf-text-caption-2);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .workspace-files__notice,
