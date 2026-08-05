@@ -373,6 +373,24 @@
   pointer-events: none;
 }
 
+/* Workspace identity: whichever branch resolves, the glyph occupies the same
+ * box, so a list of mixed identities keeps one text baseline. */
+.tmi-workspace-identity {
+  flex: none;
+}
+
+.tmi-workspace-identity--emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.tmi-workspace-identity--dot {
+  display: inline-block;
+  border-radius: var(--tmi-radius-pill);
+}
+
 .tmi-tooltip-anchor {
   position: relative;
   display: inline-flex;

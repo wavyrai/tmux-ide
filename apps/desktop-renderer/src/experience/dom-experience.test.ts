@@ -7,6 +7,7 @@ import {
 
 import { DOM_EXPERIENCE_VARIABLE, createDomExperience } from "./dom-experience.ts";
 import { resolveDomIcon } from "./dom-icons.ts";
+import { ICON_SIZE } from "../ui-system/icon.tsx";
 
 const EXPECTED_DOM_EXPERIENCE_VARIABLE_NAMES = [
   "--tmux-ide-border-attention",
@@ -204,20 +205,23 @@ describe("DOM experience adapter", () => {
     for (const id of SEMANTIC_ICON_IDS) {
       expect(resolveDomIcon(id)).toMatchObject({
         id,
-        viewBox: "0 0 16 16",
+        viewBox: "0 0 24 24",
         size: 16,
         usage: "action",
-        usageSizes: { pane: 16, tab: 16, rail: 18, action: 16, nativeWindow: 16 },
-        strokeWidth: 1.5,
+        usageSizes: { pane: 16, tab: 16, rail: 20, action: 16, nativeWindow: 16 },
+        strokeWidth: 2,
         strokeLinecap: "round",
         strokeLinejoin: "round",
         fill: "none",
         stroke: "currentColor",
       });
       expect(resolveDomIcon(id).label.length).toBeGreaterThan(0);
-      expect(resolveDomIcon(id).paths.length).toBeGreaterThan(0);
+      expect(resolveDomIcon(id).artwork.length).toBeGreaterThan(0);
     }
     expect(resolveDomIcon("close", "nativeWindow").size).toBe(16);
-    expect(resolveDomIcon("more").paths).toEqual(["M2.75 8h.5M7.75 8h.5M12.75 8h.5"]);
+    // Every usage size is a step on the shared ladder — no bespoke numbers.
+    for (const size of Object.values(resolveDomIcon("home").usageSizes)) {
+      expect(Object.values(ICON_SIZE)).toContain(size);
+    }
   });
 });

@@ -1,6 +1,23 @@
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from "./button.tsx";
 export { EmptyState, type EmptyStateProps } from "./empty-state.tsx";
 export {
+  Icon,
+  ICON_SIZE,
+  ICON_STROKE_WIDTH,
+  ICON_STROKE_WIDTH_LARGE,
+  iconNodeAttributes,
+  resolveIconSize,
+  type IconArtwork,
+  type IconNode,
+  type IconProps,
+  type IconSizeName,
+} from "./icon.tsx";
+export {
+  WorkspaceIdentity,
+  workspaceIdentityDotSize,
+  type WorkspaceIdentityProps,
+} from "./workspace-identity.tsx";
+export {
   IconButton,
   type IconButtonProps,
   type IconButtonSize,

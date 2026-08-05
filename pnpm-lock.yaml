@@ -102,6 +102,9 @@ importers:
 
   apps/desktop-renderer:
     dependencies:
+      '@hugeicons/core-free-icons':
+        specifier: ^4.2.3
+        version: 4.2.3
       '@tmux-ide/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -761,6 +764,9 @@ packages:
     peerDependencies:
       hono: '>=3.9.0'
       zod: ^4.3.6
+
+  '@hugeicons/core-free-icons@4.2.3':
+    resolution: {integrity: sha512-fpiU0qFZkv4ABi23xJ2m4qNr0BBfuIaYjPboN8WDA6aj9D+OzXa7eykxKOpACZRuGbDz1U9S5DsNx1d5KNnsgA==}
 
   '@humanfs/core@0.19.1':
     resolution: {integrity: sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==}
@@ -4365,6 +4371,8 @@ snapshots:
     dependencies:
       hono: 4.12.8
       zod: 4.3.6
+
+  '@hugeicons/core-free-icons@4.2.3': {}
 
   '@humanfs/core@0.19.1': {}
 

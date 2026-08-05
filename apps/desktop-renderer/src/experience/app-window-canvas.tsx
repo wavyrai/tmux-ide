@@ -20,6 +20,14 @@ import {
 
 // Pane chrome CSS is already imported by the renderer's external stylesheet.
 // Importing the styled entry would make Vite inject a CSP-blocked <style> tag.
+import {
+  ArrowExpandIcon,
+  MinusSignIcon,
+  PlusSignIcon,
+  RefreshIcon,
+} from "@hugeicons/core-free-icons";
+
+import { Icon, type IconArtwork } from "../ui-system/icon.tsx";
 import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host-unstyled.tsx";
 import type {
   PaneFrameAction,
@@ -338,32 +346,21 @@ export function appWindowCanvasActions(input: {
 
 type CanvasControlIconId = "zoom-in" | "zoom-out" | "fit" | "reset";
 
+/** The canvas pill's verbs, drawn from the same library as every other glyph. */
+const CANVAS_CONTROL_ARTWORK: Readonly<Record<CanvasControlIconId, IconArtwork>> = {
+  "zoom-in": PlusSignIcon,
+  "zoom-out": MinusSignIcon,
+  fit: ArrowExpandIcon,
+  reset: RefreshIcon,
+};
+
 function CanvasControlIcon(props: { readonly id: CanvasControlIconId }): JSX.Element {
   return (
-    <svg
+    <Icon
+      icon={CANVAS_CONTROL_ARTWORK[props.id]}
       class="canvas-controls__icon"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.5"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      aria-hidden="true"
       data-icon={props.id}
-    >
-      <Show when={props.id === "zoom-in"}>
-        <path d="M8 3v10M3 8h10" />
-      </Show>
-      <Show when={props.id === "zoom-out"}>
-        <path d="M3 8h10" />
-      </Show>
-      <Show when={props.id === "fit"}>
-        <path d="M6 3H3v3M10 3h3v3M13 10v3h-3M6 13H3v-3" />
-      </Show>
-      <Show when={props.id === "reset"}>
-        <path d="M13 5.5V2.75l-1.5 1.5A5.25 5.25 0 1 0 13 10M13 2.75h-2.75" />
-      </Show>
-    </svg>
+    />
   );
 }
 
