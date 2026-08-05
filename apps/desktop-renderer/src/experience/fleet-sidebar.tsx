@@ -7,7 +7,8 @@ import type {
 
 import { DashboardSquare01Icon } from "@hugeicons/core-free-icons";
 
-import { Icon } from "../ui-system/index.ts";
+import { ContextMenu, Icon, type ContextMenuSection } from "../ui-system/index.ts";
+import { sessionRowMenuSections, SURFACE_MENU_IDS } from "./multiplexer-verb-menu.ts";
 import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 
 /**
@@ -103,6 +104,22 @@ export interface FleetSidebarSectionProps {
   readonly openSessionId?: string | null;
   /** Perform the owner-gated promotion; resolves ok/reason for the dialog. */
   readonly onPromote: (sessionId: string) => Promise<FleetPromoteOutcome>;
+  /** True when the open workspace's daemon connection can carry a verb. */
+  readonly workspaceConnected?: boolean;
+  /**
+   * Run a multiplexer verb from a session row's menu.
+   *
+   * The row knows which session was right-clicked and whether it is the open
+   * one; it does not know the workspace name, the verb accessor, or how a
+   * rename gets its new name. Those belong to the shell, so the row hands the
+   * item id back and stays presentational — the property this component has had
+   * since it shipped.
+   */
+  readonly onSessionVerb?: (
+    verbId: string,
+    session: FleetCatalogSessionEntryV1,
+    args?: { readonly name?: string },
+  ) => void | Promise<void>;
 }
 
 /** Map an agent's activity to the shell's shared status-glyph token. */
@@ -137,6 +154,11 @@ function agentSummary(session: FleetCatalogSessionEntryV1): string {
 
 export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Element {
   const [pendingSession, setPendingSession] = createSignal<FleetCatalogSessionEntryV1 | null>(null);
+  const [rowMenu, setRowMenu] = createSignal<{
+    readonly session: FleetCatalogSessionEntryV1;
+    readonly pointer: { readonly x: number; readonly y: number };
+  } | null>(null);
+  const [renamingSessionId, setRenamingSessionId] = createSignal<string | null>(null);
   const [promoting, setPromoting] = createSignal(false);
   const [promoteError, setPromoteError] = createSignal<string | null>(null);
 
@@ -152,6 +174,37 @@ export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Elemen
 
   const isOpen = (session: FleetCatalogSessionEntryV1): boolean =>
     props.openSessionId != null && session.sessionId === props.openSessionId;
+
+  const rowMenuSections = createMemo<readonly ContextMenuSection[]>(() => {
+    const menu = rowMenu();
+    if (!menu) return [];
+    const open = isOpen(menu.session);
+    return sessionRowMenuSections({
+      facts: {
+        workspaceConnected: open && props.workspaceConnected === true,
+        sessionWindowCount: 1,
+      },
+      open,
+      label: menu.session.label,
+    });
+  });
+
+  const activateRowMenuItem = (itemId: string): void => {
+    const menu = rowMenu();
+    if (!menu) return;
+    if (itemId === SURFACE_MENU_IDS.openSession) {
+      setPromoteError(null);
+      setPendingSession(menu.session);
+      return;
+    }
+    if (itemId === "session.rename") {
+      // A rename needs a name, so the row becomes the field. Same idiom as the
+      // canvas card: the thing being renamed stays where the user clicked it.
+      setRenamingSessionId(menu.session.sessionId);
+      return;
+    }
+    void props.onSessionVerb?.(itemId, menu.session);
+  };
 
   const closeDialog = (): void => {
     setPendingSession(null);
@@ -198,10 +251,47 @@ export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Elemen
             <div
               class="sidebar-row fleet-sidebar__session-head"
               classList={{ "sidebar-row--active": isOpen(session) }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setRowMenu({ session, pointer: { x: event.clientX, y: event.clientY } });
+              }}
             >
               <i data-state={sessionTone(session)} />
               <span class="sidebar-row__identity">
-                <span>{session.label}</span>
+                <Show
+                  when={renamingSessionId() === session.sessionId}
+                  fallback={<span>{session.label}</span>}
+                >
+                  <form
+                    class="fleet-sidebar__rename"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const field = event.currentTarget.elements.namedItem("name");
+                      const name = field instanceof HTMLInputElement ? field.value.trim() : "";
+                      setRenamingSessionId(null);
+                      if (name.length > 0 && name !== session.label) {
+                        void props.onSessionVerb?.("session.rename", session, { name });
+                      }
+                    }}
+                  >
+                    <input
+                      name="name"
+                      aria-label={`Rename ${session.label}`}
+                      value={session.label}
+                      autocomplete="off"
+                      spellcheck={false}
+                      data-focus-ring="field"
+                      ref={(element) => queueMicrotask(() => element.select())}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          setRenamingSessionId(null);
+                        }
+                      }}
+                      onBlur={() => setRenamingSessionId(null)}
+                    />
+                  </form>
+                </Show>
                 <small>
                   {session.projectLabel} · {agentSummary(session)}
                   <Show when={!session.appCreated}>
@@ -259,6 +349,20 @@ export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Elemen
           </div>
         )}
       </For>
+
+      <Show when={rowMenu()}>
+        {(menu) => (
+          <ContextMenu
+            open
+            pointer={menu().pointer}
+            label={`${menu().session.label} actions`}
+            sections={rowMenuSections()}
+            openSource="contextmenu"
+            onClose={() => setRowMenu(null)}
+            onActivate={(itemId) => activateRowMenuItem(itemId)}
+          />
+        )}
+      </Show>
 
       <Show when={pendingSession()}>
         {(session) => (

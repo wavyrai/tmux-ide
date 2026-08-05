@@ -38,7 +38,10 @@ import {
 
 import { WebWorkbenchDock } from "../../../../packages/daemon/src/ui/workbench-dock/web-host-unstyled.tsx";
 import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host-unstyled.tsx";
-import type { ApplicationShellTerminalPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+import {
+  APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS,
+  type ApplicationShellTerminalPaneFrame,
+} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
@@ -84,7 +87,18 @@ import {
   type AppWindowCanvasMirrorProps,
   type AppWindowMirrorNodeModel,
 } from "./app-window-canvas.tsx";
-import { Button, Icon, IconButton, ResizeHandle, WorkspaceIdentity } from "../ui-system/index.ts";
+import {
+  Button,
+  ContextMenu,
+  Icon,
+  IconButton,
+  ResizeHandle,
+  WorkspaceIdentity,
+  type ContextMenuSection,
+} from "../ui-system/index.ts";
+import { useVerbTable, type MultiplexerVerbTarget } from "./multiplexer-verb-access.ts";
+import { canvasMenuSections, windowCardMenuSections } from "./multiplexer-verb-menu.ts";
+import type { AppWindowCanvasVerbSurface } from "./app-window-canvas.tsx";
 import {
   Alert02Icon,
   CheckmarkCircle02Icon,
@@ -515,6 +529,141 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const hasMaximizedPane = createMemo(() =>
     renderedPaneFrames().some(({ appearance }) => appearance.structure === "maximized"),
   );
+
+  // ── Multiplexer verbs (m49.2) ─────────────────────────────────────────────
+  // The shell owns the workspace name, the daemon connection and the create
+  // flows; the canvas and the sidebar own the pointer. This is the seam.
+  const verbAccess = useVerbTable(props.host);
+  const verbWorkspaceName = () => props.terminalWorkspaceName ?? input().workspace.id;
+  const workspaceConnected = () =>
+    dataMode() === "runtime" && props.daemonState?.status === "connected";
+  /**
+   * Windows in the session, counted the only way the renderer can: attachable
+   * resources sharing a `windowResourceId` are one tmux window, and a resource
+   * without one is its own. It is what the "last window" refusal is checked
+   * against, so it errs toward offering the verb and letting the daemon refuse.
+   */
+  const sessionWindowCount = createMemo(() => {
+    const inventory = shell().terminalInventory;
+    if (!inventory) return 1;
+    const grouped = new Set<string>();
+    let ungrouped = 0;
+    for (const resource of inventory.resources) {
+      if (resource.windowResourceId) grouped.add(resource.windowResourceId);
+      else ungrouped += 1;
+    }
+    return Math.max(1, grouped.size + ungrouped);
+  });
+  const semanticPaneIdFor = (resourceId: string): string | null => {
+    const inventory = shell().terminalInventory;
+    if (!inventory) return null;
+    const resource = inventory.resources.find(({ id }) => id === resourceId);
+    return resource?.attachability.status === "available"
+      ? resource.attachability.semanticPaneId
+      : null;
+  };
+  const openProjectDirectory = (): void => {
+    void props.host.workspace.openProjectDirectory();
+  };
+  const canvasVerbSurface = createMemo<AppWindowCanvasVerbSurface>(() => ({
+    workspaceConnected: workspaceConnected(),
+    sessionWindowCount: sessionWindowCount(),
+    invoke: (verbId, target, args) => verbAccess.invoke(verbId, target, args),
+    onCreateWindow: props.createPaneFlow ? () => setCreatePaneOpen(true) : undefined,
+    onCreateSession: openProjectDirectory,
+  }));
+
+  /** A pointer-anchored menu owned by the shell rather than by the canvas. */
+  const [shellMenu, setShellMenu] = createSignal<{
+    readonly kind: "workspace" | "pane";
+    readonly paneId: string | null;
+    readonly pointer: { readonly x: number; readonly y: number };
+    readonly openSource: "contextmenu" | "click";
+  } | null>(null);
+  const shellMenuSections = createMemo<readonly ContextMenuSection[]>(() => {
+    const menu = shellMenu();
+    if (!menu) return [];
+    const refusals = new Map<string, string>([
+      ["session.detach", "Detaching from the app is not available yet"],
+      ["session.rename", "Rename a session from the fleet sidebar"],
+    ]);
+    if (!props.createPaneFlow) {
+      refusals.set("window.new", "Creating terminals is unavailable in this host");
+    }
+    if (menu.kind === "workspace") {
+      return canvasMenuSections({
+        facts: {
+          workspaceConnected: workspaceConnected(),
+          sessionWindowCount: sessionWindowCount(),
+        },
+        refusals,
+      });
+    }
+    return windowCardMenuSections({
+      facts: {
+        workspaceConnected: workspaceConnected(),
+        sessionWindowCount: sessionWindowCount(),
+        windowPaneCount: 1,
+        windowZoomed: false,
+        targetIsActivePane: shell().focus.terminalInputPaneId === menu.paneId,
+        targetIsDockedStackMember: false,
+      },
+      placement: "docked",
+      maximized: false,
+      // This pane lives in the grid layout, which has no float, dock or stack.
+      appLayoutAvailable: false,
+      appLayoutUnavailableReason: "This pane is in the grid layout, not on the canvas",
+      dockTargets: [],
+      refusals,
+    });
+  });
+  const activateShellMenuItem = (itemId: string): void => {
+    const menu = shellMenu();
+    if (!menu) return;
+    if (itemId === "window.new") {
+      setCreatePaneOpen(true);
+      return;
+    }
+    if (itemId === "session.new") {
+      openProjectDirectory();
+      return;
+    }
+    if (itemId === "session.kill") {
+      void verbAccess.invoke("session.kill", { workspaceName: verbWorkspaceName() });
+      return;
+    }
+    if (!menu.paneId) return;
+    const semanticPaneId = semanticPaneIdFor(menu.paneId);
+    if (!semanticPaneId) return;
+    const target: MultiplexerVerbTarget = {
+      workspaceName: verbWorkspaceName(),
+      semanticPaneId,
+    };
+    if (itemId === "pane.split.right" || itemId === "pane.split.down") {
+      void verbAccess.invoke(itemId, target);
+      return;
+    }
+    if (itemId === "pane.select" || itemId === "pane.kill" || itemId === "window.kill") {
+      void verbAccess.invoke(itemId, target);
+      return;
+    }
+    if (itemId === "window.zoom.toggle") void verbAccess.invoke(itemId, target);
+  };
+  const openShellMenu = (
+    kind: "workspace" | "pane",
+    paneId: string | null,
+    anchor: Element,
+    openSource: "contextmenu" | "click",
+    pointer?: { readonly x: number; readonly y: number },
+  ): void => {
+    const bounds = anchor.getBoundingClientRect();
+    setShellMenu({
+      kind,
+      paneId,
+      openSource,
+      pointer: pointer ?? { x: bounds.left, y: bounds.bottom },
+    });
+  };
 
   // ── Mirror panes (m43 card 3, dev-facing) ─────────────────────────────────
   // One session-scoped pane-stream lease mirrors the workspace's attachable
@@ -1063,11 +1212,17 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               <strong>{shell().project.name}</strong>
               <small>{shell().project.rootLabel}</small>
             </span>
+            {/*
+              The overflow glyph beside the workspace name is exactly where a
+              user hunts for rename and close. It had a label, a tooltip and no
+              handler; it now opens the session's own verb menu.
+            */}
             <IconButton
               class="workspace-sidebar__more"
               size="small"
               label="Workspace actions"
               tooltip="Workspace actions"
+              onClick={(event) => openShellMenu("workspace", null, event.currentTarget, "click")}
             >
               <DomIcon id="more" usage="action" />
             </IconButton>
@@ -1160,6 +1315,23 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
             state={fleetState()}
             openSessionId={openFleetSessionId()}
             onPromote={promoteSession}
+            workspaceConnected={workspaceConnected()}
+            onSessionVerb={(verbId, _session, args) => {
+              // Only the open workspace's row can carry a verb: a session the
+              // app has not opened has no workspace name to address, which is
+              // why the row's other items arrive here already refused.
+              if (verbId === "session.kill") {
+                void verbAccess.invoke("session.kill", { workspaceName: verbWorkspaceName() });
+                return;
+              }
+              if (verbId === "session.rename" && args?.name) {
+                void verbAccess.invoke(
+                  "session.rename",
+                  { workspaceName: verbWorkspaceName() },
+                  { name: args.name },
+                );
+              }
+            }}
           />
         </aside>
 
@@ -1255,7 +1427,21 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                       return (
                         <WebPaneFrame
                           model={paneFrame()}
-                          onActionActivate={props.onPaneAction}
+                          onActionActivate={(intent, source) => {
+                            // The pane-actions overflow produced a command no
+                            // surface consumed. It opens the verb menu now; every
+                            // other action keeps its existing host handler.
+                            if (
+                              intent.actionId === APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS.menu
+                            ) {
+                              const anchor = document.querySelector(
+                                `[data-pane-id="${CSS.escape(intent.paneId)}"] [data-action-id="${CSS.escape(intent.actionId)}"]`,
+                              );
+                              if (anchor) openShellMenu("pane", intent.paneId, anchor, "click");
+                              return;
+                            }
+                            props.onPaneAction?.(intent, source);
+                          }}
                           onGripActivate={props.onPaneGrip}
                           renderPaneIcon={(_pane, icon) => <DomIcon id={icon} usage="pane" />}
                           renderActionIcon={(action) => <DomIcon id={action.icon} usage="action" />}
@@ -1334,6 +1520,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   mutationsAvailable={props.onAppWindowCommand !== undefined}
                   mutationUnavailableReason={props.appWindowMutationUnavailableReason}
                   mirror={mirrorCanvasProps()}
+                  verbs={canvasVerbSurface()}
                 />
               )}
             </Show>
@@ -1391,6 +1578,20 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           {statusStrip().nextAction}
         </span>
       </footer>
+
+      <Show when={shellMenu()}>
+        {(menu) => (
+          <ContextMenu
+            open
+            pointer={menu().pointer}
+            label={menu().kind === "workspace" ? "Workspace actions" : "Pane actions"}
+            sections={shellMenuSections()}
+            openSource={menu().openSource}
+            onClose={() => setShellMenu(null)}
+            onActivate={(itemId) => activateShellMenuItem(itemId)}
+          />
+        )}
+      </Show>
 
       <CommandPalette
         open={shell().focus.palette.open}

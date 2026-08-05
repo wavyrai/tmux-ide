@@ -2262,6 +2262,60 @@ kbd {
   filter: drop-shadow(0 8px 16px var(--desktop-shadow));
 }
 
+/* Inline rename. The editor sits over the card's own header rather than in a
+   dialog: the title being changed stays where the user double-clicked it, and
+   the surrounding card is still the thing being named. */
+.app-window-card__rename {
+  position: absolute;
+  z-index: 3;
+  inset: 0 0 auto;
+  display: flex;
+  padding: var(--tmi-space-2);
+}
+
+.app-window-card__rename-field {
+  width: 100%;
+  padding: var(--tmi-space-2) var(--tmi-space-4);
+  border: 1px solid var(--tmi-accent);
+  border-radius: var(--tmi-radius-sm);
+  color: var(--tmi-text-bright);
+  background: var(--tmi-surface-overlay);
+  font-family: var(--tmi-font-chrome);
+  font-size: var(--tmi-text-body-2);
+  line-height: var(--tmi-leading-body-2);
+}
+
+/* A killed window, held for a beat so destruction is seen rather than inferred
+   from an absence. Removed by its own timer; nothing here is persistent. */
+.app-window-card--ended {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tmi-space-2);
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--tmi-border-subtle);
+  color: var(--tmi-text-muted);
+  background: var(--tmi-surface-panel);
+  text-align: center;
+}
+
+.app-window-card--ended strong {
+  color: var(--tmi-text-secondary);
+  font-size: var(--tmi-text-body-2);
+  line-height: var(--tmi-leading-body-2);
+}
+
+.app-window-card--ended span {
+  font-size: var(--tmi-text-caption-1);
+  line-height: var(--tmi-leading-caption-1);
+  letter-spacing: var(--tmi-tracking-caption-1);
+  text-transform: uppercase;
+}
+
+.app-window-card[data-ending="true"] {
+  opacity: 0.6;
+}
+
 /* A docked stack's window list. Only the active member renders as a card, so
    without these tabs its siblings are unreachable. The card becomes a column
    so the strip takes its own height and the frame keeps the rest. */

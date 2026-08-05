@@ -123,14 +123,48 @@ function appLayoutItem(input: {
   };
 }
 
+/**
+ * Overlay a surface's own refusals.
+ *
+ * A refusal only ever DISABLES: an item the availability engine already refused
+ * keeps that reason, because tmux's rule is the more fundamental one and the
+ * surface's would replace a true sentence with a second true sentence.
+ */
+function applyRefusals(
+  refusals: MenuItemRefusals | undefined,
+  sections: readonly ContextMenuSection[],
+): readonly ContextMenuSection[] {
+  if (!refusals || refusals.size === 0) return sections;
+  return sections.map((section) => ({
+    ...section,
+    items: section.items.map((item) =>
+      item.disabledReason === null && refusals.has(item.id)
+        ? { ...item, disabledReason: refusals.get(item.id)! }
+        : item,
+    ),
+  }));
+}
+
 /** A stack the canvas can dock a window into, named by its visible member. */
 export interface DockStackTarget {
   readonly stackId: string;
   readonly label: string;
 }
 
+/**
+ * Surface-level refusals, keyed by item id.
+ *
+ * The availability engine answers from tmux's rules; a surface sometimes knows
+ * a further one — the app has no flow behind this verb yet, or the row names a
+ * session it cannot address. Supplying the sentence here keeps the item visible
+ * and refused rather than quietly enabled and inert, which is the failure that
+ * teaches a user the app is broken.
+ */
+export type MenuItemRefusals = ReadonlyMap<string, string>;
+
 export interface WindowCardMenuInput {
   readonly facts: MultiplexerVerbFacts;
+  readonly refusals?: MenuItemRefusals;
   readonly placement: "docked" | "floating";
   readonly maximized: boolean;
   /** False when the host cannot durably execute AppWindow commands. */
@@ -149,7 +183,7 @@ export function windowCardMenuSections(input: WindowCardMenuInput): readonly Con
     ? null
     : (input.appLayoutUnavailableReason ?? "Window mutations are unavailable in this host");
   const docked = input.placement === "docked";
-  return [
+  return applyRefusals(input.refusals, [
     {
       id: "pane",
       label: "This pane",
@@ -207,16 +241,17 @@ export function windowCardMenuSections(input: WindowCardMenuInput): readonly Con
         verbMenuItem("stack.activate", input.facts),
       ],
     },
-  ];
+  ]);
 }
 
 export interface CanvasMenuInput {
   readonly facts: MultiplexerVerbFacts;
+  readonly refusals?: MenuItemRefusals;
 }
 
 /** The menu for bare canvas: where creation starts, and the session's own verbs. */
 export function canvasMenuSections(input: CanvasMenuInput): readonly ContextMenuSection[] {
-  return [
+  return applyRefusals(input.refusals, [
     {
       id: "create",
       label: "Create",
@@ -231,7 +266,7 @@ export function canvasMenuSections(input: CanvasMenuInput): readonly ContextMenu
         verbMenuItem("session.kill", input.facts),
       ],
     },
-  ];
+  ]);
 }
 
 export interface SessionRowMenuInput {

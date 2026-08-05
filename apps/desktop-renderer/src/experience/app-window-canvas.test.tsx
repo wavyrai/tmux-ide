@@ -278,26 +278,30 @@ describe("AppWindowCanvas", () => {
         placement: "docked",
         maximized: false,
         commandsAvailable: true,
+        closeDisabledReason: null,
       }),
     ).toMatchObject([
       {
         id: APP_WINDOW_CANVAS_ACTION_IDS.placement,
         commandId: "workspace.window.float",
-        label: "Float",
+        // The qualifier is the m48 gap-1 divergence stated on the control that
+        // causes it: this button moves the card, not the tmux layout.
+        label: "Float (app layout)",
         available: true,
         disabledReason: null,
       },
       {
         id: APP_WINDOW_CANVAS_ACTION_IDS.maximize,
-        label: "Maximize",
+        label: "Maximize card (app layout)",
         available: false,
         disabledReason: "Float this window before maximizing",
       },
       {
         id: APP_WINDOW_CANVAS_ACTION_IDS.close,
         commandId: "workspace.window.close",
-        available: false,
-        disabledReason: "Closing app windows is not supported by the AppWindow command contract",
+        label: "Close",
+        available: true,
+        disabledReason: null,
       },
     ]);
     expect(
@@ -305,15 +309,31 @@ describe("AppWindowCanvas", () => {
         placement: "floating",
         maximized: false,
         commandsAvailable: false,
+        closeDisabledReason: "this is the session's last window",
       }).map(({ available, disabledReason }) => ({ available, disabledReason })),
     ).toEqual([
       { available: false, disabledReason: "Window mutations are unavailable in this host" },
       { available: false, disabledReason: "Window mutations are unavailable in this host" },
-      {
-        available: false,
-        disabledReason: "Closing app windows is not supported by the AppWindow command contract",
-      },
+      // Close is NOT an AppWindow command, so it is not gated by the layout
+      // mutation availability — only by tmux's own rule.
+      { available: false, disabledReason: "this is the session's last window" },
     ]);
+  });
+
+  it("arms the close button before it destroys anything", () => {
+    const armed = appWindowCanvasActions({
+      placement: "floating",
+      maximized: false,
+      commandsAvailable: true,
+      closeDisabledReason: null,
+      closeConfirming: true,
+    }).at(-1)!;
+    expect(armed).toMatchObject({
+      label: "Confirm close",
+      available: true,
+      attention: true,
+    });
+    expect(armed.description).toContain("cannot be undone");
   });
 
   it("renders terminal content under canonical window identity and durable geometry", () => {
@@ -714,9 +734,7 @@ describe("AppWindowCanvas", () => {
     )!;
     expect(maximize.disabled).toBe(false);
     expect(close.disabled).toBe(true);
-    expect(close.title).toBe(
-      "Closing app windows is not supported by the AppWindow command contract",
-    );
+    expect(close.title).toBe("Closing windows is unavailable in this host");
 
     maximize.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
     expect(onCommand).toHaveBeenLastCalledWith({
@@ -728,7 +746,9 @@ describe("AppWindowCanvas", () => {
       source: "mouse",
     });
     expect(maximize.getAttribute("aria-pressed")).toBe("true");
-    expect(maximize.getAttribute("aria-label")).toBe("Restore the floating window");
+    expect(maximize.getAttribute("aria-label")).toBe(
+      "Restore the floating card. This is the card's size, not tmux's pane zoom.",
+    );
     expect(root.querySelector(".terminal-surface__viewport")).toBe(terminalMount);
 
     maximize.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
@@ -867,7 +887,9 @@ describe("AppWindowCanvas", () => {
     await vi.waitFor(() =>
       expect(root.querySelector(".app-window-card")?.getAttribute("data-maximized")).toBe("false"),
     );
-    expect(maximize().getAttribute("aria-label")).toBe("Maximize the floating window");
+    expect(maximize().getAttribute("aria-label")).toBe(
+      "Maximize the floating card. This is the card's size, not tmux's pane zoom.",
+    );
 
     maximize().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
     maximize().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));

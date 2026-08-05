@@ -3,7 +3,10 @@ import {
   type AgentGraphOverlay,
   type AppWindowDocumentV1,
   type ApplicationShellTerminalInventory,
+  type MultiplexerVerbFacts,
+  type MultiplexerVerbId,
   type PaneAppearance,
+  type WorkspaceMultiplexerHostResult,
 } from "@tmux-ide/contracts";
 import {
   For,
@@ -92,6 +95,16 @@ import {
   type AgentGraphScene,
   type AgentGraphSceneRect,
 } from "./agent-graph-canvas-geometry.ts";
+import {
+  APP_LAYOUT_MENU_IDS,
+  canvasMenuSections,
+  stackIdFromDockIntoMenuId,
+  verbMenuItem,
+  windowCardMenuSections,
+  type DockStackTarget,
+} from "./multiplexer-verb-menu.ts";
+import { ContextMenu, type ContextMenuSection } from "../ui-system/index.ts";
+import type { MultiplexerVerbArguments, MultiplexerVerbTarget } from "./multiplexer-verb-access.ts";
 
 /** One read-only mirror pane node placed on the canvas (m43 card 3). */
 export interface AppWindowMirrorNodeModel {
@@ -118,6 +131,30 @@ export interface AppWindowCanvasMirrorProps {
   readonly faultLabel?: string | null;
   readonly onRetry: () => void;
   readonly rendererFactory?: MirrorTerminalRendererFactory;
+}
+
+/**
+ * What the canvas needs to offer multiplexer verbs on its cards and its ground.
+ *
+ * The canvas does not own the accessor, the workspace name, or the create
+ * flows — the shell does. It owns the pointer, which is the only reason any of
+ * this arrives here. Absent = the canvas renders exactly as it did before m49.2:
+ * no context menus, an inert Close button, and a header double-tap that frames
+ * the window instead of zooming it.
+ */
+export interface AppWindowCanvasVerbSurface {
+  readonly workspaceConnected: boolean;
+  /** Windows in this tmux session, as the terminal inventory reports them. */
+  readonly sessionWindowCount: number;
+  readonly invoke: (
+    verbId: MultiplexerVerbId,
+    target: MultiplexerVerbTarget,
+    args?: MultiplexerVerbArguments,
+  ) => Promise<WorkspaceMultiplexerHostResult>;
+  /** Open the app's create-window flow. Absent = the verb is offered, refused. */
+  readonly onCreateWindow?: () => void;
+  readonly onCreateSession?: () => void;
+  readonly onDetachSession?: () => void;
 }
 
 export interface AppWindowCanvasProps {
@@ -160,6 +197,8 @@ export interface AppWindowCanvasProps {
    * document, never vote on size, and never dispatch AppWindow commands.
    */
   readonly mirror?: AppWindowCanvasMirrorProps;
+  /** Multiplexer verbs on the cards and on bare canvas (m49.2). */
+  readonly verbs?: AppWindowCanvasVerbSurface;
 }
 
 /** One placed mirror node: its model, its durable node identity, its rect. */
@@ -285,6 +324,31 @@ export const APP_WINDOW_CANVAS_ACTION_IDS = Object.freeze({
   close: "app-window-close",
 } as const);
 
+/** Which surface a pointer-anchored menu was opened on. */
+type CanvasContextMenu =
+  | {
+      readonly kind: "window";
+      readonly windowId: string;
+      readonly pointer: { readonly x: number; readonly y: number };
+    }
+  | { readonly kind: "canvas"; readonly pointer: { readonly x: number; readonly y: number } };
+
+/**
+ * A card that has just been killed.
+ *
+ * Cheap on purpose: it is the last known title and rect, held for a beat so a
+ * destroyed window is seen to END rather than to vanish between frames. It is
+ * not a persistent record — nothing survives a reload, and the daemon's own
+ * refresh is still what removes the real card.
+ */
+interface CanvasTombstone {
+  readonly title: string;
+  readonly rect: AppWindowCanvasItem["rect"];
+}
+
+/** How long a killed card's "ended" marker stays on the canvas. */
+const TOMBSTONE_MS = 2_400;
+
 interface LocalMaximizedWindow {
   readonly restoreRect: AppWindowCanvasItem["rect"];
   readonly maximizedRect: AppWindowCanvasItem["rect"];
@@ -295,22 +359,38 @@ function unavailableReason(commandsAvailable: boolean, reason?: string): string 
   return commandsAvailable ? null : (reason ?? "Window mutations are unavailable in this host");
 }
 
+/**
+ * The card's chrome buttons.
+ *
+ * Two of the three arrange the app's canvas and never reach tmux, so they say
+ * so — "Float (app layout)" is the m48 gap-1 divergence stated on the control
+ * that causes it, rather than left for the user to discover over ssh. The third
+ * closes the tmux window and is the one that had been permanently disabled.
+ */
 export function appWindowCanvasActions(input: {
   readonly placement: AppWindowCanvasItem["placement"];
   readonly maximized: boolean;
   readonly commandsAvailable: boolean;
   readonly unavailableReason?: string;
+  /** Null when the window can be killed; the refusal sentence otherwise. */
+  readonly closeDisabledReason?: string | null;
+  /** True while the Close button is holding a pending confirm. */
+  readonly closeConfirming?: boolean;
 }): readonly PaneFrameAction[] {
   const mutationUnavailable = unavailableReason(input.commandsAvailable, input.unavailableReason);
   const docked = input.placement === "docked";
+  const closeReason = input.closeDisabledReason ?? null;
+  const confirming = input.closeConfirming === true;
   return [
     {
       id: APP_WINDOW_CANVAS_ACTION_IDS.placement,
       commandId: docked ? "workspace.window.float" : "workspace.window.dock",
       behavior: "action",
       icon: docked ? "float" : "dock",
-      label: docked ? "Float" : "Dock",
-      description: docked ? "Float this window on the canvas" : "Dock this window",
+      label: docked ? "Float (app layout)" : "Dock (app layout)",
+      description: docked
+        ? "Float this window on the canvas. App layout only — the tmux layout is unchanged."
+        : "Dock this window. App layout only — the tmux layout is unchanged.",
       available: mutationUnavailable === null,
       disabledReason: mutationUnavailable,
       pressed: false,
@@ -321,8 +401,10 @@ export function appWindowCanvasActions(input: {
       commandId: "workspace.window.maximize.toggle",
       behavior: "toggle",
       icon: input.maximized ? "restore" : "maximize",
-      label: input.maximized ? "Restore" : "Maximize",
-      description: input.maximized ? "Restore the floating window" : "Maximize the floating window",
+      label: input.maximized ? "Restore card (app layout)" : "Maximize card (app layout)",
+      description: input.maximized
+        ? "Restore the floating card. This is the card's size, not tmux's pane zoom."
+        : "Maximize the floating card. This is the card's size, not tmux's pane zoom.",
       available: mutationUnavailable === null && !docked,
       disabledReason:
         mutationUnavailable ?? (docked ? "Float this window before maximizing" : null),
@@ -334,12 +416,15 @@ export function appWindowCanvasActions(input: {
       commandId: "workspace.window.close",
       behavior: "action",
       icon: "close",
-      label: "Close",
-      description: "Close this app window",
-      available: false,
-      disabledReason: "Closing app windows is not supported by the AppWindow command contract",
+      label: confirming ? "Confirm close" : "Close",
+      description: confirming
+        ? "Click again to kill this tmux window and every process in it. This cannot be undone."
+        : "Kill this tmux window and every process in it",
+      available: closeReason === null,
+      disabledReason: closeReason,
       pressed: false,
       busy: false,
+      attention: confirming,
     },
   ];
 }
@@ -403,6 +488,8 @@ function windowFrameModel(
     readonly maximized: boolean;
     readonly commandsAvailable: boolean;
     readonly unavailableReason?: string;
+    readonly closeDisabledReason?: string | null;
+    readonly closeConfirming?: boolean;
   },
 ): PaneFrameModel {
   const paneId = window.windowId;
@@ -421,6 +508,8 @@ function windowFrameModel(
       maximized: options.maximized,
       commandsAvailable: options.commandsAvailable,
       unavailableReason: options.unavailableReason,
+      closeDisabledReason: options.closeDisabledReason,
+      closeConfirming: options.closeConfirming,
     }),
   };
 }
@@ -569,6 +658,20 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     new Map<string, LocalMaximizedWindow>(),
     { equals: false },
   );
+  const [contextMenu, setContextMenu] = createSignal<CanvasContextMenu | null>(null);
+  const [renaming, setRenaming] = createSignal<{
+    readonly windowId: string;
+    readonly initial: string;
+  } | null>(null);
+  const [closeConfirmId, setCloseConfirmId] = createSignal<string | null>(null);
+  const [tombstones, setTombstones] = createSignal(new Map<string, CanvasTombstone>(), {
+    equals: false,
+  });
+  const tombstoneTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  onCleanup(() => {
+    for (const timer of tombstoneTimers.values()) clearTimeout(timer);
+    tombstoneTimers.clear();
+  });
   onCleanup(() => {
     sceneRuntimeStyle?.dispose();
     canvasRuntimeStyle?.dispose();
@@ -889,6 +992,21 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     actionId: string,
     source: "keyboard" | "mouse",
   ) => {
+    // Close destroys a tmux window; it is not an AppWindow command and is not
+    // gated by the canvas's layout-mutation availability. Its consent is the
+    // same inline two-step the context menu uses: the first activation arms the
+    // button, the second performs it, and moving on disarms it.
+    if (actionId === APP_WINDOW_CANVAS_ACTION_IDS.close) {
+      if (!props.verbs) return;
+      if (closeConfirmId() !== window.windowId) {
+        setCloseConfirmId(window.windowId);
+        return;
+      }
+      setCloseConfirmId(null);
+      runVerb("window.kill", window);
+      return;
+    }
+    setCloseConfirmId(null);
     if (!(props.mutationsAvailable ?? props.onCommand !== undefined)) return;
     if (actionId === APP_WINDOW_CANVAS_ACTION_IDS.placement) {
       const previousMaximizeStates = maximizeStates();
@@ -967,6 +1085,281 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     );
   };
 
+  // ── Multiplexer verbs on the canvas (m49.2) ───────────────────────────────
+
+  const windowById = (windowId: string): AppWindowCanvasItem | null =>
+    projection().windows.find((window) => window.windowId === windowId) ?? null;
+
+  const semanticPaneIdOf = (window: AppWindowCanvasItem): string | null => {
+    const source = window.source;
+    return source.kind === "terminal" ? terminalTarget(source.terminalSourceId) : null;
+  };
+
+  /**
+   * The identity a verb is dispatched against.
+   *
+   * Only a pane id: a card's tmux window has no wire-safe window id here (the
+   * inventory's grouping key is a digest, not a semantic stamp), which is
+   * exactly why the intent contract accepts a pane as the way to name its
+   * window. Null when the card has no attachable pane — a verb built against
+   * nothing would act on something the user did not point at.
+   */
+  const verbTarget = (window: AppWindowCanvasItem): MultiplexerVerbTarget | null => {
+    const semanticPaneId = semanticPaneIdOf(window);
+    return semanticPaneId ? { workspaceName: props.workspaceName, semanticPaneId } : null;
+  };
+
+  const sessionFacts = (): MultiplexerVerbFacts => {
+    const verbs = props.verbs;
+    if (!verbs) return {};
+    return {
+      workspaceConnected: verbs.workspaceConnected,
+      sessionWindowCount: verbs.sessionWindowCount,
+    };
+  };
+
+  /**
+   * The facts a window card can state about itself.
+   *
+   * `windowZoomed` is seeded false rather than left unknown. The renderer is not
+   * told tmux's zoom flag, but the only answer this changes is for a single-pane
+   * window — which tmux cannot zoom anyway — so a false here refuses exactly the
+   * verb that would have been refused, and a multi-pane window stays offered.
+   * The dispatch itself sends `toggle`, so the daemon reads the real flag.
+   */
+  const windowFacts = (window: AppWindowCanvasItem): MultiplexerVerbFacts => ({
+    ...sessionFacts(),
+    windowPaneCount: window.windowGroupPaneCount ?? 1,
+    windowZoomed: false,
+    targetIsActivePane: window.active,
+    targetIsDockedStackMember: window.stackId !== null && window.placement === "docked",
+  });
+
+  /**
+   * Why this card's Close button is refused, or null when it will work.
+   *
+   * The button had shipped permanently disabled, honestly stating a contract
+   * limit. The limit is gone; what remains is tmux's own rule — a session must
+   * keep a window — which the verb table already answers, so the button and the
+   * menu item refuse for the same reason in the same words.
+   */
+  const closeRefusal = (window: AppWindowCanvasItem): string | null => {
+    if (!props.verbs) return "Closing windows is unavailable in this host";
+    if (!verbTarget(window)) return "This window has no attachable pane to address";
+    return verbMenuItem("window.kill", windowFacts(window)).disabledReason;
+  };
+
+  /** Docked stacks other than this window's own, named by their visible member. */
+  const dockTargets = (window: AppWindowCanvasItem): readonly DockStackTarget[] =>
+    projection()
+      .windows.flatMap((candidate) =>
+        candidate.placement === "docked" &&
+        candidate.stackId !== null &&
+        candidate.stackId !== window.stackId
+          ? [{ stackId: candidate.stackId, label: candidate.title ?? "Terminal" }]
+          : [],
+      )
+      .slice(0, 8);
+
+  /**
+   * Refusals the verb table cannot compute: flows this canvas has no route to.
+   *
+   * Stated rather than hidden, and rather than left enabled-but-inert. A menu
+   * item that does nothing on click is the one outcome that teaches a user the
+   * app is broken instead of teaching them the rule.
+   */
+  const surfaceRefusals = createMemo<ReadonlyMap<string, string>>(() => {
+    const verbs = props.verbs;
+    const refusals = new Map<string, string>();
+    if (!verbs?.onCreateWindow) {
+      refusals.set("window.new", "Creating terminals is unavailable in this host");
+    }
+    if (!verbs?.onCreateSession) {
+      refusals.set("session.new", "Opening a project directory is unavailable in this host");
+    }
+    if (!verbs?.onDetachSession) {
+      refusals.set("session.detach", "Detaching from the app is not available yet");
+    }
+    refusals.set("session.rename", "Rename a session from the fleet sidebar");
+    return refusals;
+  });
+
+  const menuSections = createMemo<readonly ContextMenuSection[]>(() => {
+    const menu = contextMenu();
+    if (!menu) return [];
+    if (menu.kind === "canvas") {
+      return canvasMenuSections({ facts: sessionFacts(), refusals: surfaceRefusals() });
+    }
+    const window = windowById(menu.windowId);
+    if (!window) return [];
+    return windowCardMenuSections({
+      refusals: surfaceRefusals(),
+      facts: windowFacts(window),
+      placement: window.placement,
+      maximized: maximizeStates().has(window.windowId),
+      appLayoutAvailable: props.mutationsAvailable ?? props.onCommand !== undefined,
+      appLayoutUnavailableReason: props.mutationUnavailableReason,
+      dockTargets: dockTargets(window),
+    });
+  });
+
+  const closeMenu = () => setContextMenu(null);
+
+  /** Killed windows the projection has already dropped — the tombstones to draw. */
+  const endedWindowIds = createMemo<readonly string[]>(() => {
+    const live = new Set(projection().windows.map((window) => window.windowId));
+    return [...tombstones().keys()].filter((windowId) => !live.has(windowId));
+  });
+
+  const handleContextMenu: JSX.EventHandler<HTMLDivElement, MouseEvent> = (event) => {
+    if (!props.verbs) return;
+    const region = pointerRegion(event.target);
+    if (!region) return;
+    event.preventDefault();
+    const pointer = { x: event.clientX, y: event.clientY };
+    if (region.kind === "canvas") {
+      setContextMenu({ kind: "canvas", pointer });
+      return;
+    }
+    focusWindow(region.windowId, "mouse");
+    setContextMenu({ kind: "window", windowId: region.windowId, pointer });
+  };
+
+  /**
+   * Mark a card as ended and hold the marker briefly.
+   *
+   * The daemon refresh that removes the card can land in the same frame as the
+   * kill's acknowledgement, so without this the window the user just destroyed
+   * simply is not there any more — which reads as a glitch rather than as an
+   * outcome. Held for one beat, then gone.
+   */
+  const recordTombstone = (window: AppWindowCanvasItem) => {
+    const next = new Map(tombstones());
+    next.set(window.windowId, {
+      title: window.title ?? "Terminal",
+      rect: displayedWindow(window).rect,
+    });
+    setTombstones(next);
+    clearTimeout(tombstoneTimers.get(window.windowId));
+    tombstoneTimers.set(
+      window.windowId,
+      setTimeout(() => {
+        tombstoneTimers.delete(window.windowId);
+        const remaining = new Map(tombstones());
+        remaining.delete(window.windowId);
+        setTombstones(remaining);
+      }, TOMBSTONE_MS),
+    );
+  };
+
+  const runVerb = (
+    verbId: MultiplexerVerbId,
+    window: AppWindowCanvasItem,
+    args?: MultiplexerVerbArguments,
+  ): void => {
+    const verbs = props.verbs;
+    const target = verbTarget(window);
+    if (!verbs || !target) return;
+    const destroys = verbId === "pane.kill" || verbId === "window.kill";
+    void verbs.invoke(verbId, target, args).then((result) => {
+      if (result.status === "ok" && destroys) recordTombstone(window);
+    });
+  };
+
+  const beginRename = (window: AppWindowCanvasItem): void => {
+    if (!props.verbs) return;
+    setRenaming({ windowId: window.windowId, initial: window.title ?? "" });
+  };
+
+  const commitRename = (name: string): void => {
+    const pending = renaming();
+    setRenaming(null);
+    const trimmed = name.trim();
+    const window = pending ? windowById(pending.windowId) : null;
+    if (!pending || !window || trimmed.length === 0 || trimmed === (window.title ?? "")) return;
+    runVerb("window.rename", window, { name: trimmed });
+  };
+
+  const activateMenuItem = (itemId: string): void => {
+    const menu = contextMenu();
+    const verbs = props.verbs;
+    if (!menu || !verbs) return;
+    if (menu.kind === "canvas") {
+      if (itemId === "window.new") verbs.onCreateWindow?.();
+      else if (itemId === "session.new") verbs.onCreateSession?.();
+      else if (itemId === "session.detach") verbs.onDetachSession?.();
+      else if (itemId === "session.kill") {
+        void verbs.invoke("session.kill", { workspaceName: props.workspaceName });
+      }
+      return;
+    }
+    const window = windowById(menu.windowId);
+    if (!window) return;
+    if (itemId === APP_LAYOUT_MENU_IDS.placement || itemId === APP_LAYOUT_MENU_IDS.maximize) {
+      handleWindowAction(
+        window,
+        itemId === APP_LAYOUT_MENU_IDS.placement
+          ? APP_WINDOW_CANVAS_ACTION_IDS.placement
+          : APP_WINDOW_CANVAS_ACTION_IDS.maximize,
+        "mouse",
+      );
+      return;
+    }
+    const dockStackId = stackIdFromDockIntoMenuId(itemId);
+    if (dockStackId !== null) {
+      if (!(props.mutationsAvailable ?? props.onCommand !== undefined)) return;
+      dispatchDurableCommand({
+        command: { type: "window.dock", windowId: window.windowId, stackId: dockStackId },
+        source: "mouse",
+      });
+      return;
+    }
+    if (itemId === "stack.activate") {
+      if (window.stackId) activateStackMember(window.stackId, window.windowId, "mouse");
+      return;
+    }
+    if (itemId === "window.rename") {
+      beginRename(window);
+      return;
+    }
+    if (itemId === "window.new") {
+      verbs.onCreateWindow?.();
+      return;
+    }
+    runVerb(itemId as MultiplexerVerbId, window);
+  };
+
+  /**
+   * Double-click on a card header.
+   *
+   * On the title it opens the inline rename; anywhere else on the header it
+   * runs tmux's own pane zoom, which the m48 audit found unreachable while a
+   * control one pixel away said "Maximize" and meant the card. Without a verb
+   * surface the older behaviour stands: frame the window in the viewport.
+   */
+  const handleDoubleClick: JSX.EventHandler<HTMLDivElement, MouseEvent> = (event) => {
+    const region = pointerRegion(event.target);
+    if (!region || region.kind !== "window-header") return;
+    const window = windowById(region.windowId);
+    if (!window) return;
+    if (!props.verbs) {
+      event.preventDefault();
+      zoomToWindow(displayedWindow(window).rect);
+      return;
+    }
+    if (
+      event.target instanceof Element &&
+      event.target.closest(".web-pane-frame__title-group, .web-pane-frame__title")
+    ) {
+      event.preventDefault();
+      beginRename(window);
+      return;
+    }
+    if (region.interactiveControl) return;
+    event.preventDefault();
+    runVerb("window.zoom.toggle", window);
+  };
+
   const handlePointerDown: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
     const region = pointerRegion(event.target);
     if (!region) return;
@@ -991,6 +1384,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     // which suppresses the compatibility click/dblclick pair.
     if (
       props.overlay &&
+      !props.verbs &&
       route.action === "move" &&
       region.kind === "window-header" &&
       !region.interactiveControl
@@ -1266,6 +1660,8 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
       }}
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
+      onContextMenu={handleContextMenu}
+      onDblClick={handleDoubleClick}
     >
       <div
         ref={(element) => {
@@ -1369,6 +1765,8 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                     maximized: maximizeStates().has(window().windowId),
                     commandsAvailable: props.mutationsAvailable ?? props.onCommand !== undefined,
                     unavailableReason: props.mutationUnavailableReason,
+                    closeDisabledReason: closeRefusal(window()),
+                    closeConfirming: closeConfirmId() === window().windowId,
                   })
                 : null;
             });
@@ -1407,6 +1805,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                     : undefined
                 }
                 data-maximized={maximizeStates().has(window().windowId)}
+                data-ending={tombstones().has(window().windowId)}
                 data-transient-geometry={rectOverrides().get(window().windowId)?.revision === null}
               >
                 <Show when={window().stackMembers}>
@@ -1438,6 +1837,35 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                       </For>
                     </div>
                   )}
+                </Show>
+                <Show when={renaming()?.windowId === window().windowId}>
+                  <form
+                    class="app-window-card__rename"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const field = event.currentTarget.elements.namedItem("name");
+                      commitRename(field instanceof HTMLInputElement ? field.value : "");
+                    }}
+                  >
+                    <input
+                      name="name"
+                      class="app-window-card__rename-field"
+                      aria-label={`Rename ${window().title ?? "this window"}`}
+                      value={renaming()?.initial ?? ""}
+                      autocomplete="off"
+                      spellcheck={false}
+                      data-focus-ring="field"
+                      ref={(element) => queueMicrotask(() => element.select())}
+                      onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          setRenaming(null);
+                        }
+                      }}
+                      onBlur={(event) => commitRename(event.currentTarget.value)}
+                    />
+                  </form>
                 </Show>
                 <Show
                   when={frame()}
@@ -1529,6 +1957,45 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                     )}
                   </For>
                 </Show>
+              </article>
+            );
+          }}
+        </For>
+        {/*
+         * Tombstones: cards the user killed, held for one beat after the daemon
+         * refresh removed them. A window that simply disappears reads as a
+         * glitch; one that is seen to end reads as the thing that was asked for.
+         */}
+        <For each={endedWindowIds()}>
+          {(windowId) => {
+            let tombstoneStyle: RuntimeStyleBinding | null = null;
+            onCleanup(() => tombstoneStyle?.dispose());
+            const entry = createMemo(() => tombstones().get(windowId) ?? null);
+            const applyRect = () => {
+              const rect = entry()?.rect;
+              if (!rect) return;
+              tombstoneStyle?.update({
+                left: `${rect.x}px`,
+                top: `${rect.y}px`,
+                width: `${rect.width}px`,
+                height: `${rect.height}px`,
+                "z-index": 140,
+              });
+            };
+            createEffect(applyRect);
+            return (
+              <article
+                ref={(element) => {
+                  tombstoneStyle = createRuntimeStyleBinding(element);
+                  applyRect();
+                }}
+                class="app-window-card app-window-card--ended"
+                role="status"
+                data-window-id={windowId}
+                data-ended="true"
+              >
+                <strong>{entry()?.title ?? "Terminal"}</strong>
+                <span>Ended</span>
               </article>
             );
           }}
@@ -1676,6 +2143,19 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
           )}
         </Show>
       </nav>
+      <Show when={contextMenu()}>
+        {(menu) => (
+          <ContextMenu
+            open
+            pointer={menu().pointer}
+            label={menu().kind === "window" ? "Window actions" : "Canvas actions"}
+            sections={menuSections()}
+            openSource="contextmenu"
+            onClose={closeMenu}
+            onActivate={(itemId) => activateMenuItem(itemId)}
+          />
+        )}
+      </Show>
       <Show when={minimap()}>
         {(map) => (
           <div class="canvas-minimap" data-window-count={map().windows.length}>
