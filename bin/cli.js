@@ -36258,8 +36258,46 @@ var init_agent_graph_overlay2 = __esm({
   }
 });
 
-// packages/daemon/src/command-center/terminal-attachment-issue.ts
+// packages/daemon/src/command-center/owner-authority.ts
 import { timingSafeEqual as timingSafeEqual5 } from "node:crypto";
+function ownerBearerMatches(header, ownerToken) {
+  if (!header || !ownerToken) return false;
+  const supplied = Buffer.from(header, "utf8");
+  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
+  return supplied.byteLength === expected.byteLength && timingSafeEqual5(supplied, expected);
+}
+function decideOwnerAuthority(header, ownerToken, whenOwnerless) {
+  if (!ownerToken) {
+    if (whenOwnerless === "serve-open") return { kind: "serve-open" };
+    return { kind: "denied", reason: "no-owner-capability" };
+  }
+  return ownerBearerMatches(header, ownerToken) ? { kind: "authorized" } : { kind: "denied", reason: "credential-mismatch" };
+}
+function ownerAuthorityGate(ownerToken, policy) {
+  return (c) => {
+    const decision = decideOwnerAuthority(
+      c.req.header("Authorization"),
+      ownerToken,
+      policy.whenOwnerless
+    );
+    if (decision.kind !== "denied") return null;
+    if (decision.reason === "no-owner-capability" && policy.whenOwnerless === "unavailable") {
+      return c.json({ error: policy.unavailableMessage }, 503);
+    }
+    return c.json({ error: policy.mismatchMessage }, 401);
+  };
+}
+function requireOwnerAuthority(ownerToken, policy) {
+  const gate = ownerAuthorityGate(ownerToken, policy);
+  return async (c, next) => gate(c) ?? next();
+}
+var init_owner_authority = __esm({
+  "packages/daemon/src/command-center/owner-authority.ts"() {
+    "use strict";
+  }
+});
+
+// packages/daemon/src/command-center/terminal-attachment-issue.ts
 function issueError(code, reason, retryable = false) {
   return TerminalAttachmentIssueResultSchemaZ.parse({
     status: "error",
@@ -36323,12 +36361,6 @@ function canonicalRendererOrigin2(value) {
     return null;
   }
 }
-function ownerBearerMatches(value, ownerToken) {
-  if (!value || !ownerToken) return false;
-  const supplied = Buffer.from(value, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual5(supplied, expected);
-}
 function mapBackendError(error) {
   if (error instanceof SemanticPaneCatalogError) {
     switch (error.code) {
@@ -36379,7 +36411,12 @@ function mountTerminalAttachmentIssueRoute(app, options) {
     const invalid = () => response(issueError("invalid-request", "Terminal attachment request is invalid."));
     const request = c.req.raw;
     if (new URL(request.url).search.length > 0) return invalid();
-    if (!ownerBearerMatches(request.headers.get("Authorization"), options.ownerToken)) {
+    const owner = decideOwnerAuthority(
+      request.headers.get("Authorization"),
+      options.ownerToken,
+      "reject"
+    );
+    if (owner.kind !== "authorized") {
       return response(issueError("invalid-request", "Terminal attachment request was rejected."));
     }
     if (exactHeader(request, "Content-Type")?.toLowerCase() !== "application/json") {
@@ -36441,12 +36478,12 @@ var init_terminal_attachment_issue = __esm({
     init_lease_manager();
     init_direct_websocket();
     init_semantic_pane_catalog();
+    init_owner_authority();
     MAX_ISSUE_REQUEST_BYTES = 16 * 1024;
   }
 });
 
 // packages/daemon/src/command-center/pane-stream-issue.ts
-import { timingSafeEqual as timingSafeEqual6 } from "node:crypto";
 function issueError2(code, reason, retryable = false) {
   return PaneStreamIssueResultSchemaZ.parse({
     status: "error",
@@ -36510,12 +36547,6 @@ function canonicalRendererOrigin3(value) {
     return null;
   }
 }
-function ownerBearerMatches2(value, ownerToken) {
-  if (!value || !ownerToken) return false;
-  const supplied = Buffer.from(value, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual6(supplied, expected);
-}
 function mapBackendError2(error) {
   if (error instanceof PaneStreamLeaseError) {
     switch (error.code) {
@@ -36555,7 +36586,12 @@ function mountPaneStreamIssueRoute(app, options) {
     const invalid = () => response2(issueError2("invalid-request", "Pane-stream request is invalid."));
     const request = c.req.raw;
     if (new URL(request.url).search.length > 0) return invalid();
-    if (!ownerBearerMatches2(request.headers.get("Authorization"), options.ownerToken)) {
+    const owner = decideOwnerAuthority(
+      request.headers.get("Authorization"),
+      options.ownerToken,
+      "reject"
+    );
+    if (owner.kind !== "authorized") {
       return response2(issueError2("invalid-request", "Pane-stream request was rejected."));
     }
     if (exactHeader2(request, "Content-Type")?.toLowerCase() !== "application/json") {
@@ -36615,6 +36651,7 @@ var init_pane_stream_issue = __esm({
   "packages/daemon/src/command-center/pane-stream-issue.ts"() {
     "use strict";
     init_src();
+    init_owner_authority();
     init_lease_manager2();
     init_pane_stream_websocket();
     MAX_ISSUE_REQUEST_BYTES2 = 16 * 1024;
@@ -36622,24 +36659,13 @@ var init_pane_stream_issue = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-resource-routes.ts
-import { timingSafeEqual as timingSafeEqual7 } from "node:crypto";
-function bearerMatches(header, ownerToken) {
-  if (!header || !ownerToken) return false;
-  const supplied = Buffer.from(header, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual7(supplied, expected);
-}
 function mountWorkspaceResourceRoutes(app, options) {
   const filesAuthorities = /* @__PURE__ */ new Map();
-  const authorize = (c) => {
-    if (!options.ownerToken) {
-      return c.json({ error: "Workspace resource capability is unavailable" }, 503);
-    }
-    if (!bearerMatches(c.req.header("Authorization"), options.ownerToken)) {
-      return c.json({ error: "Workspace resource access requires owner authority" }, 401);
-    }
-    return null;
-  };
+  const authorize = ownerAuthorityGate(options.ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Workspace resource capability is unavailable",
+    mismatchMessage: "Workspace resource access requires owner authority"
+  });
   const resolveWorkspace = (c) => {
     const rawName = c.req.param("name");
     const nameParse = WorkspaceResourceWorkspaceNameSchemaZ.safeParse(rawName);
@@ -36729,29 +36755,19 @@ var init_workspace_resource_routes = __esm({
   "packages/daemon/src/command-center/resources/workspace-resource-routes.ts"() {
     "use strict";
     init_src();
+    init_owner_authority();
     init_workspace_changes_authority();
     init_workspace_files_authority();
   }
 });
 
 // packages/daemon/src/command-center/resources/fleet-resource-route.ts
-import { timingSafeEqual as timingSafeEqual8 } from "node:crypto";
-function bearerMatches2(header, ownerToken) {
-  if (!header || !ownerToken) return false;
-  const supplied = Buffer.from(header, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual8(supplied, expected);
-}
 function mountFleetResourceRoute(app, options) {
-  const authorize = (c) => {
-    if (!options.ownerToken) {
-      return c.json({ error: "Fleet catalog capability is unavailable" }, 503);
-    }
-    if (!bearerMatches2(c.req.header("Authorization"), options.ownerToken)) {
-      return c.json({ error: "Fleet catalog access requires owner authority" }, 401);
-    }
-    return null;
-  };
+  const authorize = ownerAuthorityGate(options.ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Fleet catalog capability is unavailable",
+    mismatchMessage: "Fleet catalog access requires owner authority"
+  });
   app.get("/api/resources/fleet-catalog", (c) => {
     const gate = authorize(c);
     if (gate) return gate;
@@ -36776,6 +36792,7 @@ var init_fleet_resource_route = __esm({
   "packages/daemon/src/command-center/resources/fleet-resource-route.ts"() {
     "use strict";
     init_discovery();
+    init_owner_authority();
     init_fleet_catalog2();
   }
 });
@@ -36937,13 +36954,6 @@ var init_startup_readiness2 = __esm({
 });
 
 // packages/daemon/src/command-center/resources/startup-readiness-route.ts
-import { timingSafeEqual as timingSafeEqual9 } from "node:crypto";
-function bearerMatches3(header, ownerToken) {
-  if (!header || !ownerToken) return false;
-  const supplied = Buffer.from(header, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual9(supplied, expected);
-}
 function identityFacts(options) {
   const inspect2 = options.inspectCanonical ?? inspectCanonicalDaemonInfo;
   let state;
@@ -37023,13 +37033,10 @@ async function readStartupReadinessLadder(options) {
   }
 }
 function mountStartupReadinessRoute(app, options) {
-  const authorize = (c) => {
-    if (!options.ownerToken) return null;
-    if (!bearerMatches3(c.req.header("Authorization"), options.ownerToken)) {
-      return c.json({ error: "Startup readiness access requires owner authority" }, 401);
-    }
-    return null;
-  };
+  const authorize = ownerAuthorityGate(options.ownerToken, {
+    whenOwnerless: "serve-open",
+    mismatchMessage: "Startup readiness access requires owner authority"
+  });
   app.get("/api/resources/startup-readiness", async (c) => {
     const gate = authorize(c);
     if (gate) return gate;
@@ -37047,6 +37054,7 @@ var init_startup_readiness_route = __esm({
     "use strict";
     init_src();
     init_canonical();
+    init_owner_authority();
     init_startup_readiness2();
   }
 });
@@ -37102,30 +37110,20 @@ function requireAuth(token, localBypassToken) {
   };
 }
 function requireHostCapability(ownerToken) {
+  const gate = ownerAuthorityGate(ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Host mutation capability is unavailable",
+    mismatchMessage: "Host mutation capability required"
+  });
   return async (c, next) => {
     const actionName = c.req.param("name");
     if (actionName !== "workspace.pane.create" && actionName !== "workspace.open" && actionName !== "workspace.promote" && actionName !== "workspace.app-window.mutate") {
       return next();
     }
-    if (!ownerToken) {
-      return c.json({ error: "Host mutation capability is unavailable" }, 503);
-    }
-    const supplied = bearerToken(c.req.header("Authorization"));
-    if (!supplied || supplied !== ownerToken) {
-      return c.json({ error: "Host mutation capability required" }, 401);
-    }
+    const denied = gate(c);
+    if (denied) return denied;
     if (!z58.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
-    }
-    return next();
-  };
-}
-function requireOwnerCapability(ownerToken) {
-  return async (c, next) => {
-    if (!ownerToken) return c.json({ error: "Host capability discovery is unavailable" }, 503);
-    const supplied = bearerToken(c.req.header("Authorization"));
-    if (!supplied || supplied !== ownerToken) {
-      return c.json({ error: "Host capability discovery requires owner authority" }, 401);
     }
     return next();
   };
@@ -38243,7 +38241,7 @@ function attachWsEvents(server, daemonIdentity) {
     }
   };
 }
-var defaultApplicationShellAppWindowBackend, defaultApplicationShellMissionBackend, projectStreamConnections, sseMetrics;
+var defaultApplicationShellAppWindowBackend, defaultApplicationShellMissionBackend, projectStreamConnections, requireOwnerCapability, sseMetrics;
 var init_server = __esm({
   "packages/daemon/src/command-center/server.ts"() {
     "use strict";
@@ -38286,6 +38284,7 @@ var init_server = __esm({
     init_pane_stream_issue();
     init_workspace_resource_routes();
     init_fleet_resource_route();
+    init_owner_authority();
     init_startup_readiness_route();
     defaultApplicationShellAppWindowBackend = {
       async load(projectDir, terminalSourceIds, focusedTerminalSourceId) {
@@ -38303,6 +38302,11 @@ var init_server = __esm({
       }
     };
     projectStreamConnections = 0;
+    requireOwnerCapability = (ownerToken) => requireOwnerAuthority(ownerToken, {
+      whenOwnerless: "unavailable",
+      unavailableMessage: "Host capability discovery is unavailable",
+      mismatchMessage: "Host capability discovery requires owner authority"
+    });
     sseMetrics = {
       connections: 0,
       messagesSent: 0
@@ -39967,12 +39971,14 @@ var require_package = __commonJS({
         "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
+        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
         "test:tui-smoke": "node scripts/smoke-tui-missions.mjs",
-        "smoke:desktop": "node apps/electron-shell/scripts/smoke-test.mjs"
+        "smoke:desktop": "node apps/electron-shell/scripts/smoke-test.mjs",
+        "e2e:app": "pnpm --filter @tmux-ide/desktop-renderer run e2e",
+        "check:control-bytes": "node scripts/check-control-bytes.mjs"
       },
       keywords: [
         "tmux",

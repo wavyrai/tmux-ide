@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Hono } from "hono";
 import {
   PANE_STREAM_ISSUE_PATH,
@@ -12,6 +11,7 @@ import {
 } from "@tmux-ide/contracts";
 
 import type { WorkspaceRegistry } from "../lib/workspace-registry.ts";
+import { decideOwnerAuthority } from "./owner-authority.ts";
 import { PaneStreamLeaseError } from "../terminal/pane-stream/lease-manager.ts";
 import {
   PaneStreamAdmissionError,
@@ -126,13 +126,6 @@ function canonicalRendererOrigin(value: string | null): string | null {
   }
 }
 
-function ownerBearerMatches(value: string | null, ownerToken: string | null): boolean {
-  if (!value || !ownerToken) return false;
-  const supplied = Buffer.from(value, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
-}
-
 function mapBackendError(error: unknown): PaneStreamIssueResult {
   if (error instanceof PaneStreamLeaseError) {
     switch (error.code) {
@@ -180,7 +173,14 @@ export function mountPaneStreamIssueRoute(app: Hono, options: PaneStreamIssueRou
       response(issueError("invalid-request", "Pane-stream request is invalid."));
     const request = c.req.raw;
     if (new URL(request.url).search.length > 0) return invalid();
-    if (!ownerBearerMatches(request.headers.get("Authorization"), options.ownerToken)) {
+    // Owner-only; ownerless rejects, because this route answers a typed issue
+    // envelope rather than a status code and must never leak which half failed.
+    const owner = decideOwnerAuthority(
+      request.headers.get("Authorization"),
+      options.ownerToken,
+      "reject",
+    );
+    if (owner.kind !== "authorized") {
       return response(issueError("invalid-request", "Pane-stream request was rejected."));
     }
     if (exactHeader(request, "Content-Type")?.toLowerCase() !== "application/json") {

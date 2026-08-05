@@ -136,6 +136,7 @@ import {
 import { mountPaneStreamIssueRoute, type PaneStreamIssueBackend } from "./pane-stream-issue.ts";
 import { mountWorkspaceResourceRoutes } from "./resources/workspace-resource-routes.ts";
 import { mountFleetResourceRoute } from "./resources/fleet-resource-route.ts";
+import { ownerAuthorityGate, requireOwnerAuthority } from "./owner-authority.ts";
 import {
   mountStartupReadinessRoute,
   type StartupReadinessAttachmentAuthority,
@@ -253,6 +254,13 @@ function requireAuth(token: string | null, localBypassToken: string | null): Mid
 }
 
 function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
+  // Owner-only, but only for the mutating actions; every other action name is
+  // this dispatcher's own business and passes straight through.
+  const gate = ownerAuthorityGate(ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Host mutation capability is unavailable",
+    mismatchMessage: "Host mutation capability required",
+  });
   return async (c, next) => {
     const actionName = c.req.param("name");
     if (
@@ -263,13 +271,8 @@ function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
     ) {
       return next();
     }
-    if (!ownerToken) {
-      return c.json({ error: "Host mutation capability is unavailable" }, 503);
-    }
-    const supplied = bearerToken(c.req.header("Authorization"));
-    if (!supplied || supplied !== ownerToken) {
-      return c.json({ error: "Host mutation capability required" }, 401);
-    }
+    const denied = gate(c);
+    if (denied) return denied;
     if (!z.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
@@ -277,16 +280,14 @@ function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
   };
 }
 
-function requireOwnerCapability(ownerToken: string | null): MiddlewareHandler {
-  return async (c, next) => {
-    if (!ownerToken) return c.json({ error: "Host capability discovery is unavailable" }, 503);
-    const supplied = bearerToken(c.req.header("Authorization"));
-    if (!supplied || supplied !== ownerToken) {
-      return c.json({ error: "Host capability discovery requires owner authority" }, 401);
-    }
-    return next();
-  };
-}
+// Owner-only. Capability negotiation is how the host learns this generation's
+// identity, so without the credential there is nothing to negotiate.
+const requireOwnerCapability = (ownerToken: string | null): MiddlewareHandler =>
+  requireOwnerAuthority(ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Host capability discovery is unavailable",
+    mismatchMessage: "Host capability discovery requires owner authority",
+  });
 
 function remoteAccessAuth(options: CreateAppOptions): {
   token: string | null;
@@ -617,6 +618,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ workspaces: registry.list() } satisfies DaemonWorkspacesResponse);
   });
 
+  // OWNER POLICY: not owner-gated, deliberately. This is the name-only index
+  // the host reads BEFORE it can address any owner-gated resource, and the
+  // production broker fetches it with no Authorization header
+  // (`daemon-resource-broker.ts` `#requestJson`, whose `authorize` argument
+  // defaults to false and is passed `true` only for the fleet catalog and the
+  // workspace resources). It is path-free by construction — `{workspaceName,
+  // sessionName}` pairs and nothing else, asserted in `workspaces.test.ts` —
+  // and it still sits behind the remote-access gate on a non-loopback bind.
+  // Gating it on the owner bearer would break every desktop workspace read
+  // without withholding a single fact the owner-gated routes do not already
+  // protect.
   app.get("/api/resources/workspace-catalog", (c) => {
     const registry = getDefaultWorkspaceRegistry();
     return c.json({
@@ -838,6 +850,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // (registry-backed and adopted-only) with its authority-stamped agents. It
   // enumerates independently of the registry-gated session discovery so the
   // app can SEE sessions it never created; the resource is path-free.
+  // OWNER POLICY: owner-only, 503 when this generation holds no credential.
   mountFleetResourceRoute(app, {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
@@ -846,6 +859,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   // The startup readiness ladder: the ordered, typed answer to "what is this
   // daemon still missing?", computed from real state on every request.
+  // OWNER POLICY: owner-only when a credential exists; ownerless SERVES the
+  // ladder, whose `credential-held` rung is that answer. See the route header.
   mountStartupReadinessRoute(app, {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,

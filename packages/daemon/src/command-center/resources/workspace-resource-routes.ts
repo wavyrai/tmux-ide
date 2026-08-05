@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 
 import {
@@ -15,6 +14,7 @@ import {
 } from "@tmux-ide/contracts";
 
 import type { WorkspaceRegistry } from "../../lib/workspace-registry.ts";
+import { ownerAuthorityGate } from "../owner-authority.ts";
 import { ChangesAuthority } from "./workspace-changes-authority.ts";
 import { FilesAuthority } from "./workspace-files-authority.ts";
 
@@ -23,13 +23,6 @@ export interface WorkspaceResourceRouteOptions {
   /** Owner-only capability. Never the remote-access or local-bypass token. */
   readonly ownerToken: string | null;
   readonly registry: Pick<WorkspaceRegistry, "get">;
-}
-
-function bearerMatches(header: string | undefined, ownerToken: string | null): boolean {
-  if (!header || !ownerToken) return false;
-  const supplied = Buffer.from(header, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
 }
 
 /**
@@ -47,15 +40,12 @@ export function mountWorkspaceResourceRoutes(
   // list-then-preview flow, so it is cached per resolved workspace root.
   const filesAuthorities = new Map<string, FilesAuthority>();
 
-  const authorize = (c: Context): Response | null => {
-    if (!options.ownerToken) {
-      return c.json({ error: "Workspace resource capability is unavailable" }, 503);
-    }
-    if (!bearerMatches(c.req.header("Authorization"), options.ownerToken)) {
-      return c.json({ error: "Workspace resource access requires owner authority" }, 401);
-    }
-    return null;
-  };
+  // Owner-only. These read a project directory, so no credential means no read.
+  const authorize = ownerAuthorityGate(options.ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Workspace resource capability is unavailable",
+    mismatchMessage: "Workspace resource access requires owner authority",
+  });
 
   const resolveWorkspace = (
     c: Context,

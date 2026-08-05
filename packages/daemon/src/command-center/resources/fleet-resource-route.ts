@@ -1,10 +1,10 @@
-import { timingSafeEqual } from "node:crypto";
-import type { Context, Hono } from "hono";
+import type { Hono } from "hono";
 
 import type { DaemonInstanceIdentity } from "@tmux-ide/contracts";
 
 import type { WorkspaceRegistry } from "../../lib/workspace-registry.ts";
 import { readAdoptedFleet } from "../discovery.ts";
+import { ownerAuthorityGate } from "../owner-authority.ts";
 import { projectFleetCatalog } from "./fleet-catalog.ts";
 
 export interface FleetResourceRouteOptions {
@@ -13,13 +13,6 @@ export interface FleetResourceRouteOptions {
   readonly ownerToken: string | null;
   /** Source of truth for which sessions the app created (`appCreated`). */
   readonly registry: Pick<WorkspaceRegistry, "list">;
-}
-
-function bearerMatches(header: string | undefined, ownerToken: string | null): boolean {
-  if (!header || !ownerToken) return false;
-  const supplied = Buffer.from(header, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
 }
 
 /**
@@ -34,15 +27,12 @@ function bearerMatches(header: string | undefined, ownerToken: string | null): b
  * or absolute path ever crosses the wire.
  */
 export function mountFleetResourceRoute(app: Hono, options: FleetResourceRouteOptions): void {
-  const authorize = (c: Context): Response | null => {
-    if (!options.ownerToken) {
-      return c.json({ error: "Fleet catalog capability is unavailable" }, 503);
-    }
-    if (!bearerMatches(c.req.header("Authorization"), options.ownerToken)) {
-      return c.json({ error: "Fleet catalog access requires owner authority" }, 401);
-    }
-    return null;
-  };
+  // Owner-only. Without the credential the fleet cannot be answered at all.
+  const authorize = ownerAuthorityGate(options.ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Fleet catalog capability is unavailable",
+    mismatchMessage: "Fleet catalog access requires owner authority",
+  });
 
   app.get("/api/resources/fleet-catalog", (c) => {
     const gate = authorize(c);

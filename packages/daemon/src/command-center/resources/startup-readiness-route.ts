@@ -1,5 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
-import type { Context, Hono } from "hono";
+import type { Hono } from "hono";
 
 import {
   STARTUP_READINESS_RESOURCE_VERSION,
@@ -13,6 +12,7 @@ import {
 import { inspectCanonicalDaemonInfo } from "../../canonical.ts";
 import type { WorkspaceRegistry } from "../../lib/workspace-registry.ts";
 import type { NativeTerminalInventorySnapshot } from "../../terminal/attachments/native-runtime.ts";
+import { ownerAuthorityGate } from "../owner-authority.ts";
 import {
   projectStartupReadinessLadder,
   summarizeStartupReadinessCatalog,
@@ -35,13 +35,6 @@ export interface StartupReadinessRouteOptions {
   /** Seam for tests; production reads the real canonical record. */
   readonly inspectCanonical?: typeof inspectCanonicalDaemonInfo;
   readonly now?: () => number;
-}
-
-function bearerMatches(header: string | undefined, ownerToken: string | null): boolean {
-  if (!header || !ownerToken) return false;
-  const supplied = Buffer.from(header, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
 }
 
 /**
@@ -158,13 +151,12 @@ export async function readStartupReadinessLadder(
  * it gets back stops at that rung, carrying no fleet facts whatsoever.
  */
 export function mountStartupReadinessRoute(app: Hono, options: StartupReadinessRouteOptions): void {
-  const authorize = (c: Context): Response | null => {
-    if (!options.ownerToken) return null;
-    if (!bearerMatches(c.req.header("Authorization"), options.ownerToken)) {
-      return c.json({ error: "Startup readiness access requires owner authority" }, 401);
-    }
-    return null;
-  };
+  // `serve-open` is the deliberate exception documented above: ownerless serves
+  // the ladder rather than 503. A credential that exists must still match.
+  const authorize = ownerAuthorityGate(options.ownerToken, {
+    whenOwnerless: "serve-open",
+    mismatchMessage: "Startup readiness access requires owner authority",
+  });
 
   app.get("/api/resources/startup-readiness", async (c) => {
     const gate = authorize(c);
