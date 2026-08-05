@@ -178,3 +178,79 @@ it deliberately rather than inheriting chrome type.
 | **Total**           | **52**     |
 
 Zero remaining is the exit criterion.
+
+---
+
+## The fix map
+
+After screenshots sit beside the baselines in
+`docs/design-audit/typography-after/{light,dark}/` — same nine surfaces, both
+appearances, 3x.
+
+| Commit     | Concern                                                    | Closes     |
+| ---------- | ---------------------------------------------------------- | ---------- |
+| `9c69c391` | the audit artifact                                         | —          |
+| `b807d485` | medium carries the interface; semibold reserved for titles | T1.1–T1.22 |
+| `824daa95` | tracking by size, not by habit                             | T2.1–T2.8  |
+| `6bcfa31c` | tabular numerals on figures that align or update           | T3.1–T3.13 |
+| `859533b5` | single-line chrome stops wrapping and clipping mid-word    | T4.1–T4.5  |
+| `39b22e16` | rendering contract; ligatures off in the technical voice   | T5.1–T5.3  |
+
+### Closing counts
+
+| Rule                | Found  | Fixed  | Exception |
+| ------------------- | ------ | ------ | --------- |
+| T1 Weight           | 23     | 22     | 1 (T1.23) |
+| T2 Tracking         | 8      | 8      | —         |
+| T3 Tabular numerals | 13     | 13     | —         |
+| T4 Truncation       | 5      | 5      | —         |
+| T5 Rendering        | 3      | 3      | —         |
+| **Total**           | **52** | **51** | **1**     |
+
+Zero open violations. Weight ratio moved from 30:11 semibold-to-medium to
+**8 semibold : 31 medium**, which is the source's shape.
+
+---
+
+## Exception: the wordmark keeps semibold
+
+**T1.23 — `.titlebar__product-copy strong`.** The rule reserves semibold for
+panel and dialog titles, and this is neither: it is the product name in the
+titlebar. It is kept anyway, as the single "strongest emphasis" the rule allows.
+
+The reasoning is that a wordmark is not an interface label — nothing happens
+when you click it, it does not participate in the medium-weight hierarchy of
+tabs and rows and buttons, and it appears exactly once. Demoting it would put
+the app's own name at the same weight as a sidebar row. If the owner disagrees
+this is a one-line change, and the weight test names it explicitly rather than
+hiding it in a general pattern.
+
+---
+
+## Corrections to this audit
+
+Two errors in the original, found while implementing and recorded rather than
+edited away:
+
+1. **The demotion count was 21; it is 20.** The T1 table lists twenty
+   semibold→medium sites, not twenty-one. The rule total of 23 was right
+   (20 demotions + 1 promotion + 1 removal + 1 judgement).
+2. **`runtime-state-card h1` was listed as a correct semibold site.** It has no
+   `font-weight` declaration at all — it inherits. Nine sites carry semibold
+   today, and `first-run-intro__card h2` is the one the original list missed.
+
+A third, more serious one is recorded in `859533b5`: the parser this audit used
+keyed a rule by any comment preceding it, so rules with explanatory comments
+were skipped. The shared test parser now strips comments, and both the weight
+and truncation rules were re-checked through it — the truncation re-check is
+what exposed the container false-positives that shaped the final assertion.
+
+---
+
+## Note: no surface qualifies for the prose exemption
+
+Rule 6 yields no violations. The only long-form surface today is
+`.workspace-files__code`, which renders code — it keeps the technical voice and
+takes rule 5's ligature treatment instead. The reading rhythm (16px / 1.8 /
+-0.015em) is recorded here so that the next markdown-rendering surface adopts it
+deliberately rather than inheriting chrome type by default.
