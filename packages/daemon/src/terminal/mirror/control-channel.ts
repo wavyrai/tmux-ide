@@ -19,7 +19,7 @@
  * chance to detach us — killing the reader first can wedge the server.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { parseControlLine } from "../../tui/mirror/control.ts";
+import { parseControlLine } from "../protocol/control.ts";
 
 export interface ControlReply {
   ok: boolean;

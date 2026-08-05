@@ -16,7 +16,7 @@ import type {
 } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
 import runtimeStyles from "../runtime-styles.css?raw";
-import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/tui/mirror/app-window-state.ts";
+import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/lib/app-window-state.ts";
 import { createRecordingMirrorRendererFactory } from "../terminal/mirror-pane-fixture.ts";
 import type { AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
 import {

@@ -25,7 +25,7 @@ import type {
   PaneFrameAction,
   PaneFrameModel,
 } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
-import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/tui/mirror/app-window-state.ts";
+import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/lib/app-window-state.ts";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRendererFactory } from "../terminal/xterm-renderer.ts";

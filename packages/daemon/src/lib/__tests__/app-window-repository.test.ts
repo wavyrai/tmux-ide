@@ -20,10 +20,7 @@ import {
   resetAppWindowDocument,
   writeAppWindowDocument,
 } from "../app-window-repository.ts";
-import {
-  emptyAppWindowDocument,
-  serializeAppWindowDocument,
-} from "../../tui/mirror/app-window-state.ts";
+import { emptyAppWindowDocument, serializeAppWindowDocument } from "../app-window-state.ts";
 
 const roots: string[] = [];
 const IDENTITY_KEY = `git-${"f".repeat(64)}`;

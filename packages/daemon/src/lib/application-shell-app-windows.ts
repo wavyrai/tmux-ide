@@ -16,7 +16,7 @@ import {
   openProjectRuntimeRepository,
   type ProjectRuntimeRepository,
 } from "./project-runtime-repository.ts";
-import { focusAppWindow, stableAppWindowInstanceId } from "../tui/mirror/app-window-state.ts";
+import { focusAppWindow, stableAppWindowInstanceId } from "./app-window-state.ts";
 
 const MAX_SPLIT_CHILDREN = 8;
 const FIRST_RUN_WINDOW_WIDTH = 840;

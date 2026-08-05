@@ -12,7 +12,7 @@ import {
   initialApplicationShellAppWindows,
   reconcileApplicationShellAppWindows,
 } from "../../lib/application-shell-app-windows.ts";
-import { stableAppWindowInstanceId } from "../../tui/mirror/app-window-state.ts";
+import { stableAppWindowInstanceId } from "../../lib/app-window-state.ts";
 import { projectApplicationShellAgentGraphOverlay } from "./agent-graph-overlay.ts";
 import type { ApplicationShellSessionFacts } from "./application-shell.ts";
 

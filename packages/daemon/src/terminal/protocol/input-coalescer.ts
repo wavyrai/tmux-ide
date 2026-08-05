@@ -21,7 +21,7 @@
  * large paste routed through the same path never produces an oversized
  * control-mode command.
  */
-import { chunkByBytes } from "./selection.ts";
+import { chunkByBytes } from "./chunk-bytes.ts";
 
 /**
  * Max UTF-8 payload bytes per `send-keys -H` write. Every byte travels as its

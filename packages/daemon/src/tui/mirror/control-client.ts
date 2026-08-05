@@ -13,7 +13,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { parseControlLine, textToHexKeys } from "./control.ts";
+import { parseControlLine, textToHexKeys } from "../../terminal/protocol/control.ts";
 
 interface PendingReply {
   discard?: false;

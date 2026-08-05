@@ -12,7 +12,7 @@ import {
   focusAppWindow,
   restoreAppWindowNamedLayout,
   saveAppWindowNamedLayout,
-} from "../tui/mirror/app-window-state.ts";
+} from "./app-window-state.ts";
 
 export const APP_WINDOW_FLOAT_MIN_WIDTH = 20;
 export const APP_WINDOW_FLOAT_MIN_HEIGHT = 6;

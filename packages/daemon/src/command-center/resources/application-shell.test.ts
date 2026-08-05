@@ -19,7 +19,7 @@ import {
 import { projectApplicationShellAgentGraphOverlay } from "./agent-graph-overlay.ts";
 import { fleetSessionIdForName } from "./fleet-catalog.ts";
 import { initialApplicationShellAppWindows } from "../../lib/application-shell-app-windows.ts";
-import { stableAppWindowInstanceId } from "../../tui/mirror/app-window-state.ts";
+import { stableAppWindowInstanceId } from "../../lib/app-window-state.ts";
 import { MissionRepository, type MissionRepositorySnapshot } from "../../lib/mission-repository.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -5,7 +5,7 @@ import {
   parseSessionPaneDescriptors,
   type PaneGeometry,
 } from "./session-mirror.ts";
-import { parseLayout } from "./layout-parse.ts";
+import { parseLayout } from "../../terminal/protocol/layout-parse.ts";
 
 const g = (id: string, left: number, top: number, w: number, h: number, active = false) =>
   ({ id, left, top, width: w, height: h, active, appMouse: false, zoomed: false }) as PaneGeometry;

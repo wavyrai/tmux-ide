@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 
-import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/tui/mirror/app-window-state.ts";
+import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/lib/app-window-state.ts";
 import { deriveConnectionHealth } from "../runtime/connection-health.ts";
 import { terminalIssueFaultLabel } from "../runtime/connection-recovery.ts";
 import type { DesktopConnectionHealth } from "../runtime/connection-health.ts";

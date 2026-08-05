@@ -33,27 +33,27 @@ import {
   WorkspaceIdSchemaZ,
   type WorkspacePaneRect,
 } from "@tmux-ide/contracts";
-import { textToHexKeys } from "../../tui/mirror/control.ts";
-import { InputCoalescer } from "../../tui/mirror/input-coalescer.ts";
+import { textToHexKeys } from "../protocol/control.ts";
+import { InputCoalescer } from "../protocol/input-coalescer.ts";
 import {
   parseLayout,
   parseLayoutChange,
   parseSessionWindowChanged,
   parseWindowPaneChanged,
   type ParsedLayout,
-} from "../../tui/mirror/layout-parse.ts";
+} from "../protocol/layout-parse.ts";
 import {
   SESSION_PANE_DESCRIPTOR_FORMAT,
   SessionDescriptorDiscovery,
   decodeTmuxArgument,
   type SessionPaneDescriptor,
-} from "../../tui/mirror/session-descriptor-discovery.ts";
+} from "../protocol/session-descriptor-discovery.ts";
 import {
   finalizeWorkspaceTmuxReconciliation,
   planWorkspaceTmuxReconciliation,
   type WorkspaceTmuxPaneSnapshot,
   type WorkspaceTmuxStampOutcome,
-} from "../../tui/mirror/workspace-tmux-adapter.ts";
+} from "../protocol/workspace-tmux-adapter.ts";
 import type { MirrorChannelHandlers, MirrorChannelIo } from "./control-channel.ts";
 import type {
   MirrorDiagnostic,
