@@ -140,6 +140,31 @@ describe("the layout-faithful workspace view", () => {
     }
   });
 
+  it("moves the border while the pointer drags, throttled, and flushes on release", async () => {
+    /*
+     * Bug this catches at both ends: a resize per pointermove spends a
+     * serialized daemon round trip per frame of mouse movement, and sending
+     * nothing until release leaves the user dragging a handle over panes that
+     * do not move. It also pins the ABSOLUTE form — under a throttle a dropped
+     * delta silently loses its movement and the border drifts off the pointer,
+     * while a restated size is self-correcting.
+     */
+    const { root, invoke } = renderSurface([SPLIT]);
+    const border = root.querySelector<HTMLElement>(".pane-border")!;
+    // happy-dom reports zero-size boxes, so the drag arithmetic is exercised
+    // through the pure resolver's own tests; what this pins is the DISPATCH
+    // shape: one call on grab-and-release, naming an absolute size in cells.
+    border.setPointerCapture = () => undefined;
+    border.releasePointerCapture = () => undefined;
+    border.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    border.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+
+    const resizes = invoke.mock.calls.filter(([verbId]) => verbId === "pane.resize");
+    expect(resizes.length, "the release did not flush a resize").toBe(1);
+    expect(resizes[0]![1]).toBe("pane.a");
+    expect(resizes[0]![2]).toEqual({ resize: { axis: "cols", cells: 99 } });
+  });
+
   it("prunes a window whose panes the daemon no longer reports as attachable", () => {
     /*
      * Bug this catches: the pane-stream wire carries no "window closed" frame,

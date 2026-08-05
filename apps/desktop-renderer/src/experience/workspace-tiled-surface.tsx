@@ -341,42 +341,102 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
 
   // ── Border drag ───────────────────────────────────────────────────────────
   //
-  // Dispatched on RELEASE, never continuously. A drag that sent a resize per
-  // pointermove would spend a serialized daemon round trip per frame of mouse
-  // movement, and every one of them would be superseded before it landed. One
-  // verb, at the end, is both the honest thing to report and the cheap one.
+  // The border follows the pointer WHILE dragging, throttled, and flushes on
+  // release. A resize per pointermove would spend a serialized daemon round
+  // trip per frame of mouse movement; sending nothing until release leaves the
+  // user dragging a handle over panes that do not move. The throttle is the
+  // honest middle, and the flush is what guarantees the last position is the
+  // one tmux ends on rather than whichever tick happened to land last.
+  //
+  // Every dispatch states an ABSOLUTE size rather than a delta. Under a
+  // throttle the two are not equivalent: a superseded or dropped delta silently
+  // loses its movement and the border drifts away from the pointer, while an
+  // absolute size is self-correcting — the next tick states the target again
+  // and any missed one costs nothing. The baseline is the size captured at the
+  // GRAB, so the target tracks the pointer even as re-tiling changes the frame
+  // underneath.
+  const BORDER_DRAG_THROTTLE_MS = 80;
   const [dragging, setDragging] = createSignal<LayoutBorder | null>(null);
 
   const beginDrag = (border: LayoutBorder, event: PointerEvent): void => {
     if (!props.verbs.workspaceConnected) return;
+    const frame = currentFrame();
+    if (!frame) return;
     const handle = event.currentTarget as HTMLElement;
     const startX = event.clientX;
     const startY = event.clientY;
+    // Captured at the grab: the frame re-tiles under the drag, and a baseline
+    // that moved with it would make the border chase its own last position.
+    const grabbedFrame = frame;
+    const grabbedBox = gridBox();
     handle.setPointerCapture(event.pointerId);
     setDragging(border);
-    const finish = (release: PointerEvent): void => {
-      handle.releasePointerCapture?.(release.pointerId);
-      handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", cancel);
-      setDragging(null);
-      const frame = currentFrame();
-      if (!frame) return;
+
+    let lastSentAt = 0;
+    let lastSentCells: number | null = null;
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const dispatch = (clientX: number, clientY: number): void => {
       const resolved = resolveBorderDrag({
         border,
-        frame,
-        gridBox: gridBox(),
-        deltaX: release.clientX - startX,
-        deltaY: release.clientY - startY,
+        frame: grabbedFrame,
+        gridBox: grabbedBox,
+        deltaX: clientX - startX,
+        deltaY: clientY - startY,
       });
-      if (resolved) props.verbs.invoke("pane.resize", border.pane, { resize: resolved });
+      // Null means the pointer has come back to where it started, so the size
+      // to ask for is the one the pane already had.
+      const cells = resolved?.cells ?? border.cells;
+      if (cells === lastSentCells) return;
+      lastSentCells = cells;
+      lastSentAt = Date.now();
+      props.verbs.invoke("pane.resize", border.pane, {
+        resize: { axis: border.orientation === "vertical" ? "cols" : "rows", cells },
+      });
     };
-    const cancel = (): void => {
+
+    const clearPending = (): void => {
+      if (pendingTimer !== null) clearTimeout(pendingTimer);
+      pendingTimer = null;
+    };
+
+    const move = (moved: PointerEvent): void => {
+      const wait = BORDER_DRAG_THROTTLE_MS - (Date.now() - lastSentAt);
+      if (wait <= 0) {
+        clearPending();
+        dispatch(moved.clientX, moved.clientY);
+        return;
+      }
+      // Trailing edge: the last position inside the window still lands, so a
+      // drag that stops mid-throttle does not leave the border behind.
+      clearPending();
+      const x = moved.clientX;
+      const y = moved.clientY;
+      pendingTimer = setTimeout(() => {
+        pendingTimer = null;
+        dispatch(x, y);
+      }, wait);
+    };
+
+    const detach = (): void => {
+      clearPending();
+      handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", finish);
       handle.removeEventListener("pointercancel", cancel);
       setDragging(null);
     };
+    const finish = (release: PointerEvent): void => {
+      handle.releasePointerCapture?.(release.pointerId);
+      detach();
+      // Flush: whatever the throttle was holding, the release position wins.
+      dispatch(release.clientX, release.clientY);
+    };
+    const cancel = (): void => detach();
+
+    handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", finish);
     handle.addEventListener("pointercancel", cancel);
+    onCleanup(clearPending);
   };
 
   return (
