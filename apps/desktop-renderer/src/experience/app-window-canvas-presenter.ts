@@ -32,6 +32,24 @@ export interface AppWindowCanvasItem {
    * A value >1 is what makes the card attach size-passive and letterbox.
    */
   readonly windowGroupPaneCount?: number;
+  /**
+   * Every terminal window in this card's docked stack, in stack order.
+   *
+   * Only the active member of a stack is rendered as a card; the rest go to
+   * `hiddenWindowIds`. Before this field they went there anonymously, so the
+   * closest thing the app has to tmux's window list had no affordance at all
+   * and `stack.activate` — implemented, tested, and reachable from nowhere —
+   * could not be dispatched. Present only on a stack's active member, and only
+   * when the stack holds more than one window.
+   */
+  readonly stackMembers?: readonly AppWindowStackMember[];
+}
+
+/** One selectable window inside a docked stack. */
+export interface AppWindowStackMember {
+  readonly windowId: string;
+  readonly title: string | null;
+  readonly active: boolean;
 }
 
 export interface AppWindowCanvasProjection {
@@ -143,6 +161,15 @@ function projectDockNode(
       placement: "docked",
       stackId: node.id,
       stackIndex: node.windowIds.indexOf(window.id),
+      ...(terminalWindowIds.length > 1
+        ? {
+            stackMembers: terminalWindowIds.map((windowId) => ({
+              windowId,
+              title: document.windows[windowId]!.title,
+              active: windowId === activeWindowId,
+            })),
+          }
+        : {}),
       selected: document.focusedWindowId === window.id,
       active: true,
       zIndex: zIndex.value++,

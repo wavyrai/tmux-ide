@@ -1,6 +1,10 @@
 import {
   AppWindowMutationArgumentsSchemaZ,
   AppWindowMutationRequestSchemaZ,
+  WorkspaceMultiplexerMutationRequestSchemaZ,
+  WorkspaceMultiplexerMutationResultSchemaZ,
+  type WorkspaceMultiplexerMutationRequest,
+  type WorkspaceMultiplexerMutationResult,
   daemonWorkspaceRouteName,
   type DaemonWorkspaceResourceKind,
   AppWindowMutationResultSchemaZ,
@@ -840,6 +844,74 @@ export class DaemonResourceBroker {
       }
     }
     throw lastError;
+  }
+
+  /**
+   * Run one multiplexer verb.
+   *
+   * The intent's own `verb` field names the route, so this method does not
+   * switch on anything: seven tmux verbs share one path, and an eighth needs no
+   * change here. Unlike the AppWindow mutation there is no retry loop — every
+   * verb here changes tmux, and while the daemon's operation-id idempotency
+   * makes a repeat safe, a silent second attempt would report a failure the
+   * user can act on as a success they cannot see.
+   */
+  async invokeVerb(
+    request: WorkspaceMultiplexerMutationRequest,
+  ): Promise<WorkspaceMultiplexerMutationResult> {
+    if (this.#daemon.status !== "connected" || !this.#ownerToken) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
+    }
+    const parsed = WorkspaceMultiplexerMutationRequestSchemaZ.parse(request);
+    if (parsed.expectedDaemonInstanceId !== this.#daemon.descriptor.instanceId) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+    }
+    await this.#loadWorkspaceCatalog();
+    if (!this.#workspaceCatalog.has(parsed.intent.workspaceName)) {
+      throw new BrokerFailure(daemonCapabilityError("invalid-request"));
+    }
+    const { verb, ...args } = parsed.intent;
+    const raw = await this.#mutationJson(`/api/v2/action/${verb}`, args, {
+      "X-Tmux-Ide-Operation-Id": parsed.operationId,
+    });
+    const envelope = z
+      .discriminatedUnion("ok", [
+        z
+          .object({ ok: z.literal(true), result: WorkspaceMultiplexerMutationResultSchemaZ })
+          .strict(),
+        z
+          .object({
+            ok: z.literal(false),
+            error: z
+              .object({
+                code: z.string(),
+                message: z.string(),
+                details: z.unknown().optional(),
+              })
+              .strict(),
+          })
+          .strict(),
+      ])
+      .parse(raw);
+    if (!envelope.ok) {
+      // The two refusals are the daemon declining on purpose. Collapsing them
+      // into "request-failed" would tell the user their click broke rather
+      // than that the rule they hit exists.
+      throw new BrokerFailure(
+        envelope.error.code === "last_window_refused" || envelope.error.code === "last_pane_refused"
+          ? daemonCapabilityError("invalid-request")
+          : daemonCapabilityError("request-failed"),
+      );
+    }
+    if (
+      envelope.result.operationId !== parsed.operationId ||
+      envelope.result.daemonInstanceId !== this.#daemon.descriptor.instanceId ||
+      envelope.result.workspaceName !== parsed.intent.workspaceName ||
+      envelope.result.verb !== verb
+    ) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+    }
+    return envelope.result;
   }
 
   async issueTerminalAttachment(

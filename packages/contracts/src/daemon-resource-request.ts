@@ -69,6 +69,11 @@ import {
   TerminalAttachmentIssueResultSchemaZ,
   type TerminalAttachmentIssueResult,
 } from "./terminal-attachments.ts";
+import { MultiplexerVerbInvocationSchemaZ } from "./multiplexer-verbs.ts";
+import {
+  WorkspaceMultiplexerHostResultSchemaZ,
+  type WorkspaceMultiplexerHostResult,
+} from "./workspace-multiplexer.ts";
 import {
   PaneStreamIssueResultSchemaZ,
   PaneStreamLeaseRequestSchemaZ,
@@ -132,6 +137,12 @@ export const DaemonResourceRequestSchemaZ = z.discriminatedUnion("resource", [
   z
     .object({ resource: z.literal("mutateAppWindow"), request: AppWindowMutationArgumentsSchemaZ })
     .strict(),
+  // One resource for every tmux verb rather than one per route: see
+  // MultiplexerVerbInvocation for why the invocation carries both the verb the
+  // user clicked and the intent the daemon executes.
+  z
+    .object({ resource: z.literal("invokeVerb"), request: MultiplexerVerbInvocationSchemaZ })
+    .strict(),
   z
     .object({
       resource: z.literal("issueTerminalAttachment"),
@@ -169,6 +180,7 @@ export interface DaemonResourceResultMap extends Record<DaemonResourceKind, unkn
   promoteWorkspace: WorkspacePromoteHostResult;
   createWorkspacePane: WorkspacePaneCreateHostResult;
   mutateAppWindow: AppWindowMutationHostResult;
+  invokeVerb: WorkspaceMultiplexerHostResult;
   issueTerminalAttachment: TerminalAttachmentIssueResult;
   issuePaneStream: PaneStreamIssueResult;
 }
@@ -196,6 +208,7 @@ export const DAEMON_RESOURCE_RESULT_SCHEMAS: {
   promoteWorkspace: WorkspacePromoteHostResultSchemaZ,
   createWorkspacePane: WorkspacePaneCreateHostResultSchemaZ,
   mutateAppWindow: AppWindowMutationHostResultSchemaZ,
+  invokeVerb: WorkspaceMultiplexerHostResultSchemaZ,
   issueTerminalAttachment: TerminalAttachmentIssueResultSchemaZ,
   issuePaneStream: PaneStreamIssueResultSchemaZ,
 };

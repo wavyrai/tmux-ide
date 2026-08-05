@@ -190,6 +190,10 @@ function createHostHarness() {
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "fixture only" },
       })),
+      invokeVerb: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
       issueTerminalAttachment: vi.fn(async () => ({
         status: "error" as const,
         error: {

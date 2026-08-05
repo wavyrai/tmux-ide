@@ -252,6 +252,10 @@ function createHostHarness() {
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "test transport" },
       })),
+      invokeVerb: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "test transport" },
+      })),
       createWorkspacePane: vi.fn(async () => ({
         status: "ok" as const,
         result: {

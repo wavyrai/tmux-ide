@@ -26,6 +26,7 @@ import { z } from "zod";
 
 import { ActionContractsZ, type ActionName } from "./actions-contract.ts";
 import { AppWindowMutationCommandSchemaZ } from "./app-window-mutation.ts";
+import { WorkspaceMultiplexerIntentSchemaZ } from "./workspace-multiplexer.ts";
 
 export const MULTIPLEXER_VERB_TABLE_VERSION = 1 as const;
 
@@ -365,3 +366,48 @@ export function multiplexerVerbAvailability(
       return AVAILABLE;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Invocation: what a mouse surface actually sends
+// ---------------------------------------------------------------------------
+
+/**
+ * One verb invocation on the daemon wire.
+ *
+ * The union collapse (m45.3) applies here as it did to reads: seven mutation
+ * routes would have meant seven resources, seven preload stubs and seven
+ * dispatch cases in each host. One `invokeVerb` resource carrying this shape
+ * means adding the eighth verb touches the intent union and nothing else.
+ *
+ * Both fields are present on purpose. `intent` is what the daemon executes;
+ * `verbId` is which table entry the person clicked, and the two are not
+ * one-to-one — split right and split down are separate verbs to a user and one
+ * route to tmux. Keeping the verb id means a confirmation dialog or an error
+ * message can name the thing that was actually asked for.
+ */
+export const MultiplexerVerbInvocationSchemaZ = z
+  .object({
+    verbId: MultiplexerVerbIdSchemaZ,
+    intent: WorkspaceMultiplexerIntentSchemaZ,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const entry = BY_ID.get(value.verbId);
+    if (!entry) {
+      context.addIssue({ code: "custom", message: "unknown multiplexer verb" });
+      return;
+    }
+    // A verb id that disagrees with the route its intent names is a renderer
+    // bug that would otherwise execute the wrong thing under an honest label.
+    if (entry.execution.kind !== "daemon-action") {
+      context.addIssue({ code: "custom", message: "this verb is not a daemon action" });
+      return;
+    }
+    if (entry.execution.action !== value.intent.verb) {
+      context.addIssue({
+        code: "custom",
+        message: "the verb id and its intent name different routes",
+      });
+    }
+  });
+export type MultiplexerVerbInvocation = z.infer<typeof MultiplexerVerbInvocationSchemaZ>;

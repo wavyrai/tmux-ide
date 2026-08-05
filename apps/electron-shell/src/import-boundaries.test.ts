@@ -78,7 +78,10 @@ describe("desktop process boundaries", () => {
       HOST_IPC.daemonSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);
-    expect(DAEMON_RESOURCE_KINDS.length).toBe(15);
+    // Sixteen since m49.1 added `invokeVerb`. That resource carries all seven
+    // multiplexer verbs, so the count grew by one rather than by seven — which
+    // is the property this assertion is really guarding.
+    expect(DAEMON_RESOURCE_KINDS.length).toBe(16);
     expect(new Set(DAEMON_RESOURCE_KINDS).size).toBe(DAEMON_RESOURCE_KINDS.length);
   });
 

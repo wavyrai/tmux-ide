@@ -32,6 +32,8 @@ import {
   type WorkspacePromoteMutationRequest,
   type WorkspacePromoteMutationResult,
   type AppWindowMutationRequest,
+  type WorkspaceMultiplexerMutationRequest,
+  type WorkspaceMultiplexerMutationResult,
   type AppWindowMutationResult,
 } from "@tmux-ide/contracts";
 
@@ -52,6 +54,9 @@ type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected
 export interface DaemonResourceAuthority {
   capabilities(): Promise<DesktopDaemonCapabilitiesResult>;
   mutateAppWindow(request: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
+  invokeVerb(
+    request: WorkspaceMultiplexerMutationRequest,
+  ): Promise<WorkspaceMultiplexerMutationResult>;
   openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
   promoteWorkspace(
     request: WorkspacePromoteMutationRequest,
@@ -322,6 +327,23 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
     const rendererGeneration = this.#rendererGeneration;
     const result = await broker.createWorkspacePane(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
+  }
+
+  async invokeVerb(
+    request: WorkspaceMultiplexerMutationRequest,
+  ): Promise<WorkspaceMultiplexerMutationResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.invokeVerb(request);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||

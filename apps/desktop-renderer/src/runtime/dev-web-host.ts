@@ -26,6 +26,7 @@ import {
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellResourceV3SchemaZ,
   AppWindowMutationResultSchemaZ,
+  WorkspaceMultiplexerMutationResultSchemaZ,
   DaemonEventServerFrameSchemaZ,
   DESKTOP_HOST_API_VERSION,
   DesktopDaemonCapabilitiesResultSchemaZ,
@@ -625,6 +626,19 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
             .object({ ok: z.literal(true), result: AppWindowMutationResultSchemaZ })
             .strict()
             .parse(await action("workspace.app-window.mutate", daemonRequest.request));
+          return { status: "ok", result: envelope.result };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      case "invokeVerb":
+        try {
+          // The intent names its own route, so the development host needs no
+          // per-verb branch either.
+          const { verb, ...args } = daemonRequest.request.intent;
+          const envelope = z
+            .object({ ok: z.literal(true), result: WorkspaceMultiplexerMutationResultSchemaZ })
+            .strict()
+            .parse(await action(verb, args));
           return { status: "ok", result: envelope.result };
         } catch (error) {
           return { status: "error", error: failureOf(error) };

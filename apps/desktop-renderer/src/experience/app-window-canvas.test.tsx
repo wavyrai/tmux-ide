@@ -104,6 +104,37 @@ function documentFixture(): AppWindowDocumentV1 {
   });
 }
 
+/**
+ * Two terminals in one docked stack — the shape gap 10 is about. Only the
+ * active member renders as a card; the other is reachable solely through the
+ * tab strip, which is the affordance under test.
+ */
+function stackedDocumentFixture(): AppWindowDocumentV1 {
+  const value = documentFixture();
+  return AppWindowDocumentV1SchemaZ.parse({
+    ...value,
+    windows: {
+      ...value.windows,
+      "window.second": {
+        id: "window.second",
+        source: { kind: "terminal", terminalSourceId: "terminal.second" },
+        title: "Second terminal",
+        placement: {
+          mode: "docked",
+          docked: { stackId: "stack.canvas", index: 1 },
+          floating: null,
+        },
+      },
+    },
+    dockRoot: {
+      type: "stack",
+      id: "stack.canvas",
+      windowIds: ["window.lead", "window.second"],
+      activeWindowId: "window.lead",
+    },
+  });
+}
+
 function floatingDocumentFixture(): AppWindowDocumentV1 {
   const value = documentFixture();
   return AppWindowDocumentV1SchemaZ.parse({
@@ -361,6 +392,60 @@ describe("AppWindowCanvas", () => {
     expect(surface?.querySelector(".terminal-surface__viewport")?.getAttribute("aria-label")).toBe(
       "Pane 0 terminal",
     );
+  });
+
+  it("activates a docked stack member when its tab is clicked", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onCommand = vi.fn();
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={stackedDocumentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            onCommand={onCommand}
+          />
+        ),
+        root,
+      ),
+    );
+
+    const tabs = [...root.querySelectorAll<HTMLButtonElement>(".app-window-card__stack-tab")];
+    expect(tabs.map((tab) => tab.dataset.windowId)).toEqual(["window.lead", "window.second"]);
+    // The active member's tab is not a way to re-activate what is already shown.
+    expect(tabs[0]!.disabled).toBe(true);
+    expect(tabs[1]!.disabled).toBe(false);
+
+    tabs[1]!.click();
+    expect(onCommand).toHaveBeenCalledWith({
+      command: { type: "stack.activate", stackId: "stack.canvas", windowId: "window.second" },
+      source: "mouse",
+    });
+  });
+
+  it("shows no stack tabs when a docked stack holds one window", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={documentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            onCommand={vi.fn()}
+          />
+        ),
+        root,
+      ),
+    );
+    expect(root.querySelector(".app-window-card__stack-tab")).toBeNull();
   });
 
   it("emits canonical focus commands from window chrome interaction", () => {

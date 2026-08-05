@@ -871,6 +871,19 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     }
   };
 
+  /**
+   * Bring a docked stack member to the front.
+   *
+   * `stack.activate` has been implemented and tested in the daemon kernel since
+   * the stack model shipped; the renderer simply never sent it, so the app's
+   * closest analogue to tmux's window list had no way to switch windows. This
+   * is the whole dispatch: the command was always there.
+   */
+  const activateStackMember = (stackId: string, windowId: string, source: "keyboard" | "mouse") => {
+    if (!(props.mutationsAvailable ?? props.onCommand !== undefined)) return;
+    dispatchDurableCommand({ command: { type: "stack.activate", stackId, windowId }, source });
+  };
+
   const handleWindowAction = (
     window: AppWindowCanvasItem,
     actionId: string,
@@ -1396,6 +1409,36 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                 data-maximized={maximizeStates().has(window().windowId)}
                 data-transient-geometry={rectOverrides().get(window().windowId)?.revision === null}
               >
+                <Show when={window().stackMembers}>
+                  {(members) => (
+                    <div
+                      class="app-window-card__stack-tabs"
+                      role="tablist"
+                      aria-label="Windows in this stack"
+                      data-stack-id={window().stackId ?? ""}
+                    >
+                      <For each={members()}>
+                        {(member) => (
+                          <button
+                            type="button"
+                            class="app-window-card__stack-tab"
+                            role="tab"
+                            aria-selected={member.active}
+                            data-window-id={member.windowId}
+                            data-active={member.active}
+                            disabled={member.active}
+                            onClick={() => {
+                              const stackId = window().stackId;
+                              if (stackId) activateStackMember(stackId, member.windowId, "mouse");
+                            }}
+                          >
+                            {member.title ?? "Terminal"}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  )}
+                </Show>
                 <Show
                   when={frame()}
                   fallback={

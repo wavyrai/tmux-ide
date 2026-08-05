@@ -55,6 +55,18 @@ const REQUESTS: readonly DaemonResourceRequest[] = [
     },
   },
   {
+    resource: "invokeVerb",
+    request: {
+      verbId: "pane.split.right",
+      intent: {
+        verb: "workspace.window.split",
+        workspaceName: WORKSPACE,
+        semanticPaneId: "pane.worker",
+        direction: "right",
+      },
+    },
+  },
+  {
     resource: "issueTerminalAttachment",
     request: {
       protocolVersion: 1,

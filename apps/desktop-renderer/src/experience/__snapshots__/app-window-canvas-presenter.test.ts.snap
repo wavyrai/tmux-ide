@@ -28,6 +28,18 @@ exports[`projectAppWindowCanvas > allocates the same semantic scene deterministi
       },
       "stackId": "stack.left",
       "stackIndex": 0,
+      "stackMembers": [
+        {
+          "active": true,
+          "title": "Lead",
+          "windowId": "window.lead",
+        },
+        {
+          "active": false,
+          "title": "Hidden tab",
+          "windowId": "window.hidden",
+        },
+      ],
       "title": "Lead",
       "windowId": "window.lead",
       "zIndex": 1,
@@ -104,6 +116,18 @@ exports[`projectAppWindowCanvas > projects canonical dock, tab, floating, focus,
       },
       "stackId": "stack.left",
       "stackIndex": 0,
+      "stackMembers": [
+        {
+          "active": true,
+          "title": "Lead",
+          "windowId": "window.lead",
+        },
+        {
+          "active": false,
+          "title": "Hidden tab",
+          "windowId": "window.hidden",
+        },
+      ],
       "title": "Lead",
       "windowId": "window.lead",
       "zIndex": 1,

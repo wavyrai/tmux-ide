@@ -3,6 +3,9 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import {
   AppWindowMutationHostResultSchemaZ,
   AppWindowMutationRequestSchemaZ,
+  WorkspaceMultiplexerHostResultSchemaZ,
+  WorkspaceMultiplexerMutationRequestSchemaZ,
+  type MultiplexerVerbInvocation,
   DaemonResourceRequestSchemaZ,
   DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
   DESKTOP_PACKAGED_RENDERER_ORIGIN,
@@ -555,6 +558,71 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     }
   };
 
+  /**
+   * Run one multiplexer verb on behalf of the renderer.
+   *
+   * The renderer authors the intent and nothing else. The operation id is
+   * minted here, in the trusted process, for the same reason pane creation
+   * mints its own: a renderer that could choose it could replay another
+   * window's kill by reusing its id.
+   */
+  const invokeVerb = async (
+    event: IpcMainInvokeEvent,
+    authority: RendererAuthority,
+    invocation: { data: MultiplexerVerbInvocation },
+  ) => {
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return WorkspaceMultiplexerHostResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedCapabilityError(before),
+      });
+    }
+    const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse({
+      operationId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      intent: invocation.data.intent,
+    });
+    try {
+      const result = await deps.daemonResources.invokeVerb(request);
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspaceMultiplexerHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        result.operationId !== request.operationId ||
+        result.daemonInstanceId !== request.expectedDaemonInstanceId ||
+        result.workspaceName !== request.intent.workspaceName
+      ) {
+        return WorkspaceMultiplexerHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return WorkspaceMultiplexerHostResultSchemaZ.parse({ status: "ok", result });
+    } catch (error) {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspaceMultiplexerHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      return WorkspaceMultiplexerHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityErrorFromUnknown(error),
+      });
+    }
+  };
+
   const issueTerminalAttachment = async (
     event: IpcMainInvokeEvent,
     authority: RendererAuthority,
@@ -864,6 +932,8 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         return createWorkspacePane(event, authority, { data: daemonRequest.request });
       case "mutateAppWindow":
         return mutateAppWindow(event, authority, { data: daemonRequest.request });
+      case "invokeVerb":
+        return invokeVerb(event, authority, { data: daemonRequest.request });
       case "issueTerminalAttachment":
         return issueTerminalAttachment(event, authority, { data: daemonRequest.request });
       case "issuePaneStream":

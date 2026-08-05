@@ -74,9 +74,7 @@ export interface ActionExecutionContext {
     mutate(input: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
   };
   readonly workspaceMultiplexerBackend?: {
-    mutate(
-      input: WorkspaceMultiplexerMutationRequest,
-    ): Promise<WorkspaceMultiplexerMutationResult>;
+    mutate(input: WorkspaceMultiplexerMutationRequest): Promise<WorkspaceMultiplexerMutationResult>;
   };
 }
 
