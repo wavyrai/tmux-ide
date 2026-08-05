@@ -147,6 +147,14 @@ select:focus-visible,
   --sf-tertiary: oklch(60% 0.012 285.9);
   --sf-quaternary: oklch(68% 0.01 285.9);
   --sf-disabled: oklch(78% 0.006 285.9);
+  /*
+   * DERIVED. sfora's tertiary rung is 3.55:1 on the sidebar plane, under the
+   * 4.5:1 floor, and this product spends that rung on metadata that has to be
+   * read — session names, pane subtitles, timestamps. This is the darkest rung
+   * that clears the floor on all four planes. Tertiary and quaternary stay
+   * available for genuinely non-essential decoration.
+   */
+  --sf-metadata: oklch(54% 0.014 285.9);
 
   --sf-border: oklch(91.97% 0.004 286.3);
   --sf-border-light: oklch(96.01% 0 0);
@@ -184,6 +192,7 @@ select:focus-visible,
 
   --sf-hover: oklch(0% 0 0 / 5%);
   --sf-active: oklch(0% 0 0 / 9%);
+  --sf-on-lit-blue: oklch(100% 0 0);
   --sf-selection: color-mix(in srgb, var(--sf-anchor) 16%, transparent);
 
   /*
@@ -227,6 +236,8 @@ select:focus-visible,
   --sf-tertiary: oklch(58% 0.012 286.1);
   --sf-quaternary: oklch(47% 0.01 286.1);
   --sf-disabled: oklch(41% 0.008 286.1);
+  /* Same derivation, lifted: tertiary is 3.47:1 on the grey section plane. */
+  --sf-metadata: oklch(66% 0.012 286.1);
 
   --sf-border: oklch(31.51% 0.007 286);
   --sf-border-light: oklch(37.27% 0.008 286);
@@ -252,6 +263,12 @@ select:focus-visible,
 
   --sf-hover: oklch(100% 0 0 / 6%);
   --sf-active: oklch(100% 0 0 / 10%);
+  /*
+   * The lit-blue is BRIGHTER in dark mode, so the selected row's label goes
+   * dark. White on it is 2.54:1 — unreadable, and the kind of thing that only
+   * shows up when the ratio is computed rather than eyeballed.
+   */
+  --sf-on-lit-blue: oklch(12% 0.004 285.8);
   --sf-selection: color-mix(in srgb, var(--sf-anchor) 26%, transparent);
 
   --sf-wash-valid: color-mix(in oklab, var(--sf-valid) 18%, var(--sf-card));
@@ -297,7 +314,7 @@ select:focus-visible,
   --tmux-ide-text-bright: var(--sf-foreground);
   --tmux-ide-text-primary: var(--sf-foreground-strong);
   --tmux-ide-text-secondary: var(--sf-muted-foreground);
-  --tmux-ide-text-muted: var(--sf-tertiary);
+  --tmux-ide-text-muted: var(--sf-metadata);
   --tmux-ide-text-inverse: var(--sf-primary-foreground);
   --tmux-ide-text-link: var(--sf-accent-blue);
   --tmux-ide-border-subtle: var(--sf-border-light);
@@ -308,7 +325,7 @@ select:focus-visible,
   --tmux-ide-border-attention: var(--sf-warning-ink);
   --tmux-ide-border-danger: var(--sf-invalid-ink);
   /* Semantics are never decorative: one tone per meaning, and no other source. */
-  --tmux-ide-status-neutral: var(--sf-tertiary);
+  --tmux-ide-status-neutral: var(--sf-metadata);
   --tmux-ide-status-info: var(--sf-accent-blue);
   --tmux-ide-status-success: var(--sf-valid-ink);
   --tmux-ide-status-warning: var(--sf-warning-ink);
@@ -1592,14 +1609,14 @@ kbd {
  * text selection so the two blues never blur into one meaning.
  */
 .sidebar-row--active {
-  color: oklch(100% 0 0);
+  color: var(--sf-on-lit-blue);
   background: linear-gradient(to bottom, var(--sf-accent-blue), var(--sf-accent-blue-dark));
   box-shadow: none;
 }
 
 .sidebar-row--active .sidebar-row__identity > small,
 .sidebar-row--active .fleet-sidebar__badge {
-  color: color-mix(in oklab, oklch(100% 0 0) 82%, transparent);
+  color: color-mix(in oklab, var(--sf-on-lit-blue) 82%, transparent);
 }
 
 .sidebar-row i,
