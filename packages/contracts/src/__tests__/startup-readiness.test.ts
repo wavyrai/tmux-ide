@@ -11,7 +11,11 @@ import {
   startupReadinessBlockingRung,
   type StartupReadinessLadder,
 } from "../startup-readiness.ts";
-import { DaemonChildOutputTailSchemaZ, type DaemonChildOutputTail } from "../desktop-host.ts";
+import {
+  DaemonChildOutputTailSchemaZ,
+  DesktopDaemonCapabilityStateSchemaZ,
+  type DaemonChildOutputTail,
+} from "../desktop-host.ts";
 
 const OBSERVED_AT = "2026-08-04T12:00:00.000Z";
 
@@ -299,5 +303,107 @@ describe("desktop projection", () => {
       observedAt: OBSERVED_AT,
     });
     expect(readiness.ladder).toEqual(ladder);
+  });
+
+  it("prefers a ladder carried on a disconnected state over the host's outside view", () => {
+    // The daemon answers, but this desktop cannot use that generation. Only the
+    // daemon can see that the catalog is what is actually stuck.
+    const ladder = buildStartupReadinessLadder(
+      [
+        { status: "satisfied" },
+        { status: "satisfied" },
+        { status: "satisfied" },
+        {
+          status: "stuck",
+          reason: { vocabulary: "terminal-resource-unavailable", code: "missing-semantic-stamp" },
+        },
+      ],
+      OBSERVED_AT,
+    );
+    const readiness = projectDesktopStartupReadiness({
+      daemon: {
+        status: "degraded",
+        code: "identity-mismatch",
+        reason: "Canonical daemon verification is degraded.",
+        startupReadiness: ladder,
+      },
+      observedAt: OBSERVED_AT,
+    });
+    expect(readiness.ladder.blockedAt).toBe("catalog-populated");
+    expect(readiness.ladder).toEqual(ladder);
+  });
+
+  it("keeps the host issue when the daemon's own ladder claims everything is fine", () => {
+    // A daemon that believes it is healthy explains nothing about why THIS
+    // desktop is disconnected, so the host's observation stays the answer.
+    const readiness = projectDesktopStartupReadiness({
+      daemon: {
+        status: "degraded",
+        code: "identity-mismatch",
+        reason: "Canonical daemon verification is degraded.",
+        startupReadiness: fullyWalked(),
+      },
+      observedAt: OBSERVED_AT,
+    });
+    expect(readiness.ladder.blockedAt).toBe("daemon-spawned");
+    expect(readiness.ladder.rungs[0]).toMatchObject({
+      status: "stuck",
+      reason: { vocabulary: "desktop-daemon-host-issue", code: "identity-mismatch" },
+    });
+  });
+
+  it("carries the child output alongside a preferred daemon ladder", () => {
+    const childOutput: DaemonChildOutputTail = {
+      stream: "stderr",
+      lines: ["tmux: server exited"],
+      truncated: false,
+      exitCode: 1,
+      signal: null,
+    };
+    const readiness = projectDesktopStartupReadiness({
+      daemon: {
+        status: "unavailable",
+        code: "probe-failed",
+        reason: "The canonical daemon is unavailable.",
+        childOutput,
+        startupReadiness: buildStartupReadinessLadder(
+          [
+            { status: "satisfied" },
+            { status: "satisfied" },
+            { status: "satisfied" },
+            {
+              status: "stuck",
+              reason: { vocabulary: "startup-readiness", code: "catalog-sessions-unreachable" },
+            },
+          ],
+          OBSERVED_AT,
+        ),
+      },
+      observedAt: OBSERVED_AT,
+    });
+    expect(readiness.ladder.blockedAt).toBe("catalog-populated");
+    expect(readiness.childOutput).toEqual(childOutput);
+  });
+
+  it("falls back to the host issue when no ladder could be read at all", () => {
+    const readiness = projectDesktopStartupReadiness({
+      daemon: {
+        status: "unavailable",
+        code: "process-not-running",
+        reason: "The canonical daemon is unavailable.",
+      },
+      observedAt: OBSERVED_AT,
+    });
+    expect(readiness.ladder.blockedAt).toBe("daemon-spawned");
+  });
+
+  it("accepts a ladder on a disconnected capability state through the wire schema", () => {
+    const parsed = DesktopDaemonCapabilityStateSchemaZ.safeParse({
+      status: "degraded",
+      code: "identity-mismatch",
+      reason: "Canonical daemon verification is degraded.",
+      startupReadiness: fullyWalked(),
+    });
+    expect(parsed.success).toBe(true);
   });
 });

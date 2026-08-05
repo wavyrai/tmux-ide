@@ -1,5 +1,20 @@
 import { z } from "zod";
 import {
+  DaemonChildOutputTailSchemaZ,
+  DesktopDaemonHostIssueCodeSchemaZ,
+} from "./desktop-daemon-issue.ts";
+// The daemon issue vocabulary lives in a leaf module so the readiness ladder
+// can read it without importing this file back; it stays part of this contract's
+// public surface.
+export {
+  DAEMON_CHILD_OUTPUT_MAX_LINES,
+  DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH,
+  DaemonChildOutputTailSchemaZ,
+  DesktopDaemonHostIssueCodeSchemaZ,
+} from "./desktop-daemon-issue.ts";
+export type { DaemonChildOutputTail, DesktopDaemonHostIssueCode } from "./desktop-daemon-issue.ts";
+import { StartupReadinessLadderSchemaZ } from "./startup-readiness.ts";
+import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellResourceSchemaZ,
@@ -96,27 +111,6 @@ export const DesktopDaemonHostDescriptorSchemaZ = z
   })
   .strict();
 
-export const DesktopDaemonHostIssueCodeSchemaZ = z.enum([
-  "record-missing",
-  "record-invalid",
-  "endpoint-not-loopback",
-  "protocol-incompatible",
-  "process-not-running",
-  "identity-unreachable",
-  "identity-mismatch",
-  "health-unreachable",
-  "health-mismatch",
-  "probe-failed",
-  "probe-timeout",
-  "resource-broker-failed",
-  "preview-only",
-  // Added on m42/supervision: the Electron supervisor stopped restarting its
-  // bundled daemon child after consecutive fatal failures. Unlike every other
-  // issue code this one is terminal for the session — a recheck will not
-  // recover it. (m42/connection-state rebases over this addition.)
-  "supervisor-halted",
-]);
-
 /**
  * Why the desktop daemon supervisor stopped its restart loop. Structural
  * failures only: transient failures (crashes, timeouts, unreachable probes)
@@ -138,56 +132,6 @@ const DesktopDaemonHostIssueSchemaFields = {
   reason: z.string().min(1),
 } as const;
 
-/** Hard ceiling on the daemon child's captured last words. Bounded by construction. */
-export const DAEMON_CHILD_OUTPUT_MAX_LINES = 50;
-export const DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH = 500;
-
-/**
- * One captured line of the daemon child's own output. Control-free and
- * credential-redacted: a child that logged an Authorization header must not
- * turn a diagnostic into a credential leak across the renderer bridge.
- */
-const DaemonChildOutputLineSchemaZ = z
-  .string()
-  .max(DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH)
-  .refine(
-    (line) =>
-      [...line].every((character) => {
-        const code = character.charCodeAt(0);
-        return code >= 32 && code !== 127;
-      }),
-    "daemon child output must be control-character-free",
-  )
-  .refine(
-    (line) => !/(?:authorization|bearer\s+|owner.?token|redemptionticket|ta1_)/iu.test(line),
-    "daemon child output must be credential-redacted",
-  );
-
-/**
- * The tail of what the bundled daemon child actually printed before it failed.
- *
- * The desktop supervisor has always captured the child's stdout/stderr into a
- * bounded buffer; before m44.3 nothing read it, so a child that died with a
- * clear message on stderr surfaced to the user as a blank "connection failed".
- * Carrying the last lines on the disconnected state is the whole fix: a stuck
- * readiness rung arrives with the child's own words attached.
- */
-export const DaemonChildOutputTailSchemaZ = z
-  .object({
-    stream: z.literal("stderr"),
-    lines: z.array(DaemonChildOutputLineSchemaZ).max(DAEMON_CHILD_OUTPUT_MAX_LINES),
-    /** Older output was dropped to stay inside the capture bound. */
-    truncated: z.boolean(),
-    exitCode: z.number().int().min(-256).max(256).nullable(),
-    signal: z
-      .string()
-      .max(16)
-      .regex(/^SIG[A-Z0-9]{1,12}$/u)
-      .nullable(),
-  })
-  .strict();
-export type DaemonChildOutputTail = z.infer<typeof DaemonChildOutputTailSchemaZ>;
-
 const DesktopDaemonCapabilityIssueSchemaFields = {
   code: DesktopDaemonHostIssueCodeSchemaZ,
   reason: z.string().min(1).max(240),
@@ -197,6 +141,19 @@ const DesktopDaemonCapabilityIssueSchemaFields = {
    * (an attached foreign daemon) or when it printed nothing.
    */
   childOutput: DaemonChildOutputTailSchemaZ.optional(),
+  /**
+   * The daemon's OWN startup readiness ladder, read while this disconnected
+   * state was composed.
+   *
+   * A daemon can be answering HTTP while this desktop still cannot use it — a
+   * changed generation, a broker that could not be built, an identity record
+   * that no longer matches. That is exactly when the ladder is worth having:
+   * the two rungs only the daemon can answer (`credential-held`,
+   * `attachment-issuable`) and the honest empty-fleet distinction exist nowhere
+   * else. Absent when the daemon could not be read at all, and the renderer
+   * then falls back to what the host itself observed.
+   */
+  startupReadiness: StartupReadinessLadderSchemaZ.optional(),
 } as const;
 
 export const DesktopDaemonHostStateSchemaZ = z.discriminatedUnion("status", [
@@ -574,7 +531,6 @@ export type DesktopPlatform = z.infer<typeof DesktopPlatformSchemaZ>;
 export type DesktopThemeState = z.infer<typeof DesktopThemeStateSchemaZ>;
 export type DesktopWindowState = z.infer<typeof DesktopWindowStateSchemaZ>;
 export type DesktopDaemonHostDescriptor = z.infer<typeof DesktopDaemonHostDescriptorSchemaZ>;
-export type DesktopDaemonHostIssueCode = z.infer<typeof DesktopDaemonHostIssueCodeSchemaZ>;
 export type DesktopDaemonSupervisorFatalReason = z.infer<
   typeof DesktopDaemonSupervisorFatalReasonSchemaZ
 >;

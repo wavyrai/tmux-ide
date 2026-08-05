@@ -32,12 +32,15 @@
 import { z } from "zod";
 
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
+// Read from the leaf module rather than desktop-host.ts: the host contract
+// carries a ladder on its disconnected states, so importing it back here would
+// make the two files evaluate each other.
 import {
   DesktopDaemonHostIssueCodeSchemaZ,
   DaemonChildOutputTailSchemaZ,
   type DaemonChildOutputTail,
-  type DesktopDaemonCapabilityState,
-} from "./desktop-host.ts";
+} from "./desktop-daemon-issue.ts";
+import type { DesktopDaemonCapabilityState } from "./desktop-host.ts";
 import { TerminalResourceUnavailableReasonSchemaZ } from "./application-shell.ts";
 import { TerminalAttachmentIssueErrorCodeSchemaZ } from "./terminal-attachments.ts";
 
@@ -366,8 +369,15 @@ export type DesktopStartupReadiness = z.infer<typeof DesktopStartupReadinessSche
 export interface DesktopStartupReadinessInput {
   /** What the desktop host reports about the daemon right now. */
   readonly daemon: DesktopDaemonCapabilityState;
-  /** The daemon's own ladder, when it was reachable and readable. */
-  readonly ladder: StartupReadinessLadder | null;
+  /**
+   * The daemon's own ladder, when it was reachable and readable.
+   *
+   * Optional on purpose: a disconnected capability state already CARRIES the
+   * ladder the host read while composing it, and that is used when nothing is
+   * passed here. The defect this replaces was a call site that passed `null`
+   * and so silently threw the daemon's answer away.
+   */
+  readonly ladder?: StartupReadinessLadder | null;
   readonly observedAt: string;
 }
 
@@ -375,8 +385,14 @@ export interface DesktopStartupReadinessInput {
  * PURE. Fold the desktop's daemon state and the daemon-served ladder into one
  * ladder the renderer can render directly.
  *
- * - Daemon not connected → `daemon-spawned` is stuck with the host issue code,
- *   and the child output tail carried on that state travels with it.
+ * - Daemon not connected and no ladder read → `daemon-spawned` is stuck with
+ *   the host issue code, and the child output tail carried on that state
+ *   travels with it.
+ * - Daemon not connected but a ladder WAS read → the read is itself proof a
+ *   daemon answered, so its own account of where startup stopped is preferred
+ *   over the host's outside view. A ladder that clears every rung is the one
+ *   exception: the daemon believes it is fine, so the host issue is the only
+ *   true explanation of why this desktop still cannot use it.
  * - Connected but no ladder read → the three rungs the desktop itself proved
  *   (a daemon answered, with our credential, carrying an identity) are
  *   satisfied and the catalog rungs stay honestly pending.
@@ -387,6 +403,10 @@ export function projectDesktopStartupReadiness(
 ): DesktopStartupReadiness {
   if (input.daemon.status !== "connected") {
     const childOutput: DaemonChildOutputTail | undefined = input.daemon.childOutput;
+    const ladder = input.ladder ?? input.daemon.startupReadiness ?? null;
+    if (ladder && ladder.blockedAt !== null) {
+      return { ladder, ...(childOutput ? { childOutput } : {}) };
+    }
     return {
       ladder: buildStartupReadinessLadder(
         [
