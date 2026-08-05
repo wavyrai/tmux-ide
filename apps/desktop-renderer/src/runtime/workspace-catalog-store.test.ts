@@ -844,6 +844,11 @@ describe("desktop live workspace catalog and selection store", () => {
     });
     await publishLive(fake);
     await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+    // The fixture publishes `live` before its subscribe promise settles, so let
+    // that promise land: disposal can only call a teardown handle it already
+    // holds. A subscription still in flight at disposal is torn down when it
+    // resolves instead, which the "retires a pending subscription" test covers.
+    await Promise.resolve();
     const requestCalls = fake.listWorkspaces.mock.calls.length;
     expect(() => store.dispose()).not.toThrow();
     expect(store.getState().status).toBe("disposed");

@@ -90,7 +90,23 @@ export function daemonCatalogTerminalCode(
     : "invalid-response";
 }
 
-function validateDaemonTarget(
+/**
+ * An event failure whose code names a broken generation rather than a broken
+ * socket. It publishes as `degraded` with that code — but the subscription is
+ * still recovered on the ladder, because the fault may live in one frame of an
+ * otherwise healthy stream.
+ */
+export function daemonCatalogTerminalEventCode(
+  failure: DaemonCatalogFailure,
+): DaemonCatalogTerminalCode | null {
+  if (failure.code === "daemon-identity-mismatch") return "daemon-identity-mismatch";
+  if (failure.code === "invalid-response" || failure.code === "protocol-error") {
+    return "invalid-response";
+  }
+  return null;
+}
+
+export function validateDaemonTarget(
   value: unknown,
 ): GenerationBoundTargetValidation<DaemonInstanceIdentity, DaemonCatalogFailure> {
   const parsed = DesktopDaemonCapabilityStateSchemaZ.safeParse(value);
@@ -129,16 +145,14 @@ function catalogDisposition(
   failure: DaemonCatalogFailure,
   source: GenerationBoundFailureSource,
 ): GenerationBoundDisposition {
-  if (
-    failure.code === "daemon-identity-mismatch" ||
-    failure.code === "invalid-response" ||
-    failure.code === "protocol-error"
-  ) {
-    // A differently stamped or malformed response poisons this generation's
-    // authority; asking the same generation again on a timer cannot repair it.
+  // An event-side fault may live in one frame of an otherwise healthy stream,
+  // so every event failure recovers on the ladder; the projector still names a
+  // broken generation honestly. A differently stamped or malformed RESPONSE is
+  // different: asking the same generation again on a timer cannot repair it.
+  if (source === "event") return "retry";
+  if (failure.code === "daemon-identity-mismatch" || failure.code === "invalid-response") {
     return "fatal";
   }
-  if (source === "event") return "retry";
   return failure.code === "request-timeout" ||
     failure.code === "request-failed" ||
     failure.code === "event-unavailable"

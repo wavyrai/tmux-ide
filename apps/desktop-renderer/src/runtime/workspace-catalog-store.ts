@@ -1,18 +1,35 @@
 import { createSignal, onCleanup, type Accessor } from "solid-js";
 import {
-  DesktopDaemonCapabilityStateSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopWorkspaceNameSchemaZ,
-  isDaemonWireProtocolCompatible,
   type DaemonInstanceIdentity,
-  type DesktopDaemonCapabilityError,
-  type DesktopDaemonEvent,
-  type DesktopDaemonTransportState,
   type DesktopDaemonWorkspaceSummary,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
 
-import { transportStateReason } from "./connection-health.ts";
+import {
+  createDaemonCatalogAdapter,
+  daemonCatalogTerminalCode,
+  daemonCatalogTerminalEventCode,
+  daemonIdentityKey,
+  validateDaemonTarget,
+  type DaemonCatalogView,
+} from "./daemon-catalog-store.ts";
+import {
+  createGenerationBoundStore,
+  type GenerationBoundClock,
+  type GenerationBoundRetryPolicy,
+} from "./generation-bound-store.ts";
+
+/**
+ * Generation-bound renderer store for the workspace catalog.
+ *
+ * The read policy is the shared engine in {@link ./generation-bound-store.ts};
+ * what is unique to this store is the SELECTION policy below — which workspace
+ * the app should show, given a startup or persisted seed, a single live
+ * workspace, an explicit user choice, or a workspace that disappeared. That
+ * policy sits as a wrapper around the engine so the engine stays free of it.
+ */
 
 export type DesktopWorkspaceSelectionSeedSource = "startup" | "persisted";
 
@@ -98,17 +115,11 @@ export type DesktopWorkspaceCatalogState =
       readonly snapshot: null;
     });
 
-export interface DesktopWorkspaceCatalogClock {
-  now(): number;
-  setTimeout(callback: () => void, delayMs: number): unknown;
-  clearTimeout(handle: unknown): void;
-}
-
-export interface DesktopWorkspaceCatalogRetryPolicy {
-  readonly initialDelayMs: number;
-  readonly maximumDelayMs: number;
-  readonly maximumAttempts: number;
-}
+export type DesktopWorkspaceCatalogClock = GenerationBoundClock;
+export type DesktopWorkspaceCatalogRetryPolicy = Pick<
+  GenerationBoundRetryPolicy,
+  "initialDelayMs" | "maximumDelayMs" | "maximumAttempts"
+>;
 
 export interface DesktopWorkspaceCatalogStoreOptions {
   readonly host: Pick<HostCapabilities, "daemon">;
@@ -139,80 +150,19 @@ export interface SolidDesktopWorkspaceCatalogStore {
   dispose(): void;
 }
 
-const DEFAULT_RETRY: DesktopWorkspaceCatalogRetryPolicy = {
-  initialDelayMs: 250,
-  maximumDelayMs: 4_000,
-  maximumAttempts: 4,
-};
+const WORDING = {
+  staleReason: "Daemon catalog events are not connected.",
+  eventsUnavailable: "Daemon catalog events are unavailable.",
+  eventsExhausted: "Daemon catalog event recovery attempts were exhausted.",
+  requestFailed: "Desktop host workspace catalog request failed.",
+  subscriptionFailed: "Desktop host catalog event subscription failed.",
+} as const;
 
-const defaultClock: DesktopWorkspaceCatalogClock = {
-  now: () => Date.now(),
-  setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
-  clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
-};
-
-function boundedInteger(
-  value: number | undefined,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-): number {
-  if (value === undefined || !Number.isInteger(value)) return fallback;
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
-function retryPolicy(
-  overrides: Partial<DesktopWorkspaceCatalogRetryPolicy> | undefined,
-): DesktopWorkspaceCatalogRetryPolicy {
-  const initialDelayMs = boundedInteger(
-    overrides?.initialDelayMs,
-    DEFAULT_RETRY.initialDelayMs,
-    10,
-    60_000,
-  );
-  return {
-    initialDelayMs,
-    maximumDelayMs: Math.max(
-      initialDelayMs,
-      boundedInteger(overrides?.maximumDelayMs, DEFAULT_RETRY.maximumDelayMs, 10, 60_000),
-    ),
-    maximumAttempts: boundedInteger(
-      overrides?.maximumAttempts,
-      DEFAULT_RETRY.maximumAttempts,
-      0,
-      10,
-    ),
-  };
-}
-
-function sameDaemon(
-  left: DaemonInstanceIdentity | null,
-  right: DaemonInstanceIdentity | null,
-): boolean {
-  if (left === null || right === null) return left === right;
-  return (
-    left.protocolVersion === right.protocolVersion &&
-    left.productVersion === right.productVersion &&
-    left.instanceId === right.instanceId &&
-    left.startedAt === right.startedAt
-  );
-}
-
-function daemonKey(daemon: DaemonInstanceIdentity): string {
-  return [daemon.protocolVersion, daemon.productVersion, daemon.instanceId, daemon.startedAt].join(
-    "\u0000",
-  );
-}
+type WorkspaceList = readonly DesktopDaemonWorkspaceSummary[];
 
 function exactWorkspaceName(value: unknown): string | null {
   const parsed = DesktopWorkspaceNameSchemaZ.safeParse(value);
   return parsed.success && parsed.data === value ? parsed.data : null;
-}
-
-function safeReason(error: DesktopDaemonCapabilityError): string {
-  // Host capability errors are already bounded and redacted by the shared
-  // contract. Do not incorporate thrown values or schema diagnostics here.
-  return error.reason;
 }
 
 function invalidSeedReason(
@@ -238,9 +188,7 @@ function selectionWithoutWorkspace(
   };
 }
 
-function sortWorkspaceSummaries(
-  workspaces: readonly DesktopDaemonWorkspaceSummary[],
-): DesktopDaemonWorkspaceSummary[] {
+function sortWorkspaceSummaries(workspaces: WorkspaceList): DesktopDaemonWorkspaceSummary[] {
   return [...workspaces].sort((left, right) =>
     left.workspaceName < right.workspaceName
       ? -1
@@ -250,111 +198,9 @@ function sortWorkspaceSummaries(
   );
 }
 
-function parseCatalogResult(
-  value: unknown,
-  expectedDaemon: DaemonInstanceIdentity,
-):
-  | { readonly status: "ok"; readonly workspaces: DesktopDaemonWorkspaceSummary[] }
-  | { readonly status: "error"; readonly error: DesktopDaemonCapabilityError }
-  | { readonly status: "invalid-response" | "daemon-identity-mismatch" } {
-  const parsed = DesktopDaemonListWorkspacesResultSchemaZ.safeParse(value);
-  if (!parsed.success) return { status: "invalid-response" };
-  if (parsed.data.status === "error") return parsed.data;
-  if (!sameDaemon(parsed.data.daemon, expectedDaemon)) {
-    return { status: "daemon-identity-mismatch" };
-  }
-  const names = new Set<string>();
-  for (let index = 0; index < parsed.data.workspaces.length; index += 1) {
-    const parsedName = parsed.data.workspaces[index]?.workspaceName;
-    const rawName = (value as { workspaces?: Array<{ workspaceName?: unknown }> }).workspaces?.[
-      index
-    ]?.workspaceName;
-    if (parsedName === undefined || parsedName !== rawName || names.has(parsedName)) {
-      return { status: "invalid-response" };
-    }
-    names.add(parsedName);
-  }
-  return { status: "ok", workspaces: sortWorkspaceSummaries(parsed.data.workspaces) };
-}
-
-function connectedIdentity(value: unknown):
-  | { readonly status: "connected"; readonly identity: DaemonInstanceIdentity }
-  | {
-      readonly status: "unavailable" | "degraded" | "invalid";
-      readonly reason: string;
-    } {
-  const parsed = DesktopDaemonCapabilityStateSchemaZ.safeParse(value);
-  if (!parsed.success) {
-    return { status: "invalid", reason: "Desktop daemon capability state is invalid." };
-  }
-  if (parsed.data.status !== "connected") {
-    return { status: parsed.data.status, reason: parsed.data.reason };
-  }
-  if (!isDaemonWireProtocolCompatible(parsed.data.identity.protocolVersion)) {
-    return { status: "invalid", reason: "Desktop daemon protocol is incompatible." };
-  }
-  return { status: "connected", identity: parsed.data.identity };
-}
-
-function snapshotFromState(
-  state: DesktopWorkspaceCatalogState,
-): DesktopWorkspaceCatalogSnapshot | null {
-  return "snapshot" in state ? state.snapshot : null;
-}
-
-function requestShouldRetry(error: DesktopDaemonCapabilityError): boolean {
-  return (
-    error.code === "request-timeout" ||
-    error.code === "request-failed" ||
-    error.code === "event-unavailable"
-  );
-}
-
-function terminalEventFailureCode(
-  error: DesktopDaemonCapabilityError,
-): "daemon-identity-mismatch" | "invalid-response" | null {
-  if (error.code === "daemon-identity-mismatch") return "daemon-identity-mismatch";
-  if (error.code === "invalid-response" || error.code === "protocol-error") {
-    return "invalid-response";
-  }
-  return null;
-}
-
 export function createDesktopWorkspaceCatalogStore(
   options: DesktopWorkspaceCatalogStoreOptions,
 ): DesktopWorkspaceCatalogStore {
-  const host = options.host;
-  const clock = options.clock ?? defaultClock;
-  const retry = retryPolicy(options.retry);
-  const listeners = new Set<DesktopWorkspaceCatalogStateListener>();
-
-  let disposed = false;
-  let generation = 0;
-  let daemon: DaemonInstanceIdentity | null = null;
-  let daemonGeneration = "";
-  let state: DesktopWorkspaceCatalogState = {
-    status: "loading",
-    generation,
-    daemon,
-    snapshot: null,
-  };
-  let requestId = 0;
-  let subscriptionId = 0;
-  let unsubscribeHost: (() => void) | null = null;
-  let pendingSubscriptionId: number | null = null;
-  let eventRetryRequested = false;
-  let requestRetryTimer: unknown | null = null;
-  let requestRetryAttempts = 0;
-  let eventRetryTimer: unknown | null = null;
-  let eventRetryAttempts = 0;
-  let eventLive = false;
-  /**
-   * Non-null once the host pushed a supervisor-derived transport state. From
-   * then on the main-process supervisor is the ONE retry owner: a degraded
-   * connection keeps this logical subscription (no teardown-and-resubscribe
-   * loop) and this store's status derives from the pushed states.
-   */
-  let hostTransport: DesktopDaemonTransportState | null = null;
   let selectedWorkspaceName: string | null = null;
   let selectedReason: DesktopWorkspaceSelectedReason | null = null;
   let pendingSelection: {
@@ -374,73 +220,13 @@ export function createDesktopWorkspaceCatalogStore(
     }
   }
 
-  const notify = (
-    listener: DesktopWorkspaceCatalogStateListener,
-    next: DesktopWorkspaceCatalogState,
-  ): void => {
-    try {
-      listener(next);
-    } catch {
-      // Catalog observers are untrusted application code. One observer must not
-      // interrupt state retirement, another observer, or host cleanup.
-    }
-  };
-
-  const emit = (next: DesktopWorkspaceCatalogState): void => {
-    if (disposed) return;
-    state = next;
-    for (const listener of [...listeners]) {
-      if (disposed) break;
-      notify(listener, next);
-    }
-  };
-
-  const current = (expectedGeneration: number, expectedDaemonGeneration: string): boolean =>
-    !disposed &&
-    generation === expectedGeneration &&
-    daemonGeneration === expectedDaemonGeneration &&
-    daemon !== null;
-
-  const clearTimer = (handle: unknown | null): void => {
-    if (handle === null) return;
-    try {
-      clock.clearTimeout(handle);
-    } catch {
-      // A host clock must not prevent retirement or disposal.
-    }
-  };
-
-  const clearRequestRetry = (): void => {
-    clearTimer(requestRetryTimer);
-    requestRetryTimer = null;
-  };
-
-  const clearEventRetry = (): void => {
-    clearTimer(eventRetryTimer);
-    eventRetryTimer = null;
-  };
-
-  const retireRequest = (): void => {
-    requestId += 1;
-  };
-
-  const retireSubscription = (forgetPending = false): void => {
-    subscriptionId += 1;
-    if (forgetPending) pendingSubscriptionId = null;
-    eventLive = false;
-    hostTransport = null;
-    const active = unsubscribeHost;
-    unsubscribeHost = null;
-    try {
-      active?.();
-    } catch {
-      // Host teardown is best-effort; the logical generation is already retired.
-    }
-  };
-
-  const selectionFor = (
-    workspaces: readonly DesktopDaemonWorkspaceSummary[],
-  ): DesktopWorkspaceSelection => {
+  /**
+   * The selection state machine. It ADVANCES, so it must run once per resolved
+   * workspace list and once per selection command — never once per projection.
+   * {@link selectionOf} enforces that with a memo keyed on the list identity
+   * and a command revision.
+   */
+  const advanceSelection = (workspaces: WorkspaceList): DesktopWorkspaceSelection => {
     const names = new Set(workspaces.map(({ workspaceName }) => workspaceName));
     if (selectedWorkspaceName !== null) {
       if (names.has(selectedWorkspaceName)) {
@@ -462,11 +248,7 @@ export function createDesktopWorkspaceCatalogStore(
         selectedReason = pendingSelection.source;
         pendingSelection = null;
         suppressAutomaticSelection = false;
-        return {
-          view: "workspace",
-          workspaceName: selectedWorkspaceName,
-          reason: selectedReason,
-        };
+        return { view: "workspace", workspaceName: selectedWorkspaceName, reason: selectedReason };
       }
       unselectedReason = missingSeedReason(pendingSelection.source);
       pendingSelection = null;
@@ -475,11 +257,7 @@ export function createDesktopWorkspaceCatalogStore(
     if (workspaces.length === 1 && !suppressAutomaticSelection) {
       selectedWorkspaceName = workspaces[0]!.workspaceName;
       selectedReason = "only-live-workspace";
-      return {
-        view: "workspace",
-        workspaceName: selectedWorkspaceName,
-        reason: selectedReason,
-      };
+      return { view: "workspace", workspaceName: selectedWorkspaceName, reason: selectedReason };
     }
     if (unselectedReason === "loading") {
       unselectedReason =
@@ -496,455 +274,185 @@ export function createDesktopWorkspaceCatalogStore(
     return selectionWithoutWorkspace(workspaces.length, unselectedReason);
   };
 
-  const updateSelectionSnapshot = (): void => {
-    const snapshot = snapshotFromState(state);
-    if (!snapshot || !daemon) return;
-    const nextSnapshot: DesktopWorkspaceCatalogSnapshot = {
-      ...snapshot,
-      selection: selectionFor(snapshot.workspaces),
-    };
-    if (state.status === "live") emit({ ...state, snapshot: nextSnapshot });
-    else if (state.status === "stale") emit({ ...state, snapshot: nextSnapshot });
-    else if (state.status === "degraded") emit({ ...state, snapshot: nextSnapshot });
-    else if (state.status === "error") emit({ ...state, snapshot: nextSnapshot });
+  let selectionRevision = 0;
+  let memoWorkspaces: WorkspaceList | null = null;
+  let memoRevision = -1;
+  let memoSelection: DesktopWorkspaceSelection | null = null;
+
+  const selectionOf = (workspaces: WorkspaceList): DesktopWorkspaceSelection => {
+    if (
+      memoSelection !== null &&
+      memoWorkspaces === workspaces &&
+      memoRevision === selectionRevision
+    ) {
+      return memoSelection;
+    }
+    memoWorkspaces = workspaces;
+    memoRevision = selectionRevision;
+    memoSelection = advanceSelection(workspaces);
+    return memoSelection;
   };
 
-  const emitCatalog = (workspaces: readonly DesktopDaemonWorkspaceSummary[]): void => {
-    if (!daemon) return;
-    const snapshot: DesktopWorkspaceCatalogSnapshot = {
-      daemon,
-      workspaces,
-      selection: selectionFor(workspaces),
-      updatedAt: clock.now(),
-    };
-    emit(
-      eventLive
-        ? { status: "live", generation, daemon, snapshot }
-        : {
-            status: "stale",
-            generation,
+  const project = (view: DaemonCatalogView<WorkspaceList>): DesktopWorkspaceCatalogState => {
+    const { generation, target: daemon, phase } = view;
+    if (view.disposed) {
+      return { status: "disposed", generation, daemon: null, snapshot: null };
+    }
+    const snapshot: DesktopWorkspaceCatalogSnapshot | null =
+      view.snapshot && daemon
+        ? {
             daemon,
-            snapshot,
-            reason: "Daemon catalog events are not connected.",
-          },
-    );
-  };
-
-  const emitRequestError = (error: DesktopDaemonCapabilityError, exhausted: boolean): void => {
-    const snapshot = snapshotFromState(state);
-    if (snapshot) {
-      emit({
-        status: "stale",
-        generation,
-        daemon,
-        snapshot,
-        reason: safeReason(error),
-      });
-      return;
-    }
-    emit({
-      status: "error",
-      generation,
-      daemon,
-      snapshot: null,
-      code: exhausted ? "retry-exhausted" : "request-failed",
-      reason: safeReason(error),
-    });
-  };
-
-  const emitEventFailure = (error: DesktopDaemonCapabilityError, exhausted = false): void => {
-    eventLive = false;
-    const snapshot = snapshotFromState(state);
-    const terminalCode = terminalEventFailureCode(error);
-    if (terminalCode !== null) {
-      emit({
-        status: "degraded",
-        generation,
-        daemon,
-        snapshot,
-        code: terminalCode,
-        reason: safeReason(error),
-      });
-      return;
-    }
-    if (snapshot) {
-      emit({
-        status: "stale",
-        generation,
-        daemon,
-        snapshot,
-        reason: exhausted
-          ? "Daemon catalog event recovery attempts were exhausted."
-          : safeReason(error),
-      });
-      return;
-    }
-    emit({
-      status: "degraded",
-      generation,
-      daemon,
-      snapshot: null,
-      code: "event-unavailable",
-      reason: exhausted
-        ? "Daemon catalog event recovery attempts were exhausted."
-        : safeReason(error),
-    });
-  };
-
-  const scheduleRequestRetry = (
-    expectedGeneration: number,
-    expectedDaemonGeneration: string,
-  ): void => {
-    if (
-      requestRetryTimer !== null ||
-      requestRetryAttempts >= retry.maximumAttempts ||
-      !current(expectedGeneration, expectedDaemonGeneration)
-    ) {
-      return;
-    }
-    const delay = Math.min(
-      retry.maximumDelayMs,
-      retry.initialDelayMs * 2 ** Math.max(0, requestRetryAttempts),
-    );
-    requestRetryAttempts += 1;
-    requestRetryTimer = clock.setTimeout(() => {
-      requestRetryTimer = null;
-      fetchCatalog(expectedGeneration, expectedDaemonGeneration);
-    }, delay);
-  };
-
-  const scheduleEventRetry = (
-    expectedGeneration: number,
-    expectedDaemonGeneration: string,
-  ): void => {
-    if (
-      eventRetryTimer !== null ||
-      unsubscribeHost !== null ||
-      !current(expectedGeneration, expectedDaemonGeneration)
-    ) {
-      return;
-    }
-    if (pendingSubscriptionId !== null) {
-      eventRetryRequested = true;
-      return;
-    }
-    if (eventRetryAttempts >= retry.maximumAttempts) {
-      emitEventFailure(
-        {
-          code: "event-unavailable",
-          reason: "Daemon catalog events are unavailable.",
-        },
-        true,
-      );
-      return;
-    }
-    const delay = Math.min(
-      retry.maximumDelayMs,
-      retry.initialDelayMs * 2 ** Math.max(0, eventRetryAttempts),
-    );
-    eventRetryAttempts += 1;
-    eventRetryRequested = false;
-    eventRetryTimer = clock.setTimeout(() => {
-      eventRetryTimer = null;
-      connectEvents(expectedGeneration, expectedDaemonGeneration);
-    }, delay);
-  };
-
-  const recoverEvents = (
-    expectedGeneration: number,
-    expectedDaemonGeneration: string,
-    error: DesktopDaemonCapabilityError,
-  ): void => {
-    if (!current(expectedGeneration, expectedDaemonGeneration)) return;
-    retireSubscription();
-    emitEventFailure(error);
-    scheduleEventRetry(expectedGeneration, expectedDaemonGeneration);
-  };
-
-  function fetchCatalog(expectedGeneration: number, expectedDaemonGeneration: string): void {
-    if (!current(expectedGeneration, expectedDaemonGeneration) || daemon === null) return;
-    retireRequest();
-    const activeRequestId = requestId;
-    const expectedDaemon = daemon;
-    void host.daemon
-      .listWorkspaces()
-      .then((raw) => {
-        if (
-          activeRequestId !== requestId ||
-          !current(expectedGeneration, expectedDaemonGeneration)
-        ) {
-          return;
-        }
-        const result = parseCatalogResult(raw, expectedDaemon);
-        if (result.status === "ok") {
-          clearRequestRetry();
-          requestRetryAttempts = 0;
-          emitCatalog(result.workspaces);
-          return;
-        }
-        if (result.status !== "error") {
-          clearRequestRetry();
-          clearEventRetry();
-          eventRetryRequested = false;
-          // A malformed or differently stamped catalog invalidates the whole
-          // event authority for this daemon generation. Keep tracking a
-          // pending subscribe promise so an explicit recovery queues behind
-          // its eventual teardown instead of creating a parallel logical
-          // subscription. With no explicit recovery intent, its late result
-          // can only unsubscribe itself and can never publish live.
-          retireSubscription();
-          emit({
-            status: "degraded",
-            generation,
-            daemon,
-            snapshot: snapshotFromState(state),
-            code: result.status,
-            reason:
-              result.status === "daemon-identity-mismatch"
-                ? "Workspace catalog came from another daemon generation."
-                : "Desktop host returned an invalid workspace catalog.",
-          });
-          return;
-        }
-        const shouldRetry = requestShouldRetry(result.error);
-        const exhausted = shouldRetry && requestRetryAttempts >= retry.maximumAttempts;
-        emitRequestError(result.error, exhausted);
-        if (shouldRetry && !exhausted) {
-          scheduleRequestRetry(expectedGeneration, expectedDaemonGeneration);
-        }
-      })
-      .catch(() => {
-        if (
-          activeRequestId !== requestId ||
-          !current(expectedGeneration, expectedDaemonGeneration)
-        ) {
-          return;
-        }
-        const error: DesktopDaemonCapabilityError = {
-          code: "request-failed",
-          reason: "Desktop host workspace catalog request failed.",
-        };
-        const exhausted = requestRetryAttempts >= retry.maximumAttempts;
-        emitRequestError(error, exhausted);
-        if (!exhausted) scheduleRequestRetry(expectedGeneration, expectedDaemonGeneration);
-      });
-  }
-
-  function connectEvents(expectedGeneration: number, expectedDaemonGeneration: string): void {
-    if (
-      !current(expectedGeneration, expectedDaemonGeneration) ||
-      pendingSubscriptionId !== null ||
-      unsubscribeHost !== null ||
-      eventLive
-    ) {
-      return;
-    }
-    eventRetryRequested = false;
-    const activeSubscriptionId = ++subscriptionId;
-    pendingSubscriptionId = activeSubscriptionId;
-    const listener = (event: DesktopDaemonEvent): void => {
-      if (
-        activeSubscriptionId !== subscriptionId ||
-        !current(expectedGeneration, expectedDaemonGeneration)
-      ) {
-        return;
-      }
-      if (event.type === "workspaces.changed") {
-        fetchCatalog(expectedGeneration, expectedDaemonGeneration);
-        return;
-      }
-      if (event.type === "transport.changed") {
-        const previous = hostTransport;
-        hostTransport = event.transport;
-        if (event.transport.phase === "connected") {
-          // Missed invalidations cannot hide in the reconnect gap: a verified
-          // recovery refetches before trusting the retained snapshot as live.
-          if (
-            previous !== null &&
-            (previous.phase === "reconnecting" ||
-              previous.phase === "stopped" ||
-              previous.phase === "degraded")
-          ) {
-            fetchCatalog(expectedGeneration, expectedDaemonGeneration);
+            workspaces: view.snapshot.resource,
+            selection: selectionOf(view.snapshot.resource),
+            updatedAt: view.snapshot.updatedAt,
           }
-          return;
-        }
-        if (event.transport.phase === "reconnecting" || event.transport.phase === "stopped") {
-          emitEventFailure({
-            code: "event-unavailable",
-            reason:
-              transportStateReason(event.transport) ?? "Daemon catalog events are unavailable.",
-          });
-        }
-        return;
-      }
-      if (event.type !== "connection.changed") return;
-      if (event.state === "live") {
-        eventLive = true;
-        clearEventRetry();
-        eventRetryAttempts = 0;
-        eventRetryRequested = false;
-        const snapshot = snapshotFromState(state);
-        if (snapshot && daemon) emit({ status: "live", generation, daemon, snapshot });
-        return;
-      }
-      if (hostTransport !== null) {
-        // Supervisor-owned transport: derive the degraded status but keep the
-        // logical subscription; the ONE retry owner recovers the socket.
-        emitEventFailure(
-          event.error ?? {
-            code: "event-unavailable",
-            reason: "Daemon catalog events are unavailable.",
-          },
-        );
-        return;
-      }
-      recoverEvents(
-        expectedGeneration,
-        expectedDaemonGeneration,
-        event.error ?? {
-          code: "event-unavailable",
-          reason: "Daemon catalog events are unavailable.",
-        },
-      );
-    };
-    let operation: ReturnType<HostCapabilities["daemon"]["subscribe"]>;
-    try {
-      operation = host.daemon.subscribe({ workspaceNames: [] }, listener);
-    } catch {
-      if (pendingSubscriptionId === activeSubscriptionId) pendingSubscriptionId = null;
-      recoverEvents(expectedGeneration, expectedDaemonGeneration, {
-        code: "event-unavailable",
-        reason: "Desktop host catalog event subscription failed.",
-      });
-      return;
+        : null;
+    if (phase.kind === "loading") {
+      return { status: "loading", generation, daemon, snapshot: null };
     }
-    void operation
-      .then((result) => {
-        const wasPending = pendingSubscriptionId === activeSubscriptionId;
-        if (wasPending) pendingSubscriptionId = null;
-        if (
-          activeSubscriptionId !== subscriptionId ||
-          !current(expectedGeneration, expectedDaemonGeneration)
-        ) {
-          if (result.status === "subscribed") {
-            try {
-              result.unsubscribe();
-            } catch {
-              // This logical subscription was already retired.
-            }
-          }
-          if (
-            wasPending &&
-            eventRetryRequested &&
-            current(expectedGeneration, expectedDaemonGeneration)
-          ) {
-            scheduleEventRetry(expectedGeneration, expectedDaemonGeneration);
-          }
-          return;
-        }
-        if (result.status === "subscribed") {
-          unsubscribeHost = result.unsubscribe;
-          return;
-        }
-        recoverEvents(expectedGeneration, expectedDaemonGeneration, result.error);
-      })
-      .catch(() => {
-        const wasPending = pendingSubscriptionId === activeSubscriptionId;
-        if (wasPending) pendingSubscriptionId = null;
-        if (
-          activeSubscriptionId !== subscriptionId ||
-          !current(expectedGeneration, expectedDaemonGeneration)
-        ) {
-          if (
-            wasPending &&
-            eventRetryRequested &&
-            current(expectedGeneration, expectedDaemonGeneration)
-          ) {
-            scheduleEventRetry(expectedGeneration, expectedDaemonGeneration);
-          }
-          return;
-        }
-        recoverEvents(expectedGeneration, expectedDaemonGeneration, {
-          code: "event-unavailable",
-          reason: "Desktop host catalog event subscription failed.",
-        });
-      });
-  }
-
-  const startDaemon = (untrustedDaemon: unknown): void => {
-    const next = connectedIdentity(untrustedDaemon);
-    const nextIdentity = next.status === "connected" ? next.identity : null;
-    if (sameDaemon(daemon, nextIdentity) && next.status === "connected") {
-      clearRequestRetry();
-      requestRetryAttempts = 0;
-      fetchCatalog(generation, daemonGeneration);
-      if (!eventLive) {
-        clearEventRetry();
-        eventRetryAttempts = 0;
-        eventRetryRequested = true;
-        retireSubscription();
-        if (pendingSubscriptionId === null) connectEvents(generation, daemonGeneration);
-      }
-      return;
+    if (phase.kind === "live" && snapshot) {
+      return { status: "live", generation, daemon, snapshot };
     }
-
-    const previousSelection = selectedWorkspaceName;
-    const previousReason = selectedReason;
-    clearRequestRetry();
-    clearEventRetry();
-    retireRequest();
-    retireSubscription(true);
-    generation += 1;
-    daemon = nextIdentity;
-    daemonGeneration = nextIdentity ? daemonKey(nextIdentity) : `unavailable:${generation}`;
-    requestRetryAttempts = 0;
-    eventRetryAttempts = 0;
-    eventRetryRequested = false;
-    if (previousSelection !== null) {
-      pendingSelection = {
-        source: previousReason === "startup" ? "startup" : "persisted",
-        workspaceName: previousSelection,
-      };
-      selectedWorkspaceName = null;
-      selectedReason = null;
-      suppressAutomaticSelection = true;
+    if (phase.kind === "stale" && snapshot) {
+      return { status: "stale", generation, daemon, snapshot, reason: WORDING.staleReason };
     }
-
-    if (next.status !== "connected") {
-      emit({
+    if (phase.kind !== "failed") {
+      return { status: "loading", generation, daemon, snapshot: null };
+    }
+    if (phase.source === "target") {
+      return {
         status: "degraded",
         generation,
         daemon: null,
         snapshot: null,
-        code: next.status === "degraded" ? "daemon-degraded" : "daemon-unavailable",
-        reason: next.reason,
-      });
-      return;
+        code:
+          phase.failure.code === "daemon-degraded"
+            ? "daemon-degraded"
+            : phase.failure.code === "invalid-response"
+              ? "invalid-response"
+              : "daemon-unavailable",
+        reason: phase.failure.reason,
+      };
     }
-
-    emit({ status: "loading", generation, daemon, snapshot: null });
-    const expectedGeneration = generation;
-    const expectedDaemonGeneration = daemonGeneration;
-    fetchCatalog(expectedGeneration, expectedDaemonGeneration);
-    connectEvents(expectedGeneration, expectedDaemonGeneration);
+    if (phase.fatal) {
+      return {
+        status: "degraded",
+        generation,
+        daemon,
+        snapshot,
+        code: daemonCatalogTerminalCode(phase.failure),
+        reason: phase.failure.reason,
+      };
+    }
+    if (phase.source === "event") {
+      const terminalCode = daemonCatalogTerminalEventCode(phase.failure);
+      if (terminalCode !== null) {
+        return {
+          status: "degraded",
+          generation,
+          daemon,
+          snapshot,
+          code: terminalCode,
+          reason: phase.failure.reason,
+        };
+      }
+      const reason = phase.exhausted ? WORDING.eventsExhausted : phase.failure.reason;
+      if (snapshot) return { status: "stale", generation, daemon, snapshot, reason };
+      return {
+        status: "degraded",
+        generation,
+        daemon,
+        snapshot: null,
+        code: "event-unavailable",
+        reason,
+      };
+    }
+    if (snapshot) {
+      return { status: "stale", generation, daemon, snapshot, reason: phase.failure.reason };
+    }
+    return {
+      status: "error",
+      generation,
+      daemon,
+      snapshot: null,
+      code: phase.exhausted ? "retry-exhausted" : "request-failed",
+      reason: phase.failure.reason,
+    };
   };
 
-  const store: DesktopWorkspaceCatalogStore = {
-    getState: () => state,
-    subscribe(listener) {
-      if (disposed) {
-        notify(listener, state);
-        return () => undefined;
+  const adapter = createDaemonCatalogAdapter<WorkspaceList, DesktopWorkspaceCatalogState>({
+    host: options.host,
+    invalidatesOn: ["workspaces.changed"],
+    wording: WORDING,
+    fetch: async (daemon) => {
+      const raw = await options.host.daemon.listWorkspaces();
+      const parsed = DesktopDaemonListWorkspacesResultSchemaZ.safeParse(raw);
+      if (!parsed.success) {
+        return {
+          status: "failed",
+          failure: {
+            code: "invalid-response",
+            reason: "Desktop host returned an invalid workspace catalog.",
+          },
+        };
       }
-      listeners.add(listener);
-      notify(listener, state);
-      return () => listeners.delete(listener);
+      if (parsed.data.status === "error") {
+        return { status: "failed", failure: parsed.data.error };
+      }
+      if (daemonIdentityKey(parsed.data.daemon) !== daemonIdentityKey(daemon)) {
+        return {
+          status: "failed",
+          failure: {
+            code: "daemon-identity-mismatch",
+            reason: "Workspace catalog came from another daemon generation.",
+          },
+        };
+      }
+      // A name the schema coerced, or a duplicate, cannot become a selection key.
+      const names = new Set<string>();
+      for (let index = 0; index < parsed.data.workspaces.length; index += 1) {
+        const parsedName = parsed.data.workspaces[index]?.workspaceName;
+        const rawName = (raw as { workspaces?: Array<{ workspaceName?: unknown }> }).workspaces?.[
+          index
+        ]?.workspaceName;
+        if (parsedName === undefined || parsedName !== rawName || names.has(parsedName)) {
+          return {
+            status: "failed",
+            failure: {
+              code: "invalid-response",
+              reason: "Desktop host returned an invalid workspace catalog.",
+            },
+          };
+        }
+        names.add(parsedName);
+      }
+      return { status: "ok", resource: sortWorkspaceSummaries(parsed.data.workspaces) };
     },
+    project,
+  });
+
+  const store = createGenerationBoundStore(adapter, options.daemon, {
+    clock: options.clock,
+    retry: options.retry,
+  });
+
+  let currentDaemonKey: string | null = (() => {
+    const validation = validateDaemonTarget(options.daemon);
+    return validation.ok ? validation.key : null;
+  })();
+
+  /** A selection command re-projects only when a snapshot can carry it. */
+  const republishSelection = (): void => {
+    selectionRevision += 1;
+    if (store.getState().snapshot !== null) store.republish();
+  };
+
+  return {
+    getState: () => store.getState(),
+    subscribe: (listener) => store.subscribe(listener),
     select(value) {
-      if (disposed) return false;
       const workspaceName = exactWorkspaceName(value);
-      const snapshot = snapshotFromState(state);
+      const snapshot = store.getState().snapshot;
       if (
         workspaceName === null ||
         snapshot === null ||
@@ -956,55 +464,40 @@ export function createDesktopWorkspaceCatalogStore(
       selectedReason = "explicit";
       pendingSelection = null;
       suppressAutomaticSelection = false;
-      updateSelectionSnapshot();
+      republishSelection();
       return true;
     },
     clearSelection() {
-      if (disposed) return;
       selectedWorkspaceName = null;
       selectedReason = null;
       pendingSelection = null;
       suppressAutomaticSelection = true;
       unselectedReason = "explicit-selection-cleared";
-      updateSelectionSnapshot();
+      republishSelection();
     },
-    refresh() {
-      if (disposed || daemon === null) return;
-      clearRequestRetry();
-      requestRetryAttempts = 0;
-      fetchCatalog(generation, daemonGeneration);
-      if (!eventLive) {
-        clearEventRetry();
-        eventRetryAttempts = 0;
-        eventRetryRequested = true;
-        retireSubscription();
-        if (pendingSubscriptionId === null) connectEvents(generation, daemonGeneration);
-      }
-    },
+    refresh: () => store.refresh(),
     setDaemon(nextDaemon) {
-      if (disposed) return;
-      startDaemon(nextDaemon);
+      const validation = validateDaemonTarget(nextDaemon);
+      const nextKey = validation.ok ? validation.key : null;
+      if (nextKey === null || nextKey !== currentDaemonKey) {
+        // A new daemon generation retires the selection but remembers it as a
+        // seed, so the same workspace is re-chosen if it survived the restart.
+        if (selectedWorkspaceName !== null) {
+          pendingSelection = {
+            source: selectedReason === "startup" ? "startup" : "persisted",
+            workspaceName: selectedWorkspaceName,
+          };
+          selectedWorkspaceName = null;
+          selectedReason = null;
+          suppressAutomaticSelection = true;
+        }
+        selectionRevision += 1;
+      }
+      currentDaemonKey = nextKey;
+      store.setTarget(nextDaemon);
     },
-    dispose() {
-      if (disposed) return;
-      const retiredListeners = [...listeners];
-      disposed = true;
-      generation += 1;
-      daemon = null;
-      daemonGeneration = `disposed:${generation}`;
-      clearRequestRetry();
-      clearEventRetry();
-      retireRequest();
-      eventRetryRequested = false;
-      retireSubscription(true);
-      state = { status: "disposed", generation, daemon: null, snapshot: null };
-      listeners.clear();
-      for (const listener of retiredListeners) notify(listener, state);
-    },
+    dispose: () => store.dispose(),
   };
-
-  startDaemon(options.daemon);
-  return store;
 }
 
 /** Solid lifecycle adapter; the catalog/selection policy remains framework-independent. */

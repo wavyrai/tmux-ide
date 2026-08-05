@@ -198,6 +198,12 @@ export interface GenerationBoundStore<TState> {
   subscribe(listener: (state: TState) => void): () => void;
   setTarget(target: unknown): void;
   refresh(): void;
+  /**
+   * Re-project and re-publish the current phase. A wrapper that owns policy on
+   * top of the resource (the workspace catalog's selection) uses this when its
+   * own state changes without the resource changing.
+   */
+  republish(): void;
   dispose(): void;
 }
 
@@ -595,12 +601,13 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
         eventRetryAttempts = 0;
       }
       eventRetryRequested = false;
+      // A retained snapshot becomes live the moment the stream verifies; the
+      // resync then refreshes it, so recovery is never gated on a round trip.
+      if (snapshot !== null) emitPhase({ kind: "live" });
       if (resyncNeeded) {
         resyncNeeded = false;
         fetchResource(expectedGeneration, expectedKey);
-        return;
       }
-      if (snapshot !== null) emitPhase({ kind: "live" });
     };
     const handlers: GenerationBoundEventHandlers<TFailure> = {
       invalidate: () => {
@@ -774,6 +781,10 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
     },
     refresh() {
       refreshCurrent();
+    },
+    republish() {
+      if (disposed) return;
+      publish();
     },
     dispose() {
       if (disposed) return;

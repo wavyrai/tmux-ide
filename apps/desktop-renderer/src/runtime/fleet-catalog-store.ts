@@ -9,6 +9,7 @@ import {
 import {
   createDaemonCatalogAdapter,
   daemonCatalogTerminalCode,
+  daemonCatalogTerminalEventCode,
   sameDaemonIdentity,
   type DaemonCatalogView,
 } from "./daemon-catalog-store.ts";
@@ -170,6 +171,17 @@ function projectFleetCatalog(
     };
   }
   if (phase.source === "event") {
+    const terminalCode = daemonCatalogTerminalEventCode(phase.failure);
+    if (terminalCode !== null) {
+      return {
+        status: "degraded",
+        generation,
+        daemon,
+        snapshot,
+        code: terminalCode,
+        reason: phase.failure.reason,
+      };
+    }
     const reason = phase.exhausted ? WORDING.eventsExhausted : phase.failure.reason;
     if (snapshot) return { status: "stale", generation, daemon, snapshot, reason };
     return {
