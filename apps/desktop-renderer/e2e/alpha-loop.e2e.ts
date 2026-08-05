@@ -195,31 +195,33 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
     "the mirror painted no nodes for a workspace that has attachable panes",
   ).toBeGreaterThan(0);
   const firstMirror = mirrorNodes.first();
-  // Polled rather than measured once: the mirror rebuilds its node DOM on each
-  // stream update (polish finding 2), so a single measurement can land on a
-  // detached element. A node that genuinely paints nothing fails every attempt.
-  await expect
-    .poll(
-      async () => {
-        const box = await firstMirror.boundingBox().catch(() => null);
-        return box ? box.width * box.height : 0;
-      },
-      {
-        message:
-          "the first mirror node never settled into a box with area — the mirror is on and paints " +
-          "nothing",
-        timeout: 20_000,
-      },
-    )
-    .toBeGreaterThan(10_000);
-  // The node's header is what a user can actually see of it today: the card
-  // body extends below the window and under the bottom dock (polish finding 1),
-  // so the centre hit test is asserted on the header rather than on the card.
-  await proveVisible(
-    firstMirror.locator(".mirror-pane-card__header, header").first(),
-    "the first mirror node's header",
-    { minWidth: 80, minHeight: 12 },
-  );
+  const firstMirrorPane = await firstMirror.getAttribute("data-pane");
+  // The whole card, not just its header: a mirror node is placed inside the
+  // canvas above the controls, so the centre of the card itself is on screen
+  // and nothing of the app's own chrome covers it.
+  const mirrorProof = await proveVisible(firstMirror, "the first mirror node", {
+    minWidth: 120,
+    minHeight: 100,
+  });
+  // Bug this catches: the node is laid out below the fold or under the dock, so
+  // its frame technically exists and the user sees a strip or nothing at all.
+  const windowSize = page.viewportSize()!;
+  expect(
+    mirrorProof.rect.y + mirrorProof.rect.height,
+    `the first mirror node ends at y=${Math.round(mirrorProof.rect.y + mirrorProof.rect.height)} ` +
+      `in a ${windowSize.height}px window — its body is below the visible area`,
+  ).toBeLessThanOrEqual(windowSize.height);
+  const dockTop = await page
+    .locator(".workbench-dock, [data-workbench-dock]")
+    .first()
+    .boundingBox()
+    .then((box) => box?.y ?? windowSize.height)
+    .catch(() => windowSize.height);
+  expect(
+    mirrorProof.rect.y + mirrorProof.rect.height,
+    "the first mirror node's body runs under the dock",
+  ).toBeLessThanOrEqual(dockTop);
+
   // Bug this catches: the node frame appears but its stream never seeds, so the
   // user gets a labelled empty rectangle where a pane should be.
   await expect
@@ -240,6 +242,40 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
       timeout: 30_000,
     })
     .toMatch(/\S/u);
+
+  // Bug this catches — the defect this step was rewritten for: the mirror
+  // rebuilt every node's DOM on each stream update, so each tick threw away the
+  // xterm instance and re-initialized it. Identity is asserted on the element
+  // itself, across ticks driven by real typing into the mirrored pane.
+  const mirrorHandle = (await firstMirror.elementHandle())!;
+  for (let tick = 0; tick < 3; tick += 1) {
+    const echo = `MIRROR-TICK-${tick}`;
+    await terminal.locator(".xterm-screen").click();
+    await page.keyboard.type(`echo ${echo}`);
+    await page.keyboard.press("Enter");
+    await expect
+      .poll(() => firstMirror.locator(".xterm-rows").first().innerText(), {
+        message: `the mirror never streamed the output of tick ${tick}`,
+        timeout: 20_000,
+      })
+      .toContain(echo);
+    const current = (await firstMirror.elementHandle())!;
+    expect(
+      await page.evaluate(([before, after]) => before === after, [mirrorHandle, current] as const),
+      "the mirror node was replaced by a stream update — its xterm re-initializes every tick, " +
+        "which is the re-mount defect",
+    ).toBe(true);
+    expect(
+      await firstMirror.getAttribute("data-pane"),
+      "the mirror node list reordered under a stream update",
+    ).toBe(firstMirrorPane);
+  }
+  // And the node is STILL fully on screen after those ticks: placement must
+  // survive re-measurement, not merely be right on the first paint.
+  await proveVisible(firstMirror, "the first mirror node after several stream updates", {
+    minWidth: 120,
+    minHeight: 100,
+  });
   await page.screenshot({ path: testInfo.outputPath("4-mirror-on.png") });
 
   // --- The session dies under the app ------------------------------------

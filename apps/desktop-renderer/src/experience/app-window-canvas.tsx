@@ -167,6 +167,14 @@ const MIRROR_NODE_COLUMNS = 3;
 const MIRROR_SAFE_INSET_BOTTOM = 96;
 /** The deck shrinks to fit the visible canvas, but never past legibility. */
 const MIRROR_NODE_MIN_SCALE = 0.5;
+/**
+ * Mirror cards sit ABOVE the window cards and below the canvas chrome (the
+ * controls pill is 200). Keeping the deck on screen means it can land over a
+ * durable card, and a mirror the user explicitly toggled on has to be the thing
+ * they can read while it is on — it is a temporary inspection layer, gone the
+ * moment the toggle flips back.
+ */
+const MIRROR_CARD_Z_INDEX = 150;
 
 /**
  * PURE — deterministic grid rects for mirror nodes.
@@ -1499,7 +1507,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                     top: `${rect.y}px`,
                     width: `${rect.width}px`,
                     height: `${rect.height}px`,
-                    "z-index": 0,
+                    "z-index": MIRROR_CARD_Z_INDEX,
                   });
                 };
                 // Placement now moves the SAME element instead of arriving with
