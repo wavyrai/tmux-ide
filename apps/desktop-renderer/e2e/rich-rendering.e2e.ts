@@ -26,6 +26,15 @@ import {
 
 test.use({ scratchSessions: 1, promoteSessions: 1 });
 
+/**
+ * A real two-frame animated GIF, 87 bytes: GIF89a header, a global palette, a
+ * NETSCAPE looping block and two graphic-control frames. It is a fixture rather
+ * than a checked-in binary because the assertion it supports is that the bytes
+ * DECODED — `naturalWidth` is zero for a data URL the browser rejected.
+ */
+const ANIMATED_GIF_BASE64 =
+  "R0lGODlhAgACAPAAAP8AAAAA/yH/C05FVFNDQVBFMi4wAwEAAAAh+QQAMgAAACwAAAAAAgACAAACAwSAAgAh+QQAMgAAACwAAAAAAgACAAACA0ySAgA7";
+
 /** The published bin, built from this checkout — the path a user's PATH resolves. */
 const CLI = fileURLToPath(new URL("../../../bin/cli.js", import.meta.url));
 
@@ -81,6 +90,13 @@ test("a pane renders markdown from one printed line, and Ctrl-C gives the shell 
   await writeFile(
     `${paneDirectory}/w`,
     `exec "${process.execPath}" "${CLI}" widget markdown "${documentPath}"\n`,
+    "utf8",
+  );
+  const gifPath = `${paneDirectory}/spin.gif`;
+  await writeFile(gifPath, Buffer.from(ANIMATED_GIF_BASE64, "base64"));
+  await writeFile(
+    `${paneDirectory}/g`,
+    `exec "${process.execPath}" "${CLI}" widget image "${gifPath}"\n`,
     "utf8",
   );
 
@@ -198,6 +214,36 @@ test("a pane renders markdown from one printed line, and Ctrl-C gives the shell 
     { minWidth: 40, minHeight: 4 },
   );
   await page.screenshot({ path: testInfo.outputPath("2-restored-shell.png") });
+
+  /*
+   * The second widget, in the same pane the first one just released.
+   *
+   * Bug this catches: the image widget renders an <img> whose data URL the
+   * browser refuses — a wrong media type, a mangled base64, or a CSP that does
+   * not actually permit `data:`. The DOM looks identical in all three cases, so
+   * the assertion is on decoded pixels, not on the element.
+   */
+  await page.keyboard.type("sh g");
+  await page.keyboard.press("Enter");
+  await proveVisible(terminal.locator(".widget-image__frame"), "the rendered GIF", {
+    minWidth: 2,
+    minHeight: 2,
+    timeoutMs: 45_000,
+  });
+  await expect(
+    terminal,
+    "the pane rendered an image surface without reporting which widget it is",
+  ).toHaveAttribute("data-widget", "image");
+  const decoded = await terminal.locator(".widget-image__frame").evaluate((node) => ({
+    width: (node as HTMLImageElement).naturalWidth,
+    height: (node as HTMLImageElement).naturalHeight,
+    complete: (node as HTMLImageElement).complete,
+  }));
+  expect(
+    decoded,
+    "the image element is on screen but its bytes never decoded — the data URL was rejected",
+  ).toEqual({ width: 2, height: 2, complete: true });
+  await page.screenshot({ path: testInfo.outputPath("3-image-widget.png") });
 
   const violations = await page.evaluate(
     () => (globalThis as unknown as { __widgetCsp: string[] }).__widgetCsp,
