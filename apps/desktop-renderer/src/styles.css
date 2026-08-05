@@ -792,26 +792,55 @@ select:focus-visible,
   align-items: center;
   align-self: stretch;
   gap: var(--tmi-space-1);
-  padding: 7px 5px;
+  padding: var(--tmi-space-4) var(--tmi-space-2);
 }
 
+/*
+ * The chrome control: primary tabs, the palette trigger, the window buttons
+ * and the canvas pill's verbs. All four were separate families with their own
+ * reset, their own hover and their own transition; they are one recipe now, so
+ * a hover feels the same wherever it happens in the chrome. Only the close
+ * button departs from it, below, and only in its hover color.
+ */
 .primary-tabs button,
 .palette-trigger,
-.window-controls button {
-  border: 0;
-  border-radius: 0;
+.window-controls button,
+.canvas-controls button {
+  border: 1px solid transparent;
+  border-radius: var(--tmi-radius-control);
   color: var(--tmux-ide-text-muted);
   background: transparent;
+  cursor: pointer;
+  transition:
+    color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    background-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    border-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    box-shadow var(--tmi-motion-fast) var(--desktop-ease-smooth);
+}
+
+@media (hover: hover) {
+  .primary-tabs button:hover:not(:disabled),
+  .palette-trigger:hover:not(:disabled),
+  .window-controls button:hover:not(:disabled),
+  .canvas-controls button:hover:not(:disabled) {
+    color: var(--tmux-ide-text-bright);
+    background: var(--desktop-hover);
+  }
+}
+
+.primary-tabs button:active:not(:disabled),
+.palette-trigger:active:not(:disabled),
+.canvas-controls button:active:not(:disabled) {
+  color: var(--tmux-ide-text-bright);
+  background: var(--desktop-active);
 }
 
 .primary-tabs button {
   display: inline-flex;
-  height: 36px;
+  height: 32px;
   align-items: center;
   gap: var(--tmi-space-3);
-  padding: 0 12px;
-  border: 0;
-  border-radius: var(--tmi-radius-md);
+  padding: 0 var(--tmi-space-6);
   font-size: var(--sf-text-body-2);
   font-weight: var(--sf-weight-medium);
   cursor: pointer;
@@ -821,14 +850,11 @@ select:focus-visible,
   display: none;
 }
 
-.primary-tabs button:hover,
-.primary-tabs__tab--active {
-  color: var(--tmux-ide-text-bright) !important;
-  background: var(--desktop-active) !important;
-}
-
-.primary-tabs button:hover {
-  background: var(--desktop-hover) !important;
+/* Matched on the element as well as the modifier, so the selected tab outranks
+ * the shared chrome recipe on specificity rather than on !important. */
+.primary-tabs button.primary-tabs__tab--active {
+  color: var(--tmux-ide-text-bright);
+  background: var(--desktop-active);
 }
 
 .primary-tabs button:disabled {
@@ -851,17 +877,11 @@ select:focus-visible,
   align-items: center;
   justify-content: center;
   gap: 0;
-  margin: 0 9px 0 0;
+  margin: 0 var(--tmi-space-4) 0 0;
   padding: 0;
-  border: 1px solid var(--desktop-separator);
-  border-radius: var(--tmi-radius-md);
+  border-color: var(--tmi-control-hairline);
   background: color-mix(in srgb, var(--desktop-raised) 56%, transparent);
-  cursor: pointer;
-}
-
-.palette-trigger:hover {
-  color: var(--tmux-ide-text-bright);
-  background: var(--tmux-ide-selection-hover);
+  box-shadow: var(--tmi-shadow-control-raised);
 }
 
 .palette-trigger kbd {
@@ -888,11 +908,6 @@ kbd {
   transition:
     color 150ms var(--desktop-ease-smooth),
     background-color 150ms var(--desktop-ease-smooth);
-}
-
-.window-controls button:hover {
-  color: var(--tmux-ide-text-bright);
-  background: var(--tmux-ide-selection-hover);
 }
 
 .window-controls button:last-child:hover {
@@ -1431,17 +1446,19 @@ kbd {
   min-height: 48px;
   align-items: center;
   gap: var(--tmi-space-5);
-  padding: 5px 9px;
-  border: 1px solid var(--tmux-ide-border-subtle);
-  border-radius: var(--tmux-ide-shape-control);
+  padding: var(--tmi-space-2) var(--tmi-space-4);
+  border: 1px solid var(--tmi-control-hairline);
+  border-radius: var(--tmi-radius-2lg);
   color: var(--tmux-ide-text-secondary);
   background: var(--tmux-ide-surface-panel-raised);
+  box-shadow: var(--tmi-shadow-control-raised);
   text-align: left;
   cursor: pointer;
   transition:
-    color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
-    background-color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
-    border-color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard);
+    color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    background-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    border-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    box-shadow var(--tmi-motion-fast) var(--desktop-ease-smooth);
 }
 
 .workspace-chooser button > span:nth-child(2) {
@@ -2390,33 +2407,18 @@ kbd {
   height: 28px;
   padding: 0;
   place-items: center;
-  border: 0;
-  border-radius: var(--tmi-radius-sm);
   color: var(--tmux-ide-text-secondary);
-  background: transparent;
-  cursor: pointer;
-  transition:
-    color 150ms var(--desktop-ease-smooth),
-    background-color 150ms var(--desktop-ease-smooth),
-    transform 150ms var(--desktop-ease-smooth);
-}
-
-.canvas-controls button:hover:not(:disabled) {
-  color: var(--tmux-ide-text-bright);
-  background: var(--tmux-ide-selection-hover);
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .canvas-controls button:active:not(:disabled) {
-    color: var(--tmux-ide-text-bright);
-    background: var(--tmux-ide-selection-pressed);
     transform: scale(0.95);
   }
 }
 
 .canvas-controls button:focus-visible {
   outline: var(--tmi-focus-width) solid var(--tmi-accent);
-  outline-offset: var(--tmux-ide-focus-outline-offset);
+  outline-offset: var(--tmi-focus-offset-field);
 }
 
 .canvas-controls button:disabled {
