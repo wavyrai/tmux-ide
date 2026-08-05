@@ -46,6 +46,8 @@ export interface MultiplexerVerbArguments {
   readonly name?: string;
   readonly displayTitle?: string;
   readonly desiredZoom?: "toggle" | "zoomed" | "unzoomed";
+  /** One axis and the size in cells the border drag settled on. */
+  readonly resize?: { readonly axis: "cols" | "rows"; readonly cells: number };
 }
 
 /**
@@ -95,6 +97,15 @@ export function multiplexerVerbIntent(
         workspaceName,
         semanticPaneId: target.semanticPaneId,
         desired: args.desiredZoom ?? "toggle",
+      };
+    case "pane.resize":
+      if (!target.semanticPaneId || !args.resize) return null;
+      return {
+        verb: "workspace.pane.resize",
+        workspaceName,
+        semanticPaneId: target.semanticPaneId,
+        axis: args.resize.axis,
+        cells: args.resize.cells,
       };
     case "window.kill":
       if (!windowTarget) return null;

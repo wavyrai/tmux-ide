@@ -37,6 +37,8 @@ import {
 import {
   WorkspacePaneKillArgumentsSchemaZ,
   WorkspacePaneKillResultSchemaZ,
+  WorkspacePaneResizeArgumentsSchemaZ,
+  WorkspacePaneResizeResultSchemaZ,
   WorkspacePaneSelectArgumentsSchemaZ,
   WorkspacePaneSelectResultSchemaZ,
   WorkspacePaneZoomToggleArgumentsSchemaZ,
@@ -253,7 +255,7 @@ export const AppWindowMutationInputZ = AppWindowMutationArgumentsSchemaZ;
 export const AppWindowMutationResultZ = AppWindowMutationResultSchemaZ;
 
 // ---------------------------------------------------------------------------
-// The multiplexer verbs: split, kill, rename, zoom, select
+// The multiplexer verbs: split, kill, rename, zoom, select, resize
 //
 // Each input is verb-less. The route name is the verb, so there is no second
 // copy of it on the wire that could disagree with the URL that carried it.
@@ -279,6 +281,9 @@ export const WorkspacePaneZoomToggleResultZ = WorkspacePaneZoomToggleResultSchem
 
 export const WorkspacePaneSelectInputZ = WorkspacePaneSelectArgumentsSchemaZ;
 export const WorkspacePaneSelectResultZ = WorkspacePaneSelectResultSchemaZ;
+
+export const WorkspacePaneResizeInputZ = WorkspacePaneResizeArgumentsSchemaZ;
+export const WorkspacePaneResizeResultZ = WorkspacePaneResizeResultSchemaZ;
 
 // ---------------------------------------------------------------------------
 // Registry of action contracts (name → input/output schemas)
@@ -388,6 +393,10 @@ export const ActionContractsZ = {
   "workspace.pane.select": {
     input: WorkspacePaneSelectInputZ,
     result: WorkspacePaneSelectResultZ,
+  },
+  "workspace.pane.resize": {
+    input: WorkspacePaneResizeInputZ,
+    result: WorkspacePaneResizeResultZ,
   },
 } as const;
 

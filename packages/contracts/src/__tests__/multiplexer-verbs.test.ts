@@ -34,6 +34,7 @@ describe("the multiplexer verb table", () => {
       "pane.split.down",
       "pane.kill",
       "pane.select",
+      "pane.resize",
       "stack.activate",
     ]);
   });
@@ -93,7 +94,20 @@ describe("the multiplexer verb table", () => {
       "pane.split.down",
       "pane.kill",
       "pane.select",
+      "pane.resize",
     ]);
+  });
+
+  it("offers pane resize only where there is a border to move", () => {
+    const resize = verb("pane.resize");
+    expect(
+      multiplexerVerbAvailability(resize, { workspaceConnected: true, windowPaneCount: 2 }),
+    ).toEqual({ available: true });
+    // A one-pane window has no border: tmux would grow nothing, so the rule is
+    // stated up front rather than discovered by a drag that does nothing.
+    expect(
+      multiplexerVerbAvailability(resize, { workspaceConnected: true, windowPaneCount: 1 }),
+    ).toMatchObject({ available: false });
   });
 
   it("recognises its own ids and rejects others", () => {

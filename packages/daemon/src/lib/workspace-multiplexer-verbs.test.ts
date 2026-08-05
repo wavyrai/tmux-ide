@@ -28,7 +28,15 @@ interface FakePane {
   windowId: string;
   options: Map<string, string>;
   active: boolean;
+  /** Cells, as tmux reports them. Panes of a window share the window's total. */
+  width: number;
+  height: number;
 }
+
+/** The window grid every fake pane divides up, and tmux's per-pane floor. */
+const WINDOW_COLS = 200;
+const WINDOW_ROWS = 50;
+const MINIMUM_PANE_CELLS = 3;
 
 interface FakeWindow {
   id: string;
@@ -72,6 +80,8 @@ class FakeTmux {
       windowId,
       options: new Map(),
       active: !this.panes.some((p) => p.windowId === windowId),
+      width: WINDOW_COLS,
+      height: WINDOW_ROWS,
     };
     if (stamp) pane.options.set("@tmux_ide_pane_id", stamp);
     this.panes.push(pane);
@@ -97,6 +107,10 @@ class FakeTmux {
     switch (field) {
       case "#{pane_id}":
         return pane.id;
+      case "#{pane_width}":
+        return String(pane.width);
+      case "#{pane_height}":
+        return String(pane.height);
       case "#{window_id}":
         return pane.windowId;
       case "#{window_name}":
@@ -192,8 +206,29 @@ class FakeTmux {
         return "";
       }
       case "resize-pane": {
-        const window = this.#window(this.#pane(args[3]!).windowId);
-        window.zoomed = !window.zoomed;
+        // Two forms, and telling them apart is the point: `-Z -t %n` toggles
+        // zoom, `-t %n -x N` moves a border.
+        if (args[1] === "-Z") {
+          const window = this.#window(this.#pane(args[3]!).windowId);
+          window.zoomed = !window.zoomed;
+          return "";
+        }
+        if (args[1] !== "-t" || (args[3] !== "-x" && args[3] !== "-y")) {
+          throw new Error(`unsupported resize-pane: ${args.join(" ")}`);
+        }
+        const pane = this.#pane(args[2]!);
+        const siblings = this.panes.filter(
+          (other) => other.windowId === pane.windowId && other.id !== pane.id,
+        );
+        const axis = args[3] === "-x" ? "width" : "height";
+        const total = axis === "width" ? WINDOW_COLS : WINDOW_ROWS;
+        // tmux clamps: a layout has a fixed total and a floor per pane, so the
+        // size it settles on is very often not the size that was asked for.
+        const ceiling = Math.max(MINIMUM_PANE_CELLS, total - siblings.length * MINIMUM_PANE_CELLS);
+        const settled = Math.min(Math.max(Number(args[4]), MINIMUM_PANE_CELLS), ceiling);
+        const given = pane[axis] - settled;
+        pane[axis] = settled;
+        for (const sibling of siblings) sibling[axis] += Math.trunc(given / siblings.length);
         return "";
       }
       case "select-window": {
@@ -603,6 +638,132 @@ describe("the multiplexer authority", () => {
       );
       expect(result).toMatchObject({ outcome: "unchanged" });
       expect(tmux.calls.some((args) => args[0] === "rename-session")).toBe(false);
+    });
+  });
+
+  describe("resize", () => {
+    /** Two panes in one window: the shape a border drag actually happens in. */
+    const split = (): void => {
+      const second = tmux.addPane("@0");
+      second.options.set("@tmux_ide_pane_id", "pane.split");
+      second.width = 100;
+      tmux.panes.find((pane) => pane.id === "%0")!.width = 100;
+    };
+
+    it("moves one border and reports the size tmux settled on", async () => {
+      split();
+      const result = await authority.mutate(
+        request({
+          verb: "workspace.pane.resize",
+          semanticPaneId: "pane.one",
+          axis: "cols",
+          cells: 140,
+        }),
+      );
+      expect(result).toMatchObject({
+        verb: "workspace.pane.resize",
+        outcome: "applied",
+        axis: "cols",
+        cells: 140,
+      });
+      expect(tmux.panes.find((pane) => pane.id === "%0")!.width).toBe(140);
+      // The argv is the one-axis form, never the zoom form.
+      const resize = tmux.calls.find((args) => args[0] === "resize-pane")!;
+      expect(resize).toEqual(["resize-pane", "-t", "%0", "-x", "140"]);
+    });
+
+    it("reports the CLAMPED size rather than the one that was asked for", async () => {
+      split();
+      const result = await authority.mutate(
+        request({
+          verb: "workspace.pane.resize",
+          semanticPaneId: "pane.one",
+          axis: "cols",
+          // Wider than the window can give: tmux keeps a floor for the sibling.
+          cells: 4096,
+        }),
+      );
+      // Bug this catches: the result echoes the request, so the view paints a
+      // width the layout frame is about to contradict.
+      expect(result).toMatchObject({ outcome: "applied", cells: 197 });
+    });
+
+    it("reports a resize to the size a pane already has as unchanged", async () => {
+      split();
+      const result = await authority.mutate(
+        request({
+          verb: "workspace.pane.resize",
+          semanticPaneId: "pane.one",
+          axis: "cols",
+          cells: 100,
+        }),
+      );
+      expect(result).toMatchObject({ outcome: "unchanged", cells: 100 });
+      expect(tmux.calls.some((args) => args[0] === "resize-pane")).toBe(false);
+    });
+
+    it("resizes the row axis with -y", async () => {
+      split();
+      await authority.mutate(
+        request({
+          verb: "workspace.pane.resize",
+          semanticPaneId: "pane.one",
+          axis: "rows",
+          cells: 20,
+        }),
+      );
+      expect(tmux.calls.find((args) => args[0] === "resize-pane")).toEqual([
+        "resize-pane",
+        "-t",
+        "%0",
+        "-y",
+        "20",
+      ]);
+    });
+
+    it("refuses a one-pane window, which has no border to move", async () => {
+      await expectRefusal(
+        authority.mutate(
+          request({
+            verb: "workspace.pane.resize",
+            semanticPaneId: "pane.one",
+            axis: "cols",
+            cells: 40,
+          }),
+        ),
+        "single_pane_window",
+      );
+      expect(tmux.calls.some((args) => args[0] === "resize-pane")).toBe(false);
+    });
+
+    it("refuses a zoomed window, whose pane size is not the layout's", async () => {
+      split();
+      tmux.windows[0]!.zoomed = true;
+      await expectRefusal(
+        authority.mutate(
+          request({
+            verb: "workspace.pane.resize",
+            semanticPaneId: "pane.one",
+            axis: "cols",
+            cells: 40,
+          }),
+        ),
+        "zoomed_window_refused",
+      );
+    });
+
+    it("refuses a pane that no longer carries the requested stamp", async () => {
+      await expectRefusal(
+        authority.mutate(
+          request({
+            verb: "workspace.pane.resize",
+            semanticPaneId: "pane.gone",
+            axis: "cols",
+            cells: 40,
+          }),
+        ),
+        "pane_not_found",
+      );
     });
   });
 

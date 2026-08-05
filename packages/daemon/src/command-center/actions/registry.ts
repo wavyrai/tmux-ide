@@ -50,6 +50,7 @@ import { workspaceOpenHandler } from "./handlers/workspace-open.ts";
 import { workspacePromoteHandler } from "./handlers/workspace-promote.ts";
 import {
   workspacePaneKillHandler,
+  workspacePaneResizeHandler,
   workspacePaneSelectHandler,
   workspacePaneZoomToggleHandler,
   workspaceRenameHandler,
@@ -237,6 +238,12 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["workspace.pane.select"].result,
     handler: (input) => workspacePaneSelectHandler(input),
     handlerWithContext: workspacePaneSelectHandler,
+  },
+  "workspace.pane.resize": {
+    inputSchema: ActionContractsZ["workspace.pane.resize"].input,
+    resultSchema: ActionContractsZ["workspace.pane.resize"].result,
+    handler: (input) => workspacePaneResizeHandler(input),
+    handlerWithContext: workspacePaneResizeHandler,
   },
 };
 

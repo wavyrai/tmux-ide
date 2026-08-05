@@ -1,7 +1,7 @@
 /**
  * Action handlers for the multiplexer verbs.
  *
- * One handler factory serves all seven routes. The action name supplies the
+ * One handler factory serves all eight routes. The action name supplies the
  * verb, so the renderer never puts it on the wire and a request cannot claim to
  * be a split while arriving at the kill route.
  */
@@ -80,3 +80,4 @@ export const workspaceSessionKillHandler = verbHandler("workspace.session.kill")
 export const workspaceRenameHandler = verbHandler("workspace.rename");
 export const workspacePaneZoomToggleHandler = verbHandler("workspace.pane.zoom.toggle");
 export const workspacePaneSelectHandler = verbHandler("workspace.pane.select");
+export const workspacePaneResizeHandler = verbHandler("workspace.pane.resize");

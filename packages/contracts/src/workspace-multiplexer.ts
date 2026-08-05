@@ -118,6 +118,35 @@ export const WorkspacePaneSelectArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend
 }).strict();
 export type WorkspacePaneSelectArguments = z.infer<typeof WorkspacePaneSelectArgumentsSchemaZ>;
 
+/**
+ * The bound on a resize request, in cells.
+ *
+ * tmux clamps a resize to what the window can give, so an out-of-range request
+ * is not dangerous — but an unbounded one is a way to spend the daemon's tmux
+ * budget on arithmetic no user asked for. 4096 is the same grid ceiling the
+ * pane-stream layout frame is bounded by, so a request can address any pane
+ * geometry the renderer could have been told about and nothing wider.
+ */
+const RESIZE_CELL_MAXIMUM = 4096;
+
+export const WorkspaceResizeAxisSchemaZ = z.enum(["cols", "rows"]);
+export type WorkspaceResizeAxis = z.infer<typeof WorkspaceResizeAxisSchemaZ>;
+
+/**
+ * Resize one pane along ONE axis.
+ *
+ * A single axis rather than a size, because a border drag moves one edge. Asking
+ * for both would make the renderer re-assert a dimension the user did not touch,
+ * and in a layout that moved between the grab and the release, re-asserting an
+ * unchanged number is itself a change.
+ */
+export const WorkspacePaneResizeArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+  semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+  axis: WorkspaceResizeAxisSchemaZ,
+  cells: z.number().int().min(1).max(RESIZE_CELL_MAXIMUM),
+}).strict();
+export type WorkspacePaneResizeArguments = z.infer<typeof WorkspacePaneResizeArgumentsSchemaZ>;
+
 /** Every multiplexer intent, discriminated by the route that carries it. */
 export const WorkspaceMultiplexerIntentSchemaZ = z.discriminatedUnion("verb", [
   WorkspaceWindowSplitArgumentsSchemaZ.extend({
@@ -146,6 +175,9 @@ export const WorkspaceMultiplexerIntentSchemaZ = z.discriminatedUnion("verb", [
   }).strict(),
   WorkspacePaneSelectArgumentsSchemaZ.extend({
     verb: z.literal("workspace.pane.select"),
+  }).strict(),
+  WorkspacePaneResizeArgumentsSchemaZ.extend({
+    verb: z.literal("workspace.pane.resize"),
   }).strict(),
 ]);
 export type WorkspaceMultiplexerIntent = z.infer<typeof WorkspaceMultiplexerIntentSchemaZ>;
@@ -230,6 +262,20 @@ export const WorkspacePaneSelectResultSchemaZ = MutationEnvelopeSchemaZ.extend({
 }).strict();
 export type WorkspacePaneSelectResult = z.infer<typeof WorkspacePaneSelectResultSchemaZ>;
 
+export const WorkspacePaneResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+  verb: z.literal("workspace.pane.resize"),
+  semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+  axis: WorkspaceResizeAxisSchemaZ,
+  /**
+   * The size tmux actually settled on, which is rarely the size that was asked
+   * for: a layout has a minimum per pane and a fixed total, so tmux clamps. The
+   * surface reports the observed number rather than the requested one, so a drag
+   * that hit a floor reads as having stopped there instead of as having worked.
+   */
+  cells: z.number().int().positive(),
+}).strict();
+export type WorkspacePaneResizeResult = z.infer<typeof WorkspacePaneResizeResultSchemaZ>;
+
 export const WorkspaceMultiplexerMutationResultSchemaZ = z.discriminatedUnion("verb", [
   WorkspaceWindowSplitResultSchemaZ,
   WorkspaceWindowKillResultSchemaZ,
@@ -238,6 +284,7 @@ export const WorkspaceMultiplexerMutationResultSchemaZ = z.discriminatedUnion("v
   WorkspaceRenameResultSchemaZ,
   WorkspacePaneZoomToggleResultSchemaZ,
   WorkspacePaneSelectResultSchemaZ,
+  WorkspacePaneResizeResultSchemaZ,
 ]);
 export type WorkspaceMultiplexerMutationResult = z.infer<
   typeof WorkspaceMultiplexerMutationResultSchemaZ

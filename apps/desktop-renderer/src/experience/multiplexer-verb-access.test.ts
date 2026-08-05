@@ -101,6 +101,7 @@ describe("the verb table accessor", () => {
       "pane.split.down",
       "pane.kill",
       "pane.select",
+      "pane.resize",
     ]);
     // Disabled-with-reason, not hidden: the rule stays learnable.
     expect(offers.find((offer) => offer.verb.id === "pane.kill")?.availability).toEqual({
@@ -123,6 +124,30 @@ describe("the verb table accessor", () => {
         semanticPaneId: "pane.one",
       },
     });
+  });
+
+  it("builds a resize from one axis and the cells the drag settled on", async () => {
+    const { host, invokeVerb } = hostWith();
+    await useVerbTable(host).invoke("pane.resize", paneTarget, {
+      resize: { axis: "cols", cells: 96 },
+    });
+    expect(invokeVerb).toHaveBeenCalledWith({
+      verbId: "pane.resize",
+      intent: {
+        verb: "workspace.pane.resize",
+        workspaceName: "workspace.product",
+        semanticPaneId: "pane.one",
+        axis: "cols",
+        cells: 96,
+      },
+    });
+  });
+
+  it("refuses a resize with no size to apply rather than inventing one", async () => {
+    const { host, invokeVerb } = hostWith();
+    const result = await useVerbTable(host).invoke("pane.resize", paneTarget);
+    expect(result).toMatchObject({ status: "error" });
+    expect(invokeVerb).not.toHaveBeenCalled();
   });
 
   it("refuses an unbuildable verb without touching the host", async () => {

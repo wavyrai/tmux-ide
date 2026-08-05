@@ -255,6 +255,19 @@ const ENTRIES: readonly MultiplexerVerbEntry[] = [
   },
   {
     version: MULTIPLEXER_VERB_TABLE_VERSION,
+    id: "pane.resize",
+    label: "Resize pane",
+    description: "Move the border between this pane and its neighbour, changing tmux's own layout.",
+    scope: "pane",
+    execution: { kind: "daemon-action", action: "workspace.pane.resize" },
+    // A window with one pane has no border to move, and tmux refuses the resize
+    // rather than growing the window, so the refusal is stated up front.
+    availabilityInputs: ["workspaceConnected", "windowPaneCount"],
+    destructive: false,
+    tmuxKeyHint: null,
+  },
+  {
+    version: MULTIPLEXER_VERB_TABLE_VERSION,
     id: "stack.activate",
     label: "Show in stack",
     description: "Bring this window to the front of its docked stack. The app's layout only.",
@@ -358,6 +371,10 @@ export function multiplexerVerbAvailability(
         : unavailable("this window has only one pane");
     case "pane.select":
       return facts.targetIsActivePane! ? unavailable("this pane is already active") : AVAILABLE;
+    case "pane.resize":
+      return facts.windowPaneCount! > 1
+        ? AVAILABLE
+        : unavailable("this window has only one pane, so it has no border to move");
     case "stack.activate":
       return facts.targetIsDockedStackMember!
         ? AVAILABLE

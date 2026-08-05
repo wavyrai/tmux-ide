@@ -75,6 +75,10 @@ export type ActionErrorCode =
   | "last_pane_refused"
   | "mutation_failed"
   | "mutation_unverified"
+  // Resize refusals (m50): a border that does not exist cannot be moved, and a
+  // zoomed pane's size belongs to the zoom rather than to the layout.
+  | "single_pane_window"
+  | "zoomed_window_refused"
   | "internal";
 
 export class ActionError extends Error {

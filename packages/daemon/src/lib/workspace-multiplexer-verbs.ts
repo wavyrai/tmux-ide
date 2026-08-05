@@ -1,5 +1,6 @@
 /**
- * The multiplexer mutation authority: split, kill, rename, zoom and select.
+ * The multiplexer mutation authority: split, kill, rename, zoom, select and
+ * resize.
  *
  * This is the tmux authority the m48 audit found missing. It follows the
  * `workspace.pane.create` discipline deliberately and in full — one serialized
@@ -58,7 +59,11 @@ export type WorkspaceMultiplexerErrorCode =
   /** Refused: killing it would take the whole session with it. */
   | "last_pane_refused"
   | "mutation_failed"
-  | "mutation_unverified";
+  | "mutation_unverified"
+  /** Refused: a one-pane window has no border to move. */
+  | "single_pane_window"
+  /** Refused: a zoomed pane fills its window, so its size is not the layout's. */
+  | "zoomed_window_refused";
 
 const ERROR_MESSAGES: Readonly<Record<WorkspaceMultiplexerErrorCode, string>> = {
   daemon_instance_mismatch: "The daemon generation changed before the verb ran.",
@@ -75,6 +80,8 @@ const ERROR_MESSAGES: Readonly<Record<WorkspaceMultiplexerErrorCode, string>> = 
     "This is the session's last pane. Close the session instead if that is what you mean.",
   mutation_failed: "tmux refused the requested change.",
   mutation_unverified: "tmux accepted the change but the result could not be verified.",
+  single_pane_window: "This window has only one pane, so it has no border to move.",
+  zoomed_window_refused: "Unzoom this window before resizing its panes.",
 };
 
 export class WorkspaceMultiplexerError extends Error {
@@ -418,6 +425,8 @@ export class WorkspaceMultiplexerAuthority {
         return this.#zoom(intent, sessionName, envelope);
       case "workspace.pane.select":
         return this.#select(intent, sessionName, envelope);
+      case "workspace.pane.resize":
+        return this.#resize(intent, sessionName, envelope);
     }
   }
 
@@ -807,6 +816,84 @@ export class WorkspaceMultiplexerAuthority {
       verb: "workspace.pane.select",
       outcome: wasActive ? "unchanged" : "applied",
       semanticPaneId: intent.semanticPaneId,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // resize
+  // -------------------------------------------------------------------------
+
+  /** The pane's own size on one axis, in cells, read straight from tmux. */
+  #paneCells(paneId: string, axis: "cols" | "rows"): number {
+    const observed = this.#io.runTmux([
+      "display-message",
+      "-p",
+      "-t",
+      paneId,
+      axis === "cols" ? "#{pane_width}" : "#{pane_height}",
+    ]);
+    const cells = Number(observed);
+    if (!Number.isInteger(cells) || cells < 1) {
+      throw new WorkspaceMultiplexerError("mutation_unverified", { reason: "pane_size_shape" });
+    }
+    return cells;
+  }
+
+  /**
+   * Move one pane border.
+   *
+   * The result reports what tmux SETTLED ON rather than what was asked for. A
+   * layout has a per-pane minimum and a fixed total, so tmux clamps constantly —
+   * and a drag that hit a floor has to read as having stopped there. Reporting
+   * the requested number instead would make the view disagree with the layout
+   * frame that arrives a moment later, which is the class of divergence this
+   * whole view exists to remove.
+   */
+  #resize(
+    intent: Extract<WorkspaceMultiplexerIntent, { verb: "workspace.pane.resize" }>,
+    sessionName: string,
+    envelope: { operationId: string; daemonInstanceId: string; workspaceName: string },
+  ): WorkspaceMultiplexerMutationResult {
+    const rows = this.#panes(sessionName);
+    const pane = resolvePaneRow(rows, intent.semanticPaneId);
+    if (pane.windowPaneCount < 2) {
+      throw new WorkspaceMultiplexerError("single_pane_window", {
+        semanticPaneId: intent.semanticPaneId,
+      });
+    }
+    if (pane.windowZoomed) {
+      // A zoomed pane fills its window; tmux has no border to move, and the size
+      // it would report belongs to the zoom rather than to the layout.
+      throw new WorkspaceMultiplexerError("zoomed_window_refused", {
+        semanticPaneId: intent.semanticPaneId,
+      });
+    }
+    const before = this.#paneCells(pane.paneId, intent.axis);
+    if (before === intent.cells) {
+      return {
+        ...envelope,
+        verb: "workspace.pane.resize",
+        outcome: "unchanged",
+        semanticPaneId: intent.semanticPaneId,
+        axis: intent.axis,
+        cells: before,
+      };
+    }
+    this.#io.runTmux([
+      "resize-pane",
+      "-t",
+      pane.paneId,
+      intent.axis === "cols" ? "-x" : "-y",
+      String(intent.cells),
+    ]);
+    const after = this.#paneCells(pane.paneId, intent.axis);
+    return {
+      ...envelope,
+      verb: "workspace.pane.resize",
+      outcome: after === before ? "unchanged" : "applied",
+      semanticPaneId: intent.semanticPaneId,
+      axis: intent.axis,
+      cells: after,
     };
   }
 }
