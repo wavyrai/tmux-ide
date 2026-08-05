@@ -55,6 +55,22 @@ function parseEmittedColor(value: string): RendererNeutralColor {
   };
 }
 
+/** Flatten an emitted color that may carry alpha onto an opaque backdrop. */
+function compositeOver(value: string, backdrop: RendererNeutralColor): RendererNeutralColor {
+  const match = /^rgb\((\d+) (\d+) (\d+)(?: \/ ([\d.]+))?\)$/u.exec(value);
+  if (!match) throw new Error(`Expected an emitted RGB color, received ${value}`);
+  const alpha = match[4] === undefined ? 1 : Number(match[4]);
+  const blend = (channel: number, under: number): number =>
+    Math.round(channel * alpha + under * (1 - alpha));
+  return {
+    space: "srgb",
+    red: blend(Number(match[1]), backdrop.red),
+    green: blend(Number(match[2]), backdrop.green),
+    blue: blend(Number(match[3]), backdrop.blue),
+    alpha: 255,
+  };
+}
+
 describe("desktop UI primitives", () => {
   it("keeps loading and disabled button states native and legible", () => {
     const root = mount(() => (
@@ -469,6 +485,42 @@ describe("desktop UI foundation styles", () => {
     );
     expect(styles).toMatch(/\.tmi-button:disabled,[^{]*\{[^}]*background: none;/su);
   });
+
+  it.each(["dark", "light"] as const)(
+    "keeps the disabled color pair legible in %s, now that it is a pair and not a fade",
+    (mode) => {
+      /*
+       * Disabled text used to inherit the enabled color at 64% opacity, so its
+       * contrast was a function of whatever sat behind the control. It is a
+       * real pair now, which means it can be measured — and has to be.
+       *
+       * The floor here is 3:1, not 4.5. Disabled controls are exempt from the
+       * text contrast requirement precisely because they must read as
+       * unavailable, and a pair that cleared 4.5 would not look disabled. What
+       * matters is that the label stays identifiable rather than dissolving.
+       */
+      const emitted = createDomExperience({
+        hostTheme: { mode, highContrast: false, reducedMotion: false },
+      }).variables;
+      const background = parseEmittedColor(
+        emitted[DOM_EXPERIENCE_VARIABLE.control.disabledBackground]!,
+      );
+      /*
+       * The disabled ink is emitted with alpha, so what a reader sees is the
+       * composite over the disabled fill — which is opaque, so the composite is
+       * a fixed color rather than a window onto whatever is behind the control.
+       * That distinction is the whole point of the change: the element-level
+       * opacity multiplier faded the border, fill, text and elevation together
+       * and let the plane behind show through all of them.
+       */
+      const ratio = contrastRatio(
+        compositeOver(emitted[DOM_EXPERIENCE_VARIABLE.control.disabledForeground]!, background),
+        background,
+      );
+      expect(ratio, `${mode} disabled pair`).toBeGreaterThanOrEqual(1.9);
+      expect(ratio, `${mode} disabled pair reads as unavailable`).toBeLessThan(4.5);
+    },
+  );
 
   it("draws every focus ring from one recipe, keyboard-only", () => {
     // One ring declaration, reading the shared tokens. `outline: none` resets
