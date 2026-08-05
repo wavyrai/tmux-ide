@@ -1113,7 +1113,9 @@ try {
           evidence.sidebar?.width !== 236 ||
           evidence.dock?.height !== 40 ||
           evidence.status?.height !== 22 ||
-          evidence.primaryTab?.height !== 36 ||
+          // 32px is the shared control step; the tabs used to sit a
+          // half-step above it at 36 for no reason anyone chose.
+          evidence.primaryTab?.height !== 32 ||
           evidence.palette?.height !== 32 ||
           (evidence.sidebarRow?.height ?? 0) < 40 ||
           evidence.icon?.width !== 16 ||
