@@ -770,11 +770,16 @@ describe("desktop application-shell resource store", () => {
     store.subscribe(observed);
     const callsBeforeDispose = observed.mock.calls.length;
     store.dispose();
+    // Disposal notifies the observers it retires, exactly once, so a consumer
+    // learns the store is gone rather than holding its last state forever.
+    expect(observed).toHaveBeenCalledTimes(callsBeforeDispose + 1);
+    expect(observed.mock.lastCall?.[0]).toMatchObject({ status: "disposed", data: null });
+    const callsAfterDispose = observed.mock.calls.length;
     expect(signal?.aborted).toBe(true);
     expect(clock.pendingCount).toBe(0);
     pending.resolve(jsonResponse(resource("too-late")));
     await settle();
-    expect(observed).toHaveBeenCalledTimes(callsBeforeDispose);
+    expect(observed).toHaveBeenCalledTimes(callsAfterDispose);
   });
 
   describe("supervisor-owned transport (host-pushed states)", () => {

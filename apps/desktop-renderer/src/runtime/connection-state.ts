@@ -56,6 +56,12 @@ export type DesktopApplicationShellResourceState =
       readonly data: ApplicationShellProjectionInputV1;
       readonly updatedAt: number;
       readonly reason: string;
+    })
+  /** Published once to the observers disposal retires, then never again. */
+  | (DesktopResourceStateBase & {
+      readonly status: "disposed";
+      readonly target: null;
+      readonly data: null;
     });
 
 export function daemonGenerationKey(target: DesktopApplicationShellTarget): string {

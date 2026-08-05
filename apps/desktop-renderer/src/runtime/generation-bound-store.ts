@@ -171,11 +171,16 @@ export interface GenerationBoundAdapter<TTarget, TResource, TFailure, TState> {
     target: TTarget,
     signal: AbortSignal,
   ): Promise<GenerationBoundFetchResult<TResource, TFailure>>;
-  /** Open the invalidation stream for this generation. */
+  /**
+   * Open the invalidation stream for this generation. A transport that
+   * connects synchronously must return the result directly rather than a
+   * resolved promise: a pending window the caller cannot observe would swallow
+   * failures its own callbacks raise before the microtask lands.
+   */
   connect(
     target: TTarget,
     handlers: GenerationBoundEventHandlers<TFailure>,
-  ): Promise<GenerationBoundConnectResult<TFailure>>;
+  ): GenerationBoundConnectResult<TFailure> | PromiseLike<GenerationBoundConnectResult<TFailure>>;
   disposition(failure: TFailure, source: GenerationBoundFailureSource): GenerationBoundDisposition;
   /** The failure published when a fetch or a connect rejects outright. */
   rejectionFailure(source: GenerationBoundFailureSource): TFailure;
@@ -471,6 +476,9 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
   ): void => {
     if (!current(expectedGeneration, expectedKey)) return;
     eventLive = false;
+    // A read in flight across a lost stream can land after the recovery
+    // refetch and publish data older than it; retire it with the stream.
+    retireRequest();
     const disposition = adapter.disposition(failure, "event");
     if (disposition === "fatal") {
       clearRequestRetry();
@@ -670,7 +678,32 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
       },
     };
 
-    let operation: Promise<GenerationBoundConnectResult<TFailure>>;
+    const settle = (result: GenerationBoundConnectResult<TFailure>): void => {
+      const wasPending = pendingSubscriptionId === activeSubscriptionId;
+      if (wasPending) pendingSubscriptionId = null;
+      if (activeSubscriptionId !== subscriptionId || !current(expectedGeneration, expectedKey)) {
+        if (result.status === "connected") {
+          try {
+            result.close();
+          } catch {
+            // This logical subscription was already retired.
+          }
+        }
+        if (wasPending && eventRetryRequested) {
+          scheduleEventRetry(expectedGeneration, expectedKey);
+        }
+        return;
+      }
+      if (result.status === "connected") {
+        closeSubscription = result.close;
+        return;
+      }
+      handleEventFailure(result.failure, expectedGeneration, expectedKey);
+    };
+
+    let operation:
+      | GenerationBoundConnectResult<TFailure>
+      | PromiseLike<GenerationBoundConnectResult<TFailure>>;
     try {
       operation = adapter.connect(connectTarget, handlers);
     } catch {
@@ -678,29 +711,13 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
       handleEventFailure(adapter.rejectionFailure("event"), expectedGeneration, expectedKey);
       return;
     }
-    void operation
-      .then((result) => {
-        const wasPending = pendingSubscriptionId === activeSubscriptionId;
-        if (wasPending) pendingSubscriptionId = null;
-        if (activeSubscriptionId !== subscriptionId || !current(expectedGeneration, expectedKey)) {
-          if (result.status === "connected") {
-            try {
-              result.close();
-            } catch {
-              // This logical subscription was already retired.
-            }
-          }
-          if (wasPending && eventRetryRequested) {
-            scheduleEventRetry(expectedGeneration, expectedKey);
-          }
-          return;
-        }
-        if (result.status === "connected") {
-          closeSubscription = result.close;
-          return;
-        }
-        handleEventFailure(result.failure, expectedGeneration, expectedKey);
-      })
+    if (typeof (operation as PromiseLike<unknown>)?.then !== "function") {
+      // A synchronous transport is settled before any callback can fire.
+      settle(operation as GenerationBoundConnectResult<TFailure>);
+      return;
+    }
+    void Promise.resolve(operation)
+      .then(settle)
       .catch(() => {
         const wasPending = pendingSubscriptionId === activeSubscriptionId;
         if (wasPending) pendingSubscriptionId = null;

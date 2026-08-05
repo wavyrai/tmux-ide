@@ -1,8 +1,5 @@
 import { createSignal, onCleanup, type Accessor } from "solid-js";
-import type {
-  ApplicationShellProjectionInputV1,
-  DesktopDaemonTransportState,
-} from "@tmux-ide/contracts";
+import type { ApplicationShellProjectionInputV1 } from "@tmux-ide/contracts";
 import {
   DesktopApplicationShellTargetSchemaZ,
   isDaemonWireProtocolCompatible,
@@ -14,27 +11,34 @@ import {
   type DesktopApplicationShellResourceState,
   type DesktopApplicationShellTarget,
 } from "./connection-state.ts";
+import { DaemonTransportError, type DesktopDaemonTransport } from "./daemon-transport.ts";
 import {
-  DaemonTransportError,
-  type DaemonEventConnection,
-  type DesktopDaemonTransport,
-} from "./daemon-transport.ts";
+  createGenerationBoundStore,
+  type GenerationBoundAdapter,
+  type GenerationBoundClock,
+  type GenerationBoundRetryPolicy,
+  type GenerationBoundView,
+} from "./generation-bound-store.ts";
 
-export interface DesktopResourceClock {
-  now(): number;
-  setTimeout(callback: () => void, delayMs: number): unknown;
-  clearTimeout(handle: unknown): void;
-}
+/**
+ * Generation-bound renderer store for the application-shell projection.
+ *
+ * Same policy as the two catalog stores — it runs on the shared engine in
+ * {@link ./generation-bound-store.ts} — but shaped around a
+ * {@link DesktopDaemonTransport} instead of the host capability facade. What is
+ * unique here is the failure vocabulary: transport error KINDS rather than
+ * capability error codes, and a `unavailable`/`degraded` split that names
+ * whether the resource is missing or the generation is suspect.
+ *
+ * Its retry ladder keeps the jitter and stability window the other two do not
+ * need: this store is the one that reconnects a socket it opened itself, so a
+ * flapping daemon must not burn the budget and repeated attempts must not
+ * align with the supervisor's own ladder.
+ */
 
-export interface DesktopReconnectPolicy {
-  readonly initialDelayMs: number;
-  readonly maximumDelayMs: number;
-  readonly maximumAttempts: number;
-  /** Symmetric fraction around the exponential delay, from 0 through 1. */
-  readonly jitterRatio: number;
-  /** A verified connection must survive this long before the retry budget resets. */
-  readonly stabilityWindowMs: number;
-}
+export type DesktopResourceClock = GenerationBoundClock;
+
+export type DesktopReconnectPolicy = GenerationBoundRetryPolicy;
 
 export interface DesktopApplicationShellStoreOptions {
   readonly target: unknown;
@@ -69,107 +73,42 @@ const DEFAULT_RECONNECT: DesktopReconnectPolicy = {
   stabilityWindowMs: 10_000,
 };
 
-const RECONNECT_LIMITS = {
-  delayMinMs: 10,
-  delayMaxMs: 300_000,
-  attemptsMin: 1,
-  attemptsMax: 20,
-  stabilityMinMs: 100,
-  stabilityMaxMs: 300_000,
-} as const;
+/**
+ * The transport error kinds, plus the two faults that have no thrown error:
+ * a dropped socket and a rejected or malformed event frame.
+ */
+type ShellFailureKind =
+  | "descriptor-invalid"
+  | "daemon-identity-mismatch"
+  | "not-found"
+  | "network-error"
+  | "http-error"
+  | "schema-invalid"
+  | "event-frame-invalid"
+  | "disconnected";
 
-const defaultClock: DesktopResourceClock = {
-  now: () => Date.now(),
-  setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
-  clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
-};
-
-function dataFromState(
-  state: DesktopApplicationShellResourceState,
-): ApplicationShellProjectionInputV1 | null {
-  return "data" in state ? state.data : null;
+interface ShellFailure {
+  readonly kind: ShellFailureKind;
+  readonly reason: string;
 }
 
-function updatedAtFromState(state: DesktopApplicationShellResourceState): number | null {
-  return "updatedAt" in state ? state.updatedAt : null;
-}
+type ShellView = GenerationBoundView<
+  DesktopApplicationShellTarget,
+  ApplicationShellProjectionInputV1,
+  ShellFailure
+>;
 
-function boundedReconnectDelay(
-  attempt: number,
-  policy: DesktopReconnectPolicy,
-  random: () => number,
-): number {
-  const exponential = Math.min(
-    policy.maximumDelayMs,
-    policy.initialDelayMs * 2 ** Math.max(0, attempt),
-  );
-  let rawSample = 0.5;
-  try {
-    rawSample = random();
-  } catch {
-    // A test/host-provided entropy source cannot break reconnect accounting.
+function shellFailure(error: unknown, fallbackReason: string): ShellFailure {
+  if (error instanceof DaemonTransportError) {
+    return { kind: error.kind, reason: error.message };
   }
-  const sample = Number.isFinite(rawSample) ? Math.max(0, Math.min(1, rawSample)) : 0.5;
-  const jitter = 1 - policy.jitterRatio + sample * policy.jitterRatio * 2;
-  return Math.min(policy.maximumDelayMs, Math.max(0, Math.round(exponential * jitter)));
-}
-
-function finiteClamped(
-  value: number | undefined,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-): number {
-  if (value === undefined || !Number.isFinite(value)) return fallback;
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
-function normalizedReconnectPolicy(
-  overrides: Partial<DesktopReconnectPolicy> | undefined,
-): DesktopReconnectPolicy {
-  const initialDelayMs = Math.round(
-    finiteClamped(
-      overrides?.initialDelayMs,
-      DEFAULT_RECONNECT.initialDelayMs,
-      RECONNECT_LIMITS.delayMinMs,
-      RECONNECT_LIMITS.delayMaxMs,
-    ),
-  );
-  const maximumDelayMs = Math.max(
-    initialDelayMs,
-    Math.round(
-      finiteClamped(
-        overrides?.maximumDelayMs,
-        DEFAULT_RECONNECT.maximumDelayMs,
-        RECONNECT_LIMITS.delayMinMs,
-        RECONNECT_LIMITS.delayMaxMs,
-      ),
-    ),
-  );
   return {
-    initialDelayMs,
-    maximumDelayMs,
-    maximumAttempts: Math.trunc(
-      finiteClamped(
-        overrides?.maximumAttempts,
-        DEFAULT_RECONNECT.maximumAttempts,
-        RECONNECT_LIMITS.attemptsMin,
-        RECONNECT_LIMITS.attemptsMax,
-      ),
-    ),
-    jitterRatio: finiteClamped(overrides?.jitterRatio, DEFAULT_RECONNECT.jitterRatio, 0, 1),
-    stabilityWindowMs: Math.round(
-      finiteClamped(
-        overrides?.stabilityWindowMs,
-        DEFAULT_RECONNECT.stabilityWindowMs,
-        RECONNECT_LIMITS.stabilityMinMs,
-        RECONNECT_LIMITS.stabilityMaxMs,
-      ),
-    ),
+    kind: "network-error",
+    reason: error instanceof Error ? error.message : fallbackReason,
   };
 }
 
-function validateStoreTarget(value: unknown): DesktopApplicationShellTarget {
+function validateShellTarget(value: unknown): DesktopApplicationShellTarget {
   const parsed = DesktopApplicationShellTargetSchemaZ.safeParse(value);
   if (!parsed.success) {
     throw new DaemonTransportError(
@@ -186,495 +125,191 @@ function validateStoreTarget(value: unknown): DesktopApplicationShellTarget {
   return parsed.data;
 }
 
-export function createDesktopApplicationShellResourceStore(
-  options: DesktopApplicationShellStoreOptions,
-): DesktopApplicationShellResourceStore {
-  const transport = options.transport;
-  const clock = options.clock ?? defaultClock;
-  const random = options.random ?? Math.random;
-  const reconnect = normalizedReconnectPolicy(options.reconnect);
-  const listeners = new Set<DesktopResourceStateListener>();
-
-  let disposed = false;
-  let generation = 0;
-  let target: DesktopApplicationShellTarget | null = null;
-  let targetKey = "";
-  let state: DesktopApplicationShellResourceState = {
-    status: "loading",
-    generation,
-    target: null,
-    data: null,
-  };
-  let requestId = 0;
-  let requestController: AbortController | null = null;
-  let connection: DaemonEventConnection | null = null;
-  let connectionId = 0;
-  let eventConnected = false;
-  let reconnectAttempts = 0;
-  let reconnectTimer: unknown | null = null;
-  let stabilityTimer: unknown | null = null;
-  let targetIsValid = false;
-  /**
-   * Non-null once the transport pushed a supervisor-derived state. From then
-   * on the main-process supervisor is the ONE retry owner: the logical host
-   * subscription stays valid across its physical reconnects, this store stops
-   * scheduling reconnects of its own, and its status derives from the pushes.
-   */
-  let hostTransport: DesktopDaemonTransportState | null = null;
-  /** A verified reconnect must refetch so the gap cannot hide missed events. */
-  let resyncNeeded = false;
-
-  const emit = (next: DesktopApplicationShellResourceState): void => {
-    if (disposed) return;
-    // Every published state carries the transport axis so consumers derive
-    // compound health (connected-but-sync-failed vs reconnecting) directly.
-    state = { ...next, transport: hostTransport };
-    for (const listener of listeners) listener(state);
-  };
-
-  const current = (expectedGeneration: number, expectedKey: string): boolean =>
-    !disposed && generation === expectedGeneration && targetKey === expectedKey;
-
-  const clearReconnectTimer = (): void => {
-    if (reconnectTimer === null) return;
-    clock.clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  };
-
-  const clearStabilityTimer = (): void => {
-    if (stabilityTimer === null) return;
-    clock.clearTimeout(stabilityTimer);
-    stabilityTimer = null;
-  };
-
-  const retireConnection = (): void => {
-    connectionId += 1;
-    eventConnected = false;
-    hostTransport = null;
-    clearStabilityTimer();
-    const active = connection;
-    connection = null;
-    active?.close();
-  };
-
-  const abortRequest = (): void => {
-    requestId += 1;
-    requestController?.abort();
-    requestController = null;
-  };
-
-  const emitDisconnected = (reason: string, exhausted = false): void => {
-    const data = dataFromState(state);
-    const updatedAt = updatedAtFromState(state);
-    if (data && updatedAt !== null) {
-      emit({ status: "stale", generation, target, data, updatedAt, reason });
-      return;
-    }
-    emit({
+function projectShell(view: ShellView): DesktopApplicationShellResourceState {
+  const { generation, target, phase, transport } = view;
+  if (view.disposed) {
+    return { status: "disposed", generation, target: null, data: null, transport: null };
+  }
+  const data = view.snapshot?.resource ?? null;
+  const updatedAt = view.snapshot?.updatedAt ?? null;
+  if (phase.kind === "loading") {
+    return { status: "loading", generation, target, data: null, transport };
+  }
+  if (phase.kind === "live" && data !== null && updatedAt !== null) {
+    return { status: "live", generation, target, data, updatedAt, transport };
+  }
+  if (phase.kind === "stale" && data !== null && updatedAt !== null) {
+    return {
+      status: "stale",
+      generation,
+      target,
+      data,
+      updatedAt,
+      reason: "Daemon event socket is not connected.",
+      transport,
+    };
+  }
+  if (phase.kind !== "failed") {
+    return { status: "loading", generation, target, data: null, transport };
+  }
+  const { failure, exhausted } = phase;
+  if (
+    failure.kind === "descriptor-invalid" ||
+    failure.kind === "daemon-identity-mismatch" ||
+    failure.kind === "schema-invalid" ||
+    failure.kind === "event-frame-invalid"
+  ) {
+    return {
+      status: "degraded",
+      generation,
+      target,
+      data,
+      updatedAt,
+      code: failure.kind,
+      reason: failure.reason,
+      transport,
+    };
+  }
+  if (failure.kind === "not-found") {
+    return {
+      status: "unavailable",
+      generation,
+      target,
+      data: null,
+      code: "not-found",
+      reason: failure.reason,
+      transport,
+    };
+  }
+  if (data !== null && updatedAt !== null) {
+    return {
+      status: "stale",
+      generation,
+      target,
+      data,
+      updatedAt,
+      reason: failure.reason,
+      transport,
+    };
+  }
+  if (failure.kind === "disconnected") {
+    return {
       status: "unavailable",
       generation,
       target,
       data: null,
       code: exhausted ? "reconnect-exhausted" : "disconnected",
-      reason,
-    });
-  };
-
-  const emitTransportError = (error: unknown): void => {
-    const data = dataFromState(state);
-    if (error instanceof DaemonTransportError) {
-      if (error.kind === "descriptor-invalid") {
-        emit({
-          status: "degraded",
-          generation,
-          target,
-          data,
-          updatedAt: updatedAtFromState(state),
-          code: "descriptor-invalid",
-          reason: error.message,
-        });
-        return;
-      }
-      if (error.kind === "daemon-identity-mismatch") {
-        emit({
-          status: "degraded",
-          generation,
-          target,
-          data,
-          updatedAt: updatedAtFromState(state),
-          code: "daemon-identity-mismatch",
-          reason: error.message,
-        });
-        return;
-      }
-      if (error.kind === "schema-invalid") {
-        emit({
-          status: "degraded",
-          generation,
-          target,
-          data,
-          updatedAt: updatedAtFromState(state),
-          code: "schema-invalid",
-          reason: error.message,
-        });
-        return;
-      }
-      if (error.kind === "not-found") {
-        emit({
-          status: "unavailable",
-          generation,
-          target,
-          data: null,
-          code: "not-found",
-          reason: error.message,
-        });
-        return;
-      }
-      const updatedAt = updatedAtFromState(state);
-      if (data && updatedAt !== null) {
-        emit({ status: "stale", generation, target, data, updatedAt, reason: error.message });
-      } else {
-        emit({
-          status: "error",
-          generation,
-          target,
-          data: null,
-          code: error.kind === "network-error" ? "network-error" : "http-error",
-          reason: error.message,
-        });
-      }
-      return;
-    }
-    const reason =
-      error instanceof Error ? error.message : "Daemon application-shell request failed.";
-    const updatedAt = updatedAtFromState(state);
-    if (data && updatedAt !== null) {
-      emit({ status: "stale", generation, target, data, updatedAt, reason });
-    } else {
-      emit({
-        status: "error",
-        generation,
-        target,
-        data: null,
-        code: "network-error",
-        reason,
-      });
-    }
-  };
-
-  const fetchResource = (expectedGeneration: number, expectedKey: string): void => {
-    if (!current(expectedGeneration, expectedKey) || !targetIsValid || target === null) return;
-    const requestTarget = target;
-    abortRequest();
-    const activeRequestId = requestId;
-    const controller = new AbortController();
-    requestController = controller;
-    void transport
-      .fetchApplicationShell(requestTarget, controller.signal)
-      .then((data) => {
-        if (
-          controller.signal.aborted ||
-          activeRequestId !== requestId ||
-          !current(expectedGeneration, expectedKey) ||
-          !targetIsValid
-        ) {
-          return;
-        }
-        requestController = null;
-        const updatedAt = clock.now();
-        emit(
-          eventConnected
-            ? { status: "live", generation, target, data, updatedAt }
-            : {
-                status: "stale",
-                generation,
-                target,
-                data,
-                updatedAt,
-                reason: "Daemon event socket is not connected.",
-              },
-        );
-      })
-      .catch((error: unknown) => {
-        if (
-          controller.signal.aborted ||
-          activeRequestId !== requestId ||
-          !current(expectedGeneration, expectedKey)
-        ) {
-          return;
-        }
-        requestController = null;
-        if (error instanceof DaemonTransportError && error.kind === "daemon-identity-mismatch") {
-          targetIsValid = false;
-          retireConnection();
-        }
-        emitTransportError(error);
-      });
-  };
-
-  const scheduleReconnect = (expectedGeneration: number, expectedKey: string): void => {
-    if (!current(expectedGeneration, expectedKey) || reconnectTimer !== null || !targetIsValid) {
-      return;
-    }
-    if (reconnectAttempts >= reconnect.maximumAttempts) {
-      emitDisconnected("Daemon event reconnection attempts were exhausted.", true);
-      return;
-    }
-    const attempt = reconnectAttempts;
-    reconnectAttempts += 1;
-    const delay = boundedReconnectDelay(attempt, reconnect, random);
-    reconnectTimer = clock.setTimeout(() => {
-      reconnectTimer = null;
-      connectEvents(expectedGeneration, expectedKey);
-    }, delay);
-  };
-
-  const handleConnectionLoss = (
-    expectedConnectionId: number,
-    expectedGeneration: number,
-    expectedKey: string,
-    reason: string,
-  ): void => {
-    if (expectedConnectionId !== connectionId || !current(expectedGeneration, expectedKey)) {
-      return;
-    }
-    abortRequest();
-    if (hostTransport !== null) {
-      // Supervisor-owned transport: the logical subscription survives the
-      // physical reconnect, so derive the status and let the ONE owner retry.
-      eventConnected = false;
-      resyncNeeded = true;
-      emitDisconnected(reason);
-      return;
-    }
-    retireConnection();
-    emitDisconnected(reason);
-    scheduleReconnect(expectedGeneration, expectedKey);
-  };
-
-  function connectEvents(expectedGeneration: number, expectedKey: string): void {
-    if (
-      !current(expectedGeneration, expectedKey) ||
-      !targetIsValid ||
-      target === null ||
-      connection !== null
-    )
-      return;
-    const connectionTarget = target;
-    const activeConnectionId = connectionId;
-    const wasReconnect = reconnectAttempts > 0;
-    try {
-      connection = transport.connectEvents(connectionTarget, {
-        onTransportStateChanged: (transportState) => {
-          if (activeConnectionId !== connectionId || !current(expectedGeneration, expectedKey)) {
-            return;
-          }
-          hostTransport = transportState;
-          if (transportState.phase === "reconnecting" || transportState.phase === "stopped") {
-            eventConnected = false;
-            resyncNeeded = true;
-            abortRequest();
-            emitDisconnected(
-              transportStateReason(transportState) ?? "Daemon event socket disconnected.",
-              transportState.phase === "stopped",
-            );
-          }
-          // connected is handled by onVerifiedOpen; degraded is transient and
-          // immediately followed by a reconnecting or stopped push.
-        },
-        onVerifiedOpen: () => {
-          if (activeConnectionId !== connectionId || !current(expectedGeneration, expectedKey)) {
-            return;
-          }
-          eventConnected = true;
-          clearStabilityTimer();
-          if (reconnectAttempts > 0) {
-            stabilityTimer = clock.setTimeout(() => {
-              stabilityTimer = null;
-              if (
-                activeConnectionId === connectionId &&
-                eventConnected &&
-                current(expectedGeneration, expectedKey)
-              ) {
-                reconnectAttempts = 0;
-              }
-            }, reconnect.stabilityWindowMs);
-          }
-          if (wasReconnect || resyncNeeded) {
-            resyncNeeded = false;
-            fetchResource(expectedGeneration, expectedKey);
-          } else if (state.status === "stale") {
-            emit({
-              status: "live",
-              generation,
-              target,
-              data: state.data,
-              updatedAt: state.updatedAt,
-            });
-          }
-        },
-        onInvalidate: () => {
-          if (activeConnectionId !== connectionId || !current(expectedGeneration, expectedKey)) {
-            return;
-          }
-          fetchResource(expectedGeneration, expectedKey);
-        },
-        onProtocolError: (reason) => {
-          if (activeConnectionId !== connectionId || !current(expectedGeneration, expectedKey)) {
-            return;
-          }
-          const data = dataFromState(state);
-          emit({
-            status: "degraded",
-            generation,
-            target,
-            data,
-            updatedAt: updatedAtFromState(state),
-            code: "event-frame-invalid",
-            reason: `Daemon rejected the event subscription: ${reason}`,
-          });
-          abortRequest();
-          if (hostTransport !== null) {
-            eventConnected = false;
-            resyncNeeded = true;
-            return;
-          }
-          retireConnection();
-          scheduleReconnect(expectedGeneration, expectedKey);
-        },
-        onPeerMismatch: (reason) => {
-          if (activeConnectionId !== connectionId || !current(expectedGeneration, expectedKey)) {
-            return;
-          }
-          targetIsValid = false;
-          abortRequest();
-          const data = dataFromState(state);
-          emit({
-            status: "degraded",
-            generation,
-            target,
-            data,
-            updatedAt: updatedAtFromState(state),
-            code: "daemon-identity-mismatch",
-            reason,
-          });
-          retireConnection();
-        },
-        onMalformedFrame: (reason) => {
-          if (activeConnectionId !== connectionId || !current(expectedGeneration, expectedKey)) {
-            return;
-          }
-          const data = dataFromState(state);
-          emit({
-            status: "degraded",
-            generation,
-            target,
-            data,
-            updatedAt: updatedAtFromState(state),
-            code: "event-frame-invalid",
-            reason,
-          });
-          abortRequest();
-          if (hostTransport !== null) {
-            eventConnected = false;
-            resyncNeeded = true;
-            return;
-          }
-          retireConnection();
-          scheduleReconnect(expectedGeneration, expectedKey);
-        },
-        onClose: () =>
-          handleConnectionLoss(
-            activeConnectionId,
-            expectedGeneration,
-            expectedKey,
-            "Daemon event socket disconnected.",
-          ),
-        onError: (reason) =>
-          handleConnectionLoss(activeConnectionId, expectedGeneration, expectedKey, reason),
-      });
-    } catch (error) {
-      if (!current(expectedGeneration, expectedKey)) return;
-      if (
-        error instanceof DaemonTransportError &&
-        (error.kind === "descriptor-invalid" || error.kind === "daemon-identity-mismatch")
-      ) {
-        targetIsValid = false;
-        emitTransportError(error);
-        return;
-      }
-      emitDisconnected(
-        error instanceof Error ? error.message : "Daemon event socket could not be opened.",
-      );
-      scheduleReconnect(expectedGeneration, expectedKey);
-    }
+      reason: failure.reason,
+      transport,
+    };
   }
+  return {
+    status: "error",
+    generation,
+    target,
+    data: null,
+    code: failure.kind === "network-error" ? "network-error" : "http-error",
+    reason: failure.reason,
+    transport,
+  };
+}
 
-  const startTarget = (untrustedTarget: unknown): void => {
-    let nextTarget: DesktopApplicationShellTarget;
-    try {
-      nextTarget = validateStoreTarget(
-        transport.validateTarget(validateStoreTarget(untrustedTarget)),
-      );
-    } catch (error) {
-      clearReconnectTimer();
-      abortRequest();
-      retireConnection();
-      generation += 1;
-      target = null;
-      targetKey = `invalid:${generation}`;
-      reconnectAttempts = 0;
-      resyncNeeded = false;
-      targetIsValid = false;
-      emit({ status: "loading", generation, target: null, data: null });
-      emitTransportError(error);
-      return;
-    }
-    const nextKey = daemonGenerationKey(nextTarget);
-    if (target !== null && nextKey === targetKey) return;
-    clearReconnectTimer();
-    abortRequest();
-    retireConnection();
-    generation += 1;
-    target = nextTarget;
-    targetKey = nextKey;
-    reconnectAttempts = 0;
-    resyncNeeded = false;
-    targetIsValid = true;
-    emit({ status: "loading", generation, target, data: null });
-    fetchResource(generation, targetKey);
-    connectEvents(generation, targetKey);
+export function createDesktopApplicationShellResourceStore(
+  options: DesktopApplicationShellStoreOptions,
+): DesktopApplicationShellResourceStore {
+  const transport = options.transport;
+  const adapter: GenerationBoundAdapter<
+    DesktopApplicationShellTarget,
+    ApplicationShellProjectionInputV1,
+    ShellFailure,
+    DesktopApplicationShellResourceState
+  > = {
+    // The target arrives from render props, where an equal-but-new object
+    // carries no news; `refresh()` is the refetch path.
+    reassert: "ignore",
+    validateTarget(value) {
+      try {
+        const target = validateShellTarget(transport.validateTarget(validateShellTarget(value)));
+        return { ok: true, target, key: daemonGenerationKey(target) };
+      } catch (error) {
+        return {
+          ok: false,
+          failure: shellFailure(error, "Daemon application-shell target is invalid."),
+        };
+      }
+    },
+    async fetch(target, signal) {
+      try {
+        const resource = await transport.fetchApplicationShell(target, signal);
+        return { status: "ok", resource };
+      } catch (error) {
+        return {
+          status: "failed",
+          failure: shellFailure(error, "Daemon application-shell request failed."),
+        };
+      }
+    },
+    connect(target, handlers) {
+      try {
+        const connection = transport.connectEvents(target, {
+          onTransportStateChanged: (state) => handlers.transportChanged(state),
+          onVerifiedOpen: () => handlers.live(),
+          onInvalidate: () => handlers.invalidate(),
+          onProtocolError: (reason) =>
+            handlers.failed({
+              kind: "event-frame-invalid",
+              reason: `Daemon rejected the event subscription: ${reason}`,
+            }),
+          onMalformedFrame: (reason) => handlers.failed({ kind: "event-frame-invalid", reason }),
+          onPeerMismatch: (reason) => handlers.failed({ kind: "daemon-identity-mismatch", reason }),
+          onClose: () =>
+            handlers.failed({ kind: "disconnected", reason: "Daemon event socket disconnected." }),
+          onError: (reason) => handlers.failed({ kind: "disconnected", reason }),
+        });
+        return { status: "connected", close: () => connection.close() };
+      } catch (error) {
+        return {
+          status: "failed",
+          failure: shellFailure(error, "Daemon event socket could not be opened."),
+        };
+      }
+    },
+    disposition(failure) {
+      // A suspect generation stops retrying; every other fault is transient.
+      return failure.kind === "descriptor-invalid" || failure.kind === "daemon-identity-mismatch"
+        ? "fatal"
+        : "retry";
+    },
+    rejectionFailure: (source) => ({
+      kind: source === "request" ? "network-error" : "disconnected",
+      reason:
+        source === "request"
+          ? "Daemon application-shell request failed."
+          : "Daemon event socket could not be opened.",
+    }),
+    transportFailure: (state) => ({
+      kind: "disconnected",
+      reason: transportStateReason(state) ?? "Daemon event socket disconnected.",
+    }),
+    eventExhaustedFailure: () => ({
+      kind: "disconnected",
+      reason: "Daemon event reconnection attempts were exhausted.",
+    }),
+    project: projectShell,
   };
 
-  const store: DesktopApplicationShellResourceStore = {
-    getState: () => state,
-    subscribe(listener) {
-      if (disposed) return () => undefined;
-      listeners.add(listener);
-      listener(state);
-      return () => listeners.delete(listener);
-    },
-    setTarget(nextTarget) {
-      if (disposed) return;
-      startTarget(nextTarget);
-    },
-    refresh() {
-      if (disposed || !targetIsValid) return;
-      fetchResource(generation, targetKey);
-    },
-    dispose() {
-      if (disposed) return;
-      clearReconnectTimer();
-      clearStabilityTimer();
-      abortRequest();
-      retireConnection();
-      disposed = true;
-      listeners.clear();
-    },
+  const store = createGenerationBoundStore(adapter, options.target, {
+    clock: options.clock,
+    random: options.random,
+    retry: { ...DEFAULT_RECONNECT, ...options.reconnect },
+  });
+  return {
+    getState: () => store.getState(),
+    subscribe: (listener) => store.subscribe(listener),
+    setTarget: (target) => store.setTarget(target),
+    refresh: () => store.refresh(),
+    dispose: () => store.dispose(),
   };
-
-  startTarget(options.target);
-  return store;
 }
 
 /** Solid lifecycle adapter; the underlying store remains framework-independent. */
