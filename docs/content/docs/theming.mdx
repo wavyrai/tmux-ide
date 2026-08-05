@@ -143,3 +143,91 @@ See [Restore & resume](/docs/restore-resume).
 | `dir` | `""`    | Base dir for worktree checkouts. Empty → sibling `<repo>-worktrees`; a relative path resolves against the repo |
 
 See [Worktrees](/docs/worktrees).
+
+## Desktop design system
+
+The desktop app has its own token layer, separate from the tmux chrome above:
+sfora's oklch zinc system. Colour, elevation and shape are authored in one place
+— the token block in `apps/desktop-renderer/src/styles.css` — and every
+component reads a semantic role rather than a value.
+
+Two layers. The **system** (`--sf-*`) holds the zinc ladder, the shadow ladder
+and the accents. The **mapping** re-points the roles the shell consumes
+(`--tmux-ide-*`, `--desktop-*`) at that system, which is why changing the
+product's identity does not touch a single component.
+
+### The architecture is planes, not pages
+
+Depth is the identity. Four planes, back to front:
+
+| Plane          | Light    | Dark     | In tmux-ide                       |
+| -------------- | -------- | -------- | --------------------------------- |
+| Sidebar        | `96.3%`  | `12%`    | The fleet sidebar, titlebar, dock |
+| Content, inset | `98.7%`  | `14.05%` | The canvas the windows live on    |
+| Grey section   | `96.76%` | `27.41%` | Grouped and section surfaces      |
+| White item     | `100%`   | `16.8%`  | Window cards, dialogs, popovers   |
+
+All zinc-hued — hue 286, whisper chroma. Never a blue-grey, never a warm one.
+
+### Elevation is a ring, not a blur
+
+Structure comes from the plane plus a crisp **1px ring**, not from borders
+everywhere. The visible edge is what makes a card read against the plane behind
+it; a near-zero ring dissolves into the canvas, and on a floating surface the
+ring draws the silhouette sharper than any border colour can. In dark mode the
+ring flips to a lit top edge, which reads as a card's white border against a
+darker canvas.
+
+Six named tokens carry every surface — `--sf-shadow-surface` (resting cards),
+`-field` (inputs), `-overlay` (dialogs, menus, palette), `-tooltip`, `-panel`
+(floating toolbars), `-inset-track` (inset wells). There are no ad-hoc shadows
+in the renderer. Hairline borders survive only as genuine dividers, at
+`--paper-hairline`, which resolves to one _device_ pixel — `0.5px` on retina.
+
+### Colour means one thing each
+
+**Primary is metallic zinc**, not blue: buttons and primary actions are
+`--sf-primary`. This is the single most look-defining value in the system.
+
+Three blues, deliberately distinct, and never interchangeable:
+
+- the **lit-blue gradient** (`--sf-accent-blue` → `--sf-accent-blue-dark`) is the
+  selected nav or fleet row, and nothing else;
+- **anchor** `#6187fe` is focus rings and text selection, and nothing else. It
+  ships no P3 variant, so it stays sRGB;
+- `--sf-app-blue` is reserved for macOS-system-adjacent affordances and is
+  deliberately unused.
+
+**Semantics are never decorative**: `--sf-valid` is agent work and success,
+`--sf-invalid` is errors and blocked, `--sf-warning` is attention and staleness.
+Status glyphs, chips, readiness rungs and degraded surfaces draw from these and
+nothing else. **Section accents** (blue, green, amber, purple) are for identity
+— eyebrows and section marks — and are never used for status.
+
+Two rungs are derived rather than transcribed, both forced by contrast:
+light-mode `-ink` twins for the semantic tones (`#00c454` is 2.23:1 on white and
+`#f6c30f` is 1.58:1 — neither can carry 11px text or a 6px status dot, which
+needs 3:1 as a non-text component), and a metadata text rung, because sfora's
+tertiary rung is 3.55:1 on the sidebar plane and this product spends it on text
+that must be read. All 112 ink-on-plane pairs clear their floor in both modes.
+
+### Type and shape
+
+The Board-UI composite ramp — headline 16/22, body 14/20, body-2 13/18,
+caption-1 12/16 at +0.15px, caption-2 11/15 at +0.2px — drawn in the **system
+face** (`-apple-system`, SF on macOS) rather than bundling Inter. That is a
+deliberate deviation from sfora: the ramp carries the look, SF is metrically
+close, and the native face is what stops the app reading as a web page in a
+window. Chrome sits mostly at body-2 and caption-1, like a real Mac app;
+terminals keep their mono stack.
+
+Radii follow sfora's ladder: controls at 8px, cards and nav rows on the 10px
+`2lg` step.
+
+### High contrast
+
+The system steps aside when the OS asks for more contrast: the mapping is scoped
+to `[data-increased-contrast="false"]`, and in high-contrast mode the theme
+resolver owns the focus, selection, attention and danger colours. The trade-off
+is that user and project theme overrides only reach those roles while high
+contrast is on.
