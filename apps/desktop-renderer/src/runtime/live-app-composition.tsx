@@ -4,6 +4,7 @@ import {
   ApplicationShellProjectionInputV3SchemaZ,
   WorkspacePaneCreateHostResultSchemaZ,
   projectApplicationShellV1,
+  projectDesktopStartupReadiness,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
   type DaemonInstanceIdentity,
@@ -11,6 +12,7 @@ import {
   type DesktopPlatform,
   type DesktopWindowState,
   type HostCapabilities,
+  type StartupReadinessLadder,
   type WorkspaceChangeResourceId,
   type WorkspaceFileResourceId,
   type WorkspacePaneCreateInvocation,
@@ -47,6 +49,7 @@ import { deriveConnectionHealth } from "./connection-health.ts";
 import {
   reasonIndicatesMissingTmux,
   recoveryForWorkspaceOpenError,
+  startupReadinessDiagnostics,
   tmuxInstallCommand,
 } from "./connection-recovery.ts";
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
@@ -988,6 +991,36 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     );
   });
 
+  /**
+   * The daemon's own readiness ladder, read while the daemon is CONNECTED and
+   * this workspace is not.
+   *
+   * The ladder already reaches the disconnected screens: it rides on the
+   * capability state the host composes when it cannot reach a daemon at all.
+   * This is the other half. A connected daemon that cannot serve a workspace is
+   * exactly the case where the two rungs only the daemon can answer —
+   * `credential-held` and `attachment-issuable` — are the whole diagnosis, and
+   * until now this surface said only that the workspace was unavailable.
+   *
+   * Diagnostics: an unreadable ladder simply adds no lines.
+   */
+  const [daemonLadder, setDaemonLadder] = createSignal<StartupReadinessLadder | null>(null);
+  let ladderRead = 0;
+  createEffect(() => {
+    const status = store.state().status;
+    if (status !== "degraded" && status !== "error") return;
+    const read = ++ladderRead;
+    void props.host.daemon
+      .startupReadiness()
+      .then((result) => {
+        if (read !== ladderRead) return;
+        setDaemonLadder(result.status === "ok" ? result.ladder : null);
+      })
+      .catch(() => {
+        if (read === ladderRead) setDaemonLadder(null);
+      });
+  });
+
   const notice = createMemo(() => {
     const resource = store.state();
     if (resource.status === "stale") {
@@ -1016,6 +1049,19 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
       ? { tone: "stale" as const, label: "Workspace catalog is recovering", reason }
       : null;
   });
+
+  /** The stuck rung the daemon itself reports, or nothing when none was read. */
+  const startupReadinessLines = (): readonly string[] => {
+    const ladder = daemonLadder();
+    if (!ladder) return [];
+    return startupReadinessDiagnostics(
+      projectDesktopStartupReadiness({
+        daemon: { status: "connected", identity: props.target.daemon },
+        ladder,
+        observedAt: new Date().toISOString(),
+      }),
+    );
+  };
 
   const renderFallback = () => {
     const projected = projection();
@@ -1072,6 +1118,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
         diagnostics={[
           identityMismatch ? recovery.description : resourceReason(resource),
           `Resource state: ${resource.status}`,
+          ...startupReadinessLines(),
           "The desktop shell remains gated until a valid V3 resource is available.",
         ]}
         onRetry={
