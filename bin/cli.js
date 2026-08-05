@@ -6271,7 +6271,7 @@ var init_workspace_promotion = __esm({
 
 // packages/contracts/src/workspace-multiplexer.ts
 import { z as z37 } from "zod";
-var WorkspaceMultiplexerWindowTargetSchemaZ, WorkspaceSplitDirectionSchemaZ, WorkspaceMultiplexerNameSchemaZ, WorkspaceScopedSchemaZ, WorkspaceWindowSplitArgumentsSchemaZ, WorkspaceWindowKillArgumentsSchemaZ, WorkspacePaneKillArgumentsSchemaZ, WorkspaceSessionKillArgumentsSchemaZ, WorkspaceRenameArgumentsSchemaZ, WorkspacePaneZoomToggleArgumentsSchemaZ, WorkspacePaneSelectArgumentsSchemaZ, WorkspaceMultiplexerIntentSchemaZ, WorkspaceMultiplexerMutationRequestSchemaZ, MutationEnvelopeSchemaZ, WorkspaceWindowSplitResultSchemaZ, WorkspaceWindowKillResultSchemaZ, WorkspacePaneKillResultSchemaZ, WorkspaceSessionKillResultSchemaZ, WorkspaceRenameResultSchemaZ, WorkspacePaneZoomToggleResultSchemaZ, WorkspacePaneSelectResultSchemaZ, WorkspaceMultiplexerMutationResultSchemaZ, WorkspaceMultiplexerHostResultSchemaZ;
+var WorkspaceMultiplexerWindowTargetSchemaZ, WorkspaceSplitDirectionSchemaZ, WorkspaceMultiplexerNameSchemaZ, WorkspaceScopedSchemaZ, WorkspaceWindowSplitArgumentsSchemaZ, WorkspaceWindowKillArgumentsSchemaZ, WorkspacePaneKillArgumentsSchemaZ, WorkspaceSessionKillArgumentsSchemaZ, WorkspaceRenameArgumentsSchemaZ, WorkspacePaneZoomToggleArgumentsSchemaZ, WorkspacePaneSelectArgumentsSchemaZ, RESIZE_CELL_MAXIMUM, WorkspaceResizeAxisSchemaZ, WorkspacePaneResizeArgumentsSchemaZ, WorkspaceMultiplexerIntentSchemaZ, WorkspaceMultiplexerMutationRequestSchemaZ, MutationEnvelopeSchemaZ, WorkspaceWindowSplitResultSchemaZ, WorkspaceWindowKillResultSchemaZ, WorkspacePaneKillResultSchemaZ, WorkspaceSessionKillResultSchemaZ, WorkspaceRenameResultSchemaZ, WorkspacePaneZoomToggleResultSchemaZ, WorkspacePaneSelectResultSchemaZ, WorkspacePaneResizeResultSchemaZ, WorkspaceMultiplexerMutationResultSchemaZ, WorkspaceMultiplexerHostResultSchemaZ;
 var init_workspace_multiplexer = __esm({
   "packages/contracts/src/workspace-multiplexer.ts"() {
     "use strict";
@@ -6326,6 +6326,13 @@ var init_workspace_multiplexer = __esm({
     WorkspacePaneSelectArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict();
+    RESIZE_CELL_MAXIMUM = 4096;
+    WorkspaceResizeAxisSchemaZ = z37.enum(["cols", "rows"]);
+    WorkspacePaneResizeArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      axis: WorkspaceResizeAxisSchemaZ,
+      cells: z37.number().int().min(1).max(RESIZE_CELL_MAXIMUM)
+    }).strict();
     WorkspaceMultiplexerIntentSchemaZ = z37.discriminatedUnion("verb", [
       WorkspaceWindowSplitArgumentsSchemaZ.extend({
         verb: z37.literal("workspace.window.split")
@@ -6353,6 +6360,9 @@ var init_workspace_multiplexer = __esm({
       }).strict(),
       WorkspacePaneSelectArgumentsSchemaZ.extend({
         verb: z37.literal("workspace.pane.select")
+      }).strict(),
+      WorkspacePaneResizeArgumentsSchemaZ.extend({
+        verb: z37.literal("workspace.pane.resize")
       }).strict()
     ]);
     WorkspaceMultiplexerMutationRequestSchemaZ = z37.object({
@@ -6408,6 +6418,18 @@ var init_workspace_multiplexer = __esm({
       verb: z37.literal("workspace.pane.select"),
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict();
+    WorkspacePaneResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+      verb: z37.literal("workspace.pane.resize"),
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      axis: WorkspaceResizeAxisSchemaZ,
+      /**
+       * The size tmux actually settled on, which is rarely the size that was asked
+       * for: a layout has a minimum per pane and a fixed total, so tmux clamps. The
+       * surface reports the observed number rather than the requested one, so a drag
+       * that hit a floor reads as having stopped there instead of as having worked.
+       */
+      cells: z37.number().int().positive()
+    }).strict();
     WorkspaceMultiplexerMutationResultSchemaZ = z37.discriminatedUnion("verb", [
       WorkspaceWindowSplitResultSchemaZ,
       WorkspaceWindowKillResultSchemaZ,
@@ -6415,7 +6437,8 @@ var init_workspace_multiplexer = __esm({
       WorkspaceSessionKillResultSchemaZ,
       WorkspaceRenameResultSchemaZ,
       WorkspacePaneZoomToggleResultSchemaZ,
-      WorkspacePaneSelectResultSchemaZ
+      WorkspacePaneSelectResultSchemaZ,
+      WorkspacePaneResizeResultSchemaZ
     ]);
     WorkspaceMultiplexerHostResultSchemaZ = z37.discriminatedUnion("status", [
       z37.object({ status: z37.literal("ok"), result: WorkspaceMultiplexerMutationResultSchemaZ }).strict(),
@@ -6429,7 +6452,7 @@ import { z as z38 } from "zod";
 function isActionName(name) {
   return name in ActionContractsZ;
 }
-var ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, WorkspacePaneCreateInputZ, WorkspacePaneCreateResultZ, WorkspaceOpenInputZ, WorkspaceOpenResultZ, WorkspacePromoteInputZ, WorkspacePromoteResultZ, AppWindowMutationInputZ, AppWindowMutationResultZ, WorkspaceWindowSplitInputZ, WorkspaceWindowSplitResultZ, WorkspaceWindowKillInputZ, WorkspaceWindowKillResultZ, WorkspacePaneKillInputZ, WorkspacePaneKillResultZ, WorkspaceSessionKillInputZ, WorkspaceSessionKillResultZ, WorkspaceRenameInputZ, WorkspaceRenameResultZ, WorkspacePaneZoomToggleInputZ, WorkspacePaneZoomToggleResultZ, WorkspacePaneSelectInputZ, WorkspacePaneSelectResultZ, ActionContractsZ, ACTION_NAMES;
+var ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, WorkspacePaneCreateInputZ, WorkspacePaneCreateResultZ, WorkspaceOpenInputZ, WorkspaceOpenResultZ, WorkspacePromoteInputZ, WorkspacePromoteResultZ, AppWindowMutationInputZ, AppWindowMutationResultZ, WorkspaceWindowSplitInputZ, WorkspaceWindowSplitResultZ, WorkspaceWindowKillInputZ, WorkspaceWindowKillResultZ, WorkspacePaneKillInputZ, WorkspacePaneKillResultZ, WorkspaceSessionKillInputZ, WorkspaceSessionKillResultZ, WorkspaceRenameInputZ, WorkspaceRenameResultZ, WorkspacePaneZoomToggleInputZ, WorkspacePaneZoomToggleResultZ, WorkspacePaneSelectInputZ, WorkspacePaneSelectResultZ, WorkspacePaneResizeInputZ, WorkspacePaneResizeResultZ, ActionContractsZ, ACTION_NAMES;
 var init_actions_contract = __esm({
   "packages/contracts/src/actions-contract.ts"() {
     "use strict";
@@ -6579,6 +6602,8 @@ var init_actions_contract = __esm({
     WorkspacePaneZoomToggleResultZ = WorkspacePaneZoomToggleResultSchemaZ;
     WorkspacePaneSelectInputZ = WorkspacePaneSelectArgumentsSchemaZ;
     WorkspacePaneSelectResultZ = WorkspacePaneSelectResultSchemaZ;
+    WorkspacePaneResizeInputZ = WorkspacePaneResizeArgumentsSchemaZ;
+    WorkspacePaneResizeResultZ = WorkspacePaneResizeResultSchemaZ;
     ActionContractsZ = {
       "project.openTerminal": {
         input: ProjectOpenTerminalInputZ,
@@ -6683,6 +6708,10 @@ var init_actions_contract = __esm({
       "workspace.pane.select": {
         input: WorkspacePaneSelectInputZ,
         result: WorkspacePaneSelectResultZ
+      },
+      "workspace.pane.resize": {
+        input: WorkspacePaneResizeInputZ,
+        result: WorkspacePaneResizeResultZ
       }
     };
     ACTION_NAMES = Object.keys(ActionContractsZ);
@@ -7225,6 +7254,19 @@ var init_multiplexer_verbs = __esm({
         scope: "pane",
         execution: { kind: "daemon-action", action: "workspace.pane.select" },
         availabilityInputs: ["workspaceConnected", "targetIsActivePane"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "pane.resize",
+        label: "Resize pane",
+        description: "Move the border between this pane and its neighbour, changing tmux's own layout.",
+        scope: "pane",
+        execution: { kind: "daemon-action", action: "workspace.pane.resize" },
+        // A window with one pane has no border to move, and tmux refuses the resize
+        // rather than growing the window, so the refusal is stated up front.
+        availabilityInputs: ["workspaceConnected", "windowPaneCount"],
         destructive: false,
         tmuxKeyHint: null
       },
@@ -25435,7 +25477,9 @@ var init_workspace_multiplexer_verbs = __esm({
       last_window_refused: "This is the session's last window. Close the session instead if that is what you mean.",
       last_pane_refused: "This is the session's last pane. Close the session instead if that is what you mean.",
       mutation_failed: "tmux refused the requested change.",
-      mutation_unverified: "tmux accepted the change but the result could not be verified."
+      mutation_unverified: "tmux accepted the change but the result could not be verified.",
+      single_pane_window: "This window has only one pane, so it has no border to move.",
+      zoomed_window_refused: "Unzoom this window before resizing its panes."
     };
     WorkspaceMultiplexerError = class extends Error {
       code;
@@ -25604,6 +25648,8 @@ var init_workspace_multiplexer_verbs = __esm({
             return this.#zoom(intent, sessionName, envelope);
           case "workspace.pane.select":
             return this.#select(intent, sessionName, envelope);
+          case "workspace.pane.resize":
+            return this.#resize(intent, sessionName, envelope);
         }
       }
       // -------------------------------------------------------------------------
@@ -25926,6 +25972,75 @@ var init_workspace_multiplexer_verbs = __esm({
           verb: "workspace.pane.select",
           outcome: wasActive ? "unchanged" : "applied",
           semanticPaneId: intent.semanticPaneId
+        };
+      }
+      // -------------------------------------------------------------------------
+      // resize
+      // -------------------------------------------------------------------------
+      /** The pane's own size on one axis, in cells, read straight from tmux. */
+      #paneCells(paneId, axis) {
+        const observed = this.#io.runTmux([
+          "display-message",
+          "-p",
+          "-t",
+          paneId,
+          axis === "cols" ? "#{pane_width}" : "#{pane_height}"
+        ]);
+        const cells = Number(observed);
+        if (!Number.isInteger(cells) || cells < 1) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", { reason: "pane_size_shape" });
+        }
+        return cells;
+      }
+      /**
+       * Move one pane border.
+       *
+       * The result reports what tmux SETTLED ON rather than what was asked for. A
+       * layout has a per-pane minimum and a fixed total, so tmux clamps constantly —
+       * and a drag that hit a floor has to read as having stopped there. Reporting
+       * the requested number instead would make the view disagree with the layout
+       * frame that arrives a moment later, which is the class of divergence this
+       * whole view exists to remove.
+       */
+      #resize(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const pane = resolvePaneRow(rows, intent.semanticPaneId);
+        if (pane.windowPaneCount < 2) {
+          throw new WorkspaceMultiplexerError("single_pane_window", {
+            semanticPaneId: intent.semanticPaneId
+          });
+        }
+        if (pane.windowZoomed) {
+          throw new WorkspaceMultiplexerError("zoomed_window_refused", {
+            semanticPaneId: intent.semanticPaneId
+          });
+        }
+        const before = this.#paneCells(pane.paneId, intent.axis);
+        if (before === intent.cells) {
+          return {
+            ...envelope,
+            verb: "workspace.pane.resize",
+            outcome: "unchanged",
+            semanticPaneId: intent.semanticPaneId,
+            axis: intent.axis,
+            cells: before
+          };
+        }
+        this.#io.runTmux([
+          "resize-pane",
+          "-t",
+          pane.paneId,
+          intent.axis === "cols" ? "-x" : "-y",
+          String(intent.cells)
+        ]);
+        const after = this.#paneCells(pane.paneId, intent.axis);
+        return {
+          ...envelope,
+          verb: "workspace.pane.resize",
+          outcome: after === before ? "unchanged" : "applied",
+          semanticPaneId: intent.semanticPaneId,
+          axis: intent.axis,
+          cells: after
         };
       }
     };
@@ -31181,10 +31296,6 @@ var init_pane_stream_websocket = __esm({
       }
       #onLayout(event) {
         if (this.#closed) return;
-        const leased = event.panes.some(
-          (pane) => pane.semanticPaneId !== null && this.#panes.has(pane.semanticPaneId)
-        );
-        if (!leased) return;
         const frame = {
           type: "layout",
           semanticWindowId: event.semanticWindowId,
@@ -32604,6 +32715,7 @@ var init_session_channel = __esm({
         if (this.ledger.isRequested(pane.runtimeId)) this.ledger.clearRequest(pane.runtimeId);
         if (this.ledger.isBackpressured(pane.runtimeId)) this.continuePane(pane.runtimeId);
         this.reseed(sub);
+        this.emitLayoutSnapshot(sub);
         return {
           semanticPaneId: semanticPaneId2,
           freeze: () => this.freeze(sub),
@@ -32817,14 +32929,43 @@ var init_session_channel = __esm({
         }
         if (name === "session-window-changed") {
           const change = parseSessionWindowChanged(rest);
-          if (change) this.currentWindow = change.windowId;
+          if (!change) return;
+          const previous = this.currentWindow;
+          this.currentWindow = change.windowId;
+          if (previous === change.windowId) return;
+          if (previous) this.emitLayout(previous);
+          this.emitLayout(change.windowId);
           return;
         }
         if (STRUCTURAL_NOTIFICATIONS.has(name)) this.scheduleSync();
       }
       emitLayout(windowRuntimeId) {
+        const event = this.layoutEventFor(windowRuntimeId);
+        if (!event) return;
+        for (const pane of this.panesByRuntime.values()) {
+          for (const sub of pane.subs) {
+            if (!sub.closed && sub.onLayout) sub.onLayout(event);
+          }
+        }
+      }
+      /**
+       * Hand ONE new subscriber the geometry of every window this session has.
+       *
+       * Without it a subscriber's first layout frame arrives only when a layout
+       * happens to change, so a view built from these frames opens empty and stays
+       * empty until the user moves something — which reads as the app failing to
+       * find the session's windows at all.
+       */
+      emitLayoutSnapshot(sub) {
+        if (!sub.onLayout) return;
+        for (const windowRuntimeId of this.layoutByWindow.keys()) {
+          const event = this.layoutEventFor(windowRuntimeId);
+          if (!sub.closed && event) sub.onLayout(event);
+        }
+      }
+      layoutEventFor(windowRuntimeId) {
         const layout = this.layoutByWindow.get(windowRuntimeId);
-        if (!layout) return;
+        if (!layout) return null;
         const windowRecord = this.windowsByRuntime.get(windowRuntimeId) ?? null;
         const activePane = this.activePaneByWindow.get(windowRuntimeId) ?? "";
         const event = {
@@ -32845,11 +32986,7 @@ var init_session_channel = __esm({
             active: leaf.id === activePane
           }))
         };
-        for (const pane of this.panesByRuntime.values()) {
-          for (const sub of pane.subs) {
-            if (!sub.closed && sub.onLayout) sub.onLayout(event);
-          }
-        }
+        return event;
       }
       // ── Truth sync + identity join ───────────────────────────────────────────
       scheduleSync() {
@@ -32967,8 +33104,13 @@ var init_session_channel = __esm({
           }
           next.set(row.runtimeId, { runtimeId: row.runtimeId, semanticId: semanticId2, name: row.name });
         }
+        const changed = [...next].some(([runtimeId, record]) => {
+          const previous = this.windowsByRuntime.get(runtimeId);
+          return !previous || previous.name !== record.name || previous.semanticId !== record.semanticId;
+        });
         this.windowsByRuntime.clear();
         for (const [key, value] of next) this.windowsByRuntime.set(key, value);
+        if (changed) for (const runtimeId of next.keys()) this.emitLayout(runtimeId);
       }
       async reconcileIdentity(descriptors, listed) {
         if (this.disposed) return;
@@ -33061,6 +33203,7 @@ var init_session_channel = __esm({
           degraded: diagnostic4.degraded
         }));
         this.degraded = reconciliation.degraded;
+        for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
         this.settleFirstJoin();
       }
       settleFirstJoin() {
@@ -34545,7 +34688,7 @@ async function runVerb(verb, input, context, deps2) {
 function verbHandler(verb) {
   return async (input, context = {}, deps2 = {}) => await runVerb(verb, input, context, deps2);
 }
-var workspaceWindowSplitHandler, workspaceWindowKillHandler, workspacePaneKillHandler, workspaceSessionKillHandler, workspaceRenameHandler, workspacePaneZoomToggleHandler, workspacePaneSelectHandler;
+var workspaceWindowSplitHandler, workspaceWindowKillHandler, workspacePaneKillHandler, workspaceSessionKillHandler, workspaceRenameHandler, workspacePaneZoomToggleHandler, workspacePaneSelectHandler, workspacePaneResizeHandler;
 var init_workspace_multiplexer2 = __esm({
   "packages/daemon/src/command-center/actions/handlers/workspace-multiplexer.ts"() {
     "use strict";
@@ -34558,6 +34701,7 @@ var init_workspace_multiplexer2 = __esm({
     workspaceRenameHandler = verbHandler("workspace.rename");
     workspacePaneZoomToggleHandler = verbHandler("workspace.pane.zoom.toggle");
     workspacePaneSelectHandler = verbHandler("workspace.pane.select");
+    workspacePaneResizeHandler = verbHandler("workspace.pane.resize");
   }
 });
 
@@ -34726,6 +34870,12 @@ var init_registry2 = __esm({
         resultSchema: ActionContractsZ["workspace.pane.select"].result,
         handler: (input) => workspacePaneSelectHandler(input),
         handlerWithContext: workspacePaneSelectHandler
+      },
+      "workspace.pane.resize": {
+        inputSchema: ActionContractsZ["workspace.pane.resize"].input,
+        resultSchema: ActionContractsZ["workspace.pane.resize"].result,
+        handler: (input) => workspacePaneResizeHandler(input),
+        handlerWithContext: workspacePaneResizeHandler
       }
     };
   }
@@ -34896,7 +35046,8 @@ var init_command_definitions = __esm({
       "workspace.session.kill": { label: "Close session", category: "workspace", dangerous: true },
       "workspace.rename": { label: "Rename session or window", category: "workspace" },
       "workspace.pane.zoom.toggle": { label: "Toggle pane zoom", category: "workspace" },
-      "workspace.pane.select": { label: "Focus pane", category: "workspace" }
+      "workspace.pane.select": { label: "Focus pane", category: "workspace" },
+      "workspace.pane.resize": { label: "Resize pane", category: "workspace" }
     };
     DAEMON_ACTION_COMMAND_DEFINITIONS = Object.freeze(
       ACTION_NAMES.map(
@@ -39667,6 +39818,7 @@ var init_server = __esm({
       "workspace.rename": "owner-and-operation-id",
       "workspace.pane.zoom.toggle": "owner-and-operation-id",
       "workspace.pane.select": "owner-and-operation-id",
+      "workspace.pane.resize": "owner-and-operation-id",
       "project.launch": "owner",
       "project.stop": "owner",
       "project.restart": "owner",
