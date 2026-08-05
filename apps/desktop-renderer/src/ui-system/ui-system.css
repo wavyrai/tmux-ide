@@ -5,7 +5,7 @@
  * dark-first fallbacks keep isolated fixtures useful without inline styles.
  */
 :root {
-  --tmi-font-chrome: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --tmi-font-chrome: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
   --tmi-font-technical: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
   --tmi-surface-canvas: var(--tmux-ide-surface-canvas, oklch(14.05% 0.004 285.8));
   --tmi-surface-panel: var(--tmux-ide-surface-panel, oklch(27.41% 0.006 286));

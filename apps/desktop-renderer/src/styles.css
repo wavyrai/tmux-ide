@@ -9,13 +9,13 @@
 @import "../../../packages/daemon/src/ui/workbench-dock/web-host.css";
 
 :root {
-  font-family:
-    ui-sans-serif,
-    -apple-system,
-    BlinkMacSystemFont,
-    "SF Pro Text",
-    "Segoe UI",
-    sans-serif;
+  /*
+   * SF first, and nothing bundled. sfora's ramp is drawn on Inter; we take the
+   * ramp and put it on the SYSTEM face instead — a deliberate deviation, so the
+   * app reads as native rather than as a web app in a window. SF is metrically
+   * close enough that the ramp carries the same look.
+   */
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
   color: CanvasText;
   background: Canvas;
   font-synthesis: none;
@@ -319,6 +319,21 @@ select:focus-visible,
   --tmux-ide-selection-pressed: var(--sf-active);
   --tmux-ide-control-disabled-background: var(--sf-section);
   --tmux-ide-control-disabled-foreground: var(--sf-disabled);
+  /*
+   * sfora's radius ladder. Controls sit at sm/md; cards and nav rows take the
+   * 10px 2lg step. These roles are otherwise derived from the type rhythm,
+   * which lands on values tuned for a terminal grid rather than for controls.
+   */
+  --tmux-ide-shape-control-radius: 8px;
+  --tmux-ide-shape-control: 8px;
+  --tmux-ide-shape-floating-radius: 10px;
+  --tmux-ide-shape-floating: 10px;
+}
+
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  .app {
+    --paper-hairline: 0.5px;
+  }
 }
 
 .app {
@@ -328,12 +343,34 @@ select:focus-visible,
   --desktop-dock-bar-height: 40px;
   --desktop-status-height: 22px;
   --desktop-panel-radius: var(--tmi-radius-lg);
-  --desktop-ui-font:
-    "DM Sans", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
-    sans-serif;
+  --desktop-ui-font: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
   --desktop-mono-font:
     "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
-  --desktop-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  /*
+   * The Board-UI composite type ramp. Chrome sits mostly at body-2 and
+   * caption-1, the way a real Mac app does; headline is for the few genuine
+   * headings inside chrome. Display type on the launch and onboarding surfaces
+   * stays larger by intent. Terminals keep the mono stack untouched.
+   */
+  --sf-text-headline: 16px;
+  --sf-leading-headline: 22px;
+  --sf-text-body: 14px;
+  --sf-leading-body: 20px;
+  --sf-text-body-2: 13px;
+  --sf-leading-body-2: 18px;
+  --sf-text-caption-1: 12px;
+  --sf-leading-caption-1: 16px;
+  --sf-tracking-caption-1: 0.15px;
+  --sf-text-caption-2: 11px;
+  --sf-leading-caption-2: 15px;
+  --sf-tracking-caption-2: 0.2px;
+  /*
+   * A hairline is one DEVICE pixel, not one CSS pixel. On retina that is 0.5px,
+   * which is what makes a divider read as a rule rather than a bar. Structure
+   * comes from the plane and the ring; these survive only as real dividers.
+   */
+  --paper-hairline: 1px;
+  --desktop-ease-smooth: var(--sf-ease-smooth);
   /*
    * The shell's regions, placed on the depth ramp. The titlebar, sidebar and
    * dock are one FRAME at the back plane; the workbench and canvas are the
@@ -414,17 +451,32 @@ select:focus-visible,
  * covers WebKit/Chromium (the Electron renderer).
  */
 .app ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 .app ::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
   border-radius: var(--tmi-radius-pill);
-  background: color-mix(in srgb, var(--tmux-ide-text-muted) 30%, transparent);
+  background: transparent;
+  background-clip: content-box;
+  transition: background-color 150ms var(--sf-ease-out-quad);
 }
 
-.app ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--tmux-ide-text-muted) 48%, transparent);
+.app *:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--sf-foreground) 28%, transparent);
+  background-clip: content-box;
+}
+
+.app *:hover::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--sf-foreground) 45%, transparent);
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app ::-webkit-scrollbar-thumb {
+    transition: none;
+  }
 }
 
 .app ::-webkit-scrollbar-track,

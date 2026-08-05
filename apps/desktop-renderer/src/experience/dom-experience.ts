@@ -156,9 +156,11 @@ function elevationToCss(
 }
 
 function typographyFamily(value: TypographyValue["family"]): string {
+  // Chrome is drawn in the system face, unbundled: the native feel comes from
+  // SF being the same face the rest of the OS uses.
   return value === "monospace"
     ? 'ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace'
-    : 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    : '-apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif';
 }
 
 function typographyWeight(value: TypographyValue["weight"]): string {

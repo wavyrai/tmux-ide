@@ -433,7 +433,10 @@ describe("desktop UI foundation styles", () => {
 
     expect(computed.display).toBe("inline-flex");
     expect(computed.minHeight).toBe("28px");
-    expect(computed.fontFamily).toContain("ui-sans-serif");
+    // Chrome is drawn in the system face. A generic family leading the stack
+    // is the regression this catches: it renders a webfont-ish default that
+    // looks like every Electron app and nothing like the surrounding OS.
+    expect(computed.fontFamily.startsWith("-apple-system")).toBe(true);
   });
 
   it("declares dark-first semantic tokens and both reduced-motion authorities", () => {
