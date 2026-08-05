@@ -419,7 +419,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     if (!read) {
       return { status: "error" as const, error: daemonCapabilityError("daemon-unavailable") };
     }
-    let ladder: StartupReadinessLadder | null = null;
+    let ladder: StartupReadinessLadder | null;
     try {
       ladder = await read();
     } catch {
