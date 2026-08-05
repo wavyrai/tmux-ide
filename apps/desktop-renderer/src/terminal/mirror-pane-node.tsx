@@ -34,6 +34,7 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
   let mount: HTMLDivElement | undefined;
   let renderer: MirrorTerminalRenderer | null = null;
   let unregister: (() => void) | null = null;
+  let containerObserver: ResizeObserver | null = null;
   let disposed = false;
   let rendererLoad = 0;
 
@@ -45,7 +46,23 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
     renderer = next;
     renderer.open(mount);
     renderer.refreshTheme();
+    observeContainer(next, mount);
     attachSink(next);
+  };
+
+  /**
+   * The card is laid out by the canvas, so the letterbox has to follow the card
+   * as well as the grid: the deck shrinks its nodes to stay on screen, and the
+   * render must re-fit when it does. ResizeObserver is absent in some test DOMs;
+   * the seed-time fit still covers the common case there.
+   */
+  const observeContainer = (next: MirrorTerminalRenderer, element: HTMLElement): void => {
+    if (typeof ResizeObserver === "undefined") return;
+    containerObserver?.disconnect();
+    containerObserver = new ResizeObserver(() => {
+      if (!disposed && renderer === next) next.fitToContainer();
+    });
+    containerObserver.observe(element);
   };
 
   /**
@@ -95,6 +112,8 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
     onCleanup(() => {
       disposed = true;
       rendererLoad += 1;
+      containerObserver?.disconnect();
+      containerObserver = null;
       unregister?.();
       unregister = null;
       const active = renderer;

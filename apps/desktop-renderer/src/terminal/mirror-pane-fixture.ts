@@ -72,7 +72,8 @@ export type MirrorRendererCommit =
       readonly cursor: { readonly x: number; readonly y: number } | null;
     }
   | { readonly kind: "write"; readonly text: string }
-  | { readonly kind: "cursor"; readonly x: number; readonly y: number };
+  | { readonly kind: "cursor"; readonly x: number; readonly y: number }
+  | { readonly kind: "fit" };
 
 export interface RecordingMirrorRenderer extends MirrorTerminalRenderer {
   readonly commits: MirrorRendererCommit[];
@@ -106,6 +107,9 @@ export function createRecordingMirrorRendererFactory(): {
       },
       resizeGrid: () => undefined,
       refreshTheme: () => undefined,
+      fitToContainer: () => {
+        commits.push({ kind: "fit" });
+      },
       setReducedMotion: () => undefined,
       dispose: () => undefined,
     };

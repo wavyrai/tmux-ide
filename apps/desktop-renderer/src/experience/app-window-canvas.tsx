@@ -160,27 +160,89 @@ const MIRROR_NODE_GAP = 24;
 const MIRROR_NODE_COLUMNS = 3;
 
 /**
- * PURE — deterministic grid rects for mirror nodes, placed below every durable
- * window so the dev affordance never covers real cards. Exported for tests.
+ * Bottom band of the canvas the mirror deck must stay out of: the controls pill
+ * (38px tall, 16px above the edge) plus the mirror status chip above it. Nodes
+ * that end above this line can never be obscured by either.
+ */
+const MIRROR_SAFE_INSET_BOTTOM = 96;
+/** The deck shrinks to fit the visible canvas, but never past legibility. */
+const MIRROR_NODE_MIN_SCALE = 0.5;
+
+/**
+ * PURE — deterministic grid rects for mirror nodes.
+ *
+ * The deck is placed below every durable window so the dev affordance never
+ * covers real cards, and then pulled back INTO the visible canvas: a node the
+ * user cannot see is not a mirror. Given a viewport the layout also shrinks the
+ * node size (uniformly, so the letterboxed body keeps its aspect) until a row
+ * fits between the top of the canvas and the controls pill. A deck too tall to
+ * fit entirely starts at the top and extends below — its first row is always on
+ * screen, the rest is one pan away.
+ *
+ * Rects are scene coordinates measured against the UNTRANSFORMED viewport, so
+ * they are stable under pan/zoom (mirror cards move with the scene like every
+ * other card) and correct at the default 1:1 view.
+ *
+ * Exported for tests.
  */
 export function mirrorNodeRects(
   count: number,
   existing: readonly AppWindowCanvasItem["rect"][],
+  viewport?: AppWindowCanvasViewport,
 ): AppWindowCanvasItem["rect"][] {
-  let originY = 0;
+  let belowWindowsY = 0;
   for (const rect of existing) {
-    originY = Math.max(originY, rect.y + rect.height);
+    belowWindowsY = Math.max(belowWindowsY, rect.y + rect.height);
   }
-  originY += existing.length > 0 ? 2 * MIRROR_NODE_GAP : 0;
+  belowWindowsY += existing.length > 0 ? 2 * MIRROR_NODE_GAP : 0;
+
+  const visible = viewport
+    ? {
+        width: Math.max(0, viewport.width),
+        height: Math.max(0, viewport.height - MIRROR_SAFE_INSET_BOTTOM),
+      }
+    : null;
+
+  const deckAt = (
+    scale: number,
+  ): { width: number; height: number; columns: number; deckHeight: number } => {
+    const width = Math.round(MIRROR_NODE_SIZE.width * scale);
+    const height = Math.round(MIRROR_NODE_SIZE.height * scale);
+    const columns = visible
+      ? Math.min(
+          MIRROR_NODE_COLUMNS,
+          Math.max(1, Math.floor((visible.width + MIRROR_NODE_GAP) / (width + MIRROR_NODE_GAP))),
+        )
+      : MIRROR_NODE_COLUMNS;
+    const rows = Math.max(1, Math.ceil(count / columns));
+    return { width, height, columns, deckHeight: rows * height + (rows - 1) * MIRROR_NODE_GAP };
+  };
+
+  // Largest scale at which the WHOLE deck fits the visible canvas, searched in
+  // fixed 5% steps so the layout stays deterministic and easy to reason about.
+  // Below the legibility floor the deck stops shrinking and simply extends past
+  // the fold — its first row is still placed on screen.
+  let deck = deckAt(1);
+  if (visible && visible.width > 0 && visible.height > 0) {
+    for (let scale = 1; scale >= MIRROR_NODE_MIN_SCALE - 1e-9; scale -= 0.05) {
+      deck = deckAt(Math.max(MIRROR_NODE_MIN_SCALE, scale));
+      if (deck.deckHeight <= visible.height && deck.width <= visible.width) break;
+    }
+  }
+  const { width, height, columns, deckHeight } = deck;
+  const originY = visible
+    ? Math.max(0, Math.min(belowWindowsY, visible.height - deckHeight))
+    : belowWindowsY;
+
   const rects: AppWindowCanvasItem["rect"][] = [];
   for (let index = 0; index < count; index += 1) {
-    const column = index % MIRROR_NODE_COLUMNS;
-    const row = Math.floor(index / MIRROR_NODE_COLUMNS);
+    const column = index % columns;
+    const row = Math.floor(index / columns);
     rects.push({
-      x: column * (MIRROR_NODE_SIZE.width + MIRROR_NODE_GAP),
-      y: originY + row * (MIRROR_NODE_SIZE.height + MIRROR_NODE_GAP),
-      width: MIRROR_NODE_SIZE.width,
-      height: MIRROR_NODE_SIZE.height,
+      x: column * (width + MIRROR_NODE_GAP),
+      y: originY + row * (height + MIRROR_NODE_GAP),
+      width,
+      height,
     });
   }
   return rects;
@@ -1097,6 +1159,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     const rects = mirrorNodeRects(
       mirror.nodes.length,
       projection().windows.map((window) => displayedWindow(window).rect),
+      viewport(),
     );
     return {
       connection: mirror.connection,

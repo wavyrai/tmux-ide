@@ -1089,6 +1089,40 @@ describe("mirror pane nodes on the canvas (m43 card 3)", () => {
     expect(rects[3]!.y).toBeGreaterThan(originY);
   });
 
+  it("keeps the deck inside the viewport and clear of the canvas controls", () => {
+    // The window is the one the e2e drives: a 900x540 canvas whose bottom band
+    // carries the controls pill and the mirror status chip.
+    const viewport = { width: 900, height: 540 };
+    const rects = mirrorNodeRects(2, [{ x: 0, y: 0, width: 700, height: 520 }], viewport);
+    for (const rect of rects) {
+      expect(rect.y).toBeGreaterThanOrEqual(0);
+      expect(
+        rect.y + rect.height,
+        "a mirror node ends inside the band the canvas controls occupy",
+      ).toBeLessThanOrEqual(viewport.height - 96);
+      expect(rect.x + rect.width).toBeLessThanOrEqual(viewport.width);
+    }
+  });
+
+  it("shrinks the deck uniformly rather than overflowing a short viewport", () => {
+    const roomy = mirrorNodeRects(1, [], { width: 900, height: 900 })[0]!;
+    const cramped = mirrorNodeRects(1, [], { width: 900, height: 300 })[0]!;
+    expect(roomy).toMatchObject({ width: 480, height: 320 });
+    expect(cramped.height).toBeLessThan(roomy.height);
+    expect(cramped.height).toBeGreaterThanOrEqual(320 * 0.5);
+    // Uniform: the letterboxed body keeps the card's aspect ratio.
+    expect(cramped.width / cramped.height).toBeCloseTo(roomy.width / roomy.height, 1);
+  });
+
+  it("keeps the first row on screen when the deck cannot fit whole", () => {
+    const viewport = { width: 900, height: 540 };
+    const rects = mirrorNodeRects(9, [{ x: 0, y: 0, width: 400, height: 900 }], viewport);
+    expect(rects[0]!.y).toBe(0);
+    expect(rects[0]!.y + rects[0]!.height).toBeLessThanOrEqual(viewport.height - 96);
+    // Two columns fit in 900px; the ninth node flows onto a later row.
+    expect(rects[8]!.y).toBeGreaterThan(rects[0]!.y);
+  });
+
   it("shows the toggle without nodes until enabled", () => {
     const onToggle = vi.fn();
     const root = renderMirrorCanvas(mirrorProps({ enabled: false, nodes: [], onToggle }));
@@ -1171,6 +1205,48 @@ describe("mirror pane nodes on the canvas (m43 card 3)", () => {
     expect(first!.getAttribute("data-tmi-runtime-style")).toBe(styleKey);
     expect(renderers, "a stream update built a second mirror renderer").toHaveLength(1);
     expect(first!.dataset.state).toBe("live");
+  });
+
+  it("re-places the surviving node when its rect changes", () => {
+    const [viewport, setViewport] = createSignal({ width: 900, height: 300 });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const runtimeSheet = document.createElement("style");
+    runtimeSheet.textContent = runtimeStyles;
+    document.head.append(runtimeSheet);
+    disposers.push(() => runtimeSheet.remove());
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={documentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={viewport()}
+            mirror={mirrorProps({
+              rendererFactory: createRecordingMirrorRendererFactory().factory,
+            })}
+          />
+        ),
+        root,
+      ),
+    );
+    const card = root.querySelector<HTMLElement>(".mirror-pane-card");
+    expect(card).not.toBeNull();
+    const before = mirrorNodeRects(1, [], { width: 900, height: 300 })[0]!;
+    const after = mirrorNodeRects(1, [], { width: 900, height: 900 })[0]!;
+    expect(after.height).toBeGreaterThan(before.height);
+    setViewport({ width: 900, height: 900 });
+    expect(root.querySelector(".mirror-pane-card")).toBe(card);
+    const key = card!.getAttribute("data-tmi-runtime-style");
+    const rule = [...runtimeSheet.sheet!.cssRules].find(
+      (candidate): candidate is CSSStyleRule =>
+        candidate instanceof CSSStyleRule &&
+        candidate.selectorText === `[data-tmi-runtime-style="${key}"]`,
+    );
+    expect(rule, "the surviving node kept no runtime style rule to be placed by").toBeDefined();
+    expect(rule!.style.getPropertyValue("height")).toBe(`${after.height}px`);
   });
 
   it("surfaces the stream-level derived status when the connection is not healthy", () => {

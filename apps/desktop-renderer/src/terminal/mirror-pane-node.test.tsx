@@ -1,5 +1,5 @@
 /* @vitest-environment happy-dom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 
@@ -18,6 +18,7 @@ const PANE_A = "pane.workspace.a1";
 const disposers: Array<() => void> = [];
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   while (disposers.length > 0) disposers.pop()?.();
   document.body.replaceChildren();
 });
@@ -135,6 +136,28 @@ describe("mirror pane node", () => {
     session.emit(PANE_A, { type: "flow", state: "resumed", reason: "backpressure" });
     await flush();
     expect(h.host.querySelector(".mirror-pane-node__flow")).toBeNull();
+  });
+
+  it("re-letterboxes the render when the canvas resizes its card", async () => {
+    // The deck shrinks its nodes to stay on screen, so the card's size changes
+    // under a mirror that never votes on size: the fit has to follow it.
+    const callbacks: ResizeObserverCallback[] = [];
+    class StubResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(callback);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal("ResizeObserver", StubResizeObserver);
+    const h = mountNodeHarness();
+    await flush();
+    await h.stream.latest().emit(PANE_A, { type: "seed-batch", batch: seedBatch("screen") });
+    await flush();
+    expect(callbacks).toHaveLength(1);
+    callbacks[0]!([], {} as ResizeObserver);
+    expect(h.rendering.renderers[0]!.commits.at(-1)).toEqual({ kind: "fit" });
   });
 
   it("derives a reconnecting overlay from a live stream drop", async () => {
