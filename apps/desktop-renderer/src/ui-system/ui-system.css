@@ -7,26 +7,25 @@
 :root {
   --tmi-font-chrome: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --tmi-font-technical: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
-  --tmi-surface-canvas: var(--tmux-ide-surface-canvas, #0e0e12);
-  --tmi-surface-panel: var(--tmux-ide-surface-panel, #15161d);
-  --tmi-surface-raised: var(--tmux-ide-surface-panel-raised, #1c1d26);
-  --tmi-surface-overlay: var(--tmux-ide-surface-command, #20212b);
-  --tmi-text-primary: var(--tmux-ide-text-primary, #e8e9ef);
-  --tmi-text-bright: var(--tmux-ide-text-bright, #ffffff);
-  --tmi-text-secondary: var(--tmux-ide-text-secondary, #b4b6c2);
-  --tmi-text-muted: var(--tmux-ide-text-muted, #858896);
-  --tmi-text-on-accent: var(--tmux-ide-text-inverse, #101116);
-  --tmi-border-subtle: var(--tmux-ide-border-subtle, #292a34);
-  --tmi-border-default: var(--tmux-ide-border-default, #383a46);
-  --tmi-accent: var(--tmux-ide-border-focused, #7c9cff);
-  --tmi-accent-strong: var(--tmux-ide-text-link, #9ab0ff);
-  --tmi-accent-surface: var(--tmux-ide-selection-selection, #293149);
-  --tmi-hover: var(--tmux-ide-selection-hover, #252732);
-  --tmi-pressed: var(--tmux-ide-selection-pressed, #30323f);
-  --tmi-danger: var(--tmux-ide-status-danger, #ef737b);
-  --tmi-danger-surface: color-mix(in srgb, var(--tmi-danger) 15%, var(--tmi-surface-panel));
-  --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, #616472);
-  --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, #181920);
+  --tmi-surface-canvas: var(--tmux-ide-surface-canvas, oklch(14.05% 0.004 285.8));
+  --tmi-surface-panel: var(--tmux-ide-surface-panel, oklch(27.41% 0.006 286));
+  --tmi-surface-raised: var(--tmux-ide-surface-panel-raised, oklch(16.8% 0.006 285.7));
+  --tmi-surface-overlay: var(--tmux-ide-surface-command, oklch(19.5% 0.008 285.7));
+  --tmi-text-primary: var(--tmux-ide-text-primary, oklch(97% 0.003 265));
+  --tmi-text-bright: var(--tmux-ide-text-bright, oklch(98.48% 0 0));
+  --tmi-text-secondary: var(--tmux-ide-text-secondary, oklch(71.19% 0.013 286.1));
+  --tmi-text-muted: var(--tmux-ide-text-muted, oklch(58% 0.012 286.1));
+  --tmi-text-on-accent: var(--tmux-ide-text-inverse, oklch(100% 0 0));
+  --tmi-border-subtle: var(--tmux-ide-border-subtle, oklch(37.27% 0.008 286));
+  --tmi-border-default: var(--tmux-ide-border-default, oklch(31.51% 0.007 286));
+  --tmi-accent: var(--tmux-ide-border-focused, #8aa5ff);
+  --tmi-accent-strong: var(--tmux-ide-text-link, oklch(71.4% 0.143 254.6));
+  --tmi-accent-surface: var(--tmux-ide-selection-selection, rgb(97 135 254 / 26%));
+  --tmi-hover: var(--tmux-ide-selection-hover, oklch(100% 0 0 / 6%));
+  --tmi-pressed: var(--tmux-ide-selection-pressed, oklch(100% 0 0 / 10%));
+  --tmi-danger: var(--tmux-ide-status-danger, #ff8080);
+  --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, oklch(41% 0.008 286.1));
+  --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, oklch(27.41% 0.006 286));
   --tmi-focus-width: var(--tmux-ide-focus-outline, 2px);
   --tmi-focus-offset: var(--tmux-ide-focus-outline-offset, 1px);
   --tmi-radius-control: var(--tmux-ide-shape-control-radius, 4px);
@@ -36,11 +35,13 @@
    * shell maps to the nearest step (odd values round down); the ladder keeps the
    * whole surface on one rhythm instead of a dozen bespoke pixel values.
    */
-  --tmi-radius-xs: 4px;
-  --tmi-radius-sm: 6px;
+  --tmi-radius-xs: 2px;
+  --tmi-radius-sm: 4px;
   --tmi-radius-md: 8px;
-  --tmi-radius-lg: 10px;
-  --tmi-radius-xl: 12px;
+  /* Board UI's 10px step, between md and lg: cards and nav rows sit here. */
+  --tmi-radius-2lg: 10px;
+  --tmi-radius-lg: 12px;
+  --tmi-radius-xl: 16px;
   --tmi-radius-pill: 999px;
   --tmi-space-1: 2px;
   --tmi-space-2: 4px;
@@ -52,17 +53,23 @@
   --tmi-space-8: 24px;
   --tmi-disabled-opacity: 0.64;
   /*
-   * Elevation shadow ladder. Tight, low-blur, near-zero (negative) spread drop
-   * shadows that ground a surface without a wide glow — definition lives in the
-   * 1px hairline, the shadow only lifts. Three rungs: subtle (cards/chips/inputs),
-   * raised (toolbars/minimap/tooltips/floating panels), overlay (dialogs, menus,
-   * command palette, selected floating windows). Dark carries higher alpha to read
-   * against the near-black canvas; light stays quiet. Keep these values in sync
-   * with the .app copies in styles.css.
+   * The shadow ladder (dark-first fallbacks; .app supplies the live values).
+   *
+   * The crisp 1px RING is the signature of this system, not an accent on it:
+   * the visible edge is what makes a card read against the plane behind it, and
+   * on floating surfaces the ring draws the silhouette sharper than any border
+   * colour. In dark the ring flips to a LIT top edge, which reads as the white
+   * border of a card against a darker canvas. Never soften these and never
+   * substitute a border for the ring. Keep in sync with the .app copies.
    */
-  --tmi-shadow-subtle: 0 1px 2px 0 rgb(0 0 0 / 0.28), 0 1px 1px 0 rgb(0 0 0 / 0.22);
-  --tmi-shadow-raised: 0 2px 5px -1px rgb(0 0 0 / 0.36), 0 1px 3px -1px rgb(0 0 0 / 0.3);
-  --tmi-shadow-overlay: 0 8px 18px -6px rgb(0 0 0 / 0.5), 0 3px 8px -3px rgb(0 0 0 / 0.4);
+  --tmi-shadow-subtle: 0 0 0 1px oklch(100% 0 0 / 0.06), 0 1px 2px 0 oklch(0% 0 0 / 0.3);
+  --tmi-shadow-raised:
+    0 1px 0 0 oklch(0% 0 0 / 0.2), 0 1px 12px 0 oklch(0% 0 0 / 0.45), 0 0 1px 0 oklch(0% 0 0 / 0.9);
+  --tmi-shadow-overlay:
+    0 0 0 1px oklch(100% 0 0 / 0.08), 0 4px 12px -2px oklch(0% 0 0 / 0.3),
+    0 12px 32px -8px oklch(0% 0 0 / 0.45);
+  --tmi-shadow-field: none;
+  --tmi-shadow-tooltip: 0 0 0 1px oklch(100% 0 0 / 0.1), 0 4px 16px oklch(0% 0 0 / 0.4);
   --tmi-motion-fast: var(--tmux-ide-motion-fast, 150ms);
   --tmi-motion-exit: var(--tmux-ide-motion-instant, 100ms);
   --tmi-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
@@ -73,51 +80,59 @@
 
 [data-theme="dark"],
 [data-tmi-theme="dark"] {
-  --tmi-surface-canvas: var(--tmux-ide-surface-canvas, #0e0e12);
-  --tmi-surface-panel: var(--tmux-ide-surface-panel, #15161d);
-  --tmi-surface-raised: var(--tmux-ide-surface-panel-raised, #1c1d26);
-  --tmi-surface-overlay: var(--tmux-ide-surface-command, #20212b);
-  --tmi-text-primary: var(--tmux-ide-text-primary, #e8e9ef);
-  --tmi-text-bright: var(--tmux-ide-text-bright, #ffffff);
-  --tmi-text-secondary: var(--tmux-ide-text-secondary, #b4b6c2);
-  --tmi-text-muted: var(--tmux-ide-text-muted, #858896);
-  --tmi-text-on-accent: var(--tmux-ide-text-inverse, #101116);
-  --tmi-border-subtle: var(--tmux-ide-border-subtle, #292a34);
-  --tmi-border-default: var(--tmux-ide-border-default, #383a46);
-  --tmi-accent: var(--tmux-ide-border-focused, #7c9cff);
-  --tmi-accent-strong: var(--tmux-ide-text-link, #9ab0ff);
-  --tmi-accent-surface: var(--tmux-ide-selection-selection, #293149);
-  --tmi-hover: var(--tmux-ide-selection-hover, #252732);
-  --tmi-pressed: var(--tmux-ide-selection-pressed, #30323f);
-  --tmi-danger: var(--tmux-ide-status-danger, #ef737b);
-  --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, #616472);
-  --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, #181920);
+  --tmi-surface-canvas: var(--tmux-ide-surface-canvas, oklch(14.05% 0.004 285.8));
+  --tmi-surface-panel: var(--tmux-ide-surface-panel, oklch(27.41% 0.006 286));
+  --tmi-surface-raised: var(--tmux-ide-surface-panel-raised, oklch(16.8% 0.006 285.7));
+  --tmi-surface-overlay: var(--tmux-ide-surface-command, oklch(19.5% 0.008 285.7));
+  --tmi-text-primary: var(--tmux-ide-text-primary, oklch(97% 0.003 265));
+  --tmi-text-bright: var(--tmux-ide-text-bright, oklch(98.48% 0 0));
+  --tmi-text-secondary: var(--tmux-ide-text-secondary, oklch(71.19% 0.013 286.1));
+  --tmi-text-muted: var(--tmux-ide-text-muted, oklch(58% 0.012 286.1));
+  --tmi-text-on-accent: var(--tmux-ide-text-inverse, oklch(100% 0 0));
+  --tmi-border-subtle: var(--tmux-ide-border-subtle, oklch(37.27% 0.008 286));
+  --tmi-border-default: var(--tmux-ide-border-default, oklch(31.51% 0.007 286));
+  --tmi-accent: var(--tmux-ide-border-focused, #8aa5ff);
+  --tmi-accent-strong: var(--tmux-ide-text-link, oklch(71.4% 0.143 254.6));
+  --tmi-accent-surface: var(--tmux-ide-selection-selection, rgb(97 135 254 / 26%));
+  --tmi-hover: var(--tmux-ide-selection-hover, oklch(100% 0 0 / 6%));
+  --tmi-pressed: var(--tmux-ide-selection-pressed, oklch(100% 0 0 / 10%));
+  --tmi-danger: var(--tmux-ide-status-danger, #ff8080);
+  --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, oklch(41% 0.008 286.1));
+  --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, oklch(27.41% 0.006 286));
 }
 
 [data-theme="light"],
 [data-tmi-theme="light"] {
-  --tmi-surface-canvas: var(--tmux-ide-surface-canvas, #f5f5f7);
-  --tmi-surface-panel: var(--tmux-ide-surface-panel, #ffffff);
-  --tmi-surface-raised: var(--tmux-ide-surface-panel-raised, #f0f0f3);
-  --tmi-surface-overlay: var(--tmux-ide-surface-command, #ffffff);
-  --tmi-text-primary: var(--tmux-ide-text-primary, #24252b);
-  --tmi-text-bright: var(--tmux-ide-text-bright, #101116);
-  --tmi-text-secondary: var(--tmux-ide-text-secondary, #4f515c);
-  --tmi-text-muted: var(--tmux-ide-text-muted, #737681);
-  --tmi-text-on-accent: var(--tmux-ide-text-inverse, #ffffff);
-  --tmi-border-subtle: var(--tmux-ide-border-subtle, #dedfe4);
-  --tmi-border-default: var(--tmux-ide-border-default, #c8cad2);
-  --tmi-accent: var(--tmux-ide-border-focused, #496de2);
-  --tmi-accent-strong: var(--tmux-ide-text-link, #365bc8);
-  --tmi-accent-surface: var(--tmux-ide-selection-selection, #dfe5fb);
-  --tmi-hover: var(--tmux-ide-selection-hover, #e8eaf1);
-  --tmi-pressed: var(--tmux-ide-selection-pressed, #dddfe9);
-  --tmi-danger: var(--tmux-ide-status-danger, #bf3945);
-  --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, #9a9ca5);
-  --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, #ececf0);
-  --tmi-shadow-subtle: 0 1px 2px 0 rgb(25 28 36 / 0.08), 0 1px 1px 0 rgb(25 28 36 / 0.05);
-  --tmi-shadow-raised: 0 2px 5px -1px rgb(25 28 36 / 0.1), 0 1px 3px -1px rgb(25 28 36 / 0.07);
-  --tmi-shadow-overlay: 0 8px 18px -6px rgb(25 28 36 / 0.16), 0 3px 8px -3px rgb(25 28 36 / 0.1);
+  --tmi-surface-canvas: var(--tmux-ide-surface-canvas, oklch(98.7% 0 0));
+  --tmi-surface-panel: var(--tmux-ide-surface-panel, oklch(96.76% 0 0));
+  --tmi-surface-raised: var(--tmux-ide-surface-panel-raised, oklch(100% 0 0));
+  --tmi-surface-overlay: var(--tmux-ide-surface-command, oklch(100% 0 0));
+  --tmi-text-primary: var(--tmux-ide-text-primary, oklch(21% 0.006 286));
+  --tmi-text-bright: var(--tmux-ide-text-bright, oklch(14.05% 0.004 285.8));
+  --tmi-text-secondary: var(--tmux-ide-text-secondary, oklch(51% 0.014 285.9));
+  --tmi-text-muted: var(--tmux-ide-text-muted, oklch(60% 0.012 285.9));
+  --tmi-text-on-accent: var(--tmux-ide-text-inverse, oklch(100% 0 0));
+  --tmi-border-subtle: var(--tmux-ide-border-subtle, oklch(96.01% 0 0));
+  --tmi-border-default: var(--tmux-ide-border-default, oklch(91.97% 0.004 286.3));
+  --tmi-accent: var(--tmux-ide-border-focused, #4668e0);
+  --tmi-accent-strong: var(--tmux-ide-text-link, oklch(54.6% 0.215 262.9));
+  --tmi-accent-surface: var(--tmux-ide-selection-selection, rgb(97 135 254 / 16%));
+  --tmi-hover: var(--tmux-ide-selection-hover, oklch(0% 0 0 / 5%));
+  --tmi-pressed: var(--tmux-ide-selection-pressed, oklch(0% 0 0 / 9%));
+  --tmi-danger: var(--tmux-ide-status-danger, #c62222);
+  --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, oklch(78% 0.006 285.9));
+  --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, oklch(96.76% 0 0));
+  --tmi-shadow-subtle:
+    0 0 0 1px oklch(0% 0 0 / 0.07), 0 1px 1px 0 oklch(0% 0 0 / 0.05),
+    0 2px 4px -1px oklch(0% 0 0 / 0.04);
+  --tmi-shadow-raised:
+    0 1px 0 0 oklch(0% 0 0 / 0.02), 0 1px 12px 0 oklch(0% 0 0 / 0.06),
+    0 0 1px 0 oklch(0% 0 0 / 0.32);
+  --tmi-shadow-overlay:
+    0 0 1px 0 oklch(0% 0 0 / 0.3), 0 4px 12px -2px oklch(0% 0 0 / 0.08),
+    0 12px 32px -8px oklch(0% 0 0 / 0.14);
+  --tmi-shadow-field: 0 1px 2px 0 oklch(0% 0 0 / 0.05), 0 0 0 1px oklch(0% 0 0 / 0.04);
+  --tmi-shadow-tooltip: 0 0 1px 0 oklch(0% 0 0 / 0.28), 0 2px 8px -2px oklch(0% 0 0 / 0.1);
 }
 
 [data-theme],

@@ -62,6 +62,265 @@ select:focus-visible,
   border: 0;
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * m46 — the sfora design system
+ * ---------------------------------------------------------------------------
+ *
+ * Colour, elevation and shape are authored here and nowhere else. Two layers:
+ *
+ *   1. The SYSTEM (`--sf-*`): sfora's oklch zinc ladder, transcribed from
+ *      ~/Developer/sfora/src/app/prototyper-tokens.css, plus the semantic
+ *      accents from the owner's palette.
+ *   2. The MAPPING (below): the product roles the shell already consumes
+ *      (`--tmux-ide-*`, `--desktop-*`) re-pointed at the system, so a change of
+ *      identity never touches a component.
+ *
+ * THE ARCHITECTURE IS PLANES, NOT PAGES. Four of them, back to front:
+ *
+ *   sidebar 96.3%   the frame everything else sits on
+ *   content 98.7%   near-white, reads as an inset card on that frame
+ *   section 96.76%  grey cards floating on the content plane
+ *   item    100%    white cards nested inside the grey sections
+ *
+ * Dark inverts the same architecture: 12% / 14.05% / 16.8%, popovers lifted to
+ * 19.5%. In tmux-ide the fleet sidebar is the frame, the canvas is the inset
+ * content plane, and window cards and dialogs are front-plane cards.
+ *
+ * Depth comes from PLANE plus RING, not from borders everywhere — see the
+ * shadow ladder below. Hairline borders survive only as genuine dividers.
+ *
+ * Why the roles are re-pointed HERE rather than in the resolver that computes
+ * them: `--tmux-ide-*` is produced in TypeScript (packages/contracts
+ * visual-tokens → dom-experience) and pushed onto `.app` at runtime through an
+ * attribute rule. That resolver is shared with the terminal TUI, which this
+ * milestone leaves alone. A `.app[…][…]` selector scores (0,2,0) against the
+ * runtime rule's (0,1,0), so the mapping wins deterministically regardless of
+ * stylesheet order — the same seam the terminal ANSI ladder uses further down.
+ *
+ * The mapping is scoped to `[data-increased-contrast="false"]` on purpose. When
+ * a user asks the OS for more contrast the resolver rewrites the focus,
+ * selection, attention and danger borders, and a blanket static override would
+ * silently swallow that. In high contrast the resolver stays in charge and this
+ * palette steps aside. The cost, recorded rather than hidden: user and project
+ * theme overrides only reach those roles while high contrast is on.
+ */
+.app {
+  /*
+   * Accents and semantics from the owner's palette. Anchor is the focus and
+   * text-selection accent ONLY — the active nav row uses the lit-blue gradient
+   * below, which is the same blue family in a different role. Anchor ships no
+   * P3 variant in the palette, so it stays sRGB; nothing is derived for it.
+   */
+  --sf-anchor: #6187fe;
+  --sf-app-blue: #018dff;
+  --sf-valid: #00c454;
+  --sf-app-green: #34c759;
+  --sf-invalid: #ff4e4e;
+  --sf-warning: #f6c30f;
+  --sf-wash-valid: rgb(0 196 84 / 10%);
+  --sf-wash-invalid: #fff0f0;
+  --sf-wash-warning: #fefae6;
+
+  /* sfora's easing scale. */
+  --sf-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --sf-ease-out-quad: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --sf-ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1);
+}
+
+/*
+ * Light: the depth ramp, verbatim. Zinc-hued neutrals — hue 286, whisper
+ * chroma — never a blue-grey and never a warm one.
+ */
+.app[data-theme="light"] {
+  --sf-sidebar: oklch(96.3% 0 0);
+  --sf-background: oklch(98.7% 0 0);
+  --sf-section: oklch(96.76% 0 0);
+  --sf-card: oklch(100% 0 0);
+  --sf-popover: oklch(100% 0 0);
+  --sf-terminal: oklch(100% 0 0);
+
+  /* The four-step text hierarchy, plus the disabled rung. */
+  --sf-foreground: oklch(14.05% 0.004 285.8);
+  --sf-foreground-strong: oklch(21% 0.006 286);
+  --sf-muted-foreground: oklch(51% 0.014 285.9);
+  --sf-tertiary: oklch(60% 0.012 285.9);
+  --sf-quaternary: oklch(68% 0.01 285.9);
+  --sf-disabled: oklch(78% 0.006 285.9);
+
+  --sf-border: oklch(91.97% 0.004 286.3);
+  --sf-border-light: oklch(96.01% 0 0);
+  --sf-border-dark: oklch(79.59% 0.011 286.2);
+  --sf-sidebar-border: oklch(95.5% 0 0);
+
+  /*
+   * Primary is metallic ZINC, not blue. Buttons and primary actions are the
+   * single biggest look-defining decision in this system.
+   */
+  --sf-primary: oklch(44% 0.017 286);
+  --sf-primary-foreground: oklch(100% 0 0);
+  --sf-primary-hover: color-mix(in oklab, var(--sf-primary) 90%, var(--sf-primary-foreground) 10%);
+  --sf-primary-active: color-mix(in oklab, var(--sf-primary) 84%, var(--sf-primary-foreground) 16%);
+
+  /* Section accents: eyebrows and identity, never status. */
+  --sf-accent-blue: oklch(54.6% 0.215 262.9);
+  --sf-accent-blue-dark: oklch(47.5% 0.2 262.9);
+  --sf-accent-green: oklch(62.7% 0.17 149.3);
+  --sf-accent-amber: oklch(66.6% 0.157 58.3);
+  --sf-accent-purple: oklch(55.8% 0.252 302.3);
+
+  /*
+   * Semantic twins, DERIVED not transcribed. The owner's semantic hexes are
+   * the identity and drive every fill and wash, but #00c454 reaches 2.23:1 on
+   * white and #f6c30f reaches 1.58:1 — neither can carry 11px text or a 6px
+   * status dot, which needs 3:1 as a non-text component. These are the nearest
+   * values in the same hue that clear the floor. Dark mode needs no twins.
+   */
+  --sf-valid-ink: #0f7a3d;
+  --sf-invalid-ink: #c62222;
+  --sf-warning-ink: #7f6200;
+  /* Anchor as a ring on the lighter planes needs the same treatment. */
+  --sf-anchor-ring: #4668e0;
+
+  --sf-hover: oklch(0% 0 0 / 5%);
+  --sf-active: oklch(0% 0 0 / 9%);
+  --sf-selection: color-mix(in srgb, var(--sf-anchor) 16%, transparent);
+
+  /*
+   * The shadow ladder, verbatim. The crisp 1px RING is the signature: the
+   * visible edge is what makes a white card read on grey, and a near-zero ring
+   * dissolves into the canvas. On overlays the 1px shadow ring draws the
+   * silhouette sharper than any border colour can. Never soften these, never
+   * substitute a border for a ring.
+   */
+  --sf-shadow-surface:
+    0 0 0 1px oklch(0% 0 0 / 0.07), 0 1px 1px 0 oklch(0% 0 0 / 0.05),
+    0 2px 4px -1px oklch(0% 0 0 / 0.04);
+  --sf-shadow-field: 0 1px 2px 0 oklch(0% 0 0 / 0.05), 0 0 0 1px oklch(0% 0 0 / 0.04);
+  --sf-shadow-overlay:
+    0 0 1px 0 oklch(0% 0 0 / 0.3), 0 4px 12px -2px oklch(0% 0 0 / 0.08),
+    0 12px 32px -8px oklch(0% 0 0 / 0.14);
+  --sf-shadow-tooltip: 0 0 1px 0 oklch(0% 0 0 / 0.28), 0 2px 8px -2px oklch(0% 0 0 / 0.1);
+  --sf-shadow-inset-track:
+    inset 0 1px 2px oklch(0% 0 0 / 0.06), inset 0 0 0 1px oklch(0% 0 0 / 0.04);
+  --sf-shadow-panel:
+    0 1px 0 0 oklch(0% 0 0 / 0.02), 0 1px 12px 0 oklch(0% 0 0 / 0.06),
+    0 0 1px 0 oklch(0% 0 0 / 0.32);
+}
+
+/*
+ * Dark: the same architecture inverted. Tonal contrast carries the depth, and
+ * the ring flips to a LIT top edge — a light ring reads as the white border of
+ * a card against the darker canvas, which is what keeps the macOS silhouette.
+ */
+.app[data-theme="dark"] {
+  --sf-sidebar: oklch(12% 0.004 285.8);
+  --sf-background: oklch(14.05% 0.004 285.8);
+  --sf-section: oklch(27.41% 0.006 286);
+  --sf-card: oklch(16.8% 0.006 285.7);
+  --sf-popover: oklch(19.5% 0.008 285.7);
+  --sf-terminal: oklch(12% 0.004 285.8);
+
+  --sf-foreground: oklch(98.48% 0 0);
+  --sf-foreground-strong: oklch(97% 0.003 265);
+  --sf-muted-foreground: oklch(71.19% 0.013 286.1);
+  --sf-tertiary: oklch(58% 0.012 286.1);
+  --sf-quaternary: oklch(47% 0.01 286.1);
+  --sf-disabled: oklch(41% 0.008 286.1);
+
+  --sf-border: oklch(31.51% 0.007 286);
+  --sf-border-light: oklch(37.27% 0.008 286);
+  --sf-border-dark: oklch(23.37% 0.004 286.1);
+  --sf-sidebar-border: oklch(23.37% 0.004 286.1);
+
+  --sf-primary: oklch(55% 0.016 286);
+  --sf-primary-foreground: oklch(100% 0 0);
+  --sf-primary-hover: color-mix(in oklab, var(--sf-primary) 90%, var(--sf-primary-foreground) 10%);
+  --sf-primary-active: color-mix(in oklab, var(--sf-primary) 84%, var(--sf-primary-foreground) 16%);
+
+  --sf-accent-blue: oklch(71.4% 0.143 254.6);
+  --sf-accent-blue-dark: oklch(62% 0.16 254.6);
+  --sf-accent-green: oklch(80% 0.182 151.7);
+  --sf-accent-amber: oklch(83.7% 0.164 84.4);
+  --sf-accent-purple: oklch(72.2% 0.177 305.5);
+
+  /* On a dark ground the owner's semantics carry text and glyphs unaided. */
+  --sf-valid-ink: #3fd782;
+  --sf-invalid-ink: #ff8080;
+  --sf-warning-ink: #e8bc28;
+  --sf-anchor-ring: #8aa5ff;
+
+  --sf-hover: oklch(100% 0 0 / 6%);
+  --sf-active: oklch(100% 0 0 / 10%);
+  --sf-selection: color-mix(in srgb, var(--sf-anchor) 26%, transparent);
+
+  --sf-wash-valid: color-mix(in oklab, var(--sf-valid) 18%, var(--sf-card));
+  --sf-wash-invalid: color-mix(in oklab, var(--sf-invalid) 18%, var(--sf-card));
+  --sf-wash-warning: color-mix(in oklab, var(--sf-warning) 18%, var(--sf-card));
+
+  --sf-shadow-surface: 0 0 0 1px oklch(100% 0 0 / 0.06), 0 1px 2px 0 oklch(0% 0 0 / 0.3);
+  --sf-shadow-field: none;
+  --sf-shadow-overlay:
+    0 0 0 1px oklch(100% 0 0 / 0.08), 0 4px 12px -2px oklch(0% 0 0 / 0.3),
+    0 12px 32px -8px oklch(0% 0 0 / 0.45);
+  --sf-shadow-tooltip: 0 0 0 1px oklch(100% 0 0 / 0.1), 0 4px 16px oklch(0% 0 0 / 0.4);
+  --sf-shadow-inset-track:
+    inset 0 1px 2px oklch(0% 0 0 / 0.12), inset 0 0 0 1px oklch(100% 0 0 / 0.06);
+  --sf-shadow-panel:
+    0 1px 0 0 oklch(0% 0 0 / 0.2), 0 1px 12px 0 oklch(0% 0 0 / 0.45), 0 0 1px 0 oklch(0% 0 0 / 0.9);
+}
+
+/*
+ * P3, verbatim from the owner's palette. Only the values his palette provides
+ * are upgraded; anchor has no P3 variant there, so it stays sRGB rather than
+ * being derived. The oklch neutrals already carry their own gamut.
+ */
+@supports (color: color(display-p3 1 1 1)) {
+  .app {
+    --sf-app-blue: color(display-p3 0.00392156862745098 0.5529411764705883 1);
+    --sf-app-green: color(display-p3 0.20392156862745098 0.7803921568627451 0.34901960784313724);
+  }
+}
+
+/*
+ * The mapping. Every product role the shell consumes, re-pointed at the system
+ * above — the whole reason components need no diff to change identity.
+ */
+.app[data-increased-contrast="false"] {
+  --tmux-ide-surface-canvas: var(--sf-background);
+  --tmux-ide-surface-panel: var(--sf-section);
+  --tmux-ide-surface-panel-raised: var(--sf-card);
+  --tmux-ide-surface-terminal: var(--sf-terminal);
+  --tmux-ide-surface-header: var(--sf-section);
+  --tmux-ide-surface-header-active: color-mix(in oklab, var(--sf-section) 88%, var(--sf-primary));
+  --tmux-ide-surface-command: var(--sf-popover);
+  --tmux-ide-text-bright: var(--sf-foreground);
+  --tmux-ide-text-primary: var(--sf-foreground-strong);
+  --tmux-ide-text-secondary: var(--sf-muted-foreground);
+  --tmux-ide-text-muted: var(--sf-tertiary);
+  --tmux-ide-text-inverse: var(--sf-primary-foreground);
+  --tmux-ide-text-link: var(--sf-accent-blue);
+  --tmux-ide-border-subtle: var(--sf-border-light);
+  --tmux-ide-border-default: var(--sf-border);
+  /* Anchor's roles: the focus ring, and text selection. Nothing else. */
+  --tmux-ide-border-focused: var(--sf-anchor-ring);
+  --tmux-ide-border-selected: var(--sf-accent-blue);
+  --tmux-ide-border-attention: var(--sf-warning-ink);
+  --tmux-ide-border-danger: var(--sf-invalid-ink);
+  /* Semantics are never decorative: one tone per meaning, and no other source. */
+  --tmux-ide-status-neutral: var(--sf-tertiary);
+  --tmux-ide-status-info: var(--sf-accent-blue);
+  --tmux-ide-status-success: var(--sf-valid-ink);
+  --tmux-ide-status-warning: var(--sf-warning-ink);
+  --tmux-ide-status-danger: var(--sf-invalid-ink);
+  --tmux-ide-selection-selection: var(--sf-selection);
+  --tmux-ide-selection-selection-text: var(--sf-foreground);
+  --tmux-ide-selection-hover: var(--sf-hover);
+  --tmux-ide-selection-pressed: var(--sf-active);
+  --tmux-ide-control-disabled-background: var(--sf-section);
+  --tmux-ide-control-disabled-foreground: var(--sf-disabled);
+}
+
 .app {
   --desktop-chrome-height: 50px;
   --desktop-sidebar-width: 236px;
@@ -75,35 +334,50 @@ select:focus-visible,
   --desktop-mono-font:
     "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
   --desktop-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
-  --desktop-chrome: #191a1e;
-  --desktop-sidebar: #17181c;
-  --desktop-workbench: #0e1013;
-  --desktop-canvas: #101216;
-  --desktop-raised: #202228;
-  --desktop-dock: #1c1e23;
-  --desktop-hover: rgb(255 255 255 / 5%);
-  --desktop-active: rgb(255 255 255 / 7.5%);
-  --desktop-separator: rgb(255 255 255 / 8%);
-  --desktop-shadow: rgb(0 0 0 / 46%);
+  /*
+   * The shell's regions, placed on the depth ramp. The titlebar, sidebar and
+   * dock are one FRAME at the back plane; the workbench and canvas are the
+   * inset content plane; raised is the white front plane cards live on.
+   */
+  --desktop-chrome: var(--sf-sidebar);
+  --desktop-sidebar: var(--sf-sidebar);
+  --desktop-workbench: var(--sf-background);
+  --desktop-canvas: var(--sf-background);
+  --desktop-raised: var(--sf-card);
+  --desktop-dock: var(--sf-sidebar);
+  --desktop-hover: var(--sf-hover);
+  --desktop-active: var(--sf-active);
+  --desktop-separator: var(--sf-border);
+  --desktop-shadow: oklch(0% 0 0 / 46%);
   /*
    * Shared floating-surface recipe. Every overlay card reads the same three
    * ingredients: a 1px inset hairline highlight on the top edge, a low-opacity
    * drop shadow, and a translucent blurred scrim behind it. Surfaces stay opaque
    * — only the scrim is translucent.
    */
-  --tmi-overlay-hairline: inset 0 1px 0 rgb(255 255 255 / 6%);
   /*
-   * Elevation shadow ladder (dark). Tight, low-blur, negative-spread drop shadows
-   * that ground a surface without a wide glow — the 1px hairline is the definition
-   * edge, the shadow only lifts. Three rungs: subtle (cards/chips/inputs), raised
-   * (toolbars/minimap/floating panels), overlay (dialogs, menus, command palette,
-   * selected floating windows). Dark carries higher alpha to read against the
-   * near-black canvas. Keep in sync with the ui-system.css copies.
+   * The old inset highlight is gone: the ring in each shadow token IS the
+   * definition edge now, and layering a second one on top double-draws it.
    */
-  --tmi-shadow-subtle: 0 1px 2px 0 rgb(0 0 0 / 0.28), 0 1px 1px 0 rgb(0 0 0 / 0.22);
-  --tmi-shadow-raised: 0 2px 5px -1px rgb(0 0 0 / 0.36), 0 1px 3px -1px rgb(0 0 0 / 0.3);
-  --tmi-shadow-overlay: 0 8px 18px -6px rgb(0 0 0 / 0.5), 0 3px 8px -3px rgb(0 0 0 / 0.4);
-  --tmi-overlay-elevation: var(--tmi-shadow-overlay);
+  --tmi-overlay-hairline: 0 0 #0000;
+  /*
+   * The elevation ladder is sfora's named ladder, aliased so existing surfaces
+   * pick it up. Every card, popover, tooltip, field and floating panel reads
+   * one of these — there are no ad-hoc shadows in this stylesheet.
+   *
+   *   surface  resting cards on a plane      ring + contact + ambient
+   *   field    inputs and inset controls
+   *   overlay  dialogs, menus, palette       silhouette ring + float
+   *   tooltip  the lightest floating thing
+   *   panel    floating toolbars, minimap
+   */
+  --tmi-shadow-subtle: var(--sf-shadow-surface);
+  --tmi-shadow-raised: var(--sf-shadow-panel);
+  --tmi-shadow-overlay: var(--sf-shadow-overlay);
+  --tmi-shadow-field: var(--sf-shadow-field);
+  --tmi-shadow-tooltip: var(--sf-shadow-tooltip);
+  --tmi-shadow-inset-track: var(--sf-shadow-inset-track);
+  --tmi-overlay-elevation: var(--sf-shadow-overlay);
   --tmi-overlay-scrim: color-mix(in srgb, var(--desktop-workbench) 60%, transparent);
   --tmi-overlay-scrim-solid: color-mix(in srgb, var(--desktop-workbench) 82%, transparent);
   --desktop-focus-soft: color-mix(
@@ -125,23 +399,12 @@ select:focus-visible,
   -webkit-font-smoothing: antialiased;
 }
 
+/*
+ * Nothing forks per appearance at this level any more: the shell grounds read
+ * the depth ramp and the shadow ladder, and both are already appearance-aware.
+ */
 .app[data-theme="light"] {
-  --desktop-chrome: #f6f7f8;
-  --desktop-sidebar: #eef0f2;
-  --desktop-workbench: #dfe2e6;
-  --desktop-canvas: #e6e8ec;
-  --desktop-raised: #fafbfc;
-  --desktop-dock: #f2f4f6;
-  --desktop-hover: rgb(23 25 31 / 5%);
-  --desktop-active: rgb(23 25 31 / 8%);
-  --desktop-separator: rgb(23 25 31 / 10%);
-  --desktop-shadow: rgb(25 28 36 / 18%);
-  /* On light surfaces the top-edge highlight is a brighter, crisper white sheen. */
-  --tmi-overlay-hairline: inset 0 1px 0 rgb(255 255 255 / 60%);
-  /* Light ladder: same tight geometry, quieter alpha over a bright surface. */
-  --tmi-shadow-subtle: 0 1px 2px 0 rgb(25 28 36 / 0.08), 0 1px 1px 0 rgb(25 28 36 / 0.05);
-  --tmi-shadow-raised: 0 2px 5px -1px rgb(25 28 36 / 0.1), 0 1px 3px -1px rgb(25 28 36 / 0.07);
-  --tmi-shadow-overlay: 0 8px 18px -6px rgb(25 28 36 / 0.16), 0 3px 8px -3px rgb(25 28 36 / 0.1);
+  --desktop-shadow: oklch(0% 0 0 / 16%);
 }
 
 /*
