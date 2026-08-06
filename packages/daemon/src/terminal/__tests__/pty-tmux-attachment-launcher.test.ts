@@ -19,12 +19,14 @@ function plan(
   attachmentId = FIRST_ID,
   generation = 0,
   viewerMode: GroupedTmuxAttachmentPlan["viewerMode"] = "interactive",
+  geometryOwnership: GroupedTmuxAttachmentPlan["geometryOwnership"] = "passive",
 ) {
   return planGroupedTmuxAttachment({
     attachmentId,
     generation,
     target: { workspaceName: "workspace.alpha", semanticPaneId: "pane.worker" },
     viewerMode,
+    geometryOwnership,
     viewport: { cols: 120, rows: 40 },
     source: { sessionId: "$12", windowId: "@34", runtimePaneId: "%56", windowPaneCount: 1 },
   });
@@ -46,6 +48,7 @@ function input(selectedPlan = plan()): TmuxAttachmentClientTransportInput {
     },
     viewport: { ...selectedPlan.viewport },
     viewerMode: selectedPlan.viewerMode,
+    geometryOwnership: selectedPlan.geometryOwnership,
   };
 }
 
@@ -149,6 +152,7 @@ describe("PtyTmuxAttachmentLauncher", () => {
     // The spawned client is size-passive (m41 attach-2): the embedded attach
     // carries `-f ignore-size` so it never drives the shared window's size.
     expect(adapter.spawnLog[0]!.args.join(" ")).toContain("ignore-size");
+    expect(input(selectedPlan).geometryOwnership).toBe("passive");
     // The launch proof no longer gates on single-pane windows.
     expect(proof.calls[0]?.join(" ")).not.toContain("window_panes");
     expect(proof.calls[0]?.slice(0, 2)).toEqual(["-L", "owned-socket"]);
@@ -156,6 +160,42 @@ describe("PtyTmuxAttachmentLauncher", () => {
       expect.stringContaining(`=${selectedPlan.identity.viewSessionName}`),
     );
     expect(proof.calls[0]?.join(" ")).toContain(selectedPlan.identity.markerValue);
+    transport.disposeAll();
+  });
+
+  it("spawns an OWNER without ignore-size, matching the plan the executor checked", async () => {
+    /*
+     * The launcher is the fourth site that has to agree about this argv (m50.2).
+     *
+     * The plan builder decides it, the executor's canonical planner rebuilds it,
+     * the deep-equality gate compares the two, and THIS is where the result
+     * actually becomes a process. A launcher that spawned `-f ignore-size`
+     * regardless would pass every plan-level test and still leave the origin
+     * window unresizable — the feature silently absent at the only layer that
+     * runs.
+     */
+    const adapter = new MockPtyAdapter();
+    const proof = new ProofRunner();
+    const owner = plan(FIRST_ID, 0, "interactive", "owner");
+    proveCurrentAttached(proof, adapter, owner);
+    const transport = launcher(adapter, proof);
+
+    const attempt = transport.beginGuardedAttach(input(owner));
+    expect(attempt.status).toBe("claimed");
+    await expect(attempt.outcome).resolves.toEqual({ status: "executed" });
+
+    const spawned = adapter.spawnLog[0]!.args.join(" ");
+    expect(spawned).not.toContain("ignore-size");
+    expect(spawned).toContain("attach-session");
+    // …and it is the very argv the executor's equality gate accepted, not a
+    // second construction that merely happens to agree today.
+    expect(adapter.spawnLog[0]!.args).toEqual(
+      expect.arrayContaining(planCanonicalTmuxAttachmentClientCommand(input(owner)).argv),
+    );
+    // Ownership comes from the client flag alone: the launcher writes no window
+    // state, so a shared session's options are untouched by an owning attach.
+    expect(spawned).not.toContain("window-size");
+    expect(spawned).not.toContain("resize-window");
     transport.disposeAll();
   });
 

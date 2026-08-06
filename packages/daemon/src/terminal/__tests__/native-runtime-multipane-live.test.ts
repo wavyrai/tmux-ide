@@ -193,7 +193,12 @@ describe.skipIf(!hasTmux)("m41 attach-2 multi-pane live acceptance", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  async function driveAttach(workspaceName: string, sessionName: string, semanticPaneId: string) {
+  async function driveAttach(
+    workspaceName: string,
+    sessionName: string,
+    semanticPaneId: string,
+    geometryOwnership: "passive" | "owner" = "passive",
+  ) {
     const registry = new WorkspaceRegistry({
       dir: join(root, `registry-${randomUUID().slice(0, 6)}`),
       listSessions: () => [],
@@ -217,7 +222,7 @@ describe.skipIf(!hasTmux)("m41 attach-2 multi-pane live acceptance", () => {
         protocolVersion: 1,
         target: { workspaceName, semanticPaneId },
         viewerMode: "interactive",
-        geometryOwnership: "passive",
+        geometryOwnership,
         viewport: { cols: 100, rows: 30 },
       },
       { requestId, projectIdentity: "project-accept", rendererOrigin: "tmux-ide://app" },
@@ -335,5 +340,58 @@ describe.skipIf(!hasTmux)("m41 attach-2 multi-pane live acceptance", () => {
       await runtime.dispose();
     }
     expect(originSnapshot(sessionName)).toBe(before);
+  });
+
+  it("INVERTS for an owner: the same window resizes, and returns when it releases", async () => {
+    /*
+     * The owner-mode twin of the assertion above, on the same session and the
+     * same 2-pane window (m50.2, gap 1).
+     *
+     * The passive test's whole claim is `originSnapshot` byte-identical before
+     * and after. That claim is exactly what geometry ownership is FOR inverting,
+     * so it is asserted here in the negative rather than deleted — keeping both
+     * on one window is what proves the difference is the ownership flag and not
+     * something about the session, the pane count or the order of the suite.
+     *
+     * It runs last and restores the window, so the passive assertions above
+     * still see the session they were written against.
+     */
+    const sessionName = "accept-two";
+    const before = originSnapshot(sessionName);
+    const beforeGrid = windowGrid(sessionName);
+
+    const { runtime } = await driveAttach("workspace.two", sessionName, "pane.two.0", "owner");
+    try {
+      /*
+       * Bug this catches: `-f ignore-size` survives into an owning attach, so
+       * the app's measured 100x30 is discarded and the window stays at the held
+       * client's size — gap 1 silently absent, with the contract still claiming
+       * ownership was granted.
+       */
+      await vi.waitFor(
+        () => {
+          expect(windowGrid(sessionName)).toEqual({ cols: 100, rows: 30 });
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+      expect(originSnapshot(sessionName)).not.toBe(before);
+    } finally {
+      await runtime.dispose();
+    }
+
+    /*
+     * Releasing gives the window back to the held client, byte for byte.
+     *
+     * Bug this catches: a disposed attachment leaves the session pinned to the
+     * size of an app that is no longer running — which a user would meet as a
+     * permanently shrunken tmux session with nothing left to blame.
+     */
+    await vi.waitFor(
+      () => {
+        expect(windowGrid(sessionName)).toEqual(beforeGrid);
+        expect(originSnapshot(sessionName)).toBe(before);
+      },
+      { timeout: 20_000, interval: 100 },
+    );
   });
 });

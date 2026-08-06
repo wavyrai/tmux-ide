@@ -59,11 +59,28 @@ export type TerminalAttachmentViewerMode = z.infer<typeof TerminalAttachmentView
  * would. The renderer measures its tile area, floors it into cells, and sends
  * the result down the attachment's existing resize path; the PTY resize reaches
  * the tmux client as a SIGWINCH and tmux re-tiles the window to match. Nothing
- * issues `refresh-client -C` from outside — the client IS the size.
+ * issues `refresh-client -C` and nothing writes a `window-size` option — the
+ * client IS the size, and the attachment path never writes window state.
  *
- * Ownership is exclusive per window. The interactive lease is already
- * window-keyed and permits one holder, so "one owner" needs no second mechanism;
- * it is released when the attachment is.
+ * Ownership is exclusive among tmux-ide's own attachments: the interactive lease
+ * is window-keyed and permits one holder, so "one owner" needs no second
+ * mechanism, and it is released when the attachment is.
+ *
+ * ── Sharing a window with a real terminal ─────────────────────────────────────
+ *
+ * `owner` does NOT mean exclusive control of the window's size against the rest
+ * of the world, and that is deliberate. tmux's default `window-size latest`
+ * sizes a window to its most recently used client, so an owning attachment wins
+ * while the app is the client the user last acted in — and the moment they
+ * attach a real terminal and type there, THAT client wins instead. Coming back
+ * to the app takes it back.
+ *
+ * This is the intended sharing behavior, not a limitation being tolerated. The
+ * alternative — `window-size manual` plus `resize-window` — would let the app
+ * pin a size onto a session someone else is attached to, which is precisely the
+ * bullying tmux-ide exists not to do. Under `latest`, a user who never opens the
+ * app is unaffected by it, and a user who opens both gets whichever they are
+ * currently working in. Nothing is taken from the terminal they already had.
  *
  * `passive` is the DEFAULT on the request, and deliberately so: an omitted field
  * must mean the harmless thing. Owning geometry reflows a window that an ssh

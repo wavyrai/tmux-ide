@@ -619,9 +619,13 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
     // Window-as-unit launch proof (m41 attach-2): window_id + single-window
     // topology + marker ownership, with the exact pane target proving the
     // resolved pane. The former `window_panes == 1` gate is dropped so a
-    // multi-pane linked window attaches. The spawned client is size-passive
-    // (`attach-session -f ignore-size`, built by the canonical client planner),
-    // so this attachment never drives the shared origin window's size.
+    // multi-pane linked window attaches.
+    //
+    // Whether the spawned client drives the origin window's size is the
+    // attachment's `geometryOwnership` (m50.2), decided by the canonical client
+    // planner's argv — `-f ignore-size` for a passive one, absent for an owner.
+    // This proof is indifferent to it: it establishes that the right window is
+    // attached in the right marked view, which is true of both.
     const guard = `#{&&:#{==:#{window_id},${state.expectedWindowId}},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${state.markerValue}}}}`;
     const command: TmuxArgvPlan = {
       executable: "tmux",

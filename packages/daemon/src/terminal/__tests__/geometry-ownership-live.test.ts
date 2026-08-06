@@ -311,4 +311,84 @@ describe.skipIf(!hasTmux)("m50.2 geometry ownership, live", () => {
     );
     expect(run(["list-sessions", "-F", "#{session_name}"]).split("\n")).toEqual([SESSION]);
   });
+
+  it("hands the size to whichever client the user is in, and takes it back", async () => {
+    /*
+     * The sharing behaviour, asserted as a FEATURE (m50.2, gap 1).
+     *
+     * Owning geometry does not mean owning the window against the rest of the
+     * world. tmux's default `window-size latest` sizes a window to its most
+     * recently used client, so the app wins while the user is working in the
+     * app, and the terminal they also have attached wins the moment they type
+     * there. Coming back to the app takes it back.
+     *
+     * That is the whole reason this uses `latest` arbitration rather than
+     * `window-size manual` plus `resize-window`: manual would let the app pin a
+     * size onto a session someone else is attached to and hold it there. Under
+     * `latest`, the user who never opens the app loses nothing, and the user who
+     * opens both always gets the one they are working in.
+     *
+     * Bug this catches: a future change reaches for `resize-window` to make
+     * ownership "stick". The app would then win permanently — including over a
+     * colleague on the same session — and this test would fail at the handover.
+     */
+    const OWNED = { cols: 104, rows: 32 };
+    const HELD_WINDOW = { cols: HELD_COLS, rows: HELD_ROWS - 1 };
+    const { runtime, socket } = await driveOwningAttach(OWNED);
+    try {
+      // The app is the latest client, so the window is the app's size.
+      await vi.waitFor(
+        () => {
+          expect(windowGrid()).toEqual(OWNED);
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+
+      /*
+       * The user turns to their real terminal and types.
+       *
+       * Writing to the held client's PTY is what a keystroke in that terminal
+       * IS — it makes that client the most recently used one, and `latest` then
+       * sizes the window to it. Nothing is asked of tmux directly.
+       */
+      heldClients[0]!.write("\r");
+      await vi.waitFor(
+        () => {
+          expect(windowGrid()).toEqual(HELD_WINDOW);
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+
+      /*
+       * …and the user comes back to the app, which resizes as it always does.
+       * The app takes the size back without ever having taken it away.
+       */
+      const RECLAIMED = { cols: 88, rows: 26 };
+      socket.frame(
+        JSON.stringify({
+          type: "resize",
+          protocolVersion: 1,
+          generation: 0,
+          viewport: RECLAIMED,
+        }),
+      );
+      await vi.waitFor(
+        () => {
+          expect(windowGrid()).toEqual(RECLAIMED);
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      await runtime.dispose();
+    }
+
+    // With the app gone the held client is the only one left, so the window is
+    // its size again — the same release this file's first test proves.
+    await vi.waitFor(
+      () => {
+        expect(windowGrid()).toEqual(HELD_WINDOW);
+      },
+      { timeout: 20_000, interval: 100 },
+    );
+  });
 });
