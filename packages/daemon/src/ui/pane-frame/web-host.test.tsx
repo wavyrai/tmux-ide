@@ -141,7 +141,7 @@ describe("WebPaneFrame", () => {
     // A subtitle that adds a fact the title does not carry is kept: this pane
     // is called "Implementer" and the harness behind it is Codex.
     expect(root.querySelector(".web-pane-frame__subtitle")?.textContent).toBe("Codex");
-    expect(root.querySelector('[data-pane-icon="terminals"]')).not.toBeNull();
+    expect(root.querySelector('[data-pane-icon="agent-codex"]')).not.toBeNull();
     expect(root.querySelector('[data-grip-icon="move"]')).not.toBeNull();
     expect(root.querySelector('[data-action-icon="split-right"]')).not.toBeNull();
     expect(root.querySelector('[data-item-kind="status"]')?.textContent).toContain("running");

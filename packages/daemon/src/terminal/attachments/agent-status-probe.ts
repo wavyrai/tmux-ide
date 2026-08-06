@@ -37,6 +37,8 @@ import { parseSnapshot } from "../../tui/detect/snapshot.ts";
 
 /** The per-pane facts the pure projector consumes (see `ApplicationShellPanePresentationFacts`). */
 export interface AgentStatusPaneFacts {
+  /** Stable manifest id resolved from the pane hint, command, or process tree. */
+  readonly agentKind: string | null;
   /** Raw `@agent_state` (`"<state>:<epoch>"`), or null when unset. */
   readonly agentStateRaw: string | null;
   /** Raw `@agent_status_text`, or null when unset. */
@@ -115,6 +117,7 @@ interface RawPaneOptions {
 
 interface ScrapeCacheEntry {
   readonly verdict: InstantState;
+  readonly agentKind: string | null;
   /** The pane command the verdict was computed under; a change invalidates. */
   readonly command: string;
   readonly scrapedAtSec: number;
@@ -219,8 +222,10 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
         pane: AgentStatusProbePane,
         raw: RawPaneOptions | undefined,
         scrape: InstantState | null,
+        agentKind: string | null,
       ): void => {
         facts.set(pane.runtimePaneId, {
+          agentKind,
           agentStateRaw: raw?.stateRaw ?? null,
           agentStatusTextRaw: raw?.statusTextRaw ?? null,
           agentDisplayNameRaw: raw?.displayNameRaw ?? null,
@@ -236,14 +241,18 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
           // null. Drop any cached verdict so a later staleness fallback never
           // resurfaces a reading from before this authoritative report.
           verdictCache.delete(pane.runtimePaneId);
-          emit(pane, raw, null);
+          const direct = resolveAgentCommand(pane.currentCommand, raw?.pid ?? 0, [], {
+            ...(raw?.hint ? { hint: raw.hint } : {}),
+            ...(deps.manifests ? { manifests: deps.manifests } : {}),
+          }).manifest;
+          emit(pane, raw, null, direct && direct.id !== "shell" ? direct.id : null);
           continue;
         }
         const cached = verdictCache.get(pane.runtimePaneId);
         const priorEntry = cached && cached.command === pane.currentCommand ? cached : null;
         if (priorEntry && input.nowSec - priorEntry.scrapedAtSec <= ttlSeconds) {
           // Fresh verdict — one scrape serves every read in the window.
-          emit(pane, raw, priorEntry.verdict);
+          emit(pane, raw, priorEntry.verdict, priorEntry.agentKind);
           continue;
         }
         candidates.push({ pane, raw, priorEntry });
@@ -270,17 +279,18 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
           // candidate until the TTL lapses or its command changes.
           verdictCache.set(pane.runtimePaneId, {
             verdict: "unknown",
+            agentKind: null,
             command: pane.currentCommand,
             scrapedAtSec: input.nowSec,
           });
-          emit(pane, raw, "unknown");
+          emit(pane, raw, "unknown", null);
           continue;
         }
         if (capturesUsed >= captureBudget) {
           // Budget exhausted: reuse the pane's previous verdict when one exists
           // (a few seconds stale beats flapping), otherwise report the honest
           // "unknown". Nothing is cached, so the rotation reaches it next read.
-          emit(pane, raw, priorEntry?.verdict ?? "unknown");
+          emit(pane, raw, priorEntry?.verdict ?? "unknown", manifest.id);
           continue;
         }
         capturesUsed += 1;
@@ -289,10 +299,11 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
         const verdict = classifyInstant({ ...snapshot, title: pane.title }, manifest);
         verdictCache.set(pane.runtimePaneId, {
           verdict,
+          agentKind: manifest.id,
           command: pane.currentCommand,
           scrapedAtSec: input.nowSec,
         });
-        emit(pane, raw, verdict);
+        emit(pane, raw, verdict, manifest.id);
       }
 
       // Bound the cache: pane ids are server-unique and never re-probed after a

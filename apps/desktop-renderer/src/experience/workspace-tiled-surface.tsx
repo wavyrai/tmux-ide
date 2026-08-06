@@ -23,10 +23,11 @@
  *    terminal actually rendered — measured from the DOM, never assumed.
  *
  * The overlay covers no output. tmux spends exactly one cell on the border
- * between two panes, and the drag handles sit on those cells; a tile's own
- * region is transparent and only carries hit testing and a hover header.
+ * between two panes, and the drag handles plus persistent panel header sit on
+ * those reserved cells; a tile's output region stays transparent.
  */
 import { Index, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import type { SemanticIconId } from "@tmux-ide/contracts";
 
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
@@ -195,15 +196,15 @@ const CLOSE_ICON = DOM_ICON_METADATA.close.artwork;
  * line. A pane with no frame model is a plain terminal — the common case, since
  * frames are built for agent panes — and terminal is what it gets.
  */
-const ROLE_ICON: Readonly<Record<PaneFrameModel["pane"]["kind"], IconArtwork>> = {
-  home: DOM_ICON_METADATA.home.artwork,
-  terminal: DOM_ICON_METADATA.terminals.artwork,
-  files: DOM_ICON_METADATA.files.artwork,
-  changes: DOM_ICON_METADATA.changes.artwork,
-  missions: DOM_ICON_METADATA.missions.artwork,
-  activity: DOM_ICON_METADATA.activity.artwork,
-  preview: DOM_ICON_METADATA.preview.artwork,
-  native: DOM_ICON_METADATA.native.artwork,
+const ROLE_ICON_ID: Readonly<Record<PaneFrameModel["pane"]["kind"], SemanticIconId>> = {
+  home: "home",
+  terminal: "terminals",
+  files: "files",
+  changes: "changes",
+  missions: "missions",
+  activity: "activity",
+  preview: "preview",
+  native: "native",
 };
 
 /** Percentages, rounded to a precision the DOM will not thrash over. */
@@ -353,10 +354,12 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     props.paneFrames.find((model) => model.pane.id === semanticPaneId);
   const titleFor = (semanticPaneId: string): string =>
     props.paneTitles?.get(semanticPaneId) ?? frameFor(semanticPaneId)?.title ?? "Terminal";
-  const iconFor = (semanticPaneId: string): IconArtwork => {
-    const kind = frameFor(semanticPaneId)?.pane.kind;
-    return kind ? ROLE_ICON[kind] : ROLE_ICON.terminal;
+  const iconIdFor = (semanticPaneId: string): SemanticIconId => {
+    const pane = frameFor(semanticPaneId)?.pane;
+    return pane?.icon ?? (pane ? ROLE_ICON_ID[pane.kind] : "terminals");
   };
+  const iconFor = (semanticPaneId: string): IconArtwork =>
+    DOM_ICON_METADATA[iconIdFor(semanticPaneId)].artwork;
 
   // ── Aligning the overlay to the grid the terminal actually rendered ────────
   //
@@ -1077,6 +1080,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               class="window-tabs__tab"
               data-window-tab={tab().semanticWindowId ?? ""}
               data-active={tab().active}
+              data-identity-icon={tab().addressPane ? iconIdFor(tab().addressPane!) : "terminals"}
               aria-selected={tab().active}
               // A window whose panes carry no verified identity cannot be
               // addressed, so its tab refuses rather than dispatching into
@@ -1098,6 +1102,20 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                 props.onOpenWindowMenu?.(pane, { x: event.clientX, y: event.clientY });
               }}
             >
+              <span
+                class="window-tabs__icon"
+                data-identity-icon={tab().addressPane ? iconIdFor(tab().addressPane!) : "terminals"}
+                aria-hidden="true"
+              >
+                <Icon
+                  icon={
+                    DOM_ICON_METADATA[
+                      tab().addressPane ? iconIdFor(tab().addressPane!) : "terminals"
+                    ].artwork
+                  }
+                  size="dense"
+                />
+              </span>
               <Show
                 when={props.renamingPane !== null && props.renamingPane === tab().addressPane}
                 fallback={<span class="window-tabs__label">{tab().label}</span>}
@@ -1244,6 +1262,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   data-drop-target={dragPreview()?.targetPane === tile().pane ? "true" : undefined}
                   data-elevated={placement()?.elevated ?? false}
                   data-ending={endingPanes().has(tile().pane) ? "true" : undefined}
+                  data-identity-icon={iconIdFor(tile().pane)}
                   style={{
                     left: percent(rect().left),
                     top: percent(rect().top),
@@ -1259,6 +1278,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                     pane={tile().pane}
                     title={titleFor(tile().pane)}
                     icon={iconFor(tile().pane)}
+                    iconId={iconIdFor(tile().pane)}
                     status={frameFor(tile().pane)?.status ?? null}
                     active={tile().active}
                     /*
@@ -1494,6 +1514,7 @@ function PaneHeader(props: {
   readonly pane: string;
   readonly title: string;
   readonly icon: IconArtwork;
+  readonly iconId: SemanticIconId;
   readonly status: PaneFrameModel["status"] | null;
   readonly active: boolean;
   readonly heightFraction: number;
@@ -1551,7 +1572,9 @@ function PaneHeader(props: {
       onPointerUp={props.onPointerUp}
       onPointerCancel={props.onPointerCancel}
     >
-      <Icon class="pane-tile__icon" icon={props.icon} size="control" />
+      <span class="pane-tile__icon-badge" data-identity-icon={props.iconId} aria-hidden="true">
+        <Icon class="pane-tile__icon" icon={props.icon} size="dense" />
+      </span>
       <span
         class="pane-tile__title"
         data-pane-drag-handle={props.pane}
@@ -1574,7 +1597,14 @@ function PaneHeader(props: {
       </span>
       <Show when={props.status}>
         {(status) => (
-          <i class="pane-tile__status" data-tone={status().tone} title={status().label} />
+          <span
+            class="pane-tile__status"
+            data-tone={status().tone}
+            title={status().description ?? status().label}
+          >
+            <i aria-hidden="true" />
+            <span>{status().label}</span>
+          </span>
         )}
       </Show>
       <button

@@ -8,6 +8,8 @@ import type {
 import { DashboardSquare01Icon } from "@hugeicons/core-free-icons";
 
 import { ContextMenu, Icon, type ContextMenuSection } from "../ui-system/index.ts";
+import { DomIcon } from "./dom-icon.tsx";
+import { agentHarnessIcon } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 import { sessionRowMenuSections, SURFACE_MENU_IDS } from "./multiplexer-verb-menu.ts";
 import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 
@@ -344,6 +346,13 @@ export function FleetSidebarSection(props: FleetSidebarSectionProps): JSX.Elemen
               {(agent) => (
                 <div class="sidebar-row sidebar-row--agent fleet-sidebar__agent">
                   <i data-state={agentTone(agent.activity)} />
+                  <span
+                    class="sidebar-row__agent-icon"
+                    data-agent-icon={agentHarnessIcon(agent.harness)}
+                    aria-hidden="true"
+                  >
+                    <DomIcon id={agentHarnessIcon(agent.harness)} usage="pane" />
+                  </span>
                   <span class="sidebar-row__identity">
                     <span>{agent.name}</span>
                     <small>

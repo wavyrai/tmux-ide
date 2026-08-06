@@ -31,6 +31,9 @@ export const SEMANTIC_ICON_IDS = [
   "search",
   "refresh",
   "command",
+  "agent-codex",
+  "agent-claude",
+  "agent-custom",
 ] as const;
 export const SemanticIconIdSchemaZ = z.enum(SEMANTIC_ICON_IDS);
 export type SemanticIconId = z.infer<typeof SemanticIconIdSchemaZ>;

@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { WORKSPACE_SEMANTIC_PANE_OPTION } from "@tmux-ide/contracts";
 import type { Pane, Row, PaneAction } from "../types.ts";
+import { agentHintForCommand } from "./agent-kind.ts";
 import { shellEscape } from "./shell.ts";
 
 export interface LaunchPaneAction extends PaneAction {
@@ -39,13 +40,14 @@ export function semanticPaneIdForPane(pane: Pane): string {
 }
 
 export function paneIdentityOptions(
-  action: Pick<LaunchPaneAction, "semanticPaneId" | "paneRole" | "paneType" | "title">,
+  action: Pick<LaunchPaneAction, "semanticPaneId" | "paneRole" | "paneType" | "title" | "command">,
 ): ReadonlyArray<readonly [option: string, value: string]> {
   return [
     [WORKSPACE_SEMANTIC_PANE_OPTION, action.semanticPaneId],
     ["@ide_role", action.paneRole ?? "shell"],
     ["@ide_name", action.title ?? ""],
     ["@ide_type", action.paneType ?? "shell"],
+    ["@agent_hint", agentHintForCommand(action.command) ?? ""],
   ];
 }
 

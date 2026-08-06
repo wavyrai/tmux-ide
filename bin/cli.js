@@ -2168,7 +2168,10 @@ var init_experience_identifiers = __esm({
       "pop-out",
       "search",
       "refresh",
-      "command"
+      "command",
+      "agent-codex",
+      "agent-claude",
+      "agent-custom"
     ];
     SemanticIconIdSchemaZ = z16.enum(SEMANTIC_ICON_IDS);
     PANE_ROLE_IDS = [
@@ -9541,6 +9544,307 @@ var init_output = __esm({
   }
 });
 
+// packages/daemon/src/tui/integrations/claude.ts
+var claude_exports = {};
+__export(claude_exports, {
+  EVENT_STATES: () => EVENT_STATES,
+  HOOK_SCRIPT: () => HOOK_SCRIPT,
+  HOOK_SCRIPT_RELPATH: () => HOOK_SCRIPT_RELPATH,
+  claudeIntegrationStatus: () => claudeIntegrationStatus,
+  claudeSettingsPath: () => claudeSettingsPath,
+  hookScriptPath: () => hookScriptPath,
+  installClaudeIntegration: () => installClaudeIntegration,
+  isInstalled: () => isInstalled,
+  mergeHooks: () => mergeHooks,
+  removeHooks: () => removeHooks,
+  uninstallClaudeIntegration: () => uninstallClaudeIntegration
+});
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync as existsSync5,
+  mkdirSync as mkdirSync2,
+  readFileSync as readFileSync4,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname as dirname5, join as join4 } from "node:path";
+function hookScriptPath() {
+  return join4(homedir(), HOOK_SCRIPT_RELPATH);
+}
+function claudeSettingsPath() {
+  return process.env.TMUX_IDE_CLAUDE_SETTINGS ?? join4(homedir(), ".claude", "settings.json");
+}
+function isOurs(group) {
+  return group.hooks?.some((h) => h.command?.includes(HOOK_SCRIPT_RELPATH)) ?? false;
+}
+function mergeHooks(settings, scriptPath) {
+  const next = { ...settings, hooks: { ...settings.hooks ?? {} } };
+  const hooks = next.hooks;
+  for (const { event, state, matcher } of EVENT_STATES) {
+    const existing = (hooks[event] ?? []).filter((g) => !isOurs(g));
+    const group = {
+      ...matcher !== void 0 ? { matcher } : {},
+      hooks: [{ type: "command", command: `${scriptPath} ${state}` }]
+    };
+    hooks[event] = [...existing, group];
+  }
+  return next;
+}
+function removeHooks(settings) {
+  if (!settings.hooks) return { ...settings };
+  const hooks = {};
+  for (const [event, groups] of Object.entries(settings.hooks)) {
+    const kept = groups.filter((g) => !isOurs(g));
+    if (kept.length > 0) hooks[event] = kept;
+  }
+  const next = { ...settings, hooks };
+  if (Object.keys(hooks).length === 0) delete next.hooks;
+  return next;
+}
+function isInstalled(settings) {
+  return Object.values(settings.hooks ?? {}).some((groups) => groups.some(isOurs));
+}
+function readSettings(path2) {
+  if (!existsSync5(path2)) return {};
+  try {
+    return JSON.parse(readFileSync4(path2, "utf8"));
+  } catch {
+    throw new Error(`${path2} is not valid JSON \u2014 fix or move it, then retry`);
+  }
+}
+function installClaudeIntegration() {
+  const script = hookScriptPath();
+  mkdirSync2(dirname5(script), { recursive: true });
+  writeFileSync2(script, HOOK_SCRIPT, "utf8");
+  chmodSync(script, 493);
+  const settingsPath = claudeSettingsPath();
+  mkdirSync2(dirname5(settingsPath), { recursive: true });
+  const settings = readSettings(settingsPath);
+  const backup = `${settingsPath}.tmux-ide.bak`;
+  if (existsSync5(settingsPath) && !existsSync5(backup)) copyFileSync(settingsPath, backup);
+  writeFileSync2(settingsPath, `${JSON.stringify(mergeHooks(settings, script), null, 2)}
+`, "utf8");
+  return { scriptPath: script, settingsPath };
+}
+function uninstallClaudeIntegration() {
+  const settingsPath = claudeSettingsPath();
+  const settings = readSettings(settingsPath);
+  const wasInstalled = isInstalled(settings);
+  if (wasInstalled) {
+    writeFileSync2(settingsPath, `${JSON.stringify(removeHooks(settings), null, 2)}
+`, "utf8");
+  }
+  return { settingsPath, wasInstalled };
+}
+function claudeIntegrationStatus() {
+  return {
+    installed: isInstalled(readSettings(claudeSettingsPath())),
+    scriptExists: existsSync5(hookScriptPath())
+  };
+}
+var HOOK_SCRIPT_RELPATH, HOOK_SCRIPT, EVENT_STATES;
+var init_claude = __esm({
+  "packages/daemon/src/tui/integrations/claude.ts"() {
+    "use strict";
+    HOOK_SCRIPT_RELPATH = ".tmux-ide/hooks/claude-state.sh";
+    HOOK_SCRIPT = `#!/bin/sh
+# tmux-ide agent-state hook (installed by: tmux-ide integration install claude)
+# $1 = state to report: working | blocked | done | idle
+state="\${1:-idle}"
+payload="$(cat 2>/dev/null || true)"
+[ -n "$TMUX_PANE" ] || exit 0
+tmux set-option -p -t "$TMUX_PANE" @agent_state "\${state}:$(date +%s)" 2>/dev/null || exit 0
+tmux set-option -p -t "$TMUX_PANE" @agent_hint "claude" 2>/dev/null || true
+sid="$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -1)"
+[ -n "$sid" ] && tmux set-option -p -t "$TMUX_PANE" @agent_session_id "$sid" 2>/dev/null
+exit 0
+`;
+    EVENT_STATES = [
+      { event: "UserPromptSubmit", state: "working" },
+      { event: "PreToolUse", state: "working", matcher: "*" },
+      { event: "Notification", state: "blocked" },
+      { event: "Stop", state: "done" },
+      { event: "SessionEnd", state: "idle" }
+    ];
+  }
+});
+
+// packages/daemon/src/tui/integrations/opencode.ts
+var opencode_exports = {};
+__export(opencode_exports, {
+  PLUGIN_FILENAME: () => PLUGIN_FILENAME,
+  PLUGIN_MARKER: () => PLUGIN_MARKER,
+  PLUGIN_SOURCE: () => PLUGIN_SOURCE,
+  installOpencodeIntegration: () => installOpencodeIntegration,
+  isOurPlugin: () => isOurPlugin,
+  opencodeIntegrationStatus: () => opencodeIntegrationStatus,
+  opencodePluginPath: () => opencodePluginPath,
+  uninstallOpencodeIntegration: () => uninstallOpencodeIntegration
+});
+import { existsSync as existsSync6, mkdirSync as mkdirSync3, readFileSync as readFileSync5, rmSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname6, join as join5 } from "node:path";
+function opencodePluginPath() {
+  const override = process.env.TMUX_IDE_OPENCODE_DIR;
+  if (override) return join5(override, PLUGIN_FILENAME);
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const configRoot = xdg && xdg.length > 0 ? xdg : join5(homedir2(), ".config");
+  return join5(configRoot, "opencode", "plugin", PLUGIN_FILENAME);
+}
+function isOurPlugin(content) {
+  return content.includes(PLUGIN_MARKER);
+}
+function installOpencodeIntegration() {
+  const pluginPath = opencodePluginPath();
+  mkdirSync3(dirname6(pluginPath), { recursive: true });
+  writeFileSync3(pluginPath, PLUGIN_SOURCE, "utf8");
+  return { pluginPath };
+}
+function uninstallOpencodeIntegration() {
+  const pluginPath = opencodePluginPath();
+  const wasInstalled = opencodeIntegrationStatus().installed;
+  if (wasInstalled) rmSync(pluginPath, { force: true });
+  return { pluginPath, wasInstalled };
+}
+function opencodeIntegrationStatus() {
+  const pluginPath = opencodePluginPath();
+  try {
+    if (!existsSync6(pluginPath)) return { installed: false };
+    return { installed: isOurPlugin(readFileSync5(pluginPath, "utf8")) };
+  } catch {
+    return { installed: false };
+  }
+}
+var PLUGIN_MARKER, PLUGIN_FILENAME, PLUGIN_SOURCE;
+var init_opencode = __esm({
+  "packages/daemon/src/tui/integrations/opencode.ts"() {
+    "use strict";
+    PLUGIN_MARKER = "installed by: tmux-ide integration install opencode";
+    PLUGIN_FILENAME = "tmux-ide.js";
+    PLUGIN_SOURCE = `/**
+ * tmux-ide opencode plugin (${PLUGIN_MARKER})
+ *
+ * Stamps this pane's @agent_session_id tmux option with the opencode session
+ * id so \`tmux-ide restore --resume-agents\` can revive the conversation via
+ * \`opencode --session <id>\` after a tmux server death.
+ *
+ * Remove with: tmux-ide integration uninstall opencode
+ */
+export const TmuxIde = async () => {
+  const pane = process.env.TMUX_PANE;
+  if (!pane) return {}; // not inside tmux \u2014 inert
+  const { execFile } = await import("node:child_process");
+  let last = "";
+  const stamp = (id) => {
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id) || id === last) return;
+    last = id;
+    execFile("tmux", ["set-option", "-p", "-t", pane, "@agent_session_id", id], () => {});
+  };
+  return {
+    event: async ({ event }) => {
+      // session.updated fires on create + every update; info.id is the
+      // resumable session id. Child sessions (subagents) carry parentID and
+      // must never overwrite the pane's own conversation key.
+      if (event && event.type === "session.updated") {
+        const info = event.properties && event.properties.info;
+        if (info && !info.parentID) stamp(info.id);
+      }
+    },
+  };
+};
+`;
+  }
+});
+
+// packages/daemon/src/lib/agent-discovery.ts
+var agent_discovery_exports = {};
+__export(agent_discovery_exports, {
+  KNOWN_AGENTS: () => KNOWN_AGENTS,
+  discoverAgents: () => discoverAgents,
+  presentAgents: () => presentAgents
+});
+import { execFileSync as execFileSync2 } from "node:child_process";
+function discoverAgents(which = defaultWhich, isInstalled2 = defaultIntegrationProbe) {
+  return KNOWN_AGENTS.map((agent) => {
+    const path2 = which(agent.bin);
+    const present = path2 !== null;
+    const installed = present && agent.integration ? isInstalled2(agent.id) : false;
+    const captureActive = agent.capture === "probe" ? present : agent.capture !== null ? installed : false;
+    return {
+      id: agent.id,
+      bin: agent.bin,
+      integration: agent.integration,
+      path: path2,
+      installed,
+      capture: agent.capture,
+      captureActive
+    };
+  });
+}
+function presentAgents(agents) {
+  return agents.filter((a) => a.path !== null);
+}
+var KNOWN_AGENTS, defaultWhich, defaultIntegrationProbe;
+var init_agent_discovery = __esm({
+  "packages/daemon/src/lib/agent-discovery.ts"() {
+    "use strict";
+    init_claude();
+    init_opencode();
+    KNOWN_AGENTS = [
+      { id: "claude", bin: "claude", integration: true, capture: "hooks" },
+      { id: "codex", bin: "codex", integration: false, capture: "probe" },
+      { id: "opencode", bin: "opencode", integration: true, capture: "plugin" },
+      { id: "gemini", bin: "gemini", integration: false, capture: null },
+      { id: "aider", bin: "aider", integration: false, capture: null },
+      { id: "cursor", bin: "cursor-agent", integration: false, capture: "probe" },
+      { id: "copilot", bin: "copilot", integration: false, capture: null }
+    ];
+    defaultWhich = (bin) => {
+      try {
+        const out = execFileSync2("which", [bin], {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 2e3
+        }).trim();
+        if (out.length === 0) return null;
+        return out.split("\n")[0].trim() || null;
+      } catch {
+        return null;
+      }
+    };
+    defaultIntegrationProbe = (agentId) => {
+      try {
+        if (agentId === "claude") return claudeIntegrationStatus().installed;
+        if (agentId === "opencode") return opencodeIntegrationStatus().installed;
+        return false;
+      } catch {
+        return false;
+      }
+    };
+  }
+});
+
+// packages/daemon/src/lib/agent-kind.ts
+function agentHintForCommand(command2) {
+  if (!command2) return null;
+  const parts = command2.trim().split(/\s+/u).filter(Boolean);
+  const candidates = parts.slice(0, 2).filter((part) => !part.startsWith("-")).map((part) => {
+    const segments = part.split("/");
+    return segments[segments.length - 1]?.toLowerCase() ?? "";
+  });
+  for (const agent of KNOWN_AGENTS) {
+    if (candidates.includes(agent.bin.toLowerCase())) return agent.id;
+  }
+  return null;
+}
+var init_agent_kind = __esm({
+  "packages/daemon/src/lib/agent-kind.ts"() {
+    "use strict";
+    init_agent_discovery();
+  }
+});
+
 // packages/daemon/src/lib/shell.ts
 function shellEscape(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
@@ -9576,7 +9880,8 @@ function paneIdentityOptions(action) {
     [WORKSPACE_SEMANTIC_PANE_OPTION, action.semanticPaneId],
     ["@ide_role", action.paneRole ?? "shell"],
     ["@ide_name", action.title ?? ""],
-    ["@ide_type", action.paneType ?? "shell"]
+    ["@ide_type", action.paneType ?? "shell"],
+    ["@agent_hint", agentHintForCommand(action.command) ?? ""]
   ];
 }
 function buildPaneCommand(pane) {
@@ -9697,6 +10002,7 @@ var init_launch_plan = __esm({
   "packages/daemon/src/lib/launch-plan.ts"() {
     "use strict";
     init_src();
+    init_agent_kind();
     init_shell();
   }
 });
@@ -10731,15 +11037,15 @@ var init_agent_resolution = __esm({
 });
 
 // packages/daemon/src/tui/detect/manifest-loader.ts
-import { readdirSync, readFileSync as readFileSync4 } from "node:fs";
-import { homedir } from "node:os";
-import { join as join4 } from "node:path";
+import { readdirSync, readFileSync as readFileSync6 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join6 } from "node:path";
 function overrideDir() {
-  const home = process.env.TMUX_IDE_HOME ?? join4(homedir(), ".tmux-ide");
-  return join4(home, "agent-detection");
+  const home = process.env.TMUX_IDE_HOME ?? join6(homedir3(), ".tmux-ide");
+  return join6(home, "agent-detection");
 }
 function packFile(dir = overrideDir()) {
-  return join4(dir, "pack", "manifest-pack.json");
+  return join6(dir, "pack", "manifest-pack.json");
 }
 function validateManifestShape(value) {
   if (typeof value !== "object" || value === null) return false;
@@ -10801,9 +11107,9 @@ function readOverrideManifests(dir = overrideDir()) {
   }
   const overrides = [];
   for (const file of files.sort()) {
-    const path2 = join4(dir, file);
+    const path2 = join6(dir, file);
     try {
-      const parsed = JSON.parse(readFileSync4(path2, "utf8"));
+      const parsed = JSON.parse(readFileSync6(path2, "utf8"));
       if (validateManifestShape(parsed)) {
         overrides.push(normalizeStates(parsed));
       } else {
@@ -10833,7 +11139,7 @@ function readPackManifests(dir = overrideDir()) {
   const path2 = packFile(dir);
   let raw;
   try {
-    raw = readFileSync4(path2, "utf8");
+    raw = readFileSync6(path2, "utf8");
   } catch {
     return [];
   }
@@ -10873,7 +11179,7 @@ var init_manifest_loader = __esm({
 });
 
 // packages/daemon/src/tui/detect/process-tree.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
+import { execFileSync as execFileSync3 } from "node:child_process";
 function parsePsOutput(raw) {
   const entries = [];
   for (const line of raw.split("\n")) {
@@ -10929,7 +11235,7 @@ function describeSubtree(entries, rootPid, limit = 8) {
 }
 function readProcessTable() {
   try {
-    const raw = execFileSync2("ps", ["-axo", "pid=,ppid=,command="], {
+    const raw = execFileSync3("ps", ["-axo", "pid=,ppid=,command="], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
@@ -11024,7 +11330,7 @@ __export(sessions_exports, {
   rollupStatus: () => rollupStatus,
   rollupWindows: () => rollupWindows
 });
-import { execFileSync as execFileSync3 } from "node:child_process";
+import { execFileSync as execFileSync4 } from "node:child_process";
 function buildAgentEntry(input) {
   const { manifest, pane } = input;
   if (!manifest || manifest.id === "shell") return null;
@@ -11054,7 +11360,7 @@ function isListableSession(name) {
 }
 function tmux(args) {
   try {
-    return execFileSync3("tmux", args, {
+    return execFileSync4("tmux", args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
@@ -11274,9 +11580,9 @@ __export(app_config_exports, {
   parseAppConfig: () => parseAppConfig,
   updateAppConfig: () => updateAppConfig
 });
-import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync5, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname5, join as join5 } from "node:path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync4, readFileSync as readFileSync7, renameSync as renameSync2, writeFileSync as writeFileSync4 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname7, join as join7 } from "node:path";
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -11387,13 +11693,13 @@ function parseAppConfig(input) {
   };
 }
 function appConfigPath() {
-  return process.env.TMUX_IDE_CONFIG ?? join5(homedir2(), ".tmux-ide", "config.json");
+  return process.env.TMUX_IDE_CONFIG ?? join7(homedir4(), ".tmux-ide", "config.json");
 }
 function loadAppConfig() {
   const path2 = appConfigPath();
-  if (!existsSync5(path2)) return parseAppConfig(void 0);
+  if (!existsSync7(path2)) return parseAppConfig(void 0);
   try {
-    return parseAppConfig(JSON.parse(readFileSync5(path2, "utf-8")));
+    return parseAppConfig(JSON.parse(readFileSync7(path2, "utf-8")));
   } catch {
     return parseAppConfig(void 0);
   }
@@ -11407,9 +11713,9 @@ function _resetForTests() {
 }
 function loadRawAppConfig() {
   const path2 = appConfigPath();
-  if (!existsSync5(path2)) return {};
+  if (!existsSync7(path2)) return {};
   try {
-    const parsed = JSON.parse(readFileSync5(path2, "utf-8"));
+    const parsed = JSON.parse(readFileSync7(path2, "utf-8"));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
@@ -11436,9 +11742,9 @@ function mergeConfigPatch(raw, patch) {
 function updateAppConfig(patch) {
   const path2 = appConfigPath();
   const merged = mergeConfigPatch(loadRawAppConfig(), patch);
-  mkdirSync2(dirname5(path2), { recursive: true });
+  mkdirSync4(dirname7(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync2(tmp, `${JSON.stringify(merged, null, 2)}
+  writeFileSync4(tmp, `${JSON.stringify(merged, null, 2)}
 `, "utf-8");
   renameSync2(tmp, path2);
   cached = null;
@@ -11510,8 +11816,8 @@ __export(manifest_pack_exports, {
   updateManifestPack: () => updateManifestPack,
   validateManifestPack: () => validateManifestPack
 });
-import { mkdirSync as mkdirSync3, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { dirname as dirname6, join as join6 } from "node:path";
+import { mkdirSync as mkdirSync5, readFileSync as readFileSync8, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
+import { dirname as dirname8, join as join8 } from "node:path";
 import { fileURLToPath } from "node:url";
 function manifestPackUrl(version = getCurrentVersion()) {
   const v = version.startsWith("v") ? version.slice(1) : version;
@@ -11559,10 +11865,10 @@ function validateManifestPack(value) {
   };
 }
 function packDir() {
-  return join6(overrideDir(), "pack");
+  return join8(overrideDir(), "pack");
 }
 function packPath() {
-  return join6(packDir(), "manifest-pack.json");
+  return join8(packDir(), "manifest-pack.json");
 }
 async function fetchManifestPack(url, timeoutMs = 5e3) {
   if (!isAllowedPackUrl(url)) {
@@ -11572,7 +11878,7 @@ async function fetchManifestPack(url, timeoutMs = 5e3) {
   }
   let body;
   if (url.startsWith("file:")) {
-    body = readFileSync6(fileURLToPath(url), "utf8");
+    body = readFileSync8(fileURLToPath(url), "utf8");
   } else {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -11601,9 +11907,9 @@ async function fetchManifestPack(url, timeoutMs = 5e3) {
   return verdict.pack;
 }
 function installManifestPack(pack, dest = packPath()) {
-  mkdirSync3(dirname6(dest), { recursive: true });
+  mkdirSync5(dirname8(dest), { recursive: true });
   const tmp = `${dest}.${process.pid}.tmp`;
-  writeFileSync3(tmp, JSON.stringify(pack, null, 2));
+  writeFileSync5(tmp, JSON.stringify(pack, null, 2));
   renameSync3(tmp, dest);
   return dest;
 }
@@ -11658,9 +11964,9 @@ __export(update_check_exports, {
   updateCachePath: () => updateCachePath,
   writeUpdateCache: () => writeUpdateCache
 });
-import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync7, writeFileSync as writeFileSync4 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { dirname as dirname7, join as join7 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync6, readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname9, join as join9 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function parseSemver(version) {
   const core = version.trim().replace(/^v/i, "").split("+")[0] ?? "";
@@ -11709,14 +12015,14 @@ function deriveStatus(latest, currentVersion) {
   };
 }
 function updateCachePath() {
-  const home = process.env.TMUX_IDE_HOME ?? join7(homedir3(), ".tmux-ide");
-  return join7(home, "update-check.json");
+  const home = process.env.TMUX_IDE_HOME ?? join9(homedir5(), ".tmux-ide");
+  return join9(home, "update-check.json");
 }
 function readUpdateCache() {
   const path2 = updateCachePath();
-  if (!existsSync6(path2)) return null;
+  if (!existsSync8(path2)) return null;
   try {
-    const parsed = JSON.parse(readFileSync7(path2, "utf-8"));
+    const parsed = JSON.parse(readFileSync9(path2, "utf-8"));
     if (!parsed || typeof parsed !== "object") return null;
     const obj = parsed;
     const lastCheckedAt = typeof obj.lastCheckedAt === "number" ? obj.lastCheckedAt : null;
@@ -11730,8 +12036,8 @@ function readUpdateCache() {
 function writeUpdateCache(cache3) {
   const path2 = updateCachePath();
   try {
-    mkdirSync4(dirname7(path2), { recursive: true });
-    writeFileSync4(path2, JSON.stringify(cache3));
+    mkdirSync6(dirname9(path2), { recursive: true });
+    writeFileSync6(path2, JSON.stringify(cache3));
   } catch {
   }
 }
@@ -11749,16 +12055,16 @@ async function fetchLatestVersion(timeoutMs = 3e3) {
   }
 }
 function getCurrentVersion() {
-  const here = dirname7(fileURLToPath2(import.meta.url));
+  const here = dirname9(fileURLToPath2(import.meta.url));
   const candidates = [
-    join7(here, "../package.json"),
+    join9(here, "../package.json"),
     // bundled bin/cli.js → repo root
-    join7(here, "../../../../package.json")
+    join9(here, "../../../../package.json")
     // dev src/lib → repo root
   ];
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(readFileSync7(candidate, "utf-8"));
+      const parsed = JSON.parse(readFileSync9(candidate, "utf-8"));
       if (typeof parsed.version === "string" && parsed.version.length > 0) return parsed.version;
     } catch {
     }
@@ -11825,9 +12131,9 @@ __export(tui_binary_exports, {
   tuiPlatformTag: () => tuiPlatformTag,
   tuiStateHome: () => tuiStateHome
 });
-import { chmodSync, existsSync as existsSync7, mkdirSync as mkdirSync5, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname8, join as join8 } from "node:path";
+import { chmodSync as chmodSync2, existsSync as existsSync9, mkdirSync as mkdirSync7, renameSync as renameSync4, writeFileSync as writeFileSync7 } from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { dirname as dirname10, join as join10 } from "node:path";
 import { gunzipSync } from "node:zlib";
 function tuiPlatformTag(platform = process.platform, arch = process.arch) {
   return SUPPORTED[`${platform}-${arch}`] ?? null;
@@ -11845,16 +12151,16 @@ function releaseAssetUrl(version, tag) {
   return `https://github.com/${RELEASE_REPO}/releases/download/v${normalizeVersion(version)}/${releaseAssetName(tag)}`;
 }
 function downloadedTuiPath(home, tag, version) {
-  return join8(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
+  return join10(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
 }
 function tuiStateHome() {
-  return process.env.TMUX_IDE_HOME ?? join8(homedir4(), ".tmux-ide");
+  return process.env.TMUX_IDE_HOME ?? join10(homedir6(), ".tmux-ide");
 }
 function findDownloadedTui(version = getCurrentVersion()) {
   const tag = tuiPlatformTag();
   if (!tag) return null;
   const path2 = downloadedTuiPath(tuiStateHome(), tag, version);
-  return existsSync7(path2) ? path2 : null;
+  return existsSync9(path2) ? path2 : null;
 }
 async function downloadTuiBinary(opts = {}) {
   const log = opts.log ?? (() => {
@@ -11868,7 +12174,7 @@ async function downloadTuiBinary(opts = {}) {
   }
   const url = releaseAssetUrl(version, tag);
   const dest = downloadedTuiPath(tuiStateHome(), tag, version);
-  mkdirSync5(dirname8(dest), { recursive: true });
+  mkdirSync7(dirname10(dest), { recursive: true });
   log(`downloading ${url}`);
   const res = await fetch(url);
   if (!res.ok) {
@@ -11884,8 +12190,8 @@ async function downloadTuiBinary(opts = {}) {
     );
   }
   const tmp = `${dest}.${process.pid}.tmp`;
-  writeFileSync5(tmp, bin, { mode: 493 });
-  chmodSync(tmp, 493);
+  writeFileSync7(tmp, bin, { mode: 493 });
+  chmodSync2(tmp, 493);
   renameSync4(tmp, dest);
   const mb = (bin.byteLength / 1024 / 1024).toFixed(1);
   log(`installed ${dest} (${mb} MB)`);
@@ -11908,10 +12214,10 @@ var init_tui_binary = __esm({
 });
 
 // packages/daemon/src/tui/compiled.ts
-import { existsSync as existsSync8 } from "node:fs";
-import { dirname as dirname9, resolve as resolve7 } from "node:path";
+import { existsSync as existsSync10 } from "node:fs";
+import { dirname as dirname11, resolve as resolve7 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
-import { execFileSync as execFileSync4 } from "node:child_process";
+import { execFileSync as execFileSync5 } from "node:child_process";
 function resolveTuiLaunch(input) {
   if (input.checkoutExists && input.bunAvailable) {
     return { mode: "bun", bin: "bun", argv: [input.scriptPath, ...input.args] };
@@ -11935,21 +12241,21 @@ function resolveTuiLaunch(input) {
 }
 function findCompiledTui() {
   const override = process.env.TMUX_IDE_TUI_BIN;
-  if (override) return existsSync8(override) ? override : null;
+  if (override) return existsSync10(override) ? override : null;
   const anchors = [];
-  if (process.argv[1]) anchors.push(dirname9(process.argv[1]));
+  if (process.argv[1]) anchors.push(dirname11(process.argv[1]));
   anchors.push(__dirname);
   for (const anchor of anchors) {
     for (const rel of BINARY_RELS) {
       const candidate = resolve7(anchor, rel);
-      if (existsSync8(candidate)) return candidate;
+      if (existsSync10(candidate)) return candidate;
     }
   }
   return findDownloadedTui();
 }
 function isBunAvailable() {
   try {
-    execFileSync4("bun", ["--version"], { stdio: "ignore" });
+    execFileSync5("bun", ["--version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -11960,7 +12266,7 @@ var init_compiled = __esm({
   "packages/daemon/src/tui/compiled.ts"() {
     "use strict";
     init_tui_binary();
-    __dirname = dirname9(fileURLToPath3(import.meta.url));
+    __dirname = dirname11(fileURLToPath3(import.meta.url));
     BINARY_RELS = [
       "../packages/daemon/dist/tui/tmux-ide-tui",
       "../../dist/tui/tmux-ide-tui",
@@ -11988,15 +12294,15 @@ __export(sidebar_exports, {
   sidebarWidgetCommand: () => sidebarWidgetCommand,
   sidebarWidgetScript: () => sidebarWidgetScript
 });
-import { existsSync as existsSync9 } from "node:fs";
-import { dirname as dirname10, resolve as resolve8 } from "node:path";
+import { existsSync as existsSync11 } from "node:fs";
+import { dirname as dirname12, resolve as resolve8 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 function sidebarWidgetScript() {
   const candidates = [
     resolve8(__dirname2, "../../widgets/sidebar/index.tsx"),
     resolve8(__dirname2, "../packages/daemon/src/widgets/sidebar/index.tsx")
   ];
-  return candidates.find((p) => existsSync9(p)) ?? candidates[0];
+  return candidates.find((p) => existsSync11(p)) ?? candidates[0];
 }
 function sidebarWidgetCommand(scriptPath, session, dir, theme) {
   const args = [`--session=${session}`, `--dir=${dir}`];
@@ -12005,7 +12311,7 @@ function sidebarWidgetCommand(scriptPath, session, dir, theme) {
     surface: "sidebar",
     scriptPath,
     args,
-    checkoutExists: existsSync9(scriptPath),
+    checkoutExists: existsSync11(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui()
   });
@@ -12084,7 +12390,7 @@ var init_sidebar = __esm({
     init_shell();
     init_sessions2();
     init_compiled();
-    __dirname2 = dirname10(fileURLToPath4(import.meta.url));
+    __dirname2 = dirname12(fileURLToPath4(import.meta.url));
     SIDEBAR_KEY = "M-b";
     DEFAULT_SIDEBAR_WIDTH = 30;
   }
@@ -12097,12 +12403,12 @@ __export(resolve_exports, {
   resolveWidgetCommand: () => resolveWidgetCommand,
   resolveWidgetSpawn: () => resolveWidgetSpawn
 });
-import { resolve as resolve9, dirname as dirname11 } from "node:path";
-import { existsSync as existsSync10 } from "node:fs";
+import { resolve as resolve9, dirname as dirname13 } from "node:path";
+import { existsSync as existsSync12 } from "node:fs";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 function widgetEntryPath(entry) {
   const sibling = resolve9(__dirname3, entry);
-  if (existsSync10(sibling)) return sibling;
+  if (existsSync12(sibling)) return sibling;
   return resolve9(__dirname3, "../packages/daemon/src/widgets", entry);
 }
 function widgetArgs(opts) {
@@ -12119,7 +12425,7 @@ function resolveWidgetCommand(type, opts) {
     surface: type,
     scriptPath,
     args: widgetArgs(opts),
-    checkoutExists: existsSync10(scriptPath),
+    checkoutExists: existsSync12(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui()
   });
@@ -12140,7 +12446,7 @@ function resolveWidgetSpawn(type, opts) {
     surface: type,
     scriptPath,
     args: widgetArgs(opts),
-    checkoutExists: existsSync10(scriptPath),
+    checkoutExists: existsSync12(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui()
   });
@@ -12156,7 +12462,7 @@ var init_resolve = __esm({
     "use strict";
     init_shell();
     init_compiled();
-    __dirname3 = dirname11(fileURLToPath5(import.meta.url));
+    __dirname3 = dirname13(fileURLToPath5(import.meta.url));
     WIDGET_ENTRY_POINTS = {
       explorer: "explorer/index.tsx",
       changes: "changes/index.tsx",
@@ -12165,15 +12471,15 @@ var init_resolve = __esm({
       config: "config/index.tsx",
       sidebar: "sidebar/index.tsx"
     };
-    REPO_ROOT = existsSync10(resolve9(__dirname3, "explorer/index.tsx")) ? resolve9(__dirname3, "../../../..") : resolve9(__dirname3, "..");
+    REPO_ROOT = existsSync12(resolve9(__dirname3, "explorer/index.tsx")) ? resolve9(__dirname3, "../../../..") : resolve9(__dirname3, "..");
     WIDGET_TYPES = Object.keys(WIDGET_ENTRY_POINTS);
   }
 });
 
 // packages/daemon/src/tui/team/keymap.ts
-import { existsSync as existsSync11, readFileSync as readFileSync8 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { join as join9 } from "node:path";
+import { existsSync as existsSync13, readFileSync as readFileSync10 } from "node:fs";
+import { homedir as homedir7 } from "node:os";
+import { join as join11 } from "node:path";
 var ACTION_ORDER, DEFAULT_KEYMAP;
 var init_keymap = __esm({
   "packages/daemon/src/tui/team/keymap.ts"() {
@@ -12602,24 +12908,24 @@ __export(welcome_exports, {
   welcomeMarkerPath: () => welcomeMarkerPath
 });
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync12, mkdirSync as mkdirSync6, writeFileSync as writeFileSync6 } from "node:fs";
-import { homedir as homedir6 } from "node:os";
-import { dirname as dirname12, join as join10 } from "node:path";
+import { existsSync as existsSync14, mkdirSync as mkdirSync8, writeFileSync as writeFileSync8 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { dirname as dirname14, join as join12 } from "node:path";
 function renderKey2(tmuxKey) {
   return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
 }
 function welcomeMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join10(homedir6(), ".tmux-ide");
-  return join10(home, "welcomed");
+  const home = process.env.TMUX_IDE_HOME ?? join12(homedir8(), ".tmux-ide");
+  return join12(home, "welcomed");
 }
 function shouldShowWelcome() {
-  return !existsSync12(welcomeMarkerPath()) && getAppConfig().welcome.show;
+  return !existsSync14(welcomeMarkerPath()) && getAppConfig().welcome.show;
 }
 function markWelcomed() {
   const path2 = welcomeMarkerPath();
   try {
-    mkdirSync6(dirname12(path2), { recursive: true });
-    writeFileSync6(path2, (/* @__PURE__ */ new Date()).toISOString());
+    mkdirSync8(dirname14(path2), { recursive: true });
+    writeFileSync8(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
 }
@@ -12663,131 +12969,6 @@ var init_welcome = __esm({
   }
 });
 
-// packages/daemon/src/tui/integrations/claude.ts
-var claude_exports = {};
-__export(claude_exports, {
-  EVENT_STATES: () => EVENT_STATES,
-  HOOK_SCRIPT: () => HOOK_SCRIPT,
-  HOOK_SCRIPT_RELPATH: () => HOOK_SCRIPT_RELPATH,
-  claudeIntegrationStatus: () => claudeIntegrationStatus,
-  claudeSettingsPath: () => claudeSettingsPath,
-  hookScriptPath: () => hookScriptPath,
-  installClaudeIntegration: () => installClaudeIntegration,
-  isInstalled: () => isInstalled,
-  mergeHooks: () => mergeHooks,
-  removeHooks: () => removeHooks,
-  uninstallClaudeIntegration: () => uninstallClaudeIntegration
-});
-import {
-  chmodSync as chmodSync2,
-  copyFileSync,
-  existsSync as existsSync13,
-  mkdirSync as mkdirSync7,
-  readFileSync as readFileSync9,
-  writeFileSync as writeFileSync7
-} from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { dirname as dirname13, join as join11 } from "node:path";
-function hookScriptPath() {
-  return join11(homedir7(), HOOK_SCRIPT_RELPATH);
-}
-function claudeSettingsPath() {
-  return process.env.TMUX_IDE_CLAUDE_SETTINGS ?? join11(homedir7(), ".claude", "settings.json");
-}
-function isOurs(group) {
-  return group.hooks?.some((h) => h.command?.includes(HOOK_SCRIPT_RELPATH)) ?? false;
-}
-function mergeHooks(settings, scriptPath) {
-  const next = { ...settings, hooks: { ...settings.hooks ?? {} } };
-  const hooks = next.hooks;
-  for (const { event, state, matcher } of EVENT_STATES) {
-    const existing = (hooks[event] ?? []).filter((g) => !isOurs(g));
-    const group = {
-      ...matcher !== void 0 ? { matcher } : {},
-      hooks: [{ type: "command", command: `${scriptPath} ${state}` }]
-    };
-    hooks[event] = [...existing, group];
-  }
-  return next;
-}
-function removeHooks(settings) {
-  if (!settings.hooks) return { ...settings };
-  const hooks = {};
-  for (const [event, groups] of Object.entries(settings.hooks)) {
-    const kept = groups.filter((g) => !isOurs(g));
-    if (kept.length > 0) hooks[event] = kept;
-  }
-  const next = { ...settings, hooks };
-  if (Object.keys(hooks).length === 0) delete next.hooks;
-  return next;
-}
-function isInstalled(settings) {
-  return Object.values(settings.hooks ?? {}).some((groups) => groups.some(isOurs));
-}
-function readSettings(path2) {
-  if (!existsSync13(path2)) return {};
-  try {
-    return JSON.parse(readFileSync9(path2, "utf8"));
-  } catch {
-    throw new Error(`${path2} is not valid JSON \u2014 fix or move it, then retry`);
-  }
-}
-function installClaudeIntegration() {
-  const script = hookScriptPath();
-  mkdirSync7(dirname13(script), { recursive: true });
-  writeFileSync7(script, HOOK_SCRIPT, "utf8");
-  chmodSync2(script, 493);
-  const settingsPath = claudeSettingsPath();
-  mkdirSync7(dirname13(settingsPath), { recursive: true });
-  const settings = readSettings(settingsPath);
-  const backup = `${settingsPath}.tmux-ide.bak`;
-  if (existsSync13(settingsPath) && !existsSync13(backup)) copyFileSync(settingsPath, backup);
-  writeFileSync7(settingsPath, `${JSON.stringify(mergeHooks(settings, script), null, 2)}
-`, "utf8");
-  return { scriptPath: script, settingsPath };
-}
-function uninstallClaudeIntegration() {
-  const settingsPath = claudeSettingsPath();
-  const settings = readSettings(settingsPath);
-  const wasInstalled = isInstalled(settings);
-  if (wasInstalled) {
-    writeFileSync7(settingsPath, `${JSON.stringify(removeHooks(settings), null, 2)}
-`, "utf8");
-  }
-  return { settingsPath, wasInstalled };
-}
-function claudeIntegrationStatus() {
-  return {
-    installed: isInstalled(readSettings(claudeSettingsPath())),
-    scriptExists: existsSync13(hookScriptPath())
-  };
-}
-var HOOK_SCRIPT_RELPATH, HOOK_SCRIPT, EVENT_STATES;
-var init_claude = __esm({
-  "packages/daemon/src/tui/integrations/claude.ts"() {
-    "use strict";
-    HOOK_SCRIPT_RELPATH = ".tmux-ide/hooks/claude-state.sh";
-    HOOK_SCRIPT = `#!/bin/sh
-# tmux-ide agent-state hook (installed by: tmux-ide integration install claude)
-# $1 = state to report: working | blocked | done | idle
-state="\${1:-idle}"
-payload="$(cat 2>/dev/null || true)"
-[ -n "$TMUX_PANE" ] || exit 0
-tmux set-option -p -t "$TMUX_PANE" @agent_state "\${state}:$(date +%s)" 2>/dev/null || exit 0
-sid="$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -1)"
-[ -n "$sid" ] && tmux set-option -p -t "$TMUX_PANE" @agent_session_id "$sid" 2>/dev/null
-exit 0
-`;
-    EVENT_STATES = [
-      { event: "UserPromptSubmit", state: "working" },
-      { event: "PreToolUse", state: "working", matcher: "*" },
-      { event: "Notification", state: "blocked" },
-      { event: "Stop", state: "done" },
-      { event: "SessionEnd", state: "idle" }
-    ];
-  }
-});
-
 // packages/daemon/src/tui/integrations/offer.ts
 var offer_exports = {};
 __export(offer_exports, {
@@ -12797,13 +12978,13 @@ __export(offer_exports, {
   maybeOfferIntegrationPopup: () => maybeOfferIntegrationPopup,
   shouldOfferIntegration: () => shouldOfferIntegration
 });
-import { execFileSync as execFileSync5, spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync14, mkdirSync as mkdirSync8, writeFileSync as writeFileSync8 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
-import { dirname as dirname14, join as join12 } from "node:path";
+import { execFileSync as execFileSync6, spawn as spawn3 } from "node:child_process";
+import { existsSync as existsSync15, mkdirSync as mkdirSync9, writeFileSync as writeFileSync9 } from "node:fs";
+import { homedir as homedir9 } from "node:os";
+import { dirname as dirname15, join as join13 } from "node:path";
 function integrationOfferMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join12(homedir8(), ".tmux-ide");
-  return join12(home, "integration-offered");
+  const home = process.env.TMUX_IDE_HOME ?? join13(homedir9(), ".tmux-ide");
+  return join13(home, "integration-offered");
 }
 function shouldOfferIntegration(input) {
   return input.claudeOnPath && !input.integrationInstalled && !input.markerPresent && input.offerEnabled;
@@ -12811,8 +12992,8 @@ function shouldOfferIntegration(input) {
 function markIntegrationOffered() {
   const path2 = integrationOfferMarkerPath();
   try {
-    mkdirSync8(dirname14(path2), { recursive: true });
-    writeFileSync8(path2, (/* @__PURE__ */ new Date()).toISOString());
+    mkdirSync9(dirname15(path2), { recursive: true });
+    writeFileSync9(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
 }
@@ -12837,7 +13018,7 @@ function maybeOfferIntegrationPopup() {
     offer = shouldOfferIntegration({
       claudeOnPath: claudeOnPath(),
       integrationInstalled: status2.installed,
-      markerPresent: existsSync14(integrationOfferMarkerPath()),
+      markerPresent: existsSync15(integrationOfferMarkerPath()),
       offerEnabled: getAppConfig().integrations.offer
     });
   } catch {
@@ -12858,7 +13039,7 @@ function maybeOfferIntegrationPopup() {
 }
 function claudeOnPath() {
   try {
-    execFileSync5("which", ["claude"], { stdio: "ignore", timeout: 2e3 });
+    execFileSync6("which", ["claude"], { stdio: "ignore", timeout: 2e3 });
     return true;
   } catch {
     return false;
@@ -12911,11 +13092,11 @@ var init_front_door = __esm({
 });
 
 // packages/daemon/src/tui/detect/session-id.ts
-import { execFileSync as execFileSync6 } from "node:child_process";
+import { execFileSync as execFileSync7 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
-import { readdirSync as readdirSync2, readFileSync as readFileSync10, readlinkSync, statSync } from "node:fs";
-import { homedir as homedir9 } from "node:os";
-import { join as join13 } from "node:path";
+import { readdirSync as readdirSync2, readFileSync as readFileSync11, readlinkSync, statSync } from "node:fs";
+import { homedir as homedir10 } from "node:os";
+import { join as join14 } from "node:path";
 function codexIdFromOpenFiles(paths) {
   for (const path2 of paths) {
     const match = CODEX_ROLLOUT_RE.exec(path2);
@@ -12971,7 +13152,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   for (let offset = 0; offset <= MAX_SCAN_DAYS; offset++) {
     const day = new Date(nowMs - offset * 864e5);
     if (day.getTime() < cutoff - 864e5) break;
-    const dir = join13(
+    const dir = join14(
       root,
       String(day.getFullYear()),
       String(day.getMonth() + 1).padStart(2, "0"),
@@ -12980,7 +13161,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
     for (const name of io.listDir(dir)) {
       const parsed = parseCodexRolloutName(name);
       if (parsed && parsed.tsMs >= cutoff && parsed.tsMs <= nowMs + START_SLACK_MS) {
-        candidates.push({ tsMs: parsed.tsMs, path: join13(dir, name), id: parsed.id });
+        candidates.push({ tsMs: parsed.tsMs, path: join14(dir, name), id: parsed.id });
       }
     }
   }
@@ -13004,12 +13185,12 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   return null;
 }
 function cursorIdFromStateDir(chatsRoot, paneCwd, startMs, io) {
-  const hashed = join13(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
+  const hashed = join14(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
   const cutoff = startMs - START_SLACK_MS;
   let best = null;
   for (const name of io.listDir(hashed)) {
     if (!SAFE_SESSION_ID.test(name)) continue;
-    const mtime = io.mtimeMs(join13(hashed, name));
+    const mtime = io.mtimeMs(join14(hashed, name));
     if (mtime === null || mtime < cutoff) continue;
     if (!best || mtime > best.mtime) best = { name, mtime };
   }
@@ -13064,7 +13245,7 @@ function readOpenFiles(pid) {
     const paths = [];
     for (const name of names) {
       try {
-        const target = readlinkSync(join13(fdDir, name));
+        const target = readlinkSync(join14(fdDir, name));
         if (target.startsWith("/")) paths.push(target);
       } catch {
       }
@@ -13073,7 +13254,7 @@ function readOpenFiles(pid) {
   } catch {
   }
   try {
-    const raw = execFileSync6("lsof", ["-p", String(pid), "-Fn"], {
+    const raw = execFileSync7("lsof", ["-p", String(pid), "-Fn"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 3e3
@@ -13085,7 +13266,7 @@ function readOpenFiles(pid) {
 }
 function processStartMs(pid, nowMs = Date.now()) {
   try {
-    const raw = execFileSync6("ps", ["-o", "etime=", "-p", String(pid)], {
+    const raw = execFileSync7("ps", ["-o", "etime=", "-p", String(pid)], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
@@ -13102,8 +13283,8 @@ function liveProbeIo() {
     openFiles: readOpenFiles,
     processStartMs: (pid) => processStartMs(pid),
     stateDir: liveStateDirIo,
-    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join13(homedir9(), ".codex", "sessions"),
-    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join13(homedir9(), ".cursor", "chats"),
+    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join14(homedir10(), ".codex", "sessions"),
+    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join14(homedir10(), ".cursor", "chats"),
     now: () => Date.now()
   };
 }
@@ -13148,7 +13329,7 @@ var init_session_id = __esm({
       },
       readFirstLine: (path2) => {
         try {
-          const fd = readFileSync10(path2, { encoding: "utf8", flag: "r" });
+          const fd = readFileSync11(path2, { encoding: "utf8", flag: "r" });
           const newline = fd.indexOf("\n");
           return newline === -1 ? fd : fd.slice(0, newline);
         } catch {
@@ -13232,9 +13413,9 @@ var init_project_probe = __esm({
 
 // packages/daemon/src/lib/project-registry.ts
 import { EventEmitter } from "node:events";
-import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
-import { homedir as homedir10 } from "node:os";
-import { dirname as dirname15, isAbsolute as isAbsolute3, join as join14, resolve as resolve11 } from "node:path";
+import { existsSync as existsSync16, mkdirSync as mkdirSync10, readFileSync as readFileSync12, renameSync as renameSync5, writeFileSync as writeFileSync10 } from "node:fs";
+import { homedir as homedir11 } from "node:os";
+import { dirname as dirname16, isAbsolute as isAbsolute3, join as join15, resolve as resolve11 } from "node:path";
 import { z as z49 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
@@ -13270,15 +13451,15 @@ function buildRegisteredProject(probe, name, registeredAt) {
 function registryDir() {
   const override = process.env[REGISTRY_DIR_ENV];
   if (override && override.length > 0) return override;
-  return join14(homedir10(), ".tmux-ide");
+  return join15(homedir11(), ".tmux-ide");
 }
 function registryPath() {
-  return join14(registryDir(), "projects.json");
+  return join15(registryDir(), "projects.json");
 }
 function readDisk() {
   const path2 = registryPath();
-  if (!existsSync15(path2)) return [];
-  const raw = readFileSync11(path2, "utf-8");
+  if (!existsSync16(path2)) return [];
+  const raw = readFileSync12(path2, "utf-8");
   if (raw.trim().length === 0) return [];
   let parsed;
   try {
@@ -13300,11 +13481,11 @@ function readDisk() {
 }
 function writeDisk(projects) {
   const path2 = registryPath();
-  const dir = dirname15(path2);
-  mkdirSync9(dir, { recursive: true });
+  const dir = dirname16(path2);
+  mkdirSync10(dir, { recursive: true });
   const file = { version: 1, projects };
   const tmpPath = `${path2}.tmp`;
-  writeFileSync9(tmpPath, JSON.stringify(file, null, 2) + "\n");
+  writeFileSync10(tmpPath, JSON.stringify(file, null, 2) + "\n");
   renameSync5(tmpPath, path2);
 }
 function ensureCache() {
@@ -13324,7 +13505,7 @@ function getProject(name) {
   return ensureCache().find((p) => p.name === name) ?? null;
 }
 async function registerProject(input) {
-  const exists = input.exists ?? existsSync15;
+  const exists = input.exists ?? existsSync16;
   const absoluteDir = isAbsolute3(input.dir) ? input.dir : resolve11(input.dir);
   if (!exists(absoluteDir)) {
     throw new ProjectDirNotFoundError(absoluteDir);
@@ -13531,10 +13712,10 @@ var init_chip = __esm({
 });
 
 // packages/daemon/src/lib/state-home.ts
-import { homedir as homedir11 } from "node:os";
-import { join as join15 } from "node:path";
+import { homedir as homedir12 } from "node:os";
+import { join as join16 } from "node:path";
 function stateHome() {
-  return process.env.TMUX_IDE_HOME ?? join15(homedir11(), ".tmux-ide");
+  return process.env.TMUX_IDE_HOME ?? join16(homedir12(), ".tmux-ide");
 }
 var init_state_home = __esm({
   "packages/daemon/src/lib/state-home.ts"() {
@@ -13552,8 +13733,8 @@ __export(events_exports, {
   formatEventLine: () => formatEventLine,
   shouldRotate: () => shouldRotate
 });
-import { appendFileSync, existsSync as existsSync16, mkdirSync as mkdirSync10, renameSync as renameSync6, statSync as statSync2 } from "node:fs";
-import { join as join16 } from "node:path";
+import { appendFileSync, existsSync as existsSync17, mkdirSync as mkdirSync11, renameSync as renameSync6, statSync as statSync2 } from "node:fs";
+import { join as join17 } from "node:path";
 function diffFleet(prev, next) {
   const state = /* @__PURE__ */ new Map();
   const events = [];
@@ -13580,14 +13761,14 @@ function formatEventLine(ev, paint = (_s, t) => t) {
   return `${isoTime(ev.ts)} ${ev.session} ${from} \u2192 ${paint(ev.to, ev.to)}`;
 }
 function eventsPath() {
-  return join16(stateHome(), "events.jsonl");
+  return join17(stateHome(), "events.jsonl");
 }
 function appendEvents(events, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
   if (events.length === 0) return;
   const path2 = eventsPath();
   try {
-    mkdirSync10(stateHome(), { recursive: true });
-    if (existsSync16(path2) && shouldRotate(statSync2(path2).size)) {
+    mkdirSync11(stateHome(), { recursive: true });
+    if (existsSync17(path2) && shouldRotate(statSync2(path2).size)) {
       renameSync6(path2, `${path2}.1`);
     }
     const ts = now();
@@ -13690,15 +13871,15 @@ var init_notify_prefs = __esm({
 });
 
 // packages/daemon/src/tui/chrome/notify.ts
-import { execFileSync as execFileSync7, spawn as spawn4 } from "node:child_process";
-import { dirname as dirname16, resolve as resolve12 } from "node:path";
+import { execFileSync as execFileSync8, spawn as spawn4 } from "node:child_process";
+import { dirname as dirname17, resolve as resolve12 } from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 import {
   closeSync,
   constants as fsConstants,
-  existsSync as existsSync17,
+  existsSync as existsSync18,
   openSync,
-  readFileSync as readFileSync12,
+  readFileSync as readFileSync13,
   writeSync
 } from "node:fs";
 function statusPhrase(to) {
@@ -13880,7 +14061,7 @@ function soundArgv(platform) {
 }
 function playPingSound(platform = process.platform) {
   const argv = soundArgv(platform);
-  if (!argv || !existsSync17(argv[1])) return;
+  if (!argv || !existsSync18(argv[1])) return;
   try {
     const child = spawn4(argv[0], argv.slice(1), { stdio: "ignore", detached: true });
     child.on("error", () => {
@@ -13891,7 +14072,7 @@ function playPingSound(platform = process.platform) {
 }
 function binaryPath(name) {
   try {
-    const path2 = execFileSync7("which", [name], { encoding: "utf8" }).trim();
+    const path2 = execFileSync8("which", [name], { encoding: "utf8" }).trim();
     return path2.startsWith("/") ? path2 : null;
   } catch {
     return null;
@@ -13909,10 +14090,10 @@ function notifierExecuteCommand(session) {
   return `if tmux has-session -t ${host} 2>/dev/null; then tmux set-option -t ${shellSingleQuote(APP_HOST_SESSION)} ${APP_JUMP_OPTION} ${target}; tmux switch-client -t ${host}; else tmux switch-client -t ${target}; fi`;
 }
 function resolveNativeMacosNotifierPath(io = {}) {
-  const exists = io.exists ?? existsSync17;
+  const exists = io.exists ?? existsSync18;
   const cliPath = io.cliPath === void 0 ? process.env.TMUX_IDE_CLI : io.cliPath;
   const modulePath = io.modulePath ?? fileURLToPath6(import.meta.url);
-  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname16(resolve12(path2)));
+  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname17(resolve12(path2)));
   const visited = /* @__PURE__ */ new Set();
   for (const anchor of anchors) {
     let directory = anchor;
@@ -13920,7 +14101,7 @@ function resolveNativeMacosNotifierPath(io = {}) {
       visited.add(directory);
       const candidate = resolve12(directory, NATIVE_MACOS_NOTIFIER_RELATIVE_PATH);
       if (exists(resolve12(candidate, NATIVE_MACOS_NOTIFIER_EXECUTABLE))) return candidate;
-      const parent = dirname16(directory);
+      const parent = dirname17(directory);
       if (parent === directory) break;
       directory = parent;
     }
@@ -13972,7 +14153,7 @@ function notifySendArgs(n) {
 }
 function sendSystemNotification(n, io = {}) {
   const platform = io.platform ?? process.platform;
-  const exec = io.exec ?? ((cmd, args) => execFileSync7(cmd, args, { stdio: "ignore" }));
+  const exec = io.exec ?? ((cmd, args) => execFileSync8(cmd, args, { stdio: "ignore" }));
   const has = io.hasBinary ?? hasBinary;
   try {
     if (platform === "darwin") {
@@ -14048,9 +14229,9 @@ function applyKillSwitch(prefs, envValue) {
 }
 function readRawConfig() {
   const path2 = appConfigPath();
-  if (!existsSync17(path2)) return void 0;
+  if (!existsSync18(path2)) return void 0;
   try {
-    return JSON.parse(readFileSync12(path2, "utf-8"));
+    return JSON.parse(readFileSync13(path2, "utf-8"));
   } catch {
     return void 0;
   }
@@ -14092,10 +14273,10 @@ var init_notify = __esm({
 });
 
 // packages/daemon/src/tui/chrome/notify-state.ts
-import { existsSync as existsSync18, mkdirSync as mkdirSync11, readFileSync as readFileSync13, writeFileSync as writeFileSync10 } from "node:fs";
-import { join as join17 } from "node:path";
+import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, writeFileSync as writeFileSync11 } from "node:fs";
+import { join as join18 } from "node:path";
 function notifyStatePath() {
-  return join17(stateHome(), "notify-state.json");
+  return join18(stateHome(), "notify-state.json");
 }
 function serializeLastNotified(map, nowMs) {
   const lastNotified = {};
@@ -14122,17 +14303,17 @@ function parseLastNotified(json2, nowMs) {
 }
 function loadLastNotified(nowMs = Date.now()) {
   const path2 = notifyStatePath();
-  if (!existsSync18(path2)) return /* @__PURE__ */ new Map();
+  if (!existsSync19(path2)) return /* @__PURE__ */ new Map();
   try {
-    return parseLastNotified(readFileSync13(path2, "utf-8"), nowMs);
+    return parseLastNotified(readFileSync14(path2, "utf-8"), nowMs);
   } catch {
     return /* @__PURE__ */ new Map();
   }
 }
 function saveLastNotified(map, nowMs = Date.now()) {
   try {
-    mkdirSync11(stateHome(), { recursive: true });
-    writeFileSync10(notifyStatePath(), serializeLastNotified(map, nowMs));
+    mkdirSync12(stateHome(), { recursive: true });
+    writeFileSync11(notifyStatePath(), serializeLastNotified(map, nowMs));
   } catch {
   }
 }
@@ -14145,9 +14326,9 @@ var init_notify_state = __esm({
 });
 
 // packages/daemon/src/tui/chrome/snapshot.ts
-import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync7, writeFileSync as writeFileSync11 } from "node:fs";
-import { homedir as homedir12 } from "node:os";
-import { dirname as dirname17, join as join18 } from "node:path";
+import { existsSync as existsSync20, mkdirSync as mkdirSync13, readFileSync as readFileSync15, renameSync as renameSync7, writeFileSync as writeFileSync12 } from "node:fs";
+import { homedir as homedir13 } from "node:os";
+import { dirname as dirname18, join as join19 } from "node:path";
 import { z as z50 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
@@ -14262,15 +14443,15 @@ function collectFleetSnapshot(io = defaultIo) {
   return buildSnapshot(rawPanes, rawSessions, io.processTable());
 }
 function snapshotPath() {
-  return join18(homedir12(), ".tmux-ide", "snapshot.json");
+  return join19(homedir13(), ".tmux-ide", "snapshot.json");
 }
 function writeSnapshot(snapshot) {
   const path2 = snapshotPath();
   try {
-    mkdirSync12(dirname17(path2), { recursive: true });
+    mkdirSync13(dirname18(path2), { recursive: true });
     const tmp = `${path2}.tmp`;
-    writeFileSync11(tmp, JSON.stringify(snapshot, null, 2) + "\n");
-    if (existsSync19(path2)) {
+    writeFileSync12(tmp, JSON.stringify(snapshot, null, 2) + "\n");
+    if (existsSync20(path2)) {
       try {
         renameSync7(path2, `${path2}.1`);
       } catch {
@@ -14283,8 +14464,8 @@ function writeSnapshot(snapshot) {
 function readSnapshot() {
   const path2 = snapshotPath();
   try {
-    if (!existsSync19(path2)) return null;
-    const raw = readFileSync14(path2, "utf-8");
+    if (!existsSync20(path2)) return null;
+    const raw = readFileSync15(path2, "utf-8");
     if (raw.trim().length === 0) return null;
     const result = FleetSnapshotSchemaZ.safeParse(JSON.parse(raw));
     return result.success ? result.data : null;
@@ -15096,26 +15277,26 @@ import {
   fstatSync,
   linkSync as linkSync2,
   lstatSync,
-  mkdirSync as mkdirSync13,
+  mkdirSync as mkdirSync14,
   openSync as openSync2,
-  readFileSync as readFileSync15,
+  readFileSync as readFileSync16,
   renameSync as renameSync8,
-  rmSync,
-  writeFileSync as writeFileSync12
+  rmSync as rmSync2,
+  writeFileSync as writeFileSync13
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { homedir as homedir13 } from "node:os";
-import { dirname as dirname18, join as join19 } from "node:path";
+import { homedir as homedir14 } from "node:os";
+import { dirname as dirname19, join as join20 } from "node:path";
 function nonEmptyEnvironmentValue(name) {
   const value = process.env[name];
   return value !== void 0 && value.length > 0 ? value : void 0;
 }
 function getCanonicalDaemonInfoPath() {
-  const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV2) ?? join19(homedir13(), ".tmux-ide");
-  return join19(dir, DAEMON_INFO_FILE);
+  const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV2) ?? join20(homedir14(), ".tmux-ide");
+  return join20(dir, DAEMON_INFO_FILE);
 }
 function getCanonicalDaemonClaimPath() {
-  return join19(dirname18(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
+  return join20(dirname19(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
 }
 function observation(stat) {
   return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
@@ -15133,7 +15314,7 @@ function prepareCanonicalDaemonRoot(root) {
   let descriptor2;
   try {
     try {
-      mkdirSync13(root, { recursive: true, mode: 448 });
+      mkdirSync14(root, { recursive: true, mode: 448 });
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
@@ -15178,7 +15359,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
   try {
     const pathStat = lstatSync(path2);
     const pathObservation = observation(pathStat);
-    const parentStat = lstatSync(dirname18(path2));
+    const parentStat = lstatSync(dirname19(path2));
     if (parentStat.isSymbolicLink()) {
       return invalidState(
         "parent-symlink",
@@ -15249,7 +15430,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
     descriptor2 = openSync2(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const openedStat = fstatSync(descriptor2);
     const openedObservation = observation(openedStat);
-    const reopenedParentStat = lstatSync(dirname18(path2));
+    const reopenedParentStat = lstatSync(dirname19(path2));
     if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || !sameFileIdentity(parentStat, reopenedParentStat) || !reopenedParentStat.isDirectory() || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0 || typeof process.getuid === "function" && reopenedParentStat.uid !== process.getuid() || (reopenedParentStat.mode & 63) !== 0) {
       return invalidState(
         "changed-while-opening",
@@ -15260,7 +15441,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
     }
     let raw;
     try {
-      raw = JSON.parse(readFileSync15(descriptor2, "utf-8"));
+      raw = JSON.parse(readFileSync16(descriptor2, "utf-8"));
     } catch (error) {
       return invalidState(
         "malformed-json",
@@ -15302,7 +15483,7 @@ function inspectCanonicalDaemonClaimPath(path2) {
     if ((claimStat.mode & 63) !== 0) {
       return { status: "invalid", detail: "daemon claim directory is not owner-only" };
     }
-    const ownerPath = join19(path2, DAEMON_CLAIM_OWNER_FILE);
+    const ownerPath = join20(path2, DAEMON_CLAIM_OWNER_FILE);
     const ownerStat = lstatSync(ownerPath);
     if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
       return { status: "invalid", detail: "daemon claim owner must be a real file" };
@@ -15321,7 +15502,7 @@ function inspectCanonicalDaemonClaimPath(path2) {
     if (!openedStat.isFile() || openedStat.dev !== ownerStat.dev || openedStat.ino !== ownerStat.ino || openedStat.size !== ownerStat.size) {
       return { status: "invalid", detail: "daemon claim changed while it was opened" };
     }
-    const raw = JSON.parse(readFileSync15(descriptor2, "utf-8"));
+    const raw = JSON.parse(readFileSync16(descriptor2, "utf-8"));
     if (typeof raw.claimId !== "string" || !/^[0-9a-f-]{36}$/iu.test(raw.claimId) || typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid <= 0 || typeof raw.acquiredAt !== "string" || !Number.isFinite(Date.parse(raw.acquiredAt))) {
       return { status: "invalid", detail: "daemon claim owner has invalid metadata" };
     }
@@ -15342,7 +15523,7 @@ function inspectCanonicalDaemonClaimPath(path2) {
 function restoreCapturedFile(capturedPath, canonicalPath) {
   try {
     linkSync2(capturedPath, canonicalPath);
-    rmSync(capturedPath, { force: true });
+    rmSync2(capturedPath, { force: true });
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
   }
@@ -15357,7 +15538,7 @@ function retireCanonicalClaimIfMatches(expected) {
   }
   const moved = inspectCanonicalDaemonClaimPath(captured);
   if (moved.status === "valid" && moved.claim.claimId === expected.claimId && moved.claim.pid === expected.pid) {
-    rmSync(captured, { recursive: true, force: true });
+    rmSync2(captured, { recursive: true, force: true });
     return true;
   }
   try {
@@ -15368,7 +15549,7 @@ function retireCanonicalClaimIfMatches(expected) {
 }
 function tryAcquireCanonicalDaemonClaim() {
   const path2 = getCanonicalDaemonClaimPath();
-  const root = dirname18(path2);
+  const root = dirname19(path2);
   try {
     prepareCanonicalDaemonRoot(root);
   } catch (error) {
@@ -15384,8 +15565,8 @@ function tryAcquireCanonicalDaemonClaim() {
       acquiredAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     const candidate = `${path2}.${claim.claimId}.candidate`;
-    mkdirSync13(candidate, { mode: 448 });
-    writeFileSync12(join19(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
+    mkdirSync14(candidate, { mode: 448 });
+    writeFileSync13(join20(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
 `, {
       encoding: "utf-8",
       mode: 384
@@ -15395,7 +15576,7 @@ function tryAcquireCanonicalDaemonClaim() {
       activeClaims.add(claim.claimId);
       return { status: "acquired", claim };
     } catch (error) {
-      rmSync(candidate, { recursive: true, force: true });
+      rmSync2(candidate, { recursive: true, force: true });
       const existing = inspectCanonicalDaemonClaimPath(path2);
       if (existing.status === "missing") {
         if (attempt < 2) continue;
@@ -15431,7 +15612,7 @@ function releaseCanonicalDaemonClaim(claim) {
 function writeCanonicalDaemonInfo(info, claim) {
   assertCanonicalDaemonClaimHeld(claim);
   const path2 = getCanonicalDaemonInfoPath();
-  prepareCanonicalDaemonRoot(dirname18(path2));
+  prepareCanonicalDaemonRoot(dirname19(path2));
   const tmpPath = `${path2}.${claim.claimId}.${randomUUID()}.tmp`;
   const persisted = {
     pid: info.pid,
@@ -15444,7 +15625,7 @@ function writeCanonicalDaemonInfo(info, claim) {
     bindHostname: info.bindHostname,
     authToken: info.authToken
   };
-  writeFileSync12(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
+  writeFileSync13(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
     encoding: "utf-8",
     mode: 384
   });
@@ -15452,7 +15633,7 @@ function writeCanonicalDaemonInfo(info, claim) {
   try {
     linkSync2(tmpPath, path2);
   } finally {
-    rmSync(tmpPath, { force: true });
+    rmSync2(tmpPath, { force: true });
   }
 }
 function inspectCanonicalDaemonInfo() {
@@ -15482,7 +15663,7 @@ function clearCanonicalDaemonInfoIfUnchanged(state, claim) {
   try {
     const current = observation(lstatSync(captured));
     if (sameObservation(state.observation, current)) {
-      rmSync(captured, { recursive: true, force: true });
+      rmSync2(captured, { recursive: true, force: true });
       return true;
     }
     restoreCapturedFile(captured, path2);
@@ -15498,7 +15679,7 @@ function clearCanonicalDaemonInfoIfOwned(instanceId, claim) {
   if (!captured) return false;
   const state = inspectCanonicalDaemonInfoPath(captured);
   if (state.status === "valid" && state.info.instanceId === instanceId) {
-    rmSync(captured, { recursive: true, force: true });
+    rmSync2(captured, { recursive: true, force: true });
     return true;
   }
   restoreCapturedFile(captured, path2);
@@ -15518,7 +15699,7 @@ function pidLiveness(pid) {
 function canonicalDaemonClaimAllowsStartupAttempt() {
   const claimPath = getCanonicalDaemonClaimPath();
   try {
-    const root = lstatSync(dirname18(claimPath));
+    const root = lstatSync(dirname19(claimPath));
     if (root.isSymbolicLink() || !root.isDirectory() || typeof process.getuid === "function" && root.uid !== process.getuid() || (root.mode & 63) !== 0) {
       return false;
     }
@@ -15867,13 +16048,13 @@ var init_yaml_io = __esm({
 
 // packages/daemon/src/detect.ts
 import { resolve as resolve14, basename as basename6 } from "node:path";
-import { readFileSync as readFileSync16, existsSync as existsSync20 } from "node:fs";
+import { readFileSync as readFileSync17, existsSync as existsSync21 } from "node:fs";
 function fileExists(dir, name) {
-  return existsSync20(resolve14(dir, name));
+  return existsSync21(resolve14(dir, name));
 }
 function readJson(dir, name) {
   try {
-    return JSON.parse(readFileSync16(resolve14(dir, name), "utf-8"));
+    return JSON.parse(readFileSync17(resolve14(dir, name), "utf-8"));
   } catch {
     return null;
   }
@@ -15935,7 +16116,7 @@ function detectStack(dir) {
     detected.language = detected.language ?? "python";
     detected.reasons.push('Detected Python from "pyproject.toml" or "requirements.txt".');
     try {
-      const pyproject = readFileSync16(resolve14(dir, "pyproject.toml"), "utf-8");
+      const pyproject = readFileSync17(resolve14(dir, "pyproject.toml"), "utf-8");
       if (pyproject.includes("fastapi"))
         pushFramework(detected, "fastapi", 'Found "fastapi" in pyproject.toml.');
       else if (pyproject.includes("django"))
@@ -16087,28 +16268,28 @@ __export(skill_sync_exports, {
   syncSkill: () => syncSkill,
   versionMarker: () => versionMarker
 });
-import { existsSync as existsSync22, mkdirSync as mkdirSync15, readFileSync as readFileSync18, writeFileSync as writeFileSync14 } from "node:fs";
-import { homedir as homedir14 } from "node:os";
-import { dirname as dirname20, join as join21 } from "node:path";
+import { existsSync as existsSync23, mkdirSync as mkdirSync16, readFileSync as readFileSync19, writeFileSync as writeFileSync15 } from "node:fs";
+import { homedir as homedir15 } from "node:os";
+import { dirname as dirname21, join as join22 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 function claudeDir() {
-  return process.env.TMUX_IDE_CLAUDE_DIR ?? join21(homedir14(), ".claude");
+  return process.env.TMUX_IDE_CLAUDE_DIR ?? join22(homedir15(), ".claude");
 }
 function skillTargetDir() {
-  return join21(claudeDir(), "skills", "tmux-ide");
+  return join22(claudeDir(), "skills", "tmux-ide");
 }
 function skillTargetFile() {
-  return join21(skillTargetDir(), "SKILL.md");
+  return join22(skillTargetDir(), "SKILL.md");
 }
 function defaultSkillSource() {
-  const here = dirname20(fileURLToPath8(import.meta.url));
+  const here = dirname21(fileURLToPath8(import.meta.url));
   const candidates = [
-    join21(here, "../skill/SKILL.md"),
+    join22(here, "../skill/SKILL.md"),
     // bundled bin/cli.js → repo root
-    join21(here, "../../../../skill/SKILL.md")
+    join22(here, "../../../../skill/SKILL.md")
     // dev src/lib → repo root
   ];
-  return candidates.find((c) => existsSync22(c)) ?? candidates[0];
+  return candidates.find((c) => existsSync23(c)) ?? candidates[0];
 }
 function versionMarker(version) {
   return `<!-- tmux-ide-skill-version: ${version} -->`;
@@ -16122,10 +16303,10 @@ function rewriteVersionMarker(content, version) {
   return content.replace(VERSION_MARKER_RE, versionMarker(version));
 }
 function installedSkillVersion(dir = skillTargetDir()) {
-  const file = join21(dir, "SKILL.md");
-  if (!existsSync22(file)) return null;
+  const file = join22(dir, "SKILL.md");
+  if (!existsSync23(file)) return null;
   try {
-    return parseSkillVersion(readFileSync18(file, "utf-8"));
+    return parseSkillVersion(readFileSync19(file, "utf-8"));
   } catch {
     return null;
   }
@@ -16134,15 +16315,15 @@ function syncSkill({
   source = defaultSkillSource(),
   version = getCurrentVersion()
 } = {}) {
-  const rendered = rewriteVersionMarker(readFileSync18(source, "utf-8"), version);
+  const rendered = rewriteVersionMarker(readFileSync19(source, "utf-8"), version);
   const dir = skillTargetDir();
-  const target = join21(dir, "SKILL.md");
-  const existing = existsSync22(target) ? readFileSync18(target, "utf-8") : null;
+  const target = join22(dir, "SKILL.md");
+  const existing = existsSync23(target) ? readFileSync19(target, "utf-8") : null;
   if (existing === rendered) {
     return { action: "unchanged", path: target, to: version };
   }
-  mkdirSync15(dir, { recursive: true });
-  writeFileSync14(target, rendered, "utf-8");
+  mkdirSync16(dir, { recursive: true });
+  writeFileSync15(target, rendered, "utf-8");
   if (existing === null) return { action: "installed", path: target, to: version };
   return { action: "updated", path: target, from: parseSkillVersion(existing), to: version };
 }
@@ -16152,161 +16333,6 @@ var init_skill_sync = __esm({
     "use strict";
     init_update_check();
     VERSION_MARKER_RE = /<!--\s*tmux-ide-skill-version:\s*([^\s]+)\s*-->/;
-  }
-});
-
-// packages/daemon/src/tui/integrations/opencode.ts
-var opencode_exports = {};
-__export(opencode_exports, {
-  PLUGIN_FILENAME: () => PLUGIN_FILENAME,
-  PLUGIN_MARKER: () => PLUGIN_MARKER,
-  PLUGIN_SOURCE: () => PLUGIN_SOURCE,
-  installOpencodeIntegration: () => installOpencodeIntegration,
-  isOurPlugin: () => isOurPlugin,
-  opencodeIntegrationStatus: () => opencodeIntegrationStatus,
-  opencodePluginPath: () => opencodePluginPath,
-  uninstallOpencodeIntegration: () => uninstallOpencodeIntegration
-});
-import { existsSync as existsSync23, mkdirSync as mkdirSync16, readFileSync as readFileSync19, rmSync as rmSync2, writeFileSync as writeFileSync15 } from "node:fs";
-import { homedir as homedir15 } from "node:os";
-import { dirname as dirname21, join as join22 } from "node:path";
-function opencodePluginPath() {
-  const override = process.env.TMUX_IDE_OPENCODE_DIR;
-  if (override) return join22(override, PLUGIN_FILENAME);
-  const xdg = process.env.XDG_CONFIG_HOME;
-  const configRoot = xdg && xdg.length > 0 ? xdg : join22(homedir15(), ".config");
-  return join22(configRoot, "opencode", "plugin", PLUGIN_FILENAME);
-}
-function isOurPlugin(content) {
-  return content.includes(PLUGIN_MARKER);
-}
-function installOpencodeIntegration() {
-  const pluginPath = opencodePluginPath();
-  mkdirSync16(dirname21(pluginPath), { recursive: true });
-  writeFileSync15(pluginPath, PLUGIN_SOURCE, "utf8");
-  return { pluginPath };
-}
-function uninstallOpencodeIntegration() {
-  const pluginPath = opencodePluginPath();
-  const wasInstalled = opencodeIntegrationStatus().installed;
-  if (wasInstalled) rmSync2(pluginPath, { force: true });
-  return { pluginPath, wasInstalled };
-}
-function opencodeIntegrationStatus() {
-  const pluginPath = opencodePluginPath();
-  try {
-    if (!existsSync23(pluginPath)) return { installed: false };
-    return { installed: isOurPlugin(readFileSync19(pluginPath, "utf8")) };
-  } catch {
-    return { installed: false };
-  }
-}
-var PLUGIN_MARKER, PLUGIN_FILENAME, PLUGIN_SOURCE;
-var init_opencode = __esm({
-  "packages/daemon/src/tui/integrations/opencode.ts"() {
-    "use strict";
-    PLUGIN_MARKER = "installed by: tmux-ide integration install opencode";
-    PLUGIN_FILENAME = "tmux-ide.js";
-    PLUGIN_SOURCE = `/**
- * tmux-ide opencode plugin (${PLUGIN_MARKER})
- *
- * Stamps this pane's @agent_session_id tmux option with the opencode session
- * id so \`tmux-ide restore --resume-agents\` can revive the conversation via
- * \`opencode --session <id>\` after a tmux server death.
- *
- * Remove with: tmux-ide integration uninstall opencode
- */
-export const TmuxIde = async () => {
-  const pane = process.env.TMUX_PANE;
-  if (!pane) return {}; // not inside tmux \u2014 inert
-  const { execFile } = await import("node:child_process");
-  let last = "";
-  const stamp = (id) => {
-    if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id) || id === last) return;
-    last = id;
-    execFile("tmux", ["set-option", "-p", "-t", pane, "@agent_session_id", id], () => {});
-  };
-  return {
-    event: async ({ event }) => {
-      // session.updated fires on create + every update; info.id is the
-      // resumable session id. Child sessions (subagents) carry parentID and
-      // must never overwrite the pane's own conversation key.
-      if (event && event.type === "session.updated") {
-        const info = event.properties && event.properties.info;
-        if (info && !info.parentID) stamp(info.id);
-      }
-    },
-  };
-};
-`;
-  }
-});
-
-// packages/daemon/src/lib/agent-discovery.ts
-var agent_discovery_exports = {};
-__export(agent_discovery_exports, {
-  KNOWN_AGENTS: () => KNOWN_AGENTS,
-  discoverAgents: () => discoverAgents,
-  presentAgents: () => presentAgents
-});
-import { execFileSync as execFileSync8 } from "node:child_process";
-function discoverAgents(which = defaultWhich, isInstalled2 = defaultIntegrationProbe) {
-  return KNOWN_AGENTS.map((agent) => {
-    const path2 = which(agent.bin);
-    const present = path2 !== null;
-    const installed = present && agent.integration ? isInstalled2(agent.id) : false;
-    const captureActive = agent.capture === "probe" ? present : agent.capture !== null ? installed : false;
-    return {
-      id: agent.id,
-      bin: agent.bin,
-      integration: agent.integration,
-      path: path2,
-      installed,
-      capture: agent.capture,
-      captureActive
-    };
-  });
-}
-function presentAgents(agents) {
-  return agents.filter((a) => a.path !== null);
-}
-var KNOWN_AGENTS, defaultWhich, defaultIntegrationProbe;
-var init_agent_discovery = __esm({
-  "packages/daemon/src/lib/agent-discovery.ts"() {
-    "use strict";
-    init_claude();
-    init_opencode();
-    KNOWN_AGENTS = [
-      { id: "claude", bin: "claude", integration: true, capture: "hooks" },
-      { id: "codex", bin: "codex", integration: false, capture: "probe" },
-      { id: "opencode", bin: "opencode", integration: true, capture: "plugin" },
-      { id: "gemini", bin: "gemini", integration: false, capture: null },
-      { id: "aider", bin: "aider", integration: false, capture: null },
-      { id: "cursor", bin: "cursor-agent", integration: false, capture: "probe" },
-      { id: "copilot", bin: "copilot", integration: false, capture: null }
-    ];
-    defaultWhich = (bin) => {
-      try {
-        const out = execFileSync8("which", [bin], {
-          encoding: "utf-8",
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: 2e3
-        }).trim();
-        if (out.length === 0) return null;
-        return out.split("\n")[0].trim() || null;
-      } catch {
-        return null;
-      }
-    };
-    defaultIntegrationProbe = (agentId) => {
-      try {
-        if (agentId === "claude") return claudeIntegrationStatus().installed;
-        if (agentId === "opencode") return opencodeIntegrationStatus().installed;
-        return false;
-      } catch {
-        return false;
-      }
-    };
   }
 });
 
@@ -17885,7 +17911,7 @@ function readAdoptedFleet(registry = getDefaultWorkspaceRegistry()) {
   for (const line of panesRaw.split("\n")) {
     if (!line) continue;
     const fields = line.split(FLEET_FIELD_SEPARATOR);
-    if (fields.length !== 9 || fields[8] !== FLEET_LINE_SENTINEL) continue;
+    if (fields.length !== 10 || fields[9] !== FLEET_LINE_SENTINEL) continue;
     const sessionName = fields[0];
     if (!adoptedSet.has(sessionName)) continue;
     const runtimePaneId = fields[1];
@@ -17902,7 +17928,8 @@ function readAdoptedFleet(registry = getDefaultWorkspaceRegistry()) {
       currentPath: fields[4],
       agentStateRaw: emptyToNull(fields[5]),
       agentStatusTextRaw: emptyToNull(fields[6]),
-      agentDisplayNameRaw: emptyToNull(fields[7])
+      agentDisplayNameRaw: emptyToNull(fields[7]),
+      agentHintRaw: emptyToNull(fields[8])
     });
   }
   return adopted.map((name) => {
@@ -17975,6 +18002,7 @@ var init_discovery = __esm({
       "#{@agent_state}",
       "#{@agent_status_text}",
       "#{@agent_display_name}",
+      "#{@agent_hint}",
       FLEET_LINE_SENTINEL
     ].join(FLEET_FIELD_SEPARATOR);
   }
@@ -18120,6 +18148,7 @@ function toPresentationPane(pane, index) {
     role: null,
     name: null,
     type: null,
+    agentKind: pane.agentHintRaw,
     agentStateRaw: pane.agentStateRaw,
     agentStatusTextRaw: pane.agentStatusTextRaw,
     agentDisplayNameRaw: pane.agentDisplayNameRaw,
@@ -18343,6 +18372,9 @@ function legacyPaneIdentities(panes) {
   });
 }
 function harnessForPane(pane) {
+  const detected = pane.agentKind?.toLowerCase();
+  if (detected === "codex") return "codex";
+  if (detected === "claude" || detected === "claude-code") return "claude-code";
   const executable = `${pane.currentCommand} ${pane.type ?? ""} ${pane.name ?? ""}`.toLowerCase();
   if (executable.includes("codex")) return "codex";
   if (executable.includes("claude")) return "claude-code";
@@ -21789,6 +21821,7 @@ var init_workspace_pane_creation2 = __esm({
     init_src();
     init_src2();
     init_project_readiness_probe();
+    init_agent_kind();
     init_workspace_config_loader();
     init_workspace_registry();
     init_shell();
@@ -22022,6 +22055,7 @@ var init_workspace_pane_creation2 = __esm({
             ["@ide_type", resource3.kind === "agent" ? "agent" : "shell"],
             ["@ide_role", resource3.role ?? "shell"],
             ["@ide_name", resource3.displayTitle],
+            ["@agent_hint", agentHintForCommand(harness?.command.join(" ")) ?? ""],
             [HARNESS_OPTION, resource3.harnessProfileId ?? ""],
             [MISSION_OPTION, resource3.missionId ?? ""]
           ];
@@ -30238,8 +30272,9 @@ function createTmuxAgentStatusProbe(deps2) {
         return tableCache.table;
       };
       const candidates = [];
-      const emit = (pane, raw, scrape) => {
+      const emit = (pane, raw, scrape, agentKind) => {
         facts.set(pane.runtimePaneId, {
+          agentKind,
           agentStateRaw: raw?.stateRaw ?? null,
           agentStatusTextRaw: raw?.statusTextRaw ?? null,
           agentDisplayNameRaw: raw?.displayNameRaw ?? null,
@@ -30251,13 +30286,17 @@ function createTmuxAgentStatusProbe(deps2) {
         const authority = parseAuthority(raw?.stateRaw ?? void 0, input.nowSec);
         if (authority !== null) {
           verdictCache.delete(pane.runtimePaneId);
-          emit(pane, raw, null);
+          const direct = resolveAgentCommand(pane.currentCommand, raw?.pid ?? 0, [], {
+            ...raw?.hint ? { hint: raw.hint } : {},
+            ...deps2.manifests ? { manifests: deps2.manifests } : {}
+          }).manifest;
+          emit(pane, raw, null, direct && direct.id !== "shell" ? direct.id : null);
           continue;
         }
         const cached2 = verdictCache.get(pane.runtimePaneId);
         const priorEntry = cached2 && cached2.command === pane.currentCommand ? cached2 : null;
         if (priorEntry && input.nowSec - priorEntry.scrapedAtSec <= ttlSeconds) {
-          emit(pane, raw, priorEntry.verdict);
+          emit(pane, raw, priorEntry.verdict, priorEntry.agentKind);
           continue;
         }
         candidates.push({ pane, raw, priorEntry });
@@ -30274,14 +30313,15 @@ function createTmuxAgentStatusProbe(deps2) {
         if (!manifest || manifest.id === "shell") {
           verdictCache.set(pane.runtimePaneId, {
             verdict: "unknown",
+            agentKind: null,
             command: pane.currentCommand,
             scrapedAtSec: input.nowSec
           });
-          emit(pane, raw, "unknown");
+          emit(pane, raw, "unknown", null);
           continue;
         }
         if (capturesUsed >= captureBudget) {
-          emit(pane, raw, priorEntry?.verdict ?? "unknown");
+          emit(pane, raw, priorEntry?.verdict ?? "unknown", manifest.id);
           continue;
         }
         capturesUsed += 1;
@@ -30290,10 +30330,11 @@ function createTmuxAgentStatusProbe(deps2) {
         const verdict = classifyInstant({ ...snapshot, title: pane.title }, manifest);
         verdictCache.set(pane.runtimePaneId, {
           verdict,
+          agentKind: manifest.id,
           command: pane.currentCommand,
           scrapedAtSec: input.nowSec
         });
-        emit(pane, raw, verdict);
+        emit(pane, raw, verdict, manifest.id);
       }
       if (verdictCache.size > SCRAPE_CACHE_MAX_ENTRIES) {
         const byAge = [...verdictCache.entries()].sort(
@@ -43427,47 +43468,47 @@ init_legacy_config_migration();
 init_config_context();
 init_src();
 import {
-  existsSync as existsSync21,
-  readFileSync as readFileSync17,
-  writeFileSync as writeFileSync13,
-  mkdirSync as mkdirSync14,
+  existsSync as existsSync22,
+  readFileSync as readFileSync18,
+  writeFileSync as writeFileSync14,
+  mkdirSync as mkdirSync15,
   readdirSync as readdirSync3,
   copyFileSync as copyFileSync2
 } from "node:fs";
-import { resolve as resolve15, join as join20, basename as basename7, dirname as dirname19 } from "node:path";
+import { resolve as resolve15, join as join21, basename as basename7, dirname as dirname20 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
-var __dirname4 = dirname19(fileURLToPath7(import.meta.url));
+var __dirname4 = dirname20(fileURLToPath7(import.meta.url));
 function copyTemplateSkills(targetDir) {
   const created = [];
   const templateSkillsDir = resolve15(__dirname4, "..", "..", "..", "templates", "skills");
-  if (!existsSync21(templateSkillsDir)) return created;
-  mkdirSync14(targetDir, { recursive: true });
+  if (!existsSync22(templateSkillsDir)) return created;
+  mkdirSync15(targetDir, { recursive: true });
   for (const file of readdirSync3(templateSkillsDir)) {
     if (!file.endsWith(".md")) continue;
-    const destination = join20(targetDir, file);
-    copyFileSync2(join20(templateSkillsDir, file), destination);
+    const destination = join21(targetDir, file);
+    copyFileSync2(join21(templateSkillsDir, file), destination);
     created.push(destination);
   }
   return created;
 }
 function scaffoldLibraryStubs(dir) {
   const created = [];
-  const libraryDir = join20(dir, ".tmux-ide", "library");
-  if (!existsSync21(libraryDir)) {
-    mkdirSync14(libraryDir, { recursive: true });
+  const libraryDir = join21(dir, ".tmux-ide", "library");
+  if (!existsSync22(libraryDir)) {
+    mkdirSync15(libraryDir, { recursive: true });
     created.push(libraryDir);
   }
-  const archPath = join20(libraryDir, "architecture.md");
-  if (!existsSync21(archPath)) {
-    writeFileSync13(
+  const archPath = join21(libraryDir, "architecture.md");
+  if (!existsSync22(archPath)) {
+    writeFileSync14(
       archPath,
       "# Architecture\n\n<!-- Describe your project's architecture here. This context is injected into agent dispatch prompts. -->\n"
     );
     created.push(archPath);
   }
-  const learningsPath = join20(libraryDir, "learnings.md");
-  if (!existsSync21(learningsPath)) {
-    writeFileSync13(
+  const learningsPath = join21(libraryDir, "learnings.md");
+  if (!existsSync22(learningsPath)) {
+    writeFileSync14(
       learningsPath,
       "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n"
     );
@@ -43477,13 +43518,13 @@ function scaffoldLibraryStubs(dir) {
 }
 function scaffoldValidationContract(dir) {
   const created = [];
-  const tasksDir = join20(dir, ".tasks");
-  if (!existsSync21(tasksDir)) {
-    mkdirSync14(tasksDir, { recursive: true });
+  const tasksDir = join21(dir, ".tasks");
+  if (!existsSync22(tasksDir)) {
+    mkdirSync15(tasksDir, { recursive: true });
   }
-  const contractPath = join20(tasksDir, "validation-contract.md");
-  if (!existsSync21(contractPath)) {
-    writeFileSync13(
+  const contractPath = join21(tasksDir, "validation-contract.md");
+  if (!existsSync22(contractPath)) {
+    writeFileSync14(
       contractPath,
       "# Validation Contract\n\n<!-- Define assertions that the validator agent will verify. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n<!-- - VAL-003: Lint passes with zero warnings -->\n"
     );
@@ -43494,11 +43535,11 @@ function scaffoldValidationContract(dir) {
 function scaffoldAgentsMd(dir, name) {
   const created = [];
   const agentsTemplatePath = resolve15(__dirname4, "..", "..", "..", "templates", "AGENTS.md");
-  if (existsSync21(agentsTemplatePath)) {
-    const agentsPath = join20(dir, "AGENTS.md");
-    if (!existsSync21(agentsPath)) {
-      const content = readFileSync17(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
-      writeFileSync13(agentsPath, content);
+  if (existsSync22(agentsTemplatePath)) {
+    const agentsPath = join21(dir, "AGENTS.md");
+    if (!existsSync22(agentsPath)) {
+      const content = readFileSync18(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
+      writeFileSync14(agentsPath, content);
       created.push(agentsPath);
     }
   }
@@ -43516,7 +43557,7 @@ function scaffoldTeamWorkspace(dir, name) {
 }
 function scaffoldMissionsWorkspace(dir, name) {
   const created = [];
-  const skillsDir = join20(dir, ".tmux-ide", "skills");
+  const skillsDir = join21(dir, ".tmux-ide", "skills");
   created.push(...copyTemplateSkills(skillsDir));
   created.push(...scaffoldTeamWorkspace(dir, name));
   return created;
@@ -43533,10 +43574,10 @@ async function init({
   }
   if (template) {
     const templatePath = resolve15(__dirname4, "..", "..", "..", "templates", `${template}.yml`);
-    if (!existsSync21(templatePath)) {
+    if (!existsSync22(templatePath)) {
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
-    let content = readFileSync17(templatePath, "utf-8");
+    let content = readFileSync18(templatePath, "utf-8");
     const name2 = basename7(dir);
     content = content.replace(/^name: .+/m, `name: ${name2}`);
     const yaml6 = (await import("js-yaml")).default;
@@ -43548,11 +43589,11 @@ async function init({
       created = scaffoldMissionsWorkspace(dir, name2);
     } else if (isTeamTemplate(template)) {
       created = [
-        ...copyTemplateSkills(join20(dir, ".tmux-ide", "skills")),
+        ...copyTemplateSkills(join21(dir, ".tmux-ide", "skills")),
         ...scaffoldTeamWorkspace(dir, name2)
       ];
     } else {
-      created = copyTemplateSkills(join20(dir, ".tmux-ide", "skills"));
+      created = copyTemplateSkills(join21(dir, ".tmux-ide", "skills"));
     }
     if (json2) {
       console.log(JSON.stringify({ created: true, template, name: name2, paths: created }));
@@ -43580,7 +43621,7 @@ async function init({
     }
   } else {
     const templatePath = resolve15(__dirname4, "..", "..", "..", "templates", "default.yml");
-    let content = readFileSync17(templatePath, "utf-8");
+    let content = readFileSync18(templatePath, "utf-8");
     content = content.replace(/^name: .+/m, `name: ${name}`);
     const yaml6 = (await import("js-yaml")).default;
     const workspace = WorkspaceConfigV1SchemaZ.parse(yaml6.load(content));
@@ -43594,8 +43635,8 @@ async function init({
       console.log("Edit it to configure your workspace, then run: tmux-ide");
     }
   }
-  const skillsDir = join20(dir, ".tmux-ide", "skills");
-  if (!existsSync21(skillsDir)) {
+  const skillsDir = join21(dir, ".tmux-ide", "skills");
+  if (!existsSync22(skillsDir)) {
     const created = copyTemplateSkills(skillsDir);
     if (created.length > 0 && !json2) {
       console.log("Copied built-in skill templates to .tmux-ide/skills/");

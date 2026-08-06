@@ -25,6 +25,7 @@ function paneLine(
   state: string,
   statusText: string,
   displayName: string,
+  hint = "",
 ): string {
   return [
     sessionName,
@@ -35,6 +36,7 @@ function paneLine(
     state,
     statusText,
     displayName,
+    hint,
     SENTINEL,
   ].join(SEP);
 }

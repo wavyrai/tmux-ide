@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 
 import { WorkspaceTiledSurface } from "./workspace-tiled-surface.tsx";
 import type { PaneStreamLayoutEvent } from "../terminal/pane-stream-transport.ts";
+import { createDefaultDomPaneFrames } from "./dom-shell.ts";
 
 const disposers: (() => void)[] = [];
 
@@ -110,6 +111,33 @@ describe("the layout-faithful workspace view", () => {
     // outlines coincide (m50.2, gap 4).
     expect(tiles[0]!.style.width).toBe("49.7500%");
     expect(tiles[1]!.style.left).toBe("49.7500%");
+  });
+
+  it("renders agent identity and live state in both the process tab and pane card", () => {
+    const base = createDefaultDomPaneFrames()[0]!;
+    const frame = {
+      ...base,
+      pane: {
+        ...base.pane,
+        id: "pane.a",
+        kind: "terminal" as const,
+        icon: "agent-claude" as const,
+      },
+      title: "Claude Code",
+      status: base.status ? { ...base.status, label: "Running" } : null,
+    };
+    const { root } = renderSurface([layout()], { paneFrames: [frame] });
+
+    expect(root.querySelector(".window-tabs__tab")?.getAttribute("data-identity-icon")).toBe(
+      "agent-claude",
+    );
+    expect(root.querySelector(".pane-tile")?.getAttribute("data-identity-icon")).toBe(
+      "agent-claude",
+    );
+    expect(root.querySelector(".pane-tile__icon-badge")?.getAttribute("data-identity-icon")).toBe(
+      "agent-claude",
+    );
+    expect(root.querySelector(".pane-tile__status")?.textContent).toContain("Running");
   });
 
   it("hoists a pane's header into the separator row tmux draws above it", () => {

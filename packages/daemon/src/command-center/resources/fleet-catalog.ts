@@ -98,6 +98,7 @@ function toPresentationPane(
     role: null,
     name: null,
     type: null,
+    agentKind: pane.agentHintRaw,
     agentStateRaw: pane.agentStateRaw,
     agentStatusTextRaw: pane.agentStatusTextRaw,
     agentDisplayNameRaw: pane.agentDisplayNameRaw,

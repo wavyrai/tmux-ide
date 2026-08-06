@@ -120,13 +120,33 @@ describe("collectPaneStartupPlan", () => {
         paneRole: "lead",
         paneType: "agent",
         title: "Lead",
+        command: "claude --name Lead",
       }),
     ).toEqual([
       [WORKSPACE_SEMANTIC_PANE_OPTION, "agent-lead"],
       ["@ide_role", "lead"],
       ["@ide_name", "Lead"],
       ["@ide_type", "agent"],
+      ["@agent_hint", "claude"],
     ]);
+  });
+
+  it("stamps known agent commands without mistaking incidental paths for agents", () => {
+    const options = (command: string) =>
+      paneIdentityOptions({
+        semanticPaneId: "pane-test",
+        paneRole: "shell",
+        paneType: "agent",
+        title: "Test",
+        command,
+      }).at(-1);
+
+    expect(options("codex --dangerously-bypass-approvals-and-sandbox")).toEqual([
+      "@agent_hint",
+      "codex",
+    ]);
+    expect(options("node /opt/bin/opencode --continue")).toEqual(["@agent_hint", "opencode"]);
+    expect(options("vim ~/.claude/notes.md")).toEqual(["@agent_hint", ""]);
   });
 
   it("keeps derived identities stable across insert, reorder, and delete", () => {

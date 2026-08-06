@@ -40,6 +40,7 @@ import { WebWorkbenchDock } from "../../../../packages/daemon/src/ui/workbench-d
 import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host-unstyled.tsx";
 import {
   APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS,
+  agentHarnessIcon,
   type ApplicationShellTerminalPaneFrame,
 } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 import type {
@@ -1410,6 +1411,13 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   }
                 >
                   <i data-state={activityTone(agent().activity)} />
+                  <span
+                    class="sidebar-row__agent-icon"
+                    data-agent-icon={agentHarnessIcon(agent().harness)}
+                    aria-hidden="true"
+                  >
+                    <DomIcon id={agentHarnessIcon(agent().harness)} usage="pane" />
+                  </span>
                   <span class="sidebar-row__identity">
                     <span>{agent().name}</span>
                     <small>

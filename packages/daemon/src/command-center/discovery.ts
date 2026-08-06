@@ -174,6 +174,8 @@ export interface FleetPaneFacts {
   readonly agentStateRaw: string | null;
   readonly agentStatusTextRaw: string | null;
   readonly agentDisplayNameRaw: string | null;
+  /** Durable `@agent_hint` agent identity, or null when the pane has none. */
+  readonly agentHintRaw: string | null;
 }
 
 /** One adopted session in the fleet, with its live panes. */
@@ -202,6 +204,7 @@ const FLEET_PANE_FORMAT = [
   "#{@agent_state}",
   "#{@agent_status_text}",
   "#{@agent_display_name}",
+  "#{@agent_hint}",
   FLEET_LINE_SENTINEL,
 ].join(FLEET_FIELD_SEPARATOR);
 
@@ -239,8 +242,8 @@ export function readAdoptedFleet(
   for (const line of panesRaw.split("\n")) {
     if (!line) continue;
     const fields = line.split(FLEET_FIELD_SEPARATOR);
-    // session, pane, active, command, path, state, statusText, displayName, sentinel
-    if (fields.length !== 9 || fields[8] !== FLEET_LINE_SENTINEL) continue;
+    // session, pane, active, command, path, state, statusText, displayName, hint, sentinel
+    if (fields.length !== 10 || fields[9] !== FLEET_LINE_SENTINEL) continue;
     const sessionName = fields[0]!;
     if (!adoptedSet.has(sessionName)) continue;
     const runtimePaneId = fields[1]!;
@@ -258,6 +261,7 @@ export function readAdoptedFleet(
       agentStateRaw: emptyToNull(fields[5]!),
       agentStatusTextRaw: emptyToNull(fields[6]!),
       agentDisplayNameRaw: emptyToNull(fields[7]!),
+      agentHintRaw: emptyToNull(fields[8]!),
     });
   }
 

@@ -14,6 +14,7 @@ import { _setExecutor } from "../../widgets/lib/pane-comms.ts";
 import {
   projectApplicationShellResource,
   projectApplicationShellResourceV3,
+  harnessForPane,
   isAgentPane,
   resolveAgentPresentation,
 } from "./application-shell.ts";
@@ -110,6 +111,25 @@ function liveSession() {
 }
 
 describe("application-shell resource projector", () => {
+  it("prefers detected agent identity over version-shaped process names", () => {
+    expect(
+      harnessForPane({
+        ...liveSession().panes[0],
+        currentCommand: "2.1.219",
+        name: "Editor",
+        agentKind: "claude",
+      }),
+    ).toBe("claude-code");
+    expect(
+      harnessForPane({
+        ...liveSession().panes[0],
+        currentCommand: "node",
+        name: "Worker",
+        agentKind: "codex",
+      }),
+    ).toBe("codex");
+  });
+
   it("builds one immutable canonical input with correlated terminal resources", () => {
     const first = projectApplicationShellResource(liveSession());
     const second = projectApplicationShellResource(liveSession());

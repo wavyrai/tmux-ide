@@ -1721,6 +1721,47 @@ kbd {
     opacity 150ms var(--desktop-ease-smooth);
 }
 
+/* Agent rows are process cards, not anonymous list entries. The status dot
+   remains a live state channel; the larger badge answers which coding agent is
+   running before the label has to be read. */
+.sidebar-row--agent {
+  gap: var(--tmi-space-2);
+  border-color: color-mix(in oklab, var(--desktop-separator) 72%, transparent);
+  background: color-mix(in oklab, var(--desktop-raised) 62%, transparent);
+}
+
+.sidebar-row__agent-icon {
+  --pane-identity-accent: var(--tmux-ide-status-info);
+  display: inline-flex;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--pane-identity-accent) 42%, transparent);
+  border-radius: var(--tmi-radius-control);
+  color: var(--pane-identity-accent);
+  background: color-mix(in oklab, var(--pane-identity-accent) 12%, transparent);
+}
+
+.sidebar-row__agent-icon[data-agent-icon="agent-claude"] {
+  --pane-identity-accent: #d97757;
+}
+
+.sidebar-row__agent-icon[data-agent-icon="agent-codex"] {
+  --pane-identity-accent: #36a47d;
+}
+
+.sidebar-row__agent-icon[data-agent-icon="agent-custom"] {
+  --pane-identity-accent: #8c78d7;
+}
+
+.sidebar-row--active .sidebar-row__agent-icon {
+  border-color: color-mix(in oklab, var(--sf-on-lit-blue) 44%, transparent);
+  color: var(--sf-on-lit-blue);
+  background: color-mix(in oklab, var(--sf-on-lit-blue) 14%, transparent);
+}
+
 .sidebar-row:hover {
   color: var(--tmux-ide-text-primary);
   background: var(--desktop-hover);
@@ -5572,11 +5613,9 @@ kbd {
  *
  * Window tabs over tmux's own tiling. The pane area holds ONE terminal — the
  * whole tmux window as tmux painted it — and an overlay that carries the
- * chrome. The overlay is deliberately transparent: it exists to be aimed at,
- * not to be looked at, because everything worth looking at is the terminal
- * underneath it. Its only visible parts are a tile's hover header and the
- * border handles, and the handles sit on the single cell tmux already spends
- * drawing a border, so nothing here covers a character of output.
+ * chrome. The output region stays transparent while the visible panel header
+ * and border handles occupy rows/cells tmux already reserves for borders. The
+ * result reads as a carded process surface without covering terminal output.
  * ========================================================================== */
 
 /*
@@ -5610,8 +5649,8 @@ kbd {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: var(--tmi-space-1);
-  padding: var(--tmi-space-2) var(--tmi-space-2) 0;
+  gap: var(--tmi-space-2);
+  padding: var(--tmi-space-2);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -5624,15 +5663,17 @@ kbd {
    in the application bar, because to a reader they are the same gesture. */
 .window-tabs__tab,
 .window-tabs__create {
+  --pane-identity-accent: var(--tmux-ide-status-info);
   display: inline-flex;
   flex: 0 0 auto;
   gap: var(--tmi-space-1);
   align-items: center;
-  padding: var(--tmi-space-1) var(--tmi-space-3);
-  border: 1px solid transparent;
-  border-radius: var(--tmi-radius-control);
+  min-height: 28px;
+  padding: 2px var(--tmi-space-3) 2px 3px;
+  border: 1px solid color-mix(in oklab, var(--tmux-ide-border-default) 62%, transparent);
+  border-radius: var(--tmi-radius-xl);
   color: var(--tmux-ide-text-muted);
-  background: transparent;
+  background: color-mix(in oklab, var(--desktop-raised) 66%, transparent);
   font: inherit;
   white-space: nowrap;
   cursor: pointer;
@@ -5640,6 +5681,30 @@ kbd {
     color var(--tmi-motion-fast) var(--desktop-ease-smooth),
     background-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
     border-color var(--tmi-motion-fast) var(--desktop-ease-smooth);
+}
+
+.window-tabs__tab[data-identity-icon="agent-claude"] {
+  --pane-identity-accent: #d97757;
+}
+
+.window-tabs__tab[data-identity-icon="agent-codex"] {
+  --pane-identity-accent: #36a47d;
+}
+
+.window-tabs__tab[data-identity-icon="agent-custom"] {
+  --pane-identity-accent: #8c78d7;
+}
+
+.window-tabs__icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--pane-identity-accent) 38%, transparent);
+  border-radius: var(--tmi-radius-lg);
+  color: var(--pane-identity-accent);
+  background: color-mix(in oklab, var(--pane-identity-accent) 13%, transparent);
 }
 
 @media (hover: hover) {
@@ -5652,8 +5717,13 @@ kbd {
 
 .window-tabs__tab[data-active="true"] {
   color: var(--tmux-ide-text-bright);
-  background: var(--desktop-active);
-  border-color: var(--tmux-ide-border-default);
+  background: color-mix(in oklab, var(--pane-identity-accent) 12%, var(--desktop-active));
+  border-color: color-mix(
+    in oklab,
+    var(--pane-identity-accent) 52%,
+    var(--tmux-ide-border-default)
+  );
+  box-shadow: var(--tmi-shadow-subtle);
 }
 
 .window-tabs__tab:disabled {
@@ -5735,12 +5805,28 @@ kbd {
  * lines a gap apart along every shared edge, which is the picture this replaces.
  */
 .pane-tile {
+  --pane-identity-accent: var(--tmux-ide-status-info);
   position: absolute;
   pointer-events: none;
   background: transparent;
   outline: 1px solid var(--tmux-ide-border-default);
   outline-offset: 0;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--desktop-separator) 35%, transparent);
+  container-type: inline-size;
   transform-origin: 0 0;
+}
+
+.pane-tile[data-identity-icon="agent-claude"] {
+  --pane-identity-accent: #d97757;
+}
+
+.pane-tile[data-identity-icon="agent-codex"] {
+  --pane-identity-accent: #36a47d;
+}
+
+.pane-tile[data-identity-icon="agent-custom"] {
+  --pane-identity-accent: #8c78d7;
 }
 
 .tiled-pane-area[data-manipulation-phase="dragging"] .pane-tile,
@@ -5790,7 +5876,11 @@ kbd {
 }
 
 .pane-tile[data-active="true"] {
-  outline-color: var(--tmux-ide-border-strong, var(--tmux-ide-border-default));
+  outline-color: color-mix(
+    in oklab,
+    var(--pane-identity-accent) 62%,
+    var(--tmux-ide-border-strong, var(--tmux-ide-border-default))
+  );
   /* The active tile's outline must win where it meets a quiet one: coincident
      outlines resolve by paint order, and without this the neighbour's line is
      what shows along the shared edge. */
@@ -5839,7 +5929,7 @@ kbd {
     var(--tmi-surface-raised) 88%,
     var(--tmux-ide-terminal-background)
   );
-  border-bottom-color: var(--tmi-accent);
+  border-bottom-color: var(--pane-identity-accent);
 }
 
 .pane-tile__header[data-hoisted="true"] {
@@ -5862,9 +5952,20 @@ kbd {
   display: none;
 }
 
-.pane-tile__icon {
+.pane-tile__icon-badge {
+  display: inline-flex;
   flex: 0 0 auto;
-  opacity: 0.8;
+  width: 18px;
+  height: calc(100% - 2px);
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  color: var(--pane-identity-accent);
+  background: color-mix(in oklab, var(--pane-identity-accent) 13%, transparent);
+}
+
+.pane-tile__icon {
+  opacity: 0.92;
 }
 
 .pane-tile__title {
@@ -5951,19 +6052,38 @@ kbd {
 }
 
 .pane-tile__status {
+  display: inline-flex;
   flex: 0 0 auto;
+  gap: 3px;
+  align-items: center;
+  min-width: 0;
+  padding: 1px 4px;
+  border-radius: var(--tmi-radius-xl);
+  color: var(--tmux-ide-text-muted);
+  background: color-mix(in oklab, var(--desktop-raised) 76%, transparent);
+  font-size: 0.6rem;
+  white-space: nowrap;
+}
+
+.pane-tile__status > i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--tmux-ide-text-muted);
 }
 
-.pane-tile__status[data-tone="running"] {
+.pane-tile__status[data-tone="running"] > i {
   background: var(--tmux-ide-status-running, currentColor);
 }
 
-.pane-tile__status[data-tone="attention"] {
+.pane-tile__status[data-tone="attention"] > i {
   background: var(--tmux-ide-status-attention, currentColor);
+}
+
+@container (max-width: 220px) {
+  .pane-tile__status > span {
+    display: none;
+  }
 }
 
 .pane-border {

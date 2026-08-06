@@ -29,6 +29,7 @@ function pane(overrides: Partial<FleetPaneFacts> = {}): FleetPaneFacts {
     agentStateRaw: null,
     agentStatusTextRaw: null,
     agentDisplayNameRaw: null,
+    agentHintRaw: null,
     ...overrides,
   };
 }
@@ -134,6 +135,26 @@ describe("projectFleetCatalog", () => {
     expect(agent.activity).toBe("waiting");
     expect(agent.attention).toBe(true);
     expect(agent.harness).toBe("codex");
+  });
+
+  it("uses a durable hint when the immediate process name is version-shaped", () => {
+    const resource = projectFleetCatalog(
+      [
+        session({
+          panes: [
+            pane({
+              currentCommand: "2.1.219",
+              agentStateRaw: `idle:${NOW_SEC}`,
+              agentHintRaw: "claude",
+            }),
+          ],
+        }),
+      ],
+      DAEMON,
+      NOW_SEC,
+    );
+
+    expect(resource.sessions[0]!.agents[0]!.harness).toBe("claude-code");
   });
 
   it("settles a stale stamp and an unstamped agent pane to unknown WITHOUT scraping", () => {

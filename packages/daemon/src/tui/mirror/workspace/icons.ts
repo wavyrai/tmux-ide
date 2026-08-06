@@ -32,6 +32,9 @@ export const WORKSPACE_ICONS = {
   search: { glyph: "⌕", fallback: "/", label: "Search" },
   refresh: { glyph: "↻", fallback: "r", label: "Refresh" },
   command: { glyph: "›", fallback: ">", label: "Command" },
+  "agent-codex": { glyph: "◉", fallback: "C", label: "Codex agent" },
+  "agent-claude": { glyph: "✦", fallback: "A", label: "Claude Code agent" },
+  "agent-custom": { glyph: "◈", fallback: "G", label: "Coding agent" },
 } as const satisfies Readonly<Record<SemanticIconId, WorkspaceIconDefinition>>;
 
 export interface WorkspaceIconDefinition {

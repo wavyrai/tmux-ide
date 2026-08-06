@@ -150,7 +150,10 @@ export const WEB_PANE_FRAME_HOST: PaneFrameHostLeaves = {
     return (
       <div class="web-pane-frame__identity">
         <span class="web-pane-frame__role-icon" aria-hidden="true">
-          {renderers.renderPaneIcon?.(props.pane, PANE_ROLE_ICONS[props.pane.kind]) ?? "▣"}
+          {renderers.renderPaneIcon?.(
+            props.pane,
+            props.pane.icon ?? PANE_ROLE_ICONS[props.pane.kind],
+          ) ?? "▣"}
         </span>
         <span class="web-pane-frame__title-group">
           <strong class="web-pane-frame__title" title={props.title}>

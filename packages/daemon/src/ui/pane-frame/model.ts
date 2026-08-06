@@ -9,6 +9,7 @@ import {
   type PaneAttention,
   type PaneStructure,
   type PaneVisualStateV1,
+  type SemanticIconId,
   type SemanticProductId,
   type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
@@ -99,10 +100,17 @@ function paneChildId(paneId: SemanticProductId, child: string): SemanticProductI
   return `${paneId.slice(0, 128 - suffix.length)}${suffix}` as SemanticProductId;
 }
 
-function harnessLabel(harness: ApplicationShellAgent["harness"]): string {
+export function agentHarnessLabel(harness: ApplicationShellAgent["harness"]): string {
   if (harness === "claude-code") return "Claude Code";
   if (harness === "codex") return "Codex";
   return "Custom harness";
+}
+
+/** Renderer-neutral agent identity carried by every PaneFrame host. */
+export function agentHarnessIcon(harness: ApplicationShellAgent["harness"]): SemanticIconId {
+  if (harness === "claude-code") return "agent-claude";
+  if (harness === "codex") return "agent-codex";
+  return "agent-custom";
 }
 
 /**
@@ -250,7 +258,7 @@ function paneFrameModelFromApplicationShellAgent(
     },
   };
   const appearance = resolvePaneAppearance(visualState);
-  const harness = harnessLabel(agent.harness);
+  const harness = agentHarnessLabel(agent.harness);
   const attentionChip =
     status.attention === "none"
       ? []
@@ -264,7 +272,7 @@ function paneFrameModelFromApplicationShellAgent(
           },
         ];
   return {
-    pane: { id: paneId, kind: "terminal" },
+    pane: { id: paneId, kind: "terminal", icon: agentHarnessIcon(agent.harness) },
     appearance,
     title: agent.name,
     subtitle: distinctSubtitle(agent.name, harness),
@@ -326,7 +334,7 @@ function paneFrameModelFromTerminalResource(
       ? TERMINAL_RESOURCE_UNAVAILABLE_LABELS[resource.attachability.reason]
       : appearance.accessibility.description;
   return {
-    pane: { id: resource.id, kind: "terminal" },
+    pane: { id: resource.id, kind: "terminal", icon: "terminals" },
     appearance,
     title: resource.title,
     subtitle: distinctSubtitle(
@@ -421,9 +429,10 @@ export function paneFrameTerminalsFromApplicationShellInventory(
           )
         : paneFrameModelFromTerminalResource(shell, resource, local);
     if (agent && !attachable) {
-      const harness = harnessLabel(agent.harness);
+      const harness = agentHarnessLabel(agent.harness);
       model = {
         ...model,
+        pane: { ...model.pane, icon: agentHarnessIcon(agent.harness) },
         title: agent.name,
         subtitle: harness,
         chips: [
@@ -453,8 +462,14 @@ export function paneFrameTerminalsFromApplicationShellInventory(
 /** Canonical fixture/resource adapter shared by every PaneFrame host. */
 export function paneFrameModelFromCohesionPane(pane: CohesionPaneFixture): PaneFrameModel {
   const appearance = resolvePaneAppearance(pane.state);
+  const fixtureAgentIcon =
+    pane.subtitle === "Claude Code"
+      ? "agent-claude"
+      : pane.subtitle === "Codex"
+        ? "agent-codex"
+        : undefined;
   return {
-    pane: { id: pane.id, kind: pane.role },
+    pane: { id: pane.id, kind: pane.role, icon: fixtureAgentIcon },
     appearance,
     title: pane.title,
     subtitle: pane.subtitle,

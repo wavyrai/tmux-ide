@@ -4,6 +4,9 @@ import {
   ArrowShrink02Icon,
   ArrowUpRight01Icon,
   BrowserIcon,
+  BotIcon,
+  ChatGptIcon,
+  ClaudeIcon,
   Cancel01Icon,
   CommandIcon,
   Copy01Icon,
@@ -98,6 +101,9 @@ const ICON_SPECS = {
   search: { label: "Search", artwork: Search01Icon },
   refresh: { label: "Refresh", artwork: RefreshIcon },
   command: { label: "Command palette", artwork: CommandIcon },
+  "agent-codex": { label: "Codex agent", artwork: ChatGptIcon },
+  "agent-claude": { label: "Claude Code agent", artwork: ClaudeIcon },
+  "agent-custom": { label: "Coding agent", artwork: BotIcon },
 } satisfies Record<SemanticIconId, DomIconSpec>;
 
 export const DOM_ICON_METADATA: Readonly<Record<SemanticIconId, DomIconMetadata>> = Object.freeze(

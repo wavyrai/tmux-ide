@@ -84,6 +84,7 @@ describe("createTmuxAgentStatusProbe", () => {
     });
 
     expect(facts.get("%3")).toEqual({
+      agentKind: "claude",
       agentStateRaw: `working:${NOW}`,
       agentStatusTextRaw: "building",
       agentDisplayNameRaw: "Fable",
@@ -125,10 +126,15 @@ describe("createTmuxAgentStatusProbe", () => {
     });
 
     expect(facts.get("%3")).toMatchObject({
+      agentKind: "claude",
       agentScrapeState: "blocked",
       agentStateRaw: `working:${NOW - 700}`,
     });
-    expect(facts.get("%4")).toMatchObject({ agentScrapeState: "blocked", agentStateRaw: null });
+    expect(facts.get("%4")).toMatchObject({
+      agentKind: "claude",
+      agentScrapeState: "blocked",
+      agentStateRaw: null,
+    });
     // The `ps` read is shared across both scraped panes — taken at most once.
     expect(processTableReads).toBe(1);
   });
@@ -151,7 +157,7 @@ describe("createTmuxAgentStatusProbe", () => {
       nowSec: NOW,
     });
 
-    expect(facts.get("%9")).toMatchObject({ agentScrapeState: "unknown" });
+    expect(facts.get("%9")).toMatchObject({ agentKind: null, agentScrapeState: "unknown" });
     // A shell/no-match pane never triggers a capture round-trip.
     expect(captures).toEqual([]);
   });

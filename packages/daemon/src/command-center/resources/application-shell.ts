@@ -37,6 +37,8 @@ export interface ApplicationShellPanePresentationFacts {
   readonly role: string | null;
   readonly name: string | null;
   readonly type: string | null;
+  /** Stable detected agent kind; private discovery fact, never a wire identity. */
+  readonly agentKind?: string | null;
   /**
    * Durable `@tmux_ide_mission` creation stamp gathered by the IO discovery
    * layer, or null when the pane carries no mission stamp. Optional so legacy
@@ -377,6 +379,9 @@ function legacyPaneIdentities(
 export function harnessForPane(
   pane: ApplicationShellPanePresentationFacts,
 ): "codex" | "claude-code" | "custom" {
+  const detected = pane.agentKind?.toLowerCase();
+  if (detected === "codex") return "codex";
+  if (detected === "claude" || detected === "claude-code") return "claude-code";
   const executable = `${pane.currentCommand} ${pane.type ?? ""} ${pane.name ?? ""}`.toLowerCase();
   if (executable.includes("codex")) return "codex";
   if (executable.includes("claude")) return "claude-code";
