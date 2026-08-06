@@ -512,6 +512,7 @@ describe("main-process daemon connection coordinator", () => {
         protocolVersion: 1 as const,
         target: { workspaceName: "product", semanticPaneId: "pane.worker" },
         viewerMode: "interactive" as const,
+        geometryOwnership: "passive" as const,
         viewport: { cols: 120, rows: 40 },
       },
     };
@@ -529,6 +530,7 @@ describe("main-process daemon connection coordinator", () => {
         requestId: mutation.requestId,
         expiresAt: Date.now() + 30_000,
         effectiveViewerMode: "interactive",
+        effectiveGeometryOwnership: "passive",
       },
     });
 

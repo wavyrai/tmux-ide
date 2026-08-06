@@ -2,13 +2,16 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { runTmux, TmuxError } from "@tmux-ide/tmux-bridge";
 import {
+  TerminalAttachmentGeometryOwnershipSchemaZ,
   TerminalAttachmentViewerModeSchemaZ,
   TerminalAttachmentViewportSchemaZ,
+  refuseReadOnlyGeometryOwner,
 } from "@tmux-ide/contracts";
 import {
   GROUPED_TMUX_MAX_GENERATION,
   GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   GROUPED_TMUX_VIEW_SESSION_PREFIX,
+  attachCommand,
   groupedTmuxViewSessionName,
   planGroupedTmuxAttachment,
   type GroupedTmuxAttachmentPlan,
@@ -93,6 +96,13 @@ export interface TmuxAttachmentClientTransportInput {
     readonly rows: number;
   };
   readonly viewerMode: GroupedTmuxAttachmentPlan["viewerMode"];
+  /**
+   * Carried so the canonical client planner builds the SAME attach argv the
+   * grouped-tmux plan did. Omitting it would silently re-add `-f ignore-size`
+   * to an owning attachment and fail the deep-equality gate — which is the
+   * failure mode this field exists to make impossible.
+   */
+  readonly geometryOwnership: GroupedTmuxAttachmentPlan["geometryOwnership"];
 }
 
 export interface TmuxAttachmentClientTransportAttempt {
@@ -283,8 +293,10 @@ const TmuxAttachmentClientTransportInputSchemaZ = z
       .strict(),
     viewport: TerminalAttachmentViewportSchemaZ,
     viewerMode: TerminalAttachmentViewerModeSchemaZ,
+    geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ.default("passive"),
   })
-  .strict();
+  .strict()
+  .superRefine(refuseReadOnlyGeometryOwner);
 
 /**
  * Reconstructs the only normal-client argv accepted by the PTY launcher. No
@@ -302,15 +314,15 @@ export function planCanonicalTmuxAttachmentClientCommand(
   ) {
     throw new TmuxAttachmentViewExecutorError("invalid-request");
   }
-  const exactViewTarget = `=${identity.viewSessionName}`;
-  // `-f ignore-size` makes the spawned view client size-passive (m41 attach-2)
-  // so it never drives the shared window's size. This argv is cross-checked for
-  // deep equality against the grouped-tmux plan's attach command, so both must
-  // stay identical. `-r` (read-only) already implies read-only + ignore-size.
-  const attach = tmux(
-    parsed.viewerMode === "read-only"
-      ? ["attach-session", "-E", "-r", "-t", exactViewTarget]
-      : ["attach-session", "-E", "-f", "ignore-size", "-t", exactViewTarget],
+  // Built by the SAME function the grouped-tmux plan uses, not by a second copy
+  // of the rule. The two argvs are cross-checked for deep equality before a
+  // client is spawned, and the previous duplication is exactly the shape in
+  // which the two could drift — one of them learning about geometry ownership
+  // and the other not, so every owning attach fails the equality gate.
+  const attach = attachCommand(
+    identity.viewSessionName,
+    parsed.viewerMode,
+    parsed.geometryOwnership,
   );
   const commands =
     parsed.operation === "attach"
@@ -441,6 +453,10 @@ function canonicalPlanFor(operation: GuardedAttachmentViewOperation): GroupedTmu
       generation: operation.plan.identity.generation,
       target: operation.plan.identity.semanticTarget,
       viewerMode: operation.plan.viewerMode,
+      // Re-planned from the plan's OWN ownership, so a plan that claims to own
+      // geometry can only pass the deep-equality gate below if the ownership it
+      // claims is the ownership its attach argv was built with.
+      geometryOwnership: operation.plan.geometryOwnership,
       viewport: operation.plan.viewport,
       source: operation.source,
     });
@@ -547,6 +563,7 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
         },
         viewport: { ...plan.viewport },
         viewerMode: plan.viewerMode,
+        geometryOwnership: plan.geometryOwnership,
       };
       if (!isDeepStrictEqual(command, planCanonicalTmuxAttachmentClientCommand(input))) {
         throw new TmuxAttachmentViewExecutorError("invalid-request");

@@ -48,6 +48,7 @@ function mutation(
       protocolVersion: 1,
       target: { workspaceName: "product", semanticPaneId: "pane.worker" },
       viewerMode: "interactive",
+      geometryOwnership: "passive",
       viewport: { cols: 120, rows: 40 },
     },
     ...overrides,
@@ -97,6 +98,7 @@ describe("owner terminal attachment issue route", () => {
       requestId: REQUEST_ID,
       expiresAt: now + 30_000,
       effectiveViewerMode: "interactive" as const,
+      effectiveGeometryOwnership: "passive" as const,
     }));
     const app = appWith({ issue });
     const connected: DesktopDaemonHostState = {
@@ -125,6 +127,7 @@ describe("owner terminal attachment issue route", () => {
         requestId: REQUEST_ID,
         expiresAt: now + 30_000,
         effectiveViewerMode: "interactive",
+        effectiveGeometryOwnership: "passive",
       },
     });
     expect(issue).toHaveBeenCalledWith(mutation().attachment, {
@@ -182,6 +185,7 @@ describe("owner terminal attachment issue route", () => {
       requestId: REQUEST_ID,
       expiresAt: Date.now() + 30_000,
       effectiveViewerMode: "interactive" as const,
+      effectiveGeometryOwnership: "passive" as const,
     }));
     const app = appWith({ issue });
     const packagedOrigin = "tmux-ide://app";

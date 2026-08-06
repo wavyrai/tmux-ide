@@ -38,6 +38,7 @@ const REQUEST = {
   protocolVersion: 1 as const,
   target: { workspaceName: "alpha", semanticPaneId: "pane.shell" },
   viewerMode: "interactive" as const,
+  geometryOwnership: "passive" as const,
   viewport: { cols: 80, rows: 24 },
 };
 
@@ -53,6 +54,7 @@ function hostWithDescriptor(daemonInstanceId = DAEMON.instanceId) {
       requestId: "2a215cf2-547e-42a2-91c7-454df8e56121",
       expiresAt: Date.now() + 15_000,
       effectiveViewerMode: "interactive" as const,
+      effectiveGeometryOwnership: "passive" as const,
     },
   }));
   return {

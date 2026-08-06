@@ -217,6 +217,7 @@ describe.skipIf(!hasTmux)("m41 attach-2 multi-pane live acceptance", () => {
         protocolVersion: 1,
         target: { workspaceName, semanticPaneId },
         viewerMode: "interactive",
+        geometryOwnership: "passive",
         viewport: { cols: 100, rows: 30 },
       },
       { requestId, projectIdentity: "project-accept", rendererOrigin: "tmux-ide://app" },

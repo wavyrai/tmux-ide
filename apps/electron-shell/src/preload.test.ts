@@ -85,6 +85,7 @@ describe("desktop preload daemon bridge", () => {
       protocolVersion: 1 as const,
       target: { workspaceName: "product", semanticPaneId: "pane.worker" },
       viewerMode: "interactive" as const,
+      geometryOwnership: "passive" as const,
       viewport: { cols: 120, rows: 40 },
     };
     electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {

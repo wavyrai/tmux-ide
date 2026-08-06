@@ -2,6 +2,7 @@ import {
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
   TerminalAttachmentViewportSchemaZ,
   type TerminalAttachRequest,
+  type TerminalAttachmentGeometryOwnership,
   type TerminalAttachmentSemanticTarget,
   type TerminalAttachmentViewport,
 } from "@tmux-ide/contracts";
@@ -61,14 +62,33 @@ export interface TerminalSurfaceProps {
   readonly onFocus?: (source: "keyboard" | "mouse") => void;
   readonly rendererFactory?: TerminalRendererFactory;
   /**
-   * Render the origin window's own grid and letterbox the remainder instead of
-   * reflowing tmux to the card (m41 attach-5). A multi-pane window is attached
-   * as ONE size-passive card: the desktop never drives the window size, so DOM
-   * measurements must not resize the origin. The renderer is sized from the
-   * transport-reported window grid, and the surface centers it inside the card.
+   * Who decides how big the origin tmux window is (m50.2, gap 1).
+   *
+   * `passive` (the default) renders the origin window's own grid and letterboxes
+   * the remainder: DOM measurements never reflow tmux, the renderer is sized
+   * from the transport-reported window grid, and the surface centers it inside
+   * the card. Every mirror and every read-only viewer stays here.
+   *
+   * `owner` measures the card, floors it into whole cells, and drives tmux to
+   * match through the attachment's resize path — so the window IS the card and
+   * there is no letterbox. The daemon has attached this client without
+   * `-f ignore-size` for exactly that purpose; the contract carries the same
+   * word, and the interactive lease's per-window exclusivity is what keeps two
+   * owners from fighting.
    */
-  readonly sizePassive?: boolean;
+  readonly geometryOwnership?: TerminalAttachmentGeometryOwnership;
 }
+
+/**
+ * How long the surface waits before asking tmux for a new size.
+ *
+ * A window drag produces a resize event per frame, and each one is a serialized
+ * daemon round trip that makes tmux re-tile every pane and repaint every client
+ * watching. Coalescing to the settled size costs the user nothing they can see —
+ * the grid is repainted by tmux either way — and spares the multiplexer a
+ * re-tile per frame of a drag.
+ */
+const OWNED_RESIZE_DEBOUNCE_MS = 150;
 
 function sameViewport(
   left: TerminalAttachmentViewport | null,
@@ -150,6 +170,15 @@ const OUTPUT_NOT_CONSUMED = new Error("Terminal output was not consumed by the r
  * it never creates a process, resolves a tmux target, or opens a network path.
  */
 export function TerminalSurface(props: TerminalSurfaceProps) {
+  /**
+   * The render consequence of ownership, named once.
+   *
+   * Passive is the default so an omitted prop is the harmless behavior: a
+   * surface that forgot to declare itself cannot silently start reflowing a
+   * window other clients are attached to.
+   */
+  const ownsGeometry = (): boolean => props.geometryOwnership === "owner";
+  const sizePassive = (): boolean => !ownsGeometry();
   const [phase, setPhase] = createSignal<TerminalSurfacePhase>(
     props.transport ? "measuring" : "unavailable",
   );
@@ -175,6 +204,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let latestMeasuredViewport: TerminalAttachmentViewport | null = null;
   let pendingResize: TerminalAttachmentViewport | null = null;
   let resizeFlight: Promise<void> | null = null;
+  let resizeDebounce: ReturnType<typeof setTimeout> | null = null;
+  /** True until the first owned resize has been sent, so that one goes at once. */
+  let resizeSettled = true;
   let pointerFocus = false;
   let rendererLoadGeneration = 0;
   let markerWatcher = createWidgetMarkerByteWatcher();
@@ -254,6 +286,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const disposeAttachment = (): void => {
     const active = attachment;
     attachment = null;
+    if (resizeDebounce !== null) clearTimeout(resizeDebounce);
+    resizeDebounce = null;
+    resizeSettled = true;
     pendingResize = null;
     resizeFlight = null;
     retireInput();
@@ -403,7 +438,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       currentViewport = event.clientViewport;
       setSourceGrid(event.sourceGrid);
       setClientViewport(event.clientViewport);
-      if (props.sizePassive) {
+      if (sizePassive()) {
         // Size-passive card: mirror the origin window's grid; never resize tmux.
         renderer?.resizeGrid(event.sourceGrid);
         return;
@@ -423,7 +458,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       if (attachment) {
         setReason(null);
         setPhase("connected");
-        if (props.sizePassive) {
+        if (sizePassive()) {
           // Size-passive card: mirror the origin window's grid; never resize tmux.
           renderer?.resizeGrid(event.sourceGrid);
           return;
@@ -465,6 +500,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
         target: props.target,
         viewerMode: "interactive",
+        geometryOwnership: props.geometryOwnership ?? "passive",
         viewport,
       });
     } catch {
@@ -501,7 +537,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const fit = (): void => {
     animationFrame = null;
     if (disposed) return;
-    if (props.sizePassive) {
+    if (sizePassive()) {
       // Size-passive card: the origin window owns its size, so a DOM measurement
       // must never reflow tmux. Re-assert the window grid on an existing
       // attachment; otherwise open one with a provisional (ignored) viewport.
@@ -529,7 +565,25 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     if (!currentViewport) return;
     if (sameViewport(currentViewport, viewport)) return;
     pendingResize = viewport;
-    flushResize();
+    /*
+     * Coalesce, but never on the FIRST size.
+     *
+     * A window drag is a stream of measurements and only the last one matters,
+     * so the flush waits for the size to settle. The initial fit after connect
+     * is not part of a stream — it is the moment the grid stops being the
+     * provisional 80x24 the attach was opened with — and delaying it shows the
+     * user a visibly wrong terminal for a fifth of a second on every open.
+     */
+    if (resizeSettled) {
+      flushResize();
+      resizeSettled = false;
+      return;
+    }
+    if (resizeDebounce !== null) clearTimeout(resizeDebounce);
+    resizeDebounce = setTimeout(() => {
+      resizeDebounce = null;
+      flushResize();
+    }, OWNED_RESIZE_DEBOUNCE_MS);
   };
 
   const scheduleFit = (): void => {
@@ -738,7 +792,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       class="terminal-surface"
       data-phase={phase()}
       data-focused={props.focused ?? false}
-      data-size-passive={props.sizePassive ?? false}
+      data-size-passive={sizePassive()}
+      data-geometry-ownership={props.geometryOwnership ?? "passive"}
       data-reduced-motion={props.reducedMotion ?? false}
       data-preserves-frame={hasValidatedFrame()}
       data-widget={widgetTag()}

@@ -1595,6 +1595,15 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                                       focused={
                                         paneFrame().appearance.accessibility.terminalInputOwner
                                       }
+                                      /*
+                                       * The pre-tiled fallback grid, one card
+                                       * per pane. Each card is the only view of
+                                       * its window here, so it fits tmux to
+                                       * itself — the behavior this surface has
+                                       * always had, now stated rather than
+                                       * inherited from a default (m50.2).
+                                       */
+                                      geometryOwnership="owner"
                                       reducedMotion={props.reducedMotion}
                                       themeKey={props.terminalThemeKey}
                                       onFocus={(source) =>

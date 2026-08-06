@@ -72,6 +72,7 @@ const REQUESTS: readonly DaemonResourceRequest[] = [
       protocolVersion: 1,
       target: { workspaceName: WORKSPACE, semanticPaneId: "pane.worker" },
       viewerMode: "interactive",
+      geometryOwnership: "passive",
       viewport: { cols: 120, rows: 40 },
     },
   },

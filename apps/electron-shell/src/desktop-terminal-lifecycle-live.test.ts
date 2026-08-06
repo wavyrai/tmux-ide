@@ -483,6 +483,7 @@ describe
           semanticPaneId: created.resource.semanticPaneId,
         },
         viewerMode: "interactive",
+        geometryOwnership: "passive",
         viewport: { cols: 100, rows: 30 },
       };
       const firstCounters: SocketCounters = { connections: 0, outboundBinaryFrames: 0 };

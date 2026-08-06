@@ -201,7 +201,7 @@ describe("TerminalSurface", () => {
           title="Codex"
           transport={transport}
           rendererFactory={renderer.factory}
-          sizePassive
+          geometryOwnership="passive"
         />
       ),
       root,
@@ -230,6 +230,71 @@ describe("TerminalSurface", () => {
     await Promise.resolve();
     expect(attachment.resize).not.toHaveBeenCalled();
     expect(root.querySelector(".terminal-surface")?.getAttribute("data-size-passive")).toBe("true");
+    dispose();
+  });
+
+  it("asks the daemon to own geometry and fits tmux to the card", async () => {
+    /*
+     * The renderer half of m50.2 gap 1.
+     *
+     * Two claims, and both matter. The request must SAY `owner` — the daemon
+     * decides whether to drop `-f ignore-size` from that word alone, so a
+     * surface that behaves like an owner without asking to be one gets a client
+     * whose size tmux discards. And the measured fit must reach the attachment
+     * rather than the window's reported grid being mirrored back, which is what
+     * the passive path does one test above.
+     */
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    renderer.setViewport({ cols: 118, rows: 38 });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+          geometryOwnership="owner"
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        geometryOwnership: "owner",
+        // The DOM measurement, not the provisional 80x24 a passive attach opens
+        // with: an owner knows its size before it asks for a client.
+        viewport: { cols: 118, rows: 38 },
+      }),
+      expect.any(Function),
+    );
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-size-passive")).toBe(
+      "false",
+    );
+
+    /*
+     * The origin window reporting a DIFFERENT grid does not win.
+     *
+     * Bug this catches: the surface keeps the passive reflex of mirroring
+     * whatever tmux reports, so the card silently follows the window instead of
+     * the window following the card — the letterbox returns with the ownership
+     * flag still set, which is the confusing half-broken state.
+     */
+    (listener as ((event: NativeTerminalEvent) => void) | null)?.({
+      type: "geometry",
+      sourceGrid: { cols: 80, rows: 24 },
+      clientViewport: { cols: 80, rows: 24 },
+    });
+    await vi.waitFor(() => expect(attachment.resize).toHaveBeenCalledWith({ cols: 118, rows: 38 }));
+    expect(renderer.renderer.resizeGrid).not.toHaveBeenCalled();
     dispose();
   });
 
@@ -269,6 +334,7 @@ describe("TerminalSurface", () => {
         protocolVersion: 1,
         target: TARGET_A,
         viewerMode: "interactive",
+        geometryOwnership: "passive",
         viewport: { cols: 80, rows: 24 },
       },
       expect.any(Function),
@@ -416,6 +482,7 @@ describe("TerminalSurface", () => {
           target={TARGET_A}
           title="Codex"
           transport={transport}
+          geometryOwnership="owner"
           rendererFactory={renderer.factory}
         />
       ),
@@ -464,6 +531,7 @@ describe("TerminalSurface", () => {
           target={TARGET_A}
           title="Codex"
           transport={transport}
+          geometryOwnership="owner"
           rendererFactory={renderer.factory}
         />
       ),

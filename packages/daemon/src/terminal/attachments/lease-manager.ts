@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   TerminalAttachRequestSchemaZ,
   type TerminalAttachRequest,
+  type TerminalAttachmentGeometryOwnership,
   type TerminalAttachmentSemanticTarget,
   type TerminalAttachmentViewerMode,
 } from "@tmux-ide/contracts";
@@ -131,6 +132,8 @@ export interface AttachmentLeaseDescriptor {
   readonly requestId: string;
   readonly target: TerminalAttachmentSemanticTarget;
   readonly viewerMode: TerminalAttachmentViewerMode;
+  /** Echoed so a caller can audit the ownership the daemon actually granted. */
+  readonly geometryOwnership: TerminalAttachmentGeometryOwnership;
   readonly status: AttachmentLeaseStatus;
   readonly issuedAt: number;
   readonly expiresAt: number;
@@ -889,6 +892,7 @@ export class AttachmentLeaseManager {
       generation,
       target: request.target,
       viewerMode: request.viewerMode,
+      geometryOwnership: request.geometryOwnership,
       viewport: request.viewport,
       source: {
         sessionId: resolution.source.sessionId,
@@ -1067,6 +1071,7 @@ export class AttachmentLeaseManager {
       requestId: state.requestId,
       target: { ...state.request.target },
       viewerMode: state.request.viewerMode,
+      geometryOwnership: state.request.geometryOwnership,
       status: state.status,
       issuedAt: state.issuedAt,
       expiresAt: state.expiresAt,

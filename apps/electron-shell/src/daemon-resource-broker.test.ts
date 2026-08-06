@@ -482,6 +482,7 @@ describe("Electron main daemon resource broker", () => {
         requestId,
         expiresAt: now + 30_000,
         effectiveViewerMode: "interactive" as const,
+        effectiveGeometryOwnership: "passive" as const,
       };
       const broker = new DaemonResourceBroker({
         daemon: CONNECTED,
@@ -499,6 +500,7 @@ describe("Electron main daemon resource broker", () => {
           protocolVersion: 1 as const,
           target: { workspaceName: "product", semanticPaneId: "pane.worker" },
           viewerMode: "interactive" as const,
+          geometryOwnership: "passive" as const,
           viewport: { cols: 120, rows: 40 },
         },
       };
@@ -543,6 +545,7 @@ describe("Electron main daemon resource broker", () => {
             protocolVersion: 1,
             target: { workspaceName: "product", semanticPaneId: "pane.worker" },
             viewerMode: "interactive",
+            geometryOwnership: "passive",
             viewport: { cols: 120, rows: 40 },
           },
         },
@@ -550,6 +553,54 @@ describe("Electron main daemon resource broker", () => {
       ),
     ).resolves.toMatchObject({ status: "error", error: { code: "daemon-unavailable" } });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a daemon that grants geometry ownership the renderer did not ask for", async () => {
+    /*
+     * Bug this catches: the renderer asks for a passive attachment — a mirror, a
+     * peek at a pane someone else is working in — and the daemon comes back with
+     * an owning one. Nothing downstream would notice: the surface renders the
+     * same either way, and the first symptom is a colleague's window silently
+     * reflowing to the size of a card in someone else's app.
+     *
+     * The broker already refuses viewer-mode drift for the same reason. This is
+     * the second axis of the same authority.
+     */
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({
+          status: "issued",
+          descriptor: {
+            protocolVersion: 1 as const,
+            webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
+            subprotocol: "tmux-ide-terminal.v1" as const,
+            redemptionTicket: `ta1_${"A".repeat(43)}`,
+            daemonInstanceId: IDENTITY.instanceId,
+            requestId: "10000000-0000-4000-8000-000000000001",
+            expiresAt: Date.now() + 30_000,
+            effectiveViewerMode: "interactive" as const,
+            effectiveGeometryOwnership: "owner" as const,
+          },
+        }),
+    });
+    await expect(
+      broker.issueTerminalAttachment(
+        {
+          requestId: "10000000-0000-4000-8000-000000000001",
+          expectedDaemonInstanceId: IDENTITY.instanceId,
+          attachment: {
+            protocolVersion: 1,
+            target: { workspaceName: "product", semanticPaneId: "pane.worker" },
+            viewerMode: "interactive",
+            geometryOwnership: "passive",
+            viewport: { cols: 120, rows: 40 },
+          },
+        },
+        "http://127.0.0.1:5173",
+      ),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
   });
 
   it("redacts an invalid daemon issue response instead of reflecting credential text", async () => {
@@ -574,6 +625,7 @@ describe("Electron main daemon resource broker", () => {
           protocolVersion: 1,
           target: { workspaceName: "product", semanticPaneId: "pane.worker" },
           viewerMode: "interactive",
+          geometryOwnership: "passive",
           viewport: { cols: 120, rows: 40 },
         },
       },
@@ -602,6 +654,7 @@ describe("Electron main daemon resource broker", () => {
             protocolVersion: 1,
             target: { workspaceName: "product", semanticPaneId: "pane.worker" },
             viewerMode: "interactive",
+            geometryOwnership: "passive",
             viewport: { cols: 120, rows: 40 },
           },
         },

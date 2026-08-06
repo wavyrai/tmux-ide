@@ -129,6 +129,7 @@ function request(): TerminalAttachRequest {
     protocolVersion: 1,
     target: { workspaceName: "workspace.alpha", semanticPaneId: "pane.agent" },
     viewerMode: "interactive",
+    geometryOwnership: "passive",
     viewport: { cols: 120, rows: 40 },
   };
 }

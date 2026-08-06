@@ -313,6 +313,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
             semanticPaneId: created.resource.initialPaneId,
           },
           viewerMode: "interactive",
+          geometryOwnership: "passive",
           viewport: { cols: 100, rows: 30 },
         },
       }),

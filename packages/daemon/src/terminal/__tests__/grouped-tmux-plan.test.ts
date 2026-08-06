@@ -152,6 +152,55 @@ describe("grouped tmux attachment planner", () => {
     }
   });
 
+  it("drops ignore-size for a geometry OWNER, and for nothing else", () => {
+    /*
+     * The whole of m50.2 gap 1 in one argv.
+     *
+     * `-f ignore-size` is what excludes the view client from tmux's window-size
+     * calculation, so an owning attachment must not carry it — with the flag,
+     * the renderer's measured size is discarded and the app keeps rendering a
+     * window sized for somebody else's terminal under a sea of letterbox.
+     *
+     * The second half matters as much: passive stays passive. A change here
+     * that dropped the flag unconditionally would make every mirror and every
+     * secondary view start fighting over the size of a shared window.
+     */
+    const owner = planGroupedTmuxAttachment(input({ geometryOwnership: "owner" }));
+    const ownerAttachArgv = ["attach-session", "-E", "-t", `=${owner.identity.viewSessionName}`];
+    expect(owner.attach.argv).toEqual(ownerAttachArgv);
+    expect(owner.recover.attach.argv).toEqual(ownerAttachArgv);
+    expect(owner.geometryOwnership).toBe("owner");
+
+    const passive = planGroupedTmuxAttachment(input({ geometryOwnership: "passive" }));
+    expect(passive.attach.argv).toContain("ignore-size");
+    // An unstated ownership is passive, so an old caller cannot become an owner
+    // by omission.
+    expect(planGroupedTmuxAttachment(input())).toEqual(passive);
+
+    /*
+     * Ownership still comes ONLY from the client flag. The plan must never write
+     * `window-size` or issue a resize: those would change how the window is
+     * sized for every client of the durable session, permanently, rather than
+     * for as long as this attachment is open.
+     */
+    for (const argv of everyArgv(owner)) {
+      expect(argv).not.toContain("resize-window");
+      expect(argv).not.toContain("window-size");
+      expect(argv).not.toContain("refresh-client");
+    }
+  });
+
+  it("refuses a read-only plan that asks to own geometry", () => {
+    // `-r` implies ignore-size, so the ownership could never take effect; the
+    // planner refuses rather than building an attach that lies about its size
+    // authority.
+    expect(
+      GroupedTmuxAttachmentPlanInputSchemaZ.safeParse(
+        input({ viewerMode: "read-only", geometryOwnership: "owner" }),
+      ).success,
+    ).toBe(false);
+  });
+
   it("keeps attach, detach, recover, and cleanup deterministic", () => {
     const first = planGroupedTmuxAttachment(input());
     const second = planGroupedTmuxAttachment(input());

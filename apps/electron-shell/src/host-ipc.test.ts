@@ -478,6 +478,7 @@ describe("host IPC trust boundary", () => {
           protocolVersion: 1,
           target: { workspaceName: "product", semanticPaneId: "pane.worker" },
           viewerMode: "interactive",
+          geometryOwnership: "passive",
           viewport: { cols: 120, rows: 40 },
         },
       }),
@@ -794,6 +795,7 @@ describe("host IPC trust boundary", () => {
         requestId: request.requestId,
         expiresAt: Date.now() + 30_000,
         effectiveViewerMode: "interactive" as const,
+        effectiveGeometryOwnership: "passive" as const,
       });
       const issueTerminalAttachment = vi.fn(
         async (
@@ -841,6 +843,7 @@ describe("host IPC trust boundary", () => {
         protocolVersion: 1,
         target: { workspaceName: "product", semanticPaneId: "pane.worker" },
         viewerMode: "interactive",
+        geometryOwnership: "passive",
         viewport: { cols: 120, rows: 40 },
       };
 

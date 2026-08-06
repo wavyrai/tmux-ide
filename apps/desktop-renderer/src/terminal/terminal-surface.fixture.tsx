@@ -87,6 +87,7 @@ export function mountTerminalSurfaceSmokeFixture(root: HTMLElement): () => void 
         target={{ workspaceName: "csp-smoke", semanticPaneId: "terminal.csp-smoke" }}
         title="Strict CSP smoke"
         transport={replayTransport(READY_SCREEN)}
+        geometryOwnership="owner"
         focused
       />
     ),
@@ -161,7 +162,7 @@ export function mountTerminalLetterboxFixture(root: HTMLElement): () => void {
                 target={{ workspaceName: "letterbox", semanticPaneId: `terminal.${entry.label}` }}
                 title={entry.label}
                 transport={gridReplayTransport(entry.grid)}
-                sizePassive
+                geometryOwnership="passive"
               />
             </div>
           )}
@@ -232,6 +233,7 @@ export function mountTerminalRenderingGalleryFixture(root: HTMLElement): () => v
                   }}
                   title={entry.label}
                   transport={replayTransport(denseScreen())}
+                  geometryOwnership="owner"
                 />
               </div>
             </div>

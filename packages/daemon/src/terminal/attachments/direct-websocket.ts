@@ -453,6 +453,7 @@ export class TerminalAttachmentAdmissionCoordinator {
         issuedDescriptor.requestId !== requestId ||
         issuedDescriptor.status !== "awaiting-redemption" ||
         issuedDescriptor.viewerMode !== parsedRequest.viewerMode ||
+        issuedDescriptor.geometryOwnership !== parsedRequest.geometryOwnership ||
         !sameTarget(issuedDescriptor.target, parsedRequest.target)
       ) {
         await this.#releaseLease(issued.descriptor.leaseId, {
@@ -512,6 +513,7 @@ export class TerminalAttachmentAdmissionCoordinator {
         requestId,
         expiresAt: issuedDescriptor.expiresAt,
         effectiveViewerMode: issuedDescriptor.viewerMode,
+        effectiveGeometryOwnership: issuedDescriptor.geometryOwnership,
       });
     });
   }

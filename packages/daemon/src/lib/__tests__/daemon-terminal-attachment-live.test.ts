@@ -121,6 +121,7 @@ describe
             protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
             target: { workspaceName, semanticPaneId },
             viewerMode: "interactive",
+            geometryOwnership: "passive",
             viewport: { cols: 100, rows: 30 },
           },
         }),
@@ -133,6 +134,7 @@ describe
         daemonInstanceId: handle.instanceId,
         requestId,
         effectiveViewerMode: "interactive",
+        effectiveGeometryOwnership: "passive",
       });
 
       const socket = new WebSocket(descriptor.webSocketUrl, descriptor.subprotocol, {

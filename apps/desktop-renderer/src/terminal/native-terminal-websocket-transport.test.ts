@@ -35,6 +35,7 @@ const REQUEST = {
   protocolVersion: 1 as const,
   target: TARGET,
   viewerMode: "interactive" as const,
+  geometryOwnership: "passive" as const,
   viewport: { cols: 120, rows: 40 },
 };
 
@@ -48,6 +49,7 @@ function issueDescriptor(overrides: Record<string, unknown> = {}): unknown {
     requestId: REQUEST_ID,
     expiresAt: NOW + 15_000,
     effectiveViewerMode: "interactive",
+    effectiveGeometryOwnership: "passive",
     ...overrides,
   };
 }

@@ -957,6 +957,7 @@ export class DaemonResourceBroker {
         descriptor.daemonInstanceId !== this.#daemon.descriptor.instanceId ||
         descriptor.requestId !== parsed.requestId ||
         descriptor.effectiveViewerMode !== parsed.attachment.viewerMode ||
+        descriptor.effectiveGeometryOwnership !== parsed.attachment.geometryOwnership ||
         remainingLifetime <= 0 ||
         remainingLifetime > TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS
       ) {

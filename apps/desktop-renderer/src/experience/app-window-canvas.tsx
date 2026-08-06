@@ -2006,7 +2006,18 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                               title={model().title}
                               transport={props.transport}
                               focused={model().appearance.accessibility.terminalInputOwner}
-                              sizePassive={(window().windowGroupPaneCount ?? 1) > 1}
+                              /*
+                               * A single-pane card owns its window's geometry;
+                               * a multi-pane one cannot. This is the previous
+                               * `sizePassive={paneCount > 1}` rule under the
+                               * name the contract now uses (m50.2, gap 1): with
+                               * several panes there is no one card whose size
+                               * the window should follow, so the card renders
+                               * the window's own grid and letterboxes instead.
+                               */
+                              geometryOwnership={
+                                (window().windowGroupPaneCount ?? 1) > 1 ? "passive" : "owner"
+                              }
                               reducedMotion={props.reducedMotion}
                               themeKey={props.terminalThemeKey}
                               rendererFactory={props.rendererFactory}

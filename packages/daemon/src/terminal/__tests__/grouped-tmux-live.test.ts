@@ -79,6 +79,7 @@ describe.skipIf(!hasTmux)("grouped tmux attachment live isolation", () => {
         semanticPaneId: "pane.authorized",
       },
       viewerMode: "read-only",
+      geometryOwnership: "passive",
       viewport: { cols: 120, rows: 40 },
       source: {
         sessionId: sourceSessionId,

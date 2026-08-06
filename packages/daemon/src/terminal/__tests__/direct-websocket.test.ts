@@ -49,6 +49,7 @@ function descriptor(status: "awaiting-redemption" | "active" = "awaiting-redempt
     requestId: REQUEST_ID,
     target: request().target,
     viewerMode: "interactive" as const,
+    geometryOwnership: "passive" as const,
     status,
     issuedAt: 1_000,
     expiresAt: 16_000,
@@ -352,6 +353,7 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
       requestId: REQUEST_ID,
       expiresAt: 16_000,
       effectiveViewerMode: "interactive",
+      effectiveGeometryOwnership: "passive",
     });
     expect(coordinator.toJSON()).toEqual({
       pendingTickets: 1,

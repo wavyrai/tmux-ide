@@ -46,6 +46,59 @@ export type TerminalAttachmentSemanticTarget = z.infer<
 export const TerminalAttachmentViewerModeSchemaZ = z.enum(["interactive", "read-only"]);
 export type TerminalAttachmentViewerMode = z.infer<typeof TerminalAttachmentViewerModeSchemaZ>;
 
+/**
+ * Who decides how big the origin tmux window is (m50.2, gap 1).
+ *
+ * `passive` — the attachment's client is excluded from tmux's window-size
+ * calculation (`attach-session -f ignore-size`). It renders whatever grid the
+ * window already has and letterboxes the remainder. Every mirror, every
+ * read-only viewer and every secondary view is passive, because a view must
+ * never reflow a window someone else is also attached to.
+ *
+ * `owner` — the client's own size drives the window, exactly as an ssh client's
+ * would. The renderer measures its tile area, floors it into cells, and sends
+ * the result down the attachment's existing resize path; the PTY resize reaches
+ * the tmux client as a SIGWINCH and tmux re-tiles the window to match. Nothing
+ * issues `refresh-client -C` from outside — the client IS the size.
+ *
+ * Ownership is exclusive per window. The interactive lease is already
+ * window-keyed and permits one holder, so "one owner" needs no second mechanism;
+ * it is released when the attachment is.
+ *
+ * `passive` is the DEFAULT on the request, and deliberately so: an omitted field
+ * must mean the harmless thing. Owning geometry reflows a window that an ssh
+ * client, another editor or a colleague may be looking at, so it is opted into
+ * and never inferred.
+ */
+export const TerminalAttachmentGeometryOwnershipSchemaZ = z.enum(["passive", "owner"]);
+export type TerminalAttachmentGeometryOwnership = z.infer<
+  typeof TerminalAttachmentGeometryOwnershipSchemaZ
+>;
+
+/**
+ * A read-only viewer cannot own geometry.
+ *
+ * `attach-session -r` implies `ignore-size`, so tmux would ignore the request
+ * regardless — and a contract that accepts an intent the runtime silently drops
+ * is worse than one that refuses it. The combination is rejected at the boundary
+ * rather than downgraded, so a caller learns it asked for something impossible.
+ */
+export function refuseReadOnlyGeometryOwner(
+  value: {
+    readonly viewerMode: TerminalAttachmentViewerMode;
+    readonly geometryOwnership: TerminalAttachmentGeometryOwnership;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.viewerMode === "read-only" && value.geometryOwnership === "owner") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["geometryOwnership"],
+      message: "a read-only attachment cannot own the origin window's geometry",
+    });
+  }
+}
+
 export const TerminalAttachmentViewportSchemaZ = z
   .object({
     cols: z.number().int().min(TERMINAL_ATTACHMENT_MIN_COLS).max(TERMINAL_ATTACHMENT_MAX_COLS),
@@ -64,9 +117,11 @@ export const TerminalAttachRequestSchemaZ = z
     protocolVersion: z.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
     target: TerminalAttachmentSemanticTargetSchemaZ,
     viewerMode: TerminalAttachmentViewerModeSchemaZ,
+    geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ.default("passive"),
     viewport: TerminalAttachmentViewportSchemaZ,
   })
-  .strict();
+  .strict()
+  .superRefine(refuseReadOnlyGeometryOwner);
 export type TerminalAttachRequest = z.infer<typeof TerminalAttachRequestSchemaZ>;
 
 /**
@@ -78,10 +133,17 @@ export const TerminalAttachmentDescriptorSchemaZ = z
     attachmentId: z.uuid(),
     target: TerminalAttachmentSemanticTargetSchemaZ,
     viewerMode: TerminalAttachmentViewerModeSchemaZ,
+    /**
+     * Echoed, never defaulted here: the descriptor reports what the daemon
+     * RESOLVED, so a caller can see that the ownership it asked for is the
+     * ownership it got rather than assuming the request survived.
+     */
+    geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ,
     viewport: TerminalAttachmentViewportSchemaZ,
     status: z.literal("planned"),
   })
-  .strict();
+  .strict()
+  .superRefine(refuseReadOnlyGeometryOwner);
 export type TerminalAttachmentDescriptor = z.infer<typeof TerminalAttachmentDescriptorSchemaZ>;
 
 /**
@@ -219,6 +281,8 @@ export const TerminalAttachmentIssueDescriptorSchemaZ = z
     requestId: TerminalAttachmentRequestIdSchemaZ,
     expiresAt: z.number().int().positive(),
     effectiveViewerMode: TerminalAttachmentViewerModeSchemaZ,
+    /** What the daemon actually granted, beside the viewer mode it granted. */
+    effectiveGeometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ,
   })
   .strict();
 export type TerminalAttachmentIssueDescriptor = z.infer<

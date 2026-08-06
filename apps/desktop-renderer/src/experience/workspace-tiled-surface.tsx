@@ -608,23 +608,28 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               transport={props.transport}
               focused
               /*
-               * ALWAYS size-passive, whatever the pane count.
+               * THE GEOMETRY OWNER (m50.2, gap 1).
                *
-               * The daemon attaches its view client with `-f ignore-size`, so
-               * tmux excludes it when sizing the window — by design, because the
-               * desktop must never reflow a window a user also has open
-               * elsewhere. A surface that tries to drive the size anyway does
-               * not get a bigger window; it gets a client bigger than its
-               * window, which tmux paints into the corner with a divider down
-               * the middle, and any output wide enough to wrap wraps at the
-               * WINDOW's width inside a card that is wider — breaking a long
-               * logical line into rows nothing downstream can rejoin.
+               * The visible window's interactive attachment is the one client
+               * whose size tmux should follow, so it asks for ownership and the
+               * daemon attaches it without `-f ignore-size`. The surface then
+               * measures this card, floors it into whole cells, and drives tmux
+               * to match; tmux re-tiles, the layout frame comes back, and the
+               * view re-renders from it. tmux is still the only layout truth —
+               * this closes a loop through it rather than computing beside it.
                *
-               * So the card renders the window's own grid and letterboxes the
-               * remainder. That is also what makes the view faithful: the
-               * proportions on screen are the ones tmux computed.
+               * What this replaces: a size-passive card rendered the window's
+               * own grid centred, so a window sized for someone else's terminal
+               * sat in the middle of the app under a sea of letterbox. The
+               * faithfulness argument for that was real but backwards — the
+               * proportions were tmux's because nothing had told tmux the size
+               * of the surface it was being shown in.
+               *
+               * Ownership is exclusive per window because the interactive lease
+               * already is, and it is released when this attachment is. Every
+               * mirror on the deck below stays passive.
                */
-              sizePassive
+              geometryOwnership="owner"
               reducedMotion={props.reducedMotion}
               themeKey={props.terminalThemeKey}
               onFocus={(source) => {
