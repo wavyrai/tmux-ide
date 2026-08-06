@@ -111,7 +111,10 @@ describe("desktop process boundaries", () => {
     expect(vite).toContain("default-src 'self'");
     expect(vite).toContain("object-src 'none'");
     expect(vite).toContain("frame-ancestors 'none'");
-    expect(vite).toContain("ws://127.0.0.1:5173");
+    expect(vite).toContain("ws://127.0.0.1:${devServerPort}");
+    expect(vite).toContain('VITE_TMUX_IDE_DEV_GATEWAY === "1"');
+    expect(vite).toContain("TMUX_IDE_DEV_OWNER_TOKEN");
+    expect(vite).not.toContain("VITE_TMUX_IDE_DEV_OWNER_TOKEN");
     expect(vite).toContain("sourcemap: false");
     expect(vite).toContain("\"script-src 'self'\"");
     expect(vite).toContain("\"style-src-elem 'self' 'unsafe-inline'\"");

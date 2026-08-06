@@ -120,6 +120,7 @@ describe("development web host route keying", () => {
     daemonOrigin: "http://127.0.0.1:6060",
     daemonWebSocketOrigin: "ws://127.0.0.1:6060",
     ownerToken: "owner-token",
+    transport: "direct" as const,
   };
 
   /**
@@ -174,6 +175,73 @@ describe("development web host route keying", () => {
       expect(paths).toContain(`/api/project/alpha${suffix}`);
     }
     expect(paths.some((path) => path.includes("alpha-session"))).toBe(false);
+    host.dispose();
+  });
+
+  it("keeps the owner bearer out of gateway requests and rewrites redemption sockets", async () => {
+    const gatewayConfig = {
+      daemonOrigin: "http://127.0.0.1:5173",
+      daemonWebSocketOrigin: "ws://127.0.0.1:5173",
+      ownerToken: null,
+      transport: "same-origin-gateway" as const,
+    };
+    const requests: Array<{ url: string; headers: Record<string, string> }> = [];
+    const requestId = "22222222-2222-4222-8222-222222222222";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(requestId);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        requests.push({
+          url: url.toString(),
+          headers: (init?.headers ?? {}) as Record<string, string>,
+        });
+        const body =
+          url.pathname === "/api/v2/capabilities"
+            ? {
+                status: "ok",
+                daemon: IDENTITY,
+                capabilities: { appWindowMutation: { available: true } },
+              }
+            : {
+                status: "issued",
+                descriptor: {
+                  protocolVersion: 1,
+                  webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
+                  subprotocol: "tmux-ide-terminal.v1",
+                  redemptionTicket: `ta1_${"A".repeat(43)}`,
+                  daemonInstanceId: IDENTITY.instanceId,
+                  requestId,
+                  expiresAt: Date.now() + 60_000,
+                  effectiveViewerMode: "interactive",
+                  effectiveGeometryOwnership: "owner",
+                },
+              };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => body,
+        } as unknown as Response;
+      }),
+    );
+
+    const host = createDevWebHostCapabilities(gatewayConfig);
+    const issued = await host.daemon.issueTerminalAttachment({
+      protocolVersion: 1,
+      target: { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+      viewerMode: "interactive",
+      geometryOwnership: "owner",
+      viewport: { cols: 80, rows: 24 },
+    });
+
+    expect(issued.status).toBe("issued");
+    if (issued.status === "issued") {
+      expect(issued.descriptor.webSocketUrl).toBe(
+        "ws://127.0.0.1:5173/v1/terminal/attachments/redeem",
+      );
+    }
+    expect(requests.every(({ url }) => url.startsWith(gatewayConfig.daemonOrigin))).toBe(true);
+    expect(requests.every(({ headers }) => !("Authorization" in headers))).toBe(true);
     host.dispose();
   });
 });

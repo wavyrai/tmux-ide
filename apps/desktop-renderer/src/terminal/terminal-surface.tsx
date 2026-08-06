@@ -140,6 +140,8 @@ export interface TerminalSurfaceProps {
  * re-tile per frame of a drag.
  */
 const OWNED_RESIZE_DEBOUNCE_MS = 150;
+/** Fast lease-race recovery; total wait stays below the daemon's 5s grace. */
+const INTERACTIVE_CONFLICT_RETRY_MS = [50, 100, 200, 400, 800, 1_000, 1_000, 1_000] as const;
 
 function sameViewport(
   left: TerminalAttachmentViewport | null,
@@ -175,7 +177,7 @@ function validatedTransportReason(value: string): string {
  */
 function connectFailureMessage(error: NativeTerminalTransportError): string {
   if (error.code === "interactive-viewer-conflict") {
-    return "This terminal's previous session is still releasing. Wait a few seconds, then try again.";
+    return "Another interactive view still owns this tmux window.";
   }
   return validatedTransportReason(error.reason);
 }
@@ -271,6 +273,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let rendererLoadGeneration = 0;
   let markerWatcher = createWidgetMarkerByteWatcher();
   let widgetScan: ReturnType<typeof setTimeout> | null = null;
+  let conflictRetry: ReturnType<typeof setTimeout> | null = null;
+  let conflictAttempt = 0;
   let attachTraceStartedAt = monotonicNow();
 
   /**
@@ -380,6 +384,11 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     retireInput();
     retireOutput();
     if (active) safelyDispose(active);
+  };
+
+  const cancelConflictRetry = (): void => {
+    if (conflictRetry !== null) clearTimeout(conflictRetry);
+    conflictRetry = null;
   };
 
   const disposeRenderer = (): void => {
@@ -619,9 +628,32 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           return;
         }
         if (result.status === "error") {
+          if (
+            result.error.code === "interactive-viewer-conflict" &&
+            conflictAttempt < INTERACTIVE_CONFLICT_RETRY_MS.length
+          ) {
+            const delay = INTERACTIVE_CONFLICT_RETRY_MS[conflictAttempt++]!;
+            generation += 1;
+            disposeAttachment();
+            setReason("Waiting for the previous terminal view to release this window.");
+            setPhase("connecting");
+            const retryGeneration = generation;
+            cancelConflictRetry();
+            conflictRetry = setTimeout(() => {
+              conflictRetry = null;
+              if (disposed || retryGeneration !== generation) return;
+              setPhase("measuring");
+              const viewport = latestMeasuredViewport;
+              if (viewport) connect(viewport);
+              else scheduleFit();
+            }, delay);
+            return;
+          }
           failConnect(connectFailureMessage(result.error), activeGeneration);
           return;
         }
+        conflictAttempt = 0;
+        cancelConflictRetry();
         attachment = result.attachment;
         setPhase("connected");
         recordAttachPhase("attachment-ready");
@@ -699,6 +731,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   };
 
   const retry = (): void => {
+    cancelConflictRetry();
+    conflictAttempt = 0;
     generation += 1;
     disposeAttachment();
     disposeRenderer();
@@ -853,6 +887,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     onCleanup(() => {
       disposed = true;
       generation += 1;
+      cancelConflictRetry();
       disposeAttachment();
       disposeRenderer();
     });
@@ -884,6 +919,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     observedTransport = nextTransport;
     if (disposed) return;
     generation += 1;
+    cancelConflictRetry();
+    conflictAttempt = 0;
     disposeAttachment();
     disposeRenderer();
     currentViewport = null;

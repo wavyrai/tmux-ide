@@ -108,6 +108,9 @@ importers:
       '@tmux-ide/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@tmux-ide/daemon-client':
+        specifier: workspace:*
+        version: link:../../packages/daemon-client
       '@xterm/addon-fit':
         specifier: 0.11.0
         version: 0.11.0
@@ -280,6 +283,9 @@ importers:
       '@tmux-ide/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@tmux-ide/daemon-client':
+        specifier: workspace:*
+        version: link:../daemon-client
       '@tmux-ide/tmux-bridge':
         specifier: workspace:*
         version: link:../tmux-bridge

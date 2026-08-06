@@ -1157,15 +1157,22 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
-  it("names a held-lease conflict honestly and keeps a retry affordance", async () => {
-    const transport = transportHarness(async () => ({
-      status: "error",
-      error: {
-        code: "interactive-viewer-conflict",
-        reason: "The requested pane already has an interactive viewer.",
-        retryable: true,
-      },
-    }));
+  it("recovers a transient held-lease conflict without a manual retry", async () => {
+    let attempts = 0;
+    const attachment = attachmentHarness();
+    const transport = transportHarness(async () => {
+      attempts += 1;
+      return attempts < 3
+        ? {
+            status: "error" as const,
+            error: {
+              code: "interactive-viewer-conflict" as const,
+              reason: "The requested pane already has an interactive viewer.",
+              retryable: true,
+            },
+          }
+        : { status: "connected" as const, attachment };
+    });
     const renderer = rendererHarness();
     const root = document.body.appendChild(document.createElement("div"));
     const dispose = render(
@@ -1180,11 +1187,10 @@ describe("TerminalSurface", () => {
       root,
     );
     await vi.waitFor(() =>
-      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected"),
     );
-    expect(root.textContent).toContain("still releasing");
-    expect(root.textContent).not.toContain("already has an interactive viewer");
-    expect(root.textContent).toContain("Try again");
+    expect(attempts).toBe(3);
+    expect(root.textContent).not.toContain("Terminal could not attach");
     dispose();
   });
 

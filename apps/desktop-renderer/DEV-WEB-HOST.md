@@ -3,9 +3,9 @@
 The desktop renderer normally reaches the daemon through the Electron preload,
 which publishes `window.tmuxIdeHost`. For app-level browser testing there is a
 second, **development-only** implementation of that same interface —
-`src/runtime/dev-web-host.ts` — which talks to a real daemon directly over its
-HTTP API and WebSockets. No Electron, no mocks, no fixtures: a real tmux fleet
-behind a real daemon, rendered by the real app.
+`src/runtime/dev-web-host.ts` — which reaches a real daemon through Vite's
+same-origin development gateway. No Electron, no mocks, no fixtures: a real
+tmux fleet behind a real daemon, rendered by the real app.
 
 This is the seam an automated browser suite drives. It is off by default and
 cannot be turned on in a production build.
@@ -20,23 +20,19 @@ All five, or the renderer keeps its existing honest preview surface:
 2. No Electron preload already published `window.tmuxIdeHost`. The development
    host never replaces a production bridge.
 3. An explicit opt-in: `VITE_TMUX_IDE_DEV_HOST=1` **or** `?devHost=1` on the URL.
-4. `VITE_TMUX_IDE_DEV_DAEMON_URL` is a canonical loopback origin **with a port**
-   (`http://127.0.0.1:8787`). Anything routable off this machine is refused.
-5. `VITE_TMUX_IDE_DEV_OWNER_TOKEN` is non-empty.
+4. `VITE_TMUX_IDE_DEV_GATEWAY=1` selects the same-origin gateway.
+5. Vite receives `TMUX_IDE_DEV_DAEMON_URL` and `TMUX_IDE_DEV_OWNER_TOKEN`.
+   Neither value is exposed through `import.meta.env` or browser JavaScript.
 
 The policy itself is `src/runtime/dev-web-host-config.ts`, unit-tested in
 `dev-web-host-config.test.ts`. Each refusal has a named reason.
 
 ## The other gate: the dev server's CSP
 
-The Vite dev server sends `connect-src 'self' ws://127.0.0.1:<dev port>`. That
-alone refuses every daemon fetch and every daemon WebSocket, so a browser tab
-cannot reach a daemon no matter what else is configured.
-
-Setting `VITE_TMUX_IDE_DEV_DAEMON_URL` widens `connect-src` by **exactly one**
-loopback origin — its `http:` and `ws:` forms — for the dev server only. A
-malformed or non-loopback value is a hard startup error, not a silent widening.
-`vite build` output is untouched; the packaged renderer's CSP is owned by
+The Vite dev server keeps `connect-src` at `'self'`. It proxies the reviewed
+`/api`, `/ws`, and one-use terminal redemption routes to the selected loopback
+daemon. A malformed or non-loopback daemon origin is a hard startup error.
+`vite build` output is untouched; the packaged renderer's CSP is still owned by
 `apps/electron-shell/src/packaged-renderer-protocol.ts`.
 
 `TMUX_IDE_DEV_SERVER_PORT` moves the dev server and its CSP together. Prefer it
@@ -50,11 +46,9 @@ harness starting the daemon reads that file and exports the values; it is the
 same credential `apps/electron-shell/scripts/smoke-test.mjs` uses in its
 `daemonClient()` helper.
 
-This mode deliberately puts the owner token in the page. That is a real
-difference from production, where the bearer never leaves Electron main: here
-the harness already owns the daemon it started, so simulating a privilege
-boundary that does not exist would only obscure what is being tested. It is why
-the mode is loopback-only, opt-in, and absent from every built bundle.
+Like Electron main, the development gateway owns the daemon bearer and injects
+it only on proxied daemon requests. The page receives one-use terminal
+redemption tickets, never the reusable owner credential.
 
 ## By hand
 
@@ -72,8 +66,9 @@ TOKEN=$(jq -r .authToken /tmp/my-daemon/daemon.json)
 cd apps/desktop-renderer
 TMUX_IDE_DEV_SERVER_PORT=5173 \
 VITE_TMUX_IDE_DEV_HOST=1 \
-VITE_TMUX_IDE_DEV_DAEMON_URL="http://127.0.0.1:$PORT" \
-VITE_TMUX_IDE_DEV_OWNER_TOKEN="$TOKEN" \
+VITE_TMUX_IDE_DEV_GATEWAY=1 \
+TMUX_IDE_DEV_DAEMON_URL="http://127.0.0.1:$PORT" \
+TMUX_IDE_DEV_OWNER_TOKEN="$TOKEN" \
   pnpm dev
 
 # 4. Open http://127.0.0.1:5173/?devHost=1
@@ -108,11 +103,11 @@ exit path.
 
 ## What this host does not do
 
-- **No transport supervision.** It publishes `connection.changed`, never
-  `transport.changed`: the production `transport.changed` is Electron main's
-  retry supervisor reporting itself, and claiming a phase here would make the
-  renderer defer to a supervisor that does not exist instead of running its own
-  bounded recovery. It does not reconnect the event socket after a close.
+- **No Electron process supervision.** It publishes `connection.changed`, never
+  `transport.changed`: the latter belongs to Electron main's daemon-child
+  supervisor. The browser event socket does reconnect through the shared
+  renderer-neutral runtime supervisor, preserving the last usable snapshot
+  while the daemon is temporarily unavailable.
 - **No native directory picker.** `workspace.openProjectDirectory` returns null;
   a browser has no real filesystem path to offer, and the daemon would not
   accept a renderer-authored one.

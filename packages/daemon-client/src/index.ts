@@ -13,3 +13,4 @@
 export * from "./lock.ts";
 export * from "./health.ts";
 export * from "./ensure.ts";
+export * from "./connection-supervisor.ts";

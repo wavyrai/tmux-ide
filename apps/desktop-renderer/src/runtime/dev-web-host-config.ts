@@ -3,17 +3,18 @@
  *
  * The renderer normally reaches the daemon through the Electron preload bridge
  * (`window.tmuxIdeHost`). This module decides — with no IO — whether a plain
- * browser tab may instead talk to a real daemon directly. Every factor below is
- * required, so the default in every build that is not an explicitly configured
- * developer session is "inactive", and the renderer keeps its existing honest
- * preview surface.
+ * browser tab may instead talk to a real daemon through the same-origin Vite
+ * gateway. Every factor below is required, so the default in every build that
+ * is not an explicitly configured developer session is "inactive", and the
+ * renderer keeps its existing honest preview surface.
  *
  * ADR-0002 permits a renderer-direct, origin-bound WebSocket but rules out
  * "arbitrary browser tabs" and wildcard dev origins. This policy is how that
  * line is held: activation needs a development build, an absent production
- * bridge, a deliberate opt-in, a loopback-only daemon endpoint, and an owner
- * credential the developer supplied out of band. Production never satisfies the
- * first factor, because `import.meta.env.DEV` is false in every built bundle.
+ * bridge, a deliberate opt-in, and a loopback-only page origin. The gateway
+ * process owns the daemon endpoint and owner credential; neither enters browser
+ * JavaScript. Production never satisfies the first factor, because
+ * `import.meta.env.DEV` is false in every built bundle.
  */
 
 /** Why the development host stayed off. Named so the console line is useful. */
@@ -30,8 +31,12 @@ export interface DevWebHostConfig {
   readonly daemonOrigin: string;
   /** Canonical `ws://127.0.0.1:<port>` origin for the daemon's sockets. */
   readonly daemonWebSocketOrigin: string;
-  /** The daemon's owner bearer, read from its canonical record by the harness. */
-  readonly ownerToken: string;
+  /**
+   * Direct mode's owner bearer. Null behind the same-origin development
+   * gateway, where Vite injects it and browser JavaScript never receives it.
+   */
+  readonly ownerToken: string | null;
+  readonly transport: "direct" | "same-origin-gateway";
 }
 
 export type DevWebHostResolution =
@@ -51,6 +56,10 @@ export interface DevWebHostResolutionInput {
   readonly daemonUrl: string | undefined;
   /** `import.meta.env.VITE_TMUX_IDE_DEV_OWNER_TOKEN`. */
   readonly ownerToken: string | undefined;
+  /** `import.meta.env.VITE_TMUX_IDE_DEV_GATEWAY`. */
+  readonly gatewayFlag?: string | undefined;
+  /** Browser page origin; required only by same-origin gateway mode. */
+  readonly pageOrigin?: string | undefined;
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
@@ -99,6 +108,19 @@ export function resolveDevWebHostConfig(input: DevWebHostResolutionInput): DevWe
   if (!optedIn(input.optInFlag, input.optInQuery)) {
     return { status: "inactive", reason: "opt-in-absent" };
   }
+  if (input.gatewayFlag === "1") {
+    const pageOrigin = loopbackHttpOriginOrNull(input.pageOrigin);
+    if (pageOrigin === null) return { status: "inactive", reason: "daemon-url-not-loopback" };
+    return {
+      status: "active",
+      config: {
+        daemonOrigin: pageOrigin,
+        daemonWebSocketOrigin: webSocketOriginFor(pageOrigin),
+        ownerToken: null,
+        transport: "same-origin-gateway",
+      },
+    };
+  }
   if (typeof input.daemonUrl !== "string" || input.daemonUrl.length === 0) {
     return { status: "inactive", reason: "daemon-url-absent" };
   }
@@ -113,6 +135,7 @@ export function resolveDevWebHostConfig(input: DevWebHostResolutionInput): DevWe
       daemonOrigin,
       daemonWebSocketOrigin: webSocketOriginFor(daemonOrigin),
       ownerToken: input.ownerToken,
+      transport: "direct",
     },
   };
 }

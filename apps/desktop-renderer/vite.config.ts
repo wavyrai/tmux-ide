@@ -1,26 +1,19 @@
-import { defineConfig } from "vite";
+import { defineConfig, type ProxyOptions } from "vite";
 import solid from "vite-plugin-solid";
 
 import { loopbackHttpOriginOrNull, webSocketOriginFor } from "./src/runtime/dev-web-host-config.ts";
 
 /**
- * The one extra `connect-src` the browser-only development host needs (m44.2).
+ * Legacy direct mode needs one tightly scoped daemon `connect-src`. Gateway
+ * mode needs none: HTTP and WebSockets stay on the Vite page origin and Vite
+ * owns both the daemon endpoint and its reusable bearer.
  *
- * The development server's CSP is the gate that stops an ordinary browser tab
- * from reaching a daemon: without this, `connect-src 'self' ws://127.0.0.1:5173`
- * refuses every daemon fetch and every daemon WebSocket, and the renderer falls
- * back to its honest preview surface. Setting
- * `VITE_TMUX_IDE_DEV_DAEMON_URL=http://127.0.0.1:<port>` widens it by exactly
- * one loopback origin (its `http:` and `ws:` forms), for the development server
- * only.
- *
- * Fail-closed by construction: absent, malformed, or non-loopback values add
- * nothing, so a typo or a stray remote URL cannot open the page up. This never
- * affects `vite build` output — the packaged renderer's CSP is owned by
- * `apps/electron-shell/src/packaged-renderer-protocol.ts` — and production never
- * sets this variable.
+ * Fail-closed by construction: absent, malformed, or non-loopback direct-mode
+ * values add nothing. This never affects `vite build` output — the packaged
+ * renderer's CSP is owned by the Electron shell.
  */
 function developmentDaemonConnectSources(): readonly string[] {
+  if (process.env.VITE_TMUX_IDE_DEV_GATEWAY === "1") return [];
   const origin = loopbackHttpOriginOrNull(process.env.VITE_TMUX_IDE_DEV_DAEMON_URL);
   if (origin === null) {
     if (process.env.VITE_TMUX_IDE_DEV_DAEMON_URL) {
@@ -32,6 +25,53 @@ function developmentDaemonConnectSources(): readonly string[] {
     return [];
   }
   return [origin, webSocketOriginFor(origin)];
+}
+
+function developmentDaemonProxy(devServerPort: number): Record<string, ProxyOptions> | undefined {
+  if (process.env.VITE_TMUX_IDE_DEV_GATEWAY !== "1") return undefined;
+  const rawOrigin = process.env.TMUX_IDE_DEV_DAEMON_URL;
+  const origin = loopbackHttpOriginOrNull(rawOrigin);
+  if (origin === null) {
+    throw new Error(
+      "TMUX_IDE_DEV_DAEMON_URL must name the canonical loopback daemon origin in gateway mode",
+    );
+  }
+  const ownerToken = process.env.TMUX_IDE_DEV_OWNER_TOKEN;
+  if (!ownerToken) {
+    throw new Error("TMUX_IDE_DEV_OWNER_TOKEN is required in gateway mode");
+  }
+  const pageOrigin = `http://127.0.0.1:${devServerPort}`;
+  const acceptsOrigin = (value: string | undefined): boolean =>
+    value === undefined || value === pageOrigin;
+  // Keep the proxy surface explicit. In particular, this is not a catch-all
+  // forwarder that turns the browser origin into arbitrary daemon authority.
+  const options = (webSocket: boolean): ProxyOptions => ({
+    target: origin,
+    changeOrigin: false,
+    ws: webSocket,
+    configure(proxy) {
+      proxy.on("proxyReq", (request, incoming) => {
+        if (!acceptsOrigin(incoming.headers.origin)) {
+          request.destroy(new Error("cross-origin daemon gateway request refused"));
+          return;
+        }
+        request.setHeader("Authorization", `Bearer ${ownerToken}`);
+      });
+      proxy.on("proxyReqWs", (request, incoming) => {
+        if (!acceptsOrigin(incoming.headers.origin)) {
+          request.destroy(new Error("cross-origin daemon gateway socket refused"));
+          return;
+        }
+        request.setHeader("Authorization", `Bearer ${ownerToken}`);
+      });
+    },
+  });
+  return {
+    "/api": options(false),
+    "/ws": options(true),
+    "/v1/terminal/attachments/redeem": options(true),
+    "/v1/terminal/pane-streams/redeem": options(true),
+  };
 }
 
 /**
@@ -64,6 +104,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: devServerPort,
     strictPort: true,
+    proxy: developmentDaemonProxy(devServerPort),
     headers: {
       "Content-Security-Policy": [
         "default-src 'self'",

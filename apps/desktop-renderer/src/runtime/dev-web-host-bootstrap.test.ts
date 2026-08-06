@@ -13,6 +13,7 @@ const CONFIG = {
   daemonOrigin: "http://127.0.0.1:6060",
   daemonWebSocketOrigin: "ws://127.0.0.1:6060",
   ownerToken: "owner-token",
+  transport: "direct",
 } as const;
 
 const LADDER = buildStartupReadinessLadder(

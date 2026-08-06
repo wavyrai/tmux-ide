@@ -14,6 +14,8 @@ const ACTIVE: DevWebHostResolutionInput = {
   optInQuery: undefined,
   daemonUrl: "http://127.0.0.1:8787",
   ownerToken: "owner-token",
+  gatewayFlag: undefined,
+  pageOrigin: "http://127.0.0.1:5173",
 };
 
 describe("loopbackHttpOriginOrNull", () => {
@@ -58,6 +60,19 @@ describe("resolveDevWebHostConfig", () => {
         daemonOrigin: "http://127.0.0.1:8787",
         daemonWebSocketOrigin: "ws://127.0.0.1:8787",
         ownerToken: "owner-token",
+        transport: "direct",
+      },
+    });
+  });
+
+  it("uses the browser origin and exposes no owner token behind the gateway", () => {
+    expect(resolveDevWebHostConfig({ ...ACTIVE, gatewayFlag: "1" })).toEqual({
+      status: "active",
+      config: {
+        daemonOrigin: "http://127.0.0.1:5173",
+        daemonWebSocketOrigin: "ws://127.0.0.1:5173",
+        ownerToken: null,
+        transport: "same-origin-gateway",
       },
     });
   });

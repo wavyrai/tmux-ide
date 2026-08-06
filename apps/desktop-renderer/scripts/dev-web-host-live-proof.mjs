@@ -247,8 +247,9 @@ async function startVite(canonical, vitePort) {
       ...process.env,
       TMUX_IDE_DEV_SERVER_PORT: String(vitePort),
       VITE_TMUX_IDE_DEV_HOST: "1",
-      VITE_TMUX_IDE_DEV_DAEMON_URL: daemonUrl,
-      VITE_TMUX_IDE_DEV_OWNER_TOKEN: canonical.authToken,
+      VITE_TMUX_IDE_DEV_GATEWAY: "1",
+      TMUX_IDE_DEV_DAEMON_URL: daemonUrl,
+      TMUX_IDE_DEV_OWNER_TOKEN: canonical.authToken,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -268,10 +269,10 @@ async function startVite(canonical, vitePort) {
     timeoutMs: VITE_READY_TIMEOUT_MS,
   });
   const csp = headers.get("content-security-policy") ?? "";
-  if (!csp.includes(daemonUrl)) {
-    throw new Error(`the dev CSP did not admit the daemon origin ${daemonUrl}\n${csp}`);
+  if (csp.includes(daemonUrl)) {
+    throw new Error(`the same-origin gateway leaked the daemon origin into CSP\n${csp}`);
   }
-  log(`vite ready on ${pageUrl}; CSP admits ${daemonUrl}`);
+  log(`vite ready on ${pageUrl}; daemon API and sockets use the same-origin gateway`);
   return { pageUrl, daemonUrl };
 }
 

@@ -48,8 +48,9 @@ export async function startDevServer(daemon: RunningDaemon): Promise<RunningDevS
       ...process.env,
       TMUX_IDE_DEV_SERVER_PORT: String(port),
       VITE_TMUX_IDE_DEV_HOST: "1",
-      VITE_TMUX_IDE_DEV_DAEMON_URL: daemon.baseUrl,
-      VITE_TMUX_IDE_DEV_OWNER_TOKEN: daemon.record.authToken,
+      VITE_TMUX_IDE_DEV_GATEWAY: "1",
+      TMUX_IDE_DEV_DAEMON_URL: daemon.baseUrl,
+      TMUX_IDE_DEV_OWNER_TOKEN: daemon.record.authToken,
     },
   });
 

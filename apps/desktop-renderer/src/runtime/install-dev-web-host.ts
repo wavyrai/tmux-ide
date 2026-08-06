@@ -30,11 +30,13 @@ export function installDevWebHost(): DevWebHostResolution {
         : (new URLSearchParams(window.location.search).get("devHost") ?? undefined),
     daemonUrl: import.meta.env.VITE_TMUX_IDE_DEV_DAEMON_URL,
     ownerToken: import.meta.env.VITE_TMUX_IDE_DEV_OWNER_TOKEN,
+    gatewayFlag: import.meta.env.VITE_TMUX_IDE_DEV_GATEWAY,
+    pageOrigin: typeof window === "undefined" ? undefined : window.location.origin,
   });
   if (resolution.status === "active") {
     window.tmuxIdeHost = createDevWebHostCapabilities(resolution.config);
     console.info(
-      `[tmux-ide] development web host active against ${resolution.config.daemonOrigin}`,
+      `[tmux-ide] development web host active via ${resolution.config.transport} at ${resolution.config.daemonOrigin}`,
     );
   }
   return resolution;

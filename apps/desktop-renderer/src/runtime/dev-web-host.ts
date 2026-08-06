@@ -10,12 +10,12 @@
  * the fail-closed activation policy, and `../../DEV-WEB-HOST.md` for the run
  * recipe.
  *
- * What is deliberately NOT rebuilt here: retry supervision, generation
- * bookkeeping, capacity policy, and the credential boundary that keeps the
- * owner bearer out of the renderer. Those are production concerns of the
- * Electron broker. Here the harness already holds the owner token — it started
- * the daemon — so the honest simplification is to send it directly rather than
- * to simulate a privilege boundary that does not exist in this mode.
+ * The host uses the renderer-neutral runtime supervisor shared with OpenTUI for
+ * its long-lived event connection. The same-origin development gateway owns the
+ * reusable daemon bearer and rewrites the one-use terminal sockets back onto
+ * the page origin, so browser JavaScript has the same credential boundary as a
+ * packaged client. Direct mode remains only as a compatibility path for older
+ * harnesses.
  *
  * Reuse note: the response contracts come from `@tmux-ide/contracts`, the same
  * zod schemas the broker parses with, so a wire change breaks both. The broker
@@ -66,6 +66,11 @@ import {
   type StartupReadinessLadder,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
+import {
+  createRuntimeConnectionSupervisor,
+  type RuntimeConnection,
+  type RuntimeConnectionSupervisor,
+} from "@tmux-ide/daemon-client/connection-supervisor";
 
 import type { DevWebHostConfig } from "./dev-web-host-config.ts";
 
@@ -113,6 +118,13 @@ function browserWindowState(): DesktopWindowState {
     fullscreen: document.fullscreenElement !== null,
     focused: document.hasFocus(),
   };
+}
+
+/** Route one-use redemption sockets through the same-origin dev gateway. */
+function browserWebSocketUrl(config: DevWebHostConfig, daemonUrl: string): string {
+  if (config.transport === "direct") return daemonUrl;
+  const parsed = new URL(daemonUrl);
+  return `${config.daemonWebSocketOrigin}${parsed.pathname}`;
 }
 
 function subscribeMedia(listener: (state: DesktopThemeState) => void): () => void {
@@ -222,8 +234,9 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   // by every catalog read; an empty cache simply projects fewer shell events
   // until the first read lands.
   let catalogCache: readonly DevWorkspaceCatalogEntry[] = [];
-  let socket: WebSocket | null = null;
   let socketVerified = false;
+  let socketSupervisor: RuntimeConnectionSupervisor<true> | null = null;
+  let stopSocketStateSubscription: (() => void) | null = null;
   let disposed = false;
 
   const url = (pathname: string): string => `${config.daemonOrigin}${pathname}`;
@@ -244,7 +257,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         headers: {
           ...extraHeaders,
           accept: "application/json",
-          Authorization: `Bearer ${config.ownerToken}`,
+          ...(config.ownerToken ? { Authorization: `Bearer ${config.ownerToken}` } : {}),
           ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
         },
         ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
@@ -414,58 +427,85 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * daemon publishes only non-secret invalidations over it.
    */
   function ensureSocket(): void {
-    if (disposed || socket || listeners.size === 0) return;
-    const next = new WebSocket(`${config.daemonWebSocketOrigin}${EVENTS_PATH}`);
-    socket = next;
-    socketVerified = false;
-    next.addEventListener("message", (event) => {
-      if (socket !== next || typeof event.data !== "string") return;
-      let raw: unknown;
-      try {
-        raw = JSON.parse(event.data);
-      } catch {
-        return;
+    if (disposed || socketSupervisor || listeners.size === 0) return;
+    const supervisor = createRuntimeConnectionSupervisor<true>({
+      connect: ({ signal }) => connectEventSocket(signal),
+    });
+    socketSupervisor = supervisor;
+    stopSocketStateSubscription = supervisor.subscribe((state) => {
+      if (socketSupervisor !== supervisor || disposed) return;
+      socketVerified = state.phase === "live";
+      if (state.phase === "live") {
+        emit({ type: "connection.changed", state: "live", error: null });
+      } else if (state.phase === "reconnecting") {
+        emit({
+          type: "connection.changed",
+          state: "degraded",
+          error: capabilityError(
+            "event-unavailable",
+            `The daemon event connection is reconnecting (attempt ${state.attempt}).`,
+          ),
+        });
+      } else if (state.phase === "failed") {
+        emit({
+          type: "connection.changed",
+          state: "degraded",
+          error: capabilityError("event-unavailable", "The daemon event connection failed."),
+        });
       }
-      const frame = DaemonEventServerFrameSchemaZ.safeParse(raw);
-      if (!frame.success) return;
-      if (!socketVerified) {
-        if (frame.data.type !== "hello" || !sameIdentity(frame.data.daemon, identity)) {
-          next.close(1008, "daemon generation mismatch");
+    });
+    supervisor.start();
+  }
+
+  function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
+    return new Promise((resolve, reject) => {
+      const next = new WebSocket(`${config.daemonWebSocketOrigin}${EVENTS_PATH}`);
+      let connected = false;
+      let closedResolve!: (reason: unknown) => void;
+      const closed = new Promise<unknown>((settle) => {
+        closedResolve = settle;
+      });
+      const dispose = () => next.close(1000, "connection supervisor stopped");
+      signal.addEventListener("abort", dispose, { once: true });
+      next.addEventListener("message", (event) => {
+        if (typeof event.data !== "string") return;
+        let raw: unknown;
+        try {
+          raw = JSON.parse(event.data);
+        } catch {
           return;
         }
-        socketVerified = true;
-        // `connection.changed` only. `transport.changed` is the production
-        // supervisor's own retry machine reporting itself; this host has no
-        // such machine, and publishing a fake phase would make the renderer
-        // defer to a supervisor that does not exist instead of running its own
-        // bounded recovery.
-        emit({ type: "connection.changed", state: "live", error: null });
-        return;
-      }
-      if (frame.data.type === "hello") return;
-      for (const mapped of projectDaemonServerFrame(frame.data, catalogCache)) emit(mapped);
-    });
-    next.addEventListener("close", () => {
-      if (socket !== next) return;
-      socket = null;
-      socketVerified = false;
-      if (disposed) return;
-      emit({
-        type: "connection.changed",
-        state: "degraded",
-        error: capabilityError("event-unavailable", "The daemon event connection closed."),
+        const frame = DaemonEventServerFrameSchemaZ.safeParse(raw);
+        if (!frame.success) return;
+        if (!connected) {
+          if (frame.data.type !== "hello" || !sameIdentity(frame.data.daemon, identity)) {
+            next.close(1008, "daemon generation mismatch");
+            return;
+          }
+          connected = true;
+          resolve({ value: true, closed, dispose });
+          return;
+        }
+        if (frame.data.type === "hello") return;
+        for (const mapped of projectDaemonServerFrame(frame.data, catalogCache)) emit(mapped);
       });
-    });
-    next.addEventListener("error", () => {
-      if (socket === next) next.close();
+      next.addEventListener("close", (event) => {
+        signal.removeEventListener("abort", dispose);
+        const reason = new Error(event.reason || `daemon event socket closed (${event.code})`);
+        if (connected) closedResolve(reason);
+        else reject(reason);
+      });
+      next.addEventListener("error", () => next.close());
     });
   }
 
   function releaseSocket(): void {
-    const current = socket;
-    socket = null;
+    const current = socketSupervisor;
+    socketSupervisor = null;
     socketVerified = false;
-    current?.close(1000, "no subscribers");
+    stopSocketStateSubscription?.();
+    stopSocketStateSubscription = null;
+    void current?.stop();
   }
 
   /**
@@ -670,7 +710,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         try {
           const requestId = crypto.randomUUID();
           const daemonInstanceId = (await loadIdentity()).instanceId;
-          return TerminalAttachmentIssueResultSchemaZ.parse(
+          const issued = TerminalAttachmentIssueResultSchemaZ.parse(
             await request(
               TERMINAL_ATTACHMENT_ISSUE_PATH,
               {
@@ -687,6 +727,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
               },
             ),
           );
+          return issued.status === "issued"
+            ? TerminalAttachmentIssueResultSchemaZ.parse({
+                ...issued,
+                descriptor: {
+                  ...issued.descriptor,
+                  webSocketUrl: browserWebSocketUrl(config, issued.descriptor.webSocketUrl),
+                },
+              })
+            : issued;
         } catch {
           return {
             status: "error",
@@ -705,7 +754,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           });
           const requestId = crypto.randomUUID();
           const daemonInstanceId = (await loadIdentity()).instanceId;
-          return PaneStreamIssueResultSchemaZ.parse(
+          const issued = PaneStreamIssueResultSchemaZ.parse(
             await request(
               PANE_STREAM_ISSUE_PATH,
               {
@@ -718,6 +767,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
               },
             ),
           );
+          return issued.status === "issued"
+            ? PaneStreamIssueResultSchemaZ.parse({
+                ...issued,
+                descriptor: {
+                  ...issued.descriptor,
+                  webSocketUrl: browserWebSocketUrl(config, issued.descriptor.webSocketUrl),
+                },
+              })
+            : issued;
         } catch {
           return {
             status: "error",
