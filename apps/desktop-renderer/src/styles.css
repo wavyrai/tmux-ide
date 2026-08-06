@@ -119,6 +119,15 @@ select:focus-visible,
   --sf-app-green: #34c759;
   --sf-invalid: #ff4e4e;
   --sf-warning: #f6c30f;
+  /*
+   * Coding-agent identity is semantic, not component decoration. These three
+   * roles feed the source list, window tabs and pane chrome so an agent keeps
+   * one face everywhere it appears. The sRGB values are the safe baseline;
+   * capable displays receive the wider-gamut variants below.
+   */
+  --sf-agent-claude: #d97757;
+  --sf-agent-codex: #36a47d;
+  --sf-agent-custom: #8c78d7;
   --sf-wash-valid: rgb(0 196 84 / 10%);
   --sf-wash-invalid: #fff0f0;
   --sf-wash-warning: #fefae6;
@@ -140,6 +149,10 @@ select:focus-visible,
   --sf-card: oklch(100% 0 0);
   --sf-popover: oklch(100% 0 0);
   --sf-terminal: oklch(100% 0 0);
+  --sf-material-chrome: color-mix(in oklab, var(--sf-sidebar) 84%, transparent);
+  --sf-material-sidebar: color-mix(in oklab, var(--sf-sidebar) 78%, transparent);
+  --sf-material-toolbar: color-mix(in oklab, var(--sf-background) 86%, transparent);
+  --sf-material-pane-header: color-mix(in oklab, var(--sf-card) 88%, transparent);
 
   /* The four-step text hierarchy, plus the disabled rung. */
   --sf-foreground: oklch(14.05% 0.004 285.8);
@@ -230,6 +243,10 @@ select:focus-visible,
   --sf-card: oklch(16.8% 0.006 285.7);
   --sf-popover: oklch(19.5% 0.008 285.7);
   --sf-terminal: oklch(12% 0.004 285.8);
+  --sf-material-chrome: color-mix(in oklab, var(--sf-sidebar) 82%, transparent);
+  --sf-material-sidebar: color-mix(in oklab, var(--sf-sidebar) 76%, transparent);
+  --sf-material-toolbar: color-mix(in oklab, var(--sf-background) 84%, transparent);
+  --sf-material-pane-header: color-mix(in oklab, var(--sf-card) 86%, transparent);
 
   --sf-foreground: oklch(98.48% 0 0);
   --sf-foreground-strong: oklch(97% 0.003 265);
@@ -293,10 +310,15 @@ select:focus-visible,
  * are upgraded; anchor has no P3 variant there, so it stays sRGB rather than
  * being derived. The oklch neutrals already carry their own gamut.
  */
-@supports (color: color(display-p3 1 1 1)) {
-  .app {
-    --sf-app-blue: color(display-p3 0.00392156862745098 0.5529411764705883 1);
-    --sf-app-green: color(display-p3 0.20392156862745098 0.7803921568627451 0.34901960784313724);
+@media (color-gamut: p3) {
+  @supports (color: color(display-p3 1 1 1)) {
+    .app {
+      --sf-app-blue: color(display-p3 0.00392156862745098 0.5529411764705883 1);
+      --sf-app-green: color(display-p3 0.20392156862745098 0.7803921568627451 0.34901960784313724);
+      --sf-agent-claude: color(display-p3 0.851 0.467 0.31);
+      --sf-agent-codex: color(display-p3 0.15 0.66 0.47);
+      --sf-agent-custom: color(display-p3 0.55 0.43 0.88);
+    }
   }
 }
 
@@ -508,6 +530,7 @@ select:focus-visible,
     var(--tmux-ide-border-focused) 10%,
     var(--desktop-separator)
   );
+  --desktop-material-filter: saturate(1.28) blur(20px);
   position: relative;
   display: grid;
   grid-template-rows: var(--desktop-chrome-height) minmax(0, 1fr) var(--desktop-status-height);
@@ -518,6 +541,7 @@ select:focus-visible,
   background: var(--desktop-workbench);
   font-family: var(--desktop-ui-font);
   font-size: var(--sf-text-body-2);
+  font-optical-sizing: auto;
   line-height: 20px;
   /*
    * Rendering. Antialiased on both engines — WebKit's default subpixel
@@ -636,7 +660,9 @@ select:focus-visible,
   height: var(--desktop-chrome-height);
   align-items: center;
   border-bottom: 1px solid var(--desktop-separator);
-  background: var(--desktop-chrome);
+  background: var(--sf-material-chrome);
+  -webkit-backdrop-filter: var(--desktop-material-filter);
+  backdrop-filter: var(--desktop-material-filter);
   user-select: none;
 }
 
@@ -812,7 +838,8 @@ select:focus-visible,
     color var(--tmi-motion-fast) var(--desktop-ease-smooth),
     background-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
     border-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
-    box-shadow var(--tmi-motion-fast) var(--desktop-ease-smooth);
+    box-shadow var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    transform 80ms var(--sf-ease-out-quad);
 }
 
 @media (hover: hover) {
@@ -830,6 +857,7 @@ select:focus-visible,
 .canvas-controls button:active:not(:disabled) {
   color: var(--tmux-ide-text-bright);
   background: var(--desktop-active);
+  transform: scale(0.96);
 }
 
 .primary-tabs button {
@@ -1564,7 +1592,9 @@ kbd {
   padding: 10px 8px 14px;
   overflow: hidden auto;
   border-right: var(--paper-hairline) solid var(--sf-sidebar-border);
-  background: var(--desktop-sidebar);
+  background: var(--sf-material-sidebar);
+  -webkit-backdrop-filter: var(--desktop-material-filter);
+  backdrop-filter: var(--desktop-material-filter);
   scrollbar-color: color-mix(in oklab, var(--sf-foreground) 28%, transparent) transparent;
   scrollbar-width: thin;
 }
@@ -1718,7 +1748,8 @@ kbd {
     background-color 150ms var(--desktop-ease-smooth),
     border-color 150ms var(--desktop-ease-smooth),
     box-shadow 150ms var(--desktop-ease-smooth),
-    opacity 150ms var(--desktop-ease-smooth);
+    opacity 150ms var(--desktop-ease-smooth),
+    transform 80ms var(--sf-ease-out-quad);
 }
 
 /* Agent rows are process cards, not anonymous list entries. The status dot
@@ -1727,7 +1758,8 @@ kbd {
 .sidebar-row--agent {
   gap: var(--tmi-space-2);
   border-color: color-mix(in oklab, var(--desktop-separator) 72%, transparent);
-  background: color-mix(in oklab, var(--desktop-raised) 62%, transparent);
+  background: color-mix(in oklab, var(--desktop-raised) 82%, transparent);
+  box-shadow: var(--tmi-shadow-subtle);
 }
 
 .sidebar-row__agent-icon {
@@ -1745,15 +1777,15 @@ kbd {
 }
 
 .sidebar-row__agent-icon[data-agent-icon="agent-claude"] {
-  --pane-identity-accent: #d97757;
+  --pane-identity-accent: var(--sf-agent-claude);
 }
 
 .sidebar-row__agent-icon[data-agent-icon="agent-codex"] {
-  --pane-identity-accent: #36a47d;
+  --pane-identity-accent: var(--sf-agent-codex);
 }
 
 .sidebar-row__agent-icon[data-agent-icon="agent-custom"] {
-  --pane-identity-accent: #8c78d7;
+  --pane-identity-accent: var(--sf-agent-custom);
 }
 
 .sidebar-row--active .sidebar-row__agent-icon {
@@ -1765,6 +1797,10 @@ kbd {
 .sidebar-row:hover {
   color: var(--tmux-ide-text-primary);
   background: var(--desktop-hover);
+}
+
+.sidebar-row:active:not(:disabled) {
+  transform: scale(0.985);
 }
 
 /*
@@ -2466,11 +2502,13 @@ kbd {
 
 .terminal-canvas .web-pane-frame__header {
   padding-inline: 5px;
-  background: var(--pane-header);
+  background: var(--sf-material-pane-header);
+  -webkit-backdrop-filter: saturate(1.18) blur(14px);
+  backdrop-filter: saturate(1.18) blur(14px);
 }
 
 .terminal-canvas .web-pane-frame__header[data-surface="headerActive"] {
-  background: var(--pane-header-active);
+  background: color-mix(in oklab, var(--sf-material-pane-header) 90%, var(--desktop-active));
 }
 
 .terminal-canvas .web-pane-frame__title {
@@ -5404,6 +5442,76 @@ kbd {
   animation-duration: 0ms !important;
 }
 
+/*
+ * macOS exposes transparency and contrast as separate accessibility choices.
+ * Materials become honest solid planes when either preference asks for it;
+ * hierarchy remains in the tonal ramp and the existing hairline/ring system.
+ * The media feature is ignored by engines that do not expose the OS setting.
+ */
+@media (prefers-reduced-transparency: reduce) {
+  .titlebar,
+  .workspace-sidebar,
+  .window-tabs,
+  .terminal-canvas .web-pane-frame__header {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .titlebar {
+    background: var(--desktop-chrome);
+  }
+
+  .workspace-sidebar {
+    background: var(--desktop-sidebar);
+  }
+
+  .app[data-vibrancy="sidebar"] .workspace-sidebar {
+    background: var(--desktop-sidebar);
+  }
+
+  .window-tabs {
+    background: var(--desktop-workbench);
+  }
+
+  .terminal-canvas .web-pane-frame__header {
+    background: var(--pane-header);
+  }
+
+  .terminal-canvas .web-pane-frame__header[data-surface="headerActive"] {
+    background: var(--pane-header-active);
+  }
+}
+
+.app[data-increased-contrast="true"] .titlebar,
+.app[data-increased-contrast="true"] .workspace-sidebar,
+.app[data-increased-contrast="true"] .window-tabs,
+.app[data-increased-contrast="true"] .terminal-canvas .web-pane-frame__header {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.app[data-increased-contrast="true"] .titlebar {
+  background: var(--desktop-chrome);
+}
+
+.app[data-increased-contrast="true"] .workspace-sidebar {
+  background: var(--desktop-sidebar);
+}
+
+.app[data-increased-contrast="true"] .window-tabs {
+  background: var(--desktop-workbench);
+}
+
+.app[data-increased-contrast="true"] .terminal-canvas .web-pane-frame__header {
+  background: var(--pane-header);
+}
+
+.app[data-increased-contrast="true"]
+  .terminal-canvas
+  .web-pane-frame__header[data-surface="headerActive"] {
+  background: var(--pane-header-active);
+}
+
 /* ── Mirror pane nodes (m43 card 3) ─────────────────────────────────────────
    Read-only pane-stream nodes on the canvas. Same card silhouette as
    .app-window-card, visually quieter (dashed separator ring) so a mirror is
@@ -5650,8 +5758,12 @@ kbd {
   flex: 0 0 auto;
   align-items: center;
   gap: var(--tmi-space-2);
-  padding: var(--tmi-space-2);
+  padding: 6px 8px;
   overflow-x: auto;
+  border-bottom: var(--paper-hairline) solid var(--desktop-separator);
+  background: var(--sf-material-toolbar);
+  -webkit-backdrop-filter: var(--desktop-material-filter);
+  backdrop-filter: var(--desktop-material-filter);
   scrollbar-width: none;
 }
 
@@ -5680,19 +5792,21 @@ kbd {
   transition:
     color var(--tmi-motion-fast) var(--desktop-ease-smooth),
     background-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
-    border-color var(--tmi-motion-fast) var(--desktop-ease-smooth);
+    border-color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    box-shadow var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    transform 80ms var(--sf-ease-out-quad);
 }
 
 .window-tabs__tab[data-identity-icon="agent-claude"] {
-  --pane-identity-accent: #d97757;
+  --pane-identity-accent: var(--sf-agent-claude);
 }
 
 .window-tabs__tab[data-identity-icon="agent-codex"] {
-  --pane-identity-accent: #36a47d;
+  --pane-identity-accent: var(--sf-agent-codex);
 }
 
 .window-tabs__tab[data-identity-icon="agent-custom"] {
-  --pane-identity-accent: #8c78d7;
+  --pane-identity-accent: var(--sf-agent-custom);
 }
 
 .window-tabs__icon {
@@ -5705,6 +5819,12 @@ kbd {
   border-radius: var(--tmi-radius-lg);
   color: var(--pane-identity-accent);
   background: color-mix(in oklab, var(--pane-identity-accent) 13%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 34%, transparent);
+}
+
+.window-tabs__tab:active:not(:disabled),
+.window-tabs__create:active {
+  transform: scale(0.96);
 }
 
 @media (hover: hover) {
@@ -5818,15 +5938,15 @@ kbd {
 }
 
 .pane-tile[data-identity-icon="agent-claude"] {
-  --pane-identity-accent: #d97757;
+  --pane-identity-accent: var(--sf-agent-claude);
 }
 
 .pane-tile[data-identity-icon="agent-codex"] {
-  --pane-identity-accent: #36a47d;
+  --pane-identity-accent: var(--sf-agent-codex);
 }
 
 .pane-tile[data-identity-icon="agent-custom"] {
-  --pane-identity-accent: #8c78d7;
+  --pane-identity-accent: var(--sf-agent-custom);
 }
 
 .tiled-pane-area[data-manipulation-phase="dragging"] .pane-tile,

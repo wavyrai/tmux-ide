@@ -487,6 +487,31 @@ describe("desktop UI foundation styles", () => {
     expect(styles).not.toContain("transition: all");
   });
 
+  it("keeps macOS materials accessible and upgrades agent identity on P3 displays", () => {
+    /*
+     * Identity colors are tokens, not three repeated component literals: the
+     * same Claude/Codex/custom accent must reach cards, tabs and pane chrome.
+     * Every token keeps an sRGB baseline before the wider-gamut override so a
+     * non-P3 monitor does not receive an unsupported or silently missing role.
+     */
+    for (const role of ["claude", "codex", "custom"]) {
+      expect(shellStyles).toMatch(new RegExp(`--sf-agent-${role}: #[0-9a-f]{6};`, "u"));
+      expect(shellStyles).toMatch(
+        new RegExp(`--sf-agent-${role}: color\\(display-p3 [^)]+\\);`, "u"),
+      );
+      expect(shellStyles.match(new RegExp(`var\\(--sf-agent-${role}\\)`, "gu"))?.length).toBe(3);
+    }
+
+    expect(shellStyles).toContain("@media (color-gamut: p3)");
+    expect(shellStyles).toContain("@supports (color: color(display-p3 1 1 1))");
+    expect(shellStyles).toContain("--desktop-material-filter: saturate(1.28) blur(20px);");
+    expect(shellStyles).toContain("@media (prefers-reduced-transparency: reduce)");
+    expect(shellStyles).toContain('.app[data-increased-contrast="true"] .titlebar');
+    expect(shellStyles).toMatch(
+      /@media \(prefers-reduced-transparency: reduce\)[\s\S]*?backdrop-filter: none;/u,
+    );
+  });
+
   it("aliases emitted shape and focus roles by their canonical names", () => {
     expect(styles).toContain("var(--tmux-ide-shape-control-radius");
     expect(styles).toContain("var(--tmux-ide-shape-floating-radius");
