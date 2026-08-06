@@ -4414,7 +4414,16 @@ var init_issue_error = __esm({
 
 // packages/contracts/src/terminal-attachments.ts
 import { z as z25 } from "zod";
-var TERMINAL_ATTACHMENT_PROTOCOL_VERSION, TERMINAL_ATTACHMENT_MIN_COLS, TERMINAL_ATTACHMENT_MAX_COLS, TERMINAL_ATTACHMENT_MIN_ROWS, TERMINAL_ATTACHMENT_MAX_ROWS, TerminalAttachmentSemanticTargetSchemaZ, TerminalAttachmentViewerModeSchemaZ, TerminalAttachmentViewportSchemaZ, TerminalAttachRequestSchemaZ, TerminalAttachmentDescriptorSchemaZ, TerminalAttachmentPlanHandleSchemaZ, TerminalAttachmentErrorSchemaZ, TerminalAttachmentPlanResponseSchemaZ, TERMINAL_ATTACHMENT_ISSUE_PATH, TERMINAL_ATTACHMENT_REDEEM_PATH, TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL, TerminalAttachmentRequestIdSchemaZ, TerminalAttachmentRedemptionTicketSchemaZ, TerminalAttachmentLoopbackWebSocketUrlSchemaZ, TerminalAttachmentIssueDescriptorSchemaZ, TerminalAttachmentIssueErrorCodeSchemaZ, TerminalAttachmentIssueErrorSchemaZ, TerminalAttachmentIssueResultSchemaZ, TerminalAttachmentIssueMutationRequestSchemaZ;
+function refuseReadOnlyGeometryOwner(value, ctx) {
+  if (value.viewerMode === "read-only" && value.geometryOwnership === "owner") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["geometryOwnership"],
+      message: "a read-only attachment cannot own the origin window's geometry"
+    });
+  }
+}
+var TERMINAL_ATTACHMENT_PROTOCOL_VERSION, TERMINAL_ATTACHMENT_MIN_COLS, TERMINAL_ATTACHMENT_MAX_COLS, TERMINAL_ATTACHMENT_MIN_ROWS, TERMINAL_ATTACHMENT_MAX_ROWS, TerminalAttachmentSemanticTargetSchemaZ, TerminalAttachmentViewerModeSchemaZ, TerminalAttachmentGeometryOwnershipSchemaZ, TerminalAttachmentViewportSchemaZ, TerminalAttachRequestSchemaZ, TerminalAttachmentDescriptorSchemaZ, TerminalAttachmentPlanHandleSchemaZ, TerminalAttachmentErrorSchemaZ, TerminalAttachmentPlanResponseSchemaZ, TERMINAL_ATTACHMENT_ISSUE_PATH, TERMINAL_ATTACHMENT_REDEEM_PATH, TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL, TerminalAttachmentRequestIdSchemaZ, TerminalAttachmentRedemptionTicketSchemaZ, TerminalAttachmentLoopbackWebSocketUrlSchemaZ, TerminalAttachmentIssueDescriptorSchemaZ, TerminalAttachmentIssueErrorCodeSchemaZ, TerminalAttachmentIssueErrorSchemaZ, TerminalAttachmentIssueResultSchemaZ, TerminalAttachmentIssueMutationRequestSchemaZ;
 var init_terminal_attachments = __esm({
   "packages/contracts/src/terminal-attachments.ts"() {
     "use strict";
@@ -4432,6 +4441,7 @@ var init_terminal_attachments = __esm({
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict();
     TerminalAttachmentViewerModeSchemaZ = z25.enum(["interactive", "read-only"]);
+    TerminalAttachmentGeometryOwnershipSchemaZ = z25.enum(["passive", "owner"]);
     TerminalAttachmentViewportSchemaZ = z25.object({
       cols: z25.number().int().min(TERMINAL_ATTACHMENT_MIN_COLS).max(TERMINAL_ATTACHMENT_MAX_COLS),
       rows: z25.number().int().min(TERMINAL_ATTACHMENT_MIN_ROWS).max(TERMINAL_ATTACHMENT_MAX_ROWS)
@@ -4440,15 +4450,22 @@ var init_terminal_attachments = __esm({
       protocolVersion: z25.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
       target: TerminalAttachmentSemanticTargetSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ,
+      geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ.default("passive"),
       viewport: TerminalAttachmentViewportSchemaZ
-    }).strict();
+    }).strict().superRefine(refuseReadOnlyGeometryOwner);
     TerminalAttachmentDescriptorSchemaZ = z25.object({
       attachmentId: z25.uuid(),
       target: TerminalAttachmentSemanticTargetSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ,
+      /**
+       * Echoed, never defaulted here: the descriptor reports what the daemon
+       * RESOLVED, so a caller can see that the ownership it asked for is the
+       * ownership it got rather than assuming the request survived.
+       */
+      geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ,
       viewport: TerminalAttachmentViewportSchemaZ,
       status: z25.literal("planned")
-    }).strict();
+    }).strict().superRefine(refuseReadOnlyGeometryOwner);
     TerminalAttachmentPlanHandleSchemaZ = z25.object({
       requestId: z25.uuid()
     }).strict();
@@ -4521,7 +4538,9 @@ var init_terminal_attachments = __esm({
       daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
       requestId: TerminalAttachmentRequestIdSchemaZ,
       expiresAt: z25.number().int().positive(),
-      effectiveViewerMode: TerminalAttachmentViewerModeSchemaZ
+      effectiveViewerMode: TerminalAttachmentViewerModeSchemaZ,
+      /** What the daemon actually granted, beside the viewer mode it granted. */
+      effectiveGeometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ
     }).strict();
     TerminalAttachmentIssueErrorCodeSchemaZ = TerminalIssueErrorCodeSchemaZ;
     TerminalAttachmentIssueErrorSchemaZ = TerminalIssueErrorSchemaZ;
@@ -26188,9 +26207,10 @@ function reconcileCommands(args) {
     tmux3(["set-option", "-t", args.viewSessionName, "destroy-unattached", "off"])
   ];
 }
-function attachCommand(viewSessionName, viewerMode) {
+function attachCommand(viewSessionName, viewerMode, geometryOwnership) {
   const target = `=${viewSessionName}`;
-  return viewerMode === "read-only" ? tmux3(["attach-session", "-E", "-r", "-t", target]) : tmux3(["attach-session", "-E", "-f", "ignore-size", "-t", target]);
+  if (viewerMode === "read-only") return tmux3(["attach-session", "-E", "-r", "-t", target]);
+  return geometryOwnership === "owner" ? tmux3(["attach-session", "-E", "-t", target]) : tmux3(["attach-session", "-E", "-f", "ignore-size", "-t", target]);
 }
 function planGroupedTmuxAttachment(input) {
   const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.parse(input);
@@ -26210,7 +26230,7 @@ function planGroupedTmuxAttachment(input) {
     viewSessionName,
     sourceWindowId: parsed.source.windowId
   });
-  const attach2 = attachCommand(viewSessionName, parsed.viewerMode);
+  const attach2 = attachCommand(viewSessionName, parsed.viewerMode, parsed.geometryOwnership);
   const createArgv = [
     "new-session",
     "-d",
@@ -26264,6 +26284,7 @@ function planGroupedTmuxAttachment(input) {
       }
     },
     viewerMode: parsed.viewerMode,
+    geometryOwnership: parsed.geometryOwnership,
     viewport: parsed.viewport,
     create: {
       absenceProbe: existenceProbe,
@@ -26302,6 +26323,7 @@ var init_grouped_tmux = __esm({
       generation: z54.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
       target: TerminalAttachmentSemanticTargetSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ,
+      geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ.default("passive"),
       viewport: TerminalAttachmentViewportSchemaZ,
       source: z54.object({
         sessionId: RuntimeSessionIdSchemaZ2,
@@ -26315,7 +26337,7 @@ var init_grouped_tmux = __esm({
          */
         windowPaneCount: z54.number().int().positive()
       }).strict()
-    }).strict();
+    }).strict().superRefine(refuseReadOnlyGeometryOwner);
   }
 });
 
@@ -26860,6 +26882,7 @@ var init_lease_manager = __esm({
           generation,
           target: request.target,
           viewerMode: request.viewerMode,
+          geometryOwnership: request.geometryOwnership,
           viewport: request.viewport,
           source: {
             sessionId: resolution.source.sessionId,
@@ -27008,6 +27031,7 @@ var init_lease_manager = __esm({
           requestId: state.requestId,
           target: { ...state.request.target },
           viewerMode: state.request.viewerMode,
+          geometryOwnership: state.request.geometryOwnership,
           status: state.status,
           issuedAt: state.issuedAt,
           expiresAt: state.expiresAt,
@@ -27285,7 +27309,7 @@ var init_direct_websocket = __esm({
           }
           const ticket = issued.redemptionTicket;
           const issuedDescriptor = issued.descriptor;
-          if (!TicketPattern.test(ticket) || !validDescriptorIdentity(issuedDescriptor) || issuedDescriptor.requestId !== requestId || issuedDescriptor.status !== "awaiting-redemption" || issuedDescriptor.viewerMode !== parsedRequest.viewerMode || !sameTarget(issuedDescriptor.target, parsedRequest.target)) {
+          if (!TicketPattern.test(ticket) || !validDescriptorIdentity(issuedDescriptor) || issuedDescriptor.requestId !== requestId || issuedDescriptor.status !== "awaiting-redemption" || issuedDescriptor.viewerMode !== parsedRequest.viewerMode || issuedDescriptor.geometryOwnership !== parsedRequest.geometryOwnership || !sameTarget(issuedDescriptor.target, parsedRequest.target)) {
             await this.#releaseLease(issued.descriptor.leaseId, {
               daemonInstanceId: this.#instanceId,
               requestId,
@@ -27340,7 +27364,8 @@ var init_direct_websocket = __esm({
             daemonInstanceId: this.#instanceId,
             requestId,
             expiresAt: issuedDescriptor.expiresAt,
-            effectiveViewerMode: issuedDescriptor.viewerMode
+            effectiveViewerMode: issuedDescriptor.viewerMode,
+            effectiveGeometryOwnership: issuedDescriptor.geometryOwnership
           });
         });
       }
@@ -28040,9 +28065,10 @@ function planCanonicalTmuxAttachmentClientCommand(input) {
   if (groupedTmuxViewSessionName(identity.attachmentId, identity.generation) !== identity.viewSessionName || identity.markerValue !== `v1:${identity.attachmentId.toLowerCase()}:${identity.generation}`) {
     throw new TmuxAttachmentViewExecutorError("invalid-request");
   }
-  const exactViewTarget = `=${identity.viewSessionName}`;
-  const attach2 = tmux4(
-    parsed.viewerMode === "read-only" ? ["attach-session", "-E", "-r", "-t", exactViewTarget] : ["attach-session", "-E", "-f", "ignore-size", "-t", exactViewTarget]
+  const attach2 = attachCommand(
+    identity.viewSessionName,
+    parsed.viewerMode,
+    parsed.geometryOwnership
   );
   const commands = parsed.operation === "attach" ? [attach2] : [
     tmux4(["select-window", "-t", `${identity.viewSessionName}:${identity.expectedWindowId}`]),
@@ -28136,6 +28162,10 @@ function canonicalPlanFor(operation) {
       generation: operation.plan.identity.generation,
       target: operation.plan.identity.semanticTarget,
       viewerMode: operation.plan.viewerMode,
+      // Re-planned from the plan's OWN ownership, so a plan that claims to own
+      // geometry can only pass the deep-equality gate below if the ownership it
+      // claims is the ownership its attach argv was built with.
+      geometryOwnership: operation.plan.geometryOwnership,
       viewport: operation.plan.viewport,
       source: operation.source
     });
@@ -28239,8 +28269,9 @@ var init_tmux_view_executor = __esm({
         expectedWindowPaneCount: z57.number().int().positive()
       }).strict(),
       viewport: TerminalAttachmentViewportSchemaZ,
-      viewerMode: TerminalAttachmentViewerModeSchemaZ
-    }).strict();
+      viewerMode: TerminalAttachmentViewerModeSchemaZ,
+      geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ.default("passive")
+    }).strict().superRefine(refuseReadOnlyGeometryOwner);
     TmuxAttachmentViewExecutor = class {
       #runner;
       #clientTransport;
@@ -28298,7 +28329,8 @@ var init_tmux_view_executor = __esm({
               expectedWindowPaneCount: windowPaneCount
             },
             viewport: { ...plan.viewport },
-            viewerMode: plan.viewerMode
+            viewerMode: plan.viewerMode,
+            geometryOwnership: plan.geometryOwnership
           };
           if (!isDeepStrictEqual(command2, planCanonicalTmuxAttachmentClientCommand(input))) {
             throw new TmuxAttachmentViewExecutorError("invalid-request");
