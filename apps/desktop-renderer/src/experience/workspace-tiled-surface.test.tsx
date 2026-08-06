@@ -20,7 +20,7 @@ function layout(overrides: Partial<PaneStreamLayoutEvent> = {}): PaneStreamLayou
     cols: 200,
     rows: 50,
     zoomed: false,
-    paneBorderStatus: "off",
+    paneBorderStatus: "top",
     panes: [{ pane: "pane.a", left: 0, top: 0, width: 200, height: 50, active: true }],
     ...overrides,
   };
@@ -122,6 +122,7 @@ describe("the layout-faithful workspace view", () => {
      * drift out of the row as the window resizes.
      */
     const stacked = layout({
+      paneBorderStatus: "off",
       panes: [
         { pane: "pane.a", left: 0, top: 0, width: 200, height: 24, active: true },
         { pane: "pane.b", left: 0, top: 25, width: 200, height: 25, active: false },
@@ -130,7 +131,7 @@ describe("the layout-faithful workspace view", () => {
     const { root } = renderSurface([stacked]);
     const headers = [...root.querySelectorAll<HTMLElement>(".pane-tile__header")];
     // The top pane is flush with the window's top edge: no separator row exists
-    // above it, so its header stays a hover reveal over its own first row.
+    // above it, so its header stays hidden rather than covering terminal output.
     expect(headers.map((header) => header.dataset.hoisted)).toEqual(["false", "true"]);
     // One row of a tile that is 25 pane rows plus the borrowed separator row.
     expect(headers[1]!.style.height).toBe(`${((1 / 26) * 100).toFixed(4)}%`);
@@ -151,6 +152,28 @@ describe("the layout-faithful workspace view", () => {
     expect(close.getAttribute("aria-label")).toContain("cannot be undone");
     close.click();
     expect(invoke).toHaveBeenCalledWith("pane.kill", "pane.a");
+    expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')!.dataset.ending).toBe("true");
+  });
+
+  it("toggles tmux zoom from a double pointer-click on panel chrome", () => {
+    const { root, invoke } = renderSurface([SPLIT]);
+    const header = root.querySelector<HTMLElement>(".pane-tile__header")!;
+    header.setPointerCapture = () => undefined;
+    const pointer = (type: string): PointerEvent => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0 });
+      Object.defineProperties(event, {
+        pointerId: { value: 7 },
+        isPrimary: { value: true },
+        pointerType: { value: "mouse" },
+      });
+      return event as PointerEvent;
+    };
+    header.dispatchEvent(pointer("pointerdown"));
+    header.dispatchEvent(pointer("pointerup"));
+    header.dispatchEvent(pointer("pointerdown"));
+    expect(invoke).toHaveBeenCalledWith("window.zoom.toggle", "pane.a", {
+      desiredZoom: "zoomed",
+    });
   });
 
   it("opens the pane menu from the header's own control, under that control", () => {
@@ -187,6 +210,9 @@ describe("the layout-faithful workspace view", () => {
     };
     header.dispatchEvent(pointer("pointerdown", 250));
     header.dispatchEvent(pointer("pointermove", 750));
+    expect(root.querySelector(".pane-drop-ghost__label")?.textContent).toContain(
+      "Swap with Terminal",
+    );
     header.dispatchEvent(pointer("pointerup", 750));
 
     expect(invoke).toHaveBeenCalledWith("pane.swap", "pane.a", {
@@ -273,7 +299,10 @@ describe("the layout-faithful workspace view", () => {
     expect(
       root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPreviewCells,
     ).toBe("101");
+    expect(root.querySelector(".pane-resize-hud")?.textContent).toContain("101 cols");
+    expect(root.querySelector(".pane-resize-hud")?.textContent).toContain("+2");
     border.dispatchEvent(pointer("pointerup", 505));
+    expect(root.querySelector(".pane-resize-hud")?.textContent).toContain("101 cols");
 
     const resizes = invoke.mock.calls.filter(([verbId]) => verbId === "pane.resize");
     expect(resizes.length, "the release did not flush a resize").toBe(1);

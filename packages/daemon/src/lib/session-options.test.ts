@@ -74,7 +74,7 @@ describe("borderOptions", () => {
 
     expect(opts[0]).toEqual(["set-option", "-t", "my-session", "pane-border-status", "top"]);
     expect(opts[1][3]).toBe("pane-border-format");
-    expect(opts[1][4].includes("pane_current_path")).toBeTruthy();
+    expect(opts[1][4]).toContain("@tmux_ide_chip");
   });
 });
 

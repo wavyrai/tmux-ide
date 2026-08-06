@@ -67,12 +67,14 @@ export async function startDevServer(daemon: RunningDaemon): Promise<RunningDevS
     timeoutMs: VITE_READY_TIMEOUT_MS,
   });
 
-  // Without this line every daemon fetch and WebSocket from the page is refused
-  // by the dev CSP and the app silently falls back to its preview surface — a
-  // failure that would otherwise surface as an inscrutable "no fleet" timeout.
+  // Gateway mode deliberately keeps the private daemon origin OUT of browser
+  // authority: HTTP and WebSockets stay same-origin and Vite adds the owner
+  // bearer while proxying. Catch a regression back to direct-daemon CSP here.
   const csp = headers.get("content-security-policy") ?? "";
-  if (!csp.includes(daemon.baseUrl)) {
-    throw new Error(`the dev CSP does not admit the daemon origin ${daemon.baseUrl}\n${csp}`);
+  if (csp.includes(daemon.baseUrl) || !csp.includes(`ws://127.0.0.1:${port}`)) {
+    throw new Error(
+      `the gateway CSP exposes daemon authority or refuses its own HMR socket\n${csp}`,
+    );
   }
 
   return {

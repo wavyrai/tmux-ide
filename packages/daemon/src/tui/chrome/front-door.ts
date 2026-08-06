@@ -17,15 +17,10 @@
  *  sessions. (Owned here; re-exported by `updater.ts` for its callers.) */
 export const ADOPTED_OPTION = "@tmux_ide_adopted";
 
-/** Per-pane chip read by the shared top-border panel chrome. */
-export const CHIP_OPTION = "@tmux_ide_chip";
-
-/**
- * One blank, information-bearing tmux row that both native tmux and the GUI
- * can use as pane chrome. The GUI paints its panel header over this row; native
- * tmux renders the live agent chip directly into it.
- */
-export const PANE_CHROME_BORDER_FORMAT = ` #{?#{${CHIP_OPTION}},#{${CHIP_OPTION}},#{pane_title}} `;
+export {
+  PANE_CHROME_BORDER_FORMAT,
+  PANE_CHROME_CHIP_OPTION as CHIP_OPTION,
+} from "../../lib/pane-chrome.ts";
 
 /** The hidden internal session that hosts the updater loop. */
 export const UPDATER_SESSION = "_tmux-ide-chrome";

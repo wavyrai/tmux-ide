@@ -4,6 +4,7 @@
  */
 
 import type { ThemeConfig, TmuxCommand } from "../types.ts";
+import { PANE_CHROME_BORDER_FORMAT } from "./pane-chrome.ts";
 
 export function buildSessionOptions(
   session: string,
@@ -32,19 +33,11 @@ export function themeOptions(session: string, theme: ThemeConfig): TmuxCommand[]
 }
 
 export function borderOptions(session: string, theme: ThemeConfig): TmuxCommand[] {
-  const accent = theme.accent ?? "colour75";
-  const border = theme.border ?? "colour238";
-  const fg = theme.fg ?? "colour248";
+  void theme;
 
   return [
     ["set-option", "-t", session, "pane-border-status", "top"],
-    [
-      "set-option",
-      "-t",
-      session,
-      "pane-border-format",
-      ` #{?pane_active,#[fg=${accent}#,bold]▸ #T  #[fg=${fg}]#{pane_current_path},#[fg=${border}]· #T  #{pane_current_path}} `,
-    ],
+    ["set-option", "-t", session, "pane-border-format", PANE_CHROME_BORDER_FORMAT],
   ];
 }
 

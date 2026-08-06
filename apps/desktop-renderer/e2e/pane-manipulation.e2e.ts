@@ -168,6 +168,10 @@ test("resize previews locally; header drag cancels or swaps without remounting t
       tiles,
       "the split reached tmux but the tiled view did not gain its target",
     ).toHaveCount(2, { timeout: 30_000 });
+    await expect(
+      area,
+      "the confirmed split did not register an entering layout transition",
+    ).toHaveAttribute("data-last-layout-transition", /^(?:enter|mixed)$/u);
     await expect
       .poll(
         () => {
@@ -215,6 +219,11 @@ test("resize previews locally; header drag cancels or swaps without remounting t
       Number.isSafeInteger(previewCells) && previewCells > 0,
       `the preview did not expose a positive whole-cell target (received ${previewCellsText})`,
     ).toBe(true);
+    await proveVisible(page.locator(".pane-resize-hud"), "the live resize cell-count HUD", {
+      minWidth: 48,
+      minHeight: 18,
+    });
+    await expect(page.locator(".pane-resize-hud")).toContainText(`${previewCells} cols`);
     const widthDuringPreview = (await sourceTile.boundingBox())!.width;
     expect(
       Math.abs(widthDuringPreview - widthBeforePreview),
@@ -237,6 +246,7 @@ test("resize previews locally; header drag cancels or swaps without remounting t
       area,
       "the pane area did not retain the exact cell count tmux confirmed",
     ).toHaveAttribute("data-last-confirmed-cells", String(previewCells), { timeout: 30_000 });
+    await proveGone(page.locator(".pane-resize-hud"), "the resize HUD after confirmation");
     await expect
       .poll(() => pane(tmuxPaneGeometry(liveApp.fleet, sessionName), sourcePane).width, {
         message: `the UI confirmed ${previewCells} columns but tmux settled somewhere else`,
@@ -280,6 +290,11 @@ test("resize previews locally; header drag cancels or swaps without remounting t
       page.locator('.pane-tile[data-drop-target="true"]'),
       "a pane drag must expose exactly one drop target",
     ).toHaveCount(1);
+    await proveVisible(page.locator(".pane-drop-ghost__label"), "the labelled pane drop preview", {
+      minWidth: 80,
+      minHeight: 18,
+    });
+    await expect(page.locator(".pane-drop-ghost__label")).toContainText("Swap with");
     await page.keyboard.press("Escape");
     await expect(area, "Escape did not roll the pane drag back to idle").toHaveAttribute(
       "data-manipulation-phase",
@@ -371,6 +386,46 @@ test("resize previews locally; header drag cancels or swaps without remounting t
     );
     provePaintChanged(beforeTyping, await paintFingerprint(terminal), "the manipulated terminal");
     await expectSameTerminal(page, originalTerminal!, terminal, "after post-swap terminal input");
+
+    // --- Header double-click: tmux zoom, then exact restoration ------------
+    const zoomRevision = Number(await area.getAttribute("data-layout-transition-revision"));
+    await page.locator(`[data-pane-drag-handle="${sourcePane}"]`).dblclick();
+    await expect(
+      area,
+      "double-clicking panel chrome did not zoom tmux's own window",
+    ).toHaveAttribute("data-zoomed", "true", { timeout: 30_000 });
+    await expect(tiles, "zoomed tmux still exposed hidden pane tiles").toHaveCount(1);
+    await expect
+      .poll(async () => Number(await area.getAttribute("data-layout-transition-revision")), {
+        message: "the zoom layout change did not run through the FLIP transition planner",
+      })
+      .toBeGreaterThan(zoomRevision);
+    await page.locator("[data-pane-drag-handle]").dblclick();
+    await expect(
+      area,
+      "double-clicking zoomed panel chrome did not restore the layout",
+    ).toHaveAttribute("data-zoomed", "false", { timeout: 30_000 });
+    await expect(tiles, "unzoom did not restore both semantic panes").toHaveCount(2);
+
+    // --- Close: immediate ending feedback, then a confirmed exit FLIP -----
+    const closeRevision = Number(await area.getAttribute("data-layout-transition-revision"));
+    const close = page.locator(`[data-pane-close="${targetPane!}"]`);
+    await close.click();
+    await close.click();
+    await expect(
+      targetTile,
+      "confirmed close did not mark the panel as ending before tmux replied",
+    ).toHaveAttribute("data-ending", "true");
+    await expect(
+      tiles,
+      "closing one split pane did not reconcile to one remaining pane",
+    ).toHaveCount(1, { timeout: 30_000 });
+    await expect(area).toHaveAttribute("data-last-layout-transition", /^(?:exit|mixed)$/u);
+    await expect
+      .poll(async () => Number(await area.getAttribute("data-layout-transition-revision")), {
+        message: "the pane close did not register a confirmed exit transition",
+      })
+      .toBeGreaterThan(closeRevision);
 
     await page.screenshot({ path: testInfo.outputPath("pane-manipulation-complete.png") });
     await probe.attachArtifact({ fleet: liveApp.fleet, sessionName, testInfo });

@@ -49,6 +49,10 @@ import {
   type WindowTab,
 } from "./workspace-layout-tiles.ts";
 import {
+  planPaneLayoutTransition,
+  type PaneLayoutSnapshot,
+} from "./workspace-layout-transition.ts";
+import {
   beginWorkspacePaneDrag,
   beginWorkspacePaneResize,
   cancelWorkspacePaneManipulation,
@@ -79,11 +83,12 @@ type TiledVerbResult = void | Promise<{ readonly status: "ok" | "error" }>;
 export interface TiledSurfaceVerbs {
   readonly workspaceConnected: boolean;
   readonly invoke: (
-    verbId: "pane.select" | "pane.swap" | "pane.resize" | "pane.kill",
+    verbId: "pane.select" | "pane.swap" | "pane.resize" | "pane.kill" | "window.zoom.toggle",
     semanticPaneId: string,
     args?: {
       readonly resize?: { readonly axis: "cols" | "rows"; readonly cells: number };
       readonly swapTargetSemanticPaneId?: string;
+      readonly desiredZoom?: "toggle" | "zoomed" | "unzoomed";
     },
   ) => TiledVerbResult;
   /** The existing create flow, reused verbatim as the tab strip's "+". */
@@ -297,8 +302,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
             pane: fallback,
             active: true,
             // No layout frame has arrived, so there is no separator row this
-            // header could be hoisted into — it reveals on hover, like a pane
-            // flush with the top of a window.
+            // header could be hoisted into. Keep it hidden until authoritative
+            // geometry confirms a real chrome row.
             headerRows: 0 as const,
             cells: { cols: 0, rows: 0 },
             rect: { left: 0, top: 0, width: 1, height: 1 },
@@ -467,6 +472,11 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   const [committingPreview, setCommittingPreview] = createSignal<WorkspacePanePreview | null>(null);
   const [phase, setPhase] = createSignal<PaneManipulationPhase>("idle");
   const [lastConfirmedCells, setLastConfirmedCells] = createSignal<number | null>(null);
+  const [endingPanes, setEndingPanes] = createSignal<ReadonlySet<string>>(new Set());
+  const [lastLayoutTransition, setLastLayoutTransition] = createSignal<
+    "none" | "move" | "enter" | "exit" | "mixed"
+  >("none");
+  const [layoutTransitionRevision, setLayoutTransitionRevision] = createSignal(0);
   let resizeWireTimer: ReturnType<typeof setTimeout> | null = null;
   let commitTimeout: ReturnType<typeof setTimeout> | null = null;
   let touchLongPressTimer: ReturnType<typeof setTimeout> | null = null;
@@ -539,6 +549,28 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     result !== null &&
     "status" in result &&
     result.status === "error";
+
+  const closePane = (pane: string): void => {
+    if (endingPanes().has(pane)) return;
+    setEndingPanes((current) => new Set([...current, pane]));
+    Promise.resolve(props.verbs.invoke("pane.kill", pane)).then(
+      (result) => {
+        if (!mutationFailed(result)) return;
+        setEndingPanes((current) => {
+          const next = new Set(current);
+          next.delete(pane);
+          return next;
+        });
+      },
+      () => {
+        setEndingPanes((current) => {
+          const next = new Set(current);
+          next.delete(pane);
+          return next;
+        });
+      },
+    );
+  };
 
   const dispatchResize = (plan: PaneResizeWirePlan): void => {
     clearResizeWireTimer();
@@ -753,6 +785,170 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   };
   const placementFor = (pane: string) =>
     displayPreview()?.placements.find((placement) => placement.pane === pane);
+  const activeResize = createMemo<WorkspacePaneResize | null>(() => {
+    const state = displayState();
+    return state?.kind === "resize" ? state : null;
+  });
+
+  // ── Confirmed-layout FLIP transitions ───────────────────────────────────
+  // Direct manipulation already owns its own frame-by-frame transforms. This
+  // path runs only for idle, daemon-confirmed structural changes: split, kill
+  // and tmux zoom. The previous DOM box is inverted onto the new box, then the
+  // compositor removes that transform; tmux remains the only geometry owner.
+  let previousLayout: readonly PaneLayoutSnapshot[] = [];
+  let previousWindowKey: string | null = null;
+  let layoutWasPainted = false;
+  let manipulationInterruptedLayout = false;
+  let layoutAnimationGeneration = 0;
+  const runningLayoutAnimations = new Set<Animation>();
+
+  const stopLayoutAnimations = (): void => {
+    for (const animation of runningLayoutAnimations) animation.cancel();
+    runningLayoutAnimations.clear();
+  };
+  onCleanup(stopLayoutAnimations);
+
+  const paneLayoutSnapshot = (): readonly PaneLayoutSnapshot[] =>
+    [...(overlayElement?.querySelectorAll<HTMLElement>(".pane-tile[data-pane]") ?? [])].map(
+      (element) => {
+        const rect = element.getBoundingClientRect();
+        const pane = element.dataset.pane ?? "";
+        return {
+          pane,
+          title: titleFor(pane),
+          rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        };
+      },
+    );
+
+  const paneTileElement = (pane: string): HTMLElement | undefined =>
+    [...(overlayElement?.querySelectorAll<HTMLElement>(".pane-tile[data-pane]") ?? [])].find(
+      (element) => element.dataset.pane === pane,
+    );
+
+  const trackAnimation = (animation: Animation): void => {
+    runningLayoutAnimations.add(animation);
+    animation.finished.then(
+      () => runningLayoutAnimations.delete(animation),
+      () => runningLayoutAnimations.delete(animation),
+    );
+  };
+
+  const createExitGhost = (entry: PaneLayoutSnapshot): HTMLElement | null => {
+    if (!overlayElement) return null;
+    const overlayRect = overlayElement.getBoundingClientRect();
+    const ghost = document.createElement("div");
+    ghost.className = "pane-layout-ghost";
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.style.left = `${entry.rect.left - overlayRect.left}px`;
+    ghost.style.top = `${entry.rect.top - overlayRect.top}px`;
+    ghost.style.width = `${entry.rect.width}px`;
+    ghost.style.height = `${entry.rect.height}px`;
+    const header = document.createElement("span");
+    header.className = "pane-layout-ghost__header";
+    header.textContent = entry.title;
+    ghost.append(header);
+    overlayElement.append(ghost);
+    return ghost;
+  };
+
+  createEffect(() => {
+    const signature = displayTiles()
+      .map(
+        (tile) =>
+          `${tile.pane}:${tile.rect.left}:${tile.rect.top}:${tile.rect.width}:${tile.rect.height}`,
+      )
+      .join("|");
+    const windowKey = currentFrame() ? windowTabKey(currentFrame()!) : null;
+    const currentPhase = phase();
+    void signature;
+    if (currentPhase !== "idle") {
+      manipulationInterruptedLayout = true;
+      return;
+    }
+    const generation = ++layoutAnimationGeneration;
+    queueMicrotask(() => {
+      if (generation !== layoutAnimationGeneration) return;
+      const current = paneLayoutSnapshot();
+      if (!layoutWasPainted || previousWindowKey !== windowKey || manipulationInterruptedLayout) {
+        previousLayout = current;
+        previousWindowKey = windowKey;
+        layoutWasPainted = true;
+        manipulationInterruptedLayout = false;
+        return;
+      }
+      if (props.reducedMotion) {
+        previousLayout = current;
+        return;
+      }
+      const plan = planPaneLayoutTransition(previousLayout, current);
+      const transitionKinds = [
+        plan.moves.length > 0 ? "move" : null,
+        plan.enters.length > 0 ? "enter" : null,
+        plan.exits.length > 0 ? "exit" : null,
+      ].filter((kind): kind is "move" | "enter" | "exit" => kind !== null);
+      if (transitionKinds.length > 0) {
+        setLastLayoutTransition(transitionKinds.length === 1 ? transitionKinds[0]! : "mixed");
+        setLayoutTransitionRevision((value) => value + 1);
+      }
+      stopLayoutAnimations();
+      for (const move of plan.moves) {
+        const element = paneTileElement(move.pane);
+        if (!element?.animate) continue;
+        trackAnimation(
+          element.animate(
+            [
+              {
+                transform: `translate3d(${move.translateX}px, ${move.translateY}px, 0) scale(${move.scaleX}, ${move.scaleY})`,
+              },
+              { transform: "translate3d(0, 0, 0) scale(1, 1)" },
+            ],
+            { duration: 200, easing: "cubic-bezier(0.4, 0, 0.2, 1)" },
+          ),
+        );
+      }
+      for (const entry of plan.enters) {
+        const element = paneTileElement(entry.pane);
+        if (!element?.animate) continue;
+        trackAnimation(
+          element.animate(
+            [
+              { opacity: 0, transform: "scale(0.98)" },
+              { opacity: 1, transform: "scale(1)" },
+            ],
+            { duration: 150, easing: "cubic-bezier(0.32, 0.72, 0, 1)" },
+          ),
+        );
+      }
+      for (const entry of plan.exits) {
+        const ghost = createExitGhost(entry);
+        if (!ghost?.animate) {
+          ghost?.remove();
+          continue;
+        }
+        const animation = ghost.animate(
+          [
+            { opacity: 1, transform: "scale(1)" },
+            { opacity: 0, transform: "scale(0.98)" },
+          ],
+          { duration: 100, easing: "cubic-bezier(0.895, 0.03, 0.685, 0.22)" },
+        );
+        trackAnimation(animation);
+        animation.finished.then(
+          () => ghost.remove(),
+          () => ghost.remove(),
+        );
+      }
+      previousLayout = current;
+      previousWindowKey = windowKey;
+    });
+  });
+
+  createEffect(() => {
+    const live = new Set(tiles().map(({ pane }) => pane));
+    if ([...endingPanes()].every((pane) => live.has(pane))) return;
+    setEndingPanes((current) => new Set([...current].filter((pane) => live.has(pane))));
+  });
 
   const keyboardSwap = (sourcePane: string, key: string): void => {
     if (!props.verbs.workspaceConnected || phase() !== "idle") return;
@@ -965,6 +1161,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         data-manipulation-phase={phase()}
         data-manipulation-preview-cells={resizePreview()?.cells}
         data-last-confirmed-cells={lastConfirmedCells() ?? undefined}
+        data-last-layout-transition={lastLayoutTransition()}
+        data-layout-transition-revision={layoutTransitionRevision()}
         /*
          * Pane hit testing lives on the AREA, not on the tiles.
          *
@@ -1045,6 +1243,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   data-active={tile().active}
                   data-drop-target={dragPreview()?.targetPane === tile().pane ? "true" : undefined}
                   data-elevated={placement()?.elevated ?? false}
+                  data-ending={endingPanes().has(tile().pane) ? "true" : undefined}
                   style={{
                     left: percent(rect().left),
                     top: percent(rect().top),
@@ -1070,13 +1269,18 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                      * fraction of the box — which keeps it exactly one terminal row
                      * tall at every window size without the component ever knowing
                      * a pixel. A tile with no separator row above it reports 0 and
-                     * the header falls back to a hover overlay on the pane's own
-                     * first row (styles.css), because there is no free row to take.
+                     * hides the header, because borrowing a real output row would
+                     * make chrome obscure terminal content.
                      */
                     heightFraction={tile().headerRows / (tile().cells.rows + tile().headerRows)}
                     hoisted={tile().headerRows === 1}
                     onOpenMenu={(pointer) => props.onOpenPaneMenu?.(tile().pane, pointer)}
-                    onClose={() => props.verbs.invoke("pane.kill", tile().pane)}
+                    onClose={() => closePane(tile().pane)}
+                    onToggleZoom={() =>
+                      props.verbs.invoke("window.zoom.toggle", tile().pane, {
+                        desiredZoom: currentFrame()?.zoomed ? "unzoomed" : "zoomed",
+                      })
+                    }
                     dragging={dragPreview()?.sourcePane === tile().pane}
                     onPointerDown={(event) => beginPaneDrag(tile().pane, event)}
                     onPointerMove={moveManipulation}
@@ -1159,7 +1363,39 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                 width: percent(dragPreview()!.dropRect!.width),
                 height: percent(dragPreview()!.dropRect!.height),
               }}
-            />
+            >
+              <span class="pane-drop-ghost__label">
+                Swap with {titleFor(dragPreview()!.targetPane!)}
+              </span>
+            </div>
+          </Show>
+          <Show when={activeResize() && resizePreview()}>
+            <div
+              class="pane-resize-hud-anchor"
+              data-orientation={activeResize()!.border.orientation}
+              aria-hidden="true"
+              style={{
+                left: percent(
+                  activeResize()!.border.orientation === "vertical"
+                    ? activeResize()!.border.rect.left
+                    : activeResize()!.border.rect.left + activeResize()!.border.rect.width / 2,
+                ),
+                top: percent(
+                  activeResize()!.border.orientation === "horizontal"
+                    ? activeResize()!.border.rect.top
+                    : activeResize()!.border.rect.top + activeResize()!.border.rect.height / 2,
+                ),
+                transform: `translate3d(${resizePreview()!.guideTransform.translateX}px, ${resizePreview()!.guideTransform.translateY}px, 0)`,
+              }}
+            >
+              <output class="pane-resize-hud">
+                {resizePreview()!.cells} {resizePreview()!.axis === "cols" ? "cols" : "rows"}
+                <span>
+                  {resizePreview()!.movedCells >= 0 ? "+" : ""}
+                  {resizePreview()!.movedCells}
+                </span>
+              </output>
+            </div>
           </Show>
           <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">
             {dragPreview()?.targetPane
@@ -1268,11 +1504,13 @@ function PaneHeader(props: {
   readonly onPointerUp: (event: PointerEvent) => void;
   readonly onPointerCancel: (event: PointerEvent) => void;
   readonly onKeyboardSwap: (key: string) => void;
+  readonly onToggleZoom: () => void;
   readonly onOpenMenu: (pointer: { readonly x: number; readonly y: number }) => void;
   readonly onClose: () => void;
 }) {
   const [armed, setArmed] = createSignal(false);
   let disarmTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastPrimaryPointerDownAt = Number.NEGATIVE_INFINITY;
 
   const disarm = (): void => {
     if (disarmTimer !== null) clearTimeout(disarmTimer);
@@ -1291,9 +1529,24 @@ function PaneHeader(props: {
       class="pane-tile__header"
       data-hoisted={props.hoisted}
       data-active={props.active}
+      aria-hidden={!props.hoisted}
       style={props.hoisted ? { height: percent(props.heightFraction) } : undefined}
       onPointerLeave={disarm}
-      onPointerDown={props.onPointerDown}
+      onPointerDown={(event) => {
+        const now = event.timeStamp || performance.now();
+        const doubleClick =
+          event.pointerType !== "touch" &&
+          event.button === 0 &&
+          now - lastPrimaryPointerDownAt <= 320;
+        lastPrimaryPointerDownAt = doubleClick ? Number.NEGATIVE_INFINITY : now;
+        if (!doubleClick) {
+          props.onPointerDown(event);
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        props.onToggleZoom();
+      }}
       onPointerMove={props.onPointerMove}
       onPointerUp={props.onPointerUp}
       onPointerCancel={props.onPointerCancel}
@@ -1304,11 +1557,11 @@ function PaneHeader(props: {
         data-pane-drag-handle={props.pane}
         data-dragging={props.dragging}
         role="button"
-        tabIndex={0}
-        aria-label={`Drag ${props.title} to swap panes; use Alt plus an arrow key with the keyboard`}
+        tabIndex={props.hoisted ? 0 : -1}
+        aria-label={`Drag ${props.title} to swap panes; double-click to zoom; use Alt plus an arrow key with the keyboard`}
         aria-pressed={props.dragging}
         aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
-        title={`Drag to swap ${props.title}; keyboard: Alt+Arrow`}
+        title={`Drag to swap ${props.title}; double-click to zoom; keyboard: Alt+Arrow`}
         onKeyDown={(event) => {
           const directional = event.altKey && event.key.startsWith("Arrow");
           const nearest = event.key === "Enter" || event.key === " ";
@@ -1326,6 +1579,7 @@ function PaneHeader(props: {
       </Show>
       <button
         type="button"
+        disabled={!props.hoisted}
         class="pane-tile__action"
         data-pane-menu={props.pane}
         aria-label={`Actions for ${props.title}`}
@@ -1345,6 +1599,7 @@ function PaneHeader(props: {
       </button>
       <button
         type="button"
+        disabled={!props.hoisted}
         class="pane-tile__action"
         data-pane-close={props.pane}
         data-confirm-pending={armed()}

@@ -5763,12 +5763,30 @@ kbd {
 
 .pane-tile[data-elevated="true"] {
   z-index: 20;
-  outline-color: var(--tmux-ide-accent, var(--tmux-ide-border-strong));
+  outline-color: var(--tmi-accent);
   filter: drop-shadow(0 8px 16px color-mix(in oklab, black 38%, transparent));
 }
 
 .pane-tile[data-drop-target="true"] {
-  outline-color: var(--tmux-ide-accent, var(--tmux-ide-border-strong));
+  outline-color: var(--tmi-accent);
+  z-index: 10;
+}
+
+.pane-tile[data-drop-target="true"]::after {
+  position: absolute;
+  inset: 3px;
+  border: 1px solid color-mix(in oklab, var(--tmi-accent) 72%, transparent);
+  border-radius: var(--tmi-radius-control);
+  background: color-mix(in oklab, var(--tmi-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, white 14%, transparent);
+  pointer-events: none;
+  content: "";
+}
+
+.pane-tile[data-ending="true"] {
+  opacity: 0.48;
+  transform: scale(0.985);
+  transform-origin: center;
 }
 
 .pane-tile[data-active="true"] {
@@ -5834,24 +5852,14 @@ kbd {
 }
 
 /*
- * The fallback, for a pane flush with the top of the window.
+ * The fallback, for an unmanaged pane flush with the top of the window.
  *
- * No separator row exists above it to borrow, so a permanent header there would
- * cost that pane a row of real output. It reveals on approach instead and is
- * gone the rest of the time — the pre-m50.2 behavior, kept for exactly the case
- * that still needs it.
+ * No separator row exists above it to borrow, so any header there would cost a
+ * row of real output. Managed/promoted windows reserve the shared TUI row; an
+ * unmanaged window keeps terminal truth intact and renders no panel chrome.
  */
 .pane-tile__header[data-hoisted="false"] {
-  height: 1.6em;
-  background: color-mix(in oklab, var(--tmi-surface-raised) 88%, transparent);
-  opacity: 0;
-  transition: opacity var(--tmi-motion-fast) var(--desktop-ease-smooth);
-}
-
-@media (hover: hover) {
-  .pane-tile:hover .pane-tile__header[data-hoisted="false"] {
-    opacity: 1;
-  }
+  display: none;
 }
 
 .pane-tile__icon {
@@ -5972,17 +5980,120 @@ kbd {
 
 .pane-drop-ghost {
   position: absolute;
-  z-index: 15;
-  border: 1px solid var(--tmux-ide-accent, var(--tmux-ide-border-strong));
+  display: grid;
+  place-items: center;
+  /* The dragged source tile is elevated to 20 while it previews the target's
+     geometry; the destination badge must remain above that moving tile. */
+  z-index: 25;
+  border: 1px solid var(--tmi-accent);
   border-radius: var(--tmi-radius-control);
-  background: color-mix(in oklab, var(--tmux-ide-accent, currentColor) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, white 12%, transparent);
+  background: color-mix(in oklab, var(--tmi-accent) 9%, transparent);
+  box-shadow:
+    inset 0 0 0 2px color-mix(in oklab, var(--tmi-accent) 20%, transparent),
+    inset 0 0 0 3px color-mix(in oklab, white 10%, transparent);
   pointer-events: none;
+  overflow: hidden;
+}
+
+.pane-drop-ghost__label,
+.pane-resize-hud {
+  border: 1px solid color-mix(in oklab, var(--tmi-border-default) 76%, transparent);
+  border-radius: var(--tmi-radius-control);
+  color: var(--tmi-text-bright);
+  background: var(--tmi-surface-overlay);
+  box-shadow: var(--tmi-shadow-raised);
+  font-size: var(--tmi-text-caption-1);
+  font-weight: var(--sf-weight-medium);
+  line-height: var(--tmi-leading-caption-1);
+  white-space: nowrap;
+}
+
+.pane-drop-ghost__label {
+  padding: var(--tmi-space-2) var(--tmi-space-5);
+  /* Pointer capture remains on the source header while dragging. Let the badge
+     win hit-testing so its stacking order is observable and accessibility/e2e
+     probes cannot mistake a fully painted preview for one hidden underneath. */
+  pointer-events: auto;
+  animation: pane-overlay-enter 150ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.pane-resize-hud-anchor {
+  position: absolute;
+  z-index: 40;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.pane-resize-hud {
+  position: absolute;
+  display: inline-flex;
+  gap: var(--tmi-space-3);
+  align-items: baseline;
+  padding: var(--tmi-space-2) var(--tmi-space-4);
+  /* The border owns pointer capture for the active gesture, so the readout can
+     participate in hit-testing without interrupting resize. This also makes
+     its z-order mechanically verifiable instead of visually plausible only. */
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+  animation: pane-resize-hud-enter 150ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.pane-resize-hud span {
+  color: var(--tmi-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pane-layout-ghost {
+  position: absolute;
+  z-index: 35;
+  border: 1px solid var(--tmi-border-default);
+  background: color-mix(in oklab, var(--tmux-ide-terminal-background) 82%, transparent);
+  pointer-events: none;
+  overflow: hidden;
+  transform-origin: center;
+}
+
+.pane-layout-ghost__header {
+  display: block;
+  padding: var(--tmi-space-2) var(--tmi-space-3);
+  color: var(--tmi-text-muted);
+  background: var(--tmi-surface-raised);
+  font-size: var(--tmi-text-caption-1);
+  line-height: 1;
+}
+
+@keyframes pane-overlay-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pane-resize-hud-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -45%) scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tiled-pane-area .pane-tile {
+  .tiled-pane-area .pane-tile,
+  .pane-drop-ghost__label,
+  .pane-resize-hud {
     transition-duration: 0ms;
+    animation: none;
   }
 }
 

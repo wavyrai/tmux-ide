@@ -9701,6 +9701,16 @@ var init_launch_plan = __esm({
   }
 });
 
+// packages/daemon/src/lib/pane-chrome.ts
+var PANE_CHROME_CHIP_OPTION, PANE_CHROME_BORDER_FORMAT;
+var init_pane_chrome = __esm({
+  "packages/daemon/src/lib/pane-chrome.ts"() {
+    "use strict";
+    PANE_CHROME_CHIP_OPTION = "@tmux_ide_chip";
+    PANE_CHROME_BORDER_FORMAT = ` #{?#{${PANE_CHROME_CHIP_OPTION}},#{${PANE_CHROME_CHIP_OPTION}},#{pane_title}} `;
+  }
+});
+
 // packages/daemon/src/lib/session-options.ts
 function buildSessionOptions(session, { theme = {} } = {}) {
   return [
@@ -9723,18 +9733,10 @@ function themeOptions(session, theme) {
   ];
 }
 function borderOptions(session, theme) {
-  const accent = theme.accent ?? "colour75";
-  const border = theme.border ?? "colour238";
-  const fg = theme.fg ?? "colour248";
+  void theme;
   return [
     ["set-option", "-t", session, "pane-border-status", "top"],
-    [
-      "set-option",
-      "-t",
-      session,
-      "pane-border-format",
-      ` #{?pane_active,#[fg=${accent}#,bold]\u25B8 #T  #[fg=${fg}]#{pane_current_path},#[fg=${border}]\xB7 #T  #{pane_current_path}} `
-    ]
+    ["set-option", "-t", session, "pane-border-format", PANE_CHROME_BORDER_FORMAT]
   ];
 }
 function behaviorOptions(session) {
@@ -9785,6 +9787,7 @@ function keyBindings() {
 var init_session_options = __esm({
   "packages/daemon/src/lib/session-options.ts"() {
     "use strict";
+    init_pane_chrome();
   }
 });
 
@@ -12897,13 +12900,12 @@ function updaterProbeArgv() {
 function updaterSpawnArgv() {
   return ["new-session", "-d", "-s", UPDATER_SESSION, "exec tmux-ide chrome-updater"];
 }
-var ADOPTED_OPTION, CHIP_OPTION, PANE_CHROME_BORDER_FORMAT, UPDATER_SESSION;
+var ADOPTED_OPTION, UPDATER_SESSION;
 var init_front_door = __esm({
   "packages/daemon/src/tui/chrome/front-door.ts"() {
     "use strict";
+    init_pane_chrome();
     ADOPTED_OPTION = "@tmux_ide_adopted";
-    CHIP_OPTION = "@tmux_ide_chip";
-    PANE_CHROME_BORDER_FORMAT = ` #{?#{${CHIP_OPTION}},#{${CHIP_OPTION}},#{pane_title}} `;
     UPDATER_SESSION = "_tmux-ide-chrome";
   }
 });
@@ -14373,7 +14375,7 @@ var init_snapshot2 = __esm({
 var updater_exports = {};
 __export(updater_exports, {
   ADOPTED_OPTION: () => ADOPTED_OPTION,
-  CHIP_OPTION: () => CHIP_OPTION,
+  CHIP_OPTION: () => PANE_CHROME_CHIP_OPTION,
   STATUS_OPTION: () => STATUS_OPTION,
   TICK_MS: () => TICK_MS,
   UPDATER_PID_OPTION: () => UPDATER_PID_OPTION,
@@ -14477,7 +14479,7 @@ function writeSessionStatus(session, value) {
   runTmux(["set-option", "-t", session, STATUS_OPTION, value]);
 }
 function writePaneChip(paneId, value) {
-  runTmux(["set-option", "-p", "-t", paneId, CHIP_OPTION, value]);
+  runTmux(["set-option", "-p", "-t", paneId, PANE_CHROME_CHIP_OPTION, value]);
 }
 function updateSegment(status2, theme) {
   if (!status2.updateAvailable || !status2.latest) return "";
@@ -14914,7 +14916,6 @@ function statusClickUnbindCommand() {
 }
 function adoptOptionCommands(session) {
   const format = `#[align=left]#{${STATUS_OPTION}}`;
-  const borderFormat = ` #{?#{${CHIP_OPTION}},#{${CHIP_OPTION}},#{pane_title}} `;
   return [
     ["set-option", "-t", session, "status", "2"],
     ["set-option", "-t", session, "status-interval", "2"],
@@ -14926,7 +14927,7 @@ function adoptOptionCommands(session) {
     // The current window gets the shared top chrome immediately. The updater
     // repairs every other/currently-future window on its next tick.
     ["set-option", "-t", session, "pane-border-status", "top"],
-    ["set-option", "-t", session, "pane-border-format", borderFormat],
+    ["set-option", "-t", session, "pane-border-format", PANE_CHROME_BORDER_FORMAT],
     // Marker the updater enumerates by (readable in list-sessions -F formats).
     ["set-option", "-t", session, ADOPTED_OPTION, "1"]
   ];
@@ -15036,6 +15037,7 @@ var init_statusline = __esm({
     "use strict";
     init_src2();
     init_app_config();
+    init_pane_chrome();
     init_cheatsheet();
     init_menu();
     init_panels();
@@ -23350,6 +23352,7 @@ var init_workspace_promotion2 = __esm({
     init_semantic_pane_catalog();
     init_fleet_catalog2();
     init_application_shell2();
+    init_pane_chrome();
     MAX_OPERATIONS2 = 128;
     MAX_REPLAYABLE_FAILURES3 = 64;
     MAX_TMUX_OUTPUT_BYTES2 = 128 * 1024;
@@ -23644,7 +23647,7 @@ var init_workspace_promotion2 = __esm({
           });
         }
         const nowSec = Math.floor(this.#io.now() / 1e3);
-        const stampedWindows = /* @__PURE__ */ new Set();
+        const reconciledWindows = /* @__PURE__ */ new Set();
         try {
           for (const pane of scanned) {
             if (!hasValidPaneStamp(pane.semanticPaneId)) {
@@ -23662,16 +23665,27 @@ var init_workspace_promotion2 = __esm({
                 this.#io.runTmux(["set-option", "-p", "-t", pane.paneId, option, value]);
               }
             }
-            if (pane.semanticWindowId.length === 0 && !stampedWindows.has(pane.windowId)) {
-              stampedWindows.add(pane.windowId);
-              const windowStamp = `window.promoted.${digest3(`${session.sessionName}\0${pane.windowId}`)}`;
+            if (!reconciledWindows.has(pane.windowId)) {
+              reconciledWindows.add(pane.windowId);
+              if (pane.semanticWindowId.length === 0) {
+                const windowStamp = `window.promoted.${digest3(`${session.sessionName}\0${pane.windowId}`)}`;
+                this.#io.runTmux([
+                  "set-option",
+                  "-w",
+                  "-t",
+                  pane.windowId,
+                  SEMANTIC_WINDOW_OPTION2,
+                  windowStamp
+                ]);
+              }
+              this.#io.runTmux(["set-option", "-w", "-t", pane.windowId, "pane-border-status", "top"]);
               this.#io.runTmux([
                 "set-option",
                 "-w",
                 "-t",
                 pane.windowId,
-                SEMANTIC_WINDOW_OPTION2,
-                windowStamp
+                "pane-border-format",
+                PANE_CHROME_BORDER_FORMAT
               ]);
             }
           }

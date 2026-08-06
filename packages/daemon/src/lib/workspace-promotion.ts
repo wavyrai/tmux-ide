@@ -16,12 +16,12 @@
  *  - promoted sessions carry a DISTINCT provenance marker
  *    ({@link SESSION_PROMOTED_MARKER_OPTION}), never the m32 open marker.
  *
- * Every mutation is additive and inert: a `@tmux_ide_pane_id` stamp does not
- * change how a pane behaves, `@ide_*` are display metadata, and the session
- * options only name the workspace. `registry.add` runs ONLY after stamping and
- * verification succeed, so a mid-flight failure leaves the session harmless —
- * some additive stamps, no registry entry — and a retry (which never overwrites
- * a valid stamp) completes it.
+ * Identity mutations are additive: a `@tmux_ide_pane_id` stamp does not change
+ * how a pane behaves, `@ide_*` are display metadata, and the session options
+ * only name the workspace. Promotion also reconciles each window onto the
+ * shared one-row panel-chrome contract used by the TUI and GUI. `registry.add`
+ * runs ONLY after stamping and verification succeed, so a retry (which never
+ * overwrites a valid identity stamp) can safely complete an interrupted pass.
  */
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
@@ -54,6 +54,7 @@ import {
   resolveAgentPresentation,
   type ApplicationShellPanePresentationFacts,
 } from "../command-center/resources/application-shell.ts";
+import { PANE_CHROME_BORDER_FORMAT } from "./pane-chrome.ts";
 
 const MAX_OPERATIONS = 128;
 const MAX_REPLAYABLE_FAILURES = 64;
@@ -684,7 +685,7 @@ export class WorkspacePromotionAuthority {
     }
 
     const nowSec = Math.floor(this.#io.now() / 1000);
-    const stampedWindows = new Set<string>();
+    const reconciledWindows = new Set<string>();
     try {
       for (const pane of scanned) {
         if (!hasValidPaneStamp(pane.semanticPaneId)) {
@@ -703,16 +704,33 @@ export class WorkspacePromotionAuthority {
             this.#io.runTmux(["set-option", "-p", "-t", pane.paneId, option, value]);
           }
         }
-        if (pane.semanticWindowId.length === 0 && !stampedWindows.has(pane.windowId)) {
-          stampedWindows.add(pane.windowId);
-          const windowStamp = `window.promoted.${digest(`${session.sessionName}\0${pane.windowId}`)}`;
+        if (!reconciledWindows.has(pane.windowId)) {
+          reconciledWindows.add(pane.windowId);
+          if (pane.semanticWindowId.length === 0) {
+            const windowStamp = `window.promoted.${digest(`${session.sessionName}\0${pane.windowId}`)}`;
+            this.#io.runTmux([
+              "set-option",
+              "-w",
+              "-t",
+              pane.windowId,
+              SEMANTIC_WINDOW_OPTION,
+              windowStamp,
+            ]);
+          }
+
+          // Promotion is the point at which an arbitrary tmux window becomes
+          // browser-renderable workspace UI. Reserve the same one-row panel
+          // chrome used by the native TUI immediately; relying on the optional
+          // background updater leaves a transparent drag target over row zero
+          // during startup (and forever in isolated/headless runtimes).
+          this.#io.runTmux(["set-option", "-w", "-t", pane.windowId, "pane-border-status", "top"]);
           this.#io.runTmux([
             "set-option",
             "-w",
             "-t",
             pane.windowId,
-            SEMANTIC_WINDOW_OPTION,
-            windowStamp,
+            "pane-border-format",
+            PANE_CHROME_BORDER_FORMAT,
           ]);
         }
       }

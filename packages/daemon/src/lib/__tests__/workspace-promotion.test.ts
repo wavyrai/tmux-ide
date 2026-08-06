@@ -305,6 +305,8 @@ describe("WorkspacePromotionAuthority", () => {
 
     const window = mock.windowOf("@1")!.window;
     expect(window.options.get("@tmux_ide_window_id")).toMatch(/^window\.promoted\.[0-9a-f]{20}$/u);
+    expect(window.options.get("pane-border-status")).toBe("top");
+    expect(window.options.get("pane-border-format")).toContain("@tmux_ide_chip");
 
     const session = mock.sessionOf("$1")!;
     expect(session.options.get("@tmux_ide_workspace_name")).toBe(result.resource.workspaceName);
@@ -430,6 +432,11 @@ describe("WorkspacePromotionAuthority", () => {
       );
       for (const stamp of windowStamps) expect(stamp).toMatch(/^window\.promoted\.[0-9a-f]{20}$/u);
       expect(new Set(windowStamps).size).toBe(2);
+      for (const windowId of ["@1", "@2"]) {
+        const options = mock.windowOf(windowId)!.window.options;
+        expect(options.get("pane-border-status")).toBe("top");
+        expect(options.get("pane-border-format")).toContain("@tmux_ide_chip");
+      }
     });
 
     it("never writes promotion provenance onto an already-registered session", async () => {

@@ -14,6 +14,7 @@
  */
 import { runTmux } from "@tmux-ide/tmux-bridge";
 import { DEFAULT_THEME, getAppConfig, type AppKeys, type AppTheme } from "../../lib/app-config.ts";
+import { PANE_CHROME_BORDER_FORMAT } from "../../lib/pane-chrome.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 import type { TeamProject } from "../team/projects.ts";
 import { cheatsheetBindCommand, cheatsheetPopupCommand } from "./cheatsheet.ts";
@@ -31,7 +32,6 @@ import { maybeOfferIntegrationPopup } from "../integrations/offer.ts";
 import { kittyEscapeFor, kittyUserKeyIndex, kittyUserKeyName } from "./kitty-keys.ts";
 import {
   ADOPTED_OPTION,
-  CHIP_OPTION,
   clearPaneChromeWindows,
   enforcePaneChromeWindows,
   listAdoptedSessions,
@@ -386,7 +386,6 @@ export function adoptOptionCommands(session: string): string[][] {
   // tmux hides pane borders when a window has only ONE pane, so a chip only
   // shows once a window has been split — acceptable (there's no border to paint
   // in a single-pane window).
-  const borderFormat = ` #{?#{${CHIP_OPTION}},#{${CHIP_OPTION}},#{pane_title}} `;
   return [
     ["set-option", "-t", session, "status", "2"],
     ["set-option", "-t", session, "status-interval", "2"],
@@ -398,7 +397,7 @@ export function adoptOptionCommands(session: string): string[][] {
     // The current window gets the shared top chrome immediately. The updater
     // repairs every other/currently-future window on its next tick.
     ["set-option", "-t", session, "pane-border-status", "top"],
-    ["set-option", "-t", session, "pane-border-format", borderFormat],
+    ["set-option", "-t", session, "pane-border-format", PANE_CHROME_BORDER_FORMAT],
     // Marker the updater enumerates by (readable in list-sessions -F formats).
     ["set-option", "-t", session, ADOPTED_OPTION, "1"],
   ];
