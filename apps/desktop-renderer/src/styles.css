@@ -581,27 +581,35 @@ select:focus-visible,
 
 /*
  * Terminal palette. This is the single source of truth the xterm renderer reads
- * at runtime (see terminal/xterm-renderer.ts). Background, foreground, cursor,
- * and selection follow the live app theme tokens; the sixteen ANSI colors are
- * tuned per appearance to harmonize with the app's neutral + blue-accent
- * identity instead of the raw VGA-ish xterm defaults. Keyed on [data-theme] so
- * isolated fixtures resolve without the full `.app` shell, and duplicated onto
- * `.app[data-theme]` so it also wins inside the runtime token cascade.
+ * at runtime (see terminal/xterm-renderer.ts), and it is deliberately NOT keyed
+ * on the app appearance (m50.2, gap 2).
+ *
+ * The terminal is a machine surface, not a document surface. What it shows is
+ * another program's output — a TUI's box drawing, an agent's colored status, an
+ * ANSI ramp authored against a dark ground by every program that emits one. So
+ * it keeps one dark ground in BOTH app themes, the way a terminal emulator
+ * does, while the chrome around it follows the user's light/dark choice. A
+ * light-mode terminal inverted the ANSI ramp's assumptions and re-tuned sixteen
+ * colors to compensate; the surface it was compensating for is the bug.
+ *
+ * The chrome's own light/dark tokens are untouched — this block ends at the
+ * grid. `--tmux-ide-surface-terminal` (the chrome-side token for terminal-
+ * adjacent panels) still follows the theme; only the emulator's own sixteen
+ * colors plus ground, ink, cursor and selection are pinned here.
+ *
+ * Keyed on both `.app` and a bare `[data-theme]` so isolated fixtures resolve
+ * without the full app shell and so it still wins inside the runtime cascade.
  */
 .app,
 [data-theme] {
   --tmux-ide-terminal-font-family:
     "SF Mono", "SFMono-Regular", "JetBrains Mono", "Cascadia Code", "DejaVu Sans Mono",
     "Liberation Mono", Menlo, Consolas, monospace;
-}
-
-.app[data-theme="dark"],
-[data-theme="dark"] {
-  --tmux-ide-terminal-background: var(--tmux-ide-surface-terminal, #12131a);
-  --tmux-ide-terminal-foreground: var(--tmux-ide-text-primary, #e6e8f2);
-  --tmux-ide-terminal-cursor: var(--tmux-ide-text-bright, #c7d4ff);
-  --tmux-ide-terminal-cursor-accent: var(--tmux-ide-surface-terminal, #12131a);
-  --tmux-ide-terminal-selection: var(--tmux-ide-selection-selection, #33406b);
+  --tmux-ide-terminal-background: #12131a;
+  --tmux-ide-terminal-foreground: #e6e8f2;
+  --tmux-ide-terminal-cursor: #c7d4ff;
+  --tmux-ide-terminal-cursor-accent: #12131a;
+  --tmux-ide-terminal-selection: #33406b;
   --tmux-ide-terminal-ansi-black: #2a2c37;
   --tmux-ide-terminal-ansi-red: #f0748c;
   --tmux-ide-terminal-ansi-green: #7fd88f;
@@ -618,31 +626,6 @@ select:focus-visible,
   --tmux-ide-terminal-ansi-bright-magenta: #ddc4ff;
   --tmux-ide-terminal-ansi-bright-cyan: #a3e8ec;
   --tmux-ide-terminal-ansi-bright-white: #f6f8fc;
-}
-
-.app[data-theme="light"],
-[data-theme="light"] {
-  --tmux-ide-terminal-background: var(--tmux-ide-surface-terminal, #ffffff);
-  --tmux-ide-terminal-foreground: var(--tmux-ide-text-primary, #24252b);
-  --tmux-ide-terminal-cursor: var(--tmux-ide-text-bright, #2f4d8f);
-  --tmux-ide-terminal-cursor-accent: var(--tmux-ide-surface-terminal, #ffffff);
-  --tmux-ide-terminal-selection: var(--tmux-ide-selection-selection, #cdd8fb);
-  --tmux-ide-terminal-ansi-black: #2c3542;
-  --tmux-ide-terminal-ansi-red: #c0435a;
-  --tmux-ide-terminal-ansi-green: #2f8a5b;
-  --tmux-ide-terminal-ansi-yellow: #97710f;
-  --tmux-ide-terminal-ansi-blue: #3a63cf;
-  --tmux-ide-terminal-ansi-magenta: #8a4fb0;
-  --tmux-ide-terminal-ansi-cyan: #2f8794;
-  --tmux-ide-terminal-ansi-white: #c9ccd4;
-  --tmux-ide-terminal-ansi-bright-black: #6a6f7c;
-  --tmux-ide-terminal-ansi-bright-red: #d05068;
-  --tmux-ide-terminal-ansi-bright-green: #3a9b68;
-  --tmux-ide-terminal-ansi-bright-yellow: #a9821b;
-  --tmux-ide-terminal-ansi-bright-blue: #4a70de;
-  --tmux-ide-terminal-ansi-bright-magenta: #9a5fc0;
-  --tmux-ide-terminal-ansi-bright-cyan: #3a97a4;
-  --tmux-ide-terminal-ansi-bright-white: #1c2129;
 }
 
 .titlebar {

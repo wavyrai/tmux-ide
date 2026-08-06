@@ -43,7 +43,17 @@ const DARK_TOKENS: Record<string, string> = {
   "--tmux-ide-terminal-ansi-bright-white": "#f6f8fc",
 };
 
-const LIGHT_TOKENS: Record<string, string> = {
+/**
+ * A second, deliberately unrelated palette.
+ *
+ * The shipped terminal palette is one dark machine ground in both app themes
+ * (m50.2, gap 2), so this no longer names an appearance. It stays because the
+ * claim it proves is about the RESOLVER: every role is read from the token
+ * reader it was handed, so a palette change in styles.css reaches xterm without
+ * a code change here. A resolver that hardcoded the dark ramp would pass the
+ * test above and fail this one.
+ */
+const ALTERNATE_TOKENS: Record<string, string> = {
   "--tmux-ide-terminal-background": "rgb(255 255 255)",
   "--tmux-ide-terminal-foreground": "rgb(36 37 43)",
   "--tmux-ide-terminal-cursor": "rgb(47 77 143)",
@@ -75,10 +85,10 @@ describe("resolveTerminalTheme", () => {
     }
   });
 
-  it("derives a distinct complete palette for the light appearance", () => {
-    const theme = resolveTerminalTheme(readerFrom(LIGHT_TOKENS));
+  it("derives every role from the tokens it is given, not from a built-in ramp", () => {
+    const theme = resolveTerminalTheme(readerFrom(ALTERNATE_TOKENS));
     for (const role of THEME_ROLES) {
-      expect(theme[role]).toBe(LIGHT_TOKENS[TERMINAL_THEME_TOKEN[role]]);
+      expect(theme[role]).toBe(ALTERNATE_TOKENS[TERMINAL_THEME_TOKEN[role]]);
     }
     expect(theme.background).not.toBe(DARK_TOKENS["--tmux-ide-terminal-background"]);
     expect(theme.foreground).not.toBe(DARK_TOKENS["--tmux-ide-terminal-foreground"]);
