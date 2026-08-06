@@ -7,6 +7,8 @@ import {
   adoptedSessionsFrom,
   createUnreachableCounter,
   diffPaneTransitions,
+  paneChromeWindowIdsFrom,
+  paneChromeWindowTargetsFrom,
   runUpdaterTick,
   updaterProbeArgv,
   updaterSpawnArgv,
@@ -85,6 +87,32 @@ describe("adoptedSessionsFrom", () => {
   });
 });
 
+describe("paneChromeWindowTargetsFrom", () => {
+  it("selects only adopted windows that are not already using top chrome", () => {
+    expect(
+      paneChromeWindowTargetsFrom(
+        ["web\t@1\toff", "web\t@2\ttop", "api\t@3\tbottom", "other\t@4\toff"],
+        ["web", "api"],
+      ),
+    ).toEqual(["@1", "@3"]);
+  });
+
+  it("drops malformed window identities", () => {
+    expect(paneChromeWindowTargetsFrom(["web\t%1\toff", "web\t\toff"], ["web"])).toEqual([]);
+  });
+});
+
+describe("paneChromeWindowIdsFrom", () => {
+  it("selects every valid window in the requested sessions", () => {
+    expect(
+      paneChromeWindowIdsFrom(
+        ["web\t@1\toff", "web\t@2\ttop", "api\t@3\tbottom", "other\t@4\toff"],
+        ["web", "api"],
+      ),
+    ).toEqual(["@1", "@2", "@3"]);
+  });
+});
+
 describe("runUpdaterTick", () => {
   it("writes each adopted session its own bar with that session flagged active", () => {
     const projects = [project("web"), project("api")];
@@ -101,6 +129,20 @@ describe("runUpdaterTick", () => {
     expect(writes[1]![1]).toBe(buildStatusline(projects, "api"));
     // The two bars differ precisely in which project is highlighted.
     expect(writes[0]![1]).not.toBe(writes[1]![1]);
+  });
+
+  it("repairs pane chrome once per tick before computing the fleet", () => {
+    const order: string[] = [];
+    runUpdaterTick({
+      listAdopted: () => ["web", "api"],
+      enforcePaneChrome: (sessions) => order.push(`chrome:${sessions.join(",")}`),
+      computeProjects: () => {
+        order.push("projects");
+        return [];
+      },
+      writeStatus: () => {},
+    });
+    expect(order).toEqual(["chrome:web,api", "projects"]);
   });
 
   it("computes the fleet ONCE per tick, not per session", () => {

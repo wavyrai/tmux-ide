@@ -1293,6 +1293,10 @@ function PaneHeader(props: {
       data-active={props.active}
       style={props.hoisted ? { height: percent(props.heightFraction) } : undefined}
       onPointerLeave={disarm}
+      onPointerDown={props.onPointerDown}
+      onPointerMove={props.onPointerMove}
+      onPointerUp={props.onPointerUp}
+      onPointerCancel={props.onPointerCancel}
     >
       <Icon class="pane-tile__icon" icon={props.icon} size="control" />
       <span
@@ -1305,10 +1309,6 @@ function PaneHeader(props: {
         aria-pressed={props.dragging}
         aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
         title={`Drag to swap ${props.title}; keyboard: Alt+Arrow`}
-        onPointerDown={props.onPointerDown}
-        onPointerMove={props.onPointerMove}
-        onPointerUp={props.onPointerUp}
-        onPointerCancel={props.onPointerCancel}
         onKeyDown={(event) => {
           const directional = event.altKey && event.key.startsWith("Arrow");
           const nearest = event.key === "Enter" || event.key === " ";

@@ -82,6 +82,8 @@ export interface MirrorLayoutEvent {
   cols: number;
   rows: number;
   zoomed: boolean;
+  /** Where tmux reserves its pane-border title row for this window. */
+  paneBorderStatus: "top" | "bottom" | "off";
   panes: MirrorLayoutPane[];
 }
 

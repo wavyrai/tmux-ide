@@ -1083,6 +1083,7 @@ export class PaneStreamLiveConnection {
       cols: event.cols,
       rows: event.rows,
       zoomed: event.zoomed,
+      paneBorderStatus: event.paneBorderStatus,
       panes: event.panes.map((pane) => ({
         pane: pane.semanticPaneId,
         left: pane.left,

@@ -20,6 +20,7 @@ function layout(overrides: Partial<PaneStreamLayoutEvent> = {}): PaneStreamLayou
     cols: 200,
     rows: 50,
     zoomed: false,
+    paneBorderStatus: "off",
     panes: [{ pane: "pane.a", left: 0, top: 0, width: 200, height: 50, active: true }],
     ...overrides,
   };
@@ -165,6 +166,32 @@ describe("the layout-faithful workspace view", () => {
     // between that could have survived and disagreed.
     expect(renderSurface([layout()]).root.querySelectorAll(".pane-tile")).toHaveLength(1);
     expect(renderSurface([SPLIT]).root.querySelectorAll(".pane-tile")).toHaveLength(2);
+  });
+
+  it("uses the whole panel header as the drag handle", () => {
+    const { root, invoke } = renderSurface([SPLIT]);
+    const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
+    overlay.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1_000, height: 500, right: 1_000, bottom: 500 }) as DOMRect;
+    const header = root.querySelector<HTMLElement>(".pane-tile__header")!;
+    header.setPointerCapture = () => undefined;
+    header.releasePointerCapture = () => undefined;
+    const pointer = (type: string, x: number): PointerEvent => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 10 });
+      Object.defineProperties(event, {
+        pointerId: { value: 7 },
+        isPrimary: { value: true },
+        pointerType: { value: "mouse" },
+      });
+      return event as PointerEvent;
+    };
+    header.dispatchEvent(pointer("pointerdown", 250));
+    header.dispatchEvent(pointer("pointermove", 750));
+    header.dispatchEvent(pointer("pointerup", 750));
+
+    expect(invoke).toHaveBeenCalledWith("pane.swap", "pane.a", {
+      swapTargetSemanticPaneId: "pane.b",
+    });
   });
 
   it("puts a draggable border on tmux's own border cell, and none when there is one pane", () => {

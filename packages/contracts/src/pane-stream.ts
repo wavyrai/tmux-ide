@@ -304,6 +304,8 @@ export const PaneStreamLayoutFrameSchemaZ = z
     cols: GridCellSchemaZ,
     rows: GridCellSchemaZ,
     zoomed: z.boolean(),
+    /** Backward-compatible while older daemons are still in the reconnect window. */
+    paneBorderStatus: z.enum(["top", "bottom", "off"]).default("off"),
     panes: z
       .array(
         z

@@ -24,6 +24,7 @@ function frame(overrides: Partial<LayoutFrame> = {}): LayoutFrame {
     cols: 200,
     rows: 50,
     zoomed: false,
+    paneBorderStatus: "off",
     panes: [pane({ pane: "pane.a", width: 200, height: 50, active: true })],
     ...overrides,
   };
@@ -133,6 +134,11 @@ describe("layout tiles", () => {
     expect(below!.headerRows).toBe(1);
     // …and the row it borrowed is the one tmux left empty between the panes.
     expect(below!.rect.top).toBe(24 / 50);
+  });
+
+  it("gives topmost panes the explicit top chrome row tmux omits from its layout string", () => {
+    const tiles = layoutTiles({ ...SPLIT_VERTICAL, paneBorderStatus: "top" });
+    expect(tiles.map((tile) => tile.headerRows)).toEqual([1, 1]);
   });
 
   it("keeps the cell sizes, because the drag arithmetic speaks in cells", () => {

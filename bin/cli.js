@@ -6946,6 +6946,8 @@ var init_pane_stream = __esm({
       cols: GridCellSchemaZ,
       rows: GridCellSchemaZ,
       zoomed: z40.boolean(),
+      /** Backward-compatible while older daemons are still in the reconnect window. */
+      paneBorderStatus: z40.enum(["top", "bottom", "off"]).default("off"),
       panes: z40.array(
         z40.object({
           /** Null while the pane's semantic identity join is unverified. */
@@ -12895,11 +12897,13 @@ function updaterProbeArgv() {
 function updaterSpawnArgv() {
   return ["new-session", "-d", "-s", UPDATER_SESSION, "exec tmux-ide chrome-updater"];
 }
-var ADOPTED_OPTION, UPDATER_SESSION;
+var ADOPTED_OPTION, CHIP_OPTION, PANE_CHROME_BORDER_FORMAT, UPDATER_SESSION;
 var init_front_door = __esm({
   "packages/daemon/src/tui/chrome/front-door.ts"() {
     "use strict";
     ADOPTED_OPTION = "@tmux_ide_adopted";
+    CHIP_OPTION = "@tmux_ide_chip";
+    PANE_CHROME_BORDER_FORMAT = ` #{?#{${CHIP_OPTION}},#{${CHIP_OPTION}},#{pane_title}} `;
     UPDATER_SESSION = "_tmux-ide-chrome";
   }
 });
@@ -14376,10 +14380,14 @@ __export(updater_exports, {
   UPDATER_SESSION: () => UPDATER_SESSION,
   UPDATER_UNREACHABLE_EXIT_TICKS: () => UPDATER_UNREACHABLE_EXIT_TICKS,
   adoptedSessionsFrom: () => adoptedSessionsFrom,
+  clearPaneChromeWindows: () => clearPaneChromeWindows,
   createUnreachableCounter: () => createUnreachableCounter,
   diffPaneTransitions: () => diffPaneTransitions,
+  enforcePaneChromeWindows: () => enforcePaneChromeWindows,
   fleetStatuses: () => fleetStatuses,
   listAdoptedSessions: () => listAdoptedSessions,
+  paneChromeWindowIdsFrom: () => paneChromeWindowIdsFrom,
+  paneChromeWindowTargetsFrom: () => paneChromeWindowTargetsFrom,
   paneLocation: () => paneLocation,
   runUpdaterLoop: () => runUpdaterLoop,
   runUpdaterTick: () => runUpdaterTick,
@@ -14407,6 +14415,64 @@ function listAdoptedSessions() {
     return [];
   }
 }
+function paneChromeWindowTargetsFrom(lines, adoptedSessions) {
+  const adopted = new Set(adoptedSessions);
+  const targets = [];
+  for (const line of lines) {
+    const [session = "", windowId = "", status2 = ""] = line.split("	");
+    if (adopted.has(session) && /^@\d+$/u.test(windowId) && status2 !== "top") {
+      targets.push(windowId);
+    }
+  }
+  return targets;
+}
+function paneChromeWindowIdsFrom(lines, sessions) {
+  const selected = new Set(sessions);
+  const targets = [];
+  for (const line of lines) {
+    const [session = "", windowId = ""] = line.split("	");
+    if (selected.has(session) && /^@\d+$/u.test(windowId)) targets.push(windowId);
+  }
+  return targets;
+}
+function listPaneChromeWindows() {
+  const raw = runTmux([
+    "list-windows",
+    "-a",
+    "-F",
+    "#{session_name}	#{window_id}	#{pane-border-status}"
+  ]).toString().trim();
+  return raw ? raw.split("\n") : [];
+}
+function enforcePaneChromeWindows(adoptedSessions) {
+  if (adoptedSessions.length === 0) return;
+  const targets = paneChromeWindowTargetsFrom(listPaneChromeWindows(), adoptedSessions);
+  for (const windowId of targets) {
+    try {
+      runTmux(["set-option", "-w", "-t", windowId, "pane-border-status", "top"]);
+      runTmux([
+        "set-option",
+        "-w",
+        "-t",
+        windowId,
+        "pane-border-format",
+        PANE_CHROME_BORDER_FORMAT
+      ]);
+    } catch {
+    }
+  }
+}
+function clearPaneChromeWindows(sessions) {
+  if (sessions.length === 0) return;
+  const targets = paneChromeWindowIdsFrom(listPaneChromeWindows(), sessions);
+  for (const windowId of targets) {
+    try {
+      runTmux(["set-option", "-uw", "-t", windowId, "pane-border-status"]);
+      runTmux(["set-option", "-uw", "-t", windowId, "pane-border-format"]);
+    } catch {
+    }
+  }
+}
 function writeSessionStatus(session, value) {
   runTmux(["set-option", "-t", session, STATUS_OPTION, value]);
 }
@@ -14423,6 +14489,7 @@ function fleetStatuses(projects) {
 function runUpdaterTick(deps2) {
   const adopted = deps2.listAdopted();
   if (adopted.length === 0) return;
+  deps2.enforcePaneChrome?.(adopted);
   const theme = deps2.theme ?? DEFAULT_THEME;
   const panes = [];
   const projects = deps2.computeProjects((pane) => panes.push(pane));
@@ -14659,6 +14726,7 @@ function runUpdaterLoop() {
         listAdopted: listAdoptedSessions,
         computeProjects: (onPane) => listTeamProjects(tracker, { onPane }),
         writeStatus: writeSessionStatus,
+        enforcePaneChrome: enforcePaneChromeWindows,
         theme: config2.theme,
         writeChip: writePaneChip,
         chipCache,
@@ -14704,7 +14772,7 @@ function runUpdaterLoop() {
   process.on("SIGINT", shutdown);
   tick();
 }
-var STATUS_OPTION, CHIP_OPTION, UPDATER_PID_OPTION, TICK_MS, UPDATER_UNREACHABLE_EXIT_TICKS;
+var STATUS_OPTION, UPDATER_PID_OPTION, TICK_MS, UPDATER_UNREACHABLE_EXIT_TICKS;
 var init_updater = __esm({
   "packages/daemon/src/tui/chrome/updater.ts"() {
     "use strict";
@@ -14723,7 +14791,6 @@ var init_updater = __esm({
     init_statusline();
     init_front_door();
     STATUS_OPTION = "@tmux_ide_status";
-    CHIP_OPTION = "@tmux_ide_chip";
     UPDATER_PID_OPTION = "@tmux_ide_updater_pid";
     TICK_MS = 2e3;
     UPDATER_UNREACHABLE_EXIT_TICKS = 5;
@@ -14856,8 +14923,9 @@ function adoptOptionCommands(session) {
     // behavior (the wheel enters copy-mode / scrolls pane history instead of the
     // terminal's native scrollback). Per-session (`-t`) so only adopted change.
     ["set-option", "-t", session, "mouse", "on"],
-    // Per-pane agent chips on the bottom border (see borderFormat above).
-    ["set-option", "-t", session, "pane-border-status", "bottom"],
+    // The current window gets the shared top chrome immediately. The updater
+    // repairs every other/currently-future window on its next tick.
+    ["set-option", "-t", session, "pane-border-status", "top"],
     ["set-option", "-t", session, "pane-border-format", borderFormat],
     // Marker the updater enumerates by (readable in list-sessions -F formats).
     ["set-option", "-t", session, ADOPTED_OPTION, "1"]
@@ -14900,6 +14968,7 @@ function prefixKeyBinds(keys, switcherCmd = "tmux-ide switcher") {
 }
 function adoptSession(session, switcherCmd = "tmux-ide switcher") {
   for (const argv of adoptOptionCommands(session)) runTmux(argv);
+  enforcePaneChromeWindows([session]);
   for (const legacy of LEGACY_BINDS) {
     try {
       runTmux(legacy);
@@ -14925,6 +14994,7 @@ function adoptSession(session, switcherCmd = "tmux-ide switcher") {
   maybeOfferIntegrationPopup();
 }
 function unadoptSession(session) {
+  clearPaneChromeWindows([session]);
   for (const argv of unadoptOptionCommands(session)) runTmux(argv);
   const keys = getAppConfig().keys;
   for (const undo of [
@@ -31480,6 +31550,7 @@ var init_pane_stream_websocket = __esm({
           cols: event.cols,
           rows: event.rows,
           zoomed: event.zoomed,
+          paneBorderStatus: event.paneBorderStatus,
           panes: event.panes.map((pane) => ({
             pane: pane.semanticPaneId,
             left: pane.left,
@@ -33153,6 +33224,7 @@ var init_session_channel = __esm({
           cols: layout.width,
           rows: layout.height,
           zoomed: layout.zoomed,
+          paneBorderStatus: windowRecord?.paneBorderStatus ?? "off",
           panes: layout.leaves.map((leaf) => ({
             semanticPaneId: this.panesByRuntime.get(leaf.id)?.semanticId ?? null,
             left: leaf.left,
@@ -33216,14 +33288,22 @@ var init_session_channel = __esm({
       }
       async syncWindows() {
         const lines = await this.io.request(
-          `list-windows -t "${this.opts.session}" -F "#{window_id}	#{qa:@tmux_ide_window_id}	#{qa:window_name}	#{window_active}	#{window_visible_layout}	#{?window_zoomed_flag,1,0}"`
+          `list-windows -t "${this.opts.session}" -F "#{window_id}	#{qa:@tmux_ide_window_id}	#{qa:window_name}	#{window_active}	#{window_visible_layout}	#{?window_zoomed_flag,1,0}	#{pane-border-status}"`
         );
         const rows = [];
         for (const raw of lines) {
           const line = Buffer.from(raw, "latin1").toString("utf8");
           const parts = line.split("	");
           if (parts.length < 6) continue;
-          const [runtimeId = "", stampRaw = "", nameRaw = "", active2 = "", visible = "", zoomed = ""] = parts;
+          const [
+            runtimeId = "",
+            stampRaw = "",
+            nameRaw = "",
+            active2 = "",
+            visible = "",
+            zoomed = "",
+            borderStatus = "off"
+          ] = parts;
           if (!/^@[0-9]+$/u.test(runtimeId)) continue;
           const stamp = decodeTmuxArgument(stampRaw);
           const name = decodeTmuxArgument(nameRaw);
@@ -33233,7 +33313,8 @@ var init_session_channel = __esm({
             name: name.length > 0 ? name : null,
             active: active2 === "1",
             visible,
-            zoomed: zoomed === "1"
+            zoomed: zoomed === "1",
+            paneBorderStatus: borderStatus === "top" || borderStatus === "bottom" ? borderStatus : "off"
           });
         }
         const stampCounts = /* @__PURE__ */ new Map();
@@ -33278,11 +33359,16 @@ var init_session_channel = __esm({
               }
             }
           }
-          next.set(row.runtimeId, { runtimeId: row.runtimeId, semanticId: semanticId2, name: row.name });
+          next.set(row.runtimeId, {
+            runtimeId: row.runtimeId,
+            semanticId: semanticId2,
+            name: row.name,
+            paneBorderStatus: row.paneBorderStatus
+          });
         }
         const changed = [...next].some(([runtimeId, record]) => {
           const previous = this.windowsByRuntime.get(runtimeId);
-          return !previous || previous.name !== record.name || previous.semanticId !== record.semanticId;
+          return !previous || previous.name !== record.name || previous.semanticId !== record.semanticId || previous.paneBorderStatus !== record.paneBorderStatus;
         });
         this.windowsByRuntime.clear();
         for (const [key, value] of next) this.windowsByRuntime.set(key, value);

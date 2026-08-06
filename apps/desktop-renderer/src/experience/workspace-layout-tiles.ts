@@ -37,6 +37,8 @@ export interface LayoutFrame {
   readonly cols: number;
   readonly rows: number;
   readonly zoomed: boolean;
+  /** Window option tmux does not encode in `window_visible_layout`. */
+  readonly paneBorderStatus: "top" | "bottom" | "off";
   readonly panes: readonly LayoutFramePane[];
 }
 
@@ -165,13 +167,11 @@ function clamped(value: number): number {
  * to the pane BELOW it, because that row is where that pane's header is drawn.
  *
  * `headerRows` is 1 where a separator row exists above the pane and 0 where one
- * does not — a pane flush with the top of the window (`top === 0`) has no row to
- * borrow. Under `pane-border-status top` tmux spends a separator row above every
- * pane including the topmost, so every pane reports `top > 0` and every tile
- * gets its header row; where the option is off or inherited as `off` on a fresh
- * window, the top pane's header has nowhere to go and the view falls back to
- * revealing it on hover over the pane's own first row (see styles.css). Both
- * cases are honest; only the first is free.
+ * does not. The visible-layout grammar keeps top panes at `top === 0` even when
+ * `pane-border-status top` reserves a row above them, so that window option is
+ * carried alongside the layout explicitly. Where the option is off, the top
+ * pane's header has nowhere free to go and the view falls back to revealing it
+ * on hover over the pane's own first row (see styles.css).
  *
  * Outer edges are clamped to the grid box. The half-cell shift would otherwise
  * put the leftmost tile's outline half a cell outside the grid, where the pane
@@ -190,7 +190,7 @@ export function layoutTiles(frame: LayoutFrame): readonly LayoutTile[] {
   // are still the truth the frame reported.
   const panes = frame.zoomed && visible.length === 0 ? joined : visible;
   return panes.map((pane) => {
-    const headerRows = pane.top > 0 ? 1 : 0;
+    const headerRows = frame.paneBorderStatus === "top" || pane.top > 0 ? 1 : 0;
     const left = clamped(fraction(pane.left - 0.5, frame.cols));
     const top = clamped(fraction(pane.top - headerRows, frame.rows));
     const right = clamped(fraction(pane.left + pane.width + 0.5, frame.cols));

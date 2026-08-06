@@ -115,6 +115,7 @@ export interface PaneStreamLayoutEvent {
   readonly cols: number;
   readonly rows: number;
   readonly zoomed: boolean;
+  readonly paneBorderStatus: "top" | "bottom" | "off";
   readonly panes: readonly {
     readonly pane: string | null;
     readonly left: number;

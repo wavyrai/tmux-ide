@@ -26,6 +26,7 @@ function frame(): LayoutFrame {
     cols: 100,
     rows: 50,
     zoomed: false,
+    paneBorderStatus: "off",
     panes: [
       { pane: "pane.a", left: 0, top: 0, width: 39, height: 50, active: true },
       { pane: "pane.b", left: 40, top: 0, width: 60, height: 19, active: false },

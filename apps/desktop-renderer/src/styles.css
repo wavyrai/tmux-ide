@@ -5802,15 +5802,35 @@ kbd {
   /* The row belongs to the terminal grid, so the header paints ON the terminal
      ground rather than on a chrome surface — a chrome-colored strip between two
      panes reads as a gap in the mosaic rather than as a label on it. */
-  background: var(--tmux-ide-terminal-background);
-  /* The controls take the pointer; the strip itself must not, or it would eat
-     clicks aimed at the border handle that shares this row. */
+  background: color-mix(
+    in oklab,
+    var(--tmi-surface-raised) 74%,
+    var(--tmux-ide-terminal-background)
+  );
+  border-bottom: 1px solid color-mix(in oklab, var(--tmux-ide-border-default) 70%, transparent);
+  /* The panel chrome is the drag handle. Resize borders are painted above it,
+     so the shared edge keeps resize authority while the rest is easy to grab. */
   pointer-events: none;
   overflow: hidden;
 }
 
 .pane-tile__header[data-active="true"] {
   color: var(--tmux-ide-text-bright);
+  background: color-mix(
+    in oklab,
+    var(--tmi-surface-raised) 88%,
+    var(--tmux-ide-terminal-background)
+  );
+  border-bottom-color: var(--tmi-accent);
+}
+
+.pane-tile__header[data-hoisted="true"] {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.pane-tile__header[data-hoisted="true"]:has(.pane-tile__title[data-dragging="true"]) {
+  cursor: grabbing;
 }
 
 /*
@@ -5823,7 +5843,7 @@ kbd {
  */
 .pane-tile__header[data-hoisted="false"] {
   height: 1.6em;
-  background: color-mix(in oklab, var(--tmux-ide-surface-raised) 88%, transparent);
+  background: color-mix(in oklab, var(--tmi-surface-raised) 88%, transparent);
   opacity: 0;
   transition: opacity var(--tmi-motion-fast) var(--desktop-ease-smooth);
 }
@@ -5840,7 +5860,10 @@ kbd {
 }
 
 .pane-tile__title {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5855,7 +5878,7 @@ kbd {
 }
 
 .pane-tile__title:focus-visible {
-  outline: 1px solid var(--tmux-ide-accent, var(--tmux-ide-border-strong));
+  outline: 1px solid var(--tmi-accent);
   outline-offset: 1px;
 }
 
@@ -5872,7 +5895,7 @@ kbd {
   background: transparent;
   pointer-events: auto;
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.55;
   transition:
     opacity var(--tmi-motion-fast) var(--desktop-ease-smooth),
     color var(--tmi-motion-fast) var(--desktop-ease-smooth),
@@ -5895,6 +5918,13 @@ kbd {
   .pane-tile__action:hover {
     color: var(--tmux-ide-text-bright);
     background: var(--desktop-hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-tile__header,
+  .pane-tile__action {
+    transition: none;
   }
 }
 

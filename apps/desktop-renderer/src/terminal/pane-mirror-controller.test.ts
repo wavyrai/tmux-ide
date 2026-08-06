@@ -381,6 +381,7 @@ describe("layout frames", () => {
     cols: 200,
     rows: 50,
     zoomed: false,
+    paneBorderStatus: "off",
     panes: [{ pane: PANE_A, left: 0, top: 0, width: 200, height: 50, active: true }],
     ...overrides,
   });

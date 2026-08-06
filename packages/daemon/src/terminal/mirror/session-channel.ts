@@ -120,6 +120,7 @@ interface WindowRecord {
   runtimeId: string;
   semanticId: string | null;
   name: string | null;
+  paneBorderStatus: "top" | "bottom" | "off";
 }
 
 export function defaultMirrorPaneId(): string {
@@ -551,6 +552,7 @@ export class SessionChannel {
       cols: layout.width,
       rows: layout.height,
       zoomed: layout.zoomed,
+      paneBorderStatus: windowRecord?.paneBorderStatus ?? "off",
       panes: layout.leaves.map((leaf) => ({
         semanticPaneId: this.panesByRuntime.get(leaf.id)?.semanticId ?? null,
         left: leaf.left,
@@ -621,7 +623,7 @@ export class SessionChannel {
 
   private async syncWindows(): Promise<void> {
     const lines = await this.io.request(
-      `list-windows -t "${this.opts.session}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}"`,
+      `list-windows -t "${this.opts.session}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}"`,
     );
     interface Row {
       runtimeId: string;
@@ -630,6 +632,7 @@ export class SessionChannel {
       active: boolean;
       visible: string;
       zoomed: boolean;
+      paneBorderStatus: "top" | "bottom" | "off";
     }
     const rows: Row[] = [];
     for (const raw of lines) {
@@ -637,8 +640,15 @@ export class SessionChannel {
       const line = Buffer.from(raw, "latin1").toString("utf8");
       const parts = line.split("\t");
       if (parts.length < 6) continue;
-      const [runtimeId = "", stampRaw = "", nameRaw = "", active = "", visible = "", zoomed = ""] =
-        parts;
+      const [
+        runtimeId = "",
+        stampRaw = "",
+        nameRaw = "",
+        active = "",
+        visible = "",
+        zoomed = "",
+        borderStatus = "off",
+      ] = parts;
       if (!/^@[0-9]+$/u.test(runtimeId)) continue;
       const stamp = decodeTmuxArgument(stampRaw);
       const name = decodeTmuxArgument(nameRaw);
@@ -649,6 +659,8 @@ export class SessionChannel {
         active: active === "1",
         visible,
         zoomed: zoomed === "1",
+        paneBorderStatus:
+          borderStatus === "top" || borderStatus === "bottom" ? borderStatus : "off",
       });
     }
     // Valid unique stamps are identity; missing/invalid/duplicated stamps are
@@ -697,12 +709,20 @@ export class SessionChannel {
           }
         }
       }
-      next.set(row.runtimeId, { runtimeId: row.runtimeId, semanticId, name: row.name });
+      next.set(row.runtimeId, {
+        runtimeId: row.runtimeId,
+        semanticId,
+        name: row.name,
+        paneBorderStatus: row.paneBorderStatus,
+      });
     }
     const changed = [...next].some(([runtimeId, record]) => {
       const previous = this.windowsByRuntime.get(runtimeId);
       return (
-        !previous || previous.name !== record.name || previous.semanticId !== record.semanticId
+        !previous ||
+        previous.name !== record.name ||
+        previous.semanticId !== record.semanticId ||
+        previous.paneBorderStatus !== record.paneBorderStatus
       );
     });
     this.windowsByRuntime.clear();
