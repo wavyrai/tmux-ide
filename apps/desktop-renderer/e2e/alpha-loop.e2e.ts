@@ -487,6 +487,47 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
     })
     .toMatch(/\S/u);
 
+  /*
+   * The GRID is inside the card, not merely the card inside the window.
+   *
+   * Bug this catches (m50.2): the letterbox fit scaled the emulator about its
+   * own centre, which is the centre of the card only while the grid still fits
+   * it. Once the app owned tmux's window geometry the element laid out at grid
+   * size — far larger than the card — and the render was parked around a point
+   * outside it: measured 180px below the card and off the bottom of the window,
+   * where xterm stops painting. The card stayed on screen and reported a live
+   * stream the whole time, which is why every existing placement assertion
+   * passed; only the pixels the user reads were somewhere else.
+   */
+  const gridPlacement = await firstMirror.evaluate((element) => {
+    const screen = element.querySelector(".xterm-screen");
+    if (!screen) return null;
+    const card = element.getBoundingClientRect();
+    const grid = screen.getBoundingClientRect();
+    return {
+      card: { top: card.top, bottom: card.bottom, left: card.left, right: card.right },
+      grid: { top: grid.top, bottom: grid.bottom, left: grid.left, right: grid.right },
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+    };
+  });
+  expect(gridPlacement, "the mirror node has no rendered grid at all").not.toBeNull();
+  const placement = gridPlacement!;
+  const slack = 1; // sub-pixel: a fractional scale cannot round to an escape.
+  expect(
+    placement.grid.top >= placement.card.top - slack &&
+      placement.grid.bottom <= placement.card.bottom + slack &&
+      placement.grid.left >= placement.card.left - slack &&
+      placement.grid.right <= placement.card.right + slack,
+    `the mirror's grid is rendered at ${JSON.stringify(placement.grid)} but its card is at ` +
+      `${JSON.stringify(placement.card)} — the render escaped the card that frames it`,
+  ).toBe(true);
+  expect(
+    placement.grid.bottom <= placement.viewport.height && placement.grid.top >= 0,
+    `the mirror's grid runs from ${Math.round(placement.grid.top)} to ` +
+      `${Math.round(placement.grid.bottom)} in a ${placement.viewport.height}px window — the ` +
+      "emulator stops painting outside the viewport, so the mirror would freeze mid-stream",
+  ).toBe(true);
+
   // Bug this catches — the defect this step was rewritten for: the mirror
   // rebuilt every node's DOM on each stream update, so each tick threw away the
   // xterm instance and re-initialized it. Identity is asserted on the element

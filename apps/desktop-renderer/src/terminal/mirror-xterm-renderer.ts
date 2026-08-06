@@ -69,6 +69,45 @@ export function mirrorFitScale(
   return Math.min(1, container.width / natural.width, container.height / natural.height);
 }
 
+/**
+ * PURE — the full fit transform: the scale AND where the scaled grid lands.
+ *
+ * `transform-origin: center center` was wrong, and wrong in a way that only
+ * appears once the grid outgrows its card. The emulator's element is sized by
+ * its GRID, not by the card — a 157x36 window lays out about 1134x503px inside
+ * a 318x176 card — so the box the origin is taken from is the overflowing one,
+ * and scaling about its centre parks the render around a point far outside the
+ * card. Measured: the card sat at y=657 with the terminal it contains rendered
+ * at y=838, entirely below it and below the window; xterm pauses rendering for
+ * an element outside the viewport, so the mirror painted its seed and then
+ * silently stopped following the pane it was mirroring.
+ *
+ * So the origin is the element's top-left — a point that does not move with the
+ * overflow — and the centring is an explicit translation into the card. That is
+ * also the placement {@link gridOverlayBox} already assumes, so the pixels and
+ * the overlay model now describe the same thing.
+ *
+ * `offset` is where the grid layer sits inside the transformed element (0,0 in
+ * practice); it is carried so the translation stays correct if xterm ever puts
+ * chrome above the screen.
+ */
+export function mirrorFitTransform(
+  natural: { readonly width: number; readonly height: number },
+  container: { readonly width: number; readonly height: number },
+  offset: { readonly left: number; readonly top: number } = { left: 0, top: 0 },
+): { scale: number; translateX: number; translateY: number } {
+  const scale = mirrorFitScale(natural, container);
+  const width = Math.min(container.width, natural.width * scale);
+  const height = Math.min(container.height, natural.height * scale);
+  const translateX = (container.width - width) / 2 - offset.left * scale;
+  const translateY = (container.height - height) / 2 - offset.top * scale;
+  return {
+    scale,
+    translateX: Number.isFinite(translateX) ? translateX : 0,
+    translateY: Number.isFinite(translateY) ? translateY : 0,
+  };
+}
+
 export type MirrorTerminalRendererFactory = (options: {
   readonly reducedMotion: boolean;
   readonly label: string;
@@ -88,6 +127,7 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
   let container: HTMLElement | null = null;
   let fitStyle: RuntimeStyleBinding | null = null;
   let appliedScale = 1;
+  let appliedTransform: string | null = null;
   const encoder = new TextEncoder();
   const terminal = new Terminal({
     allowProposedApi: false,
@@ -120,24 +160,31 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
   /**
    * A CSS transform is the whole fit seam: it costs one composited layer, needs
    * no reflow of the emulator, and — unlike a font-size fit — cannot perturb the
-   * cell metrics the stream's grid is measured in. The scale is written through
-   * the runtime stylesheet because `style-src 'self'` forbids style attributes.
+   * cell metrics the stream's grid is measured in. The transform is written
+   * through the runtime stylesheet because `style-src 'self'` forbids style
+   * attributes.
+   *
+   * See {@link mirrorFitTransform} for why the origin is the top-left and the
+   * centring is explicit.
    */
   const applyFit = (): void => {
     const element = terminal.element;
     if (!container || !element) return;
-    // The grid's true size lives on the screen layer; `.xterm` itself stretches
-    // to the container and would measure as already-fitting. offsetWidth/Height
-    // are pre-transform, so measuring stays idempotent across repeated fits.
+    // The grid's true size lives on the screen layer. offsetWidth/Height are
+    // pre-transform, so measuring stays idempotent across repeated fits.
     const screen = element.querySelector<HTMLElement>(".xterm-screen") ?? element;
-    const scale = mirrorFitScale(
+    const fit = mirrorFitTransform(
       { width: screen.offsetWidth, height: screen.offsetHeight },
       { width: container.clientWidth, height: container.clientHeight },
+      { left: screen.offsetLeft, top: screen.offsetTop },
     );
-    if (scale === appliedScale && fitStyle) return;
-    appliedScale = scale;
+    const transform =
+      `translate(${fit.translateX}px, ${fit.translateY}px) scale(${fit.scale})` as const;
+    if (transform === appliedTransform && fitStyle) return;
+    appliedTransform = transform;
+    appliedScale = fit.scale;
     fitStyle ??= createRuntimeStyleBinding(element);
-    fitStyle.update({ transform: `scale(${scale})`, "transform-origin": "center center" });
+    fitStyle.update({ transform, "transform-origin": "top left" });
   };
 
   return {
@@ -221,6 +268,7 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
       fitStyle?.dispose();
       fitStyle = null;
       appliedScale = 1;
+      appliedTransform = null;
       terminal.dispose();
     },
   };
