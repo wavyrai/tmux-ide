@@ -50,6 +50,26 @@ with the pixels on screen. Degenerate measurements fall back to the whole
 container, because an overlay covering slightly too much is a cosmetic error and
 one collapsed to zero is an invisible feature.
 
+**1b. The fit must CONTAIN the grid, not merely scale it.** The letterbox
+transform takes its origin at the emulator element's **top-left** and centres by
+an explicit translation (`mirrorFitTransform`). `transform-origin: center center`
+looks equivalent and is not: xterm sizes its element by the **grid**, not by the
+card, so once the grid outgrows its container the box the origin is taken from is
+the overflowing one, and the scaled render is parked around a point outside the
+card.
+
+Measured (m50.2): a 157x36 window laid out about 1134x503px inside a 318x176
+card and rendered at y=838 for a card at y=657 — off the bottom of a 900px
+window. This is not a cosmetic bug. **xterm pauses rendering for an element
+outside the viewport**, so the emulator's buffer went on advancing while the DOM
+kept its last painted frame: the mirror seeded, painted once, reported a live
+stream, and silently stopped following the pane it was mirroring.
+
+The test lesson generalises past the mirror: asserting that a **container** is
+visible proves nothing about what it contains. For anything that scales or
+transforms its content, assert the containment — the content's box inside the
+container's box, and inside the viewport.
+
 **2. Index by cell, not by UTF-16 offset.** Any code that maps a column number
 to a character goes through the emulator's cell API (`line.getCell(x).getChars()`
 plus `getWidth()`), never through indexing a string built from the row.
