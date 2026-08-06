@@ -340,10 +340,20 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
     }
   }
 
-  // Bug this catches: the terminal ground does not follow the app's appearance,
-  // so a dark app renders a glaring white terminal (or the reverse). The pane
-  // ground may warm with the paper palette; it may never disagree with the
-  // appearance the rest of the chrome is drawn in.
+  /*
+   * The terminal ground is DARK in both appearances (m50.2, gap 2).
+   *
+   * It used to follow the app theme, which meant a light-mode user got a white
+   * terminal and a sixteen-colour ANSI ramp re-tuned to survive it. Those
+   * colours are authored by the programs being rendered, against a dark ground;
+   * the light surface was the thing they were compensating for. So the terminal
+   * is a machine surface with one ground, the way an emulator is, while the
+   * chrome around it still follows light/dark.
+   *
+   * Bug this catches: a token refactor quietly re-attaches the terminal ground
+   * to the appearance tokens, and light mode goes back to a glaring white
+   * terminal under colours chosen for black.
+   */
   const groundLuminance = await terminal.evaluate((element) => {
     const color = getComputedStyle(element).backgroundColor;
     // Rasterise the computed colour rather than parsing it. The token layer is
@@ -360,14 +370,11 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
     const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
     return { color, value: (red! + green! + blue!) / 3 };
   });
-  const appIsDark = await page
-    .locator(".app")
-    .getAttribute("data-theme")
-    .then((theme) => theme === "dark");
+  const appTheme = await page.locator(".app").getAttribute("data-theme");
   expect(
-    appIsDark ? groundLuminance.value < 128 : groundLuminance.value > 128,
-    `the app is in ${appIsDark ? "dark" : "light"} mode but its terminal ground is ` +
-      `${groundLuminance.color} — the terminal disagrees with the appearance around it`,
+    groundLuminance.value < 128,
+    `the app is in ${appTheme} mode and its terminal ground is ${groundLuminance.color} — ` +
+      "the terminal is meant to keep one dark machine ground in both appearances",
   ).toBe(true);
 
   const beforeTyping = await paintFingerprint(terminal);

@@ -37,6 +37,11 @@ export interface ScratchFleet {
   readonly currentWindow: (name: string) => string;
   /** Every pane of the session's current window, as `width x height` cells. */
   readonly paneSizes: (name: string) => readonly string[];
+  /**
+   * The session's current WINDOW size in cells, as tmux reports it — the ground
+   * truth for whether the app's attachment actually owns the geometry (m50.2).
+   */
+  readonly windowGrid: (name: string) => { readonly cols: number; readonly rows: number };
   /** Raw pane text, for proving the app is showing what tmux actually holds. */
   readonly capturePane: (name: string) => string;
   readonly dispose: () => Promise<void>;
@@ -163,6 +168,32 @@ export async function createScratchFleet(
         .split("\n")
         .filter(Boolean).length,
     currentWindow: (name) => runTmux(["display-message", "-p", "-t", `${name}:`, "#{window_name}"]),
+    /**
+     * The session's current WINDOW size in cells, as tmux itself reports it.
+     *
+     * This is the ground truth a geometry-ownership assertion needs (m50.2): the
+     * app claims its attachment drives this number, and only tmux can say
+     * whether it does.
+     */
+    windowGrid: (name) => {
+      /*
+       * `x` as the separator, not a tab.
+       *
+       * `runTmux` deliberately gives tmux a minimal environment (TERM and PATH
+       * only), and without a locale tmux sanitizes non-printable characters out
+       * of `display-message -p` output — a tab comes back as `_`, so a
+       * tab-separated format silently parses to NaN. `x` is what every other
+       * geometry helper here uses, and it survives.
+       */
+      const [cols, rows] = runTmux([
+        "display-message",
+        "-p",
+        "-t",
+        `${name}:`,
+        "#{window_width}x#{window_height}",
+      ]).split("x");
+      return { cols: Number(cols), rows: Number(rows) };
+    },
     paneSizes: (name) =>
       runTmux(["list-panes", "-t", `${name}:`, "-F", "#{pane_width}x#{pane_height}"])
         .split("\n")

@@ -5667,14 +5667,30 @@ kbd {
   color: var(--tmux-ide-text-muted);
 }
 
+/*
+ * The terminal ground (m50.2, gap 2).
+ *
+ * The area is the machine surface, so it paints the terminal background rather
+ * than the app's. That matters for the two places the grid cannot reach: the
+ * sub-cell remainder left over when the viewport is floored into whole cells,
+ * and the moment between a resize and tmux's repaint. Both used to show as a
+ * pale field around the terminal; now they are the same dark ground the cells
+ * are on, and read as nothing at all.
+ *
+ * The margin is a thin gutter — enough to keep the elevation ring off the
+ * window chrome, not the wide inset it was. With the attachment owning geometry
+ * the grid fills this box, so every pixel the margin takes is a pixel of
+ * terminal the user does not get.
+ */
 .tiled-pane-area {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  margin: var(--tmi-space-2);
+  margin: var(--tmi-space-1) var(--tmi-space-2) var(--tmi-space-2);
   border: 1px solid var(--tmux-ide-border-default);
   border-radius: var(--tmi-radius-control);
+  background: var(--tmux-ide-terminal-background);
   overflow: hidden;
 }
 
