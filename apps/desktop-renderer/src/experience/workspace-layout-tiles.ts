@@ -51,8 +51,18 @@ export interface TileRect {
 export interface LayoutTile {
   /** Semantic pane identity. Tiles for unjoined panes are not produced. */
   readonly pane: string;
+  /**
+   * The tile's box in grid fractions — the MOSAIC box, not the pane's own cells.
+   * See {@link layoutTiles} for the invariant that makes adjacent boxes meet.
+   */
   readonly rect: TileRect;
   readonly active: boolean;
+  /**
+   * Whether this tile's box includes tmux's separator row above the pane, which
+   * is where the header is drawn. 0 for a pane flush with the top of the window,
+   * which has no separator row to borrow — see {@link layoutTiles}.
+   */
+  readonly headerRows: 0 | 1;
   /** Cell geometry, kept for the drag arithmetic that has to speak in cells. */
   readonly cells: { readonly cols: number; readonly rows: number };
 }
@@ -125,6 +135,11 @@ function fraction(value: number, total: number): number {
   return total > 0 ? value / total : 0;
 }
 
+/** Keep an outer edge of the mosaic inside the grid box. */
+function clamped(value: number): number {
+  return Math.min(Math.max(value, 0), 1);
+}
+
 /**
  * The active window's panes as rectangles.
  *
@@ -132,6 +147,36 @@ function fraction(value: number, total: number): number {
  * still carrying their unzoomed rects, so the zoomed pane is returned alone.
  * Rendering the hidden ones underneath would put a stack of tiles behind the one
  * the user is looking at, and every hit test would land on the wrong one.
+ *
+ * ── The mosaic invariant (m50.2, gaps 3 and 4) ────────────────────────────────
+ *
+ * A tile's box is NOT the pane's own cells. tmux spends one cell between two
+ * panes drawing a border, so boxes drawn at the panes' cell rects sit one cell
+ * apart and the grid reads as a scatter of separate rectangles rather than one
+ * object. Each box therefore claims that shared cell:
+ *
+ *   width  = pane.width  + 1          shifted half a cell LEFT
+ *   height = pane.height + headerRows shifted headerRows cells UP
+ *
+ * so that `left.right === right.left` and `top.bottom === bottom.top` exactly,
+ * the outlines coincide, and the frame is connected. The asymmetry between the
+ * axes is not an oversight: horizontally the shared cell is split in half
+ * between the two neighbours, while vertically the whole separator row is given
+ * to the pane BELOW it, because that row is where that pane's header is drawn.
+ *
+ * `headerRows` is 1 where a separator row exists above the pane and 0 where one
+ * does not — a pane flush with the top of the window (`top === 0`) has no row to
+ * borrow. Under `pane-border-status top` tmux spends a separator row above every
+ * pane including the topmost, so every pane reports `top > 0` and every tile
+ * gets its header row; where the option is off or inherited as `off` on a fresh
+ * window, the top pane's header has nowhere to go and the view falls back to
+ * revealing it on hover over the pane's own first row (see styles.css). Both
+ * cases are honest; only the first is free.
+ *
+ * Outer edges are clamped to the grid box. The half-cell shift would otherwise
+ * put the leftmost tile's outline half a cell outside the grid, where the pane
+ * area clips it — the invariant only has to hold BETWEEN neighbours, and an
+ * edge with no neighbour has nothing to meet.
  */
 export function layoutTiles(frame: LayoutFrame): readonly LayoutTile[] {
   const joined = frame.panes.filter(
@@ -144,17 +189,20 @@ export function layoutTiles(frame: LayoutFrame): readonly LayoutTile[] {
   // rather than blank: an empty pane area reads as a broken app, and the tiles
   // are still the truth the frame reported.
   const panes = frame.zoomed && visible.length === 0 ? joined : visible;
-  return panes.map((pane) => ({
-    pane: pane.pane,
-    active: pane.active,
-    cells: { cols: pane.width, rows: pane.height },
-    rect: {
-      left: fraction(pane.left, frame.cols),
-      top: fraction(pane.top, frame.rows),
-      width: fraction(pane.width, frame.cols),
-      height: fraction(pane.height, frame.rows),
-    },
-  }));
+  return panes.map((pane) => {
+    const headerRows = pane.top > 0 ? 1 : 0;
+    const left = clamped(fraction(pane.left - 0.5, frame.cols));
+    const top = clamped(fraction(pane.top - headerRows, frame.rows));
+    const right = clamped(fraction(pane.left + pane.width + 0.5, frame.cols));
+    const bottom = clamped(fraction(pane.top + pane.height, frame.rows));
+    return {
+      pane: pane.pane,
+      active: pane.active,
+      headerRows: headerRows as 0 | 1,
+      cells: { cols: pane.width, rows: pane.height },
+      rect: { left, top, width: right - left, height: bottom - top },
+    };
+  });
 }
 
 /** Do two spans on one axis overlap by at least one cell? */

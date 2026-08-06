@@ -33,6 +33,8 @@ import type { NativeTerminalTransport } from "../terminal/native-terminal-transp
 import type { PaneStreamLayoutEvent } from "../terminal/pane-stream-transport.ts";
 import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
+import { Icon, type IconArtwork } from "../ui-system/icon.tsx";
+import { DOM_ICON_METADATA } from "./dom-icons.ts";
 import { gridOverlayBox } from "./grid-overlay.ts";
 import { MirrorPaneNode } from "../terminal/mirror-pane-node.tsx";
 import type { AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
@@ -50,7 +52,7 @@ import {
 export interface TiledSurfaceVerbs {
   readonly workspaceConnected: boolean;
   readonly invoke: (
-    verbId: "pane.select" | "pane.resize",
+    verbId: "pane.select" | "pane.resize" | "pane.kill",
     semanticPaneId: string,
     args?: { readonly resize?: { readonly axis: "cols" | "rows"; readonly cells: number } },
   ) => void;
@@ -143,6 +145,32 @@ function toFrame(layout: PaneStreamLayoutEvent): LayoutFrame {
   return layout;
 }
 
+/*
+ * The header's own two glyphs, named from the semantic vocabulary rather than
+ * drawn here, so a header control and a titlebar control are the same mark.
+ */
+const MENU_ICON = DOM_ICON_METADATA.more.artwork;
+const CLOSE_ICON = DOM_ICON_METADATA.close.artwork;
+
+/**
+ * A pane's type glyph, from the semantic vocabulary.
+ *
+ * The role a pane frame reports IS the product's word for what the pane is, so
+ * the mapping is role to icon and nothing is inferred from a title or a command
+ * line. A pane with no frame model is a plain terminal — the common case, since
+ * frames are built for agent panes — and terminal is what it gets.
+ */
+const ROLE_ICON: Readonly<Record<PaneFrameModel["pane"]["kind"], IconArtwork>> = {
+  home: DOM_ICON_METADATA.home.artwork,
+  terminal: DOM_ICON_METADATA.terminals.artwork,
+  files: DOM_ICON_METADATA.files.artwork,
+  changes: DOM_ICON_METADATA.changes.artwork,
+  missions: DOM_ICON_METADATA.missions.artwork,
+  activity: DOM_ICON_METADATA.activity.artwork,
+  preview: DOM_ICON_METADATA.preview.artwork,
+  native: DOM_ICON_METADATA.native.artwork,
+};
+
 /** Percentages, rounded to a precision the DOM will not thrash over. */
 function percent(value: number): string {
   return `${(value * 100).toFixed(4)}%`;
@@ -188,6 +216,10 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
           {
             pane: fallback,
             active: true,
+            // No layout frame has arrived, so there is no separator row this
+            // header could be hoisted into — it reveals on hover, like a pane
+            // flush with the top of a window.
+            headerRows: 0 as const,
             cells: { cols: 0, rows: 0 },
             rect: { left: 0, top: 0, width: 1, height: 1 },
           },
@@ -236,6 +268,10 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     props.paneFrames.find((model) => model.pane.id === semanticPaneId);
   const titleFor = (semanticPaneId: string): string =>
     props.paneTitles?.get(semanticPaneId) ?? frameFor(semanticPaneId)?.title ?? "Terminal";
+  const iconFor = (semanticPaneId: string): IconArtwork => {
+    const kind = frameFor(semanticPaneId)?.pane.kind;
+    return kind ? ROLE_ICON[kind] : ROLE_ICON.terminal;
+  };
 
   // ── Aligning the overlay to the grid the terminal actually rendered ────────
   //
@@ -613,18 +649,28 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   height: percent(tile.rect.height),
                 }}
               >
-                <span class="pane-tile__chrome" aria-hidden="true">
-                  <span class="pane-tile__title">{titleFor(tile.pane)}</span>
-                  <Show when={frameFor(tile.pane)?.status}>
-                    {(status) => (
-                      <i
-                        class="pane-tile__status"
-                        data-tone={status().tone}
-                        title={status().label}
-                      />
-                    )}
-                  </Show>
-                </span>
+                <PaneHeader
+                  pane={tile.pane}
+                  title={titleFor(tile.pane)}
+                  icon={iconFor(tile.pane)}
+                  status={frameFor(tile.pane)?.status ?? null}
+                  active={tile.active}
+                  /*
+                   * The header's share of its own tile.
+                   *
+                   * The tile is `pane.height + headerRows` cells tall and the
+                   * header is the one separator row of it, so the header is that
+                   * fraction of the box — which keeps it exactly one terminal row
+                   * tall at every window size without the component ever knowing
+                   * a pixel. A tile with no separator row above it reports 0 and
+                   * the header falls back to a hover overlay on the pane's own
+                   * first row (styles.css), because there is no free row to take.
+                   */
+                  heightFraction={tile.headerRows / (tile.cells.rows + tile.headerRows)}
+                  hoisted={tile.headerRows === 1}
+                  onOpenMenu={(pointer) => props.onOpenPaneMenu?.(tile.pane, pointer)}
+                  onClose={() => props.verbs.invoke("pane.kill", tile.pane)}
+                />
                 <span class="sr-only">
                   {titleFor(tile.pane)}
                   {tile.active ? ", active pane" : ""}
@@ -712,6 +758,118 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         )}
       </Show>
       <AttachmentReporter area={() => areaElement} onChange={props.onAttachmentChanged} />
+    </div>
+  );
+}
+
+/**
+ * How long an armed close stays armed.
+ *
+ * The confirm exists so a stray click cannot kill a pane; an arm that never
+ * expires turns the NEXT visit to the same button — minutes later, in a
+ * different task — into the confirming click. Disarming on a timer, on pointer
+ * exit and on blur means the second click has to be a deliberate follow-up to
+ * the first.
+ */
+const CLOSE_CONFIRM_MS = 4_000;
+
+/**
+ * One pane's header (m50.2, gap 3).
+ *
+ * It occupies the separator row tmux already draws above the pane, so it costs
+ * no output — see the mosaic invariant in `workspace-layout-tiles.ts`. The
+ * header carries the pane's type, its live title, its status glyph, and the two
+ * verbs a header is the natural home for: the full menu, and close.
+ *
+ * Close ARMS rather than firing, matching the destructive discipline the verb
+ * menu already holds itself to. A close button beside a menu button, both one
+ * row tall, is exactly the geometry in which a mis-aimed click happens; making
+ * the first click reversible is what keeps the affordance worth having.
+ */
+function PaneHeader(props: {
+  readonly pane: string;
+  readonly title: string;
+  readonly icon: IconArtwork;
+  readonly status: PaneFrameModel["status"] | null;
+  readonly active: boolean;
+  readonly heightFraction: number;
+  readonly hoisted: boolean;
+  readonly onOpenMenu: (pointer: { readonly x: number; readonly y: number }) => void;
+  readonly onClose: () => void;
+}) {
+  const [armed, setArmed] = createSignal(false);
+  let disarmTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const disarm = (): void => {
+    if (disarmTimer !== null) clearTimeout(disarmTimer);
+    disarmTimer = null;
+    setArmed(false);
+  };
+  const arm = (): void => {
+    if (disarmTimer !== null) clearTimeout(disarmTimer);
+    setArmed(true);
+    disarmTimer = setTimeout(disarm, CLOSE_CONFIRM_MS);
+  };
+  onCleanup(disarm);
+
+  return (
+    <div
+      class="pane-tile__header"
+      data-hoisted={props.hoisted}
+      data-active={props.active}
+      style={props.hoisted ? { height: percent(props.heightFraction) } : undefined}
+      onPointerLeave={disarm}
+    >
+      <Icon class="pane-tile__icon" icon={props.icon} size="control" />
+      <span class="pane-tile__title">{props.title}</span>
+      <Show when={props.status}>
+        {(status) => (
+          <i class="pane-tile__status" data-tone={status().tone} title={status().label} />
+        )}
+      </Show>
+      <button
+        type="button"
+        class="pane-tile__action"
+        data-pane-menu={props.pane}
+        aria-label={`Actions for ${props.title}`}
+        title={`Actions for ${props.title}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          disarm();
+          // Opened at the button's own bottom-left, not at the pointer: a menu
+          // summoned from a control belongs under that control, wherever the
+          // click happened to land inside it.
+          const box = event.currentTarget.getBoundingClientRect();
+          props.onOpenMenu({ x: box.left, y: box.bottom });
+        }}
+      >
+        <Icon icon={MENU_ICON} size="control" />
+      </button>
+      <button
+        type="button"
+        class="pane-tile__action"
+        data-pane-close={props.pane}
+        data-confirm-pending={armed()}
+        aria-label={
+          armed() ? `Close ${props.title} — this cannot be undone` : `Close ${props.title}`
+        }
+        title={armed() ? "Click again to close — this cannot be undone" : `Close ${props.title}`}
+        onBlur={disarm}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") disarm();
+        }}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (!armed()) {
+            arm();
+            return;
+          }
+          disarm();
+          props.onClose();
+        }}
+      >
+        <Icon icon={CLOSE_ICON} size="control" />
+      </button>
     </div>
   );
 }

@@ -87,11 +87,52 @@ describe("window tabs", () => {
 });
 
 describe("layout tiles", () => {
-  it("places panes at exactly the frame's proportions", () => {
+  it("places panes at exactly the frame's proportions, each claiming its border cell", () => {
     const tiles = layoutTiles(SPLIT_VERTICAL);
     expect(tiles.map((tile) => tile.pane)).toEqual(["pane.a", "pane.b"]);
-    expect(tiles[0]!.rect).toEqual({ left: 0, top: 0, width: 99 / 200, height: 1 });
-    expect(tiles[1]!.rect).toEqual({ left: 0.5, top: 0, width: 0.5, height: 1 });
+    // Half a cell past the pane's own 99 columns; the outer edges clamp to the
+    // grid, so the left edge is 0 rather than -0.5 cells and the right edge 1.
+    expect(tiles[0]!.rect).toEqual({ left: 0, top: 0, width: 99.5 / 200, height: 1 });
+    expect(tiles[1]!.rect).toEqual({
+      left: 99.5 / 200,
+      top: 0,
+      width: 1 - 99.5 / 200,
+      height: 1,
+    });
+  });
+
+  it("makes adjacent tiles MEET, so the grid reads as one connected frame", () => {
+    /*
+     * Bug this catches — the whole of gap 4: tiles drawn at the panes' own cell
+     * rects sit one cell apart, because that cell is the one tmux spends on the
+     * border. Each box is a separate rectangle with a gutter around it, and the
+     * mosaic reads as scattered cards instead of a single divided surface.
+     *
+     * The claim is exact equality, not approximate: two outlines a fraction of a
+     * pixel apart still render as two lines with a seam between them.
+     */
+    const [left, right] = layoutTiles(SPLIT_VERTICAL);
+    expect(left!.rect.left + left!.rect.width).toBe(right!.rect.left);
+
+    const [above, below] = layoutTiles(SPLIT_HORIZONTAL);
+    expect(above!.rect.top + above!.rect.height).toBe(below!.rect.top);
+  });
+
+  it("gives a tile the separator row above it, which is where its header is drawn", () => {
+    /*
+     * Bug this catches: the header is drawn inside the pane's own box and covers
+     * the first row of that pane's output permanently — a line of everyone's
+     * terminal spent on a title bar. tmux already spends the row above the pane
+     * drawing a separator, so the header costs nothing where one exists.
+     */
+    const [above, below] = layoutTiles(SPLIT_HORIZONTAL);
+    // The top pane is flush with the top of the window: no separator row exists
+    // above it to borrow, so it reports none and the view reveals its header on
+    // hover instead of hoisting it.
+    expect(above!.headerRows).toBe(0);
+    expect(below!.headerRows).toBe(1);
+    // …and the row it borrowed is the one tmux left empty between the panes.
+    expect(below!.rect.top).toBe(24 / 50);
   });
 
   it("keeps the cell sizes, because the drag arithmetic speaks in cells", () => {

@@ -5709,44 +5709,149 @@ kbd {
  * click without swallowing it. Only the border handles take the pointer, and
  * they sit on cells tmux spends on a border rather than on output.
  */
+/*
+ * The mosaic frame (m50.2, gap 4).
+ *
+ * Every tile is outlined, not only the active one. The tile rects are computed
+ * to MEET exactly (see `layoutTiles`), so neighbouring outlines land on the same
+ * pixels and the grid reads as one divided surface rather than as a scatter of
+ * cards. `outline-offset: 0` is load-bearing: an inset outline would draw two
+ * lines a gap apart along every shared edge, which is the picture this replaces.
+ */
 .pane-tile {
   position: absolute;
   pointer-events: none;
   background: transparent;
-  outline-offset: -2px;
+  outline: 1px solid var(--tmux-ide-border-default);
+  outline-offset: 0;
 }
 
 .pane-tile[data-active="true"] {
-  outline: 1px solid var(--tmux-ide-border-strong, var(--tmux-ide-border-default));
+  outline-color: var(--tmux-ide-border-strong, var(--tmux-ide-border-default));
+  /* The active tile's outline must win where it meets a quiet one: coincident
+     outlines resolve by paint order, and without this the neighbour's line is
+     what shows along the shared edge. */
+  z-index: 1;
 }
 
-.pane-tile__chrome {
+/*
+ * The pane header (m50.2, gap 3).
+ *
+ * A HOISTED header sits in the separator row tmux already draws above the pane,
+ * whose height the renderer sets from the layout frame (`heightFraction`), so it
+ * is exactly one terminal row tall and covers no output. That is what lets it be
+ * permanent rather than a hover reveal: the row is spent either way, and a title
+ * that is only there while the pointer is over it cannot be read at a glance,
+ * which is the whole point of a header on a grid of panes.
+ */
+.pane-tile__header {
   position: absolute;
   inset: 0 0 auto 0;
   display: flex;
-  gap: var(--tmi-space-2);
+  gap: var(--tmi-space-1);
   align-items: center;
-  padding: 0 var(--tmi-space-2);
+  padding: 0 var(--tmi-space-1);
+  color: var(--tmux-ide-text-muted);
+  font-size: 0.6875rem;
+  line-height: 1;
+  /* The row belongs to the terminal grid, so the header paints ON the terminal
+     ground rather than on a chrome surface — a chrome-colored strip between two
+     panes reads as a gap in the mosaic rather than as a label on it. */
+  background: var(--tmux-ide-terminal-background);
+  /* The controls take the pointer; the strip itself must not, or it would eat
+     clicks aimed at the border handle that shares this row. */
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.pane-tile__header[data-active="true"] {
   color: var(--tmux-ide-text-bright);
+}
+
+/*
+ * The fallback, for a pane flush with the top of the window.
+ *
+ * No separator row exists above it to borrow, so a permanent header there would
+ * cost that pane a row of real output. It reveals on approach instead and is
+ * gone the rest of the time — the pre-m50.2 behavior, kept for exactly the case
+ * that still needs it.
+ */
+.pane-tile__header[data-hoisted="false"] {
+  height: 1.6em;
   background: color-mix(in oklab, var(--tmux-ide-surface-raised) 88%, transparent);
-  font-size: 0.75rem;
-  line-height: 1.6;
   opacity: 0;
   transition: opacity var(--tmi-motion-fast) var(--desktop-ease-smooth);
 }
 
-/* The header appears on approach and is gone the rest of the time: a title bar
-   pinned over every pane would cost a line of everyone's output permanently. */
 @media (hover: hover) {
-  .pane-tile:hover .pane-tile__chrome {
+  .pane-tile:hover .pane-tile__header[data-hoisted="false"] {
     opacity: 1;
   }
 }
 
+.pane-tile__icon {
+  flex: 0 0 auto;
+  opacity: 0.8;
+}
+
 .pane-tile__title {
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The controls sit at the far end, after the title has taken what it needs. */
+.pane-tile__action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--tmi-radius-control);
+  color: inherit;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    color var(--tmi-motion-fast) var(--desktop-ease-smooth),
+    background-color var(--tmi-motion-fast) var(--desktop-ease-smooth);
+}
+
+.pane-tile__action:first-of-type {
+  margin-left: auto;
+}
+
+/* Revealed on approach, and always for a keyboard user who has reached them —
+   a control that only exists under the pointer is a control a keyboard cannot
+   find. */
+@media (hover: hover) {
+  .pane-tile:hover .pane-tile__action,
+  .pane-tile__action:focus-visible {
+    opacity: 1;
+  }
+
+  .pane-tile__action:hover {
+    color: var(--tmux-ide-text-bright);
+    background: var(--desktop-hover);
+  }
+}
+
+@media (hover: none) {
+  .pane-tile__action {
+    opacity: 1;
+  }
+}
+
+/* The armed close, in the destructive tone the verb menu already uses, so the
+   two routes to the same irreversible thing look like the same thing. */
+.pane-tile__action[data-confirm-pending="true"] {
+  color: var(--tmux-ide-status-attention, currentColor);
+  background: color-mix(in oklab, var(--tmux-ide-status-attention, currentColor) 22%, transparent);
+  opacity: 1;
 }
 
 .pane-tile__status {

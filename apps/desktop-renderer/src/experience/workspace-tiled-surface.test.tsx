@@ -100,12 +100,63 @@ describe("the layout-faithful workspace view", () => {
     expect(root.querySelector<HTMLButtonElement>(".window-tabs__tab")!.disabled).toBe(true);
   });
 
-  it("places the tiles at exactly the frame's proportions", () => {
+  it("places the tiles at exactly the frame's proportions, meeting on the border cell", () => {
     const { root } = renderSurface([SPLIT]);
     const tiles = [...root.querySelectorAll<HTMLElement>(".pane-tile")];
     expect(tiles.map((tile) => tile.dataset.pane)).toEqual(["pane.a", "pane.b"]);
-    expect(tiles[0]!.style.width).toBe("49.5000%");
-    expect(tiles[1]!.style.left).toBe("50.0000%");
+    // Each box claims half of the one cell tmux spends on the border between
+    // them, so the left tile ends exactly where the right one starts and the two
+    // outlines coincide (m50.2, gap 4).
+    expect(tiles[0]!.style.width).toBe("49.7500%");
+    expect(tiles[1]!.style.left).toBe("49.7500%");
+  });
+
+  it("hoists a pane's header into the separator row tmux draws above it", () => {
+    /*
+     * Bug this catches: the header is drawn inside the pane's own box, so it
+     * covers the first row of that pane's output for as long as the app is open
+     * — a line of every pane's terminal spent on a title bar. The row above the
+     * pane is one tmux already spends on a separator, and the height proves the
+     * header is sized from the frame rather than from a CSS constant that would
+     * drift out of the row as the window resizes.
+     */
+    const stacked = layout({
+      panes: [
+        { pane: "pane.a", left: 0, top: 0, width: 200, height: 24, active: true },
+        { pane: "pane.b", left: 0, top: 25, width: 200, height: 25, active: false },
+      ],
+    });
+    const { root } = renderSurface([stacked]);
+    const headers = [...root.querySelectorAll<HTMLElement>(".pane-tile__header")];
+    // The top pane is flush with the window's top edge: no separator row exists
+    // above it, so its header stays a hover reveal over its own first row.
+    expect(headers.map((header) => header.dataset.hoisted)).toEqual(["false", "true"]);
+    // One row of a tile that is 25 pane rows plus the borrowed separator row.
+    expect(headers[1]!.style.height).toBe(`${((1 / 26) * 100).toFixed(4)}%`);
+  });
+
+  it("arms the pane header's close before it kills anything", () => {
+    /*
+     * Bug this catches: close fires on the first click. It sits one row tall,
+     * next to the menu button, over a terminal a user is typing into — exactly
+     * the geometry a mis-aimed click happens in — and killing a pane takes the
+     * process and its scrollback with it.
+     */
+    const { root, invoke } = renderSurface([SPLIT]);
+    const close = root.querySelector<HTMLButtonElement>('[data-pane-close="pane.a"]')!;
+    close.click();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(close.dataset.confirmPending).toBe("true");
+    expect(close.getAttribute("aria-label")).toContain("cannot be undone");
+    close.click();
+    expect(invoke).toHaveBeenCalledWith("pane.kill", "pane.a");
+  });
+
+  it("opens the pane menu from the header's own control, under that control", () => {
+    const opened = vi.fn();
+    const { root } = renderSurface([SPLIT], { onOpenPaneMenu: opened });
+    root.querySelector<HTMLButtonElement>('[data-pane-menu="pane.b"]')!.click();
+    expect(opened).toHaveBeenCalledWith("pane.b", expect.objectContaining({ x: 0, y: 0 }));
   });
 
   it("re-tiles from the next frame with no renderer-owned geometry in between", () => {
