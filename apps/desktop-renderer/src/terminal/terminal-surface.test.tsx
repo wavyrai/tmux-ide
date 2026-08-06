@@ -364,6 +364,106 @@ describe("TerminalSurface", () => {
     expect(attachment.dispose).toHaveBeenCalledOnce();
   });
 
+  it("names every renderer-visible first-attach boundary through first paint", async () => {
+    const connection = deferred<NativeTerminalConnectResult>();
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return connection.promise;
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    const surface = (): HTMLElement => root.querySelector<HTMLElement>(".terminal-surface")!;
+    const trace = (): Array<{ phase: string; atMs: number }> =>
+      JSON.parse(surface().getAttribute("data-attach-trace") ?? "[]") as Array<{
+        phase: string;
+        atMs: number;
+      }>;
+
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    expect(surface().getAttribute("data-phase")).toBe("connecting");
+    expect(surface().getAttribute("data-attach-phase")).toBe("attach-requested");
+    expect(trace().map((entry) => entry.phase)).toEqual([
+      "renderer-loading",
+      "renderer-ready",
+      "attach-requested",
+    ]);
+
+    connection.resolve({ status: "connected", attachment });
+    await vi.waitFor(() => expect(surface().getAttribute("data-phase")).toBe("connected"));
+    expect(surface().getAttribute("data-attach-phase")).toBe("awaiting-first-output");
+    expect(root.textContent).toContain("Loading terminal contents");
+    expect(root.textContent).toContain("waiting for xterm to paint its first frame");
+
+    await Promise.resolve(
+      (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+        type: "output",
+        bytes: new Uint8Array([27, 91, 65]),
+      }),
+    );
+    expect(surface().getAttribute("data-attach-phase")).toBe("live");
+    expect(root.querySelector(".terminal-surface__state")).toBeNull();
+    expect(trace().map((entry) => entry.phase)).toEqual([
+      "renderer-loading",
+      "renderer-ready",
+      "attach-requested",
+      "attachment-ready",
+      "awaiting-first-output",
+      "first-output-received",
+      "painting-first-frame",
+      "live",
+    ]);
+    expect(
+      trace().every(
+        (entry, index, entries) => index === 0 || entry.atMs >= entries[index - 1]!.atMs,
+      ),
+    ).toBe(true);
+    expect(surface().getAttribute("data-attach-trace")).not.toMatch(
+      /(?:ticket|daemon|tmuxPaneId|runtimePaneId|workspace-a|agent-a)/u,
+    );
+    dispose();
+  });
+
+  it("names an owner attach that is waiting for a usable viewport", async () => {
+    const attachment = attachmentHarness();
+    const transport = transportHarness(async () => ({ status: "connected", attachment }));
+    const renderer = rendererHarness({ cols: 0, rows: 0 });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          geometryOwnership="owner"
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-attach-phase")).toBe(
+        "waiting-for-viewport",
+      ),
+    );
+    expect(transport.connect).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("Waiting for enough pane space");
+    dispose();
+  });
+
   it("acknowledges ordered output only after the renderer write callback settles", async () => {
     const firstWrite = deferred<void>();
     const writeOrder: number[] = [];

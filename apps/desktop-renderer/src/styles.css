@@ -5740,6 +5740,35 @@ kbd {
   background: transparent;
   outline: 1px solid var(--tmux-ide-border-default);
   outline-offset: 0;
+  transform-origin: 0 0;
+}
+
+.tiled-pane-area[data-manipulation-phase="dragging"] .pane-tile,
+.tiled-pane-area[data-manipulation-phase="drop-ready"] .pane-tile,
+.tiled-pane-area[data-manipulation-phase="resize-preview"] .pane-tile {
+  /* Pointer samples write transform/opacity directly. Easing here would make
+     the pane chase the cursor and turn an 80 ms wire budget into visible lag. */
+  transition: none;
+  will-change: transform, opacity;
+}
+
+.tiled-pane-area[data-manipulation-phase="swap-committing"] .pane-tile,
+.tiled-pane-area[data-manipulation-phase="resize-committing"] .pane-tile,
+.tiled-pane-area[data-manipulation-phase="rollback"] .pane-tile,
+.tiled-pane-area[data-manipulation-phase="idle"] .pane-tile {
+  transition:
+    transform 150ms var(--desktop-ease-smooth),
+    opacity 150ms var(--desktop-ease-smooth);
+}
+
+.pane-tile[data-elevated="true"] {
+  z-index: 20;
+  outline-color: var(--tmux-ide-accent, var(--tmux-ide-border-strong));
+  filter: drop-shadow(0 8px 16px color-mix(in oklab, black 38%, transparent));
+}
+
+.pane-tile[data-drop-target="true"] {
+  outline-color: var(--tmux-ide-accent, var(--tmux-ide-border-strong));
 }
 
 .pane-tile[data-active="true"] {
@@ -5815,6 +5844,19 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+
+.pane-tile__title[data-dragging="true"] {
+  cursor: grabbing;
+}
+
+.pane-tile__title:focus-visible {
+  outline: 1px solid var(--tmux-ide-accent, var(--tmux-ide-border-strong));
+  outline-offset: 1px;
 }
 
 /* The controls sit at the far end, after the title has taken what it needs. */
@@ -5893,6 +5935,25 @@ kbd {
   /* The handle is one cell wide, which is thinner than a comfortable grab
      target, so the hit area is widened outward without moving what is drawn. */
   outline: 3px solid transparent;
+  z-index: 30;
+  touch-action: none;
+  transform-origin: 0 0;
+}
+
+.pane-drop-ghost {
+  position: absolute;
+  z-index: 15;
+  border: 1px solid var(--tmux-ide-accent, var(--tmux-ide-border-strong));
+  border-radius: var(--tmi-radius-control);
+  background: color-mix(in oklab, var(--tmux-ide-accent, currentColor) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, white 12%, transparent);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tiled-pane-area .pane-tile {
+    transition-duration: 0ms;
+  }
 }
 
 .pane-border[data-orientation="vertical"] {
@@ -5901,6 +5962,11 @@ kbd {
 
 .pane-border[data-orientation="horizontal"] {
   cursor: row-resize;
+}
+
+.pane-border:focus-visible {
+  background: var(--tmux-ide-border-strong, var(--tmux-ide-border-default));
+  outline-color: var(--tmux-ide-accent, currentColor);
 }
 
 @media (hover: hover) {

@@ -79,6 +79,7 @@ export type ActionErrorCode =
   // zoomed pane's size belongs to the zoom rather than to the layout.
   | "single_pane_window"
   | "zoomed_window_refused"
+  | "different_window_refused"
   | "internal";
 
 export class ActionError extends Error {

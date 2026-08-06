@@ -60,6 +60,7 @@ e2e/
     live-app.ts            the composed `test` object every chain imports
     visible.ts             the visual-truth assertions
   alpha-loop.e2e.ts        the main chain: fleet → open → terminal → mirror → kill → degraded
+  first-attach.e2e.ts      cold-load issue → redeem → seed → first-paint flight recorder
   empty-fleet.e2e.ts       cold start with nothing adopted → honest onboarding state
 ```
 

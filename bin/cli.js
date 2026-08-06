@@ -6290,7 +6290,7 @@ var init_workspace_promotion = __esm({
 
 // packages/contracts/src/workspace-multiplexer.ts
 import { z as z37 } from "zod";
-var WorkspaceMultiplexerWindowTargetSchemaZ, WorkspaceSplitDirectionSchemaZ, WorkspaceMultiplexerNameSchemaZ, WorkspaceScopedSchemaZ, WorkspaceWindowSplitArgumentsSchemaZ, WorkspaceWindowKillArgumentsSchemaZ, WorkspacePaneKillArgumentsSchemaZ, WorkspaceSessionKillArgumentsSchemaZ, WorkspaceRenameArgumentsSchemaZ, WorkspacePaneZoomToggleArgumentsSchemaZ, WorkspacePaneSelectArgumentsSchemaZ, RESIZE_CELL_MAXIMUM, WorkspaceResizeAxisSchemaZ, WorkspacePaneResizeArgumentsSchemaZ, WorkspaceMultiplexerIntentSchemaZ, WorkspaceMultiplexerMutationRequestSchemaZ, MutationEnvelopeSchemaZ, WorkspaceWindowSplitResultSchemaZ, WorkspaceWindowKillResultSchemaZ, WorkspacePaneKillResultSchemaZ, WorkspaceSessionKillResultSchemaZ, WorkspaceRenameResultSchemaZ, WorkspacePaneZoomToggleResultSchemaZ, WorkspacePaneSelectResultSchemaZ, WorkspacePaneResizeResultSchemaZ, WorkspaceMultiplexerMutationResultSchemaZ, WorkspaceMultiplexerHostResultSchemaZ;
+var WorkspaceMultiplexerWindowTargetSchemaZ, WorkspaceSplitDirectionSchemaZ, WorkspaceMultiplexerNameSchemaZ, WorkspaceScopedSchemaZ, WorkspaceWindowSplitArgumentsSchemaZ, WorkspaceWindowKillArgumentsSchemaZ, WorkspacePaneKillArgumentsSchemaZ, WorkspaceSessionKillArgumentsSchemaZ, WorkspaceRenameArgumentsSchemaZ, WorkspacePaneZoomToggleArgumentsSchemaZ, WorkspacePaneSelectArgumentsSchemaZ, WorkspacePaneSwapArgumentsSchemaZ, RESIZE_CELL_MAXIMUM, WorkspaceResizeAxisSchemaZ, WorkspacePaneResizeArgumentsSchemaZ, WorkspaceMultiplexerIntentSchemaZ, WorkspaceMultiplexerMutationRequestSchemaZ, MutationEnvelopeSchemaZ, WorkspaceWindowSplitResultSchemaZ, WorkspaceWindowKillResultSchemaZ, WorkspacePaneKillResultSchemaZ, WorkspaceSessionKillResultSchemaZ, WorkspaceRenameResultSchemaZ, WorkspacePaneZoomToggleResultSchemaZ, WorkspacePaneSelectResultSchemaZ, WorkspacePaneSwapResultSchemaZ, WorkspacePaneResizeResultSchemaZ, WorkspaceMultiplexerMutationResultSchemaZ, WorkspaceMultiplexerHostResultSchemaZ;
 var init_workspace_multiplexer = __esm({
   "packages/contracts/src/workspace-multiplexer.ts"() {
     "use strict";
@@ -6345,6 +6345,10 @@ var init_workspace_multiplexer = __esm({
     WorkspacePaneSelectArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict();
+    WorkspacePaneSwapArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+      sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+    }).strict();
     RESIZE_CELL_MAXIMUM = 4096;
     WorkspaceResizeAxisSchemaZ = z37.enum(["cols", "rows"]);
     WorkspacePaneResizeArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
@@ -6379,6 +6383,9 @@ var init_workspace_multiplexer = __esm({
       }).strict(),
       WorkspacePaneSelectArgumentsSchemaZ.extend({
         verb: z37.literal("workspace.pane.select")
+      }).strict(),
+      WorkspacePaneSwapArgumentsSchemaZ.extend({
+        verb: z37.literal("workspace.pane.swap")
       }).strict(),
       WorkspacePaneResizeArgumentsSchemaZ.extend({
         verb: z37.literal("workspace.pane.resize")
@@ -6437,6 +6444,11 @@ var init_workspace_multiplexer = __esm({
       verb: z37.literal("workspace.pane.select"),
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict();
+    WorkspacePaneSwapResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+      verb: z37.literal("workspace.pane.swap"),
+      sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+    }).strict();
     WorkspacePaneResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
       verb: z37.literal("workspace.pane.resize"),
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
@@ -6457,6 +6469,7 @@ var init_workspace_multiplexer = __esm({
       WorkspaceRenameResultSchemaZ,
       WorkspacePaneZoomToggleResultSchemaZ,
       WorkspacePaneSelectResultSchemaZ,
+      WorkspacePaneSwapResultSchemaZ,
       WorkspacePaneResizeResultSchemaZ
     ]);
     WorkspaceMultiplexerHostResultSchemaZ = z37.discriminatedUnion("status", [
@@ -6471,7 +6484,7 @@ import { z as z38 } from "zod";
 function isActionName(name) {
   return name in ActionContractsZ;
 }
-var ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, WorkspacePaneCreateInputZ, WorkspacePaneCreateResultZ, WorkspaceOpenInputZ, WorkspaceOpenResultZ, WorkspacePromoteInputZ, WorkspacePromoteResultZ, AppWindowMutationInputZ, AppWindowMutationResultZ, WorkspaceWindowSplitInputZ, WorkspaceWindowSplitResultZ, WorkspaceWindowKillInputZ, WorkspaceWindowKillResultZ, WorkspacePaneKillInputZ, WorkspacePaneKillResultZ, WorkspaceSessionKillInputZ, WorkspaceSessionKillResultZ, WorkspaceRenameInputZ, WorkspaceRenameResultZ, WorkspacePaneZoomToggleInputZ, WorkspacePaneZoomToggleResultZ, WorkspacePaneSelectInputZ, WorkspacePaneSelectResultZ, WorkspacePaneResizeInputZ, WorkspacePaneResizeResultZ, ActionContractsZ, ACTION_NAMES;
+var ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, WorkspacePaneCreateInputZ, WorkspacePaneCreateResultZ, WorkspaceOpenInputZ, WorkspaceOpenResultZ, WorkspacePromoteInputZ, WorkspacePromoteResultZ, AppWindowMutationInputZ, AppWindowMutationResultZ, WorkspaceWindowSplitInputZ, WorkspaceWindowSplitResultZ, WorkspaceWindowKillInputZ, WorkspaceWindowKillResultZ, WorkspacePaneKillInputZ, WorkspacePaneKillResultZ, WorkspaceSessionKillInputZ, WorkspaceSessionKillResultZ, WorkspaceRenameInputZ, WorkspaceRenameResultZ, WorkspacePaneZoomToggleInputZ, WorkspacePaneZoomToggleResultZ, WorkspacePaneSelectInputZ, WorkspacePaneSelectResultZ, WorkspacePaneSwapInputZ, WorkspacePaneSwapResultZ, WorkspacePaneResizeInputZ, WorkspacePaneResizeResultZ, ActionContractsZ, ACTION_NAMES;
 var init_actions_contract = __esm({
   "packages/contracts/src/actions-contract.ts"() {
     "use strict";
@@ -6621,6 +6634,8 @@ var init_actions_contract = __esm({
     WorkspacePaneZoomToggleResultZ = WorkspacePaneZoomToggleResultSchemaZ;
     WorkspacePaneSelectInputZ = WorkspacePaneSelectArgumentsSchemaZ;
     WorkspacePaneSelectResultZ = WorkspacePaneSelectResultSchemaZ;
+    WorkspacePaneSwapInputZ = WorkspacePaneSwapArgumentsSchemaZ;
+    WorkspacePaneSwapResultZ = WorkspacePaneSwapResultSchemaZ;
     WorkspacePaneResizeInputZ = WorkspacePaneResizeArgumentsSchemaZ;
     WorkspacePaneResizeResultZ = WorkspacePaneResizeResultSchemaZ;
     ActionContractsZ = {
@@ -6727,6 +6742,10 @@ var init_actions_contract = __esm({
       "workspace.pane.select": {
         input: WorkspacePaneSelectInputZ,
         result: WorkspacePaneSelectResultZ
+      },
+      "workspace.pane.swap": {
+        input: WorkspacePaneSwapInputZ,
+        result: WorkspacePaneSwapResultZ
       },
       "workspace.pane.resize": {
         input: WorkspacePaneResizeInputZ,
@@ -7273,6 +7292,17 @@ var init_multiplexer_verbs = __esm({
         scope: "pane",
         execution: { kind: "daemon-action", action: "workspace.pane.select" },
         availabilityInputs: ["workspaceConnected", "targetIsActivePane"],
+        destructive: false,
+        tmuxKeyHint: null
+      },
+      {
+        version: MULTIPLEXER_VERB_TABLE_VERSION,
+        id: "pane.swap",
+        label: "Swap panes",
+        description: "Exchange this pane's position with another pane in the same tmux window.",
+        scope: "pane",
+        execution: { kind: "daemon-action", action: "workspace.pane.swap" },
+        availabilityInputs: ["workspaceConnected", "windowPaneCount"],
         destructive: false,
         tmuxKeyHint: null
       },
@@ -25401,25 +25431,37 @@ function parseMultiplexerPaneRows(output) {
   const rows = [];
   for (const line of output.split("\n")) {
     const fields = line.split("	");
-    if (fields.length !== 8) {
+    if (fields.length !== 9) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape"
       });
     }
-    const [paneId, windowId, paneStamp, windowStamp, paneCount, zoomed, active2, creationId] = fields;
+    const [
+      paneId,
+      paneIndex,
+      windowId,
+      paneStamp,
+      windowStamp,
+      paneCount,
+      zoomed,
+      active2,
+      creationId
+    ] = fields;
     if (!RUNTIME_PANE.test(paneId) || !RUNTIME_WINDOW.test(windowId)) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape"
       });
     }
     const count = Number(paneCount);
-    if (!Number.isInteger(count) || count < 1) {
+    const index = Number(paneIndex);
+    if (!Number.isInteger(count) || count < 1 || !Number.isInteger(index) || index < 0) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape"
       });
     }
     rows.push({
       paneId,
+      paneIndex: index,
       windowId,
       semanticPaneId: paneStamp === "" ? null : paneStamp,
       semanticWindowId: windowStamp === "" ? null : windowStamp,
@@ -25498,7 +25540,8 @@ var init_workspace_multiplexer_verbs = __esm({
       mutation_failed: "tmux refused the requested change.",
       mutation_unverified: "tmux accepted the change but the result could not be verified.",
       single_pane_window: "This window has only one pane, so it has no border to move.",
-      zoomed_window_refused: "Unzoom this window before resizing its panes."
+      zoomed_window_refused: "Unzoom this window before resizing its panes.",
+      different_window_refused: "Panes can only be swapped inside the same window."
     };
     WorkspaceMultiplexerError = class extends Error {
       code;
@@ -25512,6 +25555,7 @@ var init_workspace_multiplexer_verbs = __esm({
     };
     PANE_FIELDS = [
       "#{pane_id}",
+      "#{pane_index}",
       "#{window_id}",
       `#{${SEMANTIC_PANE_OPTION4}}`,
       `#{${SEMANTIC_WINDOW_OPTION3}}`,
@@ -25667,6 +25711,8 @@ var init_workspace_multiplexer_verbs = __esm({
             return this.#zoom(intent, sessionName, envelope);
           case "workspace.pane.select":
             return this.#select(intent, sessionName, envelope);
+          case "workspace.pane.swap":
+            return this.#swap(intent, sessionName, envelope);
           case "workspace.pane.resize":
             return this.#resize(intent, sessionName, envelope);
         }
@@ -25991,6 +26037,47 @@ var init_workspace_multiplexer_verbs = __esm({
           verb: "workspace.pane.select",
           outcome: wasActive ? "unchanged" : "applied",
           semanticPaneId: intent.semanticPaneId
+        };
+      }
+      // -------------------------------------------------------------------------
+      // swap
+      // -------------------------------------------------------------------------
+      /** Exchange two semantic panes without exposing a tmux target to the caller. */
+      #swap(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const source = resolvePaneRow(rows, intent.sourceSemanticPaneId);
+        const target = resolvePaneRow(rows, intent.targetSemanticPaneId);
+        if (source.paneId === target.paneId) {
+          return {
+            ...envelope,
+            verb: "workspace.pane.swap",
+            outcome: "unchanged",
+            sourceSemanticPaneId: intent.sourceSemanticPaneId,
+            targetSemanticPaneId: intent.targetSemanticPaneId
+          };
+        }
+        if (source.windowId !== target.windowId) {
+          throw new WorkspaceMultiplexerError("different_window_refused", {
+            sourceSemanticPaneId: intent.sourceSemanticPaneId,
+            targetSemanticPaneId: intent.targetSemanticPaneId
+          });
+        }
+        this.#io.runTmux(["swap-pane", "-s", source.paneId, "-t", target.paneId]);
+        const after = this.#panes(sessionName);
+        const sourceAfter = resolvePaneRow(after, intent.sourceSemanticPaneId);
+        const targetAfter = resolvePaneRow(after, intent.targetSemanticPaneId);
+        if (sourceAfter.paneId !== source.paneId || targetAfter.paneId !== target.paneId || sourceAfter.windowId !== source.windowId || targetAfter.windowId !== target.windowId || sourceAfter.paneIndex !== target.paneIndex || targetAfter.paneIndex !== source.paneIndex) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "pane_positions_not_swapped"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.pane.swap",
+          outcome: "applied",
+          sourceSemanticPaneId: intent.sourceSemanticPaneId,
+          targetSemanticPaneId: intent.targetSemanticPaneId
         };
       }
       // -------------------------------------------------------------------------
@@ -27137,7 +27224,7 @@ function boundedInputCapability(client, viewerMode) {
     return { input: null, capability: "unavailable", limits: null };
   }
 }
-var TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL, TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES, TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES, TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS, TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES, WS_OPEN4, TicketPattern, BindingIdSchemaZ2, RedemptionFrameSchemaZ, ResizeFrameSchemaZ, GridSchemaZ, TerminalAttachmentAdmissionError, TerminalAttachmentAdmissionCoordinator, PreAuthAdmission, TerminalAttachmentLiveConnection;
+var TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL, TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES, TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES, TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS, TERMINAL_ATTACHMENT_MAX_REDEMPTION_PROCESSING_MS, TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES, WS_OPEN4, TicketPattern, BindingIdSchemaZ2, RedemptionFrameSchemaZ, ResizeFrameSchemaZ, GridSchemaZ, TerminalAttachmentAdmissionError, TerminalAttachmentAdmissionCoordinator, PreAuthAdmission, TerminalAttachmentLiveConnection;
 var init_direct_websocket = __esm({
   "packages/daemon/src/terminal/attachments/direct-websocket.ts"() {
     "use strict";
@@ -27149,6 +27236,7 @@ var init_direct_websocket = __esm({
     TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES = 4 * 1024;
     TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES = 4 * 1024;
     TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS = 1e3;
+    TERMINAL_ATTACHMENT_MAX_REDEMPTION_PROCESSING_MS = 1e4;
     TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES = 1024;
     WS_OPEN4 = 1;
     TicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
@@ -27186,6 +27274,7 @@ var init_direct_websocket = __esm({
       #maxPreAuth;
       #maxLive;
       #redemptionTimeoutMs;
+      #redemptionProcessingTimeoutMs;
       #maxBufferedOutputBytes;
       #maxOutputFrameBytes;
       #maxLiveControlFrames;
@@ -27233,6 +27322,11 @@ var init_direct_websocket = __esm({
           options.redemptionTimeoutMs,
           TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS,
           TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS
+        );
+        this.#redemptionProcessingTimeoutMs = boundedInteger(
+          options.redemptionProcessingTimeoutMs,
+          TERMINAL_ATTACHMENT_MAX_REDEMPTION_PROCESSING_MS,
+          6e4
         );
         this.#maxBufferedOutputBytes = boundedInteger(
           options.maxBufferedOutputBytes,
@@ -27397,6 +27491,7 @@ var init_direct_websocket = __esm({
         const admission = new PreAuthAdmission({
           origin,
           timeoutMs: this.#redemptionTimeoutMs,
+          processingTimeoutMs: this.#redemptionProcessingTimeoutMs,
           schedule: this.#schedule,
           onRelease: (released) => this.#preAuth.delete(released),
           onRedeem: (active2, frame, socket) => this.#redeem(active2, frame, socket)
@@ -27487,6 +27582,12 @@ var init_direct_websocket = __esm({
               );
             }
             await this.#leaseManager.executeViewOperation(pending.leaseId, binding, "create");
+            if (!admission.isOpen()) {
+              throw new TerminalAttachmentAdmissionError(
+                "redemption-rejected",
+                "Terminal attachment redemption was rejected."
+              );
+            }
             const attached = await this.#leaseManager.executeViewOperation(
               pending.leaseId,
               binding,
@@ -27500,6 +27601,13 @@ var init_direct_websocket = __esm({
             }
             const activeDescriptor = this.#assertActiveDescriptor(attached.descriptor, pending);
             const client = this.#launcher.claim(attached.clientClaim);
+            if (!admission.isOpen()) {
+              client?.dispose();
+              throw new TerminalAttachmentAdmissionError(
+                "redemption-rejected",
+                "Terminal attachment redemption was rejected."
+              );
+            }
             if (!client) {
               throw new TerminalAttachmentAdmissionError(
                 "attachment-unavailable",
@@ -27615,6 +27723,8 @@ var init_direct_websocket = __esm({
       origin;
       #onRelease;
       #onRedeem;
+      #schedule;
+      #processingTimeoutMs;
       #cancelDeadline;
       #socket = null;
       #frameReceived = false;
@@ -27624,6 +27734,8 @@ var init_direct_websocket = __esm({
         this.origin = options.origin;
         this.#onRelease = options.onRelease;
         this.#onRedeem = options.onRedeem;
+        this.#schedule = options.schedule;
+        this.#processingTimeoutMs = options.processingTimeoutMs;
         this.#cancelDeadline = options.schedule(
           () => this.close(1008, "redemption-timeout"),
           options.timeoutMs
@@ -27645,6 +27757,10 @@ var init_direct_websocket = __esm({
       beginRedemption() {
         if (!this.#open || this.#promoted) return;
         this.#cancelDeadline();
+        this.#cancelDeadline = this.#schedule(
+          () => this.#processingTimedOut(),
+          this.#processingTimeoutMs
+        );
       }
       cancelBeforeBind() {
         this.close(1008, "upgrade-rejected");
@@ -27707,6 +27823,22 @@ var init_direct_websocket = __esm({
         });
       };
       #onClose = () => this.close(1008, "redemption-rejected");
+      #processingTimedOut() {
+        if (!this.#open || this.#promoted) return;
+        const socket = this.#socket;
+        if (socket) {
+          try {
+            sendControl(socket, {
+              type: "error",
+              protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+              code: "attachment-unavailable",
+              retryable: true
+            });
+          } catch {
+          }
+        }
+        this.close(1013, "redemption-processing-timeout");
+      }
       #detach() {
         const socket = this.#socket;
         this.#socket = null;
@@ -28824,15 +28956,17 @@ function productionProofRunner(tmuxExecutable, trustedCwd, environment, execute 
   encoding: "utf8",
   env: options.env,
   maxBuffer: MAX_PROOF_OUTPUT_BYTES,
-  stdio: ["ignore", "pipe", "pipe"]
-})) {
+  stdio: ["ignore", "pipe", "pipe"],
+  timeout: options.timeoutMs
+}), timeoutMs = DEFAULT_READINESS_TIMEOUT_MS) {
   return {
     run(command2) {
       if (command2.executable !== "tmux") return { status: "failed" };
       try {
         const stdout = execute(tmuxExecutable, command2.argv, {
           cwd: trustedCwd,
-          env: { ...environment }
+          env: { ...environment },
+          timeoutMs
         });
         return { status: "ok", stdout: String(stdout) };
       } catch (error) {
@@ -28859,7 +28993,7 @@ function canonicalRequest(input) {
     throw new TypeError("guarded PTY attachment input is invalid");
   }
 }
-var MAX_PROOF_OUTPUT_BYTES, MAX_PROOF_CLIENTS, PROOF_MISMATCH_SENTINEL, SafeTerminalValue, SafeColorTerminalValue, SafeLocaleValue, PtyTmuxAttachmentLauncher;
+var MAX_PROOF_OUTPUT_BYTES, MAX_PROOF_CLIENTS, DEFAULT_READINESS_TIMEOUT_MS, PROOF_MISMATCH_SENTINEL, SafeTerminalValue, SafeColorTerminalValue, SafeLocaleValue, PtyTmuxAttachmentLauncher;
 var init_pty_tmux_attachment_launcher = __esm({
   "packages/daemon/src/terminal/attachments/pty-tmux-attachment-launcher.ts"() {
     "use strict";
@@ -28868,6 +29002,7 @@ var init_pty_tmux_attachment_launcher = __esm({
     init_tmux_view_executor();
     MAX_PROOF_OUTPUT_BYTES = 64 * 1024;
     MAX_PROOF_CLIENTS = 256;
+    DEFAULT_READINESS_TIMEOUT_MS = 2e3;
     PROOF_MISMATCH_SENTINEL = "__tmux_ide_pty_view_proof_mismatch_v1__";
     SafeTerminalValue = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
     SafeColorTerminalValue = /^(?:truecolor|24bit)$/u;
@@ -28904,13 +29039,18 @@ var init_pty_tmux_attachment_launcher = __esm({
         if (options.proofRunner && options.proofCommandExecutor) {
           throw new TypeError("proof runner and proof command executor are mutually exclusive");
         }
+        this.#timeoutMs = boundedPositiveInteger(
+          options.readinessTimeoutMs,
+          DEFAULT_READINESS_TIMEOUT_MS,
+          3e4
+        );
         this.#proofRunner = options.proofRunner ?? productionProofRunner(
           this.#tmuxExecutable,
           this.#trustedCwd,
           this.#environment,
-          options.proofCommandExecutor
+          options.proofCommandExecutor,
+          this.#timeoutMs
         );
-        this.#timeoutMs = boundedPositiveInteger(options.readinessTimeoutMs, 2e3, 3e4);
         this.#pollIntervalMs = boundedPositiveInteger(options.readinessPollIntervalMs, 20, 1e3);
         this.#claimTimeoutMs = boundedPositiveInteger(options.claimTimeoutMs, 2e3, 3e4);
         this.#maxEarlyBytes = boundedPositiveInteger(
@@ -29357,7 +29497,8 @@ function defaultCommandExecutor(executable, argv, options) {
     encoding: "utf8",
     env: options.env,
     maxBuffer: options.maxBuffer,
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: options.timeoutMs
   });
 }
 function pinnedRunner(authority, execute, startupPolicy) {
@@ -29371,7 +29512,8 @@ function pinnedRunner(authority, execute, startupPolicy) {
           {
             cwd: authority.trustedCwd,
             env: authority.environment,
-            maxBuffer: MAX_TMUX_OUTPUT_BYTES4
+            maxBuffer: MAX_TMUX_OUTPUT_BYTES4,
+            timeoutMs: TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS
           }
         );
         const value = String(stdout);
@@ -29601,7 +29743,7 @@ function geometryDescriptorIsValid(descriptor2, client) {
 function createNativeTerminalAttachmentRuntime(options) {
   return new NativeTerminalAttachmentRuntime(options);
 }
-var MAX_TMUX_OUTPUT_BYTES4, MAX_DISCOVERED_WORKSPACES, MAX_DISCOVERED_PANES, MAX_GEOMETRY_CLIENTS, SAFE_SESSION_NAME, SAFE_TERMINAL_VALUE2, SAFE_COLOR_TERMINAL_VALUE2, SAFE_LOCALE_VALUE2, INTEGER, VIEW_MISMATCH, SESSION_WIRE_SENTINEL, PANE_WIRE_SENTINEL, WIRE_SEPARATOR, RUNTIME_SESSION_ID, RUNTIME_WINDOW_ID, RUNTIME_PANE_ID, ERROR_MESSAGES7, NativeTerminalAttachmentRuntimeError, SESSION_FORMAT3, PANE_FORMAT2, NativeTerminalAttachmentGeometryResolver, NativeTerminalAttachmentRuntime;
+var MAX_TMUX_OUTPUT_BYTES4, TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS, MAX_DISCOVERED_WORKSPACES, MAX_DISCOVERED_PANES, MAX_GEOMETRY_CLIENTS, SAFE_SESSION_NAME, SAFE_TERMINAL_VALUE2, SAFE_COLOR_TERMINAL_VALUE2, SAFE_LOCALE_VALUE2, INTEGER, VIEW_MISMATCH, SESSION_WIRE_SENTINEL, PANE_WIRE_SENTINEL, WIRE_SEPARATOR, RUNTIME_SESSION_ID, RUNTIME_WINDOW_ID, RUNTIME_PANE_ID, ERROR_MESSAGES7, NativeTerminalAttachmentRuntimeError, SESSION_FORMAT3, PANE_FORMAT2, NativeTerminalAttachmentGeometryResolver, NativeTerminalAttachmentRuntime;
 var init_native_runtime = __esm({
   "packages/daemon/src/terminal/attachments/native-runtime.ts"() {
     "use strict";
@@ -29614,6 +29756,7 @@ var init_native_runtime = __esm({
     init_semantic_pane_catalog();
     init_tmux_view_executor();
     MAX_TMUX_OUTPUT_BYTES4 = 128 * 1024;
+    TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS = 5e3;
     MAX_DISCOVERED_WORKSPACES = 128;
     MAX_DISCOVERED_PANES = 4096;
     MAX_GEOMETRY_CLIENTS = 32;
@@ -29797,7 +29940,8 @@ var init_native_runtime = __esm({
           proofCommandExecutor: (executable, argv, executionOptions) => execute(executable, argv, {
             cwd: executionOptions.cwd,
             env: executionOptions.env,
-            maxBuffer: MAX_TMUX_OUTPUT_BYTES4
+            maxBuffer: MAX_TMUX_OUTPUT_BYTES4,
+            timeoutMs: executionOptions.timeoutMs
           })
         });
         const viewExecutor = new TmuxAttachmentViewExecutor({
@@ -34720,7 +34864,7 @@ async function runVerb(verb, input, context, deps2) {
 function verbHandler(verb) {
   return async (input, context = {}, deps2 = {}) => await runVerb(verb, input, context, deps2);
 }
-var workspaceWindowSplitHandler, workspaceWindowKillHandler, workspacePaneKillHandler, workspaceSessionKillHandler, workspaceRenameHandler, workspacePaneZoomToggleHandler, workspacePaneSelectHandler, workspacePaneResizeHandler;
+var workspaceWindowSplitHandler, workspaceWindowKillHandler, workspacePaneKillHandler, workspaceSessionKillHandler, workspaceRenameHandler, workspacePaneZoomToggleHandler, workspacePaneSelectHandler, workspacePaneSwapHandler, workspacePaneResizeHandler;
 var init_workspace_multiplexer2 = __esm({
   "packages/daemon/src/command-center/actions/handlers/workspace-multiplexer.ts"() {
     "use strict";
@@ -34733,6 +34877,7 @@ var init_workspace_multiplexer2 = __esm({
     workspaceRenameHandler = verbHandler("workspace.rename");
     workspacePaneZoomToggleHandler = verbHandler("workspace.pane.zoom.toggle");
     workspacePaneSelectHandler = verbHandler("workspace.pane.select");
+    workspacePaneSwapHandler = verbHandler("workspace.pane.swap");
     workspacePaneResizeHandler = verbHandler("workspace.pane.resize");
   }
 });
@@ -34902,6 +35047,12 @@ var init_registry2 = __esm({
         resultSchema: ActionContractsZ["workspace.pane.select"].result,
         handler: (input) => workspacePaneSelectHandler(input),
         handlerWithContext: workspacePaneSelectHandler
+      },
+      "workspace.pane.swap": {
+        inputSchema: ActionContractsZ["workspace.pane.swap"].input,
+        resultSchema: ActionContractsZ["workspace.pane.swap"].result,
+        handler: (input) => workspacePaneSwapHandler(input),
+        handlerWithContext: workspacePaneSwapHandler
       },
       "workspace.pane.resize": {
         inputSchema: ActionContractsZ["workspace.pane.resize"].input,
@@ -35079,6 +35230,7 @@ var init_command_definitions = __esm({
       "workspace.rename": { label: "Rename session or window", category: "workspace" },
       "workspace.pane.zoom.toggle": { label: "Toggle pane zoom", category: "workspace" },
       "workspace.pane.select": { label: "Focus pane", category: "workspace" },
+      "workspace.pane.swap": { label: "Swap panes", category: "workspace" },
       "workspace.pane.resize": { label: "Resize pane", category: "workspace" }
     };
     DAEMON_ACTION_COMMAND_DEFINITIONS = Object.freeze(
@@ -39850,6 +40002,7 @@ var init_server = __esm({
       "workspace.rename": "owner-and-operation-id",
       "workspace.pane.zoom.toggle": "owner-and-operation-id",
       "workspace.pane.select": "owner-and-operation-id",
+      "workspace.pane.swap": "owner-and-operation-id",
       "workspace.pane.resize": "owner-and-operation-id",
       "project.launch": "owner",
       "project.stop": "owner",

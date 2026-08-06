@@ -48,6 +48,7 @@ import {
 import type { AgentStatusPaneFacts, AgentStatusProbe } from "./agent-status-probe.ts";
 
 const MAX_TMUX_OUTPUT_BYTES = 128 * 1024;
+const TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS = 5_000;
 const MAX_DISCOVERED_WORKSPACES = 128;
 const MAX_DISCOVERED_PANES = 4_096;
 const MAX_GEOMETRY_CLIENTS = 32;
@@ -107,6 +108,7 @@ export interface NativeTerminalAttachmentCommandExecutor {
       readonly cwd: string;
       readonly env: NodeJS.ProcessEnv;
       readonly maxBuffer: number;
+      readonly timeoutMs: number;
     },
   ): string | Buffer;
 }
@@ -169,7 +171,12 @@ function canonicalAuthority(input: NativeTerminalAttachmentTmuxAuthority): Canon
 function defaultCommandExecutor(
   executable: string,
   argv: readonly string[],
-  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly maxBuffer: number },
+  options: {
+    readonly cwd: string;
+    readonly env: NodeJS.ProcessEnv;
+    readonly maxBuffer: number;
+    readonly timeoutMs: number;
+  },
 ): string | Buffer {
   return runTmuxBinary(executable, [...argv], {
     cwd: options.cwd,
@@ -177,6 +184,7 @@ function defaultCommandExecutor(
     env: options.env,
     maxBuffer: options.maxBuffer,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: options.timeoutMs,
   });
 }
 
@@ -196,6 +204,7 @@ function pinnedRunner(
             cwd: authority.trustedCwd,
             env: authority.environment,
             maxBuffer: MAX_TMUX_OUTPUT_BYTES,
+            timeoutMs: TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS,
           },
         );
         const value = String(stdout);
@@ -847,6 +856,7 @@ export class NativeTerminalAttachmentRuntime {
           cwd: executionOptions.cwd,
           env: executionOptions.env,
           maxBuffer: MAX_TMUX_OUTPUT_BYTES,
+          timeoutMs: executionOptions.timeoutMs,
         }),
     });
     const viewExecutor = new TmuxAttachmentViewExecutor({

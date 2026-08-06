@@ -63,6 +63,7 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
   readonly calls: string[] = [];
   readonly releases: Array<{ leaseId: string; binding: AttachmentLeaseBinding }> = [];
   redeemGate: Promise<void> | null = null;
+  createGate: Promise<void> | null = null;
   releaseGate: Promise<void> | null = null;
   renewGate: Promise<void> | null = null;
   renewFailure = false;
@@ -104,6 +105,7 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
     operation: "create" | "attach",
   ): Promise<ExecutedAttachmentViewOperation> {
     this.calls.push(operation);
+    if (operation === "create") await this.createGate;
     if (!this.active) throw new Error("inactive");
     return {
       descriptor: this.leaseDescriptor("active"),
@@ -165,6 +167,7 @@ class FakeClient implements ClaimedPtyTmuxAttachment {
   readonly exitListeners = new Set<
     (event: { readonly exitCode: number; readonly signal: number | null }) => void
   >();
+  initialOutput: Buffer | null = null;
   disposed = 0;
 
   constructor(
@@ -186,6 +189,11 @@ class FakeClient implements ClaimedPtyTmuxAttachment {
 
   onData(callback: (data: Buffer) => void): () => void {
     this.dataListeners.add(callback);
+    if (this.initialOutput) {
+      const initial = this.initialOutput;
+      this.initialOutput = null;
+      callback(initial);
+    }
     return () => this.dataListeners.delete(callback);
   }
 
@@ -264,6 +272,7 @@ function rig(
     maxPreAuthSockets?: number;
     maxLiveConnections?: number;
     redemptionTimeoutMs?: number;
+    redemptionProcessingTimeoutMs?: number;
     maxBufferedOutputBytes?: number;
     maxOutputFrameBytes?: number;
     maxLiveControlFrames?: number;
@@ -487,8 +496,95 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
     await coordinator.shutdown();
   });
 
+  it("turns stalled post-frame redemption into a named retryable failure", async () => {
+    const scheduled: Array<{ callback: () => void; cancelled: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, cancelled: false, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.cancelled = true;
+      };
+    };
+    let releaseRedeem!: () => void;
+    const { coordinator, manager, claim } = rig({
+      schedule,
+      redemptionProcessingTimeoutMs: 75,
+    });
+    manager.redeemGate = new Promise<void>((resolve) => {
+      releaseRedeem = resolve;
+    });
+    await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+
+    socket.frame(redemption());
+    await flush();
+    const processingDeadline = scheduled.find((entry) => entry.delay === 75 && !entry.cancelled);
+    expect(processingDeadline).toBeDefined();
+    expect(manager.calls).toContain("redeem");
+
+    processingDeadline!.callback();
+    expect(JSON.parse(socket.sent.at(-1)!.data as string)).toMatchObject({
+      type: "error",
+      code: "attachment-unavailable",
+      retryable: true,
+    });
+    expect(socket.closes.at(-1)).toEqual({
+      code: 1013,
+      reason: "redemption-processing-timeout",
+    });
+    expect(coordinator.snapshot().preAuthSockets).toBe(0);
+    expect(claim).not.toHaveBeenCalled();
+
+    releaseRedeem();
+    await flush();
+    await flush();
+    expect(manager.calls).not.toContain("create");
+    expect(manager.releases).toHaveLength(1);
+    await coordinator.shutdown();
+  });
+
+  it("does not advance from a timed-out create into PTY attach", async () => {
+    const scheduled: Array<{ callback: () => void; cancelled: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, cancelled: false, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.cancelled = true;
+      };
+    };
+    let releaseCreate!: () => void;
+    const { coordinator, manager, claim } = rig({
+      schedule,
+      redemptionProcessingTimeoutMs: 75,
+    });
+    manager.createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption());
+    await flush();
+    await flush();
+    expect(manager.calls).toContain("create");
+
+    scheduled.find((entry) => entry.delay === 75 && !entry.cancelled)!.callback();
+    releaseCreate();
+    await flush();
+    await flush();
+
+    expect(manager.calls).not.toContain("attach");
+    expect(claim).not.toHaveBeenCalled();
+    expect(manager.releases).toHaveLength(1);
+    await coordinator.shutdown();
+  });
+
   it("consumes pending into exactly one live slot, claims once, and streams output directly", async () => {
     const { coordinator, manager, client, claim } = rig();
+    // Models the real launcher synchronously draining PTY bytes accumulated
+    // between spawn and claim when the live connection installs its listener.
+    client.initialOutput = Buffer.from([0x1b, 0x5b, 0x48]);
     await issue(coordinator);
     const pending = admission(coordinator);
     const socket = new FakeSocket();
@@ -515,6 +611,7 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
       sourceGrid: { cols: 120, rows: 40 },
       clientViewport: { cols: 118, rows: 38 },
     });
+    expect(socket.sent[1]).toEqual({ data: Buffer.from([0x1b, 0x5b, 0x48]), binary: true });
     client.output(Buffer.from([0, 255, 13, 10]));
     expect(socket.sent.at(-1)).toEqual({ data: Buffer.from([0, 255, 13, 10]), binary: true });
 

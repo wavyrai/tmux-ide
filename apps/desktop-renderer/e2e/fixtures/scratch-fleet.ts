@@ -44,6 +44,8 @@ export interface ScratchFleet {
   readonly windowGrid: (name: string) => { readonly cols: number; readonly rows: number };
   /** Raw pane text, for proving the app is showing what tmux actually holds. */
   readonly capturePane: (name: string) => string;
+  /** Type literal text into the current pane, then press Enter. SETUP only. */
+  readonly typeInPane: (name: string, text: string) => void;
   readonly dispose: () => Promise<void>;
 }
 
@@ -201,6 +203,12 @@ export async function createScratchFleet(
     // `<session>:` is the session's current window, active pane. A bare `=name`
     // is a SESSION target and tmux rejects it where a pane is required.
     capturePane: (name) => runTmux(["capture-pane", "-p", "-t", `${name}:`]),
+    // `-l` keeps the fixture text literal: neither tmux key names nor a shell
+    // interpolation layer gets to reinterpret the marker used by paint proofs.
+    typeInPane: (name, text) => {
+      runTmux(["send-keys", "-t", `${name}:`, "-l", text]);
+      runTmux(["send-keys", "-t", `${name}:`, "Enter"]);
+    },
     environment: {
       HOME: home,
       XDG_CONFIG_HOME: join(home, ".config"),

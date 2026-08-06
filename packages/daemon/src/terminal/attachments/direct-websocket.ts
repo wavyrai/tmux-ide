@@ -46,6 +46,7 @@ export const TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL = TERMINAL_ATTACHMENT_WEBSOC
 export const TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES = 4 * 1024;
 export const TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES = 4 * 1024;
 export const TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS = 1_000;
+export const TERMINAL_ATTACHMENT_MAX_REDEMPTION_PROCESSING_MS = 10_000;
 export const TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES = 1_024;
 
 const WS_OPEN = 1;
@@ -209,6 +210,14 @@ export interface TerminalAttachmentAdmissionCoordinatorOptions {
   readonly maxPreAuthSockets?: number;
   readonly maxLiveConnections?: number;
   readonly redemptionTimeoutMs?: number;
+  /**
+   * Bounds how long the socket may wait on daemon-owned work after a valid
+   * redemption frame arrives.
+   * Without a second deadline, a stuck catalog/tmux/geometry operation leaves
+   * the socket in a silent pre-auth state forever because frame delivery has
+   * already cancelled `redemptionTimeoutMs`.
+   */
+  readonly redemptionProcessingTimeoutMs?: number;
   readonly maxBufferedOutputBytes?: number;
   readonly maxOutputFrameBytes?: number;
   readonly maxLiveControlFrames?: number;
@@ -317,6 +326,7 @@ export class TerminalAttachmentAdmissionCoordinator {
   readonly #maxPreAuth: number;
   readonly #maxLive: number;
   readonly #redemptionTimeoutMs: number;
+  readonly #redemptionProcessingTimeoutMs: number;
   readonly #maxBufferedOutputBytes: number;
   readonly #maxOutputFrameBytes: number;
   readonly #maxLiveControlFrames: number;
@@ -367,6 +377,11 @@ export class TerminalAttachmentAdmissionCoordinator {
       options.redemptionTimeoutMs,
       TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS,
       TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS,
+    );
+    this.#redemptionProcessingTimeoutMs = boundedInteger(
+      options.redemptionProcessingTimeoutMs,
+      TERMINAL_ATTACHMENT_MAX_REDEMPTION_PROCESSING_MS,
+      60_000,
     );
     this.#maxBufferedOutputBytes = boundedInteger(
       options.maxBufferedOutputBytes,
@@ -553,6 +568,7 @@ export class TerminalAttachmentAdmissionCoordinator {
     const admission = new PreAuthAdmission({
       origin,
       timeoutMs: this.#redemptionTimeoutMs,
+      processingTimeoutMs: this.#redemptionProcessingTimeoutMs,
       schedule: this.#schedule,
       onRelease: (released) => this.#preAuth.delete(released),
       onRedeem: (active, frame, socket) => this.#redeem(active, frame, socket),
@@ -662,6 +678,12 @@ export class TerminalAttachmentAdmissionCoordinator {
           );
         }
         await this.#leaseManager.executeViewOperation(pending.leaseId, binding, "create");
+        if (!admission.isOpen()) {
+          throw new TerminalAttachmentAdmissionError(
+            "redemption-rejected",
+            "Terminal attachment redemption was rejected.",
+          );
+        }
         const attached = await this.#leaseManager.executeViewOperation(
           pending.leaseId,
           binding,
@@ -675,6 +697,13 @@ export class TerminalAttachmentAdmissionCoordinator {
         }
         const activeDescriptor = this.#assertActiveDescriptor(attached.descriptor, pending);
         const client = this.#launcher.claim(attached.clientClaim);
+        if (!admission.isOpen()) {
+          client?.dispose();
+          throw new TerminalAttachmentAdmissionError(
+            "redemption-rejected",
+            "Terminal attachment redemption was rejected.",
+          );
+        }
         if (!client) {
           throw new TerminalAttachmentAdmissionError(
             "attachment-unavailable",
@@ -810,6 +839,7 @@ export class TerminalAttachmentAdmissionCoordinator {
 interface PreAuthAdmissionOptions {
   readonly origin: string;
   readonly timeoutMs: number;
+  readonly processingTimeoutMs: number;
   readonly schedule: (callback: () => void, delayMs: number) => () => void;
   readonly onRelease: (admission: PreAuthAdmission) => void;
   readonly onRedeem: (
@@ -823,7 +853,9 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
   readonly origin: string;
   readonly #onRelease: PreAuthAdmissionOptions["onRelease"];
   readonly #onRedeem: PreAuthAdmissionOptions["onRedeem"];
-  readonly #cancelDeadline: () => void;
+  readonly #schedule: PreAuthAdmissionOptions["schedule"];
+  readonly #processingTimeoutMs: number;
+  #cancelDeadline: () => void;
   #socket: DirectTerminalSocket | null = null;
   #frameReceived = false;
   #open = true;
@@ -833,6 +865,8 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
     this.origin = options.origin;
     this.#onRelease = options.onRelease;
     this.#onRedeem = options.onRedeem;
+    this.#schedule = options.schedule;
+    this.#processingTimeoutMs = options.processingTimeoutMs;
     this.#cancelDeadline = options.schedule(
       () => this.close(1008, "redemption-timeout"),
       options.timeoutMs,
@@ -857,6 +891,10 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
   beginRedemption(): void {
     if (!this.#open || this.#promoted) return;
     this.#cancelDeadline();
+    this.#cancelDeadline = this.#schedule(
+      () => this.#processingTimedOut(),
+      this.#processingTimeoutMs,
+    );
   }
 
   cancelBeforeBind(): void {
@@ -935,6 +973,24 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
   };
 
   readonly #onClose = (): void => this.close(1008, "redemption-rejected");
+
+  #processingTimedOut(): void {
+    if (!this.#open || this.#promoted) return;
+    const socket = this.#socket;
+    if (socket) {
+      try {
+        sendControl(socket, {
+          type: "error",
+          protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+          code: "attachment-unavailable",
+          retryable: true,
+        });
+      } catch {
+        // The bounded close below remains the fail-closed response.
+      }
+    }
+    this.close(1013, "redemption-processing-timeout");
+  }
 
   #detach(): void {
     const socket = this.#socket;

@@ -286,6 +286,7 @@ const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">
   "workspace.rename": "owner-and-operation-id",
   "workspace.pane.zoom.toggle": "owner-and-operation-id",
   "workspace.pane.select": "owner-and-operation-id",
+  "workspace.pane.swap": "owner-and-operation-id",
   "workspace.pane.resize": "owner-and-operation-id",
   "project.launch": "owner",
   "project.stop": "owner",

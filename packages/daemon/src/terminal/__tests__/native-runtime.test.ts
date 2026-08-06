@@ -574,7 +574,7 @@ class StartupReconciliationTmuxModel {
 describe("native terminal attachment runtime lifecycle", () => {
   it("uses the pinned executable and custom socket for exact application-shell inventory", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
-    const calls: Array<{ executable: string; argv: readonly string[] }> = [];
+    const calls: Array<{ executable: string; argv: readonly string[]; timeoutMs: number }> = [];
     const runtime = createNativeTerminalAttachmentRuntime({
       daemonInstanceId: INSTANCE_ID,
       webSocketUrl: WS_URL,
@@ -583,8 +583,8 @@ describe("native terminal attachment runtime lifecycle", () => {
         ...authority(root),
         socketSelector: { kind: "name", name: "inventory-socket" },
       },
-      commandExecutor: (executable, rawArgv) => {
-        calls.push({ executable, argv: [...rawArgv] });
+      commandExecutor: (executable, rawArgv, options) => {
+        calls.push({ executable, argv: [...rawArgv], timeoutMs: options.timeoutMs });
         const argv = rawArgv.slice(2);
         if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
           return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
@@ -617,6 +617,9 @@ describe("native terminal attachment runtime lifecycle", () => {
     expect(new Set(calls.map(({ executable }) => executable))).toEqual(
       new Set([realpathSync(authority(root).executablePath)]),
     );
+    // Every synchronous tmux command is kill-bounded. A nominal async
+    // readiness deadline cannot interrupt execFileSync if tmux itself stalls.
+    expect(new Set(calls.map(({ timeoutMs }) => timeoutMs))).toEqual(new Set([5_000]));
 
     registry.add({ name: "workspace.beta", sessionName: "runtime:session", projectDir: root });
     await expect(runtime.discoverApplicationShellSession("runtime:session")).rejects.toMatchObject({

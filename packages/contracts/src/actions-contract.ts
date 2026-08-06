@@ -41,6 +41,8 @@ import {
   WorkspacePaneResizeResultSchemaZ,
   WorkspacePaneSelectArgumentsSchemaZ,
   WorkspacePaneSelectResultSchemaZ,
+  WorkspacePaneSwapArgumentsSchemaZ,
+  WorkspacePaneSwapResultSchemaZ,
   WorkspacePaneZoomToggleArgumentsSchemaZ,
   WorkspacePaneZoomToggleResultSchemaZ,
   WorkspaceRenameArgumentsSchemaZ,
@@ -282,6 +284,9 @@ export const WorkspacePaneZoomToggleResultZ = WorkspacePaneZoomToggleResultSchem
 export const WorkspacePaneSelectInputZ = WorkspacePaneSelectArgumentsSchemaZ;
 export const WorkspacePaneSelectResultZ = WorkspacePaneSelectResultSchemaZ;
 
+export const WorkspacePaneSwapInputZ = WorkspacePaneSwapArgumentsSchemaZ;
+export const WorkspacePaneSwapResultZ = WorkspacePaneSwapResultSchemaZ;
+
 export const WorkspacePaneResizeInputZ = WorkspacePaneResizeArgumentsSchemaZ;
 export const WorkspacePaneResizeResultZ = WorkspacePaneResizeResultSchemaZ;
 
@@ -393,6 +398,10 @@ export const ActionContractsZ = {
   "workspace.pane.select": {
     input: WorkspacePaneSelectInputZ,
     result: WorkspacePaneSelectResultZ,
+  },
+  "workspace.pane.swap": {
+    input: WorkspacePaneSwapInputZ,
+    result: WorkspacePaneSwapResultZ,
   },
   "workspace.pane.resize": {
     input: WorkspacePaneResizeInputZ,

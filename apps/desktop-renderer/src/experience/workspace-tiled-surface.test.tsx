@@ -172,7 +172,25 @@ describe("the layout-faithful workspace view", () => {
     const border = root.querySelector<HTMLElement>(".pane-border")!;
     expect(border.dataset.orientation).toBe("vertical");
     expect(border.style.left).toBe("49.5000%");
+    expect(border.tabIndex).toBe(0);
+    expect(border.getAttribute("aria-valuenow")).toBe("99");
+    expect(border.getAttribute("aria-valuemax")).toBe("200");
     expect(renderSurface([layout()]).root.querySelectorAll(".pane-border")).toHaveLength(0);
+  });
+
+  it("resizes a focused separator one cell with its directional arrow key", () => {
+    const { root, invoke } = renderSurface([SPLIT]);
+    const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
+    overlay.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1_000, height: 500, right: 1_000, bottom: 500 }) as DOMRect;
+    const border = root.querySelector<HTMLElement>('.pane-border[data-orientation="vertical"]')!;
+    border.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }));
+    expect(invoke).toHaveBeenCalledWith("pane.resize", "pane.a", {
+      resize: { axis: "cols", cells: 100 },
+    });
+    expect(root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPhase).toBe(
+      "resize-committing",
+    );
   });
 
   it("leaves the pointer to the terminal underneath", () => {
@@ -202,18 +220,38 @@ describe("the layout-faithful workspace view", () => {
      */
     const { root, invoke } = renderSurface([SPLIT]);
     const border = root.querySelector<HTMLElement>(".pane-border")!;
-    // happy-dom reports zero-size boxes, so the drag arithmetic is exercised
-    // through the pure resolver's own tests; what this pins is the DISPATCH
-    // shape: one call on grab-and-release, naming an absolute size in cells.
+    const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
+    overlay.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1_000, height: 500, right: 1_000, bottom: 500 }) as DOMRect;
     border.setPointerCapture = () => undefined;
     border.releasePointerCapture = () => undefined;
-    border.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
-    border.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    const pointer = (type: string, x: number): PointerEvent => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        button: 0,
+        clientX: x,
+        clientY: 200,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 7 },
+        isPrimary: { value: true },
+      });
+      return event as PointerEvent;
+    };
+    border.dispatchEvent(pointer("pointerdown", 495));
+    expect(root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPhase).toBe(
+      "resize-preview",
+    );
+    border.dispatchEvent(pointer("pointermove", 505));
+    expect(
+      root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPreviewCells,
+    ).toBe("101");
+    border.dispatchEvent(pointer("pointerup", 505));
 
     const resizes = invoke.mock.calls.filter(([verbId]) => verbId === "pane.resize");
     expect(resizes.length, "the release did not flush a resize").toBe(1);
     expect(resizes[0]![1]).toBe("pane.a");
-    expect(resizes[0]![2]).toEqual({ resize: { axis: "cols", cells: 99 } });
+    expect(resizes[0]![2]).toEqual({ resize: { axis: "cols", cells: 101 } });
   });
 
   it("prunes a window whose panes the daemon no longer reports as attachable", () => {

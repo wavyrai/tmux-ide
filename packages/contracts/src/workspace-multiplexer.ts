@@ -119,6 +119,19 @@ export const WorkspacePaneSelectArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend
 export type WorkspacePaneSelectArguments = z.infer<typeof WorkspacePaneSelectArgumentsSchemaZ>;
 
 /**
+ * Exchange the positions of two panes in one tmux window.
+ *
+ * Both ends are semantic identities. Runtime pane ids and tmux target syntax
+ * remain daemon-private, and the daemon refuses panes from different windows
+ * rather than turning a card drop into a cross-window tmux mutation.
+ */
+export const WorkspacePaneSwapArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+  sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+  targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+}).strict();
+export type WorkspacePaneSwapArguments = z.infer<typeof WorkspacePaneSwapArgumentsSchemaZ>;
+
+/**
  * The bound on a resize request, in cells.
  *
  * tmux clamps a resize to what the window can give, so an out-of-range request
@@ -175,6 +188,9 @@ export const WorkspaceMultiplexerIntentSchemaZ = z.discriminatedUnion("verb", [
   }).strict(),
   WorkspacePaneSelectArgumentsSchemaZ.extend({
     verb: z.literal("workspace.pane.select"),
+  }).strict(),
+  WorkspacePaneSwapArgumentsSchemaZ.extend({
+    verb: z.literal("workspace.pane.swap"),
   }).strict(),
   WorkspacePaneResizeArgumentsSchemaZ.extend({
     verb: z.literal("workspace.pane.resize"),
@@ -262,6 +278,13 @@ export const WorkspacePaneSelectResultSchemaZ = MutationEnvelopeSchemaZ.extend({
 }).strict();
 export type WorkspacePaneSelectResult = z.infer<typeof WorkspacePaneSelectResultSchemaZ>;
 
+export const WorkspacePaneSwapResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+  verb: z.literal("workspace.pane.swap"),
+  sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+  targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+}).strict();
+export type WorkspacePaneSwapResult = z.infer<typeof WorkspacePaneSwapResultSchemaZ>;
+
 export const WorkspacePaneResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
   verb: z.literal("workspace.pane.resize"),
   semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
@@ -284,6 +307,7 @@ export const WorkspaceMultiplexerMutationResultSchemaZ = z.discriminatedUnion("v
   WorkspaceRenameResultSchemaZ,
   WorkspacePaneZoomToggleResultSchemaZ,
   WorkspacePaneSelectResultSchemaZ,
+  WorkspacePaneSwapResultSchemaZ,
   WorkspacePaneResizeResultSchemaZ,
 ]);
 export type WorkspaceMultiplexerMutationResult = z.infer<

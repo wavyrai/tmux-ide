@@ -26,7 +26,7 @@
  * between two panes, and the drag handles sit on those cells; a tile's own
  * region is transparent and only carries hit testing and a hover header.
  */
-import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { Index, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
@@ -41,21 +41,51 @@ import type { AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
 import {
   layoutBorders,
   layoutTiles,
-  resolveBorderDrag,
   windowTabKey,
   windowTabs,
   type LayoutBorder,
   type LayoutFrame,
+  type TileRect,
   type WindowTab,
 } from "./workspace-layout-tiles.ts";
+import {
+  beginWorkspacePaneDrag,
+  beginWorkspacePaneResize,
+  cancelWorkspacePaneManipulation,
+  createWorkspacePaneIdle,
+  finishWorkspacePaneManipulation,
+  flushWorkspacePaneResizeWire,
+  previewWorkspacePaneManipulation,
+  updateWorkspacePaneManipulation,
+  type PaneResizeWirePlan,
+  type WorkspacePaneDrag,
+  type WorkspacePaneManipulation,
+  type WorkspacePanePreview,
+  type WorkspacePaneResize,
+  type WorkspacePointerSample,
+} from "./workspace-pane-manipulation.ts";
+
+type PaneManipulationPhase =
+  | "idle"
+  | "resize-preview"
+  | "resize-committing"
+  | "dragging"
+  | "drop-ready"
+  | "swap-committing"
+  | "rollback";
+
+type TiledVerbResult = void | Promise<{ readonly status: "ok" | "error" }>;
 
 export interface TiledSurfaceVerbs {
   readonly workspaceConnected: boolean;
   readonly invoke: (
-    verbId: "pane.select" | "pane.resize" | "pane.kill",
+    verbId: "pane.select" | "pane.swap" | "pane.resize" | "pane.kill",
     semanticPaneId: string,
-    args?: { readonly resize?: { readonly axis: "cols" | "rows"; readonly cells: number } },
-  ) => void;
+    args?: {
+      readonly resize?: { readonly axis: "cols" | "rows"; readonly cells: number };
+      readonly swapTargetSemanticPaneId?: string;
+    },
+  ) => TiledVerbResult;
   /** The existing create flow, reused verbatim as the tab strip's "+". */
   readonly onCreateWindow?: () => void;
 }
@@ -174,6 +204,56 @@ const ROLE_ICON: Readonly<Record<PaneFrameModel["pane"]["kind"], IconArtwork>> =
 /** Percentages, rounded to a precision the DOM will not thrash over. */
 function percent(value: number): string {
   return `${(value * 100).toFixed(4)}%`;
+}
+
+function pointerSample(event: PointerEvent): WorkspacePointerSample {
+  return {
+    pointerId: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    atMs: performance.now(),
+    isPrimary: event.isPrimary,
+  };
+}
+
+function samePaneGeometry(
+  left: LayoutFrame["panes"][number] | undefined,
+  right: LayoutFrame["panes"][number] | undefined,
+): boolean {
+  return Boolean(
+    left &&
+    right &&
+    left.left === right.left &&
+    left.top === right.top &&
+    left.width === right.width &&
+    left.height === right.height,
+  );
+}
+
+function transformedRectForResize(
+  rect: TileRect,
+  state: WorkspacePaneResize,
+  preview: Extract<WorkspacePanePreview, { readonly kind: "resize" }>,
+): TileRect {
+  const vertical = state.border.orientation === "vertical";
+  const total = vertical ? state.snapshot.frame.cols : state.snapshot.frame.rows;
+  const delta = preview.movedCells / total;
+  const boundary = vertical ? state.border.rect.left : state.border.rect.top;
+  const epsilon = 1 / Math.max(1, total * 2);
+  if (vertical) {
+    const right = rect.left + rect.width;
+    if (Math.abs(right - boundary) <= epsilon) return { ...rect, width: rect.width + delta };
+    if (Math.abs(rect.left - boundary) <= epsilon) {
+      return { ...rect, left: rect.left + delta, width: rect.width - delta };
+    }
+    return rect;
+  }
+  const bottom = rect.top + rect.height;
+  if (Math.abs(bottom - boundary) <= epsilon) return { ...rect, height: rect.height + delta };
+  if (Math.abs(rect.top - boundary) <= epsilon) {
+    return { ...rect, top: rect.top + delta, height: rect.height - delta };
+  }
+  return rect;
 }
 
 export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
@@ -375,104 +455,414 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     return hit?.pane ?? null;
   };
 
-  // ── Border drag ───────────────────────────────────────────────────────────
-  //
-  // The border follows the pointer WHILE dragging, throttled, and flushes on
-  // release. A resize per pointermove would spend a serialized daemon round
-  // trip per frame of mouse movement; sending nothing until release leaves the
-  // user dragging a handle over panes that do not move. The throttle is the
-  // honest middle, and the flush is what guarantees the last position is the
-  // one tmux ends on rather than whichever tick happened to land last.
-  //
-  // Every dispatch states an ABSOLUTE size rather than a delta. Under a
-  // throttle the two are not equivalent: a superseded or dropped delta silently
-  // loses its movement and the border drifts away from the pointer, while an
-  // absolute size is self-correcting — the next tick states the target again
-  // and any missed one costs nothing. The baseline is the size captured at the
-  // GRAB, so the target tracks the pointer even as re-tiling changes the frame
-  // underneath.
-  const BORDER_DRAG_THROTTLE_MS = 80;
-  const [dragging, setDragging] = createSignal<LayoutBorder | null>(null);
+  // ── Pane direct manipulation ──────────────────────────────────────────────
+  // A transaction freezes the frame it began on. Pointer feedback is local and
+  // compositor-only; tmux mutations are confirmations of that preview, never
+  // the source of the preview itself.
+  const [manipulation, setManipulation] = createSignal<WorkspacePaneManipulation | null>(null);
+  const [localPreview, setLocalPreview] = createSignal<WorkspacePanePreview | null>(null);
+  const [committingState, setCommittingState] = createSignal<
+    WorkspacePaneResize | WorkspacePaneDrag | null
+  >(null);
+  const [committingPreview, setCommittingPreview] = createSignal<WorkspacePanePreview | null>(null);
+  const [phase, setPhase] = createSignal<PaneManipulationPhase>("idle");
+  const [lastConfirmedCells, setLastConfirmedCells] = createSignal<number | null>(null);
+  let resizeWireTimer: ReturnType<typeof setTimeout> | null = null;
+  let commitTimeout: ReturnType<typeof setTimeout> | null = null;
+  let touchLongPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingTouchDrag: {
+    readonly pointerId: number;
+    readonly x: number;
+    readonly y: number;
+  } | null = null;
 
-  const beginDrag = (border: LayoutBorder, event: PointerEvent): void => {
-    if (!props.verbs.workspaceConnected) return;
+  const clearResizeWireTimer = (): void => {
+    if (resizeWireTimer !== null) clearTimeout(resizeWireTimer);
+    resizeWireTimer = null;
+  };
+  const clearCommitTimeout = (): void => {
+    if (commitTimeout !== null) clearTimeout(commitTimeout);
+    commitTimeout = null;
+  };
+  const clearTouchLongPress = (): void => {
+    if (touchLongPressTimer !== null) clearTimeout(touchLongPressTimer);
+    touchLongPressTimer = null;
+    pendingTouchDrag = null;
+  };
+  onCleanup(() => {
+    clearResizeWireTimer();
+    clearCommitTimeout();
+    clearTouchLongPress();
+  });
+  if (typeof window !== "undefined") {
+    const onManipulationKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || phase() === "idle") return;
+      event.preventDefault();
+      cancelManipulation();
+    };
+    window.addEventListener("keydown", onManipulationKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onManipulationKeyDown));
+  }
+
+  const currentGridBox = () => {
+    const box = overlayElement?.getBoundingClientRect();
+    return {
+      left: box?.left ?? 0,
+      top: box?.top ?? 0,
+      width: box?.width ?? gridBox().width,
+      height: box?.height ?? gridBox().height,
+    };
+  };
+
+  const settle = (rolledBack = false): void => {
+    clearResizeWireTimer();
+    clearCommitTimeout();
+    setCommittingState(null);
+    setCommittingPreview(null);
+    setLocalPreview(null);
+    setPhase(rolledBack ? "rollback" : "idle");
+    const frame = currentFrame();
+    setManipulation(
+      frame ? createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }) : null,
+    );
+    if (rolledBack) {
+      const settleMs = props.reducedMotion ? 0 : 150;
+      commitTimeout = setTimeout(() => {
+        commitTimeout = null;
+        setPhase("idle");
+      }, settleMs);
+    }
+  };
+
+  const mutationFailed = (result: unknown): boolean =>
+    typeof result === "object" &&
+    result !== null &&
+    "status" in result &&
+    result.status === "error";
+
+  const dispatchResize = (plan: PaneResizeWirePlan): void => {
+    clearResizeWireTimer();
+    if (plan.dispatch) {
+      const { pane, axis, cells } = plan.dispatch.command;
+      Promise.resolve(props.verbs.invoke("pane.resize", pane, { resize: { axis, cells } })).then(
+        (result) => {
+          if (mutationFailed(result) && phase() === "resize-preview") cancelManipulation();
+        },
+        () => {
+          if (phase() === "resize-preview") cancelManipulation();
+        },
+      );
+    }
+    if (plan.trailing) {
+      resizeWireTimer = setTimeout(() => {
+        resizeWireTimer = null;
+        const state = manipulation();
+        if (!state) return;
+        const flushed = flushWorkspacePaneResizeWire(state, performance.now());
+        setManipulation(flushed.state);
+        setLocalPreview(flushed.preview);
+        dispatchResize(flushed.wire);
+      }, plan.trailing.delayMs);
+    }
+  };
+
+  const beginResize = (borderId: string, event: PointerEvent): void => {
+    if (!props.verbs.workspaceConnected || phase() !== "idle") return;
     const frame = currentFrame();
     if (!frame) return;
-    const handle = event.currentTarget as HTMLElement;
-    const startX = event.clientX;
-    const startY = event.clientY;
-    // Captured at the grab: the frame re-tiles under the drag, and a baseline
-    // that moved with it would make the border chase its own last position.
-    const grabbedFrame = frame;
-    const grabbedBox = gridBox();
-    handle.setPointerCapture(event.pointerId);
-    setDragging(border);
+    const started = beginWorkspacePaneResize(
+      createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }),
+      { borderId, pointer: pointerSample(event), gridBox: currentGridBox() },
+    );
+    if (started.kind !== "resize") return;
+    event.preventDefault();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    setLastConfirmedCells(started.border.cells);
+    setManipulation(started);
+    setLocalPreview(previewWorkspacePaneManipulation(started));
+    setPhase("resize-preview");
+  };
 
-    let lastSentAt = 0;
-    let lastSentCells: number | null = null;
-    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  const beginPaneDrag = (pane: string, event: PointerEvent): void => {
+    if (!props.verbs.workspaceConnected || phase() !== "idle" || event.button !== 0) return;
+    const frame = currentFrame();
+    if (!frame) return;
+    const started = beginWorkspacePaneDrag(
+      createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }),
+      { pane, pointer: pointerSample(event), gridBox: currentGridBox() },
+    );
+    if (started.kind !== "drag") return;
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    setManipulation(started);
+    setLocalPreview(previewWorkspacePaneManipulation(started));
+    setPhase("dragging");
+    if (event.pointerType === "touch") {
+      pendingTouchDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+      touchLongPressTimer = setTimeout(() => {
+        touchLongPressTimer = null;
+        pendingTouchDrag = null;
+      }, 400);
+    }
+  };
 
-    const dispatch = (clientX: number, clientY: number): void => {
-      const resolved = resolveBorderDrag({
-        border,
-        frame: grabbedFrame,
-        gridBox: grabbedBox,
-        deltaX: clientX - startX,
-        deltaY: clientY - startY,
-      });
-      // Null means the pointer has come back to where it started, so the size
-      // to ask for is the one the pane already had.
-      const cells = resolved?.cells ?? border.cells;
-      if (cells === lastSentCells) return;
-      lastSentCells = cells;
-      lastSentAt = Date.now();
-      props.verbs.invoke("pane.resize", border.pane, {
-        resize: { axis: border.orientation === "vertical" ? "cols" : "rows", cells },
-      });
-    };
-
-    const clearPending = (): void => {
-      if (pendingTimer !== null) clearTimeout(pendingTimer);
-      pendingTimer = null;
-    };
-
-    const move = (moved: PointerEvent): void => {
-      const wait = BORDER_DRAG_THROTTLE_MS - (Date.now() - lastSentAt);
-      if (wait <= 0) {
-        clearPending();
-        dispatch(moved.clientX, moved.clientY);
-        return;
+  const moveManipulation = (event: PointerEvent): void => {
+    const state = manipulation();
+    if (!state || state.kind === "idle") return;
+    if (state.kind === "drag" && pendingTouchDrag?.pointerId === event.pointerId) {
+      if (Math.hypot(event.clientX - pendingTouchDrag.x, event.clientY - pendingTouchDrag.y) >= 5) {
+        cancelManipulation(event);
       }
-      // Trailing edge: the last position inside the window still lands, so a
-      // drag that stops mid-throttle does not leave the border behind.
-      clearPending();
-      const x = moved.clientX;
-      const y = moved.clientY;
-      pendingTimer = setTimeout(() => {
-        pendingTimer = null;
-        dispatch(x, y);
-      }, wait);
-    };
+      return;
+    }
+    const updated = updateWorkspacePaneManipulation(state, pointerSample(event));
+    if (updated.ignored) return;
+    setManipulation(updated.state);
+    setLocalPreview(updated.preview);
+    if (updated.preview.kind === "drag") {
+      setPhase(updated.preview.targetPane ? "drop-ready" : "dragging");
+    }
+    dispatchResize(updated.wire);
+  };
 
-    const detach = (): void => {
-      clearPending();
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", cancel);
-      setDragging(null);
-    };
-    const finish = (release: PointerEvent): void => {
-      handle.releasePointerCapture?.(release.pointerId);
-      detach();
-      // Flush: whatever the throttle was holding, the release position wins.
-      dispatch(release.clientX, release.clientY);
-    };
-    const cancel = (): void => detach();
+  const beginCommitTimeout = (): void => {
+    clearCommitTimeout();
+    commitTimeout = setTimeout(() => settle(true), 2_000);
+  };
 
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", cancel);
-    onCleanup(clearPending);
+  const finishManipulation = (event: PointerEvent): void => {
+    const state = manipulation();
+    if (!state || state.kind === "idle") return;
+    clearTouchLongPress();
+    const releaseSample = pointerSample(event);
+    // The release coordinate is authoritative even when no pointermove landed
+    // in that frame. Preview it without adopting its wire bookkeeping; finish
+    // still compares against commands that were actually dispatched.
+    const preview = updateWorkspacePaneManipulation(state, releaseSample).preview;
+    const finished = finishWorkspacePaneManipulation(state, releaseSample);
+    if (finished.ignored || !finished.completion) return;
+    clearResizeWireTimer();
+    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+    setManipulation(finished.state);
+    dispatchResize(finished.wire);
+
+    if (
+      finished.completion.kind === "resize" &&
+      (finished.completion.changed || finished.wire.dispatch !== null)
+    ) {
+      setCommittingState(state);
+      setCommittingPreview(preview);
+      setPhase("resize-committing");
+      beginCommitTimeout();
+      return;
+    }
+    if (finished.completion.kind === "swap") {
+      setCommittingState(state);
+      setCommittingPreview(preview);
+      setPhase("swap-committing");
+      beginCommitTimeout();
+      Promise.resolve(
+        props.verbs.invoke("pane.swap", finished.completion.sourcePane, {
+          swapTargetSemanticPaneId: finished.completion.targetPane,
+        }),
+      ).then(
+        (result) => {
+          if (mutationFailed(result)) settle(true);
+        },
+        () => settle(true),
+      );
+      return;
+    }
+    settle(false);
+  };
+
+  function cancelManipulation(event?: PointerEvent): void {
+    const state = manipulation();
+    if (!state || state.kind === "idle") return;
+    clearTouchLongPress();
+    const cancelled = cancelWorkspacePaneManipulation(
+      state,
+      event ? { pointerId: event.pointerId } : undefined,
+    );
+    if (cancelled.ignored) return;
+    clearResizeWireTimer();
+    if (event) (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+    setManipulation(cancelled.state);
+    dispatchResize(cancelled.wire);
+    settle(cancelled.completion?.kind === "cancelled" ? cancelled.completion.rolledBack : false);
+  }
+
+  createEffect(() => {
+    const frame = currentFrame();
+    if (!frame) return;
+    const pending = committingState();
+    const preview = committingPreview();
+    if (pending?.kind === "resize" && preview?.kind === "resize") {
+      const pane = frame.panes.find((candidate) => candidate.pane === preview.pane);
+      const confirmed = preview.axis === "cols" ? pane?.width : pane?.height;
+      if (confirmed === preview.cells) {
+        setLastConfirmedCells(confirmed);
+        settle(false);
+      }
+      return;
+    }
+    if (pending?.kind === "drag" && preview?.kind === "drag" && preview.targetPane) {
+      const beforeSource = pending.snapshot.frame.panes.find(
+        (pane) => pane.pane === preview.sourcePane,
+      );
+      const beforeTarget = pending.snapshot.frame.panes.find(
+        (pane) => pane.pane === preview.targetPane,
+      );
+      const afterSource = frame.panes.find((pane) => pane.pane === preview.sourcePane);
+      const afterTarget = frame.panes.find((pane) => pane.pane === preview.targetPane);
+      if (
+        samePaneGeometry(beforeSource, afterTarget) &&
+        samePaneGeometry(beforeTarget, afterSource)
+      ) {
+        settle(false);
+      }
+      return;
+    }
+  });
+
+  const displayPreview = createMemo(() => committingPreview() ?? localPreview());
+  const resizePreview = createMemo(() => {
+    const preview = displayPreview();
+    return preview?.kind === "resize" ? preview : null;
+  });
+  const dragPreview = createMemo(() => {
+    const preview = displayPreview();
+    return preview?.kind === "drag" ? preview : null;
+  });
+  const displayState = createMemo(() => committingState() ?? manipulation());
+  const displayTiles = createMemo(() => {
+    const state = displayState();
+    return state && state.kind !== "idle" ? state.snapshot.tiles : tiles();
+  });
+  const displayBorders = createMemo(() => {
+    const state = displayState();
+    return state && state.kind !== "idle" ? state.snapshot.borders : borders();
+  });
+  const rectForTile = (tile: ReturnType<typeof layoutTiles>[number]): TileRect => {
+    const state = displayState();
+    const preview = displayPreview();
+    return state?.kind === "resize" && preview?.kind === "resize"
+      ? transformedRectForResize(tile.rect, state, preview)
+      : tile.rect;
+  };
+  const placementFor = (pane: string) =>
+    displayPreview()?.placements.find((placement) => placement.pane === pane);
+
+  const keyboardSwap = (sourcePane: string, key: string): void => {
+    if (!props.verbs.workspaceConnected || phase() !== "idle") return;
+    const frame = currentFrame();
+    const box = currentGridBox();
+    const source = tiles().find((tile) => tile.pane === sourcePane);
+    if (!frame || !source || box.width <= 0 || box.height <= 0) return;
+    const center = (rect: TileRect) => ({
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    });
+    const from = center(source.rect);
+    const candidates = tiles()
+      .filter((tile) => tile.pane !== sourcePane)
+      .map((tile) => ({ tile, point: center(tile.rect) }))
+      .filter(({ point }) => {
+        if (key === "ArrowLeft") return point.x < from.x;
+        if (key === "ArrowRight") return point.x > from.x;
+        if (key === "ArrowUp") return point.y < from.y;
+        if (key === "ArrowDown") return point.y > from.y;
+        return true;
+      })
+      .sort((left, right) => {
+        const leftDistance = Math.hypot(left.point.x - from.x, left.point.y - from.y);
+        const rightDistance = Math.hypot(right.point.x - from.x, right.point.y - from.y);
+        return leftDistance - rightDistance;
+      });
+    const target = candidates[0];
+    if (!target) return;
+    const atMs = performance.now();
+    const started = beginWorkspacePaneDrag(
+      createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }),
+      {
+        pane: sourcePane,
+        pointer: {
+          pointerId: -1,
+          x: box.left + from.x * box.width,
+          y: box.top + from.y * box.height,
+          atMs,
+        },
+        gridBox: box,
+      },
+    );
+    if (started.kind !== "drag") return;
+    const moved = updateWorkspacePaneManipulation(started, {
+      pointerId: -1,
+      x: box.left + target.point.x * box.width,
+      y: box.top + target.point.y * box.height,
+      atMs: atMs + 1,
+    });
+    if (moved.state.kind !== "drag" || moved.preview.kind !== "drag") return;
+    setManipulation(createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }));
+    setCommittingState(moved.state);
+    setCommittingPreview(moved.preview);
+    setPhase("swap-committing");
+    beginCommitTimeout();
+    Promise.resolve(
+      props.verbs.invoke("pane.swap", sourcePane, {
+        swapTargetSemanticPaneId: target.tile.pane,
+      }),
+    ).then(
+      (result) => {
+        if (mutationFailed(result)) settle(true);
+      },
+      () => settle(true),
+    );
+  };
+
+  const keyboardResize = (border: LayoutBorder, delta: number): void => {
+    if (!props.verbs.workspaceConnected || phase() !== "idle") return;
+    const frame = currentFrame();
+    const box = currentGridBox();
+    if (!frame || box.width <= 0 || box.height <= 0) return;
+    const started = beginWorkspacePaneResize(
+      createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }),
+      {
+        borderId: border.id,
+        pointer: { pointerId: -2, x: box.left, y: box.top, atMs: performance.now() },
+        gridBox: box,
+      },
+    );
+    if (started.kind !== "resize") return;
+    const cellPixels =
+      border.orientation === "vertical" ? box.width / frame.cols : box.height / frame.rows;
+    const moved = updateWorkspacePaneManipulation(started, {
+      pointerId: -2,
+      x: box.left + (border.orientation === "vertical" ? delta * cellPixels : 0),
+      y: box.top + (border.orientation === "horizontal" ? delta * cellPixels : 0),
+      atMs: performance.now(),
+    });
+    if (moved.state.kind !== "resize" || moved.preview.kind !== "resize") return;
+    setLastConfirmedCells(border.cells);
+    setManipulation(createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }));
+    setCommittingState(moved.state);
+    setCommittingPreview(moved.preview);
+    setPhase("resize-committing");
+    beginCommitTimeout();
+    Promise.resolve(
+      props.verbs.invoke("pane.resize", border.pane, {
+        resize: {
+          axis: border.orientation === "vertical" ? "cols" : "rows",
+          cells: moved.preview.cells,
+        },
+      }),
+    ).then(
+      (result) => {
+        if (mutationFailed(result)) settle(true);
+      },
+      () => settle(true),
+    );
   };
 
   return (
@@ -572,6 +962,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         data-pane-count={paneCount()}
         data-zoomed={currentFrame()?.zoomed ?? false}
         data-focus-zone="canvas"
+        data-manipulation-phase={phase()}
+        data-manipulation-preview-cells={resizePreview()?.cells}
+        data-last-confirmed-cells={lastConfirmedCells() ?? undefined}
         /*
          * Pane hit testing lives on the AREA, not on the tiles.
          *
@@ -641,72 +1034,142 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         </Show>
 
         <div class="tiled-pane-area__overlay" ref={(element) => (overlayElement = element)}>
-          <For each={tiles()}>
-            {(tile) => (
-              <div
-                class="pane-tile"
-                data-pane={tile.pane}
-                data-active={tile.active}
-                style={{
-                  left: percent(tile.rect.left),
-                  top: percent(tile.rect.top),
-                  width: percent(tile.rect.width),
-                  height: percent(tile.rect.height),
-                }}
-              >
-                <PaneHeader
-                  pane={tile.pane}
-                  title={titleFor(tile.pane)}
-                  icon={iconFor(tile.pane)}
-                  status={frameFor(tile.pane)?.status ?? null}
-                  active={tile.active}
-                  /*
-                   * The header's share of its own tile.
-                   *
-                   * The tile is `pane.height + headerRows` cells tall and the
-                   * header is the one separator row of it, so the header is that
-                   * fraction of the box — which keeps it exactly one terminal row
-                   * tall at every window size without the component ever knowing
-                   * a pixel. A tile with no separator row above it reports 0 and
-                   * the header falls back to a hover overlay on the pane's own
-                   * first row (styles.css), because there is no free row to take.
-                   */
-                  heightFraction={tile.headerRows / (tile.cells.rows + tile.headerRows)}
-                  hoisted={tile.headerRows === 1}
-                  onOpenMenu={(pointer) => props.onOpenPaneMenu?.(tile.pane, pointer)}
-                  onClose={() => props.verbs.invoke("pane.kill", tile.pane)}
-                />
-                <span class="sr-only">
-                  {titleFor(tile.pane)}
-                  {tile.active ? ", active pane" : ""}
-                </span>
-              </div>
-            )}
-          </For>
-          <For each={borders()}>
+          <Index each={displayTiles()}>
+            {(tile) => {
+              const rect = createMemo(() => rectForTile(tile()));
+              const placement = createMemo(() => placementFor(tile().pane));
+              return (
+                <div
+                  class="pane-tile"
+                  data-pane={tile().pane}
+                  data-active={tile().active}
+                  data-drop-target={dragPreview()?.targetPane === tile().pane ? "true" : undefined}
+                  data-elevated={placement()?.elevated ?? false}
+                  style={{
+                    left: percent(rect().left),
+                    top: percent(rect().top),
+                    width: percent(rect().width),
+                    height: percent(rect().height),
+                    transform: placement()
+                      ? `translate3d(${placement()!.transform.translateX}px, ${placement()!.transform.translateY}px, 0) scale(${placement()!.transform.scaleX}, ${placement()!.transform.scaleY})`
+                      : undefined,
+                    opacity: placement()?.opacity,
+                  }}
+                >
+                  <PaneHeader
+                    pane={tile().pane}
+                    title={titleFor(tile().pane)}
+                    icon={iconFor(tile().pane)}
+                    status={frameFor(tile().pane)?.status ?? null}
+                    active={tile().active}
+                    /*
+                     * The header's share of its own tile.
+                     *
+                     * The tile is `pane.height + headerRows` cells tall and the
+                     * header is the one separator row of it, so the header is that
+                     * fraction of the box — which keeps it exactly one terminal row
+                     * tall at every window size without the component ever knowing
+                     * a pixel. A tile with no separator row above it reports 0 and
+                     * the header falls back to a hover overlay on the pane's own
+                     * first row (styles.css), because there is no free row to take.
+                     */
+                    heightFraction={tile().headerRows / (tile().cells.rows + tile().headerRows)}
+                    hoisted={tile().headerRows === 1}
+                    onOpenMenu={(pointer) => props.onOpenPaneMenu?.(tile().pane, pointer)}
+                    onClose={() => props.verbs.invoke("pane.kill", tile().pane)}
+                    dragging={dragPreview()?.sourcePane === tile().pane}
+                    onPointerDown={(event) => beginPaneDrag(tile().pane, event)}
+                    onPointerMove={moveManipulation}
+                    onPointerUp={finishManipulation}
+                    onPointerCancel={(event) => cancelManipulation(event)}
+                    onKeyboardSwap={(key) => keyboardSwap(tile().pane, key)}
+                  />
+                  <span class="sr-only">
+                    {titleFor(tile().pane)}
+                    {tile().active ? ", active pane" : ""}
+                  </span>
+                </div>
+              );
+            }}
+          </Index>
+          <Index each={displayBorders()}>
             {(border) => (
               <div
                 class="pane-border"
-                data-pane-border={border.id}
-                data-orientation={border.orientation}
-                data-dragging={dragging()?.id === border.id}
+                data-pane-border={border().id}
+                data-orientation={border().orientation}
+                data-dragging={
+                  displayState()?.kind === "resize" &&
+                  (displayState() as WorkspacePaneResize).border.id === border().id
+                }
                 role="separator"
-                aria-orientation={border.orientation}
-                aria-label={`Resize pane ${border.orientation === "vertical" ? "width" : "height"}`}
+                tabIndex={0}
+                aria-orientation={border().orientation}
+                aria-label={`Resize pane ${border().orientation === "vertical" ? "width" : "height"}`}
+                aria-valuemin={1}
+                aria-valuemax={
+                  border().orientation === "vertical"
+                    ? (displayState()?.snapshot.frame.cols ?? currentFrame()?.cols ?? 1)
+                    : (displayState()?.snapshot.frame.rows ?? currentFrame()?.rows ?? 1)
+                }
+                aria-valuenow={resizePreview()?.cells ?? border().cells}
+                aria-valuetext={`${resizePreview()?.cells ?? border().cells} ${border().orientation === "vertical" ? "columns" : "rows"}`}
                 style={{
-                  left: percent(border.rect.left),
-                  top: percent(border.rect.top),
-                  width: percent(border.rect.width),
-                  height: percent(border.rect.height),
+                  left: percent(border().rect.left),
+                  top: percent(border().rect.top),
+                  width: percent(border().rect.width),
+                  height: percent(border().rect.height),
+                  transform:
+                    displayState()?.kind === "resize" &&
+                    (displayState() as WorkspacePaneResize).border.id === border().id &&
+                    resizePreview()
+                      ? `translate3d(${resizePreview()!.guideTransform.translateX}px, ${resizePreview()!.guideTransform.translateY}px, 0)`
+                      : undefined,
                 }}
                 onPointerDown={(event) => {
                   if (event.button !== 0) return;
                   event.preventDefault();
-                  beginDrag(border, event);
+                  beginResize(border().id, event);
+                }}
+                onPointerMove={moveManipulation}
+                onPointerUp={finishManipulation}
+                onPointerCancel={(event) => cancelManipulation(event)}
+                onKeyDown={(event) => {
+                  const vertical = border().orientation === "vertical";
+                  const decrease =
+                    (vertical && event.key === "ArrowLeft") ||
+                    (!vertical && event.key === "ArrowUp");
+                  const increase =
+                    (vertical && event.key === "ArrowRight") ||
+                    (!vertical && event.key === "ArrowDown");
+                  if (!decrease && !increase) return;
+                  event.preventDefault();
+                  keyboardResize(border(), increase ? 1 : -1);
                 }}
               />
             )}
-          </For>
+          </Index>
+          <Show when={dragPreview()?.dropRect}>
+            <div
+              class="pane-drop-ghost"
+              aria-hidden="true"
+              style={{
+                left: percent(dragPreview()!.dropRect!.left),
+                top: percent(dragPreview()!.dropRect!.top),
+                width: percent(dragPreview()!.dropRect!.width),
+                height: percent(dragPreview()!.dropRect!.height),
+              }}
+            />
+          </Show>
+          <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {dragPreview()?.targetPane
+              ? `${titleFor(dragPreview()!.sourcePane)} will swap with ${titleFor(dragPreview()!.targetPane!)}`
+              : phase() === "rollback"
+                ? "Pane manipulation cancelled"
+                : phase() === "swap-committing"
+                  ? "Swapping panes"
+                  : ""}
+          </span>
         </div>
       </div>
       <Show when={props.mirror}>
@@ -799,6 +1262,12 @@ function PaneHeader(props: {
   readonly active: boolean;
   readonly heightFraction: number;
   readonly hoisted: boolean;
+  readonly dragging: boolean;
+  readonly onPointerDown: (event: PointerEvent) => void;
+  readonly onPointerMove: (event: PointerEvent) => void;
+  readonly onPointerUp: (event: PointerEvent) => void;
+  readonly onPointerCancel: (event: PointerEvent) => void;
+  readonly onKeyboardSwap: (key: string) => void;
   readonly onOpenMenu: (pointer: { readonly x: number; readonly y: number }) => void;
   readonly onClose: () => void;
 }) {
@@ -826,7 +1295,30 @@ function PaneHeader(props: {
       onPointerLeave={disarm}
     >
       <Icon class="pane-tile__icon" icon={props.icon} size="control" />
-      <span class="pane-tile__title">{props.title}</span>
+      <span
+        class="pane-tile__title"
+        data-pane-drag-handle={props.pane}
+        data-dragging={props.dragging}
+        role="button"
+        tabIndex={0}
+        aria-label={`Drag ${props.title} to swap panes; use Alt plus an arrow key with the keyboard`}
+        aria-pressed={props.dragging}
+        aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+        title={`Drag to swap ${props.title}; keyboard: Alt+Arrow`}
+        onPointerDown={props.onPointerDown}
+        onPointerMove={props.onPointerMove}
+        onPointerUp={props.onPointerUp}
+        onPointerCancel={props.onPointerCancel}
+        onKeyDown={(event) => {
+          const directional = event.altKey && event.key.startsWith("Arrow");
+          const nearest = event.key === "Enter" || event.key === " ";
+          if (!directional && !nearest) return;
+          event.preventDefault();
+          props.onKeyboardSwap(directional ? event.key : "nearest");
+        }}
+      >
+        {props.title}
+      </span>
       <Show when={props.status}>
         {(status) => (
           <i class="pane-tile__status" data-tone={status().tone} title={status().label} />
@@ -838,6 +1330,7 @@ function PaneHeader(props: {
         data-pane-menu={props.pane}
         aria-label={`Actions for ${props.title}`}
         title={`Actions for ${props.title}`}
+        onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
           disarm();
@@ -859,6 +1352,7 @@ function PaneHeader(props: {
           armed() ? `Close ${props.title} — this cannot be undone` : `Close ${props.title}`
         }
         title={armed() ? "Click again to close — this cannot be undone" : `Close ${props.title}`}
+        onPointerDown={(event) => event.stopPropagation()}
         onBlur={disarm}
         onKeyDown={(event) => {
           if (event.key === "Escape") disarm();

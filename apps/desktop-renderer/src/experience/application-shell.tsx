@@ -1668,7 +1668,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                         ? () => setCreatePaneOpen(true)
                         : undefined,
                       invoke: (verbId, semanticPaneId, args) => {
-                        void verbAccess.invoke(
+                        return verbAccess.invoke(
                           verbId,
                           { workspaceName: verbWorkspaceName(), semanticPaneId },
                           args,

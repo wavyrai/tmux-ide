@@ -207,6 +207,7 @@ describe("PtyTmuxAttachmentLauncher", () => {
       argv: readonly string[];
       cwd: string;
       env: NodeJS.ProcessEnv;
+      timeoutMs: number;
     }> = [];
     const transport = new PtyTmuxAttachmentLauncher({
       socketSelector: { kind: "name", name: "owned-socket" },
@@ -220,7 +221,13 @@ describe("PtyTmuxAttachmentLauncher", () => {
         SECRET_TOKEN: "must-not-cross",
       },
       proofCommandExecutor(executable, argv, options) {
-        proofCalls.push({ executable, argv: [...argv], cwd: options.cwd, env: options.env });
+        proofCalls.push({
+          executable,
+          argv: [...argv],
+          cwd: options.cwd,
+          env: options.env,
+          timeoutMs: options.timeoutMs,
+        });
         return `${adapter.lastSpawned()!.pid}\t${selectedPlan.identity.viewSessionName}\n`;
       },
     });
@@ -232,6 +239,7 @@ describe("PtyTmuxAttachmentLauncher", () => {
       executable: "/trusted/bin/tmux",
       cwd: "/daemon/project",
       env: { TERM: "screen-256color" },
+      timeoutMs: 2_000,
     });
     expect(proofCalls[0]!.env).not.toHaveProperty("PATH");
     expect(proofCalls[0]!.env).not.toHaveProperty("TMUX_TMPDIR");

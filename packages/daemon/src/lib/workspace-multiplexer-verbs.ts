@@ -1,6 +1,6 @@
 /**
- * The multiplexer mutation authority: split, kill, rename, zoom, select and
- * resize.
+ * The multiplexer mutation authority: split, kill, rename, zoom, select, swap
+ * and resize.
  *
  * This is the tmux authority the m48 audit found missing. It follows the
  * `workspace.pane.create` discipline deliberately and in full — one serialized
@@ -63,7 +63,9 @@ export type WorkspaceMultiplexerErrorCode =
   /** Refused: a one-pane window has no border to move. */
   | "single_pane_window"
   /** Refused: a zoomed pane fills its window, so its size is not the layout's. */
-  | "zoomed_window_refused";
+  | "zoomed_window_refused"
+  /** Refused: direct manipulation may only reorder panes inside one window. */
+  | "different_window_refused";
 
 const ERROR_MESSAGES: Readonly<Record<WorkspaceMultiplexerErrorCode, string>> = {
   daemon_instance_mismatch: "The daemon generation changed before the verb ran.",
@@ -82,6 +84,7 @@ const ERROR_MESSAGES: Readonly<Record<WorkspaceMultiplexerErrorCode, string>> = 
   mutation_unverified: "tmux accepted the change but the result could not be verified.",
   single_pane_window: "This window has only one pane, so it has no border to move.",
   zoomed_window_refused: "Unzoom this window before resizing its panes.",
+  different_window_refused: "Panes can only be swapped inside the same window.",
 };
 
 export class WorkspaceMultiplexerError extends Error {
@@ -109,6 +112,7 @@ export class WorkspaceMultiplexerError extends Error {
  */
 export interface MultiplexerPaneRow {
   readonly paneId: string;
+  readonly paneIndex: number;
   readonly windowId: string;
   readonly semanticPaneId: string | null;
   readonly semanticWindowId: string | null;
@@ -120,6 +124,7 @@ export interface MultiplexerPaneRow {
 
 const PANE_FIELDS = [
   "#{pane_id}",
+  "#{pane_index}",
   "#{window_id}",
   `#{${SEMANTIC_PANE_OPTION}}`,
   `#{${SEMANTIC_WINDOW_OPTION}}`,
@@ -142,26 +147,37 @@ export function parseMultiplexerPaneRows(output: string): readonly MultiplexerPa
   const rows: MultiplexerPaneRow[] = [];
   for (const line of output.split("\n")) {
     const fields = line.split("\t");
-    if (fields.length !== 8) {
+    if (fields.length !== 9) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape",
       });
     }
-    const [paneId, windowId, paneStamp, windowStamp, paneCount, zoomed, active, creationId] =
-      fields as [string, string, string, string, string, string, string, string];
+    const [
+      paneId,
+      paneIndex,
+      windowId,
+      paneStamp,
+      windowStamp,
+      paneCount,
+      zoomed,
+      active,
+      creationId,
+    ] = fields as [string, string, string, string, string, string, string, string, string];
     if (!RUNTIME_PANE.test(paneId) || !RUNTIME_WINDOW.test(windowId)) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape",
       });
     }
     const count = Number(paneCount);
-    if (!Number.isInteger(count) || count < 1) {
+    const index = Number(paneIndex);
+    if (!Number.isInteger(count) || count < 1 || !Number.isInteger(index) || index < 0) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape",
       });
     }
     rows.push({
       paneId,
+      paneIndex: index,
       windowId,
       semanticPaneId: paneStamp === "" ? null : paneStamp,
       semanticWindowId: windowStamp === "" ? null : windowStamp,
@@ -425,6 +441,8 @@ export class WorkspaceMultiplexerAuthority {
         return this.#zoom(intent, sessionName, envelope);
       case "workspace.pane.select":
         return this.#select(intent, sessionName, envelope);
+      case "workspace.pane.swap":
+        return this.#swap(intent, sessionName, envelope);
       case "workspace.pane.resize":
         return this.#resize(intent, sessionName, envelope);
     }
@@ -816,6 +834,65 @@ export class WorkspaceMultiplexerAuthority {
       verb: "workspace.pane.select",
       outcome: wasActive ? "unchanged" : "applied",
       semanticPaneId: intent.semanticPaneId,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // swap
+  // -------------------------------------------------------------------------
+
+  /** Exchange two semantic panes without exposing a tmux target to the caller. */
+  #swap(
+    intent: Extract<WorkspaceMultiplexerIntent, { verb: "workspace.pane.swap" }>,
+    sessionName: string,
+    envelope: { operationId: string; daemonInstanceId: string; workspaceName: string },
+  ): WorkspaceMultiplexerMutationResult {
+    const rows = this.#panes(sessionName);
+    const source = resolvePaneRow(rows, intent.sourceSemanticPaneId);
+    const target = resolvePaneRow(rows, intent.targetSemanticPaneId);
+    if (source.paneId === target.paneId) {
+      return {
+        ...envelope,
+        verb: "workspace.pane.swap",
+        outcome: "unchanged",
+        sourceSemanticPaneId: intent.sourceSemanticPaneId,
+        targetSemanticPaneId: intent.targetSemanticPaneId,
+      };
+    }
+    if (source.windowId !== target.windowId) {
+      throw new WorkspaceMultiplexerError("different_window_refused", {
+        sourceSemanticPaneId: intent.sourceSemanticPaneId,
+        targetSemanticPaneId: intent.targetSemanticPaneId,
+      });
+    }
+
+    this.#io.runTmux(["swap-pane", "-s", source.paneId, "-t", target.paneId]);
+
+    // Prove the two exact runtime panes exchanged positions. Their semantic
+    // stamps follow their processes, while the indices are the layout slots a
+    // direct-manipulation surface asked to exchange.
+    const after = this.#panes(sessionName);
+    const sourceAfter = resolvePaneRow(after, intent.sourceSemanticPaneId);
+    const targetAfter = resolvePaneRow(after, intent.targetSemanticPaneId);
+    if (
+      sourceAfter.paneId !== source.paneId ||
+      targetAfter.paneId !== target.paneId ||
+      sourceAfter.windowId !== source.windowId ||
+      targetAfter.windowId !== target.windowId ||
+      sourceAfter.paneIndex !== target.paneIndex ||
+      targetAfter.paneIndex !== source.paneIndex
+    ) {
+      throw new WorkspaceMultiplexerError("mutation_unverified", {
+        operationId: envelope.operationId,
+        reason: "pane_positions_not_swapped",
+      });
+    }
+    return {
+      ...envelope,
+      verb: "workspace.pane.swap",
+      outcome: "applied",
+      sourceSemanticPaneId: intent.sourceSemanticPaneId,
+      targetSemanticPaneId: intent.targetSemanticPaneId,
     };
   }
 

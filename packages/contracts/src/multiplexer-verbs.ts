@@ -255,6 +255,17 @@ const ENTRIES: readonly MultiplexerVerbEntry[] = [
   },
   {
     version: MULTIPLEXER_VERB_TABLE_VERSION,
+    id: "pane.swap",
+    label: "Swap panes",
+    description: "Exchange this pane's position with another pane in the same tmux window.",
+    scope: "pane",
+    execution: { kind: "daemon-action", action: "workspace.pane.swap" },
+    availabilityInputs: ["workspaceConnected", "windowPaneCount"],
+    destructive: false,
+    tmuxKeyHint: null,
+  },
+  {
+    version: MULTIPLEXER_VERB_TABLE_VERSION,
     id: "pane.resize",
     label: "Resize pane",
     description: "Move the border between this pane and its neighbour, changing tmux's own layout.",
@@ -371,6 +382,10 @@ export function multiplexerVerbAvailability(
         : unavailable("this window has only one pane");
     case "pane.select":
       return facts.targetIsActivePane! ? unavailable("this pane is already active") : AVAILABLE;
+    case "pane.swap":
+      return facts.windowPaneCount! > 1
+        ? AVAILABLE
+        : unavailable("this window has no other pane to swap with");
     case "pane.resize":
       return facts.windowPaneCount! > 1
         ? AVAILABLE

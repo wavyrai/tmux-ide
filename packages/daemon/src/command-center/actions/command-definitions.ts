@@ -48,6 +48,7 @@ const ACTION_COMMAND_METADATA: Record<ActionName, ActionCommandMetadata> = {
   "workspace.rename": { label: "Rename session or window", category: "workspace" },
   "workspace.pane.zoom.toggle": { label: "Toggle pane zoom", category: "workspace" },
   "workspace.pane.select": { label: "Focus pane", category: "workspace" },
+  "workspace.pane.swap": { label: "Swap panes", category: "workspace" },
   "workspace.pane.resize": { label: "Resize pane", category: "workspace" },
 };
 

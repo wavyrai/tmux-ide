@@ -40,6 +40,7 @@ describe("building a verb intent", () => {
   it("refuses to build a pane verb against a target with no pane", () => {
     expect(multiplexerVerbIntent("pane.kill", sessionOnly)).toBeNull();
     expect(multiplexerVerbIntent("pane.select", sessionOnly)).toBeNull();
+    expect(multiplexerVerbIntent("pane.swap", sessionOnly)).toBeNull();
     expect(multiplexerVerbIntent("window.zoom.toggle", sessionOnly)).toBeNull();
   });
 
@@ -101,6 +102,7 @@ describe("the verb table accessor", () => {
       "pane.split.down",
       "pane.kill",
       "pane.select",
+      "pane.swap",
       "pane.resize",
     ]);
     // Disabled-with-reason, not hidden: the rule stays learnable.
@@ -141,6 +143,29 @@ describe("the verb table accessor", () => {
         cells: 96,
       },
     });
+  });
+
+  it("builds a swap from two semantic pane identities", async () => {
+    const { host, invokeVerb } = hostWith();
+    await useVerbTable(host).invoke("pane.swap", paneTarget, {
+      swapTargetSemanticPaneId: "pane.two",
+    });
+    expect(invokeVerb).toHaveBeenCalledWith({
+      verbId: "pane.swap",
+      intent: {
+        verb: "workspace.pane.swap",
+        workspaceName: "workspace.product",
+        sourceSemanticPaneId: "pane.one",
+        targetSemanticPaneId: "pane.two",
+      },
+    });
+  });
+
+  it("refuses a swap without a target rather than guessing one", async () => {
+    const { host, invokeVerb } = hostWith();
+    const result = await useVerbTable(host).invoke("pane.swap", paneTarget);
+    expect(result).toMatchObject({ status: "error" });
+    expect(invokeVerb).not.toHaveBeenCalled();
   });
 
   it("refuses a resize with no size to apply rather than inventing one", async () => {

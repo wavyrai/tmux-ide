@@ -34,6 +34,7 @@ describe("the multiplexer verb table", () => {
       "pane.split.down",
       "pane.kill",
       "pane.select",
+      "pane.swap",
       "pane.resize",
       "stack.activate",
     ]);
@@ -94,6 +95,7 @@ describe("the multiplexer verb table", () => {
       "pane.split.down",
       "pane.kill",
       "pane.select",
+      "pane.swap",
       "pane.resize",
     ]);
   });
@@ -108,6 +110,20 @@ describe("the multiplexer verb table", () => {
     expect(
       multiplexerVerbAvailability(resize, { workspaceConnected: true, windowPaneCount: 1 }),
     ).toMatchObject({ available: false });
+  });
+
+  it("offers pane swap only when another pane exists in the window", () => {
+    const swap = verb("pane.swap");
+    expect(
+      multiplexerVerbAvailability(swap, { workspaceConnected: true, windowPaneCount: 2 }),
+    ).toEqual({ available: true });
+    expect(
+      multiplexerVerbAvailability(swap, { workspaceConnected: true, windowPaneCount: 1 }),
+    ).toMatchObject({ available: false });
+    expect(swap.execution).toEqual({
+      kind: "daemon-action",
+      action: "workspace.pane.swap",
+    });
   });
 
   it("recognises its own ids and rejects others", () => {

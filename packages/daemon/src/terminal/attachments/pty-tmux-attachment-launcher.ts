@@ -22,6 +22,7 @@ import {
 
 const MAX_PROOF_OUTPUT_BYTES = 64 * 1024;
 const MAX_PROOF_CLIENTS = 256;
+const DEFAULT_READINESS_TIMEOUT_MS = 2_000;
 const PROOF_MISMATCH_SENTINEL = "__tmux_ide_pty_view_proof_mismatch_v1__";
 const SafeTerminalValue = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
 const SafeColorTerminalValue = /^(?:truecolor|24bit)$/u;
@@ -65,7 +66,11 @@ export interface PtyTmuxAttachmentLauncherOptions {
   readonly proofCommandExecutor?: (
     executable: string,
     argv: readonly string[],
-    options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv },
+    options: {
+      readonly cwd: string;
+      readonly env: NodeJS.ProcessEnv;
+      readonly timeoutMs: number;
+    },
   ) => string | Buffer;
   readonly tmuxExecutable?: string;
   readonly environment?: NodeJS.ProcessEnv;
@@ -189,7 +194,11 @@ function productionProofRunner(
   execute: (
     executable: string,
     argv: readonly string[],
-    options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv },
+    options: {
+      readonly cwd: string;
+      readonly env: NodeJS.ProcessEnv;
+      readonly timeoutMs: number;
+    },
   ) => string | Buffer = (executable, argv, options) =>
     execFileSync(executable, [...argv], {
       cwd: options.cwd,
@@ -197,7 +206,9 @@ function productionProofRunner(
       env: options.env,
       maxBuffer: MAX_PROOF_OUTPUT_BYTES,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: options.timeoutMs,
     }),
+  timeoutMs = DEFAULT_READINESS_TIMEOUT_MS,
 ): TmuxAttachmentCommandRunner {
   return {
     run(command) {
@@ -206,6 +217,7 @@ function productionProofRunner(
         const stdout = execute(tmuxExecutable, command.argv, {
           cwd: trustedCwd,
           env: { ...environment },
+          timeoutMs,
         });
         return { status: "ok", stdout: String(stdout) };
       } catch (error) {
@@ -278,6 +290,11 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
     if (options.proofRunner && options.proofCommandExecutor) {
       throw new TypeError("proof runner and proof command executor are mutually exclusive");
     }
+    this.#timeoutMs = boundedPositiveInteger(
+      options.readinessTimeoutMs,
+      DEFAULT_READINESS_TIMEOUT_MS,
+      30_000,
+    );
     this.#proofRunner =
       options.proofRunner ??
       productionProofRunner(
@@ -285,8 +302,8 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
         this.#trustedCwd,
         this.#environment,
         options.proofCommandExecutor,
+        this.#timeoutMs,
       );
-    this.#timeoutMs = boundedPositiveInteger(options.readinessTimeoutMs, 2_000, 30_000);
     this.#pollIntervalMs = boundedPositiveInteger(options.readinessPollIntervalMs, 20, 1_000);
     this.#claimTimeoutMs = boundedPositiveInteger(options.claimTimeoutMs, 2_000, 30_000);
     this.#maxEarlyBytes = boundedPositiveInteger(

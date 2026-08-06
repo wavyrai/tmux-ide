@@ -80,4 +80,5 @@ export const workspaceSessionKillHandler = verbHandler("workspace.session.kill")
 export const workspaceRenameHandler = verbHandler("workspace.rename");
 export const workspacePaneZoomToggleHandler = verbHandler("workspace.pane.zoom.toggle");
 export const workspacePaneSelectHandler = verbHandler("workspace.pane.select");
+export const workspacePaneSwapHandler = verbHandler("workspace.pane.swap");
 export const workspacePaneResizeHandler = verbHandler("workspace.pane.resize");

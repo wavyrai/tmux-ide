@@ -32,6 +32,57 @@ export type TerminalSurfacePhase =
   | "error";
 
 /**
+ * Renderer-local first-attach milestones (m50 follow-up #169).
+ *
+ * These are deliberately NOT part of the daemon/attachment wire contract.
+ * They name what this surface can prove happened, and are exposed as bounded
+ * data attributes so browser failure artifacts identify the stalled boundary
+ * without leaking a ticket, daemon address, or private tmux identity.
+ */
+export type TerminalSurfaceAttachPhase =
+  | "unavailable"
+  | "renderer-loading"
+  | "renderer-ready"
+  | "waiting-for-viewport"
+  | "attach-requested"
+  | "transport-ready"
+  | "attachment-ready"
+  | "awaiting-first-output"
+  | "first-output-received"
+  | "painting-first-frame"
+  | "live"
+  | "disconnected"
+  | "failed";
+
+interface TerminalSurfaceAttachTraceEntry {
+  readonly phase: TerminalSurfaceAttachPhase;
+  /** Monotonic milliseconds since this attach attempt began. */
+  readonly atMs: number;
+}
+
+const ATTACH_PHASE_RANK: Readonly<Record<TerminalSurfaceAttachPhase, number>> = Object.freeze({
+  unavailable: 0,
+  "renderer-loading": 1,
+  "renderer-ready": 2,
+  "waiting-for-viewport": 3,
+  "attach-requested": 4,
+  "transport-ready": 5,
+  "attachment-ready": 6,
+  "awaiting-first-output": 7,
+  "first-output-received": 8,
+  "painting-first-frame": 9,
+  live: 10,
+  disconnected: 11,
+  failed: 11,
+});
+
+const MAX_ATTACH_TRACE_ENTRIES = 16;
+
+function monotonicNow(): number {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+/**
  * Provisional viewport for a size-passive attach (m41 attach-5). The origin
  * window is attached size-passive (`-f ignore-size`), so tmux discards the
  * client viewport when sizing the window; the request only needs a valid grid.
@@ -182,6 +233,15 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const [phase, setPhase] = createSignal<TerminalSurfacePhase>(
     props.transport ? "measuring" : "unavailable",
   );
+  const initialAttachPhase: TerminalSurfaceAttachPhase = props.transport
+    ? "renderer-loading"
+    : "unavailable";
+  const [attachPhase, setAttachPhase] =
+    createSignal<TerminalSurfaceAttachPhase>(initialAttachPhase);
+  const [attachTrace, setAttachTrace] = createSignal<readonly TerminalSurfaceAttachTraceEntry[]>([
+    { phase: initialAttachPhase, atMs: 0 },
+  ]);
+  const [attachAttempt, setAttachAttempt] = createSignal(props.transport ? 1 : 0);
   const [reason, setReason] = createSignal<string | null>(null);
   const [hasValidatedFrame, setHasValidatedFrame] = createSignal(false);
   const [sourceGrid, setSourceGrid] = createSignal<TerminalAttachmentViewport | null>(null);
@@ -211,6 +271,32 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let rendererLoadGeneration = 0;
   let markerWatcher = createWidgetMarkerByteWatcher();
   let widgetScan: ReturnType<typeof setTimeout> | null = null;
+  let attachTraceStartedAt = monotonicNow();
+
+  /**
+   * Record each milestone once, but never let a late callback move the visible
+   * diagnostic backwards. Early output is legal: the transport listener can
+   * consume the seed before connect() resolves with its attachment handle.
+   */
+  const recordAttachPhase = (next: TerminalSurfaceAttachPhase): void => {
+    const currentTrace = attachTrace();
+    if (!currentTrace.some((entry) => entry.phase === next)) {
+      const entry = {
+        phase: next,
+        atMs: Math.max(0, Math.round(monotonicNow() - attachTraceStartedAt)),
+      } satisfies TerminalSurfaceAttachTraceEntry;
+      setAttachTrace([...currentTrace, entry].slice(-MAX_ATTACH_TRACE_ENTRIES));
+    }
+    if (ATTACH_PHASE_RANK[next] >= ATTACH_PHASE_RANK[attachPhase()]) setAttachPhase(next);
+  };
+
+  const resetAttachTrace = (available: boolean): void => {
+    attachTraceStartedAt = monotonicNow();
+    const next: TerminalSurfaceAttachPhase = available ? "renderer-loading" : "unavailable";
+    setAttachPhase(next);
+    setAttachTrace([{ phase: next, atMs: 0 }]);
+    setAttachAttempt((attempt) => attempt + 1);
+  };
 
   /**
    * Read the grid and decide what this pane is showing (m49.7).
@@ -342,6 +428,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         }
         setReason(validatedTransportReason(result.error.reason));
         setPhase("error");
+        recordAttachPhase("failed");
         generation += 1;
         disposeAttachment();
       })
@@ -349,6 +436,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         if (disposed || attachment !== activeAttachment) return;
         setReason("The desktop host could not resize this terminal.");
         setPhase("error");
+        recordAttachPhase("failed");
         generation += 1;
         disposeAttachment();
       })
@@ -365,6 +453,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     if (!activeRenderer || epoch.pending >= MAX_PENDING_OUTPUT_WRITES) {
       setReason("The terminal renderer could not keep up with the native output stream.");
       setPhase("error");
+      recordAttachPhase("failed");
       generation += 1;
       disposeAttachment();
       return Promise.reject(OUTPUT_NOT_CONSUMED);
@@ -410,6 +499,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         if (!retiredOrStale) {
           setReason("The terminal renderer could not consume native output.");
           setPhase("error");
+          recordAttachPhase("failed");
           generation += 1;
           disposeAttachment();
         }
@@ -430,8 +520,15 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       return event.type === "output" ? Promise.reject(OUTPUT_NOT_CONSUMED) : undefined;
     }
     if (isNativeTerminalOutput(event)) {
+      if (!hasValidatedFrame()) {
+        recordAttachPhase("first-output-received");
+        recordAttachPhase("painting-first-frame");
+      }
       return queueOutput(event.bytes, activeGeneration).then(() => {
-        if (!disposed && activeGeneration === generation) setHasValidatedFrame(true);
+        if (!disposed && activeGeneration === generation) {
+          setHasValidatedFrame(true);
+          recordAttachPhase("live");
+        }
       });
     }
     if (event.type === "geometry") {
@@ -452,12 +549,14 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
     if (event.type !== "state") return;
     if (event.state === "connected") {
+      recordAttachPhase("transport-ready");
       currentViewport = event.clientViewport;
       setSourceGrid(event.sourceGrid);
       setClientViewport(event.clientViewport);
       if (attachment) {
         setReason(null);
         setPhase("connected");
+        if (!hasValidatedFrame()) recordAttachPhase("awaiting-first-output");
         if (sizePassive()) {
           // Size-passive card: mirror the origin window's grid; never resize tmux.
           renderer?.resizeGrid(event.sourceGrid);
@@ -477,6 +576,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         : "The native tmux attachment closed.",
     );
     setPhase("disconnected");
+    recordAttachPhase("disconnected");
     generation += 1;
     disposeAttachment();
   };
@@ -487,6 +587,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     disposeAttachment();
     setReason(message);
     setPhase("error");
+    recordAttachPhase("failed");
   };
 
   const connect = (viewport: TerminalAttachmentViewport): void => {
@@ -494,6 +595,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     const activeGeneration = ++generation;
     setReason(null);
     setPhase("connecting");
+    recordAttachPhase("attach-requested");
     let request: TerminalAttachRequest;
     try {
       request = validateNativeTerminalRequest({
@@ -522,6 +624,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         }
         attachment = result.attachment;
         setPhase("connected");
+        recordAttachPhase("attachment-ready");
+        if (!hasValidatedFrame()) recordAttachPhase("awaiting-first-output");
         const latestViewport = latestMeasuredViewport;
         if (currentViewport && latestViewport && !sameViewport(currentViewport, latestViewport)) {
           pendingResize = latestViewport;
@@ -554,7 +658,10 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
     const viewport = usableViewport(renderer?.fit() ?? null);
     if (!viewport) {
-      if (!attachment && props.transport) setPhase("measuring");
+      if (!attachment && props.transport) {
+        setPhase("measuring");
+        recordAttachPhase("waiting-for-viewport");
+      }
       return;
     }
     latestMeasuredViewport = viewport;
@@ -601,6 +708,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     setSourceGrid(null);
     setClientViewport(null);
     setHasValidatedFrame(false);
+    resetAttachTrace(Boolean(props.transport));
     setPhase(props.transport ? "measuring" : "unavailable");
     ensureRenderer();
     scheduleFit();
@@ -609,6 +717,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const failInput = (message: string): void => {
     setReason(message);
     setPhase("error");
+    recordAttachPhase("failed");
     generation += 1;
     disposeAttachment();
   };
@@ -703,6 +812,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
     renderer = nextRenderer;
     renderer.open(mount);
+    if (props.transport) recordAttachPhase("renderer-ready");
     renderer.refreshTheme();
     renderer.setReducedMotion(props.reducedMotion ?? false);
     if (props.focused) renderer.focus();
@@ -733,6 +843,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         if (disposed || activeLoad !== rendererLoadGeneration) return;
         setReason("The native terminal renderer could not be loaded.");
         setPhase("error");
+        recordAttachPhase("failed");
       });
   };
 
@@ -782,6 +893,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     setClientViewport(null);
     setReason(null);
     setHasValidatedFrame(false);
+    resetAttachTrace(Boolean(nextTransport));
     setPhase(nextTransport ? "measuring" : "unavailable");
     ensureRenderer();
     scheduleFit();
@@ -791,6 +903,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     <div
       class="terminal-surface"
       data-phase={phase()}
+      data-attach-phase={props.transport ? attachPhase() : undefined}
+      data-attach-attempt={props.transport ? attachAttempt() : undefined}
+      data-attach-trace={props.transport ? JSON.stringify(attachTrace()) : undefined}
       data-focused={props.focused ?? false}
       data-size-passive={sizePassive()}
       data-geometry-ownership={props.geometryOwnership ?? "passive"}
@@ -829,7 +944,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           <WidgetSurface resolution={resolution} onRequestFocus={() => renderer?.focus()} />
         )}
       </Show>
-      <Show when={phase() !== "connected"}>
+      <Show when={phase() !== "connected" || !hasValidatedFrame()}>
         <div
           class="terminal-surface__state"
           role={phase() === "error" || phase() === "disconnected" ? "alert" : "status"}
@@ -847,7 +962,15 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
             </Match>
             <Match when={phase() === "connecting"}>
               <strong>Connecting to tmux</strong>
-              <span>The desktop host is attaching this semantic pane.</span>
+              <span>
+                {attachPhase() === "transport-ready"
+                  ? "The terminal transport is ready; waiting for the attachment handle."
+                  : "The desktop host is issuing and redeeming this semantic attachment."}
+              </span>
+            </Match>
+            <Match when={phase() === "connected" && !hasValidatedFrame()}>
+              <strong>Loading terminal contents</strong>
+              <span>The attachment is ready; waiting for xterm to paint its first frame.</span>
             </Match>
             <Match when={phase() === "disconnected"}>
               <strong>Terminal disconnected</strong>

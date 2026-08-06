@@ -52,6 +52,7 @@ import {
   workspacePaneKillHandler,
   workspacePaneResizeHandler,
   workspacePaneSelectHandler,
+  workspacePaneSwapHandler,
   workspacePaneZoomToggleHandler,
   workspaceRenameHandler,
   workspaceSessionKillHandler,
@@ -238,6 +239,12 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["workspace.pane.select"].result,
     handler: (input) => workspacePaneSelectHandler(input),
     handlerWithContext: workspacePaneSelectHandler,
+  },
+  "workspace.pane.swap": {
+    inputSchema: ActionContractsZ["workspace.pane.swap"].input,
+    resultSchema: ActionContractsZ["workspace.pane.swap"].result,
+    handler: (input) => workspacePaneSwapHandler(input),
+    handlerWithContext: workspacePaneSwapHandler,
   },
   "workspace.pane.resize": {
     inputSchema: ActionContractsZ["workspace.pane.resize"].input,

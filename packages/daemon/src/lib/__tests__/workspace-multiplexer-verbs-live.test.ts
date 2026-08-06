@@ -286,6 +286,56 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
     expect(again).toMatchObject({ outcome: "unchanged" });
   });
 
+  it("swaps two panes in one window by semantic identity", async () => {
+    const created = (await mutate({
+      verb: "workspace.window.split",
+      semanticPaneId: "pane.editor",
+      direction: "right",
+    })) as { semanticPaneId: string };
+    const before = new Map(
+      tmux([
+        "list-panes",
+        "-t",
+        editorWindow,
+        "-F",
+        "#{@tmux_ide_pane_id}\t#{pane_id}\t#{pane_index}",
+      ])
+        .split("\n")
+        .map((line) => {
+          const [semanticPaneId, paneId, paneIndex] = line.split("\t");
+          return [semanticPaneId!, { paneId: paneId!, paneIndex: Number(paneIndex) }] as const;
+        }),
+    );
+
+    const result = await mutate({
+      verb: "workspace.pane.swap",
+      sourceSemanticPaneId: "pane.editor",
+      targetSemanticPaneId: created.semanticPaneId,
+    });
+    expect(result).toMatchObject({ verb: "workspace.pane.swap", outcome: "applied" });
+
+    const after = new Map(
+      tmux([
+        "list-panes",
+        "-t",
+        editorWindow,
+        "-F",
+        "#{@tmux_ide_pane_id}\t#{pane_id}\t#{pane_index}",
+      ])
+        .split("\n")
+        .map((line) => {
+          const [semanticPaneId, paneId, paneIndex] = line.split("\t");
+          return [semanticPaneId!, { paneId: paneId!, paneIndex: Number(paneIndex) }] as const;
+        }),
+    );
+    expect(after.get("pane.editor")?.paneId).toBe(before.get("pane.editor")?.paneId);
+    expect(after.get(created.semanticPaneId)?.paneId).toBe(
+      before.get(created.semanticPaneId)?.paneId,
+    );
+    expect(after.get("pane.editor")?.paneIndex).toBe(before.get(created.semanticPaneId)?.paneIndex);
+    expect(after.get(created.semanticPaneId)?.paneIndex).toBe(before.get("pane.editor")?.paneIndex);
+  });
+
   it("replays a split rather than creating a second pane for one operation id", async () => {
     const operationId = randomUUID();
     const intent = {

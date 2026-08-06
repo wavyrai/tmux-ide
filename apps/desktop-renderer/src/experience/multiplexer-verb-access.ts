@@ -48,6 +48,8 @@ export interface MultiplexerVerbArguments {
   readonly desiredZoom?: "toggle" | "zoomed" | "unzoomed";
   /** One axis and the size in cells the border drag settled on. */
   readonly resize?: { readonly axis: "cols" | "rows"; readonly cells: number };
+  /** The second semantic pane in a same-window drag-to-swap gesture. */
+  readonly swapTargetSemanticPaneId?: string;
 }
 
 /**
@@ -89,6 +91,14 @@ export function multiplexerVerbIntent(
         verb: "workspace.pane.select",
         workspaceName,
         semanticPaneId: target.semanticPaneId,
+      };
+    case "pane.swap":
+      if (!target.semanticPaneId || !args.swapTargetSemanticPaneId) return null;
+      return {
+        verb: "workspace.pane.swap",
+        workspaceName,
+        sourceSemanticPaneId: target.semanticPaneId,
+        targetSemanticPaneId: args.swapTargetSemanticPaneId,
       };
     case "window.zoom.toggle":
       if (!target.semanticPaneId) return null;

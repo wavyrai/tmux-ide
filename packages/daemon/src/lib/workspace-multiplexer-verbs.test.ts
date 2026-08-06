@@ -56,6 +56,8 @@ class FakeTmux {
   #nextWindow = 0;
   /** Argv prefix → thrown error, for failure-path tests. */
   failOn: { match: (args: readonly string[]) => boolean; error: Error } | null = null;
+  /** Model tmux accepting a swap command without moving either pane. */
+  ignoreSwap = false;
 
   constructor(sessionName: string) {
     this.sessionName = sessionName;
@@ -107,6 +109,10 @@ class FakeTmux {
     switch (field) {
       case "#{pane_id}":
         return pane.id;
+      case "#{pane_index}":
+        return String(
+          this.panes.filter((candidate) => candidate.windowId === pane.windowId).indexOf(pane),
+        );
       case "#{pane_width}":
         return String(pane.width);
       case "#{pane_height}":
@@ -231,6 +237,20 @@ class FakeTmux {
         for (const sibling of siblings) sibling[axis] += Math.trunc(given / siblings.length);
         return "";
       }
+      case "swap-pane": {
+        if (args[1] !== "-s" || args[3] !== "-t") {
+          throw new Error(`unsupported swap-pane: ${args.join(" ")}`);
+        }
+        const source = this.#pane(args[2]!);
+        const target = this.#pane(args[4]!);
+        if (source.windowId !== target.windowId) throw new Error("panes are in different windows");
+        if (this.ignoreSwap) return "";
+        const sourceIndex = this.panes.indexOf(source);
+        const targetIndex = this.panes.indexOf(target);
+        this.panes[sourceIndex] = target;
+        this.panes[targetIndex] = source;
+        return "";
+      }
       case "select-window": {
         for (const window of this.windows) window.active = window.id === args[2];
         return "";
@@ -265,10 +285,11 @@ async function expectRefusal(
 
 describe("pane listing parsing", () => {
   it("reads one well-formed row", () => {
-    const rows = parseMultiplexerPaneRows("%1\t@2\tpane.abc\twin.def\t3\t1\t0\top-1");
+    const rows = parseMultiplexerPaneRows("%1\t2\t@2\tpane.abc\twin.def\t3\t1\t0\top-1");
     expect(rows).toEqual([
       {
         paneId: "%1",
+        paneIndex: 2,
         windowId: "@2",
         semanticPaneId: "pane.abc",
         semanticWindowId: "win.def",
@@ -285,7 +306,7 @@ describe("pane listing parsing", () => {
   });
 
   it("reads absent stamps as null, not as empty strings", () => {
-    const [row] = parseMultiplexerPaneRows("%1\t@2\t\t\t1\t0\t1\t");
+    const [row] = parseMultiplexerPaneRows("%1\t0\t@2\t\t\t1\t0\t1\t");
     expect(row).toMatchObject({
       semanticPaneId: null,
       semanticWindowId: null,
@@ -296,7 +317,7 @@ describe("pane listing parsing", () => {
 
   it("refuses a listing whose shape no longer matches", () => {
     expect(() => parseMultiplexerPaneRows("%1\t@2\tpane.abc")).toThrow(WorkspaceMultiplexerError);
-    expect(() => parseMultiplexerPaneRows("nope\t@2\ta\tb\t1\t0\t0\t")).toThrow(
+    expect(() => parseMultiplexerPaneRows("nope\t0\t@2\ta\tb\t1\t0\t0\t")).toThrow(
       WorkspaceMultiplexerError,
     );
   });
@@ -304,7 +325,7 @@ describe("pane listing parsing", () => {
 
 describe("semantic target resolution", () => {
   const rows = parseMultiplexerPaneRows(
-    ["%1\t@1\tpane.a\twin.1\t2\t0\t1\t", "%2\t@1\tpane.b\twin.1\t2\t0\t0\t"].join("\n"),
+    ["%1\t0\t@1\tpane.a\twin.1\t2\t0\t1\t", "%2\t1\t@1\tpane.b\twin.1\t2\t0\t0\t"].join("\n"),
   );
 
   it("resolves a pane by its stamp", () => {
@@ -317,7 +338,7 @@ describe("semantic target resolution", () => {
 
   it("refuses a duplicated stamp rather than guessing which pane was meant", () => {
     const duplicated = parseMultiplexerPaneRows(
-      ["%1\t@1\tpane.a\twin.1\t1\t0\t1\t", "%2\t@2\tpane.a\twin.2\t1\t0\t0\t"].join("\n"),
+      ["%1\t0\t@1\tpane.a\twin.1\t1\t0\t1\t", "%2\t0\t@2\tpane.a\twin.2\t1\t0\t0\t"].join("\n"),
     );
     const error = (() => {
       try {
@@ -763,6 +784,103 @@ describe("the multiplexer authority", () => {
           }),
         ),
         "pane_not_found",
+      );
+    });
+  });
+
+  describe("swap", () => {
+    const split = (): FakePane => {
+      const second = tmux.addPane("@0");
+      second.options.set("@tmux_ide_pane_id", "pane.split");
+      return second;
+    };
+
+    it("swaps two semantic panes with exact resolved tmux targets", async () => {
+      const second = split();
+      expect(tmux.panes.filter((pane) => pane.windowId === "@0").map((pane) => pane.id)).toEqual([
+        "%0",
+        second.id,
+      ]);
+
+      const result = await authority.mutate(
+        request({
+          verb: "workspace.pane.swap",
+          sourceSemanticPaneId: "pane.one",
+          targetSemanticPaneId: "pane.split",
+        }),
+      );
+
+      expect(result).toMatchObject({
+        verb: "workspace.pane.swap",
+        outcome: "applied",
+        sourceSemanticPaneId: "pane.one",
+        targetSemanticPaneId: "pane.split",
+      });
+      expect(tmux.calls.find((args) => args[0] === "swap-pane")).toEqual([
+        "swap-pane",
+        "-s",
+        "%0",
+        "-t",
+        second.id,
+      ]);
+      expect(tmux.panes.filter((pane) => pane.windowId === "@0").map((pane) => pane.id)).toEqual([
+        second.id,
+        "%0",
+      ]);
+    });
+
+    it("treats dropping a pane on itself as an unchanged mutation", async () => {
+      const result = await authority.mutate(
+        request({
+          verb: "workspace.pane.swap",
+          sourceSemanticPaneId: "pane.one",
+          targetSemanticPaneId: "pane.one",
+        }),
+      );
+      expect(result).toMatchObject({ verb: "workspace.pane.swap", outcome: "unchanged" });
+      expect(tmux.calls.some((args) => args[0] === "swap-pane")).toBe(false);
+    });
+
+    it("refuses panes in different windows before invoking tmux", async () => {
+      await expectRefusal(
+        authority.mutate(
+          request({
+            verb: "workspace.pane.swap",
+            sourceSemanticPaneId: "pane.one",
+            targetSemanticPaneId: "pane.two",
+          }),
+        ),
+        "different_window_refused",
+      );
+      expect(tmux.calls.some((args) => args[0] === "swap-pane")).toBe(false);
+    });
+
+    it("refuses a missing target semantic identity", async () => {
+      split();
+      await expectRefusal(
+        authority.mutate(
+          request({
+            verb: "workspace.pane.swap",
+            sourceSemanticPaneId: "pane.one",
+            targetSemanticPaneId: "pane.missing",
+          }),
+        ),
+        "pane_not_found",
+      );
+    });
+
+    it("reports an accepted swap that did not exchange positions as unverified", async () => {
+      split();
+      tmux.ignoreSwap = true;
+      await expectRefusal(
+        authority.mutate(
+          request({
+            verb: "workspace.pane.swap",
+            sourceSemanticPaneId: "pane.one",
+            targetSemanticPaneId: "pane.split",
+          }),
+        ),
+        "mutation_unverified",
       );
     });
   });
