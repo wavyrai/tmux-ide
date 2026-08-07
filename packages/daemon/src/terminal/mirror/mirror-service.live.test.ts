@@ -204,13 +204,7 @@ describe.skipIf(!hasTmux)("MirrorService live", () => {
     // ── Scenario 2: flood + stalled reader → %pause → sticky recovery ─────
     const floodIo = lastIo!;
     const floodStart = a.events.length;
-    runTmux([
-      "send-keys",
-      "-t",
-      runtimePanes[0]!,
-      "yes TMUX_IDE_BACKPRESSURE_FLOOD",
-      "Enter",
-    ]);
+    runTmux(["send-keys", "-t", runtimePanes[0]!, "yes TMUX_IDE_BACKPRESSURE_FLOOD", "Enter"]);
     // The flood is demonstrably flowing before the reader stalls.
     await vi.waitFor(
       () => {
