@@ -3006,6 +3006,36 @@ kbd {
   height: auto;
 }
 
+/*
+ * A read-only client must show the whole shared grid.
+ *
+ * Its source window may be owned by a much larger browser, so a literal 1:1
+ * rendering clips entire panes at the right and bottom. Read-only surfaces do
+ * not drive tmux geometry or accept terminal input, which makes a uniform
+ * visual fit safe here. TerminalSurface writes the measured scale; centring the
+ * transformed xterm keeps both letterbox axes honest, and the pane overlay
+ * follows the transformed grid rect through its resize event.
+ */
+.terminal-surface[data-size-passive="true"][data-phase="connected"][data-viewer-mode="read-only"]
+  .terminal-surface__viewport {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+}
+
+.terminal-surface[data-size-passive="true"][data-phase="connected"][data-viewer-mode="read-only"]
+  .terminal-surface__viewport
+  > .xterm {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(var(--terminal-passive-fit-scale, 1));
+  transform-origin: center;
+}
+
 .terminal-surface__viewport .xterm-viewport {
   scrollbar-color: var(--tmux-ide-border-default) transparent;
   scrollbar-width: thin;
@@ -3096,6 +3126,40 @@ kbd {
   background: var(--tmux-ide-selection-hover);
 }
 
+.terminal-surface__viewer-status {
+  position: absolute;
+  z-index: 3;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: var(--tmi-space-3);
+  align-items: center;
+  padding: 5px 6px 5px 9px;
+  border: 1px solid color-mix(in display-p3, var(--tmux-ide-status-info) 42%, transparent);
+  border-radius: var(--tmux-ide-shape-control);
+  color: var(--tmux-ide-text-secondary);
+  background: color-mix(in display-p3, var(--tmux-ide-surface-panel) 92%, transparent);
+  box-shadow: var(--tmi-shadow-raised);
+  font-family: var(--desktop-ui-font);
+  font-size: var(--sf-text-caption-3);
+  backdrop-filter: blur(16px) saturate(1.15);
+}
+
+.terminal-surface__viewer-status button {
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--tmux-ide-border-default);
+  border-radius: var(--tmux-ide-shape-control);
+  color: var(--tmux-ide-text-primary);
+  background: var(--tmux-ide-surface-header);
+  cursor: pointer;
+}
+
+.terminal-surface__viewer-status button:hover {
+  border-color: var(--tmux-ide-border-focused);
+  background: var(--tmux-ide-selection-hover);
+}
+
 @keyframes terminal-surface-signal {
   50% {
     opacity: 0.34;
@@ -3104,7 +3168,8 @@ kbd {
 
 @media (prefers-reduced-motion: reduce) {
   .terminal-surface__state > i,
-  .terminal-surface__state button {
+  .terminal-surface__state button,
+  .terminal-surface__viewer-status button {
     animation: none !important;
     transition: none !important;
   }
@@ -5948,6 +6013,41 @@ kbd {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--desktop-separator) 35%, transparent);
   container-type: inline-size;
   transform-origin: 0 0;
+}
+
+/*
+ * Tmuxy-style pane composition.
+ *
+ * The whole-window attachment remains mounted underneath as the keyboard,
+ * mouse and geometry client, but its pixels are not the visible terminal.
+ * Each pane-stream node owns a flex body below a real header row, so chrome and
+ * terminal cells are siblings in layout instead of competing paint layers.
+ */
+.tiled-pane-area[data-pane-compositor="true"] > .terminal-surface > .terminal-surface__viewport {
+  opacity: 0;
+}
+
+.pane-tile[data-composed="true"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--tmux-ide-terminal-background);
+}
+
+.pane-tile[data-composed="true"] > .pane-tile__header {
+  position: relative;
+  inset: auto;
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.pane-tile__body {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .pane-tile[data-identity-icon="agent-claude"] {

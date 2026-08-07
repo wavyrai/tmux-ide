@@ -91,6 +91,8 @@ const MAX_BUFFERED_EVENTS_PER_PANE = 1_024;
 interface SinkChannel {
   sink: MirrorPaneSink | null;
   readonly buffer: PaneMirrorEvent[];
+  /** True once this lease's atomic seed has reached (or passed) the channel. */
+  seedSeen: boolean;
   /** Serializes buffered replay and live events so paint order is wire order. */
   tail: Promise<void>;
 }
@@ -137,6 +139,7 @@ export class PaneMirrorController {
   #attempt = 0;
   #generation = 0;
   #disposed = false;
+  #freshSeedScheduled = false;
 
   constructor(dependencies: PaneMirrorControllerDependencies) {
     this.#transport = dependencies.transport;
@@ -196,6 +199,8 @@ export class PaneMirrorController {
    */
   registerPaneSink(pane: string, sink: MirrorPaneSink): () => void {
     const channel = this.#channel(pane);
+    const needsFreshSeed =
+      channel.seedSeen && !channel.buffer.some((event) => event.type === "seed-batch");
     channel.sink = sink;
     const buffered = channel.buffer.splice(0, channel.buffer.length);
     for (const event of buffered) {
@@ -203,15 +208,32 @@ export class PaneMirrorController {
         .then(() => (channel.sink === sink ? this.#applyToSink(sink, event) : undefined))
         .catch(() => undefined);
     }
+    if (needsFreshSeed) this.#scheduleFreshSeed();
     return () => {
       if (channel.sink === sink) channel.sink = null;
     };
   }
 
+  /**
+   * A pane node can be remounted after its one-shot seed was consumed (HMR,
+   * view reparenting, or a recovered renderer). The protocol intentionally has
+   * no per-pane reseed verb, so coalesce all such registrations into one fresh
+   * lease. That gives every mounted sink a new atomic seed without retaining an
+   * unbounded replay log of terminal output in the renderer process.
+   */
+  #scheduleFreshSeed(): void {
+    if (this.#disposed || this.#freshSeedScheduled) return;
+    this.#freshSeedScheduled = true;
+    queueMicrotask(() => {
+      this.#freshSeedScheduled = false;
+      if (!this.#disposed) this.retry();
+    });
+  }
+
   #channel(pane: string): SinkChannel {
     let channel = this.#channels.get(pane);
     if (!channel) {
-      channel = { sink: null, buffer: [], tail: Promise.resolve() };
+      channel = { sink: null, buffer: [], seedSeen: false, tail: Promise.resolve() };
       this.#channels.set(pane, channel);
     }
     return channel;
@@ -305,7 +327,10 @@ export class PaneMirrorController {
     // The layouts are NOT cleared: tmux re-sends a frame per window on
     // subscribe, and blanking the tab strip for the width of a reconnect would
     // make a recoverable stream drop look like the session losing its windows.
-    for (const channel of this.#channels.values()) channel.buffer.length = 0;
+    for (const channel of this.#channels.values()) {
+      channel.buffer.length = 0;
+      channel.seedSeen = false;
+    }
     for (const [pane, state] of this.#paneStates) {
       if (state.kind !== "ended") this.#paneStates.set(pane, { kind: "connecting" });
     }
@@ -358,6 +383,7 @@ export class PaneMirrorController {
       return;
     }
     if (event.type === "seed-batch" && current.kind !== "ended") {
+      this.#channel(pane).seedSeen = true;
       this.#setPaneState(pane, { kind: "live", flowPaused: false });
     }
     const channel = this.#channel(pane);

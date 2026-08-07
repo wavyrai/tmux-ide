@@ -5,10 +5,12 @@ import {
   ApplicationShellProjectionInputV3SchemaZ,
   DESKTOP_HOST_API_VERSION,
   applicationShellActionTraceV1,
+  createClientViewStateV1,
   projectApplicationShellV1,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionInputV3,
+  type ClientViewStateV1,
   type DesktopWindowState,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
@@ -414,6 +416,8 @@ describe("visible DOM application shell", () => {
     });
     const onCommand = vi.fn<(invocation: ApplicationShellCommandInvocation) => void>();
     const onAppWindowCommand = vi.fn<NonNullable<DomApplicationShellProps["onAppWindowCommand"]>>();
+    const onClientViewStateChange =
+      vi.fn<NonNullable<DomApplicationShellProps["onClientViewStateChange"]>>();
     const root = document.createElement("div");
     document.body.append(root);
     disposers.push(
@@ -430,6 +434,7 @@ describe("visible DOM application shell", () => {
             experimentalSurfaces
             onCommand={onCommand}
             onAppWindowCommand={onAppWindowCommand}
+            onClientViewStateChange={onClientViewStateChange}
             paneFrames={paneFrames}
           />
         ),
@@ -453,11 +458,15 @@ describe("visible DOM application shell", () => {
         .querySelector('[data-window-id="window.pm"] .terminal-surface')
         ?.getAttribute("data-focused"),
     ).toBe("true");
-    expect(onAppWindowCommand).toHaveBeenCalledOnce();
-    expect(onAppWindowCommand).toHaveBeenCalledWith({
-      command: { type: "window.focus", windowId: "window.pm" },
-      source: "mouse",
-    });
+    // Focus is renderer-owned presentation now; it never competes through the
+    // shared durable AppWindow mutation queue.
+    expect(onAppWindowCommand).not.toHaveBeenCalled();
+    expect(onClientViewStateChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        focusedWindowId: "window.pm",
+        selectedWindowIds: ["window.pm"],
+      }),
+    );
     expect(onCommand).toHaveBeenCalledOnce();
     expect(onCommand).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1126,6 +1135,61 @@ describe("visible DOM application shell", () => {
     expect(root.textContent).toContain("Codex refreshed");
     expect(root.querySelector(".workspace-files")).not.toBeNull();
     expect(root.textContent).toContain("Connected from fresh host snapshot");
+  });
+
+  it("applies externally controlled dock presentation without touching shared input", async () => {
+    const input = createDefaultDomShellInput();
+    const sharedDock = structuredClone(input.dock);
+    const base = createClientViewStateV1({
+      clientId: "client.browser",
+      viewId: "view.controlled",
+      workspaceId: input.workspace.id,
+    });
+    const [clientView, setClientView] = createSignal<ClientViewStateV1>({
+      ...base,
+      dock: {
+        mode: "maximized" as const,
+        preferredHeight: 420,
+        focusZone: "dock-body" as const,
+        activeTabId: "files" as const,
+      },
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input}
+            dataMode="runtime"
+            clientViewState={clientView()}
+          />
+        ),
+        root,
+      ),
+    );
+
+    expect(root.querySelector(".workspace-main")?.getAttribute("data-dock-mode")).toBe("maximized");
+    expect(root.querySelector('#workbench-dock-tab-files[aria-selected="true"]')).not.toBeNull();
+
+    setClientView((current) => ({
+      ...current,
+      dock: {
+        ...current.dock,
+        mode: "open",
+        focusZone: "dock-tabs",
+        activeTabId: "changes",
+      },
+    }));
+    await vi.waitFor(() =>
+      expect(root.querySelector(".workspace-main")?.getAttribute("data-dock-mode")).toBe("open"),
+    );
+    expect(root.querySelector('#workbench-dock-tab-changes[aria-selected="true"]')).not.toBeNull();
+    expect(input.dock).toEqual(sharedDock);
   });
 
   it("selects session and agent rows visibly while emitting canonical resource commands", () => {

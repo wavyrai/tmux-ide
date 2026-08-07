@@ -255,7 +255,7 @@ describe("browser-safe daemon transport", () => {
     socket.emit("message", JSON.stringify({ type: "hello", daemon: daemonIdentity, sessions: [] }));
     expect(onVerifiedOpen).toHaveBeenCalledOnce();
     expect(socket.sent.map((frame) => JSON.parse(frame))).toEqual([
-      { type: "subscribe", sessions: ["project"] },
+      { type: "subscribe", sessions: ["project"], afterSequence: 0 },
     ]);
 
     socket.emit("message", JSON.stringify({ type: "sessions.changed" }));
@@ -279,6 +279,80 @@ describe("browser-safe daemon transport", () => {
 
     connection.close();
     expect(socket.closes).toEqual([{ code: 1000, reason: "Desktop resource store disposed" }]);
+  });
+
+  it("resumes from the last applied event sequence and recovers an explicit journal gap", () => {
+    const firstSocket = new FakeSocket();
+    const secondSocket = new FakeSocket();
+    const sockets = [firstSocket, secondSocket];
+    const onInvalidate = vi.fn();
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor,
+      resolveSessionName,
+      createWebSocket: () => sockets.shift()!,
+    });
+    const handlers = {
+      onVerifiedOpen: vi.fn(),
+      onInvalidate,
+      onProtocolError: vi.fn(),
+      onPeerMismatch: vi.fn(),
+      onMalformedFrame: vi.fn(),
+      onClose: vi.fn(),
+      onError: vi.fn(),
+    };
+
+    const first = transport.connectEvents(
+      { daemon: daemonIdentity, workspaceName: "project" },
+      handlers,
+    );
+    firstSocket.emit("open");
+    firstSocket.emit(
+      "message",
+      JSON.stringify({ type: "hello", daemon: daemonIdentity, sessions: [], eventSequence: 1 }),
+    );
+    firstSocket.emit(
+      "message",
+      JSON.stringify({
+        type: "action.complete",
+        name: "workspace.app-window.mutate",
+        result: { outcome: "applied" },
+      }),
+    );
+    expect(onInvalidate).not.toHaveBeenCalled();
+    firstSocket.emit(
+      "message",
+      JSON.stringify({
+        type: "resource.changed",
+        sequence: 1,
+        workspaceName: "project",
+        resource: "application-shell",
+        revision: 5,
+        causeOperationId: null,
+      }),
+    );
+    expect(onInvalidate).toHaveBeenCalledOnce();
+    first.close();
+
+    transport.connectEvents({ daemon: daemonIdentity, workspaceName: "project" }, handlers);
+    secondSocket.emit("open");
+    secondSocket.emit(
+      "message",
+      JSON.stringify({ type: "hello", daemon: daemonIdentity, sessions: [], eventSequence: 2 }),
+    );
+    expect(secondSocket.sent.map((value) => JSON.parse(value))).toEqual([
+      { type: "subscribe", sessions: ["project"], afterSequence: 1 },
+    ]);
+    secondSocket.emit(
+      "message",
+      JSON.stringify({
+        type: "snapshot-required",
+        afterSequence: 1,
+        oldestAvailableSequence: 3,
+        currentSequence: 4,
+        reason: "journal-gap",
+      }),
+    );
+    expect(onInvalidate).toHaveBeenCalledTimes(2);
   });
 
   it("does not authenticate a socket before one matching, secret-free hello", () => {
@@ -331,6 +405,6 @@ describe("browser-safe daemon transport", () => {
     );
     expect(onPeerMismatch).toHaveBeenCalledOnce();
     expect(onVerifiedOpen).not.toHaveBeenCalled();
-    expect(socket.closes).toEqual([{ code: 1008, reason: "Daemon identity mismatch" }]);
+    expect(socket.closes).toEqual([{ code: 4008, reason: "Daemon identity mismatch" }]);
   });
 });

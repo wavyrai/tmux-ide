@@ -173,6 +173,10 @@ function createHostHarness() {
       onStatusChanged: () => () => undefined,
     },
     daemon: {
+      fetchWidgetAsset: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
       startupReadiness: vi.fn(async () => ({
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "not used by App tests" },
@@ -408,6 +412,30 @@ describe("desktop App live composition", () => {
     expect(root.textContent).not.toContain("Open another folder");
     await Promise.resolve();
     expect(fetchSpy).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("automatically rechecks a degraded bootstrap for tabs that survive a daemon restart", async () => {
+    vi.useFakeTimers();
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.bootstrap)
+      .mockResolvedValueOnce({
+        ...bootstrap(),
+        daemon: {
+          status: "unavailable",
+          code: "probe-failed",
+          reason: "The requested resource is unavailable.",
+        },
+      })
+      .mockResolvedValueOnce(bootstrap());
+    const { dispose } = mount(() => <App host={harness.host} />);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.host.bootstrap).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(harness.host.bootstrap).toHaveBeenCalledTimes(2);
+
     dispose();
   });
 

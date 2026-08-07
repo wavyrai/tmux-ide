@@ -10,7 +10,6 @@ import {
   type TmuxArgvPlan,
 } from "./grouped-tmux.ts";
 import {
-  TmuxAttachmentClientTransportError,
   planCanonicalTmuxAttachmentClientCommand,
   type TmuxAttachmentClientTransport,
   type TmuxAttachmentClientTransportAttempt,
@@ -322,12 +321,6 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
   ): TmuxAttachmentClientTransportAttempt {
     const canonical = canonicalRequest(input);
     const request = canonical.input;
-    if (request.viewerMode === "read-only") {
-      // Read-only tmux clients are not geometry-neutral without a proven
-      // installed-version gate and continuously held interactive size owner.
-      // This slice owns neither dependency, so it fails before PTY spawn.
-      throw new TmuxAttachmentClientTransportError("read_only_unavailable");
-    }
     const existing = this.#ownedByAttachment.get(request.identity.attachmentId);
     if (existing && request.identity.generation <= existing.generation) {
       throw new TypeError("attachment generation is stale or already owned");

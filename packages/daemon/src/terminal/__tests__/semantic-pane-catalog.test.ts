@@ -43,6 +43,30 @@ describe("SemanticPaneCatalog", () => {
     await expect(catalog.resolve({ ...target, runtimePaneId: "%999" } as never)).rejects.toThrow();
   });
 
+  it("resolves a pane set from one trusted discovery snapshot", async () => {
+    let discoveries = 0;
+    const siblingTarget = { ...target, semanticPaneId: "pane.sibling" };
+    const catalog = new SemanticPaneCatalog({
+      discover: () => {
+        discoveries += 1;
+        return [
+          row({ windowStamp: "window.shared", windowPaneCount: 2 }),
+          row({
+            semanticPaneId: siblingTarget.semanticPaneId,
+            runtimePaneId: "%4",
+            windowStamp: "window.shared",
+            windowPaneCount: 2,
+          }),
+        ];
+      },
+    });
+
+    const resolved = await catalog.resolveMany([target, siblingTarget]);
+    expect(discoveries).toBe(1);
+    expect(resolved.map((pane) => pane.source.windowId)).toEqual(["@2", "@2"]);
+    expect(resolved.map((pane) => pane.source.runtimePaneId)).toEqual(["%3", "%4"]);
+  });
+
   it("keeps generations stable and increments when trusted tmux identity churns", async () => {
     let rows = [row()];
     const catalog = new SemanticPaneCatalog({ discover: () => rows });

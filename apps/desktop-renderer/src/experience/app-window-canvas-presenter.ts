@@ -5,6 +5,7 @@ import {
   type AppWindowInstance,
   type AppWindowRect,
   type AppWindowSource,
+  type ClientViewStateV1,
 } from "@tmux-ide/contracts";
 
 export interface AppWindowCanvasViewport {
@@ -140,15 +141,19 @@ function projectDockNode(
   hidden: string[],
   zIndex: { value: number },
   gap: number,
+  view: ClientViewStateV1 | undefined,
 ): void {
   if (node.type === "stack") {
     const terminalWindowIds = node.windowIds.filter(
       (windowId) => document.windows[windowId]?.source.kind === "terminal",
     );
     if (terminalWindowIds.length === 0) return;
-    const activeWindowId = terminalWindowIds.includes(node.activeWindowId)
-      ? node.activeWindowId
-      : terminalWindowIds[0]!;
+    const localActiveWindowId = view?.activeWindowIdsByStack[node.id];
+    const activeWindowId = terminalWindowIds.includes(localActiveWindowId ?? "")
+      ? localActiveWindowId!
+      : terminalWindowIds.includes(node.activeWindowId)
+        ? node.activeWindowId
+        : terminalWindowIds[0]!;
     for (const windowId of terminalWindowIds) {
       if (windowId !== activeWindowId) hidden.push(windowId);
     }
@@ -170,7 +175,9 @@ function projectDockNode(
             })),
           }
         : {}),
-      selected: document.focusedWindowId === window.id,
+      selected:
+        (view?.selectedWindowIds.includes(window.id) ?? false) ||
+        (view ? view.focusedWindowId : document.focusedWindowId) === window.id,
       active: true,
       zIndex: zIndex.value++,
     });
@@ -193,7 +200,7 @@ function projectDockNode(
     const childRect = horizontal
       ? { x: cursor, y: rect.y, width: extent, height: rect.height }
       : { x: rect.x, y: cursor, width: rect.width, height: extent };
-    projectDockNode(child, childRect, document, output, hidden, zIndex, gap);
+    projectDockNode(child, childRect, document, output, hidden, zIndex, gap, view);
     cursor += extent + gap;
   }
 }
@@ -287,6 +294,8 @@ export function projectAppWindowCanvas(
   options: {
     readonly gap?: number;
     readonly windowGroupBySourceId?: ReadonlyMap<string, string>;
+    /** Local presentation overrides. Never mutate the durable document. */
+    readonly clientViewState?: ClientViewStateV1;
   } = {},
 ): AppWindowCanvasProjection {
   const document = AppWindowDocumentV1SchemaZ.parse(value);
@@ -294,6 +303,13 @@ export function projectAppWindowCanvas(
   const gap = Math.max(0, Math.round(options.gap ?? 6));
   const windows: AppWindowCanvasItem[] = [];
   const hiddenWindowIds: string[] = [];
+  const requestedFocus = options.clientViewState
+    ? options.clientViewState.focusedWindowId
+    : document.focusedWindowId;
+  const focusedWindowId =
+    requestedFocus !== null && Object.hasOwn(document.windows, requestedFocus)
+      ? requestedFocus
+      : null;
   const dockZ = { value: 1 };
   if (document.dockRoot) {
     projectDockNode(
@@ -304,6 +320,7 @@ export function projectAppWindowCanvas(
       hiddenWindowIds,
       dockZ,
       gap,
+      options.clientViewState,
     );
   }
 
@@ -319,16 +336,23 @@ export function projectAppWindowCanvas(
       placement: "floating",
       stackId: null,
       stackIndex: null,
-      selected: document.focusedWindowId === window.id,
-      active: document.focusedWindowId === window.id,
-      zIndex: dockZ.value + order,
+      selected:
+        (options.clientViewState?.selectedWindowIds.includes(window.id) ?? false) ||
+        focusedWindowId === window.id,
+      active: focusedWindowId === window.id,
+      // Focus is presentation-only. Raise the focused card in this view
+      // without rewriting the shared durable floating order.
+      zIndex:
+        options.clientViewState && focusedWindowId === window.id
+          ? dockZ.value + document.floatingOrder.length + 1
+          : dockZ.value + order,
     });
   }
 
   const coalesced = coalesceWindowGroups(
     windows,
     hiddenWindowIds,
-    document.focusedWindowId,
+    focusedWindowId,
     options.windowGroupBySourceId ?? new Map(),
   );
 

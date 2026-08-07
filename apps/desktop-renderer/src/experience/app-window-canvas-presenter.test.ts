@@ -1,5 +1,6 @@
 import {
   AppWindowDocumentV1SchemaZ,
+  createClientViewStateV1,
   type AppWindowDockNodeShape,
   type AppWindowDocumentV1,
   type AppWindowInstance,
@@ -216,6 +217,53 @@ function paneGroup(count: number): Map<string, string> {
   }
   return map;
 }
+
+describe("projectAppWindowCanvas client-local presentation", () => {
+  it("projects distinct focus and active stack tabs without changing shared layout", () => {
+    const document = scene();
+    const base = createClientViewStateV1({
+      clientId: "client.browser",
+      viewId: "view.one",
+      workspaceId: "workspace.shared",
+      legacyDocument: document,
+    });
+    const first = projectAppWindowCanvas(
+      document,
+      { width: 900, height: 540 },
+      {
+        clientViewState: {
+          ...base,
+          focusedWindowId: "window.lead",
+          selectedWindowIds: ["window.lead"],
+          activeWindowIdsByStack: { ...base.activeWindowIdsByStack, "stack.left": "window.lead" },
+        },
+      },
+    );
+    const second = projectAppWindowCanvas(
+      document,
+      { width: 900, height: 540 },
+      {
+        clientViewState: {
+          ...base,
+          viewId: "view.two",
+          focusedWindowId: "window.hidden",
+          selectedWindowIds: ["window.hidden"],
+          activeWindowIdsByStack: { ...base.activeWindowIdsByStack, "stack.left": "window.hidden" },
+        },
+      },
+    );
+
+    expect(first.focusedWindowId).toBe("window.lead");
+    expect(first.windows.some(({ windowId }) => windowId === "window.lead")).toBe(true);
+    expect(second.focusedWindowId).toBe("window.hidden");
+    expect(second.windows.some(({ windowId }) => windowId === "window.hidden")).toBe(true);
+    expect(document.focusedWindowId).toBe("window.review");
+    expect(document.dockRoot?.type === "split" && document.dockRoot.children[0]).toMatchObject({
+      type: "stack",
+      activeWindowId: "window.lead",
+    });
+  });
+});
 
 describe("projectAppWindowCanvas window coalescing", () => {
   it("collapses the panes of one durable window into a single representative card", () => {

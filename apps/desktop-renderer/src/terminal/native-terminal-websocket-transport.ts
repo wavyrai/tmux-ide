@@ -18,6 +18,7 @@ import {
   type TerminalAttachmentViewerMode,
   type TerminalAttachmentViewport,
 } from "@tmux-ide/contracts";
+import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 
 import type {
   NativeTerminalAttachment,
@@ -1328,7 +1329,10 @@ class NativeTerminalWebSocketSession {
         this.#socket.readyState === WS_CLOSING)
     ) {
       try {
-        this.#socket.close(closeCode, closeReason?.slice(0, 123));
+        this.#socket.close(
+          browserInitiatedWebSocketCloseCode(closeCode),
+          closeReason?.slice(0, 123),
+        );
       } catch {
         // Local authority is already retired.
       }

@@ -1,5 +1,7 @@
 import { MirrorService } from "../mirror/mirror-service.ts";
 import type { DaemonTmuxSocketSelector } from "../attachments/pty-tmux-attachment-launcher.ts";
+import type { SemanticPaneCatalog } from "../attachments/semantic-pane-catalog.ts";
+import type { TerminalInputAuthority } from "../input-authority.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import {
   PaneStreamAdmissionCoordinator,
@@ -12,6 +14,9 @@ export interface PaneStreamRuntimeOptions {
   /** The daemon's pinned tmux authority; omit both for the default server. */
   readonly tmuxExecutablePath?: string;
   readonly tmuxSocketSelector?: DaemonTmuxSocketSelector;
+  /** Shared production authority and trusted semantic resolver. */
+  readonly inputAuthority?: TerminalInputAuthority;
+  readonly semanticPaneCatalog?: SemanticPaneCatalog;
   readonly admission?: Omit<
     PaneStreamAdmissionCoordinatorOptions,
     "daemonInstanceId" | "webSocketUrl" | "leaseManager" | "mirror"
@@ -40,6 +45,12 @@ export class PaneStreamRuntime {
     });
     const leaseManager = new PaneStreamLeaseManager({
       daemonInstanceId: options.daemonInstanceId,
+      ...(options.inputAuthority && options.semanticPaneCatalog
+        ? {
+            inputAuthority: options.inputAuthority,
+            semanticPaneCatalog: options.semanticPaneCatalog,
+          }
+        : {}),
     });
     this.coordinator = new PaneStreamAdmissionCoordinator({
       ...options.admission,

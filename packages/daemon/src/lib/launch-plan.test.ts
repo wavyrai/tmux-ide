@@ -5,6 +5,7 @@ import {
   collectPaneStartupPlan,
   paneIdentityOptions,
   semanticPaneIdForPane,
+  semanticWindowIdForSession,
 } from "./launch-plan.ts";
 import type { Row } from "../types.ts";
 
@@ -18,6 +19,15 @@ describe("buildPaneCommand", () => {
     expect(buildPaneCommand({ command: "claude", role: "teammate", task: 'Fix "lint"' })).toBe(
       "claude",
     );
+  });
+});
+
+describe("semanticWindowIdForSession", () => {
+  it("is stable for a session and distinct across sessions", () => {
+    const first = semanticWindowIdForSession("workspace-alpha");
+    expect(first).toMatch(/^window\.launch\.[0-9a-f]{20}$/u);
+    expect(semanticWindowIdForSession("workspace-alpha")).toBe(first);
+    expect(semanticWindowIdForSession("workspace-beta")).not.toBe(first);
   });
 });
 

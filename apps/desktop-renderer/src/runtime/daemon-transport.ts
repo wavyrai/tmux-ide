@@ -14,6 +14,12 @@ import {
   type DesktopDaemonHostDescriptor,
   type DesktopDaemonTransportState,
 } from "@tmux-ide/contracts";
+import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
+import {
+  advanceResourceReplica,
+  initialResourceReplica,
+  type ResourceReplicaState,
+} from "@tmux-ide/daemon-client/resource-replica";
 
 import type { DesktopApplicationShellTarget } from "./connection-state.ts";
 
@@ -231,6 +237,13 @@ function isRelevantFrame(
     case "projects.changed":
     case "action.complete":
       return true;
+    case "resource.changed":
+      return (
+        frame.resource === "application-shell" &&
+        (frame.workspaceName === null || frame.workspaceName === workspaceName)
+      );
+    case "snapshot-required":
+      return true;
     case "workspace.added":
       return frame.workspace.name === workspaceName;
     case "workspace.removed":
@@ -255,6 +268,7 @@ export function createDirectLoopbackDaemonTransport(
   }
   const fetchImpl = dependencies.fetch ?? defaultFetch;
   const createWebSocket = dependencies.createWebSocket ?? defaultCreateWebSocket;
+  const eventReplicas = new Map<string, ResourceReplicaState<null>>();
   const validateBoundTarget = (value: unknown): DesktopApplicationShellTarget => {
     const safeTarget = validatedTarget(value);
     requireMatchingPeer(safeTarget.daemon, descriptor);
@@ -334,10 +348,28 @@ export function createDirectLoopbackDaemonTransport(
     connectEvents(target, handlers) {
       const safeTarget = validateBoundTarget(target);
       const sessionName = resolvedSessionName(resolveSessionName, safeTarget.workspaceName);
+      let eventReplica =
+        eventReplicas.get(safeTarget.workspaceName) ?? initialResourceReplica<null>();
       const socket = createWebSocket(eventSocketUrl(descriptor));
       let closed = false;
       let socketOpened = false;
       let peerVerified = false;
+      let resourceEventsSupported = false;
+
+      const establishCursor = (daemonInstanceId: string, sequence: number): void => {
+        eventReplica = advanceResourceReplica(eventReplica, {
+          type: "connected",
+          daemonInstanceId,
+        }).state;
+        eventReplica = advanceResourceReplica(eventReplica, {
+          type: "snapshot",
+          daemonInstanceId,
+          sequence,
+          revision: sequence,
+          value: null,
+        }).state;
+        eventReplicas.set(safeTarget.workspaceName, eventReplica);
+      };
 
       const onOpen: DaemonSocketListener = () => {
         if (closed) return;
@@ -378,13 +410,20 @@ export function createDirectLoopbackDaemonTransport(
             socket.removeEventListener?.("close", onClose);
             socket.removeEventListener?.("error", onError);
             handlers.onPeerMismatch(reason);
-            socket.close(1008, "Daemon identity mismatch");
+            socket.close(browserInitiatedWebSocketCloseCode(1008), "Daemon identity mismatch");
             return;
           }
           try {
+            const resumeSequence =
+              eventReplica.daemonInstanceId === parsed.data.daemon.instanceId
+                ? (eventReplica.sequence ?? 0)
+                : 0;
+            establishCursor(parsed.data.daemon.instanceId, resumeSequence);
+            resourceEventsSupported = parsed.data.eventSequence !== undefined;
             const subscribe = DaemonEventClientFrameSchemaZ.parse({
               type: "subscribe",
               sessions: [sessionName],
+              afterSequence: resumeSequence,
             });
             socket.send(JSON.stringify(subscribe));
             peerVerified = true;
@@ -402,6 +441,55 @@ export function createDirectLoopbackDaemonTransport(
         }
         if (parsed.data.type === "protocol.error") {
           handlers.onProtocolError(parsed.data.message);
+          return;
+        }
+        if (parsed.data.type === "snapshot-required") {
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "gap",
+            daemonInstanceId: safeTarget.daemon.instanceId,
+            sequence: parsed.data.currentSequence,
+          });
+          eventReplica = transition.state;
+          eventReplicas.set(safeTarget.workspaceName, eventReplica);
+          handlers.onInvalidate();
+          establishCursor(safeTarget.daemon.instanceId, parsed.data.currentSequence);
+          return;
+        }
+        if (parsed.data.type === "resource.changed") {
+          const previousSequence = eventReplica.sequence;
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "changed",
+            daemonInstanceId: safeTarget.daemon.instanceId,
+            sequence: parsed.data.sequence,
+            // The shared replica owns the global event cursor here; the
+            // resource-specific revision remains on the wire frame.
+            revision: parsed.data.sequence,
+            ...(parsed.data.causeOperationId
+              ? { causeOperationId: parsed.data.causeOperationId }
+              : {}),
+          });
+          eventReplica = transition.state;
+          eventReplicas.set(safeTarget.workspaceName, eventReplica);
+          if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+            handlers.onInvalidate();
+            establishCursor(safeTarget.daemon.instanceId, parsed.data.sequence);
+            return;
+          }
+          if (
+            parsed.data.sequence > (previousSequence ?? -1) &&
+            isRelevantFrame(parsed.data, safeTarget.workspaceName, sessionName)
+          ) {
+            handlers.onInvalidate();
+          }
+          return;
+        }
+        if (
+          parsed.data.type === "action.complete" &&
+          resourceEventsSupported &&
+          parsed.data.name.startsWith("workspace.")
+        ) {
+          // New daemons follow workspace actions with the scoped, replayable
+          // resource frame. Keep this legacy frame only for older peers.
           return;
         }
         if (isRelevantFrame(parsed.data, safeTarget.workspaceName, sessionName)) {

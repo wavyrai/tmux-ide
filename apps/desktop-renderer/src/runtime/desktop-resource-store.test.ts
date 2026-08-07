@@ -275,7 +275,7 @@ describe("desktop application-shell resource store", () => {
       data: { project: { name: "live-project" } },
     });
     expect(runtime.sockets[0]!.sent.map((value) => JSON.parse(value))).toEqual([
-      { type: "subscribe", sessions: ["project"] },
+      { type: "subscribe", sessions: ["project"], afterSequence: 0 },
     ]);
     store.dispose();
   });

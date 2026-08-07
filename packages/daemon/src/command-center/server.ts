@@ -141,6 +141,7 @@ import {
   mountStartupReadinessRoute,
   type StartupReadinessAttachmentAuthority,
 } from "./resources/startup-readiness-route.ts";
+import { readWidgetAsset } from "../lib/widget-asset-store.ts";
 export interface CreateAppOptions {
   authService?: AuthService;
   authConfig?: AuthConfig;
@@ -607,6 +608,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     }
+  });
+
+  // Pane widgets publish only content-addressed, media-validated bytes into the
+  // private tmux-ide state home. This route can therefore serve an opaque id
+  // without becoming a general-purpose filesystem reader.
+  app.get("/api/widget-assets/:assetId", (c) => {
+    const asset = readWidgetAsset(c.req.param("assetId"));
+    if (!asset) return c.json({ error: "widget asset not found" }, 404);
+    return c.json({
+      assetId: asset.assetId,
+      media: asset.media,
+      name: asset.name,
+      data: asset.bytes.toString("base64"),
+    });
   });
 
   // T067: /healthz — minimal liveness probe used by daemon-client.

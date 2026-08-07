@@ -4,7 +4,12 @@ import { createHash } from "node:crypto";
 import { resolveProjectConfigContext, type ProjectConfigContext } from "./lib/config-context.ts";
 import { computeSizes, toSplitPercents } from "./lib/sizes.ts";
 import { outputError } from "./lib/output.ts";
-import { collectPaneStartupPlan, paneIdentityOptions } from "./lib/launch-plan.ts";
+import {
+  collectPaneStartupPlan,
+  paneIdentityOptions,
+  semanticWindowIdForSession,
+} from "./lib/launch-plan.ts";
+import { WORKSPACE_SEMANTIC_WINDOW_OPTION } from "@tmux-ide/contracts";
 import { buildSessionOptions } from "./lib/session-options.ts";
 import {
   attachSession,
@@ -17,6 +22,7 @@ import {
   sendLiteral,
   setPaneOption,
   setPaneTitle,
+  setWindowOption,
   setSessionEnvironment,
   setSessionVariable,
   splitPane,
@@ -268,6 +274,15 @@ export async function launch(
   for (const diagnostic of launchDiagnostics) {
     console.error(`tmux-ide: warning: ${diagnostic.message}`);
   }
+
+  // The CLI creates one root tmux window. Stamp it before the pane processes
+  // start so a recreated, already-registered workspace remains immediately
+  // attachable from the browser without an owner-side promotion replay.
+  setWindowOption(
+    rootPaneId,
+    WORKSPACE_SEMANTIC_WINDOW_OPTION,
+    semanticWindowIdForSession(session),
+  );
 
   for (const action of paneActions) {
     if (action.title) {

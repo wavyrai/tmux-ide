@@ -222,6 +222,38 @@ describe("pane mirror controller lifecycle", () => {
     expect(sink.outputs).toEqual(["early", "late"]);
   });
 
+  it("releases one fresh seed lease when a painted pane renderer remounts", async () => {
+    const h = controllerHarness([PANE_A]);
+    const firstSink = recordingSink();
+    const unregister = h.controller.registerPaneSink(PANE_A, firstSink);
+    h.controller.start();
+    await flush();
+    const first = h.transport.latest();
+    await first.listeners.onPaneEvent(PANE_A, {
+      type: "seed-batch",
+      batch: seedBatch("first"),
+    });
+    await flush();
+    expect(firstSink.seeds).toHaveLength(1);
+
+    unregister();
+    const replacementSink = recordingSink();
+    h.controller.registerPaneSink(PANE_A, replacementSink);
+    await flush();
+
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(h.transport.sessions).toHaveLength(2);
+    expect(h.controller.state().panes.get(PANE_A)).toEqual({ kind: "connecting" });
+    await h.transport.latest().listeners.onPaneEvent(PANE_A, {
+      type: "seed-batch",
+      batch: seedBatch("replacement"),
+    });
+    await flush();
+    expect(replacementSink.seeds.map((batch) => new TextDecoder().decode(batch.seed))).toEqual([
+      "replacement",
+    ]);
+  });
+
   it("supervises a retryable end with bounded backoff and reseeds on reconnect", async () => {
     const h = controllerHarness();
     h.controller.start();

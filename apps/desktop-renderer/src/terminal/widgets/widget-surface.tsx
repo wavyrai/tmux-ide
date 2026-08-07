@@ -1,14 +1,27 @@
-import { Match, Show, Switch, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createResource, type JSX } from "solid-js";
 
 import { MarkdownView } from "./markdown-view.tsx";
 import {
+  CARD_WIDGET_ID,
   IMAGE_WIDGET_ID,
   MARKDOWN_WIDGET_ID,
   imageWidgetDataUrl,
+  isAssetImageWidget,
+  isAssetMarkdownWidget,
+  type AssetImageWidgetArgs,
+  type AssetMarkdownWidgetArgs,
   type ImageWidgetArgs,
+  type InlineImageWidgetArgs,
   type MarkdownWidgetArgs,
+  type RichCardWidgetArgs,
   type WidgetResolution,
 } from "./widget-registry.ts";
+import {
+  loadWidgetAsset,
+  widgetAssetDataUrl,
+  widgetAssetText,
+  type WidgetAssetLoader,
+} from "./widget-asset-loader.ts";
 
 /**
  * The rich surface a pane shows instead of its grid.
@@ -26,6 +39,9 @@ export interface WidgetSurfaceProps {
   readonly resolution: WidgetResolution;
   /** Focus the emulator underneath, so keys keep reaching the pane. */
   readonly onRequestFocus?: () => void;
+  readonly loadAsset?: WidgetAssetLoader;
+  /** Writes an explicit card action back to the owning pane. */
+  readonly onAction?: (input: string) => void;
 }
 
 export function WidgetSurface(props: WidgetSurfaceProps): JSX.Element {
@@ -88,10 +104,22 @@ export function WidgetSurface(props: WidgetSurfaceProps): JSX.Element {
             {(resolution) => (
               <Switch>
                 <Match when={resolution.definition.id === MARKDOWN_WIDGET_ID}>
-                  <MarkdownView text={(resolution.args as MarkdownWidgetArgs).text} />
+                  <MarkdownWidgetView
+                    args={resolution.args as MarkdownWidgetArgs}
+                    loadAsset={props.loadAsset}
+                  />
                 </Match>
                 <Match when={resolution.definition.id === IMAGE_WIDGET_ID}>
-                  <ImageWidgetView args={resolution.args as ImageWidgetArgs} />
+                  <ImageWidgetView
+                    args={resolution.args as ImageWidgetArgs}
+                    loadAsset={props.loadAsset}
+                  />
+                </Match>
+                <Match when={resolution.definition.id === CARD_WIDGET_ID}>
+                  <CardWidgetView
+                    args={resolution.args as RichCardWidgetArgs}
+                    onAction={props.onAction}
+                  />
                 </Match>
               </Switch>
             )}
@@ -102,7 +130,61 @@ export function WidgetSurface(props: WidgetSurfaceProps): JSX.Element {
   );
 }
 
-function ImageWidgetView(props: { readonly args: ImageWidgetArgs }): JSX.Element {
+function MarkdownWidgetView(props: {
+  readonly args: MarkdownWidgetArgs;
+  readonly loadAsset?: WidgetAssetLoader;
+}): JSX.Element {
+  return (
+    <Show
+      when={isAssetMarkdownWidget(props.args) ? props.args : null}
+      keyed
+      fallback={<MarkdownView text={(props.args as { text: string }).text} />}
+    >
+      {(args) => <AssetMarkdownWidget args={args} loadAsset={props.loadAsset} />}
+    </Show>
+  );
+}
+
+function AssetMarkdownWidget(props: {
+  readonly args: AssetMarkdownWidgetArgs;
+  readonly loadAsset?: WidgetAssetLoader;
+}): JSX.Element {
+  const [asset] = createResource(() => props.args.assetId, props.loadAsset ?? loadWidgetAsset);
+  return (
+    <Switch>
+      <Match when={asset.error}>
+        <p class="widget-surface__refusal" role="status">
+          This Markdown asset could not be loaded. The pane is still a terminal.
+        </p>
+      </Match>
+      <Match when={asset()} keyed>
+        {(value) => <MarkdownView text={widgetAssetText(value)} />}
+      </Match>
+      <Match when={true}>
+        <p class="widget-surface__loading" role="status">
+          Loading Markdown…
+        </p>
+      </Match>
+    </Switch>
+  );
+}
+
+function ImageWidgetView(props: {
+  readonly args: ImageWidgetArgs;
+  readonly loadAsset?: WidgetAssetLoader;
+}): JSX.Element {
+  return (
+    <Show
+      when={isAssetImageWidget(props.args) ? props.args : null}
+      keyed
+      fallback={<InlineImageWidget args={props.args as InlineImageWidgetArgs} />}
+    >
+      {(args) => <AssetImageWidget args={args} loadAsset={props.loadAsset} />}
+    </Show>
+  );
+}
+
+function InlineImageWidget(props: { readonly args: InlineImageWidgetArgs }): JSX.Element {
   return (
     <figure class="widget-image">
       {/* A GIF animates here for free: it is an ordinary <img>, and the bytes
@@ -117,5 +199,101 @@ function ImageWidgetView(props: { readonly args: ImageWidgetArgs }): JSX.Element
         <figcaption>{props.args.name}</figcaption>
       </Show>
     </figure>
+  );
+}
+
+function AssetImageWidget(props: {
+  readonly args: AssetImageWidgetArgs;
+  readonly loadAsset?: WidgetAssetLoader;
+}): JSX.Element {
+  const [asset] = createResource(() => props.args.assetId, props.loadAsset ?? loadWidgetAsset);
+  return (
+    <Switch>
+      <Match when={asset.error}>
+        <p class="widget-surface__refusal" role="status">
+          This image asset could not be loaded. The pane is still a terminal.
+        </p>
+      </Match>
+      <Match when={asset()} keyed>
+        {(value) => (
+          <figure class="widget-image">
+            <img
+              class="widget-image__frame"
+              src={widgetAssetDataUrl(value)}
+              alt={props.args.alt ?? props.args.name ?? value.name}
+            />
+            <figcaption>{props.args.name ?? value.name}</figcaption>
+          </figure>
+        )}
+      </Match>
+      <Match when={true}>
+        <p class="widget-surface__loading" role="status">
+          Loading image…
+        </p>
+      </Match>
+    </Switch>
+  );
+}
+
+function CardWidgetView(props: {
+  readonly args: RichCardWidgetArgs;
+  readonly onAction?: (input: string) => void;
+}): JSX.Element {
+  return (
+    <article class="widget-card">
+      <header class="widget-card__header">
+        <h1>{props.args.title}</h1>
+        <Show when={props.args.subtitle}>{(subtitle) => <p>{subtitle()}</p>}</Show>
+      </header>
+      <div class="widget-card__items">
+        <For each={props.args.items}>
+          {(item) => (
+            <Switch>
+              <Match when={item.type === "text" ? item : null} keyed>
+                {(textItem) => <p class="widget-card__text">{textItem.text}</p>}
+              </Match>
+              <Match when={item.type === "badge" ? item : null} keyed>
+                {(badge) => (
+                  <span class="widget-card__badge" data-tone={badge.tone}>
+                    {badge.text}
+                  </span>
+                )}
+              </Match>
+              <Match when={item.type === "progress" ? item : null} keyed>
+                {(progress) => (
+                  <div class="widget-card__progress">
+                    <div>
+                      <span>{progress.label ?? "Progress"}</span>
+                      <strong>{Math.round(progress.value)}%</strong>
+                    </div>
+                    <progress max="100" value={progress.value} />
+                  </div>
+                )}
+              </Match>
+              <Match when={item.type === "code" ? item : null} keyed>
+                {(code) => (
+                  <pre class="widget-markdown__code" data-language={code.language}>
+                    <code>{code.code}</code>
+                  </pre>
+                )}
+              </Match>
+              <Match when={item.type === "button" ? item : null} keyed>
+                {(button) => (
+                  <button
+                    type="button"
+                    class="widget-card__button"
+                    data-tone={button.tone}
+                    disabled={!props.onAction}
+                    onClick={() => props.onAction?.(`${button.input}${button.submit ? "\r" : ""}`)}
+                  >
+                    {button.label}
+                  </button>
+                )}
+              </Match>
+            </Switch>
+          )}
+        </For>
+      </div>
+    </article>
   );
 }

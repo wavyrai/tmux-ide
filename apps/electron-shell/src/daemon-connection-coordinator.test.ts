@@ -88,6 +88,10 @@ function brokerHarness(
         daemon: identity,
         capabilities: { appWindowMutation: { available: true } },
       }),
+      fetchWidgetAsset: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
       mutateAppWindow: async (request) => ({
         operationId: request.operationId,
         daemonInstanceId: identity.instanceId,

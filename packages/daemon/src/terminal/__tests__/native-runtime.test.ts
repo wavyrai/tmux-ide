@@ -99,7 +99,7 @@ function row(overrides: Partial<TrustedSemanticPaneSnapshot> = {}): TrustedSeman
 
 function applicationShellPaneWire(
   sessionName: string,
-  options: { stamp?: string; paneId?: string; role?: string; mission?: string } = {},
+  options: { stamp?: string; paneId?: string; role?: string; mission?: string; cwd?: string } = {},
 ): string {
   return [
     sessionName,
@@ -118,7 +118,7 @@ function applicationShellPaneWire(
     "Codex",
     "agent",
     options.mission ?? "",
-    "/repo",
+    options.cwd ?? "/repo",
     "",
     "tmux-ide-pane-v2",
   ].join(INVENTORY_SEPARATOR);
@@ -575,6 +575,7 @@ describe("native terminal attachment runtime lifecycle", () => {
   it("uses the pinned executable and custom socket for exact application-shell inventory", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     const calls: Array<{ executable: string; argv: readonly string[]; timeoutMs: number }> = [];
+    let paneCwd = "/repo";
     const runtime = createNativeTerminalAttachmentRuntime({
       daemonInstanceId: INSTANCE_ID,
       webSocketUrl: WS_URL,
@@ -592,7 +593,7 @@ describe("native terminal attachment runtime lifecycle", () => {
         if (argv[0] === "list-sessions") return "";
         if (argv[0] === "list-panes") {
           expect(argv[argv.indexOf("-t") + 1]).toBe("$7");
-          return `${applicationShellPaneWire("runtime:session")}\n`;
+          return `${applicationShellPaneWire("runtime:session", { cwd: paneCwd })}\n`;
         }
         return "";
       },
@@ -620,6 +621,18 @@ describe("native terminal attachment runtime lifecycle", () => {
     // Every synchronous tmux command is kill-bounded. A nominal async
     // readiness deadline cannot interrupt execFileSync if tmux itself stalls.
     expect(new Set(calls.map(({ timeoutMs }) => timeoutMs))).toEqual(new Set([5_000]));
+
+    // A long-lived pipeline can outlive its process-group leader, making tmux
+    // report an empty pane_current_path even though the pane and registered
+    // workspace are healthy. That presentation gap must not take the whole
+    // application-shell inventory offline.
+    paneCwd = "";
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).resolves.toMatchObject(
+      {
+        dir: root,
+        panes: [expect.objectContaining({ runtimePaneId: "%3" })],
+      },
+    );
 
     registry.add({ name: "workspace.beta", sessionName: "runtime:session", projectDir: root });
     await expect(runtime.discoverApplicationShellSession("runtime:session")).rejects.toMatchObject({

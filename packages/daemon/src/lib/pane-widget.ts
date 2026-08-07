@@ -1,8 +1,11 @@
 import { basename, extname } from "node:path";
 
 import {
+  RichCardWidgetArgsSchemaZ,
   WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS,
+  WidgetAssetIdSchemaZ,
   widgetMarkerAnnouncement,
+  type RichCardWidgetArgs,
 } from "@tmux-ide/contracts";
 
 /**
@@ -112,7 +115,32 @@ export function buildImageAnnouncement(bytes: Uint8Array, filePath: string): str
   });
 }
 
-export const PANE_WIDGET_IDS = ["markdown", "image"] as const;
+export function buildMarkdownAssetAnnouncement(assetId: string, title?: string): string {
+  const id = WidgetAssetIdSchemaZ.parse(assetId);
+  return widgetMarkerAnnouncement(
+    "markdown",
+    title === undefined ? { assetId: id } : { assetId: id, title },
+  );
+}
+
+export function buildImageAssetAnnouncement(
+  assetId: string,
+  options: { readonly name?: string; readonly alt?: string } = {},
+): string {
+  const id = WidgetAssetIdSchemaZ.parse(assetId);
+  return widgetMarkerAnnouncement("image", {
+    assetId: id,
+    ...(options.name === undefined ? {} : { name: options.name }),
+    ...(options.alt === undefined ? {} : { alt: options.alt }),
+  });
+}
+
+export function buildCardAnnouncement(value: unknown): string {
+  const card = RichCardWidgetArgsSchemaZ.parse(value) satisfies RichCardWidgetArgs;
+  return widgetMarkerAnnouncement("card", card);
+}
+
+export const PANE_WIDGET_IDS = ["markdown", "image", "card"] as const;
 export type PaneWidgetId = (typeof PANE_WIDGET_IDS)[number];
 
 export function paneWidgetId(value: string): PaneWidgetId {

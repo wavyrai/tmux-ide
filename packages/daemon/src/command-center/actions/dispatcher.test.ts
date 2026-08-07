@@ -17,6 +17,7 @@ const actionApp = (
     "/api/v2/action/:name",
     createActionDispatcher({
       broadcast,
+      broadcastResourceChanged: vi.fn(),
       daemonInstanceId: "20000000-0000-4000-8000-000000000002",
       workspacePaneCreationBackend,
       workspaceOpenBackend,
@@ -167,6 +168,54 @@ describe("command-backed action dispatcher compatibility", () => {
     );
   });
 
+  it("emits a scoped versioned invalidation for an applied app-window mutation", async () => {
+    const resourceBroadcast = vi.fn();
+    const app = new Hono();
+    app.post(
+      "/api/v2/action/:name",
+      createActionDispatcher({
+        broadcast: vi.fn(),
+        broadcastResourceChanged: resourceBroadcast,
+        daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+        appWindowMutationBackend: {
+          mutate: async (input) => ({
+            operationId: input.operationId,
+            daemonInstanceId: input.expectedDaemonInstanceId,
+            outcome: "applied",
+            workspaceName: input.intent.workspaceName,
+            documentRevision: 9,
+          }),
+        },
+      }),
+    );
+    const response = await app.request(
+      "http://localhost/api/v2/action/workspace.app-window.mutate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tmux-Ide-Operation-Id": "10000000-0000-4000-8000-000000000001",
+        },
+        body: JSON.stringify({
+          workspaceName: "workspace.alpha",
+          expectedDocumentRevision: 8,
+          command: { type: "window.focus", windowId: null },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(resourceBroadcast).toHaveBeenCalledWith(
+      {
+        workspaceName: "workspace.alpha",
+        resource: "application-shell",
+        revision: 9,
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      "20000000-0000-4000-8000-000000000002",
+    );
+  });
+
   it("rejects renderer-authored runtime fields before pane creation", async () => {
     const create = vi.fn();
     const { app } = actionApp(vi.fn(), { create });
@@ -264,6 +313,7 @@ describe("workspace.promote completion receipt", () => {
       "/api/v2/action/:name",
       createActionDispatcher({
         broadcast,
+        broadcastResourceChanged: vi.fn(),
         broadcastPromotionCompleted: (workspaceName, outcome) =>
           receipts.push({ workspaceName, outcome }),
         daemonInstanceId: "20000000-0000-4000-8000-000000000002",

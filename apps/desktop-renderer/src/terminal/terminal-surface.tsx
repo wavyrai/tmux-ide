@@ -4,6 +4,7 @@ import {
   type TerminalAttachRequest,
   type TerminalAttachmentGeometryOwnership,
   type TerminalAttachmentSemanticTarget,
+  type TerminalAttachmentViewerMode,
   type TerminalAttachmentViewport,
 } from "@tmux-ide/contracts";
 import { Match, Show, Switch, createEffect, createSignal, onCleanup, onMount } from "solid-js";
@@ -142,6 +143,29 @@ export interface TerminalSurfaceProps {
 const OWNED_RESIZE_DEBOUNCE_MS = 150;
 /** Fast lease-race recovery; total wait stays below the daemon's 5s grace. */
 const INTERACTIVE_CONFLICT_RETRY_MS = [50, 100, 200, 400, 800, 1_000, 1_000, 1_000] as const;
+/** After cheap grace-race retries, a persistent owner makes this client a viewer. */
+const INTERACTIVE_CONFLICT_RETRIES_BEFORE_READ_ONLY = 2;
+
+/** Uniformly fit a read-only source grid without ever enlarging its cells. */
+export function readOnlyTerminalFitScale(input: {
+  readonly availableWidth: number;
+  readonly availableHeight: number;
+  readonly gridWidth: number;
+  readonly gridHeight: number;
+}): number {
+  const values = [
+    input.availableWidth,
+    input.availableHeight,
+    input.gridWidth,
+    input.gridHeight,
+  ];
+  if (values.some((value) => !Number.isFinite(value) || value <= 0)) return 1;
+  return Math.min(
+    1,
+    input.availableWidth / input.gridWidth,
+    input.availableHeight / input.gridHeight,
+  );
+}
 
 function sameViewport(
   left: TerminalAttachmentViewport | null,
@@ -230,7 +254,10 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
    * surface that forgot to declare itself cannot silently start reflowing a
    * window other clients are attached to.
    */
-  const ownsGeometry = (): boolean => props.geometryOwnership === "owner";
+  const [viewerMode, setViewerMode] = createSignal<TerminalAttachmentViewerMode>("interactive");
+  const effectiveGeometryOwnership = (): TerminalAttachmentGeometryOwnership =>
+    viewerMode() === "read-only" ? "passive" : (props.geometryOwnership ?? "passive");
+  const ownsGeometry = (): boolean => effectiveGeometryOwnership() === "owner";
   const sizePassive = (): boolean => !ownsGeometry();
   const [phase, setPhase] = createSignal<TerminalSurfacePhase>(
     props.transport ? "measuring" : "unavailable",
@@ -272,6 +299,35 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let pointerFocus = false;
   let rendererLoadGeneration = 0;
   let markerWatcher = createWidgetMarkerByteWatcher();
+
+  const updateReadOnlyFitScale = (): void => {
+    if (!mount) return;
+    const surface = mount.parentElement;
+    const grid = mount.querySelector<HTMLElement>(":scope > .xterm");
+    const scale =
+      viewerMode() === "read-only" && sizePassive() && grid
+        ? readOnlyTerminalFitScale({
+            availableWidth: mount.clientWidth,
+            availableHeight: mount.clientHeight,
+            gridWidth: grid.offsetWidth,
+            gridHeight: grid.offsetHeight,
+          })
+        : 1;
+    const serialized = scale.toFixed(6);
+    if (mount.style.getPropertyValue("--terminal-passive-fit-scale") === serialized) return;
+    mount.style.setProperty("--terminal-passive-fit-scale", serialized);
+    surface?.setAttribute("data-passive-fit-scale", scale.toFixed(4));
+    mount.dispatchEvent(
+      new CustomEvent("tmux-ide-terminal-grid-resized", {
+        bubbles: true,
+      }),
+    );
+  };
+
+  const resizePassiveGrid = (viewport: TerminalAttachmentViewport): void => {
+    renderer?.resizeGrid(viewport);
+    queueMicrotask(updateReadOnlyFitScale);
+  };
   let widgetScan: ReturnType<typeof setTimeout> | null = null;
   let conflictRetry: ReturnType<typeof setTimeout> | null = null;
   let conflictAttempt = 0;
@@ -546,7 +602,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       setClientViewport(event.clientViewport);
       if (sizePassive()) {
         // Size-passive card: mirror the origin window's grid; never resize tmux.
-        renderer?.resizeGrid(event.sourceGrid);
+        resizePassiveGrid(event.sourceGrid);
         return;
       }
       const measured = latestMeasuredViewport;
@@ -568,7 +624,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         if (!hasValidatedFrame()) recordAttachPhase("awaiting-first-output");
         if (sizePassive()) {
           // Size-passive card: mirror the origin window's grid; never resize tmux.
-          renderer?.resizeGrid(event.sourceGrid);
+          resizePassiveGrid(event.sourceGrid);
           return;
         }
         const measured = latestMeasuredViewport;
@@ -610,8 +666,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       request = validateNativeTerminalRequest({
         protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
         target: props.target,
-        viewerMode: "interactive",
-        geometryOwnership: props.geometryOwnership ?? "passive",
+        viewerMode: viewerMode(),
+        geometryOwnership: effectiveGeometryOwnership(),
         viewport,
       });
     } catch {
@@ -630,7 +686,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         if (result.status === "error") {
           if (
             result.error.code === "interactive-viewer-conflict" &&
-            conflictAttempt < INTERACTIVE_CONFLICT_RETRY_MS.length
+            viewerMode() === "interactive" &&
+            conflictAttempt < INTERACTIVE_CONFLICT_RETRIES_BEFORE_READ_ONLY
           ) {
             const delay = INTERACTIVE_CONFLICT_RETRY_MS[conflictAttempt++]!;
             generation += 1;
@@ -647,6 +704,28 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
               if (viewport) connect(viewport);
               else scheduleFit();
             }, delay);
+            return;
+          }
+          if (
+            result.error.code === "interactive-viewer-conflict" &&
+            viewerMode() === "interactive"
+          ) {
+            // Multi-client viewing is a supported steady state. The daemon
+            // keeps control authority; this surface reconnects passively and
+            // may request control explicitly later.
+            generation += 1;
+            disposeAttachment();
+            conflictAttempt = 0;
+            setViewerMode("read-only");
+            setReason("Another client controls this tmux window. Viewing read-only.");
+            setPhase("measuring");
+            const readOnlyGeneration = generation;
+            queueMicrotask(() => {
+              if (disposed || readOnlyGeneration !== generation) return;
+              const nextViewport = latestMeasuredViewport ?? SIZE_PASSIVE_CONNECT_VIEWPORT;
+              latestMeasuredViewport = nextViewport;
+              connect(nextViewport);
+            });
             return;
           }
           failConnect(connectFailureMessage(result.error), activeGeneration);
@@ -679,7 +758,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       // attachment; otherwise open one with a provisional (ignored) viewport.
       if (attachment) {
         const grid = sourceGrid();
-        if (grid) renderer?.resizeGrid(grid);
+        if (grid) resizePassiveGrid(grid);
         return;
       }
       if (phase() === "measuring") {
@@ -688,6 +767,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       }
       return;
     }
+    updateReadOnlyFitScale();
     const viewport = usableViewport(renderer?.fit() ?? null);
     if (!viewport) {
       if (!attachment && props.transport) {
@@ -733,6 +813,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const retry = (): void => {
     cancelConflictRetry();
     conflictAttempt = 0;
+    setViewerMode("interactive");
     generation += 1;
     disposeAttachment();
     disposeRenderer();
@@ -745,6 +826,20 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     resetAttachTrace(Boolean(props.transport));
     setPhase(props.transport ? "measuring" : "unavailable");
     ensureRenderer();
+    scheduleFit();
+  };
+
+  const requestControl = (): void => {
+    if (disposed || viewerMode() === "interactive") return;
+    generation += 1;
+    cancelConflictRetry();
+    conflictAttempt = 0;
+    disposeAttachment();
+    currentViewport = null;
+    pendingResize = null;
+    setViewerMode("interactive");
+    setReason(null);
+    setPhase("measuring");
     scheduleFit();
   };
 
@@ -823,7 +918,14 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   };
 
   const queueInput = (bytes: Uint8Array): void => {
-    if (bytes.byteLength === 0 || !attachment || phase() !== "connected") return;
+    if (
+      viewerMode() === "read-only" ||
+      bytes.byteLength === 0 ||
+      !attachment ||
+      phase() !== "connected"
+    ) {
+      return;
+    }
     const epoch = activeInputEpoch;
     if (
       epoch.pendingEntries >= MAX_PENDING_INPUT_WRITES ||
@@ -921,6 +1023,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     generation += 1;
     cancelConflictRetry();
     conflictAttempt = 0;
+    setViewerMode("interactive");
     disposeAttachment();
     disposeRenderer();
     currentViewport = null;
@@ -944,8 +1047,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       data-attach-attempt={props.transport ? attachAttempt() : undefined}
       data-attach-trace={props.transport ? JSON.stringify(attachTrace()) : undefined}
       data-focused={props.focused ?? false}
+      data-viewer-mode={viewerMode()}
       data-size-passive={sizePassive()}
-      data-geometry-ownership={props.geometryOwnership ?? "passive"}
+      data-geometry-ownership={effectiveGeometryOwnership()}
       data-reduced-motion={props.reducedMotion ?? false}
       data-preserves-frame={hasValidatedFrame()}
       data-widget={widgetTag()}
@@ -978,8 +1082,20 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
        */}
       <Show when={widget()} keyed>
         {(resolution) => (
-          <WidgetSurface resolution={resolution} onRequestFocus={() => renderer?.focus()} />
+          <WidgetSurface
+            resolution={resolution}
+            onRequestFocus={() => renderer?.focus()}
+            onAction={(input) => queueInput(new TextEncoder().encode(input))}
+          />
         )}
+      </Show>
+      <Show when={phase() === "connected" && hasValidatedFrame() && viewerMode() === "read-only"}>
+        <div class="terminal-surface__viewer-status" role="status" aria-live="polite">
+          <span>Viewing read-only · another client has terminal control</span>
+          <button type="button" onClick={requestControl}>
+            Take control
+          </button>
+        </div>
       </Show>
       <Show when={phase() !== "connected" || !hasValidatedFrame()}>
         <div

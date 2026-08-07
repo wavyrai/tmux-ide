@@ -1,9 +1,16 @@
 /* @vitest-environment happy-dom */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 
-import { WorkspaceTiledSurface } from "./workspace-tiled-surface.tsx";
+import {
+  WorkspaceTiledSurface,
+  renderedTerminalGridRect,
+  terminalGridOverlayBox,
+} from "./workspace-tiled-surface.tsx";
 import type { PaneStreamLayoutEvent } from "../terminal/pane-stream-transport.ts";
+import { createRecordingMirrorRendererFactory } from "../terminal/mirror-pane-fixture.ts";
+import type { AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
 import { createDefaultDomPaneFrames } from "./dom-shell.ts";
 
 const disposers: (() => void)[] = [];
@@ -60,6 +67,62 @@ function renderSurface(
 }
 
 describe("the layout-faithful workspace view", () => {
+  it("anchors pane chrome to the xterm grid instead of its padded viewport", () => {
+    /*
+     * The viewport includes the terminal-background gutter. Using its rect for
+     * row-based pane chrome shifts the header above xterm and clips the first
+     * output row. The stable outer xterm box is the grid, while the viewport is
+     * retained only as the pre-mount fallback.
+     */
+    const area = document.createElement("div");
+    const viewport = document.createElement("div");
+    const grid = document.createElement("div");
+    viewport.className = "terminal-surface__viewport";
+    grid.className = "xterm";
+    viewport.append(grid);
+    area.append(viewport);
+
+    const areaRect = {
+      x: 100,
+      y: 50,
+      left: 100,
+      top: 50,
+      width: 800,
+      height: 500,
+    } as DOMRect;
+    const viewportRect = {
+      x: 101,
+      y: 51,
+      left: 101,
+      top: 51,
+      width: 798,
+      height: 498,
+    } as DOMRect;
+    const gridRect = {
+      x: 108,
+      y: 57,
+      left: 108,
+      top: 57,
+      width: 784,
+      height: 486,
+    } as DOMRect;
+    area.getBoundingClientRect = () => areaRect;
+    viewport.getBoundingClientRect = () => viewportRect;
+    grid.getBoundingClientRect = () => gridRect;
+    Object.defineProperties(area, {
+      clientLeft: { value: 1 },
+      clientTop: { value: 1 },
+      clientWidth: { value: 798 },
+      clientHeight: { value: 498 },
+    });
+
+    expect(renderedTerminalGridRect(area)).toBe(gridRect);
+    expect(terminalGridOverlayBox(area)).toEqual({ left: 7, top: 6, width: 784, height: 486 });
+    grid.remove();
+    expect(renderedTerminalGridRect(area)).toBe(viewportRect);
+    expect(terminalGridOverlayBox(area)).toEqual({ left: 0, top: 0, width: 798, height: 498 });
+  });
+
   it("renders one tab per tmux window, labelled and marked from the live frames", () => {
     const { root } = renderSurface([
       layout({ semanticWindowId: "window.editor", windowName: "editor", currentWindow: false }),
@@ -113,6 +176,67 @@ describe("the layout-faithful workspace view", () => {
     expect(tiles[1]!.style.left).toBe("49.7500%");
   });
 
+  it("composes each terminal below a real chrome row without remounting it on stream state", () => {
+    const recording = createRecordingMirrorRendererFactory();
+    const node = (pane: string, state: "connecting" | "live") => ({
+      pane,
+      title: pane,
+      frame: null,
+      state:
+        state === "connecting"
+          ? ({ kind: "connecting" } as const)
+          : ({ kind: "live", flowPaused: false } as const),
+      registerSink: () => () => undefined,
+    });
+    const initial: AppWindowCanvasMirrorProps = {
+      enabled: true,
+      onToggle: vi.fn(),
+      nodes: [node("pane.a", "connecting"), node("pane.b", "connecting")],
+      connection: { kind: "connected" },
+      onRetry: vi.fn(),
+      rendererFactory: recording.factory,
+    };
+    const [mirror, setMirror] = createSignal(initial);
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WorkspaceTiledSurface
+            layouts={[SPLIT]}
+            workspaceName="workspace.product"
+            transport={null}
+            paneFrames={[]}
+            verbs={{ workspaceConnected: true, invoke: vi.fn() }}
+            mirror={mirror()}
+          />
+        ),
+        root,
+      ),
+    );
+
+    expect(root.querySelector(".tiled-pane-area")?.getAttribute("data-pane-compositor")).toBe(
+      "true",
+    );
+    expect(root.querySelectorAll('.pane-tile[data-composed="true"]')).toHaveLength(2);
+    expect(root.querySelectorAll(".pane-tile__body > .mirror-pane-node")).toHaveLength(2);
+    expect(root.querySelectorAll(".mirror-deck")).toHaveLength(0);
+    expect(recording.renderers).toHaveLength(2);
+
+    setMirror({
+      ...initial,
+      nodes: [node("pane.a", "live"), node("pane.b", "live")],
+    });
+
+    // A seed changes node state before it paints. Re-keying on the node object
+    // here used to destroy both renderers at that exact boundary and lose the
+    // seed, leaving six blank panes marked "live" in the real workspace.
+    expect(recording.renderers).toHaveLength(2);
+    const headers = [...root.querySelectorAll<HTMLElement>(".pane-tile__header")];
+    expect(headers.every((header) => header.style.top === "0px")).toBe(true);
+    expect(headers.every((header) => !header.style.height.includes("calc"))).toBe(true);
+  });
+
   it("renders agent identity and live state in both the process tab and pane card", () => {
     const base = createDefaultDomPaneFrames()[0]!;
     const frame = {
@@ -162,7 +286,8 @@ describe("the layout-faithful workspace view", () => {
     // above it, so its header stays hidden rather than covering terminal output.
     expect(headers.map((header) => header.dataset.hoisted)).toEqual(["false", "true"]);
     // One row of a tile that is 25 pane rows plus the borrowed separator row.
-    expect(headers[1]!.style.height).toBe(`${((1 / 26) * 100).toFixed(4)}%`);
+    expect(headers[1]!.style.top).toBe("1px");
+    expect(headers[1]!.style.height).toBe(`calc(${((1 / 26) * 100).toFixed(4)}% - 1px)`);
   });
 
   it("arms the pane header's close before it kills anything", () => {

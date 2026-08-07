@@ -427,12 +427,6 @@ export class TerminalAttachmentAdmissionCoordinator {
         );
       }
       const parsedRequest = TerminalAttachRequestSchemaZ.parse(request);
-      if (parsedRequest.viewerMode === "read-only") {
-        throw new TerminalAttachmentAdmissionError(
-          "read_only_unavailable",
-          "Read-only terminal attachments are not proven geometry-neutral.",
-        );
-      }
       const origin = canonicalRendererOrigin(context.rendererOrigin);
       const requestId = z.uuid().parse(context.requestId);
       const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);

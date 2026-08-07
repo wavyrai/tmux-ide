@@ -21,6 +21,7 @@ const REQUESTS: readonly DaemonResourceRequest[] = [
   { resource: "refreshConnection" },
   { resource: "listWorkspaces" },
   { resource: "fetchFleetCatalog" },
+  { resource: "fetchWidgetAsset", request: { assetId: "a".repeat(64) } },
   { resource: "startupReadiness" },
   { resource: "fetchApplicationShell", request: { workspaceName: WORKSPACE } },
   { resource: "fetchWorkspaceFiles", request: { workspaceName: WORKSPACE } },

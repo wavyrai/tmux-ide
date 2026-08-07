@@ -320,7 +320,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       status: "error",
       error: { code: "protocol-error" },
     });
-    expect(firstSocket.closes.at(-1)).toEqual({ code: 1002, reason: "protocol-error" });
+    expect(firstSocket.closes.at(-1)).toEqual({ code: 4002, reason: "protocol-error" });
 
     const wrongIdentity = rig();
     const second = wrongIdentity.transport.connect(REQUEST, () => undefined);
@@ -395,7 +395,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       status: "error",
       error: { code: "socket-backpressure" },
     });
-    expect(socket.closes.at(-1)).toEqual({ code: 1013, reason: "socket-backpressure" });
+    expect(socket.closes.at(-1)).toEqual({ code: 4013, reason: "socket-backpressure" });
     await vi.waitFor(() =>
       expect(events).toContainEqual({
         type: "state",
@@ -498,7 +498,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
 
     const chunk = new Uint8Array(NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES);
     for (let index = 0; index < 8; index += 1) socket.message(chunk.buffer.slice(0));
-    expect(socket.closes.at(-1)).toEqual({ code: 1013, reason: "renderer-backpressure" });
+    expect(socket.closes.at(-1)).toEqual({ code: 4013, reason: "renderer-backpressure" });
     releaseOutput();
     await vi.waitFor(() =>
       expect(events).toContainEqual({
@@ -516,7 +516,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     text.socket.message("x".repeat(NATIVE_TERMINAL_MAX_CONTROL_BYTES + 1));
     expect(encode).not.toHaveBeenCalled();
     expect(text.socket.closes.at(-1)).toEqual({
-      code: 1009,
+      code: 4009,
       reason: "control-frame-too-large",
     });
     encode.mockRestore();
@@ -527,7 +527,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     encoded.socket.message("€".repeat(Math.floor(NATIVE_TERMINAL_MAX_CONTROL_BYTES / 3) + 1));
     expect(encodedByteCheck).toHaveBeenCalledOnce();
     expect(encoded.socket.closes.at(-1)).toEqual({
-      code: 1009,
+      code: 4009,
       reason: "control-frame-too-large",
     });
     encodedByteCheck.mockRestore();
@@ -538,7 +538,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     buffer.socket.message(new ArrayBuffer(NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES + 1));
     expect(arrayBufferSlice).not.toHaveBeenCalled();
     expect(buffer.socket.closes.at(-1)).toEqual({
-      code: 1009,
+      code: 4009,
       reason: "output-frame-too-large",
     });
     arrayBufferSlice.mockRestore();
@@ -549,7 +549,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     view.socket.message(new Uint8Array(NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES + 1));
     expect(typedArraySlice).not.toHaveBeenCalled();
     expect(view.socket.closes.at(-1)).toEqual({
-      code: 1009,
+      code: 4009,
       reason: "output-frame-too-large",
     });
     typedArraySlice.mockRestore();
@@ -570,7 +570,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       if (control.socket.readyState === 3) break;
     }
     expect(control.socket.closes.at(-1)).toEqual({
-      code: 1008,
+      code: 4008,
       reason: "control-frame-rate-limit",
     });
 
@@ -582,7 +582,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       if (frames.socket.readyState === 3) break;
     }
     expect(frames.socket.closes.at(-1)).toEqual({
-      code: 1008,
+      code: 4008,
       reason: "inbound-frame-rate-limit",
     });
 
@@ -620,7 +620,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       status: "error",
       error: { code: "resize-ack-timeout" },
     });
-    expect(resize.socket.closes.at(-1)).toEqual({ code: 1008, reason: "resize-ack-timeout" });
+    expect(resize.socket.closes.at(-1)).toEqual({ code: 4008, reason: "resize-ack-timeout" });
 
     const lifetimeHarness = rig({ schedule });
     const lifetimeEvents: NativeTerminalEvent[] = [];
@@ -633,7 +633,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     expect(lifetimeLimit).toBeDefined();
     lifetimeLimit!.callback();
     expect(lifetime.socket.closes.at(-1)).toEqual({
-      code: 1008,
+      code: 4008,
       reason: "connection-lifetime-limit",
     });
     await vi.waitFor(() =>
@@ -809,7 +809,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       status: "error",
       error: { code: "redeem-timeout", retryable: true },
     });
-    expect(socket.closes).toEqual([{ code: 1008, reason: "redeem-timeout" }]);
+    expect(socket.closes).toEqual([{ code: 4008, reason: "redeem-timeout" }]);
   });
 
   it("surfaces a structured issue rejection code instead of the generic failure", async () => {
@@ -961,7 +961,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       status: "error",
       error: { code: "protocol-error" },
     });
-    expect(malicious.socket.closes.at(-1)).toEqual({ code: 1002, reason: "protocol-error" });
+    expect(malicious.socket.closes.at(-1)).toEqual({ code: 4002, reason: "protocol-error" });
 
     const duplicateHarness = rig();
     const duplicate = await connectLive(duplicateHarness);
@@ -969,7 +969,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     duplicate.socket.message(inputAck(1, 1));
     await expect(accepted).resolves.toEqual({ status: "ok" });
     duplicate.socket.message(inputAck(1, 1));
-    expect(duplicate.socket.closes.at(-1)).toEqual({ code: 1002, reason: "protocol-error" });
+    expect(duplicate.socket.closes.at(-1)).toEqual({ code: 4002, reason: "protocol-error" });
 
     const scheduled: Array<{ callback: () => void; active: boolean; delay: number }> = [];
     const schedule = (callback: () => void, delay: number) => {

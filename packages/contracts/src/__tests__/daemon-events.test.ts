@@ -14,6 +14,13 @@ describe("daemon event contracts", () => {
       DaemonEventClientFrameSchemaZ.parse({ type: "subscribe", sessions: ["tmux-ide"] }),
     ).toEqual({ type: "subscribe", sessions: ["tmux-ide"] });
     expect(
+      DaemonEventClientFrameSchemaZ.parse({
+        type: "subscribe",
+        sessions: ["tmux-ide"],
+        afterSequence: 41,
+      }),
+    ).toEqual({ type: "subscribe", sessions: ["tmux-ide"], afterSequence: 41 });
+    expect(
       DaemonEventClientFrameSchemaZ.safeParse({ type: "unsubscribe", sessions: [] }).success,
     ).toBe(true);
     expect(DaemonEventClientFrameSchemaZ.safeParse({ type: "ping" }).success).toBe(true);
@@ -23,10 +30,50 @@ describe("daemon event contracts", () => {
       DaemonEventClientFrameSchemaZ.safeParse({
         type: "subscribe",
         sessions: [],
+        afterSequence: -1,
+      }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventClientFrameSchemaZ.safeParse({
+        type: "subscribe",
+        sessions: [],
         typo: true,
       }).success,
     ).toBe(false);
     expect(DaemonEventClientFrameSchemaZ.safeParse({ type: "ping", sessions: [] }).success).toBe(
+      false,
+    );
+  });
+
+  it("strictly parses replayable resource invalidations and gap recovery", () => {
+    const changed = {
+      type: "resource.changed",
+      sequence: 42,
+      workspaceName: "tmux-ide",
+      resource: "application-shell",
+      revision: 8,
+      causeOperationId: "10000000-0000-4000-8000-000000000001",
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(changed)).toEqual(changed);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...changed, sequence: 0 }).success).toBe(
+      false,
+    );
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ ...changed, resource: "everything" }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ ...changed, causeOperationId: null }).success,
+    ).toBe(true);
+
+    const gap = {
+      type: "snapshot-required",
+      afterSequence: 1,
+      oldestAvailableSequence: 20,
+      currentSequence: 42,
+      reason: "journal-gap",
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(gap)).toEqual(gap);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...gap, reason: "unknown" }).success).toBe(
       false,
     );
   });

@@ -87,7 +87,15 @@ import {
   type AppWindowMutationResult,
   type DaemonChildOutputTail,
   type StartupReadinessLadder,
+  WidgetAssetResultSchemaZ,
+  type WidgetAssetRequest,
+  type WidgetAssetResult,
 } from "@tmux-ide/contracts";
+import {
+  advanceResourceReplica,
+  initialResourceReplica,
+  type ResourceReplicaState,
+} from "@tmux-ide/daemon-client/resource-replica";
 import { z } from "zod";
 
 import { DaemonEventSupervisor } from "./daemon-event-supervisor.ts";
@@ -552,6 +560,9 @@ export class DaemonResourceBroker {
   #sentSessions = new Set<string>();
   #socketPeerVerified = false;
   #socketOpened = false;
+  #eventCursorSent = false;
+  #resourceEventsSupported = false;
+  #eventReplica: ResourceReplicaState<null> = initialResourceReplica();
   /** The single owner of event-transport retry, backoff, and the fatal ceiling. */
   readonly #supervisor: DaemonEventSupervisor;
 
@@ -1191,6 +1202,25 @@ export class DaemonResourceBroker {
     }
   }
 
+  async fetchWidgetAsset(request: WidgetAssetRequest): Promise<WidgetAssetResult> {
+    if (this.#daemon.status !== "connected") return this.#disconnectedResult();
+    if (!this.#ownerToken) {
+      return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
+    }
+    try {
+      const raw = await this.#requestJson(
+        `/api/widget-assets/${encodeURIComponent(request.assetId)}`,
+        24 * 1024 * 1024,
+        true,
+      );
+      const parsed = WidgetAssetResultSchemaZ.safeParse({ status: "ok", asset: raw });
+      if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
+      return parsed.data;
+    } catch (error) {
+      return { status: "error", error: this.#boundedError(error) };
+    }
+  }
+
   /**
    * Owner-authenticated read of a generation-stamped workspace resource.
    *
@@ -1564,6 +1594,7 @@ export class DaemonResourceBroker {
     this.#socket = socket;
     this.#socketPeerVerified = false;
     this.#socketOpened = false;
+    this.#eventCursorSent = false;
     this.#sentSessions.clear();
     socket.addEventListener("open", () => {
       if (this.#socket !== socket) return;
@@ -1623,6 +1654,12 @@ export class DaemonResourceBroker {
         return;
       }
       this.#socketPeerVerified = true;
+      this.#resourceEventsSupported = parsed.data.eventSequence !== undefined;
+      const resumeSequence =
+        this.#eventReplica.daemonInstanceId === parsed.data.daemon.instanceId
+          ? (this.#eventReplica.sequence ?? 0)
+          : 0;
+      this.#establishEventCursor(parsed.data.daemon.instanceId, resumeSequence);
       this.#sendSubscriptionDelta(this.#requiredSessions());
       this.#supervisor.verified();
       return;
@@ -1635,6 +1672,56 @@ export class DaemonResourceBroker {
   }
 
   #projectServerFrame(frame: DaemonEventServerFrame): void {
+    if (this.#daemon.status !== "connected") return;
+    if (frame.type === "snapshot-required") {
+      const instanceId = this.#daemon.descriptor.instanceId;
+      this.#eventReplica = advanceResourceReplica(this.#eventReplica, {
+        type: "gap",
+        daemonInstanceId: instanceId,
+        sequence: frame.currentSequence,
+      }).state;
+      this.#invalidateEveryResource();
+      this.#establishEventCursor(instanceId, frame.currentSequence);
+      return;
+    }
+    if (frame.type === "resource.changed") {
+      const instanceId = this.#daemon.descriptor.instanceId;
+      const previousSequence = this.#eventReplica.sequence;
+      const transition = advanceResourceReplica(this.#eventReplica, {
+        type: "changed",
+        daemonInstanceId: instanceId,
+        sequence: frame.sequence,
+        revision: frame.sequence,
+        ...(frame.causeOperationId ? { causeOperationId: frame.causeOperationId } : {}),
+      });
+      this.#eventReplica = transition.state;
+      if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+        this.#invalidateEveryResource();
+        this.#establishEventCursor(instanceId, frame.sequence);
+        return;
+      }
+      if (frame.sequence <= (previousSequence ?? -1)) return;
+      if (frame.resource === "application-shell") {
+        if (frame.workspaceName === null) {
+          for (const workspace of this.#workspaceCatalog.values()) {
+            this.#emit({
+              type: "application-shell.changed",
+              workspaceName: workspace.workspaceName,
+            });
+          }
+        } else if (this.#workspaceCatalog.has(frame.workspaceName)) {
+          this.#emit({
+            type: "application-shell.changed",
+            workspaceName: frame.workspaceName,
+          });
+        }
+      } else if (frame.resource === "fleet-catalog") {
+        this.#emit({ type: "fleet.changed" });
+      } else {
+        this.#emit({ type: "workspaces.changed" });
+      }
+      return;
+    }
     switch (frame.type) {
       case "snapshot":
       case "config.changed":
@@ -1696,6 +1783,7 @@ export class DaemonResourceBroker {
         }
         return;
       case "action.complete":
+        if (this.#resourceEventsSupported && frame.name.startsWith("workspace.")) return;
         if (frame.name === "workspace.app-window.mutate") {
           const mutation = AppWindowMutationResultSchemaZ.safeParse(frame.result);
           if (mutation.success && this.#workspaceCatalog.has(mutation.data.workspaceName)) {
@@ -1734,6 +1822,31 @@ export class DaemonResourceBroker {
     }
   }
 
+  #invalidateEveryResource(): void {
+    this.#emit({ type: "workspaces.changed" });
+    this.#emit({ type: "fleet.changed" });
+    for (const workspace of this.#workspaceCatalog.values()) {
+      this.#emit({
+        type: "application-shell.changed",
+        workspaceName: workspace.workspaceName,
+      });
+    }
+  }
+
+  #establishEventCursor(daemonInstanceId: string, sequence: number): void {
+    this.#eventReplica = advanceResourceReplica(this.#eventReplica, {
+      type: "connected",
+      daemonInstanceId,
+    }).state;
+    this.#eventReplica = advanceResourceReplica(this.#eventReplica, {
+      type: "snapshot",
+      daemonInstanceId,
+      sequence,
+      revision: sequence,
+      value: null,
+    }).state;
+  }
+
   #emit(raw: DesktopDaemonEvent): void {
     const event = DesktopDaemonEventSchemaZ.parse(raw);
     for (const subscription of this.#subscriptions.values()) {
@@ -1767,10 +1880,17 @@ export class DaemonResourceBroker {
         ),
       );
     }
-    if (added.length > 0) {
+    if (added.length > 0 || !this.#eventCursorSent) {
       this.#socket.send(
-        JSON.stringify(DaemonEventClientFrameSchemaZ.parse({ type: "subscribe", sessions: added })),
+        JSON.stringify(
+          DaemonEventClientFrameSchemaZ.parse({
+            type: "subscribe",
+            sessions: added,
+            ...(!this.#eventCursorSent ? { afterSequence: this.#eventReplica.sequence ?? 0 } : {}),
+          }),
+        ),
       );
+      this.#eventCursorSent = true;
     }
     this.#sentSessions = required;
   }
@@ -1815,6 +1935,8 @@ export class DaemonResourceBroker {
     this.#socketPeerVerified = false;
     this.#socketOpened = false;
     this.#sentSessions.clear();
+    this.#eventCursorSent = false;
+    this.#resourceEventsSupported = false;
   }
 
   /** Physical teardown only; what happens next is the supervisor's decision. */

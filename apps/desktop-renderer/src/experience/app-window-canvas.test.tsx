@@ -1,6 +1,7 @@
 /* @vitest-environment happy-dom */
 import {
   AppWindowDocumentV1SchemaZ,
+  createClientViewStateV1,
   resolvePaneAppearance,
   type ApplicationShellTerminalInventory,
   type AppWindowDocumentV1,
@@ -498,6 +499,51 @@ describe("AppWindowCanvas", () => {
       source: "mouse",
     });
     expect(onCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus and viewport changes in controlled client view state", () => {
+    const shared = documentFixture();
+    const [view, setView] = createSignal({
+      ...createClientViewStateV1({
+        clientId: "client.browser",
+        viewId: "view.local",
+        workspaceId: "workspace.product",
+        legacyDocument: shared,
+      }),
+      focusedWindowId: null,
+      selectedWindowIds: [],
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onCommand = vi.fn();
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={shared}
+            clientViewState={view()}
+            onClientViewStateChange={setView}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            onCommand={onCommand}
+          />
+        ),
+        root,
+      ),
+    );
+
+    root
+      .querySelector<HTMLElement>(".web-pane-frame__header")
+      ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    root.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]')?.click();
+
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(view().focusedWindowId).toBe("window.lead");
+    expect(view().selectedWindowIds).toEqual(["window.lead"]);
+    expect(view().viewport.scale).toBeGreaterThan(1);
+    expect(shared.focusedWindowId).toBe("window.lead");
   });
 
   it("invokes the docked Float control from keyboard activation", () => {

@@ -433,7 +433,7 @@ describe("PtyTmuxAttachmentLauncher", () => {
     transport.disposeAll();
   });
 
-  it("exposes only bounded native input and rejects read-only before PTY spawn", async () => {
+  it("exposes bounded input only to interactive clients and keeps read-only clients passive", async () => {
     const adapter = new MockPtyAdapter();
     const proof = new ProofRunner();
     const interactivePlan = plan();
@@ -456,14 +456,14 @@ describe("PtyTmuxAttachmentLauncher", () => {
     expect(interactive.boundedInput?.snapshot().state).toBe("closed");
 
     const readOnlyPlan = plan(SECOND_ID, 0, "read-only");
-    const spawnCount = adapter.spawnCount;
-    expect(() => transport.beginGuardedAttach(input(readOnlyPlan))).toThrowError(
-      expect.objectContaining({
-        name: "TmuxAttachmentClientTransportError",
-        code: "read_only_unavailable",
-      }),
-    );
-    expect(adapter.spawnCount).toBe(spawnCount);
+    proveCurrentAttached(proof, adapter, readOnlyPlan);
+    const readOnlyAttempt = transport.beginGuardedAttach(input(readOnlyPlan));
+    await readOnlyAttempt.outcome;
+    const readOnly = transport.claim(readOnlyAttempt)!;
+    expect(readOnly.boundedInput).toBeNull();
+    expect(() => readOnly.resize(91, 31)).toThrow(/read-only/u);
+    expect(adapter.lastSpawned()!.boundedWriteLog).toEqual([]);
+    readOnly.dispose();
   });
 
   it("disposes only the PTY client and never emits a tmux kill-session command", async () => {

@@ -134,3 +134,7 @@ export function setPaneTitle(targetPane: string, title: string): void {
 export function setPaneOption(targetPane: string, option: string, value: string): void {
   runTmux(["set-option", "-pqt", targetPane, option, value]);
 }
+
+export function setWindowOption(targetPane: string, option: string, value: string): void {
+  runTmux(["set-option", "-wqt", targetPane, option, value]);
+}

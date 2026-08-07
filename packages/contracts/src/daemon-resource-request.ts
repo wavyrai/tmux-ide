@@ -79,6 +79,11 @@ import {
   PaneStreamLeaseRequestSchemaZ,
   type PaneStreamIssueResult,
 } from "./pane-stream.ts";
+import {
+  WidgetAssetRequestSchemaZ,
+  WidgetAssetResultSchemaZ,
+  type WidgetAssetResult,
+} from "./widget-asset.ts";
 
 /**
  * Every daemon resource a desktop host can be asked for, keyed by `resource`.
@@ -152,6 +157,9 @@ export const DaemonResourceRequestSchemaZ = z.discriminatedUnion("resource", [
   z
     .object({ resource: z.literal("issuePaneStream"), request: PaneStreamLeaseRequestSchemaZ })
     .strict(),
+  z
+    .object({ resource: z.literal("fetchWidgetAsset"), request: WidgetAssetRequestSchemaZ })
+    .strict(),
 ]);
 
 export type DaemonResourceRequest = z.infer<typeof DaemonResourceRequestSchemaZ>;
@@ -183,6 +191,7 @@ export interface DaemonResourceResultMap extends Record<DaemonResourceKind, unkn
   invokeVerb: WorkspaceMultiplexerHostResult;
   issueTerminalAttachment: TerminalAttachmentIssueResult;
   issuePaneStream: PaneStreamIssueResult;
+  fetchWidgetAsset: WidgetAssetResult;
 }
 
 export type DaemonResourceResult<K extends DaemonResourceKind> = DaemonResourceResultMap[K];
@@ -211,6 +220,7 @@ export const DAEMON_RESOURCE_RESULT_SCHEMAS: {
   invokeVerb: WorkspaceMultiplexerHostResultSchemaZ,
   issueTerminalAttachment: TerminalAttachmentIssueResultSchemaZ,
   issuePaneStream: PaneStreamIssueResultSchemaZ,
+  fetchWidgetAsset: WidgetAssetResultSchemaZ,
 };
 
 /**

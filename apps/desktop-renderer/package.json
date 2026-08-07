@@ -19,6 +19,7 @@
     "@tmux-ide/daemon-client": "workspace:*",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "mermaid": "^11.16.1",
     "solid-js": "1.9.12",
     "zod": "4.3.6"
   },

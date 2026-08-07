@@ -277,6 +277,13 @@ export {
   type PaneStreamRuntimeOptions,
 } from "./terminal/pane-stream/runtime.ts";
 export {
+  TerminalInputAuthority,
+  TerminalInputAuthorityConflictError,
+  type TerminalInputAuthoritySnapshot,
+  type TerminalInputOwner,
+  type TerminalInputTransport,
+} from "./terminal/input-authority.ts";
+export {
   attachPaneStreamWebSocket,
   type PaneStreamWebSocketBoundary,
 } from "./server/pane-stream-upgrade.ts";

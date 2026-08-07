@@ -10,8 +10,8 @@ import {
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionInputV3,
   type ApplicationShellProjectionV1,
-  type AppWindowDocumentV1,
   type CommandSource,
+  type ClientViewStateV1,
   type DesktopDaemonCapabilityState,
   type DesktopWindowState,
   type FocusZone,
@@ -21,6 +21,8 @@ import {
   type SemanticFocusTarget,
   type WorkspacePaneCreateInvocation,
   resolvePaneAppearance,
+  createClientViewStateV1,
+  reconcileClientViewStateV1,
 } from "@tmux-ide/contracts";
 import {
   For,
@@ -169,6 +171,9 @@ export interface DomApplicationShellProps {
   readonly onAppWindowCommand?: (
     invocation: AppWindowCanvasCommandInvocation,
   ) => void | Promise<void>;
+  /** Optional controlled client-local presentation for this shell instance. */
+  readonly clientViewState?: ClientViewStateV1;
+  readonly onClientViewStateChange?: (next: ClientViewStateV1) => void;
   readonly appWindowMutationUnavailableReason?: string;
   /**
    * Fixture/test override of the pane-stream transport behind the mirror-panes
@@ -308,7 +313,24 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   );
   const experimentalSurfaces = props.experimentalSurfaces ?? experimentalSurfacesEnabled();
   const hiddenTools = hiddenDockTools(experimentalSurfaces);
-  const [state, setState] = createSignal(createDomShellReplayState(input(), hiddenTools));
+  const initialReplayState = createDomShellReplayState(input(), hiddenTools);
+  const initialClientDock = props.clientViewState?.dock;
+  const initialDockTool = initialClientDock?.activeTabId;
+  const [state, setState] = createSignal({
+    ...initialReplayState,
+    ...(initialClientDock
+      ? {
+          dockMode: initialClientDock.mode,
+          activeDockTool:
+            initialDockTool &&
+            !hiddenTools.has(initialDockTool) &&
+            input().dock.tools.some(({ id }) => id === initialDockTool)
+              ? initialDockTool
+              : initialReplayState.activeDockTool,
+          focus: { ...initialReplayState.focus, focusZone: initialClientDock.focusZone },
+        }
+      : {}),
+  });
   const [viewport, setViewport] = createSignal(initialViewport());
   const [createPaneOpen, setCreatePaneOpen] = createSignal(false);
   const [sidebarWidth, setSidebarWidth] = createSignal<number>(DOM_SHELL_GEOMETRY.sidebarWidth);
@@ -406,29 +428,54 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     const value = input();
     return "appWindows" in value ? value.appWindows : null;
   });
-  const [localFocusedWindowId, setLocalFocusedWindowId] = createSignal<string | null>(null);
+  const localViewIdentity = `view.${Math.random().toString(36).slice(2)}`;
+  const [localClientViewState, setLocalClientViewState] = createSignal<ClientViewStateV1>(
+    props.clientViewState ??
+      createClientViewStateV1({
+        clientId: "client.desktop-renderer",
+        viewId: localViewIdentity,
+        workspaceId: input().workspace.id,
+        legacyDocument: appWindowDocument(),
+      }),
+  );
+  const clientViewState = createMemo(() => props.clientViewState ?? localClientViewState());
+  const publishClientViewState = (next: ClientViewStateV1): void => {
+    if (props.clientViewState === undefined) setLocalClientViewState(next);
+    props.onClientViewStateChange?.(next);
+  };
   let appWindowWorkspaceId = input().workspace.id;
   createEffect(() => {
-    const localId = localFocusedWindowId();
-    if (localId && appWindowDocument()?.focusedWindowId === localId) {
-      setLocalFocusedWindowId(null);
-    }
-  });
-  const focusedAppWindowDocument = createMemo<AppWindowDocumentV1 | null>(() => {
     const document = appWindowDocument();
-    if (!document) return null;
-    const localId = localFocusedWindowId();
-    const windowId = localId && Object.hasOwn(document.windows, localId) ? localId : null;
-    if (!windowId || document.focusedWindowId === windowId) return document;
-    const window = document.windows[windowId]!;
-    return {
-      ...document,
-      focusedWindowId: windowId,
-      floatingOrder:
-        window.placement.mode === "floating"
-          ? [...document.floatingOrder.filter((candidate) => candidate !== windowId), windowId]
-          : document.floatingOrder,
-    };
+    if (!document) return;
+    const current = clientViewState();
+    const next = reconcileClientViewStateV1(current, document);
+    if (JSON.stringify(next) !== JSON.stringify(current)) publishClientViewState(next);
+  });
+  createEffect(() => {
+    const controlled = props.clientViewState;
+    if (!controlled || controlled.workspaceId !== input().workspace.id) return;
+    setState((current) => {
+      const requestedTool = controlled.dock.activeTabId;
+      const activeDockTool =
+        requestedTool &&
+        !hiddenTools.has(requestedTool) &&
+        input().dock.tools.some(({ id }) => id === requestedTool)
+          ? requestedTool
+          : current.activeDockTool;
+      if (
+        current.dockMode === controlled.dock.mode &&
+        current.activeDockTool === activeDockTool &&
+        current.focus.focusZone === controlled.dock.focusZone
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        dockMode: controlled.dock.mode,
+        activeDockTool,
+        focus: { ...current.focus, focusZone: controlled.dock.focusZone },
+      };
+    });
   });
   const paneFrames = createMemo<readonly PaneFrameModel[]>(() => {
     if (props.terminalPanes) return props.terminalPanes.map(({ model }) => model);
@@ -714,12 +761,21 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     if (dataMode() !== "runtime" || props.daemonState?.status !== "connected") return null;
     return createHostPaneStreamTransport(props.host, props.daemonState.identity);
   });
+  /*
+   * The layout-faithful terminal surface composes each pane from its pane
+   * stream, tmuxy-style, so its header can occupy a real flex row instead of
+   * painting over the whole-window xterm. The hidden whole-window attachment
+   * remains the input/geometry client; these streams are the visible pixels.
+   */
+  const tiledPaneCompositorEnabled = createMemo(
+    () => !experimentalSurfaces && dataMode() === "runtime" && mirrorTransport() !== null,
+  );
   let activeMirrorKey = "";
   createEffect(() => {
     const transport = mirrorTransport();
     const panes = mirrorPaneIds();
     const workspaceName = props.terminalWorkspaceName ?? input().workspace.id;
-    const leased = mirrorEnabled() ? panes : panes.slice(0, 1);
+    const leased = mirrorEnabled() || tiledPaneCompositorEnabled() ? panes : panes.slice(0, 1);
     const enabled = transport !== null && leased.length > 0;
     const key = enabled ? [workspaceName, ...leased].join("\u0000") : "";
     if (!enabled) {
@@ -776,7 +832,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     if (mirrorTransport() === null || mirrorPaneIds().length === 0) return undefined;
     const controller = mirrorController();
     const state = mirrorState();
-    const enabled = mirrorEnabled() && controller !== null && state !== null;
+    const enabled =
+      (mirrorEnabled() || tiledPaneCompositorEnabled()) && controller !== null && state !== null;
     const framesById = new Map(renderedPaneFrames().map((frame) => [frame.pane.id, frame]));
     return {
       enabled,
@@ -933,7 +990,15 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     const nextDataMode = dataMode();
     if (nextInput.workspace.id !== appWindowWorkspaceId) {
       appWindowWorkspaceId = nextInput.workspace.id;
-      setLocalFocusedWindowId(null);
+      const currentView = clientViewState();
+      publishClientViewState(
+        createClientViewStateV1({
+          clientId: currentView.clientId,
+          viewId: currentView.viewId,
+          workspaceId: nextInput.workspace.id,
+          legacyDocument: "appWindows" in nextInput ? nextInput.appWindows : null,
+        }),
+      );
     }
     if (nextInput === previousInput && nextDataMode === previousDataMode) return;
     const currentInput = previousInput;
@@ -952,16 +1017,31 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     props.onCommand?.(invocation);
   };
 
-  const dispatchAppWindow = (
-    invocation: AppWindowCanvasCommandInvocation,
-  ): void | Promise<void> => {
-    if (invocation.command.type !== "window.focus" || invocation.command.windowId === null) {
-      return props.onAppWindowCommand?.(invocation);
+  createEffect(() => {
+    const current = clientViewState();
+    const projection = shell();
+    const dock = {
+      ...current.dock,
+      mode: projection.bottomDock.mode,
+      activeTabId: projection.bottomDock.activeTool,
+      focusZone: projection.focus.zone,
+    };
+    if (
+      dock.mode !== current.dock.mode ||
+      dock.activeTabId !== current.dock.activeTabId ||
+      dock.focusZone !== current.dock.focusZone
+    ) {
+      publishClientViewState({ ...current, dock });
     }
-    const document = appWindowDocument();
-    const window = document?.windows[invocation.command.windowId];
+  });
+
+  const moveTerminalFocus = (
+    windowId: string | null,
+    source: "keyboard" | "mouse" | "programmatic",
+  ): void => {
+    if (windowId === null) return;
+    const window = appWindowDocument()?.windows[windowId];
     if (!window || window.source.kind !== "terminal") return;
-    setLocalFocusedWindowId(window.id);
     dispatch(
       applicationShellCommandInvocation(
         APPLICATION_SHELL_COMMAND_IDS.moveFocus,
@@ -973,12 +1053,43 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           },
         },
         {
-          kind: invocation.source === "programmatic" ? "keyboard" : invocation.source,
+          kind: source === "programmatic" ? "keyboard" : source,
           surface: "application-shell",
         },
       ),
     );
-    return props.onAppWindowCommand?.(invocation);
+  };
+
+  const applyClientWindowFocus = (
+    windowId: string | null,
+    source: "keyboard" | "mouse" | "programmatic",
+  ): void => {
+    const current = clientViewState();
+    if (current.focusedWindowId !== windowId) {
+      publishClientViewState({
+        ...current,
+        focusedWindowId: windowId,
+        selectedWindowIds: windowId === null ? [] : [windowId],
+      });
+    }
+    moveTerminalFocus(windowId, source);
+  };
+
+  const acceptCanvasClientViewState = (next: ClientViewStateV1): void => {
+    const previousFocus = clientViewState().focusedWindowId;
+    publishClientViewState(next);
+    if (next.focusedWindowId !== previousFocus) {
+      moveTerminalFocus(next.focusedWindowId, "mouse");
+    }
+  };
+
+  const dispatchAppWindow = (
+    invocation: AppWindowCanvasCommandInvocation,
+  ): void | Promise<void> => {
+    if (invocation.command.type !== "window.focus") {
+      return props.onAppWindowCommand?.(invocation);
+    }
+    applyClientWindowFocus(invocation.command.windowId, invocation.source);
   };
 
   const dispatchSurface = (surface: ProductSurfaceId, source: CommandSource): void => {
@@ -1520,7 +1631,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
             data-focus-zone="canvas"
           >
             <Show
-              when={experimentalSurfaces && focusedAppWindowDocument()}
+              when={experimentalSurfaces && appWindowDocument()}
               fallback={
                 <Show
                   when={tiledViewAvailable()}
@@ -1721,6 +1832,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               {(document) => (
                 <AppWindowCanvas
                   document={document()}
+                  clientViewState={clientViewState()}
+                  onClientViewStateChange={acceptCanvasClientViewState}
                   paneFrames={renderedPaneFrames()}
                   terminalInventory={shell().terminalInventory}
                   overlay={agentGraphOverlay()}

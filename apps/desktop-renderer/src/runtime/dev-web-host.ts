@@ -27,6 +27,7 @@ import {
   ApplicationShellResourceV3SchemaZ,
   AppWindowMutationResultSchemaZ,
   WorkspaceMultiplexerMutationResultSchemaZ,
+  DaemonEventClientFrameSchemaZ,
   DaemonEventServerFrameSchemaZ,
   DESKTOP_HOST_API_VERSION,
   DesktopDaemonCapabilitiesResultSchemaZ,
@@ -47,6 +48,7 @@ import {
   WorkspacePaneCreateMutationResultSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
   WorkspacePromotionFailureSchemaZ,
+  WidgetAssetSchemaZ,
   createDaemonResourceMethods,
   daemonWorkspaceRouteName,
   type DaemonEventServerFrame,
@@ -65,6 +67,11 @@ import {
   type HostCapabilities,
   type StartupReadinessLadder,
 } from "@tmux-ide/contracts";
+import {
+  advanceResourceReplica,
+  initialResourceReplica,
+  type ResourceReplicaState,
+} from "@tmux-ide/daemon-client/resource-replica";
 import { z } from "zod";
 import {
   createRuntimeConnectionSupervisor,
@@ -73,6 +80,7 @@ import {
 } from "@tmux-ide/daemon-client/connection-supervisor";
 
 import type { DevWebHostConfig } from "./dev-web-host-config.ts";
+import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 
 const REQUEST_TIMEOUT_MS = 5_000;
 const PROMOTE_TIMEOUT_MS = 15_000;
@@ -201,6 +209,18 @@ export function projectDaemonServerFrame(
       return [...shellEventsForSession(catalog, frame.sessionName), { type: "fleet.changed" }];
     case "fleet.changed":
       return [{ type: "fleet.changed" }];
+    case "resource.changed":
+      if (frame.resource === "application-shell") {
+        return frame.workspaceName === null
+          ? shellEventsForEveryWorkspace(catalog)
+          : catalog.some((entry) => entry.workspaceName === frame.workspaceName)
+            ? [{ type: "application-shell.changed", workspaceName: frame.workspaceName }]
+            : [];
+      }
+      if (frame.resource === "fleet-catalog") return [{ type: "fleet.changed" }];
+      return [{ type: "workspaces.changed" }];
+    case "snapshot-required":
+      return [{ type: "workspaces.changed" }, ...shellEventsForEveryWorkspace(catalog)];
     case "workspace.added":
     case "workspace.removed":
       return [{ type: "workspaces.changed" }];
@@ -235,6 +255,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   // until the first read lands.
   let catalogCache: readonly DevWorkspaceCatalogEntry[] = [];
   let socketVerified = false;
+  let eventReplica: ResourceReplicaState<null> = initialResourceReplica();
   let socketSupervisor: RuntimeConnectionSupervisor<true> | null = null;
   let stopSocketStateSubscription: (() => void) | null = null;
   let disposed = false;
@@ -267,6 +288,9 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         signal: controller.signal,
       });
       if (!response.ok) {
+        console.warn(
+          `[tmux-ide] development daemon request failed: ${init.method} ${pathname} -> ${response.status}`,
+        );
         throw new DevHostFailure(
           response.status === 404
             ? capabilityError("workspace-not-found", "The requested resource is unavailable.")
@@ -420,6 +444,20 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     }
   }
 
+  function establishEventCursor(daemonInstanceId: string, sequence: number): void {
+    eventReplica = advanceResourceReplica(eventReplica, {
+      type: "connected",
+      daemonInstanceId,
+    }).state;
+    eventReplica = advanceResourceReplica(eventReplica, {
+      type: "snapshot",
+      daemonInstanceId,
+      sequence,
+      revision: sequence,
+      value: null,
+    }).state;
+  }
+
   /**
    * One shared event socket for every subscriber, mirroring the production
    * broker's single-connection rule. It carries no credential: `/ws/events`
@@ -461,6 +499,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     return new Promise((resolve, reject) => {
       const next = new WebSocket(`${config.daemonWebSocketOrigin}${EVENTS_PATH}`);
       let connected = false;
+      let resourceEventsSupported = false;
       let closedResolve!: (reason: unknown) => void;
       const closed = new Promise<unknown>((settle) => {
         closedResolve = settle;
@@ -479,14 +518,75 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         if (!frame.success) return;
         if (!connected) {
           if (frame.data.type !== "hello" || !sameIdentity(frame.data.daemon, identity)) {
-            next.close(1008, "daemon generation mismatch");
+            next.close(browserInitiatedWebSocketCloseCode(1008), "daemon generation mismatch");
             return;
           }
+          const resumeSequence =
+            eventReplica.daemonInstanceId === frame.data.daemon.instanceId
+              ? (eventReplica.sequence ?? 0)
+              : 0;
+          establishEventCursor(frame.data.daemon.instanceId, resumeSequence);
+          resourceEventsSupported = frame.data.eventSequence !== undefined;
+          next.send(
+            JSON.stringify(
+              DaemonEventClientFrameSchemaZ.parse({
+                type: "subscribe",
+                sessions: catalogCache.map(({ sessionName }) => sessionName),
+                afterSequence: resumeSequence,
+              }),
+            ),
+          );
           connected = true;
           resolve({ value: true, closed, dispose });
           return;
         }
         if (frame.data.type === "hello") return;
+        if (frame.data.type === "snapshot-required") {
+          eventReplica = advanceResourceReplica(eventReplica, {
+            type: "gap",
+            daemonInstanceId: requireIdentity().instanceId,
+            sequence: frame.data.currentSequence,
+          }).state;
+          for (const mapped of projectDaemonServerFrame(frame.data, catalogCache)) emit(mapped);
+          establishEventCursor(requireIdentity().instanceId, frame.data.currentSequence);
+          return;
+        }
+        if (frame.data.type === "resource.changed") {
+          const previousSequence = eventReplica.sequence;
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "changed",
+            daemonInstanceId: requireIdentity().instanceId,
+            sequence: frame.data.sequence,
+            revision: frame.data.sequence,
+            ...(frame.data.causeOperationId
+              ? { causeOperationId: frame.data.causeOperationId }
+              : {}),
+          });
+          eventReplica = transition.state;
+          if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+            for (const mapped of projectDaemonServerFrame(
+              {
+                type: "snapshot-required",
+                afterSequence: previousSequence ?? 0,
+                oldestAvailableSequence: null,
+                currentSequence: frame.data.sequence,
+                reason: "journal-gap",
+              },
+              catalogCache,
+            ))
+              emit(mapped);
+            establishEventCursor(requireIdentity().instanceId, frame.data.sequence);
+            return;
+          }
+          if (frame.data.sequence <= (previousSequence ?? -1)) return;
+        }
+        if (
+          frame.data.type === "action.complete" &&
+          resourceEventsSupported &&
+          frame.data.name.startsWith("workspace.")
+        ) {
+          return;
+        }
         for (const mapped of projectDaemonServerFrame(frame.data, catalogCache)) emit(mapped);
       });
       next.addEventListener("close", (event) => {
@@ -586,6 +686,21 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
             );
           }
           return { status: "ok", envelope: parsed.data };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      case "fetchWidgetAsset":
+        try {
+          await loadIdentity();
+          const asset = WidgetAssetSchemaZ.parse(
+            await request(
+              `/api/widget-assets/${encodeURIComponent(daemonRequest.request.assetId)}`,
+              {
+                method: "GET",
+              },
+            ),
+          );
+          return { status: "ok", asset };
         } catch (error) {
           return { status: "error", error: failureOf(error) };
         }

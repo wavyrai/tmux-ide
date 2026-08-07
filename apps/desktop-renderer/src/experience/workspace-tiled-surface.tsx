@@ -36,7 +36,6 @@ import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-fra
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import { Icon, type IconArtwork } from "../ui-system/icon.tsx";
 import { DOM_ICON_METADATA } from "./dom-icons.ts";
-import { gridOverlayBox } from "./grid-overlay.ts";
 import { MirrorPaneNode } from "../terminal/mirror-pane-node.tsx";
 import type { AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
 import {
@@ -78,6 +77,38 @@ type PaneManipulationPhase =
   | "drop-ready"
   | "swap-committing"
   | "rollback";
+
+/**
+ * Return the stable pixels occupied by xterm's grid, excluding viewport
+ * padding. The rows inside xterm can move with scrollback; the outer `.xterm`
+ * box cannot. Before the renderer mounts, the viewport is the safe fallback.
+ */
+export function renderedTerminalGridRect(area: HTMLElement): DOMRect | null {
+  const viewport = area.querySelector<HTMLElement>(".terminal-surface__viewport");
+  const grid = viewport?.querySelector<HTMLElement>(":scope > .xterm");
+  return (grid ?? viewport)?.getBoundingClientRect() ?? null;
+}
+
+/** Convert the measured grid rect into the pane area's local padding box. */
+export function terminalGridOverlayBox(area: HTMLElement): {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+} {
+  const areaRect = area.getBoundingClientRect();
+  const gridRect = renderedTerminalGridRect(area);
+  if (!gridRect || gridRect.width <= 0 || gridRect.height <= 0) {
+    return { left: 0, top: 0, width: area.clientWidth, height: area.clientHeight };
+  }
+  return {
+    // Absolutely positioned children use the padding box as their origin.
+    left: gridRect.left - areaRect.left - area.clientLeft,
+    top: gridRect.top - areaRect.top - area.clientTop,
+    width: gridRect.width,
+    height: gridRect.height,
+  };
+}
 
 type TiledVerbResult = void | Promise<{ readonly status: "ok" | "error" }>;
 
@@ -312,6 +343,15 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         ]
       : [];
   });
+  const compositorNodes = createMemo(() => {
+    const mirror = props.mirror;
+    return new Map(mirror?.enabled ? mirror.nodes.map((node) => [node.pane, node] as const) : []);
+  });
+  const paneCompositorEnabled = createMemo(() => {
+    const visible = tiles();
+    const nodes = compositorNodes();
+    return visible.length > 0 && visible.every((tile) => nodes.has(tile.pane));
+  });
   const borders = createMemo(() => {
     const frame = currentFrame();
     return frame ? layoutBorders(frame) : [];
@@ -378,28 +418,19 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   const positionOverlay = (): void => {
     if (!overlayElement || !areaElement) return;
     /*
-     * Align to the terminal's VIEWPORT element, never to `.xterm-screen`.
+     * Align to xterm's stable outer GRID element, never to `.xterm-screen`.
      *
-     * The screen element lives inside xterm's scroll area, so its rect moves
-     * with the scrollback — measured against it the overlay drifted hundreds of
-     * pixels below the terminal, which is how a right-click in the pane area
-     * hit no pane at all. The viewport element is the grid's own box in both
-     * modes: it fills the card when the surface drives tmux, and it shrinks to
-     * the window's natural grid and centres when the card is size-passive.
+     * The screen element lives inside xterm's scroll area, so its rect can move
+     * with scrollback. The outer `.xterm` box does not move, and—unlike the
+     * terminal viewport—excludes the protective padding around the grid. That
+     * keeps one-row pane headers exactly on tmux's separator row instead of
+     * clipping the adjacent output row.
      */
-    const viewport = areaElement.querySelector<HTMLElement>(".terminal-surface__viewport");
-    const area = areaElement.getBoundingClientRect();
-    const natural = viewport?.getBoundingClientRect();
     overlayStyle ??= createRuntimeStyleBinding(overlayElement);
-    // Scale 1 on purpose: the interactive surface letterboxes by CENTRING, with
-    // no CSS transform (a transform would desync xterm's pointer-to-cell map),
-    // so the rule-10 box collapses to the centred rectangle. Degenerate input
-    // falls back to the whole area, which is what the helper already promises.
-    const box = gridOverlayBox(
-      { width: natural?.width ?? 0, height: natural?.height ?? 0 },
-      { width: area.width, height: area.height },
-      1,
-    );
+    // Use the measured offset as well as the measured size. This preserves the
+    // grid's true padding inset for an owner and its clipping/letterbox offset
+    // for a passive viewer; re-centring only the dimensions loses both.
+    const box = terminalGridOverlayBox(areaElement);
     overlayStyle.update({
       left: `${box.left}px`,
       top: `${box.top}px`,
@@ -434,11 +465,36 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       props.onOpenPaneMenu?.(pane, { x: event.clientX, y: event.clientY });
     };
     element.addEventListener("contextmenu", onContextMenu, true);
-    onCleanup(() => element.removeEventListener("contextmenu", onContextMenu, true));
+    const onTerminalGridResize = (): void => positionOverlay();
+    element.addEventListener("tmux-ide-terminal-grid-resized", onTerminalGridResize);
+    onCleanup(() => {
+      element.removeEventListener("contextmenu", onContextMenu, true);
+      element.removeEventListener("tmux-ide-terminal-grid-resized", onTerminalGridResize);
+    });
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => positionOverlay());
     observer.observe(element);
-    onCleanup(() => observer.disconnect());
+    const viewport = element.querySelector<HTMLElement>(".terminal-surface__viewport");
+    if (viewport) observer.observe(viewport);
+
+    let observedGrid: HTMLElement | null = null;
+    const observeRenderedGrid = (): void => {
+      const nextGrid = element.querySelector<HTMLElement>(".terminal-surface__viewport > .xterm");
+      if (nextGrid !== observedGrid) {
+        if (observedGrid) observer.unobserve(observedGrid);
+        observedGrid = nextGrid;
+        if (observedGrid) observer.observe(observedGrid);
+      }
+      positionOverlay();
+    };
+    const mutationObserver =
+      typeof MutationObserver === "undefined" ? null : new MutationObserver(observeRenderedGrid);
+    mutationObserver?.observe(element, { childList: true, subtree: true });
+    queueMicrotask(observeRenderedGrid);
+    onCleanup(() => {
+      mutationObserver?.disconnect();
+      observer.disconnect();
+    });
   };
   onCleanup(() => overlayStyle?.dispose());
 
@@ -1174,6 +1230,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         class="tiled-pane-area"
         ref={observeArea}
         data-pane-count={paneCount()}
+        data-pane-compositor={paneCompositorEnabled()}
         data-zoomed={currentFrame()?.zoomed ?? false}
         data-focus-zone="canvas"
         data-manipulation-phase={phase()}
@@ -1254,6 +1311,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
             {(tile) => {
               const rect = createMemo(() => rectForTile(tile()));
               const placement = createMemo(() => placementFor(tile().pane));
+              const compositorNode = createMemo(() => compositorNodes().get(tile().pane));
               return (
                 <div
                   class="pane-tile"
@@ -1263,6 +1321,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   data-elevated={placement()?.elevated ?? false}
                   data-ending={endingPanes().has(tile().pane) ? "true" : undefined}
                   data-identity-icon={iconIdFor(tile().pane)}
+                  data-composed={Boolean(compositorNode())}
                   style={{
                     left: percent(rect().left),
                     top: percent(rect().top),
@@ -1281,6 +1340,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                     iconId={iconIdFor(tile().pane)}
                     status={frameFor(tile().pane)?.status ?? null}
                     active={tile().active}
+                    composed={Boolean(compositorNode())}
                     /*
                      * The header's share of its own tile.
                      *
@@ -1308,6 +1368,24 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                     onPointerCancel={(event) => cancelManipulation(event)}
                     onKeyboardSwap={(key) => keyboardSwap(tile().pane, key)}
                   />
+                  <Show when={compositorNode()}>
+                    {(node) => (
+                      <div class="pane-tile__body" aria-hidden="true">
+                        <MirrorPaneNode
+                          pane={node().pane}
+                          title={node().title}
+                          state={node().state}
+                          connection={props.mirror!.connection}
+                          faultLabel={props.mirror!.faultLabel}
+                          registerSink={node().registerSink}
+                          onRetry={props.mirror!.onRetry}
+                          reducedMotion={props.reducedMotion}
+                          themeKey={props.terminalThemeKey}
+                          rendererFactory={props.mirror!.rendererFactory}
+                        />
+                      </div>
+                    )}
+                  </Show>
                   <span class="sr-only">
                     {titleFor(tile().pane)}
                     {tile().active ? ", active pane" : ""}
@@ -1428,7 +1506,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
           </span>
         </div>
       </div>
-      <Show when={props.mirror}>
+      <Show when={paneCompositorEnabled() ? undefined : props.mirror}>
         {(mirror) => (
           <div class="mirror-deck" data-enabled={mirror().enabled}>
             <div class="mirror-deck__controls">
@@ -1517,6 +1595,8 @@ function PaneHeader(props: {
   readonly iconId: SemanticIconId;
   readonly status: PaneFrameModel["status"] | null;
   readonly active: boolean;
+  /** Header owns a flex row; false means it still overlays tmux's separator. */
+  readonly composed: boolean;
   readonly heightFraction: number;
   readonly hoisted: boolean;
   readonly dragging: boolean;
@@ -1551,7 +1631,23 @@ function PaneHeader(props: {
       data-hoisted={props.hoisted}
       data-active={props.active}
       aria-hidden={!props.hoisted}
-      style={props.hoisted ? { height: percent(props.heightFraction) } : undefined}
+      style={
+        props.hoisted
+          ? props.composed
+            ? {
+                top: "0",
+                height: percent(props.heightFraction),
+              }
+            : {
+                // Keep the composited chrome one CSS pixel inside tmux's
+                // separator row. Glyph antialiasing can extend to the final
+                // device pixel of the preceding content row; painting from the
+                // exact boundary made that last pixel look clipped at HiDPI.
+                top: "1px",
+                height: `calc(${percent(props.heightFraction)} - 1px)`,
+              }
+          : undefined
+      }
       onPointerLeave={disarm}
       onPointerDown={(event) => {
         const now = event.timeStamp || performance.now();

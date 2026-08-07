@@ -8,6 +8,8 @@ stops being a real tmux pane while it does.
 ```bash
 tmux-ide widget markdown PLAN.md      # or: … | tmux-ide widget markdown
 tmux-ide widget image demo.gif
+printf '%s' '{"title":"Build","items":[{"type":"progress","value":72}]}' | tmux-ide widget card
+tmux-ide widget card apps/desktop-renderer/src/terminal/widgets/examples/agent-status-card.json
 # Ctrl-C returns the pane to a shell.
 ```
 
@@ -89,7 +91,9 @@ the widget is simply a function of what is in the grid.
 
 ### `markdown`
 
-`{ text: string, title?: string }`. Parsed by `markdown.ts` into a typed tree and
+Stdin uses `{ text, title? }`; a file uses `{ assetId, title? }`. Files are
+content-addressed and watched, so saving one republishes and refreshes the pane.
+The content is parsed by `markdown.ts` into a typed tree and
 rendered by `markdown-view.tsx` as real elements. There is **no `innerHTML`
 anywhere**, so document text can never become markup and no sanitiser sits
 between the parser and the screen. Links are restricted to `http`, `https`,
@@ -119,29 +123,22 @@ space) code blocks · reference-style links and footnotes · inline HTML, which 
 absent by construction rather than by omission — this renderer creates elements
 and never parses markup, so there is no code path that could honour it ·
 `![alt](src)` inline images, which parse as their alt text because a document
-may not fetch bytes (the `image` widget is the supported way to show one) ·
-mermaid and other diagram fences, which render as ordinary code blocks.
+may not fetch arbitrary URLs (the `image` widget is the supported way to show
+one). Fenced `mermaid` blocks render as strict-mode diagrams; other diagram
+languages remain ordinary code blocks.
 
 Code spans win over every other inline rule and their contents are never
 re-scanned, so a documented shell command survives being documented.
 
-No markdown library was added. There is none anywhere in this repo — the docs
-site is fumadocs/MDX, which is React- and Next-only — and a parser we own is
-smaller than a dependency, testable as pure logic, and CSP-green by construction
-rather than by evidence.
-
-**Mermaid-class diagrams are a follow-up, not a gap we forgot.** No
-self-contained option is cheap: the usual renderer is a large dependency that
-wants its own fonts and layout engine, which is a card of its own rather than a
-line item in this one.
+The Markdown parser remains dependency-free and CSP-green. Mermaid is lazy
+loaded only when a document contains a Mermaid fence.
 
 ### `image`
 
-`{ media, data, name?, alt? }`. `media` is one of `image/png`, `image/jpeg`,
-`image/gif`, `image/webp`, `image/avif`; `data` is base64. It renders as an
-`<img>` fed a `data:` URL, which the renderer's CSP already permits (`img-src
-'self' data:`), so **a GIF animates for free** — no decoder, no fetch, no policy
-change.
+The CLI emits `{ assetId, name?, alt? }`; the legacy in-band
+`{ media, data, name?, alt? }` form remains accepted. The typed desktop host
+fetches the published bytes and renders an `<img>` data URL, so **a GIF animates
+for free**.
 
 `image/svg+xml` is deliberately excluded. An SVG is a document that can carry
 script and external references, so accepting one would turn "render the file
@@ -149,17 +146,17 @@ this pane named" into "execute the file this pane named".
 
 #### Where the bytes come from, and the refusals
 
-The helper reads the file **itself** — it runs in the user's own pane with the
-user's own permissions — and the bytes travel inside the marker's payload.
+The helper reads the file **itself** and publishes it into tmux-ide's private,
+content-addressed asset store. The marker carries only its SHA-256 id; no path,
+daemon URL or credential enters scrollback. The store accepts up to 16 MB,
+retains assets for 24 hours and verifies the hash before serving bytes.
 
-This is a deliberate departure from the original card, which specified fetching
-bytes through the workspace-files preview route. That route cannot serve them:
-`WorkspaceFilesAuthority.preview()` classifies an image as `status: "binary"` and
-returns only its name, size and media type, and the preview contract has no
-payload field. Carrying the bytes in-band needs no new route, no contract change
-and no workspace-boundary question in the renderer.
+This is intentionally separate from the workspace-file preview route: widget
+assets are ephemeral capabilities, while previews are durable workspace
+resources. The desktop host owns the authenticated fetch in both browser and
+packaged clients.
 
-The cost is a ceiling, and the helper refuses rather than truncating:
+The legacy in-band builder remains bounded and refuses rather than truncating:
 
 | Refusal             | When                                                                       |
 | ------------------- | -------------------------------------------------------------------------- |
@@ -215,13 +212,21 @@ it, with nothing on screen saying why. `pane-widget-marker.test.ts` covers each
 truncation shape, and `mirror-pane-node.test.tsx` covers it where it actually
 happens — a seed batch carrying a beheaded marker.
 
-Serving image bytes over a daemon route — which lifts the ceiling entirely, and
-is the right long-term shape — is a follow-up card, blocked only on contract
-work another branch owns.
+The CLI no longer pays that legacy ceiling because it uses the daemon-backed
+asset route. Saving the source image publishes a new hash and refreshes the
+pane.
+
+### `card`
+
+The renderer-neutral card vocabulary supports text, badges, progress, code and
+buttons. Buttons write only their schema-bounded `input` back to the owning pane
+after an explicit click; no JSX, HTML or JavaScript is evaluated. OpenTUI shares
+the descriptor and has a plain semantic fallback.
 
 ## Adding a widget
 
-1. Add a schema and an entry to `WIDGET_DEFINITIONS` in `widget-registry.ts`.
+1. Add the renderer-neutral schema in `packages/contracts/src/pane-widget-descriptor.ts`
+   and an entry to `WIDGET_DEFINITIONS` in `widget-registry.ts`.
 2. Add a branch to `WidgetSurface`.
 3. Add the id to `PANE_WIDGET_IDS` in `packages/daemon/src/lib/pane-widget.ts`
    if the CLI should be able to emit it.

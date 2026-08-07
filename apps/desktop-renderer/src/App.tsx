@@ -57,6 +57,8 @@ function daemonCapabilityReason(value: DesktopHostBootstrap["daemon"]): string {
   return value.status === "connected" ? "The daemon connection changed." : value.reason;
 }
 
+const BOOTSTRAP_AUTO_RECHECK_MS = 2_000;
+
 export function App(props: AppProps = {}) {
   const browserPreview =
     props.host === undefined && (typeof window === "undefined" || window.tmuxIdeHost === undefined);
@@ -149,6 +151,20 @@ export function App(props: AppProps = {}) {
       bootstrapRequest += 1;
       daemonRefreshFlight = null;
     });
+  });
+
+  // A browser tab commonly survives a local daemon/Vite restart. Re-read the
+  // complete bootstrap while degraded so the page heals as soon as the new
+  // owner capability is reachable; the manual button remains available for an
+  // immediate retry. Each completed degraded read schedules only one successor.
+  createEffect(() => {
+    const current = bootstrap();
+    const failed = bootstrapError();
+    if (!host || disposed || (!failed && (!current || current.daemon.status === "connected"))) {
+      return;
+    }
+    const timer = setTimeout(loadBootstrap, BOOTSTRAP_AUTO_RECHECK_MS);
+    onCleanup(() => clearTimeout(timer));
   });
 
   const effectiveTheme = () => theme() ?? bootstrap()?.theme ?? initialTheme;

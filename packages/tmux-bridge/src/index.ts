@@ -22,6 +22,7 @@ export {
   sendLiteral,
   setPaneOption,
   setPaneTitle,
+  setWindowOption,
   splitPane,
   type CapturePaneOptions,
   type SendKeysOptions,

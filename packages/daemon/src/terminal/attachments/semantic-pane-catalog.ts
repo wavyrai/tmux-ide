@@ -190,14 +190,26 @@ export class SemanticPaneCatalog {
   }
 
   async resolve(target: TerminalAttachmentSemanticTarget): Promise<SemanticPaneResolution> {
-    const parsedTarget = TerminalAttachmentSemanticTargetSchemaZ.parse(target);
+    return (await this.resolveMany([target]))[0]!;
+  }
+
+  /** Resolves a pane set from one trusted discovery snapshot. */
+  async resolveMany(
+    targets: readonly TerminalAttachmentSemanticTarget[],
+  ): Promise<readonly SemanticPaneResolution[]> {
+    const parsedTargets = z
+      .array(TerminalAttachmentSemanticTargetSchemaZ)
+      .min(1)
+      .max(4_096)
+      .parse(targets);
+    const diagnosticTarget = parsedTargets[0]!;
     let discovered: readonly unknown[];
     try {
       discovered = await this.#discover();
     } catch {
       throw new SemanticPaneCatalogError(
         "discovery-failed",
-        parsedTarget,
+        diagnosticTarget,
         "Trusted tmux pane discovery failed.",
       );
     }
@@ -207,7 +219,7 @@ export class SemanticPaneCatalog {
     if (analysis.invalidRuntimeProof) {
       throw new SemanticPaneCatalogError(
         "invalid-runtime-proof",
-        parsedTarget,
+        diagnosticTarget,
         "Trusted tmux discovery returned an invalid runtime proof.",
       );
     }
@@ -215,61 +227,59 @@ export class SemanticPaneCatalog {
     if (analysis.missingSemanticStamp) {
       throw new SemanticPaneCatalogError(
         "missing-semantic-stamp",
-        parsedTarget,
+        diagnosticTarget,
         "Trusted tmux discovery contains an unstamped pane.",
-      );
-    }
-
-    const workspaceRows = rows.filter((row) => row.workspaceName === parsedTarget.workspaceName);
-    if (workspaceRows.length === 0) {
-      throw new SemanticPaneCatalogError(
-        "workspace-not-found",
-        parsedTarget,
-        "The requested workspace is not present in trusted tmux discovery.",
       );
     }
 
     if (analysis.duplicateSemanticStamp) {
       throw new SemanticPaneCatalogError(
         "duplicate-semantic-stamp",
-        parsedTarget,
+        diagnosticTarget,
         "Semantic pane identities must be unique across trusted discovery.",
       );
     }
     if (analysis.duplicateRuntimePaneBinding) {
       throw new SemanticPaneCatalogError(
         "duplicate-runtime-pane-binding",
-        parsedTarget,
+        diagnosticTarget,
         "A runtime pane cannot be bound to multiple semantic pane identities.",
       );
     }
 
-    const matches = workspaceRows.filter(
-      (row) => row.semanticPaneId === parsedTarget.semanticPaneId,
-    );
-    if (matches.length === 0) {
-      throw new SemanticPaneCatalogError(
-        "pane-not-found",
-        parsedTarget,
-        "The semantic pane is not present in trusted tmux discovery.",
+    return parsedTargets.map((parsedTarget) => {
+      const workspaceRows = rows.filter((row) => row.workspaceName === parsedTarget.workspaceName);
+      if (workspaceRows.length === 0) {
+        throw new SemanticPaneCatalogError(
+          "workspace-not-found",
+          parsedTarget,
+          "The requested workspace is not present in trusted tmux discovery.",
+        );
+      }
+      const matches = workspaceRows.filter(
+        (row) => row.semanticPaneId === parsedTarget.semanticPaneId,
       );
-    }
+      if (matches.length === 0) {
+        throw new SemanticPaneCatalogError(
+          "pane-not-found",
+          parsedTarget,
+          "The semantic pane is not present in trusted tmux discovery.",
+        );
+      }
 
-    const row = matches[0]!;
-    const source = this.#proveWindow(row, rows, parsedTarget);
-
-    const key = semanticPaneTargetKey(parsedTarget);
-    const fingerprint = proofFingerprint(source);
-    const previous = this.#generations.get(key);
-    const generation =
-      previous === undefined
-        ? 0
-        : previous.fingerprint === fingerprint
-          ? previous.generation
-          : previous.generation + 1;
-    this.#generations.set(key, { fingerprint, generation });
-
-    return { target: parsedTarget, bindingGeneration: generation, source };
+      const source = this.#proveWindow(matches[0]!, rows, parsedTarget);
+      const key = semanticPaneTargetKey(parsedTarget);
+      const fingerprint = proofFingerprint(source);
+      const previous = this.#generations.get(key);
+      const generation =
+        previous === undefined
+          ? 0
+          : previous.fingerprint === fingerprint
+            ? previous.generation
+            : previous.generation + 1;
+      this.#generations.set(key, { fingerprint, generation });
+      return { target: parsedTarget, bindingGeneration: generation, source };
+    });
   }
 
   /**

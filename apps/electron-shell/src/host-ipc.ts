@@ -903,6 +903,10 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         return readResource(event, authority.generation, () =>
           deps.daemonResources.fetchFleetCatalog(),
         );
+      case "fetchWidgetAsset":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.fetchWidgetAsset(daemonRequest.request),
+        );
       case "fetchApplicationShell":
         return readResource(event, authority.generation, () =>
           deps.daemonResources.fetchApplicationShell(

@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./connection-supervisor": "./src/connection-supervisor.ts"
+    "./connection-supervisor": "./src/connection-supervisor.ts",
+    "./resource-replica": "./src/resource-replica.ts"
   },
   "main": "src/index.ts",
   "scripts": {

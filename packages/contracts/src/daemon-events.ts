@@ -15,6 +15,13 @@ export const DaemonEventSubscribeFrameSchemaZ = z
   .object({
     type: z.literal("subscribe"),
     sessions: SessionNamesSchemaZ,
+    /**
+     * Last resource-event sequence the client applied for this daemon
+     * generation. Omitted by legacy clients. The daemon either replays every
+     * later retained event or answers `snapshot-required` when the bounded
+     * journal no longer covers the requested cursor.
+     */
+    afterSequence: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -46,6 +53,8 @@ export const DaemonEventHelloFrameSchemaZ = z
     type: z.literal("hello"),
     daemon: DaemonInstanceIdentitySchemaZ,
     sessions: z.array(DaemonSessionOverviewSchemaZ),
+    /** Current head of the generation-scoped resource-event journal. */
+    eventSequence: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -105,6 +114,49 @@ export const DaemonEventTerminalsChangedFrameSchemaZ = z
     sessionName: z.string(),
   })
   .strict();
+
+/** Resources that can be invalidated without making every client refetch. */
+export const DaemonEventResourceKindSchemaZ = z.enum([
+  "workspace-catalog",
+  "fleet-catalog",
+  "application-shell",
+  "workspace-files",
+  "workspace-changes",
+]);
+export type DaemonEventResourceKind = z.infer<typeof DaemonEventResourceKindSchemaZ>;
+
+/**
+ * Generation-scoped, replayable invalidation. `sequence` orders the journal;
+ * `revision` strictly orders changes to one workspace/resource projection. No
+ * path, tmux runtime id, or credential crosses it.
+ */
+export const DaemonEventResourceChangedFrameSchemaZ = z
+  .object({
+    type: z.literal("resource.changed"),
+    sequence: z.number().int().positive(),
+    workspaceName: DesktopWorkspaceNameSchemaZ.nullable(),
+    resource: DaemonEventResourceKindSchemaZ,
+    revision: z.number().int().nonnegative(),
+    causeOperationId: z.uuid().nullable(),
+  })
+  .strict();
+export type DaemonEventResourceChangedFrame = z.infer<
+  typeof DaemonEventResourceChangedFrameSchemaZ
+>;
+
+/** The requested replay cursor fell outside the bounded generation journal. */
+export const DaemonEventSnapshotRequiredFrameSchemaZ = z
+  .object({
+    type: z.literal("snapshot-required"),
+    afterSequence: z.number().int().nonnegative(),
+    oldestAvailableSequence: z.number().int().positive().nullable(),
+    currentSequence: z.number().int().nonnegative(),
+    reason: z.enum(["cursor-ahead", "journal-gap"]),
+  })
+  .strict();
+export type DaemonEventSnapshotRequiredFrame = z.infer<
+  typeof DaemonEventSnapshotRequiredFrameSchemaZ
+>;
 
 /**
  * A pane's ground-truth agent status (`@agent_state`) transitioned inside a
@@ -227,6 +279,8 @@ export const DaemonEventServerFrameSchemaZ = z.discriminatedUnion("type", [
   DaemonEventActionCompleteFrameSchemaZ,
   DaemonEventConfigChangedFrameSchemaZ,
   DaemonEventTerminalsChangedFrameSchemaZ,
+  DaemonEventResourceChangedFrameSchemaZ,
+  DaemonEventSnapshotRequiredFrameSchemaZ,
   DaemonEventAgentStatusChangedFrameSchemaZ,
   DaemonEventAgentTurnCompletedFrameSchemaZ,
   DaemonEventFleetChangedFrameSchemaZ,

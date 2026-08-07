@@ -675,7 +675,9 @@ describe("Electron main daemon resource broker", () => {
     expect(result.status).toBe("subscribed");
     socket.emit("open");
     socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
-    expect(socket.sent).toEqual([]);
+    expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+      { type: "subscribe", sessions: [], afterSequence: 0 },
+    ]);
     expect(events).toEqual([
       { type: "transport.changed", transport: { phase: "connecting" } },
       { type: "transport.changed", transport: { phase: "connected" } },
@@ -1079,6 +1081,7 @@ describe("Electron main daemon resource broker", () => {
     expect(JSON.parse(socket.sent[0]!)).toEqual({
       type: "subscribe",
       sessions: ["server/session:42", "durable-docs"],
+      afterSequence: 0,
     });
     socket.emit(
       "message",
@@ -1216,6 +1219,7 @@ describe("Electron main daemon resource broker", () => {
       expect(refreshedSocket.sent.map((value) => JSON.parse(value))).toContainEqual({
         type: "subscribe",
         sessions: ["durable-docs"],
+        afterSequence: 0,
       });
       events.length = 0;
       refreshedSocket.emit(

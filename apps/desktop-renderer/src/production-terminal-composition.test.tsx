@@ -239,6 +239,10 @@ function createHostHarness() {
       onStatusChanged: () => () => undefined,
     },
     daemon: {
+      fetchWidgetAsset: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
       startupReadiness: vi.fn(async () => ({
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "fixture only" },

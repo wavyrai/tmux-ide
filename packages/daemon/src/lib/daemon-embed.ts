@@ -993,6 +993,8 @@ export async function startEmbeddedDaemon(
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
         tmuxExecutablePath: tmuxAuthority.executablePath,
         tmuxSocketSelector: tmuxAuthority.socketSelector,
+        inputAuthority: terminalAttachmentRuntime.inputAuthority,
+        semanticPaneCatalog: terminalAttachmentRuntime.semanticPaneCatalog,
       });
       startedServer = await startHttpServer({
         sessionName,

@@ -3,6 +3,7 @@ import {
   type AgentGraphOverlay,
   type AppWindowDocumentV1,
   type ApplicationShellTerminalInventory,
+  type ClientViewStateV1,
   multiplexerVerb,
   type MultiplexerVerbFacts,
   type MultiplexerVerbId,
@@ -168,6 +169,10 @@ export interface AppWindowCanvasProps {
   readonly terminalThemeKey?: string;
   readonly rendererFactory?: TerminalRendererFactory;
   readonly viewport?: AppWindowCanvasViewport;
+  /** Per-client presentation layered over the shared durable document. */
+  readonly clientViewState?: ClientViewStateV1;
+  /** Receives only local focus/tab/viewport changes; never a durable layout mutation. */
+  readonly onClientViewStateChange?: (next: ClientViewStateV1) => void;
   /** True only when the host can durably execute AppWindow commands. */
   readonly mutationsAvailable?: boolean;
   readonly mutationUnavailableReason?: string;
@@ -628,6 +633,7 @@ function createAppWindowRecords(
  * zoom, and it is skipped entirely when no overlay is supplied.
  */
 export function AppWindowCanvas(props: AppWindowCanvasProps) {
+  let latestClientViewState = props.clientViewState;
   const [measured, setMeasured] = createSignal<AppWindowCanvasViewport>(
     props.viewport ?? { width: 1_000, height: 640 },
   );
@@ -642,7 +648,9 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     readonly transform: CanvasViewportTransform;
   } | null = null;
   const [spaceKey, setSpaceKey] = createSignal(false);
-  const [transform, setTransform] = createSignal<CanvasViewportTransform>(DEFAULT_CANVAS_TRANSFORM);
+  const [transform, setTransform] = createSignal<CanvasViewportTransform>(
+    props.clientViewState?.viewport ?? DEFAULT_CANVAS_TRANSFORM,
+  );
   const [viewportAnimating, setViewportAnimating] = createSignal(false);
   let viewportAnimationTimer: ReturnType<typeof setTimeout> | null = null;
   let lastHeaderTap: { readonly windowId: string; readonly time: number } | null = null;
@@ -748,6 +756,16 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   });
 
   const viewport = createMemo(() => props.viewport ?? measured());
+  createEffect(() => {
+    const state = props.clientViewState;
+    if (!state) return;
+    latestClientViewState = state;
+    const next = state.viewport;
+    const current = transform();
+    if (current.x !== next.x || current.y !== next.y || current.scale !== next.scale) {
+      setTransform(next);
+    }
+  });
   // Panes of one durable tmux window share a `windowResourceId` (m41 attach-5).
   // Feeding that grouping to the presenter coalesces them into ONE card.
   const windowGroupBySourceId = createMemo(() => {
@@ -760,6 +778,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   const projection = createMemo(() =>
     projectAppWindowCanvas(props.document, viewport(), {
       windowGroupBySourceId: windowGroupBySourceId(),
+      clientViewState: props.clientViewState,
     }),
   );
   const windowRecords = createAppWindowRecords(() => projection().windows);
@@ -907,9 +926,23 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     return { kind: "window-content", windowId };
   };
 
+  const updateClientView = (patch: Partial<ClientViewStateV1>): boolean => {
+    const current = latestClientViewState ?? props.clientViewState;
+    if (!current || !props.onClientViewStateChange) return false;
+    const next = { ...current, ...patch };
+    latestClientViewState = next;
+    props.onClientViewStateChange(next);
+    return true;
+  };
+
+  const currentClientViewState = (): ClientViewStateV1 | undefined =>
+    latestClientViewState ?? props.clientViewState;
+
   const focusWindow = (windowId: string, source: "keyboard" | "mouse") => {
     if (projection().focusedWindowId !== windowId) {
-      props.onCommand?.(appWindowFocusInvocation(windowId, source));
+      if (!updateClientView({ focusedWindowId: windowId, selectedWindowIds: [windowId] })) {
+        props.onCommand?.(appWindowFocusInvocation(windowId, source));
+      }
     }
   };
 
@@ -924,9 +957,14 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     setRectOverrides(next);
   };
 
-  const resetViewport = () => setTransform(DEFAULT_CANVAS_TRANSFORM);
+  const setCanvasTransform = (next: CanvasViewportTransform): void => {
+    setTransform(next);
+    updateClientView({ viewport: next });
+  };
+
+  const resetViewport = () => setCanvasTransform(DEFAULT_CANVAS_TRANSFORM);
   const fitViewport = () =>
-    setTransform(
+    setCanvasTransform(
       fitCanvasViewport(
         projection().windows.map((window) => displayedWindow(window).rect),
         viewport(),
@@ -935,7 +973,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     );
   const zoomViewport = (factor: number) => {
     const current = transform();
-    setTransform(
+    setCanvasTransform(
       zoomCanvasViewportAt(
         current,
         current.scale * factor,
@@ -948,11 +986,11 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   const animateViewport = (next: CanvasViewportTransform) => {
     if (props.reducedMotion) {
       setViewportAnimating(false);
-      setTransform(next);
+      setCanvasTransform(next);
       return;
     }
     setViewportAnimating(true);
-    setTransform(next);
+    setCanvasTransform(next);
     if (viewportAnimationTimer !== null) clearTimeout(viewportAnimationTimer);
     viewportAnimationTimer = setTimeout(() => {
       viewportAnimationTimer = null;
@@ -970,7 +1008,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
   const panToMinimapPoint = (point: { readonly x: number; readonly y: number }) => {
     const current = minimap();
     if (!current) return;
-    setTransform(
+    setCanvasTransform(
       agentGraphMinimapPanTransform(current, point, transform(), viewport(), MINIMAP_PADDING),
     );
   };
@@ -1010,6 +1048,18 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
    * is the whole dispatch: the command was always there.
    */
   const activateStackMember = (stackId: string, windowId: string, source: "keyboard" | "mouse") => {
+    if (
+      updateClientView({
+        activeWindowIdsByStack: {
+          ...currentClientViewState()?.activeWindowIdsByStack,
+          [stackId]: windowId,
+        },
+        focusedWindowId: windowId,
+        selectedWindowIds: [windowId],
+      })
+    ) {
+      return;
+    }
     if (!(props.mutationsAvailable ?? props.onCommand !== undefined)) return;
     dispatchDurableCommand({ command: { type: "stack.activate", stackId, windowId }, source });
   };
@@ -1451,7 +1501,9 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     if (route.action === "clear-focus") {
       canvas?.focus({ preventScroll: true });
       if (projection().focusedWindowId !== null) {
-        props.onCommand?.(appWindowFocusInvocation(null, "mouse"));
+        if (!updateClientView({ focusedWindowId: null, selectedWindowIds: [] })) {
+          props.onCommand?.(appWindowFocusInvocation(null, "mouse"));
+        }
       }
       return;
     }
@@ -1519,7 +1571,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     const pointer = pointInCanvas(event);
     if (panTransaction?.pointerId === event.pointerId) {
       event.preventDefault();
-      setTransform(
+      setCanvasTransform(
         panCanvasViewport(
           panTransaction.transform,
           { x: pointer.x - panTransaction.origin.x, y: pointer.y - panTransaction.origin.y },
@@ -1603,7 +1655,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     const region = pointerRegion(event.target);
     if (!region || !canvasOwnsWheel(region)) return;
     event.preventDefault();
-    setTransform(
+    setCanvasTransform(
       canvasWheelTransform({
         transform: transform(),
         anchor: pointInCanvas(event),
@@ -1631,7 +1683,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     if (command === "fit") fitViewport();
     else if (command === "reset") resetViewport();
     else {
-      setTransform(
+      setCanvasTransform(
         keyboardCanvasViewportTransform({
           transform: transform(),
           command,

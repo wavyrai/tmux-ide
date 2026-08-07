@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tmux-ide/contracts": "workspace:*"
+    "@tmux-ide/contracts": "workspace:*",
+    "@tmux-ide/daemon-client": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

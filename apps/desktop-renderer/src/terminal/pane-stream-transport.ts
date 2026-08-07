@@ -12,6 +12,7 @@ import {
   type PaneStreamLeaseRequest,
   type PaneStreamServerFrame,
 } from "@tmux-ide/contracts";
+import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 
 /**
  * Renderer-direct pane-stream transport (m43 card 3): ONE WebSocket per
@@ -787,7 +788,10 @@ class PaneStreamSession {
         this.#socket.readyState === WS_CLOSING)
     ) {
       try {
-        this.#socket.close(closeCode, closeReason?.slice(0, 123));
+        this.#socket.close(
+          browserInitiatedWebSocketCloseCode(closeCode),
+          closeReason?.slice(0, 123),
+        );
       } catch {
         // Local authority is already retired.
       }

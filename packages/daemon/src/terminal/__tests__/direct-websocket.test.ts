@@ -72,16 +72,18 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
   nextLeaseId = LEASE_ID;
   currentLeaseId = LEASE_ID;
   currentRequestId = REQUEST_ID;
+  currentViewerMode: "interactive" | "read-only" = "interactive";
   active = false;
   consumed = false;
 
   async issue(
-    _request: TerminalAttachRequest,
+    request: TerminalAttachRequest,
     context: { requestId: string; projectIdentity: string },
   ): Promise<IssuedAttachmentLease> {
     this.calls.push("issue");
     this.currentLeaseId = this.nextLeaseId;
     this.currentRequestId = context.requestId;
+    this.currentViewerMode = request.viewerMode;
     const issued = { descriptor: this.leaseDescriptor() } as IssuedAttachmentLease;
     Object.defineProperty(issued, "redemptionTicket", { value: this.issuedTicket });
     return issued;
@@ -151,6 +153,7 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
       ...descriptor(status),
       leaseId: this.currentLeaseId,
       requestId: this.currentRequestId,
+      viewerMode: this.currentViewerMode,
     };
   }
 }
@@ -376,15 +379,23 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
     await coordinator.shutdown();
   });
 
-  it("rejects read-only before lease issue and atomically bounds pending issue", async () => {
+  it("issues a passive read-only attachment without input authority", async () => {
+    const { coordinator, manager } = rig();
+    const issued = await coordinator.issue(request("read-only"), {
+      requestId: REQUEST_ID,
+      projectIdentity: "project-alpha",
+      rendererOrigin: ORIGIN,
+    });
+    expect(issued).toMatchObject({
+      effectiveViewerMode: "read-only",
+      effectiveGeometryOwnership: "passive",
+    });
+    expect(manager.calls).toEqual(["issue"]);
+    await coordinator.shutdown();
+  });
+
+  it("atomically bounds pending issue", async () => {
     const { coordinator, manager } = rig({ maxPendingTickets: 1 });
-    await expect(
-      coordinator.issue(request("read-only"), {
-        requestId: REQUEST_ID,
-        projectIdentity: "project-alpha",
-        rendererOrigin: ORIGIN,
-      }),
-    ).rejects.toMatchObject({ code: "read_only_unavailable" });
     await issue(coordinator);
     await expect(
       coordinator.issue(request(), {
@@ -628,6 +639,41 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
       acceptedFrames: 1,
     });
     expect(coordinator.snapshot().liveConnections).toBe(1);
+    await coordinator.shutdown();
+  });
+
+  it("streams a read-only attachment while advertising no input capability", async () => {
+    const { coordinator, manager, client } = rig();
+    await coordinator.issue(request("read-only"), {
+      requestId: REQUEST_ID,
+      projectIdentity: "project-alpha",
+      rendererOrigin: ORIGIN,
+    });
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption());
+    await flush();
+    await flush();
+
+    expect(JSON.parse(socket.sent[0]!.data as string)).toMatchObject({
+      type: "ready",
+      effectiveViewerMode: "read-only",
+      inputCapability: "unavailable",
+    });
+    client.output(Buffer.from("passive output"));
+    expect(socket.sent.at(-1)).toEqual({ data: Buffer.from("passive output"), binary: true });
+
+    socket.frame(Buffer.from(encodeTerminalAttachmentInputFrame(1, Buffer.from("blocked"))), true);
+    expect(JSON.parse(socket.sent.at(-1)!.data as string)).toMatchObject({
+      type: "mutation-error",
+      mutation: "input",
+      code: "input-backpressure-unavailable",
+      retryable: false,
+    });
+    expect(client.boundedWrites).toEqual([]);
+    await flush();
+    await flush();
+    expect(manager.releases).toHaveLength(1);
     await coordinator.shutdown();
   });
 

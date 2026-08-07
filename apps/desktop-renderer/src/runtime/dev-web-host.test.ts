@@ -82,6 +82,41 @@ describe("projectDaemonServerFrame", () => {
     ]);
   });
 
+  it("projects a scoped resource revision onto only its workspace", () => {
+    expect(
+      projectDaemonServerFrame(
+        frame({
+          type: "resource.changed",
+          sequence: 12,
+          workspaceName: "beta",
+          resource: "application-shell",
+          revision: 4,
+          causeOperationId: null,
+        }),
+        CATALOG,
+      ),
+    ).toEqual([{ type: "application-shell.changed", workspaceName: "beta" }]);
+  });
+
+  it("falls back to a full refresh when the replay journal reports a gap", () => {
+    expect(
+      projectDaemonServerFrame(
+        frame({
+          type: "snapshot-required",
+          afterSequence: 1,
+          oldestAvailableSequence: 10,
+          currentSequence: 20,
+          reason: "journal-gap",
+        }),
+        CATALOG,
+      ),
+    ).toEqual([
+      { type: "workspaces.changed" },
+      { type: "application-shell.changed", workspaceName: "alpha" },
+      { type: "application-shell.changed", workspaceName: "beta" },
+    ]);
+  });
+
   it("invalidates the catalog and every shell on a fleet-wide change", () => {
     expect(projectDaemonServerFrame(frame({ type: "sessions.changed" }), CATALOG)).toEqual([
       { type: "workspaces.changed" },

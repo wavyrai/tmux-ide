@@ -4,7 +4,7 @@
  *
  * Endpoint: `/ws/events` (mounted by the daemon's HTTP server).
  *
- * Wire protocol: see `src/schemas/ws-events.ts`.
+ * Wire protocol: see `packages/contracts/src/daemon-events.ts`.
  *
  * The orchestrator/task/chat event feed moved out of tmux-ide (agent
  * coordination now lives in sfora.ai), so this channel only carries
@@ -25,9 +25,12 @@ import { projectRegistryEmitter } from "../lib/project-registry.ts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
 import {
   DaemonEventClientFrameSchemaZ,
+  DaemonEventResourceChangedFrameSchemaZ,
   TerminalAttachmentSemanticPaneIdSchemaZ,
   type DaemonEventAgentTurnCompletedFrame,
   type DaemonEventClientFrame,
+  type DaemonEventResourceChangedFrame,
+  type DaemonEventResourceKind,
   type DaemonEventServerFrame,
   type DaemonEventWorkspacePromotionCompletedFrame,
   type DaemonInstanceIdentity,
@@ -64,8 +67,73 @@ interface ClientHandle {
   broadcastAgentTurnCompleted(frame: DaemonEventAgentTurnCompletedFrame): void;
   broadcastWorkspacePromotionCompleted(frame: DaemonEventWorkspacePromotionCompletedFrame): void;
   broadcastFleetChanged(): void;
+  broadcastResourceChanged(frame: DaemonEventResourceChangedFrame): void;
 }
 const allClients = new Set<ClientHandle>();
+
+const RESOURCE_EVENT_JOURNAL_LIMIT = 256;
+let resourceEventGeneration: string | null = null;
+let resourceEventSequence = 0;
+let resourceEventJournal: DaemonEventResourceChangedFrame[] = [];
+const resourceRevisions = new Map<string, number>();
+
+function useResourceEventGeneration(instanceId: string): void {
+  if (resourceEventGeneration === instanceId) return;
+  resourceEventGeneration = instanceId;
+  resourceEventSequence = 0;
+  resourceEventJournal = [];
+  resourceRevisions.clear();
+}
+
+function resourceRevisionKey(
+  workspaceName: string | null,
+  resource: DaemonEventResourceKind,
+): string {
+  return `${workspaceName === null ? "global" : `workspace\0${workspaceName}`}\0${resource}`;
+}
+
+export interface ResourceChangedBroadcast {
+  readonly workspaceName: string | null;
+  readonly resource: DaemonEventResourceKind;
+  /** Uses the next daemon-scoped resource revision when omitted. */
+  readonly revision?: number;
+  readonly causeOperationId?: string | null;
+}
+
+/**
+ * Record and broadcast one scoped invalidation. The journal and sequence are
+ * tied to the supplied daemon instance id, so a restarted daemon can never
+ * replay frames from its predecessor.
+ */
+export function broadcastResourceChanged(
+  change: ResourceChangedBroadcast,
+  daemonInstanceId: string,
+): DaemonEventResourceChangedFrame {
+  useResourceEventGeneration(daemonInstanceId);
+  const key = resourceRevisionKey(change.workspaceName, change.resource);
+  const previousRevision = resourceRevisions.get(key) ?? 0;
+  // A domain revision (for example AppWindow documentRevision) is a useful
+  // lower bound, not the resource projection's whole clock: pane creation and
+  // tmux mutations also change application-shell. Always advance strictly so
+  // mixed mutation kinds can never emit an equal or backwards revision.
+  const revision = Math.max(previousRevision + 1, change.revision ?? 0);
+  const frame = DaemonEventResourceChangedFrameSchemaZ.parse({
+    type: "resource.changed",
+    sequence: resourceEventSequence + 1,
+    workspaceName: change.workspaceName,
+    resource: change.resource,
+    revision,
+    causeOperationId: change.causeOperationId ?? null,
+  });
+  resourceEventSequence = frame.sequence;
+  resourceRevisions.set(key, revision);
+  resourceEventJournal.push(frame);
+  if (resourceEventJournal.length > RESOURCE_EVENT_JOURNAL_LIMIT) {
+    resourceEventJournal.splice(0, resourceEventJournal.length - RESOURCE_EVENT_JOURNAL_LIMIT);
+  }
+  for (const client of allClients) client.broadcastResourceChanged(frame);
+  return frame;
+}
 
 let sessionsPollTimer: ReturnType<typeof setInterval> | null = null;
 let lastSessionsHash = "";
@@ -293,9 +361,11 @@ export function handleWsEventsConnection(
   socket: WebSocket | WsLike,
   daemonIdentity: DaemonInstanceIdentity,
 ): void {
+  useResourceEventGeneration(daemonIdentity.instanceId);
   const ws = socket as WsLike;
   const subscriptions = new Set<string>();
   let closed = false;
+  let replayRequested = false;
 
   const send = (frame: DaemonEventServerFrame): void => {
     if (closed || ws.readyState !== WS_OPEN) return;
@@ -358,6 +428,10 @@ export function handleWsEventsConnection(
     send({ type: "fleet.changed" });
   };
 
+  const broadcastResourceChangedForClient = (frame: DaemonEventResourceChangedFrame): void => {
+    send(frame);
+  };
+
   // Per-connection subscription to the current workspace-registry singleton.
   const workspaceRegistry = getDefaultWorkspaceRegistry();
   const unsubWorkspaceAdded = workspaceRegistry.on("workspace.added", (workspace) =>
@@ -379,6 +453,7 @@ export function handleWsEventsConnection(
     broadcastAgentTurnCompleted: broadcastAgentTurnCompletedForClient,
     broadcastWorkspacePromotionCompleted: broadcastWorkspacePromotionCompletedForClient,
     broadcastFleetChanged: broadcastFleetChangedForClient,
+    broadcastResourceChanged: broadcastResourceChangedForClient,
   };
   allClients.add(clientHandle);
   ensureSessionsPoller();
@@ -393,11 +468,11 @@ export function handleWsEventsConnection(
   }, KEEPALIVE_INTERVAL_MS);
   keepalive.unref?.();
 
-  const subscribe = (sessionName: string): void => {
+  const subscribe = (sessionName: string, sendInitialSnapshot: boolean): void => {
     if (subscriptions.has(sessionName)) return;
     const session = discoverSessions().find((s) => s.name === sessionName);
     subscriptions.add(sessionName);
-    if (session) {
+    if (session && sendInitialSnapshot) {
       const data = buildSessionSnapshot(sessionName);
       if (data) {
         send({ type: "snapshot", sessionName, data });
@@ -448,7 +523,36 @@ export function handleWsEventsConnection(
     const parsed: DaemonEventClientFrame = result.data;
 
     if (parsed.type === "subscribe") {
-      for (const name of parsed.sessions) subscribe(name);
+      if (parsed.afterSequence !== undefined && !replayRequested) {
+        replayRequested = true;
+        const currentSequence = resourceEventSequence;
+        const oldestAvailableSequence = resourceEventJournal[0]?.sequence ?? null;
+        if (parsed.afterSequence > currentSequence) {
+          send({
+            type: "snapshot-required",
+            afterSequence: parsed.afterSequence,
+            oldestAvailableSequence,
+            currentSequence,
+            reason: "cursor-ahead",
+          });
+        } else if (
+          oldestAvailableSequence !== null &&
+          parsed.afterSequence < oldestAvailableSequence - 1
+        ) {
+          send({
+            type: "snapshot-required",
+            afterSequence: parsed.afterSequence,
+            oldestAvailableSequence,
+            currentSequence,
+            reason: "journal-gap",
+          });
+        } else {
+          for (const frame of resourceEventJournal) {
+            if (frame.sequence > parsed.afterSequence) send(frame);
+          }
+        }
+      }
+      for (const name of parsed.sessions) subscribe(name, parsed.afterSequence === undefined);
       return;
     }
     if (parsed.type === "unsubscribe") {
@@ -468,9 +572,19 @@ export function handleWsEventsConnection(
   // a separate REST round-trip.
   try {
     const sessions = discoverSessions();
-    send({ type: "hello", daemon: daemonIdentity, sessions: buildOverviews(sessions) });
+    send({
+      type: "hello",
+      daemon: daemonIdentity,
+      sessions: buildOverviews(sessions),
+      eventSequence: resourceEventSequence,
+    });
   } catch {
-    send({ type: "hello", daemon: daemonIdentity, sessions: [] });
+    send({
+      type: "hello",
+      daemon: daemonIdentity,
+      sessions: [],
+      eventSequence: resourceEventSequence,
+    });
   }
 }
 
@@ -517,6 +631,14 @@ export function _stopFleetPollerForTests(): void {
   clearInterval(fleetPollTimer);
   fleetPollTimer = null;
   lastFleetHash = "";
+}
+
+/** Test-only reset for the generation-scoped replay journal. */
+export function _resetResourceEventJournalForTests(): void {
+  resourceEventGeneration = null;
+  resourceEventSequence = 0;
+  resourceEventJournal = [];
+  resourceRevisions.clear();
 }
 
 /**

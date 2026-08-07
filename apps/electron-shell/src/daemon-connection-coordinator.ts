@@ -35,6 +35,8 @@ import {
   type WorkspaceMultiplexerMutationRequest,
   type WorkspaceMultiplexerMutationResult,
   type AppWindowMutationResult,
+  type WidgetAssetRequest,
+  type WidgetAssetResult,
 } from "@tmux-ide/contracts";
 
 import {
@@ -74,6 +76,7 @@ export interface DaemonResourceAuthority {
   ): Promise<PaneStreamIssueResult>;
   listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
   fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult>;
+  fetchWidgetAsset(request: WidgetAssetRequest): Promise<WidgetAssetResult>;
   fetchApplicationShell(
     workspaceName: string,
     resourceVersion?: DesktopDaemonFetchApplicationShellRequest["resourceVersion"],
@@ -479,6 +482,26 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
     const result = await broker.fetchFleetCatalog();
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWidgetAsset(request: WidgetAssetRequest): Promise<WidgetAssetResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWidgetAsset(request);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||

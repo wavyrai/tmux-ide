@@ -1,13 +1,14 @@
 /* @vitest-environment happy-dom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSignal } from "solid-js";
+import { Show, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import type {
+  TerminalAttachRequest,
   TerminalAttachmentSemanticTarget,
   TerminalAttachmentViewport,
 } from "@tmux-ide/contracts";
 
-import { TerminalSurface } from "./terminal-surface.tsx";
+import { TerminalSurface, readOnlyTerminalFitScale } from "./terminal-surface.tsx";
 import type {
   NativeTerminalAttachment,
   NativeTerminalConnectResult,
@@ -37,6 +38,27 @@ function deferred<T>(): Deferred<T> {
   });
   return { promise, resolve: (value) => resolvePromise?.(value) };
 }
+
+describe("readOnlyTerminalFitScale", () => {
+  it("fits the whole shared grid without enlarging it", () => {
+    expect(
+      readOnlyTerminalFitScale({
+        availableWidth: 1_000,
+        availableHeight: 500,
+        gridWidth: 2_000,
+        gridHeight: 1_000,
+      }),
+    ).toBe(0.5);
+    expect(
+      readOnlyTerminalFitScale({
+        availableWidth: 1_000,
+        availableHeight: 500,
+        gridWidth: 500,
+        gridHeight: 250,
+      }),
+    ).toBe(1);
+  });
+});
 
 const TARGET_A: TerminalAttachmentSemanticTarget = {
   workspaceName: "workspace-a",
@@ -1192,6 +1214,227 @@ describe("TerminalSurface", () => {
     expect(attempts).toBe(3);
     expect(root.textContent).not.toContain("Terminal could not attach");
     dispose();
+  });
+
+  it("falls back to a passive read-only viewer when another client keeps control", async () => {
+    const requests: TerminalAttachRequest[] = [];
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (request, nextListener) => {
+      requests.push(request);
+      listener = nextListener;
+      if (request.viewerMode === "interactive") {
+        return {
+          status: "error" as const,
+          error: {
+            code: "interactive-viewer-conflict" as const,
+            reason: "Another client controls this window.",
+            retryable: true,
+          },
+        };
+      }
+      return { status: "connected" as const, attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          geometryOwnership="owner"
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-viewer-mode")).toBe(
+        "read-only",
+      ),
+    );
+    expect(requests.at(-1)).toMatchObject({
+      viewerMode: "read-only",
+      geometryOwnership: "passive",
+    });
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-geometry-ownership")).toBe(
+      "passive",
+    );
+    await Promise.resolve(
+      (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+        type: "output",
+        bytes: new TextEncoder().encode("shared output"),
+      }),
+    );
+    await vi.waitFor(() => expect(root.textContent).toContain("Viewing read-only"));
+    expect(root.textContent).toContain("Take control");
+    renderer.emitInput(new Uint8Array([3]));
+    expect(attachment.write).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("keeps a second surface passive and recovers control after a release race", async () => {
+    type ClientId = "owner" | "viewer";
+    const listeners = new Map<ClientId, (event: NativeTerminalEvent) => void | Promise<void>>();
+    const requests = new Map<ClientId, TerminalAttachRequest[]>([
+      ["owner", []],
+      ["viewer", []],
+    ]);
+    const ownerWrite = vi.fn(async (_bytes: Uint8Array) => ({ status: "ok" as const }));
+    const viewerWrite = vi.fn(async (_bytes: Uint8Array) => ({ status: "ok" as const }));
+    const writes = new Map<ClientId, typeof ownerWrite>([
+      ["owner", ownerWrite],
+      ["viewer", viewerWrite],
+    ]);
+    let interactiveOwner: ClientId | null = null;
+    let deferOwnerRelease = false;
+    let ownerReleaseScheduled = false;
+    let viewerConflicts = 0;
+
+    const clientTransport = (clientId: ClientId): NativeTerminalTransport =>
+      transportHarness(async (request, listener) => {
+        requests.get(clientId)!.push(request);
+        listeners.set(clientId, listener);
+        if (request.viewerMode === "interactive") {
+          if (interactiveOwner !== null && interactiveOwner !== clientId) {
+            if (clientId === "viewer") viewerConflicts += 1;
+            return {
+              status: "error" as const,
+              error: {
+                code: "interactive-viewer-conflict" as const,
+                reason: "Another client controls this window.",
+                retryable: true,
+              },
+            };
+          }
+          interactiveOwner = clientId;
+        }
+        let disposed = false;
+        return {
+          status: "connected" as const,
+          attachment: attachmentHarness({
+            write: writes.get(clientId)!,
+            dispose: vi.fn(() => {
+              if (disposed) return;
+              disposed = true;
+              if (request.viewerMode !== "interactive" || interactiveOwner !== clientId) return;
+              if (clientId === "owner" && deferOwnerRelease) {
+                ownerReleaseScheduled = true;
+                setTimeout(() => {
+                  if (interactiveOwner === clientId) interactiveOwner = null;
+                }, 120);
+              } else {
+                interactiveOwner = null;
+              }
+            }),
+          }),
+        };
+      });
+
+    const ownerRenderer = rendererHarness();
+    const viewerRenderer = rendererHarness();
+    const ownerTransport = clientTransport("owner");
+    const viewerTransport = clientTransport("viewer");
+    const ownerRoot = document.body.appendChild(document.createElement("div"));
+    const viewerRoot = document.body.appendChild(document.createElement("div"));
+    const [showOwner, setShowOwner] = createSignal(true);
+    const disposeOwnerRoot = render(
+      () => (
+        <Show when={showOwner()}>
+          <TerminalSurface
+            target={TARGET_A}
+            title="Owner"
+            transport={ownerTransport}
+            geometryOwnership="owner"
+            rendererFactory={ownerRenderer.factory}
+          />
+        </Show>
+      ),
+      ownerRoot,
+    );
+    await vi.waitFor(() => expect(interactiveOwner).toBe("owner"));
+
+    const disposeViewerRoot = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Viewer"
+          transport={viewerTransport}
+          geometryOwnership="owner"
+          rendererFactory={viewerRenderer.factory}
+        />
+      ),
+      viewerRoot,
+    );
+    await vi.waitFor(() =>
+      expect(viewerRoot.querySelector(".terminal-surface")?.getAttribute("data-viewer-mode")).toBe(
+        "read-only",
+      ),
+    );
+
+    await Promise.all([
+      Promise.resolve(
+        listeners.get("owner")?.({
+          type: "output",
+          bytes: new TextEncoder().encode("owner frame"),
+        }),
+      ),
+      Promise.resolve(
+        listeners.get("viewer")?.({
+          type: "output",
+          bytes: new TextEncoder().encode("viewer frame"),
+        }),
+      ),
+    ]);
+    await vi.waitFor(() => {
+      expect(ownerRenderer.writes).toHaveLength(1);
+      expect(viewerRenderer.writes).toHaveLength(1);
+      expect(viewerRoot.textContent).toContain("Take control");
+    });
+    expect(requests.get("viewer")!.at(-1)).toMatchObject({
+      viewerMode: "read-only",
+      geometryOwnership: "passive",
+    });
+    expect(
+      viewerRoot.querySelector(".terminal-surface")?.getAttribute("data-geometry-ownership"),
+    ).toBe("passive");
+
+    ownerRenderer.emitInput(new Uint8Array([1]));
+    viewerRenderer.emitInput(new Uint8Array([2]));
+    await vi.waitFor(() => expect(writes.get("owner")).toHaveBeenCalledOnce());
+    expect(writes.get("viewer")).not.toHaveBeenCalled();
+
+    // The original client's disconnect is not visible to the authority
+    // immediately. Take control must survive two honest conflicts, then win
+    // once the short release race settles instead of falling back again.
+    deferOwnerRelease = true;
+    setShowOwner(false);
+    await vi.waitFor(() => expect(ownerReleaseScheduled).toBe(true));
+    viewerRoot.querySelector<HTMLButtonElement>(".terminal-surface__viewer-status button")!.click();
+    await vi.waitFor(
+      () => {
+        expect(interactiveOwner).toBe("viewer");
+        expect(
+          viewerRoot.querySelector(".terminal-surface")?.getAttribute("data-viewer-mode"),
+        ).toBe("interactive");
+        expect(viewerRoot.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe(
+          "connected",
+        );
+      },
+      { timeout: 1_500 },
+    );
+    expect(viewerConflicts).toBeGreaterThanOrEqual(5);
+    expect(requests.get("viewer")!.at(-1)).toMatchObject({
+      viewerMode: "interactive",
+      geometryOwnership: "owner",
+    });
+    viewerRenderer.emitInput(new Uint8Array([3]));
+    await vi.waitFor(() => expect(writes.get("viewer")).toHaveBeenCalledOnce());
+
+    disposeViewerRoot();
+    disposeOwnerRoot();
   });
 
   it("retires a rejected connect before rejecting late output", async () => {

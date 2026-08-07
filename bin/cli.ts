@@ -227,6 +227,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide cheatsheet")}         ${dim("Print the key cheat sheet (⌥k / [ ? keys ] popup)")}
   ${cyan("tmux-ide menu")} [--client N]  ${dim("Open the right-click actions menu (⌥m / right-click any pane or the bar)")}
   ${cyan("tmux-ide popup")} <widget>     ${dim("Open a widget as a floating panel (explorer/changes/config; ⌥e/⌥g/⌥,)")}
+  ${cyan("tmux-ide widget")} <markdown|image|card> [file]  ${dim("Render rich live content in the current pane")}
   ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the app nav column (⌥b on adopted sessions)")}
   ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim("Add a git worktree (new branch) + open a session in it")}
@@ -1785,12 +1786,13 @@ try {
       /*
        * Opt this pane into rich rendering (m49.7).
        *
-       *   tmux-ide widget markdown [file]     # or stdin
-       *   tmux-ide widget image <file>
+       *   tmux-ide widget markdown [file]     # or stdin; files live-refresh
+       *   tmux-ide widget image <file>        # PNG/JPEG/GIF/WebP/AVIF
+       *   tmux-ide widget card [file]         # or JSON on stdin
        *
-       * The marker line carries the content, so the helper prints ONE line and
-       * then simply holds the pane: there is nothing to stream afterwards, and
-       * a pane that returned to its prompt would scroll the marker away. Ctrl-C
+       * The marker line carries inline content or a content-addressed asset id,
+       * so the helper prints ONE line and then holds the pane. File-backed
+       * widgets publish a new id whenever the file changes. Ctrl-C
        * clears the screen, which is what takes the widget down — the renderer
        * shows one for exactly as long as the marker is in the grid.
        *
@@ -1800,11 +1802,17 @@ try {
       const {
         PaneWidgetRefusal,
         PANE_WIDGET_RESTORE_SEQUENCE,
-        buildImageAnnouncement,
+        buildCardAnnouncement,
+        buildImageAssetAnnouncement,
         buildMarkdownAnnouncement,
+        buildMarkdownAssetAnnouncement,
+        imageMediaTypeFor,
         paneWidgetId,
       } = await import("../packages/daemon/src/lib/pane-widget.ts");
-      const { readFileSync } = await import("node:fs");
+      const { publishWidgetAsset, WidgetAssetStoreError } =
+        await import("../packages/daemon/src/lib/widget-asset-store.ts");
+      const { readFileSync, watchFile, unwatchFile } = await import("node:fs");
+      const { basename } = await import("node:path");
 
       const readStdin = async (): Promise<string> => {
         const chunks: Buffer[] = [];
@@ -1813,19 +1821,57 @@ try {
       };
 
       let announcement: string;
+      let watchedFile: string | null = null;
+      let refreshAnnouncement: (() => string) | null = null;
       try {
         const id = paneWidgetId(positionals[1] ?? "");
         const file = positionals[2];
         if (id === "markdown") {
-          const text = file ? readFileSync(file, "utf8") : await readStdin();
-          announcement = buildMarkdownAnnouncement(text);
-        } else {
+          if (file) {
+            const publish = (): string => {
+              const asset = publishWidgetAsset(readFileSync(file), {
+                media: "text/markdown",
+                name: basename(file),
+              });
+              return buildMarkdownAssetAnnouncement(asset.assetId, basename(file));
+            };
+            announcement = publish();
+            watchedFile = file;
+            refreshAnnouncement = publish;
+          } else {
+            announcement = buildMarkdownAnnouncement(await readStdin());
+          }
+        } else if (id === "image") {
           if (!file) throw new PaneWidgetRefusal("empty", "The image widget needs a file path.");
-          announcement = buildImageAnnouncement(readFileSync(file), file);
+          const publish = (): string => {
+            const media = imageMediaTypeFor(file);
+            if (!media) {
+              throw new PaneWidgetRefusal(
+                "unsupported-media",
+                `"${basename(file)}" is not a supported raster image.`,
+              );
+            }
+            const asset = publishWidgetAsset(readFileSync(file), {
+              media: media as
+                | "image/png"
+                | "image/jpeg"
+                | "image/gif"
+                | "image/webp"
+                | "image/avif",
+              name: basename(file),
+            });
+            return buildImageAssetAnnouncement(asset.assetId, { name: basename(file) });
+          };
+          announcement = publish();
+          watchedFile = file;
+          refreshAnnouncement = publish;
+        } else {
+          const source = file ? readFileSync(file, "utf8") : await readStdin();
+          announcement = buildCardAnnouncement(JSON.parse(source) as unknown);
         }
       } catch (error) {
         const message =
-          error instanceof PaneWidgetRefusal
+          error instanceof PaneWidgetRefusal || error instanceof WidgetAssetStoreError
             ? error.message
             : `The widget input could not be read: ${(error as Error).message}`;
         if (json) {
@@ -1843,11 +1889,26 @@ try {
       }
 
       process.stdout.write(announcement);
+      if (watchedFile && refreshAnnouncement) {
+        const source = watchedFile;
+        const refresh = refreshAnnouncement;
+        watchFile(source, { interval: 750 }, (current, previous) => {
+          if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) return;
+          try {
+            process.stdout.write(PANE_WIDGET_RESTORE_SEQUENCE + refresh());
+          } catch (error) {
+            process.stderr.write(
+              `tmux-ide widget could not refresh: ${(error as Error).message}\n`,
+            );
+          }
+        });
+      }
       // Hold the pane. The process is doing nothing, but it is what Ctrl-C has
       // to reach for the restore to be the user's own action rather than ours.
       const hold = setInterval(() => undefined, 1 << 30);
       const restore = (): void => {
         clearInterval(hold);
+        if (watchedFile) unwatchFile(watchedFile);
         process.stdout.write(PANE_WIDGET_RESTORE_SEQUENCE);
         process.exit(0);
       };

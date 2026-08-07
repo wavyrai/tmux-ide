@@ -11,7 +11,37 @@ describe("the widget registry", () => {
   it("ships exactly the widgets this build claims", () => {
     expect(widgetDefinition("markdown")?.label).toBe("Markdown");
     expect(widgetDefinition("image")?.label).toBe("Image");
+    expect(widgetDefinition("card")?.label).toBe("Card");
     expect(widgetDefinition("mermaid")).toBe(null);
+  });
+
+  it("accepts content-addressed assets without accepting arbitrary paths or URLs", () => {
+    const assetId = "a".repeat(64);
+    expect(resolveWidget(marker("markdown", { assetId })).status).toBe("ready");
+    expect(resolveWidget(marker("image", { assetId, name: "demo.gif" })).status).toBe("ready");
+    for (const invalid of ["/tmp/demo.gif", "https://example.com/demo.gif", "../secret"]) {
+      expect(resolveWidget(marker("image", { assetId: invalid })).status).toBe("invalid-arguments");
+    }
+  });
+
+  it("validates the declarative card vocabulary", () => {
+    expect(
+      resolveWidget(
+        marker("card", {
+          title: "Build",
+          items: [
+            { type: "badge", text: "Passed", tone: "success" },
+            { type: "progress", value: 72 },
+            { type: "button", label: "Rerun", input: "pnpm test" },
+          ],
+        }),
+      ).status,
+    ).toBe("ready");
+    expect(
+      resolveWidget(
+        marker("card", { title: "Unsafe", items: [{ type: "html", html: "<b>x</b>" }] }),
+      ).status,
+    ).toBe("invalid-arguments");
   });
 
   it("resolves a valid markdown marker", () => {

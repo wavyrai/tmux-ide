@@ -7,6 +7,7 @@ import {
   type MarkdownInline,
   type MarkdownListItem,
 } from "./markdown.ts";
+import { MermaidBlock } from "./mermaid-block.tsx";
 
 /**
  * Renders a markdown tree as real elements.
@@ -49,9 +50,16 @@ function Block(props: { readonly block: MarkdownBlock }): JSX.Element {
       </Match>
       <Match when={props.block.kind === "code" ? props.block : null} keyed>
         {(block) => (
-          <pre class="widget-markdown__code" data-language={block.language ?? undefined}>
-            <code>{block.text}</code>
-          </pre>
+          <Show
+            when={block.language?.toLowerCase() === "mermaid"}
+            fallback={
+              <pre class="widget-markdown__code" data-language={block.language ?? undefined}>
+                <code>{block.text}</code>
+              </pre>
+            }
+          >
+            <MermaidBlock source={block.text} />
+          </Show>
         )}
       </Match>
       <Match when={props.block.kind === "quote" ? props.block : null} keyed>

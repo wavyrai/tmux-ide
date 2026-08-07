@@ -78,10 +78,10 @@ describe("desktop process boundaries", () => {
       HOST_IPC.daemonSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);
-    // Sixteen since m49.1 added `invokeVerb`. That resource carries all seven
-    // multiplexer verbs, so the count grew by one rather than by seven — which
-    // is the property this assertion is really guarding.
-    expect(DAEMON_RESOURCE_KINDS.length).toBe(16);
+    // Seventeen after the content-addressed widget asset read joined the same
+    // closed request union. `invokeVerb` still carries all seven multiplexer
+    // verbs, so this remains one reviewed capability per semantic resource.
+    expect(DAEMON_RESOURCE_KINDS.length).toBe(17);
     expect(new Set(DAEMON_RESOURCE_KINDS).size).toBe(DAEMON_RESOURCE_KINDS.length);
   });
 

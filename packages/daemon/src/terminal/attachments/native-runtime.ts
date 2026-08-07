@@ -28,6 +28,7 @@ import {
   type AttachmentLeaseManagerOptions,
   type AttachmentLeaseDescriptor,
 } from "./lease-manager.ts";
+import { TerminalInputAuthority } from "../input-authority.ts";
 import {
   PtyTmuxAttachmentLauncher,
   type DaemonTmuxSocketSelector,
@@ -485,7 +486,11 @@ function parsePaneSnapshot(
       name: nullable(name),
       type: nullable(type),
       missionStamp: nullable(missionStamp),
-      dir: boundedWireValue(dir, 4_096, false),
+      // tmux can temporarily report an empty pane_current_path for a valid
+      // foreground pipeline after its process-group leader exits. The
+      // registered workspace remains the trusted application-shell root, so
+      // keep discovery available and carry the empty presentation value.
+      dir: boundedWireValue(dir, 4_096),
     });
   }
   const counts = new Map<string, number>();
@@ -746,7 +751,7 @@ export class NativeTerminalAttachmentGeometryResolver {
 
 type LeaseRuntimeOptions = Omit<
   AttachmentLeaseManagerOptions,
-  "daemonInstanceId" | "catalog" | "viewExecutor"
+  "daemonInstanceId" | "catalog" | "viewExecutor" | "inputAuthority"
 >;
 type LauncherRuntimeOptions = Omit<
   PtyTmuxAttachmentLauncherOptions,
@@ -777,6 +782,8 @@ export interface NativeTerminalAttachmentRuntimeOptions {
   readonly commandExecutor?: NativeTerminalAttachmentCommandExecutor;
   /** Narrow deterministic seam; production omits it and uses registry-backed discovery. */
   readonly semanticPaneCatalog?: SemanticPaneCatalog;
+  /** Shared with pane streaming so both transports arbitrate one live window. */
+  readonly inputAuthority?: TerminalInputAuthority;
   readonly lease?: LeaseRuntimeOptions;
   readonly launcher?: LauncherRuntimeOptions;
   readonly admission?: AdmissionRuntimeOptions;
@@ -800,6 +807,8 @@ export interface NativeTerminalAttachmentRuntimeOptions {
 /** One daemon-generation owner for catalog, grouped view, PTY, lease and admission state. */
 export class NativeTerminalAttachmentRuntime {
   readonly admission: TerminalAttachmentAdmissionCoordinator;
+  readonly semanticPaneCatalog: SemanticPaneCatalog;
+  readonly inputAuthority: TerminalInputAuthority;
   readonly #launcher: PtyTmuxAttachmentLauncher;
   readonly #startupBarrier: Promise<void>;
   readonly #serializer: TmuxAttachmentOperationSerializer;
@@ -844,6 +853,7 @@ export class NativeTerminalAttachmentRuntime {
           );
         },
       });
+    const inputAuthority = options.inputAuthority ?? new TerminalInputAuthority();
     const launcher = new PtyTmuxAttachmentLauncher({
       ...options.launcher,
       socketSelector: authority.socketSelector,
@@ -870,6 +880,7 @@ export class NativeTerminalAttachmentRuntime {
       daemonInstanceId: options.daemonInstanceId,
       catalog,
       viewExecutor,
+      inputAuthority,
     });
     const geometry = new NativeTerminalAttachmentGeometryResolver({
       catalog,
@@ -909,6 +920,8 @@ export class NativeTerminalAttachmentRuntime {
       resolveGeometry: (descriptor, client) => geometry.resolve(descriptor, client),
     });
     this.#launcher = launcher;
+    this.semanticPaneCatalog = catalog;
+    this.inputAuthority = inputAuthority;
     this.#serializer = serializer;
     this.#registry = options.registry;
     this.#discoverTerminalInventory = discoverTerminalInventory;

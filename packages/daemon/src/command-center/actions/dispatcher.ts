@@ -26,8 +26,19 @@ import {
 } from "./contract.ts";
 import { ActionError, wrapInternalError } from "./errors.ts";
 import { getLooseActionEntry } from "./registry.ts";
-import { broadcastActionComplete, broadcastWorkspacePromotionCompleted } from "../ws-events.ts";
-import { WorkspacePromoteMutationResultSchemaZ } from "@tmux-ide/contracts";
+import {
+  broadcastActionComplete,
+  broadcastResourceChanged,
+  broadcastWorkspacePromotionCompleted,
+  type ResourceChangedBroadcast,
+} from "../ws-events.ts";
+import {
+  AppWindowMutationResultSchemaZ,
+  WorkspaceMultiplexerMutationResultSchemaZ,
+  WorkspaceOpenMutationResultSchemaZ,
+  WorkspacePaneCreateMutationResultSchemaZ,
+  WorkspacePromoteMutationResultSchemaZ,
+} from "@tmux-ide/contracts";
 import { daemonActionCommandRegistry } from "./command-definitions.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
 import type { WorkspaceMultiplexerBackend } from "./handlers/workspace-multiplexer.ts";
@@ -40,6 +51,8 @@ export interface DispatcherDeps {
   broadcast?: (name: string, result: unknown) => void;
   /** Override the typed promotion-completed receipt broadcaster (tests). */
   broadcastPromotionCompleted?: (workspaceName: string, outcome: "promoted" | "replayed") => void;
+  /** Override the scoped replayable invalidation broadcaster (tests). */
+  broadcastResourceChanged?: (change: ResourceChangedBroadcast, daemonInstanceId: string) => void;
   /** Trusted daemon generation; never accepted from an HTTP request body. */
   daemonInstanceId?: string;
   /** Instance-owned privileged mutation authority; never module-global. */
@@ -57,6 +70,98 @@ export interface DispatcherDeps {
 interface DispatchOk {
   ok: true;
   result: unknown;
+}
+
+function resourceChangesForAction(
+  actionName: ActionName,
+  result: unknown,
+): readonly ResourceChangedBroadcast[] {
+  if (actionName === "workspace.app-window.mutate") {
+    const mutation = AppWindowMutationResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome !== "applied") return [];
+    return [
+      {
+        workspaceName: mutation.data.workspaceName,
+        resource: "application-shell",
+        revision: mutation.data.documentRevision,
+        causeOperationId: mutation.data.operationId,
+      },
+    ];
+  }
+  if (actionName === "workspace.pane.create") {
+    const mutation = WorkspacePaneCreateMutationResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome !== "created") return [];
+    return [
+      {
+        workspaceName: mutation.data.resource.workspaceName,
+        resource: "application-shell",
+        causeOperationId: mutation.data.operationId,
+      },
+      {
+        workspaceName: null,
+        resource: "fleet-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+    ];
+  }
+  if (actionName === "workspace.open") {
+    const mutation = WorkspaceOpenMutationResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome === "replayed") return [];
+    const base = {
+      workspaceName: mutation.data.resource.workspaceName,
+      causeOperationId: mutation.data.operationId,
+    } as const;
+    return [
+      { ...base, resource: "workspace-catalog" },
+      { ...base, resource: "application-shell" },
+      { ...base, workspaceName: null, resource: "fleet-catalog" },
+    ];
+  }
+  if (actionName === "workspace.promote") {
+    const mutation = WorkspacePromoteMutationResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome !== "promoted") return [];
+    const base = {
+      workspaceName: mutation.data.resource.workspaceName,
+      causeOperationId: mutation.data.operationId,
+    } as const;
+    return [
+      { ...base, resource: "workspace-catalog" },
+      { ...base, resource: "application-shell" },
+      { ...base, workspaceName: null, resource: "fleet-catalog" },
+    ];
+  }
+  if (actionName.startsWith("workspace.")) {
+    const mutation = WorkspaceMultiplexerMutationResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome !== "applied") return [];
+    const changes: ResourceChangedBroadcast[] = [
+      {
+        workspaceName: mutation.data.workspaceName,
+        resource: "application-shell",
+        causeOperationId: mutation.data.operationId,
+      },
+    ];
+    if (
+      mutation.data.verb === "workspace.window.split" ||
+      mutation.data.verb === "workspace.window.kill" ||
+      mutation.data.verb === "workspace.pane.kill" ||
+      mutation.data.verb === "workspace.session.kill"
+    ) {
+      changes.push({
+        workspaceName: null,
+        resource: "fleet-catalog",
+        causeOperationId: mutation.data.operationId,
+      });
+    }
+    if (mutation.data.verb === "workspace.session.kill") {
+      changes.push({
+        workspaceName: mutation.data.workspaceName,
+        resource: "workspace-catalog",
+        causeOperationId: mutation.data.operationId,
+      });
+    }
+    return changes;
+  }
+  return [];
 }
 
 function errorEnvelope(err: ActionError): ActionErrorEnvelope {
@@ -97,6 +202,7 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
   const broadcast = deps.broadcast ?? broadcastActionComplete;
   const broadcastPromotionCompleted =
     deps.broadcastPromotionCompleted ?? broadcastWorkspacePromotionCompleted;
+  const broadcastResource = deps.broadcastResourceChanged ?? broadcastResourceChanged;
 
   return async function dispatcher(c: Context): Promise<Response> {
     const name = c.req.param("name");
@@ -210,6 +316,16 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       } catch (err) {
         // Broadcast failure must not turn a successful action into a failure.
         console.error("[actions] broadcast failed:", err);
+      }
+    }
+
+    if (deps.daemonInstanceId) {
+      for (const change of resourceChangesForAction(actionName, outputParsed.data)) {
+        try {
+          broadcastResource(change, deps.daemonInstanceId);
+        } catch (err) {
+          console.error("[actions] resource invalidation broadcast failed:", err);
+        }
       }
     }
 

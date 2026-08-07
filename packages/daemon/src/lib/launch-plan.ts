@@ -15,6 +15,16 @@ export interface LaunchPlanDiagnostic {
   message: string;
 }
 
+/** Stable identity for the single root window created by the CLI launcher. */
+export function semanticWindowIdForSession(session: string): string {
+  const digest = createHash("sha256")
+    .update("tmux-ide.launch.window.v1\0", "utf8")
+    .update(session, "utf8")
+    .digest("hex")
+    .slice(0, 20);
+  return `window.launch.${digest}`;
+}
+
 /**
  * Explicit `pane.id` is authoritative. The fallback hashes declarative pane
  * metadata, never its row/column. A title is part of fallback identity so two

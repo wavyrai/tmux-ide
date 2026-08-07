@@ -3,7 +3,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DaemonEventServerFrameSchemaZ, type DaemonEventServerFrame } from "@tmux-ide/contracts";
 import {
   _detachProjectRegistryListenerForTests,
+  _resetResourceEventJournalForTests,
   _stopSessionsPollerForTests,
+  broadcastResourceChanged,
   handleWsEventsConnection,
 } from "../../command-center/ws-events.ts";
 import { _setTmuxRunner } from "../../command-center/discovery.ts";
@@ -58,6 +60,7 @@ function frames(socket: ProtocolWebSocket): DaemonEventServerFrame[] {
 afterEach(() => {
   _stopSessionsPollerForTests();
   _detachProjectRegistryListenerForTests();
+  _resetResourceEventJournalForTests();
 });
 
 describe("/ws/events client frame protocol", () => {
@@ -124,6 +127,65 @@ describe("/ws/events client frame protocol", () => {
     socket.receive(JSON.stringify({ type: "future.event" }));
 
     expect(frames(socket).map(({ type }) => type)).toEqual(["protocol.error", "protocol.error"]);
+    socket.disconnect();
+  });
+
+  it("replays retained scoped invalidations after a reconnect cursor", () => {
+    broadcastResourceChanged(
+      {
+        workspaceName: "tmux-ide",
+        resource: "application-shell",
+        revision: 7,
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      daemonIdentity.instanceId,
+    );
+    broadcastResourceChanged(
+      { workspaceName: "tmux-ide", resource: "application-shell", revision: 8 },
+      daemonIdentity.instanceId,
+    );
+    // A lower domain-local revision cannot move the shared resource clock
+    // backwards after another mutation kind already advanced it.
+    broadcastResourceChanged(
+      { workspaceName: "tmux-ide", resource: "application-shell", revision: 4 },
+      daemonIdentity.instanceId,
+    );
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    expect(frames(socket)[0]).toMatchObject({ type: "hello", eventSequence: 3 });
+    socket.sent.length = 0;
+    socket.receive(JSON.stringify({ type: "subscribe", sessions: [], afterSequence: 0 }));
+
+    expect(frames(socket)).toEqual([
+      expect.objectContaining({ type: "resource.changed", sequence: 1, revision: 7 }),
+      expect.objectContaining({ type: "resource.changed", sequence: 2, revision: 8 }),
+      expect.objectContaining({ type: "resource.changed", sequence: 3, revision: 9 }),
+    ]);
+    socket.disconnect();
+  });
+
+  it("requires a snapshot when a reconnect cursor fell behind the bounded journal", () => {
+    for (let index = 0; index < 257; index += 1) {
+      broadcastResourceChanged(
+        { workspaceName: "tmux-ide", resource: "application-shell" },
+        daemonIdentity.instanceId,
+      );
+    }
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    socket.sent.length = 0;
+    socket.receive(JSON.stringify({ type: "subscribe", sessions: [], afterSequence: 0 }));
+
+    expect(frames(socket)).toEqual([
+      {
+        type: "snapshot-required",
+        afterSequence: 0,
+        oldestAvailableSequence: 2,
+        currentSequence: 257,
+        reason: "journal-gap",
+      },
+    ]);
     socket.disconnect();
   });
 });

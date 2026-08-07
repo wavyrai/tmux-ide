@@ -10,6 +10,9 @@ import {
   PANE_WIDGET_RESTORE_SEQUENCE,
   PaneWidgetRefusal,
   buildImageAnnouncement,
+  buildImageAssetAnnouncement,
+  buildMarkdownAssetAnnouncement,
+  buildCardAnnouncement,
   buildMarkdownAnnouncement,
   imageMediaTypeFor,
   paneWidgetId,
@@ -128,7 +131,27 @@ describe("the helper's surface", () => {
   it("accepts only the widgets that exist", () => {
     expect(paneWidgetId("markdown")).toBe("markdown");
     expect(paneWidgetId("image")).toBe("image");
-    expect(() => paneWidgetId("mermaid")).toThrow(/Available: markdown, image/u);
+    expect(paneWidgetId("card")).toBe("card");
+    expect(() => paneWidgetId("mermaid")).toThrow(/Available: markdown, image, card/u);
+  });
+
+  it("emits compact asset references and validated declarative cards", () => {
+    const assetId = "a".repeat(64);
+    expect(
+      decodeWidgetMarkerLine(markerLine(buildMarkdownAssetAnnouncement(assetId, "PLAN.md")))?.args,
+    ).toEqual({ assetId, title: "PLAN.md" });
+    expect(
+      decodeWidgetMarkerLine(markerLine(buildImageAssetAnnouncement(assetId, { name: "demo.gif" })))
+        ?.args,
+    ).toEqual({ assetId, name: "demo.gif" });
+    expect(
+      decodeWidgetMarkerLine(
+        markerLine(
+          buildCardAnnouncement({ title: "Build", items: [{ type: "progress", value: 72 }] }),
+        ),
+      )?.id,
+    ).toBe("card");
+    expect(() => buildCardAnnouncement({ title: "Build", items: [{ type: "script" }] })).toThrow();
   });
 
   /*
