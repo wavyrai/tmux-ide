@@ -1472,7 +1472,7 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
-  it("requires an explicit retry after disconnect instead of reconnecting on resize", async () => {
+  it("reconnects a closed attachment without remounting the terminal renderer", async () => {
     const attachments = [attachmentHarness(), attachmentHarness()];
     const listeners: Array<(event: NativeTerminalEvent) => void | Promise<void>> = [];
     let connectionIndex = 0;
@@ -1508,20 +1508,17 @@ describe("TerminalSurface", () => {
     await Promise.resolve();
     expect(transport.connect).toHaveBeenCalledOnce();
 
-    root.querySelector<HTMLButtonElement>(".terminal-surface__state button")!.click();
-    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("measuring");
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(rendererFleet.instances).toHaveLength(2));
-    const newRenderer = rendererFleet.instances[1]!;
-    expect(oldRenderer.renderer.dispose).toHaveBeenCalledOnce();
-    expect(root.querySelector(".terminal-surface")?.getAttribute("data-preserves-frame")).toBe(
-      "false",
-    );
+    expect(rendererFleet.instances).toHaveLength(1);
+    expect(oldRenderer.renderer.dispose).not.toHaveBeenCalled();
+    vi.mocked(oldRenderer.renderer.write).mockImplementation(async (bytes) => {
+      oldRenderer.writes.push(bytes);
+    });
     await Promise.resolve(listeners[1]!({ type: "output", bytes: new Uint8Array([2]) }));
-    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
+    expect(oldRenderer.writes).toEqual([new Uint8Array([2])]);
     blockedWrite.resolve();
     await Promise.resolve();
-    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
+    expect(oldRenderer.writes).toEqual([new Uint8Array([2])]);
     dispose();
   });
 

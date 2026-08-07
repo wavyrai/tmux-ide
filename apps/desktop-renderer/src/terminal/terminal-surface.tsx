@@ -146,6 +146,8 @@ const OWNED_RESIZE_DEBOUNCE_MS = 150;
 const INTERACTIVE_CONFLICT_RETRY_MS = [50, 100, 200, 400, 800, 1_000, 1_000, 1_000] as const;
 /** After cheap grace-race retries, a persistent owner makes this client a viewer. */
 const INTERACTIVE_CONFLICT_RETRIES_BEFORE_READ_ONLY = 2;
+/** Bounded recovery when an established attachment closes underneath the UI. */
+const ATTACHMENT_RECONNECT_RETRY_MS = [250, 750, 1_500, 3_000] as const;
 
 /** Uniformly fit a read-only source grid without ever enlarging its cells. */
 export function readOnlyTerminalFitScale(input: {
@@ -331,6 +333,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let widgetScan: ReturnType<typeof setTimeout> | null = null;
   let conflictRetry: ReturnType<typeof setTimeout> | null = null;
   let conflictAttempt = 0;
+  let reconnectRetry: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempt = 0;
   let attachTraceStartedAt = monotonicNow();
 
   /**
@@ -445,6 +449,11 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const cancelConflictRetry = (): void => {
     if (conflictRetry !== null) clearTimeout(conflictRetry);
     conflictRetry = null;
+  };
+
+  const cancelReconnectRetry = (): void => {
+    if (reconnectRetry !== null) clearTimeout(reconnectRetry);
+    reconnectRetry = null;
   };
 
   const disposeRenderer = (): void => {
@@ -591,6 +600,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       }
       return queueOutput(event.bytes, activeGeneration).then(() => {
         if (!disposed && activeGeneration === generation) {
+          reconnectAttempt = 0;
           setHasValidatedFrame(true);
           recordAttachPhase("live");
         }
@@ -644,6 +654,20 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     recordAttachPhase("disconnected");
     generation += 1;
     disposeAttachment();
+    cancelReconnectRetry();
+    const retryDelay = ATTACHMENT_RECONNECT_RETRY_MS[reconnectAttempt++];
+    if (retryDelay === undefined || !props.transport) return;
+    const reconnectGeneration = generation;
+    reconnectRetry = setTimeout(() => {
+      reconnectRetry = null;
+      if (disposed || reconnectGeneration !== generation || !props.transport) return;
+      resetAttachTrace(true);
+      setReason("The terminal attachment closed. Reconnecting…");
+      setPhase("measuring");
+      const viewport = latestMeasuredViewport;
+      if (viewport) connect(viewport);
+      else scheduleFit();
+    }, retryDelay);
   };
 
   const failConnect = (message: string, activeGeneration: number): void => {
@@ -812,7 +836,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
 
   const retry = (): void => {
     cancelConflictRetry();
+    cancelReconnectRetry();
     conflictAttempt = 0;
+    reconnectAttempt = 0;
     setViewerMode("interactive");
     generation += 1;
     disposeAttachment();
@@ -833,6 +859,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     if (disposed || viewerMode() === "interactive") return;
     generation += 1;
     cancelConflictRetry();
+    cancelReconnectRetry();
     conflictAttempt = 0;
     disposeAttachment();
     currentViewport = null;
@@ -990,6 +1017,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       disposed = true;
       generation += 1;
       cancelConflictRetry();
+      cancelReconnectRetry();
       disposeAttachment();
       disposeRenderer();
       viewportRuntimeStyle?.dispose();
@@ -1025,7 +1053,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     if (disposed) return;
     generation += 1;
     cancelConflictRetry();
+    cancelReconnectRetry();
     conflictAttempt = 0;
+    reconnectAttempt = 0;
     setViewerMode("interactive");
     disposeAttachment();
     disposeRenderer();

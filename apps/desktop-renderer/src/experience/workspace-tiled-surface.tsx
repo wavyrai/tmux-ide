@@ -577,8 +577,13 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       event.preventDefault();
       cancelManipulation();
     };
-    window.addEventListener("keydown", onManipulationKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onManipulationKeyDown));
+    // xterm consumes Escape while it owns keyboard focus. Pane manipulation is
+    // shell chrome, so its cancellation contract must run in capture before
+    // terminal key handling can stop propagation.
+    window.addEventListener("keydown", onManipulationKeyDown, { capture: true });
+    onCleanup(() =>
+      window.removeEventListener("keydown", onManipulationKeyDown, { capture: true }),
+    );
   }
 
   const currentGridBox = () => {

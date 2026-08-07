@@ -374,7 +374,7 @@ test("resize previews locally; header drag cancels or swaps without remounting t
     await page.keyboard.type(`echo ${LIVE_MARKER}`);
     await page.keyboard.press("Enter");
     await expect
-      .poll(() => liveApp.fleet.capturePane(sessionName), {
+      .poll(() => liveApp.fleet.captureWindowPanes(sessionName), {
         message: "the stable TerminalSurface stopped forwarding input after pane manipulation",
         timeout: 30_000,
       })
