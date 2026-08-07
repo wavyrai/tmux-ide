@@ -264,17 +264,6 @@ export class MirrorControlChannel implements MirrorChannelIo {
     return this.core.inputErrorCount;
   }
 
-  /** TESTS ONLY — stop draining tmux's stdout to simulate a stalled renderer
-   *  (the flood/%pause live scenario). */
-  stallReaderForTest(): void {
-    this.proc?.stdout?.pause();
-  }
-
-  /** TESTS ONLY — resume the stalled reader. */
-  resumeReaderForTest(): void {
-    this.proc?.stdout?.resume();
-  }
-
   /**
    * Detach-before-kill hygiene: resume a stalled reader (the server must be
    * able to flush), ask tmux to detach us, and drain until the process exits;
