@@ -11,6 +11,7 @@ import {
   DesktopDaemonRefreshConnectionResultSchemaZ,
   projectDesktopStartupReadiness,
 } from "@tmux-ide/contracts";
+import { createTmuxIdeSdk, type TmuxIdeSdk } from "@tmux-ide/sdk";
 
 import {
   parseThemeState,
@@ -62,10 +63,10 @@ const BOOTSTRAP_AUTO_RECHECK_MS = 2_000;
 export function App(props: AppProps = {}) {
   const browserPreview =
     props.host === undefined && (typeof window === "undefined" || window.tmuxIdeHost === undefined);
-  let host: HostCapabilities | null = null;
+  let host: TmuxIdeSdk | null = null;
   let hostResolutionError = false;
   try {
-    host = resolveHostCapabilities(props.host);
+    host = createTmuxIdeSdk(resolveHostCapabilities(props.host));
   } catch {
     hostResolutionError = true;
   }

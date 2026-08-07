@@ -1,6 +1,7 @@
 import type {
   PaneMirrorEvent,
   PaneStreamConnectResult,
+  PaneStreamLayoutEvent,
   PaneStreamRequest,
   PaneStreamSessionListeners,
   PaneStreamTransport,
@@ -23,6 +24,7 @@ import type { GridOverlayBox } from "../experience/grid-overlay.ts";
 export interface ScriptedPaneStreamSession {
   readonly request: PaneStreamRequest;
   readonly emit: (pane: string, event: PaneMirrorEvent) => void | Promise<void>;
+  readonly layout: (event: PaneStreamLayoutEvent) => void;
   readonly end: (error: PaneStreamTransportError | null) => void;
   readonly dispose: () => void;
   disposed: boolean;
@@ -44,6 +46,7 @@ export function createScriptedPaneStream(): ScriptedPaneStream {
       const session: ScriptedPaneStreamSession = {
         request,
         emit: (pane, event) => listeners.onPaneEvent(pane, event),
+        layout: (event) => listeners.onLayout?.(event),
         end: (error) => listeners.onEnd(error),
         dispose: () => {
           session.disposed = true;
@@ -75,6 +78,7 @@ export type MirrorRendererCommit =
     }
   | { readonly kind: "write"; readonly text: string }
   | { readonly kind: "cursor"; readonly x: number; readonly y: number }
+  | { readonly kind: "resize"; readonly cols: number; readonly rows: number }
   | { readonly kind: "fit" };
 
 export interface RecordingMirrorRenderer extends MirrorTerminalRenderer {
@@ -113,7 +117,9 @@ export function createRecordingMirrorRendererFactory(): {
       applyCursor: (x, y) => {
         commits.push({ kind: "cursor", x, y });
       },
-      resizeGrid: () => undefined,
+      resizeGrid: ({ cols, rows }) => {
+        commits.push({ kind: "resize", cols, rows });
+      },
       readCellRows: () => cellRows,
       setCellRows: (rows) => {
         cellRows.length = 0;
