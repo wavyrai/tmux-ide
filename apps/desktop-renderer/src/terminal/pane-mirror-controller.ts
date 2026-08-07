@@ -33,6 +33,12 @@ import type {
 export interface MirrorPaneSink {
   /** ONE atomic paint: reset, one capture, held deltas, cursor — never spliced. */
   applySeedBatch(batch: PaneMirrorSeedBatch): void | Promise<void>;
+  /**
+   * Apply tmux's ordered pane geometry before any output produced at that
+   * geometry. Layout frames share the pane-stream socket with output, so this
+   * is the compositor's resize authority rather than a DOM measurement.
+   */
+  applyGeometry(cols: number, rows: number): void;
   applyOutput(bytes: Uint8Array): void | Promise<void>;
   applyCursor(x: number, y: number): void;
 }
@@ -88,9 +94,13 @@ const DEFAULT_RECONNECT_MAXIMUM_ATTEMPTS = 4;
  */
 const MAX_BUFFERED_EVENTS_PER_PANE = 1_024;
 
+type MirrorSinkEvent =
+  | PaneMirrorEvent
+  | { readonly type: "geometry"; readonly cols: number; readonly rows: number };
+
 interface SinkChannel {
   sink: MirrorPaneSink | null;
-  readonly buffer: PaneMirrorEvent[];
+  readonly buffer: MirrorSinkEvent[];
   /** True once this lease's atomic seed has reached (or passed) the channel. */
   seedSeen: boolean;
   /** Serializes buffered replay and live events so paint order is wire order. */
@@ -190,6 +200,19 @@ export class PaneMirrorController {
           : { ...known, currentWindow: false },
       );
     }
+    // The pane-stream guarantees that a layout frame is delivered before any
+    // bytes tmux produced at that new geometry. Put the corresponding resize on
+    // the SAME per-pane tail as seed/output/cursor so a compositor can never
+    // paint new-width output into the previous grid.
+    for (const pane of layout.panes) {
+      if (pane.pane && this.#paneStates.has(pane.pane)) {
+        this.#enqueueSinkEvent(pane.pane, {
+          type: "geometry",
+          cols: pane.width,
+          rows: pane.height,
+        });
+      }
+    }
     this.#emit();
   }
 
@@ -239,11 +262,35 @@ export class PaneMirrorController {
     return channel;
   }
 
-  #applyToSink(sink: MirrorPaneSink, event: PaneMirrorEvent): void | Promise<void> {
+  #applyToSink(sink: MirrorPaneSink, event: MirrorSinkEvent): void | Promise<void> {
+    if (event.type === "geometry") {
+      sink.applyGeometry(event.cols, event.rows);
+      return;
+    }
     if (event.type === "seed-batch") return sink.applySeedBatch(event.batch);
     if (event.type === "output") return sink.applyOutput(event.bytes);
     if (event.type === "cursor") sink.applyCursor(event.x, event.y);
     return undefined;
+  }
+
+  #enqueueSinkEvent(pane: string, event: MirrorSinkEvent): void | Promise<void> {
+    const channel = this.#channel(pane);
+    if (!channel.sink) {
+      if (channel.buffer.length >= MAX_BUFFERED_EVENTS_PER_PANE) {
+        this.#scheduleReconnect({
+          code: "mirror-sink-missing",
+          reason: "No mirror node consumed this pane's stream in time.",
+          retryable: true,
+        });
+        return;
+      }
+      channel.buffer.push(event);
+      return;
+    }
+    channel.tail = channel.tail
+      .then(() => (channel.sink ? this.#applyToSink(channel.sink, event) : undefined))
+      .catch(() => undefined);
+    return channel.tail;
   }
 
   start(): void {
@@ -386,23 +433,7 @@ export class PaneMirrorController {
       this.#channel(pane).seedSeen = true;
       this.#setPaneState(pane, { kind: "live", flowPaused: false });
     }
-    const channel = this.#channel(pane);
-    if (!channel.sink) {
-      if (channel.buffer.length >= MAX_BUFFERED_EVENTS_PER_PANE) {
-        this.#scheduleReconnect({
-          code: "mirror-sink-missing",
-          reason: "No mirror node consumed this pane's stream in time.",
-          retryable: true,
-        });
-        return;
-      }
-      channel.buffer.push(event);
-      return;
-    }
-    channel.tail = channel.tail
-      .then(() => (channel.sink ? this.#applyToSink(channel.sink, event) : undefined))
-      .catch(() => undefined);
-    return channel.tail;
+    return this.#enqueueSinkEvent(pane, event);
   }
 
   #onEnd(generation: number, error: PaneStreamTransportError | null): void {

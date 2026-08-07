@@ -211,6 +211,24 @@ describe("mirror pane node", () => {
     expect(kinds).toEqual(["seed-commit", "write", "cursor"]);
   });
 
+  it("resizes the mirror grid from ordered layout geometry", async () => {
+    const h = mountNodeHarness();
+    await flush();
+    h.stream.latest().layout({
+      semanticWindowId: "window-a",
+      windowName: "main",
+      currentWindow: true,
+      cols: 160,
+      rows: 42,
+      zoomed: false,
+      paneBorderStatus: "top",
+      panes: [{ pane: PANE_A, left: 0, top: 0, width: 120, height: 42, active: true }],
+    });
+    await flush();
+    expect(h.rendering.renderers[0]!.commits).toEqual([{ kind: "resize", cols: 120, rows: 42 }]);
+    expect(h.host.querySelector(".mirror-pane-node")!.getAttribute("data-grid")).toBe("120x42");
+  });
+
   it("shows the honest ended state when the pane closes", async () => {
     const h = mountNodeHarness();
     await flush();

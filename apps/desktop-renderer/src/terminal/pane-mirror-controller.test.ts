@@ -99,23 +99,52 @@ function recordingSink(): MirrorPaneSink & {
   readonly seeds: PaneMirrorSeedBatch[];
   readonly outputs: string[];
   readonly cursors: { x: number; y: number }[];
+  readonly geometries: { cols: number; rows: number }[];
+  readonly calls: string[];
 } {
   const seeds: PaneMirrorSeedBatch[] = [];
   const outputs: string[] = [];
   const cursors: { x: number; y: number }[] = [];
+  const geometries: { cols: number; rows: number }[] = [];
+  const calls: string[] = [];
   return {
     seeds,
     outputs,
     cursors,
+    geometries,
+    calls,
     applySeedBatch: (batch) => {
       seeds.push(batch);
+      calls.push("seed");
+    },
+    applyGeometry: (cols, rows) => {
+      geometries.push({ cols, rows });
+      calls.push(`geometry:${cols}x${rows}`);
     },
     applyOutput: (bytes) => {
       outputs.push(new TextDecoder().decode(bytes));
+      calls.push("output");
     },
     applyCursor: (x, y) => {
       cursors.push({ x, y });
+      calls.push("cursor");
     },
+  };
+}
+
+function layout(cols = 160, rows = 40): PaneStreamLayoutEvent {
+  return {
+    semanticWindowId: "window-a",
+    windowName: "main",
+    currentWindow: true,
+    cols,
+    rows,
+    zoomed: false,
+    paneBorderStatus: "top",
+    panes: [
+      { pane: PANE_A, left: 0, top: 0, width: 100, height: rows, active: true },
+      { pane: PANE_B, left: 101, top: 0, width: cols - 101, height: rows, active: false },
+    ],
   };
 }
 
@@ -196,6 +225,34 @@ describe("pane mirror controller lifecycle", () => {
     expect(sink.seeds).toHaveLength(1);
     expect(sink.outputs).toEqual(["delta"]);
     expect(sink.cursors).toEqual([{ x: 2, y: 3 }]);
+  });
+
+  it("applies authoritative layout geometry before output at the new size", async () => {
+    const h = controllerHarness();
+    const sink = recordingSink();
+    h.controller.registerPaneSink(PANE_A, sink);
+    h.controller.start();
+    await flush();
+    const session = h.transport.latest();
+    session.listeners.onLayout?.(layout());
+    await session.listeners.onPaneEvent(PANE_A, {
+      type: "output",
+      bytes: new TextEncoder().encode("after-resize"),
+    });
+    await flush();
+    expect(sink.geometries).toEqual([{ cols: 100, rows: 40 }]);
+    expect(sink.calls).toEqual(["geometry:100x40", "output"]);
+  });
+
+  it("buffers layout geometry for a pane whose renderer has not mounted yet", async () => {
+    const h = controllerHarness();
+    h.controller.start();
+    await flush();
+    h.transport.latest().listeners.onLayout?.(layout(180, 50));
+    const sink = recordingSink();
+    h.controller.registerPaneSink(PANE_A, sink);
+    await flush();
+    expect(sink.geometries).toEqual([{ cols: 100, rows: 50 }]);
   });
 
   it("buffers events until the sink registers and replays them in order", async () => {

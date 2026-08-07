@@ -149,6 +149,12 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
         scheduleWidgetScan();
         return applied;
       },
+      applyGeometry: (cols: number, rows: number) => {
+        if (disposed || renderer !== next) return;
+        setGrid({ cols, rows });
+        next.resizeGrid({ cols, rows });
+        positionOverlay();
+      },
       applyOutput: (bytes: Uint8Array) => {
         if (disposed || renderer !== next) return;
         // Either the bytes carry the sentinel, or a widget is already showing

@@ -50,6 +50,7 @@ export default [
       "scripts/**/*.ts",
       "src/**/*.ts",
       "packages/contracts/src/**/*.ts",
+      "packages/sdk/src/**/*.ts",
       "packages/daemon/src/**/*.ts",
       "packages/tmux-bridge/src/**/*.ts",
       "apps/**/*.{ts,tsx}",
@@ -155,6 +156,26 @@ export default [
                 "!**/packages/tmux-bridge/src/**",
               ],
               message: "tmux-bridge may only relative-import within itself or contracts",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/sdk/src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@tmux-ide/*", "!@tmux-ide/contracts"],
+              message: "sdk is host-neutral and may only import @tmux-ide/contracts",
+            },
+            {
+              group: ["**/packages/*/src/**", "!**/packages/sdk/src/**"],
+              message: "sdk may not reach into another package implementation",
             },
           ],
         },
