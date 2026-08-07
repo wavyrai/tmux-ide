@@ -12,23 +12,27 @@ verbs in `packages/contracts/src/multiplexer-verbs.ts`. The browser uses that
 table for labels, descriptions, availability, menus, mutation dispatch, and
 feedback. The TUI command palette now consumes the same entries for the eight
 shared verbs it exposes instead of maintaining parallel copy and enablement
-rules.
+rules. Palette and context-menu mutations now resolve the daemon's
+generation-stamped session-to-workspace catalog and durable pane identities,
+then use the same owner-gated action dispatcher as the browser. Raw control-mode
+tmux remains only as a standalone fallback when no canonical daemon is alive;
+live-daemon refusals fail closed and appear in the TUI status line.
 
 | Verb                 | Browser GUI                                                           | TUI                                    | Shared-contract status                                   |
 | -------------------- | --------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------- |
 | `session.new`        | Open-directory flow; native picker is unavailable in browser-dev host | “Open folder…” flow                    | Separate entry points; shared execution is still pending |
-| `session.kill`       | Session menu, daemon-authorized, confirmed                            | Not exposed                            | Browser only                                             |
-| `session.rename`     | Inline session rename                                                 | Not exposed                            | Browser only                                             |
+| `session.kill`       | Session menu, daemon-authorized, confirmed                            | Session context menu                   | Shared daemon execution and feedback                     |
+| `session.rename`     | Inline session rename                                                 | Session context menu                   | Shared daemon execution and feedback                     |
 | `session.detach`     | Client-local detach                                                   | Quit/detach key path                   | Same intent, not yet one command descriptor              |
-| `window.new`         | Pane chrome and menu                                                  | Palette: “New terminal or agent”       | Shared identity, copy, and availability                  |
-| `window.kill`        | Pane menu, confirmed                                                  | Palette: “Close window”, confirmed     | Shared identity, copy, and availability                  |
-| `window.rename`      | Pane menu and inline rename                                           | Palette query action                   | Shared identity, copy, and availability                  |
-| `window.zoom.toggle` | Pane menu and double-click                                            | Palette: “Zoom pane”                   | Shared identity, copy, and availability                  |
-| `pane.split.right`   | Pane menu                                                             | Palette: “Split right”                 | Shared identity, copy, and availability                  |
-| `pane.split.down`    | Pane menu                                                             | Palette: “Split down”                  | Shared identity, copy, and availability                  |
-| `pane.kill`          | Two-step armed close                                                  | Confirmation dialog                    | Shared identity, copy, and availability                  |
+| `window.new`         | Pane chrome and menu                                                  | Palette and window context menu        | Shared daemon execution and feedback                     |
+| `window.kill`        | Pane menu, confirmed                                                  | Palette/context menu, confirmed        | Shared daemon execution and feedback                     |
+| `window.rename`      | Pane menu and inline rename                                           | Palette query and context menu         | Shared daemon execution and feedback                     |
+| `window.zoom.toggle` | Pane menu and double-click                                            | Palette and pane context menu          | Shared daemon execution and feedback                     |
+| `pane.split.right`   | Pane menu                                                             | Palette and pane context menu          | Shared daemon execution and feedback                     |
+| `pane.split.down`    | Pane menu                                                             | Palette and pane context menu          | Shared daemon execution and feedback                     |
+| `pane.kill`          | Two-step armed close                                                  | Confirmation/context-menu arming       | Shared daemon execution and feedback                     |
 | `pane.select`        | Click/focus and menu state                                            | Direct terminal focus                  | Native on both surfaces; not one descriptor              |
-| `pane.swap`          | Drag between pane chromes                                             | Palette: “Swap panes”                  | Shared identity, copy, and availability                  |
+| `pane.swap`          | Drag between pane chromes                                             | Palette and pane context menu          | Shared daemon execution and feedback                     |
 | `pane.resize`        | Drag a tmux split border                                              | Mouse border drag                      | Shared intent; gesture paths remain surface-specific     |
 | `stack.activate`     | App-layout stack selection                                            | Not applicable to the native tmux grid | Deliberately browser-only                                |
 
@@ -42,24 +46,32 @@ rules.
   shared contract. Executing “Split right” created pane `%230` in the selected
   pane's current working directory; the acceptance pane was then removed and the
   workspace returned to six panes.
+- The daemon-first TUI adapter was then exercised against a restarted canonical
+  daemon. Two split invocations created durable `pane.<operation-id>` stamps;
+  typed pane-kill invocations removed both acceptance panes and returned
+  `new-name` to six panes.
+- A disposable one-window workspace exercised the destructive refusal path.
+  `workspace.window.kill` returned `last_window_refused`, the tmux session
+  remained alive, and the local fallback spy was never called. The disposable
+  registry entry and session were removed afterwards.
 - Focused TUI tests cover shared verb mapping, contract-derived descriptions and
-  categories, last-pane/last-window availability, and dispatch gating.
+  categories, catalog/generation correlation, stable owner-operation retries,
+  offline-only fallback, semantic swaps, last-pane/last-window availability,
+  and dispatch gating.
 
 ### Next architecture card
 
-The remaining important gap is execution authority. Browser verbs travel through
-the daemon's typed, owner-authorized mutation path; the TUI still translates its
-shared palette actions into raw tmux commands locally. Add a typed
-`MultiplexerVerbInvocation` client in the TUI and route the common eight verbs
-through the daemon dispatcher. Keep a narrowly-scoped local fallback only for
-standalone/offline use. This gives browser, TUI, and future native clients one
-authorization policy, one revision model, one event stream, and one source of
-truth for multi-client conflict handling.
-
-Multi-client geometry belongs in the same card. Attaching the TUI while the web
+Multi-client geometry is now the important remaining durability gap. Attaching the TUI while the web
 client was open caused tmux to renegotiate the window to the smaller terminal
 size. Client viewport geometry must remain local view state; only an explicit,
 leased layout mutation should resize authoritative tmux panes.
+
+The TUI currently discovers durable descriptors for the active window only.
+That is sufficient for its pane canvas and palette, but an inactive window's
+context-menu rename/close cannot safely produce a semantic target. The UI now
+asks the user to open that window first. A session-wide semantic window catalog
+would remove that limitation without reintroducing runtime `@window` ids at the
+client boundary.
 
 Reconnaissance for the GUI-first milestone. The scope call makes terminals the
 product, so the question this answers is narrow and literal: **which tmux verbs

@@ -40,6 +40,15 @@ const FailureEnvelopeZ = z.object({
 const RETRY_SAFE_OWNER_ACTIONS: ReadonlySet<ActionName> = new Set([
   "workspace.pane.create",
   "workspace.open",
+  "workspace.window.split",
+  "workspace.window.kill",
+  "workspace.pane.kill",
+  "workspace.session.kill",
+  "workspace.rename",
+  "workspace.pane.zoom.toggle",
+  "workspace.pane.select",
+  "workspace.pane.swap",
+  "workspace.pane.resize",
 ]);
 
 interface CliActionBridgeDeps {
@@ -114,7 +123,7 @@ function expectedDaemonVersion(): string {
   }
 }
 
-async function resolveCanonicalDaemon(): Promise<{
+async function resolveCanonicalDaemon(options: { autostart: boolean }): Promise<{
   baseUrl: string;
   ownerToken: string | null;
   transientHandle: EmbeddedDaemonHandle | null;
@@ -140,7 +149,7 @@ async function resolveCanonicalDaemon(): Promise<{
   // exercise the local-mutation fallback path; without this guard a
   // single `tmux-ide config enable-team` in a fixture dir would start a
   // full embedded daemon and never tear it down in time.
-  if (process.env.TMUX_IDE_CLI_NO_AUTOSTART) {
+  if (!options.autostart || process.env.TMUX_IDE_CLI_NO_AUTOSTART) {
     return null;
   }
 
@@ -181,12 +190,12 @@ async function stopTransientDaemon(daemon: {
 export async function tryDispatchAction<Name extends ActionName>(
   name: Name,
   input: ActionInput<Name>,
-  options: { cwd?: string; operationId?: string } = {},
+  options: { cwd?: string; operationId?: string; autostart?: boolean } = {},
 ): Promise<ActionResult<Name> | null> {
   const dir = options.cwd ?? deps.cwd();
   const previousDeps = deps;
   deps = { ...deps, cwd: () => dir };
-  const daemon = await resolveCanonicalDaemon();
+  const daemon = await resolveCanonicalDaemon({ autostart: options.autostart ?? true });
   deps = previousDeps;
   if (!daemon) return null;
 
