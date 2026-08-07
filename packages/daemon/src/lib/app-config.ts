@@ -24,7 +24,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentStatus } from "../tui/detect/classify.ts";
-import type { ThemeModeSetting } from "../tui/mirror/theme.ts";
+import type { ThemeModeSetting } from "./theme-mode.ts";
 import {
   LEGACY_THEME_OVERRIDE_PROVENANCE,
   legacyThemeOverrideProvenance,

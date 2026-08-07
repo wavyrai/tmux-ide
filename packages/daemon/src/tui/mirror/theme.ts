@@ -28,9 +28,9 @@ import {
   type LegacyThemeOverrideId,
   type LegacyThemeOverrideProvenance,
 } from "../../lib/legacy-theme-compat.ts";
+import type { ResolvedThemeMode, ThemeModeSetting } from "../../lib/theme-mode.ts";
 
-export type ResolvedThemeMode = "dark" | "light";
-export type ThemeModeSetting = ResolvedThemeMode | "system";
+export type { ResolvedThemeMode, ThemeModeSetting };
 
 export interface ThemeModeSource {
   readonly themeMode: ResolvedThemeMode | null;

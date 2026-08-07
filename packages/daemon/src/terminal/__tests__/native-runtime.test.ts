@@ -99,7 +99,7 @@ function row(overrides: Partial<TrustedSemanticPaneSnapshot> = {}): TrustedSeman
 
 function applicationShellPaneWire(
   sessionName: string,
-  options: { stamp?: string; paneId?: string } = {},
+  options: { stamp?: string; paneId?: string; role?: string; mission?: string; cwd?: string } = {},
 ): string {
   return [
     sessionName,
@@ -114,10 +114,12 @@ function applicationShellPaneWire(
     "codex",
     "1",
     "1",
-    "teammate",
+    options.role ?? "teammate",
     "Codex",
     "agent",
-    "/repo",
+    options.mission ?? "",
+    options.cwd ?? "/repo",
+    "",
     "tmux-ide-pane-v2",
   ].join(INVENTORY_SEPARATOR);
 }
@@ -127,6 +129,7 @@ function request(): TerminalAttachRequest {
     protocolVersion: 1,
     target: { workspaceName: "workspace.alpha", semanticPaneId: "pane.agent" },
     viewerMode: "interactive",
+    geometryOwnership: "passive",
     viewport: { cols: 120, rows: 40 },
   };
 }
@@ -179,6 +182,8 @@ describe("workspace-registry semantic pane discovery", () => {
       windowId?: string;
       paneId?: string;
       windows?: number;
+      panes?: number;
+      windowStamp?: string;
       active?: boolean;
     } = {},
   ): string {
@@ -187,7 +192,7 @@ describe("workspace-registry semantic pane discovery", () => {
       "$1",
       options.windowId ?? "@2",
       options.paneId ?? "%3",
-      "1",
+      String(options.panes ?? 1),
       String(options.windows ?? 1),
       options.stamp ?? "pane.agent",
       "0",
@@ -198,7 +203,9 @@ describe("workspace-registry semantic pane discovery", () => {
       "teammate",
       "Codex",
       "agent",
+      "",
       "/repo",
+      options.windowStamp ?? "",
       "tmux-ide-pane-v2",
     ].join(INVENTORY_SEPARATOR);
   }
@@ -238,6 +245,55 @@ describe("workspace-registry semantic pane discovery", () => {
       discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
     });
     await expect(catalog.resolve(request().target)).rejects.toMatchObject({ code });
+  });
+
+  it("resolves a stamped multi-pane window through real discovery (m41 attach-2)", async () => {
+    const sessionName = "multi-session";
+    const { registry } = createRegistry("workspace.alpha", sessionName);
+    const rows = [
+      paneWire(sessionName, {
+        panes: 2,
+        paneId: "%3",
+        stamp: "pane.agent",
+        windowStamp: "window.workspace.alpha",
+      }),
+      paneWire(sessionName, {
+        panes: 2,
+        paneId: "%4",
+        stamp: "pane.worker",
+        windowStamp: "window.workspace.alpha",
+        active: false,
+      }),
+    ].join("\n");
+    const { runner } = inventoryRunner(sessionName, `${rows}\n`);
+    const catalog = new SemanticPaneCatalog({
+      discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
+    });
+    await expect(catalog.resolve(request().target)).resolves.toMatchObject({
+      source: {
+        sessionId: "$1",
+        windowId: "@2",
+        runtimePaneId: "%3",
+        windowPaneCount: 2,
+        windowStamp: "window.workspace.alpha",
+      },
+    });
+  });
+
+  it("refuses an unstamped multi-pane window and fails closed", async () => {
+    const sessionName = "multi-unstamped";
+    const { registry } = createRegistry("workspace.alpha", sessionName);
+    const rows = [
+      paneWire(sessionName, { panes: 2, paneId: "%3", stamp: "pane.agent" }),
+      paneWire(sessionName, { panes: 2, paneId: "%4", stamp: "pane.worker", active: false }),
+    ].join("\n");
+    const { runner } = inventoryRunner(sessionName, `${rows}\n`);
+    const catalog = new SemanticPaneCatalog({
+      discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
+    });
+    await expect(catalog.resolve(request().target)).rejects.toMatchObject({
+      code: "missing-window-stamp",
+    });
   });
 
   it("rejects a pane topology race between exact before/after snapshots", async () => {
@@ -335,6 +391,31 @@ describe("native terminal attachment geometry", () => {
     expect(serialized).toContain("$1:@2.%3");
     expect(serialized).toContain(groupedTmuxViewSessionName(LEASE_ID, 0));
     expect(serialized).toContain(`v1:${LEASE_ID}:0`);
+    // The render grid is the WHOLE window and the guard no longer gates panes.
+    expect(serialized).toContain("#{window_width}");
+    expect(serialized).toContain("#{window_height}");
+    expect(serialized).not.toContain("#{==:#{window_panes},1}");
+  });
+
+  it("resolves a multi-pane window with the window as the render grid (m41 attach-2)", async () => {
+    const rig = geometryRig(
+      (viewName) => `source\t$1\t@2\t%3\t9\t200\t50\nclient\t4321\t${viewName}\t200\t50\n`,
+    );
+    rig.mutate(row({ windowPaneCount: 9, windowStamp: "window.workspace.alpha" }));
+    await expect(rig.resolver.resolve(descriptor(), claim)).resolves.toEqual({
+      sourceGrid: { cols: 200, rows: 50 },
+      clientViewport: { cols: 200, rows: 50 },
+    });
+  });
+
+  it("fails closed when live window_panes disagrees with the resolved windowPaneCount", async () => {
+    const rig = geometryRig(
+      (viewName) => `source\t$1\t@2\t%3\t8\t200\t50\nclient\t4321\t${viewName}\t200\t50\n`,
+    );
+    rig.mutate(row({ windowPaneCount: 9, windowStamp: "window.workspace.alpha" }));
+    await expect(rig.resolver.resolve(descriptor(), claim)).rejects.toBeInstanceOf(
+      NativeTerminalAttachmentRuntimeError,
+    );
   });
 
   it.each([
@@ -493,7 +574,8 @@ class StartupReconciliationTmuxModel {
 describe("native terminal attachment runtime lifecycle", () => {
   it("uses the pinned executable and custom socket for exact application-shell inventory", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
-    const calls: Array<{ executable: string; argv: readonly string[] }> = [];
+    const calls: Array<{ executable: string; argv: readonly string[]; timeoutMs: number }> = [];
+    let paneCwd = "/repo";
     const runtime = createNativeTerminalAttachmentRuntime({
       daemonInstanceId: INSTANCE_ID,
       webSocketUrl: WS_URL,
@@ -502,8 +584,8 @@ describe("native terminal attachment runtime lifecycle", () => {
         ...authority(root),
         socketSelector: { kind: "name", name: "inventory-socket" },
       },
-      commandExecutor: (executable, rawArgv) => {
-        calls.push({ executable, argv: [...rawArgv] });
+      commandExecutor: (executable, rawArgv, options) => {
+        calls.push({ executable, argv: [...rawArgv], timeoutMs: options.timeoutMs });
         const argv = rawArgv.slice(2);
         if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
           return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
@@ -511,7 +593,7 @@ describe("native terminal attachment runtime lifecycle", () => {
         if (argv[0] === "list-sessions") return "";
         if (argv[0] === "list-panes") {
           expect(argv[argv.indexOf("-t") + 1]).toBe("$7");
-          return `${applicationShellPaneWire("runtime:session")}\n`;
+          return `${applicationShellPaneWire("runtime:session", { cwd: paneCwd })}\n`;
         }
         return "";
       },
@@ -523,6 +605,9 @@ describe("native terminal attachment runtime lifecycle", () => {
       {
         name: "runtime:session",
         runtimeSessionId: "$7",
+        // The inventory fixture reports /repo as the active pane cwd. Durable
+        // application state must remain rooted at the registered workspace.
+        dir: root,
         catalogIssue: null,
         panes: [expect.objectContaining({ semanticPaneId: "pane.agent", runtimePaneId: "%3" })],
       },
@@ -533,11 +618,77 @@ describe("native terminal attachment runtime lifecycle", () => {
     expect(new Set(calls.map(({ executable }) => executable))).toEqual(
       new Set([realpathSync(authority(root).executablePath)]),
     );
+    // Every synchronous tmux command is kill-bounded. A nominal async
+    // readiness deadline cannot interrupt execFileSync if tmux itself stalls.
+    expect(new Set(calls.map(({ timeoutMs }) => timeoutMs))).toEqual(new Set([5_000]));
+
+    // A long-lived pipeline can outlive its process-group leader, making tmux
+    // report an empty pane_current_path even though the pane and registered
+    // workspace are healthy. That presentation gap must not take the whole
+    // application-shell inventory offline.
+    paneCwd = "";
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).resolves.toMatchObject(
+      {
+        dir: root,
+        panes: [expect.objectContaining({ runtimePaneId: "%3" })],
+      },
+    );
 
     registry.add({ name: "workspace.beta", sessionName: "runtime:session", projectDir: root });
     await expect(runtime.discoverApplicationShellSession("runtime:session")).rejects.toMatchObject({
       code: "discovery-failed",
     });
+    await runtime.dispose();
+  });
+
+  it("merges injected agent-status probe facts onto discovered panes", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const probed: Array<{ sessionId: string; panes: readonly { runtimePaneId: string }[] }> = [];
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: (_executable, rawArgv) => {
+        const argv = rawArgv.slice(2);
+        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+          return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+        }
+        if (argv[0] === "list-sessions") return "";
+        if (argv[0] === "list-panes") return `${applicationShellPaneWire("runtime:session")}\n`;
+        return "";
+      },
+      agentStatusProbe: {
+        probe(input) {
+          probed.push({ sessionId: input.sessionId, panes: input.panes });
+          return new Map(
+            input.panes.map((pane) => [
+              pane.runtimePaneId,
+              {
+                agentStateRaw: `blocked:${input.nowSec}`,
+                agentStatusTextRaw: "waiting on you",
+                agentDisplayNameRaw: "Codex",
+                agentScrapeState: null,
+              },
+            ]),
+          );
+        },
+      },
+    });
+
+    await runtime.whenReady();
+    const session = await runtime.discoverApplicationShellSession("runtime:session");
+    expect(session?.panes[0]).toMatchObject({
+      runtimePaneId: "%3",
+      agentStateRaw: expect.stringMatching(/^blocked:/u),
+      agentStatusTextRaw: "waiting on you",
+      agentDisplayNameRaw: "Codex",
+      agentScrapeState: null,
+    });
+    // The probe is handed the resolved session id and the discovered pane set.
+    expect(probed).toHaveLength(1);
+    expect(probed[0]!.sessionId).toBe("$7");
+    expect(probed[0]!.panes.map((pane) => pane.runtimePaneId)).toEqual(["%3"]);
     await runtime.dispose();
   });
 

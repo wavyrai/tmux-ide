@@ -19,6 +19,8 @@ import type {
 export interface PaneFramePane {
   readonly id: SemanticProductId;
   readonly kind: PaneRoleId;
+  /** Optional identity-specific icon; hosts fall back to the broad pane role. */
+  readonly icon?: SemanticIconId;
 }
 
 export interface PaneFrameStatus {

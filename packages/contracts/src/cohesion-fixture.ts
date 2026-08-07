@@ -126,7 +126,7 @@ const DockToolDataSchemaZ = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("missions"),
-      missionId: SemanticProductIdSchemaZ,
+      missionId: SemanticProductIdSchemaZ.nullable(),
       title: LabelSchemaZ,
       status: CanonicalDomainStatusSchemaZ,
       goalCount: z.number().int().nonnegative(),

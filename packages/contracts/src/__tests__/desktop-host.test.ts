@@ -25,8 +25,9 @@ describe("desktop host contract", () => {
         theme: { mode: "dark", highContrast: false, reducedMotion: false },
         window: { maximized: false, fullscreen: false, focused: true },
         daemon: { status: "unavailable", code: "record-missing", reason: "owner not installed" },
+        onboarding: { introAcknowledged: false },
       }),
-    ).toMatchObject({ apiVersion: 5, runtime: "electron" });
+    ).toMatchObject({ apiVersion: 13, runtime: "electron" });
   });
 
   it("does not permit unversioned daemon metadata to leak into the facade", () => {
@@ -70,6 +71,28 @@ describe("desktop host contract", () => {
       DesktopDaemonHostDescriptorSchemaZ.safeParse({
         ...descriptor,
         authToken: "must-not-cross-ipc",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("carries the stable environment id additively on the daemon descriptor", () => {
+    const descriptor = {
+      apiBaseUrl: "http://127.0.0.1:6060",
+      protocolVersion: 1,
+      productVersion: "2.8.0",
+      instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+      startedAt: "2026-07-21T00:00:00.000Z",
+    };
+    expect(DesktopDaemonHostDescriptorSchemaZ.parse(descriptor).environmentId).toBeUndefined();
+    const withEnvironment = {
+      ...descriptor,
+      environmentId: "0f4e9a7c-2f4a-4d55-9d2e-1f6cf3a3b210",
+    };
+    expect(DesktopDaemonHostDescriptorSchemaZ.parse(withEnvironment)).toEqual(withEnvironment);
+    expect(
+      DesktopDaemonHostDescriptorSchemaZ.safeParse({
+        ...descriptor,
+        environmentId: "not-a-uuid",
       }).success,
     ).toBe(false);
   });
@@ -192,6 +215,42 @@ describe("desktop host contract", () => {
         type: "daemon-generation.changed",
         previousIdentity: identity,
         daemon: { status: "connected", identity, sessionName: "raw-session" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("carries the supervisor-derived transport state as a typed event", () => {
+    const error = {
+      code: "event-unavailable",
+      reason: "The daemon event connection is unavailable.",
+    };
+    for (const transport of [
+      { phase: "idle" },
+      { phase: "connecting" },
+      { phase: "connected" },
+      { phase: "degraded", error },
+      {
+        phase: "reconnecting",
+        attempt: 2,
+        maximumAttempts: 4,
+        nextRetryAt: 1_753_000_000_000,
+        error,
+      },
+      { phase: "stopped", error },
+    ]) {
+      const event = { type: "transport.changed", transport };
+      expect(DesktopDaemonEventSchemaZ.parse(event)).toEqual(event);
+    }
+    expect(
+      DesktopDaemonEventSchemaZ.safeParse({
+        type: "transport.changed",
+        transport: { phase: "reconnecting", attempt: 0, maximumAttempts: 4, nextRetryAt: 1, error },
+      }).success,
+    ).toBe(false);
+    expect(
+      DesktopDaemonEventSchemaZ.safeParse({
+        type: "transport.changed",
+        transport: { phase: "connected", endpoint: "http://127.0.0.1:1" },
       }).success,
     ).toBe(false);
   });

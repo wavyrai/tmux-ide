@@ -150,6 +150,22 @@ export function projectMissionTimeline(
   return entries.map(parseTimelineEntry);
 }
 
+/**
+ * Project the complete durable activity stream with one state/history
+ * validation pass. Newest-first ordering matches activity consumers while
+ * retaining each canonical event sequence for stable identity.
+ */
+export function projectMissionActivity(
+  state: MissionProjectState,
+  history: MissionHistoryEntry[],
+): MissionTimelineEntry[] {
+  const parsed = validateStateAndHistory(state, history);
+  return [...history]
+    .sort((left, right) => right.sequence - left.sequence)
+    .map((entry) => timelineEntry(parsed.missions[entry.event.missionId]!, entry))
+    .map(parseTimelineEntry);
+}
+
 export function missionStatusToBoardColumn(status: MissionStatus): MissionBoardColumn {
   switch (status) {
     case "created":

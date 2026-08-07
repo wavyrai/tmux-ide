@@ -1,4 +1,4 @@
-import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type {
   ApplicationShellCommandInvocation,
   ApplicationShellProjectionInputV1,
@@ -7,7 +7,10 @@ import type {
   DesktopWindowState,
   HostCapabilities,
 } from "@tmux-ide/contracts";
-import { DesktopDaemonRefreshConnectionResultSchemaZ } from "@tmux-ide/contracts";
+import {
+  DesktopDaemonRefreshConnectionResultSchemaZ,
+  projectDesktopStartupReadiness,
+} from "@tmux-ide/contracts";
 
 import {
   parseThemeState,
@@ -22,6 +25,10 @@ import {
   DesktopLiveApplication,
   type DesktopDaemonRecoveryPhase,
 } from "./runtime/live-app-composition.tsx";
+import {
+  recoveryForDaemonCapability,
+  startupReadinessDiagnostics,
+} from "./runtime/connection-recovery.ts";
 import { createHostNativeTerminalTransport } from "./runtime/host-terminal-transport.ts";
 import type { NativeTerminalTransport } from "./terminal/native-terminal-transport.ts";
 import type {
@@ -30,6 +37,7 @@ import type {
   PaneFrameGripIntent,
   PaneFrameModel,
 } from "../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "./runtime-style.ts";
 
 export interface AppProps {
   readonly host?: HostCapabilities;
@@ -49,6 +57,8 @@ function daemonCapabilityReason(value: DesktopHostBootstrap["daemon"]): string {
   return value.status === "connected" ? "The daemon connection changed." : value.reason;
 }
 
+const BOOTSTRAP_AUTO_RECHECK_MS = 2_000;
+
 export function App(props: AppProps = {}) {
   const browserPreview =
     props.host === undefined && (typeof window === "undefined" || window.tmuxIdeHost === undefined);
@@ -65,9 +75,11 @@ export function App(props: AppProps = {}) {
   const [daemonRecovery, setDaemonRecovery] = createSignal<DesktopDaemonRecoveryPhase>("idle");
   const [theme, setTheme] = createSignal<DesktopThemeState | null>(null);
   const [windowState, setWindowState] = createSignal<DesktopWindowState | null>(null);
+  const [introDismissed, setIntroDismissed] = createSignal(false);
   let bootstrapRequest = 0;
   let daemonRefreshFlight: Promise<void> | null = null;
   let disposed = false;
+  let appRuntimeStyle: RuntimeStyleBinding | null = null;
   let productionTerminalAuthority: {
     readonly key: string;
     readonly transport: NativeTerminalTransport;
@@ -141,9 +153,44 @@ export function App(props: AppProps = {}) {
     });
   });
 
+  // A browser tab commonly survives a local daemon/Vite restart. Re-read the
+  // complete bootstrap while degraded so the page heals as soon as the new
+  // owner capability is reachable; the manual button remains available for an
+  // immediate retry. Each completed degraded read schedules only one successor.
+  createEffect(() => {
+    const current = bootstrap();
+    const failed = bootstrapError();
+    if (!host || disposed || (!failed && (!current || current.daemon.status === "connected"))) {
+      return;
+    }
+    const timer = setTimeout(loadBootstrap, BOOTSTRAP_AUTO_RECHECK_MS);
+    onCleanup(() => clearTimeout(timer));
+  });
+
   const effectiveTheme = () => theme() ?? bootstrap()?.theme ?? initialTheme;
   const effectiveWindow = () => windowState() ?? bootstrap()?.window ?? null;
+  const introPending = () =>
+    !introDismissed() && bootstrap()?.onboarding.introAcknowledged === false;
+  const acknowledgeIntro = (): void => {
+    setIntroDismissed(true);
+    void host?.onboarding.acknowledgeIntro().catch(() => undefined);
+  };
   const experience = createMemo(() => createDomExperience({ hostTheme: effectiveTheme() }));
+  /*
+   * Vibrancy is decided when the native window is built, and travels here on
+   * the entry URL. The renderer's half of the effect is letting the sidebar go
+   * translucent; without this it would sit opaque over the material and the
+   * blur would never be seen. Absent (the default) means the sidebar keeps its
+   * CSS wash.
+   */
+  const vibrancyRequest = (): "sidebar" | undefined =>
+    new URLSearchParams(window.location.search).get("vibrancy") === "sidebar"
+      ? "sidebar"
+      : undefined;
+  createEffect(() => {
+    const variables = experience().variables;
+    appRuntimeStyle?.update(variables);
+  });
   const terminalThemeKey = createMemo(() => {
     const current = effectiveTheme();
     return `${current?.mode ?? "system"}:${current?.highContrast ?? false}`;
@@ -166,9 +213,18 @@ export function App(props: AppProps = {}) {
 
   return (
     <div
+      ref={(element) => {
+        appRuntimeStyle = createRuntimeStyleBinding(element);
+        appRuntimeStyle.update(experience().variables);
+        onCleanup(() => {
+          appRuntimeStyle?.dispose();
+          appRuntimeStyle = null;
+        });
+      }}
       class="app"
       data-theme={experience().appearance}
       data-platform={bootstrap()?.platform}
+      data-vibrancy={vibrancyRequest()}
       data-reduced-motion={String(experience().accessibility.reducedMotion)}
       data-increased-contrast={String(experience().accessibility.increasedContrast)}
       data-accessibility-conflicts={experience().accessibility.conflicts.join(" ") || undefined}
@@ -181,7 +237,6 @@ export function App(props: AppProps = {}) {
               ? "preview"
               : "runtime"
       }
-      style={experience().variables}
     >
       <Show
         when={!hostResolutionError && host}
@@ -234,6 +289,11 @@ export function App(props: AppProps = {}) {
                       guidance="Reopen tmux-ide after updating the desktop host"
                       alert
                       onRetry={loadBootstrap}
+                      retryLabel="Retry host check"
+                      diagnostics={[
+                        "The desktop bridge returned an invalid bootstrap response.",
+                        "No preview or partial workspace data was substituted.",
+                      ]}
                     />
                   }
                 >
@@ -253,20 +313,48 @@ export function App(props: AppProps = {}) {
                     {(ready) => (
                       <Show
                         when={ready().daemon.status === "connected"}
-                        fallback={
-                          <DesktopConnectionSurface
-                            host={activeHost()}
-                            runtime={ready().runtime}
-                            platform={ready().platform}
-                            windowState={effectiveWindow()}
-                            state="degraded"
-                            eyebrow="Native tmux workspace"
-                            title="The daemon is unavailable"
-                            description={daemonCapabilityReason(ready().daemon)}
-                            guidance="Start tmux-ide and try again"
-                            onRetry={refreshDaemonConnection}
-                          />
-                        }
+                        fallback={(() => {
+                          const daemon = ready().daemon;
+                          const recovery =
+                            daemon.status === "connected"
+                              ? null
+                              : recoveryForDaemonCapability(daemon, ready().platform);
+                          return (
+                            <DesktopConnectionSurface
+                              host={activeHost()}
+                              runtime={ready().runtime}
+                              platform={ready().platform}
+                              windowState={effectiveWindow()}
+                              state="degraded"
+                              eyebrow={recovery?.eyebrow ?? "Native tmux workspace"}
+                              title={recovery?.title ?? "The daemon is unavailable"}
+                              description={recovery?.description ?? daemonCapabilityReason(daemon)}
+                              guidance={
+                                recovery?.guidance ??
+                                "The workspace stays hidden until daemon health is verified"
+                              }
+                              command={recovery?.command ?? null}
+                              onRetry={refreshDaemonConnection}
+                              retryLabel="Recheck daemon"
+                              diagnostics={[
+                                daemonCapabilityReason(daemon),
+                                // Name the stuck startup rung, its typed reason,
+                                // and the engine child's own last words. The
+                                // ladder the host read from the engine travels
+                                // on `daemon` and is preferred over anything
+                                // re-derived here.
+                                ...startupReadinessDiagnostics(
+                                  projectDesktopStartupReadiness({
+                                    daemon,
+                                    observedAt: new Date().toISOString(),
+                                  }),
+                                ),
+                                `Recovery phase: ${daemonRecovery()}`,
+                                "No workspace resource or terminal attachment has been mounted.",
+                              ]}
+                            />
+                          );
+                        })()}
                       >
                         <DesktopLiveApplication
                           host={activeHost()}
@@ -287,6 +375,8 @@ export function App(props: AppProps = {}) {
                           onCommand={props.onCommand}
                           onPaneAction={props.onPaneAction}
                           onPaneGrip={props.onPaneGrip}
+                          introPending={introPending()}
+                          onAcknowledgeIntro={acknowledgeIntro}
                         />
                       </Show>
                     )}

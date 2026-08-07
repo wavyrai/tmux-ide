@@ -135,15 +135,23 @@ export interface WorkbenchDockPresenterProps {
   ) => void;
 }
 
-/** Positional host leaves are safe only while the canonical fixed order holds. */
+/**
+ * Positional host leaves are safe only while the canonical ORDER holds.
+ *
+ * A host may withhold a tab — that is the placement decision hosts are allowed
+ * to make, and a shorter list still lands each surviving leaf at a stable slot
+ * for `Index`. What it may never do is reorder them or invent an id, because
+ * then the slot a leaf occupies stops meaning the surface it renders. So the
+ * check is subsequence-in-canonical-order, not equality.
+ */
 export function assertWorkbenchDockHostOrder(projection: WorkbenchDockHostProjection): void {
   const tabOrder = projection.tabs.map(({ id }) => id);
   const actionOrder = projection.actions.map(({ id }) => id);
-  if (
-    tabOrder.length !== WORKBENCH_DOCK_HOST_TAB_ORDER.length ||
-    tabOrder.some((id, index) => id !== WORKBENCH_DOCK_HOST_TAB_ORDER[index])
-  ) {
-    throw new Error(`workbench dock tab order changed: ${tabOrder.join(",")}`);
+  let canonical = 0;
+  for (const id of tabOrder) {
+    const found = WORKBENCH_DOCK_HOST_TAB_ORDER.indexOf(id, canonical);
+    if (found < 0) throw new Error(`workbench dock tab order changed: ${tabOrder.join(",")}`);
+    canonical = found + 1;
   }
   if (
     actionOrder.length !== WORKBENCH_DOCK_HOST_ACTION_ORDER.length ||

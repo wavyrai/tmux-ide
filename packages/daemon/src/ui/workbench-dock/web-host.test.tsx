@@ -258,6 +258,18 @@ describe("shared WorkbenchDockPresenter DOM host", () => {
     expect(() =>
       assertWorkbenchDockHostOrder({ ...fixture, actions: [...fixture.actions].reverse() }),
     ).toThrowError("workbench dock action order changed: toggle-maximize,toggle-collapse");
+    // A duplicate is a reorder by another name: the second copy cannot occupy a
+    // canonical slot after the first, so it lands on the wrong leaf.
+    expect(() =>
+      assertWorkbenchDockHostOrder({ ...fixture, tabs: [fixture.tabs[0]!, fixture.tabs[0]!] }),
+    ).toThrowError("workbench dock tab order changed: files,files");
+  });
+
+  it("accepts a host that withholds tabs, so long as the survivors keep canonical order", () => {
+    const fixture = createWorkbenchDockHostFixture();
+    const survivors = fixture.tabs.filter(({ id }) => id === "files" || id === "changes");
+    expect(() => assertWorkbenchDockHostOrder({ ...fixture, tabs: survivors })).not.toThrow();
+    expect(() => assertWorkbenchDockHostOrder({ ...fixture, tabs: [] })).not.toThrow();
   });
 
   it("computes selected, focused, attention, and disabled styles from canonical variables", () => {

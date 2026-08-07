@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellProjectionInputV2SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   COHESION_FIXTURE_V1,
   type DesktopDaemonHostDescriptor,
 } from "@tmux-ide/contracts";
@@ -47,7 +49,27 @@ const resource = ApplicationShellProjectionInputV2SchemaZ.parse({
   terminalInventory: { activeResourceId: null, resources: [] },
 });
 
-function resourceEnvelope(value: unknown = resource, daemon: unknown = daemonIdentity): unknown {
+const resourceV3 = ApplicationShellProjectionInputV3SchemaZ.parse({
+  ...resource,
+  appWindows: {
+    version: 1,
+    revision: 0,
+    updatedAt: "2026-07-22T10:00:00.000Z",
+    windows: {},
+    dockRoot: null,
+    dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+    floatingOrder: [],
+    focusedWindowId: null,
+    activeLayoutId: null,
+    layouts: {},
+  },
+});
+
+function resourceEnvelope(value: unknown = resourceV3, daemon: unknown = daemonIdentity): unknown {
+  return { version: APPLICATION_SHELL_RESOURCE_V3_VERSION, daemon, resource: value };
+}
+
+function resourceV2Envelope(value: unknown = resource, daemon: unknown = daemonIdentity): unknown {
   return { version: APPLICATION_SHELL_RESOURCE_V2_VERSION, daemon, resource: value };
 }
 
@@ -102,11 +124,11 @@ describe("browser-safe daemon transport", () => {
       new AbortController().signal,
     );
 
-    expect(result).toEqual(resource);
+    expect(result).toEqual(resourceV3);
     expect(fetch).toHaveBeenCalledOnce();
     const [url, init] = fetch.mock.calls[0]!;
     expect(String(url)).toBe(
-      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell?version=2",
+      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell?version=3",
     );
     expect(init).toMatchObject({
       method: "GET",
@@ -116,6 +138,30 @@ describe("browser-safe daemon transport", () => {
       headers: { accept: "application/json" },
     });
     expect(JSON.stringify(init)).not.toContain("token");
+  });
+
+  it("falls back to V2 only when the same daemon rejects V3 as unsupported", async () => {
+    const fetch = vi.fn<DaemonFetch>(async (input) =>
+      String(input).endsWith("version=3")
+        ? new Response(JSON.stringify({ error: "Unsupported resource version" }), { status: 400 })
+        : new Response(JSON.stringify(resourceV2Envelope()), { status: 200 }),
+    );
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor,
+      resolveSessionName,
+      fetch,
+    });
+
+    await expect(
+      transport.fetchApplicationShell(
+        { daemon: daemonIdentity, workspaceName: "project / one" },
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual(resource);
+    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual([
+      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell?version=3",
+      "http://127.0.0.1:6060/api/project/session%20%2F%20one/application-shell?version=2",
+    ]);
   });
 
   it("classifies missing and invalid resources without returning unvalidated data", async () => {
@@ -155,7 +201,7 @@ describe("browser-safe daemon transport", () => {
       const transport = createDirectLoopbackDaemonTransport({
         descriptor,
         resolveSessionName,
-        fetch: async () => new Response(JSON.stringify(resourceEnvelope(resource, daemon))),
+        fetch: async () => new Response(JSON.stringify(resourceEnvelope(resourceV3, daemon))),
       });
       await expect(
         transport.fetchApplicationShell(
@@ -209,11 +255,23 @@ describe("browser-safe daemon transport", () => {
     socket.emit("message", JSON.stringify({ type: "hello", daemon: daemonIdentity, sessions: [] }));
     expect(onVerifiedOpen).toHaveBeenCalledOnce();
     expect(socket.sent.map((frame) => JSON.parse(frame))).toEqual([
-      { type: "subscribe", sessions: ["project"] },
+      { type: "subscribe", sessions: ["project"], afterSequence: 0 },
     ]);
 
     socket.emit("message", JSON.stringify({ type: "sessions.changed" }));
     expect(onInvalidate).toHaveBeenCalledOnce();
+    // A session-scoped agent-status change re-fetches only for the bound
+    // session; another session's frame is ignored.
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "agent-status.changed", sessionName: "project" }),
+    );
+    expect(onInvalidate).toHaveBeenCalledTimes(2);
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "agent-status.changed", sessionName: "other-session" }),
+    );
+    expect(onInvalidate).toHaveBeenCalledTimes(2);
     socket.emit("message", "not-json");
     socket.emit("message", JSON.stringify({ type: "sessions.changed", unexpected: true }));
     socket.emit("message", new Uint8Array([1, 2, 3]));
@@ -221,6 +279,80 @@ describe("browser-safe daemon transport", () => {
 
     connection.close();
     expect(socket.closes).toEqual([{ code: 1000, reason: "Desktop resource store disposed" }]);
+  });
+
+  it("resumes from the last applied event sequence and recovers an explicit journal gap", () => {
+    const firstSocket = new FakeSocket();
+    const secondSocket = new FakeSocket();
+    const sockets = [firstSocket, secondSocket];
+    const onInvalidate = vi.fn();
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor,
+      resolveSessionName,
+      createWebSocket: () => sockets.shift()!,
+    });
+    const handlers = {
+      onVerifiedOpen: vi.fn(),
+      onInvalidate,
+      onProtocolError: vi.fn(),
+      onPeerMismatch: vi.fn(),
+      onMalformedFrame: vi.fn(),
+      onClose: vi.fn(),
+      onError: vi.fn(),
+    };
+
+    const first = transport.connectEvents(
+      { daemon: daemonIdentity, workspaceName: "project" },
+      handlers,
+    );
+    firstSocket.emit("open");
+    firstSocket.emit(
+      "message",
+      JSON.stringify({ type: "hello", daemon: daemonIdentity, sessions: [], eventSequence: 1 }),
+    );
+    firstSocket.emit(
+      "message",
+      JSON.stringify({
+        type: "action.complete",
+        name: "workspace.app-window.mutate",
+        result: { outcome: "applied" },
+      }),
+    );
+    expect(onInvalidate).not.toHaveBeenCalled();
+    firstSocket.emit(
+      "message",
+      JSON.stringify({
+        type: "resource.changed",
+        sequence: 1,
+        workspaceName: "project",
+        resource: "application-shell",
+        revision: 5,
+        causeOperationId: null,
+      }),
+    );
+    expect(onInvalidate).toHaveBeenCalledOnce();
+    first.close();
+
+    transport.connectEvents({ daemon: daemonIdentity, workspaceName: "project" }, handlers);
+    secondSocket.emit("open");
+    secondSocket.emit(
+      "message",
+      JSON.stringify({ type: "hello", daemon: daemonIdentity, sessions: [], eventSequence: 2 }),
+    );
+    expect(secondSocket.sent.map((value) => JSON.parse(value))).toEqual([
+      { type: "subscribe", sessions: ["project"], afterSequence: 1 },
+    ]);
+    secondSocket.emit(
+      "message",
+      JSON.stringify({
+        type: "snapshot-required",
+        afterSequence: 1,
+        oldestAvailableSequence: 3,
+        currentSequence: 4,
+        reason: "journal-gap",
+      }),
+    );
+    expect(onInvalidate).toHaveBeenCalledTimes(2);
   });
 
   it("does not authenticate a socket before one matching, secret-free hello", () => {
@@ -273,6 +405,6 @@ describe("browser-safe daemon transport", () => {
     );
     expect(onPeerMismatch).toHaveBeenCalledOnce();
     expect(onVerifiedOpen).not.toHaveBeenCalled();
-    expect(socket.closes).toEqual([{ code: 1008, reason: "Daemon identity mismatch" }]);
+    expect(socket.closes).toEqual([{ code: 4008, reason: "Daemon identity mismatch" }]);
   });
 });

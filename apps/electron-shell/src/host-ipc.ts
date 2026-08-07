@@ -1,32 +1,59 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import {
+  AppWindowMutationHostResultSchemaZ,
+  AppWindowMutationRequestSchemaZ,
+  WorkspaceMultiplexerHostResultSchemaZ,
+  WorkspaceMultiplexerMutationRequestSchemaZ,
+  type MultiplexerVerbInvocation,
+  DaemonResourceRequestSchemaZ,
   DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
   DESKTOP_PACKAGED_RENDERER_ORIGIN,
   DESKTOP_HOST_API_VERSION,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
+  DesktopDaemonCapabilitiesResultSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
-  DesktopDaemonFetchApplicationShellRequestSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
+  DesktopDaemonStartupReadinessResultSchemaZ,
   DesktopDaemonSubscriptionIdSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
-  TerminalAttachRequestSchemaZ,
+  DesktopUpdateStatusSchemaZ,
   TerminalAttachmentIssueMutationRequestSchemaZ,
   TerminalAttachmentIssueResultSchemaZ,
+  PaneStreamIssueMutationRequestSchemaZ,
+  PaneStreamIssueResultSchemaZ,
   WorkspacePaneCreateHostResultSchemaZ,
-  WorkspacePaneCreateInvocationSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
+  WorkspaceOpenHostResultSchemaZ,
+  WorkspaceOpenMutationRequestSchemaZ,
+  WorkspacePromoteHostResultSchemaZ,
+  WorkspacePromoteMutationRequestSchemaZ,
+  isDaemonResourceKind,
+  type AppWindowMutationArguments,
   type DaemonInstanceIdentity,
+  type DaemonResourceKind,
   type DesktopDaemonCapabilityState,
   type DesktopHostBootstrap,
   type DesktopPlatform,
   type DesktopThemeState,
+  type DesktopUpdateStatus,
   type DesktopWindowState,
+  type PaneStreamLeaseRequest,
+  type StartupReadinessLadder,
+  type TerminalAttachRequest,
+  type WorkspacePaneCreateInvocation,
+  type WorkspacePromoteArguments,
 } from "@tmux-ide/contracts";
 
 import type { DaemonConnectionAuthority } from "./daemon-connection-coordinator.ts";
-import { daemonCapabilityError, terminalAttachmentIssueError } from "./daemon-resource-broker.ts";
+import {
+  daemonCapabilityError,
+  daemonCapabilityErrorFromUnknown,
+  paneStreamIssueError,
+  terminalAttachmentIssueError,
+  workspacePromotionFailureFromUnknown,
+} from "./daemon-resource-broker.ts";
 import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
 
 export interface HostIpcDependencies {
@@ -36,9 +63,17 @@ export interface HostIpcDependencies {
   platform: DesktopPlatform;
   daemonResources: DaemonConnectionAuthority;
   rendererDidBootstrap?: () => void;
-  requestQuit: () => void;
   selectProjectDirectory: (window: BrowserWindow) => Promise<string | null>;
+  /**
+   * The daemon's own startup readiness ladder, or null when none was readable.
+   * Diagnostics: it must be bounded and must never reject. Optional so bespoke
+   * test hosts without a canonical daemon record stay valid.
+   */
+  readStartupReadiness?: () => Promise<StartupReadinessLadder | null>;
   getTheme: () => DesktopThemeState;
+  getUpdateStatus: () => DesktopUpdateStatus;
+  readOnboardingIntroAcknowledged: () => boolean;
+  acknowledgeOnboardingIntro: () => void;
   trustedRendererLocation: TrustedRendererLocation;
 }
 
@@ -101,6 +136,30 @@ function disconnectedCapabilityError(state: DesktopDaemonCapabilityState) {
 
 function disconnectedTerminalError(state: DesktopDaemonCapabilityState) {
   return terminalAttachmentIssueError(
+    state.status === "degraded" ? "daemon-degraded" : "daemon-unavailable",
+  );
+}
+
+/**
+ * How a well-named resource refuses a payload it cannot read.
+ *
+ * The two lease issues answer in their own issue vocabulary — a renderer
+ * switching on `attachment-unavailable` must never receive a capability error
+ * instead — so the refusal is chosen by tag, exactly as the fifteen separate
+ * handlers each chose it for themselves.
+ */
+function invalidDaemonRequestResult(kind: DaemonResourceKind) {
+  if (kind === "issueTerminalAttachment") {
+    return { status: "error" as const, error: terminalAttachmentIssueError("invalid-request") };
+  }
+  if (kind === "issuePaneStream") {
+    return { status: "error" as const, error: paneStreamIssueError("invalid-request") };
+  }
+  return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+}
+
+function disconnectedPaneStreamError(state: DesktopDaemonCapabilityState) {
+  return paneStreamIssueError(
     state.status === "degraded" ? "daemon-degraded" : "daemon-unavailable",
   );
 }
@@ -241,17 +300,11 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       theme: deps.getTheme(),
       window: snapshotWindow(window),
       daemon: deps.daemonResources.state(),
+      onboarding: { introAcknowledged: deps.readOnboardingIntroAcknowledged() },
     };
     deps.rendererDidBootstrap?.();
     return DesktopHostBootstrapSchemaZ.parse(bootstrap);
   });
-  handle(HOST_IPC.lifecycleQuit, (event) => {
-    trustedRendererAuthority(event);
-    deps.requestQuit();
-  });
-  handle(HOST_IPC.windowGetState, (event) =>
-    snapshotWindow(trustedRendererAuthority(event).window),
-  );
   handle(HOST_IPC.windowMinimize, (event) => {
     const { window } = trustedRendererAuthority(event);
     window.minimize();
@@ -266,52 +319,130 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
   handle(HOST_IPC.windowClose, (event) => {
     trustedRendererAuthority(event).window.close();
   });
-  handle(HOST_IPC.menuShowApplication, (event) => {
-    trustedRendererAuthority(event);
-    return { status: "unavailable" as const };
-  });
-  handle(HOST_IPC.dialogSelectProjectDirectory, async (event) => {
+  handle(HOST_IPC.workspaceOpenProjectDirectory, async (event, ...args) => {
     const authority = trustedRendererAuthority(event);
+    if (args.length !== 0) {
+      return WorkspaceOpenHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("invalid-request"),
+      });
+    }
     const { window } = authority;
     const path = await deps.selectProjectDirectory(window);
     assertRendererAuthority(event, authority.generation);
-    return path ? { path } : null;
+    if (!path) return null;
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return WorkspaceOpenHostResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedCapabilityError(before),
+      });
+    }
+    const request = WorkspaceOpenMutationRequestSchemaZ.parse({
+      operationId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      intent: { projectDir: path },
+    });
+    try {
+      const result = await deps.daemonResources.openWorkspace(request);
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspaceOpenHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        result.operationId !== request.operationId ||
+        result.daemonInstanceId !== request.expectedDaemonInstanceId
+      ) {
+        return WorkspaceOpenHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return WorkspaceOpenHostResultSchemaZ.parse({ status: "ok", result });
+    } catch {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspaceOpenHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      return WorkspaceOpenHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("request-failed"),
+      });
+    }
   });
-  handle(HOST_IPC.themeGetState, (event) => {
+  handle(HOST_IPC.onboardingAcknowledgeIntro, (event, ...args) => {
     trustedRendererAuthority(event);
-    return deps.getTheme();
+    if (args.length !== 0) throw new Error("desktop onboarding acknowledge request was invalid");
+    deps.acknowledgeOnboardingIntro();
+  });
+  handle(HOST_IPC.updateGetStatus, (event) => {
+    trustedRendererAuthority(event);
+    return DesktopUpdateStatusSchemaZ.parse(deps.getUpdateStatus());
   });
 
-  handle(HOST_IPC.daemonRefreshConnection, async (event, ...args) => {
-    const authority = trustedRendererAuthority(event);
-    if (args.length !== 0) throw new Error("desktop daemon refresh request was invalid");
+  const refreshConnection = async (event: IpcMainInvokeEvent, expectedGeneration: number) => {
     const result = DesktopDaemonRefreshConnectionResultSchemaZ.parse(
       await deps.daemonResources.refreshConnection(),
     );
-    assertRendererAuthority(event, authority.generation);
+    assertRendererAuthority(event, expectedGeneration);
     if (result.outcome === "generation-replaced" || result.outcome === "authority-retired") {
       // The coordinator already retired the underlying subscriptions after
       // delivering the typed generation event. Forget their private IPC ids.
       daemonSubscriptions.clear();
     }
     return result;
-  });
+  };
 
-  handle(HOST_IPC.daemonCreateWorkspacePane, async (event, ...args) => {
-    const authority = trustedRendererAuthority(event);
-    if (args.length !== 1) {
-      return WorkspacePaneCreateHostResultSchemaZ.parse({
-        status: "error",
-        error: daemonCapabilityError("invalid-request"),
-      });
+  const capabilities = async (event: IpcMainInvokeEvent, expectedGeneration: number) => {
+    const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
+      await deps.daemonResources.capabilities(),
+    );
+    assertRendererAuthority(event, expectedGeneration);
+    return result;
+  };
+
+  /**
+   * The daemon's own ladder, for surfaces that are degraded WHILE the daemon is
+   * connected — where the two rungs only it can answer are the whole diagnosis.
+   * Never throws: an unreadable ladder is a missing diagnostic, not a fault.
+   */
+  const startupReadiness = async (event: IpcMainInvokeEvent, expectedGeneration: number) => {
+    const read = deps.readStartupReadiness;
+    if (!read) {
+      return { status: "error" as const, error: daemonCapabilityError("daemon-unavailable") };
     }
-    const invocation = WorkspacePaneCreateInvocationSchemaZ.safeParse(args[0]);
-    if (!invocation.success) {
-      return WorkspacePaneCreateHostResultSchemaZ.parse({
-        status: "error",
-        error: daemonCapabilityError("invalid-request"),
-      });
+    let ladder: StartupReadinessLadder | null;
+    try {
+      ladder = await read();
+    } catch {
+      ladder = null;
     }
+    assertRendererAuthority(event, expectedGeneration);
+    // safeParse, not parse: a daemon that answers with a ladder this build
+    // cannot read leaves the surface without a diagnostic, which is the same
+    // outcome as no ladder at all. It must not fail the request.
+    const parsed = DesktopDaemonStartupReadinessResultSchemaZ.safeParse({ status: "ok", ladder });
+    return parsed.success
+      ? parsed.data
+      : { status: "error" as const, error: daemonCapabilityError("invalid-response") };
+  };
+
+  const createWorkspacePane = async (
+    event: IpcMainInvokeEvent,
+    authority: RendererAuthority,
+    invocation: { data: WorkspacePaneCreateInvocation },
+  ) => {
     const before = deps.daemonResources.state();
     if (before.status !== "connected") {
       return WorkspacePaneCreateHostResultSchemaZ.parse({
@@ -361,23 +492,142 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         error: daemonCapabilityError("request-failed"),
       });
     }
-  });
+  };
 
-  handle(HOST_IPC.daemonIssueTerminalAttachment, async (event, ...args) => {
-    const authority = trustedRendererAuthority(event);
-    if (args.length !== 1) {
-      return TerminalAttachmentIssueResultSchemaZ.parse({
+  const mutateAppWindow = async (
+    event: IpcMainInvokeEvent,
+    authority: RendererAuthority,
+    intent: { data: AppWindowMutationArguments },
+  ) => {
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return AppWindowMutationHostResultSchemaZ.parse({
         status: "error",
-        error: terminalAttachmentIssueError("invalid-request"),
+        error: disconnectedCapabilityError(before),
       });
     }
-    const attachment = TerminalAttachRequestSchemaZ.safeParse(args[0]);
-    if (!attachment.success) {
-      return TerminalAttachmentIssueResultSchemaZ.parse({
+    const request = AppWindowMutationRequestSchemaZ.parse({
+      operationId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      intent: intent.data,
+    });
+    try {
+      const result = await deps.daemonResources.mutateAppWindow(request);
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return AppWindowMutationHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        result.operationId !== request.operationId ||
+        result.daemonInstanceId !== request.expectedDaemonInstanceId ||
+        result.workspaceName !== request.intent.workspaceName
+      ) {
+        return AppWindowMutationHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return AppWindowMutationHostResultSchemaZ.parse({ status: "ok", result });
+    } catch (error) {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return AppWindowMutationHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (after.status !== "connected" || !sameDaemonIdentity(before.identity, after.identity)) {
+        return AppWindowMutationHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return AppWindowMutationHostResultSchemaZ.parse({
         status: "error",
-        error: terminalAttachmentIssueError("invalid-request"),
+        error: daemonCapabilityErrorFromUnknown(error),
       });
     }
+  };
+
+  /**
+   * Run one multiplexer verb on behalf of the renderer.
+   *
+   * The renderer authors the intent and nothing else. The operation id is
+   * minted here, in the trusted process, for the same reason pane creation
+   * mints its own: a renderer that could choose it could replay another
+   * window's kill by reusing its id.
+   */
+  const invokeVerb = async (
+    event: IpcMainInvokeEvent,
+    authority: RendererAuthority,
+    invocation: { data: MultiplexerVerbInvocation },
+  ) => {
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return WorkspaceMultiplexerHostResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedCapabilityError(before),
+      });
+    }
+    const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse({
+      operationId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      intent: invocation.data.intent,
+    });
+    try {
+      const result = await deps.daemonResources.invokeVerb(request);
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspaceMultiplexerHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        result.operationId !== request.operationId ||
+        result.daemonInstanceId !== request.expectedDaemonInstanceId ||
+        result.workspaceName !== request.intent.workspaceName
+      ) {
+        return WorkspaceMultiplexerHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return WorkspaceMultiplexerHostResultSchemaZ.parse({ status: "ok", result });
+    } catch (error) {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspaceMultiplexerHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      return WorkspaceMultiplexerHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityErrorFromUnknown(error),
+      });
+    }
+  };
+
+  const issueTerminalAttachment = async (
+    event: IpcMainInvokeEvent,
+    authority: RendererAuthority,
+    attachment: { data: TerminalAttachRequest },
+  ) => {
     const rendererFrameUrl = authority.mainFrame?.url;
     if (
       !rendererFrameUrl ||
@@ -452,29 +702,247 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         error: terminalAttachmentIssueError("request-failed"),
       });
     }
-  });
+  };
 
-  handle(HOST_IPC.daemonListWorkspaces, async (event, ...args) => {
-    const authority = trustedRendererAuthority(event);
-    if (args.length !== 0) {
-      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+  const issuePaneStream = async (
+    event: IpcMainInvokeEvent,
+    authority: RendererAuthority,
+    stream: { data: PaneStreamLeaseRequest },
+  ) => {
+    const rendererFrameUrl = authority.mainFrame?.url;
+    if (
+      !rendererFrameUrl ||
+      !rendererLocationIsTrusted(rendererFrameUrl, deps.trustedRendererLocation)
+    ) {
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: paneStreamIssueError("renderer-origin-unavailable"),
+      });
     }
-    const result = await deps.daemonResources.listWorkspaces();
-    assertRendererAuthority(event, authority.generation);
+    const rendererOrigin =
+      deps.trustedRendererLocation.kind === "development-origin"
+        ? deps.trustedRendererLocation.origin
+        : deps.trustedRendererLocation.kind === "packaged-origin"
+          ? deps.trustedRendererLocation.origin
+          : null;
+    if (!rendererOrigin) {
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: paneStreamIssueError("renderer-origin-unavailable"),
+      });
+    }
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedPaneStreamError(before),
+      });
+    }
+    const request = PaneStreamIssueMutationRequestSchemaZ.parse({
+      requestId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      stream: stream.data,
+    });
+    try {
+      const result = PaneStreamIssueResultSchemaZ.parse(
+        await deps.daemonResources.issuePaneStream(request, rendererOrigin),
+      );
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return PaneStreamIssueResultSchemaZ.parse({
+          status: "error",
+          error: paneStreamIssueError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        (result.status === "issued" &&
+          (result.descriptor.requestId !== request.requestId ||
+            result.descriptor.daemonInstanceId !== request.expectedDaemonInstanceId))
+      ) {
+        return PaneStreamIssueResultSchemaZ.parse({
+          status: "error",
+          error: paneStreamIssueError("daemon-identity-mismatch"),
+        });
+      }
+      return result;
+    } catch {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return PaneStreamIssueResultSchemaZ.parse({
+          status: "error",
+          error: paneStreamIssueError("disposed"),
+        });
+      }
+      return PaneStreamIssueResultSchemaZ.parse({
+        status: "error",
+        error: paneStreamIssueError("request-failed"),
+      });
+    }
+  };
+
+  /** The reads that need nothing but the broker call and the generation recheck. */
+  const readResource = async <T>(
+    event: IpcMainInvokeEvent,
+    expectedGeneration: number,
+    read: () => Promise<T>,
+  ): Promise<T> => {
+    const result = await read();
+    assertRendererAuthority(event, expectedGeneration);
     return result;
-  });
-  handle(HOST_IPC.daemonFetchApplicationShell, async (event, ...args) => {
+  };
+
+  const promoteWorkspace = async (
+    event: IpcMainInvokeEvent,
+    authority: RendererAuthority,
+    intent: { data: WorkspacePromoteArguments },
+  ) => {
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return WorkspacePromoteHostResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedCapabilityError(before),
+      });
+    }
+    const request = WorkspacePromoteMutationRequestSchemaZ.parse({
+      operationId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      intent: intent.data,
+    });
+    try {
+      const result = await deps.daemonResources.promoteWorkspace(request);
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspacePromoteHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        result.operationId !== request.operationId ||
+        result.daemonInstanceId !== request.expectedDaemonInstanceId
+      ) {
+        return WorkspacePromoteHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return WorkspacePromoteHostResultSchemaZ.parse({ status: "ok", result });
+    } catch (error) {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspacePromoteHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      // A typed daemon verdict (session_not_adopted, workspace_conflict, a
+      // promotion_verification_failed reason, …) is forwarded verbatim so the
+      // dialog can render its specific reason; only a genuine transport failure
+      // falls through to the generic request-failed line.
+      const promotionFailure = workspacePromotionFailureFromUnknown(error);
+      if (promotionFailure) {
+        return WorkspacePromoteHostResultSchemaZ.parse({
+          status: "error",
+          error: promotionFailure,
+        });
+      }
+      return WorkspacePromoteHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("request-failed"),
+      });
+    }
+  };
+
+  /**
+   * The one daemon hop.
+   *
+   * Every resource arrives here, is validated once against the closed union,
+   * and is dispatched on its tag. What did NOT collapse is semantics: each
+   * mutation keeps its own before/after identity comparison, its own error
+   * vocabulary, and its own renderer-generation recheck, because those differ
+   * per resource and always did. Only the plumbing was ever duplicated.
+   */
+  handle(HOST_IPC.daemonRequest, async (event, ...args) => {
     const authority = trustedRendererAuthority(event);
-    if (args.length !== 1) {
-      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    if (args.length !== 1) throw new Error("desktop daemon request was invalid");
+    const named = args[0];
+    const kind =
+      typeof named === "object" && named !== null
+        ? (named as { resource?: unknown }).resource
+        : undefined;
+    // An unnamed or unknown resource is not a refusable request — there is no
+    // vocabulary to refuse it in — so it is rejected outright.
+    if (!isDaemonResourceKind(kind)) {
+      throw new Error("desktop daemon request named an unknown resource");
     }
-    const request = DesktopDaemonFetchApplicationShellRequestSchemaZ.safeParse(args[0]);
-    if (!request.success) {
-      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    const parsed = DaemonResourceRequestSchemaZ.safeParse(named);
+    if (!parsed.success) return invalidDaemonRequestResult(kind);
+    const daemonRequest = parsed.data;
+    switch (daemonRequest.resource) {
+      case "capabilities":
+        return capabilities(event, authority.generation);
+      case "refreshConnection":
+        return refreshConnection(event, authority.generation);
+      case "startupReadiness":
+        return startupReadiness(event, authority.generation);
+      case "listWorkspaces":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.listWorkspaces(),
+        );
+      case "fetchFleetCatalog":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.fetchFleetCatalog(),
+        );
+      case "fetchWidgetAsset":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.fetchWidgetAsset(daemonRequest.request),
+        );
+      case "fetchApplicationShell":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.fetchApplicationShell(
+            daemonRequest.request.workspaceName,
+            daemonRequest.request.resourceVersion,
+          ),
+        );
+      case "fetchWorkspaceFiles":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.fetchWorkspaceFiles(daemonRequest.request),
+        );
+      case "fetchWorkspaceFilePreview":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.fetchWorkspaceFilePreview(daemonRequest.request),
+        );
+      case "fetchWorkspaceChanges":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.fetchWorkspaceChanges(daemonRequest.request),
+        );
+      case "fetchWorkspaceChangeDiff":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.fetchWorkspaceChangeDiff(daemonRequest.request),
+        );
+      case "promoteWorkspace":
+        return promoteWorkspace(event, authority, { data: daemonRequest.request });
+      case "createWorkspacePane":
+        return createWorkspacePane(event, authority, { data: daemonRequest.request });
+      case "mutateAppWindow":
+        return mutateAppWindow(event, authority, { data: daemonRequest.request });
+      case "invokeVerb":
+        return invokeVerb(event, authority, { data: daemonRequest.request });
+      case "issueTerminalAttachment":
+        return issueTerminalAttachment(event, authority, { data: daemonRequest.request });
+      case "issuePaneStream":
+        return issuePaneStream(event, authority, { data: daemonRequest.request });
     }
-    const result = await deps.daemonResources.fetchApplicationShell(request.data.workspaceName);
-    assertRendererAuthority(event, authority.generation);
-    return result;
   });
   handle(HOST_IPC.daemonSubscribe, async (event, ...args) => {
     const authority = trustedRendererAuthority(event);
@@ -585,4 +1053,13 @@ export function publishWindowState(window: BrowserWindow): void {
 
 export function publishTheme(window: BrowserWindow | null, theme: DesktopThemeState): void {
   if (window && !window.isDestroyed()) window.webContents.send(HOST_IPC.themeChanged, theme);
+}
+
+export function publishUpdateStatus(
+  window: BrowserWindow | null,
+  status: DesktopUpdateStatus,
+): void {
+  if (window && !window.isDestroyed()) {
+    window.webContents.send(HOST_IPC.updateStatusChanged, DesktopUpdateStatusSchemaZ.parse(status));
+  }
 }

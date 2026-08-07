@@ -2,13 +2,16 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { runTmux, TmuxError } from "@tmux-ide/tmux-bridge";
 import {
+  TerminalAttachmentGeometryOwnershipSchemaZ,
   TerminalAttachmentViewerModeSchemaZ,
   TerminalAttachmentViewportSchemaZ,
+  refuseReadOnlyGeometryOwner,
 } from "@tmux-ide/contracts";
 import {
   GROUPED_TMUX_MAX_GENERATION,
   GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   GROUPED_TMUX_VIEW_SESSION_PREFIX,
+  attachCommand,
   groupedTmuxViewSessionName,
   planGroupedTmuxAttachment,
   type GroupedTmuxAttachmentPlan,
@@ -26,7 +29,10 @@ import type {
 const MAX_TMUX_OUTPUT_BYTES = 128 * 1024;
 const MAX_ENUMERATED_VIEWS = 256;
 const MAX_ENUMERATED_WINDOWS_PER_VIEW = 16;
-const MAX_SOURCE_PROOF_ROWS = 8;
+// A trusted linked window may now carry many panes (m41 attach-2), so pane
+// listings are bounded by the max panes per window rather than the old
+// single-pane source-proof shape.
+const MAX_WINDOW_PANES = 256;
 const MAX_MARKER_OUTPUT_ROWS = 1;
 const SOURCE_PROOF_MISMATCH_SENTINEL = "__tmux_ide_source_proof_mismatch_v1__";
 const VIEW_PROOF_MISMATCH_SENTINEL = "__tmux_ide_view_proof_mismatch_v1__";
@@ -82,12 +88,21 @@ export interface TmuxAttachmentClientTransportInput {
     readonly expectedViewSessionId: string;
     readonly expectedWindowId: string;
     readonly expectedPaneId: string;
+    /** Resolved source window pane count; the source guard binds to it (m41 attach-2). */
+    readonly expectedWindowPaneCount: number;
   };
   readonly viewport: {
     readonly cols: number;
     readonly rows: number;
   };
   readonly viewerMode: GroupedTmuxAttachmentPlan["viewerMode"];
+  /**
+   * Carried so the canonical client planner builds the SAME attach argv the
+   * grouped-tmux plan did. Omitting it would silently re-add `-f ignore-size`
+   * to an owning attachment and fail the deep-equality gate — which is the
+   * failure mode this field exists to make impossible.
+   */
+  readonly geometryOwnership: GroupedTmuxAttachmentPlan["geometryOwnership"];
 }
 
 export interface TmuxAttachmentClientTransportAttempt {
@@ -251,8 +266,13 @@ function sourceProofFormat(operation: GuardedAttachmentViewOperation): string {
   const source = operation.source;
   // The target itself includes the globally unique runtime pane id. tmux's
   // format comparator treats a `%N` rhs specially, so re-check the enclosing
-  // session/window/count while target resolution proves the pane identity.
-  return `#{&&:#{==:#{session_id},${source.sessionId}},#{&&:#{==:#{window_id},${source.windowId}},#{==:#{window_panes},1}}}`;
+  // session/window while target resolution proves the pane identity. For
+  // window-as-unit attach (m41 attach-2) the single-pane gate becomes a bind to
+  // the resolved window pane count, so a last-moment split/close of the source
+  // window is still caught inside the server queue. This string must stay
+  // byte-identical to the source guard built by
+  // planCanonicalTmuxAttachmentClientCommand.
+  return `#{&&:#{==:#{session_id},${source.sessionId}},#{&&:#{==:#{window_id},${source.windowId}},#{==:#{window_panes},${source.windowPaneCount}}}}`;
 }
 
 const TmuxAttachmentClientTransportInputSchemaZ = z
@@ -268,12 +288,15 @@ const TmuxAttachmentClientTransportInputSchemaZ = z
         expectedViewSessionId: RuntimeSessionIdSchemaZ,
         expectedWindowId: RuntimeWindowIdSchemaZ,
         expectedPaneId: RuntimePaneIdSchemaZ,
+        expectedWindowPaneCount: z.number().int().positive(),
       })
       .strict(),
     viewport: TerminalAttachmentViewportSchemaZ,
     viewerMode: TerminalAttachmentViewerModeSchemaZ,
+    geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ.default("passive"),
   })
-  .strict();
+  .strict()
+  .superRefine(refuseReadOnlyGeometryOwner);
 
 /**
  * Reconstructs the only normal-client argv accepted by the PTY launcher. No
@@ -291,11 +314,15 @@ export function planCanonicalTmuxAttachmentClientCommand(
   ) {
     throw new TmuxAttachmentViewExecutorError("invalid-request");
   }
-  const exactViewTarget = `=${identity.viewSessionName}`;
-  const attach = tmux(
-    parsed.viewerMode === "read-only"
-      ? ["attach-session", "-E", "-r", "-t", exactViewTarget]
-      : ["attach-session", "-E", "-t", exactViewTarget],
+  // Built by the SAME function the grouped-tmux plan uses, not by a second copy
+  // of the rule. The two argvs are cross-checked for deep equality before a
+  // client is spawned, and the previous duplication is exactly the shape in
+  // which the two could drift — one of them learning about geometry ownership
+  // and the other not, so every owning attach fails the equality gate.
+  const attach = attachCommand(
+    identity.viewSessionName,
+    parsed.viewerMode,
+    parsed.geometryOwnership,
   );
   const commands =
     parsed.operation === "attach"
@@ -308,7 +335,11 @@ export function planCanonicalTmuxAttachmentClientCommand(
         ];
   const mutation = tmuxCommandListString(commands);
   const viewTarget = `${identity.expectedViewSessionId}:${identity.expectedWindowId}.${identity.expectedPaneId}`;
-  const viewFormat = `#{&&:#{==:#{session_id},${identity.expectedViewSessionId}},#{&&:#{==:#{window_id},${identity.expectedWindowId}},#{&&:#{==:#{window_panes},1},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${identity.markerValue}}}}}}`;
+  // Window-as-unit proof (m41 attach-2): session_id + window_id + single-window
+  // topology + marker ownership. The former `window_panes == 1` gate is gone so
+  // a multi-pane linked window is accepted; the exact pane target still proves
+  // the resolved pane exists inside that window.
+  const viewFormat = `#{&&:#{==:#{session_id},${identity.expectedViewSessionId}},#{&&:#{==:#{window_id},${identity.expectedWindowId}},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${identity.markerValue}}}}}`;
   const viewGuardedMutation = tmuxCommandString(
     tmux([
       "if-shell",
@@ -321,7 +352,11 @@ export function planCanonicalTmuxAttachmentClientCommand(
     ]),
   );
   const sourceTarget = `${identity.expectedSourceSessionId}:${identity.expectedWindowId}.${identity.expectedPaneId}`;
-  const sourceFormat = `#{&&:#{==:#{session_id},${identity.expectedSourceSessionId}},#{&&:#{==:#{window_id},${identity.expectedWindowId}},#{==:#{window_panes},1}}}`;
+  // Source window proof (m41 attach-2): the exact pane target proves the
+  // resolved pane, session_id + window_id prove its enclosing window, and
+  // window_panes is bound to the resolved count so a last-moment split/close is
+  // caught. This must stay byte-identical to sourceProofFormat.
+  const sourceFormat = `#{&&:#{==:#{session_id},${identity.expectedSourceSessionId}},#{&&:#{==:#{window_id},${identity.expectedWindowId}},#{==:#{window_panes},${identity.expectedWindowPaneCount}}}}`;
   return tmux([
     "if-shell",
     "-F",
@@ -418,6 +453,10 @@ function canonicalPlanFor(operation: GuardedAttachmentViewOperation): GroupedTmu
       generation: operation.plan.identity.generation,
       target: operation.plan.identity.semanticTarget,
       viewerMode: operation.plan.viewerMode,
+      // Re-planned from the plan's OWN ownership, so a plan that claims to own
+      // geometry can only pass the deep-equality gate below if the ownership it
+      // claims is the ownership its attach argv was built with.
+      geometryOwnership: operation.plan.geometryOwnership,
       viewport: operation.plan.viewport,
       source: operation.source,
     });
@@ -503,6 +542,7 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     operation: "attach" | "recover",
     plan: GroupedTmuxAttachmentPlan,
     viewGuard: ViewServerGuard,
+    windowPaneCount: number,
   ): TmuxAttachmentClientTransportAttempt {
     if (!this.#clientTransport) {
       throw new TmuxAttachmentViewExecutorError("attachment-transport-unavailable");
@@ -519,9 +559,11 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
           expectedViewSessionId: viewGuard.sessionId,
           expectedWindowId: plan.identity.durableSource.windowId,
           expectedPaneId: plan.identity.durableSource.runtimePaneId,
+          expectedWindowPaneCount: windowPaneCount,
         },
         viewport: { ...plan.viewport },
         viewerMode: plan.viewerMode,
+        geometryOwnership: plan.geometryOwnership,
       };
       if (!isDeepStrictEqual(command, planCanonicalTmuxAttachmentClientCommand(input))) {
         throw new TmuxAttachmentViewExecutorError("invalid-request");
@@ -585,7 +627,7 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     if (result.status === "failed") {
       throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
     }
-    const sessionIds = strictLines(result.stdout, MAX_SOURCE_PROOF_ROWS);
+    const sessionIds = strictLines(result.stdout, MAX_WINDOW_PANES);
     if (
       sessionIds.length === 0 ||
       new Set(sessionIds).size !== 1 ||
@@ -612,10 +654,20 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     return lines;
   }
 
+  /**
+   * Proves the WHOLE linked view window (m41 attach-2). The former single-pane
+   * shape is gone: a linked window may carry many panes, so every pane row is
+   * validated to share one session, the expected window id, a `window_panes`
+   * equal to the observed row count, and single-window topology, plus session
+   * marker ownership. When `expectedPaneId` is given it must be present; the
+   * returned guard targets that pane (else the first pane). The guard `format`
+   * is window-level and no longer gates on `window_panes == 1`.
+   */
   #viewServerGuard(
     exactTarget: `=${string}`,
     expectedMarker: string,
     expectedWindowId: string,
+    expectedPaneId?: string,
   ): ViewServerGuard | null {
     const result = this.#command(
       tmux([
@@ -630,36 +682,55 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     if (result.status === "failed") {
       throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
     }
-    const rows = strictLines(result.stdout, MAX_SOURCE_PROOF_ROWS);
-    if (rows.length !== 1) return null;
-    const fields = rows[0]!.split("\t");
-    if (fields.length !== 5) {
-      throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
-    }
-    const [sessionId, windowId, paneId, paneCount, sessionWindowCount] = fields;
+    const rows = strictLines(result.stdout, MAX_WINDOW_PANES);
+    if (rows.length === 0) return null;
+    const parsed = rows.map((row) => {
+      const fields = row.split("\t");
+      if (fields.length !== 5) {
+        throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
+      }
+      const [sessionId, windowId, paneId, paneCount, sessionWindowCount] = fields;
+      if (
+        !RuntimeSessionIdSchemaZ.safeParse(sessionId).success ||
+        !RuntimeWindowIdSchemaZ.safeParse(windowId).success ||
+        !RuntimePaneIdSchemaZ.safeParse(paneId).success ||
+        !/^(?:0|[1-9][0-9]*)$/u.test(paneCount!) ||
+        !/^(?:0|[1-9][0-9]*)$/u.test(sessionWindowCount!)
+      ) {
+        throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
+      }
+      return {
+        sessionId: sessionId!,
+        windowId: windowId!,
+        paneId: paneId!,
+        paneCount: paneCount!,
+        sessionWindowCount: sessionWindowCount!,
+      };
+    });
+    const sessionIds = new Set(parsed.map((row) => row.sessionId));
+    const paneIds = parsed.map((row) => row.paneId);
     if (
-      !RuntimeSessionIdSchemaZ.safeParse(sessionId).success ||
-      !RuntimeWindowIdSchemaZ.safeParse(windowId).success ||
-      !RuntimePaneIdSchemaZ.safeParse(paneId).success ||
-      !/^(?:0|[1-9][0-9]*)$/u.test(paneCount!) ||
-      !/^(?:0|[1-9][0-9]*)$/u.test(sessionWindowCount!)
-    ) {
-      throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
-    }
-    if (
-      windowId !== expectedWindowId ||
-      paneCount !== "1" ||
-      sessionWindowCount !== "1" ||
-      this.#sessionMarker(sessionId!) !== expectedMarker
+      sessionIds.size !== 1 ||
+      new Set(paneIds).size !== paneIds.length ||
+      parsed.some(
+        (row) =>
+          row.windowId !== expectedWindowId ||
+          row.paneCount !== String(rows.length) ||
+          row.sessionWindowCount !== "1",
+      )
     ) {
       return null;
     }
+    const sessionId = [...sessionIds][0]!;
+    if (this.#sessionMarker(sessionId) !== expectedMarker) return null;
+    const targetPaneId = expectedPaneId ?? paneIds[0]!;
+    if (!paneIds.includes(targetPaneId)) return null;
     return {
-      sessionId: sessionId!,
-      windowId: windowId!,
-      paneId: paneId!,
-      target: `${sessionId}:${windowId}.${paneId}`,
-      format: `#{&&:#{==:#{session_id},${sessionId}},#{&&:#{==:#{window_id},${windowId}},#{&&:#{==:#{window_panes},1},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${expectedMarker}}}}}}`,
+      sessionId,
+      windowId: expectedWindowId,
+      paneId: targetPaneId,
+      target: `${sessionId}:${expectedWindowId}.${targetPaneId}`,
+      format: `#{&&:#{==:#{session_id},${sessionId}},#{&&:#{==:#{window_id},${expectedWindowId}},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${expectedMarker}}}}}`,
     };
   }
 
@@ -722,7 +793,8 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
       !RuntimeSessionIdSchemaZ.safeParse(source.sessionId).success ||
       !RuntimeWindowIdSchemaZ.safeParse(source.windowId).success ||
       !RuntimePaneIdSchemaZ.safeParse(source.runtimePaneId).success ||
-      source.paneCount !== 1
+      !Number.isSafeInteger(source.windowPaneCount) ||
+      source.windowPaneCount <= 0
     ) {
       throw new TmuxAttachmentViewExecutorError("invalid-request");
     }
@@ -739,26 +811,38 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
     if (result.status === "failed") {
       throw new TmuxAttachmentViewExecutorError("tmux-command-failed");
     }
-    const rows = strictLines(result.stdout, MAX_SOURCE_PROOF_ROWS);
-    if (rows.length !== 1) return false;
-    const fields = rows[0]!.split("\t");
-    if (fields.length !== 4) {
-      throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
-    }
-    const [sessionId, windowId, paneId, paneCount] = fields;
-    if (
-      !RuntimeSessionIdSchemaZ.safeParse(sessionId).success ||
-      !RuntimeWindowIdSchemaZ.safeParse(windowId).success ||
-      !RuntimePaneIdSchemaZ.safeParse(paneId).success ||
-      !/^(?:0|[1-9][0-9]*)$/u.test(paneCount!)
-    ) {
-      throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
-    }
+    const rows = strictLines(result.stdout, MAX_WINDOW_PANES);
+    if (rows.length === 0) return false;
+    const parsed = rows.map((row) => {
+      const fields = row.split("\t");
+      if (fields.length !== 4) {
+        throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
+      }
+      const [sessionId, windowId, paneId, paneCount] = fields;
+      if (
+        !RuntimeSessionIdSchemaZ.safeParse(sessionId).success ||
+        !RuntimeWindowIdSchemaZ.safeParse(windowId).success ||
+        !RuntimePaneIdSchemaZ.safeParse(paneId).success ||
+        !/^(?:0|[1-9][0-9]*)$/u.test(paneCount!)
+      ) {
+        throw new TmuxAttachmentViewExecutorError("invalid-tmux-output");
+      }
+      return { sessionId: sessionId!, windowId: windowId!, paneId: paneId!, paneCount: paneCount! };
+    });
+    // The WHOLE window must still match its resolution: every pane shares the
+    // resolved session/window, the live pane count equals both the observed row
+    // count and the resolved windowPaneCount, and the resolved pane is present.
+    const paneIds = parsed.map((row) => row.paneId);
     return (
-      sessionId === source.sessionId &&
-      windowId === source.windowId &&
-      paneId === source.runtimePaneId &&
-      paneCount === "1"
+      parsed.every(
+        (row) =>
+          row.sessionId === source.sessionId &&
+          row.windowId === source.windowId &&
+          row.paneCount === String(rows.length),
+      ) &&
+      rows.length === source.windowPaneCount &&
+      new Set(paneIds).size === paneIds.length &&
+      paneIds.includes(source.runtimePaneId)
     );
   }
 
@@ -772,6 +856,7 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
       exactTarget,
       plan.identity.markerValue,
       plan.identity.durableSource.windowId,
+      plan.identity.durableSource.runtimePaneId,
     );
     return guard?.paneId === plan.identity.durableSource.runtimePaneId ? guard : null;
   }
@@ -826,7 +911,13 @@ export class TmuxAttachmentViewExecutor implements AttachmentViewExecutor {
 
     let attempt: TmuxAttachmentClientTransportAttempt;
     try {
-      attempt = this.#clientCommand(guarded, operation.operation, plan, viewGuard!);
+      attempt = this.#clientCommand(
+        guarded,
+        operation.operation,
+        plan,
+        viewGuard!,
+        operation.source.windowPaneCount,
+      );
     } catch (error) {
       if (error instanceof TmuxAttachmentViewExecutorError) throw error;
       throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");

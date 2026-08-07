@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Hono } from "hono";
 import {
   TERMINAL_ATTACHMENT_ISSUE_PATH,
@@ -7,8 +6,8 @@ import {
   TerminalAttachmentIssueMutationRequestSchemaZ,
   TerminalAttachmentIssueResultSchemaZ,
   type TerminalAttachRequest,
-  type TerminalAttachmentIssueErrorCode,
   type TerminalAttachmentIssueResult,
+  type TerminalIssueErrorCode,
 } from "@tmux-ide/contracts";
 
 import type { WorkspaceRegistry } from "../lib/workspace-registry.ts";
@@ -21,6 +20,7 @@ import {
   type DirectTerminalAttachmentDescriptor,
 } from "../terminal/attachments/direct-websocket.ts";
 import { SemanticPaneCatalogError } from "../terminal/attachments/semantic-pane-catalog.ts";
+import { decideOwnerAuthority } from "./owner-authority.ts";
 
 const MAX_ISSUE_REQUEST_BYTES = 16 * 1024;
 
@@ -38,8 +38,9 @@ export interface TerminalAttachmentIssueRouteOptions {
   readonly backend: TerminalAttachmentIssueBackend | null;
 }
 
+/** One issue-error vocabulary for both lease families — see issue-error.ts. */
 function issueError(
-  code: TerminalAttachmentIssueErrorCode,
+  code: TerminalIssueErrorCode,
   reason: string,
   retryable = false,
 ): TerminalAttachmentIssueResult {
@@ -125,13 +126,6 @@ function canonicalRendererOrigin(value: string | null): string | null {
   }
 }
 
-function ownerBearerMatches(value: string | null, ownerToken: string | null): boolean {
-  if (!value || !ownerToken) return false;
-  const supplied = Buffer.from(value, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
-}
-
 function mapBackendError(error: unknown): TerminalAttachmentIssueResult {
   if (error instanceof SemanticPaneCatalogError) {
     switch (error.code) {
@@ -192,7 +186,14 @@ export function mountTerminalAttachmentIssueRoute(
       response(issueError("invalid-request", "Terminal attachment request is invalid."));
     const request = c.req.raw;
     if (new URL(request.url).search.length > 0) return invalid();
-    if (!ownerBearerMatches(request.headers.get("Authorization"), options.ownerToken)) {
+    // Owner-only; ownerless rejects, because this route answers a typed issue
+    // envelope rather than a status code and must never leak which half failed.
+    const owner = decideOwnerAuthority(
+      request.headers.get("Authorization"),
+      options.ownerToken,
+      "reject",
+    );
+    if (owner.kind !== "authorized") {
       return response(issueError("invalid-request", "Terminal attachment request was rejected."));
     }
     if (exactHeader(request, "Content-Type")?.toLowerCase() !== "application/json") {

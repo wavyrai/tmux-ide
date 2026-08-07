@@ -10,6 +10,13 @@ no generic IPC, command, eval, or raw send escape hatch. Renderer processes run
 with context isolation and sandboxing enabled, Node integration disabled, and
 navigation, popups, webviews, and permission requests denied.
 
+The renderer CSP keeps scripts restricted to packaged same-origin assets. Its
+only inline exception is style content required by xterm's dynamic cell and
+cursor layout. The window remains sandboxed with context isolation enabled and
+all Node integration disabled; the custom `tmux-ide:` origin serves only the
+entry document and verified flat build assets. See the desktop-renderer README
+for the xterm migration seam and application-owned CSSOM rule.
+
 The daemon integration is deliberately an injected preflight seam. The default
 reports `deferred`; canonical daemon startup remains owned by its future card.
 

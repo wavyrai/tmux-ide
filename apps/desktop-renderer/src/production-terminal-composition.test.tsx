@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellProjectionInputV2SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   DESKTOP_HOST_API_VERSION,
   type ApplicationShellProjectionInputV2,
+  type ApplicationShellProjectionInputV3,
   type DaemonInstanceIdentity,
   type DesktopDaemonEvent,
   type HostCapabilities,
@@ -36,6 +39,7 @@ const xtermHarness = vi.hoisted(() => ({
     write: vi.fn(async () => undefined),
     focus: vi.fn(),
     fit: vi.fn(() => ({ cols: 80, rows: 24 })),
+    resizeGrid: vi.fn(),
     refreshTheme: vi.fn(),
     setReducedMotion: vi.fn(),
     onInput: vi.fn(() => ({ dispose: vi.fn() })),
@@ -147,9 +151,61 @@ function shellInput(extraTerminalId?: string): ApplicationShellProjectionInputV2
   });
 }
 
+function shellInputV3(): ApplicationShellProjectionInputV3 {
+  return ApplicationShellProjectionInputV3SchemaZ.parse({
+    ...shellInput(),
+    appWindows: {
+      version: 1,
+      revision: 0,
+      updatedAt: "2026-07-22T10:00:00.000Z",
+      windows: {
+        "window.shell": {
+          id: "window.shell",
+          source: { kind: "terminal", terminalSourceId: "pane.shell" },
+          title: "Project shell",
+          placement: {
+            mode: "floating",
+            docked: null,
+            floating: { x: 40, y: 30, width: 720, height: 440 },
+          },
+        },
+      },
+      dockRoot: null,
+      dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+      floatingOrder: ["window.shell"],
+      focusedWindowId: "window.shell",
+      activeLayoutId: null,
+      layouts: {},
+    },
+  });
+}
+
+function shellInputV3AtRevision(
+  revision: number,
+  rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): ApplicationShellProjectionInputV3 {
+  const input = shellInputV3();
+  return ApplicationShellProjectionInputV3SchemaZ.parse({
+    ...input,
+    appWindows: {
+      ...input.appWindows,
+      revision,
+      updatedAt: `2026-07-22T10:00:0${revision}.000Z`,
+      windows: {
+        ...input.appWindows.windows,
+        "window.shell": {
+          ...input.appWindows.windows["window.shell"],
+          placement: { mode: "floating", docked: null, floating: rect },
+        },
+      },
+    },
+  });
+}
+
 function createHostHarness() {
   let daemon = DAEMON_A;
-  let resource = shellInput();
+  let resource: ApplicationShellProjectionInputV2 | ApplicationShellProjectionInputV3 =
+    shellInput();
   const subscriptions: Array<(event: DesktopDaemonEvent) => void> = [];
   const host: HostCapabilities = {
     apiVersion: DESKTOP_HOST_API_VERSION,
@@ -161,22 +217,49 @@ function createHostHarness() {
       theme: { mode: "dark" as const, highContrast: false, reducedMotion: false },
       window: { maximized: false, fullscreen: false, focused: true },
       daemon: { status: "connected" as const, identity: daemon },
+      onboarding: { introAcknowledged: true as const },
     })),
-    lifecycle: { requestQuit: async () => undefined },
     window: {
-      getState: async () => ({ maximized: false, fullscreen: false, focused: true }),
       minimize: async () => ({ maximized: false, fullscreen: false, focused: true }),
       toggleMaximized: async () => ({ maximized: true, fullscreen: false, focused: true }),
       close: async () => undefined,
       onStateChanged: () => () => undefined,
     },
-    menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
-    dialog: { selectProjectDirectory: async () => null },
+    workspace: { openProjectDirectory: async () => null },
+    onboarding: { acknowledgeIntro: async () => undefined },
     theme: {
-      getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,
     },
+    update: {
+      getStatus: async () => ({
+        phase: "idle" as const,
+        currentVersion: "test",
+        availableVersion: null,
+      }),
+      onStatusChanged: () => () => undefined,
+    },
     daemon: {
+      fetchWidgetAsset: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
+      startupReadiness: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
+      capabilities: vi.fn(async () => ({
+        status: "ok" as const,
+        daemon,
+        capabilities: { appWindowMutation: { available: true as const } },
+      })),
+      mutateAppWindow: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "test transport" },
+      })),
+      invokeVerb: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "test transport" },
+      })),
       createWorkspacePane: vi.fn(async () => ({
         status: "ok" as const,
         result: {
@@ -199,6 +282,14 @@ function createHostHarness() {
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "test transport", retryable: false },
       })),
+      issuePaneStream: vi.fn(async () => ({
+        status: "error" as const,
+        error: {
+          code: "attachment-unavailable" as const,
+          reason: "test transport",
+          retryable: false,
+        },
+      })),
       refreshConnection: vi.fn(async () => ({
         outcome: "generation-replaced" as const,
         previousIdentity: DAEMON_A,
@@ -209,13 +300,40 @@ function createHostHarness() {
         daemon,
         workspaces: [{ workspaceName: "alpha" }],
       })),
-      fetchApplicationShell: vi.fn(async () => ({
+      fetchFleetCatalog: vi.fn(async () => ({
         status: "ok" as const,
-        envelope: {
-          version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
-          daemon,
-          resource,
-        },
+        envelope: { version: 1 as const, daemon, sessions: [] },
+      })),
+      promoteWorkspace: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by composition tests" },
+      })),
+      fetchApplicationShell: vi.fn(async () =>
+        "appWindows" in resource
+          ? {
+              status: "ok" as const,
+              envelope: { version: APPLICATION_SHELL_RESOURCE_V3_VERSION, daemon, resource },
+            }
+          : {
+              status: "ok" as const,
+              envelope: { version: APPLICATION_SHELL_RESOURCE_V2_VERSION, daemon, resource },
+            },
+      ),
+      fetchWorkspaceFiles: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by terminal tests" },
+      })),
+      fetchWorkspaceFilePreview: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by terminal tests" },
+      })),
+      fetchWorkspaceChanges: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by terminal tests" },
+      })),
+      fetchWorkspaceChangeDiff: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by terminal tests" },
       })),
       subscribe: vi.fn(async (_request, listener) => {
         subscriptions.push(listener);
@@ -228,7 +346,7 @@ function createHostHarness() {
     setDaemon(next: DaemonInstanceIdentity) {
       daemon = next;
     },
-    setResource(next: ApplicationShellProjectionInputV2) {
+    setResource(next: ApplicationShellProjectionInputV2 | ApplicationShellProjectionInputV3) {
       resource = next;
     },
     emit(event: DesktopDaemonEvent) {
@@ -249,6 +367,13 @@ function click(element: Element | null): void {
 }
 
 beforeEach(() => {
+  /*
+   * These are AppWindow CANVAS tests, and the canvas is parked behind the
+   * experimental-surfaces flag since m50. `<App />` reads the flag from
+   * storage, so turning it on here is exactly the switch a user would flip —
+   * which is also what keeps proving the canvas is parked rather than deleted.
+   */
+  window.localStorage.setItem("tmux-ide.experimental-surfaces", "1");
   terminalHarness.generations.length = 0;
   vi.clearAllMocks();
   vi.stubGlobal("ResizeObserver", ResizeObserverHarness);
@@ -273,6 +398,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.localStorage.removeItem("tmux-ide.experimental-surfaces");
   delete window.tmuxIdeHost;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -280,6 +406,156 @@ afterEach(() => {
 });
 
 describe("production terminal composition", () => {
+  it("enables durable AppWindow controls after exact-generation capability negotiation", async () => {
+    const harness = createHostHarness();
+    harness.setResource(shellInputV3());
+    window.tmuxIdeHost = harness.host;
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <App />, root);
+
+    const placement = await vi.waitFor(() => {
+      const value = root.querySelector<HTMLButtonElement>(
+        '[data-action-id="app-window-placement"]',
+      );
+      expect(value).not.toBeNull();
+      return value!;
+    });
+    expect(placement.disabled).toBe(false);
+    expect(harness.host.apiVersion).toBe(13);
+    dispose();
+  });
+
+  it("retries one transient capability handoff before enabling window controls", async () => {
+    const harness = createHostHarness();
+    harness.setResource(shellInputV3());
+    vi.mocked(harness.host.daemon.capabilities)
+      .mockRejectedValueOnce(new Error("transient IPC handoff"))
+      .mockResolvedValueOnce({
+        status: "ok",
+        daemon: DAEMON_A,
+        capabilities: { appWindowMutation: { available: true } },
+      });
+    window.tmuxIdeHost = harness.host;
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <App />, root);
+
+    await vi.waitFor(() => {
+      expect(
+        root.querySelector<HTMLButtonElement>('[data-action-id="app-window-placement"]')?.disabled,
+      ).toBe(false);
+    });
+    expect(harness.host.daemon.capabilities).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+
+  it.each([
+    ["protocolVersion", { protocolVersion: 2 }],
+    ["productVersion", { productVersion: "different-product" }],
+    ["instanceId", { instanceId: "00000000-0000-4000-8000-000000000099" }],
+    ["startedAt", { startedAt: "2026-07-22T00:00:01.000Z" }],
+  ] as const)(
+    "rejects capability authority with a mismatched daemon %s",
+    async (_field, changed) => {
+      const harness = createHostHarness();
+      harness.setResource(shellInputV3());
+      vi.mocked(harness.host.daemon.capabilities).mockResolvedValue({
+        status: "ok",
+        daemon: { ...DAEMON_A, ...changed },
+        capabilities: { appWindowMutation: { available: true } },
+      });
+      window.tmuxIdeHost = harness.host;
+      const root = document.body.appendChild(document.createElement("div"));
+      const dispose = render(() => <App />, root);
+
+      await vi.waitFor(() => {
+        const placement = root.querySelector<HTMLButtonElement>(
+          '[data-action-id="app-window-placement"]',
+        );
+        expect(placement?.disabled).toBe(true);
+        expect(placement?.title).toBe(
+          "Durable window controls are unavailable. Reopen the workspace to recheck.",
+        );
+      });
+      expect(harness.host.daemon.capabilities).toHaveBeenCalledTimes(2);
+      dispose();
+    },
+  );
+
+  it("keeps AppWindow controls disabled with the daemon-provided capability reason", async () => {
+    const harness = createHostHarness();
+    harness.setResource(shellInputV3());
+    vi.mocked(harness.host.daemon.capabilities).mockResolvedValue({
+      status: "ok",
+      daemon: DAEMON_A,
+      capabilities: {
+        appWindowMutation: { available: false, reason: "Upgrade the daemon to save layouts." },
+      },
+    });
+    window.tmuxIdeHost = harness.host;
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <App />, root);
+    await vi.waitFor(() => {
+      const placement = root.querySelector<HTMLButtonElement>(
+        '[data-action-id="app-window-placement"]',
+      );
+      expect(placement?.disabled).toBe(true);
+      expect(placement?.title).toBe("Upgrade the daemon to save layouts.");
+    });
+    dispose();
+  });
+
+  it("refreshes and retries one semantic AppWindow command after a revision conflict", async () => {
+    const harness = createHostHarness();
+    harness.setResource(shellInputV3());
+    vi.mocked(harness.host.daemon.mutateAppWindow)
+      .mockImplementationOnce(async () => {
+        harness.setResource(shellInputV3AtRevision(1, { x: 44, y: 34, width: 720, height: 440 }));
+        return {
+          status: "error" as const,
+          error: { code: "resource-changed" as const, reason: "The layout changed." },
+        };
+      })
+      .mockImplementationOnce(async () => {
+        harness.setResource(shellInputV3AtRevision(2, { x: 12, y: 12, width: 876, height: 516 }));
+        return {
+          status: "ok" as const,
+          result: {
+            operationId: "00000000-0000-4000-8000-000000000020",
+            daemonInstanceId: DAEMON_A.instanceId,
+            outcome: "applied" as const,
+            workspaceName: "alpha",
+            documentRevision: 2,
+          },
+        };
+      });
+    window.tmuxIdeHost = harness.host;
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <App />, root);
+    const maximize = await vi.waitFor(() => {
+      const value = root.querySelector<HTMLButtonElement>('[data-action-id="app-window-maximize"]');
+      expect(value?.disabled).toBe(false);
+      return value!;
+    });
+    maximize.click();
+
+    await vi.waitFor(() => expect(harness.host.daemon.mutateAppWindow).toHaveBeenCalledTimes(2));
+    expect(harness.host.daemon.mutateAppWindow).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ expectedDocumentRevision: 0 }),
+    );
+    expect(harness.host.daemon.mutateAppWindow).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ expectedDocumentRevision: 1 }),
+    );
+    expect(
+      vi.mocked(harness.host.daemon.mutateAppWindow).mock.calls.map(([request]) => request.command),
+    ).toEqual([
+      expect.objectContaining({ type: "window.float", windowId: "window.shell" }),
+      expect.objectContaining({ type: "window.float", windowId: "window.shell" }),
+    ]);
+    dispose();
+  });
+
   it("uses every available semantic inventory entry and never attaches unavailable panes", async () => {
     const harness = createHostHarness();
     window.tmuxIdeHost = harness.host;
@@ -293,10 +569,21 @@ describe("production terminal composition", () => {
       expect.objectContaining({ workspaceName: "alpha", semanticPaneId: "pane.shell" }),
     );
     expect(JSON.stringify(requests)).not.toMatch(/tmuxPaneId|sessionName|%\d+/u);
-    expect(root.querySelectorAll(".web-pane-frame").length).toBeGreaterThanOrEqual(3);
-    expect(root.querySelectorAll(".terminal-surface__viewport").length).toBeGreaterThanOrEqual(2);
-    expect(root.textContent).toContain("Logs shell");
-    expect(root.textContent).toContain("Unavailable shell");
+    /*
+     * The layout-faithful view attaches ONE terminal per window (m50), because
+     * interactive attachment ownership is window-keyed and a single attach
+     * paints the whole window anyway. So the inventory shows up as the window
+     * tab strip rather than as a card per pane.
+     */
+    expect(root.querySelectorAll(".terminal-surface__viewport").length).toBe(1);
+    const tabLabels = [...root.querySelectorAll(".window-tabs__tab")].map(
+      (tab) => tab.textContent ?? "",
+    );
+    expect(tabLabels.length).toBeGreaterThanOrEqual(2);
+    expect(tabLabels.join(" ")).toContain("Logs shell");
+    // Bug this catches: an unattachable pane is offered as though it were a
+    // window a click could reach, and the click can only fail.
+    expect(tabLabels.join(" ")).not.toContain("Unavailable shell");
     expect(requests).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ target: { semanticPaneId: "pane.unavailable" } }),

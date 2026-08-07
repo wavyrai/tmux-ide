@@ -214,7 +214,7 @@ function plan(
       sessionId: "$12",
       windowId: "@34",
       runtimePaneId: "%56",
-      paneCount: 1,
+      windowPaneCount: 1,
     },
   });
 }
@@ -232,7 +232,7 @@ function operation(
       sessionId: "$12",
       windowId: "@34",
       runtimePaneId: "%56",
-      paneCount: 1,
+      windowPaneCount: 1,
     },
     plan: selectedPlan,
   };
@@ -335,6 +335,31 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
     await expect(executor.executeGuardedViewOperation(operation())).resolves.toBe(
       "source-proof-mismatch",
     );
+    expect(runner.mutationCount).toBe(0);
+  });
+
+  it("accepts a multi-pane source window when every pane agrees (m41 attach-2)", async () => {
+    const runner = new FakeRunner();
+    runner.sourceOutput = "$12\t@34\t%56\t3\n$12\t@34\t%57\t3\n$12\t@34\t%58\t3\n";
+    const executor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    const op: GuardedAttachmentViewOperation = {
+      ...operation(),
+      source: { sessionId: "$12", windowId: "@34", runtimePaneId: "%56", windowPaneCount: 3 },
+    };
+    await expect(executor.executeGuardedViewOperation(op)).resolves.toBe("executed");
+    expect(runner.mutationCount).toBe(1);
+  });
+
+  it("fails closed when the live source pane count no longer matches the resolution", async () => {
+    const runner = new FakeRunner();
+    // Resolution said 3 panes, but the window now reports 2.
+    runner.sourceOutput = "$12\t@34\t%56\t2\n$12\t@34\t%57\t2\n";
+    const executor = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    const op: GuardedAttachmentViewOperation = {
+      ...operation(),
+      source: { sessionId: "$12", windowId: "@34", runtimePaneId: "%56", windowPaneCount: 3 },
+    };
+    await expect(executor.executeGuardedViewOperation(op)).resolves.toBe("source-proof-mismatch");
     expect(runner.mutationCount).toBe(0);
   });
 

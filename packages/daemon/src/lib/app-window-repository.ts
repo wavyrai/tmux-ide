@@ -18,7 +18,7 @@ import {
   parseAppWindowDocument,
   serializeAppWindowDocument,
   type AppWindowStateDiagnostic,
-} from "../tui/mirror/app-window-state.ts";
+} from "./app-window-state.ts";
 
 export const APP_WINDOW_DOCUMENT_PATH = "ui/app-windows.json";
 const LEGACY_WORKSPACE_UI_PATH = "ui/workspace.json";

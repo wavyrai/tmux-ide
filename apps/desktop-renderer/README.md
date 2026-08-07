@@ -13,6 +13,22 @@ Run `pnpm --filter @tmux-ide/desktop-renderer dev` for browser development.
 The browser fallback implements the same narrow host shape with safe no-op
 native capabilities.
 
+## Renderer style policy
+
+The desktop document keeps `script-src` at exactly `'self'` and retains the
+restricted default, connection, image, font, object, base, frame, and form
+directives. It permits inline style elements and attributes only because xterm
+6 creates both dynamically for cell geometry, cursor placement, scrollbars,
+selection, and generated color rules. Nonces and hashes cannot authorize those
+changing values.
+
+Application-authored theme, canvas-window, and tooltip geometry must continue
+to use the external CSSOM registry in `src/runtime-style.ts`; the xterm
+exception is dependency-driven and checked by the real-browser CSP smoke. The
+renderer has no Node integration. A future native terminal renderer or isolated
+terminal-host origin can remove this style exception without changing the
+semantic terminal transport contract.
+
 ## Native terminal transport boundary
 
 `src/terminal/native-terminal-websocket-transport.ts` is the renderer-owned

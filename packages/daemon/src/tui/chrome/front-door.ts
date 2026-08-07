@@ -17,6 +17,11 @@
  *  sessions. (Owned here; re-exported by `updater.ts` for its callers.) */
 export const ADOPTED_OPTION = "@tmux_ide_adopted";
 
+export {
+  PANE_CHROME_BORDER_FORMAT,
+  PANE_CHROME_CHIP_OPTION as CHIP_OPTION,
+} from "../../lib/pane-chrome.ts";
+
 /** The hidden internal session that hosts the updater loop. */
 export const UPDATER_SESSION = "_tmux-ide-chrome";
 

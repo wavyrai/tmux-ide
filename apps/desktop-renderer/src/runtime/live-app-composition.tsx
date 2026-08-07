@@ -1,6 +1,10 @@
 import {
+  AgentGraphOverlaySchemaZ,
+  AppWindowMutationHostResultSchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   WorkspacePaneCreateHostResultSchemaZ,
   projectApplicationShellV1,
+  projectDesktopStartupReadiness,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
   type DaemonInstanceIdentity,
@@ -8,9 +12,21 @@ import {
   type DesktopPlatform,
   type DesktopWindowState,
   type HostCapabilities,
+  type StartupReadinessLadder,
+  type WorkspaceChangeResourceId,
+  type WorkspaceFileResourceId,
   type WorkspacePaneCreateInvocation,
 } from "@tmux-ide/contracts";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 
 import {
   paneFrameTerminalsFromApplicationShellInventory,
@@ -22,8 +38,37 @@ import type {
   PaneFrameGripIntent,
 } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { DomApplicationShell } from "../experience/application-shell.tsx";
+import type { AppWindowCanvasCommandInvocation } from "../experience/app-window-canvas-presenter.ts";
 import type { CreatePaneFlowCatalogs } from "../experience/create-pane-flow-presenter.ts";
 import { DomIcon } from "../experience/dom-icon.tsx";
+import { FirstRunIntro } from "../experience/first-run-intro.tsx";
+import type { ChangesSurfaceProps } from "../experience/workspace-changes-surface.tsx";
+import type { FilesSurfaceProps } from "../experience/workspace-files-surface.tsx";
+import {
+  Alert02Icon,
+  ArrowRight01Icon,
+  CheckmarkCircle02Icon,
+  Loading03Icon,
+} from "@hugeicons/core-free-icons";
+
+import { Button, Icon } from "../ui-system/index.ts";
+
+/**
+ * The runtime state as a glyph, in the same three shapes the status strip uses
+ * so a degraded workspace looks the same wherever it is reported.
+ */
+function runtimeStateGlyph(state: string) {
+  if (state === "onboarding" || state === "chooser") return CheckmarkCircle02Icon;
+  if (state === "degraded" || state === "error" || state === "hard-error") return Alert02Icon;
+  return Loading03Icon;
+}
+import { deriveConnectionHealth } from "./connection-health.ts";
+import {
+  reasonIndicatesMissingTmux,
+  recoveryForWorkspaceOpenError,
+  startupReadinessDiagnostics,
+  tmuxInstallCommand,
+} from "./connection-recovery.ts";
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
 import { createSolidDesktopApplicationShellResourceStore } from "./desktop-resource-store.ts";
 import { createHostDaemonTransport } from "./host-daemon-transport.ts";
@@ -32,6 +77,22 @@ import {
   createSolidDesktopWorkspaceCatalogStore,
   type DesktopWorkspaceCatalogState,
 } from "./workspace-catalog-store.ts";
+import {
+  createSolidWorkspaceChangeDiffStore,
+  createSolidWorkspaceChangesCatalogStore,
+} from "./workspace-changes-store.ts";
+import {
+  createSolidWorkspaceFilePreviewStore,
+  createSolidWorkspaceFilesCatalogStore,
+} from "./workspace-files-store.ts";
+import {
+  changeDiffSurfaceModel,
+  changeEntriesById,
+  changesSurfaceModel,
+  collectFileCatalogs,
+  filePreviewSurfaceModel,
+  filesSurfaceModel,
+} from "./workspace-surface-model.ts";
 
 export type DesktopDaemonRecoveryPhase =
   | "idle"
@@ -55,9 +116,15 @@ export interface DesktopLiveApplicationProps {
     source: PaneFrameActivationSource,
   ) => void;
   readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
+  readonly onAppWindowCommand?: (
+    invocation: AppWindowCanvasCommandInvocation,
+  ) => void | Promise<void>;
   readonly terminalTransport?: NativeTerminalTransport | null;
   readonly reducedMotion?: boolean;
   readonly terminalThemeKey?: string;
+  /** Show the first-run intro layer over the first live workspace. */
+  readonly introPending?: boolean;
+  readonly onAcknowledgeIntro?: () => void;
 }
 
 interface DesktopConnectionSurfaceProps {
@@ -79,8 +146,49 @@ interface DesktopConnectionSurfaceProps {
   readonly guidance: string;
   readonly alert?: boolean;
   readonly onRetry?: () => void;
+  readonly retryLabel?: string;
+  readonly onRestartConnection?: () => void;
+  readonly diagnostics?: readonly string[];
   readonly workspaces?: readonly string[];
   readonly onSelectWorkspace?: (workspaceName: string) => void;
+  readonly onOpenProject?: () => void;
+  readonly openProjectPhase?: "idle" | "selecting" | "opening" | "waiting" | "error";
+  readonly openProjectError?: string | null;
+  /** A copyable shell command shown when a concrete step resolves this state. */
+  readonly command?: string | null;
+}
+
+/** Selectable command block with a best-effort copy button (no host clipboard needed). */
+function RecoveryCommand(props: { readonly command: string }) {
+  const [copied, setCopied] = createSignal(false);
+  let resetTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    if (resetTimer) clearTimeout(resetTimer);
+  });
+  const copy = (): void => {
+    const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+    void clipboard?.writeText(props.command).then(
+      () => {
+        setCopied(true);
+        if (resetTimer) clearTimeout(resetTimer);
+        resetTimer = setTimeout(() => setCopied(false), 2_000);
+      },
+      () => undefined,
+    );
+  };
+  return (
+    <div class="runtime-state-card__command">
+      <code>{props.command}</code>
+      <Button
+        size="small"
+        variant="secondary"
+        aria-label={copied() ? "Command copied" : "Copy command"}
+        onClick={copy}
+      >
+        {copied() ? "Copied" : "Copy"}
+      </Button>
+    </div>
+  );
 }
 
 function WindowControls(props: {
@@ -175,6 +283,17 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
     }
   };
 
+  const openingProject = () =>
+    props.openProjectPhase === "selecting" ||
+    props.openProjectPhase === "opening" ||
+    props.openProjectPhase === "waiting";
+  const openProjectLabel = () => {
+    if (props.openProjectPhase === "selecting") return "Opening project…";
+    if (props.openProjectPhase === "opening") return "Opening workspace…";
+    if (props.openProjectPhase === "waiting") return "Preparing workspace…";
+    return props.state === "chooser" ? "Open another folder" : "Open Folder";
+  };
+
   return (
     <>
       <header class="titlebar runtime-titlebar" data-focus-zone="application-bar">
@@ -197,56 +316,175 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
         data-state={props.state}
         role={props.alert ? "alert" : undefined}
         aria-live={props.alert ? "assertive" : "polite"}
-        aria-busy={props.state === "pending" || props.state === "loading"}
+        aria-busy={props.state === "pending" || props.state === "loading" || openingProject()}
       >
-        <section class="runtime-state-card" aria-labelledby="runtime-state-title">
-          <div class="runtime-state-card__signal" aria-hidden="true">
-            <i />
-            <span>{props.state}</span>
-          </div>
-          <span class="eyebrow">{props.eyebrow}</span>
-          <h1 id="runtime-state-title">{props.title}</h1>
-          <p>{props.description}</p>
+        <Switch>
+          <Match when={props.state === "pending"}>
+            <section class="runtime-launch" aria-labelledby="runtime-state-title">
+              <div class="runtime-launch__brand" aria-hidden="true">
+                <span>
+                  <DomIcon id="terminals" usage="pane" />
+                </span>
+                <strong>tmux-ide</strong>
+              </div>
+              <div class="runtime-launch__copy">
+                <span class="eyebrow">{props.eyebrow}</span>
+                <h1 id="runtime-state-title">{props.title}</h1>
+                <p>{props.description}</p>
+              </div>
+              <div class="runtime-launch__skeleton" aria-hidden="true">
+                <i />
+                <span />
+                <span />
+                <span />
+              </div>
+            </section>
+          </Match>
+          <Match when={true}>
+            <section class="runtime-state-card" aria-labelledby="runtime-state-title">
+              <div class="runtime-state-card__main">
+                <div class="runtime-state-card__signal" aria-hidden="true">
+                  <Icon icon={runtimeStateGlyph(props.state)} size="dense" />
+                  <span>{props.state}</span>
+                </div>
+                <span class="eyebrow">{props.eyebrow}</span>
+                <h1 id="runtime-state-title">{props.title}</h1>
+                <p>{props.description}</p>
 
-          <Show when={props.workspaces && props.workspaces.length > 0}>
-            <div
-              class="workspace-chooser"
-              role="listbox"
-              aria-label="Available workspaces"
-              onKeyDown={handleChooserKeyDown}
-            >
-              <For each={props.workspaces}>
-                {(workspaceName) => (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={workspaceName === activeWorkspace()}
-                    tabIndex={workspaceName === activeWorkspace() ? 0 : -1}
-                    onFocus={() => setActiveWorkspace(workspaceName)}
-                    onClick={() => props.onSelectWorkspace?.(workspaceName)}
+                <Show when={props.workspaces && props.workspaces.length > 0}>
+                  <div class="workspace-chooser__heading">
+                    <span>Available now</span>
+                    <small>{props.workspaces?.length} workspaces</small>
+                  </div>
+                  <div
+                    class="workspace-chooser"
+                    role="listbox"
+                    aria-label="Available workspaces"
+                    onKeyDown={handleChooserKeyDown}
                   >
-                    <span class="workspace-chooser__mark" aria-hidden="true">
-                      {workspaceName.slice(0, 2)}
-                    </span>
-                    <span>
-                      <strong>{workspaceName}</strong>
-                      <small>Live tmux workspace</small>
-                    </span>
-                    <DomIcon id="terminals" usage="action" />
-                  </button>
-                )}
-              </For>
-            </div>
-          </Show>
+                    <For each={props.workspaces}>
+                      {(workspaceName) => (
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={workspaceName === activeWorkspace()}
+                          tabIndex={workspaceName === activeWorkspace() ? 0 : -1}
+                          onFocus={() => setActiveWorkspace(workspaceName)}
+                          onClick={() => props.onSelectWorkspace?.(workspaceName)}
+                        >
+                          <span class="workspace-chooser__mark" aria-hidden="true">
+                            {workspaceName.slice(0, 2)}
+                          </span>
+                          <span>
+                            <strong>{workspaceName}</strong>
+                            <small>Live tmux workspace</small>
+                          </span>
+                          <DomIcon id="terminals" usage="action" />
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
 
-          <Show when={props.onRetry}>
-            <div class="runtime-state-card__actions">
-              <button class="runtime-action" type="button" onClick={() => props.onRetry?.()}>
-                Try again
-              </button>
-            </div>
-          </Show>
-        </section>
+                <Show when={props.openProjectError}>
+                  <div class="runtime-state-card__inline-error" role="alert">
+                    <DomIcon id="refresh" usage="action" />
+                    <span>{props.openProjectError}</span>
+                  </div>
+                </Show>
+
+                <Show when={props.command}>
+                  {(command) => <RecoveryCommand command={command()} />}
+                </Show>
+
+                <Show when={props.onOpenProject || props.onRetry || props.onRestartConnection}>
+                  <div class="runtime-state-card__actions">
+                    <Show when={props.onOpenProject}>
+                      <Button
+                        variant="primary"
+                        loading={openingProject()}
+                        onClick={() => props.onOpenProject?.()}
+                      >
+                        {openProjectLabel()}
+                      </Button>
+                    </Show>
+                    <Show when={props.onRetry}>
+                      <Button
+                        variant={props.onOpenProject ? "secondary" : "primary"}
+                        onClick={() => props.onRetry?.()}
+                      >
+                        {props.retryLabel ?? "Try again"}
+                      </Button>
+                    </Show>
+                    <Show when={props.onRestartConnection}>
+                      <Button variant="secondary" onClick={() => props.onRestartConnection?.()}>
+                        Restart connection
+                      </Button>
+                    </Show>
+                  </div>
+                </Show>
+
+                <Show when={props.diagnostics && props.diagnostics.length > 0}>
+                  <details class="runtime-diagnostics">
+                    <summary>
+                      <Icon icon={ArrowRight01Icon} size="dense" />
+                      Connection details
+                    </summary>
+                    <ul>
+                      <For each={props.diagnostics}>{(item) => <li>{item}</li>}</For>
+                    </ul>
+                  </details>
+                </Show>
+              </div>
+
+              <Show when={props.state === "onboarding"}>
+                <aside class="runtime-onboarding-notes" aria-label="Config-free workspace setup">
+                  <span class="runtime-onboarding-notes__icon">
+                    <DomIcon id="native" usage="pane" />
+                  </span>
+                  <strong>Start from the folder you already have</strong>
+                  <p>
+                    tmux-ide opens a native tmux workspace, detects the project context, and keeps
+                    agent terminals attached to the real session.
+                  </p>
+                  {/*
+                   * Each bullet's copy is ONE grid item. The list is a two-column
+                   * grid (dot, text); an inline <code> in the middle of a bare text
+                   * run split this bullet into three items, so "ide.yml" was placed
+                   * into the 8px dot column and "required" onto the next row — the
+                   * line painted on top of itself.
+                   */}
+                  <ul>
+                    <li>
+                      <Icon icon={CheckmarkCircle02Icon} size="dense" />
+                      <span>
+                        No <code>ide.yml</code> required
+                      </span>
+                    </li>
+                    <li>
+                      <Icon icon={CheckmarkCircle02Icon} size="dense" />
+                      <span>Available harnesses are discovered after opening</span>
+                    </li>
+                    <li>
+                      <Icon icon={CheckmarkCircle02Icon} size="dense" />
+                      <span>Your tmux session stays the source of truth</span>
+                    </li>
+                  </ul>
+                  <details>
+                    <summary>
+                      <Icon icon={ArrowRight01Icon} size="dense" />
+                      Advanced configuration
+                    </summary>
+                    <p>
+                      Add <code>.tmux-ide/workspace.yml</code> later only when you want a saved
+                      layout, custom commands, or project theme overrides.
+                    </p>
+                  </details>
+                </aside>
+              </Show>
+            </section>
+          </Match>
+        </Switch>
       </main>
 
       <footer class="status-strip runtime-status-strip" role="status">
@@ -302,7 +540,7 @@ interface LiveWorkspaceProps extends Omit<DesktopLiveApplicationProps, "daemon">
   readonly catalogState: DesktopWorkspaceCatalogState;
 }
 
-type LiveWorkspaceProjection =
+export type LiveWorkspaceProjection =
   | {
       readonly status: "ready";
       readonly input: ApplicationShellProjectionInputV1;
@@ -316,8 +554,29 @@ function assertUniqueSemanticIds(label: string, ids: readonly string[]): void {
   }
 }
 
+/**
+ * The agent-graph overlay is a NON-durable, additive projection. A malformed
+ * overlay must never blank the whole workspace, so it is validated in isolation
+ * at the read boundary: if it fails, only the overlay is dropped and the shell
+ * read continues. A valid or absent overlay is returned untouched.
+ */
+export function sanitizeAgentGraphOverlay(
+  input: ApplicationShellProjectionInputV1,
+): ApplicationShellProjectionInputV1 {
+  if (!("agentGraphOverlay" in input)) return input;
+  const candidate = (input as { readonly agentGraphOverlay?: unknown }).agentGraphOverlay;
+  if (candidate === undefined || AgentGraphOverlaySchemaZ.safeParse(candidate).success) {
+    return input;
+  }
+  const rest: Record<string, unknown> = { ...input };
+  delete rest.agentGraphOverlay;
+  return rest as unknown as ApplicationShellProjectionInputV1;
+}
+
 /** Strict rendering boundary. Failures are intentionally sanitized by the caller. */
-function projectLiveWorkspace(input: ApplicationShellProjectionInputV1): LiveWorkspaceProjection {
+export function projectLiveWorkspace(
+  input: ApplicationShellProjectionInputV1,
+): LiveWorkspaceProjection {
   try {
     const shell = projectApplicationShellV1(input);
     const sessionIds = shell.sidebar.sessions.map(({ id }) => id);
@@ -333,7 +592,7 @@ function projectLiveWorkspace(input: ApplicationShellProjectionInputV1): LiveWor
       "terminal resource",
       terminalPanes.map(({ model }) => model.pane.id),
     );
-    return { status: "ready", input, terminalPanes };
+    return { status: "ready", input: sanitizeAgentGraphOverlay(input), terminalPanes };
   } catch {
     return { status: "rejected" };
   }
@@ -394,6 +653,165 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
   });
   createEffect(() => store.setTarget(props.target));
 
+  // Live Files and Changes read stores, pinned to the same daemon generation as
+  // the shell resource. Expansion and selection are renderer-owned; each store
+  // parses responses at the boundary and drops stale-generation reads.
+  const filesCatalog = createSolidWorkspaceFilesCatalogStore({
+    host: props.host,
+    target: props.target,
+  });
+  const filePreview = createSolidWorkspaceFilePreviewStore({
+    host: props.host,
+    target: props.target,
+  });
+  const changesCatalog = createSolidWorkspaceChangesCatalogStore({
+    host: props.host,
+    target: props.target,
+  });
+  const changeDiff = createSolidWorkspaceChangeDiffStore({
+    host: props.host,
+    target: props.target,
+  });
+  const [filesExpandedIds, setFilesExpandedIds] = createSignal<
+    ReadonlySet<WorkspaceFileResourceId>
+  >(new Set<WorkspaceFileResourceId>());
+  const [filesSelectedId, setFilesSelectedId] = createSignal<WorkspaceFileResourceId | null>(null);
+  const [changesSelectedId, setChangesSelectedId] = createSignal<WorkspaceChangeResourceId | null>(
+    null,
+  );
+  let workspaceSurfaceKey = "";
+  createEffect(() => {
+    const target = props.target;
+    filesCatalog.setTarget(target);
+    filePreview.setTarget(target);
+    changesCatalog.setTarget(target);
+    changeDiff.setTarget(target);
+    const key = [target.daemon.instanceId, target.daemon.startedAt, target.workspaceName].join(
+      "\u0000",
+    );
+    if (key === workspaceSurfaceKey) return;
+    // A new workspace generation retires renderer-owned expansion and selection.
+    workspaceSurfaceKey = key;
+    setFilesExpandedIds(new Set<WorkspaceFileResourceId>());
+    setFilesSelectedId(null);
+    setChangesSelectedId(null);
+  });
+
+  const fileEntriesById = createMemo(() => collectFileCatalogs(filesCatalog.state()).entriesById);
+
+  // A directory whose incremental load failed must not spin forever: drop it and
+  // collapse it so the row returns to an openable, honest collapsed state.
+  createEffect(() => {
+    const directories = filesCatalog.state().directories;
+    const expanded = filesExpandedIds();
+    const failed: WorkspaceFileResourceId[] = [];
+    for (const [id, slot] of directories) {
+      if (!expanded.has(id)) continue;
+      if (
+        slot.status === "error" ||
+        (slot.status === "loaded" && slot.resource.status !== "ready")
+      ) {
+        failed.push(id);
+      }
+    }
+    if (failed.length === 0) return;
+    const next = new Set(expanded);
+    for (const id of failed) {
+      next.delete(id);
+      filesCatalog.dropDirectory(id);
+    }
+    setFilesExpandedIds(next);
+  });
+
+  const filesSurface = createMemo<FilesSurfaceProps>(() => ({
+    model: filesSurfaceModel(
+      filesCatalog.state(),
+      props.target.workspaceName,
+      filesExpandedIds(),
+      filesSelectedId(),
+    ),
+    preview: filePreviewSurfaceModel(filePreview.state(), fileEntriesById()),
+    onSelectFile: (id) => {
+      setFilesSelectedId(id);
+      if (fileEntriesById().get(id)?.kind === "file") filePreview.load(id);
+    },
+    onToggleDirectory: (id, next) => {
+      const current = new Set(filesExpandedIds());
+      if (next) {
+        current.add(id);
+        filesCatalog.loadDirectory(id);
+      } else {
+        current.delete(id);
+        filesCatalog.dropDirectory(id);
+      }
+      setFilesExpandedIds(current);
+    },
+    onRetry: () => filesCatalog.refresh(),
+    onRetryPreview: () => {
+      const id = filesSelectedId();
+      if (id && fileEntriesById().get(id)?.kind === "file") filePreview.load(id);
+    },
+  }));
+
+  const changesSurface = createMemo<ChangesSurfaceProps>(() => ({
+    model: changesSurfaceModel(changesCatalog.state(), changesSelectedId()),
+    diff: changeDiffSurfaceModel(changeDiff.state(), changeEntriesById(changesCatalog.state())),
+    onSelectChange: (id) => {
+      setChangesSelectedId(id);
+      changeDiff.load(id);
+    },
+    onRetry: () => changesCatalog.refresh(),
+    onRetryDiff: () => {
+      const id = changesSelectedId();
+      if (id) changeDiff.load(id);
+    },
+  }));
+
+  const [mutationError, setMutationError] = createSignal<string | null>(null);
+  const [appWindowMutationAvailable, setAppWindowMutationAvailable] = createSignal(false);
+  const [appWindowMutationUnavailableReason, setAppWindowMutationUnavailableReason] = createSignal(
+    "Checking durable window controls…",
+  );
+  let mutationTail: Promise<void> = Promise.resolve();
+  let capabilityGeneration = 0;
+  let disposed = false;
+  createEffect(() => {
+    const daemon = { ...props.target.daemon };
+    const generation = ++capabilityGeneration;
+    setAppWindowMutationAvailable(false);
+    setAppWindowMutationUnavailableReason("Checking durable window controls…");
+    void (async () => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const result = await props.host.daemon.capabilities();
+          if (disposed || generation !== capabilityGeneration) return;
+          if (
+            result.status === "ok" &&
+            result.daemon.protocolVersion === daemon.protocolVersion &&
+            result.daemon.productVersion === daemon.productVersion &&
+            result.daemon.instanceId === daemon.instanceId &&
+            result.daemon.startedAt === daemon.startedAt
+          ) {
+            setAppWindowMutationAvailable(result.capabilities.appWindowMutation.available);
+            setAppWindowMutationUnavailableReason(
+              result.capabilities.appWindowMutation.available
+                ? ""
+                : result.capabilities.appWindowMutation.reason,
+            );
+            return;
+          }
+        } catch {
+          // One bounded retry covers a transient IPC/broker handoff.
+        }
+      }
+      if (!disposed && generation === capabilityGeneration) {
+        setAppWindowMutationUnavailableReason(
+          "Durable window controls are unavailable. Reopen the workspace to recheck.",
+        );
+      }
+    })();
+  });
+
   const createPaneCatalogs = createMemo<CreatePaneFlowCatalogs>(() => {
     const snapshot = props.catalogState.snapshot;
     return {
@@ -425,7 +843,6 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     readonly reject: () => void;
     readonly timer: ReturnType<typeof setTimeout>;
   } | null = null;
-  let disposed = false;
 
   const settlePendingRefresh = (outcome: "resolve" | "reject"): void => {
     const pending = pendingRefresh;
@@ -508,6 +925,78 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     return snapshot ? projectLiveWorkspace(snapshot) : null;
   });
 
+  const waitForAppWindowRevision = async (revision: number): Promise<void> => {
+    const deadline = Date.now() + 8_000;
+    while (!disposed && Date.now() < deadline) {
+      const parsed = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
+      if (parsed.success && parsed.data.appWindows.revision >= revision) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("The authoritative window layout did not refresh.");
+  };
+
+  const mutateAppWindow = (invocation: AppWindowCanvasCommandInvocation): Promise<void> => {
+    const operation = mutationTail.then(async () => {
+      if (disposed) throw new Error("The active workspace changed during window mutation.");
+      let current = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
+      if (!current.success) throw new Error("The live window layout is unavailable.");
+      let attemptedRevision = current.data.appWindows.revision;
+      try {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          attemptedRevision = current.data.appWindows.revision;
+          const result = AppWindowMutationHostResultSchemaZ.parse(
+            await props.host.daemon.mutateAppWindow({
+              workspaceName: props.target.workspaceName,
+              expectedDocumentRevision: attemptedRevision,
+              command: invocation.command,
+            }),
+          );
+          if (result.status === "error") {
+            if (result.error.code === "daemon-identity-mismatch") {
+              props.onDaemonIdentityMismatch?.();
+            }
+            if (result.error.code !== "resource-changed" || attempt > 0) {
+              throw new Error(result.error.reason);
+            }
+            store.refresh();
+            await waitForAppWindowRevision(attemptedRevision + 1);
+            current = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
+            if (!current.success) throw new Error("The refreshed window layout is unavailable.");
+            continue;
+          }
+          if (
+            result.result.daemonInstanceId !== props.target.daemon.instanceId ||
+            result.result.workspaceName !== props.target.workspaceName
+          ) {
+            props.onDaemonIdentityMismatch?.();
+            throw new Error("The window layout belongs to a different workspace generation.");
+          }
+          store.refresh();
+          await waitForAppWindowRevision(result.result.documentRevision);
+          setMutationError(null);
+          return;
+        }
+      } catch (error) {
+        // A conflict means our V3 revision is stale. Refresh before releasing
+        // the serialized mutation queue so the next gesture can retry once.
+        store.refresh();
+        const deadline = Date.now() + 2_000;
+        while (!disposed && Date.now() < deadline) {
+          const refreshed = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
+          if (refreshed.success && refreshed.data.appWindows.revision !== attemptedRevision) {
+            break;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        }
+        throw error;
+      }
+    });
+    mutationTail = operation.catch((error: unknown) => {
+      setMutationError(error instanceof Error ? error.message : "Window mutation failed.");
+    });
+    return operation;
+  };
+
   let mismatchGeneration = -1;
   createEffect(() => {
     const state = store.state();
@@ -520,6 +1009,50 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
       props.onDaemonIdentityMismatch?.();
     }
   });
+  // The one derived compound connection shape: transport health from the
+  // main-process supervisor (pushed through the store) crossed with the last
+  // sync result. A failed read on a healthy socket reads "connected, sync
+  // degraded"; a supervisor retry shows its real attempt position.
+  const connectionHealth = createMemo(() => {
+    const resource = store.state();
+    const transport = resource.transport ?? null;
+    const syncHealthy = resource.status === "live" || resource.status === "loading";
+    return deriveConnectionHealth(
+      transport,
+      syncHealthy ? { ok: true } : { ok: false, reason: resourceReason(resource) },
+    );
+  });
+
+  /**
+   * The daemon's own readiness ladder, read while the daemon is CONNECTED and
+   * this workspace is not.
+   *
+   * The ladder already reaches the disconnected screens: it rides on the
+   * capability state the host composes when it cannot reach a daemon at all.
+   * This is the other half. A connected daemon that cannot serve a workspace is
+   * exactly the case where the two rungs only the daemon can answer —
+   * `credential-held` and `attachment-issuable` — are the whole diagnosis, and
+   * until now this surface said only that the workspace was unavailable.
+   *
+   * Diagnostics: an unreadable ladder simply adds no lines.
+   */
+  const [daemonLadder, setDaemonLadder] = createSignal<StartupReadinessLadder | null>(null);
+  let ladderRead = 0;
+  createEffect(() => {
+    const status = store.state().status;
+    if (status !== "degraded" && status !== "error") return;
+    const read = ++ladderRead;
+    void props.host.daemon
+      .startupReadiness()
+      .then((result) => {
+        if (read !== ladderRead) return;
+        setDaemonLadder(result.status === "ok" ? result.ladder : null);
+      })
+      .catch(() => {
+        if (read === ladderRead) setDaemonLadder(null);
+      });
+  });
+
   const notice = createMemo(() => {
     const resource = store.state();
     if (resource.status === "stale") {
@@ -536,11 +1069,31 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
         reason: resource.reason,
       };
     }
+    if (mutationError()) {
+      return {
+        tone: "degraded" as const,
+        label: "Window layout was not saved",
+        reason: mutationError() ?? "Try the window action again.",
+      };
+    }
     const reason = catalogReason(props.catalogState);
     return reason
       ? { tone: "stale" as const, label: "Workspace catalog is recovering", reason }
       : null;
   });
+
+  /** The stuck rung the daemon itself reports, or nothing when none was read. */
+  const startupReadinessLines = (): readonly string[] => {
+    const ladder = daemonLadder();
+    if (!ladder) return [];
+    return startupReadinessDiagnostics(
+      projectDesktopStartupReadiness({
+        daemon: { status: "connected", identity: props.target.daemon },
+        ladder,
+        observedAt: new Date().toISOString(),
+      }),
+    );
+  };
 
   const renderFallback = () => {
     const projected = projection();
@@ -557,6 +1110,12 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
           description="tmux-ide rejected an incoherent semantic workspace update."
           guidance="No preview or partial workspace data is shown"
           onRetry={() => store.refresh()}
+          retryLabel="Reload workspace"
+          onRestartConnection={props.onRetryDaemonConnection}
+          diagnostics={[
+            "The V3 workspace resource failed semantic projection.",
+            "The previous workspace was not mounted as a fallback.",
+          ]}
         />
       );
     }
@@ -588,12 +1147,24 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
         description={identityMismatch ? recovery.description : resourceReason(resource)}
         guidance={identityMismatch ? recovery.guidance : "tmux remains the source of truth"}
         alert={resource.status === "error"}
+        diagnostics={[
+          identityMismatch ? recovery.description : resourceReason(resource),
+          `Resource state: ${resource.status}`,
+          ...startupReadinessLines(),
+          "The desktop shell remains gated until a valid V3 resource is available.",
+        ]}
         onRetry={
           identityMismatch
             ? props.daemonRecovery === "refreshing"
               ? undefined
               : props.onRetryDaemonConnection
             : () => store.refresh()
+        }
+        retryLabel={identityMismatch ? "Recheck daemon" : "Reload workspace"}
+        onRestartConnection={
+          !identityMismatch && resource.status === "error"
+            ? props.onRetryDaemonConnection
+            : undefined
         }
       />
     );
@@ -629,6 +1200,15 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             }}
             onPaneAction={props.onPaneAction}
             onPaneGrip={props.onPaneGrip}
+            onAppWindowCommand={
+              props.onAppWindowCommand ??
+              (appWindowMutationAvailable() ? mutateAppWindow : undefined)
+            }
+            appWindowMutationUnavailableReason={appWindowMutationUnavailableReason()}
+            connectionHealth={connectionHealth()}
+            onRefreshResource={() => store.refresh()}
+            filesSurface={filesSurface()}
+            changesSurface={changesSurface()}
           />
           <Show when={notice()}>
             {(current) => (
@@ -638,6 +1218,12 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
                 reason={current().reason}
               />
             )}
+          </Show>
+          <Show when={props.introPending}>
+            <FirstRunIntro
+              platform={props.platform}
+              onDismiss={() => props.onAcknowledgeIntro?.()}
+            />
           </Show>
         </>
       )}
@@ -653,6 +1239,75 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
   const catalog = createSolidDesktopWorkspaceCatalogStore({
     host: props.host,
     daemon: props.daemon,
+  });
+  const [openProjectPhase, setOpenProjectPhase] = createSignal<
+    "idle" | "selecting" | "opening" | "waiting" | "error"
+  >("idle");
+  const [openProjectError, setOpenProjectError] = createSignal<string | null>(null);
+  const [openProjectCommand, setOpenProjectCommand] = createSignal<string | null>(null);
+  const [pendingWorkspaceName, setPendingWorkspaceName] = createSignal<string | null>(null);
+  let openProjectRequest = 0;
+  let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearDiscoveryTimer = (): void => {
+    if (discoveryTimer !== null) clearTimeout(discoveryTimer);
+    discoveryTimer = null;
+  };
+
+  const waitForOpenedWorkspace = (workspaceName: string): void => {
+    clearDiscoveryTimer();
+    setPendingWorkspaceName(workspaceName);
+    setOpenProjectPhase("waiting");
+    catalog.refresh();
+    discoveryTimer = setTimeout(() => {
+      if (pendingWorkspaceName() !== workspaceName) return;
+      setOpenProjectError(
+        "The workspace opened, but discovery is still catching up. Retry discovery without reopening the folder.",
+      );
+      setOpenProjectPhase("error");
+    }, 8_000);
+  };
+
+  const openProject = async (): Promise<void> => {
+    if (openProjectPhase() === "selecting" || openProjectPhase() === "opening") return;
+    const request = ++openProjectRequest;
+    clearDiscoveryTimer();
+    setOpenProjectError(null);
+    setOpenProjectCommand(null);
+    setOpenProjectPhase("selecting");
+    try {
+      const result = await props.host.workspace.openProjectDirectory();
+      if (request !== openProjectRequest) return;
+      if (!result) {
+        setOpenProjectPhase("idle");
+        return;
+      }
+      if (result.status === "error") {
+        const recovery = recoveryForWorkspaceOpenError(result.error, props.platform);
+        setOpenProjectError(recovery.description);
+        setOpenProjectCommand(recovery.command);
+        setOpenProjectPhase("error");
+        return;
+      }
+      waitForOpenedWorkspace(result.result.resource.workspaceName);
+    } catch {
+      if (request !== openProjectRequest) return;
+      setOpenProjectError("tmux-ide could not open that folder through the verified daemon.");
+      setOpenProjectPhase("error");
+    }
+  };
+
+  const retryDiscovery = (): void => {
+    const workspaceName = pendingWorkspaceName();
+    if (!workspaceName) return;
+    setOpenProjectError(null);
+    setOpenProjectCommand(null);
+    waitForOpenedWorkspace(workspaceName);
+  };
+
+  onCleanup(() => {
+    openProjectRequest += 1;
+    clearDiscoveryTimer();
   });
   // The constructor already owns the initial daemon. Only a genuinely new
   // capability generation should retire catalog work and start another read.
@@ -685,6 +1340,23 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     return { daemon: state.daemon, workspaceName: selection.workspaceName };
   });
 
+  createEffect(() => {
+    const workspaceName = pendingWorkspaceName();
+    const snapshot = catalog.state().snapshot;
+    if (
+      !workspaceName ||
+      !snapshot?.workspaces.some((workspace) => workspace.workspaceName === workspaceName)
+    ) {
+      return;
+    }
+    if (!catalog.select(workspaceName)) return;
+    clearDiscoveryTimer();
+    setPendingWorkspaceName(null);
+    setOpenProjectError(null);
+    setOpenProjectCommand(null);
+    setOpenProjectPhase("idle");
+  });
+
   const fallback = () => {
     const state = catalog.state();
     const selection = state.snapshot?.selection;
@@ -697,9 +1369,15 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           windowState={props.windowState}
           state="onboarding"
           eyebrow="Workspace discovery"
-          title="No live workspaces yet"
-          description="Start tmux-ide in a project to make its live workspace available here."
-          guidance="Workspace opening is not available in this build yet"
+          title="Open a project to begin"
+          description="Choose any project folder. tmux-ide will create or reopen its config-free native workspace."
+          guidance="No ide.yml required"
+          onOpenProject={() => void openProject()}
+          openProjectPhase={openProjectPhase()}
+          openProjectError={openProjectError()}
+          command={openProjectCommand()}
+          onRetry={pendingWorkspaceName() ? retryDiscovery : undefined}
+          retryLabel="Retry discovery"
         />
       );
     }
@@ -717,12 +1395,23 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           guidance="Arrow keys move · Enter opens"
           workspaces={state.snapshot.workspaces.map(({ workspaceName }) => workspaceName)}
           onSelectWorkspace={(workspaceName) => catalog.select(workspaceName)}
+          onOpenProject={() => void openProject()}
+          openProjectPhase={openProjectPhase()}
+          openProjectError={openProjectError()}
+          command={openProjectCommand()}
+          onRetry={pendingWorkspaceName() ? retryDiscovery : undefined}
+          retryLabel="Retry discovery"
         />
       );
     }
     const identityMismatch =
       state.status === "degraded" && state.code === "daemon-identity-mismatch";
     const recovery = recoveryPresentation(props.daemonRecovery ?? "idle");
+    const catalogReasonText = "reason" in state ? state.reason : null;
+    const missingTmuxCommand =
+      !identityMismatch && catalogReasonText && reasonIndicatesMissingTmux(catalogReasonText)
+        ? tmuxInstallCommand(props.platform)
+        : null;
     const surfaceState =
       state.status === "loading"
         ? "loading"
@@ -736,6 +1425,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
         platform={props.platform}
         windowState={props.windowState}
         state={surfaceState}
+        command={missingTmuxCommand}
         eyebrow="Native tmux workspace"
         title={
           state.status === "loading"
@@ -753,6 +1443,15 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
         }
         guidance={identityMismatch ? recovery.guidance : "tmux remains the source of truth"}
         alert={state.status === "error"}
+        diagnostics={[
+          identityMismatch
+            ? recovery.description
+            : "reason" in state
+              ? state.reason
+              : "Catalog unavailable.",
+          `Recovery phase: ${props.daemonRecovery ?? "idle"}`,
+          "The renderer has not received a usable V3 workspace resource.",
+        ]}
         onRetry={
           state.status === "loading"
             ? undefined
@@ -761,6 +1460,10 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
                 ? undefined
                 : props.onRetryDaemonConnection
               : () => catalog.refresh()
+        }
+        retryLabel="Retry workspace"
+        onRestartConnection={
+          props.daemonRecovery === "refreshing" ? undefined : props.onRetryDaemonConnection
         }
       />
     );
@@ -782,9 +1485,12 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           onCommand={props.onCommand}
           onPaneAction={props.onPaneAction}
           onPaneGrip={props.onPaneGrip}
+          onAppWindowCommand={props.onAppWindowCommand}
           onDaemonIdentityMismatch={props.onDaemonIdentityMismatch}
           daemonRecovery={props.daemonRecovery}
           onRetryDaemonConnection={props.onRetryDaemonConnection}
+          introPending={props.introPending}
+          onAcknowledgeIntro={props.onAcknowledgeIntro}
         />
       )}
     </Show>

@@ -2,31 +2,67 @@ import {
   DesktopDaemonHostStateSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
   type DaemonInstanceIdentity,
+  type DaemonChildOutputTail,
+  type StartupReadinessLadder,
   type DesktopDaemonCapabilityState,
+  type DesktopDaemonCapabilitiesResult,
   type DesktopDaemonEvent,
   type DesktopDaemonFetchApplicationShellResult,
+  type DesktopDaemonFetchApplicationShellRequest,
+  type DesktopDaemonFetchWorkspaceChangeDiffRequest,
+  type DesktopDaemonFetchWorkspaceChangeDiffResult,
+  type DesktopDaemonFetchWorkspaceChangesRequest,
+  type DesktopDaemonFetchWorkspaceChangesResult,
+  type DesktopDaemonFetchWorkspaceFilePreviewRequest,
+  type DesktopDaemonFetchWorkspaceFilePreviewResult,
+  type DesktopDaemonFetchWorkspaceFilesRequest,
+  type DesktopDaemonFetchWorkspaceFilesResult,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
+  type DesktopDaemonFetchFleetCatalogResult,
   type DesktopDaemonRefreshConnectionResult,
   type TerminalAttachmentIssueMutationRequest,
   type TerminalAttachmentIssueResult,
+  type PaneStreamIssueMutationRequest,
+  type PaneStreamIssueResult,
   type WorkspacePaneCreateMutationRequest,
   type WorkspacePaneCreateMutationResult,
+  type WorkspaceOpenMutationRequest,
+  type WorkspaceOpenMutationResult,
+  type WorkspacePromoteMutationRequest,
+  type WorkspacePromoteMutationResult,
+  type AppWindowMutationRequest,
+  type WorkspaceMultiplexerMutationRequest,
+  type WorkspaceMultiplexerMutationResult,
+  type AppWindowMutationResult,
+  type WidgetAssetRequest,
+  type WidgetAssetResult,
 } from "@tmux-ide/contracts";
 
 import {
   DaemonResourceBroker,
   daemonCapabilityError,
+  paneStreamIssueError,
   rendererDaemonState,
   terminalAttachmentIssueError,
   type BrokerSubscriptionResult,
 } from "./daemon-resource-broker.ts";
 import { runDaemonPreflight, type DaemonPreflight } from "./daemon-preflight.ts";
+import type { KnownEnvironmentReconciler } from "./environment-catalog.ts";
 import { inspectCanonicalDaemonInfo } from "../../../packages/daemon/src/canonical.ts";
 
 type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected" }>;
 
 export interface DaemonResourceAuthority {
+  capabilities(): Promise<DesktopDaemonCapabilitiesResult>;
+  mutateAppWindow(request: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
+  invokeVerb(
+    request: WorkspaceMultiplexerMutationRequest,
+  ): Promise<WorkspaceMultiplexerMutationResult>;
+  openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
+  promoteWorkspace(
+    request: WorkspacePromoteMutationRequest,
+  ): Promise<WorkspacePromoteMutationResult>;
   createWorkspacePane(
     request: WorkspacePaneCreateMutationRequest,
   ): Promise<WorkspacePaneCreateMutationResult>;
@@ -34,12 +70,39 @@ export interface DaemonResourceAuthority {
     request: TerminalAttachmentIssueMutationRequest,
     rendererOrigin: string,
   ): Promise<TerminalAttachmentIssueResult>;
+  issuePaneStream(
+    request: PaneStreamIssueMutationRequest,
+    rendererOrigin: string,
+  ): Promise<PaneStreamIssueResult>;
   listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
-  fetchApplicationShell(workspaceName: string): Promise<DesktopDaemonFetchApplicationShellResult>;
+  fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult>;
+  fetchWidgetAsset(request: WidgetAssetRequest): Promise<WidgetAssetResult>;
+  fetchApplicationShell(
+    workspaceName: string,
+    resourceVersion?: DesktopDaemonFetchApplicationShellRequest["resourceVersion"],
+  ): Promise<DesktopDaemonFetchApplicationShellResult>;
+  fetchWorkspaceFiles(
+    request: DesktopDaemonFetchWorkspaceFilesRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceFilesResult>;
+  fetchWorkspaceFilePreview(
+    request: DesktopDaemonFetchWorkspaceFilePreviewRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult>;
+  fetchWorkspaceChanges(
+    request: DesktopDaemonFetchWorkspaceChangesRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceChangesResult>;
+  fetchWorkspaceChangeDiff(
+    request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult>;
   subscribe(
     workspaceNames: readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
   ): Promise<BrokerSubscriptionResult>;
+  /**
+   * Explicit transport wakeup: interrupts a scheduled event-socket backoff and
+   * restarts a transport stopped at its fatal ceiling. Optional so bespoke
+   * test authorities without an event supervisor remain valid.
+   */
+  retryTransport?(): void;
   releaseRenderer(): void;
   dispose(): void;
 }
@@ -56,6 +119,26 @@ export interface DaemonConnectionCoordinatorDependencies {
   readonly createBroker?: (daemon: ConnectedDaemonState) => DaemonResourceAuthority;
   /** Main-process-only observer; renderer-safe state remains behind state(). */
   readonly onHostStateChanged?: (daemon: DesktopDaemonHostState) => void;
+  /**
+   * Client-side environment catalog: learns the daemon-minted environmentId
+   * from each verified connect. Observational only — reconcile failures never
+   * disturb connection authority, and no trust decision reads it.
+   */
+  readonly environmentReconciler?: KnownEnvironmentReconciler;
+  /**
+   * The daemon child's captured stderr tail, read at state() time. Supplied by
+   * the supervisor that owns the child; absent for coordinators with no child
+   * of their own (an attached foreign daemon, tests).
+   */
+  readonly childOutputTail?: () => DaemonChildOutputTail | null;
+  /**
+   * Reads the daemon's own startup readiness ladder. Called only while a
+   * DISCONNECTED state is being composed — the daemon may still be answering,
+   * and then its ladder names the rung the host cannot see. Must be bounded and
+   * must resolve to null rather than reject; a diagnostic read never delays or
+   * changes a connection verdict.
+   */
+  readonly readStartupReadiness?: () => Promise<StartupReadinessLadder | null>;
 }
 
 interface RefreshFlight {
@@ -79,8 +162,15 @@ const BROKER_FAILED_STATE: DesktopDaemonHostState = Object.freeze({
 function identityOf(
   daemon: Extract<DesktopDaemonHostState, { status: "connected" }>,
 ): DaemonInstanceIdentity {
-  const { protocolVersion, productVersion, instanceId, startedAt } = daemon.descriptor;
-  return { protocolVersion, productVersion, instanceId, startedAt };
+  const { protocolVersion, productVersion, instanceId, startedAt, environmentId } =
+    daemon.descriptor;
+  return {
+    protocolVersion,
+    productVersion,
+    instanceId,
+    startedAt,
+    ...(environmentId !== undefined ? { environmentId } : {}),
+  };
 }
 
 function sameIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceIdentity): boolean {
@@ -127,7 +217,12 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   readonly #preflightTimeoutMs: number | undefined;
   readonly #createBroker: (daemon: ConnectedDaemonState) => DaemonResourceAuthority;
   readonly #onHostStateChanged: ((daemon: DesktopDaemonHostState) => void) | undefined;
+  readonly #environmentReconciler: KnownEnvironmentReconciler | undefined;
+  readonly #childOutputTail: (() => DaemonChildOutputTail | null) | undefined;
+  readonly #readStartupReadiness: (() => Promise<StartupReadinessLadder | null>) | undefined;
   readonly #subscriptions = new Map<number, CoordinatorSubscription>();
+  /** The last ladder read while disconnected; cleared the moment we connect. */
+  #startupReadiness: StartupReadinessLadder | null = null;
 
   #daemon: DesktopDaemonHostState;
   #broker: DaemonResourceAuthority | null = null;
@@ -143,18 +238,61 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     this.#preflightTimeoutMs = dependencies.preflightTimeoutMs;
     this.#createBroker = dependencies.createBroker ?? defaultBrokerFactory;
     this.#onHostStateChanged = dependencies.onHostStateChanged;
+    this.#environmentReconciler = dependencies.environmentReconciler;
+    this.#childOutputTail = dependencies.childOutputTail;
+    this.#readStartupReadiness = dependencies.readStartupReadiness;
     if (this.#daemon.status === "connected") {
       try {
         this.#broker = this.#createBroker(this.#daemon);
+        this.#reconcileEnvironment(this.#daemon);
       } catch {
         this.#daemon = BROKER_FAILED_STATE;
       }
     }
+    if (this.#daemon.status !== "connected") {
+      // The first bootstrap can arrive before any refresh runs, and a desktop
+      // that starts disconnected is exactly when the user needs the diagnosis.
+      // Nothing waits on this: it resolves into the cache or it does not.
+      void this.#refreshStartupReadiness();
+    }
     this.#publishHostState();
   }
 
+  /**
+   * Read the daemon's ladder into the cache. Never throws, never rejects, and
+   * is only meaningful while disconnected — a connected state is served by the
+   * broker, which already sees everything the ladder would report.
+   */
+  async #refreshStartupReadiness(): Promise<void> {
+    if (!this.#readStartupReadiness) return;
+    try {
+      const ladder = await this.#readStartupReadiness();
+      this.#startupReadiness = ladder ?? null;
+    } catch {
+      this.#startupReadiness = null;
+    }
+  }
+
+  /** Learn the stable environment id behind a verified connect; best-effort. */
+  #reconcileEnvironment(daemon: ConnectedDaemonState): void {
+    const environmentId = daemon.descriptor.environmentId;
+    if (environmentId === undefined) return;
+    try {
+      this.#environmentReconciler?.reconcileLocalCanonical(environmentId);
+    } catch {
+      // The catalog is bookkeeping; it can never affect connection authority.
+    }
+  }
+
   state(): DesktopDaemonCapabilityState {
-    return rendererDaemonState(this.#daemon);
+    if (this.#daemon.status === "connected") return rendererDaemonState(this.#daemon);
+    let childOutput: DaemonChildOutputTail | null = null;
+    try {
+      childOutput = this.#childOutputTail?.() ?? null;
+    } catch {
+      // Diagnostics are never allowed to break connection reporting.
+    }
+    return rendererDaemonState(this.#daemon, childOutput, this.#startupReadiness);
   }
 
   refreshConnection(): Promise<DesktopDaemonRefreshConnectionResult> {
@@ -202,6 +340,70 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     return result;
   }
 
+  async invokeVerb(
+    request: WorkspaceMultiplexerMutationRequest,
+  ): Promise<WorkspaceMultiplexerMutationResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.invokeVerb(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
+  }
+
+  async mutateAppWindow(request: AppWindowMutationRequest): Promise<AppWindowMutationResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.mutateAppWindow(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
+  }
+
+  async openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.openWorkspace(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
+  }
+
+  async promoteWorkspace(
+    request: WorkspacePromoteMutationRequest,
+  ): Promise<WorkspacePromoteMutationResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.promoteWorkspace(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
+  }
+
   async issueTerminalAttachment(
     request: TerminalAttachmentIssueMutationRequest,
     rendererOrigin: string,
@@ -230,6 +432,31 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     return result;
   }
 
+  async issuePaneStream(
+    request: PaneStreamIssueMutationRequest,
+    rendererOrigin: string,
+  ): Promise<PaneStreamIssueResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) {
+      return { status: "error", error: paneStreamIssueError("daemon-unavailable") };
+    }
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.issuePaneStream(request, rendererOrigin);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: paneStreamIssueError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
   async listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult> {
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
@@ -250,13 +477,142 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     return result;
   }
 
+  async fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchFleetCatalog();
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWidgetAsset(request: WidgetAssetRequest): Promise<WidgetAssetResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWidgetAsset(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
   async fetchApplicationShell(
     workspaceName: string,
+    resourceVersion?: DesktopDaemonFetchApplicationShellRequest["resourceVersion"],
   ): Promise<DesktopDaemonFetchApplicationShellResult> {
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.fetchApplicationShell(workspaceName);
+    const result = await broker.fetchApplicationShell(workspaceName, resourceVersion);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceFiles(
+    request: DesktopDaemonFetchWorkspaceFilesRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceFilesResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceFiles(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceFilePreview(
+    request: DesktopDaemonFetchWorkspaceFilePreviewRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceFilePreview(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceChanges(
+    request: DesktopDaemonFetchWorkspaceChangesRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceChangesResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceChanges(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceChangeDiff(
+    request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceChangeDiff(request);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
@@ -393,6 +749,19 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       return this.#superseded();
     }
 
+    if (candidate.status === "connected") {
+      // A usable daemon needs no ladder: the broker reads everything directly.
+      this.#startupReadiness = null;
+    } else {
+      // Bounded, failure-tolerant, and read BEFORE the disconnected state is
+      // composed so the state the renderer receives already carries the
+      // daemon's own account of the stuck rung.
+      await this.#refreshStartupReadiness();
+      if (this.#disposed || expectedRendererGeneration !== this.#rendererGeneration) {
+        return this.#superseded();
+      }
+    }
+
     const previousDaemon = this.#daemon;
     const previousIdentity =
       previousDaemon.status === "connected" ? identityOf(previousDaemon) : null;
@@ -405,6 +774,14 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
         sameIdentity(previousIdentity, nextIdentity) &&
         previousDaemon.descriptor.apiBaseUrl === candidate.descriptor.apiBaseUrl
       ) {
+        // An explicit revalidation against an unchanged generation is a
+        // transport wakeup: it interrupts a scheduled event-socket backoff and
+        // restarts a transport stopped at its fatal ceiling.
+        try {
+          this.#broker?.retryTransport?.();
+        } catch {
+          // The wakeup is advisory; connection authority is unchanged.
+        }
         return this.#parseResult({ outcome: "unchanged", daemon: this.state() });
       }
 
@@ -412,6 +789,13 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       try {
         nextBroker = this.#createBroker(candidate);
       } catch {
+        // The daemon answered, but no authority can be built over it. This is
+        // the one disconnected outcome reached from a CONNECTED probe, and so
+        // the case where the daemon's own ladder is most likely readable.
+        await this.#refreshStartupReadiness();
+        if (this.#disposed || expectedRendererGeneration !== this.#rendererGeneration) {
+          return this.#superseded();
+        }
         return this.#transitionToDisconnected(BROKER_FAILED_STATE, previousIdentity);
       }
       if (this.#disposed || expectedRendererGeneration !== this.#rendererGeneration) {
@@ -426,6 +810,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       const previousBroker = this.#broker;
       this.#daemon = candidate;
       this.#broker = nextBroker;
+      this.#reconcileEnvironment(candidate);
       this.#publishHostState();
       const daemon = this.state();
       this.#retireSubscriptions({
@@ -535,5 +920,22 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
   #parseResult(value: unknown): DesktopDaemonRefreshConnectionResult {
     return DesktopDaemonRefreshConnectionResultSchemaZ.parse(value);
+  }
+
+  async capabilities(): Promise<DesktopDaemonCapabilitiesResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) {
+      return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
+    }
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.capabilities();
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return { status: "error", error: daemonCapabilityError("disposed") };
+    }
+    return result;
   }
 }

@@ -1,10 +1,11 @@
 import {
   APPLICATION_SHELL_RESOURCE_VERSION,
-  APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   COHESION_FIXTURE_V1,
   type DesktopDaemonEvent,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
+import { createDaemonResourceMethods } from "@tmux-ide/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { createHostDaemonTransport } from "./host-daemon-transport.ts";
@@ -29,30 +30,32 @@ function daemonHost(
 ): Pick<HostCapabilities, "daemon"> {
   return {
     daemon: {
-      createWorkspacePane: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      issueTerminalAttachment: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only", retryable: false },
-      }),
-      refreshConnection: async () => ({
-        outcome: "unchanged",
-        daemon: { status: "connected", identity: DAEMON },
-      }),
-      listWorkspaces: async () => ({
-        status: "ok",
-        daemon: DAEMON,
-        workspaces: [{ workspaceName: "product" }],
-      }),
-      fetchApplicationShell: async () => ({
-        status: "ok",
-        envelope: {
-          version: APPLICATION_SHELL_RESOURCE_VERSION,
-          daemon: DAEMON,
-          resource: RESOURCE,
-        },
+      ...createDaemonResourceMethods(async (request) => {
+        switch (request.resource) {
+          case "capabilities":
+            return {
+              status: "ok",
+              daemon: DAEMON,
+              capabilities: { appWindowMutation: { available: true } },
+            };
+          case "refreshConnection":
+            return { outcome: "unchanged", daemon: { status: "connected", identity: DAEMON } };
+          case "listWorkspaces":
+            return { status: "ok", daemon: DAEMON, workspaces: [{ workspaceName: "product" }] };
+          case "fetchFleetCatalog":
+            return { status: "ok", envelope: { version: 1, daemon: DAEMON, sessions: [] } };
+          case "fetchApplicationShell":
+            return {
+              status: "ok",
+              envelope: {
+                version: APPLICATION_SHELL_RESOURCE_VERSION,
+                daemon: DAEMON,
+                resource: RESOURCE,
+              },
+            };
+          default:
+            return { status: "error", error: { code: "preview-only", reason: "fixture only" } };
+        }
       }),
       subscribe: async () => ({ status: "subscribed", unsubscribe: () => undefined }),
       ...overrides,
@@ -75,7 +78,7 @@ describe("HostCapabilities-backed daemon transport", () => {
     expect(result).toEqual(RESOURCE);
     expect(fetchApplicationShell).toHaveBeenCalledWith({
       workspaceName: "product",
-      resourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
+      resourceVersion: APPLICATION_SHELL_RESOURCE_V3_VERSION,
     });
     expect(JSON.stringify(fetchApplicationShell.mock.calls)).not.toMatch(
       /apiBaseUrl|sessionName|token|authorization/iu,
@@ -146,6 +149,7 @@ describe("HostCapabilities-backed daemon transport", () => {
       onMalformedFrame: vi.fn(),
       onClose: vi.fn(),
       onError: vi.fn(),
+      onTransportStateChanged: vi.fn(),
     };
     const connection = transport.connectEvents(
       { daemon: DAEMON, workspaceName: "product" },
@@ -184,6 +188,23 @@ describe("HostCapabilities-backed daemon transport", () => {
       error: { code: "protocol-error", reason: "The subscription was rejected." },
     });
     expect(handlers.onProtocolError).toHaveBeenCalledOnce();
+
+    // A supervisor transport push is forwarded verbatim to the typed handler
+    // and never misread as a generic transport error.
+    publish?.({
+      type: "transport.changed",
+      transport: {
+        phase: "reconnecting",
+        attempt: 1,
+        maximumAttempts: 4,
+        nextRetryAt: 1_753_000_000_000,
+        error: { code: "event-unavailable", reason: "The daemon event connection is unavailable." },
+      },
+    });
+    expect(handlers.onTransportStateChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "reconnecting", attempt: 1 }),
+    );
+    expect(handlers.onError).not.toHaveBeenCalled();
 
     connection.close();
     expect(unsubscribe).toHaveBeenCalledOnce();

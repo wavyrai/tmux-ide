@@ -533,6 +533,7 @@ export function writeCanonicalDaemonInfo(
     productVersion: info.productVersion,
     instanceId: info.instanceId,
     startedAt: info.startedAt,
+    ...(info.environmentId !== undefined ? { environmentId: info.environmentId } : {}),
     bindHostname: info.bindHostname,
     authToken: info.authToken,
   };
@@ -628,6 +629,33 @@ function pidLiveness(pid: number): PidLiveness {
     if (code === "EPERM") return "alive";
     return "unknown";
   }
+}
+
+/**
+ * Read-only startup guard for hosts which would launch a daemon contender.
+ * Missing and explicitly dead claims are safe because the atomic claimant can
+ * recover them; live, unknown, and malformed claims remain authoritative.
+ */
+export function canonicalDaemonClaimAllowsStartupAttempt(): boolean {
+  const claimPath = getCanonicalDaemonClaimPath();
+  try {
+    const root = lstatSync(dirname(claimPath));
+    if (
+      root.isSymbolicLink() ||
+      !root.isDirectory() ||
+      (typeof process.getuid === "function" && root.uid !== process.getuid()) ||
+      (root.mode & 0o077) !== 0
+    ) {
+      return false;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
+  }
+  const claim = inspectCanonicalDaemonClaimPath(claimPath);
+  return (
+    claim.status === "missing" ||
+    (claim.status === "valid" && pidLiveness(claim.claim.pid) === "dead")
+  );
 }
 
 /** Unknown process state is retained as ownership, never mistaken for death. */

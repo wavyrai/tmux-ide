@@ -8,6 +8,7 @@ import {
   type DesktopDaemonListWorkspacesResult,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
+import { createDaemonResourceMethods } from "@tmux-ide/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -92,23 +93,13 @@ function fakeDaemonHost(
     return subscribeResult ? subscribeResult() : ({ status: "subscribed", unsubscribe } as const);
   });
   const daemon: HostCapabilities["daemon"] = {
-    createWorkspacePane: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "fixture only" },
-    }),
-    issueTerminalAttachment: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "fixture only", retryable: false },
-    }),
-    refreshConnection: async () => ({
-      outcome: "unchanged",
-      daemon: { status: "connected", identity: DAEMON },
-    }),
+    // One refusal for every resource these tests do not exercise.
+    ...createDaemonResourceMethods(async (request) =>
+      request.resource === "refreshConnection"
+        ? { outcome: "unchanged", daemon: { status: "connected", identity: DAEMON } }
+        : { status: "error", error: { code: "preview-only", reason: "fixture only" } },
+    ),
     listWorkspaces: list as HostCapabilities["daemon"]["listWorkspaces"],
-    fetchApplicationShell: async () => ({
-      status: "error",
-      error: { code: "preview-only", reason: "not used by catalog tests" },
-    }),
     subscribe,
   };
   return {
@@ -735,6 +726,51 @@ describe("desktop live workspace catalog and selection store", () => {
     }
   });
 
+  it("derives its status from pushed transport states and keeps one logical subscription", async () => {
+    const EVENT_ERROR = {
+      code: "event-unavailable" as const,
+      reason: "The daemon event connection is unavailable.",
+    };
+    const fake = fakeDaemonHost(async () => catalog(["alpha", "beta"]));
+    const store = createDesktopWorkspaceCatalogStore({ host: fake.host, daemon: CONNECTED });
+    await vi.waitFor(() => expect(fake.subscribe).toHaveBeenCalledOnce());
+    fake.publish({ type: "transport.changed", transport: { phase: "connected" } });
+    fake.publish({ type: "connection.changed", state: "live", error: null });
+    await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+
+    fake.publish({
+      type: "transport.changed",
+      transport: { phase: "degraded", error: EVENT_ERROR },
+    });
+    fake.publish({ type: "connection.changed", state: "degraded", error: EVENT_ERROR });
+    fake.publish({
+      type: "transport.changed",
+      transport: {
+        phase: "reconnecting",
+        attempt: 1,
+        maximumAttempts: 4,
+        nextRetryAt: 1_753_000_000_000,
+        error: EVENT_ERROR,
+      },
+    });
+    const reconnectingState = store.getState();
+    expect(reconnectingState.status).toBe("stale");
+    expect(reconnectingState.status === "stale" && reconnectingState.reason).toBe(
+      "Reconnecting to the engine (attempt 1 of 4).",
+    );
+    // The supervisor is the ONE retry owner: no teardown-and-resubscribe loop.
+    expect(fake.subscribe).toHaveBeenCalledOnce();
+    expect(fake.unsubscribe).not.toHaveBeenCalled();
+
+    // A verified recovery refetches before trusting the retained snapshot.
+    fake.publish({ type: "transport.changed", transport: { phase: "connected" } });
+    fake.publish({ type: "connection.changed", state: "live", error: null });
+    await vi.waitFor(() => expect(fake.listWorkspaces).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+    expect(fake.subscribe).toHaveBeenCalledOnce();
+    store.dispose();
+  });
+
   it("isolates observer and host teardown exceptions after making disposal irrevocable", async () => {
     const unsubscribe = vi.fn(() => {
       throw new Error("private host teardown failure");
@@ -763,6 +799,11 @@ describe("desktop live workspace catalog and selection store", () => {
     });
     await publishLive(fake);
     await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+    // The fixture publishes `live` before its subscribe promise settles, so let
+    // that promise land: disposal can only call a teardown handle it already
+    // holds. A subscription still in flight at disposal is torn down when it
+    // resolves instead, which the "retires a pending subscription" test covers.
+    await Promise.resolve();
     const requestCalls = fake.listWorkspaces.mock.calls.length;
     expect(() => store.dispose()).not.toThrow();
     expect(store.getState().status).toBe("disposed");
@@ -789,6 +830,6 @@ describe("desktop live workspace catalog and selection store", () => {
 
 describe("workspace catalog host contract seam", () => {
   it("uses the current versioned facade without exposing a generic transport", () => {
-    expect(DESKTOP_HOST_API_VERSION).toBe(5);
+    expect(DESKTOP_HOST_API_VERSION).toBe(13);
   });
 });

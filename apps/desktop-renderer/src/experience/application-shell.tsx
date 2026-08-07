@@ -1,13 +1,17 @@
 import {
   APPLICATION_SHELL_COMMAND_IDS,
   ApplicationShellProjectionInputV1SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   applyApplicationShellInvocationV1,
   applicationShellCommandInvocation,
   commandsToOpenSurface,
+  type AgentGraphOverlay,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
+  type ApplicationShellProjectionInputV3,
   type ApplicationShellProjectionV1,
   type CommandSource,
+  type ClientViewStateV1,
   type DesktopDaemonCapabilityState,
   type DesktopWindowState,
   type FocusZone,
@@ -17,6 +21,8 @@ import {
   type SemanticFocusTarget,
   type WorkspacePaneCreateInvocation,
   resolvePaneAppearance,
+  createClientViewStateV1,
+  reconcileClientViewStateV1,
 } from "@tmux-ide/contracts";
 import {
   For,
@@ -24,6 +30,7 @@ import {
   Match,
   Show,
   Switch,
+  createComputed,
   createEffect,
   createMemo,
   createSignal,
@@ -31,9 +38,13 @@ import {
   onMount,
 } from "solid-js";
 
-import { WebWorkbenchDock } from "../../../../packages/daemon/src/ui/workbench-dock/web-host.tsx";
-import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host.tsx";
-import type { ApplicationShellTerminalPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+import { WebWorkbenchDock } from "../../../../packages/daemon/src/ui/workbench-dock/web-host-unstyled.tsx";
+import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host-unstyled.tsx";
+import {
+  APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS,
+  agentHarnessIcon,
+  type ApplicationShellTerminalPaneFrame,
+} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
@@ -47,13 +58,63 @@ import type {
 } from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
 import { CommandPalette } from "./command-palette.tsx";
 import { CreatePaneFlow } from "./create-pane-flow.tsx";
+import { FleetSidebarSection, type FleetPromoteOutcome } from "./fleet-sidebar.tsx";
+import { mergeFleetGraphOverlay } from "./fleet-graph-merge.ts";
+import {
+  createSolidDesktopFleetCatalogStore,
+  type DesktopFleetCatalogState,
+} from "../runtime/fleet-catalog-store.ts";
+import {
+  statusStripFromConnectionHealth,
+  type DesktopConnectionHealth,
+} from "../runtime/connection-health.ts";
+import { UpdateChip } from "./update-chip.tsx";
+import { MissionActivitySurface } from "./mission-activity-surface.tsx";
+import { WorkspaceFilesSurface, type FilesSurfaceProps } from "./workspace-files-surface.tsx";
+import { WorkspaceChangesSurface, type ChangesSurfaceProps } from "./workspace-changes-surface.tsx";
 import type { CreatePaneFlowCatalogs } from "./create-pane-flow-presenter.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import {
+  PaneMirrorController,
+  type PaneMirrorControllerState,
+} from "../terminal/pane-mirror-controller.ts";
+import type { PaneStreamTransport } from "../terminal/pane-stream-transport.ts";
+import { createHostPaneStreamTransport } from "../runtime/host-pane-stream-transport.ts";
+import { deriveConnectionHealth } from "../runtime/connection-health.ts";
+import { terminalIssueFaultLabel } from "../runtime/connection-recovery.ts";
+import { PANE_STREAM_MAX_PANES } from "@tmux-ide/contracts";
+import {
+  AppWindowCanvas,
+  type AppWindowCanvasMirrorProps,
+  type AppWindowMirrorNodeModel,
+} from "./app-window-canvas.tsx";
+import {
+  Button,
+  ContextMenu,
+  Icon,
+  IconButton,
+  ResizeHandle,
+  WorkspaceIdentity,
+  type ContextMenuSection,
+} from "../ui-system/index.ts";
+import { useVerbTable, type MultiplexerVerbTarget } from "./multiplexer-verb-access.ts";
+import { canvasMenuSections, windowCardMenuSections } from "./multiplexer-verb-menu.ts";
+import type { AppWindowCanvasVerbSurface } from "./app-window-canvas.tsx";
+import {
+  Alert02Icon,
+  CheckmarkCircle02Icon,
+  ComputerTerminal01Icon,
+  Loading03Icon,
+  UserGroupIcon,
+} from "@hugeicons/core-free-icons";
+import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
+import type { AppWindowCanvasCommandInvocation } from "./app-window-canvas-presenter.ts";
+import {
   createDefaultDomShellInput,
   createDefaultDomPaneFrames,
+  DOM_SHELL_GEOMETRY,
   createDomPaletteEntries,
   createDomShellReplayState,
   dockToolIcon,
@@ -64,8 +125,23 @@ import {
   type DomPaletteEntry,
   type DomViewport,
 } from "./dom-shell.ts";
+import { experimentalSurfacesEnabled, hiddenDockTools } from "./experimental-surfaces.ts";
+import { WorkspaceTiledSurface } from "./workspace-tiled-surface.tsx";
+import { statusStripWithAttachment } from "./terminal-attachment-status.ts";
 
 const PALETTE_OVERLAY_ID = "overlay.palette.trace";
+
+/**
+ * The connection state as a glyph. The strip already carried the state in
+ * color; shape says it a second way, which is the difference between a status
+ * a reader recognises and one they have to have learned — and it survives a
+ * viewer who cannot separate the palette.
+ */
+function connectionGlyph(state: string) {
+  if (state === "connected" || state === "complete") return CheckmarkCircle02Icon;
+  if (state === "warning" || state === "disconnected" || state === "blocked") return Alert02Icon;
+  return Loading03Icon;
+}
 
 export interface DomApplicationShellProps {
   readonly host: HostCapabilities;
@@ -73,7 +149,7 @@ export interface DomApplicationShellProps {
   readonly runtime?: string;
   readonly platform?: string;
   readonly windowState?: DesktopWindowState | null;
-  readonly input?: ApplicationShellProjectionInputV1;
+  readonly input?: ApplicationShellProjectionInputV1 | ApplicationShellProjectionInputV3;
   readonly dataMode?: "runtime" | "preview";
   readonly terminalWorkspaceName?: string;
   readonly terminalTransport?: NativeTerminalTransport | null;
@@ -92,6 +168,41 @@ export interface DomApplicationShellProps {
     source: PaneFrameActivationSource,
   ) => void;
   readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
+  readonly onAppWindowCommand?: (
+    invocation: AppWindowCanvasCommandInvocation,
+  ) => void | Promise<void>;
+  /** Optional controlled client-local presentation for this shell instance. */
+  readonly clientViewState?: ClientViewStateV1;
+  readonly onClientViewStateChange?: (next: ClientViewStateV1) => void;
+  readonly appWindowMutationUnavailableReason?: string;
+  /**
+   * Fixture/test override of the pane-stream transport behind the mirror-panes
+   * affordance. Undefined = derive the production transport from the host when
+   * the daemon is connected; null = the affordance is unavailable.
+   */
+  readonly paneStreamTransport?: PaneStreamTransport | null;
+  readonly onRefreshResource?: () => void;
+  /**
+   * Supervisor-derived compound connection health. When present and not
+   * healthy, the runtime status strip renders this derived state instead of
+   * the projection's own connection segment, so transport retries show their
+   * real attempt position and a sync failure on a healthy socket never
+   * masquerades as a reconnect.
+   */
+  readonly connectionHealth?: DesktopConnectionHealth;
+  readonly filesSurface?: FilesSurfaceProps;
+  readonly changesSurface?: ChangesSurfaceProps;
+  /** Fixture/preview override of the live fleet-catalog store state. */
+  readonly fleetState?: DesktopFleetCatalogState;
+  /** Fixture/preview override of the promote action (defaults to the host mutation). */
+  readonly onPromoteSession?: (sessionId: string) => Promise<FleetPromoteOutcome>;
+  /**
+   * Override the GUI-first scope flag (see `experimental-surfaces.ts`). Read
+   * once at construction — it is a startup setting, not a live control — so
+   * fixtures state it as a constant rather than toggling it under a mounted
+   * shell.
+   */
+  readonly experimentalSurfaces?: boolean;
 }
 
 export interface PrimaryNavigationProps {
@@ -189,21 +300,183 @@ function activityTone(activity: string): string {
 
 export function DomApplicationShell(props: DomApplicationShellProps) {
   const fallbackInput = createDefaultDomShellInput();
-  const input = createMemo(() =>
-    ApplicationShellProjectionInputV1SchemaZ.parse(props.input ?? fallbackInput),
+  const input = createMemo<ApplicationShellProjectionInputV1 | ApplicationShellProjectionInputV3>(
+    () => {
+      const value = props.input ?? fallbackInput;
+      return "appWindows" in value
+        ? ApplicationShellProjectionInputV3SchemaZ.parse(value)
+        : ApplicationShellProjectionInputV1SchemaZ.parse(value);
+    },
   );
   const dataMode = createMemo<"runtime" | "preview">(() =>
     props.input === undefined ? "preview" : (props.dataMode ?? "runtime"),
   );
-  const [state, setState] = createSignal(createDomShellReplayState(input()));
+  const experimentalSurfaces = props.experimentalSurfaces ?? experimentalSurfacesEnabled();
+  const hiddenTools = hiddenDockTools(experimentalSurfaces);
+  const initialReplayState = createDomShellReplayState(input(), hiddenTools);
+  const initialClientDock = props.clientViewState?.dock;
+  const initialDockTool = initialClientDock?.activeTabId;
+  const [state, setState] = createSignal({
+    ...initialReplayState,
+    ...(initialClientDock
+      ? {
+          dockMode: initialClientDock.mode,
+          activeDockTool:
+            initialDockTool &&
+            !hiddenTools.has(initialDockTool) &&
+            input().dock.tools.some(({ id }) => id === initialDockTool)
+              ? initialDockTool
+              : initialReplayState.activeDockTool,
+          focus: { ...initialReplayState.focus, focusZone: initialClientDock.focusZone },
+        }
+      : {}),
+  });
   const [viewport, setViewport] = createSignal(initialViewport());
   const [createPaneOpen, setCreatePaneOpen] = createSignal(false);
+  const [sidebarWidth, setSidebarWidth] = createSignal<number>(DOM_SHELL_GEOMETRY.sidebarWidth);
+  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
+  const [paletteTransitionSource, setPaletteTransitionSource] = createSignal<"keyboard" | "mouse">(
+    "keyboard",
+  );
+  let titlebarStyle: RuntimeStyleBinding | null = null;
+  let workbenchStyle: RuntimeStyleBinding | null = null;
   let previousInput = input();
   let previousDataMode = dataMode();
   let returnFocusElement: HTMLElement | null = null;
   let returnFocusId: string | null = null;
 
-  const shell = createMemo(() => projectDomApplicationShell(input(), state()));
+  const shell = createMemo(() => projectDomApplicationShell(input(), state(), hiddenTools));
+  const missionWorkspace = createMemo(() => {
+    const value = input();
+    return "appWindows" in value ? value.missionWorkspace : undefined;
+  });
+  // The live fleet-catalog store — every adopted session, not just the open
+  // workspace. Fixtures/preview inject `fleetState` instead of a live store.
+  const fleetStore = props.fleetState
+    ? null
+    : createSolidDesktopFleetCatalogStore({ host: props.host, daemon: props.daemonState });
+  if (fleetStore) {
+    createEffect(() => fleetStore.setDaemon(props.daemonState));
+  }
+  const fleetState = createMemo<DesktopFleetCatalogState>(
+    () => props.fleetState ?? fleetStore!.state(),
+  );
+  const fleetSnapshot = createMemo(() => {
+    const state = fleetState();
+    return "snapshot" in state ? state.snapshot : null;
+  });
+  const promoteSession = async (sessionId: string): Promise<FleetPromoteOutcome> => {
+    if (props.onPromoteSession) return props.onPromoteSession(sessionId);
+    const result = await props.host.daemon.promoteWorkspace({ sessionId });
+    // On success the daemon emits workspace.added, which refreshes the workspace
+    // catalog automatically; the new workspace then appears for selection.
+    return result.status === "ok" ? { ok: true } : { ok: false, error: result.error };
+  };
+
+  // The open workspace's own fleet session id, when the daemon supplied it (V3+).
+  // It is the correlation key that lets the sidebar mark this session open and
+  // keeps the renderer-side graph merge from drawing it twice.
+  const openFleetSessionId = createMemo<string | null>(() => {
+    const value = input();
+    return "appWindows" in value ? (value.fleetSessionId ?? null) : null;
+  });
+  const excludeSessionIds = createMemo<ReadonlySet<string> | undefined>(() => {
+    const id = openFleetSessionId();
+    return id ? new Set([id]) : undefined;
+  });
+  // The agent-graph overlay is a non-durable, additive V3 projection. It follows
+  // the same generation as the rest of the input, so reading it here keeps it
+  // reconciled with the mutation/refresh queue exactly like missionWorkspace.
+  // When a live fleet snapshot is present it is composed in renderer-side so the
+  // canvas shows the whole fleet, not just the open workspace — excluding the
+  // open session so it is not drawn once as the real overlay and again as a
+  // display-only fleet group.
+  const fleetGraphMerge = createMemo(() => {
+    const value = input();
+    const base = "appWindows" in value ? value.agentGraphOverlay : undefined;
+    if (!base) return null;
+    const snapshot = fleetSnapshot();
+    if (!snapshot) return null;
+    return mergeFleetGraphOverlay({
+      openOverlay: base,
+      fleet: snapshot.catalog,
+      excludeSessionIds: excludeSessionIds(),
+    });
+  });
+  const agentGraphOverlay = createMemo<AgentGraphOverlay | undefined>(() => {
+    const value = input();
+    const base = "appWindows" in value ? value.agentGraphOverlay : undefined;
+    if (!base) return base;
+    return fleetGraphMerge()?.overlay ?? base;
+  });
+  // Quiet canvas indicator when the fleet could not be fully composed (an
+  // over-cap fleet is dropped wholesale rather than half-rendered).
+  const fleetGraphTruncated = createMemo<boolean>(() => fleetGraphMerge()?.truncated ?? false);
+  const effectiveSidebarWidth = createMemo(() =>
+    sidebarCollapsed() ? DOM_SHELL_GEOMETRY.sidebarCollapsedWidth : sidebarWidth(),
+  );
+  createComputed(() => {
+    const properties = { "--desktop-sidebar-width": `${effectiveSidebarWidth()}px` };
+    titlebarStyle?.update(properties);
+    workbenchStyle?.update(properties);
+  });
+  onCleanup(() => {
+    titlebarStyle?.dispose();
+    workbenchStyle?.dispose();
+  });
+  const appWindowDocument = createMemo(() => {
+    const value = input();
+    return "appWindows" in value ? value.appWindows : null;
+  });
+  const localViewIdentity = `view.${Math.random().toString(36).slice(2)}`;
+  const [localClientViewState, setLocalClientViewState] = createSignal<ClientViewStateV1>(
+    props.clientViewState ??
+      createClientViewStateV1({
+        clientId: "client.desktop-renderer",
+        viewId: localViewIdentity,
+        workspaceId: input().workspace.id,
+        legacyDocument: appWindowDocument(),
+      }),
+  );
+  const clientViewState = createMemo(() => props.clientViewState ?? localClientViewState());
+  const publishClientViewState = (next: ClientViewStateV1): void => {
+    if (props.clientViewState === undefined) setLocalClientViewState(next);
+    props.onClientViewStateChange?.(next);
+  };
+  let appWindowWorkspaceId = input().workspace.id;
+  createEffect(() => {
+    const document = appWindowDocument();
+    if (!document) return;
+    const current = clientViewState();
+    const next = reconcileClientViewStateV1(current, document);
+    if (JSON.stringify(next) !== JSON.stringify(current)) publishClientViewState(next);
+  });
+  createEffect(() => {
+    const controlled = props.clientViewState;
+    if (!controlled || controlled.workspaceId !== input().workspace.id) return;
+    setState((current) => {
+      const requestedTool = controlled.dock.activeTabId;
+      const activeDockTool =
+        requestedTool &&
+        !hiddenTools.has(requestedTool) &&
+        input().dock.tools.some(({ id }) => id === requestedTool)
+          ? requestedTool
+          : current.activeDockTool;
+      if (
+        current.dockMode === controlled.dock.mode &&
+        current.activeDockTool === activeDockTool &&
+        current.focus.focusZone === controlled.dock.focusZone
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        dockMode: controlled.dock.mode,
+        activeDockTool,
+        focus: { ...current.focus, focusZone: controlled.dock.focusZone },
+      };
+    });
+  });
   const paneFrames = createMemo<readonly PaneFrameModel[]>(() => {
     if (props.terminalPanes) return props.terminalPanes.map(({ model }) => model);
     if (props.paneFrames) return props.paneFrames;
@@ -306,10 +579,380 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const hasMaximizedPane = createMemo(() =>
     renderedPaneFrames().some(({ appearance }) => appearance.structure === "maximized"),
   );
-  const dock = createMemo(() => projectDomWorkbenchDock(shell(), viewport()));
+
+  // ── Multiplexer verbs (m49.2) ─────────────────────────────────────────────
+  // The shell owns the workspace name, the daemon connection and the create
+  // flows; the canvas and the sidebar own the pointer. This is the seam.
+  const verbAccess = useVerbTable(props.host);
+  const verbWorkspaceName = () => props.terminalWorkspaceName ?? input().workspace.id;
+  const workspaceConnected = () =>
+    dataMode() === "runtime" && props.daemonState?.status === "connected";
+  /**
+   * Windows in the session, counted the only way the renderer can: attachable
+   * resources sharing a `windowResourceId` are one tmux window, and a resource
+   * without one is its own. It is what the "last window" refusal is checked
+   * against, so it errs toward offering the verb and letting the daemon refuse.
+   */
+  const sessionWindowCount = createMemo(() => {
+    const inventory = shell().terminalInventory;
+    if (!inventory) return 1;
+    const grouped = new Set<string>();
+    let ungrouped = 0;
+    for (const resource of inventory.resources) {
+      if (resource.windowResourceId) grouped.add(resource.windowResourceId);
+      else ungrouped += 1;
+    }
+    return Math.max(1, grouped.size + ungrouped);
+  });
+  const semanticPaneIdFor = (resourceId: string): string | null => {
+    const inventory = shell().terminalInventory;
+    if (!inventory) return null;
+    const resource = inventory.resources.find(({ id }) => id === resourceId);
+    return resource?.attachability.status === "available"
+      ? resource.attachability.semanticPaneId
+      : null;
+  };
+  const openProjectDirectory = (): void => {
+    void props.host.workspace.openProjectDirectory();
+  };
+  const canvasVerbSurface = createMemo<AppWindowCanvasVerbSurface>(() => ({
+    workspaceConnected: workspaceConnected(),
+    sessionWindowCount: sessionWindowCount(),
+    invoke: (verbId, target, args) => verbAccess.invoke(verbId, target, args),
+    onCreateWindow: props.createPaneFlow ? () => setCreatePaneOpen(true) : undefined,
+    onCreateSession: openProjectDirectory,
+  }));
+
+  /** A pointer-anchored menu owned by the shell rather than by the canvas. */
+  const [terminalAttached, setTerminalAttached] = createSignal(false);
+  /** The window being renamed in the tab strip, named by a pane inside it. */
+  const [renamingPane, setRenamingPane] = createSignal<string | null>(null);
+  const [shellMenu, setShellMenu] = createSignal<{
+    readonly kind: "workspace" | "pane";
+    readonly paneId: string | null;
+    readonly pointer: { readonly x: number; readonly y: number };
+    readonly openSource: "contextmenu" | "click";
+  } | null>(null);
+  const shellMenuSections = createMemo<readonly ContextMenuSection[]>(() => {
+    const menu = shellMenu();
+    if (!menu) return [];
+    const refusals = new Map<string, string>([
+      ["session.detach", "Detaching from the app is not available yet"],
+      ["session.rename", "Rename a session from the fleet sidebar"],
+    ]);
+    if (!props.createPaneFlow) {
+      refusals.set("window.new", "Creating terminals is unavailable in this host");
+    }
+    if (menu.kind === "workspace") {
+      return canvasMenuSections({
+        facts: {
+          workspaceConnected: workspaceConnected(),
+          sessionWindowCount: sessionWindowCount(),
+        },
+        refusals,
+      });
+    }
+    const targetFrame = (mirrorState()?.layouts ?? []).find((layout) =>
+      layout.panes.some((pane) => pane.pane === menu.paneId),
+    );
+    return windowCardMenuSections({
+      facts: {
+        workspaceConnected: workspaceConnected(),
+        sessionWindowCount: sessionWindowCount(),
+        // Real counts now that the layout frame is on hand: the zoom and resize
+        // verbs are refused for a one-pane window, and a hardcoded 1 refused
+        // them for every window.
+        windowPaneCount: windowPaneCountFor(menu.paneId),
+        windowZoomed: targetFrame?.zoomed ?? false,
+        targetIsActivePane: shell().focus.terminalInputPaneId === menu.paneId,
+        targetIsDockedStackMember: false,
+      },
+      placement: "docked",
+      maximized: false,
+      // This pane lives in the grid layout, which has no float, dock or stack.
+      appLayoutAvailable: false,
+      appLayoutUnavailableReason: "This pane is in the grid layout, not on the canvas",
+      dockTargets: [],
+      refusals,
+    });
+  });
+  const activateShellMenuItem = (itemId: string): void => {
+    const menu = shellMenu();
+    if (!menu) return;
+    if (itemId === "window.new") {
+      setCreatePaneOpen(true);
+      return;
+    }
+    if (itemId === "session.new") {
+      openProjectDirectory();
+      return;
+    }
+    if (itemId === "session.kill") {
+      void verbAccess.invoke("session.kill", { workspaceName: verbWorkspaceName() });
+      return;
+    }
+    if (!menu.paneId) return;
+    const semanticPaneId = semanticPaneIdFor(menu.paneId);
+    if (!semanticPaneId) return;
+    const target: MultiplexerVerbTarget = {
+      workspaceName: verbWorkspaceName(),
+      semanticPaneId,
+    };
+    if (itemId === "pane.split.right" || itemId === "pane.split.down") {
+      void verbAccess.invoke(itemId, target);
+      return;
+    }
+    if (itemId === "pane.select" || itemId === "pane.kill" || itemId === "window.kill") {
+      void verbAccess.invoke(itemId, target);
+      return;
+    }
+    if (itemId === "window.rename") {
+      setRenamingPane(semanticPaneId);
+      return;
+    }
+    if (itemId === "window.zoom.toggle") void verbAccess.invoke(itemId, target);
+  };
+  const openShellMenu = (
+    kind: "workspace" | "pane",
+    paneId: string | null,
+    anchor: Element,
+    openSource: "contextmenu" | "click",
+    pointer?: { readonly x: number; readonly y: number },
+  ): void => {
+    const bounds = anchor.getBoundingClientRect();
+    setShellMenu({
+      kind,
+      paneId,
+      openSource,
+      pointer: pointer ?? { x: bounds.left, y: bounds.bottom },
+    });
+  };
+
+  // ── The pane-stream lease (m43 card 3, widened in m50) ────────────────────
+  // One session-scoped lease. The controller owns connect/reconnect; this shell
+  // owns WHEN a lease exists and WHICH panes it enumerates.
+  /**
+   * The layout lease.
+   *
+   * The tiled view is a pure function of the pane-stream layout frames, and
+   * those frames ride on a lease — so one exists whenever the workspace is
+   * open, not only while the mirror toggle is on. It costs one pane's stream:
+   * the frames are SESSION-scoped (tmux reports every window's geometry on the
+   * one control channel), so a single-pane lease already carries the whole
+   * picture. Turning the mirror on widens the same lease to every pane rather
+   * than opening a second one.
+   */
+  const [mirrorEnabled, setMirrorEnabled] = createSignal(false);
+  const [mirrorState, setMirrorState] = createSignal<PaneMirrorControllerState | null>(null);
+  const [mirrorController, setMirrorController] = createSignal<PaneMirrorController | null>(null);
+  const mirrorPaneIds = createMemo<readonly string[]>(() => {
+    const inventory = shell().terminalInventory;
+    if (!inventory) return [];
+    return inventory.resources
+      .flatMap((resource) =>
+        resource.attachability.status === "available"
+          ? [resource.attachability.semanticPaneId]
+          : [],
+      )
+      .slice(0, PANE_STREAM_MAX_PANES);
+  });
+  const mirrorTransport = createMemo<PaneStreamTransport | null>(() => {
+    if (props.paneStreamTransport !== undefined) return props.paneStreamTransport;
+    if (dataMode() !== "runtime" || props.daemonState?.status !== "connected") return null;
+    return createHostPaneStreamTransport(props.host, props.daemonState.identity);
+  });
+  /*
+   * The layout-faithful terminal surface composes each pane from its pane
+   * stream, tmuxy-style, so its header can occupy a real flex row instead of
+   * painting over the whole-window xterm. The hidden whole-window attachment
+   * remains the input/geometry client; these streams are the visible pixels.
+   */
+  const tiledPaneCompositorEnabled = createMemo(
+    () => !experimentalSurfaces && dataMode() === "runtime" && mirrorTransport() !== null,
+  );
+  let activeMirrorKey = "";
+  createEffect(() => {
+    const transport = mirrorTransport();
+    const panes = mirrorPaneIds();
+    const workspaceName = props.terminalWorkspaceName ?? input().workspace.id;
+    const leased = mirrorEnabled() || tiledPaneCompositorEnabled() ? panes : panes.slice(0, 1);
+    const enabled = transport !== null && leased.length > 0;
+    const key = enabled ? [workspaceName, ...leased].join("\u0000") : "";
+    if (!enabled) {
+      activeMirrorKey = "";
+      mirrorController()?.dispose();
+      setMirrorController(null);
+      setMirrorState(null);
+      return;
+    }
+    const current = mirrorController();
+    if (current && activeMirrorKey === key) return;
+    if (current && activeMirrorKey.startsWith(`${workspaceName}\u0000`)) {
+      // Same lease scope, new pane set: re-issue through the same controller.
+      activeMirrorKey = key;
+      current.setPanes(leased);
+      return;
+    }
+    current?.dispose();
+    activeMirrorKey = key;
+    const controller = new PaneMirrorController({
+      transport,
+      workspaceName,
+      panes: leased,
+      onStateChanged: (state) => setMirrorState(state),
+    });
+    setMirrorController(controller);
+    setMirrorState(controller.state());
+    controller.start();
+  });
+  onCleanup(() => {
+    mirrorController()?.dispose();
+  });
+  // A mirror node registers its sink ONCE per lease, so the registrar it is
+  // handed must not change identity on every tick — only when the controller
+  // behind it is genuinely replaced (a new lease needs a re-registration).
+  let mirrorRegistrars = new Map<string, AppWindowMirrorNodeModel["registerSink"]>();
+  let mirrorRegistrarOwner: PaneMirrorController | null = null;
+  const mirrorRegistrar = (
+    controller: PaneMirrorController,
+    pane: string,
+  ): AppWindowMirrorNodeModel["registerSink"] => {
+    if (mirrorRegistrarOwner !== controller) {
+      mirrorRegistrarOwner = controller;
+      mirrorRegistrars = new Map();
+    }
+    const existing = mirrorRegistrars.get(pane);
+    if (existing) return existing;
+    const registrar: AppWindowMirrorNodeModel["registerSink"] = (sink) =>
+      controller.registerPaneSink(pane, sink);
+    mirrorRegistrars.set(pane, registrar);
+    return registrar;
+  };
+  const mirrorCanvasProps = createMemo<AppWindowCanvasMirrorProps | undefined>(() => {
+    if (mirrorTransport() === null || mirrorPaneIds().length === 0) return undefined;
+    const controller = mirrorController();
+    const state = mirrorState();
+    const enabled =
+      (mirrorEnabled() || tiledPaneCompositorEnabled()) && controller !== null && state !== null;
+    const framesById = new Map(renderedPaneFrames().map((frame) => [frame.pane.id, frame]));
+    return {
+      enabled,
+      onToggle: setMirrorEnabled,
+      nodes:
+        enabled && controller && state
+          ? mirrorPaneIds().map((pane) => ({
+              pane,
+              title: framesById.get(pane)?.title ?? pane,
+              frame: framesById.get(pane) ?? null,
+              state: state.panes.get(pane) ?? { kind: "connecting" as const },
+              registerSink: mirrorRegistrar(controller, pane),
+            }))
+          : [],
+      connection: deriveConnectionHealth(state?.transport ?? null, { ok: true }),
+      // The stream fault keeps its own code (the merged issue vocabulary), so a
+      // refused pane or a degraded engine reads as itself instead of as the
+      // generic transport error the connection health is typed in.
+      faultLabel: state?.fault ? terminalIssueFaultLabel(state.fault.code) : null,
+      onRetry: () => mirrorController()?.retry(),
+    };
+  });
+  /**
+   * The panes the daemon still reports as attachable, which is what prunes a
+   * killed window's last layout frame out of the tab strip.
+   */
+  const livePaneIds = createMemo<ReadonlySet<string>>(() => {
+    const inventory = shell().terminalInventory;
+    if (!inventory) return new Set<string>();
+    return new Set(
+      inventory.resources.flatMap((resource) =>
+        resource.attachability.status === "available"
+          ? [resource.attachability.semanticPaneId]
+          : [],
+      ),
+    );
+  });
+  /**
+   * The tiled view IS the runtime terminals surface; the pane grid below it is
+   * the preview/fixture path only.
+   *
+   * The condition is whether a pane-stream transport EXISTS, never whether its
+   * frames have arrived yet. Attachment ownership
+   * is window-keyed with a grace period, so a grid that attaches for the second
+   * before the first layout frame lands leaves a lease still releasing when the
+   * tiled view attaches — and the user is shown "this terminal's previous
+   * session is still releasing" for a window nothing else is using. The tiled
+   * surface states its own waiting-for-geometry case instead.
+   */
+  const tiledViewAvailable = createMemo<boolean>(
+    () => dataMode() === "runtime" && mirrorTransport() !== null,
+  );
+  /**
+   * The session's windows as the inventory groups them: panes sharing a
+   * `windowResourceId` are one tmux window, and a pane without one is its own.
+   * It is the tab strip's source until layout frames arrive.
+   */
+  const inventoryWindows = createMemo(() => {
+    const inventory = shell().terminalInventory;
+    const groups = new Map<
+      string,
+      { key: string; label: string; panes: string[]; active: boolean }
+    >();
+    for (const resource of inventory?.resources ?? []) {
+      if (resource.attachability.status !== "available") continue;
+      const key = resource.windowResourceId ?? resource.id;
+      const group = groups.get(key) ?? { key, label: resource.title, panes: [], active: false };
+      group.panes.push(resource.attachability.semanticPaneId);
+      if (resource.active) group.active = true;
+      groups.set(key, group);
+    }
+    return [...groups.values()];
+  });
+  /** Every attachable pane's title, as the daemon's inventory records it. */
+  const paneTitles = createMemo<ReadonlyMap<string, string>>(() => {
+    const inventory = shell().terminalInventory;
+    const titles = new Map<string, string>();
+    for (const resource of inventory?.resources ?? []) {
+      if (resource.attachability.status === "available") {
+        titles.set(resource.attachability.semanticPaneId, resource.title);
+      }
+    }
+    return titles;
+  });
+  /**
+   * The inventory's own active pane — what the tiled view shows before (or
+   * without) any layout frame, so late geometry never costs the user a terminal.
+   */
+  const activeSemanticPaneId = createMemo<string | null>(() => {
+    const inventory = shell().terminalInventory;
+    if (!inventory) return null;
+    const attachable = inventory.resources.filter(
+      (resource) => resource.attachability.status === "available",
+    );
+    const active = attachable.find((resource) => resource.active) ?? attachable[0];
+    return active?.attachability.status === "available"
+      ? active.attachability.semanticPaneId
+      : null;
+  });
+  /** Panes in the window the shell menu's target belongs to, per tmux. */
+  const windowPaneCountFor = (semanticPaneId: string | null): number => {
+    if (!semanticPaneId) return 1;
+    const frame = (mirrorState()?.layouts ?? []).find((layout) =>
+      layout.panes.some((pane) => pane.pane === semanticPaneId),
+    );
+    return frame?.panes.length ?? 1;
+  };
+
+  const dock = createMemo(() =>
+    projectDomWorkbenchDock(shell(), viewport(), { sidebarWidth: effectiveSidebarWidth() }),
+  );
   const paletteEntries = createMemo(() => createDomPaletteEntries(shell()));
   const statusStrip = createMemo(() => {
-    if (dataMode() !== "preview") return shell().statusStrip;
+    if (dataMode() !== "preview") {
+      const derived = props.connectionHealth
+        ? statusStripFromConnectionHealth(props.connectionHealth)
+        : null;
+      return statusStripWithAttachment(derived ?? shell().statusStrip, terminalAttached());
+    }
     if (props.daemonState?.status === "connected") {
       return {
         state: "connected" as const,
@@ -345,6 +988,18 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   createEffect(() => {
     const nextInput = input();
     const nextDataMode = dataMode();
+    if (nextInput.workspace.id !== appWindowWorkspaceId) {
+      appWindowWorkspaceId = nextInput.workspace.id;
+      const currentView = clientViewState();
+      publishClientViewState(
+        createClientViewStateV1({
+          clientId: currentView.clientId,
+          viewId: currentView.viewId,
+          workspaceId: nextInput.workspace.id,
+          legacyDocument: "appWindows" in nextInput ? nextInput.appWindows : null,
+        }),
+      );
+    }
     if (nextInput === previousInput && nextDataMode === previousDataMode) return;
     const currentInput = previousInput;
     const currentDataMode = previousDataMode;
@@ -352,8 +1007,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     previousDataMode = nextDataMode;
     setState((current) =>
       currentDataMode === nextDataMode
-        ? reconcileDomShellReplayState(currentInput, nextInput, current)
-        : createDomShellReplayState(nextInput),
+        ? reconcileDomShellReplayState(currentInput, nextInput, current, hiddenTools)
+        : createDomShellReplayState(nextInput, hiddenTools),
     );
   });
 
@@ -362,10 +1017,111 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     props.onCommand?.(invocation);
   };
 
+  createEffect(() => {
+    const current = clientViewState();
+    const projection = shell();
+    const dock = {
+      ...current.dock,
+      mode: projection.bottomDock.mode,
+      activeTabId: projection.bottomDock.activeTool,
+      focusZone: projection.focus.zone,
+    };
+    if (
+      dock.mode !== current.dock.mode ||
+      dock.activeTabId !== current.dock.activeTabId ||
+      dock.focusZone !== current.dock.focusZone
+    ) {
+      publishClientViewState({ ...current, dock });
+    }
+  });
+
+  const moveTerminalFocus = (
+    windowId: string | null,
+    source: "keyboard" | "mouse" | "programmatic",
+  ): void => {
+    if (windowId === null) return;
+    const window = appWindowDocument()?.windows[windowId];
+    if (!window || window.source.kind !== "terminal") return;
+    dispatch(
+      applicationShellCommandInvocation(
+        APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+        {
+          target: {
+            kind: "pane",
+            paneId: window.source.terminalSourceId,
+            input: "terminal",
+          },
+        },
+        {
+          kind: source === "programmatic" ? "keyboard" : source,
+          surface: "application-shell",
+        },
+      ),
+    );
+  };
+
+  const applyClientWindowFocus = (
+    windowId: string | null,
+    source: "keyboard" | "mouse" | "programmatic",
+  ): void => {
+    const current = clientViewState();
+    if (current.focusedWindowId !== windowId) {
+      publishClientViewState({
+        ...current,
+        focusedWindowId: windowId,
+        selectedWindowIds: windowId === null ? [] : [windowId],
+      });
+    }
+    moveTerminalFocus(windowId, source);
+  };
+
+  const acceptCanvasClientViewState = (next: ClientViewStateV1): void => {
+    const previousFocus = clientViewState().focusedWindowId;
+    publishClientViewState(next);
+    if (next.focusedWindowId !== previousFocus) {
+      moveTerminalFocus(next.focusedWindowId, "mouse");
+    }
+  };
+
+  const dispatchAppWindow = (
+    invocation: AppWindowCanvasCommandInvocation,
+  ): void | Promise<void> => {
+    if (invocation.command.type !== "window.focus") {
+      return props.onAppWindowCommand?.(invocation);
+    }
+    applyClientWindowFocus(invocation.command.windowId, invocation.source);
+  };
+
   const dispatchSurface = (surface: ProductSurfaceId, source: CommandSource): void => {
     for (const command of commandsToOpenSurface({ surface })) {
       dispatch(invocationFromSurfaceCommand(command, source));
     }
+  };
+
+  const selectResource = (surface: ProductSurfaceId, resourceId: string): void => {
+    dispatch(
+      applicationShellCommandInvocation(
+        APPLICATION_SHELL_COMMAND_IDS.selectResource,
+        { surface, resourceId },
+        { kind: "mouse", surface: "mission-activity-surface" },
+      ),
+    );
+  };
+
+  const openMissionActivity = (missionId: string): void => {
+    selectResource("missions", missionId);
+    const resource = missionWorkspace();
+    const event =
+      resource?.status === "ready"
+        ? resource.activity.find((candidate) => candidate.missionId === missionId)
+        : undefined;
+    if (event) selectResource("activity", event.id);
+    dispatchSurface("activity", { kind: "mouse", surface: "mission-activity-surface" });
+  };
+
+  const openMissionFromActivity = (missionId: string): void => {
+    selectResource("missions", missionId);
+    dispatchSurface("missions", { kind: "mouse", surface: "mission-activity-surface" });
   };
 
   const setDockMode = (mode: WorkbenchDockHostMode, source: CommandSource): void => {
@@ -378,8 +1134,14 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     );
   };
 
+  const returnToTerminals = (): void => {
+    setDockMode("collapsed", { kind: "mouse", surface: "mission-activity-surface" });
+    dispatchSurface("terminals", { kind: "mouse", surface: "mission-activity-surface" });
+  };
+
   const openPalette = (source: CommandSource): void => {
     if (shell().focus.palette.open) return;
+    setPaletteTransitionSource(source.kind === "mouse" ? "mouse" : "keyboard");
     const activeElement = document.activeElement;
     returnFocusElement =
       activeElement && "focus" in activeElement ? (activeElement as HTMLElement) : null;
@@ -404,6 +1166,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const closePalette = (sourceKind: "keyboard" | "mouse"): void => {
     const overlayId = shell().focus.palette.overlayId;
     if (!overlayId) return;
+    setPaletteTransitionSource(sourceKind);
     dispatch(
       applicationShellCommandInvocation(
         APPLICATION_SHELL_COMMAND_IDS.closePalette,
@@ -427,6 +1190,15 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       });
     const keydown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || shell().focus.palette.open) return;
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLocaleLowerCase() === "b" &&
+        !(event.target instanceof HTMLElement && event.target.matches("input, textarea, select"))
+      ) {
+        event.preventDefault();
+        setSidebarCollapsed((collapsed) => !collapsed);
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
         event.preventDefault();
         openPalette({ kind: "keyboard", surface: "application-shell" });
@@ -451,32 +1223,71 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     const tool = input().dock.tools.find(
       (candidate) => candidate.id === shell().bottomDock.activeTool,
     )!;
+    // Belt to the projection's braces: a withheld tool has no tab to reach it
+    // by, and no body either, even if a hand-built input names it active.
+    if (hiddenTools.has(tool.id)) return null;
     return (
       <div class="dock-surface" data-surface={tool.id}>
         <div class="dock-surface__rail" aria-hidden="true">
           <DomIcon id={dockToolIcon(shell(), tool.id)} usage="rail" />
         </div>
-        <div class="dock-surface__content">
+        <div
+          class="dock-surface__content"
+          classList={{
+            "dock-surface__content--journey":
+              ("appWindows" in input() && (tool.id === "missions" || tool.id === "activity")) ||
+              tool.id === "files" ||
+              tool.id === "changes",
+          }}
+        >
           <header>
             <strong>{tool.label}</strong>
             <span>{tool.shortcut}</span>
           </header>
           <Switch>
-            <Match when={tool.data.kind === "files" && tool.data}>
-              {(data) => (
-                <div class="surface-summary">
-                  <span>{data().fileCount} indexed files</span>
-                  <code>{data().selectedResourceId}</code>
-                </div>
-              )}
+            <Match
+              when={
+                "appWindows" in input() &&
+                (tool.data.kind === "missions" || tool.data.kind === "activity")
+              }
+            >
+              <MissionActivitySurface
+                mode={tool.id === "activity" ? "activity" : "missions"}
+                resource={missionWorkspace()}
+                selectedMissionId={
+                  state().selectedResources.find(({ surface }) => surface === "missions")
+                    ?.resourceId ?? null
+                }
+                selectedActivityId={
+                  state().selectedResources.find(({ surface }) => surface === "activity")
+                    ?.resourceId ?? null
+                }
+                onSelectMission={(missionId) => selectResource("missions", missionId)}
+                onSelectActivity={(activityId) => selectResource("activity", activityId)}
+                onOpenMissions={openMissionFromActivity}
+                onOpenActivity={openMissionActivity}
+                onOpenTerminals={returnToTerminals}
+                onRefresh={props.onRefreshResource}
+              />
             </Match>
-            <Match when={tool.data.kind === "changes" && tool.data}>
-              {(data) => (
-                <div class="surface-summary">
-                  <span>{data().changeCount} working tree changes</span>
-                  <code>{data().selectedResourceId}</code>
-                </div>
-              )}
+            <Match when={tool.data.kind === "files"}>
+              <WorkspaceFilesSurface
+                model={props.filesSurface?.model}
+                preview={props.filesSurface?.preview}
+                onSelectFile={props.filesSurface?.onSelectFile}
+                onToggleDirectory={props.filesSurface?.onToggleDirectory}
+                onRetry={props.filesSurface?.onRetry}
+                onRetryPreview={props.filesSurface?.onRetryPreview}
+              />
+            </Match>
+            <Match when={tool.data.kind === "changes"}>
+              <WorkspaceChangesSurface
+                model={props.changesSurface?.model}
+                diff={props.changesSurface?.diff}
+                onSelectChange={props.changesSurface?.onSelectChange}
+                onRetry={props.changesSurface?.onRetry}
+                onRetryDiff={props.changesSurface?.onRetryDiff}
+              />
             </Match>
             <Match when={tool.data.kind === "missions" && tool.data}>
               {(data) => (
@@ -506,11 +1317,33 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
 
   return (
     <>
-      <header class="titlebar" data-focus-zone="application-bar">
+      <header
+        ref={(element) => {
+          titlebarStyle = createRuntimeStyleBinding(element);
+          titlebarStyle.update({ "--desktop-sidebar-width": `${effectiveSidebarWidth()}px` });
+        }}
+        class="titlebar"
+        data-focus-zone="application-bar"
+        data-sidebar-collapsed={sidebarCollapsed()}
+      >
         <div class="titlebar__brand">
-          <DomIcon id="terminals" usage="tab" />
-          <strong>tmux-ide</strong>
-          <span>{shell().project.name}</span>
+          <span class="titlebar__product-mark" aria-hidden="true">
+            <DomIcon id="terminals" usage="tab" />
+          </span>
+          <span class="titlebar__product-copy">
+            <strong>tmux-ide</strong>
+            <small>{shell().project.name}</small>
+          </span>
+          <IconButton
+            class="titlebar__sidebar-toggle"
+            size="small"
+            label={sidebarCollapsed() ? "Expand sidebar" : "Collapse sidebar"}
+            tooltip={`${sidebarCollapsed() ? "Expand" : "Collapse"} sidebar (${props.platform === "darwin" ? "⌘B" : "Ctrl B"})`}
+            pressed={!sidebarCollapsed()}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          >
+            <DomIcon id="dock" usage="action" />
+          </IconButton>
         </div>
         <Show when={dataMode() === "preview"}>
           <span class="titlebar__preview-badge">Preview data</span>
@@ -522,6 +1355,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           }
         />
         <div class="titlebar__drag titlebar__spacer" />
+        <UpdateChip host={props.host} />
         <Show when={props.createPaneFlow}>
           {(flow) => (
             <CreatePaneFlow
@@ -533,9 +1367,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
             />
           )}
         </Show>
-        <button
+        <Button
           class="palette-trigger"
-          type="button"
+          size="small"
+          variant="ghost"
           aria-label="Open command palette"
           id="application-command-palette-trigger"
           title="Open command palette (Cmd/Ctrl-K)"
@@ -548,7 +1383,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         >
           <DomIcon id="command" usage="action" />
           <kbd>{props.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd>
-        </button>
+        </Button>
         <Show when={props.runtime === "electron" && props.platform !== "darwin"}>
           <nav class="window-controls" aria-label="Window controls">
             <button
@@ -575,19 +1410,52 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         </Show>
       </header>
 
-      <div class="shell-workbench" data-shell-source={dataMode()}>
+      <div
+        ref={(element) => {
+          workbenchStyle = createRuntimeStyleBinding(element);
+          workbenchStyle.update({ "--desktop-sidebar-width": `${effectiveSidebarWidth()}px` });
+        }}
+        class="shell-workbench"
+        data-shell-source={dataMode()}
+        data-sidebar-collapsed={sidebarCollapsed()}
+      >
         <aside class="workspace-sidebar" aria-label="Workspace overview" data-focus-zone="sidebar">
           <div class="workspace-sidebar__project">
+            {/*
+              The workspace glyph. Nothing in the shell projection carries a
+              chosen emoji or color yet, so this resolves to the folder
+              fallback — which is the point of the component: the tile is
+              correct today and becomes richer the moment the model can say
+              more, without this call site changing. The two initials it
+              replaces were redundant with the name printed beside them.
+            */}
             <span class="project-monogram" aria-hidden="true">
-              {shell().project.name.slice(0, 2)}
+              <WorkspaceIdentity size="surface" />
             </span>
             <span>
               <strong>{shell().project.name}</strong>
               <small>{shell().project.rootLabel}</small>
             </span>
+            {/*
+              The overflow glyph beside the workspace name is exactly where a
+              user hunts for rename and close. It had a label, a tooltip and no
+              handler; it now opens the session's own verb menu.
+            */}
+            <IconButton
+              class="workspace-sidebar__more"
+              size="small"
+              label="Workspace actions"
+              tooltip="Workspace actions"
+              onClick={(event) => openShellMenu("workspace", null, event.currentTarget, "click")}
+            >
+              <DomIcon id="more" usage="action" />
+            </IconButton>
           </div>
           <section aria-labelledby="sessions-heading">
-            <h2 id="sessions-heading">Sessions</h2>
+            <h2 id="sessions-heading">
+              <Icon icon={ComputerTerminal01Icon} size="dense" />
+              Sessions
+            </h2>
             <Index each={shell().sidebar.sessions}>
               {(session) => {
                 const selected = () =>
@@ -615,7 +1483,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                     }
                   >
                     <i data-state={session().state} />
-                    <span>{session().label}</span>
+                    <span class="sidebar-row__identity">
+                      <span>{session().label}</span>
+                      <small>{session().state}</small>
+                    </span>
                   </button>
                 );
               }}
@@ -623,6 +1494,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           </section>
           <section aria-labelledby="agents-heading">
             <h2 id="agents-heading">
+              <Icon icon={UserGroupIcon} size="dense" />
               Agents <span>{shell().sidebar.agents.length}</span>
             </h2>
             <Index each={shell().sidebar.agents}>
@@ -650,7 +1522,19 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   }
                 >
                   <i data-state={activityTone(agent().activity)} />
-                  <span>{agent().name}</span>
+                  <span
+                    class="sidebar-row__agent-icon"
+                    data-agent-icon={agentHarnessIcon(agent().harness)}
+                    aria-hidden="true"
+                  >
+                    <DomIcon id={agentHarnessIcon(agent().harness)} usage="pane" />
+                  </span>
+                  <span class="sidebar-row__identity">
+                    <span>{agent().name}</span>
+                    <small>
+                      {agent().harness} · {agent().activity}
+                    </small>
+                  </span>
                   <Show when={agent().attention}>
                     <b aria-label="Needs attention" />
                   </Show>
@@ -658,7 +1542,42 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               )}
             </Index>
           </section>
+          <FleetSidebarSection
+            state={fleetState()}
+            openSessionId={openFleetSessionId()}
+            onPromote={promoteSession}
+            workspaceConnected={workspaceConnected()}
+            onSessionVerb={(verbId, _session, args) => {
+              // Only the open workspace's row can carry a verb: a session the
+              // app has not opened has no workspace name to address, which is
+              // why the row's other items arrive here already refused.
+              if (verbId === "session.kill") {
+                void verbAccess.invoke("session.kill", { workspaceName: verbWorkspaceName() });
+                return;
+              }
+              if (verbId === "session.rename" && args?.name) {
+                void verbAccess.invoke(
+                  "session.rename",
+                  { workspaceName: verbWorkspaceName() },
+                  { name: args.name },
+                );
+              }
+            }}
+          />
         </aside>
+
+        <ResizeHandle
+          class="workspace-sidebar__resize"
+          value={sidebarWidth()}
+          min={DOM_SHELL_GEOMETRY.sidebarMinimumWidth}
+          max={DOM_SHELL_GEOMETRY.sidebarMaximumWidth}
+          label="Resize workspace sidebar"
+          disabled={sidebarCollapsed()}
+          onValueChange={(width) => {
+            setSidebarWidth(width);
+            setSidebarCollapsed(false);
+          }}
+        />
 
         <main class="workspace-main" data-dock-mode={shell().bottomDock.mode}>
           <section
@@ -711,102 +1630,226 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
             hidden={shell().workspaceCanvas.activeMode !== "terminals"}
             data-focus-zone="canvas"
           >
-            <header class="canvas-toolbar">
-              <span>
-                <strong>{shell().workspace.name}</strong>{" "}
-                <small>{dataMode() === "preview" ? "preview data" : "workspace snapshot"}</small>
-              </span>
-              <span>
-                {shell().terminalInventory?.resources.length ?? shell().sidebar.agents.length}{" "}
-                terminals · {shell().sidebar.agents.length} agents
-              </span>
-            </header>
-            <div class="agent-grid" data-has-maximized={hasMaximizedPane()}>
-              <Index each={renderedPaneFrames()}>
-                {(paneFrame) => {
-                  const agent = createMemo(() =>
-                    shell().sidebar.agents.find((item) => item.paneId === paneFrame().pane.id),
-                  );
-                  const terminalTarget = createMemo(() => {
-                    const inventory = shell().terminalInventory;
-                    if (inventory !== undefined) {
-                      const resource = inventory.resources.find(
-                        ({ id }) => id === paneFrame().pane.id,
-                      );
-                      return resource?.attachability.status === "available"
-                        ? resource.attachability.semanticPaneId
-                        : null;
-                    }
-                    const projected = props.terminalPanes?.find(
-                      ({ model }) => model.pane.id === paneFrame().pane.id,
-                    );
-                    if (projected) return projected.terminalTarget?.semanticPaneId ?? null;
-                    return paneFrame().pane.id;
-                  });
-                  return (
-                    <WebPaneFrame
-                      model={paneFrame()}
-                      onActionActivate={props.onPaneAction}
-                      onGripActivate={props.onPaneGrip}
-                      renderPaneIcon={(_pane, icon) => <DomIcon id={icon} usage="pane" />}
-                      renderActionIcon={(action) => <DomIcon id={action.icon} usage="action" />}
-                      renderGripIcon={(icon) => <DomIcon id={icon} usage="action" />}
-                    >
-                      <div class="agent-pane__body" data-focus-zone="terminal">
-                        <Show
-                          when={terminalTarget()}
-                          fallback={
-                            <div
-                              class="terminal-surface terminal-surface--unavailable"
-                              role="status"
-                            >
-                              <strong>Terminal unavailable</strong>
-                              <span>
-                                {paneFrame().status?.description ??
-                                  "This terminal cannot be attached safely."}
-                              </span>
-                            </div>
-                          }
-                        >
-                          {(semanticPaneId) => (
-                            <TerminalSurface
-                              target={{
-                                workspaceName: props.terminalWorkspaceName ?? input().workspace.id,
-                                semanticPaneId: semanticPaneId(),
+            <Show
+              when={experimentalSurfaces && appWindowDocument()}
+              fallback={
+                <Show
+                  when={tiledViewAvailable()}
+                  fallback={
+                    <div class="agent-grid" data-has-maximized={hasMaximizedPane()}>
+                      <Index each={renderedPaneFrames()}>
+                        {(paneFrame) => {
+                          const agent = createMemo(() =>
+                            shell().sidebar.agents.find(
+                              (item) => item.paneId === paneFrame().pane.id,
+                            ),
+                          );
+                          const terminalTarget = createMemo(() => {
+                            const inventory = shell().terminalInventory;
+                            if (inventory !== undefined) {
+                              const resource = inventory.resources.find(
+                                ({ id }) => id === paneFrame().pane.id,
+                              );
+                              return resource?.attachability.status === "available"
+                                ? resource.attachability.semanticPaneId
+                                : null;
+                            }
+                            const projected = props.terminalPanes?.find(
+                              ({ model }) => model.pane.id === paneFrame().pane.id,
+                            );
+                            if (projected) return projected.terminalTarget?.semanticPaneId ?? null;
+                            return paneFrame().pane.id;
+                          });
+                          return (
+                            <WebPaneFrame
+                              model={paneFrame()}
+                              onActionActivate={(intent, source) => {
+                                // The pane-actions overflow produced a command no
+                                // surface consumed. It opens the verb menu now; every
+                                // other action keeps its existing host handler.
+                                if (
+                                  intent.actionId ===
+                                  APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS.menu
+                                ) {
+                                  const anchor = document.querySelector(
+                                    `[data-pane-id="${CSS.escape(intent.paneId)}"] [data-action-id="${CSS.escape(intent.actionId)}"]`,
+                                  );
+                                  if (anchor) openShellMenu("pane", intent.paneId, anchor, "click");
+                                  return;
+                                }
+                                props.onPaneAction?.(intent, source);
                               }}
-                              title={paneFrame().title}
-                              transport={props.terminalTransport}
-                              focused={paneFrame().appearance.accessibility.terminalInputOwner}
-                              reducedMotion={props.reducedMotion}
-                              themeKey={props.terminalThemeKey}
-                              onFocus={(source) =>
-                                dispatch(
-                                  applicationShellCommandInvocation(
-                                    APPLICATION_SHELL_COMMAND_IDS.moveFocus,
-                                    {
-                                      target: {
-                                        kind: "pane",
-                                        paneId: paneFrame().pane.id,
-                                        input: "terminal",
-                                      },
-                                    },
-                                    { kind: source, surface: "application-shell" },
-                                  ),
-                                )
-                              }
-                            />
-                          )}
-                        </Show>
-                        <span class="sr-only">
-                          {agent()?.harness ?? paneFrame().subtitle ?? paneFrame().pane.kind} ·
-                          Activity: {agent()?.activity ?? paneFrame().status?.label ?? "idle"}
-                        </span>
-                      </div>
-                    </WebPaneFrame>
-                  );
-                }}
-              </Index>
-            </div>
+                              onGripActivate={props.onPaneGrip}
+                              renderPaneIcon={(_pane, icon) => <DomIcon id={icon} usage="pane" />}
+                              renderActionIcon={(action) => (
+                                <DomIcon id={action.icon} usage="action" />
+                              )}
+                              renderGripIcon={(icon) => <DomIcon id={icon} usage="action" />}
+                            >
+                              <div class="agent-pane__body" data-focus-zone="terminal">
+                                <Show
+                                  when={terminalTarget()}
+                                  fallback={
+                                    <div
+                                      class="terminal-surface terminal-surface--unavailable"
+                                      role="status"
+                                    >
+                                      <strong>Terminal unavailable</strong>
+                                      <span>
+                                        {paneFrame().status?.description ??
+                                          "This terminal cannot be attached safely."}
+                                      </span>
+                                    </div>
+                                  }
+                                >
+                                  {(semanticPaneId) => (
+                                    <TerminalSurface
+                                      target={{
+                                        workspaceName:
+                                          props.terminalWorkspaceName ?? input().workspace.id,
+                                        semanticPaneId: semanticPaneId(),
+                                      }}
+                                      title={paneFrame().title}
+                                      transport={props.terminalTransport}
+                                      focused={
+                                        paneFrame().appearance.accessibility.terminalInputOwner
+                                      }
+                                      /*
+                                       * The pre-tiled fallback grid, one card
+                                       * per pane. Each card is the only view of
+                                       * its window here, so it fits tmux to
+                                       * itself — the behavior this surface has
+                                       * always had, now stated rather than
+                                       * inherited from a default (m50.2).
+                                       */
+                                      geometryOwnership="owner"
+                                      reducedMotion={props.reducedMotion}
+                                      themeKey={props.terminalThemeKey}
+                                      onFocus={(source) =>
+                                        dispatch(
+                                          applicationShellCommandInvocation(
+                                            APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+                                            {
+                                              target: {
+                                                kind: "pane",
+                                                paneId: paneFrame().pane.id,
+                                                input: "terminal",
+                                              },
+                                            },
+                                            { kind: source, surface: "application-shell" },
+                                          ),
+                                        )
+                                      }
+                                    />
+                                  )}
+                                </Show>
+                                <span class="sr-only">
+                                  {agent()?.harness ??
+                                    paneFrame().subtitle ??
+                                    paneFrame().pane.kind}{" "}
+                                  · Activity:{" "}
+                                  {agent()?.activity ?? paneFrame().status?.label ?? "idle"}
+                                </span>
+                              </div>
+                            </WebPaneFrame>
+                          );
+                        }}
+                      </Index>
+                    </div>
+                  }
+                >
+                  <WorkspaceTiledSurface
+                    layouts={mirrorState()?.layouts ?? []}
+                    workspaceName={verbWorkspaceName()}
+                    transport={props.terminalTransport}
+                    paneFrames={renderedPaneFrames()}
+                    livePanes={livePaneIds()}
+                    fallbackPane={activeSemanticPaneId()}
+                    paneTitles={paneTitles()}
+                    fallbackWindows={inventoryWindows()}
+                    reducedMotion={props.reducedMotion}
+                    terminalThemeKey={props.terminalThemeKey}
+                    mirror={mirrorCanvasProps()}
+                    onAttachmentChanged={setTerminalAttached}
+                    renamingPane={renamingPane()}
+                    onRenameCancel={() => setRenamingPane(null)}
+                    onRenameCommit={(semanticPaneId, name) => {
+                      setRenamingPane(null);
+                      void verbAccess.invoke(
+                        "window.rename",
+                        { workspaceName: verbWorkspaceName(), semanticPaneId },
+                        { name },
+                      );
+                    }}
+                    verbs={{
+                      workspaceConnected: workspaceConnected(),
+                      onCreateWindow: props.createPaneFlow
+                        ? () => setCreatePaneOpen(true)
+                        : undefined,
+                      invoke: (verbId, semanticPaneId, args) => {
+                        return verbAccess.invoke(
+                          verbId,
+                          { workspaceName: verbWorkspaceName(), semanticPaneId },
+                          args,
+                        );
+                      },
+                    }}
+                    onOpenPaneMenu={(semanticPaneId, pointer) =>
+                      setShellMenu({
+                        kind: "pane",
+                        paneId: semanticPaneId,
+                        pointer,
+                        openSource: "contextmenu",
+                      })
+                    }
+                    onOpenWindowMenu={(semanticPaneId, pointer) =>
+                      setShellMenu({
+                        kind: "pane",
+                        paneId: semanticPaneId,
+                        pointer,
+                        openSource: "contextmenu",
+                      })
+                    }
+                    onFocusPane={(semanticPaneId, source) =>
+                      dispatch(
+                        applicationShellCommandInvocation(
+                          APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+                          {
+                            target: {
+                              kind: "pane",
+                              paneId: semanticPaneId,
+                              input: "terminal",
+                            },
+                          },
+                          { kind: source, surface: "application-shell" },
+                        ),
+                      )
+                    }
+                  />
+                </Show>
+              }
+            >
+              {(document) => (
+                <AppWindowCanvas
+                  document={document()}
+                  clientViewState={clientViewState()}
+                  onClientViewStateChange={acceptCanvasClientViewState}
+                  paneFrames={renderedPaneFrames()}
+                  terminalInventory={shell().terminalInventory}
+                  overlay={agentGraphOverlay()}
+                  overlayTruncated={fleetGraphTruncated()}
+                  workspaceName={props.terminalWorkspaceName ?? input().workspace.id}
+                  transport={props.terminalTransport}
+                  reducedMotion={props.reducedMotion}
+                  terminalThemeKey={props.terminalThemeKey}
+                  onCommand={dispatchAppWindow}
+                  mutationsAvailable={props.onAppWindowCommand !== undefined}
+                  mutationUnavailableReason={props.appWindowMutationUnavailableReason}
+                  mirror={mirrorCanvasProps()}
+                  verbs={canvasVerbSurface()}
+                />
+              )}
+            </Show>
           </section>
 
           <div class="workspace-dock" data-focus-zone="dock-tabs">
@@ -851,7 +1894,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           data-state={statusStrip().state}
           title={statusStrip().message}
         >
-          <i />
+          <Icon icon={connectionGlyph(statusStrip().state)} size="dense" />
           <span>{statusStrip().message}</span>
         </span>
         <span class="status-strip__safe" title={statusStrip().safeState}>
@@ -862,9 +1905,24 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         </span>
       </footer>
 
+      <Show when={shellMenu()}>
+        {(menu) => (
+          <ContextMenu
+            open
+            pointer={menu().pointer}
+            label={menu().kind === "workspace" ? "Workspace actions" : "Pane actions"}
+            sections={shellMenuSections()}
+            openSource={menu().openSource}
+            onClose={() => setShellMenu(null)}
+            onActivate={(itemId) => activateShellMenuItem(itemId)}
+          />
+        )}
+      </Show>
+
       <CommandPalette
         open={shell().focus.palette.open}
         entries={paletteEntries()}
+        transitionSource={paletteTransitionSource()}
         onClose={closePalette}
         onClosed={() => {
           const currentTarget = returnFocusId ? document.getElementById(returnFocusId) : null;

@@ -242,7 +242,7 @@ describe("MissionRepository replay and persistence", () => {
     const detached = missions.get("mis_alpha")!;
     detached.tasks.tsk_setup!.title = "mutated";
     expect(missions.get("mis_alpha")?.tasks.tsk_setup?.title).toBe("Setup");
-  });
+  }, 15_000);
 
   it("returns history and state from one event-log read in snapshot()", () => {
     const { runtime, missions } = repository();

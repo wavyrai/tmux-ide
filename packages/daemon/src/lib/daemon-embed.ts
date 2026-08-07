@@ -14,6 +14,8 @@ import { WebSocket, WebSocketServer } from "ws";
 import {
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
+  PANE_STREAM_REDEEM_PATH,
+  PaneStreamLoopbackWebSocketUrlSchemaZ,
   TERMINAL_ATTACHMENT_REDEEM_PATH,
   TerminalAttachmentLoopbackWebSocketUrlSchemaZ,
   type DaemonInstanceIdentity,
@@ -31,15 +33,28 @@ import {
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
+import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
+import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
+import { WorkspaceMultiplexerAuthority } from "./workspace-multiplexer-verbs.ts";
 import {
   createNativeTerminalAttachmentRuntime,
   type NativeTerminalAttachmentRuntime,
 } from "../terminal/attachments/native-runtime.ts";
+import { createTmuxAgentStatusProbe } from "../terminal/attachments/agent-status-probe.ts";
 import {
   attachTerminalAttachmentWebSocket,
   type TerminalAttachmentWebSocketBoundary,
 } from "../server/terminal-attachment-upgrade.ts";
+import {
+  attachPaneStreamWebSocket,
+  type PaneStreamWebSocketBoundary,
+} from "../server/pane-stream-upgrade.ts";
+import {
+  createPaneStreamRuntime,
+  type PaneStreamRuntime,
+} from "../terminal/pane-stream/runtime.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
+import { readOrMintEnvironmentId } from "./environment-identity.ts";
 import {
   canonicalDaemonUrl,
   clearCanonicalDaemonInfoIfOwned,
@@ -181,6 +196,18 @@ export function terminalAttachmentWebSocketUrl(bindHostname: string, port: numbe
   }
   return TerminalAttachmentLoopbackWebSocketUrlSchemaZ.parse(
     canonicalDaemonUrl("ws", descriptorHostname, port, TERMINAL_ATTACHMENT_REDEEM_PATH),
+  );
+}
+
+/** Pane-stream descriptors share the loopback-only discipline above. */
+export function paneStreamWebSocketUrl(bindHostname: string, port: number): string {
+  const descriptorHostname =
+    bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname === "::" ? "::1" : bindHostname;
+  if (!["127.0.0.1", "localhost", "::1"].includes(descriptorHostname)) {
+    throw new TypeError("Pane-stream listener must include a canonical loopback address.");
+  }
+  return PaneStreamLoopbackWebSocketUrlSchemaZ.parse(
+    canonicalDaemonUrl("ws", descriptorHostname, port, PANE_STREAM_REDEEM_PATH),
   );
 }
 
@@ -642,8 +669,12 @@ async function startHttpServer({
   daemonIdentity,
   workspacePaneCreationBackend,
   workspaceOpenBackend,
+  workspacePromotionBackend,
+  appWindowMutationBackend,
+  workspaceMultiplexerBackend,
   workspaceRegistry,
   terminalAttachmentRuntime,
+  paneStreamRuntime,
 }: {
   sessionName: string;
   requestedPort: number;
@@ -657,17 +688,23 @@ async function startHttpServer({
     productVersion: string;
     instanceId: string;
     startedAt: string;
+    environmentId?: string;
   };
   workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
   workspaceOpenBackend: WorkspaceOpenAuthority;
+  workspacePromotionBackend: WorkspacePromotionAuthority;
+  appWindowMutationBackend: AppWindowMutationAuthority;
+  workspaceMultiplexerBackend: WorkspaceMultiplexerAuthority;
   workspaceRegistry: WorkspaceRegistry;
   terminalAttachmentRuntime: NativeTerminalAttachmentRuntime;
+  paneStreamRuntime: PaneStreamRuntime;
 }): Promise<{
   server: Server;
   sockets: Set<Socket>;
   closeClients: () => void;
   closeWsServers: () => Promise<void>;
   terminalAttachmentBoundary: TerminalAttachmentWebSocketBoundary;
+  paneStreamBoundary: PaneStreamWebSocketBoundary;
 }> {
   const { createApp } = await import("../command-center/server.ts");
   const { getRequestListener } = await import(requireFromHere.resolve("@hono/node-server"));
@@ -699,9 +736,18 @@ async function startHttpServer({
     daemonIdentity,
     workspacePaneCreationBackend,
     workspaceOpenBackend,
+    workspacePromotionBackend,
+    appWindowMutationBackend,
+    // Named in this function's parameter type since the verb routes shipped and
+    // never forwarded, so every multiplexer verb answered "not available from
+    // this daemon" in every real process. Only the in-test dispatcher, which is
+    // handed the authority directly, ever reached it.
+    workspaceMultiplexerBackend,
     workspaceRegistry,
     terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
+    paneStreamIssueBackend: paneStreamRuntime.coordinator,
     applicationShellInventoryBackend: terminalAttachmentRuntime,
+    startupReadinessAttachmentBackend: terminalAttachmentRuntime,
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({ ok: true, session: sessionName });
@@ -727,6 +773,7 @@ async function startHttpServer({
     server,
     terminalAttachmentRuntime.admission,
   );
+  const paneStreamBoundary = attachPaneStreamWebSocket(server, paneStreamRuntime.coordinator);
 
   try {
     await new Promise<void>((resolve, reject) => {
@@ -764,6 +811,7 @@ async function startHttpServer({
   } catch (error) {
     await Promise.allSettled([
       Promise.resolve().then(() => terminalAttachmentBoundary.close()),
+      Promise.resolve().then(() => paneStreamBoundary.close()),
       Promise.resolve().then(() => closeClients()),
       ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
       Promise.resolve().then(() => closeWsServers()),
@@ -777,6 +825,7 @@ async function startHttpServer({
     closeClients,
     closeWsServers,
     terminalAttachmentBoundary,
+    paneStreamBoundary,
   };
 }
 
@@ -849,6 +898,9 @@ export async function startEmbeddedDaemon(
     const productVersion = resolveDaemonProductVersion(opts.productVersion);
     const instanceId = randomUUID();
     const startedAt = new Date().toISOString();
+    // Stable across restarts, unlike the per-process nonce above; minted once
+    // per daemon state home and re-minted only if its record disappears.
+    const environmentId = readOrMintEnvironmentId();
 
     // Workspace registry: load + reconcile against live tmux sessions on
     // startup. Backwards-compat: if TMUX_IDE_SESSION is set, auto-add it as
@@ -902,7 +954,22 @@ export async function startEmbeddedDaemon(
       registry: workspaceRegistry,
       tmuxAuthority,
     });
+    const workspacePromotion = new WorkspacePromotionAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
+      tmuxAuthority,
+    });
+    const appWindowMutation = new AppWindowMutationAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
+    });
+    const workspaceMultiplexer = new WorkspaceMultiplexerAuthority({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
+      tmuxAuthority,
+    });
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
+    let paneStreamRuntime: PaneStreamRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
       terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
@@ -914,10 +981,21 @@ export async function startEmbeddedDaemon(
           socketSelector: tmuxAuthority.socketSelector,
           trustedCwd: dir,
         },
+        // Ground-truth agent status: authority-first with a screen-scrape
+        // fallback. Option/capture IO rides the runtime's own pinned runner.
+        agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
       });
       // Orphan reconciliation is a hard startup barrier: neither the HTTP
       // mutation nor direct WebSocket redemption is exposed before it passes.
       await terminalAttachmentRuntime.whenReady();
+      paneStreamRuntime = createPaneStreamRuntime({
+        daemonInstanceId: instanceId,
+        webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
+        tmuxExecutablePath: tmuxAuthority.executablePath,
+        tmuxSocketSelector: tmuxAuthority.socketSelector,
+        inputAuthority: terminalAttachmentRuntime.inputAuthority,
+        semanticPaneCatalog: terminalAttachmentRuntime.semanticPaneCatalog,
+      });
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,
@@ -927,35 +1005,63 @@ export async function startEmbeddedDaemon(
         localBypassToken,
         silent: opts.silent,
         readProjectAuth: !sessionless,
-        daemonIdentity: { productVersion, instanceId, startedAt },
+        daemonIdentity: { productVersion, instanceId, startedAt, environmentId },
         workspacePaneCreationBackend: workspacePaneCreation,
         workspaceOpenBackend: workspaceOpen,
+        workspacePromotionBackend: workspacePromotion,
+        appWindowMutationBackend: appWindowMutation,
+        workspaceMultiplexerBackend: workspaceMultiplexer,
         workspaceRegistry,
         terminalAttachmentRuntime,
+        paneStreamRuntime,
       });
     } catch (error) {
       await Promise.allSettled([
         terminalAttachmentRuntime?.dispose() ?? Promise.resolve(),
+        paneStreamRuntime?.dispose() ?? Promise.resolve(),
         workspacePaneCreation.dispose(),
         workspaceOpen.dispose(),
+        workspacePromotion.dispose(),
+        appWindowMutation.dispose(),
+        workspaceMultiplexer.dispose(),
       ]);
       throw error;
     }
-    const { server, sockets, closeClients, closeWsServers, terminalAttachmentBoundary } =
-      startedServer;
+    const {
+      server,
+      sockets,
+      closeClients,
+      closeWsServers,
+      terminalAttachmentBoundary,
+      paneStreamBoundary,
+    } = startedServer;
+    const retirePaneStreamTransport = async (): Promise<readonly unknown[]> => {
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() => paneStreamRuntime!.dispose()),
+        Promise.resolve().then(() => paneStreamBoundary.close()),
+      ]);
+      return results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+    };
     const abortStartedServer = async (): Promise<void> => {
-      const terminalFailures = await retireTerminalAttachmentTransport(
-        terminalAttachmentRuntime,
-        terminalAttachmentBoundary,
-      );
+      const terminalFailures = [
+        ...(await retireTerminalAttachmentTransport(
+          terminalAttachmentRuntime,
+          terminalAttachmentBoundary,
+        )),
+        ...(await retirePaneStreamTransport()),
+      ];
       const paneDisposal = Promise.resolve().then(() => workspacePaneCreation.dispose());
       const workspaceOpenDisposal = Promise.resolve().then(() => workspaceOpen.dispose());
+      const workspacePromotionDisposal = Promise.resolve().then(() => workspacePromotion.dispose());
+      const appWindowMutationDisposal = Promise.resolve().then(() => appWindowMutation.dispose());
       const closePromise = Promise.resolve()
         .then(() => waitForServerClose(server))
         .catch(() => undefined);
       await Promise.allSettled([
         paneDisposal,
         workspaceOpenDisposal,
+        workspacePromotionDisposal,
+        appWindowMutationDisposal,
         Promise.resolve().then(() => closeClients()),
         ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
         Promise.race([closePromise, delay(100)]),
@@ -974,6 +1080,7 @@ export async function startEmbeddedDaemon(
           productVersion,
           instanceId,
           startedAt,
+          environmentId,
           bindHostname,
           authToken: localBypassToken,
         },
@@ -1115,8 +1222,11 @@ export async function startEmbeddedDaemon(
                 terminalAttachmentBoundary,
               )),
             );
+            failures.push(...(await retirePaneStreamTransport()));
             await capture(() => workspacePaneCreation.dispose());
             await capture(() => workspaceOpen.dispose());
+            await capture(() => workspacePromotion.dispose());
+            await capture(() => appWindowMutation.dispose());
 
             let closePromise: Promise<void>;
             try {

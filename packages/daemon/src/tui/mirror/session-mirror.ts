@@ -27,7 +27,7 @@
 import { appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { ControlModeClient } from "./control-client.ts";
-import { InputCoalescer } from "./input-coalescer.ts";
+import { InputCoalescer } from "../../terminal/protocol/input-coalescer.ts";
 import {
   PaneMirror,
   type MirrorSnapshot,
@@ -43,21 +43,21 @@ import {
   parseSessionWindowChanged,
   parseMouseSubscription,
   type LayoutLeaf,
-} from "./layout-parse.ts";
+} from "../../terminal/protocol/layout-parse.ts";
 import { effectiveWindowSize, type Size } from "./size-truth.ts";
 import {
   SESSION_PANE_DESCRIPTOR_FORMAT,
   SessionDescriptorDiscovery,
   type SessionDescriptorDiscoveryDiagnostic,
   type SessionPaneDescriptor,
-} from "./session-descriptor-discovery.ts";
+} from "../../terminal/protocol/session-descriptor-discovery.ts";
 
 export {
   decodeTmuxArgument,
   parseSessionPaneDescriptors,
   type SessionDescriptorDiscoveryDiagnostic,
   type SessionPaneDescriptor,
-} from "./session-descriptor-discovery.ts";
+} from "../../terminal/protocol/session-descriptor-discovery.ts";
 
 /** One pane's geometry inside the window, in cells (tmux coordinates). */
 export interface PaneGeometry {

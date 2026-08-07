@@ -1,0 +1,32 @@
+{
+  "title": "tmux-ide rich workspace",
+  "subtitle": "Shared browser + TUI widget contract",
+  "items": [
+    {
+      "type": "badge",
+      "text": "Live daemon connected",
+      "tone": "success"
+    },
+    {
+      "type": "progress",
+      "label": "Implementation",
+      "value": 100
+    },
+    {
+      "type": "text",
+      "text": "Markdown, animated GIFs, Mermaid diagrams, and safe agent-aware cards render directly inside terminal panels."
+    },
+    {
+      "type": "code",
+      "language": "sh",
+      "code": "tmux-ide widget image demo.gif"
+    },
+    {
+      "type": "button",
+      "label": "Send status",
+      "input": "echo rich-widget-ready",
+      "submit": true,
+      "tone": "info"
+    }
+  ]
+}

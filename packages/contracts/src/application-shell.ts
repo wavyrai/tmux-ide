@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DesktopMissionWorkspaceResourceSchemaZ } from "./desktop-missions.ts";
 import { CohesionFixtureV1SchemaZ, type CohesionFixtureV1 } from "./cohesion-fixture.ts";
 import {
   APPLICATION_SHELL_COMMAND_IDS,
@@ -39,6 +40,9 @@ import {
 } from "./focus-overlay.ts";
 import { SemanticProductIdSchemaZ } from "./pane-appearance.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
+import { AppWindowDocumentV1SchemaZ } from "./app-window-state.ts";
+import { AgentGraphOverlaySchemaZ } from "./agent-graph-overlay.ts";
+import { FleetSessionIdSchemaZ } from "./fleet-catalog.ts";
 
 export const APPLICATION_SHELL_PROJECTION_VERSION = 1 as const;
 export const APPLICATION_SHELL_TRACE_VERSION = 1 as const;
@@ -49,11 +53,37 @@ export const TerminalResourceUnavailableReasonSchemaZ = z.enum([
   "invalid-semantic-stamp",
   "duplicate-semantic-stamp",
   "duplicate-runtime-pane-binding",
+  // Retained for wire compatibility only. m41 attach-4 stopped emitting this from
+  // the window-capable projection: a multi-pane window is attachable once it
+  // carries a durable window stamp. It is still emitted by legacy facts sources
+  // that gathered no window facts at all.
   "not-single-pane-window",
+  // Window-level attachability faults (m41 attach-4). A multi-pane window is
+  // attachable only once every one of its panes shares one durable, unique
+  // `@tmux_ide_window_id` stamp; these mirror the semantic-pane catalog's own
+  // window proof so the projection stays honest with what an attach would do.
+  "missing-window-stamp",
+  "window-stamp-inconsistent",
+  "duplicate-window-stamp",
 ]);
 export type TerminalResourceUnavailableReason = z.infer<
   typeof TerminalResourceUnavailableReasonSchemaZ
 >;
+
+/**
+ * Wire-safe grouping key shared by every terminal resource that belongs to one
+ * durable tmux window (m41 attach-4). It is minted from the window stamp digest
+ * — never the raw `@tmux_ide_window_id` value — so the renderer can see that two
+ * attachable panes live in the same window (and that attaching both conflicts
+ * under the window-keyed interactive ownership proven in attach-3).
+ */
+export const TerminalWindowResourceIdSchemaZ = z
+  .string()
+  .regex(
+    /^terminal-window\.[0-9a-f]{20}$/u,
+    "window grouping key must be a wire-safe window stamp digest",
+  );
+export type TerminalWindowResourceId = z.infer<typeof TerminalWindowResourceIdSchemaZ>;
 
 export const TerminalResourceAttachabilitySchemaZ = z.discriminatedUnion("status", [
   z
@@ -78,8 +108,22 @@ export const ApplicationShellTerminalResourceSchemaZ = z
     kind: z.enum(["agent", "terminal"]),
     active: z.boolean(),
     attachability: TerminalResourceAttachabilitySchemaZ,
+    // Additive (m41 attach-4). Present only on attachable resources whose durable
+    // tmux window carries a valid, unique window stamp; resources sharing it live
+    // in the same window. attach-5's UI consumes it to surface the shared-window
+    // relationship and the resulting single-attach conflict.
+    windowResourceId: TerminalWindowResourceIdSchemaZ.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((resource, ctx) => {
+    if (resource.windowResourceId !== undefined && resource.attachability.status !== "available") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["windowResourceId"],
+        message: "window grouping key is only valid on an attachable terminal resource",
+      });
+    }
+  });
 export type ApplicationShellTerminalResource = z.infer<
   typeof ApplicationShellTerminalResourceSchemaZ
 >;
@@ -250,6 +294,64 @@ export const ApplicationShellProjectionInputV2SchemaZ = z
   });
 export type ApplicationShellProjectionInputV2 = z.infer<
   typeof ApplicationShellProjectionInputV2SchemaZ
+>;
+
+/**
+ * V3 is the first desktop projection input that carries durable app-window
+ * state. The complete document is retained at this boundary so renderer
+ * projections can preserve canonical window identity and revision provenance.
+ */
+export const ApplicationShellProjectionInputV3SchemaZ = z
+  .object({
+    ...ApplicationShellProjectionInputV1Fields,
+    terminalInventory: ApplicationShellTerminalInventorySchemaZ,
+    appWindows: AppWindowDocumentV1SchemaZ,
+    missionWorkspace: DesktopMissionWorkspaceResourceSchemaZ.optional(),
+    /**
+     * The runtime agent-graph overlay: a NON-durable, path-free projection of
+     * the live fleet onto the canvas (ground-truth status nodes keyed by durable
+     * AppWindow ids, plus spawn/mission edges and mission groups). Additive and
+     * optional exactly like {@link missionWorkspace} — producers that never
+     * assemble it, and consumers that ignore it, are unaffected. It carries no
+     * pane id, session name, or path (see AgentGraphOverlaySchemaZ).
+     */
+    agentGraphOverlay: AgentGraphOverlaySchemaZ.optional(),
+    /**
+     * The open workspace's OWN opaque fleet session id — the same
+     * `session.<digest>` token the fleet catalog mints for this session (see
+     * {@link ./fleet-catalog.ts} `FleetSessionIdSchemaZ` and the daemon's
+     * `fleetSessionIdForName`). It lets the renderer correlate the open
+     * workspace to its fleet entry so that entry is marked open in the sidebar
+     * and excluded from the renderer-side graph merge (drawn once, not twice).
+     * Additive and optional exactly like {@link missionWorkspace}: it carries no
+     * raw session name, pane id, or path — only the opaque, path-free digest.
+     */
+    fleetSessionId: FleetSessionIdSchemaZ.optional(),
+  })
+  .strict()
+  .superRefine((input, ctx) => {
+    refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
+      "workspace",
+      "sidebar",
+      "agents",
+    ]);
+    const resources = new Map(
+      input.terminalInventory.resources.map((resource) => [resource.id, resource]),
+    );
+    for (const [index, agent] of input.workspace.sidebar.agents.entries()) {
+      if (agent.paneId === null) continue;
+      const resource = resources.get(agent.paneId);
+      if (resource === undefined || resource.kind !== "agent") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["workspace", "sidebar", "agents", index, "paneId"],
+          message: "attached agents must correlate to one agent terminal resource",
+        });
+      }
+    }
+  });
+export type ApplicationShellProjectionInputV3 = z.infer<
+  typeof ApplicationShellProjectionInputV3SchemaZ
 >;
 
 type SidebarSession = CohesionFixtureV1["workspace"]["sidebar"]["sessions"][number];

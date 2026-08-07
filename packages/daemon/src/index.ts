@@ -135,6 +135,11 @@ export {
   type WorkspacePaneTmuxAuthority,
 } from "./lib/workspace-pane-creation.ts";
 export {
+  AppWindowMutationAuthority,
+  AppWindowMutationError,
+  type AppWindowMutationErrorCode,
+} from "./lib/app-window-mutation.ts";
+export {
   SemanticPaneCatalog,
   SemanticPaneCatalogError,
   TrustedSemanticPaneSnapshotSchemaZ,
@@ -229,3 +234,56 @@ export {
   type NativeTerminalAttachmentRuntimeOptions,
   type NativeTerminalAttachmentTmuxAuthority,
 } from "./terminal/attachments/native-runtime.ts";
+export {
+  PaneStreamLeaseError,
+  PaneStreamLeaseManager,
+  type IssuedPaneStreamLease,
+  type PaneStreamIssueContext as PaneStreamLeaseIssueContext,
+  type PaneStreamLeaseBinding,
+  type PaneStreamLeaseDescriptor,
+  type PaneStreamLeaseErrorCode,
+  type PaneStreamLeaseManagerOptions,
+  type PaneStreamLeaseStatus,
+} from "./terminal/pane-stream/lease-manager.ts";
+export {
+  PANE_STREAM_MAX_CONTROL_BYTES,
+  PANE_STREAM_MAX_REDEMPTION_BYTES,
+  PANE_STREAM_MAX_REDEMPTION_MS,
+  PaneStreamAdmissionCoordinator,
+  PaneStreamAdmissionError,
+  PaneStreamLiveConnection,
+  type PaneStreamAdmissionCoordinatorOptions,
+  type PaneStreamAdmissionErrorCode,
+  type PaneStreamAdmissionSnapshot,
+  type PaneStreamDescriptor,
+  type PaneStreamIssueContext,
+  type PaneStreamLeaseAuthority,
+  type PaneStreamMirror,
+  type PaneStreamPreAuthAdmission,
+  type PaneStreamUpgradeDecision,
+} from "./terminal/pane-stream/pane-stream-websocket.ts";
+export {
+  DEFAULT_PANE_STREAM_FLOW_BUDGETS,
+  PANE_STREAM_FLOW_OWNERS,
+  PaneStreamWireLedger,
+  type PaneStreamFlowBudget,
+  type PaneStreamFlowBudgets,
+  type PaneStreamFlowOwner,
+  type PaneStreamReturnedTickets,
+} from "./terminal/pane-stream/wire-ledger.ts";
+export {
+  PaneStreamRuntime,
+  createPaneStreamRuntime,
+  type PaneStreamRuntimeOptions,
+} from "./terminal/pane-stream/runtime.ts";
+export {
+  TerminalInputAuthority,
+  TerminalInputAuthorityConflictError,
+  type TerminalInputAuthoritySnapshot,
+  type TerminalInputOwner,
+  type TerminalInputTransport,
+} from "./terminal/input-authority.ts";
+export {
+  attachPaneStreamWebSocket,
+  type PaneStreamWebSocketBoundary,
+} from "./server/pane-stream-upgrade.ts";

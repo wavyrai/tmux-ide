@@ -38,11 +38,16 @@ import {
   AddWorkspaceRequestSchemaZ,
   APPLICATION_SHELL_RESOURCE_V1_VERSION,
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   WORKSPACE_CATALOG_RESOURCE_VERSION,
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
   type ApplicationShellResourceV1,
   type ApplicationShellResourceV2,
+  type ApplicationShellResourceV3,
+  type AgentGraphOverlay,
+  type AppWindowDocumentV1,
+  type DesktopMissionWorkspaceResource,
   type WorkspaceCatalogResourceV1,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
@@ -113,12 +118,30 @@ import { WebSocketServer } from "ws";
 import {
   projectLegacyApplicationShellResourceV1,
   projectApplicationShellResource,
+  projectApplicationShellResourceV3,
   type ApplicationShellSessionFacts,
+  type ApplicationShellWorkspaceDockSummary,
 } from "./resources/application-shell.ts";
+import { FilesAuthority } from "./resources/workspace-files-authority.ts";
+import { ChangesAuthority } from "./resources/workspace-changes-authority.ts";
+import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
+import { daemonActionCommandRegistry } from "./actions/command-definitions.ts";
+import { MissionRepository, type MissionRepositorySnapshot } from "../lib/mission-repository.ts";
+import { projectDesktopMissionWorkspace } from "./resources/desktop-missions.ts";
+import { projectApplicationShellAgentGraphOverlay } from "./resources/agent-graph-overlay.ts";
 import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
 } from "./terminal-attachment-issue.ts";
+import { mountPaneStreamIssueRoute, type PaneStreamIssueBackend } from "./pane-stream-issue.ts";
+import { mountWorkspaceResourceRoutes } from "./resources/workspace-resource-routes.ts";
+import { mountFleetResourceRoute } from "./resources/fleet-resource-route.ts";
+import { ownerAuthorityGate, requireOwnerAuthority } from "./owner-authority.ts";
+import {
+  mountStartupReadinessRoute,
+  type StartupReadinessAttachmentAuthority,
+} from "./resources/startup-readiness-route.ts";
+import { readWidgetAsset } from "../lib/widget-asset-store.ts";
 export interface CreateAppOptions {
   authService?: AuthService;
   authConfig?: AuthConfig;
@@ -133,23 +156,90 @@ export interface CreateAppOptions {
     productVersion: string;
     instanceId: string;
     startedAt: string;
+    /** Stable per-daemon-home identity; absent for pre-environment callers. */
+    environmentId?: string;
   };
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
   workspaceOpenBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenBackend;
+  workspacePromotionBackend?: import("./actions/handlers/workspace-promote.ts").WorkspacePromotionBackend;
+  appWindowMutationBackend?: import("./actions/handlers/app-window-mutate.ts").AppWindowMutationBackend;
+  workspaceMultiplexerBackend?: import("./actions/handlers/workspace-multiplexer.ts").WorkspaceMultiplexerBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
+  /** Catalog + startup-barrier facts for the startup readiness ladder. */
+  startupReadinessAttachmentBackend?: StartupReadinessAttachmentAuthority | null;
+  paneStreamIssueBackend?: PaneStreamIssueBackend | null;
   applicationShellInventoryBackend?: {
     discoverApplicationShellSession(
       requestedSessionName: string,
     ): Promise<ApplicationShellSessionFacts | null>;
   } | null;
+  applicationShellAppWindowBackend?: {
+    load(
+      projectDir: string,
+      terminalSourceIds: readonly string[],
+      focusedTerminalSourceId: string | null,
+    ): Promise<AppWindowDocumentV1>;
+  } | null;
+  applicationShellMissionBackend?: {
+    load(projectDir: string): Promise<DesktopMissionWorkspaceResource>;
+    /**
+     * The raw mission snapshot for daemon-side agent-graph correlation. Optional
+     * and best-effort: it still carries attempt terminal/session targets, so it
+     * is consumed only to derive durable window ids and never crosses the wire.
+     */
+    loadSnapshot?(projectDir: string): Promise<MissionRepositorySnapshot | null>;
+  } | null;
 }
+
+const defaultApplicationShellAppWindowBackend = {
+  async load(
+    projectDir: string,
+    terminalSourceIds: readonly string[],
+    focusedTerminalSourceId: string | null,
+  ): Promise<AppWindowDocumentV1> {
+    return loadApplicationShellAppWindows(projectDir, terminalSourceIds, focusedTerminalSourceId);
+  },
+};
+
+const defaultApplicationShellMissionBackend = {
+  async load(projectDir: string): Promise<DesktopMissionWorkspaceResource> {
+    const repository = await MissionRepository.open(projectDir);
+    return projectDesktopMissionWorkspace(repository.snapshot());
+  },
+  async loadSnapshot(projectDir: string): Promise<MissionRepositorySnapshot | null> {
+    const repository = await MissionRepository.open(projectDir);
+    return repository.snapshot();
+  },
+};
 
 let projectStreamConnections = 0;
 
 function bearerToken(authHeader: string | undefined): string | null {
   if (!authHeader?.startsWith("Bearer ")) return null;
   return authHeader.slice("Bearer ".length);
+}
+
+/**
+ * Bounded Files/Changes counts for the V3 dock badges. Best-effort: a failed
+ * listing or non-repository maps to a zero count so the shell read never fails
+ * on a workspace surface that has its own honest unavailable state.
+ */
+function workspaceDockSummary(
+  projectDir: string,
+  workspaceName: string,
+): ApplicationShellWorkspaceDockSummary {
+  const safeCount = (read: () => number | null): number => {
+    try {
+      return read() ?? 0;
+    } catch {
+      return 0;
+    }
+  };
+  return {
+    fileCount: safeCount(() => new FilesAuthority(projectDir, workspaceName).rootEntryCount()),
+    changeCount: safeCount(() => new ChangesAuthority(projectDir, workspaceName).changeCount()),
+  };
 }
 
 function requireAuth(token: string | null, localBypassToken: string | null): MiddlewareHandler {
@@ -165,25 +255,77 @@ function requireAuth(token: string | null, localBypassToken: string | null): Mid
   };
 }
 
+/**
+ * Every action that changes a user's tmux world, and what each one demands.
+ *
+ * `owner-and-operation-id` is the full m44 discipline: owner authority plus a
+ * stable operation id, so a retried request replays rather than repeats. The
+ * multiplexer verbs join it because they destroy things — a `kill-pane`
+ * delivered twice must not take a second pane with it.
+ *
+ * `owner` is the same authority gate without the idempotency requirement. The
+ * `project.*` lifecycle actions sit here rather than in the list above: they
+ * predate the operation-id envelope and are reached by the CLI, which has no
+ * host to mint one, so demanding an id would break `tmux-ide stop` rather than
+ * secure it. What they must not keep doing is bypassing the owner check
+ * entirely — `project.stop` kills a tmux session, and it was open to any caller
+ * that could reach the port. For GUI use `workspace.session.kill` supersedes
+ * it: same effect, owner-gated, idempotent, and it answers with a verified
+ * result instead of a boolean.
+ *
+ * Anything absent from this table is a read or a query and passes through.
+ */
+const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">> = {
+  "workspace.pane.create": "owner-and-operation-id",
+  "workspace.open": "owner-and-operation-id",
+  "workspace.promote": "owner-and-operation-id",
+  "workspace.app-window.mutate": "owner-and-operation-id",
+  "workspace.window.split": "owner-and-operation-id",
+  "workspace.window.kill": "owner-and-operation-id",
+  "workspace.pane.kill": "owner-and-operation-id",
+  "workspace.session.kill": "owner-and-operation-id",
+  "workspace.rename": "owner-and-operation-id",
+  "workspace.pane.zoom.toggle": "owner-and-operation-id",
+  "workspace.pane.select": "owner-and-operation-id",
+  "workspace.pane.swap": "owner-and-operation-id",
+  "workspace.pane.resize": "owner-and-operation-id",
+  "project.launch": "owner",
+  "project.stop": "owner",
+  "project.restart": "owner",
+  "project.activate": "owner",
+  "project.openTerminal": "owner",
+};
+
 function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
+  const gate = ownerAuthorityGate(ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Host mutation capability is unavailable",
+    mismatchMessage: "Host mutation capability required",
+  });
   return async (c, next) => {
     const actionName = c.req.param("name");
-    if (actionName !== "workspace.pane.create" && actionName !== "workspace.open") {
-      return next();
-    }
-    if (!ownerToken) {
-      return c.json({ error: "Host mutation capability is unavailable" }, 503);
-    }
-    const supplied = bearerToken(c.req.header("Authorization"));
-    if (!supplied || supplied !== ownerToken) {
-      return c.json({ error: "Host mutation capability required" }, 401);
-    }
-    if (!z.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+    const requirement = actionName ? GATED_ACTIONS[actionName] : undefined;
+    if (!requirement) return next();
+    const denied = gate(c);
+    if (denied) return denied;
+    if (
+      requirement === "owner-and-operation-id" &&
+      !z.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success
+    ) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
     return next();
   };
 }
+
+// Owner-only. Capability negotiation is how the host learns this generation's
+// identity, so without the credential there is nothing to negotiate.
+const requireOwnerCapability = (ownerToken: string | null): MiddlewareHandler =>
+  requireOwnerAuthority(ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Host capability discovery is unavailable",
+    mismatchMessage: "Host capability discovery requires owner authority",
+  });
 
 function remoteAccessAuth(options: CreateAppOptions): {
   token: string | null;
@@ -333,6 +475,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     workspaceRegistry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
     backend: options.terminalAttachmentIssueBackend ?? null,
   });
+  mountPaneStreamIssueRoute(app, {
+    daemonInstanceId: daemonIdentity.instanceId,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    workspaceRegistry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+    backend: options.paneStreamIssueBackend ?? null,
+  });
 
   // Remote access bearer gate. Local Electron access uses a per-daemon
   // bypass token from preload; loopback IPs are not implicitly trusted.
@@ -384,12 +532,47 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   //     project / terminal operations — see src/command-center/actions/) ---
 
   app.post(
+    "/api/v2/capabilities",
+    requireOwnerCapability(options.remoteAccess?.ownerToken ?? null),
+    async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid capability request" }, 400);
+      }
+      if (!z.object({}).strict().safeParse(body).success) {
+        return c.json({ error: "Invalid capability request" }, 400);
+      }
+      const appWindowCommandRegistered = daemonActionCommandRegistry
+        .descriptors()
+        .some(({ id }) => id === "workspace.app-window.mutate");
+      return c.json({
+        status: "ok" as const,
+        daemon: daemonInstanceIdentity,
+        capabilities: {
+          appWindowMutation:
+            appWindowCommandRegistered && options.appWindowMutationBackend !== undefined
+              ? { available: true as const }
+              : {
+                  available: false as const,
+                  reason: "This daemon generation has no AppWindow mutation backend.",
+                },
+        },
+      });
+    },
+  );
+
+  app.post(
     "/api/v2/action/:name",
     requireHostCapability(options.remoteAccess?.ownerToken ?? null),
     createActionDispatcher({
       daemonInstanceId: daemonIdentity.instanceId,
       workspacePaneCreationBackend: options.workspacePaneCreationBackend,
       workspaceOpenBackend: options.workspaceOpenBackend,
+      workspacePromotionBackend: options.workspacePromotionBackend,
+      appWindowMutationBackend: options.appWindowMutationBackend,
+      workspaceMultiplexerBackend: options.workspaceMultiplexerBackend,
     }),
   );
 
@@ -427,6 +610,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
   });
 
+  // Pane widgets publish only content-addressed, media-validated bytes into the
+  // private tmux-ide state home. This route can therefore serve an opaque id
+  // without becoming a general-purpose filesystem reader.
+  app.get("/api/widget-assets/:assetId", (c) => {
+    const asset = readWidgetAsset(c.req.param("assetId"));
+    if (!asset) return c.json({ error: "widget asset not found" }, 404);
+    return c.json({
+      assetId: asset.assetId,
+      media: asset.media,
+      name: asset.name,
+      data: asset.bytes.toString("base64"),
+    });
+  });
+
   // T067: /healthz — minimal liveness probe used by daemon-client.
   // Intentionally NOT under /api so it bypasses the auth middleware on
   // every consumer. Returns ok + productVersion + uptime (ms since boot).
@@ -450,6 +647,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       productVersion: daemonIdentity.productVersion,
       instanceId: daemonIdentity.instanceId,
       startedAt: daemonIdentity.startedAt,
+      ...(daemonIdentity.environmentId !== undefined
+        ? { environmentId: daemonIdentity.environmentId }
+        : {}),
     });
   });
 
@@ -471,6 +671,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ workspaces: registry.list() } satisfies DaemonWorkspacesResponse);
   });
 
+  // OWNER POLICY: not owner-gated, deliberately. This is the name-only index
+  // the host reads BEFORE it can address any owner-gated resource, and the
+  // production broker fetches it with no Authorization header
+  // (`daemon-resource-broker.ts` `#requestJson`, whose `authorize` argument
+  // defaults to false and is passed `true` only for the fleet catalog and the
+  // workspace resources). It is path-free by construction — `{workspaceName,
+  // sessionName}` pairs and nothing else, asserted in `workspaces.test.ts` —
+  // and it still sits behind the remote-access gate on a non-loopback bind.
+  // Gating it on the owner bearer would break every desktop workspace read
+  // without withholding a single fact the owner-gated routes do not already
+  // protect.
   app.get("/api/resources/workspace-catalog", (c) => {
     const registry = getDefaultWorkspaceRegistry();
     return c.json({
@@ -551,11 +762,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     if (
       requestedVersion !== undefined &&
       requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) &&
-      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION)
+      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION) &&
+      requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V3_VERSION)
     ) {
       return c.json({ error: "Unsupported application-shell resource version" }, 400);
     }
-    if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION)) {
+    if (
+      requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION) ||
+      requestedVersion === String(APPLICATION_SHELL_RESOURCE_V3_VERSION)
+    ) {
       const backend = options.applicationShellInventoryBackend;
       if (!backend) return c.json({ error: "Session discovery unavailable" }, 503);
       let session: ApplicationShellSessionFacts | null;
@@ -566,6 +781,75 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       }
       if (!session) return c.json({ error: "Session not found" }, 404);
       const resource = projectApplicationShellResource(session);
+      if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V3_VERSION)) {
+        const appWindowBackend =
+          options.applicationShellAppWindowBackend === undefined
+            ? defaultApplicationShellAppWindowBackend
+            : options.applicationShellAppWindowBackend;
+        if (!appWindowBackend) return c.json({ error: "App window state unavailable" }, 503);
+        let appWindows: AppWindowDocumentV1;
+        try {
+          appWindows = await appWindowBackend.load(
+            session.dir,
+            resource.terminalInventory.resources.map(({ id }) => id),
+            resource.terminalInventory.activeResourceId,
+          );
+        } catch {
+          return c.json({ error: "App window state unavailable" }, 503);
+        }
+        const missionBackend =
+          options.applicationShellMissionBackend === undefined
+            ? defaultApplicationShellMissionBackend
+            : options.applicationShellMissionBackend;
+        let missionWorkspace: DesktopMissionWorkspaceResource;
+        if (!missionBackend) {
+          missionWorkspace = {
+            status: "degraded",
+            reason: "Mission history is unavailable from this daemon.",
+          };
+        } else {
+          try {
+            missionWorkspace = await missionBackend.load(session.dir);
+          } catch {
+            missionWorkspace = {
+              status: "degraded",
+              reason:
+                "Mission history could not be verified. The terminal workspace remains available.",
+            };
+          }
+        }
+        // Best-effort runtime agent-graph overlay. Correlating the raw mission
+        // snapshot (attempt terminal/session targets) to durable window ids
+        // happens entirely here; any failure degrades to omitting the overlay
+        // and never fails the shell read (mirroring mission verification above).
+        let agentGraphOverlay: AgentGraphOverlay | undefined;
+        try {
+          let missionSnapshot: MissionRepositorySnapshot | null = null;
+          if (missionBackend?.loadSnapshot) {
+            missionSnapshot = await missionBackend.loadSnapshot(session.dir);
+          }
+          const overlay = projectApplicationShellAgentGraphOverlay({
+            session,
+            appWindows,
+            missionSnapshot,
+            nowSec: Math.floor(Date.now() / 1000),
+          });
+          if (Object.keys(overlay.nodes).length > 0) agentGraphOverlay = overlay;
+        } catch {
+          agentGraphOverlay = undefined;
+        }
+        return c.json({
+          version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
+          daemon: daemonInstanceIdentity,
+          resource: projectApplicationShellResourceV3(
+            session,
+            appWindows,
+            missionWorkspace,
+            workspaceDockSummary(session.dir, name),
+            agentGraphOverlay,
+          ),
+        } satisfies ApplicationShellResourceV3);
+      }
       return c.json({
         version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
         daemon: daemonInstanceIdentity,
@@ -604,6 +888,37 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       daemon: daemonInstanceIdentity,
       resource: legacyResource,
     } satisfies ApplicationShellResourceV1);
+  });
+
+  // Owner-only, generation-stamped native Files and Changes read resources.
+  // The route param is a semantic workspace name resolved through the private
+  // workspace registry; renderer-supplied ids never decode to a path.
+  mountWorkspaceResourceRoutes(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+  });
+
+  // Owner-only, generation-stamped fleet catalog: every ADOPTED tmux session
+  // (registry-backed and adopted-only) with its authority-stamped agents. It
+  // enumerates independently of the registry-gated session discovery so the
+  // app can SEE sessions it never created; the resource is path-free.
+  // OWNER POLICY: owner-only, 503 when this generation holds no credential.
+  mountFleetResourceRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+  });
+
+  // The startup readiness ladder: the ordered, typed answer to "what is this
+  // daemon still missing?", computed from real state on every request.
+  // OWNER POLICY: owner-only when a credential exists; ownerless SERVES the
+  // ladder, whose `credential-held` rung is that answer. See the route header.
+  mountStartupReadinessRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+    attachmentRuntime: options.startupReadinessAttachmentBackend ?? null,
   });
 
   app.get("/api/project/:name/panes", (c) => {
@@ -1368,7 +1683,11 @@ function listAvailableTemplates(): ProjectTemplate[] {
   // Repo-root templates/ — 4 levels up from packages/daemon/src/command-center/.
   // Pre-fold this lived at <pkg>/templates (..,.. worked); post-fold the
   // canonical templates dir is at the repo root.
-  const templatesDir = join(__dir, "..", "..", "..", "..", "templates");
+  const configuredTemplatesDir = process.env.TMUX_IDE_TEMPLATES_DIR;
+  const templatesDir =
+    configuredTemplatesDir && isAbsolute(configuredTemplatesDir)
+      ? configuredTemplatesDir
+      : join(__dir, "..", "..", "..", "..", "templates");
   if (!existsSync(templatesDir)) return [];
   const labels: Record<string, { label: string; description: string }> = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },

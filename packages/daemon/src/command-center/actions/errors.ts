@@ -60,6 +60,26 @@ export type ActionErrorCode =
   | "workspace_creation_failed"
   | "workspace_cleanup_unproven"
   | "workspace_resource_changed"
+  | "session_not_found"
+  | "session_not_adopted"
+  | "session_internal"
+  | "stamp_failed"
+  | "promotion_verification_failed"
+  // Multiplexer verbs. The two refusals are policy, not failure: a client that
+  // receives them asked for something the daemon declines to do, and the honest
+  // response is to say which rule stopped it.
+  | "pane_not_found"
+  | "window_not_found"
+  | "ambiguous_target"
+  | "last_window_refused"
+  | "last_pane_refused"
+  | "mutation_failed"
+  | "mutation_unverified"
+  // Resize refusals (m50): a border that does not exist cannot be moved, and a
+  // zoomed pane's size belongs to the zoom rather than to the layout.
+  | "single_pane_window"
+  | "zoomed_window_refused"
+  | "different_window_refused"
   | "internal";
 
 export class ActionError extends Error {

@@ -39,6 +39,17 @@ const ACTION_COMMAND_METADATA: Record<ActionName, ActionCommandMetadata> = {
   "daemon.shutdown": { label: "Shut down daemon", category: "daemon", dangerous: true },
   "workspace.pane.create": { label: "Create workspace pane", category: "workspace" },
   "workspace.open": { label: "Open config-free workspace", category: "workspace" },
+  "workspace.promote": { label: "Promote adopted session to workspace", category: "workspace" },
+  "workspace.app-window.mutate": { label: "Mutate application window", category: "workspace" },
+  "workspace.window.split": { label: "Split pane", category: "workspace" },
+  "workspace.window.kill": { label: "Close window", category: "workspace", dangerous: true },
+  "workspace.pane.kill": { label: "Close pane", category: "workspace", dangerous: true },
+  "workspace.session.kill": { label: "Close session", category: "workspace", dangerous: true },
+  "workspace.rename": { label: "Rename session or window", category: "workspace" },
+  "workspace.pane.zoom.toggle": { label: "Toggle pane zoom", category: "workspace" },
+  "workspace.pane.select": { label: "Focus pane", category: "workspace" },
+  "workspace.pane.swap": { label: "Swap panes", category: "workspace" },
+  "workspace.pane.resize": { label: "Resize pane", category: "workspace" },
 };
 
 function actionDescriptor(name: ActionName): CommandDescriptor {

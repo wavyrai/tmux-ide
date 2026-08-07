@@ -5,6 +5,7 @@ import {
   APPLICATION_SHELL_RESOURCE_VERSION,
   ApplicationShellProjectionInputV1SchemaZ,
   DESKTOP_HOST_API_VERSION,
+  buildStartupReadinessLadder,
   type ApplicationShellProjectionInputV1,
   type DaemonInstanceIdentity,
   type DesktopDaemonEvent,
@@ -74,6 +75,7 @@ function bootstrap(daemon: DaemonInstanceIdentity = DAEMON_A): DesktopHostBootst
     theme: { mode: "light", highContrast: false, reducedMotion: false },
     window: INITIAL_WINDOW,
     daemon: { status: "connected", identity: daemon },
+    onboarding: { introAcknowledged: true },
   };
 }
 
@@ -145,9 +147,7 @@ function createHostHarness() {
   const host: HostCapabilities = {
     apiVersion: DESKTOP_HOST_API_VERSION,
     bootstrap: vi.fn(async () => activeBootstrap),
-    lifecycle: { requestQuit: async () => undefined },
     window: {
-      getState: async () => INITIAL_WINDOW,
       minimize: async () => INITIAL_WINDOW,
       toggleMaximized: async () => INITIAL_WINDOW,
       close: async () => undefined,
@@ -156,17 +156,45 @@ function createHostHarness() {
         return stopWindow;
       },
     },
-    menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
-    dialog: { selectProjectDirectory: vi.fn(async () => null) },
+    workspace: { openProjectDirectory: vi.fn(async () => null) },
+    onboarding: { acknowledgeIntro: vi.fn(async () => undefined) },
     theme: {
-      getState: async () => ({ mode: "light", highContrast: false, reducedMotion: false }),
       onChanged(listener) {
         publishTheme = listener;
         return stopTheme;
       },
     },
+    update: {
+      getStatus: async () => ({
+        phase: "idle" as const,
+        currentVersion: "test",
+        availableVersion: null,
+      }),
+      onStatusChanged: () => () => undefined,
+    },
     daemon: {
+      fetchWidgetAsset: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
+      startupReadiness: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
+      capabilities: vi.fn(async () => ({
+        status: "ok" as const,
+        daemon: activeDaemon,
+        capabilities: { appWindowMutation: { available: true as const } },
+      })),
+      mutateAppWindow: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
       createWorkspacePane: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
+      invokeVerb: vi.fn(async () => ({
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "fixture only" },
       })),
@@ -174,6 +202,14 @@ function createHostHarness() {
         status: "error" as const,
         error: {
           code: "preview-only" as const,
+          reason: "fixture only",
+          retryable: false,
+        },
+      })),
+      issuePaneStream: vi.fn(async () => ({
+        status: "error" as const,
+        error: {
+          code: "attachment-unavailable" as const,
           reason: "fixture only",
           retryable: false,
         },
@@ -191,6 +227,14 @@ function createHostHarness() {
           workspaces: workspaceNames.map((workspaceName) => ({ workspaceName })),
         }),
       ),
+      fetchFleetCatalog: vi.fn(async () => ({
+        status: "ok" as const,
+        envelope: { version: 1 as const, daemon: activeDaemon, sessions: [] },
+      })),
+      promoteWorkspace: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
       fetchApplicationShell: vi.fn(async ({ workspaceName }) => ({
         status: "ok" as const,
         envelope: {
@@ -198,6 +242,22 @@ function createHostHarness() {
           daemon: activeDaemon,
           resource: shellInputs.get(workspaceName) ?? shellInput(workspaceName),
         },
+      })),
+      fetchWorkspaceFiles: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
+      fetchWorkspaceFilePreview: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
+      fetchWorkspaceChanges: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
+      fetchWorkspaceChangeDiff: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
       })),
       subscribe: vi.fn(async (request, listener) => {
         const subscription: HostSubscription = {
@@ -315,12 +375,24 @@ async function mountResourceIdentityMismatch(
 function retryButton(root: HTMLElement): HTMLButtonElement | null {
   return (
     [...root.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Try again",
+      (button) =>
+        button.textContent === "Try again" ||
+        button.textContent === "Retry workspace" ||
+        button.textContent === "Recheck daemon",
+    ) ?? null
+  );
+}
+
+function buttonNamed(root: HTMLElement, label: string): HTMLButtonElement | null {
+  return (
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === label,
     ) ?? null
   );
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   delete window.tmuxIdeHost;
   document.body.replaceChildren();
@@ -343,6 +415,30 @@ describe("desktop App live composition", () => {
     dispose();
   });
 
+  it("automatically rechecks a degraded bootstrap for tabs that survive a daemon restart", async () => {
+    vi.useFakeTimers();
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.bootstrap)
+      .mockResolvedValueOnce({
+        ...bootstrap(),
+        daemon: {
+          status: "unavailable",
+          code: "probe-failed",
+          reason: "The requested resource is unavailable.",
+        },
+      })
+      .mockResolvedValueOnce(bootstrap());
+    const { dispose } = mount(() => <App host={harness.host} />);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.host.bootstrap).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(harness.host.bootstrap).toHaveBeenCalledTimes(2);
+
+    dispose();
+  });
+
   it("hard-fails an invalid present bridge instead of falling back to preview", () => {
     installLightMediaPreference();
     window.tmuxIdeHost = { apiVersion: DESKTOP_HOST_API_VERSION } as HostCapabilities;
@@ -357,6 +453,47 @@ describe("desktop App live composition", () => {
     );
     expect(root.querySelector(".titlebar__preview-badge")).toBeNull();
     expect(root.querySelector(".shell-workbench")).toBeNull();
+    dispose();
+  });
+
+  it("shows the engine's own stalled rung instead of re-deriving one locally", async () => {
+    // The host reached a daemon that answered with its ladder while refusing to
+    // be used. Re-deriving locally would say only "the engine could not be
+    // reached"; the daemon knows the catalog is what actually stalled.
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.bootstrap).mockResolvedValueOnce({
+      ...bootstrap(),
+      daemon: {
+        status: "degraded",
+        code: "identity-mismatch",
+        reason: "Canonical daemon verification is degraded.",
+        startupReadiness: buildStartupReadinessLadder(
+          [
+            { status: "satisfied" },
+            { status: "satisfied" },
+            { status: "satisfied" },
+            {
+              status: "stuck",
+              reason: { vocabulary: "startup-readiness", code: "catalog-sessions-unreachable" },
+            },
+          ],
+          "2026-08-05T09:00:00.000Z",
+        ),
+      },
+    });
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+
+    await vi.waitFor(() => {
+      expect(root.querySelector(".runtime-state-surface")?.getAttribute("data-state")).toBe(
+        "degraded",
+      );
+    });
+    const diagnostics = root.querySelector(".runtime-diagnostics")?.textContent ?? "";
+    expect(diagnostics).toContain(
+      "Startup stalled at: reading the terminal catalog — the registered sessions are no longer running.",
+    );
+    expect(diagnostics).not.toContain("Startup stalled at: starting the engine");
     dispose();
   });
 
@@ -402,7 +539,9 @@ describe("desktop App live composition", () => {
       expect(root.querySelector(".runtime-state-surface")?.getAttribute("data-state")).toBe(
         "onboarding",
       );
-      expect(root.textContent).toContain("Start tmux-ide in a project");
+      expect(root.textContent).toContain("Open a project to begin");
+      expect(root.textContent).toContain("No ide.yml required");
+      expect(root.textContent).toContain("Open Folder");
       expect(root.querySelector('[aria-label="Minimize"]')).not.toBeNull();
     });
 
@@ -416,13 +555,188 @@ describe("desktop App live composition", () => {
     });
     expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
     expect(styles).toContain("var(--tmux-ide-motion-easing-standard)");
-    expect(root.querySelector(".runtime-action")).toBeNull();
-    expect(harness.host.dialog.selectProjectDirectory).not.toHaveBeenCalled();
+    expect(harness.host.workspace.openProjectDirectory).not.toHaveBeenCalled();
 
     dispose();
     expect(harness.stopTheme).toHaveBeenCalledOnce();
     expect(harness.stopWindow).toHaveBeenCalledOnce();
     expect(harness.subscriptions[0]?.unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("treats native folder selection cancellation as a quiet no-op", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+
+    buttonNamed(root, "Open Folder")?.click();
+    await vi.waitFor(() =>
+      expect(harness.host.workspace.openProjectDirectory).toHaveBeenCalledOnce(),
+    );
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")?.disabled).toBe(false));
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+    expect(root.querySelector(".shell-workbench")).toBeNull();
+    dispose();
+  });
+
+  it("shows a bounded native open error without revealing a workspace", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.workspace.openProjectDirectory).mockResolvedValueOnce({
+      status: "error",
+      error: { code: "request-failed", reason: "The selected project could not be opened." },
+    });
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+
+    buttonNamed(root, "Open Folder")?.click();
+    await vi.waitFor(() =>
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "The selected project could not be opened.",
+      ),
+    );
+    expect(root.querySelector(".shell-workbench")).toBeNull();
+    dispose();
+  });
+
+  it("reveals a native workspace only after catalog discovery and a usable V3 resource", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    const workspaceName = "project-00112233445566778899aabbccddeeff";
+    harness.setShell(workspaceName, shellInput("Opened project"));
+    vi.mocked(harness.host.workspace.openProjectDirectory).mockImplementationOnce(async () => {
+      harness.setWorkspaces(workspaceName);
+      return {
+        status: "ok",
+        result: {
+          operationId: "20000000-0000-4000-8000-000000000002",
+          daemonInstanceId: DAEMON_A.instanceId,
+          outcome: "created",
+          resource: {
+            resourceVersion: 1,
+            workspaceName,
+            initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+          },
+        },
+      };
+    });
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+
+    buttonNamed(root, "Open Folder")?.click();
+    await markLive(harness, [workspaceName]);
+    await vi.waitFor(() => {
+      expect(root.querySelector(".shell-workbench")?.getAttribute("data-shell-source")).toBe(
+        "runtime",
+      );
+      expect(root.textContent).toContain("Opened project");
+    });
+    expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledWith({
+      workspaceName,
+      resourceVersion: 3,
+    });
+    dispose();
+  });
+
+  it("shows the first-run intro over the first live workspace, then persists dismissal", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.bootstrap).mockResolvedValueOnce({
+      ...bootstrap(),
+      onboarding: { introAcknowledged: false },
+    });
+    const workspaceName = "project-00112233445566778899aabbccddeeff";
+    harness.setWorkspaces(workspaceName);
+    harness.setShell(workspaceName, shellInput("First live workspace"));
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await markLive(harness, [workspaceName]);
+    await vi.waitFor(() => expect(root.querySelector(".shell-workbench")).not.toBeNull());
+
+    const intro = root.querySelector('[role="dialog"].first-run-intro');
+    expect(intro).not.toBeNull();
+    expect(intro?.textContent).toContain("Your workspace is live");
+    expect(intro?.textContent).toContain("command palette");
+
+    buttonNamed(root, "Got it")?.click();
+    await vi.waitFor(() => expect(harness.host.onboarding.acknowledgeIntro).toHaveBeenCalledOnce());
+    expect(root.querySelector(".first-run-intro")).toBeNull();
+    // The shell stays mounted; only the intro layer is retired.
+    expect(root.querySelector(".shell-workbench")).not.toBeNull();
+    dispose();
+  });
+
+  it("does not show the first-run intro once acknowledged", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    const workspaceName = "project-00112233445566778899aabbccddeeff";
+    harness.setWorkspaces(workspaceName);
+    harness.setShell(workspaceName, shellInput("Returning workspace"));
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await markLive(harness, [workspaceName]);
+    await vi.waitFor(() => expect(root.querySelector(".shell-workbench")).not.toBeNull());
+    expect(root.querySelector(".first-run-intro")).toBeNull();
+    expect(harness.host.onboarding.acknowledgeIntro).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("times out discovery honestly and retries it without reopening the folder", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.workspace.openProjectDirectory).mockResolvedValueOnce({
+      status: "ok",
+      result: {
+        operationId: "20000000-0000-4000-8000-000000000002",
+        daemonInstanceId: DAEMON_A.instanceId,
+        outcome: "created",
+        resource: {
+          resourceVersion: 1,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+        },
+      },
+    });
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+
+    vi.useFakeTimers();
+    buttonNamed(root, "Open Folder")?.click();
+    await vi.advanceTimersByTimeAsync(8_000);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(root.textContent).toContain("discovery is still catching up"));
+    const listCalls = vi.mocked(harness.host.daemon.listWorkspaces).mock.calls.length;
+    buttonNamed(root, "Retry discovery")?.click();
+    await vi.waitFor(() =>
+      expect(harness.host.daemon.listWorkspaces).toHaveBeenCalledTimes(listCalls + 1),
+    );
+    expect(harness.host.workspace.openProjectDirectory).toHaveBeenCalledOnce();
+    dispose();
+  });
+
+  it("suppresses a second folder-open submission while the native transaction is pending", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    const pendingOpen = deferred<null>();
+    vi.mocked(harness.host.workspace.openProjectDirectory).mockReturnValueOnce(pendingOpen.promise);
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+    const open = buttonNamed(root, "Open Folder")!;
+
+    open.click();
+    open.click();
+    await vi.waitFor(() =>
+      expect(harness.host.workspace.openProjectDirectory).toHaveBeenCalledOnce(),
+    );
+    expect(open.disabled).toBe(true);
+    pendingOpen.resolve(null);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")?.disabled).toBe(false));
+    dispose();
   });
 
   it("requires explicit selection for many workspaces and renders the live semantic shell", async () => {
@@ -476,12 +790,12 @@ describe("desktop App live composition", () => {
     });
     expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledWith({
       workspaceName: "beta",
-      resourceVersion: 2,
+      resourceVersion: 3,
     });
     const workspaceSubscription = harness.subscriptions.find(
       ({ workspaceNames }) => workspaceNames[0] === "beta",
     );
-    expect(harness.host.dialog.selectProjectDirectory).not.toHaveBeenCalled();
+    expect(harness.host.workspace.openProjectDirectory).not.toHaveBeenCalled();
     dispose();
     expect(workspaceSubscription?.unsubscribe).toHaveBeenCalledOnce();
   });
@@ -580,7 +894,7 @@ describe("desktop App live composition", () => {
     expect(root.textContent).not.toContain("old-workspace");
     expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledWith({
       workspaceName: "new-workspace",
-      resourceVersion: 2,
+      resourceVersion: 3,
     });
     expect(harness.host.daemon.fetchApplicationShell).not.toHaveBeenCalledWith({
       workspaceName: "old-workspace",
@@ -628,11 +942,15 @@ describe("desktop App live composition", () => {
     await vi.waitFor(() =>
       expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledTimes(1),
     );
+    // Three workspace-scoped subscriptions per open workspace: the shell
+    // resource, and the Files and Changes catalogs, which now take their
+    // invalidations from the wire instead of waiting for a manual refresh.
     await vi.waitFor(() =>
       expect(
         harness.subscriptions.filter(({ workspaceNames }) => workspaceNames[0] === "alpha"),
-      ).toHaveLength(1),
+      ).toHaveLength(3),
     );
+    // The shell resource's, which is opened first.
     const retired = harness.subscriptions.find(
       ({ workspaceNames }) => workspaceNames[0] === "alpha",
     )!;
@@ -736,7 +1054,9 @@ describe("desktop App live composition", () => {
       },
     });
 
-    await vi.waitFor(() => expect(root.textContent).toContain("The daemon is unavailable"));
+    await vi.waitFor(() =>
+      expect(root.textContent).toContain("The workspace engine isn't running yet"),
+    );
     expect(root.textContent).toContain("canonical daemon is not running");
     expect(root.textContent).not.toContain("Revalidating the daemon");
     expect(root.querySelector(".shell-workbench")).toBeNull();

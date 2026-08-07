@@ -61,6 +61,7 @@ state="\${1:-idle}"
 payload="$(cat 2>/dev/null || true)"
 [ -n "$TMUX_PANE" ] || exit 0
 tmux set-option -p -t "$TMUX_PANE" @agent_state "\${state}:$(date +%s)" 2>/dev/null || exit 0
+tmux set-option -p -t "$TMUX_PANE" @agent_hint "claude" 2>/dev/null || true
 sid="$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -1)"
 [ -n "$sid" ] && tmux set-option -p -t "$TMUX_PANE" @agent_session_id "$sid" 2>/dev/null
 exit 0

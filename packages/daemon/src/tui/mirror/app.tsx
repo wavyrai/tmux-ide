@@ -207,6 +207,11 @@ import { homedir } from "node:os";
 import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, EditBuffer, createCliRenderer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
+import {
+  createRuntimeConnectionSupervisor,
+  type RuntimeConnection,
+  type RuntimeConnectionSupervisor,
+} from "@tmux-ide/daemon-client/connection-supervisor";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "./pane-surface.tsx";
 import { tapInputSent, tapInputTick } from "./perf-tap.ts";
@@ -2645,6 +2650,7 @@ try {
     let lastPin: Size | null = terminalCanvasProjection().tmuxSize;
     let repinInFlight: RepinState | null = null;
     let pendingAttachTarget: string | null = null;
+    let mirrorSupervisor: RuntimeConnectionSupervisor<SessionMirror> | null = null;
     const attach = (name: string) => {
       const pin = terminalCanvasProjection().tmuxSize ?? lastPin;
       if (!pin) {
@@ -2653,32 +2659,69 @@ try {
         return;
       }
       pendingAttachTarget = null;
-      mirror?.dispose();
+      const previousSupervisor = mirrorSupervisor;
+      mirrorSupervisor = null;
+      mirror = null;
+      void previousSupervisor?.stop();
       scrollOffsets.clear();
       setPanes([]);
       setStatus(`attaching ${name}…`);
       // A fresh mirror pins at the current canvas size — no re-pin in flight.
       lastPin = pin;
       repinInFlight = null;
-      const m = new SessionMirror({
-        target: name,
-        cols: pin.cols,
-        rows: pin.rows,
-        onDirty: markDirty,
-        onStatus: () => {
-          markDirty();
-          void m.windows().then(setWindowTabs);
+      const supervisor = createRuntimeConnectionSupervisor<SessionMirror>({
+        connect: async ({ signal }): Promise<RuntimeConnection<SessionMirror>> => {
+          const reconnectPin = terminalCanvasProjection().tmuxSize ?? lastPin ?? pin;
+          lastPin = reconnectPin;
+          let close!: (reason: unknown) => void;
+          const closed = new Promise<unknown>((resolve) => {
+            close = resolve;
+          });
+          const candidate = new SessionMirror({
+            target: name,
+            cols: reconnectPin.cols,
+            rows: reconnectPin.rows,
+            onDirty: markDirty,
+            onStatus: () => {
+              markDirty();
+              void candidate.windows().then(setWindowTabs);
+            },
+            onExit: () => close(new Error("tmux control client exited")),
+          });
+          let retired = false;
+          const dispose = () => {
+            if (retired) return;
+            retired = true;
+            signal.removeEventListener("abort", dispose);
+            candidate.dispose();
+          };
+          signal.addEventListener("abort", dispose, { once: true });
+          try {
+            await candidate.start();
+            return { value: candidate, closed, dispose };
+          } catch (error) {
+            dispose();
+            throw error;
+          }
         },
-        onExit: () => setStatus("control client exited"),
       });
-      mirror = m;
-      void m
-        .start()
-        .then(() => {
+      mirrorSupervisor = supervisor;
+      supervisor.subscribe((state) => {
+        if (mirrorSupervisor !== supervisor) return;
+        if (state.phase === "live" && state.value) {
+          mirror = state.value;
           setStatus("live");
-          void m.windows().then(setWindowTabs);
-        })
-        .catch((e) => setStatus(`error: ${(e as Error).message}`));
+          void state.value.windows().then(setWindowTabs);
+          markDirty();
+        } else if (state.phase === "reconnecting") {
+          mirror = null;
+          setStatus(`reconnecting ${name} (attempt ${state.attempt})…`);
+        } else if (state.phase === "failed") {
+          mirror = null;
+          setStatus("tmux connection failed");
+        }
+      });
+      supervisor.start();
     };
     createEffect(() => {
       const next = terminalCanvasProjection().tmuxSize;
@@ -5005,7 +5048,9 @@ try {
         if (noteTimer) clearTimeout(noteTimer);
       });
       cleanupRegistry.set("terminal-and-editor", () => {
-        mirror?.dispose();
+        void mirrorSupervisor?.stop();
+        mirrorSupervisor = null;
+        mirror = null;
         editBuffer?.destroy();
       });
     });

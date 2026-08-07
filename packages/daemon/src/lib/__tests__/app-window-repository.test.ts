@@ -20,10 +20,7 @@ import {
   resetAppWindowDocument,
   writeAppWindowDocument,
 } from "../app-window-repository.ts";
-import {
-  emptyAppWindowDocument,
-  serializeAppWindowDocument,
-} from "../../tui/mirror/app-window-state.ts";
+import { emptyAppWindowDocument, serializeAppWindowDocument } from "../app-window-state.ts";
 
 const roots: string[] = [];
 const IDENTITY_KEY = `git-${"f".repeat(64)}`;
@@ -348,6 +345,29 @@ describe("app window write protection and recovery", () => {
         layoutId: "unsafe",
         name: "Unsafe",
       }),
+    ).toThrowError(expect.objectContaining({ code: "WRITE_PROTECTED" }));
+    expect(readFileSync(target, "utf-8")).toBe(before);
+  });
+
+  it("write-protects an over-precision timestamp and preserves it for recovery", () => {
+    const { first } = repositoryPair();
+    const malformed = {
+      ...emptyAppWindowDocument(NOW),
+      updatedAt: "2026-07-20T12:00:00.1234567890Z",
+    };
+    first.writeDocument(APP_WINDOW_DOCUMENT_PATH, malformed, { expectedRevision: null });
+    const target = join(first.runtimeRoot, APP_WINDOW_DOCUMENT_PATH);
+    const before = readFileSync(target, "utf-8");
+
+    const loaded = loadAppWindowDocument(first, { loadedAt: NOW });
+
+    expect(loaded.writeProtected).toBe(true);
+    expect(loaded.preservedPayload).toEqual(malformed);
+    expect(loaded.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "INVALID_FIELD", path: "$.updatedAt" }),
+    );
+    expect(() =>
+      writeAppWindowDocument(first, loaded.revision, emptyAppWindowDocument(LATER)),
     ).toThrowError(expect.objectContaining({ code: "WRITE_PROTECTED" }));
     expect(readFileSync(target, "utf-8")).toBe(before);
   });

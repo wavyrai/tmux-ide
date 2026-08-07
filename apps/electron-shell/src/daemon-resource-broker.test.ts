@@ -1,14 +1,29 @@
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
+  APP_WINDOW_MAX_ID_LENGTH,
+  APP_WINDOW_MAX_LAYOUTS,
+  APP_WINDOW_TIMESTAMP_MAX_LENGTH,
+  APP_WINDOW_MAX_WINDOWS,
+  ApplicationShellResourceV3SchemaZ,
+  AppWindowDocumentV1SchemaZ,
   COHESION_FIXTURE_V1,
   DESKTOP_PACKAGED_RENDERER_ORIGIN,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
+  PANE_STREAM_ISSUE_PATH,
   type DesktopDaemonEvent,
   type DesktopDaemonHostState,
+  type AppWindowDockNodeShape,
+  type AppWindowInstance,
 } from "@tmux-ide/contracts";
 import { describe, expect, it, vi } from "vitest";
 
-import { DaemonResourceBroker, type BrokerEventSocket } from "./daemon-resource-broker.ts";
+import {
+  APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES,
+  DaemonResourceBroker,
+  workspacePromotionFailureFromUnknown,
+  type BrokerEventSocket,
+} from "./daemon-resource-broker.ts";
 
 const IDENTITY = {
   protocolVersion: 1,
@@ -59,6 +74,136 @@ const APPLICATION_SHELL_ENVELOPE = {
   },
 };
 
+const APPLICATION_SHELL_V3_ENVELOPE = {
+  version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
+  daemon: IDENTITY,
+  resource: {
+    ...APPLICATION_SHELL_ENVELOPE.resource,
+    appWindows: {
+      version: 1,
+      revision: 0,
+      updatedAt: "2026-07-22T10:00:00.000Z",
+      windows: {},
+      dockRoot: null,
+      dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+      floatingOrder: [],
+      focusedWindowId: null,
+      activeLayoutId: null,
+      layouts: {},
+    },
+  },
+};
+
+function maximumSemanticId(prefix: string, index: number): string {
+  const head = `${prefix}${String(index).padStart(3, "0")}`;
+  return `${head}${"x".repeat(APP_WINDOW_MAX_ID_LENGTH - head.length)}`;
+}
+
+const MAXIMUM_APP_WINDOW_TIMESTAMP = "2026-07-22T10:00:00.123456789Z";
+
+/** Current schema maxima with maximum timestamps and six-byte JSON-expanded bounded text. */
+function maximumApplicationShellV3Envelope() {
+  const escapedText = "\u0001";
+  const windows: Record<string, AppWindowInstance> = {};
+  let dockNodes: AppWindowDockNodeShape[] = Array.from(
+    { length: APP_WINDOW_MAX_WINDOWS },
+    (_, index) => {
+      const windowId = maximumSemanticId("window.", index);
+      const stackId = maximumSemanticId("stack.", index);
+      windows[windowId] = {
+        id: windowId,
+        source: {
+          kind: "terminal",
+          terminalSourceId: maximumSemanticId("terminal.", index),
+        },
+        title: escapedText.repeat(160),
+        placement: {
+          mode: "docked",
+          docked: { stackId, index: 0 },
+          floating: { x: -1_000_000, y: -1_000_000, width: 1_000_000, height: 1_000_000 },
+        },
+      };
+      return {
+        type: "stack",
+        id: stackId,
+        windowIds: [windowId],
+        activeWindowId: windowId,
+      };
+    },
+  );
+  let level = 0;
+  while (dockNodes.length > 1) {
+    const next: AppWindowDockNodeShape[] = [];
+    for (let index = 0; index < dockNodes.length; index += 2) {
+      const left = dockNodes[index]!;
+      const right = dockNodes[index + 1];
+      if (!right) {
+        next.push(left);
+        continue;
+      }
+      next.push({
+        type: "split",
+        id: maximumSemanticId(`split.${level}.`, index / 2),
+        axis: level % 2 === 0 ? "horizontal" : "vertical",
+        children: [left, right],
+        weights: [1_000_000, 1_000_000],
+      });
+    }
+    dockNodes = next;
+    level += 1;
+  }
+  const focusedWindowId = Object.keys(windows)[0]!;
+  const scene = {
+    windows,
+    dockRoot: dockNodes[0]!,
+    dockState: { mode: "maximized", preferredHeight: 1_000_000, focusZone: "dock-body" },
+    floatingOrder: [],
+    focusedWindowId,
+  };
+  const layouts = Object.fromEntries(
+    Array.from({ length: APP_WINDOW_MAX_LAYOUTS }, (_, index) => {
+      const layoutId = maximumSemanticId("layout.", index);
+      return [
+        layoutId,
+        {
+          id: layoutId,
+          name: escapedText.repeat(80),
+          description: escapedText.repeat(512),
+          revision: Number.MAX_SAFE_INTEGER,
+          createdAt: MAXIMUM_APP_WINDOW_TIMESTAMP,
+          updatedAt: MAXIMUM_APP_WINDOW_TIMESTAMP,
+          scene,
+        },
+      ];
+    }),
+  );
+  const appWindows = AppWindowDocumentV1SchemaZ.parse({
+    ...scene,
+    version: 1,
+    revision: Number.MAX_SAFE_INTEGER,
+    updatedAt: MAXIMUM_APP_WINDOW_TIMESTAMP,
+    activeLayoutId: Object.keys(layouts)[0],
+    layouts,
+  });
+  return ApplicationShellResourceV3SchemaZ.parse({
+    ...APPLICATION_SHELL_V3_ENVELOPE,
+    resource: {
+      ...APPLICATION_SHELL_V3_ENVELOPE.resource,
+      terminalInventory: {
+        activeResourceId: null,
+        resources: Array.from({ length: 512 }, (_, index) => ({
+          id: maximumSemanticId("resource.", index),
+          title: escapedText.repeat(160),
+          kind: "terminal",
+          active: false,
+          attachability: { status: "unavailable", reason: "invalid-runtime-proof" },
+        })),
+      },
+      appWindows,
+    },
+  });
+}
+
 function json(value: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
   headers.set("content-type", "application/json; charset=utf-8");
@@ -93,6 +238,134 @@ class FakeSocket implements BrokerEventSocket {
 }
 
 describe("Electron main daemon resource broker", () => {
+  it("negotiates owner-authenticated AppWindow availability and treats an old 404 as unsupported", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        return new Response("missing", { status: 404 });
+      },
+    });
+    await expect(broker.capabilities()).resolves.toEqual({
+      status: "ok",
+      daemon: IDENTITY,
+      capabilities: {
+        appWindowMutation: {
+          available: false,
+          reason: "This daemon predates durable AppWindow mutation support.",
+        },
+      },
+    });
+    expect(requests[0]?.url).toBe("http://127.0.0.1:6060/api/v2/capabilities");
+    expect(new Headers(requests[0]?.init?.headers).get("Authorization")).toBe(
+      "Bearer owner-only-token",
+    );
+    expect(requests[0]?.init?.redirect).toBe("error");
+  });
+
+  it("rejects a capability catalog stamped by another daemon generation", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({
+          status: "ok",
+          daemon: { ...IDENTITY, instanceId: "00000000-0000-4000-8000-000000000099" },
+          capabilities: { appWindowMutation: { available: true } },
+        }),
+    });
+    await expect(broker.capabilities()).resolves.toMatchObject({
+      status: "error",
+      error: { code: "daemon-identity-mismatch" },
+    });
+  });
+
+  it("reuses one AppWindow operation id across a single uncertain transport retry", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const operationId = "30000000-0000-4000-8000-000000000003";
+    let mutationAttempt = 0;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        const url = input.toString();
+        requests.push({ url, init });
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        mutationAttempt += 1;
+        if (mutationAttempt === 1) throw new Error("transport timeout after commit");
+        return json({
+          ok: true,
+          result: {
+            operationId,
+            daemonInstanceId: IDENTITY.instanceId,
+            outcome: "replayed",
+            workspaceName: "product workspace",
+            documentRevision: 5,
+          },
+        });
+      },
+    });
+
+    await expect(
+      broker.mutateAppWindow({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: {
+          workspaceName: "product workspace",
+          expectedDocumentRevision: 4,
+          command: { type: "window.focus", windowId: null },
+        },
+      }),
+    ).resolves.toMatchObject({ operationId, outcome: "replayed", documentRevision: 5 });
+    const mutationRequests = requests.filter(({ url }) =>
+      url.endsWith("/api/v2/action/workspace.app-window.mutate"),
+    );
+    expect(mutationRequests).toHaveLength(2);
+    for (const request of mutationRequests) {
+      expect(new Headers(request.init?.headers).get("x-tmux-ide-operation-id")).toBe(operationId);
+      expect(new Headers(request.init?.headers).get("authorization")).toBe(
+        "Bearer owner-only-token",
+      );
+    }
+  });
+
+  it("does not replay a deterministic AppWindow revision conflict", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json({
+          ok: false,
+          error: {
+            code: "workspace_resource_changed",
+            message: "The workspace layout changed.",
+          },
+        });
+      },
+    });
+
+    await expect(
+      broker.mutateAppWindow({
+        operationId: "40000000-0000-4000-8000-000000000004",
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: {
+          workspaceName: "product workspace",
+          expectedDocumentRevision: 4,
+          command: { type: "window.focus", windowId: null },
+        },
+      }),
+    ).rejects.toMatchObject({ error: { code: "resource-changed" } });
+    expect(
+      requests.filter((url) => url.endsWith("/api/v2/action/workspace.app-window.mutate")),
+    ).toHaveLength(1);
+  });
+
   it("keeps the owner token in main and reuses one operation id across a transport retry", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const operationId = "10000000-0000-4000-8000-000000000001";
@@ -147,6 +420,53 @@ describe("Electron main daemon resource broker", () => {
     }
   });
 
+  it("replays one host-authored workspace open across a transport retry", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const operationId = "20000000-0000-4000-8000-000000000002";
+    let attempt = 0;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        attempt += 1;
+        if (attempt === 1) throw new Error("transport timeout after workspace commit");
+        return json({
+          ok: true,
+          result: {
+            operationId,
+            daemonInstanceId: IDENTITY.instanceId,
+            outcome: "replayed",
+            resource: {
+              resourceVersion: 1,
+              workspaceName: "project-00112233445566778899aabbccddeeff",
+              initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+            },
+          },
+        });
+      },
+    });
+
+    await expect(
+      broker.openWorkspace({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: { projectDir: "/selected/private/project" },
+      }),
+    ).resolves.toMatchObject({ operationId, outcome: "replayed" });
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      expect(request.url).toBe("http://127.0.0.1:6060/api/v2/action/workspace.open");
+      expect(new Headers(request.init?.headers).get("authorization")).toBe(
+        "Bearer owner-only-token",
+      );
+      expect(new Headers(request.init?.headers).get("x-tmux-ide-operation-id")).toBe(operationId);
+      expect(JSON.parse(String(request.init?.body))).toEqual({
+        projectDir: "/selected/private/project",
+      });
+    }
+  });
+
   it.each(["http://127.0.0.1:5173", DESKTOP_PACKAGED_RENDERER_ORIGIN])(
     "issues a bounded terminal attachment for renderer origin %s against only the exact owner-authorized endpoint",
     async (rendererOrigin) => {
@@ -162,6 +482,7 @@ describe("Electron main daemon resource broker", () => {
         requestId,
         expiresAt: now + 30_000,
         effectiveViewerMode: "interactive" as const,
+        effectiveGeometryOwnership: "passive" as const,
       };
       const broker = new DaemonResourceBroker({
         daemon: CONNECTED,
@@ -179,6 +500,7 @@ describe("Electron main daemon resource broker", () => {
           protocolVersion: 1 as const,
           target: { workspaceName: "product", semanticPaneId: "pane.worker" },
           viewerMode: "interactive" as const,
+          geometryOwnership: "passive" as const,
           viewport: { cols: 120, rows: 40 },
         },
       };
@@ -223,6 +545,7 @@ describe("Electron main daemon resource broker", () => {
             protocolVersion: 1,
             target: { workspaceName: "product", semanticPaneId: "pane.worker" },
             viewerMode: "interactive",
+            geometryOwnership: "passive",
             viewport: { cols: 120, rows: 40 },
           },
         },
@@ -230,6 +553,54 @@ describe("Electron main daemon resource broker", () => {
       ),
     ).resolves.toMatchObject({ status: "error", error: { code: "daemon-unavailable" } });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a daemon that grants geometry ownership the renderer did not ask for", async () => {
+    /*
+     * Bug this catches: the renderer asks for a passive attachment — a mirror, a
+     * peek at a pane someone else is working in — and the daemon comes back with
+     * an owning one. Nothing downstream would notice: the surface renders the
+     * same either way, and the first symptom is a colleague's window silently
+     * reflowing to the size of a card in someone else's app.
+     *
+     * The broker already refuses viewer-mode drift for the same reason. This is
+     * the second axis of the same authority.
+     */
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({
+          status: "issued",
+          descriptor: {
+            protocolVersion: 1 as const,
+            webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
+            subprotocol: "tmux-ide-terminal.v1" as const,
+            redemptionTicket: `ta1_${"A".repeat(43)}`,
+            daemonInstanceId: IDENTITY.instanceId,
+            requestId: "10000000-0000-4000-8000-000000000001",
+            expiresAt: Date.now() + 30_000,
+            effectiveViewerMode: "interactive" as const,
+            effectiveGeometryOwnership: "owner" as const,
+          },
+        }),
+    });
+    await expect(
+      broker.issueTerminalAttachment(
+        {
+          requestId: "10000000-0000-4000-8000-000000000001",
+          expectedDaemonInstanceId: IDENTITY.instanceId,
+          attachment: {
+            protocolVersion: 1,
+            target: { workspaceName: "product", semanticPaneId: "pane.worker" },
+            viewerMode: "interactive",
+            geometryOwnership: "passive",
+            viewport: { cols: 120, rows: 40 },
+          },
+        },
+        "http://127.0.0.1:5173",
+      ),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
   });
 
   it("redacts an invalid daemon issue response instead of reflecting credential text", async () => {
@@ -254,6 +625,7 @@ describe("Electron main daemon resource broker", () => {
           protocolVersion: 1,
           target: { workspaceName: "product", semanticPaneId: "pane.worker" },
           viewerMode: "interactive",
+          geometryOwnership: "passive",
           viewport: { cols: 120, rows: 40 },
         },
       },
@@ -282,6 +654,7 @@ describe("Electron main daemon resource broker", () => {
             protocolVersion: 1,
             target: { workspaceName: "product", semanticPaneId: "pane.worker" },
             viewerMode: "interactive",
+            geometryOwnership: "passive",
             viewport: { cols: 120, rows: 40 },
           },
         },
@@ -302,8 +675,14 @@ describe("Electron main daemon resource broker", () => {
     expect(result.status).toBe("subscribed");
     socket.emit("open");
     socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
-    expect(socket.sent).toEqual([]);
-    expect(events).toEqual([{ type: "connection.changed", state: "live", error: null }]);
+    expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+      { type: "subscribe", sessions: [], afterSequence: 0 },
+    ]);
+    expect(events).toEqual([
+      { type: "transport.changed", transport: { phase: "connecting" } },
+      { type: "transport.changed", transport: { phase: "connected" } },
+      { type: "connection.changed", state: "live", error: null },
+    ]);
 
     socket.emit(
       "message",
@@ -329,9 +708,11 @@ describe("Electron main daemon resource broker", () => {
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       requests.push({ url, init });
-      return url.endsWith("/api/resources/workspace-catalog")
-        ? json(WORKSPACE_CATALOG)
-        : json(APPLICATION_SHELL_ENVELOPE);
+      if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+      if (url.endsWith("application-shell?version=3")) {
+        return json({ error: "Unsupported resource version" }, { status: 400 });
+      }
+      return json(APPLICATION_SHELL_ENVELOPE);
     });
     const broker = new DaemonResourceBroker({ daemon: CONNECTED, fetch });
 
@@ -348,12 +729,164 @@ describe("Electron main daemon resource broker", () => {
     expect(requests.map(({ url }) => url)).toEqual([
       "http://127.0.0.1:6060/api/resources/workspace-catalog",
       "http://127.0.0.1:6060/api/resources/workspace-catalog",
+      "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=3",
       "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=2",
     ]);
     expect(requests.every(({ init }) => init?.method === "GET" && init.redirect === "error")).toBe(
       true,
     );
     expect(JSON.stringify(requests.map(({ init }) => init?.headers))).not.toMatch(/bearer|token/iu);
+  });
+
+  it("honors an explicit V2 request without probing V3", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        return url.endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : json(APPLICATION_SHELL_ENVELOPE);
+      },
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V2_VERSION),
+    ).resolves.toEqual({ status: "ok", envelope: APPLICATION_SHELL_ENVELOPE });
+    expect(requests).toEqual([
+      "http://127.0.0.1:6060/api/resources/workspace-catalog",
+      "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=2",
+    ]);
+  });
+
+  it("returns V3 directly when the daemon supports it", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        return url.endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : json(APPLICATION_SHELL_V3_ENVELOPE);
+      },
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V3_VERSION),
+    ).resolves.toEqual({ status: "ok", envelope: APPLICATION_SHELL_V3_ENVELOPE });
+    expect(requests.at(-1)).toContain("application-shell?version=3");
+    expect(requests).toHaveLength(2);
+  });
+
+  it("accepts the schema-maximum app-window document above the generic response cap", async () => {
+    const envelope = maximumApplicationShellV3Envelope();
+    const serialized = JSON.stringify(envelope);
+    const payloadBytes = new TextEncoder().encode(serialized).byteLength;
+    expect(MAXIMUM_APP_WINDOW_TIMESTAMP).toHaveLength(APP_WINDOW_TIMESTAMP_MAX_LENGTH);
+    expect(payloadBytes).toBeGreaterThan(1024 * 1024);
+    expect(payloadBytes).toBeLessThanOrEqual(APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES);
+    expect(APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES - payloadBytes).toBeGreaterThan(5 * 1024 * 1024);
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) =>
+        input.toString().endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : new Response(serialized, { headers: { "content-type": "application/json" } }),
+    });
+
+    const result = await broker.fetchApplicationShell(
+      "product workspace",
+      APPLICATION_SHELL_RESOURCE_V3_VERSION,
+    );
+    expect(result.status).toBe("ok");
+    if (
+      result.status === "ok" &&
+      result.envelope.version === APPLICATION_SHELL_RESOURCE_V3_VERSION
+    ) {
+      expect(Object.keys(result.envelope.resource.appWindows.windows)).toHaveLength(
+        APP_WINDOW_MAX_WINDOWS,
+      );
+      expect(Object.keys(result.envelope.resource.appWindows.layouts)).toHaveLength(
+        APP_WINDOW_MAX_LAYOUTS,
+      );
+    }
+  });
+
+  it("rejects a V3 response one byte beyond its dedicated ceiling", async () => {
+    const requests: string[] = [];
+    const oversizedBody = `"${"x".repeat(APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES - 1)}"`;
+    expect(new TextEncoder().encode(oversizedBody)).toHaveLength(
+      APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES + 1,
+    );
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return new Response(oversizedBody, { headers: { "content-type": "application/json" } });
+      },
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V3_VERSION),
+    ).resolves.toMatchObject({
+      status: "error",
+      error: { code: "response-too-large" },
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests.at(-1)).toContain("application-shell?version=3");
+  });
+
+  it("keeps V2 application-shell responses on the generic one MiB ceiling", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) =>
+        input.toString().endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : new Response("{}", {
+              headers: {
+                "content-type": "application/json",
+                "content-length": String(1024 * 1024 + 1),
+              },
+            }),
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V2_VERSION),
+    ).resolves.toMatchObject({
+      status: "error",
+      error: { code: "response-too-large" },
+    });
+  });
+
+  it("classifies a bounded malformed V3 envelope without exposing parser details", async () => {
+    const malformed = {
+      ...APPLICATION_SHELL_V3_ENVELOPE,
+      resource: {
+        ...APPLICATION_SHELL_V3_ENVELOPE.resource,
+        appWindows: { ...APPLICATION_SHELL_V3_ENVELOPE.resource.appWindows, unexpected: true },
+      },
+    };
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async (input) =>
+        input.toString().endsWith("/api/resources/workspace-catalog")
+          ? json(WORKSPACE_CATALOG)
+          : json(malformed),
+    });
+
+    await expect(
+      broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V3_VERSION),
+    ).resolves.toEqual({
+      status: "error",
+      error: {
+        code: "invalid-response",
+        reason: "The daemon returned an invalid resource response.",
+      },
+    });
   });
 
   it("never lets an unknown semantic name become a daemon route", async () => {
@@ -548,6 +1081,7 @@ describe("Electron main daemon resource broker", () => {
     expect(JSON.parse(socket.sent[0]!)).toEqual({
       type: "subscribe",
       sessions: ["server/session:42", "durable-docs"],
+      afterSequence: 0,
     });
     socket.emit(
       "message",
@@ -605,7 +1139,10 @@ describe("Electron main daemon resource broker", () => {
     expect((await broker.subscribe(["docs"], (event) => second.push(event))).status).toBe(
       "subscribed",
     );
-    expect(second).toEqual([{ type: "connection.changed", state: "live", error: null }]);
+    expect(second).toEqual([
+      { type: "transport.changed", transport: { phase: "connected" } },
+      { type: "connection.changed", state: "live", error: null },
+    ]);
     expect(first.filter((event) => event.type === "connection.changed")).toHaveLength(1);
   });
 
@@ -663,10 +1200,13 @@ describe("Electron main daemon resource broker", () => {
 
       originalSocket.emit("message", JSON.stringify(frame));
       expect(originalSocket.close).toHaveBeenCalledWith(1002, expect.any(String));
-      expect(events.at(-1)).toMatchObject({
-        type: "connection.changed",
+      expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
         state: "degraded",
         error: { code: "invalid-response" },
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "transport.changed",
+        transport: { phase: "reconnecting", attempt: 1 },
       });
       await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
       await vi.waitFor(() => expect(createWebSocket).toHaveBeenCalledTimes(2));
@@ -679,6 +1219,7 @@ describe("Electron main daemon resource broker", () => {
       expect(refreshedSocket.sent.map((value) => JSON.parse(value))).toContainEqual({
         type: "subscribe",
         sessions: ["durable-docs"],
+        afterSequence: 0,
       });
       events.length = 0;
       refreshedSocket.emit(
@@ -784,10 +1325,13 @@ describe("Electron main daemon resource broker", () => {
         );
         if (opened) socket.emit("open");
         await vi.advanceTimersByTimeAsync(10);
-        expect(events.at(-1)).toMatchObject({
-          type: "connection.changed",
+        expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
           state: "degraded",
           error: { code: "event-unavailable" },
+        });
+        expect(events.at(-1)).toMatchObject({
+          type: "transport.changed",
+          transport: { phase: "reconnecting", attempt: 1 },
         });
         expect(socket.close).toHaveBeenCalledWith(1008, "event handshake timeout");
 
@@ -801,6 +1345,7 @@ describe("Electron main daemon resource broker", () => {
         });
         await released.subscribe(["docs"], (event) => releasedEvents.push(event));
         released.releaseRenderer();
+        releasedEvents.length = 0;
         await vi.advanceTimersByTimeAsync(10);
         expect(releasedEvents).toEqual([]);
       } finally {
@@ -820,7 +1365,13 @@ describe("Electron main daemon resource broker", () => {
     await broker.subscribe(["docs"], (event) => events.push(event));
     socket.emit("error");
     expect(socket.close).toHaveBeenCalledWith(1011, "event connection failed");
-    expect(events.at(-1)).toMatchObject({ error: { code: "event-unavailable" } });
+    expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
+      error: { code: "event-unavailable" },
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "transport.changed",
+      transport: { phase: "reconnecting", attempt: 1, maximumAttempts: 4 },
+    });
   });
 
   it("recovers a retained logical subscriber over one physical socket at a time", async () => {
@@ -922,6 +1473,121 @@ describe("Electron main daemon resource broker", () => {
     }
   });
 
+  it("surfaces the fatal retry ceiling as a stopped transport instead of dying silently", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const createWebSocket = vi.fn(() => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      });
+      const events: DesktopDaemonEvent[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 10,
+        eventReconnectMaximumDelayMs: 10,
+        eventReconnectMaximumAttempts: 1,
+      });
+      const result = await broker.subscribe([], (event) => events.push(event));
+      sockets[0]!.emit("close");
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[1]!.emit("close");
+      expect(events.at(-1)).toEqual({
+        type: "transport.changed",
+        transport: {
+          phase: "stopped",
+          error: { code: "event-unavailable", reason: expect.any(String) },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("wakes a stopped transport on an explicit retry and reconnects immediately", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const createWebSocket = vi.fn(() => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      });
+      const events: DesktopDaemonEvent[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 10,
+        eventReconnectMaximumDelayMs: 10,
+        eventReconnectMaximumAttempts: 1,
+      });
+      const result = await broker.subscribe([], (event) => events.push(event));
+      sockets[0]!.emit("close");
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[1]!.emit("close");
+      expect(events.at(-1)).toMatchObject({
+        type: "transport.changed",
+        transport: { phase: "stopped" },
+      });
+
+      broker.retryTransport();
+      expect(createWebSocket).toHaveBeenCalledTimes(3);
+      sockets[2]!.emit("open");
+      sockets[2]!.emit(
+        "message",
+        JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }),
+      );
+      expect(events.at(-1)).toEqual({ type: "connection.changed", state: "live", error: null });
+      expect(broker.transportState()).toEqual({ phase: "connected" });
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("interrupts a scheduled backoff on an explicit transport wakeup", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const createWebSocket = vi.fn(() => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      });
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket,
+        eventReconnectInitialDelayMs: 5_000,
+        eventReconnectMaximumDelayMs: 5_000,
+        eventReconnectMaximumAttempts: 2,
+      });
+      const result = await broker.subscribe([], vi.fn());
+      sockets[0]!.emit("close");
+      expect(broker.transportState()).toMatchObject({ phase: "reconnecting", attempt: 1 });
+      broker.retryTransport();
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      sockets[1]!.emit("open");
+      sockets[1]!.emit(
+        "message",
+        JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }),
+      );
+      // The interrupted backoff timer never spawns a parallel socket.
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(createWebSocket).toHaveBeenCalledTimes(2);
+      if (result.status === "subscribed") result.unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     {
       label: "protocol error",
@@ -958,7 +1624,13 @@ describe("Electron main daemon resource broker", () => {
       first.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
       first.emit("message", JSON.stringify(frame));
       expect(first.close).toHaveBeenCalledWith(...close);
-      expect(events.at(-1)).toMatchObject({ type: "connection.changed", state: "degraded" });
+      expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
+        state: "degraded",
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "transport.changed",
+        transport: { phase: "reconnecting", attempt: 1 },
+      });
       expect(JSON.stringify(events)).not.toMatch(/must\/not\/leak|private/iu);
       await vi.advanceTimersByTimeAsync(10);
       expect(createWebSocket).toHaveBeenCalledTimes(2);
@@ -997,10 +1669,13 @@ describe("Electron main daemon resource broker", () => {
       );
       expect(first.sent).toEqual([]);
       expect(first.close).toHaveBeenCalledWith(1008, "daemon generation mismatch");
-      expect(events.at(-1)).toMatchObject({
-        type: "connection.changed",
+      expect(events.filter((event) => event.type === "connection.changed").at(-1)).toMatchObject({
         state: "degraded",
         error: { code: "daemon-identity-mismatch" },
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "transport.changed",
+        transport: { phase: "reconnecting", attempt: 1 },
       });
       await vi.advanceTimersByTimeAsync(10);
       expect(createWebSocket).toHaveBeenCalledTimes(2);
@@ -1021,5 +1696,705 @@ describe("Electron main daemon resource broker", () => {
     socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
     expect(socket.sent).toEqual([]);
     expect(socket.close).toHaveBeenCalledWith(1002, "event frame before open");
+  });
+});
+
+const FILES_CATALOG_ENVELOPE = {
+  version: 1,
+  daemon: IDENTITY,
+  resource: {
+    status: "ready" as const,
+    workspaceName: "product workspace",
+    revision: "files-rev.revrevrevrevrev01",
+    rootId: "file.rootrootrootroot01",
+    directory: {
+      id: "file.rootrootrootroot01",
+      name: "product",
+      relativePath: null,
+      parentId: null,
+    },
+    breadcrumbs: [{ id: "file.rootrootrootroot01", label: "product" }],
+    entries: [
+      {
+        id: "file.entryentryentry001",
+        parentId: "file.rootrootrootroot01",
+        name: "README.md",
+        relativePath: "README.md",
+        kind: "file" as const,
+        hidden: false,
+        ignored: false,
+        hasChildren: false,
+        gitStatus: null,
+      },
+    ],
+    totalEntries: 1,
+    truncated: false,
+  },
+};
+
+const FILE_PREVIEW_ENVELOPE = {
+  version: 1,
+  daemon: IDENTITY,
+  resource: {
+    status: "ready" as const,
+    workspaceName: "product workspace",
+    catalogRevision: "files-rev.revrevrevrevrev01",
+    fileId: "file.entryentryentry001",
+    name: "README.md",
+    relativePath: "README.md",
+    encoding: "utf-8" as const,
+    languageHint: "markdown",
+    content: "# Title\n",
+    totalBytes: 8,
+    totalLines: 2,
+    truncated: false,
+  },
+};
+
+const CHANGES_CATALOG_ENVELOPE = {
+  version: 1,
+  daemon: IDENTITY,
+  resource: {
+    status: "ready" as const,
+    workspaceName: "product workspace",
+    revision: "changes-rev.revrevrevrevrev01",
+    branch: "main",
+    detached: false,
+    entries: [
+      {
+        id: "change.changechangechange01",
+        group: "unstaged" as const,
+        status: "modified" as const,
+        name: "README.md",
+        relativePath: "README.md",
+        originPath: null,
+        binary: false,
+        additions: 3,
+        deletions: 1,
+      },
+    ],
+    totalEntries: 1,
+    truncated: false,
+  },
+};
+
+const CHANGE_DIFF_ENVELOPE = {
+  version: 1,
+  daemon: IDENTITY,
+  resource: {
+    status: "ready" as const,
+    workspaceName: "product workspace",
+    changesRevision: "changes-rev.revrevrevrevrev01",
+    changeId: "change.changechangechange01",
+    group: "unstaged" as const,
+    relativePath: "README.md",
+    originPath: null,
+    hunks: [
+      {
+        header: "@@ -1 +1 @@",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 1,
+        lines: [
+          { kind: "delete" as const, content: "old", oldLine: 1, newLine: null },
+          { kind: "insert" as const, content: "new", oldLine: null, newLine: 1 },
+        ],
+      },
+    ],
+    totalHunks: 1,
+    totalLines: 2,
+    truncated: false,
+  },
+};
+
+describe("Electron main daemon workspace read resources", () => {
+  it("authenticates a files catalog read and routes by encoded workspace name", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        const url = input.toString();
+        requests.push({ url, init });
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json(FILES_CATALOG_ENVELOPE);
+      },
+    });
+    const result = await broker.fetchWorkspaceFiles({ workspaceName: "product workspace" });
+    expect(result).toMatchObject({ status: "ok", envelope: { resource: { status: "ready" } } });
+    const filesRequest = requests.find(({ url }) => url.includes("/files"));
+    expect(filesRequest?.url).toBe("http://127.0.0.1:6060/api/project/product%20workspace/files");
+    expect(new Headers(filesRequest?.init?.headers).get("authorization")).toBe(
+      "Bearer owner-only-token",
+    );
+  });
+
+  it("passes a directory id as a query for incremental tree expansion", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json(FILES_CATALOG_ENVELOPE);
+      },
+    });
+    await broker.fetchWorkspaceFiles({
+      workspaceName: "product workspace",
+      directoryId: "file.rootrootrootroot01",
+    });
+    expect(requests).toContain(
+      "http://127.0.0.1:6060/api/project/product%20workspace/files?directoryId=file.rootrootrootroot01",
+    );
+  });
+
+  it("maps an unknown workspace to workspace-not-found without a resource request", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        requests.push(input.toString());
+        return json(WORKSPACE_CATALOG);
+      },
+    });
+    await expect(broker.fetchWorkspaceChanges({ workspaceName: "ghost" })).resolves.toMatchObject({
+      status: "error",
+      error: { code: "workspace-not-found" },
+    });
+    expect(requests.some((url) => url.includes("/changes"))).toBe(false);
+  });
+
+  it("refuses a read without an owner capability", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async () => json(WORKSPACE_CATALOG),
+    });
+    await expect(
+      broker.fetchWorkspaceFiles({ workspaceName: "product workspace" }),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-unavailable" } });
+  });
+
+  it("rejects a files catalog stamped by another daemon generation", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json({
+          ...FILES_CATALOG_ENVELOPE,
+          daemon: { ...IDENTITY, instanceId: "00000000-0000-4000-8000-000000000099" },
+        });
+      },
+    });
+    await expect(
+      broker.fetchWorkspaceFiles({ workspaceName: "product workspace" }),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
+  });
+
+  it("rejects a malformed resource envelope", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        return json({ version: 1, daemon: IDENTITY, resource: { status: "bogus" } });
+      },
+    });
+    await expect(
+      broker.fetchWorkspaceChangeDiff({
+        workspaceName: "product workspace",
+        changeId: "change.changechangechange01",
+      }),
+    ).resolves.toMatchObject({ status: "error", error: { code: "invalid-response" } });
+  });
+
+  it("reads a file preview and a change diff over authenticated query routes", async () => {
+    const requests: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input) => {
+        const url = input.toString();
+        requests.push(url);
+        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (url.includes("/file-preview")) return json(FILE_PREVIEW_ENVELOPE);
+        if (url.includes("/change-diff")) return json(CHANGE_DIFF_ENVELOPE);
+        return json(CHANGES_CATALOG_ENVELOPE);
+      },
+    });
+    await expect(
+      broker.fetchWorkspaceFilePreview({
+        workspaceName: "product workspace",
+        fileId: "file.entryentryentry001",
+      }),
+    ).resolves.toMatchObject({ status: "ok", envelope: { resource: { status: "ready" } } });
+    await expect(
+      broker.fetchWorkspaceChangeDiff({
+        workspaceName: "product workspace",
+        changeId: "change.changechangechange01",
+      }),
+    ).resolves.toMatchObject({ status: "ok", envelope: { resource: { status: "ready" } } });
+    await expect(
+      broker.fetchWorkspaceChanges({ workspaceName: "product workspace" }),
+    ).resolves.toMatchObject({ status: "ok", envelope: { resource: { status: "ready" } } });
+    expect(requests).toContain(
+      "http://127.0.0.1:6060/api/project/product%20workspace/file-preview?fileId=file.entryentryentry001",
+    );
+    expect(requests).toContain(
+      "http://127.0.0.1:6060/api/project/product%20workspace/change-diff?changeId=change.changechangechange01",
+    );
+  });
+
+  it("reads the owner-gated fleet catalog and rejects a foreign daemon generation", async () => {
+    const fleetCatalog = {
+      version: 1,
+      daemon: IDENTITY,
+      sessions: [
+        {
+          sessionId: "session.aaaaaaaaaaaaaaaa",
+          label: "web",
+          projectLabel: "web-app",
+          appCreated: true,
+          paneCount: 3,
+          agents: [
+            {
+              agentId: "agent.aaaaaaaaaaaaaaaa",
+              name: "Claude",
+              harness: "claude-code",
+              activity: "running",
+              attention: false,
+              statusSource: "authority",
+            },
+          ],
+        },
+      ],
+    };
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        return json(fleetCatalog);
+      },
+    });
+
+    await expect(broker.fetchFleetCatalog()).resolves.toEqual({
+      status: "ok",
+      envelope: fleetCatalog,
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.url).toBe("http://127.0.0.1:6060/api/resources/fleet-catalog");
+    expect(new Headers(requests[0]!.init?.headers).get("authorization")).toBe(
+      "Bearer owner-only-token",
+    );
+
+    const foreign = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({ ...fleetCatalog, daemon: { ...IDENTITY, instanceId: crypto.randomUUID() } }),
+    });
+    await expect(foreign.fetchFleetCatalog()).resolves.toMatchObject({
+      status: "error",
+      error: { code: "daemon-identity-mismatch" },
+    });
+  });
+
+  it("refuses a fleet catalog read without the owner secret", async () => {
+    const fetch = vi.fn();
+    const broker = new DaemonResourceBroker({ daemon: CONNECTED, fetch });
+    await expect(broker.fetchFleetCatalog()).resolves.toMatchObject({
+      status: "error",
+      error: { code: "daemon-unavailable" },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("replays one host-authored workspace promotion across a transport retry", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const operationId = "30000000-0000-4000-8000-000000000003";
+    let attempt = 0;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        attempt += 1;
+        if (attempt === 1) throw new Error("transport timeout after promotion commit");
+        return json({
+          ok: true,
+          result: {
+            operationId,
+            daemonInstanceId: IDENTITY.instanceId,
+            outcome: "replayed",
+            resource: { resourceVersion: 1, workspaceName: "web" },
+          },
+        });
+      },
+    });
+
+    await expect(
+      broker.promoteWorkspace({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: { sessionId: "session.aaaaaaaaaaaaaaaa" },
+      }),
+    ).resolves.toMatchObject({ operationId, outcome: "replayed" });
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      expect(request.url).toBe("http://127.0.0.1:6060/api/v2/action/workspace.promote");
+      expect(new Headers(request.init?.headers).get("authorization")).toBe(
+        "Bearer owner-only-token",
+      );
+      expect(new Headers(request.init?.headers).get("x-tmux-ide-operation-id")).toBe(operationId);
+      expect(JSON.parse(String(request.init?.body))).toEqual({
+        sessionId: "session.aaaaaaaaaaaaaaaa",
+      });
+    }
+  });
+
+  it("surfaces a typed promotion verdict without retrying it", async () => {
+    const operationId = "40000000-0000-4000-8000-000000000004";
+    let attempts = 0;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () => {
+        attempts += 1;
+        // The daemon's typed `{ ok: false }` verdict is HTTP 200 by contract.
+        return json({
+          ok: false,
+          error: {
+            code: "promotion_verification_failed",
+            message: "The promoted session did not pass admission verification.",
+            details: { reason: "project_directory_unavailable" },
+          },
+        });
+      },
+    });
+
+    const error = await broker
+      .promoteWorkspace({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: { sessionId: "session.aaaaaaaaaaaaaaaa" },
+      })
+      .then(
+        () => null,
+        (rejection: unknown) => rejection,
+      );
+
+    // A deterministic verdict is thrown as a typed promotion failure and never retried.
+    expect(attempts).toBe(1);
+    expect(workspacePromotionFailureFromUnknown(error)).toEqual({
+      kind: "promotion",
+      code: "promotion_verification_failed",
+      reason: "project_directory_unavailable",
+    });
+  });
+
+  it("treats an unknown ok:false code as a generic transport failure, not a typed verdict", async () => {
+    const operationId = "40000000-0000-4000-8000-000000000005";
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () => json({ ok: false, error: { code: "internal", message: "boom" } }),
+    });
+
+    const error = await broker
+      .promoteWorkspace({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: { sessionId: "session.aaaaaaaaaaaaaaaa" },
+      })
+      .then(
+        () => null,
+        (rejection: unknown) => rejection,
+      );
+
+    // An unrecognized code carries no promotion taxonomy — the caller falls back
+    // to the generic transport line rather than inventing a typed reason.
+    expect(workspacePromotionFailureFromUnknown(error)).toBeNull();
+  });
+
+  it("folds daemon fleet.changed and agent-status.changed frames into one renderer fleet invalidation", async () => {
+    const socket = new FakeSocket();
+    const events: DesktopDaemonEvent[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async () => json(WORKSPACE_CATALOG),
+      createWebSocket: () => socket,
+    });
+    const result = await broker.subscribe(["docs"], (event) => events.push(event));
+    expect(result.status).toBe("subscribed");
+    socket.emit("open");
+    socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
+
+    socket.emit("message", JSON.stringify({ type: "fleet.changed" }));
+    expect(events.at(-1)).toEqual({ type: "fleet.changed" });
+
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "agent-status.changed", sessionName: "durable-docs" }),
+    );
+    // Session-scoped status refreshes the open workspace AND the whole fleet.
+    expect(events).toContainEqual({ type: "application-shell.changed", workspaceName: "docs" });
+    expect(events.at(-1)).toEqual({ type: "fleet.changed" });
+    // A raw tmux session name never crosses to the renderer.
+    expect(JSON.stringify(events)).not.toMatch(/durable-docs|sessionName/iu);
+    if (result.status === "subscribed") result.unsubscribe();
+  });
+
+  it("folds agent-status.changed into fleet.changed for an empty-set (fleet catalog) subscription", async () => {
+    // The fleet-catalog store subscribes with an empty workspace set. It receives
+    // NO application-shell.changed (those are workspace-filtered), but MUST still
+    // receive the fleet-wide fleet.changed folded from a session-scoped
+    // agent-status.changed — this is the whole status-push path for the sidebar.
+    const socket = new FakeSocket();
+    const events: DesktopDaemonEvent[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async () => json(WORKSPACE_CATALOG),
+      createWebSocket: () => socket,
+    });
+    const result = await broker.subscribe([], (event) => events.push(event));
+    expect(result.status).toBe("subscribed");
+    socket.emit("open");
+    socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
+    events.length = 0;
+
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "agent-status.changed", sessionName: "durable-docs" }),
+    );
+
+    // The empty-set subscription sees the fleet invalidation but never a
+    // workspace-scoped application-shell.changed, and no raw session name leaks.
+    expect(events).toEqual([{ type: "fleet.changed" }]);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: "application-shell.changed" }),
+    );
+    expect(JSON.stringify(events)).not.toMatch(/durable-docs|sessionName/iu);
+    if (result.status === "subscribed") result.unsubscribe();
+  });
+});
+
+describe("Electron main pane-stream issuance (m43 card 3)", () => {
+  const now = 1_784_662_800_000;
+  const requestId = "10000000-0000-4000-8000-000000000002";
+  const panes = ["pane.workspace.a1", "pane.workspace.b2"] as const;
+
+  function paneStreamDescriptor(overrides: Record<string, unknown> = {}) {
+    return {
+      protocolVersion: 1 as const,
+      webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/pane-streams/redeem",
+      subprotocol: "tmux-ide-pane-stream.v1" as const,
+      redemptionTicket: `ps1_${"B".repeat(43)}`,
+      daemonInstanceId: IDENTITY.instanceId,
+      requestId,
+      expiresAt: now + 15_000,
+      panes: [...panes],
+      effectiveViewerMode: "read-only" as const,
+      ...overrides,
+    };
+  }
+
+  function paneStreamMutation() {
+    return {
+      requestId,
+      expectedDaemonInstanceId: IDENTITY.instanceId,
+      stream: {
+        protocolVersion: 1 as const,
+        workspaceName: "product",
+        panes: [...panes],
+        viewerMode: "read-only" as const,
+      },
+    };
+  }
+
+  it.each(["http://127.0.0.1:5173", DESKTOP_PACKAGED_RENDERER_ORIGIN])(
+    "issues a bounded pane stream for renderer origin %s against the exact owner-authorized endpoint",
+    async (rendererOrigin) => {
+      const requests: Array<{ url: string; init?: RequestInit }> = [];
+      const descriptor = paneStreamDescriptor();
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        ownerToken: "owner-only-token",
+        now: () => now,
+        fetch: async (input, init) => {
+          requests.push({ url: input.toString(), init });
+          return json({ status: "issued", descriptor });
+        },
+      });
+
+      await expect(broker.issuePaneStream(paneStreamMutation(), rendererOrigin)).resolves.toEqual({
+        status: "issued",
+        descriptor,
+      });
+      expect(requests).toHaveLength(1);
+      const sent = requests[0]!;
+      expect(sent.url).toBe(`${CONNECTED.descriptor.apiBaseUrl}${PANE_STREAM_ISSUE_PATH}`);
+      expect(sent.init).toMatchObject({
+        method: "POST",
+        credentials: "omit",
+        redirect: "error",
+        cache: "no-store",
+      });
+      const headers = new Headers(sent.init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer owner-only-token");
+      expect(headers.get("origin")).toBe(rendererOrigin);
+      expect(headers.get("x-tmux-ide-request-id")).toBe(requestId);
+      expect(headers.get("x-tmux-ide-expected-daemon-instance-id")).toBe(IDENTITY.instanceId);
+      expect(JSON.parse(String(sent.init?.body))).toEqual(paneStreamMutation());
+      expect(JSON.stringify(sent)).not.toContain(descriptor.redemptionTicket);
+    },
+  );
+
+  it("requires the canonical owner secret before any request leaves the broker", async () => {
+    const fetch = vi.fn();
+    const broker = new DaemonResourceBroker({ daemon: CONNECTED, fetch });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-unavailable" } });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale expected daemon generation without a network request", async () => {
+    const fetch = vi.fn();
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch,
+    });
+    await expect(
+      broker.issuePaneStream(
+        {
+          ...paneStreamMutation(),
+          expectedDaemonInstanceId: "00000000-0000-4000-8000-00000000dead",
+        },
+        "http://127.0.0.1:5173",
+      ),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["another daemon generation", { daemonInstanceId: "3d1a1f1e-4242-4b3a-9c37-abcabcabcabc" }],
+    ["a foreign request id", { requestId: "10000000-0000-4000-8000-00000000ffff" }],
+    ["a viewer-mode drift", { effectiveViewerMode: "interactive" }],
+    ["a mutated pane set", { panes: [panes[1], panes[0]] }],
+    ["an expired descriptor", { expiresAt: now - 1 }],
+    ["an over-lifetime descriptor", { expiresAt: now + 61_000 }],
+  ])("rejects a descriptor carrying %s", async (_label, overrides) => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      now: () => now,
+      fetch: async () => json({ status: "issued", descriptor: paneStreamDescriptor(overrides) }),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
+  });
+
+  it("passes the daemon's typed pane-stream verdict through with fixed renderer copy", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({
+          status: "error",
+          error: { code: "pane-not-found", reason: "raw daemon words", retryable: false },
+        }),
+    });
+    const result = await broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173");
+    expect(result).toMatchObject({
+      status: "error",
+      error: {
+        code: "pane-not-found",
+        reason: "A requested pane is unavailable.",
+        retryable: false,
+      },
+    });
+  });
+
+  it("accepts a pre-merge daemon's legacy pane-stream code", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({
+          status: "error",
+          error: { code: "stream-unavailable", reason: "old daemon words", retryable: true },
+        }),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({
+      status: "error",
+      error: { code: "attachment-unavailable", reason: "Pane streaming is unavailable." },
+    });
+  });
+
+  it("forwards a timed-out broker fault instead of flattening it", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      requestTimeoutMs: 5,
+      fetch: async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "request-timeout" } });
+  });
+
+  it("names an unparseable issue response for what it is", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () => json({ status: "weird" }),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "invalid-response" } });
+  });
+
+  it("applies the narrow response bound to pane-stream issuance", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json(
+          { status: "error", error: { code: "request-failed", reason: "ignored" } },
+          { headers: { "content-length": String(16 * 1024 + 1) } },
+        ),
+    });
+    await expect(
+      broker.issuePaneStream(paneStreamMutation(), "http://127.0.0.1:5173"),
+    ).resolves.toMatchObject({ status: "error", error: { code: "response-too-large" } });
+  });
+
+  it("rejects an unusable renderer origin before contacting the daemon", async () => {
+    const fetch = vi.fn();
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch,
+    });
+    await expect(broker.issuePaneStream(paneStreamMutation(), "null")).resolves.toMatchObject({
+      status: "error",
+      error: { code: "invalid-request" },
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

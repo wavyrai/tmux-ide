@@ -87,7 +87,7 @@ describe("application-shell agent-terminal PaneFrame adapter", () => {
     const model = firstModel(selected);
 
     expect(model).toMatchObject({
-      pane: { id: "pane.agent-primary", kind: "terminal" },
+      pane: { id: "pane.agent-primary", kind: "terminal", icon: "agent-claude" },
       title: "Primary implementer",
       subtitle: "Claude Code",
     });
@@ -104,6 +104,14 @@ describe("application-shell agent-terminal PaneFrame adapter", () => {
       ],
       [APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS.menu, "workspace.pane.menu.open", "action"],
     ]);
+  });
+
+  it.each([
+    ["claude-code", "agent-claude"],
+    ["codex", "agent-codex"],
+    ["custom", "agent-custom"],
+  ] as const)("carries %s identity into every renderer host", (harness, icon) => {
+    expect(firstModel(shell({ harness })).pane.icon).toBe(icon);
   });
 
   it.each([

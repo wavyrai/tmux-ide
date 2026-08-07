@@ -8,7 +8,7 @@ import {
   AppWindowKernelError,
   applyAppWindowCommand,
 } from "../app-window-kernel.ts";
-import { migrateWorkspaceUiStateV2ToAppWindowDocument } from "../../tui/mirror/app-window-state.ts";
+import { migrateWorkspaceUiStateV2ToAppWindowDocument } from "../app-window-state.ts";
 
 const NOW = "2026-07-20T12:00:00.000Z";
 const T1 = "2026-07-20T12:01:00.000Z";

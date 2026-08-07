@@ -18,20 +18,39 @@ import {
   type DesktopThemeState,
 } from "@tmux-ide/contracts";
 
+import type { DaemonPreflight } from "./daemon-preflight.ts";
+import { createCatalogBackedPreflight, KnownEnvironmentCatalog } from "./environment-catalog.ts";
 import {
-  canonicalDaemonPreflight,
-  runDaemonPreflight,
-  type DaemonPreflight,
-} from "./daemon-preflight.ts";
+  acknowledgeOnboardingIntro,
+  readOnboardingIntroAcknowledged,
+} from "../../../packages/daemon/src/lib/onboarding-marker.ts";
 import { DaemonConnectionCoordinator } from "./daemon-connection-coordinator.ts";
+import { readDaemonStartupReadinessLadder } from "./startup-readiness-probe.ts";
+import { shutdownDesktopDaemonRuntime } from "./daemon-runtime-shutdown.ts";
+import {
+  DesktopDaemonSupervisor,
+  type DesktopDaemonSupervisorSnapshot,
+} from "./daemon-supervisor.ts";
+import { DesktopQuitCoordinator } from "./desktop-quit-coordinator.ts";
 import {
   publishTheme,
+  publishUpdateStatus,
   publishWindowState,
   registerHostIpc,
   type RegisteredHostIpc,
   type TrustedRendererLocation,
 } from "./host-ipc.ts";
-import { ShutdownBarrier } from "./shutdown-barrier.ts";
+import { DesktopUpdater } from "./update/desktop-updater.ts";
+import { unsignedFeedManifestVerifier } from "./update/update-verify.ts";
+import { applyStagedUpdate } from "./update/staged-update.ts";
+import {
+  clearPendingMarker,
+  createStagedUpdateFilesystem,
+  createUpdaterIo,
+  readPendingMarker,
+  resolveUpdateStateDir,
+  resolveUpdaterConfig,
+} from "./update/update-runtime.ts";
 import {
   developmentRendererContentSecurityPolicy,
   installPackagedRendererProtocol,
@@ -39,6 +58,12 @@ import {
   packagedRendererContentSecurityPolicy,
   registerPackagedRendererScheme,
 } from "./packaged-renderer-protocol.ts";
+import {
+  parseVibrancySetting,
+  resolveWindowAppearance,
+  withVibrancyParam,
+  type WindowVibrancy,
+} from "./window-appearance.ts";
 import { loadHiddenWindow } from "./window-loader.ts";
 import { denyRendererEscapes, secureWebPreferences } from "./window-security.ts";
 import {
@@ -51,6 +76,10 @@ import {
 
 export interface DesktopAppDependencies {
   daemonPreflight?: DaemonPreflight;
+  daemonSupervisor?: Pick<
+    DesktopDaemonSupervisor,
+    "start" | "stopOwned" | "snapshot" | "childOutputTail"
+  >;
   loadTimeoutMs?: number;
 }
 
@@ -82,6 +111,39 @@ function displayWorkAreas(): DesktopDisplayWorkArea[] {
   return screen.getAllDisplays().map(({ workArea }) => ({ ...workArea }));
 }
 
+/** The on-disk install target a staged update would swap into place. */
+function resolveInstallPath(): string {
+  const exe = app.getPath("exe");
+  // macOS: .app/Contents/MacOS/<exe> → the .app bundle root.
+  if (process.platform === "darwin") return join(exe, "..", "..", "..");
+  return join(exe, "..");
+}
+
+/**
+ * Apply a verified update staged by a PRIOR session, before anything else comes
+ * up. Runs only for a packaged app; a dev run is never touched. Normally a no-op
+ * (no marker). On a successful swap the process relaunches to run the new bytes.
+ * Returns true when startup should halt because a relaunch is in progress.
+ */
+async function applyPendingUpdateOnLaunch(): Promise<boolean> {
+  if (!app.isPackaged) return false;
+  const stateDir = resolveUpdateStateDir(app.getPath("userData"));
+  const marker = await readPendingMarker(stateDir);
+  if (!marker) return false;
+  const outcome = await applyStagedUpdate(
+    marker,
+    resolveInstallPath(),
+    createStagedUpdateFilesystem(),
+  );
+  await clearPendingMarker(stateDir);
+  if (outcome.status === "applied") {
+    app.relaunch();
+    app.exit(0);
+    return true;
+  }
+  return false;
+}
+
 function trustedDevelopmentUrl(): string | null {
   const raw = process.env.TMUX_IDE_RENDERER_URL;
   if (!raw) return null;
@@ -98,17 +160,125 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     return;
   }
 
+  // Read once at startup: vibrancy is a window-construction material, so a
+  // mid-session change could not take effect without rebuilding the window.
+  const vibrancy: WindowVibrancy = parseVibrancySetting(process.env.TMUX_IDE_DESKTOP_VIBRANCY);
   let currentWindow: BrowserWindow | null = null;
   let hostIpc: RegisteredHostIpc | null = null;
-  let quittingAfterBarrier = false;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
   let rendererPolicyReloadTimer: ReturnType<typeof setTimeout> | null = null;
   let lastBoundsWrite = Promise.resolve();
   let rendererDidBootstrap: (() => void) | null = null;
   let latestNormalBounds: DesktopWindowBounds | null = null;
-  const shutdown = new ShutdownBarrier();
+  let daemonResources: DaemonConnectionCoordinator | null = null;
+  let persistBounds = async (): Promise<void> => undefined;
+  let disposePackagedRendererProtocol = (): void => undefined;
+  let disposeDevelopmentRendererCsp = (): void => undefined;
+  let onThemeUpdated: (() => void) | null = null;
+  let desktopUpdater: DesktopUpdater | null = null;
+  let releaseUpdateStatus: (() => void) | null = null;
+  // The app's own record of known environments and how to reach them. Today it
+  // holds exactly the local canonical daemon; the coordinator reads through it
+  // rather than hardcoding that one endpoint.
+  const environmentCatalog = new KnownEnvironmentCatalog(
+    join(app.getPath("userData"), "known-environments.json"),
+  );
+  const daemonPreflight = deps.daemonPreflight ?? createCatalogBackedPreflight(environmentCatalog);
+  const revalidateDaemonConnection = (context: string): void => {
+    void daemonResources?.refreshConnection().catch((error: unknown) => {
+      console.error(`Failed to revalidate desktop daemon authority (${context})`, error);
+    });
+  };
+  const onOwnedDaemonCrash = (_snapshot: DesktopDaemonSupervisorSnapshot): void => {
+    revalidateDaemonConnection("owned daemon crash");
+  };
+  const daemonSupervisor =
+    deps.daemonSupervisor ??
+    new DesktopDaemonSupervisor({
+      preflight: daemonPreflight,
+      childEntryPath: join(__dirname, "daemon-child.cjs"),
+      productVersion: app.getVersion(),
+      onOwnedDaemonCrash,
+      // Restart attempts and the fatal halt settle in the background; each
+      // one revalidates the renderer-facing connection state.
+      onSupervisedDaemonStateChanged: () => revalidateDaemonConnection("supervised restart"),
+    });
+  // A halted supervisor is terminal: rechecking must show the typed halt
+  // reason, not a fresh probe's misleading "engine isn't running yet".
+  const supervisedDaemonPreflight: DaemonPreflight = {
+    probe: (signal) => {
+      const supervised = daemonSupervisor.snapshot();
+      if (
+        supervised.phase === "halted" &&
+        supervised.daemon &&
+        supervised.daemon.status !== "connected"
+      ) {
+        return Promise.resolve(supervised.daemon);
+      }
+      return daemonPreflight.probe(signal);
+    },
+  };
+  const teardownDesktopHost = async (): Promise<void> => {
+    if (persistTimer) clearTimeout(persistTimer);
+    if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
+    if (onThemeUpdated) nativeTheme.removeListener("updated", onThemeUpdated);
+    releaseUpdateStatus?.();
+    desktopUpdater?.dispose();
+    // Renderer terminal capabilities and the main-process broker are retired
+    // before the exact Electron-owned daemon child is signalled.
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => disposeDevelopmentRendererCsp()),
+      Promise.resolve().then(() => disposePackagedRendererProtocol()),
+      shutdownDesktopDaemonRuntime({
+        disposeHostIpc: () => hostIpc?.dispose(),
+        disposeDaemonResources: () => daemonResources?.dispose(),
+        stopOwnedDaemon: () => daemonSupervisor.stopOwned(),
+      }),
+    ]);
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length > 0) throw new AggregateError(failures, "desktop host cleanup failed");
+  };
+  // When an update is staged, quit becomes apply+quit: the marker is already
+  // durable, so this only flips status to "applying" (the swap runs next launch)
+  // before the rest of the host tears down. Never yanks the daemon or terminals.
+  const finalizePendingUpdate = async (): Promise<void> => {
+    await desktopUpdater?.finalizePendingUpdateForQuit();
+  };
+  const quitCoordinator = new DesktopQuitCoordinator({
+    app,
+    shutdownTasks: () => [finalizePendingUpdate, persistBounds, teardownDesktopHost],
+    onShutdownError: (error: unknown) => console.error("Desktop shutdown was incomplete", error),
+  });
+
+  // This must precede both app readiness and daemon startup: a native quit can
+  // arrive while either promise is pending.
+  quitCoordinator.install();
 
   await app.whenReady();
+  if (quitCoordinator.quitRequested) return;
+
+  // A staged update from a prior session is swapped in here, before the daemon or
+  // any window exists. On a successful swap this relaunches and never returns.
+  if (await applyPendingUpdateOnLaunch()) return;
+
+  desktopUpdater = new DesktopUpdater({
+    config: resolveUpdaterConfig({
+      enabled: app.isPackaged,
+      platformKey: `${process.platform}-${process.arch}`,
+      currentVersion: app.getVersion(),
+    }),
+    io: createUpdaterIo({
+      stateDir: resolveUpdateStateDir(app.getPath("userData")),
+      net: { fetch: (url) => net.fetch(url) },
+      logger: (message, detail) => console.warn(`[update] ${message}`, detail ?? {}),
+    }),
+    verifier: unsignedFeedManifestVerifier(),
+  });
+  releaseUpdateStatus = desktopUpdater.subscribe((status) =>
+    publishUpdateStatus(currentWindow, status),
+  );
 
   const desktopSession = session.defaultSession;
   desktopSession.setPermissionCheckHandler(() => false);
@@ -119,40 +289,92 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   const stateStore = new DesktopWindowStateStore(
     join(app.getPath("userData"), "window-state.json"),
   );
-  const daemonPreflight = deps.daemonPreflight ?? canonicalDaemonPreflight;
-  const daemon = await runDaemonPreflight(daemonPreflight);
-  let daemonHttpOrigin = daemon.status === "connected" ? daemon.descriptor.apiBaseUrl : null;
   const developmentUrl = trustedDevelopmentUrl();
   const developmentOrigin = developmentUrl ? new URL(developmentUrl).origin : null;
-  const disposePackagedRendererProtocol = installPackagedRendererProtocol({
-    protocol,
-    fileFetcher: { fetch: (url) => net.fetch(url) },
-    rendererRoot: join(__dirname, "renderer"),
-    contentSecurityPolicy: () => packagedRendererContentSecurityPolicy(daemonHttpOrigin),
-  });
-  const disposeDevelopmentRendererCsp = developmentOrigin
-    ? installDevelopmentRendererCsp({
-        webRequest: desktopSession.webRequest,
-        rendererOrigin: developmentOrigin,
-        contentSecurityPolicy: () =>
-          developmentRendererContentSecurityPolicy(daemonHttpOrigin, developmentOrigin),
-      })
-    : () => undefined;
-  const daemonResources = new DaemonConnectionCoordinator({
-    initialDaemon: daemon,
-    preflight: daemonPreflight,
-    onHostStateChanged: (state) => {
-      const nextOrigin = state.status === "connected" ? state.descriptor.apiBaseUrl : null;
-      if (nextOrigin === daemonHttpOrigin) return;
-      daemonHttpOrigin = nextOrigin;
-      if (!currentWindow || currentWindow.isDestroyed()) return;
-      if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
-      rendererPolicyReloadTimer = setTimeout(() => {
-        rendererPolicyReloadTimer = null;
-        if (currentWindow && !currentWindow.isDestroyed()) currentWindow.reload();
-      }, 0);
-    },
-  });
+  const daemon = await quitCoordinator.startUnlessQuitting(() => daemonSupervisor.start());
+  if (!daemon) return;
+  let daemonHttpOrigin = daemon.status === "connected" ? daemon.descriptor.apiBaseUrl : null;
+  try {
+    disposePackagedRendererProtocol = installPackagedRendererProtocol({
+      protocol,
+      fileFetcher: { fetch: (url) => net.fetch(url) },
+      rendererRoot: join(__dirname, "renderer"),
+      contentSecurityPolicy: () => packagedRendererContentSecurityPolicy(daemonHttpOrigin),
+    });
+  } catch (error) {
+    await daemonSupervisor.stopOwned().catch(() => undefined);
+    throw error;
+  }
+  try {
+    disposeDevelopmentRendererCsp = developmentOrigin
+      ? installDevelopmentRendererCsp({
+          webRequest: desktopSession.webRequest,
+          rendererOrigin: developmentOrigin,
+          contentSecurityPolicy: () =>
+            developmentRendererContentSecurityPolicy(daemonHttpOrigin, developmentOrigin),
+        })
+      : () => undefined;
+  } catch (error) {
+    await Promise.allSettled([
+      Promise.resolve().then(() => disposePackagedRendererProtocol()),
+      daemonSupervisor.stopOwned(),
+    ]);
+    throw error;
+  }
+  const abortDesktopStartup = async (): Promise<void> => {
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => {
+        disposeDevelopmentRendererCsp();
+        disposePackagedRendererProtocol();
+      }),
+      shutdownDesktopDaemonRuntime({
+        disposeHostIpc: () => hostIpc?.dispose(),
+        disposeDaemonResources: () => daemonResources?.dispose(),
+        stopOwnedDaemon: () => daemonSupervisor.stopOwned(),
+      }),
+    ]);
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length > 0) throw new AggregateError(failures, "desktop startup cleanup failed");
+  };
+  try {
+    daemonResources = new DaemonConnectionCoordinator({
+      initialDaemon: daemon,
+      preflight: supervisedDaemonPreflight,
+      environmentReconciler: environmentCatalog,
+      // A disconnected state now carries the daemon child's own last words.
+      childOutputTail: () => daemonSupervisor.childOutputTail(),
+      // …and, when the daemon answers anyway, its own readiness ladder.
+      readStartupReadiness: () => readDaemonStartupReadinessLadder(),
+      onHostStateChanged: (state) => {
+        const nextOrigin = state.status === "connected" ? state.descriptor.apiBaseUrl : null;
+        if (nextOrigin === daemonHttpOrigin) return;
+        daemonHttpOrigin = nextOrigin;
+        if (!currentWindow || currentWindow.isDestroyed()) return;
+        if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
+        rendererPolicyReloadTimer = setTimeout(() => {
+          rendererPolicyReloadTimer = null;
+          if (currentWindow && !currentWindow.isDestroyed()) currentWindow.reload();
+        }, 0);
+      },
+    });
+  } catch (error) {
+    await abortDesktopStartup().catch(() => undefined);
+    throw error;
+  }
+  {
+    // Supervision may have advanced (crash, background restart, halt) between
+    // startup readiness and the coordinator existing to observe it.
+    const supervisedPhase = daemonSupervisor.snapshot().phase;
+    if (
+      supervisedPhase === "crashed" ||
+      supervisedPhase === "restarting" ||
+      supervisedPhase === "halted"
+    ) {
+      revalidateDaemonConnection("supervision advanced during startup");
+    }
+  }
   const trustedRendererLocation: TrustedRendererLocation = developmentUrl
     ? { kind: "development-origin", origin: new URL(developmentUrl).origin }
     : {
@@ -161,7 +383,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         entryUrl: DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
       };
 
-  const persistBounds = async (): Promise<void> => {
+  persistBounds = async (): Promise<void> => {
     latestNormalBounds = captureDesktopWindowNormalBounds(currentWindow, latestNormalBounds);
     if (!latestNormalBounds) return lastBoundsWrite;
     const bounds = latestNormalBounds;
@@ -187,12 +409,19 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     const savedBounds = await stateStore.read();
     const bounds = restoreDesktopWindowBounds(savedBounds, displayWorkAreas());
     latestNormalBounds = bounds;
+    const appearance = resolveWindowAppearance({
+      platform: platform(),
+      theme: themeState(),
+      vibrancy,
+    });
     const window = new BrowserWindow({
       ...bounds,
       show: false,
       minWidth: 720,
       minHeight: 480,
-      backgroundColor: "#101116",
+      backgroundColor: appearance.backgroundColor,
+      vibrancy: appearance.vibrancy,
+      transparent: appearance.transparent,
       title: "tmux-ide",
       titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
       trafficLightPosition: process.platform === "darwin" ? { x: 14, y: 16 } : undefined,
@@ -224,8 +453,8 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         reveal: !smokeTest,
         rendererReady,
         load: async () => {
-          if (developmentUrl) await window.loadURL(developmentUrl);
-          else await window.loadURL(DESKTOP_PACKAGED_RENDERER_ENTRY_URL);
+          const entry = developmentUrl ?? DESKTOP_PACKAGED_RENDERER_ENTRY_URL;
+          await window.loadURL(withVibrancyParam(entry, appearance));
         },
       });
     } finally {
@@ -234,26 +463,47 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     return window;
   };
 
-  hostIpc = registerHostIpc({
-    ipcMain,
-    getWindow: () => currentWindow,
-    appVersion: app.getVersion(),
-    platform: platform(),
-    daemonResources,
-    rendererDidBootstrap: () => rendererDidBootstrap?.(),
-    requestQuit: () => app.quit(),
-    selectProjectDirectory: async (window) => {
-      const result = await dialog.showOpenDialog(window, {
-        title: "Open project",
-        properties: ["openDirectory", "createDirectory"],
-      });
-      return result.canceled ? null : (result.filePaths[0] ?? null);
-    },
-    getTheme: themeState,
-    trustedRendererLocation,
-  });
+  try {
+    hostIpc = registerHostIpc({
+      ipcMain,
+      getWindow: () => currentWindow,
+      appVersion: app.getVersion(),
+      platform: platform(),
+      daemonResources,
+      rendererDidBootstrap: () => rendererDidBootstrap?.(),
+      readStartupReadiness: () => readDaemonStartupReadinessLadder(),
+      selectProjectDirectory: async (window) => {
+        const result = await dialog.showOpenDialog(window, {
+          title: "Open project",
+          properties: ["openDirectory", "createDirectory"],
+        });
+        return result.canceled ? null : (result.filePaths[0] ?? null);
+      },
+      getTheme: themeState,
+      getUpdateStatus: () =>
+        desktopUpdater?.status() ?? {
+          phase: "idle",
+          currentVersion: app.getVersion(),
+          availableVersion: null,
+        },
+      readOnboardingIntroAcknowledged,
+      acknowledgeOnboardingIntro,
+      trustedRendererLocation,
+    });
+  } catch (error) {
+    await abortDesktopStartup().catch(() => undefined);
+    throw error;
+  }
 
-  const onThemeUpdated = (): void => publishTheme(currentWindow, themeState());
+  onThemeUpdated = (): void => {
+    const theme = themeState();
+    publishTheme(currentWindow, theme);
+    // The window ground is painted outside the renderer's frames, so it has to
+    // follow the appearance switch too or a light window keeps a dark edge.
+    currentWindow?.setBackgroundColor(
+      resolveWindowAppearance({ platform: platform(), theme, vibrancy }).backgroundColor,
+    );
+  };
   nativeTheme.on("updated", onThemeUpdated);
 
   app.on("second-instance", () => {
@@ -274,33 +524,13 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     if (process.platform !== "darwin") app.quit();
   });
 
-  app.on("before-quit", (event) => {
-    if (quittingAfterBarrier) return;
-    event.preventDefault();
-    void shutdown
-      .run([
-        persistBounds,
-        () => {
-          if (persistTimer) clearTimeout(persistTimer);
-          if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
-          hostIpc?.dispose();
-          daemonResources.dispose();
-          disposeDevelopmentRendererCsp();
-          disposePackagedRendererProtocol();
-          nativeTheme.removeListener("updated", onThemeUpdated);
-        },
-      ])
-      .catch((error: unknown) => console.error("Desktop shutdown was incomplete", error))
-      .finally(() => {
-        quittingAfterBarrier = true;
-        app.quit();
-      });
-  });
-
   try {
     await createWindow();
+    // Non-blocking: the launch check and the modest cadence start only after the
+    // window is up, so nothing about the update path ever gates startup.
+    if (!smokeTest) desktopUpdater.start();
     if (smokeTest) {
-      console.log("tmux-ide desktop smoke ready");
+      console.log(`tmux-ide desktop smoke ready daemon=${daemonSupervisor.snapshot().phase}`);
       app.quit();
     }
   } catch (error) {

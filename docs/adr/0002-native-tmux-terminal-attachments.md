@@ -440,7 +440,8 @@ The native terminal path is not complete until all gates are implemented:
    continuous owner, mismatch, and owner-loss behavior are proven geometry-neutral.
 7. `PtyAdapter` provides measurable input completion/drain or demonstrably bounded
    fail-closed input plus output pause/resume or HWM close; the legacy void-write/private
-   queue is not used as proof.
+   queue is not used as proof. Met by the bounded branch: `PtyProcess.boundedInput` is
+   wired into the direct WebSocket transport for interactive viewers (ADR-0003).
 8. Renderer xterm connects directly, handles binary data, clips/scrolls a mismatched
    source grid honestly, coalesces interactive resize, preserves a recovery overlay,
    and resets for a fresh real redraw on reconnect.

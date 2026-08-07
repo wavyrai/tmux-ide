@@ -5,6 +5,7 @@ import {
   collectPaneStartupPlan,
   paneIdentityOptions,
   semanticPaneIdForPane,
+  semanticWindowIdForSession,
 } from "./launch-plan.ts";
 import type { Row } from "../types.ts";
 
@@ -18,6 +19,15 @@ describe("buildPaneCommand", () => {
     expect(buildPaneCommand({ command: "claude", role: "teammate", task: 'Fix "lint"' })).toBe(
       "claude",
     );
+  });
+});
+
+describe("semanticWindowIdForSession", () => {
+  it("is stable for a session and distinct across sessions", () => {
+    const first = semanticWindowIdForSession("workspace-alpha");
+    expect(first).toMatch(/^window\.launch\.[0-9a-f]{20}$/u);
+    expect(semanticWindowIdForSession("workspace-alpha")).toBe(first);
+    expect(semanticWindowIdForSession("workspace-beta")).not.toBe(first);
   });
 });
 
@@ -120,13 +130,33 @@ describe("collectPaneStartupPlan", () => {
         paneRole: "lead",
         paneType: "agent",
         title: "Lead",
+        command: "claude --name Lead",
       }),
     ).toEqual([
       [WORKSPACE_SEMANTIC_PANE_OPTION, "agent-lead"],
       ["@ide_role", "lead"],
       ["@ide_name", "Lead"],
       ["@ide_type", "agent"],
+      ["@agent_hint", "claude"],
     ]);
+  });
+
+  it("stamps known agent commands without mistaking incidental paths for agents", () => {
+    const options = (command: string) =>
+      paneIdentityOptions({
+        semanticPaneId: "pane-test",
+        paneRole: "shell",
+        paneType: "agent",
+        title: "Test",
+        command,
+      }).at(-1);
+
+    expect(options("codex --dangerously-bypass-approvals-and-sandbox")).toEqual([
+      "@agent_hint",
+      "codex",
+    ]);
+    expect(options("node /opt/bin/opencode --continue")).toEqual(["@agent_hint", "opencode"]);
+    expect(options("vim ~/.claude/notes.md")).toEqual(["@agent_hint", ""]);
   });
 
   it("keeps derived identities stable across insert, reorder, and delete", () => {

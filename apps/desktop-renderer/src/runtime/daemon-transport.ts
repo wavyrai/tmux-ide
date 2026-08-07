@@ -1,6 +1,8 @@
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellResourceV2SchemaZ,
+  ApplicationShellResourceV3SchemaZ,
   DaemonEventClientFrameSchemaZ,
   DaemonEventServerFrameSchemaZ,
   DesktopApplicationShellTargetSchemaZ,
@@ -10,7 +12,14 @@ import {
   type DaemonEventServerFrame,
   type DaemonInstanceIdentity,
   type DesktopDaemonHostDescriptor,
+  type DesktopDaemonTransportState,
 } from "@tmux-ide/contracts";
+import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
+import {
+  advanceResourceReplica,
+  initialResourceReplica,
+  type ResourceReplicaState,
+} from "@tmux-ide/daemon-client/resource-replica";
 
 import type { DesktopApplicationShellTarget } from "./connection-state.ts";
 
@@ -67,6 +76,14 @@ export interface DaemonEventHandlers {
   readonly onMalformedFrame: (reason: string) => void;
   readonly onClose: () => void;
   readonly onError: (reason: string) => void;
+  /**
+   * Pushed by transports whose physical socket is owned by the main-process
+   * connection supervisor. Once a state arrives, the supervisor is the ONE
+   * retry owner: the store derives its status from these states and must not
+   * run its own reconnect loop. Transports that own their socket directly
+   * (the loopback development transport) never call this.
+   */
+  readonly onTransportStateChanged?: (transport: DesktopDaemonTransportState) => void;
 }
 
 export interface DaemonEventConnection {
@@ -143,12 +160,18 @@ function validatedTarget(value: unknown): DesktopApplicationShellTarget {
   return parsed.data;
 }
 
-function applicationShellUrl(descriptor: DesktopDaemonHostDescriptor, sessionName: string): URL {
+function applicationShellUrl(
+  descriptor: DesktopDaemonHostDescriptor,
+  sessionName: string,
+  version:
+    | typeof APPLICATION_SHELL_RESOURCE_V2_VERSION
+    | typeof APPLICATION_SHELL_RESOURCE_V3_VERSION,
+): URL {
   const url = new URL(
     `/api/project/${encodeURIComponent(sessionName)}/application-shell`,
     descriptor.apiBaseUrl,
   );
-  url.searchParams.set("version", String(APPLICATION_SHELL_RESOURCE_V2_VERSION));
+  url.searchParams.set("version", String(version));
   return url;
 }
 
@@ -208,10 +231,18 @@ function isRelevantFrame(
     case "snapshot":
     case "config.changed":
     case "terminals.changed":
+    case "agent-status.changed":
       return frame.sessionName === sessionName;
     case "sessions.changed":
     case "projects.changed":
     case "action.complete":
+      return true;
+    case "resource.changed":
+      return (
+        frame.resource === "application-shell" &&
+        (frame.workspaceName === null || frame.workspaceName === workspaceName)
+      );
+    case "snapshot-required":
       return true;
     case "workspace.added":
       return frame.workspace.name === workspaceName;
@@ -237,6 +268,7 @@ export function createDirectLoopbackDaemonTransport(
   }
   const fetchImpl = dependencies.fetch ?? defaultFetch;
   const createWebSocket = dependencies.createWebSocket ?? defaultCreateWebSocket;
+  const eventReplicas = new Map<string, ResourceReplicaState<null>>();
   const validateBoundTarget = (value: unknown): DesktopApplicationShellTarget => {
     const safeTarget = validatedTarget(value);
     requireMatchingPeer(safeTarget.daemon, descriptor);
@@ -250,15 +282,24 @@ export function createDirectLoopbackDaemonTransport(
       const safeTarget = validateBoundTarget(target);
       const sessionName = resolvedSessionName(resolveSessionName, safeTarget.workspaceName);
       let response: Response;
+      let negotiatedVersion = APPLICATION_SHELL_RESOURCE_V3_VERSION as
+        | typeof APPLICATION_SHELL_RESOURCE_V2_VERSION
+        | typeof APPLICATION_SHELL_RESOURCE_V3_VERSION;
       try {
-        response = await fetchImpl(applicationShellUrl(descriptor, sessionName), {
-          method: "GET",
-          headers: { accept: "application/json" },
-          credentials: "omit",
-          cache: "no-store",
-          redirect: "error",
-          signal,
-        });
+        const request = (version: typeof negotiatedVersion) =>
+          fetchImpl(applicationShellUrl(descriptor, sessionName, version), {
+            method: "GET",
+            headers: { accept: "application/json" },
+            credentials: "omit",
+            cache: "no-store",
+            redirect: "error",
+            signal,
+          });
+        response = await request(negotiatedVersion);
+        if (response.status === 400) {
+          negotiatedVersion = APPLICATION_SHELL_RESOURCE_V2_VERSION;
+          response = await request(negotiatedVersion);
+        }
       } catch (error) {
         if (signal.aborted) throw error;
         throw new DaemonTransportError(
@@ -290,7 +331,10 @@ export function createDirectLoopbackDaemonTransport(
           "Daemon application-shell response was not valid JSON.",
         );
       }
-      const parsed = ApplicationShellResourceV2SchemaZ.safeParse(body);
+      const parsed =
+        negotiatedVersion === APPLICATION_SHELL_RESOURCE_V3_VERSION
+          ? ApplicationShellResourceV3SchemaZ.safeParse(body)
+          : ApplicationShellResourceV2SchemaZ.safeParse(body);
       if (!parsed.success) {
         throw new DaemonTransportError(
           "schema-invalid",
@@ -304,10 +348,28 @@ export function createDirectLoopbackDaemonTransport(
     connectEvents(target, handlers) {
       const safeTarget = validateBoundTarget(target);
       const sessionName = resolvedSessionName(resolveSessionName, safeTarget.workspaceName);
+      let eventReplica =
+        eventReplicas.get(safeTarget.workspaceName) ?? initialResourceReplica<null>();
       const socket = createWebSocket(eventSocketUrl(descriptor));
       let closed = false;
       let socketOpened = false;
       let peerVerified = false;
+      let resourceEventsSupported = false;
+
+      const establishCursor = (daemonInstanceId: string, sequence: number): void => {
+        eventReplica = advanceResourceReplica(eventReplica, {
+          type: "connected",
+          daemonInstanceId,
+        }).state;
+        eventReplica = advanceResourceReplica(eventReplica, {
+          type: "snapshot",
+          daemonInstanceId,
+          sequence,
+          revision: sequence,
+          value: null,
+        }).state;
+        eventReplicas.set(safeTarget.workspaceName, eventReplica);
+      };
 
       const onOpen: DaemonSocketListener = () => {
         if (closed) return;
@@ -348,13 +410,20 @@ export function createDirectLoopbackDaemonTransport(
             socket.removeEventListener?.("close", onClose);
             socket.removeEventListener?.("error", onError);
             handlers.onPeerMismatch(reason);
-            socket.close(1008, "Daemon identity mismatch");
+            socket.close(browserInitiatedWebSocketCloseCode(1008), "Daemon identity mismatch");
             return;
           }
           try {
+            const resumeSequence =
+              eventReplica.daemonInstanceId === parsed.data.daemon.instanceId
+                ? (eventReplica.sequence ?? 0)
+                : 0;
+            establishCursor(parsed.data.daemon.instanceId, resumeSequence);
+            resourceEventsSupported = parsed.data.eventSequence !== undefined;
             const subscribe = DaemonEventClientFrameSchemaZ.parse({
               type: "subscribe",
               sessions: [sessionName],
+              afterSequence: resumeSequence,
             });
             socket.send(JSON.stringify(subscribe));
             peerVerified = true;
@@ -372,6 +441,55 @@ export function createDirectLoopbackDaemonTransport(
         }
         if (parsed.data.type === "protocol.error") {
           handlers.onProtocolError(parsed.data.message);
+          return;
+        }
+        if (parsed.data.type === "snapshot-required") {
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "gap",
+            daemonInstanceId: safeTarget.daemon.instanceId,
+            sequence: parsed.data.currentSequence,
+          });
+          eventReplica = transition.state;
+          eventReplicas.set(safeTarget.workspaceName, eventReplica);
+          handlers.onInvalidate();
+          establishCursor(safeTarget.daemon.instanceId, parsed.data.currentSequence);
+          return;
+        }
+        if (parsed.data.type === "resource.changed") {
+          const previousSequence = eventReplica.sequence;
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "changed",
+            daemonInstanceId: safeTarget.daemon.instanceId,
+            sequence: parsed.data.sequence,
+            // The shared replica owns the global event cursor here; the
+            // resource-specific revision remains on the wire frame.
+            revision: parsed.data.sequence,
+            ...(parsed.data.causeOperationId
+              ? { causeOperationId: parsed.data.causeOperationId }
+              : {}),
+          });
+          eventReplica = transition.state;
+          eventReplicas.set(safeTarget.workspaceName, eventReplica);
+          if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+            handlers.onInvalidate();
+            establishCursor(safeTarget.daemon.instanceId, parsed.data.sequence);
+            return;
+          }
+          if (
+            parsed.data.sequence > (previousSequence ?? -1) &&
+            isRelevantFrame(parsed.data, safeTarget.workspaceName, sessionName)
+          ) {
+            handlers.onInvalidate();
+          }
+          return;
+        }
+        if (
+          parsed.data.type === "action.complete" &&
+          resourceEventsSupported &&
+          parsed.data.name.startsWith("workspace.")
+        ) {
+          // New daemons follow workspace actions with the scoped, replayable
+          // resource frame. Keep this legacy frame only for older peers.
           return;
         }
         if (isRelevantFrame(parsed.data, safeTarget.workspaceName, sessionName)) {

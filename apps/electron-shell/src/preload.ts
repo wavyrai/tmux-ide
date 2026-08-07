@@ -1,30 +1,24 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
+  DAEMON_RESOURCE_RESULT_SCHEMAS,
   DESKTOP_HOST_API_VERSION,
+  DaemonResourceRequestSchemaZ,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
-  DesktopDaemonFetchApplicationShellRequestSchemaZ,
-  DesktopDaemonFetchApplicationShellResultSchemaZ,
-  DesktopDaemonListWorkspacesResultSchemaZ,
-  DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
-  DesktopDirectorySelectionSchemaZ,
   DesktopHostBootstrapSchemaZ,
-  DesktopMenuResultSchemaZ,
   DesktopThemeStateSchemaZ,
+  DesktopUpdateStatusSchemaZ,
   DesktopWindowStateSchemaZ,
-  TerminalAttachRequestSchemaZ,
-  TerminalAttachmentIssueResultSchemaZ,
-  WorkspacePaneCreateHostResultSchemaZ,
-  WorkspacePaneCreateInvocationSchemaZ,
+  WorkspaceOpenHostResultSchemaZ,
+  createDaemonResourceMethods,
+  type DaemonResourceRequest,
   type DesktopDaemonEvent,
   type DesktopDaemonEventSubscriptionRequest,
-  type DesktopDaemonFetchApplicationShellRequest,
   type DesktopThemeState,
+  type DesktopUpdateStatus,
   type DesktopWindowState,
   type HostCapabilities,
-  type TerminalAttachRequest,
-  type WorkspacePaneCreateInvocation,
 } from "@tmux-ide/contracts";
 
 import { HOST_IPC } from "./ipc-channels.ts";
@@ -68,18 +62,23 @@ function onValidatedEvent<T>(
   return () => ipcRenderer.removeListener(channel, receive);
 }
 
+/**
+ * The single daemon hop. Both directions are validated here — the request
+ * against the union before it leaves the renderer process, the answer against
+ * the schema its own variant declares — so a malformed request never reaches
+ * main and a malformed answer never reaches application code.
+ */
+async function requestDaemonResource(request: DaemonResourceRequest): Promise<unknown> {
+  const parsed = DaemonResourceRequestSchemaZ.parse(request);
+  const result = await ipcRenderer.invoke(HOST_IPC.daemonRequest, parsed);
+  return DAEMON_RESOURCE_RESULT_SCHEMAS[parsed.resource].parse(result);
+}
+
 const capabilities: HostCapabilities = Object.freeze({
   apiVersion: DESKTOP_HOST_API_VERSION,
   bootstrap: async () =>
     DesktopHostBootstrapSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.bootstrap)),
-  lifecycle: Object.freeze({
-    requestQuit: async () => {
-      await ipcRenderer.invoke(HOST_IPC.lifecycleQuit);
-    },
-  }),
   window: Object.freeze({
-    getState: async () =>
-      DesktopWindowStateSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.windowGetState)),
     minimize: async () =>
       DesktopWindowStateSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.windowMinimize)),
     toggleMaximized: async () =>
@@ -94,19 +93,18 @@ const capabilities: HostCapabilities = Object.freeze({
         listener,
       ),
   }),
-  menu: Object.freeze({
-    showApplicationMenu: async () =>
-      DesktopMenuResultSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.menuShowApplication)),
-  }),
-  dialog: Object.freeze({
-    selectProjectDirectory: async () =>
-      DesktopDirectorySelectionSchemaZ.nullable().parse(
-        await ipcRenderer.invoke(HOST_IPC.dialogSelectProjectDirectory),
+  workspace: Object.freeze({
+    openProjectDirectory: async () =>
+      WorkspaceOpenHostResultSchemaZ.nullable().parse(
+        await ipcRenderer.invoke(HOST_IPC.workspaceOpenProjectDirectory),
       ),
   }),
+  onboarding: Object.freeze({
+    acknowledgeIntro: async () => {
+      await ipcRenderer.invoke(HOST_IPC.onboardingAcknowledgeIntro);
+    },
+  }),
   theme: Object.freeze({
-    getState: async () =>
-      DesktopThemeStateSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.themeGetState)),
     onChanged: (listener: (state: DesktopThemeState) => void) =>
       onValidatedEvent(
         HOST_IPC.themeChanged,
@@ -114,33 +112,18 @@ const capabilities: HostCapabilities = Object.freeze({
         listener,
       ),
   }),
+  update: Object.freeze({
+    getStatus: async () =>
+      DesktopUpdateStatusSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.updateGetStatus)),
+    onStatusChanged: (listener: (status: DesktopUpdateStatus) => void) =>
+      onValidatedEvent(
+        HOST_IPC.updateStatusChanged,
+        (value) => DesktopUpdateStatusSchemaZ.parse(value),
+        listener,
+      ),
+  }),
   daemon: Object.freeze({
-    createWorkspacePane: async (invocation: WorkspacePaneCreateInvocation) => {
-      const parsed = WorkspacePaneCreateInvocationSchemaZ.parse(invocation);
-      return WorkspacePaneCreateHostResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonCreateWorkspacePane, parsed),
-      );
-    },
-    issueTerminalAttachment: async (request: TerminalAttachRequest) => {
-      const parsed = TerminalAttachRequestSchemaZ.parse(request);
-      return TerminalAttachmentIssueResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonIssueTerminalAttachment, parsed),
-      );
-    },
-    refreshConnection: async () =>
-      DesktopDaemonRefreshConnectionResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonRefreshConnection),
-      ),
-    listWorkspaces: async () =>
-      DesktopDaemonListWorkspacesResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonListWorkspaces),
-      ),
-    fetchApplicationShell: async (request: DesktopDaemonFetchApplicationShellRequest) => {
-      const parsed = DesktopDaemonFetchApplicationShellRequestSchemaZ.parse(request);
-      return DesktopDaemonFetchApplicationShellResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonFetchApplicationShell, parsed),
-      );
-    },
+    ...createDaemonResourceMethods(requestDaemonResource),
     subscribe: async (
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,

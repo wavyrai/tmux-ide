@@ -5,6 +5,7 @@ import { createActionDispatcher } from "./dispatcher.ts";
 import { setDaemonShutdownBackend } from "./handlers/daemon-shutdown.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
 import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
+import type { WorkspacePromotionBackend } from "./handlers/workspace-promote.ts";
 
 const actionApp = (
   broadcast = vi.fn(),
@@ -16,6 +17,7 @@ const actionApp = (
     "/api/v2/action/:name",
     createActionDispatcher({
       broadcast,
+      broadcastResourceChanged: vi.fn(),
       daemonInstanceId: "20000000-0000-4000-8000-000000000002",
       workspacePaneCreationBackend,
       workspaceOpenBackend,
@@ -166,6 +168,54 @@ describe("command-backed action dispatcher compatibility", () => {
     );
   });
 
+  it("emits a scoped versioned invalidation for an applied app-window mutation", async () => {
+    const resourceBroadcast = vi.fn();
+    const app = new Hono();
+    app.post(
+      "/api/v2/action/:name",
+      createActionDispatcher({
+        broadcast: vi.fn(),
+        broadcastResourceChanged: resourceBroadcast,
+        daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+        appWindowMutationBackend: {
+          mutate: async (input) => ({
+            operationId: input.operationId,
+            daemonInstanceId: input.expectedDaemonInstanceId,
+            outcome: "applied",
+            workspaceName: input.intent.workspaceName,
+            documentRevision: 9,
+          }),
+        },
+      }),
+    );
+    const response = await app.request(
+      "http://localhost/api/v2/action/workspace.app-window.mutate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tmux-Ide-Operation-Id": "10000000-0000-4000-8000-000000000001",
+        },
+        body: JSON.stringify({
+          workspaceName: "workspace.alpha",
+          expectedDocumentRevision: 8,
+          command: { type: "window.focus", windowId: null },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(resourceBroadcast).toHaveBeenCalledWith(
+      {
+        workspaceName: "workspace.alpha",
+        resource: "application-shell",
+        revision: 9,
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      "20000000-0000-4000-8000-000000000002",
+    );
+  });
+
   it("rejects renderer-authored runtime fields before pane creation", async () => {
     const create = vi.fn();
     const { app } = actionApp(vi.fn(), { create });
@@ -249,5 +299,68 @@ describe("command-backed action dispatcher compatibility", () => {
       error: { code: "validation_failed" },
     });
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe("workspace.promote completion receipt", () => {
+  const promoteApp = (
+    promote: WorkspacePromotionBackend["promote"],
+    receipts: Array<{ workspaceName: string; outcome: string }>,
+  ) => {
+    const broadcast = vi.fn();
+    const app = new Hono();
+    app.post(
+      "/api/v2/action/:name",
+      createActionDispatcher({
+        broadcast,
+        broadcastResourceChanged: vi.fn(),
+        broadcastPromotionCompleted: (workspaceName, outcome) =>
+          receipts.push({ workspaceName, outcome }),
+        daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+        workspacePromotionBackend: { promote },
+      }),
+    );
+    return { app, broadcast };
+  };
+  const dispatchPromote = (app: Hono) =>
+    app.request("http://localhost/api/v2/action/workspace.promote", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": "10000000-0000-4000-8000-000000000001",
+      },
+      body: JSON.stringify({ sessionId: `session.${"a".repeat(32)}` }),
+    });
+
+  it("broadcasts one typed receipt alongside action.complete on success", async () => {
+    const receipts: Array<{ workspaceName: string; outcome: string }> = [];
+    const { app, broadcast } = promoteApp(
+      async (input) => ({
+        operationId: input.operationId,
+        daemonInstanceId: input.expectedDaemonInstanceId,
+        outcome: "replayed" as const,
+        resource: { resourceVersion: 1 as const, workspaceName: "fleet-alpha" },
+      }),
+      receipts,
+    );
+    const response = await dispatchPromote(app);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, result: { outcome: "replayed" } });
+    expect(receipts).toEqual([{ workspaceName: "fleet-alpha", outcome: "replayed" }]);
+    expect(broadcast).toHaveBeenCalledWith(
+      "workspace.promote",
+      expect.objectContaining({ outcome: "replayed" }),
+    );
+  });
+
+  it("emits no receipt when the promotion fails", async () => {
+    const receipts: Array<{ workspaceName: string; outcome: string }> = [];
+    const { app } = promoteApp(async () => {
+      throw new Error("tmux went away");
+    }, receipts);
+    const response = await dispatchPromote(app);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: "internal" } });
+    expect(receipts).toEqual([]);
   });
 });

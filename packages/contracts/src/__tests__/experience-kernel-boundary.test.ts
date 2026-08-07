@@ -87,12 +87,19 @@ describe("experience-kernel import boundary", () => {
 
     expect(findings).toEqual([]);
     expect([...visited].map(displayPath).sort()).toEqual([
+      "agent-graph-overlay.ts",
+      "app-window-state.ts",
       "application-shell.ts",
       "cohesion-fixture.ts",
       "commands.ts",
+      "daemon-wire.ts",
+      "desktop-missions.ts",
+      "domain.ts",
       "experience-identifiers.ts",
       "experience-shell.ts",
+      "fleet-catalog.ts",
       "focus-overlay.ts",
+      "mission-projections.ts",
       "pane-appearance.ts",
       "semantic-identity.ts",
       "visual-recipes.ts",

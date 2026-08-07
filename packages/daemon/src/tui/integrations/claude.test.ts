@@ -79,6 +79,7 @@ describe("isInstalled", () => {
 describe("hook script", () => {
   it("stamps @agent_state with the state arg and epoch, and exits outside tmux", () => {
     expect(HOOK_SCRIPT).toContain('@agent_state "${state}:$(date +%s)"');
+    expect(HOOK_SCRIPT).toContain('@agent_hint "claude"');
     expect(HOOK_SCRIPT).toContain('[ -n "$TMUX_PANE" ] || exit 0');
     expect(HOOK_SCRIPT).toContain("@agent_session_id");
   });

@@ -1,13 +1,14 @@
 /* @vitest-environment happy-dom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSignal } from "solid-js";
+import { Show, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import type {
+  TerminalAttachRequest,
   TerminalAttachmentSemanticTarget,
   TerminalAttachmentViewport,
 } from "@tmux-ide/contracts";
 
-import { TerminalSurface } from "./terminal-surface.tsx";
+import { TerminalSurface, readOnlyTerminalFitScale } from "./terminal-surface.tsx";
 import type {
   NativeTerminalAttachment,
   NativeTerminalConnectResult,
@@ -15,6 +16,12 @@ import type {
   NativeTerminalTransport,
 } from "./native-terminal-transport.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "./xterm-renderer.ts";
+import {
+  WIDGET_MARKER_CONCEAL_PREFIX,
+  WIDGET_MARKER_CONCEAL_SUFFIX,
+  widgetMarkerAnnouncement,
+  type WidgetCellRow,
+} from "@tmux-ide/contracts";
 import surfaceSource from "./terminal-surface.tsx?raw";
 import transportSource from "./native-terminal-transport.ts?raw";
 import xtermSource from "./xterm-renderer.ts?raw";
@@ -31,6 +38,27 @@ function deferred<T>(): Deferred<T> {
   });
   return { promise, resolve: (value) => resolvePromise?.(value) };
 }
+
+describe("readOnlyTerminalFitScale", () => {
+  it("fits the whole shared grid without enlarging it", () => {
+    expect(
+      readOnlyTerminalFitScale({
+        availableWidth: 1_000,
+        availableHeight: 500,
+        gridWidth: 2_000,
+        gridHeight: 1_000,
+      }),
+    ).toBe(0.5);
+    expect(
+      readOnlyTerminalFitScale({
+        availableWidth: 1_000,
+        availableHeight: 500,
+        gridWidth: 500,
+        gridHeight: 250,
+      }),
+    ).toBe(1);
+  });
+});
 
 const TARGET_A: TerminalAttachmentSemanticTarget = {
   workspaceName: "workspace-a",
@@ -70,13 +98,16 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
   let input: ((bytes: Uint8Array) => void) | null = null;
   const writes: Uint8Array[] = [];
   const disposeInput = vi.fn(() => (input = null));
+  const cellRows: WidgetCellRow[] = [];
   const renderer: TerminalRenderer = {
     open: vi.fn(),
+    readCellRows: vi.fn(() => cellRows),
     write: vi.fn(async (bytes) => {
       writes.push(bytes);
     }),
     focus: vi.fn(),
     fit: vi.fn(() => viewport),
+    resizeGrid: vi.fn(),
     refreshTheme: vi.fn(),
     setReducedMotion: vi.fn(),
     onInput: vi.fn((listener) => {
@@ -97,6 +128,11 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
     setViewport(next: TerminalAttachmentViewport) {
       viewport = next;
     },
+    /** Replace what the emulator would report as its grid, for widget detection. */
+    setCellRows(rows: readonly WidgetCellRow[]) {
+      cellRows.length = 0;
+      cellRows.push(...rows);
+    },
   };
 }
 
@@ -110,6 +146,19 @@ function rendererFleetHarness(
     return instance.renderer;
   });
   return { factory, instances };
+}
+
+/**
+ * The grid an emulator would hold after printing `announcement`: the conceal
+ * codes are consumed by the parser and never reach a cell, so what the rows
+ * carry is the marker text alone.
+ */
+function markerCellRows(announcement: string): WidgetCellRow[] {
+  const line = announcement
+    .replaceAll(WIDGET_MARKER_CONCEAL_PREFIX, "")
+    .replaceAll(WIDGET_MARKER_CONCEAL_SUFFIX, "")
+    .trimEnd();
+  return [{ cells: [...line], wrapped: false }];
 }
 
 function attachmentHarness(overrides: Partial<NativeTerminalAttachment> = {}) {
@@ -158,6 +207,119 @@ describe("TerminalSurface", () => {
     expect(renderer.renderer.dispose).toHaveBeenCalledOnce();
   });
 
+  it("mirrors the origin window grid and never reflows tmux when size-passive", async () => {
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+          geometryOwnership="passive"
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    // Size-passive attaches with a provisional viewport tmux ignores, not a DOM fit.
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ viewport: { cols: 80, rows: 24 } }),
+      expect.any(Function),
+    );
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected"),
+    );
+
+    (listener as ((event: NativeTerminalEvent) => void) | null)?.({
+      type: "geometry",
+      sourceGrid: { cols: 200, rows: 50 },
+      clientViewport: { cols: 200, rows: 50 },
+    });
+    expect(renderer.renderer.resizeGrid).toHaveBeenCalledWith({ cols: 200, rows: 50 });
+
+    // A DOM resize must re-assert the window grid, never resize the origin window.
+    for (const observer of ResizeObserverHarness.active) observer.trigger();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(attachment.resize).not.toHaveBeenCalled();
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-size-passive")).toBe("true");
+    dispose();
+  });
+
+  it("asks the daemon to own geometry and fits tmux to the card", async () => {
+    /*
+     * The renderer half of m50.2 gap 1.
+     *
+     * Two claims, and both matter. The request must SAY `owner` — the daemon
+     * decides whether to drop `-f ignore-size` from that word alone, so a
+     * surface that behaves like an owner without asking to be one gets a client
+     * whose size tmux discards. And the measured fit must reach the attachment
+     * rather than the window's reported grid being mirrored back, which is what
+     * the passive path does one test above.
+     */
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    renderer.setViewport({ cols: 118, rows: 38 });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+          geometryOwnership="owner"
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        geometryOwnership: "owner",
+        // The DOM measurement, not the provisional 80x24 a passive attach opens
+        // with: an owner knows its size before it asks for a client.
+        viewport: { cols: 118, rows: 38 },
+      }),
+      expect.any(Function),
+    );
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-size-passive")).toBe(
+      "false",
+    );
+
+    /*
+     * The origin window reporting a DIFFERENT grid does not win.
+     *
+     * Bug this catches: the surface keeps the passive reflex of mirroring
+     * whatever tmux reports, so the card silently follows the window instead of
+     * the window following the card — the letterbox returns with the ownership
+     * flag still set, which is the confusing half-broken state.
+     */
+    (listener as ((event: NativeTerminalEvent) => void) | null)?.({
+      type: "geometry",
+      sourceGrid: { cols: 80, rows: 24 },
+      clientViewport: { cols: 80, rows: 24 },
+    });
+    await vi.waitFor(() => expect(attachment.resize).toHaveBeenCalledWith({ cols: 118, rows: 38 }));
+    expect(renderer.renderer.resizeGrid).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it("forwards early binary output and serializes terminal input writes", async () => {
     const connection = deferred<NativeTerminalConnectResult>();
     const firstWrite = deferred<void>();
@@ -194,6 +356,7 @@ describe("TerminalSurface", () => {
         protocolVersion: 1,
         target: TARGET_A,
         viewerMode: "interactive",
+        geometryOwnership: "passive",
         viewport: { cols: 80, rows: 24 },
       },
       expect.any(Function),
@@ -221,6 +384,106 @@ describe("TerminalSurface", () => {
 
     dispose();
     expect(attachment.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("names every renderer-visible first-attach boundary through first paint", async () => {
+    const connection = deferred<NativeTerminalConnectResult>();
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return connection.promise;
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    const surface = (): HTMLElement => root.querySelector<HTMLElement>(".terminal-surface")!;
+    const trace = (): Array<{ phase: string; atMs: number }> =>
+      JSON.parse(surface().getAttribute("data-attach-trace") ?? "[]") as Array<{
+        phase: string;
+        atMs: number;
+      }>;
+
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    expect(surface().getAttribute("data-phase")).toBe("connecting");
+    expect(surface().getAttribute("data-attach-phase")).toBe("attach-requested");
+    expect(trace().map((entry) => entry.phase)).toEqual([
+      "renderer-loading",
+      "renderer-ready",
+      "attach-requested",
+    ]);
+
+    connection.resolve({ status: "connected", attachment });
+    await vi.waitFor(() => expect(surface().getAttribute("data-phase")).toBe("connected"));
+    expect(surface().getAttribute("data-attach-phase")).toBe("awaiting-first-output");
+    expect(root.textContent).toContain("Loading terminal contents");
+    expect(root.textContent).toContain("waiting for xterm to paint its first frame");
+
+    await Promise.resolve(
+      (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+        type: "output",
+        bytes: new Uint8Array([27, 91, 65]),
+      }),
+    );
+    expect(surface().getAttribute("data-attach-phase")).toBe("live");
+    expect(root.querySelector(".terminal-surface__state")).toBeNull();
+    expect(trace().map((entry) => entry.phase)).toEqual([
+      "renderer-loading",
+      "renderer-ready",
+      "attach-requested",
+      "attachment-ready",
+      "awaiting-first-output",
+      "first-output-received",
+      "painting-first-frame",
+      "live",
+    ]);
+    expect(
+      trace().every(
+        (entry, index, entries) => index === 0 || entry.atMs >= entries[index - 1]!.atMs,
+      ),
+    ).toBe(true);
+    expect(surface().getAttribute("data-attach-trace")).not.toMatch(
+      /(?:ticket|daemon|tmuxPaneId|runtimePaneId|workspace-a|agent-a)/u,
+    );
+    dispose();
+  });
+
+  it("names an owner attach that is waiting for a usable viewport", async () => {
+    const attachment = attachmentHarness();
+    const transport = transportHarness(async () => ({ status: "connected", attachment }));
+    const renderer = rendererHarness({ cols: 0, rows: 0 });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          geometryOwnership="owner"
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-attach-phase")).toBe(
+        "waiting-for-viewport",
+      ),
+    );
+    expect(transport.connect).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("Waiting for enough pane space");
+    dispose();
   });
 
   it("acknowledges ordered output only after the renderer write callback settles", async () => {
@@ -341,6 +604,7 @@ describe("TerminalSurface", () => {
           target={TARGET_A}
           title="Codex"
           transport={transport}
+          geometryOwnership="owner"
           rendererFactory={renderer.factory}
         />
       ),
@@ -389,6 +653,7 @@ describe("TerminalSurface", () => {
           target={TARGET_A}
           title="Codex"
           transport={transport}
+          geometryOwnership="owner"
           rendererFactory={renderer.factory}
         />
       ),
@@ -876,7 +1141,7 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
-  it("retires a typed connect failure before rejecting late output", async () => {
+  it("retires a retryable typed connect failure before rejecting late output", async () => {
     let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
     const transport = transportHarness(async (_request, nextListener) => {
       listener = nextListener;
@@ -899,7 +1164,9 @@ describe("TerminalSurface", () => {
       root,
     );
     await vi.waitFor(() =>
-      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe(
+        "disconnected",
+      ),
     );
 
     await expect(
@@ -914,7 +1181,310 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
-  it("retires a rejected connect before rejecting late output", async () => {
+  it("recovers a transient held-lease conflict without a manual retry", async () => {
+    let attempts = 0;
+    const attachment = attachmentHarness();
+    const transport = transportHarness(async () => {
+      attempts += 1;
+      return attempts < 3
+        ? {
+            status: "error" as const,
+            error: {
+              code: "interactive-viewer-conflict" as const,
+              reason: "The requested pane already has an interactive viewer.",
+              retryable: true,
+            },
+          }
+        : { status: "connected" as const, attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected"),
+    );
+    expect(attempts).toBe(3);
+    expect(root.textContent).not.toContain("Terminal could not attach");
+    dispose();
+  });
+
+  it("retries a transient replacement-lease failure without leaving a stale connected frame", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const attachment = attachmentHarness();
+    const transport = transportHarness(async () => {
+      attempts += 1;
+      return attempts === 1
+        ? {
+            status: "error" as const,
+            error: {
+              code: "attachment-unavailable" as const,
+              reason: "The terminal attachment issue failed.",
+              retryable: true,
+            },
+          }
+        : { status: "connected" as const, attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe(
+      "disconnected",
+    );
+    expect(root.textContent).not.toContain("Terminal could not attach");
+
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected");
+    expect(attempts).toBe(2);
+    dispose();
+    vi.useRealTimers();
+  });
+
+  it("falls back to a passive read-only viewer when another client keeps control", async () => {
+    const requests: TerminalAttachRequest[] = [];
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (request, nextListener) => {
+      requests.push(request);
+      listener = nextListener;
+      if (request.viewerMode === "interactive") {
+        return {
+          status: "error" as const,
+          error: {
+            code: "interactive-viewer-conflict" as const,
+            reason: "Another client controls this window.",
+            retryable: true,
+          },
+        };
+      }
+      return { status: "connected" as const, attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          geometryOwnership="owner"
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-viewer-mode")).toBe(
+        "read-only",
+      ),
+    );
+    expect(requests.at(-1)).toMatchObject({
+      viewerMode: "read-only",
+      geometryOwnership: "passive",
+    });
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-geometry-ownership")).toBe(
+      "passive",
+    );
+    await Promise.resolve(
+      (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+        type: "output",
+        bytes: new TextEncoder().encode("shared output"),
+      }),
+    );
+    await vi.waitFor(() => expect(root.textContent).toContain("Viewing read-only"));
+    expect(root.textContent).toContain("Take control");
+    renderer.emitInput(new Uint8Array([3]));
+    expect(attachment.write).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("keeps a second surface passive and recovers control after a release race", async () => {
+    type ClientId = "owner" | "viewer";
+    const listeners = new Map<ClientId, (event: NativeTerminalEvent) => void | Promise<void>>();
+    const requests = new Map<ClientId, TerminalAttachRequest[]>([
+      ["owner", []],
+      ["viewer", []],
+    ]);
+    const ownerWrite = vi.fn(async (_bytes: Uint8Array) => ({ status: "ok" as const }));
+    const viewerWrite = vi.fn(async (_bytes: Uint8Array) => ({ status: "ok" as const }));
+    const writes = new Map<ClientId, typeof ownerWrite>([
+      ["owner", ownerWrite],
+      ["viewer", viewerWrite],
+    ]);
+    let interactiveOwner: ClientId | null = null;
+    let deferOwnerRelease = false;
+    let ownerReleaseScheduled = false;
+    let viewerConflicts = 0;
+
+    const clientTransport = (clientId: ClientId): NativeTerminalTransport =>
+      transportHarness(async (request, listener) => {
+        requests.get(clientId)!.push(request);
+        listeners.set(clientId, listener);
+        if (request.viewerMode === "interactive") {
+          if (interactiveOwner !== null && interactiveOwner !== clientId) {
+            if (clientId === "viewer") viewerConflicts += 1;
+            return {
+              status: "error" as const,
+              error: {
+                code: "interactive-viewer-conflict" as const,
+                reason: "Another client controls this window.",
+                retryable: true,
+              },
+            };
+          }
+          interactiveOwner = clientId;
+        }
+        let disposed = false;
+        return {
+          status: "connected" as const,
+          attachment: attachmentHarness({
+            write: writes.get(clientId)!,
+            dispose: vi.fn(() => {
+              if (disposed) return;
+              disposed = true;
+              if (request.viewerMode !== "interactive" || interactiveOwner !== clientId) return;
+              if (clientId === "owner" && deferOwnerRelease) {
+                ownerReleaseScheduled = true;
+                setTimeout(() => {
+                  if (interactiveOwner === clientId) interactiveOwner = null;
+                }, 120);
+              } else {
+                interactiveOwner = null;
+              }
+            }),
+          }),
+        };
+      });
+
+    const ownerRenderer = rendererHarness();
+    const viewerRenderer = rendererHarness();
+    const ownerTransport = clientTransport("owner");
+    const viewerTransport = clientTransport("viewer");
+    const ownerRoot = document.body.appendChild(document.createElement("div"));
+    const viewerRoot = document.body.appendChild(document.createElement("div"));
+    const [showOwner, setShowOwner] = createSignal(true);
+    const disposeOwnerRoot = render(
+      () => (
+        <Show when={showOwner()}>
+          <TerminalSurface
+            target={TARGET_A}
+            title="Owner"
+            transport={ownerTransport}
+            geometryOwnership="owner"
+            rendererFactory={ownerRenderer.factory}
+          />
+        </Show>
+      ),
+      ownerRoot,
+    );
+    await vi.waitFor(() => expect(interactiveOwner).toBe("owner"));
+
+    const disposeViewerRoot = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Viewer"
+          transport={viewerTransport}
+          geometryOwnership="owner"
+          rendererFactory={viewerRenderer.factory}
+        />
+      ),
+      viewerRoot,
+    );
+    await vi.waitFor(() =>
+      expect(viewerRoot.querySelector(".terminal-surface")?.getAttribute("data-viewer-mode")).toBe(
+        "read-only",
+      ),
+    );
+
+    await Promise.all([
+      Promise.resolve(
+        listeners.get("owner")?.({
+          type: "output",
+          bytes: new TextEncoder().encode("owner frame"),
+        }),
+      ),
+      Promise.resolve(
+        listeners.get("viewer")?.({
+          type: "output",
+          bytes: new TextEncoder().encode("viewer frame"),
+        }),
+      ),
+    ]);
+    await vi.waitFor(() => {
+      expect(ownerRenderer.writes).toHaveLength(1);
+      expect(viewerRenderer.writes).toHaveLength(1);
+      expect(viewerRoot.textContent).toContain("Take control");
+    });
+    expect(requests.get("viewer")!.at(-1)).toMatchObject({
+      viewerMode: "read-only",
+      geometryOwnership: "passive",
+    });
+    expect(
+      viewerRoot.querySelector(".terminal-surface")?.getAttribute("data-geometry-ownership"),
+    ).toBe("passive");
+
+    ownerRenderer.emitInput(new Uint8Array([1]));
+    viewerRenderer.emitInput(new Uint8Array([2]));
+    await vi.waitFor(() => expect(writes.get("owner")).toHaveBeenCalledOnce());
+    expect(writes.get("viewer")).not.toHaveBeenCalled();
+
+    // The original client's disconnect is not visible to the authority
+    // immediately. Take control must survive two honest conflicts, then win
+    // once the short release race settles instead of falling back again.
+    deferOwnerRelease = true;
+    setShowOwner(false);
+    await vi.waitFor(() => expect(ownerReleaseScheduled).toBe(true));
+    viewerRoot.querySelector<HTMLButtonElement>(".terminal-surface__viewer-status button")!.click();
+    await vi.waitFor(
+      () => {
+        expect(interactiveOwner).toBe("viewer");
+        expect(
+          viewerRoot.querySelector(".terminal-surface")?.getAttribute("data-viewer-mode"),
+        ).toBe("interactive");
+        expect(viewerRoot.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe(
+          "connected",
+        );
+      },
+      { timeout: 1_500 },
+    );
+    expect(viewerConflicts).toBeGreaterThanOrEqual(5);
+    expect(requests.get("viewer")!.at(-1)).toMatchObject({
+      viewerMode: "interactive",
+      geometryOwnership: "owner",
+    });
+    viewerRenderer.emitInput(new Uint8Array([3]));
+    await vi.waitFor(() => expect(writes.get("viewer")).toHaveBeenCalledOnce());
+
+    disposeViewerRoot();
+    disposeOwnerRoot();
+  });
+
+  it("retires a rejected connect while retrying and rejects late output", async () => {
     let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
     const transport = transportHarness((_request, nextListener) => {
       listener = nextListener;
@@ -934,7 +1504,9 @@ describe("TerminalSurface", () => {
       root,
     );
     await vi.waitFor(() =>
-      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe(
+        "disconnected",
+      ),
     );
 
     await expect(
@@ -949,7 +1521,7 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
-  it("requires an explicit retry after disconnect instead of reconnecting on resize", async () => {
+  it("reconnects a closed attachment without remounting the terminal renderer", async () => {
     const attachments = [attachmentHarness(), attachmentHarness()];
     const listeners: Array<(event: NativeTerminalEvent) => void | Promise<void>> = [];
     let connectionIndex = 0;
@@ -985,20 +1557,143 @@ describe("TerminalSurface", () => {
     await Promise.resolve();
     expect(transport.connect).toHaveBeenCalledOnce();
 
-    root.querySelector<HTMLButtonElement>(".terminal-surface__state button")!.click();
-    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("measuring");
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(rendererFleet.instances).toHaveLength(2));
-    const newRenderer = rendererFleet.instances[1]!;
-    expect(oldRenderer.renderer.dispose).toHaveBeenCalledOnce();
-    expect(root.querySelector(".terminal-surface")?.getAttribute("data-preserves-frame")).toBe(
-      "false",
-    );
+    expect(rendererFleet.instances).toHaveLength(1);
+    expect(oldRenderer.renderer.dispose).not.toHaveBeenCalled();
+    vi.mocked(oldRenderer.renderer.write).mockImplementation(async (bytes) => {
+      oldRenderer.writes.push(bytes);
+    });
     await Promise.resolve(listeners[1]!({ type: "output", bytes: new Uint8Array([2]) }));
-    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
+    expect(oldRenderer.writes).toEqual([new Uint8Array([2])]);
     blockedWrite.resolve();
     await Promise.resolve();
-    expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
+    expect(oldRenderer.writes).toEqual([new Uint8Array([2])]);
+    dispose();
+  });
+
+  /*
+   * The whole widget contract, in one chain (m49.7).
+   *
+   * A pane that prints a marker renders a document; it does NOT stop being a
+   * pane. The emulator stays mounted, keys still reach the process, and the
+   * Ctrl-C the user presses is what takes the widget away — because the trap on
+   * the other end clears the screen, and the marker stops existing.
+   */
+  it("swaps a marked pane to a widget, keeps its keyboard path, and restores on Ctrl-C", async () => {
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    const emit = (bytes: Uint8Array): Promise<unknown> =>
+      Promise.resolve(
+        (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+          type: "output",
+          bytes,
+        }),
+      ).catch(() => undefined);
+
+    const surface = (): Element => root.querySelector(".terminal-surface")!;
+    await vi.waitFor(() => expect(surface().getAttribute("data-phase")).toBe("connected"));
+
+    // The pane prints the marker. The emulator parses it; the grid is what
+    // detection reads, so the harness reports the row the emulator would hold.
+    const announcement = widgetMarkerAnnouncement("markdown", {
+      text: "# Plan\n\nRun `pnpm test`, then ship.",
+    });
+    renderer.setCellRows(markerCellRows(announcement));
+    await emit(new TextEncoder().encode(announcement));
+
+    await vi.waitFor(() => expect(surface().getAttribute("data-widget")).toBe("markdown"));
+    const widget = root.querySelector(".widget-surface")!;
+    expect(widget).not.toBeNull();
+
+    // Bug this catches: the widget renders the document as escaped text, or
+    // renders nothing, and the pane shows a blank panel where a plan should be.
+    expect(widget.querySelector("h1")?.textContent).toBe("Plan");
+    expect(widget.querySelector("code")?.textContent).toBe("pnpm test");
+
+    /*
+     * Bug this catches: the swap REPLACES the grid instead of covering it. The
+     * emulator unmounts, its textarea leaves the focus order, and the user is
+     * trapped inside a widget with no way to signal the process behind it.
+     */
+    expect(root.querySelector(".terminal-surface__viewport")).not.toBeNull();
+    expect(renderer.renderer.dispose).not.toHaveBeenCalled();
+
+    /*
+     * Clicking the document focuses the PANE, not the overlay — and the focus
+     * is handed back on mouse-UP, because a mousedown on ordinary content is
+     * what blurs the emulator in the first place. A live run proved that a
+     * pointerdown-only handler leaves the pane unable to be interrupted.
+     */
+    widget.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true }));
+    widget.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true }));
+    await vi.waitFor(() => expect(renderer.renderer.focus).toHaveBeenCalledTimes(2));
+
+    // Ctrl-C, from the keyboard, while the widget is on screen.
+    renderer.emitInput(new Uint8Array([3]));
+    await vi.waitFor(() => expect(attachment.write).toHaveBeenCalledWith(new Uint8Array([3])));
+
+    // What the helper's trap does on SIGINT: clear the screen and exec a shell.
+    renderer.setCellRows([{ cells: [..."$ "], wrapped: false }]);
+    await emit(new TextEncoder().encode("\u001b[2J\u001b[H$ "));
+
+    await vi.waitFor(() => expect(surface().getAttribute("data-widget")).toBe(null));
+    expect(root.querySelector(".widget-surface")).toBeNull();
+    expect(root.querySelector(".terminal-surface__viewport")).not.toBeNull();
+    dispose();
+  });
+
+  it("names a widget it cannot render instead of silently staying a terminal", async () => {
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    const announcement = widgetMarkerAnnouncement("flowchart", { nodes: 3 });
+    renderer.setCellRows(markerCellRows(announcement));
+    await Promise.resolve(
+      (listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null)?.({
+        type: "output",
+        bytes: new TextEncoder().encode(announcement),
+      }),
+    ).catch(() => undefined);
+
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-widget")).toBe("invalid"),
+    );
+    expect(root.querySelector(".widget-surface__refusal")?.textContent).toContain("flowchart");
     dispose();
   });
 

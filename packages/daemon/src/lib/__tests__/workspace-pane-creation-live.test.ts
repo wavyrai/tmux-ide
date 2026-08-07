@@ -16,6 +16,11 @@ const daemonInstanceId = "20000000-0000-4000-8000-000000000002";
 const operationId = "10000000-0000-4000-8000-000000000001";
 
 describe.skipIf(!hasTmux)("workspace pane creation live tmux boundary", () => {
+  // Real tmux + pty over an isolated socket. Under parallel load the beforeAll
+  // spawn and the create/retire operations are starved past the default
+  // hook/test budgets, so widen both. Assertions are unchanged.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
   const root = mkdtempSync(join(tmpdir(), "tmux-ide-pane-create-live-"));
   const proofPath = join(root, "argv-proof");
   const commandInjectionPath = join(root, "command-injected");
@@ -32,7 +37,10 @@ describe.skipIf(!hasTmux)("workspace pane creation live tmux boundary", () => {
   }
 
   beforeAll(() => {
-    runOnSocket(["new-session", "-d", "-s", sessionName, "exec sleep 30"]);
+    // Long-lived source session: the per-case budgets below can run many
+    // seconds under parallel load, and the source pane must outlive them (a
+    // short sleep would exit mid-test and collapse the isolated server).
+    runOnSocket(["new-session", "-d", "-s", sessionName, "exec sleep 2147483647"]);
   });
 
   afterAll(() => {
@@ -80,7 +88,7 @@ describe.skipIf(!hasTmux)("workspace pane creation live tmux boundary", () => {
       },
     });
 
-    await vi.waitFor(() => expect(existsSync(proofPath)).toBe(true));
+    await vi.waitFor(() => expect(existsSync(proofPath)).toBe(true), { timeout: 15_000 });
     expect(readFileSync(proofPath, "utf8")).toBe(`one two\n$(touch ${commandInjectionPath})`);
     expect(existsSync(commandInjectionPath)).toBe(false);
     expect(existsSync(titleInjectionPath)).toBe(false);
@@ -121,7 +129,7 @@ describe.skipIf(!hasTmux)("workspace pane creation live tmux boundary", () => {
       .split("\n")
       .find((name) => name === title);
     expect(createdWindow).toBe(title);
-  });
+  }, 30_000);
 
   it("retires a live-success operation after its exact tmux window closes", async () => {
     const registry = new WorkspaceRegistry({
@@ -168,7 +176,7 @@ describe.skipIf(!hasTmux)("workspace pane creation live tmux boundary", () => {
         intent: { kind: "terminal", workspaceName: "workspace.retire" },
       }),
     ).resolves.toMatchObject({ outcome: "created" });
-  });
+  }, 30_000);
 
   it("uses a daemon-pinned absolute tmux executable and socket after ambient env changes", async () => {
     const registry = new WorkspaceRegistry({
@@ -210,5 +218,5 @@ describe.skipIf(!hasTmux)("workspace pane creation live tmux boundary", () => {
     expect(
       runOnSocket(["list-windows", "-t", `=${sessionName}`, "-F", "#{window_name}"]),
     ).toContain("Pinned authority");
-  });
+  }, 30_000);
 });

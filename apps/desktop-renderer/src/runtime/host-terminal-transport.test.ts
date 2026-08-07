@@ -6,8 +6,23 @@ const nativeFactory = vi.hoisted(() =>
   vi.fn((_dependencies: NativeTerminalWebSocketTransportDependencies) => ({ connect: vi.fn() })),
 );
 
+const NativeTerminalIssueError = vi.hoisted(
+  () =>
+    class NativeTerminalIssueError extends Error {
+      constructor(
+        readonly code: string,
+        readonly reason: string,
+        readonly retryable: boolean,
+      ) {
+        super(reason);
+        this.name = "NativeTerminalIssueError";
+      }
+    },
+);
+
 vi.mock("../terminal/native-terminal-websocket-transport.ts", () => ({
   createNativeTerminalWebSocketTransport: nativeFactory,
+  NativeTerminalIssueError,
 }));
 
 import { createHostNativeTerminalTransport } from "./host-terminal-transport.ts";
@@ -23,6 +38,7 @@ const REQUEST = {
   protocolVersion: 1 as const,
   target: { workspaceName: "alpha", semanticPaneId: "pane.shell" },
   viewerMode: "interactive" as const,
+  geometryOwnership: "passive" as const,
   viewport: { cols: 80, rows: 24 },
 };
 
@@ -38,6 +54,7 @@ function hostWithDescriptor(daemonInstanceId = DAEMON.instanceId) {
       requestId: "2a215cf2-547e-42a2-91c7-454df8e56121",
       expiresAt: Date.now() + 15_000,
       effectiveViewerMode: "interactive" as const,
+      effectiveGeometryOwnership: "passive" as const,
     },
   }));
   return {
@@ -71,6 +88,10 @@ describe("HostCapabilities-backed native terminal transport", () => {
     await expect(mismatchDependencies.issueAttachment(REQUEST)).rejects.toThrow(
       "another daemon generation",
     );
+    await expect(mismatchDependencies.issueAttachment(REQUEST)).rejects.toMatchObject({
+      code: "daemon-identity-mismatch",
+      retryable: true,
+    });
 
     const host = {
       daemon: {
@@ -90,5 +111,31 @@ describe("HostCapabilities-backed native terminal transport", () => {
     await expect(errorDependencies.issueAttachment(REQUEST)).rejects.toThrow(
       "daemon is unavailable",
     );
+  });
+
+  it("preserves the daemon's structured code and reason for a held-lease conflict", async () => {
+    // The live bug: a prior attach that died at/before redeem holds the
+    // window-keyed interactive lease, so the retry issues into a conflict. The
+    // adapter must carry that exact code — not collapse it to a generic failure.
+    const host = {
+      daemon: {
+        issueTerminalAttachment: vi.fn(async () => ({
+          status: "error" as const,
+          error: {
+            code: "interactive-viewer-conflict" as const,
+            reason: "The requested pane already has an interactive viewer.",
+            retryable: true,
+          },
+        })),
+      },
+    } as unknown as Pick<HostCapabilities, "daemon">;
+    createHostNativeTerminalTransport(host, DAEMON);
+    const dependencies = nativeFactory.mock.calls.at(-1)?.[0];
+    if (!dependencies) throw new Error("Expected transport dependencies.");
+    await expect(dependencies.issueAttachment(REQUEST)).rejects.toMatchObject({
+      code: "interactive-viewer-conflict",
+      reason: "The requested pane already has an interactive viewer.",
+      retryable: true,
+    });
   });
 });

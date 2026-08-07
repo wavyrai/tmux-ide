@@ -9,6 +9,7 @@ import {
   type PaneAttention,
   type PaneStructure,
   type PaneVisualStateV1,
+  type SemanticIconId,
   type SemanticProductId,
   type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
@@ -52,6 +53,9 @@ export const TERMINAL_RESOURCE_UNAVAILABLE_LABELS: Readonly<
   "duplicate-semantic-stamp": "Terminal identity is duplicated",
   "duplicate-runtime-pane-binding": "Terminal runtime binding is duplicated",
   "not-single-pane-window": "Terminal belongs to a multi-pane tmux window",
+  "missing-window-stamp": "Terminal window has not established a durable identity",
+  "window-stamp-inconsistent": "Terminal window identity is inconsistent across its panes",
+  "duplicate-window-stamp": "Terminal window identity is duplicated",
 });
 
 type ApplicationShellAgent = ApplicationShellProjectionV1["sidebar"]["agents"][number];
@@ -96,10 +100,32 @@ function paneChildId(paneId: SemanticProductId, child: string): SemanticProductI
   return `${paneId.slice(0, 128 - suffix.length)}${suffix}` as SemanticProductId;
 }
 
-function harnessLabel(harness: ApplicationShellAgent["harness"]): string {
+export function agentHarnessLabel(harness: ApplicationShellAgent["harness"]): string {
   if (harness === "claude-code") return "Claude Code";
   if (harness === "codex") return "Codex";
   return "Custom harness";
+}
+
+/** Renderer-neutral agent identity carried by every PaneFrame host. */
+export function agentHarnessIcon(harness: ApplicationShellAgent["harness"]): SemanticIconId {
+  if (harness === "claude-code") return "agent-claude";
+  if (harness === "codex") return "agent-codex";
+  return "agent-custom";
+}
+
+/**
+ * A subtitle earns its place by saying something the title does not.
+ *
+ * A pane titled "Terminal" was rendering "Terminal Terminal", and one titled
+ * "Terminal 1" rendered "Terminal 1 Terminal" — the eye reads both as a bug in
+ * the app, and both spend a line of header saying nothing. A subtitle the title
+ * already opens with is dropped; one that adds a fact is kept.
+ */
+function distinctSubtitle(title: string, subtitle: string | null): string | null {
+  if (subtitle === null) return null;
+  const normalise = (value: string): string => value.trim().toLowerCase();
+  const [normalisedTitle, normalisedSubtitle] = [normalise(title), normalise(subtitle)];
+  return normalisedTitle.startsWith(normalisedSubtitle) ? null : subtitle;
 }
 
 /**
@@ -232,7 +258,7 @@ function paneFrameModelFromApplicationShellAgent(
     },
   };
   const appearance = resolvePaneAppearance(visualState);
-  const harness = harnessLabel(agent.harness);
+  const harness = agentHarnessLabel(agent.harness);
   const attentionChip =
     status.attention === "none"
       ? []
@@ -246,10 +272,10 @@ function paneFrameModelFromApplicationShellAgent(
           },
         ];
   return {
-    pane: { id: paneId, kind: "terminal" },
+    pane: { id: paneId, kind: "terminal", icon: agentHarnessIcon(agent.harness) },
     appearance,
     title: agent.name,
-    subtitle: harness,
+    subtitle: distinctSubtitle(agent.name, harness),
     status: {
       // The status value changes; its semantic slot identity never does.
       id: paneChildId(paneId, "status"),
@@ -308,10 +334,13 @@ function paneFrameModelFromTerminalResource(
       ? TERMINAL_RESOURCE_UNAVAILABLE_LABELS[resource.attachability.reason]
       : appearance.accessibility.description;
   return {
-    pane: { id: resource.id, kind: "terminal" },
+    pane: { id: resource.id, kind: "terminal", icon: "terminals" },
     appearance,
     title: resource.title,
-    subtitle: resource.kind === "agent" ? "Agent terminal" : "Terminal",
+    subtitle: distinctSubtitle(
+      resource.title,
+      resource.kind === "agent" ? "Agent terminal" : "Terminal",
+    ),
     status: {
       id: paneChildId(resource.id, "status"),
       label: statusLabel,
@@ -400,9 +429,10 @@ export function paneFrameTerminalsFromApplicationShellInventory(
           )
         : paneFrameModelFromTerminalResource(shell, resource, local);
     if (agent && !attachable) {
-      const harness = harnessLabel(agent.harness);
+      const harness = agentHarnessLabel(agent.harness);
       model = {
         ...model,
+        pane: { ...model.pane, icon: agentHarnessIcon(agent.harness) },
         title: agent.name,
         subtitle: harness,
         chips: [
@@ -432,8 +462,14 @@ export function paneFrameTerminalsFromApplicationShellInventory(
 /** Canonical fixture/resource adapter shared by every PaneFrame host. */
 export function paneFrameModelFromCohesionPane(pane: CohesionPaneFixture): PaneFrameModel {
   const appearance = resolvePaneAppearance(pane.state);
+  const fixtureAgentIcon =
+    pane.subtitle === "Claude Code"
+      ? "agent-claude"
+      : pane.subtitle === "Codex"
+        ? "agent-codex"
+        : undefined;
   return {
-    pane: { id: pane.id, kind: pane.role },
+    pane: { id: pane.id, kind: pane.role, icon: fixtureAgentIcon },
     appearance,
     title: pane.title,
     subtitle: pane.subtitle,

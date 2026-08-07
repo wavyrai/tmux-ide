@@ -162,7 +162,7 @@ exports[`PaneFrame OpenTUI renderer renders the live application-shell agent ada
 
 exports[`PaneFrame OpenTUI renderer renders the live application-shell agent adapter at %sx%s as standard 1`] = `
 "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│:: ▣ ❯ Codex · Codex                                                                 Running   Codex: running   □   ⋯ │
+│:: ▣ ❯ Codex                                                                         Running   Codex: running   □   ⋯ │
 │ opaque terminal body                                                                                                 │
 │                                                                                                                      │
 │                                                                                                                      │
@@ -205,7 +205,7 @@ exports[`PaneFrame OpenTUI renderer renders the live application-shell agent ada
 
 exports[`PaneFrame OpenTUI renderer renders the live application-shell agent adapter at %sx%s as wide 1`] = `
 "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│:: ▣ ❯ Codex · Codex                                                                                                                                                 Running   Codex: running   ▣   ⋯ │
+│:: ▣ ❯ Codex                                                                                                                                                         Running   Codex: running   ▣   ⋯ │
 │ opaque terminal body                                                                                                                                                                                 │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

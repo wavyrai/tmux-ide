@@ -14,8 +14,10 @@ import {
   NATIVE_TERMINAL_MAX_QUEUED_EVENTS,
   NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES,
   NATIVE_TERMINAL_RATE_WINDOW_MS,
+  NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS,
   NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS,
   NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
+  NativeTerminalIssueError,
   createNativeTerminalWebSocketTransport,
   type NativeTerminalSocketEvent,
   type NativeTerminalSocketListener,
@@ -33,6 +35,7 @@ const REQUEST = {
   protocolVersion: 1 as const,
   target: TARGET,
   viewerMode: "interactive" as const,
+  geometryOwnership: "passive" as const,
   viewport: { cols: 120, rows: 40 },
 };
 
@@ -46,6 +49,7 @@ function issueDescriptor(overrides: Record<string, unknown> = {}): unknown {
     requestId: REQUEST_ID,
     expiresAt: NOW + 15_000,
     effectiveViewerMode: "interactive",
+    effectiveGeometryOwnership: "passive",
     ...overrides,
   };
 }
@@ -316,7 +320,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       status: "error",
       error: { code: "protocol-error" },
     });
-    expect(firstSocket.closes.at(-1)).toEqual({ code: 1002, reason: "protocol-error" });
+    expect(firstSocket.closes.at(-1)).toEqual({ code: 4002, reason: "protocol-error" });
 
     const wrongIdentity = rig();
     const second = wrongIdentity.transport.connect(REQUEST, () => undefined);
@@ -391,7 +395,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       status: "error",
       error: { code: "socket-backpressure" },
     });
-    expect(socket.closes.at(-1)).toEqual({ code: 1013, reason: "socket-backpressure" });
+    expect(socket.closes.at(-1)).toEqual({ code: 4013, reason: "socket-backpressure" });
     await vi.waitFor(() =>
       expect(events).toContainEqual({
         type: "state",
@@ -423,7 +427,18 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     await expect(latest).resolves.toEqual({ status: "ok" });
   });
 
-  it("bounds asynchronous output delivery and retires instead of growing an event queue", async () => {
+  it("coalesces queued output behind a stalled consumer instead of retiring the attachment", async () => {
+    /*
+     * Bug this catches, and it cost a whole milestone's live runs: the count
+     * bound is the wrong shape for output. A full-window repaint arrives as
+     * ~1 KiB frames, so a 200x50 terminal's FIRST paint is more than thirty of
+     * them — it overflowed a thirty-two entry queue while using three per cent
+     * of the byte budget, and a correctly-behaving terminal killed its own
+     * attachment the moment the app started rendering whole windows.
+     *
+     * Adjacent output merges into one entry instead, which also means the
+     * consumer is awaited once for the burst rather than once per kilobyte.
+     */
     let releaseOutput!: () => void;
     const outputGate = new Promise<void>((resolve) => {
       releaseOutput = resolve;
@@ -440,10 +455,50 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       }
     });
 
-    for (let index = 0; index <= NATIVE_TERMINAL_MAX_QUEUED_EVENTS; index += 1) {
+    for (let index = 0; index <= NATIVE_TERMINAL_MAX_QUEUED_EVENTS * 4; index += 1) {
       socket.message(Uint8Array.of(index & 0xff).buffer);
     }
-    expect(socket.closes.at(-1)).toEqual({ code: 1013, reason: "renderer-backpressure" });
+    expect(
+      socket.closes.at(-1),
+      "a burst of small output frames still retires the attachment on the count bound",
+    ).toBeUndefined();
+
+    releaseOutput();
+    // The whole burst arrives as ONE further write: the first frame was already
+    // in flight, and everything behind it merged into a single queued entry.
+    await vi.waitFor(() =>
+      expect(events.filter((event) => event.type === "output")).toHaveLength(2),
+    );
+    const delivered = events.filter((event) => event.type === "output");
+    expect(
+      delivered[1]!.type === "output" ? delivered[1]!.bytes.byteLength : 0,
+      "the coalesced write does not carry every byte that was queued behind the stall",
+    ).toBe(NATIVE_TERMINAL_MAX_QUEUED_EVENTS * 4);
+    expect(socket.closes).toEqual([]);
+  });
+
+  it("still retires when a stalled consumer lets the queue exceed its BYTE budget", async () => {
+    // The byte budget is the real safety property, and it is the one that has
+    // to bite: coalescing bounds the entry COUNT, never the memory behind it.
+    let releaseOutput!: () => void;
+    const outputGate = new Promise<void>((resolve) => {
+      releaseOutput = resolve;
+    });
+    const events: NativeTerminalEvent[] = [];
+    const harness = rig();
+    const { socket } = await connectLive(harness, async (event) => {
+      events.push(event);
+      if (
+        event.type === "output" &&
+        events.filter((entry) => entry.type === "output").length === 1
+      ) {
+        await outputGate;
+      }
+    });
+
+    const chunk = new Uint8Array(NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES);
+    for (let index = 0; index < 8; index += 1) socket.message(chunk.buffer.slice(0));
+    expect(socket.closes.at(-1)).toEqual({ code: 4013, reason: "renderer-backpressure" });
     releaseOutput();
     await vi.waitFor(() =>
       expect(events).toContainEqual({
@@ -452,7 +507,6 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
         error: expect.objectContaining({ code: "renderer-backpressure" }),
       }),
     );
-    expect(events.filter((event) => event.type === "output")).toHaveLength(1);
   });
 
   it("rejects oversized text and binary frames before encoding or copying payloads", async () => {
@@ -462,7 +516,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     text.socket.message("x".repeat(NATIVE_TERMINAL_MAX_CONTROL_BYTES + 1));
     expect(encode).not.toHaveBeenCalled();
     expect(text.socket.closes.at(-1)).toEqual({
-      code: 1009,
+      code: 4009,
       reason: "control-frame-too-large",
     });
     encode.mockRestore();
@@ -473,7 +527,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     encoded.socket.message("€".repeat(Math.floor(NATIVE_TERMINAL_MAX_CONTROL_BYTES / 3) + 1));
     expect(encodedByteCheck).toHaveBeenCalledOnce();
     expect(encoded.socket.closes.at(-1)).toEqual({
-      code: 1009,
+      code: 4009,
       reason: "control-frame-too-large",
     });
     encodedByteCheck.mockRestore();
@@ -484,7 +538,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     buffer.socket.message(new ArrayBuffer(NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES + 1));
     expect(arrayBufferSlice).not.toHaveBeenCalled();
     expect(buffer.socket.closes.at(-1)).toEqual({
-      code: 1009,
+      code: 4009,
       reason: "output-frame-too-large",
     });
     arrayBufferSlice.mockRestore();
@@ -495,7 +549,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     view.socket.message(new Uint8Array(NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES + 1));
     expect(typedArraySlice).not.toHaveBeenCalled();
     expect(view.socket.closes.at(-1)).toEqual({
-      code: 1009,
+      code: 4009,
       reason: "output-frame-too-large",
     });
     typedArraySlice.mockRestore();
@@ -516,7 +570,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       if (control.socket.readyState === 3) break;
     }
     expect(control.socket.closes.at(-1)).toEqual({
-      code: 1008,
+      code: 4008,
       reason: "control-frame-rate-limit",
     });
 
@@ -528,7 +582,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       if (frames.socket.readyState === 3) break;
     }
     expect(frames.socket.closes.at(-1)).toEqual({
-      code: 1008,
+      code: 4008,
       reason: "inbound-frame-rate-limit",
     });
 
@@ -566,7 +620,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       status: "error",
       error: { code: "resize-ack-timeout" },
     });
-    expect(resize.socket.closes.at(-1)).toEqual({ code: 1008, reason: "resize-ack-timeout" });
+    expect(resize.socket.closes.at(-1)).toEqual({ code: 4008, reason: "resize-ack-timeout" });
 
     const lifetimeHarness = rig({ schedule });
     const lifetimeEvents: NativeTerminalEvent[] = [];
@@ -579,7 +633,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     expect(lifetimeLimit).toBeDefined();
     lifetimeLimit!.callback();
     expect(lifetime.socket.closes.at(-1)).toEqual({
-      code: 1008,
+      code: 4008,
       reason: "connection-lifetime-limit",
     });
     await vi.waitFor(() =>
@@ -705,6 +759,93 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     expect(socket.sent).toHaveLength(0);
   });
 
+  it("hands ticket expiry to the daemon once the redemption frame is sent", async () => {
+    const scheduled: Array<{ callback: () => void; active: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, active: true, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.active = false;
+      };
+    };
+    const harness = rig({ schedule });
+    const connecting = harness.transport.connect(REQUEST, () => undefined);
+    const socket = await waitForSocket(harness.sockets);
+    const expiry = scheduled.find((entry) => entry.delay === 15_000);
+    expect(expiry?.active).toBe(true);
+    socket.open();
+    expect(socket.sent).toHaveLength(1);
+    // Delivery is on the wire: the local ticket clock retires and only the
+    // bounded response ceiling remains armed.
+    expect(expiry?.active).toBe(false);
+    const ceiling = scheduled.find(
+      (entry) => entry.delay === NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS,
+    );
+    expect(ceiling?.active).toBe(true);
+    socket.message(ready());
+    await expect(connecting).resolves.toMatchObject({ status: "connected" });
+    expect(ceiling?.active).toBe(false);
+  });
+
+  it("retires a silent daemon at the bounded redemption-response ceiling", async () => {
+    const scheduled: Array<{ callback: () => void; active: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, active: true, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.active = false;
+      };
+    };
+    const harness = rig({ schedule });
+    const connecting = harness.transport.connect(REQUEST, () => undefined);
+    const socket = await waitForSocket(harness.sockets);
+    socket.open();
+    const ceiling = scheduled.find(
+      (entry) => entry.delay === NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS,
+    );
+    expect(ceiling?.active).toBe(true);
+    ceiling!.callback();
+    await expect(connecting).resolves.toMatchObject({
+      status: "error",
+      error: { code: "redeem-timeout", retryable: true },
+    });
+    expect(socket.closes).toEqual([{ code: 4008, reason: "redeem-timeout" }]);
+  });
+
+  it("surfaces a structured issue rejection code instead of the generic failure", async () => {
+    const conflict = rig({
+      issueAttachment: async () => {
+        throw new NativeTerminalIssueError(
+          "interactive-viewer-conflict",
+          "The requested pane already has an interactive viewer.",
+          true,
+        );
+      },
+    });
+    await expect(conflict.transport.connect(REQUEST, () => undefined)).resolves.toMatchObject({
+      status: "error",
+      error: {
+        code: "interactive-viewer-conflict",
+        reason: "The requested pane already has an interactive viewer.",
+        retryable: true,
+      },
+    });
+    expect(conflict.sockets).toHaveLength(0);
+  });
+
+  it("falls back to the generic failure for an unstructured issue rejection", async () => {
+    const opaque = rig({
+      issueAttachment: async () => {
+        throw new Error("boom");
+      },
+    });
+    await expect(opaque.transport.connect(REQUEST, () => undefined)).resolves.toMatchObject({
+      status: "error",
+      error: { code: "attachment-issue-failed", retryable: true },
+    });
+    expect(opaque.sockets).toHaveLength(0);
+  });
+
   it("requires a fresh issue/ticket on reconnect and rejects late retired output", async () => {
     const secondTicket = `ta1_${"b".repeat(43)}`;
     const secondRequest = "fa8e7197-2236-4a62-bc01-5b64dd18c267";
@@ -820,7 +961,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
       status: "error",
       error: { code: "protocol-error" },
     });
-    expect(malicious.socket.closes.at(-1)).toEqual({ code: 1002, reason: "protocol-error" });
+    expect(malicious.socket.closes.at(-1)).toEqual({ code: 4002, reason: "protocol-error" });
 
     const duplicateHarness = rig();
     const duplicate = await connectLive(duplicateHarness);
@@ -828,7 +969,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
     duplicate.socket.message(inputAck(1, 1));
     await expect(accepted).resolves.toEqual({ status: "ok" });
     duplicate.socket.message(inputAck(1, 1));
-    expect(duplicate.socket.closes.at(-1)).toEqual({ code: 1002, reason: "protocol-error" });
+    expect(duplicate.socket.closes.at(-1)).toEqual({ code: 4002, reason: "protocol-error" });
 
     const scheduled: Array<{ callback: () => void; active: boolean; delay: number }> = [];
     const schedule = (callback: () => void, delay: number) => {

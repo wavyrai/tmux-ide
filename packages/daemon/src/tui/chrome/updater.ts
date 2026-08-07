@@ -21,7 +21,13 @@
  * without a live tmux; `adoptedSessionsFrom` is a pure parser.
  */
 import { hasSession, isProcessAlive, runTmux } from "@tmux-ide/tmux-bridge";
-import { ADOPTED_OPTION, UPDATER_SESSION, updaterSpawnArgv } from "./front-door.ts";
+import {
+  ADOPTED_OPTION,
+  CHIP_OPTION,
+  PANE_CHROME_BORDER_FORMAT,
+  UPDATER_SESSION,
+  updaterSpawnArgv,
+} from "./front-door.ts";
 import { DEFAULT_THEME, getAppConfig, type AppTheme } from "../../lib/app-config.ts";
 import {
   maybeCheckForUpdate,
@@ -66,13 +72,12 @@ import { buildStatusline } from "./statusline.ts";
 
 /** Per-session user option holding the pre-rendered status-bar string. */
 export const STATUS_OPTION = "@tmux_ide_status";
-/** Per-PANE user option holding the pre-rendered agent chip (read by pane-border-format). */
-export const CHIP_OPTION = "@tmux_ide_chip";
 // The adopted marker, the updater session name, and their argv builders live
 // in the LEAF module front-door.ts (the unified app imports them without
 // pulling this module's fleet-scan graph); re-exported here for the chrome.
 export {
   ADOPTED_OPTION,
+  CHIP_OPTION,
   UPDATER_SESSION,
   updaterProbeArgv,
   updaterSpawnArgv,
@@ -110,6 +115,94 @@ export function listAdoptedSessions(): string[] {
   }
 }
 
+/**
+ * Parse the single fleet-wide window probe into windows whose panel-chrome row
+ * is missing. Kept pure so the per-tick enforcement has no hidden grammar.
+ */
+export function paneChromeWindowTargetsFrom(
+  lines: readonly string[],
+  adoptedSessions: readonly string[],
+): string[] {
+  const adopted = new Set(adoptedSessions);
+  const targets: string[] = [];
+  for (const line of lines) {
+    const [session = "", windowId = "", status = ""] = line.split("\t");
+    if (adopted.has(session) && /^@\d+$/u.test(windowId) && status !== "top") {
+      targets.push(windowId);
+    }
+  }
+  return targets;
+}
+
+/**
+ * Parse every valid window identity belonging to the selected sessions. Used
+ * when removing chrome, where already-top windows must be restored too.
+ */
+export function paneChromeWindowIdsFrom(
+  lines: readonly string[],
+  sessions: readonly string[],
+): string[] {
+  const selected = new Set(sessions);
+  const targets: string[] = [];
+  for (const line of lines) {
+    const [session = "", windowId = ""] = line.split("\t");
+    if (selected.has(session) && /^@\d+$/u.test(windowId)) targets.push(windowId);
+  }
+  return targets;
+}
+
+function listPaneChromeWindows(): string[] {
+  const raw = runTmux([
+    "list-windows",
+    "-a",
+    "-F",
+    "#{session_name}\t#{window_id}\t#{pane-border-status}",
+  ])
+    .toString()
+    .trim();
+  return raw ? raw.split("\n") : [];
+}
+
+/**
+ * Keep every window of every adopted session on the shared top-border chrome
+ * contract. New tmux windows start with their own window options, so setting
+ * only the session's current window during adoption is insufficient.
+ */
+export function enforcePaneChromeWindows(adoptedSessions: readonly string[]): void {
+  if (adoptedSessions.length === 0) return;
+  const targets = paneChromeWindowTargetsFrom(listPaneChromeWindows(), adoptedSessions);
+  for (const windowId of targets) {
+    try {
+      runTmux(["set-option", "-w", "-t", windowId, "pane-border-status", "top"]);
+      runTmux([
+        "set-option",
+        "-w",
+        "-t",
+        windowId,
+        "pane-border-format",
+        PANE_CHROME_BORDER_FORMAT,
+      ]);
+    } catch {
+      // A window can disappear between the fleet probe and these writes. The
+      // next tick repairs survivors; a closing window needs no repair.
+    }
+  }
+}
+
+/** Restore inherited pane-border options on every window being unadopted. */
+export function clearPaneChromeWindows(sessions: readonly string[]): void {
+  if (sessions.length === 0) return;
+  const targets = paneChromeWindowIdsFrom(listPaneChromeWindows(), sessions);
+  for (const windowId of targets) {
+    try {
+      runTmux(["set-option", "-uw", "-t", windowId, "pane-border-status"]);
+      runTmux(["set-option", "-uw", "-t", windowId, "pane-border-format"]);
+    } catch {
+      // Same close-race as enforcement; disappearing windows are already clean.
+    }
+  }
+}
+
 /** Write a session's pre-rendered status var. */
 function writeSessionStatus(session: string, value: string): void {
   runTmux(["set-option", "-t", session, STATUS_OPTION, value]);
@@ -131,6 +224,8 @@ export interface UpdaterTickDeps {
    */
   computeProjects: (onPane: (pane: PaneDetail) => void) => TeamProject[];
   writeStatus: (session: string, value: string) => void;
+  /** Repair new/external windows onto the shared top-border chrome contract. */
+  enforcePaneChrome?: (adoptedSessions: readonly string[]) => void;
   /**
    * The shared palette threaded into {@link buildStatusline} / {@link paneChip}
    * (default {@link DEFAULT_THEME}). The loop resolves it once from the app
@@ -257,6 +352,7 @@ export function fleetStatuses(
 export function runUpdaterTick(deps: UpdaterTickDeps): void {
   const adopted = deps.listAdopted();
   if (adopted.length === 0) return;
+  deps.enforcePaneChrome?.(adopted);
   const theme = deps.theme ?? DEFAULT_THEME;
   // Collect per-pane detail during the fleet scan so chips need no second pass.
   const panes: PaneDetail[] = [];
@@ -666,6 +762,7 @@ export function runUpdaterLoop(): void {
         listAdopted: listAdoptedSessions,
         computeProjects: (onPane) => listTeamProjects(tracker, { onPane }),
         writeStatus: writeSessionStatus,
+        enforcePaneChrome: enforcePaneChromeWindows,
         theme: config.theme,
         writeChip: writePaneChip,
         chipCache,

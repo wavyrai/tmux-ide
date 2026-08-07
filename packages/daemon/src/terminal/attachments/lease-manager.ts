@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   TerminalAttachRequestSchemaZ,
   type TerminalAttachRequest,
+  type TerminalAttachmentGeometryOwnership,
   type TerminalAttachmentSemanticTarget,
   type TerminalAttachmentViewerMode,
 } from "@tmux-ide/contracts";
@@ -14,11 +15,12 @@ import {
   planGroupedTmuxAttachment,
   type GroupedTmuxAttachmentPlan,
 } from "./grouped-tmux.ts";
+import { SemanticPaneCatalog, type SemanticPaneResolution } from "./semantic-pane-catalog.ts";
 import {
-  SemanticPaneCatalog,
-  semanticPaneTargetKey,
-  type SemanticPaneResolution,
-} from "./semantic-pane-catalog.ts";
+  TerminalInputAuthority,
+  TerminalInputAuthorityConflictError,
+  type TerminalInputOwner,
+} from "../input-authority.ts";
 
 const BindingIdSchemaZ = z
   .string()
@@ -74,7 +76,8 @@ export interface GuardedAttachmentViewOperation {
     readonly sessionId: string;
     readonly windowId: string;
     readonly runtimePaneId: string;
-    readonly paneCount: 1;
+    /** The resolved window's live pane count (m41 attach-2); no longer pinned to 1. */
+    readonly windowPaneCount: number;
   };
   /** Server-authored plan whose selected operation is executed by this guard. */
   readonly plan: GroupedTmuxAttachmentPlan;
@@ -130,6 +133,8 @@ export interface AttachmentLeaseDescriptor {
   readonly requestId: string;
   readonly target: TerminalAttachmentSemanticTarget;
   readonly viewerMode: TerminalAttachmentViewerMode;
+  /** Echoed so a caller can audit the ownership the daemon actually granted. */
+  readonly geometryOwnership: TerminalAttachmentGeometryOwnership;
   readonly status: AttachmentLeaseStatus;
   readonly issuedAt: number;
   readonly expiresAt: number;
@@ -225,6 +230,9 @@ export interface AttachmentLeaseManagerOptions {
   readonly daemonInstanceId: string;
   readonly catalog: SemanticPaneCatalog;
   readonly viewExecutor: AttachmentViewExecutor;
+  /** Shared daemon-generation input authority. Production passes the same
+   * instance to pane streaming; isolated tests may omit it. */
+  readonly inputAuthority?: TerminalInputAuthority;
   readonly now?: () => number;
   readonly randomBytes?: (size: number) => Uint8Array;
   readonly createId?: () => string;
@@ -232,6 +240,12 @@ export interface AttachmentLeaseManagerOptions {
   readonly leaseTtlMs?: number;
   readonly maxLeaseTtlMs?: number;
   readonly disconnectGraceMs?: number;
+  /**
+   * Ceiling on redemption execution measured from authenticated frame arrival.
+   * The ticket TTL bounds credential delivery; this bounds how long the
+   * daemon's own serialized redemption work may take after delivery.
+   */
+  readonly redemptionProcessingTtlMs?: number;
   readonly onAudit?: (event: AttachmentLeaseAuditEvent) => void;
 }
 
@@ -247,8 +261,8 @@ interface LeaseState {
   ticketDigest: Buffer | null;
   ticketExpiresAt: number | null;
   resolution: SemanticPaneResolution;
-  /** Exact global tmux pane identity currently reserved by this lease. */
-  interactiveRuntimeKey: string | null;
+  /** Runtime window (`@window_id`) whose interactive input this lease reserves. */
+  interactiveWindowKey: string | null;
   viewGeneration: number;
   plan: GroupedTmuxAttachmentPlan;
 }
@@ -306,14 +320,26 @@ function sameLinkedWindow(left: SemanticPaneResolution, right: SemanticPaneResol
   return left.source.windowId === right.source.windowId;
 }
 
-function runtimePaneKey(resolution: SemanticPaneResolution): string {
-  // `%pane_id` is server-global and remains stable when a window is linked
-  // into another session. Including `$session_id` would permit two writers.
-  return resolution.source.runtimePaneId;
+function windowOwnerKey(resolution: SemanticPaneResolution): string {
+  // Interactive input ownership is exclusive per runtime WINDOW, not per pane
+  // (m41 attach-3). Attachment links the whole window, so two interactive
+  // attachments that target different panes of one window must conflict, while
+  // attachments on different windows of a session must not. `@window_id` is
+  // server-global and stays stable when a window is linked into another session
+  // (like `%pane_id`), so a session alias never rotates ownership. This keys on
+  // the same identity as `sameLinkedWindow`, unifying ownership and the view
+  // generation on one window id. `windowStamp` is deliberately not used: it is
+  // null for a legacy single-pane window and only proves durability, whereas
+  // `windowId` is always present and uniquely names one live window this run.
+  return resolution.source.windowId;
 }
 
 function exactViewSessionTarget(plan: GroupedTmuxAttachmentPlan): `=${string}` {
   return `=${plan.identity.viewSessionName}`;
+}
+
+function inputOwner(leaseId: string): TerminalInputOwner {
+  return { transport: "terminal-attachment", leaseId };
 }
 
 /**
@@ -325,6 +351,7 @@ export class AttachmentLeaseManager {
   readonly #instanceId: string;
   readonly #catalog: SemanticPaneCatalog;
   readonly #viewExecutor: AttachmentViewExecutor;
+  readonly #inputAuthority: TerminalInputAuthority;
   readonly #now: () => number;
   readonly #randomBytes: (size: number) => Uint8Array;
   readonly #createId: () => string;
@@ -332,17 +359,17 @@ export class AttachmentLeaseManager {
   readonly #leaseTtlMs: number;
   readonly #maxLeaseTtlMs: number;
   readonly #disconnectGraceMs: number;
+  readonly #redemptionProcessingTtlMs: number;
   readonly #onAudit: ((event: AttachmentLeaseAuditEvent) => void) | undefined;
   readonly #leases = new Map<string, LeaseState>();
   readonly #requests = new Map<string, string>();
-  readonly #interactiveOwners = new Map<string, string>();
-  readonly #interactiveRuntimeOwners = new Map<string, string>();
   #operationTail: Promise<void> = Promise.resolve();
 
   constructor(options: AttachmentLeaseManagerOptions) {
     this.#instanceId = BindingIdSchemaZ.parse(options.daemonInstanceId);
     this.#catalog = options.catalog;
     this.#viewExecutor = options.viewExecutor;
+    this.#inputAuthority = options.inputAuthority ?? new TerminalInputAuthority();
     this.#now = options.now ?? Date.now;
     this.#randomBytes = options.randomBytes ?? randomBytes;
     this.#createId = options.createId ?? randomUUID;
@@ -360,6 +387,11 @@ export class AttachmentLeaseManager {
       options.disconnectGraceMs,
       5_000,
       "disconnectGraceMs",
+    );
+    this.#redemptionProcessingTtlMs = positiveDuration(
+      options.redemptionProcessingTtlMs,
+      60_000,
+      "redemptionProcessingTtlMs",
     );
     this.#onAudit = options.onAudit;
   }
@@ -379,19 +411,7 @@ export class AttachmentLeaseManager {
 
       const resolution = await this.#catalog.resolve(parsedRequest.target);
       await this.#expireAndCleanup(this.#now());
-      const targetKey = semanticPaneTargetKey(parsedRequest.target);
-      const runtimeKey = runtimePaneKey(resolution);
-      if (parsedRequest.viewerMode === "interactive") {
-        if (
-          this.#interactiveOwners.has(targetKey) ||
-          this.#interactiveRuntimeOwners.has(runtimeKey)
-        ) {
-          throw new AttachmentLeaseError(
-            "interactive-viewer-conflict",
-            "The resolved runtime pane already has an interactive input owner.",
-          );
-        }
-      }
+      const windowKey = windowOwnerKey(resolution);
 
       const leaseId = this.#freshId();
       const issuedAt = this.#now();
@@ -404,6 +424,19 @@ export class AttachmentLeaseManager {
       }
       const redemptionTicket = `ta1_${Buffer.from(ticketBytes).toString("base64url")}`;
       const plan = this.#buildPlan(leaseId, 0, parsedRequest, resolution);
+      if (parsedRequest.viewerMode === "interactive") {
+        try {
+          this.#inputAuthority.claim(inputOwner(leaseId), [windowKey]);
+        } catch (error) {
+          if (error instanceof TerminalInputAuthorityConflictError) {
+            throw new AttachmentLeaseError(
+              "interactive-viewer-conflict",
+              "The resolved runtime window already has an interactive input owner.",
+            );
+          }
+          throw error;
+        }
+      }
       const state: LeaseState = {
         leaseId,
         requestId,
@@ -416,16 +449,12 @@ export class AttachmentLeaseManager {
         ticketDigest: hashTicket(redemptionTicket),
         ticketExpiresAt: issuedAt + this.#ticketTtlMs,
         resolution,
-        interactiveRuntimeKey: parsedRequest.viewerMode === "interactive" ? runtimeKey : null,
+        interactiveWindowKey: parsedRequest.viewerMode === "interactive" ? windowKey : null,
         viewGeneration: 0,
         plan,
       };
       this.#leases.set(leaseId, state);
       this.#requests.set(requestId, leaseId);
-      if (parsedRequest.viewerMode === "interactive") {
-        this.#interactiveOwners.set(targetKey, leaseId);
-        this.#interactiveRuntimeOwners.set(runtimeKey, leaseId);
-      }
       this.#audit("issued", state, issuedAt);
       const issued = { descriptor: this.#descriptor(state) } as IssuedAttachmentLease;
       Object.defineProperty(issued, "redemptionTicket", {
@@ -438,7 +467,19 @@ export class AttachmentLeaseManager {
     });
   }
 
-  redeem(ticket: string, binding: AttachmentLeaseBinding): Promise<RedeemedAttachmentLease> {
+  /**
+   * `receivedAt` is the in-process arrival time of the authenticated
+   * redemption frame, stamped by the admission boundary BEFORE the redemption
+   * queued behind other serialized work. The ticket TTL bounds delivery (the
+   * frame must arrive while the ticket lives); execution after delivery is the
+   * daemon's own latency and gets the separate bounded processing budget, so a
+   * redemption delivered in time cannot be retired by its own queue wait.
+   */
+  redeem(
+    ticket: string,
+    binding: AttachmentLeaseBinding,
+    receivedAt?: number,
+  ): Promise<RedeemedAttachmentLease> {
     return this.#exclusive(async () => {
       const parsedBinding = validateBinding(binding);
       if (!RedemptionTicketPattern.test(ticket)) {
@@ -466,12 +507,18 @@ export class AttachmentLeaseManager {
       }
 
       const now = this.#now();
-      if (now >= state.ticketExpiresAt) {
+      // The caller is trusted in-process code; a claimed future arrival still
+      // never precedes now, and a claimed past arrival only SHRINKS the budget.
+      const deliveredAt =
+        typeof receivedAt === "number" && Number.isSafeInteger(receivedAt) && receivedAt <= now
+          ? receivedAt
+          : now;
+      if (deliveredAt >= state.ticketExpiresAt) {
         this.#removeState(state);
         await this.#cleanupPlan(state);
         throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
       }
-      const ticketDeadline = state.ticketExpiresAt;
+      const processingDeadline = deliveredAt + this.#redemptionProcessingTtlMs;
 
       // Delete before the first await: even concurrent callers cannot replay it.
       state.ticketDigest.fill(0);
@@ -479,21 +526,21 @@ export class AttachmentLeaseManager {
       state.ticketExpiresAt = null;
       try {
         const resolution = await this.#catalog.resolve(state.request.target);
-        await this.#expireTicketOrThrow(state, ticketDeadline);
+        await this.#expireTicketOrThrow(state, processingDeadline);
         await this.#applyResolution(state, resolution);
-        await this.#expireTicketOrThrow(state, ticketDeadline);
+        await this.#expireTicketOrThrow(state, processingDeadline);
       } catch (error) {
         if (this.#leases.get(state.leaseId) === state) {
           this.#removeState(state);
           await this.#cleanupPlan(state);
         }
-        if (this.#now() >= ticketDeadline) {
+        if (this.#now() >= processingDeadline) {
           throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
         }
         throw error;
       }
       const activatedAt = this.#now();
-      if (activatedAt >= ticketDeadline) {
+      if (activatedAt >= processingDeadline) {
         this.#removeState(state);
         await this.#cleanupPlan(state);
         throw new AttachmentLeaseError("ticket-expired", "The redemption ticket has expired.");
@@ -589,7 +636,7 @@ export class AttachmentLeaseManager {
               sessionId: state.resolution.source.sessionId,
               windowId: state.resolution.source.windowId,
               runtimePaneId: state.resolution.source.runtimePaneId,
-              paneCount: 1,
+              windowPaneCount: state.resolution.source.windowPaneCount,
             },
             plan: structuredClone(state.plan),
           });
@@ -850,25 +897,35 @@ export class AttachmentLeaseManager {
       generation,
       target: request.target,
       viewerMode: request.viewerMode,
+      geometryOwnership: request.geometryOwnership,
       viewport: request.viewport,
       source: {
         sessionId: resolution.source.sessionId,
         windowId: resolution.source.windowId,
         runtimePaneId: resolution.source.runtimePaneId,
-        paneCount: 1,
+        windowPaneCount: resolution.source.windowPaneCount,
       },
     });
   }
 
   async #applyResolution(state: LeaseState, resolution: SemanticPaneResolution): Promise<void> {
-    const oldRuntimeKey = state.interactiveRuntimeKey;
-    const newRuntimeKey = runtimePaneKey(resolution);
-    if (oldRuntimeKey !== null && oldRuntimeKey !== newRuntimeKey) {
-      const owner = this.#interactiveRuntimeOwners.get(newRuntimeKey);
-      if (owner !== undefined && owner !== state.leaseId) {
+    const oldWindowKey = state.interactiveWindowKey;
+    const newWindowKey = windowOwnerKey(resolution);
+    // Ownership only moves when the lease's runtime window changes. Pane churn
+    // inside one window keeps the same window key, so it rebinds the plan and
+    // bumps `bindingGeneration` (below) without touching window ownership. This
+    // key equality tracks `sameLinkedWindow`, so the migration and the view
+    // rotation always fire together on a genuine window relink.
+    if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
+      try {
+        // Keep the old claim while reserving the new window. No other
+        // transport can take either side during the asynchronous view cleanup.
+        this.#inputAuthority.claim(inputOwner(state.leaseId), [newWindowKey]);
+      } catch (error) {
+        if (!(error instanceof TerminalInputAuthorityConflictError)) throw error;
         throw new AttachmentLeaseError(
           "interactive-viewer-conflict",
-          "The rebound runtime pane already has an interactive input owner.",
+          "The rebound runtime window already has an interactive input owner.",
         );
       }
     }
@@ -891,6 +948,9 @@ export class AttachmentLeaseManager {
     if (linkedWindowChanged) {
       const cleanup = await this.#cleanupPlan(state);
       if (cleanup.status !== "cleaned" && cleanup.status !== "absent") {
+        if (oldWindowKey !== null) {
+          this.#inputAuthority.replace(inputOwner(state.leaseId), [oldWindowKey]);
+        }
         throw new AttachmentLeaseError(
           "view-cleanup-failed",
           "The prior marked attachment view could not be safely cleaned.",
@@ -901,12 +961,9 @@ export class AttachmentLeaseManager {
     state.resolution = resolution;
     state.viewGeneration = nextViewGeneration;
     state.plan = nextPlan;
-    if (oldRuntimeKey !== null && oldRuntimeKey !== newRuntimeKey) {
-      if (this.#interactiveRuntimeOwners.get(oldRuntimeKey) === state.leaseId) {
-        this.#interactiveRuntimeOwners.delete(oldRuntimeKey);
-      }
-      this.#interactiveRuntimeOwners.set(newRuntimeKey, state.leaseId);
-      state.interactiveRuntimeKey = newRuntimeKey;
+    if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
+      this.#inputAuthority.replace(inputOwner(state.leaseId), [newWindowKey]);
+      state.interactiveWindowKey = newWindowKey;
     }
     if (changed) this.#audit("rebound", state, this.#now());
   }
@@ -951,17 +1008,10 @@ export class AttachmentLeaseManager {
     if (this.#leases.get(state.leaseId) !== state) return;
     this.#leases.delete(state.leaseId);
     this.#requests.delete(state.requestId);
-    const targetKey = semanticPaneTargetKey(state.request.target);
-    if (this.#interactiveOwners.get(targetKey) === state.leaseId) {
-      this.#interactiveOwners.delete(targetKey);
+    if (state.interactiveWindowKey !== null) {
+      this.#inputAuthority.release(inputOwner(state.leaseId));
     }
-    if (
-      state.interactiveRuntimeKey !== null &&
-      this.#interactiveRuntimeOwners.get(state.interactiveRuntimeKey) === state.leaseId
-    ) {
-      this.#interactiveRuntimeOwners.delete(state.interactiveRuntimeKey);
-    }
-    state.interactiveRuntimeKey = null;
+    state.interactiveWindowKey = null;
     state.ticketDigest?.fill(0);
     state.ticketDigest = null;
     state.ticketExpiresAt = null;
@@ -1023,6 +1073,7 @@ export class AttachmentLeaseManager {
       requestId: state.requestId,
       target: { ...state.request.target },
       viewerMode: state.request.viewerMode,
+      geometryOwnership: state.request.geometryOwnership,
       status: state.status,
       issuedAt: state.issuedAt,
       expiresAt: state.expiresAt,

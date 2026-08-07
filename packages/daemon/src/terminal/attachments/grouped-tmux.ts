@@ -1,8 +1,11 @@
 import { z } from "zod";
 import {
   TerminalAttachmentSemanticTargetSchemaZ,
+  TerminalAttachmentGeometryOwnershipSchemaZ,
   TerminalAttachmentViewerModeSchemaZ,
   TerminalAttachmentViewportSchemaZ,
+  refuseReadOnlyGeometryOwner,
+  type TerminalAttachmentGeometryOwnership,
   type TerminalAttachmentSemanticTarget,
   type TerminalAttachmentViewerMode,
   type TerminalAttachmentViewport,
@@ -43,18 +46,25 @@ export const GroupedTmuxAttachmentPlanInputSchemaZ = z
     generation: z.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
     target: TerminalAttachmentSemanticTargetSchemaZ,
     viewerMode: TerminalAttachmentViewerModeSchemaZ,
+    geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ.default("passive"),
     viewport: TerminalAttachmentViewportSchemaZ,
     source: z
       .object({
         sessionId: RuntimeSessionIdSchemaZ,
         windowId: RuntimeWindowIdSchemaZ,
         runtimePaneId: RuntimePaneIdSchemaZ,
-        /** Grouped views are valid only after discovery proves this invariant. */
-        paneCount: z.literal(1),
+        /**
+         * The resolved window's live pane count (m41 attach-2). The planner
+         * links the WHOLE window, so this is a window proof, not a per-pane
+         * gate: any positive count is valid. Single-pane windows keep passing
+         * `1`, so their plans stay byte-identical.
+         */
+        windowPaneCount: z.number().int().positive(),
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine(refuseReadOnlyGeometryOwner);
 export type GroupedTmuxAttachmentPlanInput = z.infer<typeof GroupedTmuxAttachmentPlanInputSchemaZ>;
 
 export interface TmuxArgvPlan {
@@ -82,6 +92,8 @@ export interface GroupedTmuxAttachmentPlan {
     };
   };
   readonly viewerMode: TerminalAttachmentViewerMode;
+  /** Whether this attachment's client drives the origin window's size. */
+  readonly geometryOwnership: TerminalAttachmentGeometryOwnership;
   readonly viewport: TerminalAttachmentViewport;
   readonly create: {
     readonly absenceProbe: TmuxArgvPlan;
@@ -143,16 +155,32 @@ function reconcileCommands(args: {
   ];
 }
 
-function attachCommand(
+export function attachCommand(
   viewSessionName: string,
   viewerMode: TerminalAttachmentViewerMode,
+  geometryOwnership: TerminalAttachmentGeometryOwnership,
 ): TmuxArgvPlan {
   const target = `=${viewSessionName}`;
   // `-E` keeps daemon-client environment values out of the view session by
   // disabling tmux's update-environment behavior during every attachment.
-  return viewerMode === "read-only"
-    ? tmux(["attach-session", "-E", "-r", "-t", target])
-    : tmux(["attach-session", "-E", "-t", target]);
+  //
+  // `-f ignore-size` makes the view client size-passive (m41 attach-2): tmux
+  // excludes an ignore-size client when computing the shared window's size, so
+  // this attachment never reflows the origin window while another size owner is
+  // present. Read-only's `-r` already implies read-only + ignore-size, which is
+  // why a read-only owner is refused at the contract boundary rather than
+  // spelled here.
+  //
+  // A GEOMETRY OWNER drops the flag (m50.2, gap 1). The client then counts in
+  // tmux's window-size calculation like any other, and because the view session
+  // holds a LINKED window — the same window object the durable session has, not
+  // a copy — resizing it there is resizing the origin. The renderer drives that
+  // through the attachment's PTY resize path, so the size travels as a SIGWINCH
+  // to a real tmux client; nothing here issues `refresh-client -C`.
+  if (viewerMode === "read-only") return tmux(["attach-session", "-E", "-r", "-t", target]);
+  return geometryOwnership === "owner"
+    ? tmux(["attach-session", "-E", "-t", target])
+    : tmux(["attach-session", "-E", "-f", "ignore-size", "-t", target]);
 }
 
 /**
@@ -186,7 +214,7 @@ export function planGroupedTmuxAttachment(
     viewSessionName,
     sourceWindowId: parsed.source.windowId,
   });
-  const attach = attachCommand(viewSessionName, parsed.viewerMode);
+  const attach = attachCommand(viewSessionName, parsed.viewerMode, parsed.geometryOwnership);
 
   const createArgv = [
     "new-session",
@@ -242,6 +270,7 @@ export function planGroupedTmuxAttachment(
       },
     },
     viewerMode: parsed.viewerMode,
+    geometryOwnership: parsed.geometryOwnership,
     viewport: parsed.viewport,
     create: {
       absenceProbe: existenceProbe,

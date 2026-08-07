@@ -67,4 +67,23 @@ describe("daemon action contract", () => {
     });
     expect(JSON.stringify(result)).not.toMatch(/projectDir|sessionName|runtime|tmux|path/u);
   });
+
+  it("accepts only semantic pane identities for a swap", () => {
+    const input = {
+      workspaceName: "workspace.alpha",
+      sourceSemanticPaneId: "pane.source",
+      targetSemanticPaneId: "pane.target",
+    } as const;
+    expect(ActionContractsZ["workspace.pane.swap"].input.parse(input)).toEqual(input);
+    for (const unsafe of [
+      { sourcePaneId: "%1" },
+      { targetPaneId: "%2" },
+      { tmuxCommand: "swap-pane -D" },
+      { sessionName: "runtime-session" },
+    ]) {
+      expect(
+        ActionContractsZ["workspace.pane.swap"].input.safeParse({ ...input, ...unsafe }).success,
+      ).toBe(false);
+    }
+  });
 });

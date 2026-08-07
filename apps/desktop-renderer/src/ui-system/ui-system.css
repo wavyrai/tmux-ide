@@ -1,0 +1,1050 @@
+/*
+ * Desktop primitive foundation. This file is loaded as an external stylesheet
+ * from index.html so the renderer remains compatible with `style-src 'self'`.
+ * Product variables are preferred when the primitives live inside .app; the
+ * dark-first fallbacks keep isolated fixtures useful without inline styles.
+ */
+:root {
+  --tmi-font-chrome: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
+  --tmi-font-technical: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --tmi-surface-canvas: var(--tmux-ide-surface-canvas, oklch(14.05% 0.004 285.8));
+  --tmi-surface-panel: var(--tmux-ide-surface-panel, oklch(27.41% 0.006 286));
+  --tmi-surface-raised: var(--tmux-ide-surface-panel-raised, oklch(16.8% 0.006 285.7));
+  --tmi-surface-overlay: var(--tmux-ide-surface-command, oklch(19.5% 0.008 285.7));
+  --tmi-text-primary: var(--tmux-ide-text-primary, oklch(97% 0.003 265));
+  --tmi-text-bright: var(--tmux-ide-text-bright, oklch(98.48% 0 0));
+  --tmi-text-secondary: var(--tmux-ide-text-secondary, oklch(71.19% 0.013 286.1));
+  --tmi-text-muted: var(--tmux-ide-text-muted, oklch(58% 0.012 286.1));
+  --tmi-text-on-accent: var(--tmux-ide-text-inverse, oklch(100% 0 0));
+  --tmi-border-subtle: var(--tmux-ide-border-subtle, oklch(37.27% 0.008 286));
+  --tmi-border-default: var(--tmux-ide-border-default, oklch(31.51% 0.007 286));
+  --tmi-accent: var(--tmux-ide-border-focused, #8aa5ff);
+  --tmi-accent-strong: var(--tmux-ide-text-link, oklch(71.4% 0.143 254.6));
+  --tmi-accent-surface: var(--tmux-ide-selection-selection, rgb(97 135 254 / 26%));
+  --tmi-hover: var(--tmux-ide-selection-hover, oklch(100% 0 0 / 6%));
+  --tmi-pressed: var(--tmux-ide-selection-pressed, oklch(100% 0 0 / 10%));
+  --tmi-danger: var(--tmux-ide-status-danger, #ff8080);
+  --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, oklch(41% 0.008 286.1));
+  --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, oklch(27.41% 0.006 286));
+  --tmi-focus-width: var(--tmux-ide-focus-outline, 2px);
+  --tmi-focus-offset: var(--tmux-ide-focus-outline-offset, 2px);
+  --tmi-focus-offset-field: -1px;
+  --tmi-radius-control: var(--tmux-ide-shape-control-radius, 8px);
+  --tmi-radius-panel: var(--tmux-ide-shape-floating-radius, 10px);
+  /*
+   * Shared radius + spacing ladders. Every hardcoded radius/gap in the desktop
+   * shell maps to the nearest step (odd values round down); the ladder keeps the
+   * whole surface on one rhythm instead of a dozen bespoke pixel values.
+   */
+  --tmi-radius-xs: 2px;
+  --tmi-radius-sm: 4px;
+  --tmi-radius-md: 8px;
+  /* Board UI's 10px step, between md and lg: cards and nav rows sit here. */
+  --tmi-radius-2lg: 10px;
+  --tmi-radius-lg: 12px;
+  --tmi-radius-xl: 16px;
+  --tmi-radius-pill: 999px;
+  --tmi-space-1: 2px;
+  --tmi-space-2: 4px;
+  --tmi-space-3: 6px;
+  --tmi-space-4: 8px;
+  --tmi-space-5: 10px;
+  --tmi-space-6: 12px;
+  --tmi-space-7: 16px;
+  --tmi-space-8: 24px;
+  /*
+   * The shadow ladder (dark-first fallbacks; .app supplies the live values).
+   *
+   * The crisp 1px RING is the signature of this system, not an accent on it:
+   * the visible edge is what makes a card read against the plane behind it, and
+   * on floating surfaces the ring draws the silhouette sharper than any border
+   * colour. In dark the ring flips to a LIT top edge, which reads as the white
+   * border of a card against a darker canvas. Never soften these and never
+   * substitute a border for the ring. Keep in sync with the .app copies.
+   */
+  --tmi-shadow-subtle: 0 0 0 1px oklch(100% 0 0 / 0.06), 0 1px 2px 0 oklch(0% 0 0 / 0.3);
+  --tmi-shadow-raised:
+    0 1px 0 0 oklch(0% 0 0 / 0.2), 0 1px 12px 0 oklch(0% 0 0 / 0.45), 0 0 1px 0 oklch(0% 0 0 / 0.9);
+  --tmi-shadow-overlay:
+    0 0 0 1px oklch(100% 0 0 / 0.08), 0 4px 12px -2px oklch(0% 0 0 / 0.3),
+    0 12px 32px -8px oklch(0% 0 0 / 0.45);
+  --tmi-shadow-field: none;
+  --tmi-shadow-tooltip: 0 0 0 1px oklch(100% 0 0 / 0.1), 0 4px 16px oklch(0% 0 0 / 0.4);
+  /*
+   * Control elevation. A control is a small physical object, and these two
+   * shadows are what make it one.
+   *
+   * `lit` is the filled recipe: a highlight along the top edge, as if the
+   * object were lit from above, over a tight contact shadow. `raised` is the
+   * outline recipe — just the contact shadow, so the control sits ON the plane
+   * rather than floating over it. Neither is a soft glow; both are 1-2px and
+   * deliberately hard.
+   */
+  --tmi-shadow-control-lit:
+    inset 0 1px 0 0 oklch(100% 0 0 / 0.22), 0 1px 2px 0 oklch(0% 0 0 / 0.16);
+  --tmi-shadow-control-raised: 0 1px 2px 0 oklch(0% 0 0 / 0.06);
+  /*
+   * Control state colors, derived rather than declared.
+   *
+   * A filled control needs three steps of its accent: the gradient's bottom
+   * stop (which is also its edge), a brighter step for hover, and the flat dark
+   * it presses to. Deriving them means a theme only has to supply the accent
+   * itself and every control follows. Redeclared in the theme block below,
+   * because a derived property computes where it is declared — leaving these
+   * on :root alone would freeze them to the fallback accent.
+   */
+  --tmi-accent-dark: color-mix(in oklab, var(--tmi-accent) 84%, oklch(0% 0 0));
+  --tmi-accent-bright: color-mix(in oklab, var(--tmi-accent) 90%, oklch(100% 0 0));
+  --tmi-border-dark: var(--tmux-ide-border-strong, oklch(23.37% 0.004 286.1));
+  --tmi-control-hairline: color-mix(in srgb, var(--tmi-border-dark) 70%, transparent);
+  --tmi-disabled-border: color-mix(in srgb, var(--tmi-disabled-fg) 30%, var(--tmi-disabled-bg));
+  /*
+   * The type ramp, aliased from the product ramp with standalone fallbacks so
+   * isolated fixtures render at the same sizes the shell does. Chrome lives at
+   * body-2 and caption-1; headline is for genuine panel titles. Weights are
+   * three steps, no more: regular for content, medium for interactive labels,
+   * semibold for titles.
+   */
+  --tmi-text-headline: var(--sf-text-headline, 16px);
+  --tmi-leading-headline: var(--sf-leading-headline, 22px);
+  --tmi-text-body: var(--sf-text-body, 14px);
+  --tmi-leading-body: var(--sf-leading-body, 20px);
+  --tmi-text-body-2: var(--sf-text-body-2, 13px);
+  --tmi-leading-body-2: var(--sf-leading-body-2, 18px);
+  --tmi-text-caption-1: var(--sf-text-caption-1, 12px);
+  --tmi-leading-caption-1: var(--sf-leading-caption-1, 16px);
+  --tmi-tracking-caption-1: var(--sf-tracking-caption-1, 0.15px);
+  --tmi-text-caption-2: var(--sf-text-caption-2, 11px);
+  --tmi-leading-caption-2: var(--sf-leading-caption-2, 15px);
+  --tmi-tracking-caption-2: var(--sf-tracking-caption-2, 0.2px);
+  --tmi-weight-regular: 400;
+  --tmi-weight-medium: 500;
+  --tmi-weight-semibold: 600;
+  --tmi-motion-fast: var(--tmux-ide-motion-fast, 150ms);
+  --tmi-motion-exit: var(--tmux-ide-motion-instant, 100ms);
+  --tmi-motion-standard: 200ms;
+  --tmi-motion-medium: 250ms;
+  --tmi-motion-smooth: 300ms;
+  --tmi-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --tmi-ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
+  --tmi-ease-in-quart: cubic-bezier(0.895, 0.03, 0.685, 0.22);
+  --tmi-material-overlay: color-mix(in oklab, var(--tmi-surface-overlay) 92%, transparent);
+  --tmi-material-control: color-mix(in oklab, var(--tmi-surface-raised) 92%, transparent);
+  --tmi-material-filter: saturate(1.22) blur(20px);
+  --tmi-control-highlight: inset 0 1px 0 color-mix(in oklab, white 20%, transparent);
+  --tmi-focus-halo: 0 0 0 3px color-mix(in srgb, var(--tmi-accent) 24%, transparent);
+  --tmi-layer-tooltip: 100;
+  --tmi-layer-menu: 90;
+}
+
+[data-theme="dark"],
+[data-tmi-theme="dark"] {
+  --tmi-surface-canvas: var(--tmux-ide-surface-canvas, oklch(14.05% 0.004 285.8));
+  --tmi-surface-panel: var(--tmux-ide-surface-panel, oklch(27.41% 0.006 286));
+  --tmi-surface-raised: var(--tmux-ide-surface-panel-raised, oklch(16.8% 0.006 285.7));
+  --tmi-surface-overlay: var(--tmux-ide-surface-command, oklch(19.5% 0.008 285.7));
+  --tmi-text-primary: var(--tmux-ide-text-primary, oklch(97% 0.003 265));
+  --tmi-text-bright: var(--tmux-ide-text-bright, oklch(98.48% 0 0));
+  --tmi-text-secondary: var(--tmux-ide-text-secondary, oklch(71.19% 0.013 286.1));
+  --tmi-text-muted: var(--tmux-ide-text-muted, oklch(58% 0.012 286.1));
+  --tmi-text-on-accent: var(--tmux-ide-text-inverse, oklch(100% 0 0));
+  --tmi-border-subtle: var(--tmux-ide-border-subtle, oklch(37.27% 0.008 286));
+  --tmi-border-default: var(--tmux-ide-border-default, oklch(31.51% 0.007 286));
+  --tmi-accent: var(--tmux-ide-border-focused, #8aa5ff);
+  --tmi-accent-strong: var(--tmux-ide-text-link, oklch(71.4% 0.143 254.6));
+  --tmi-accent-surface: var(--tmux-ide-selection-selection, rgb(97 135 254 / 26%));
+  --tmi-hover: var(--tmux-ide-selection-hover, oklch(100% 0 0 / 6%));
+  --tmi-pressed: var(--tmux-ide-selection-pressed, oklch(100% 0 0 / 10%));
+  --tmi-danger: var(--tmux-ide-status-danger, #ff8080);
+  --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, oklch(41% 0.008 286.1));
+  --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, oklch(27.41% 0.006 286));
+}
+
+[data-theme="light"],
+[data-tmi-theme="light"] {
+  --tmi-surface-canvas: var(--tmux-ide-surface-canvas, oklch(98.7% 0 0));
+  --tmi-surface-panel: var(--tmux-ide-surface-panel, oklch(96.76% 0 0));
+  --tmi-surface-raised: var(--tmux-ide-surface-panel-raised, oklch(100% 0 0));
+  --tmi-surface-overlay: var(--tmux-ide-surface-command, oklch(100% 0 0));
+  --tmi-text-primary: var(--tmux-ide-text-primary, oklch(21% 0.006 286));
+  --tmi-text-bright: var(--tmux-ide-text-bright, oklch(14.05% 0.004 285.8));
+  --tmi-text-secondary: var(--tmux-ide-text-secondary, oklch(51% 0.014 285.9));
+  --tmi-text-muted: var(--tmux-ide-text-muted, oklch(60% 0.012 285.9));
+  --tmi-text-on-accent: var(--tmux-ide-text-inverse, oklch(100% 0 0));
+  --tmi-border-subtle: var(--tmux-ide-border-subtle, oklch(96.01% 0 0));
+  --tmi-border-default: var(--tmux-ide-border-default, oklch(91.97% 0.004 286.3));
+  --tmi-accent: var(--tmux-ide-border-focused, #4668e0);
+  --tmi-accent-strong: var(--tmux-ide-text-link, oklch(54.6% 0.215 262.9));
+  --tmi-accent-surface: var(--tmux-ide-selection-selection, rgb(97 135 254 / 16%));
+  --tmi-hover: var(--tmux-ide-selection-hover, oklch(0% 0 0 / 5%));
+  --tmi-pressed: var(--tmux-ide-selection-pressed, oklch(0% 0 0 / 9%));
+  --tmi-danger: var(--tmux-ide-status-danger, #c62222);
+  --tmi-disabled-fg: var(--tmux-ide-control-disabled-foreground, oklch(78% 0.006 285.9));
+  --tmi-disabled-bg: var(--tmux-ide-control-disabled-background, oklch(96.76% 0 0));
+  --tmi-shadow-subtle:
+    0 0 0 1px oklch(0% 0 0 / 0.07), 0 1px 1px 0 oklch(0% 0 0 / 0.05),
+    0 2px 4px -1px oklch(0% 0 0 / 0.04);
+  --tmi-shadow-raised:
+    0 1px 0 0 oklch(0% 0 0 / 0.02), 0 1px 12px 0 oklch(0% 0 0 / 0.06),
+    0 0 1px 0 oklch(0% 0 0 / 0.32);
+  --tmi-shadow-overlay:
+    0 0 1px 0 oklch(0% 0 0 / 0.3), 0 4px 12px -2px oklch(0% 0 0 / 0.08),
+    0 12px 32px -8px oklch(0% 0 0 / 0.14);
+  --tmi-shadow-field: 0 1px 2px 0 oklch(0% 0 0 / 0.05), 0 0 0 1px oklch(0% 0 0 / 0.04);
+  --tmi-shadow-tooltip: 0 0 1px 0 oklch(0% 0 0 / 0.28), 0 2px 8px -2px oklch(0% 0 0 / 0.1);
+}
+
+[data-theme],
+[data-tmi-theme] {
+  --tmi-danger-surface: color-mix(in srgb, var(--tmi-danger) 15%, var(--tmi-surface-panel));
+  --tmi-accent-dark: color-mix(in oklab, var(--tmi-accent) 84%, oklch(0% 0 0));
+  --tmi-accent-bright: color-mix(in oklab, var(--tmi-accent) 90%, oklch(100% 0 0));
+  --tmi-border-dark: var(--tmux-ide-border-strong, var(--tmi-border-default));
+  --tmi-control-hairline: color-mix(in srgb, var(--tmi-border-dark) 70%, transparent);
+  --tmi-disabled-border: color-mix(in srgb, var(--tmi-disabled-fg) 30%, var(--tmi-disabled-bg));
+  --tmi-focus-width: var(--tmux-ide-focus-outline, 2px);
+  --tmi-focus-offset: var(--tmux-ide-focus-outline-offset, 2px);
+  --tmi-focus-offset-field: -1px;
+  --tmi-radius-control: var(--tmux-ide-shape-control-radius, 8px);
+  --tmi-radius-panel: var(--tmux-ide-shape-floating-radius, 10px);
+  --tmi-motion-fast: var(--tmux-ide-motion-fast, 150ms);
+  --tmi-motion-exit: var(--tmux-ide-motion-instant, 100ms);
+}
+
+[data-overlay-root] {
+  --tmi-layer-tooltip: 1;
+  --tmi-layer-menu: 1;
+}
+
+.tmi-technical {
+  font-family: var(--tmi-font-technical);
+  font-variant-ligatures: none;
+}
+
+/*
+ * Tabular numerals. Proportional digits are set to look right in a sentence,
+ * which means a 1 is narrower than a 0 — so a number that updates in place
+ * jitters, and a column of numbers does not line up. Any figure that counts,
+ * ticks, or stacks reads better with fixed-width digits, and nothing else
+ * about the text changes.
+ */
+.tmi-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.tmi-showcase {
+  display: grid;
+  gap: var(--tmi-space-7);
+  padding: var(--tmi-space-8);
+  color: var(--tmi-text-primary);
+  background:
+    radial-gradient(
+      circle at 50% -10%,
+      color-mix(in oklab, var(--tmi-accent) 9%, transparent),
+      transparent 38%
+    ),
+    var(--tmi-surface-canvas);
+}
+
+.tmi-showcase > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tmi-showcase__split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 7px minmax(0, 1fr);
+  height: 120px;
+  box-shadow: var(--tmi-shadow-subtle);
+}
+
+.tmi-showcase__split > div:not([role="separator"]) {
+  padding: 12px;
+  background: var(--tmi-surface-panel);
+  font-family: var(--tmi-font-chrome);
+}
+
+.tmi-button,
+.tmi-icon-button,
+.tmi-tabs__trigger {
+  appearance: none;
+  border: 1px solid transparent;
+  color: var(--tmi-text-primary);
+  background: transparent;
+  font-family: var(--tmi-font-chrome);
+  font-size: var(--tmi-text-caption-1);
+  font-weight: var(--tmi-weight-medium);
+  line-height: 1;
+  cursor: pointer;
+  /*
+   * Only the paint transitions. States switch tokens, so there is nothing to
+   * fade — animating opacity here is what makes a control feel like a decal
+   * rather than an object changing color.
+   */
+  transition:
+    color var(--tmi-motion-fast) var(--tmi-ease-smooth),
+    background-color var(--tmi-motion-fast) var(--tmi-ease-smooth),
+    border-color var(--tmi-motion-fast) var(--tmi-ease-smooth),
+    box-shadow var(--tmi-motion-fast) var(--tmi-ease-smooth),
+    transform var(--tmi-motion-fast) var(--tmi-ease-out-fluid);
+}
+
+/*
+ * THE focus ring. One implementation, three offsets.
+ *
+ * `ring` sits outside the control at offset 2 so it never eats the object's
+ * own edge. `field` pulls to -1 for inputs and full-bleed rows, where an
+ * outside ring would be clipped by the row that contains it. `invalid` is the
+ * field ring in the danger color.
+ *
+ * Keyboard-only by construction (`:focus-visible`), and opt-in by attribute so
+ * a new component gets the ring by saying so — not by being remembered here.
+ * Anything added to this selector list must be a genuine ui-system primitive.
+ */
+[data-focus-ring]:focus-visible,
+.tmi-button:focus-visible,
+.tmi-icon-button:focus-visible,
+.tmi-tabs__trigger:focus-visible,
+.tmi-tabs__panel:focus-visible,
+.tmi-resize-handle:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: var(--tmi-focus-width) solid var(--tmi-accent);
+  outline-offset: var(--tmi-focus-offset);
+}
+
+[data-focus-ring="field"]:focus-visible {
+  outline-offset: var(--tmi-focus-offset-field);
+}
+
+[data-focus-ring]:focus-visible[aria-invalid="true"],
+[data-focus-ring="invalid"]:focus-visible {
+  outline-color: var(--tmi-danger);
+  outline-offset: var(--tmi-focus-offset-field);
+}
+
+.tmi-button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: var(--tmi-space-3);
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: var(--tmi-radius-control);
+  white-space: nowrap;
+}
+
+.tmi-button[data-size="small"] {
+  gap: var(--tmi-space-2);
+  min-height: 28px;
+  padding-inline: var(--tmi-space-4);
+  font-size: var(--tmi-text-caption-2);
+}
+
+/* Icons in text buttons track the smaller optical weight; icon-only buttons
+ * keep their 16px glyph. shrink-0 stops long labels from squashing the glyph. */
+.tmi-button > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  pointer-events: none;
+}
+
+/*
+ * The filled control. A vertical two-stop gradient over a crisp dark edge, lit
+ * from above by an inset highlight — the three ingredients that read as a
+ * physical object rather than a colored rectangle. Every state below switches
+ * tokens; none of them adds a layer or changes opacity.
+ */
+.tmi-button[data-variant="primary"] {
+  color: var(--tmi-text-on-accent);
+  border-color: var(--tmi-accent-dark);
+  background: linear-gradient(to bottom, var(--tmi-accent), var(--tmi-accent-dark));
+  box-shadow: var(--tmi-shadow-control-lit);
+}
+
+/*
+ * The outline control (toolbars, pickers, secondary actions): a crisp hairline
+ * and a tight contact shadow. Sharper silhouette than a soft border, and it
+ * keeps the control on the plane instead of floating it.
+ */
+.tmi-button[data-variant="secondary"] {
+  border-color: var(--tmi-control-hairline);
+  background: var(--tmi-material-control);
+  box-shadow: var(--tmi-control-highlight), var(--tmi-shadow-control-raised);
+}
+
+/* Ghost is wash-only: no edge, no elevation, nothing until it is hovered. */
+.tmi-button[data-variant="ghost"] {
+  color: var(--tmi-text-secondary);
+}
+
+.tmi-button[data-variant="danger"] {
+  color: var(--tmi-text-on-accent);
+  border-color: color-mix(in oklab, var(--tmi-danger) 84%, oklch(0% 0 0));
+  background: linear-gradient(
+    to bottom,
+    var(--tmi-danger),
+    color-mix(in oklab, var(--tmi-danger) 84%, oklch(0% 0 0))
+  );
+  box-shadow: var(--tmi-shadow-control-lit);
+}
+
+@media (hover: hover) {
+  .tmi-button:hover:not(:disabled),
+  .tmi-icon-button:hover:not(:disabled),
+  .tmi-tabs__trigger:hover:not(:disabled) {
+    color: var(--tmi-text-bright);
+    border-color: var(--tmi-border-default);
+    background: var(--tmi-hover);
+  }
+
+  /* Hover brightens the gradient one step; the edge and the lighting hold. */
+  .tmi-button[data-variant="primary"]:hover:not(:disabled) {
+    color: var(--tmi-text-on-accent);
+    border-color: var(--tmi-accent-dark);
+    background: linear-gradient(to bottom, var(--tmi-accent-bright), var(--tmi-accent));
+  }
+
+  .tmi-button[data-variant="secondary"]:hover:not(:disabled) {
+    border-color: var(--tmi-border-dark);
+    background: var(--tmi-surface-panel);
+  }
+
+  .tmi-button[data-variant="danger"]:hover:not(:disabled),
+  .tmi-icon-button[data-variant="danger"]:hover:not(:disabled) {
+    color: var(--tmi-text-on-accent);
+    background: linear-gradient(
+      to bottom,
+      color-mix(in oklab, var(--tmi-danger) 90%, oklch(100% 0 0)),
+      var(--tmi-danger)
+    );
+  }
+}
+
+.tmi-button:active:not(:disabled),
+.tmi-icon-button:active:not(:disabled) {
+  background: var(--tmi-pressed);
+}
+
+/* Pressed flattens dark and drops the lighting — the object goes in, not dim. */
+.tmi-button[data-variant="primary"]:active:not(:disabled) {
+  background: var(--tmi-accent-dark);
+  box-shadow: none;
+}
+
+.tmi-button[data-variant="secondary"]:active:not(:disabled) {
+  box-shadow: none;
+}
+
+.tmi-button[data-variant="danger"]:active:not(:disabled) {
+  background: color-mix(in oklab, var(--tmi-danger) 84%, oklch(0% 0 0));
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tmi-button:not([data-variant="ghost"]):active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .tmi-icon-button:not([data-variant="ghost"]):active:not(:disabled) {
+    transform: scale(0.95);
+  }
+}
+
+/*
+ * Disabled is a COLOR, not an opacity.
+ *
+ * Fading a control leaves it legible-but-dimmed, which reads as "loading" and
+ * drags whatever is behind it through the glass. A flat grey pill reads as
+ * "off". Filled variants drop their gradient and their lighting to get there,
+ * so nothing survives to suggest the object is still pressable.
+ */
+.tmi-button:disabled,
+.tmi-icon-button:disabled,
+.tmi-tabs__trigger:disabled {
+  color: var(--tmi-disabled-fg);
+  border-color: var(--tmi-disabled-border);
+  background: none;
+  background-color: var(--tmi-disabled-bg);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.tmi-button[data-variant="ghost"]:disabled,
+.tmi-icon-button[data-variant="ghost"]:disabled {
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.tmi-button__spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: tmi-spin 700ms linear infinite;
+}
+
+@keyframes tmi-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tmi-button__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tmi-icon-button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border-radius: var(--tmi-radius-control);
+  color: var(--tmi-text-secondary);
+}
+
+.tmi-icon-button[data-size="small"] {
+  width: 28px;
+  height: 28px;
+}
+
+.tmi-icon-button[data-variant="secondary"] {
+  border-color: var(--tmi-control-hairline);
+  background: var(--tmi-material-control);
+  box-shadow: var(--tmi-control-highlight), var(--tmi-shadow-control-raised);
+}
+
+.tmi-icon-button[data-variant="danger"] {
+  color: var(--tmi-danger);
+}
+
+.tmi-icon-button[aria-pressed="true"] {
+  color: var(--tmi-accent-strong);
+  border-color: color-mix(in srgb, var(--tmi-accent) 55%, transparent);
+  background: var(--tmi-accent-surface);
+  box-shadow:
+    var(--tmi-control-highlight),
+    0 0 0 1px color-mix(in srgb, var(--tmi-accent) 18%, transparent);
+}
+
+.tmi-icon-button > svg {
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+
+/* Workspace identity: whichever branch resolves, the glyph occupies the same
+ * box, so a list of mixed identities keeps one text baseline. */
+.tmi-workspace-identity {
+  flex: none;
+}
+
+.tmi-workspace-identity--emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.tmi-workspace-identity--dot {
+  display: inline-block;
+  border-radius: var(--tmi-radius-pill);
+}
+
+.tmi-tooltip-anchor {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.tmi-tooltip {
+  position: fixed;
+  z-index: var(--tmi-layer-tooltip);
+  width: max-content;
+  max-width: min(260px, calc(100vw - 24px));
+  padding: var(--tmi-space-3) var(--tmi-space-5);
+  border: 1px solid color-mix(in srgb, var(--tmi-border-default) 82%, transparent);
+  border-radius: var(--tmi-radius-control);
+  color: var(--tmi-text-primary);
+  background: var(--tmi-material-overlay);
+  -webkit-backdrop-filter: var(--tmi-material-filter);
+  backdrop-filter: var(--tmi-material-filter);
+  box-shadow: var(--tmi-shadow-tooltip);
+  font-family: var(--tmi-font-chrome);
+  font-size: var(--tmi-text-caption-2);
+  line-height: var(--tmi-leading-caption-2);
+  pointer-events: none;
+  transform-origin: center;
+  transition:
+    opacity var(--tmi-motion-exit) var(--tmi-ease-in-quart),
+    transform var(--tmi-motion-exit) var(--tmi-ease-in-quart),
+    visibility 0ms linear var(--tmi-motion-exit);
+}
+
+.tmi-tooltip[data-open="false"] {
+  visibility: hidden;
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+.tmi-tooltip[data-positioned="false"] {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.tmi-tooltip[data-open="true"] {
+  visibility: visible;
+  opacity: 1;
+  transform: scale(1);
+  transition-duration: var(--tmi-motion-fast), var(--tmi-motion-fast), 0ms;
+  transition-delay: 0ms;
+  transition-timing-function: var(--tmi-ease-out-fluid);
+}
+
+.tmi-tooltip[data-instant="true"] {
+  transition: none;
+}
+
+.tmi-tooltip[data-placement="top"] {
+  transform-origin: bottom center;
+}
+
+.tmi-tooltip[data-placement="bottom"] {
+  transform-origin: top center;
+}
+
+.tmi-tooltip[data-placement="left"] {
+  transform-origin: right center;
+}
+
+.tmi-tooltip[data-placement="right"] {
+  transform-origin: left center;
+}
+
+.tmi-tabs {
+  min-width: 0;
+  color: var(--tmi-text-primary);
+  font-family: var(--tmi-font-chrome);
+}
+
+.tmi-tabs > [role="tablist"] {
+  display: flex;
+  min-width: 0;
+  gap: var(--tmi-space-1);
+  width: max-content;
+  padding: var(--tmi-space-1);
+  border: 1px solid var(--tmi-border-default);
+  border-radius: var(--tmi-radius-2lg);
+  background: color-mix(in oklab, var(--tmi-surface-panel) 88%, transparent);
+  box-shadow: var(--tmi-shadow-field);
+}
+
+.tmi-tabs[data-orientation="vertical"] {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.tmi-tabs[data-orientation="vertical"] > [role="tablist"] {
+  flex-direction: column;
+}
+
+.tmi-tabs__trigger {
+  position: relative;
+  isolation: isolate;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: var(--tmi-radius-md);
+  color: var(--tmi-text-muted);
+  white-space: nowrap;
+}
+
+.tmi-tabs__trigger::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--tmi-surface-raised);
+  box-shadow: var(--tmi-control-highlight), var(--tmi-shadow-subtle);
+  content: "";
+  opacity: 0;
+  transition: opacity var(--tmi-motion-fast) var(--tmi-ease-smooth);
+}
+
+.tmi-tabs__trigger[aria-selected="true"] {
+  color: var(--tmi-text-bright);
+  background: transparent;
+}
+
+.tmi-tabs__trigger[aria-selected="true"]::after {
+  opacity: 1;
+}
+
+.tmi-tabs[data-orientation="vertical"] .tmi-tabs__trigger {
+  border-radius: var(--tmi-radius-md);
+  text-align: left;
+}
+
+.tmi-tabs__panel {
+  min-width: 0;
+  padding: 12px;
+  outline: none;
+}
+
+.tmi-tabs__panel[hidden] {
+  display: none;
+}
+
+.tmi-empty-state {
+  display: grid;
+  max-width: 440px;
+  justify-items: center;
+  padding: 32px;
+  border: 1px solid var(--tmi-border-subtle);
+  border-radius: var(--tmi-radius-lg);
+  color: var(--tmi-text-primary);
+  background: color-mix(in oklab, var(--tmi-surface-panel) 78%, transparent);
+  box-shadow: var(--tmi-shadow-subtle);
+  font-family: var(--tmi-font-chrome);
+  text-align: center;
+}
+
+.tmi-empty-state[data-size="compact"] {
+  padding: 20px;
+}
+
+.tmi-empty-state__icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 12px;
+  place-items: center;
+  border-radius: var(--tmi-radius-2lg);
+  color: var(--tmi-accent-strong);
+  border: 1px solid color-mix(in srgb, var(--tmi-accent) 20%, var(--tmi-border-default));
+  background: color-mix(in srgb, var(--tmi-accent) 10%, var(--tmi-surface-raised));
+  box-shadow: var(--tmi-control-highlight), var(--tmi-shadow-subtle);
+}
+
+.tmi-empty-state__icon > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.tmi-empty-state h2 {
+  margin: 0;
+  color: var(--tmi-text-bright);
+  font-size: var(--tmi-text-headline);
+  font-weight: var(--tmi-weight-semibold);
+  line-height: var(--tmi-leading-headline);
+}
+
+.tmi-empty-state p {
+  max-width: 380px;
+  margin: 6px 0 0;
+  color: var(--tmi-text-muted);
+  font-size: var(--tmi-text-body-2);
+  line-height: var(--tmi-leading-body-2);
+}
+
+.tmi-empty-state__action {
+  margin-top: 16px;
+}
+
+.tmi-resize-handle {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.tmi-resize-handle[data-orientation="vertical"] {
+  width: 7px;
+  margin-inline: -3px;
+  cursor: ew-resize;
+}
+
+.tmi-resize-handle[data-orientation="horizontal"] {
+  height: 7px;
+  margin-block: -3px;
+  cursor: ns-resize;
+}
+
+.tmi-resize-handle[data-orientation="vertical"][data-dragging="true"] {
+  cursor: grabbing;
+}
+
+.tmi-resize-handle[data-orientation="horizontal"][data-dragging="true"] {
+  cursor: grabbing;
+}
+
+.tmi-resize-handle::after {
+  position: absolute;
+  border-radius: var(--tmi-radius-xs);
+  background: var(--tmi-border-subtle);
+  content: "";
+  transition:
+    background-color var(--tmi-motion-fast) var(--tmi-ease-smooth),
+    transform var(--tmi-motion-fast) var(--tmi-ease-out-fluid),
+    opacity var(--tmi-motion-fast) var(--tmi-ease-smooth);
+}
+
+.tmi-resize-handle[data-orientation="vertical"]::after {
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+}
+
+.tmi-resize-handle[data-orientation="horizontal"]::after {
+  top: 3px;
+  right: 0;
+  left: 0;
+  height: 1px;
+}
+
+.tmi-resize-handle:hover::after,
+.tmi-resize-handle:focus-visible::after {
+  background: var(--tmi-accent);
+  transform: scale(1.5);
+}
+
+.tmi-resize-handle[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+[data-increased-contrast="true"] .tmi-button,
+[data-increased-contrast="true"] .tmi-icon-button,
+[data-increased-contrast="true"] .tmi-empty-state__icon {
+  border-color: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tmi-button,
+  .tmi-icon-button,
+  .tmi-tabs__trigger,
+  .tmi-tabs__trigger::after,
+  .tmi-tooltip,
+  .tmi-resize-handle::after {
+    transition: none;
+  }
+
+  .tmi-button__spinner {
+    animation: none;
+    border-right-color: currentColor;
+    opacity: 0.55;
+  }
+}
+
+[data-reduced-motion="true"] .tmi-button,
+[data-reduced-motion="true"] .tmi-icon-button,
+[data-reduced-motion="true"] .tmi-tabs__trigger,
+[data-reduced-motion="true"] .tmi-tabs__trigger::after,
+[data-reduced-motion="true"] .tmi-tooltip,
+[data-reduced-motion="true"] .tmi-resize-handle::after {
+  transition: none;
+}
+
+[data-reduced-motion="true"] .tmi-button__spinner {
+  animation: none;
+  border-right-color: currentColor;
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-reduced-motion="true"] .tmi-button:not([data-variant="ghost"]):active:not(:disabled),
+  [data-reduced-motion="true"] .tmi-icon-button:not([data-variant="ghost"]):active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/*
+ * Context menu.
+ *
+ * The overlay shadow and the panel radius come from the ladder rather than from
+ * local values, so a menu reads as the same kind of object as the palette and
+ * the create dialog. Rows are the body-2 step; reasons and qualifiers are the
+ * caption step, which is what lets an item say why it is unavailable without
+ * competing with the items that are.
+ */
+.tmi-context-menu-anchor {
+  display: contents;
+}
+
+.tmi-context-menu {
+  position: fixed;
+  z-index: var(--tmi-layer-menu);
+  display: flex;
+  flex-direction: column;
+  gap: var(--tmi-space-1);
+  width: max-content;
+  min-width: 224px;
+  max-width: min(340px, calc(100vw - 24px));
+  padding: var(--tmi-space-2);
+  border: 1px solid color-mix(in srgb, var(--tmi-border-default) 86%, transparent);
+  border-radius: var(--tmi-radius-panel);
+  color: var(--tmi-text-primary);
+  background: var(--tmi-material-overlay);
+  -webkit-backdrop-filter: var(--tmi-material-filter);
+  backdrop-filter: var(--tmi-material-filter);
+  box-shadow: var(--tmi-shadow-overlay);
+  font-family: var(--tmi-font-chrome);
+  transform-origin: top left;
+  transition:
+    opacity var(--tmi-motion-fast) var(--tmi-ease-out-fluid),
+    transform var(--tmi-motion-fast) var(--tmi-ease-out-fluid);
+}
+
+.tmi-context-menu[data-positioned="false"] {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
+.tmi-context-menu:focus-visible {
+  outline: none;
+}
+
+.tmi-context-menu__section + .tmi-context-menu__section {
+  margin-top: var(--tmi-space-2);
+  padding-top: var(--tmi-space-2);
+  border-top: 1px solid var(--tmi-border-subtle);
+}
+
+.tmi-context-menu__section-label {
+  margin: 0;
+  padding: var(--tmi-space-2) var(--tmi-space-4) var(--tmi-space-1);
+  color: var(--tmi-text-muted);
+  font-size: var(--tmi-text-caption-2);
+  line-height: var(--tmi-leading-caption-2);
+  letter-spacing: var(--tmi-tracking-caption-2);
+  font-weight: var(--tmi-weight-semibold);
+  text-transform: uppercase;
+}
+
+.tmi-context-menu__section-note {
+  margin: 0;
+  padding: 0 var(--tmi-space-4) var(--tmi-space-2);
+  color: var(--tmi-text-muted);
+  font-size: var(--tmi-text-caption-2);
+  line-height: var(--tmi-leading-caption-2);
+}
+
+.tmi-context-menu__item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 var(--tmi-space-6);
+  align-items: baseline;
+  width: 100%;
+  padding: var(--tmi-space-3) var(--tmi-space-4);
+  border: none;
+  border-radius: var(--tmi-radius-sm);
+  color: inherit;
+  background: none;
+  font: inherit;
+  font-size: var(--tmi-text-body-2);
+  line-height: var(--tmi-leading-body-2);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color var(--tmi-motion-fast) var(--tmi-ease-smooth),
+    background-color var(--tmi-motion-fast) var(--tmi-ease-smooth),
+    transform var(--tmi-motion-fast) var(--tmi-ease-out-fluid);
+}
+
+.tmi-context-menu__item:hover:not([data-disabled="true"]),
+.tmi-context-menu__item:focus-visible:not([data-disabled="true"]) {
+  color: var(--tmi-text-on-accent);
+  background: var(--tmi-accent-strong);
+  outline: none;
+}
+
+.tmi-context-menu__item:hover:not([data-disabled="true"]) .tmi-context-menu__item-qualifier,
+.tmi-context-menu__item:hover:not([data-disabled="true"]) .tmi-context-menu__item-reason,
+.tmi-context-menu__item:hover:not([data-disabled="true"]) .tmi-context-menu__item-key,
+.tmi-context-menu__item:focus-visible:not([data-disabled="true"]) .tmi-context-menu__item-qualifier,
+.tmi-context-menu__item:focus-visible:not([data-disabled="true"]) .tmi-context-menu__item-reason,
+.tmi-context-menu__item:focus-visible:not([data-disabled="true"]) .tmi-context-menu__item-key {
+  color: color-mix(in srgb, var(--tmi-text-on-accent) 82%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tmi-context-menu__item:active:not([data-disabled="true"]) {
+    transform: scale(0.98);
+  }
+}
+
+.tmi-context-menu__item[data-disabled="true"] {
+  color: var(--tmi-disabled-fg);
+  cursor: default;
+}
+
+.tmi-context-menu__item[data-destructive="true"]:not([data-disabled="true"]) {
+  color: var(--tmi-danger);
+}
+
+.tmi-context-menu__item[data-confirm-pending="true"] {
+  background: var(--tmi-danger-surface);
+}
+
+.tmi-context-menu__item-label {
+  display: flex;
+  gap: var(--tmi-space-3);
+  align-items: baseline;
+  min-width: 0;
+}
+
+.tmi-context-menu__item-qualifier {
+  color: var(--tmi-text-muted);
+  font-size: var(--tmi-text-caption-2);
+  line-height: var(--tmi-leading-caption-2);
+  white-space: nowrap;
+}
+
+.tmi-context-menu__item-reason {
+  grid-column: 1 / -1;
+  color: var(--tmi-text-muted);
+  font-size: var(--tmi-text-caption-2);
+  line-height: var(--tmi-leading-caption-2);
+}
+
+.tmi-context-menu__item[data-confirm-pending="true"] .tmi-context-menu__item-reason {
+  color: var(--tmi-danger);
+}
+
+.tmi-context-menu__item-key {
+  color: var(--tmi-text-muted);
+  font-family: var(--tmi-font-technical);
+  font-size: var(--tmi-text-caption-2);
+  line-height: var(--tmi-leading-caption-2);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tmi-context-menu,
+  .tmi-context-menu__item {
+    transition: none;
+  }
+}
+
+[data-reduced-motion="true"] .tmi-context-menu,
+[data-reduced-motion="true"] .tmi-context-menu__item {
+  transition: none;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .tmi-tooltip,
+  .tmi-context-menu {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--tmi-surface-overlay);
+  }
+}

@@ -49,6 +49,7 @@ function descriptor(status: "awaiting-redemption" | "active" = "awaiting-redempt
     requestId: REQUEST_ID,
     target: request().target,
     viewerMode: "interactive" as const,
+    geometryOwnership: "passive" as const,
     status,
     issuedAt: 1_000,
     expiresAt: 16_000,
@@ -62,6 +63,7 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
   readonly calls: string[] = [];
   readonly releases: Array<{ leaseId: string; binding: AttachmentLeaseBinding }> = [];
   redeemGate: Promise<void> | null = null;
+  createGate: Promise<void> | null = null;
   releaseGate: Promise<void> | null = null;
   renewGate: Promise<void> | null = null;
   renewFailure = false;
@@ -70,23 +72,28 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
   nextLeaseId = LEASE_ID;
   currentLeaseId = LEASE_ID;
   currentRequestId = REQUEST_ID;
+  currentViewerMode: "interactive" | "read-only" = "interactive";
   active = false;
   consumed = false;
 
   async issue(
-    _request: TerminalAttachRequest,
+    request: TerminalAttachRequest,
     context: { requestId: string; projectIdentity: string },
   ): Promise<IssuedAttachmentLease> {
     this.calls.push("issue");
     this.currentLeaseId = this.nextLeaseId;
     this.currentRequestId = context.requestId;
+    this.currentViewerMode = request.viewerMode;
     const issued = { descriptor: this.leaseDescriptor() } as IssuedAttachmentLease;
     Object.defineProperty(issued, "redemptionTicket", { value: this.issuedTicket });
     return issued;
   }
 
-  async redeem(ticket: string, _binding: AttachmentLeaseBinding) {
+  readonly receivedAts: Array<number | undefined> = [];
+
+  async redeem(ticket: string, _binding: AttachmentLeaseBinding, receivedAt?: number) {
     this.calls.push("redeem");
+    this.receivedAts.push(receivedAt);
     await this.redeemGate;
     if (this.consumed || ticket !== this.issuedTicket) throw new Error("invalid ticket");
     this.consumed = true;
@@ -100,6 +107,7 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
     operation: "create" | "attach",
   ): Promise<ExecutedAttachmentViewOperation> {
     this.calls.push(operation);
+    if (operation === "create") await this.createGate;
     if (!this.active) throw new Error("inactive");
     return {
       descriptor: this.leaseDescriptor("active"),
@@ -145,6 +153,7 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
       ...descriptor(status),
       leaseId: this.currentLeaseId,
       requestId: this.currentRequestId,
+      viewerMode: this.currentViewerMode,
     };
   }
 }
@@ -161,6 +170,7 @@ class FakeClient implements ClaimedPtyTmuxAttachment {
   readonly exitListeners = new Set<
     (event: { readonly exitCode: number; readonly signal: number | null }) => void
   >();
+  initialOutput: Buffer | null = null;
   disposed = 0;
 
   constructor(
@@ -182,6 +192,11 @@ class FakeClient implements ClaimedPtyTmuxAttachment {
 
   onData(callback: (data: Buffer) => void): () => void {
     this.dataListeners.add(callback);
+    if (this.initialOutput) {
+      const initial = this.initialOutput;
+      this.initialOutput = null;
+      callback(initial);
+    }
     return () => this.dataListeners.delete(callback);
   }
 
@@ -260,6 +275,7 @@ function rig(
     maxPreAuthSockets?: number;
     maxLiveConnections?: number;
     redemptionTimeoutMs?: number;
+    redemptionProcessingTimeoutMs?: number;
     maxBufferedOutputBytes?: number;
     maxOutputFrameBytes?: number;
     maxLiveControlFrames?: number;
@@ -349,6 +365,7 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
       requestId: REQUEST_ID,
       expiresAt: 16_000,
       effectiveViewerMode: "interactive",
+      effectiveGeometryOwnership: "passive",
     });
     expect(coordinator.toJSON()).toEqual({
       pendingTickets: 1,
@@ -362,15 +379,23 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
     await coordinator.shutdown();
   });
 
-  it("rejects read-only before lease issue and atomically bounds pending issue", async () => {
+  it("issues a passive read-only attachment without input authority", async () => {
+    const { coordinator, manager } = rig();
+    const issued = await coordinator.issue(request("read-only"), {
+      requestId: REQUEST_ID,
+      projectIdentity: "project-alpha",
+      rendererOrigin: ORIGIN,
+    });
+    expect(issued).toMatchObject({
+      effectiveViewerMode: "read-only",
+      effectiveGeometryOwnership: "passive",
+    });
+    expect(manager.calls).toEqual(["issue"]);
+    await coordinator.shutdown();
+  });
+
+  it("atomically bounds pending issue", async () => {
     const { coordinator, manager } = rig({ maxPendingTickets: 1 });
-    await expect(
-      coordinator.issue(request("read-only"), {
-        requestId: REQUEST_ID,
-        projectIdentity: "project-alpha",
-        rendererOrigin: ORIGIN,
-      }),
-    ).rejects.toMatchObject({ code: "read_only_unavailable" });
     await issue(coordinator);
     await expect(
       coordinator.issue(request(), {
@@ -482,8 +507,95 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
     await coordinator.shutdown();
   });
 
+  it("turns stalled post-frame redemption into a named retryable failure", async () => {
+    const scheduled: Array<{ callback: () => void; cancelled: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, cancelled: false, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.cancelled = true;
+      };
+    };
+    let releaseRedeem!: () => void;
+    const { coordinator, manager, claim } = rig({
+      schedule,
+      redemptionProcessingTimeoutMs: 75,
+    });
+    manager.redeemGate = new Promise<void>((resolve) => {
+      releaseRedeem = resolve;
+    });
+    await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+
+    socket.frame(redemption());
+    await flush();
+    const processingDeadline = scheduled.find((entry) => entry.delay === 75 && !entry.cancelled);
+    expect(processingDeadline).toBeDefined();
+    expect(manager.calls).toContain("redeem");
+
+    processingDeadline!.callback();
+    expect(JSON.parse(socket.sent.at(-1)!.data as string)).toMatchObject({
+      type: "error",
+      code: "attachment-unavailable",
+      retryable: true,
+    });
+    expect(socket.closes.at(-1)).toEqual({
+      code: 1013,
+      reason: "redemption-processing-timeout",
+    });
+    expect(coordinator.snapshot().preAuthSockets).toBe(0);
+    expect(claim).not.toHaveBeenCalled();
+
+    releaseRedeem();
+    await flush();
+    await flush();
+    expect(manager.calls).not.toContain("create");
+    expect(manager.releases).toHaveLength(1);
+    await coordinator.shutdown();
+  });
+
+  it("does not advance from a timed-out create into PTY attach", async () => {
+    const scheduled: Array<{ callback: () => void; cancelled: boolean; delay: number }> = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const entry = { callback, cancelled: false, delay };
+      scheduled.push(entry);
+      return () => {
+        entry.cancelled = true;
+      };
+    };
+    let releaseCreate!: () => void;
+    const { coordinator, manager, claim } = rig({
+      schedule,
+      redemptionProcessingTimeoutMs: 75,
+    });
+    manager.createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption());
+    await flush();
+    await flush();
+    expect(manager.calls).toContain("create");
+
+    scheduled.find((entry) => entry.delay === 75 && !entry.cancelled)!.callback();
+    releaseCreate();
+    await flush();
+    await flush();
+
+    expect(manager.calls).not.toContain("attach");
+    expect(claim).not.toHaveBeenCalled();
+    expect(manager.releases).toHaveLength(1);
+    await coordinator.shutdown();
+  });
+
   it("consumes pending into exactly one live slot, claims once, and streams output directly", async () => {
     const { coordinator, manager, client, claim } = rig();
+    // Models the real launcher synchronously draining PTY bytes accumulated
+    // between spawn and claim when the live connection installs its listener.
+    client.initialOutput = Buffer.from([0x1b, 0x5b, 0x48]);
     await issue(coordinator);
     const pending = admission(coordinator);
     const socket = new FakeSocket();
@@ -510,6 +622,7 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
       sourceGrid: { cols: 120, rows: 40 },
       clientViewport: { cols: 118, rows: 38 },
     });
+    expect(socket.sent[1]).toEqual({ data: Buffer.from([0x1b, 0x5b, 0x48]), binary: true });
     client.output(Buffer.from([0, 255, 13, 10]));
     expect(socket.sent.at(-1)).toEqual({ data: Buffer.from([0, 255, 13, 10]), binary: true });
 
@@ -526,6 +639,60 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
       acceptedFrames: 1,
     });
     expect(coordinator.snapshot().liveConnections).toBe(1);
+    await coordinator.shutdown();
+  });
+
+  it("streams a read-only attachment while advertising no input capability", async () => {
+    const { coordinator, manager, client } = rig();
+    await coordinator.issue(request("read-only"), {
+      requestId: REQUEST_ID,
+      projectIdentity: "project-alpha",
+      rendererOrigin: ORIGIN,
+    });
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption());
+    await flush();
+    await flush();
+
+    expect(JSON.parse(socket.sent[0]!.data as string)).toMatchObject({
+      type: "ready",
+      effectiveViewerMode: "read-only",
+      inputCapability: "unavailable",
+    });
+    client.output(Buffer.from("passive output"));
+    expect(socket.sent.at(-1)).toEqual({ data: Buffer.from("passive output"), binary: true });
+
+    socket.frame(Buffer.from(encodeTerminalAttachmentInputFrame(1, Buffer.from("blocked"))), true);
+    expect(JSON.parse(socket.sent.at(-1)!.data as string)).toMatchObject({
+      type: "mutation-error",
+      mutation: "input",
+      code: "input-backpressure-unavailable",
+      retryable: false,
+    });
+    expect(client.boundedWrites).toEqual([]);
+    await flush();
+    await flush();
+    expect(manager.releases).toHaveLength(1);
+    await coordinator.shutdown();
+  });
+
+  it("stamps redemption arrival before the serialized queue so a queue wait cannot expire delivery", async () => {
+    let now = 1_000;
+    const { coordinator, manager } = rig({ now: () => now });
+    await issue(coordinator);
+    const pending = admission(coordinator);
+    const socket = new FakeSocket();
+    pending.bind(socket);
+    now = 2_000;
+    socket.frame(redemption());
+    // The queue drains much later than the frame arrived; the lease manager
+    // must still see the true arrival time, not the drain time.
+    now = 30_000;
+    await flush();
+    await flush();
+    expect(manager.receivedAts).toEqual([2_000]);
+    expect(manager.calls.slice(0, 2)).toEqual(["issue", "redeem"]);
     await coordinator.shutdown();
   });
 

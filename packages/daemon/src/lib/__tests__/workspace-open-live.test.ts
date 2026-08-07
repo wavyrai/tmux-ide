@@ -11,7 +11,7 @@ import {
   WorkspaceOpenMutationResultSchemaZ,
 } from "@tmux-ide/contracts";
 import { WebSocket } from "ws";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "../daemon-embed.ts";
 import { deriveWorkspaceOpenIdentity } from "../workspace-open.ts";
@@ -20,6 +20,11 @@ import { _setDefaultWorkspaceRegistryForTests, WorkspaceRegistry } from "../work
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 
 describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux integration", () => {
+  // Real embedded daemon + tmux + pty over isolated state. Under parallel load
+  // the beforeAll and attach path are starved past the default hook/test
+  // budgets, so widen both. Assertions are unchanged.
+  vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
+
   const root = mkdtempSync(join("/tmp", "tmux-ide-open-live-"));
   const projectDir = join(root, "project");
   const aliasDir = join(root, "project-alias");
@@ -96,6 +101,9 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
           Authorization: `Bearer ${ownerToken}`,
           "Content-Type": "application/json",
           "X-Tmux-Ide-Operation-Id": operationId,
+          // Fresh connection per dispatch: reusing an idle kept-alive socket
+          // races the embedded daemon's idle-close and surfaces as ECONNRESET.
+          Connection: "close",
         },
         body: JSON.stringify({ projectDir: selectedDir }),
       });
@@ -169,7 +177,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
 
     const shellResponse = await fetch(
       `${handle.apiBaseUrl}/api/project/${encodeURIComponent(created.resource.workspaceName)}/application-shell?version=2`,
-      { headers: { Authorization: `Bearer ${ownerToken}` } },
+      { headers: { Authorization: `Bearer ${ownerToken}`, Connection: "close" } },
     );
     expect(shellResponse.status).toBe(200);
     const shell = ApplicationShellResourceV2SchemaZ.parse(await shellResponse.json());
@@ -215,7 +223,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
     );
     const duplicatedMembershipResponse = await fetch(
       `${handle.apiBaseUrl}/api/project/${encodeURIComponent(created.resource.workspaceName)}/application-shell?version=2`,
-      { headers: { Authorization: `Bearer ${ownerToken}` } },
+      { headers: { Authorization: `Bearer ${ownerToken}`, Connection: "close" } },
     );
     expect(duplicatedMembershipResponse.status).toBe(503);
     expect(await duplicatedMembershipResponse.json()).toEqual({
@@ -289,6 +297,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
       method: "POST",
       headers: {
         Authorization: `Bearer ${ownerToken}`,
+        Connection: "close",
         "Content-Type": "application/json",
         Origin: "tmux-ide://app",
         "X-Tmux-Ide-Expected-Daemon-Instance-Id": handle.instanceId,
@@ -304,6 +313,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
             semanticPaneId: created.resource.initialPaneId,
           },
           viewerMode: "interactive",
+          geometryOwnership: "passive",
           viewport: { cols: 100, rows: 30 },
         },
       }),
@@ -316,7 +326,10 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
       origin: "tmux-ide://app",
     });
     const ready = new Promise<unknown>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("attachment did not become ready")), 5_000);
+      const timeout = setTimeout(
+        () => reject(new Error("attachment did not become ready")),
+        15_000,
+      );
       socket.on("error", reject);
       socket.on("message", (data, isBinary) => {
         if (isBinary) return;

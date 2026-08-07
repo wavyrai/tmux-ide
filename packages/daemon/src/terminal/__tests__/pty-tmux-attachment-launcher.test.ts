@@ -19,14 +19,16 @@ function plan(
   attachmentId = FIRST_ID,
   generation = 0,
   viewerMode: GroupedTmuxAttachmentPlan["viewerMode"] = "interactive",
+  geometryOwnership: GroupedTmuxAttachmentPlan["geometryOwnership"] = "passive",
 ) {
   return planGroupedTmuxAttachment({
     attachmentId,
     generation,
     target: { workspaceName: "workspace.alpha", semanticPaneId: "pane.worker" },
     viewerMode,
+    geometryOwnership,
     viewport: { cols: 120, rows: 40 },
-    source: { sessionId: "$12", windowId: "@34", runtimePaneId: "%56", paneCount: 1 },
+    source: { sessionId: "$12", windowId: "@34", runtimePaneId: "%56", windowPaneCount: 1 },
   });
 }
 
@@ -42,9 +44,11 @@ function input(selectedPlan = plan()): TmuxAttachmentClientTransportInput {
       expectedViewSessionId: "$90",
       expectedWindowId: selectedPlan.identity.durableSource.windowId,
       expectedPaneId: selectedPlan.identity.durableSource.runtimePaneId,
+      expectedWindowPaneCount: 1,
     },
     viewport: { ...selectedPlan.viewport },
     viewerMode: selectedPlan.viewerMode,
+    geometryOwnership: selectedPlan.geometryOwnership,
   };
 }
 
@@ -145,11 +149,53 @@ describe("PtyTmuxAttachmentLauncher", () => {
     expect(attempt.status).toBe("claimed");
     await expect(attempt.outcome).resolves.toEqual({ status: "executed" });
     expect(adapter.lastSpawned()!.paused).toBe(true);
+    // The spawned client is size-passive (m41 attach-2): the embedded attach
+    // carries `-f ignore-size` so it never drives the shared window's size.
+    expect(adapter.spawnLog[0]!.args.join(" ")).toContain("ignore-size");
+    expect(input(selectedPlan).geometryOwnership).toBe("passive");
+    // The launch proof no longer gates on single-pane windows.
+    expect(proof.calls[0]?.join(" ")).not.toContain("window_panes");
     expect(proof.calls[0]?.slice(0, 2)).toEqual(["-L", "owned-socket"]);
     expect(proof.calls[0]).toContainEqual(
       expect.stringContaining(`=${selectedPlan.identity.viewSessionName}`),
     );
     expect(proof.calls[0]?.join(" ")).toContain(selectedPlan.identity.markerValue);
+    transport.disposeAll();
+  });
+
+  it("spawns an OWNER without ignore-size, matching the plan the executor checked", async () => {
+    /*
+     * The launcher is the fourth site that has to agree about this argv (m50.2).
+     *
+     * The plan builder decides it, the executor's canonical planner rebuilds it,
+     * the deep-equality gate compares the two, and THIS is where the result
+     * actually becomes a process. A launcher that spawned `-f ignore-size`
+     * regardless would pass every plan-level test and still leave the origin
+     * window unresizable — the feature silently absent at the only layer that
+     * runs.
+     */
+    const adapter = new MockPtyAdapter();
+    const proof = new ProofRunner();
+    const owner = plan(FIRST_ID, 0, "interactive", "owner");
+    proveCurrentAttached(proof, adapter, owner);
+    const transport = launcher(adapter, proof);
+
+    const attempt = transport.beginGuardedAttach(input(owner));
+    expect(attempt.status).toBe("claimed");
+    await expect(attempt.outcome).resolves.toEqual({ status: "executed" });
+
+    const spawned = adapter.spawnLog[0]!.args.join(" ");
+    expect(spawned).not.toContain("ignore-size");
+    expect(spawned).toContain("attach-session");
+    // …and it is the very argv the executor's equality gate accepted, not a
+    // second construction that merely happens to agree today.
+    expect(adapter.spawnLog[0]!.args).toEqual(
+      expect.arrayContaining(planCanonicalTmuxAttachmentClientCommand(input(owner)).argv),
+    );
+    // Ownership comes from the client flag alone: the launcher writes no window
+    // state, so a shared session's options are untouched by an owning attach.
+    expect(spawned).not.toContain("window-size");
+    expect(spawned).not.toContain("resize-window");
     transport.disposeAll();
   });
 
@@ -161,6 +207,7 @@ describe("PtyTmuxAttachmentLauncher", () => {
       argv: readonly string[];
       cwd: string;
       env: NodeJS.ProcessEnv;
+      timeoutMs: number;
     }> = [];
     const transport = new PtyTmuxAttachmentLauncher({
       socketSelector: { kind: "name", name: "owned-socket" },
@@ -174,7 +221,13 @@ describe("PtyTmuxAttachmentLauncher", () => {
         SECRET_TOKEN: "must-not-cross",
       },
       proofCommandExecutor(executable, argv, options) {
-        proofCalls.push({ executable, argv: [...argv], cwd: options.cwd, env: options.env });
+        proofCalls.push({
+          executable,
+          argv: [...argv],
+          cwd: options.cwd,
+          env: options.env,
+          timeoutMs: options.timeoutMs,
+        });
         return `${adapter.lastSpawned()!.pid}\t${selectedPlan.identity.viewSessionName}\n`;
       },
     });
@@ -186,6 +239,7 @@ describe("PtyTmuxAttachmentLauncher", () => {
       executable: "/trusted/bin/tmux",
       cwd: "/daemon/project",
       env: { TERM: "screen-256color" },
+      timeoutMs: 2_000,
     });
     expect(proofCalls[0]!.env).not.toHaveProperty("PATH");
     expect(proofCalls[0]!.env).not.toHaveProperty("TMUX_TMPDIR");
@@ -379,7 +433,7 @@ describe("PtyTmuxAttachmentLauncher", () => {
     transport.disposeAll();
   });
 
-  it("exposes only bounded native input and rejects read-only before PTY spawn", async () => {
+  it("exposes bounded input only to interactive clients and keeps read-only clients passive", async () => {
     const adapter = new MockPtyAdapter();
     const proof = new ProofRunner();
     const interactivePlan = plan();
@@ -402,14 +456,14 @@ describe("PtyTmuxAttachmentLauncher", () => {
     expect(interactive.boundedInput?.snapshot().state).toBe("closed");
 
     const readOnlyPlan = plan(SECOND_ID, 0, "read-only");
-    const spawnCount = adapter.spawnCount;
-    expect(() => transport.beginGuardedAttach(input(readOnlyPlan))).toThrowError(
-      expect.objectContaining({
-        name: "TmuxAttachmentClientTransportError",
-        code: "read_only_unavailable",
-      }),
-    );
-    expect(adapter.spawnCount).toBe(spawnCount);
+    proveCurrentAttached(proof, adapter, readOnlyPlan);
+    const readOnlyAttempt = transport.beginGuardedAttach(input(readOnlyPlan));
+    await readOnlyAttempt.outcome;
+    const readOnly = transport.claim(readOnlyAttempt)!;
+    expect(readOnly.boundedInput).toBeNull();
+    expect(() => readOnly.resize(91, 31)).toThrow(/read-only/u);
+    expect(adapter.lastSpawned()!.boundedWriteLog).toEqual([]);
+    readOnly.dispose();
   });
 
   it("disposes only the PTY client and never emits a tmux kill-session command", async () => {

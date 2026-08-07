@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { DAEMON_RESOURCE_KINDS } from "@tmux-ide/contracts";
+
 import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -49,19 +51,13 @@ describe("desktop process boundaries", () => {
   it("exposes only the reviewed invoke vocabulary", () => {
     expect(HOST_INVOKE_CHANNELS).toEqual([
       HOST_IPC.bootstrap,
-      HOST_IPC.lifecycleQuit,
-      HOST_IPC.windowGetState,
       HOST_IPC.windowMinimize,
       HOST_IPC.windowToggleMaximized,
       HOST_IPC.windowClose,
-      HOST_IPC.menuShowApplication,
-      HOST_IPC.dialogSelectProjectDirectory,
-      HOST_IPC.themeGetState,
-      HOST_IPC.daemonRefreshConnection,
-      HOST_IPC.daemonCreateWorkspacePane,
-      HOST_IPC.daemonIssueTerminalAttachment,
-      HOST_IPC.daemonListWorkspaces,
-      HOST_IPC.daemonFetchApplicationShell,
+      HOST_IPC.workspaceOpenProjectDirectory,
+      HOST_IPC.onboardingAcknowledgeIntro,
+      HOST_IPC.updateGetStatus,
+      HOST_IPC.daemonRequest,
       HOST_IPC.daemonSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);
@@ -71,6 +67,22 @@ describe("desktop process boundaries", () => {
     expect(
       Object.values(HOST_IPC).some((channel) => /byte|pty|terminal-data/iu.test(channel)),
     ).toBe(false);
+  });
+
+  it("reaches every daemon resource over exactly one request channel", () => {
+    // The channel is one; the reachable surface is still the closed union, so
+    // "generic channel" and "generic capability" stay different things.
+    const daemonChannels = HOST_INVOKE_CHANNELS.filter((channel) => channel.includes("/daemon/"));
+    expect(daemonChannels).toEqual([
+      HOST_IPC.daemonRequest,
+      HOST_IPC.daemonSubscribe,
+      HOST_IPC.daemonUnsubscribe,
+    ]);
+    // Seventeen after the content-addressed widget asset read joined the same
+    // closed request union. `invokeVerb` still carries all seven multiplexer
+    // verbs, so this remains one reviewed capability per semantic resource.
+    expect(DAEMON_RESOURCE_KINDS.length).toBe(17);
+    expect(new Set(DAEMON_RESOURCE_KINDS).size).toBe(DAEMON_RESOURCE_KINDS.length);
   });
 
   it("keeps canonical daemon attachment in Electron main and out of preload", async () => {
@@ -99,8 +111,14 @@ describe("desktop process boundaries", () => {
     expect(vite).toContain("default-src 'self'");
     expect(vite).toContain("object-src 'none'");
     expect(vite).toContain("frame-ancestors 'none'");
-    expect(vite).toContain("ws://127.0.0.1:5173");
+    expect(vite).toContain("ws://127.0.0.1:${devServerPort}");
+    expect(vite).toContain('VITE_TMUX_IDE_DEV_GATEWAY === "1"');
+    expect(vite).toContain("TMUX_IDE_DEV_OWNER_TOKEN");
+    expect(vite).not.toContain("VITE_TMUX_IDE_DEV_OWNER_TOKEN");
     expect(vite).toContain("sourcemap: false");
-    expect(vite).not.toMatch(/unsafe-(?:inline|eval)/u);
+    expect(vite).toContain("\"script-src 'self'\"");
+    expect(vite).toContain("\"style-src-elem 'self' 'unsafe-inline'\"");
+    expect(vite).toContain("\"style-src-attr 'unsafe-inline'\"");
+    expect(vite).not.toContain("unsafe-eval");
   });
 });

@@ -26,6 +26,34 @@ import {
   WorkspaceOpenArgumentsSchemaZ,
   WorkspaceOpenMutationResultSchemaZ,
 } from "./workspace-open.ts";
+import {
+  WorkspacePromoteArgumentsSchemaZ,
+  WorkspacePromoteMutationResultSchemaZ,
+} from "./workspace-promotion.ts";
+import {
+  AppWindowMutationArgumentsSchemaZ,
+  AppWindowMutationResultSchemaZ,
+} from "./app-window-mutation.ts";
+import {
+  WorkspacePaneKillArgumentsSchemaZ,
+  WorkspacePaneKillResultSchemaZ,
+  WorkspacePaneResizeArgumentsSchemaZ,
+  WorkspacePaneResizeResultSchemaZ,
+  WorkspacePaneSelectArgumentsSchemaZ,
+  WorkspacePaneSelectResultSchemaZ,
+  WorkspacePaneSwapArgumentsSchemaZ,
+  WorkspacePaneSwapResultSchemaZ,
+  WorkspacePaneZoomToggleArgumentsSchemaZ,
+  WorkspacePaneZoomToggleResultSchemaZ,
+  WorkspaceRenameArgumentsSchemaZ,
+  WorkspaceRenameResultSchemaZ,
+  WorkspaceSessionKillArgumentsSchemaZ,
+  WorkspaceSessionKillResultSchemaZ,
+  WorkspaceWindowKillArgumentsSchemaZ,
+  WorkspaceWindowKillResultSchemaZ,
+  WorkspaceWindowSplitArgumentsSchemaZ,
+  WorkspaceWindowSplitResultSchemaZ,
+} from "./workspace-multiplexer.ts";
 
 // ---------------------------------------------------------------------------
 // project.openTerminal
@@ -215,6 +243,54 @@ export const WorkspaceOpenInputZ = WorkspaceOpenArgumentsSchemaZ;
 export const WorkspaceOpenResultZ = WorkspaceOpenMutationResultSchemaZ;
 
 // ---------------------------------------------------------------------------
+// workspace.promote
+// ---------------------------------------------------------------------------
+
+export const WorkspacePromoteInputZ = WorkspacePromoteArgumentsSchemaZ;
+export const WorkspacePromoteResultZ = WorkspacePromoteMutationResultSchemaZ;
+
+// ---------------------------------------------------------------------------
+// workspace.app-window.mutate
+// ---------------------------------------------------------------------------
+
+export const AppWindowMutationInputZ = AppWindowMutationArgumentsSchemaZ;
+export const AppWindowMutationResultZ = AppWindowMutationResultSchemaZ;
+
+// ---------------------------------------------------------------------------
+// The multiplexer verbs: split, kill, rename, zoom, select, resize
+//
+// Each input is verb-less. The route name is the verb, so there is no second
+// copy of it on the wire that could disagree with the URL that carried it.
+// ---------------------------------------------------------------------------
+
+export const WorkspaceWindowSplitInputZ = WorkspaceWindowSplitArgumentsSchemaZ;
+export const WorkspaceWindowSplitResultZ = WorkspaceWindowSplitResultSchemaZ;
+
+export const WorkspaceWindowKillInputZ = WorkspaceWindowKillArgumentsSchemaZ;
+export const WorkspaceWindowKillResultZ = WorkspaceWindowKillResultSchemaZ;
+
+export const WorkspacePaneKillInputZ = WorkspacePaneKillArgumentsSchemaZ;
+export const WorkspacePaneKillResultZ = WorkspacePaneKillResultSchemaZ;
+
+export const WorkspaceSessionKillInputZ = WorkspaceSessionKillArgumentsSchemaZ;
+export const WorkspaceSessionKillResultZ = WorkspaceSessionKillResultSchemaZ;
+
+export const WorkspaceRenameInputZ = WorkspaceRenameArgumentsSchemaZ;
+export const WorkspaceRenameResultZ = WorkspaceRenameResultSchemaZ;
+
+export const WorkspacePaneZoomToggleInputZ = WorkspacePaneZoomToggleArgumentsSchemaZ;
+export const WorkspacePaneZoomToggleResultZ = WorkspacePaneZoomToggleResultSchemaZ;
+
+export const WorkspacePaneSelectInputZ = WorkspacePaneSelectArgumentsSchemaZ;
+export const WorkspacePaneSelectResultZ = WorkspacePaneSelectResultSchemaZ;
+
+export const WorkspacePaneSwapInputZ = WorkspacePaneSwapArgumentsSchemaZ;
+export const WorkspacePaneSwapResultZ = WorkspacePaneSwapResultSchemaZ;
+
+export const WorkspacePaneResizeInputZ = WorkspacePaneResizeArgumentsSchemaZ;
+export const WorkspacePaneResizeResultZ = WorkspacePaneResizeResultSchemaZ;
+
+// ---------------------------------------------------------------------------
 // Registry of action contracts (name → input/output schemas)
 // ---------------------------------------------------------------------------
 
@@ -286,6 +362,50 @@ export const ActionContractsZ = {
   "workspace.open": {
     input: WorkspaceOpenInputZ,
     result: WorkspaceOpenResultZ,
+  },
+  "workspace.promote": {
+    input: WorkspacePromoteInputZ,
+    result: WorkspacePromoteResultZ,
+  },
+  "workspace.app-window.mutate": {
+    input: AppWindowMutationInputZ,
+    result: AppWindowMutationResultZ,
+  },
+  "workspace.window.split": {
+    input: WorkspaceWindowSplitInputZ,
+    result: WorkspaceWindowSplitResultZ,
+  },
+  "workspace.window.kill": {
+    input: WorkspaceWindowKillInputZ,
+    result: WorkspaceWindowKillResultZ,
+  },
+  "workspace.pane.kill": {
+    input: WorkspacePaneKillInputZ,
+    result: WorkspacePaneKillResultZ,
+  },
+  "workspace.session.kill": {
+    input: WorkspaceSessionKillInputZ,
+    result: WorkspaceSessionKillResultZ,
+  },
+  "workspace.rename": {
+    input: WorkspaceRenameInputZ,
+    result: WorkspaceRenameResultZ,
+  },
+  "workspace.pane.zoom.toggle": {
+    input: WorkspacePaneZoomToggleInputZ,
+    result: WorkspacePaneZoomToggleResultZ,
+  },
+  "workspace.pane.select": {
+    input: WorkspacePaneSelectInputZ,
+    result: WorkspacePaneSelectResultZ,
+  },
+  "workspace.pane.swap": {
+    input: WorkspacePaneSwapInputZ,
+    result: WorkspacePaneSwapResultZ,
+  },
+  "workspace.pane.resize": {
+    input: WorkspacePaneResizeInputZ,
+    result: WorkspacePaneResizeResultZ,
   },
 } as const;
 

@@ -16,7 +16,9 @@ import {
   TerminalAttachmentIssueResultSchemaZ,
   TerminalAttachmentPlanResponseSchemaZ,
   TerminalAttachmentSemanticPaneIdSchemaZ,
+  TerminalAttachmentSemanticWindowIdSchemaZ,
 } from "../terminal-attachments.ts";
+import { WORKSPACE_SEMANTIC_WINDOW_OPTION } from "../workspace-state.ts";
 
 const target = {
   workspaceName: "workspace.alpha-2",
@@ -45,6 +47,41 @@ describe("terminal attachment contracts", () => {
     ).toBe(true);
   });
 
+  it("defaults an unstated geometry ownership to passive", () => {
+    /*
+     * Bug this catches: a caller that predates the field, or forgets it, starts
+     * driving the size of a tmux window that an ssh client or a colleague is
+     * also attached to. The unsafe direction has to be the one you ask for.
+     */
+    expect(TerminalAttachRequestSchemaZ.parse(request()).geometryOwnership).toBe("passive");
+    expect(
+      TerminalAttachRequestSchemaZ.parse({ ...request(), geometryOwnership: "owner" })
+        .geometryOwnership,
+    ).toBe("owner");
+  });
+
+  it("refuses a read-only attachment that asks to own geometry", () => {
+    /*
+     * `attach-session -r` implies `ignore-size`, so tmux would drop the request
+     * on the floor. Accepting it would leave a caller believing it owns a size
+     * it does not, with nothing anywhere saying otherwise.
+     */
+    expect(
+      TerminalAttachRequestSchemaZ.safeParse({
+        ...request(),
+        viewerMode: "read-only",
+        geometryOwnership: "owner",
+      }).success,
+    ).toBe(false);
+    expect(
+      TerminalAttachRequestSchemaZ.safeParse({
+        ...request(),
+        viewerMode: "read-only",
+        geometryOwnership: "passive",
+      }).success,
+    ).toBe(true);
+  });
+
   it("reserves discovered fallback ids outside attachment authority", () => {
     const reserved = "terminal.discovered.user-authored";
     expect(TerminalAttachmentSemanticPaneIdSchemaZ.safeParse(reserved).success).toBe(false);
@@ -54,6 +91,19 @@ describe("terminal attachment contracts", () => {
         target: { ...target, semanticPaneId: reserved },
       }).success,
     ).toBe(false);
+  });
+
+  it("shares the pane-stamp grammar for the durable window-id stamp", () => {
+    expect(WORKSPACE_SEMANTIC_WINDOW_OPTION).toBe("@tmux_ide_window_id");
+    expect(
+      TerminalAttachmentSemanticWindowIdSchemaZ.safeParse("window.workspace.alpha").success,
+    ).toBe(true);
+    expect(
+      TerminalAttachmentSemanticWindowIdSchemaZ.safeParse("window.promoted.abc123").success,
+    ).toBe(true);
+    for (const invalid of ["terminal.discovered.window", "window:colon", "__proto__", ".dot"]) {
+      expect(TerminalAttachmentSemanticWindowIdSchemaZ.safeParse(invalid).success).toBe(false);
+    }
   });
 
   it("uses the exact portable workspace-id grammar for semantic pane admission", () => {
@@ -137,6 +187,7 @@ describe("terminal attachment contracts", () => {
         attachmentId: "2ddc3f17-723b-4e16-a3d2-ad751fb01b2e",
         target,
         viewerMode: "interactive" as const,
+        geometryOwnership: "passive" as const,
         viewport: { cols: 120, rows: 40 },
         status: "planned" as const,
       },
@@ -202,6 +253,7 @@ describe("terminal attachment contracts", () => {
       requestId: "10000000-0000-4000-8000-000000000001",
       expiresAt: 1_784_662_860_000,
       effectiveViewerMode: "interactive" as const,
+      effectiveGeometryOwnership: "passive" as const,
     };
     expect(TerminalAttachmentIssueDescriptorSchemaZ.parse(descriptor)).toEqual(descriptor);
     expect(TerminalAttachmentIssueResultSchemaZ.parse({ status: "issued", descriptor })).toEqual({

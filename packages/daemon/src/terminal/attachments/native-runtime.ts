@@ -28,6 +28,7 @@ import {
   type AttachmentLeaseManagerOptions,
   type AttachmentLeaseDescriptor,
 } from "./lease-manager.ts";
+import { TerminalInputAuthority } from "../input-authority.ts";
 import {
   PtyTmuxAttachmentLauncher,
   type DaemonTmuxSocketSelector,
@@ -45,8 +46,10 @@ import {
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
 } from "./tmux-view-executor.ts";
+import type { AgentStatusPaneFacts, AgentStatusProbe } from "./agent-status-probe.ts";
 
 const MAX_TMUX_OUTPUT_BYTES = 128 * 1024;
+const TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS = 5_000;
 const MAX_DISCOVERED_WORKSPACES = 128;
 const MAX_DISCOVERED_PANES = 4_096;
 const MAX_GEOMETRY_CLIENTS = 32;
@@ -106,6 +109,7 @@ export interface NativeTerminalAttachmentCommandExecutor {
       readonly cwd: string;
       readonly env: NodeJS.ProcessEnv;
       readonly maxBuffer: number;
+      readonly timeoutMs: number;
     },
   ): string | Buffer;
 }
@@ -168,7 +172,12 @@ function canonicalAuthority(input: NativeTerminalAttachmentTmuxAuthority): Canon
 function defaultCommandExecutor(
   executable: string,
   argv: readonly string[],
-  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly maxBuffer: number },
+  options: {
+    readonly cwd: string;
+    readonly env: NodeJS.ProcessEnv;
+    readonly maxBuffer: number;
+    readonly timeoutMs: number;
+  },
 ): string | Buffer {
   return runTmuxBinary(executable, [...argv], {
     cwd: options.cwd,
@@ -176,6 +185,7 @@ function defaultCommandExecutor(
     env: options.env,
     maxBuffer: options.maxBuffer,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: options.timeoutMs,
   });
 }
 
@@ -195,6 +205,7 @@ function pinnedRunner(
             cwd: authority.trustedCwd,
             env: authority.environment,
             maxBuffer: MAX_TMUX_OUTPUT_BYTES,
+            timeoutMs: TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS,
           },
         );
         const value = String(stdout);
@@ -299,6 +310,8 @@ export interface NativeTerminalInventoryPaneSnapshot extends TrustedSemanticPane
   readonly role: string | null;
   readonly name: string | null;
   readonly type: string | null;
+  /** Durable `@tmux_ide_mission` creation stamp, or null when unset. */
+  readonly missionStamp: string | null;
   readonly dir: string;
 }
 
@@ -312,10 +325,11 @@ export interface NativeApplicationShellSessionSnapshot {
   readonly runtimeSessionId: string;
   readonly dir: string;
   readonly catalogIssue: NativeTerminalInventoryCatalogIssue | null;
-  readonly panes: readonly Omit<
+  readonly panes: readonly (Omit<
     NativeTerminalInventoryPaneSnapshot,
     "workspaceName" | "sessionName" | "sessionId" | "sessionWindowCount" | "dir"
-  >[];
+  > &
+    Partial<AgentStatusPaneFacts>)[];
 }
 
 const SESSION_FORMAT = ["#{session_name}", "#{session_id}", SESSION_WIRE_SENTINEL].join(
@@ -337,7 +351,12 @@ const PANE_FORMAT = [
   "#{@ide_role}",
   "#{@ide_name}",
   "#{@ide_type}",
+  "#{@tmux_ide_mission}",
   "#{pane_current_path}",
+  // Durable window stamp (m41). It is a WINDOW option, so every pane of a
+  // window reports the same value; the catalog requires it before a multi-pane
+  // window is attachable.
+  "#{@tmux_ide_window_id}",
   PANE_WIRE_SENTINEL,
 ].join(WIRE_SEPARATOR);
 
@@ -393,7 +412,7 @@ function parsePaneSnapshot(
   const runtimeIds = new Set<string>();
   for (const line of strictLines(stdout, MAX_DISCOVERED_PANES)) {
     const fields = line.split(WIRE_SEPARATOR);
-    if (fields.length !== 17 || fields[16] !== PANE_WIRE_SENTINEL) {
+    if (fields.length !== 19 || fields[18] !== PANE_WIRE_SENTINEL) {
       throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
     }
     const [
@@ -412,8 +431,12 @@ function parsePaneSnapshot(
       role,
       name,
       type,
+      missionStamp,
       dir,
+      windowStampValue,
     ] = fields as [
+      string,
+      string,
       string,
       string,
       string,
@@ -454,6 +477,7 @@ function parsePaneSnapshot(
       windowPaneCount: positiveInteger(paneCountValue),
       sessionWindowCount: positiveInteger(windowCountValue),
       semanticPaneId: nullable(stamp),
+      windowStamp: nullable(windowStampValue),
       index: nonnegativeInteger(indexValue),
       title: boundedWireValue(title, 1_024),
       currentCommand: boundedWireValue(currentCommand, 512),
@@ -461,7 +485,12 @@ function parsePaneSnapshot(
       role: nullable(role),
       name: nullable(name),
       type: nullable(type),
-      dir: boundedWireValue(dir, 4_096, false),
+      missionStamp: nullable(missionStamp),
+      // tmux can temporarily report an empty pane_current_path for a valid
+      // foreground pipeline after its process-group leader exits. The
+      // registered workspace remains the trusted application-shell root, so
+      // keep discovery available and carry the empty presentation value.
+      dir: boundedWireValue(dir, 4_096),
     });
   }
   const counts = new Map<string, number>();
@@ -536,6 +565,7 @@ export async function discoverWorkspaceRegistryTerminalInventory(
         role: _role,
         name: _name,
         type: _type,
+        missionStamp: _missionStamp,
         dir: _dir,
         ...row
       }) => row,
@@ -560,6 +590,7 @@ export async function discoverWorkspaceRegistrySemanticPanes(
       role: _role,
       name: _name,
       type: _type,
+      missionStamp: _missionStamp,
       dir: _dir,
       ...row
     }) => row,
@@ -647,17 +678,19 @@ export class NativeTerminalAttachmentGeometryResolver {
     const sourceTarget = `${source.sessionId}:${source.windowId}.${source.runtimePaneId}`;
     const viewTarget = `=${viewName}:${source.windowId}.${source.runtimePaneId}`;
     // The `=name` target is exact. The session-local marker then proves that
-    // exact view's ownership while the linked global window id and
-    // one-window/one-pane topology prove its contents. The exact target
-    // already selects the expected global pane id; tmux does not populate
-    // `pane_id` in this if-shell format context on all supported versions.
-    const viewGuard = `#{&&:#{==:#{window_id},${source.windowId}},#{&&:#{==:#{window_panes},1},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${marker}}}}}`;
+    // exact view's ownership while the linked global window id and single-window
+    // topology prove its contents. The exact target already selects the expected
+    // global pane id; tmux does not populate `pane_id` in this if-shell format
+    // context on all supported versions. m41 attach-2 drops the former
+    // `window_panes == 1` gate so a multi-pane linked window resolves; the
+    // render grid is the WHOLE window, so the payload reports window dimensions.
+    const viewGuard = `#{&&:#{==:#{window_id},${source.windowId}},#{&&:#{==:#{session_windows},1},#{==:#{${GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT}},${marker}}}}`;
     const payload = commandString([
       "display-message",
       "-p",
       "-t",
       sourceTarget,
-      "source\t#{session_id}\t#{window_id}\t#{pane_id}\t#{window_panes}\t#{pane_width}\t#{pane_height}",
+      "source\t#{session_id}\t#{window_id}\t#{pane_id}\t#{window_panes}\t#{window_width}\t#{window_height}",
       ";",
       "list-clients",
       "-t",
@@ -685,13 +718,17 @@ export class NativeTerminalAttachmentGeometryResolver {
       throw new NativeTerminalAttachmentRuntimeError("geometry-mismatch");
     }
     const sourceFields = lines[0]!.split("\t");
+    // `window_panes` is now bound to the resolved windowPaneCount instead of the
+    // literal 1, so a live topology change between resolution and geometry fails
+    // closed. `sourceGrid` is the window's dimensions (the render grid), not one
+    // pane's; the client viewport below is already window-level.
     if (
       sourceFields.length !== 7 ||
       sourceFields[0] !== "source" ||
       sourceFields[1] !== source.sessionId ||
       sourceFields[2] !== source.windowId ||
       sourceFields[3] !== source.runtimePaneId ||
-      sourceFields[4] !== "1"
+      sourceFields[4] !== String(source.windowPaneCount)
     ) {
       throw new NativeTerminalAttachmentRuntimeError("geometry-mismatch");
     }
@@ -714,7 +751,7 @@ export class NativeTerminalAttachmentGeometryResolver {
 
 type LeaseRuntimeOptions = Omit<
   AttachmentLeaseManagerOptions,
-  "daemonInstanceId" | "catalog" | "viewExecutor"
+  "daemonInstanceId" | "catalog" | "viewExecutor" | "inputAuthority"
 >;
 type LauncherRuntimeOptions = Omit<
   PtyTmuxAttachmentLauncherOptions,
@@ -745,19 +782,39 @@ export interface NativeTerminalAttachmentRuntimeOptions {
   readonly commandExecutor?: NativeTerminalAttachmentCommandExecutor;
   /** Narrow deterministic seam; production omits it and uses registry-backed discovery. */
   readonly semanticPaneCatalog?: SemanticPaneCatalog;
+  /** Shared with pane streaming so both transports arbitrate one live window. */
+  readonly inputAuthority?: TerminalInputAuthority;
   readonly lease?: LeaseRuntimeOptions;
   readonly launcher?: LauncherRuntimeOptions;
   readonly admission?: AdmissionRuntimeOptions;
+  /**
+   * Ground-truth agent-status probe for the application-shell inventory. When
+   * omitted (e.g. unit tests, catalog-only runtimes) the projection falls back
+   * to its legacy shell-vs-active heuristic. A directly-injected probe wins;
+   * otherwise {@link agentStatusProbeFactory} is built from the runtime's own
+   * pinned runner so option/capture IO shares the attachment socket authority.
+   */
+  readonly agentStatusProbe?: AgentStatusProbe;
+  /**
+   * Build the probe from the runtime's pinned tmux runner (production wiring in
+   * daemon-embed). Ignored when {@link agentStatusProbe} is provided directly.
+   */
+  readonly agentStatusProbeFactory?: (deps: {
+    readonly run: (argv: readonly string[]) => string | null;
+  }) => AgentStatusProbe;
 }
 
 /** One daemon-generation owner for catalog, grouped view, PTY, lease and admission state. */
 export class NativeTerminalAttachmentRuntime {
   readonly admission: TerminalAttachmentAdmissionCoordinator;
+  readonly semanticPaneCatalog: SemanticPaneCatalog;
+  readonly inputAuthority: TerminalInputAuthority;
   readonly #launcher: PtyTmuxAttachmentLauncher;
   readonly #startupBarrier: Promise<void>;
   readonly #serializer: TmuxAttachmentOperationSerializer;
   readonly #registry: WorkspaceRegistry;
   readonly #discoverTerminalInventory: () => Promise<NativeTerminalInventorySnapshot>;
+  readonly #agentStatusProbe: AgentStatusProbe | null;
   #lifecycle: "initializing" | "ready" | "failed" | "disposing" | "disposed" = "initializing";
   #disposePromise: Promise<void> | null = null;
 
@@ -789,12 +846,14 @@ export class NativeTerminalAttachmentRuntime {
               role: _role,
               name: _name,
               type: _type,
+              missionStamp: _missionStamp,
               dir: _dir,
               ...row
             }) => row,
           );
         },
       });
+    const inputAuthority = options.inputAuthority ?? new TerminalInputAuthority();
     const launcher = new PtyTmuxAttachmentLauncher({
       ...options.launcher,
       socketSelector: authority.socketSelector,
@@ -807,6 +866,7 @@ export class NativeTerminalAttachmentRuntime {
           cwd: executionOptions.cwd,
           env: executionOptions.env,
           maxBuffer: MAX_TMUX_OUTPUT_BYTES,
+          timeoutMs: executionOptions.timeoutMs,
         }),
     });
     const viewExecutor = new TmuxAttachmentViewExecutor({
@@ -820,6 +880,7 @@ export class NativeTerminalAttachmentRuntime {
       daemonInstanceId: options.daemonInstanceId,
       catalog,
       viewExecutor,
+      inputAuthority,
     });
     const geometry = new NativeTerminalAttachmentGeometryResolver({
       catalog,
@@ -859,9 +920,21 @@ export class NativeTerminalAttachmentRuntime {
       resolveGeometry: (descriptor, client) => geometry.resolve(descriptor, client),
     });
     this.#launcher = launcher;
+    this.semanticPaneCatalog = catalog;
+    this.inputAuthority = inputAuthority;
     this.#serializer = serializer;
     this.#registry = options.registry;
     this.#discoverTerminalInventory = discoverTerminalInventory;
+    this.#agentStatusProbe =
+      options.agentStatusProbe ??
+      (options.agentStatusProbeFactory
+        ? options.agentStatusProbeFactory({
+            run: (argv) => {
+              const result = runner.run({ executable: "tmux", argv });
+              return result.status === "ok" ? result.stdout : null;
+            },
+          })
+        : null);
   }
 
   /**
@@ -896,10 +969,33 @@ export class NativeTerminalAttachmentRuntime {
           : inventory.catalog.duplicateRuntimePaneBinding
             ? "duplicate-runtime-pane-binding"
             : null;
+    // Ground-truth agent facts (authority + scrape fallback). All IO stays here;
+    // the resource projector composes them purely. Absent probe → no facts →
+    // the projector keeps its legacy heuristic. Never fail discovery over this.
+    let agentFacts: ReadonlyMap<string, AgentStatusPaneFacts> = new Map();
+    if (this.#agentStatusProbe) {
+      try {
+        agentFacts = this.#agentStatusProbe.probe({
+          sessionId: active.sessionId,
+          nowSec: Math.floor(Date.now() / 1000),
+          panes: panes.map((pane) => ({
+            runtimePaneId: pane.runtimePaneId,
+            currentCommand: pane.currentCommand,
+            title: pane.title,
+          })),
+        });
+      } catch {
+        agentFacts = new Map();
+      }
+    }
     return Object.freeze({
       name: workspace.sessionName,
       runtimeSessionId: active.sessionId,
-      dir: active.dir,
+      // Application-owned resources belong to the registered workspace, not
+      // whichever cwd happens to be active inside one tmux pane. Pane cwd may
+      // be outside the project (or move during a shell session), while the
+      // registry projectDir is the durable workspace identity boundary.
+      dir: workspace.projectDir,
       catalogIssue,
       panes: Object.freeze(
         panes.map(
@@ -910,10 +1006,28 @@ export class NativeTerminalAttachmentRuntime {
             sessionWindowCount: _sessionWindowCount,
             dir: _dir,
             ...pane
-          }) => Object.freeze(pane),
+          }) => Object.freeze({ ...pane, ...(agentFacts.get(pane.runtimePaneId) ?? {}) }),
         ),
       ),
     });
+  }
+
+  /**
+   * The live inventory pass, taken through the same pinned runner and socket
+   * the attachment catalog resolves against. Read by the startup readiness
+   * ladder so its catalog rung reports what an actual attach would find rather
+   * than a second, drifting view of tmux.
+   */
+  discoverTerminalInventory(): Promise<NativeTerminalInventorySnapshot> {
+    return this.#discoverTerminalInventory();
+  }
+
+  /**
+   * The startup-barrier state, observed WITHOUT awaiting it — a readiness read
+   * must never block on the barrier it is reporting on.
+   */
+  lifecycleState(): "initializing" | "ready" | "failed" | "disposing" | "disposed" {
+    return this.#lifecycle;
   }
 
   snapshot(): TerminalAttachmentAdmissionSnapshot {

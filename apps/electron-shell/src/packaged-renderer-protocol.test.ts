@@ -116,6 +116,13 @@ describe("packaged renderer protocol", () => {
   });
 
   it("emits an exact current loopback daemon connect source and rejects malformed origins", () => {
+    const policy = packagedRendererContentSecurityPolicy("http://localhost:6123");
+    expect(policy).toContain("script-src 'self';");
+    expect(policy).not.toContain("script-src 'self' 'unsafe-inline'");
+    expect(policy).not.toContain("'unsafe-eval'");
+    expect(policy).toContain("style-src-elem 'self' 'unsafe-inline';");
+    expect(policy).toContain("style-src-attr 'unsafe-inline';");
+    expect(policy).toContain("object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     expect(packagedRendererContentSecurityPolicy("http://localhost:6123")).toContain(
       "connect-src 'self' ws://localhost:6123",
     );

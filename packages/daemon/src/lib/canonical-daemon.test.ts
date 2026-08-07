@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   canonicalDaemonUrl,
+  canonicalDaemonClaimAllowsStartupAttempt,
   clearCanonicalDaemonInfoIfOwned,
   clearCanonicalDaemonInfoIfUnchanged,
   getCanonicalDaemonClaimPath,
@@ -173,6 +174,33 @@ describe("canonical daemon info", () => {
     expect(readCanonicalDaemonInfo()?.protocolVersion).toBe(2);
   });
 
+  it("persists and reads back the optional stable environment id", async () => {
+    const port = await listen();
+    const environmentId = "0f4e9a7c-2f4a-4d55-9d2e-1f6cf3a3b210";
+    writeCanonicalDaemonInfo({ ...info(port), environmentId }, acquireClaim());
+
+    expect(readCanonicalDaemonInfo()?.environmentId).toBe(environmentId);
+    const raw = JSON.parse(readFileSync(getCanonicalDaemonInfoPath(), "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    expect(raw.environmentId).toBe(environmentId);
+  });
+
+  it("reads a pre-environment daemon record unchanged", async () => {
+    const port = await listen();
+    writeCanonicalDaemonInfo(info(port), acquireClaim());
+
+    const persisted = readCanonicalDaemonInfo();
+    expect(persisted?.port).toBe(port);
+    expect(persisted?.environmentId).toBeUndefined();
+    const raw = JSON.parse(readFileSync(getCanonicalDaemonInfoPath(), "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    expect("environmentId" in raw).toBe(false);
+  });
+
   it("does not serialize a local bypass token if one is present on the input object", async () => {
     const port = await listen();
     writeCanonicalDaemonInfo(
@@ -302,13 +330,16 @@ describe("canonical daemon info", () => {
   });
 
   it("allows exactly one process-lifetime canonical claim", () => {
+    expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(true);
     const claim = acquireClaim();
+    expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(false);
     expect(tryAcquireCanonicalDaemonClaim()).toMatchObject({
       status: "busy",
       owner: { claimId: claim.claimId, pid: process.pid },
     });
     expect(releaseCanonicalDaemonClaim(claim)).toBe(true);
     activeClaim = null;
+    expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(true);
 
     const replacement = tryAcquireCanonicalDaemonClaim();
     expect(replacement.status).toBe("acquired");
@@ -335,6 +366,7 @@ describe("canonical daemon info", () => {
     rmSync(tempDir, { recursive: true });
     symlinkSync(target, tempDir);
     try {
+      expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(false);
       expect(tryAcquireCanonicalDaemonClaim()).toEqual({
         status: "invalid",
         detail: "canonical daemon parent must not be a symbolic link",
@@ -352,6 +384,7 @@ describe("canonical daemon info", () => {
     rmSync(tempDir, { recursive: true });
     writeFileSync(tempDir, "not a directory", { mode: 0o600 });
     try {
+      expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(false);
       expect(tryAcquireCanonicalDaemonClaim()).toEqual({
         status: "invalid",
         detail: "canonical daemon parent must be a directory",

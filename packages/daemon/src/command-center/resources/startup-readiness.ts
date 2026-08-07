@@ -1,0 +1,250 @@
+/**
+ * PURE projection of the startup readiness ladder from real daemon facts.
+ *
+ * The daemon answers the ladder from state gathered at request time — there is
+ * no cached optimism here, and no rung is ever assumed from the fact that a
+ * previous request succeeded. The IO that gathers the facts lives in
+ * {@link ./startup-readiness-route.ts}; everything that DECIDES lives here.
+ *
+ * The catalog rung reuses {@link paneIdentities} — the same pure attachability
+ * classification the application-shell resource projects through, which in turn
+ * mirrors the semantic pane catalog's own window proof. Readiness therefore
+ * cannot drift from what an actual attach would do.
+ */
+import {
+  buildStartupReadinessLadder,
+  type DaemonInstanceIdentity,
+  type StartupReadinessCatalogPopulation,
+  type StartupReadinessLadder,
+  type StartupReadinessStuckReason,
+  type TerminalResourceUnavailableReason,
+} from "@tmux-ide/contracts";
+
+import type {
+  NativeTerminalInventoryPaneSnapshot,
+  NativeTerminalInventorySnapshot,
+} from "../../terminal/attachments/native-runtime.ts";
+import { paneIdentities, type ApplicationShellSessionFacts } from "./application-shell.ts";
+
+/** What a catalog read produced, or the fact that it could not be read at all. */
+export type StartupReadinessCatalogFacts =
+  | { readonly status: "discovery-failed" }
+  | {
+      readonly status: "read";
+      /** Registered workspaces the pass considered — zero means an empty fleet. */
+      readonly workspaceCount: number;
+      readonly attachablePaneCount: number;
+      /**
+       * The typed reason no pane is attachable, when panes exist but none
+       * resolve. Null when the catalog is clean (including a clean empty one).
+       */
+      readonly blockingReason: TerminalResourceUnavailableReason | null;
+    };
+
+export interface StartupReadinessFacts {
+  /** The daemon holds an owner capability, so privileged reads can be authorized. */
+  readonly ownerCapability: boolean;
+  /** The generation-stamped identity, or null when none could be established. */
+  readonly identity: DaemonInstanceIdentity | null;
+  /** Null when the catalog was never reached (a lower rung already blocked). */
+  readonly catalog: StartupReadinessCatalogFacts | null;
+  /** The attachment runtime's own startup-barrier verdict. */
+  readonly attachment: "ready" | "unready";
+}
+
+/**
+ * PURE. Fold one live terminal inventory into catalog facts.
+ *
+ * `workspaceCount` is supplied by the caller because a registered workspace
+ * whose tmux session has died contributes no panes at all — the inventory alone
+ * cannot tell "no workspaces" from "workspaces whose sessions are gone", and
+ * that is exactly the distinction the ladder must not blur.
+ */
+export function summarizeStartupReadinessCatalog(
+  inventory: NativeTerminalInventorySnapshot,
+  workspaceCount: number,
+): StartupReadinessCatalogFacts {
+  const globalIssue: TerminalResourceUnavailableReason | null = inventory.catalog
+    .invalidRuntimeProof
+    ? "invalid-runtime-proof"
+    : inventory.catalog.missingSemanticStamp
+      ? "missing-semantic-stamp"
+      : inventory.catalog.duplicateSemanticStamp
+        ? "duplicate-semantic-stamp"
+        : inventory.catalog.duplicateRuntimePaneBinding
+          ? "duplicate-runtime-pane-binding"
+          : null;
+
+  let attachablePaneCount = 0;
+  let blockingReason: TerminalResourceUnavailableReason | null = globalIssue;
+  for (const session of groupSessions(inventory.panes, globalIssue)) {
+    for (const identity of paneIdentities(session)) {
+      if (identity.attachability.status === "available") {
+        attachablePaneCount += 1;
+        continue;
+      }
+      blockingReason ??= identity.attachability.reason;
+    }
+  }
+  return {
+    status: "read",
+    workspaceCount,
+    attachablePaneCount,
+    blockingReason: attachablePaneCount > 0 ? null : blockingReason,
+  };
+}
+
+/** Regroup flat inventory panes into the per-session facts the projection consumes. */
+function groupSessions(
+  panes: readonly NativeTerminalInventoryPaneSnapshot[],
+  catalogIssue: TerminalResourceUnavailableReason | null,
+): readonly ApplicationShellSessionFacts[] {
+  const bySession = new Map<string, NativeTerminalInventoryPaneSnapshot[]>();
+  for (const pane of panes) {
+    const key = `${pane.workspaceName}\u0000${pane.sessionName}`;
+    const existing = bySession.get(key);
+    if (existing) existing.push(pane);
+    else bySession.set(key, [pane]);
+  }
+  const sessions: ApplicationShellSessionFacts[] = [];
+  for (const group of bySession.values()) {
+    const first = group[0]!;
+    sessions.push({
+      name: first.sessionName,
+      runtimeSessionId: first.sessionId,
+      dir: first.dir,
+      // Only the analyzer's own global faults belong here; window-level and
+      // per-pane faults are resolved inside the projection.
+      catalogIssue:
+        catalogIssue === "invalid-runtime-proof" ||
+        catalogIssue === "missing-semantic-stamp" ||
+        catalogIssue === "duplicate-semantic-stamp" ||
+        catalogIssue === "duplicate-runtime-pane-binding"
+          ? catalogIssue
+          : null,
+      panes: group.map((pane) => ({
+        semanticPaneId: pane.semanticPaneId,
+        index: pane.index,
+        title: pane.title,
+        currentCommand: pane.currentCommand,
+        active: pane.active,
+        role: pane.role,
+        name: pane.name,
+        type: pane.type,
+        runtimePaneId: pane.runtimePaneId,
+        windowPaneCount: pane.windowPaneCount,
+        windowId: pane.windowId,
+        windowStamp: pane.windowStamp ?? null,
+      })),
+    });
+  }
+  return sessions;
+}
+
+function catalogVerdict(
+  catalog: StartupReadinessCatalogFacts,
+):
+  | { readonly status: "satisfied"; readonly population: StartupReadinessCatalogPopulation }
+  | { readonly status: "stuck"; readonly reason: StartupReadinessStuckReason } {
+  if (catalog.status === "discovery-failed") {
+    return {
+      status: "stuck",
+      reason: { vocabulary: "startup-readiness", code: "catalog-discovery-failed" },
+    };
+  }
+  // An empty fleet is a satisfied rung. The user has adopted nothing yet;
+  // nothing is broken, and no surface should imply otherwise.
+  if (catalog.workspaceCount === 0) {
+    return {
+      status: "satisfied",
+      population: { fleet: "empty", workspaceCount: 0, attachablePaneCount: 0 },
+    };
+  }
+  if (catalog.attachablePaneCount > 0) {
+    return {
+      status: "satisfied",
+      population: {
+        fleet: "populated",
+        workspaceCount: catalog.workspaceCount,
+        attachablePaneCount: catalog.attachablePaneCount,
+      },
+    };
+  }
+  // Workspaces are registered but nothing in them can be attached. Prefer the
+  // typed catalog fault; fall back to "their sessions are not there".
+  return {
+    status: "stuck",
+    reason: catalog.blockingReason
+      ? { vocabulary: "terminal-resource-unavailable", code: catalog.blockingReason }
+      : { vocabulary: "startup-readiness", code: "catalog-sessions-unreachable" },
+  };
+}
+
+/**
+ * PURE. Project the ladder from gathered facts.
+ *
+ * `daemon-spawned` is satisfied by construction here: this projection only runs
+ * inside a daemon that is answering a request. The rung exists because the
+ * DESKTOP can observe it stuck (see `projectDesktopStartupReadiness`), which is
+ * precisely the case where no daemon-side answer is possible.
+ */
+export function projectStartupReadinessLadder(
+  facts: StartupReadinessFacts,
+  observedAt: string,
+): StartupReadinessLadder {
+  if (!facts.ownerCapability) {
+    return buildStartupReadinessLadder(
+      [
+        { status: "satisfied" },
+        {
+          status: "stuck",
+          reason: { vocabulary: "startup-readiness", code: "owner-capability-unavailable" },
+        },
+      ],
+      observedAt,
+    );
+  }
+  if (!facts.identity) {
+    return buildStartupReadinessLadder(
+      [
+        { status: "satisfied" },
+        { status: "satisfied" },
+        {
+          status: "stuck",
+          reason: { vocabulary: "startup-readiness", code: "daemon-identity-unavailable" },
+        },
+      ],
+      observedAt,
+    );
+  }
+  if (!facts.catalog) {
+    return buildStartupReadinessLadder(
+      [
+        { status: "satisfied" },
+        { status: "satisfied" },
+        { status: "satisfied" },
+        {
+          status: "stuck",
+          reason: { vocabulary: "startup-readiness", code: "catalog-discovery-failed" },
+        },
+      ],
+      observedAt,
+    );
+  }
+  const catalog = catalogVerdict(facts.catalog);
+  return buildStartupReadinessLadder(
+    [
+      { status: "satisfied" },
+      { status: "satisfied" },
+      { status: "satisfied" },
+      catalog,
+      facts.attachment === "ready"
+        ? { status: "satisfied" }
+        : {
+            status: "stuck",
+            reason: { vocabulary: "startup-readiness", code: "attachment-runtime-unready" },
+          },
+    ],
+    observedAt,
+  );
+}

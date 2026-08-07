@@ -18,6 +18,7 @@ import {
   type TerminalAttachmentViewerMode,
   type TerminalAttachmentViewport,
 } from "@tmux-ide/contracts";
+import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 
 import type {
   NativeTerminalAttachment,
@@ -33,6 +34,22 @@ export const NATIVE_TERMINAL_MAX_CONTROL_BYTES = 4 * 1024;
 export const NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES = 256 * 1024;
 export const NATIVE_TERMINAL_MAX_QUEUED_EVENT_BYTES = 1024 * 1024;
 export const NATIVE_TERMINAL_MAX_QUEUED_EVENTS = 32;
+/**
+ * The ceiling on ONE coalesced output entry.
+ *
+ * Adjacent output frames waiting in the queue are merged into a single write
+ * rather than delivered one at a time. The count bound above is the wrong
+ * shape for output on its own: a full-window repaint arrives as ~1 KiB frames,
+ * so a 200x50 terminal's FIRST paint is more than thirty of them and overflows
+ * a thirty-two entry queue while using three per cent of the byte budget —
+ * which is precisely how a correctly-behaving terminal killed its own
+ * attachment the moment the app started rendering whole windows (m50).
+ *
+ * Merging also makes the delivery cheaper: the consumer is awaited once per
+ * entry, so thirty-two awaited 1 KiB writes become one awaited 32 KiB write.
+ * The byte budget is untouched and remains the real safety property.
+ */
+export const NATIVE_TERMINAL_MAX_COALESCED_OUTPUT_BYTES = 256 * 1024;
 export const NATIVE_TERMINAL_MAX_CONTROL_FRAMES = 1_024;
 export const NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES = 128 * 1024;
 export const NATIVE_TERMINAL_MAX_DESCRIPTOR_LIFETIME_MS = 60_000;
@@ -43,6 +60,15 @@ export const NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW = 256;
 export const NATIVE_TERMINAL_MAX_CONNECTION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 export const NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS = 5_000;
 export const NATIVE_TERMINAL_INPUT_ACK_TIMEOUT_MS = 5_000;
+/**
+ * Ceiling on the daemon's answer once the redemption frame is on the wire.
+ * The ticket TTL bounds credential DELIVERY; concurrent attachments redeem
+ * through one serialized daemon queue whose execution legitimately outlives a
+ * short ticket, so after send the daemon owns expiry (it stamps frame arrival
+ * and enforces its own bounded processing budget) and this local ceiling only
+ * catches a daemon that never answers at all.
+ */
+export const NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS = 75_000;
 
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
@@ -397,6 +423,7 @@ function controlError(frame: ErrorFrame): NativeTerminalTransportError {
     "attachment-renewal-failed": "The terminal attachment could not renew its lease.",
     "input-backpressure-unavailable": INPUT_UNAVAILABLE.reason,
     "resize-unavailable": "The daemon could not resize this terminal attachment.",
+    "ticket-expired": "The terminal attachment ticket expired before the daemon received it.",
   };
   return transportError(
     frame.code,
@@ -461,6 +488,7 @@ class NativeTerminalWebSocketSession {
   #resolveConnect!: (result: NativeTerminalConnectResult) => void;
   #redemptionFrame: string | null;
   #cancelExpiry: (() => void) | null = null;
+  #cancelRedeemResponse: (() => void) | null = null;
   #cancelLifetime: (() => void) | null = null;
   #phase: "opening" | "redeeming" | "live" | "closed" = "opening";
   #generation: number | null = null;
@@ -570,6 +598,25 @@ class NativeTerminalWebSocketSession {
     this.#phase = "redeeming";
     const sendError = this.#sendControl(frame);
     if (sendError) return;
+    // The ticket bounded delivery and the frame is now on the wire; expiry
+    // authority moves to the daemon, which stamps arrival. Keep only a bounded
+    // local ceiling so a daemon that never answers cannot hold the card open.
+    this.#cancelExpiry?.();
+    this.#cancelExpiry = null;
+    this.#cancelRedeemResponse = this.#schedule(
+      () =>
+        this.#retire(
+          transportError(
+            "redeem-timeout",
+            "The daemon did not answer the terminal redemption in time.",
+            true,
+          ),
+          false,
+          1008,
+          "redeem-timeout",
+        ),
+      NATIVE_TERMINAL_REDEEM_RESPONSE_TIMEOUT_MS,
+    );
   };
 
   readonly #onMessage = (event: NativeTerminalSocketEvent): void => {
@@ -702,6 +749,8 @@ class NativeTerminalWebSocketSession {
       this.#phase = "live";
       this.#cancelExpiry?.();
       this.#cancelExpiry = null;
+      this.#cancelRedeemResponse?.();
+      this.#cancelRedeemResponse = null;
       this.#cancelLifetime = this.#schedule(
         () =>
           this.#retire(
@@ -1133,6 +1182,7 @@ class NativeTerminalWebSocketSession {
 
   #queueEvent(event: NativeTerminalEvent, byteLength: number): void {
     if (this.#phase === "closed" && event.type === "output") return;
+    if (this.#coalesceOutput(event, byteLength)) return;
     if (
       this.#eventCount >= NATIVE_TERMINAL_MAX_QUEUED_EVENTS ||
       byteLength > NATIVE_TERMINAL_MAX_QUEUED_EVENT_BYTES - this.#eventBytes
@@ -1153,6 +1203,30 @@ class NativeTerminalWebSocketSession {
     this.#eventCount += 1;
     this.#eventBytes += byteLength;
     this.#drainEvents();
+  }
+
+  /**
+   * Merge one output event into the queue's tail when both are output.
+   *
+   * Only entries still in the array are candidates — `#drainEvents` shifts an
+   * entry off before awaiting it, so the one in flight is never reachable here
+   * and cannot be mutated underneath its consumer.
+   */
+  #coalesceOutput(event: NativeTerminalEvent, byteLength: number): boolean {
+    if (event.type !== "output") return false;
+    const tail = this.#eventQueue.at(-1);
+    if (!tail || tail.event.type !== "output") return false;
+    const merged = tail.byteLength + byteLength;
+    if (merged > NATIVE_TERMINAL_MAX_COALESCED_OUTPUT_BYTES) return false;
+    const bytes = new Uint8Array(merged);
+    bytes.set(tail.event.bytes, 0);
+    bytes.set(event.bytes, tail.event.bytes.byteLength);
+    this.#eventQueue[this.#eventQueue.length - 1] = {
+      event: { type: "output", bytes },
+      byteLength: merged,
+    };
+    this.#eventBytes += byteLength;
+    return true;
   }
 
   #drainEvents(): void {
@@ -1230,6 +1304,8 @@ class NativeTerminalWebSocketSession {
     this.#inputLimits = null;
     this.#cancelExpiry?.();
     this.#cancelExpiry = null;
+    this.#cancelRedeemResponse?.();
+    this.#cancelRedeemResponse = null;
     this.#cancelLifetime?.();
     this.#cancelLifetime = null;
     this.#socket.removeEventListener("open", this.#onOpen);
@@ -1253,7 +1329,10 @@ class NativeTerminalWebSocketSession {
         this.#socket.readyState === WS_CLOSING)
     ) {
       try {
-        this.#socket.close(closeCode, closeReason?.slice(0, 123));
+        this.#socket.close(
+          browserInitiatedWebSocketCloseCode(closeCode),
+          closeReason?.slice(0, 123),
+        );
       } catch {
         // Local authority is already retired.
       }
@@ -1270,23 +1349,73 @@ class NativeTerminalWebSocketSession {
   }
 }
 
+/**
+ * Structured issue failure a host adapter can throw so the transport surfaces
+ * the daemon's real attachment code/reason instead of a single generic message.
+ * The masked `attachment-issue-failed` code is what made an
+ * `interactive-viewer-conflict` (a held lease from a prior attach) undebuggable.
+ */
+export class NativeTerminalIssueError extends Error {
+  readonly code: string;
+  readonly reason: string;
+  readonly retryable: boolean;
+  constructor(code: string, reason: string, retryable: boolean) {
+    super(reason);
+    this.name = "NativeTerminalIssueError";
+    this.code = code;
+    this.reason = reason;
+    this.retryable = retryable;
+  }
+}
+
+// Card-local bound on a surfaced reason. Issue reasons are already schema-bounded
+// and credential-redacted at the daemon, but the injected host result stays
+// untrusted until this checks it.
+function boundedIssueReason(reason: unknown): string | null {
+  return typeof reason === "string" &&
+    reason.length > 0 &&
+    reason.length <= 240 &&
+    !/[\0\r\n]/u.test(reason)
+    ? reason
+    : null;
+}
+
+const GENERIC_ISSUE_ERROR = transportError(
+  "attachment-issue-failed",
+  "The desktop host could not issue a terminal attachment.",
+  true,
+);
+
+/** Preserve a thrown structured issue error; never let it collapse to generic. */
+function issueErrorToTransportError(error: unknown): NativeTerminalTransportError {
+  if (error instanceof NativeTerminalIssueError && ErrorCodePattern.test(error.code)) {
+    const reason = boundedIssueReason(error.reason);
+    if (reason) return transportError(error.code, reason, error.retryable);
+  }
+  return GENERIC_ISSUE_ERROR;
+}
+
+type IssueOutcome =
+  | { readonly status: "ok"; readonly value: unknown }
+  | { readonly status: "error"; readonly error?: unknown };
+
 function issueWithTimeout(
   issueAttachment: NativeTerminalIssueAttachment,
   request: TerminalAttachRequest,
   timeoutMs: number,
   schedule: (callback: () => void, delayMs: number) => () => void,
-): Promise<{ readonly status: "ok"; readonly value: unknown } | { readonly status: "error" }> {
+): Promise<IssueOutcome> {
   return new Promise((resolve) => {
     let settled = false;
     let cancelTimeout = (): void => undefined;
-    const finish = (
-      result: { readonly status: "ok"; readonly value: unknown } | { readonly status: "error" },
-    ): void => {
+    const finish = (result: IssueOutcome): void => {
       if (settled) return;
       settled = true;
       cancelTimeout();
       resolve(result);
     };
+    // A timeout carries no structured error, so it stays the generic retryable
+    // failure; only an adapter rejection can surface a specific daemon code.
     const scheduledCancellation = schedule(() => finish({ status: "error" }), timeoutMs);
     cancelTimeout = scheduledCancellation;
     if (settled) scheduledCancellation();
@@ -1294,7 +1423,7 @@ function issueWithTimeout(
       .then(() => issueAttachment(request))
       .then(
         (value) => finish({ status: "ok", value }),
-        () => finish({ status: "error" }),
+        (error: unknown) => finish({ status: "error", error }),
       );
   });
 }
@@ -1339,14 +1468,7 @@ export function createNativeTerminalWebSocketTransport(
         schedule,
       );
       if (issued.status === "error") {
-        return {
-          status: "error",
-          error: transportError(
-            "attachment-issue-failed",
-            "The desktop host could not issue a terminal attachment.",
-            true,
-          ),
-        };
+        return { status: "error", error: issueErrorToTransportError(issued.error) };
       }
       const descriptor = validateIssueDescriptor(issued.value, parsedRequest.data, now());
       if (!descriptor) {

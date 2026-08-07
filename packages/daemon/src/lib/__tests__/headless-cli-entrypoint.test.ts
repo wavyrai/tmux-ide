@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   chmodSync,
@@ -204,6 +204,12 @@ async function listenWithProtocol(protocolVersion: number): Promise<number> {
 }
 
 describe.sequential("shipped tmux-ide --headless entrypoint", () => {
+  // Each case spawns the real shipped CLI (node subprocess) that boots an
+  // embedded daemon. Under parallel load those spawns are starved past the
+  // per-case budgets, so widen both hook and test budgets here. The existing
+  // per-case timeouts remain as documentation of intent; assertions unchanged.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
   it("documents the real root flag and preserves the root version command", async () => {
     const help = await waitForExit(spawnCli(["--help"]));
     expect(help.code).toBe(0);

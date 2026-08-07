@@ -1,20 +1,48 @@
 import { z } from "zod";
 import {
+  DaemonChildOutputTailSchemaZ,
+  DesktopDaemonHostIssueCodeSchemaZ,
+} from "./desktop-daemon-issue.ts";
+// The daemon issue vocabulary lives in a leaf module so the readiness ladder
+// can read it without importing this file back; it stays part of this contract's
+// public surface.
+export {
+  DAEMON_CHILD_OUTPUT_MAX_LINES,
+  DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH,
+  DaemonChildOutputTailSchemaZ,
+  DesktopDaemonHostIssueCodeSchemaZ,
+} from "./desktop-daemon-issue.ts";
+export type { DaemonChildOutputTail, DesktopDaemonHostIssueCode } from "./desktop-daemon-issue.ts";
+import { StartupReadinessLadderSchemaZ } from "./startup-readiness.ts";
+import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellResourceSchemaZ,
 } from "./application-shell-resource.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
-import type {
-  TerminalAttachRequest,
-  TerminalAttachmentIssueResult,
-} from "./terminal-attachments.ts";
-import type {
-  WorkspacePaneCreateHostResult,
-  WorkspacePaneCreateInvocation,
-} from "./workspace-pane-creation.ts";
+import { CommandAvailabilitySchemaZ } from "./commands.ts";
+import type { DesktopUpdateStatus } from "./desktop-update.ts";
+import {
+  WorkspaceFilePreviewEnvelopeV1SchemaZ,
+  WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+} from "./workspace-files-resource.ts";
+import {
+  WorkspaceChangeDiffEnvelopeV1SchemaZ,
+  WorkspaceChangesCatalogEnvelopeV1SchemaZ,
+} from "./workspace-changes-resource.ts";
+import {
+  WorkspaceChangeResourceIdSchemaZ,
+  WorkspaceFileResourceIdSchemaZ,
+} from "./workspace-resource-identity.ts";
+import { FleetCatalogResourceV1SchemaZ } from "./fleet-catalog.ts";
+import type { WorkspaceOpenHostResult } from "./workspace-open.ts";
+// Type-only, and deliberately so: `daemon-resource-request.ts` imports the
+// result schemas declared below, so a value import here would close a module
+// cycle. Types are erased, this edge is not.
+import type { DaemonResourceMethods } from "./daemon-resource-request.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 5 as const;
+export const DESKTOP_HOST_API_VERSION = 13 as const;
 
 /** Stable tuple origin for the packaged, sandboxed Electron renderer. */
 export const DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide" as const;
@@ -65,23 +93,25 @@ export const DesktopDaemonHostDescriptorSchemaZ = z
     productVersion: z.string().trim().min(1),
     instanceId: z.uuid(),
     startedAt: z.iso.datetime({ offset: true }),
+    /** Stable environment identity; absent until a daemon that mints it runs. */
+    environmentId: z.uuid().optional(),
   })
   .strict();
 
-export const DesktopDaemonHostIssueCodeSchemaZ = z.enum([
-  "record-missing",
+/**
+ * Why the desktop daemon supervisor stopped its restart loop. Structural
+ * failures only: transient failures (crashes, timeouts, unreachable probes)
+ * never halt the loop and therefore never carry one of these.
+ * Added on m42/supervision (additive; m42/connection-state rebases over this).
+ */
+export const DesktopDaemonSupervisorFatalReasonSchemaZ = z.enum([
+  "protocol-incompatible",
   "record-invalid",
   "endpoint-not-loopback",
-  "protocol-incompatible",
-  "process-not-running",
-  "identity-unreachable",
   "identity-mismatch",
-  "health-unreachable",
   "health-mismatch",
-  "probe-failed",
-  "probe-timeout",
-  "resource-broker-failed",
-  "preview-only",
+  "spawn-failed",
+  "child-fatal-exit",
 ]);
 
 const DesktopDaemonHostIssueSchemaFields = {
@@ -92,6 +122,25 @@ const DesktopDaemonHostIssueSchemaFields = {
 const DesktopDaemonCapabilityIssueSchemaFields = {
   code: DesktopDaemonHostIssueCodeSchemaZ,
   reason: z.string().min(1).max(240),
+  /**
+   * The daemon child's captured last words, when this desktop generation owned
+   * a child that produced any. Absent when the daemon was never ours to spawn
+   * (an attached foreign daemon) or when it printed nothing.
+   */
+  childOutput: DaemonChildOutputTailSchemaZ.optional(),
+  /**
+   * The daemon's OWN startup readiness ladder, read while this disconnected
+   * state was composed.
+   *
+   * A daemon can be answering HTTP while this desktop still cannot use it — a
+   * changed generation, a broker that could not be built, an identity record
+   * that no longer matches. That is exactly when the ladder is worth having:
+   * the two rungs only the daemon can answer (`credential-held`,
+   * `attachment-issuable`) and the honest empty-fleet distinction exist nowhere
+   * else. Absent when the daemon could not be read at all, and the renderer
+   * then falls back to what the host itself observed.
+   */
+  startupReadiness: StartupReadinessLadderSchemaZ.optional(),
 } as const;
 
 export const DesktopDaemonHostStateSchemaZ = z.discriminatedUnion("status", [
@@ -145,6 +194,7 @@ export const DesktopDaemonCapabilityErrorCodeSchemaZ = z.enum([
   "invalid-response",
   "daemon-identity-mismatch",
   "request-failed",
+  "resource-changed",
   "event-unavailable",
   "protocol-error",
   "disposed",
@@ -172,10 +222,30 @@ export const DesktopDaemonListWorkspacesResultSchemaZ = z.discriminatedUnion("st
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
+export const DesktopDaemonCapabilitiesResultSchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("ok"),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      capabilities: z
+        .object({
+          appWindowMutation: CommandAvailabilitySchemaZ,
+        })
+        .strict(),
+    })
+    .strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
 export const DesktopDaemonFetchApplicationShellRequestSchemaZ = z
   .object({
     workspaceName: DesktopWorkspaceNameSchemaZ,
-    resourceVersion: z.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION).optional(),
+    resourceVersion: z
+      .union([
+        z.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION),
+        z.literal(APPLICATION_SHELL_RESOURCE_V3_VERSION),
+      ])
+      .optional(),
   })
   .strict();
 
@@ -189,6 +259,84 @@ export const DesktopApplicationShellTargetSchemaZ = z
 
 export const DesktopDaemonFetchApplicationShellResultSchemaZ = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ok"), envelope: ApplicationShellResourceSchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+/**
+ * Renderer-issued read requests for the native Files and Changes resources.
+ * The daemon-issued opaque ids are the only cursor into a workspace; callers
+ * never supply a path. Directory omission requests the workspace root catalog.
+ */
+export const DesktopDaemonFetchWorkspaceFilesRequestSchemaZ = z
+  .object({
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    directoryId: WorkspaceFileResourceIdSchemaZ.optional(),
+  })
+  .strict();
+
+export const DesktopDaemonFetchWorkspaceFilesResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), envelope: WorkspaceFilesCatalogEnvelopeV1SchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+export const DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ = z
+  .object({
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    fileId: WorkspaceFileResourceIdSchemaZ,
+  })
+  .strict();
+
+export const DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), envelope: WorkspaceFilePreviewEnvelopeV1SchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+export const DesktopDaemonFetchWorkspaceChangesRequestSchemaZ = z
+  .object({ workspaceName: DesktopWorkspaceNameSchemaZ })
+  .strict();
+
+export const DesktopDaemonFetchWorkspaceChangesResultSchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({ status: z.literal("ok"), envelope: WorkspaceChangesCatalogEnvelopeV1SchemaZ })
+    .strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+export const DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ = z
+  .object({
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    changeId: WorkspaceChangeResourceIdSchemaZ,
+  })
+  .strict();
+
+export const DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), envelope: WorkspaceChangeDiffEnvelopeV1SchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+/**
+ * The fleet catalog is a single, workspace-free read: it enumerates the whole
+ * adopted tmux fleet (see {@link ./fleet-catalog.ts}). The renderer supplies no
+ * cursor — there is one catalog per daemon generation — so the host method takes
+ * no request payload and the result is the parsed, generation-stamped resource.
+ */
+export const DesktopDaemonFetchFleetCatalogResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), envelope: FleetCatalogResourceV1SchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+/**
+ * The daemon's own startup readiness ladder, read on demand.
+ *
+ * A disconnected capability state already carries the ladder the host read
+ * while composing it. This resource covers the other case: the daemon IS
+ * connected and some surface below it is degraded, where the ladder's two
+ * daemon-only rungs (`credential-held`, `attachment-issuable`) are the only
+ * account of the stuck step. Diagnostics — an error here means no ladder was
+ * readable, never that the daemon is unusable.
+ */
+export const DesktopDaemonStartupReadinessResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), ladder: StartupReadinessLadderSchemaZ }).strict(),
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
@@ -211,8 +359,50 @@ export const DesktopDaemonSubscriptionIdSchemaZ = z
   .string()
   .regex(/^desktop-subscription-[1-9][0-9]{0,9}$/u);
 
+/**
+ * Derived transport health of the single daemon event connection, published by
+ * the main-process connection supervisor — the ONE owner of transport retry.
+ * Renderer surfaces derive their connection status from these states instead
+ * of inferring health from the presence of a transport object or from their
+ * own retry bookkeeping.
+ *
+ * - `idle`         — no live subscription requires a socket.
+ * - `connecting`   — a socket exists but its hello handshake has not verified.
+ * - `connected`    — the socket is open and generation-verified.
+ * - `degraded`     — a transport fault was observed; recovery is being decided.
+ * - `reconnecting` — the supervisor owns a scheduled retry (`attempt` of
+ *                    `maximumAttempts`, firing at `nextRetryAt` epoch ms).
+ * - `stopped`      — the bounded retry budget is exhausted; only an explicit
+ *                    retry or a daemon-generation change restarts it.
+ */
+export const DesktopDaemonTransportStateSchemaZ = z.discriminatedUnion("phase", [
+  z.object({ phase: z.literal("idle") }).strict(),
+  z.object({ phase: z.literal("connecting") }).strict(),
+  z.object({ phase: z.literal("connected") }).strict(),
+  z.object({ phase: z.literal("degraded"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+  z
+    .object({
+      phase: z.literal("reconnecting"),
+      attempt: z.number().int().min(1).max(1_000),
+      maximumAttempts: z.number().int().min(1).max(1_000),
+      nextRetryAt: z.number().int().nonnegative(),
+      error: DesktopDaemonCapabilityErrorSchemaZ,
+    })
+    .strict(),
+  z.object({ phase: z.literal("stopped"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
 export const DesktopDaemonEventSchemaZ = z.discriminatedUnion("type", [
   z.object({ type: z.literal("workspaces.changed") }).strict(),
+  /**
+   * The adopted-session fleet changed — its composition (a session adopted or
+   * gone) OR the ground-truth agent status of some session in it. Workspace-free
+   * like `workspaces.changed`: a fleet-catalog consumer re-fetches the whole
+   * catalog. The daemon carries these as two session-agnostic broadcast frames
+   * (`fleet.changed` / `agent-status.changed`); the main-process broker folds
+   * both into this single renderer-safe invalidation.
+   */
+  z.object({ type: z.literal("fleet.changed") }).strict(),
   z
     .object({
       type: z.literal("application-shell.changed"),
@@ -224,6 +414,18 @@ export const DesktopDaemonEventSchemaZ = z.discriminatedUnion("type", [
       type: z.literal("connection.changed"),
       state: z.enum(["live", "degraded"]),
       error: DesktopDaemonCapabilityErrorSchemaZ.nullable(),
+    })
+    .strict(),
+  /**
+   * The supervisor-derived transport state changed. Additive companion to
+   * `connection.changed`: that event stays the coarse live/degraded signal,
+   * while this one carries the full typed machine state (retry attempt,
+   * next-retry time, fatal stop) so status displays derive rather than infer.
+   */
+  z
+    .object({
+      type: z.literal("transport.changed"),
+      transport: DesktopDaemonTransportStateSchemaZ,
     })
     .strict(),
   z
@@ -303,6 +505,13 @@ export const DesktopDaemonEventWireEnvelopeSchemaZ = z
   })
   .strict();
 
+/**
+ * First-run onboarding state carried at bootstrap. `introAcknowledged` is a
+ * persisted, machine-local marker (see the daemon's onboarding-marker) so the
+ * gentle intro layer shows exactly once and never returns after dismissal.
+ */
+export const DesktopOnboardingStateSchemaZ = z.object({ introAcknowledged: z.boolean() }).strict();
+
 export const DesktopHostBootstrapSchemaZ = z
   .object({
     apiVersion: z.literal(DESKTOP_HOST_API_VERSION),
@@ -312,10 +521,10 @@ export const DesktopHostBootstrapSchemaZ = z
     theme: DesktopThemeStateSchemaZ,
     window: DesktopWindowStateSchemaZ,
     daemon: DesktopDaemonCapabilityStateSchemaZ,
+    onboarding: DesktopOnboardingStateSchemaZ,
   })
   .strict();
 
-export const DesktopMenuResultSchemaZ = z.object({ status: z.literal("unavailable") }).strict();
 export const DesktopDirectorySelectionSchemaZ = z.object({ path: z.string().min(1) }).strict();
 
 export type DesktopRuntimeKind = z.infer<typeof DesktopRuntimeKindSchemaZ>;
@@ -323,7 +532,9 @@ export type DesktopPlatform = z.infer<typeof DesktopPlatformSchemaZ>;
 export type DesktopThemeState = z.infer<typeof DesktopThemeStateSchemaZ>;
 export type DesktopWindowState = z.infer<typeof DesktopWindowStateSchemaZ>;
 export type DesktopDaemonHostDescriptor = z.infer<typeof DesktopDaemonHostDescriptorSchemaZ>;
-export type DesktopDaemonHostIssueCode = z.infer<typeof DesktopDaemonHostIssueCodeSchemaZ>;
+export type DesktopDaemonSupervisorFatalReason = z.infer<
+  typeof DesktopDaemonSupervisorFatalReasonSchemaZ
+>;
 export type DesktopDaemonHostState = z.infer<typeof DesktopDaemonHostStateSchemaZ>;
 export type DesktopDaemonCapabilityState = z.infer<typeof DesktopDaemonCapabilityStateSchemaZ>;
 export type DesktopDaemonCapabilityErrorCode = z.infer<
@@ -334,6 +545,9 @@ export type DesktopDaemonWorkspaceSummary = z.infer<typeof DesktopDaemonWorkspac
 export type DesktopDaemonListWorkspacesResult = z.infer<
   typeof DesktopDaemonListWorkspacesResultSchemaZ
 >;
+export type DesktopDaemonCapabilitiesResult = z.infer<
+  typeof DesktopDaemonCapabilitiesResultSchemaZ
+>;
 export type DesktopDaemonFetchApplicationShellRequest = z.infer<
   typeof DesktopDaemonFetchApplicationShellRequestSchemaZ
 >;
@@ -341,9 +555,37 @@ export type DesktopApplicationShellTarget = z.infer<typeof DesktopApplicationShe
 export type DesktopDaemonFetchApplicationShellResult = z.infer<
   typeof DesktopDaemonFetchApplicationShellResultSchemaZ
 >;
+export type DesktopDaemonFetchWorkspaceFilesRequest = z.infer<
+  typeof DesktopDaemonFetchWorkspaceFilesRequestSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceFilesResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceFilesResultSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceFilePreviewRequest = z.infer<
+  typeof DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceFilePreviewResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceChangesRequest = z.infer<
+  typeof DesktopDaemonFetchWorkspaceChangesRequestSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceChangesResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceChangesResultSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceChangeDiffRequest = z.infer<
+  typeof DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceChangeDiffResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ
+>;
+export type DesktopDaemonFetchFleetCatalogResult = z.infer<
+  typeof DesktopDaemonFetchFleetCatalogResultSchemaZ
+>;
 export type DesktopDaemonEventSubscriptionRequest = z.infer<
   typeof DesktopDaemonEventSubscriptionRequestSchemaZ
 >;
+export type DesktopDaemonTransportState = z.infer<typeof DesktopDaemonTransportStateSchemaZ>;
 export type DesktopDaemonEvent = z.infer<typeof DesktopDaemonEventSchemaZ>;
 export type DesktopDaemonRefreshConnectionResult = z.infer<
   typeof DesktopDaemonRefreshConnectionResultSchemaZ
@@ -351,10 +593,13 @@ export type DesktopDaemonRefreshConnectionResult = z.infer<
 export type DesktopDaemonSubscribeWireResult = z.infer<
   typeof DesktopDaemonSubscribeWireResultSchemaZ
 >;
+export type DesktopDaemonStartupReadinessResult = z.infer<
+  typeof DesktopDaemonStartupReadinessResultSchemaZ
+>;
 /** @deprecated Compatibility name for existing host bootstrap consumers. */
 export type DesktopDaemonPreflight = DesktopDaemonHostState;
+export type DesktopOnboardingState = z.infer<typeof DesktopOnboardingStateSchemaZ>;
 export type DesktopHostBootstrap = z.infer<typeof DesktopHostBootstrapSchemaZ>;
-export type DesktopMenuResult = z.infer<typeof DesktopMenuResultSchemaZ>;
 export type DesktopDirectorySelection = z.infer<typeof DesktopDirectorySelectionSchemaZ>;
 export type DesktopHostUnsubscribe = () => void;
 export type DesktopDaemonHostSubscriptionResult =
@@ -363,42 +608,48 @@ export type DesktopDaemonHostSubscriptionResult =
 
 /**
  * The complete renderer-visible desktop surface. It intentionally has no
- * generic send/invoke/eval/command escape hatch. Every new capability must be
- * named and reviewed here first.
+ * generic send/invoke/eval/command escape hatch: `daemon` is generic in shape
+ * but not in reach — every reachable resource is a named variant of
+ * {@link DaemonResourceRequest}, so a new capability is still declared and
+ * reviewed in the contract before any client can ask for it.
  */
 export interface HostCapabilities {
   readonly apiVersion: typeof DESKTOP_HOST_API_VERSION;
   bootstrap(): Promise<DesktopHostBootstrap>;
-  readonly lifecycle: {
-    requestQuit(): Promise<void>;
-  };
   readonly window: {
-    getState(): Promise<DesktopWindowState>;
     minimize(): Promise<DesktopWindowState>;
     toggleMaximized(): Promise<DesktopWindowState>;
     close(): Promise<void>;
     onStateChanged(listener: (state: DesktopWindowState) => void): DesktopHostUnsubscribe;
   };
-  readonly menu: {
-    showApplicationMenu(): Promise<DesktopMenuResult>;
+  readonly workspace: {
+    openProjectDirectory(): Promise<WorkspaceOpenHostResult | null>;
   };
-  readonly dialog: {
-    selectProjectDirectory(): Promise<DesktopDirectorySelection | null>;
+  readonly onboarding: {
+    /** Persist that the first-run intro layer has been dismissed. Idempotent. */
+    acknowledgeIntro(): Promise<void>;
   };
   readonly theme: {
-    getState(): Promise<DesktopThemeState>;
     onChanged(listener: (state: DesktopThemeState) => void): DesktopHostUnsubscribe;
   };
-  readonly daemon: {
-    createWorkspacePane(
-      invocation: WorkspacePaneCreateInvocation,
-    ): Promise<WorkspacePaneCreateHostResult>;
-    issueTerminalAttachment(request: TerminalAttachRequest): Promise<TerminalAttachmentIssueResult>;
-    refreshConnection(): Promise<DesktopDaemonRefreshConnectionResult>;
-    listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
-    fetchApplicationShell(
-      request: DesktopDaemonFetchApplicationShellRequest,
-    ): Promise<DesktopDaemonFetchApplicationShellResult>;
+  /**
+   * Packaged-app auto-update. Renderer-safe by construction: a coarse phase plus
+   * two version strings, never a URL, path, checksum, or signature. The renderer
+   * can only observe; the check/download/verify/stage/apply all run in main.
+   */
+  readonly update: {
+    getStatus(): Promise<DesktopUpdateStatus>;
+    onStatusChanged(listener: (status: DesktopUpdateStatus) => void): DesktopHostUnsubscribe;
+  };
+  /**
+   * Every daemon read and mutation, plus the one push registration.
+   *
+   * The named methods are DERIVED from {@link DaemonResourceRequestSchemaZ} —
+   * adding a variant there adds the method here, and no hand-maintained mirror
+   * of this list can drift from it. `subscribe` stays declared by hand because
+   * it is not a request: it registers a listener and hands back a teardown.
+   */
+  readonly daemon: DaemonResourceMethods & {
     subscribe(
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,

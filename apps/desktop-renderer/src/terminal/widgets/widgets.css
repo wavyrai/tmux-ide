@@ -1,0 +1,416 @@
+/*
+ * Rich pane widgets (m49.7).
+ *
+ * A widget is a first-class surface, not a preview: it takes the app's type
+ * ramp, its elevation and its palette, so a rendered plan sitting next to a
+ * terminal reads as part of the same product rather than as an embedded viewer.
+ *
+ * Everything here is authored against design tokens. No colour, size or shadow
+ * is spelled out in this file that the rest of the app does not already use.
+ */
+
+.widget-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  /* Opaque on purpose: this covers the grid rather than replacing it, and a
+     translucent panel would let the terminal text show through the document. */
+  background: var(--tmux-ide-surface-raised, var(--sf-background));
+  color: var(--tmux-ide-text-primary);
+  font-family: var(--desktop-ui-font, -apple-system, BlinkMacSystemFont, system-ui, sans-serif);
+  font-size: var(--sf-text-body-2);
+  line-height: 1.55;
+}
+
+.widget-surface__bar {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--tmi-space-2);
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--tmux-ide-border-default) 76%, transparent);
+  background: color-mix(in oklab, var(--tmux-ide-surface-header) 90%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+}
+
+.widget-surface__label {
+  font-size: var(--sf-text-caption-2);
+  font-weight: var(--sf-weight-medium);
+  color: var(--tmux-ide-text-secondary);
+  letter-spacing: var(--sf-tracking-eyebrow, 0.04em);
+  text-transform: uppercase;
+}
+
+/* The way out, stated where the user is rather than in documentation. */
+.widget-surface__hint {
+  font-size: var(--sf-text-caption-3);
+  color: var(--tmux-ide-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.widget-surface__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--tmi-space-4, 16px);
+}
+
+.widget-surface__refusal {
+  max-width: 60ch;
+  color: var(--tmux-ide-text-secondary);
+  font-size: var(--sf-text-caption-1);
+}
+
+.widget-surface__refusal code {
+  font-family: var(--desktop-mono-font);
+  font-size: 0.95em;
+}
+
+.widget-surface__loading {
+  color: var(--tmux-ide-text-muted);
+  font-size: var(--sf-text-caption-1);
+}
+
+/* --- markdown ----------------------------------------------------------- */
+
+.widget-markdown {
+  /* A measure, not a width: long prose set to the full width of a wide pane is
+     unreadable no matter how good the type is. */
+  max-width: 78ch;
+}
+
+.widget-markdown > :first-child {
+  margin-top: 0;
+}
+
+.widget-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.widget-markdown h1,
+.widget-markdown h2,
+.widget-markdown h3,
+.widget-markdown h4,
+.widget-markdown h5,
+.widget-markdown h6 {
+  margin: 1.4em 0 0.5em;
+  color: var(--tmux-ide-text-bright);
+  font-weight: var(--sf-weight-semibold, 600);
+  line-height: 1.25;
+}
+
+.widget-markdown h1 {
+  font-size: var(--sf-text-title);
+}
+
+.widget-markdown h2 {
+  font-size: var(--sf-text-headline);
+}
+
+.widget-markdown h3 {
+  font-size: var(--sf-text-body);
+}
+
+.widget-markdown h4,
+.widget-markdown h5,
+.widget-markdown h6 {
+  font-size: var(--sf-text-body-2);
+  color: var(--tmux-ide-text-secondary);
+}
+
+.widget-markdown p,
+.widget-markdown ul,
+.widget-markdown ol,
+.widget-markdown blockquote,
+.widget-markdown pre,
+.widget-markdown .widget-markdown__table-scroll {
+  margin: 0 0 0.85em;
+}
+
+.widget-markdown ul,
+.widget-markdown ol {
+  padding-left: 1.4em;
+}
+
+.widget-markdown li {
+  margin: 0.2em 0;
+}
+
+.widget-markdown li > .widget-markdown__nested,
+.widget-markdown li p {
+  margin: 0;
+}
+
+.widget-markdown li[data-task] {
+  list-style: none;
+  margin-left: -1.2em;
+}
+
+.widget-markdown li[data-task] input {
+  margin-right: 0.5em;
+}
+
+.widget-markdown a {
+  color: var(--tmux-ide-text-link);
+  text-decoration-color: color-mix(in oklch, currentcolor 40%, transparent);
+  text-underline-offset: 2px;
+}
+
+.widget-markdown code {
+  padding: 0.1em 0.35em;
+  border-radius: var(--tmi-radius-sm, 4px);
+  background: var(--tmux-ide-surface-sunken, transparent);
+  font-family: var(--desktop-mono-font);
+  font-size: 0.92em;
+}
+
+.widget-markdown__code {
+  padding: var(--tmi-space-3, 12px);
+  border: 1px solid color-mix(in srgb, var(--tmux-ide-border-default) 82%, transparent);
+  border-radius: var(--tmi-radius-md, 8px);
+  background: var(--tmux-ide-surface-sunken, transparent);
+  box-shadow:
+    var(--tmi-shadow-inset-track),
+    inset 0 1px 0 color-mix(in srgb, white 3%, transparent);
+  overflow-x: auto;
+}
+
+.widget-markdown__code code {
+  padding: 0;
+  background: none;
+  font-size: var(--sf-text-caption-1);
+  line-height: 1.5;
+}
+
+.widget-markdown blockquote {
+  padding: var(--tmi-space-2, 8px) var(--tmi-space-3, 12px);
+  border-left: 3px solid var(--tmux-ide-border-focused);
+  border-radius: 0 var(--tmi-radius-md, 8px) var(--tmi-radius-md, 8px) 0;
+  color: var(--tmux-ide-text-secondary);
+  background: color-mix(in srgb, var(--tmux-ide-border-focused) 7%, transparent);
+}
+
+.widget-markdown hr {
+  height: 1px;
+  margin: 1.6em 0;
+  border: 0;
+  background: var(--tmux-ide-border-subtle);
+}
+
+.widget-markdown__table-scroll {
+  overflow-x: auto;
+}
+
+.widget-markdown table {
+  border-collapse: collapse;
+  font-size: var(--sf-text-caption-1);
+  border-radius: var(--tmi-radius-md, 8px);
+  overflow: hidden;
+}
+
+.widget-markdown th,
+.widget-markdown td {
+  padding: 5px 10px;
+  border: 1px solid var(--tmux-ide-border-subtle);
+  text-align: left;
+}
+
+.widget-markdown th {
+  background: var(--tmux-ide-surface-sunken, transparent);
+  color: var(--tmux-ide-text-secondary);
+  font-weight: var(--sf-weight-medium);
+}
+
+.widget-markdown th[data-align="center"],
+.widget-markdown td[data-align="center"] {
+  text-align: center;
+}
+
+.widget-markdown th[data-align="right"],
+.widget-markdown td[data-align="right"] {
+  text-align: right;
+}
+
+.widget-mermaid {
+  margin: 0 0 0.85em;
+  padding: var(--tmi-space-3, 12px);
+  border: 1px solid color-mix(in srgb, var(--tmux-ide-border-default) 82%, transparent);
+  border-radius: var(--tmi-radius-lg, 12px);
+  background: #111116;
+  box-shadow:
+    var(--tmi-shadow-inset-track),
+    inset 0 1px 0 rgb(255 255 255 / 5%);
+  overflow: auto;
+}
+
+.widget-mermaid img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  min-height: 80px;
+  margin: 0 auto;
+}
+
+.widget-mermaid--error strong {
+  display: block;
+  margin-bottom: var(--tmi-space-2, 8px);
+  color: var(--sf-red, #ff453a);
+}
+
+/* --- image / GIF -------------------------------------------------------- */
+
+.widget-image {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tmi-space-2);
+  align-items: center;
+  margin: 0;
+}
+
+.widget-image__frame {
+  /* Contain rather than cover: a screenshot cropped to fit is a screenshot the
+     user has to open somewhere else to read. */
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--tmi-radius-md, 8px);
+  box-shadow: var(--tmi-shadow-raised);
+}
+
+.widget-image figcaption {
+  font-size: var(--sf-text-caption-3);
+  color: var(--tmux-ide-text-muted);
+}
+
+/* --- declarative agent card -------------------------------------------- */
+
+.widget-card {
+  width: min(100%, 680px);
+  margin: 0 auto;
+  padding: var(--tmi-space-4, 16px);
+  border: 1px solid color-mix(in oklab, var(--tmux-ide-border-default) 82%, transparent);
+  border-radius: var(--tmi-radius-xl, 16px);
+  background: color-mix(in oklab, var(--tmux-ide-surface-header) 86%, transparent);
+  box-shadow:
+    var(--tmi-shadow-raised),
+    inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+}
+
+.widget-card__header h1 {
+  margin: 0;
+  color: var(--tmux-ide-text-bright);
+  font-size: var(--sf-text-title);
+  font-weight: var(--sf-weight-semibold, 600);
+  letter-spacing: -0.02em;
+}
+
+.widget-card__header p,
+.widget-card__text {
+  margin: 5px 0 0;
+  color: var(--tmux-ide-text-secondary);
+}
+
+.widget-card__items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tmi-space-3, 12px);
+  margin-top: var(--tmi-space-4, 16px);
+}
+
+.widget-card__badge {
+  align-self: flex-start;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in oklab, var(--tmux-ide-border-default) 78%, transparent);
+  border-radius: 999px;
+  color: var(--tmux-ide-text-secondary);
+  background: var(--tmux-ide-surface-sunken, transparent);
+  font-size: var(--sf-text-caption-2);
+  font-weight: var(--sf-weight-medium);
+}
+
+.widget-card__badge[data-tone="success"] {
+  color: var(--sf-green, #34c759);
+}
+.widget-card__badge[data-tone="warning"] {
+  color: var(--sf-orange, #ff9f0a);
+}
+.widget-card__badge[data-tone="danger"] {
+  color: var(--sf-red, #ff453a);
+}
+.widget-card__badge[data-tone="info"] {
+  color: var(--tmux-ide-text-link);
+}
+
+.widget-card__progress > div {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+  color: var(--tmux-ide-text-secondary);
+  font-size: var(--sf-text-caption-1);
+}
+
+.widget-card__progress progress {
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  accent-color: var(--tmux-ide-border-focused);
+}
+
+.widget-card__button {
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 4px 11px;
+  border: 1px solid color-mix(in oklab, var(--tmux-ide-border-default) 88%, transparent);
+  border-radius: var(--tmi-radius-md, 8px);
+  color: var(--tmux-ide-text-primary);
+  background: color-mix(in oklab, var(--tmux-ide-surface-raised) 90%, white 4%);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, black 22%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+  font: inherit;
+  font-size: var(--sf-text-caption-1);
+  cursor: pointer;
+}
+
+.widget-card__button:hover:not(:disabled) {
+  border-color: var(--tmux-ide-border-focused);
+  background: color-mix(
+    in oklab,
+    var(--tmux-ide-border-focused) 12%,
+    var(--tmux-ide-surface-raised)
+  );
+}
+
+.widget-card__button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.widget-card__button:disabled {
+  cursor: default;
+  opacity: 0.46;
+}
+
+/* The mirror twin is positioned onto the letterboxed grid at runtime, so it
+   carries no inset of its own — see grid-overlay.ts. */
+.mirror-pane-node__widget {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mirror-pane-node__widget .widget-surface {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+}

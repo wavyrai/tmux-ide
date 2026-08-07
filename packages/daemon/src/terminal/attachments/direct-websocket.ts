@@ -1,5 +1,13 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import {
+  canonicalOriginOrNull,
+  digestSecret,
+  digestsEqual,
+  rawDataByteLength,
+  rawDataToBuffer,
+  safeCloseSocket,
+  strictJsonParse,
+} from "./admission-util.ts";
 import {
   TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES,
   TerminalAttachmentInputLimitsSchemaZ,
@@ -18,13 +26,14 @@ import {
   type TerminalAttachmentViewport,
   type TerminalAttachmentViewerMode,
 } from "@tmux-ide/contracts";
-import type {
-  AttachmentIssueContext,
-  AttachmentLeaseBinding,
-  AttachmentLeaseDescriptor,
-  ExecutedAttachmentViewOperation,
-  IssuedAttachmentLease,
-  RedeemedAttachmentLease,
+import {
+  AttachmentLeaseError,
+  type AttachmentIssueContext,
+  type AttachmentLeaseBinding,
+  type AttachmentLeaseDescriptor,
+  type ExecutedAttachmentViewOperation,
+  type IssuedAttachmentLease,
+  type RedeemedAttachmentLease,
 } from "./lease-manager.ts";
 import type {
   ClaimedPtyTmuxAttachment,
@@ -37,6 +46,7 @@ export const TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL = TERMINAL_ATTACHMENT_WEBSOC
 export const TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES = 4 * 1024;
 export const TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES = 4 * 1024;
 export const TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS = 1_000;
+export const TERMINAL_ATTACHMENT_MAX_REDEMPTION_PROCESSING_MS = 10_000;
 export const TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES = 1_024;
 
 const WS_OPEN = 1;
@@ -100,7 +110,11 @@ export interface DirectTerminalAttachmentLeaseManager {
     request: TerminalAttachRequest,
     context: AttachmentIssueContext,
   ): Promise<IssuedAttachmentLease>;
-  redeem(ticket: string, binding: AttachmentLeaseBinding): Promise<RedeemedAttachmentLease>;
+  redeem(
+    ticket: string,
+    binding: AttachmentLeaseBinding,
+    receivedAt?: number,
+  ): Promise<RedeemedAttachmentLease>;
   renew(leaseId: string, binding: AttachmentLeaseBinding): Promise<RedeemedAttachmentLease>;
   executeViewOperation(
     leaseId: string,
@@ -196,6 +210,14 @@ export interface TerminalAttachmentAdmissionCoordinatorOptions {
   readonly maxPreAuthSockets?: number;
   readonly maxLiveConnections?: number;
   readonly redemptionTimeoutMs?: number;
+  /**
+   * Bounds how long the socket may wait on daemon-owned work after a valid
+   * redemption frame arrives.
+   * Without a second deadline, a stuck catalog/tmux/geometry operation leaves
+   * the socket in a silent pre-auth state forever because frame delivery has
+   * already cancelled `redemptionTimeoutMs`.
+   */
+  readonly redemptionProcessingTimeoutMs?: number;
   readonly maxBufferedOutputBytes?: number;
   readonly maxOutputFrameBytes?: number;
   readonly maxLiveControlFrames?: number;
@@ -228,48 +250,17 @@ function boundedInteger(value: number | undefined, fallback: number, maximum: nu
 }
 
 function digestTicket(ticket: string): Buffer {
-  return createHash("sha256").update(ticket, "utf8").digest();
+  return digestSecret(ticket);
 }
 
 function matchesDigest(left: Buffer, right: Buffer): boolean {
-  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+  return digestsEqual(left, right);
 }
 
 function canonicalRendererOrigin(value: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length < 4 ||
-    value.length > 2048 ||
-    value === "null" ||
-    value === "*" ||
-    /[\0\r\n\t ]/u.test(value)
-  ) {
+  const canonical = canonicalOriginOrNull(value);
+  if (canonical === null) {
     throw new TerminalAttachmentAdmissionError("invalid-origin", "Renderer Origin is invalid.");
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new TerminalAttachmentAdmissionError("invalid-origin", "Renderer Origin is invalid.");
-  }
-  if (
-    !/^[a-z][a-z0-9+.-]*:$/u.test(parsed.protocol) ||
-    parsed.protocol === "file:" ||
-    parsed.username ||
-    parsed.password ||
-    (parsed.pathname !== "" && parsed.pathname !== "/") ||
-    parsed.search ||
-    parsed.hash ||
-    !parsed.hostname
-  ) {
-    throw new TerminalAttachmentAdmissionError("invalid-origin", "Renderer Origin is invalid.");
-  }
-  const canonical = `${parsed.protocol}//${parsed.host}`;
-  if (canonical !== value) {
-    throw new TerminalAttachmentAdmissionError(
-      "invalid-origin",
-      "Renderer Origin must be canonical.",
-    );
   }
   return canonical;
 }
@@ -282,42 +273,12 @@ function validateWebSocketUrl(value: string): string {
   }
 }
 
-function rawDataToBuffer(data: string | Buffer | ArrayBuffer | readonly Buffer[]): Buffer {
-  if (typeof data === "string") return Buffer.from(data, "utf8");
-  if (Buffer.isBuffer(data)) return data;
-  if (data instanceof ArrayBuffer) return Buffer.from(data);
-  return Buffer.concat(data.map((entry) => Buffer.from(entry)));
-}
-
-function rawDataByteLength(
-  data: string | Buffer | ArrayBuffer | readonly Buffer[],
-  maximum: number,
-): number {
-  if (typeof data === "string") return Buffer.byteLength(data, "utf8");
-  if (Buffer.isBuffer(data)) return data.byteLength;
-  if (data instanceof ArrayBuffer) return data.byteLength;
-  let total = 0;
-  for (const entry of data) {
-    if (entry.byteLength > maximum - total) return maximum + 1;
-    total += entry.byteLength;
-  }
-  return total;
-}
-
 function strictJson(bytes: Buffer): unknown {
-  const text = bytes.toString("utf8");
-  if (Buffer.byteLength(text, "utf8") !== bytes.byteLength || text.includes("\uFFFD")) {
-    throw new TypeError("Control frame is not valid UTF-8.");
-  }
-  return JSON.parse(text) as unknown;
+  return strictJsonParse(bytes);
 }
 
 function safeClose(socket: DirectTerminalSocket, code: number, reason: string): void {
-  try {
-    if (socket.readyState === WS_OPEN) socket.close(code, reason.slice(0, 123));
-  } catch {
-    // Teardown ownership has already moved to the daemon state machine.
-  }
+  safeCloseSocket(socket, code, reason);
 }
 
 function sendControl(socket: DirectTerminalSocket, frame: Readonly<Record<string, unknown>>): void {
@@ -365,6 +326,7 @@ export class TerminalAttachmentAdmissionCoordinator {
   readonly #maxPreAuth: number;
   readonly #maxLive: number;
   readonly #redemptionTimeoutMs: number;
+  readonly #redemptionProcessingTimeoutMs: number;
   readonly #maxBufferedOutputBytes: number;
   readonly #maxOutputFrameBytes: number;
   readonly #maxLiveControlFrames: number;
@@ -416,6 +378,11 @@ export class TerminalAttachmentAdmissionCoordinator {
       TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS,
       TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS,
     );
+    this.#redemptionProcessingTimeoutMs = boundedInteger(
+      options.redemptionProcessingTimeoutMs,
+      TERMINAL_ATTACHMENT_MAX_REDEMPTION_PROCESSING_MS,
+      60_000,
+    );
     this.#maxBufferedOutputBytes = boundedInteger(
       options.maxBufferedOutputBytes,
       1 << 20,
@@ -460,12 +427,6 @@ export class TerminalAttachmentAdmissionCoordinator {
         );
       }
       const parsedRequest = TerminalAttachRequestSchemaZ.parse(request);
-      if (parsedRequest.viewerMode === "read-only") {
-        throw new TerminalAttachmentAdmissionError(
-          "read_only_unavailable",
-          "Read-only terminal attachments are not proven geometry-neutral.",
-        );
-      }
       const origin = canonicalRendererOrigin(context.rendererOrigin);
       const requestId = z.uuid().parse(context.requestId);
       const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);
@@ -501,6 +462,7 @@ export class TerminalAttachmentAdmissionCoordinator {
         issuedDescriptor.requestId !== requestId ||
         issuedDescriptor.status !== "awaiting-redemption" ||
         issuedDescriptor.viewerMode !== parsedRequest.viewerMode ||
+        issuedDescriptor.geometryOwnership !== parsedRequest.geometryOwnership ||
         !sameTarget(issuedDescriptor.target, parsedRequest.target)
       ) {
         await this.#releaseLease(issued.descriptor.leaseId, {
@@ -560,6 +522,7 @@ export class TerminalAttachmentAdmissionCoordinator {
         requestId,
         expiresAt: issuedDescriptor.expiresAt,
         effectiveViewerMode: issuedDescriptor.viewerMode,
+        effectiveGeometryOwnership: issuedDescriptor.geometryOwnership,
       });
     });
   }
@@ -599,6 +562,7 @@ export class TerminalAttachmentAdmissionCoordinator {
     const admission = new PreAuthAdmission({
       origin,
       timeoutMs: this.#redemptionTimeoutMs,
+      processingTimeoutMs: this.#redemptionProcessingTimeoutMs,
       schedule: this.#schedule,
       onRelease: (released) => this.#preAuth.delete(released),
       onRedeem: (active, frame, socket) => this.#redeem(active, frame, socket),
@@ -646,6 +610,10 @@ export class TerminalAttachmentAdmissionCoordinator {
     frame: RedemptionFrame,
     socket: DirectTerminalSocket,
   ): Promise<TerminalAttachmentLiveConnection> {
+    // Stamp authenticated frame arrival BEFORE queueing: concurrent redemptions
+    // serialize below, and a queue wait must not consume the ticket's delivery
+    // TTL (the lease manager gives execution its own bounded budget).
+    const receivedAt = this.#now();
     return this.#exclusive(async () => {
       if (this.#shuttingDown) {
         throw new TerminalAttachmentAdmissionError(
@@ -695,7 +663,7 @@ export class TerminalAttachmentAdmissionCoordinator {
       let liveReservationHeld = true;
       this.#liveReservations += 1;
       try {
-        const redeemed = await this.#leaseManager.redeem(frame.ticket, binding);
+        const redeemed = await this.#leaseManager.redeem(frame.ticket, binding, receivedAt);
         this.#assertActiveDescriptor(redeemed.descriptor, pending);
         if (!admission.isOpen()) {
           throw new TerminalAttachmentAdmissionError(
@@ -704,6 +672,12 @@ export class TerminalAttachmentAdmissionCoordinator {
           );
         }
         await this.#leaseManager.executeViewOperation(pending.leaseId, binding, "create");
+        if (!admission.isOpen()) {
+          throw new TerminalAttachmentAdmissionError(
+            "redemption-rejected",
+            "Terminal attachment redemption was rejected.",
+          );
+        }
         const attached = await this.#leaseManager.executeViewOperation(
           pending.leaseId,
           binding,
@@ -717,6 +691,13 @@ export class TerminalAttachmentAdmissionCoordinator {
         }
         const activeDescriptor = this.#assertActiveDescriptor(attached.descriptor, pending);
         const client = this.#launcher.claim(attached.clientClaim);
+        if (!admission.isOpen()) {
+          client?.dispose();
+          throw new TerminalAttachmentAdmissionError(
+            "redemption-rejected",
+            "Terminal attachment redemption was rejected.",
+          );
+        }
         if (!client) {
           throw new TerminalAttachmentAdmissionError(
             "attachment-unavailable",
@@ -852,6 +833,7 @@ export class TerminalAttachmentAdmissionCoordinator {
 interface PreAuthAdmissionOptions {
   readonly origin: string;
   readonly timeoutMs: number;
+  readonly processingTimeoutMs: number;
   readonly schedule: (callback: () => void, delayMs: number) => () => void;
   readonly onRelease: (admission: PreAuthAdmission) => void;
   readonly onRedeem: (
@@ -865,7 +847,9 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
   readonly origin: string;
   readonly #onRelease: PreAuthAdmissionOptions["onRelease"];
   readonly #onRedeem: PreAuthAdmissionOptions["onRedeem"];
-  readonly #cancelDeadline: () => void;
+  readonly #schedule: PreAuthAdmissionOptions["schedule"];
+  readonly #processingTimeoutMs: number;
+  #cancelDeadline: () => void;
   #socket: DirectTerminalSocket | null = null;
   #frameReceived = false;
   #open = true;
@@ -875,6 +859,8 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
     this.origin = options.origin;
     this.#onRelease = options.onRelease;
     this.#onRedeem = options.onRedeem;
+    this.#schedule = options.schedule;
+    this.#processingTimeoutMs = options.processingTimeoutMs;
     this.#cancelDeadline = options.schedule(
       () => this.close(1008, "redemption-timeout"),
       options.timeoutMs,
@@ -899,6 +885,10 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
   beginRedemption(): void {
     if (!this.#open || this.#promoted) return;
     this.#cancelDeadline();
+    this.#cancelDeadline = this.#schedule(
+      () => this.#processingTimedOut(),
+      this.#processingTimeoutMs,
+    );
   }
 
   cancelBeforeBind(): void {
@@ -954,14 +944,20 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
     this.beginRedemption();
     void this.#onRedeem(this, frame, socket).catch((error: unknown) => {
       if (!this.#open) return;
+      // A late-delivered or budget-exhausted ticket surfaces its honest code so
+      // the renderer can name the expiry instead of a generic retirement.
       const code =
-        error instanceof TerminalAttachmentAdmissionError ? error.code : "attachment-unavailable";
+        error instanceof TerminalAttachmentAdmissionError
+          ? error.code
+          : error instanceof AttachmentLeaseError && error.code === "ticket-expired"
+            ? "ticket-expired"
+            : "attachment-unavailable";
       try {
         sendControl(socket, {
           type: "error",
           protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
           code,
-          retryable: code === "live-capacity-exhausted",
+          retryable: code === "live-capacity-exhausted" || code === "ticket-expired",
         });
       } catch {
         // Closing below is the fail-closed response.
@@ -971,6 +967,24 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
   };
 
   readonly #onClose = (): void => this.close(1008, "redemption-rejected");
+
+  #processingTimedOut(): void {
+    if (!this.#open || this.#promoted) return;
+    const socket = this.#socket;
+    if (socket) {
+      try {
+        sendControl(socket, {
+          type: "error",
+          protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+          code: "attachment-unavailable",
+          retryable: true,
+        });
+      } catch {
+        // The bounded close below remains the fail-closed response.
+      }
+    }
+    this.close(1013, "redemption-processing-timeout");
+  }
 
   #detach(): void {
     const socket = this.#socket;

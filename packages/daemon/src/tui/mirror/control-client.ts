@@ -13,7 +13,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { parseControlLine, textToHexKeys } from "./control.ts";
+import { parseControlLine, textToHexKeys } from "../../terminal/protocol/control.ts";
 
 interface PendingReply {
   discard?: false;
@@ -65,6 +65,13 @@ export class ControlModeClient {
       env: { ...process.env, TMUX: "" },
     });
     this.proc = proc;
+    // Pipe errors on a child stream arrive asynchronously as an 'error' event,
+    // so no try/catch around `write()` can catch one; unhandled, it kills the
+    // process. A killed session exits its control client while writes are still
+    // in flight — process exit is the authority on death, not the broken pipe.
+    proc.stdin?.on("error", () => {});
+    proc.stdout!.on("error", () => {});
+    proc.stderr?.on("error", () => {});
     proc.stdout!.setEncoding("latin1");
     proc.stdout!.on("data", (chunk: string) => this.feed(chunk));
     proc.on("exit", () => this.opts.onExit?.(null));

@@ -13,6 +13,7 @@ import {
 import { runTmuxBinary, TmuxError } from "@tmux-ide/tmux-bridge";
 
 import { probeProjectReadiness } from "./project-readiness-probe.ts";
+import { agentHintForCommand } from "./agent-kind.ts";
 import {
   loadWorkspaceConfig,
   WorkspaceConfigLoadError,
@@ -456,8 +457,17 @@ function assertBoundedLaunch(launch: ResolvedHarnessLaunch): void {
   }
 }
 
-function semanticPaneId(operationId: string): string {
+/**
+ * The one semantic-pane-id scheme. Exported because the multiplexer split verb
+ * also creates panes and must stamp them from the same generator — two schemes
+ * would mean a pane whose identity depended on which route made it.
+ */
+export function semanticPaneIdForOperation(operationId: string): string {
   return `pane.${operationId.replaceAll("-", "")}`;
+}
+
+function semanticPaneId(operationId: string): string {
+  return semanticPaneIdForOperation(operationId);
 }
 
 function provisionalWindowName(operationId: string): string {
@@ -801,6 +811,7 @@ export class WorkspacePaneCreationAuthority {
         ["@ide_type", resource.kind === "agent" ? "agent" : "shell"],
         ["@ide_role", resource.role ?? "shell"],
         ["@ide_name", resource.displayTitle],
+        ["@agent_hint", agentHintForCommand(harness?.command.join(" ")) ?? ""],
         [HARNESS_OPTION, resource.harnessProfileId ?? ""],
         [MISSION_OPTION, resource.missionId ?? ""],
       ];

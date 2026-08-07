@@ -31,6 +31,34 @@ beforeAll(async () => {
 });
 
 describe("desktop preload daemon bridge", () => {
+  it("opens a native-selected project without exposing or accepting a filesystem path", async () => {
+    const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
+    const operationId = "20000000-0000-4000-8000-000000000002";
+    electron.invoke.mockImplementationOnce(async (...args: unknown[]) => {
+      expect(args).toEqual([HOST_IPC.workspaceOpenProjectDirectory]);
+      return {
+        status: "ok",
+        result: {
+          operationId,
+          daemonInstanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+          outcome: "created",
+          resource: {
+            resourceVersion: 1,
+            workspaceName: "project-00112233445566778899aabbccddeeff",
+            initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+          },
+        },
+      };
+    });
+
+    const openWithInjectedArgument = capabilities.workspace.openProjectDirectory as unknown as (
+      rendererValue: unknown,
+    ) => ReturnType<HostCapabilities["workspace"]["openProjectDirectory"]>;
+    const result = await openWithInjectedArgument({ projectDir: "/renderer/substitution" });
+    expect(result).toMatchObject({ status: "ok", result: { operationId } });
+    expect(JSON.stringify(result)).not.toMatch(/projectDir|renderer\/substitution/iu);
+  });
+
   it("exposes only named, schema-validated semantic create and attachment issue calls", async () => {
     const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
     const callsBefore = electron.invoke.mock.calls.length;
@@ -41,8 +69,8 @@ describe("desktop preload daemon bridge", () => {
       args: { kind: "terminal" as const, workspaceName: "product" },
     };
     electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
-      expect(channel).toBe(HOST_IPC.daemonCreateWorkspacePane);
-      expect(value).toEqual(invocation);
+      expect(channel).toBe(HOST_IPC.daemonRequest);
+      expect(value).toEqual({ resource: "createWorkspacePane", request: invocation });
       return {
         status: "error",
         error: { code: "daemon-unavailable", reason: "The canonical daemon is unavailable." },
@@ -57,11 +85,12 @@ describe("desktop preload daemon bridge", () => {
       protocolVersion: 1 as const,
       target: { workspaceName: "product", semanticPaneId: "pane.worker" },
       viewerMode: "interactive" as const,
+      geometryOwnership: "passive" as const,
       viewport: { cols: 120, rows: 40 },
     };
     electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
-      expect(channel).toBe(HOST_IPC.daemonIssueTerminalAttachment);
-      expect(value).toEqual(attachment);
+      expect(channel).toBe(HOST_IPC.daemonRequest);
+      expect(value).toEqual({ resource: "issueTerminalAttachment", request: attachment });
       return {
         status: "error",
         error: {
@@ -76,18 +105,48 @@ describe("desktop preload daemon bridge", () => {
       error: { code: "attachment-unavailable" },
     });
 
+    const stream = {
+      protocolVersion: 1 as const,
+      workspaceName: "product",
+      panes: ["pane.worker", "pane.dev"],
+      viewerMode: "read-only" as const,
+    };
+    electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
+      expect(channel).toBe(HOST_IPC.daemonRequest);
+      expect(value).toEqual({ resource: "issuePaneStream", request: stream });
+      return {
+        status: "error",
+        error: {
+          code: "attachment-unavailable",
+          reason: "Pane streaming is unavailable.",
+          retryable: true,
+        },
+      };
+    });
+    await expect(capabilities.daemon.issuePaneStream(stream)).resolves.toMatchObject({
+      status: "error",
+      error: { code: "attachment-unavailable" },
+    });
+
     await expect(
       capabilities.daemon.createWorkspacePane({
         ...invocation,
         ownerToken: "renderer-secret",
       } as typeof invocation),
     ).rejects.toThrow();
-    expect(electron.invoke.mock.calls).toHaveLength(callsBefore + 2);
+    await expect(
+      capabilities.daemon.issuePaneStream({
+        ...stream,
+        redemptionTicket: "renderer-secret",
+      } as typeof stream),
+    ).rejects.toThrow();
+    expect(electron.invoke.mock.calls).toHaveLength(callsBefore + 3);
   });
 
   it("exposes and validates the semantic daemon refresh result", async () => {
-    electron.invoke.mockImplementationOnce(async (channel: string) => {
-      expect(channel).toBe(HOST_IPC.daemonRefreshConnection);
+    electron.invoke.mockImplementationOnce(async (channel: string, value: unknown) => {
+      expect(channel).toBe(HOST_IPC.daemonRequest);
+      expect(value).toEqual({ resource: "refreshConnection" });
       return {
         outcome: "generation-replaced",
         previousIdentity: null,

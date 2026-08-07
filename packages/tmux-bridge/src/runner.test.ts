@@ -15,6 +15,7 @@ import {
   startSessionMonitor,
   stopSessionMonitor,
   setPaneTitle,
+  setWindowOption,
   selectPane,
   getPaneCurrentCommand,
   setSessionEnvironment,
@@ -362,6 +363,20 @@ describe("setPaneTitle", () => {
     mockExec.mockImplementation(() => "");
     setPaneTitle("%0", "My Pane");
     expect(mockExec.mock.calls[0][1]).toEqual(["select-pane", "-t", "%0", "-T", "My Pane"]);
+  });
+});
+
+describe("setWindowOption", () => {
+  it("sets a quiet window-local option through a pane target", () => {
+    mockExec.mockImplementation(() => "");
+    setWindowOption("%0", "@tmux_ide_window_id", "window.launch.abc123");
+    expect(mockExec.mock.calls[0][1]).toEqual([
+      "set-option",
+      "-wqt",
+      "%0",
+      "@tmux_ide_window_id",
+      "window.launch.abc123",
+    ]);
   });
 });
 

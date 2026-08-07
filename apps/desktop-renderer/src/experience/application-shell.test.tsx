@@ -2,14 +2,19 @@
 import {
   APPLICATION_SHELL_COMMAND_IDS,
   ApplicationShellProjectionInputV1SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
   DESKTOP_HOST_API_VERSION,
   applicationShellActionTraceV1,
+  createClientViewStateV1,
   projectApplicationShellV1,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
+  type ApplicationShellProjectionInputV3,
+  type ClientViewStateV1,
   type DesktopWindowState,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
+import { createDaemonResourceMethods } from "@tmux-ide/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
@@ -20,15 +25,30 @@ import {
   type DomApplicationShellProps,
 } from "./application-shell.tsx";
 import { DOM_EXPERIENCE_VARIABLE, createDomExperience } from "./dom-experience.ts";
+import { createMissionActivityFixture } from "./mission-activity-fixture.ts";
+import {
+  agentGraphCanvasDocument,
+  agentGraphCanvasInventory,
+  agentGraphCanvasOverlay,
+  agentGraphCanvasPaneFrames,
+  type AgentGraphCanvasScenario,
+} from "./agent-graph-canvas-fixture.ts";
 import {
   createDefaultDomShellInput,
   createDefaultDomPaneFrames,
   createDomShellReplayState,
   projectDomApplicationShell,
 } from "./dom-shell.ts";
+import * as fleetGraphMergeModule from "./fleet-graph-merge.ts";
+import { FLEET_FIXTURE_DAEMON, mixedFleetCatalog } from "../runtime/fleet-catalog-fixture.ts";
+import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 import styles from "../styles.css?raw";
 import paneFrameStyles from "../../../../packages/daemon/src/ui/pane-frame/web-host.css?raw";
-import { paneFrameTerminalsFromApplicationShellInventory } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+import {
+  APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS,
+  applicationShellAgentTerminalActions,
+  paneFrameTerminalsFromApplicationShellInventory,
+} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 
 const disposers: Array<() => void> = [];
 
@@ -49,45 +69,35 @@ function host(): HostCapabilities {
       theme: { mode: "dark", highContrast: false, reducedMotion: false },
       window: WINDOW_STATE,
       daemon: { status: "unavailable", code: "preview-only", reason: "fixture only" },
+      onboarding: { introAcknowledged: true },
     }),
-    lifecycle: { requestQuit: async () => undefined },
     window: {
-      getState: async () => WINDOW_STATE,
       minimize: async () => WINDOW_STATE,
       toggleMaximized: async () => WINDOW_STATE,
       close: async () => undefined,
       onStateChanged: () => () => undefined,
     },
-    menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
-    dialog: { selectProjectDirectory: async () => null },
+    workspace: { openProjectDirectory: async () => null },
+    onboarding: { acknowledgeIntro: async () => undefined },
     theme: {
-      getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,
     },
+    update: {
+      getStatus: async () => ({
+        phase: "idle" as const,
+        currentVersion: "test",
+        availableVersion: null,
+      }),
+      onStatusChanged: () => () => undefined,
+    },
     daemon: {
-      createWorkspacePane: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      issueTerminalAttachment: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only", retryable: false },
-      }),
-      refreshConnection: async () => ({
-        outcome: "unchanged",
-        daemon: { status: "unavailable", code: "preview-only", reason: "fixture only" },
-      }),
-      listWorkspaces: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
-      fetchApplicationShell: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
-      }),
+      ...createDaemonResourceMethods(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
       subscribe: async () => ({
-        status: "error",
-        error: { code: "preview-only", reason: "fixture only" },
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
       }),
     },
   };
@@ -108,11 +118,49 @@ function withDisabledActivity(): ApplicationShellProjectionInputV1 {
   });
 }
 
+function withMissionWorkspace(): ApplicationShellProjectionInputV3 {
+  const input = createDefaultDomShellInput();
+  const paneFrames = createDefaultDomPaneFrames();
+  return ApplicationShellProjectionInputV3SchemaZ.parse({
+    ...input,
+    terminalInventory: {
+      activeResourceId: input.focus.appFocusedPaneId,
+      resources: paneFrames.map((frame) => ({
+        id: frame.pane.id,
+        title: frame.title,
+        kind: "agent" as const,
+        active: frame.pane.id === input.focus.appFocusedPaneId,
+        attachability: { status: "available" as const, semanticPaneId: frame.pane.id },
+      })),
+    },
+    appWindows: {
+      version: 1,
+      revision: 0,
+      updatedAt: "2026-07-22T15:30:00.000Z",
+      windows: {},
+      dockRoot: null,
+      dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+      floatingOrder: [],
+      focusedWindowId: null,
+      activeLayoutId: null,
+      layouts: {},
+    },
+    missionWorkspace: createMissionActivityFixture(),
+  });
+}
+
+/**
+ * Most chains here assert the canonical product surface — every dock tool, its
+ * disabled reason, the full action trace — so they render with the m48
+ * experimental surfaces ON. The GUI-first default (off) has its own chain
+ * below, which is where the reduced dock is asserted.
+ */
 function renderShell(
   input: ApplicationShellProjectionInputV1 = createDefaultDomShellInput(),
   onCommand?: (invocation: ApplicationShellCommandInvocation) => void,
   platform = "darwin",
   onPaneAction?: DomApplicationShellProps["onPaneAction"],
+  experimentalSurfaces = true,
 ) {
   const root = document.createElement("div");
   document.body.append(root);
@@ -129,6 +177,7 @@ function renderShell(
           onCommand={onCommand}
           paneFrames={createDefaultDomPaneFrames()}
           onPaneAction={onPaneAction}
+          experimentalSurfaces={experimentalSurfaces}
         />
       ),
       root,
@@ -193,6 +242,241 @@ afterEach(() => {
 });
 
 describe("visible DOM application shell", () => {
+  it("uses the durable AppWindow scene instead of the legacy fixed terminal grid", () => {
+    const input = createDefaultDomShellInput();
+    const resources = createDefaultDomPaneFrames().map((frame) => ({
+      id: frame.pane.id,
+      title: frame.title,
+      kind: "agent" as const,
+      active: frame.pane.id === input.focus.appFocusedPaneId,
+      attachability: { status: "available" as const, semanticPaneId: frame.pane.id },
+    }));
+    const v3 = ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...input,
+      terminalInventory: {
+        activeResourceId: input.focus.appFocusedPaneId,
+        resources,
+      },
+      appWindows: {
+        version: 1,
+        revision: 9,
+        updatedAt: "2026-07-22T10:00:00.000Z",
+        windows: {
+          "window.implementer": {
+            id: "window.implementer",
+            source: { kind: "terminal", terminalSourceId: "pane.implementer" },
+            title: "Implementer",
+            placement: {
+              mode: "docked",
+              docked: { stackId: "stack.canvas", index: 0 },
+              floating: null,
+            },
+          },
+        },
+        dockRoot: {
+          type: "stack",
+          id: "stack.canvas",
+          windowIds: ["window.implementer"],
+          activeWindowId: "window.implementer",
+        },
+        dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+        floatingOrder: [],
+        focusedWindowId: "window.implementer",
+        activeLayoutId: null,
+        layouts: {},
+      },
+    });
+
+    const root = renderShell(v3);
+    expect(root.querySelector(".agent-grid")).toBeNull();
+    expect(root.querySelector(".app-window-canvas")?.getAttribute("data-window-revision")).toBe(
+      "9",
+    );
+    const card = root.querySelector('.app-window-card[data-window-id="window.implementer"]');
+    expect(card?.getAttribute("data-terminal-source-id")).toBe("pane.implementer");
+    expect(card?.querySelector(".web-pane-frame")?.getAttribute("data-pane-id")).toBe(
+      "window.implementer",
+    );
+  });
+
+  it("routes the V3 mission-to-activity journey through existing semantic commands", () => {
+    const invocations: ApplicationShellCommandInvocation[] = [];
+    const root = renderShell(withMissionWorkspace(), (invocation) => invocations.push(invocation));
+    pointerClick(root.querySelector("#workbench-dock-tab-missions")!);
+    expect(root.querySelector('.dock-surface[data-surface="missions"]')).not.toBeNull();
+    expect(root.textContent).toContain("12/12 tests passing");
+
+    const follow = [...root.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.textContent?.includes("Follow activity"),
+    )!;
+    pointerClick(follow);
+    expect(root.querySelector('.dock-surface[data-surface="activity"]')).not.toBeNull();
+    expect(root.textContent).toContain("Renderer acceptance passed.");
+
+    const semanticJourney = invocations.filter(
+      ({ source }) => source.surface === "mission-activity-surface",
+    );
+    expect(semanticJourney.map(({ id }) => id)).toEqual([
+      APPLICATION_SHELL_COMMAND_IDS.selectResource,
+      APPLICATION_SHELL_COMMAND_IDS.selectResource,
+      APPLICATION_SHELL_COMMAND_IDS.activateMode,
+      APPLICATION_SHELL_COMMAND_IDS.setDockMode,
+      APPLICATION_SHELL_COMMAND_IDS.activateDockTool,
+    ]);
+    expect(semanticJourney[0]?.args).toEqual({
+      surface: "missions",
+      resourceId: "mis_alpha",
+    });
+    expect(semanticJourney[1]?.args).toEqual({
+      surface: "activity",
+      resourceId: "activity.12",
+    });
+
+    const inspect = [...root.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.textContent?.includes("Inspect mission"),
+    )!;
+    pointerClick(inspect);
+    expect(root.querySelector('.dock-surface[data-surface="missions"]')).not.toBeNull();
+
+    const returnToTerminals = [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("Return to terminals"),
+    )!;
+    pointerClick(returnToTerminals);
+    expect(root.querySelector(".workspace-main")?.getAttribute("data-dock-mode")).toBe("collapsed");
+    expect(root.querySelector("#primary-tab-terminals")?.getAttribute("aria-selected")).toBe(
+      "true",
+    );
+  });
+
+  it("gives exactly one canvas terminal input ownership through canonical window focus", () => {
+    const input = createDefaultDomShellInput();
+    const paneFrames = createDefaultDomPaneFrames();
+    const resources = paneFrames.map((frame) => ({
+      id: frame.pane.id,
+      title: frame.title,
+      kind: "agent" as const,
+      active: frame.pane.id === "pane.implementer",
+      attachability: { status: "available" as const, semanticPaneId: frame.pane.id },
+    }));
+    const v3 = ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...input,
+      terminalInventory: { activeResourceId: "pane.implementer", resources },
+      appWindows: {
+        version: 1,
+        revision: 4,
+        updatedAt: "2026-07-22T10:00:00.000Z",
+        windows: {
+          "window.pm": {
+            id: "window.pm",
+            source: { kind: "terminal", terminalSourceId: "pane.pm" },
+            title: "PM",
+            placement: {
+              mode: "docked",
+              docked: { stackId: "stack.pm", index: 0 },
+              floating: null,
+            },
+          },
+          "window.implementer": {
+            id: "window.implementer",
+            source: { kind: "terminal", terminalSourceId: "pane.implementer" },
+            title: "Implementer",
+            placement: {
+              mode: "docked",
+              docked: { stackId: "stack.implementer", index: 0 },
+              floating: null,
+            },
+          },
+        },
+        dockRoot: {
+          type: "split",
+          id: "split.canvas",
+          axis: "horizontal",
+          children: [
+            {
+              type: "stack",
+              id: "stack.pm",
+              windowIds: ["window.pm"],
+              activeWindowId: "window.pm",
+            },
+            {
+              type: "stack",
+              id: "stack.implementer",
+              windowIds: ["window.implementer"],
+              activeWindowId: "window.implementer",
+            },
+          ],
+          weights: [1, 1],
+        },
+        dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+        floatingOrder: [],
+        focusedWindowId: "window.implementer",
+        activeLayoutId: null,
+        layouts: {},
+      },
+    });
+    const onCommand = vi.fn<(invocation: ApplicationShellCommandInvocation) => void>();
+    const onAppWindowCommand = vi.fn<NonNullable<DomApplicationShellProps["onAppWindowCommand"]>>();
+    const onClientViewStateChange =
+      vi.fn<NonNullable<DomApplicationShellProps["onClientViewStateChange"]>>();
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={v3}
+            dataMode="runtime"
+            // A canvas test, so the parked canvas is turned on (m50).
+            experimentalSurfaces
+            onCommand={onCommand}
+            onAppWindowCommand={onAppWindowCommand}
+            onClientViewStateChange={onClientViewStateChange}
+            paneFrames={paneFrames}
+          />
+        ),
+        root,
+      ),
+    );
+
+    expect(root.querySelectorAll('.terminal-surface[data-focused="true"]')).toHaveLength(1);
+    expect(
+      root
+        .querySelector('[data-window-id="window.implementer"] .terminal-surface')
+        ?.getAttribute("data-focused"),
+    ).toBe("true");
+    root
+      .querySelector('[data-window-id="window.pm"] .web-pane-frame__header')
+      ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+
+    expect(root.querySelectorAll('.terminal-surface[data-focused="true"]')).toHaveLength(1);
+    expect(
+      root
+        .querySelector('[data-window-id="window.pm"] .terminal-surface')
+        ?.getAttribute("data-focused"),
+    ).toBe("true");
+    // Focus is renderer-owned presentation now; it never competes through the
+    // shared durable AppWindow mutation queue.
+    expect(onAppWindowCommand).not.toHaveBeenCalled();
+    expect(onClientViewStateChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        focusedWindowId: "window.pm",
+        selectedWindowIds: ["window.pm"],
+      }),
+    );
+    expect(onCommand).toHaveBeenCalledOnce();
+    expect(onCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+        args: { target: { kind: "pane", paneId: "pane.pm", input: "terminal" } },
+        source: { kind: "mouse", surface: "application-shell" },
+      }),
+    );
+  });
+
   it("renders honest landmarks, canonical tabs, disabled reasons, and platform shortcuts", async () => {
     const root = renderShell(withDisabledActivity());
 
@@ -206,7 +490,7 @@ describe("visible DOM application shell", () => {
     expect(root.querySelectorAll('[role="tabpanel"]')).toHaveLength(6);
     expect(root.textContent).toContain("Sessions");
     expect(root.textContent).toContain("Agents");
-    expect(root.textContent).toContain("workspace snapshot");
+    expect(root.querySelector(".canvas-toolbar")).toBeNull();
     expect(root.textContent).not.toContain("Preview data");
     expect(root.querySelector(".shell-workbench")?.getAttribute("data-shell-source")).toBe(
       "runtime",
@@ -235,6 +519,7 @@ describe("visible DOM application shell", () => {
 
     const returnTarget = root.querySelector<HTMLButtonElement>("#primary-tab-terminals")!;
     returnTarget.focus();
+    const returnFocus = vi.spyOn(returnTarget, "focus");
     expect(document.activeElement).toBe(returnTarget);
     document.dispatchEvent(
       new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }),
@@ -244,6 +529,15 @@ describe("visible DOM application shell", () => {
     expect(input.getAttribute("aria-controls")).toBe("application-command-palette-list");
     expect(root.querySelector('[role="dialog"]')).not.toBeNull();
     expect(root.querySelector('[role="listbox"]')).not.toBeNull();
+    expect(root.querySelectorAll('.command-palette__group[role="group"]')).toHaveLength(2);
+    expect(root.querySelector("#palette-group-workspace")?.textContent).toBe("Workspace");
+    expect(root.querySelector("#palette-group-workbench")?.textContent).toBe("Workbench");
+    expect(
+      root.querySelector("#palette-option-terminals .command-palette__icon svg"),
+    ).not.toBeNull();
+    expect(
+      root.querySelector("#palette-option-terminals .command-palette__copy")?.textContent,
+    ).toContain("Switch the workspace");
     const disabledOption = root.querySelector<HTMLElement>("#palette-option-activity")!;
     expect(disabledOption.getAttribute("aria-disabled")).toBe("true");
     expect(disabledOption.textContent).toContain("Activity requires a daemon connection");
@@ -251,17 +545,26 @@ describe("visible DOM application shell", () => {
     expect(input.getAttribute("aria-activedescendant")).toBe("palette-option-missions");
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await vi.waitFor(() => expect(document.activeElement).toBe(returnTarget));
+    expect(returnFocus).toHaveBeenCalledOnce();
 
-    expect(styles).toContain("grid-template-rows: 28px minmax(0, 1fr) 18px");
-    expect(styles).toContain("grid-template-columns: 48px minmax(0, 1fr)");
+    expect(styles).toContain(
+      "grid-template-rows: var(--desktop-chrome-height) minmax(0, 1fr) var(--desktop-status-height)",
+    );
+    expect(styles).toContain("grid-template-columns: var(--desktop-sidebar-width) minmax(0, 1fr)");
     expect(styles).toContain("width: 456px");
     expect(styles).toMatch(
       /@media \(max-width: 999px\)[\s\S]*?\.status-strip__safe \{\s*display: none;[\s\S]*?\.status-strip__guidance \{[\s\S]*?max-width: 184px;[\s\S]*?text-overflow: ellipsis;/u,
     );
-    expect(styles).not.toMatch(
-      /\.command-palette(?:-overlay)?(?:--open)?\s*\{[^}]*(?:transition|transform)\s*:/gu,
-    );
+    expect(styles).toContain('.command-palette-overlay[data-transition-source="keyboard"]');
+    expect(styles).toContain("transition: none");
+    expect(styles).toContain("opacity 150ms cubic-bezier(0, 0.55, 0.45, 1)");
+    expect(styles).toContain("opacity 100ms cubic-bezier(0.5, 0, 1, 1)");
+    expect(styles).not.toContain("transition: all");
     expect(styles).toContain('.status-strip__connection[data-state="recovering"] > i');
+    expect(styles).toContain('@import "../../../packages/daemon/src/ui/pane-frame/web-host.css"');
+    expect(styles).toContain(
+      '@import "../../../packages/daemon/src/ui/workbench-dock/web-host.css"',
+    );
     expect(paneFrameStyles).toContain('.web-pane-frame[data-border-role="focused"]');
     expect(styles).not.toMatch(/^\[data-state=/mu);
   });
@@ -413,16 +716,45 @@ describe("visible DOM application shell", () => {
     expect(root.querySelector("#sidebar-session-session\\.docs")?.getAttribute("aria-label")).toBe(
       "Documentation, connected",
     );
-    expect(styles).toMatch(
-      /@media \(max-width: 999px\)[\s\S]*?\.sidebar-row span,[\s\S]*?display: none;/u,
+    expect(styles).toContain(
+      '.shell-workbench[data-sidebar-collapsed="true"] .sidebar-row__identity',
     );
+  });
+
+  it("collapses and keyboard-resizes the sidebar without changing shell ownership", () => {
+    const root = renderShell();
+    const workbench = root.querySelector<HTMLElement>(".shell-workbench")!;
+    const titlebar = root.querySelector<HTMLElement>(".titlebar")!;
+    const resize = root.querySelector<HTMLElement>('.workspace-sidebar__resize[role="separator"]')!;
+    const toggle = root.querySelector<HTMLButtonElement>('[aria-label="Collapse sidebar"]')!;
+
+    expect(resize.getAttribute("aria-valuemin")).toBe("220");
+    expect(resize.getAttribute("aria-valuemax")).toBe("300");
+    expect(resize.getAttribute("aria-valuenow")).toBe("236");
+    resize.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    expect(resize.getAttribute("aria-valuenow")).toBe("228");
+
+    pointerClick(toggle);
+    expect(workbench.getAttribute("data-sidebar-collapsed")).toBe("true");
+    expect(titlebar.getAttribute("data-sidebar-collapsed")).toBe("true");
+    expect(resize.getAttribute("aria-disabled")).toBe("true");
+    expect(root.querySelector('[aria-label="Expand sidebar"]')).not.toBeNull();
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }),
+    );
+    expect(workbench.getAttribute("data-sidebar-collapsed")).toBe("false");
+    expect(resize.getAttribute("aria-disabled")).toBeNull();
+    expect(root.querySelector('[aria-label="Collapse sidebar"]')).not.toBeNull();
   });
 
   it("applies state tones to explicit indicators without recoloring their parent surfaces", () => {
     const root = renderShell();
     const experience = installApplicationStyles(root);
     const connection = root.querySelector<HTMLElement>(".status-strip__connection")!;
-    const connectionIndicator = connection.querySelector<HTMLElement>("i")!;
+    // The strip's indicator is a stroked glyph, so its tone lives on `color`
+    // rather than a fill — it states the connection in shape as well as hue.
+    const connectionIndicator = connection.querySelector<SVGSVGElement>("svg")!;
     const runningPane = root.querySelector<HTMLElement>(
       '.web-pane-frame[data-pane-id="pane.implementer"]',
     )!;
@@ -434,7 +766,7 @@ describe("visible DOM application shell", () => {
       '[data-item-kind="status"] i',
     )!;
 
-    expect(getComputedStyle(connectionIndicator).backgroundColor).toBe(
+    expect(getComputedStyle(connectionIndicator).color).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.status.warning],
     );
     expect(getComputedStyle(connection).backgroundColor).not.toBe(
@@ -443,21 +775,17 @@ describe("visible DOM application shell", () => {
     expect(getComputedStyle(runningIndicator).backgroundColor).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.status.info],
     );
-    expect(getComputedStyle(runningPane).backgroundColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.surface.terminal],
+    expect(getComputedStyle(runningPane).backgroundColor).not.toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.status.info],
     );
-    expect(getComputedStyle(runningPane).borderColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.border.focused],
-    );
+    expect(runningPane.getAttribute("data-border-role")).toBe("focused");
     expect(getComputedStyle(recoveryIndicator).backgroundColor).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.status.danger],
     );
-    expect(getComputedStyle(recoveryPane).backgroundColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.surface.terminal],
+    expect(getComputedStyle(recoveryPane).backgroundColor).not.toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.status.danger],
     );
-    expect(getComputedStyle(recoveryPane).borderColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.border.danger],
-    );
+    expect(recoveryPane.getAttribute("data-border-role")).toBe("danger");
   });
 
   it("makes an unavailable primary surface both explanatory and inert", () => {
@@ -558,6 +886,9 @@ describe("visible DOM application shell", () => {
     const trigger = root.querySelector<HTMLButtonElement>("#application-command-palette-trigger")!;
 
     trigger.click();
+    expect(
+      root.querySelector(".command-palette-overlay")?.getAttribute("data-transition-source"),
+    ).toBe("keyboard");
     expect(invocations.slice(0, 2).map(({ id, source }) => ({ id, source }))).toEqual([
       {
         id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
@@ -573,6 +904,9 @@ describe("visible DOM application shell", () => {
       .querySelector<HTMLInputElement>('[role="combobox"]')!
       .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     pointerClick(trigger);
+    expect(
+      root.querySelector(".command-palette-overlay")?.getAttribute("data-transition-source"),
+    ).toBe("mouse");
     expect(invocations.slice(-2).map(({ id, source }) => ({ id, source }))).toEqual([
       {
         id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
@@ -796,11 +1130,66 @@ describe("visible DOM application shell", () => {
     );
     expect(root.querySelector(".workspace-main")?.getAttribute("data-dock-mode")).toBe("maximized");
     expect(docsLeaf?.getAttribute("aria-pressed")).toBe("true");
-    expect(root.textContent).toContain("Reactive workspace");
+    expect(root.querySelector(".titlebar__brand")?.textContent).toContain("tmux-ide reactive");
     expect(root.textContent).toContain("Fresh documentation");
     expect(root.textContent).toContain("Codex refreshed");
-    expect(root.textContent).toContain("999 indexed files");
+    expect(root.querySelector(".workspace-files")).not.toBeNull();
     expect(root.textContent).toContain("Connected from fresh host snapshot");
+  });
+
+  it("applies externally controlled dock presentation without touching shared input", async () => {
+    const input = createDefaultDomShellInput();
+    const sharedDock = structuredClone(input.dock);
+    const base = createClientViewStateV1({
+      clientId: "client.browser",
+      viewId: "view.controlled",
+      workspaceId: input.workspace.id,
+    });
+    const [clientView, setClientView] = createSignal<ClientViewStateV1>({
+      ...base,
+      dock: {
+        mode: "maximized" as const,
+        preferredHeight: 420,
+        focusZone: "dock-body" as const,
+        activeTabId: "files" as const,
+      },
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input}
+            dataMode="runtime"
+            clientViewState={clientView()}
+          />
+        ),
+        root,
+      ),
+    );
+
+    expect(root.querySelector(".workspace-main")?.getAttribute("data-dock-mode")).toBe("maximized");
+    expect(root.querySelector('#workbench-dock-tab-files[aria-selected="true"]')).not.toBeNull();
+
+    setClientView((current) => ({
+      ...current,
+      dock: {
+        ...current.dock,
+        mode: "open",
+        focusZone: "dock-tabs",
+        activeTabId: "changes",
+      },
+    }));
+    await vi.waitFor(() =>
+      expect(root.querySelector(".workspace-main")?.getAttribute("data-dock-mode")).toBe("open"),
+    );
+    expect(root.querySelector('#workbench-dock-tab-changes[aria-selected="true"]')).not.toBeNull();
+    expect(input.dock).toEqual(sharedDock);
   });
 
   it("selects session and agent rows visibly while emitting canonical resource commands", () => {
@@ -831,5 +1220,343 @@ describe("visible DOM application shell", () => {
         source: { kind: "mouse", surface: "sidebar" },
       }),
     ]);
+  });
+});
+
+describe("DomApplicationShell fleet correlation pass-through", () => {
+  const OPEN_FLEET_SESSION_ID = "session.aaaaaaaaaaaaaaaa";
+
+  function liveFleetState(): DesktopFleetCatalogState {
+    return {
+      status: "live",
+      generation: 1,
+      daemon: FLEET_FIXTURE_DAEMON,
+      snapshot: { daemon: FLEET_FIXTURE_DAEMON, catalog: mixedFleetCatalog(), updatedAt: 0 },
+    };
+  }
+
+  function fleetV3Input(fleetSessionId?: string): ApplicationShellProjectionInputV3 {
+    const base = createDefaultDomShellInput();
+    const inventory = agentGraphCanvasInventory();
+    const agents = inventory.resources.map((resource) => ({
+      id: `agent.${resource.id}`,
+      name: resource.title,
+      harness: "claude-code" as const,
+      activity: "running" as const,
+      paneId: resource.id,
+      attention: false,
+    }));
+    return ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...base,
+      workspace: { ...base.workspace, sidebar: { ...base.workspace.sidebar, agents } },
+      focus: {
+        ...base.focus,
+        appFocusedPaneId: inventory.activeResourceId,
+        terminalInputPaneId: null,
+        layoutSelectedPaneId: null,
+        overlays: [],
+      },
+      terminalInventory: inventory,
+      appWindows: agentGraphCanvasDocument(),
+      agentGraphOverlay: agentGraphCanvasOverlay("nodes-only"),
+      ...(fleetSessionId ? { fleetSessionId } : {}),
+    });
+  }
+
+  function renderFleetShell(
+    input: ApplicationShellProjectionInputV3,
+    fleetState: DesktopFleetCatalogState,
+  ): HTMLElement {
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input}
+            dataMode="runtime"
+            fleetState={fleetState}
+            onPromoteSession={async () => ({ ok: true })}
+            paneFrames={agentGraphCanvasPaneFrames()}
+          />
+        ),
+        root,
+      ),
+    );
+    return root;
+  }
+
+  it("marks the open workspace's fleet session and makes it non-promotable", () => {
+    const root = renderFleetShell(fleetV3Input(OPEN_FLEET_SESSION_ID), liveFleetState());
+    const sessions = [...root.querySelectorAll<HTMLElement>(".fleet-sidebar__session")];
+    const open = sessions.find((session) => session.dataset.open === "true");
+    expect(open).not.toBeUndefined();
+    expect(open!.querySelector(".fleet-sidebar__badge--open")).not.toBeNull();
+    // The open session offers no promote action; the other sessions still do.
+    expect(open!.querySelector(".fleet-sidebar__open-action")).toBeNull();
+    expect(root.querySelectorAll(".fleet-sidebar__open-action").length).toBe(sessions.length - 1);
+  });
+
+  it("leaves every fleet session promotable when the daemon supplies no correlation key", () => {
+    const root = renderFleetShell(fleetV3Input(), liveFleetState());
+    const sessions = root.querySelectorAll(".fleet-sidebar__session");
+    expect(root.querySelectorAll('.fleet-sidebar__session[data-open="true"]').length).toBe(0);
+    expect(root.querySelectorAll(".fleet-sidebar__open-action").length).toBe(sessions.length);
+  });
+
+  it("excludes the open session from the renderer-side fleet graph merge", () => {
+    const mergeSpy = vi.spyOn(fleetGraphMergeModule, "mergeFleetGraphOverlay");
+    try {
+      renderFleetShell(fleetV3Input(OPEN_FLEET_SESSION_ID), liveFleetState());
+      expect(mergeSpy).toHaveBeenCalled();
+      const lastCall = mergeSpy.mock.calls.at(-1)![0];
+      expect([...(lastCall.excludeSessionIds ?? [])]).toEqual([OPEN_FLEET_SESSION_ID]);
+    } finally {
+      mergeSpy.mockRestore();
+    }
+  });
+
+  it("merges the whole fleet when no correlation key excludes the open session", () => {
+    const mergeSpy = vi.spyOn(fleetGraphMergeModule, "mergeFleetGraphOverlay");
+    try {
+      renderFleetShell(fleetV3Input(), liveFleetState());
+      expect(mergeSpy).toHaveBeenCalled();
+      const lastCall = mergeSpy.mock.calls.at(-1)![0];
+      expect(lastCall.excludeSessionIds).toBeUndefined();
+    } finally {
+      mergeSpy.mockRestore();
+    }
+  });
+});
+
+describe("DomApplicationShell agent-graph overlay pass-through", () => {
+  function agentGraphV3Input(
+    scenario: AgentGraphCanvasScenario,
+    workspaceId = "workspace.product",
+  ): ApplicationShellProjectionInputV3 {
+    const base = createDefaultDomShellInput();
+    const inventory = agentGraphCanvasInventory();
+    const agents = inventory.resources.map((resource) => ({
+      id: `agent.${resource.id}`,
+      name: resource.title,
+      harness: "claude-code" as const,
+      activity: "running" as const,
+      paneId: resource.id,
+      attention: false,
+    }));
+    const overlay = agentGraphCanvasOverlay(scenario);
+    return ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...base,
+      workspace: {
+        ...base.workspace,
+        id: workspaceId,
+        sidebar: { ...base.workspace.sidebar, agents },
+      },
+      focus: {
+        ...base.focus,
+        appFocusedPaneId: inventory.activeResourceId,
+        terminalInputPaneId: null,
+        layoutSelectedPaneId: null,
+        overlays: [],
+      },
+      terminalInventory: inventory,
+      appWindows: agentGraphCanvasDocument(),
+      ...(overlay ? { agentGraphOverlay: overlay } : {}),
+    });
+  }
+
+  function renderOverlayShell(input: () => ApplicationShellProjectionInputV3): HTMLElement {
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input()}
+            dataMode="runtime"
+            // The canvas is parked behind the flag (m50); these tests are about
+            // the canvas, so they turn it on rather than asserting against the
+            // tiled view that replaced it as the default.
+            experimentalSurfaces
+            paneFrames={agentGraphCanvasPaneFrames()}
+          />
+        ),
+        root,
+      ),
+    );
+    return root;
+  }
+
+  it("hands a live overlay to the canvas so ground-truth status reaches window chrome", () => {
+    const root = renderOverlayShell(() => agentGraphV3Input("nodes-only"));
+    expect(root.querySelector(".agent-graph")).not.toBeNull();
+    const lead = root.querySelector<HTMLElement>('.app-window-card[data-window-id="window.lead"]')!;
+    expect(lead.dataset.agentStatus).toBe("working");
+    const worker = root.querySelector<HTMLElement>(
+      '.app-window-card[data-window-id="window.worker"]',
+    )!;
+    expect(worker.dataset.agentStatus).toBe("done");
+  });
+
+  it("renders exactly as today when the resource carries no overlay", () => {
+    const root = renderOverlayShell(() => agentGraphV3Input("no-overlay"));
+    expect(root.querySelector(".agent-graph")).toBeNull();
+    for (const card of root.querySelectorAll(".app-window-card")) {
+      expect(card.getAttribute("data-agent-status")).toBeNull();
+    }
+  });
+
+  it("drops the overlay when a new workspace generation arrives without one", () => {
+    const [input, setInput] = createSignal<ApplicationShellProjectionInputV3>(
+      agentGraphV3Input("nodes-only"),
+    );
+    const root = renderOverlayShell(input);
+    const leadWith = root.querySelector<HTMLElement>(
+      '.app-window-card[data-window-id="window.lead"]',
+    )!;
+    expect(leadWith.dataset.agentStatus).toBe("working");
+
+    setInput(agentGraphV3Input("no-overlay", "workspace.next-generation"));
+    expect(root.querySelector(".agent-graph")).toBeNull();
+    const leadAfter = root.querySelector<HTMLElement>(
+      '.app-window-card[data-window-id="window.lead"]',
+    )!;
+    expect(leadAfter.getAttribute("data-agent-status")).toBeNull();
+  });
+});
+
+/*
+ * The m48 GUI-first scope call, asserted at the surface a user meets it on.
+ *
+ * The point of these is that "hidden" means gone: not a zero-height tab, not a
+ * tab pushed past the strip, not a disabled tab with a euphemism on it. A
+ * withheld surface has no button to press and no palette row to find, and the
+ * dock still lands somewhere real.
+ */
+describe("DomApplicationShell GUI-first scope", () => {
+  it("withholds the Missions and Activity tabs from the DOM entirely", () => {
+    const root = renderShell(createDefaultDomShellInput(), undefined, "darwin", undefined, false);
+
+    expect(root.querySelector("#workbench-dock-tab-missions")).toBeNull();
+    expect(root.querySelector("#workbench-dock-tab-activity")).toBeNull();
+    expect(
+      [...root.querySelectorAll('.workbench-dock [role="tab"]')].map((tab) =>
+        tab.getAttribute("data-tab-id"),
+      ),
+    ).toEqual(["files", "changes"]);
+    // The dock's own body panels go with the tabs — a tabpanel with no tab is
+    // exactly the orphan the reduction must not leave behind.
+    expect(root.querySelector("#workbench-dock-panel-missions")).toBeNull();
+    expect(root.querySelector("#workbench-dock-panel-activity")).toBeNull();
+    // Both workspace modes survive: this reduces the dock, not the product.
+    expect(root.querySelectorAll('.primary-tabs [role="tab"]')).toHaveLength(2);
+  });
+
+  it("redirects a snapshot that opens on a withheld tool onto one that exists", () => {
+    // The preview fixture's dock opens on Missions, so this is the default
+    // browser-host path, not a contrived input.
+    expect(createDefaultDomShellInput().dock.activeTool).toBe("missions");
+
+    const root = renderShell(createDefaultDomShellInput(), undefined, "darwin", undefined, false);
+    const body = root.querySelector<HTMLElement>(".dock-surface");
+    expect(body?.dataset.surface).toBe("files");
+    expect(root.querySelector('#workbench-dock-tab-files[aria-selected="true"]')).not.toBeNull();
+    expect(root.textContent).not.toContain("Missions");
+  });
+
+  it("keeps the withheld surfaces out of the command palette too", async () => {
+    const root = renderShell(createDefaultDomShellInput(), undefined, "darwin", undefined, false);
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }),
+    );
+    const paletteInput = root.querySelector<HTMLInputElement>('[role="combobox"]')!;
+    await vi.waitFor(() => expect(document.activeElement).toBe(paletteInput));
+
+    expect(root.querySelector("#palette-option-missions")).toBeNull();
+    expect(root.querySelector("#palette-option-activity")).toBeNull();
+    expect(root.querySelector("#palette-option-files")).not.toBeNull();
+    expect(root.querySelector("#palette-option-terminals")).not.toBeNull();
+  });
+
+  it("restores both tabs when the flag is on, so this is a setting and not a deletion", () => {
+    const root = renderShell(createDefaultDomShellInput(), undefined, "darwin", undefined, true);
+    expect(
+      [...root.querySelectorAll('.workbench-dock [role="tab"]')].map((tab) =>
+        tab.getAttribute("data-tab-id"),
+      ),
+    ).toEqual(["files", "changes", "missions", "activity"]);
+    expect(root.querySelector("#workbench-dock-panel-missions")).not.toBeNull();
+  });
+});
+
+describe("the two dead affordances the GUI map found", () => {
+  function menuItem(id: string): HTMLButtonElement {
+    const element = document.querySelector<HTMLButtonElement>(`[data-context-menu-item="${id}"]`);
+    if (!element) throw new Error(`no menu item ${id}`);
+    return element;
+  }
+
+  it("opens the session verb menu from the sidebar's Workspace actions button", () => {
+    const root = renderShell();
+    const more = root.querySelector<HTMLButtonElement>(".workspace-sidebar__more")!;
+    // It had a label, a tooltip and no handler; clicking it changed nothing.
+    pointerClick(more);
+    const menu = document.querySelector('[role="menu"]');
+    expect(menu?.getAttribute("aria-label")).toBe("Workspace actions");
+    expect(menuItem("session.kill").dataset.destructive).toBe("true");
+    // The daemon is unavailable in this fixture, so tmux verbs are refused —
+    // visibly, with the reason, rather than hidden.
+    expect(menuItem("session.kill").textContent).toContain("workspace is not connected");
+  });
+
+  it("opens the pane verb menu from the grid path's Pane actions button", () => {
+    const onPaneAction = vi.fn<NonNullable<DomApplicationShellProps["onPaneAction"]>>();
+    // The live grid renders the shared agent-terminal action set, whose
+    // overflow button is the affordance under test.
+    const frames = createDefaultDomPaneFrames().map((frame) => ({
+      ...frame,
+      actions: applicationShellAgentTerminalActions("docked"),
+    }));
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={createDefaultDomShellInput()}
+            dataMode="runtime"
+            paneFrames={frames}
+            onPaneAction={onPaneAction}
+            experimentalSurfaces
+          />
+        ),
+        root,
+      ),
+    );
+    const overflow = root.querySelector<HTMLButtonElement>(
+      `[data-action-id="${APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS.menu}"]`,
+    )!;
+    pointerClick(overflow);
+    // It used to emit `workspace.pane.menu.open`, which no surface consumed.
+    expect(onPaneAction).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="menu"]')?.getAttribute("aria-label")).toBe(
+      "Pane actions",
+    );
+    expect(menuItem("pane.split.right")).toBeTruthy();
+    // The grid layout has no float, dock or stack, and the menu says so rather
+    // than offering an arrangement that would do nothing.
+    expect(menuItem("app-layout:placement").textContent).toContain("grid layout");
   });
 });

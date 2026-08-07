@@ -1,8 +1,11 @@
 import {
+  DAEMON_RESOURCE_KINDS,
   DESKTOP_HOST_API_VERSION,
   DesktopHostBootstrapSchemaZ,
   DesktopThemeStateSchemaZ,
   DesktopWindowStateSchemaZ,
+  createDaemonResourceMethods,
+  type DaemonResourceRequest,
   type DesktopPlatform,
   type DesktopThemeState,
   type DesktopWindowState,
@@ -71,6 +74,46 @@ function subscribeMedia(listener: (state: DesktopThemeState) => void): () => voi
   };
 }
 
+/**
+ * Every daemon resource, refused the same way, in the vocabulary its own
+ * caller switches on. One dispatcher replaces fifteen preview stubs; the two
+ * lease issues keep their issue-error shape because a renderer branching on
+ * `retryable` must not receive a capability error instead.
+ */
+async function previewDaemonResource(request: DaemonResourceRequest): Promise<unknown> {
+  if (request.resource === "issueTerminalAttachment") {
+    return {
+      status: "error",
+      error: {
+        code: "preview-only",
+        reason: "Terminal attachments are unavailable in browser preview.",
+        retryable: false,
+      },
+    };
+  }
+  if (request.resource === "issuePaneStream") {
+    return {
+      status: "error",
+      error: {
+        code: "daemon-unavailable",
+        reason: "Pane streams are unavailable in browser preview.",
+        retryable: false,
+      },
+    };
+  }
+  if (request.resource === "refreshConnection") {
+    return {
+      outcome: "unchanged",
+      daemon: {
+        status: "unavailable",
+        code: "preview-only",
+        reason: "Browser preview does not attach to the desktop daemon.",
+      },
+    };
+  }
+  return { status: "error", error: PREVIEW_DAEMON_ERROR };
+}
+
 export function createBrowserHostCapabilities(): HostCapabilities {
   const capabilities: HostCapabilities = {
     apiVersion: DESKTOP_HOST_API_VERSION,
@@ -86,75 +129,66 @@ export function createBrowserHostCapabilities(): HostCapabilities {
         code: "preview-only",
         reason: "Browser preview does not attach to the desktop daemon.",
       },
+      onboarding: { introAcknowledged: false },
     }),
-    lifecycle: {
-      requestQuit: async () => undefined,
-    },
     window: {
-      getState: async () => browserWindowState(),
       minimize: async () => browserWindowState(),
       toggleMaximized: async () => browserWindowState(),
       close: async () => undefined,
       onStateChanged: () => () => undefined,
     },
-    menu: {
-      showApplicationMenu: async () => ({ status: "unavailable" }),
+    workspace: {
+      openProjectDirectory: async () => null,
     },
-    dialog: {
-      selectProjectDirectory: async () => null,
+    onboarding: {
+      acknowledgeIntro: async () => undefined,
     },
     theme: {
-      getState: async () => browserTheme(),
       onChanged: subscribeMedia,
     },
+    update: {
+      getStatus: async () => ({
+        phase: "idle",
+        currentVersion: "browser-dev",
+        availableVersion: null,
+      }),
+      onStatusChanged: () => () => undefined,
+    },
     daemon: {
-      createWorkspacePane: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
-      issueTerminalAttachment: async () => ({
-        status: "error",
-        error: {
-          code: "preview-only",
-          reason: "Terminal attachments are unavailable in browser preview.",
-          retryable: false,
-        },
-      }),
-      refreshConnection: async () => ({
-        outcome: "unchanged",
-        daemon: {
-          status: "unavailable",
-          code: "preview-only",
-          reason: "Browser preview does not attach to the desktop daemon.",
-        },
-      }),
-      listWorkspaces: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
-      fetchApplicationShell: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
+      ...createDaemonResourceMethods(previewDaemonResource),
       subscribe: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
     },
   };
   return capabilities;
 }
 
+/**
+ * Is this object the bridge this renderer was built against?
+ *
+ * The daemon half is checked against `DAEMON_RESOURCE_KINDS` rather than a
+ * hand-written list. That list used to be a fourth copy of the interface that
+ * TypeScript could not keep in sync — the reason a new resource had to be added
+ * twice in this one file — and it is now derived from the same union the
+ * methods themselves are.
+ */
 function hasNarrowFacade(value: unknown): value is HostCapabilities {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<HostCapabilities>;
+  const daemon = candidate.daemon as Record<string, unknown> | undefined;
   return (
     candidate.apiVersion === DESKTOP_HOST_API_VERSION &&
     typeof candidate.bootstrap === "function" &&
-    typeof candidate.lifecycle?.requestQuit === "function" &&
-    typeof candidate.window?.getState === "function" &&
     typeof candidate.window?.minimize === "function" &&
     typeof candidate.window?.toggleMaximized === "function" &&
     typeof candidate.window?.close === "function" &&
     typeof candidate.window?.onStateChanged === "function" &&
-    typeof candidate.menu?.showApplicationMenu === "function" &&
-    typeof candidate.dialog?.selectProjectDirectory === "function" &&
-    typeof candidate.theme?.getState === "function" &&
+    typeof candidate.workspace?.openProjectDirectory === "function" &&
+    typeof candidate.onboarding?.acknowledgeIntro === "function" &&
     typeof candidate.theme?.onChanged === "function" &&
-    typeof candidate.daemon?.createWorkspacePane === "function" &&
-    typeof candidate.daemon?.issueTerminalAttachment === "function" &&
-    typeof candidate.daemon?.refreshConnection === "function" &&
-    typeof candidate.daemon?.listWorkspaces === "function" &&
-    typeof candidate.daemon?.fetchApplicationShell === "function" &&
-    typeof candidate.daemon?.subscribe === "function"
+    typeof candidate.update?.getStatus === "function" &&
+    typeof candidate.update?.onStatusChanged === "function" &&
+    typeof candidate.daemon?.subscribe === "function" &&
+    DAEMON_RESOURCE_KINDS.every((resource) => typeof daemon?.[resource] === "function")
   );
 }
 

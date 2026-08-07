@@ -157,6 +157,7 @@ const knownCommands = new Set([
   "worktree",
   "update",
   "skill-sync",
+  "widget",
   "serve",
   "command-center",
   "server",
@@ -226,6 +227,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide cheatsheet")}         ${dim("Print the key cheat sheet (⌥k / [ ? keys ] popup)")}
   ${cyan("tmux-ide menu")} [--client N]  ${dim("Open the right-click actions menu (⌥m / right-click any pane or the bar)")}
   ${cyan("tmux-ide popup")} <widget>     ${dim("Open a widget as a floating panel (explorer/changes/config; ⌥e/⌥g/⌥,)")}
+  ${cyan("tmux-ide widget")} <markdown|image|card> [file]  ${dim("Render rich live content in the current pane")}
   ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the app nav column (⌥b on adopted sessions)")}
   ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim("Add a git worktree (new branch) + open a session in it")}
@@ -239,6 +241,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan("tmux-ide update --manifests")} ${dim("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan("tmux-ide skill-sync")}         ${dim("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
+  ${cyan("tmux-ide widget <name> [file]")} ${dim("Render markdown or an image inside this pane (Ctrl-C restores it)")}
   ${cyan("tmux-ide validate")} [--json]  ${dim("Validate workspace config")}
   ${cyan("tmux-ide detect")} [--json]    ${dim("Detect project stack")}
   ${cyan("tmux-ide detect --write")}     ${dim("Detect and write .tmux-ide/workspace.yml")}
@@ -803,6 +806,37 @@ try {
         }
         if (json) console.log(JSON.stringify({ session: sessionName, status: want, ok: true }));
         else console.log(`${sessionName} reached status: ${want}`);
+        process.exit(0);
+      }
+
+      // Receipt fast path: a running daemon pushes a typed `agent.turn-completed`
+      // receipt on /ws/events the moment its watcher observes the transition —
+      // one idle socket instead of re-scraping the fleet every poll. Only
+      // `done`/`idle` are receipt-covered; anything it cannot answer (no
+      // daemon, connect failure, socket drop, other target status) returns
+      // null and the polling below takes over. A receipt-path timeout is a
+      // real timeout, not a fallback.
+      const { waitForAgentStatusViaReceipts } =
+        await import("../packages/daemon/src/tui/team/wait-receipts.ts");
+      const viaReceipts = await waitForAgentStatusViaReceipts(
+        sessionName!,
+        want as import("../packages/daemon/src/tui/detect/classify.ts").AgentStatus,
+        { timeoutMs: timeout },
+      );
+      if (viaReceipts) {
+        if (!viaReceipts.ok) {
+          console.error(
+            `Timed out after ${timeout}ms waiting for ${sessionName} to reach status "${want}" (last: ${viaReceipts.status ?? "absent"})`,
+          );
+          process.exit(1);
+        }
+        if (json) {
+          console.log(
+            JSON.stringify({ session: sessionName, status: viaReceipts.status, ok: true }),
+          );
+        } else {
+          console.log(`${sessionName} reached status: ${viaReceipts.status}`);
+        }
         process.exit(0);
       }
 
@@ -1745,6 +1779,141 @@ try {
             : ` (v${result.to})`;
         console.log(`skill ${result.action}${detail}: ${result.path}`);
       }
+      break;
+    }
+
+    case "widget": {
+      /*
+       * Opt this pane into rich rendering (m49.7).
+       *
+       *   tmux-ide widget markdown [file]     # or stdin; files live-refresh
+       *   tmux-ide widget image <file>        # PNG/JPEG/GIF/WebP/AVIF
+       *   tmux-ide widget card [file]         # or JSON on stdin
+       *
+       * The marker line carries inline content or a content-addressed asset id,
+       * so the helper prints ONE line and then holds the pane. File-backed
+       * widgets publish a new id whenever the file changes. Ctrl-C
+       * clears the screen, which is what takes the widget down — the renderer
+       * shows one for exactly as long as the marker is in the grid.
+       *
+       * Outside a tmux-ide window this prints a concealed line and waits, which
+       * is why the marker is wrapped in SGR 8 rather than left bare.
+       */
+      const {
+        PaneWidgetRefusal,
+        PANE_WIDGET_RESTORE_SEQUENCE,
+        buildCardAnnouncement,
+        buildImageAssetAnnouncement,
+        buildMarkdownAnnouncement,
+        buildMarkdownAssetAnnouncement,
+        imageMediaTypeFor,
+        paneWidgetId,
+      } = await import("../packages/daemon/src/lib/pane-widget.ts");
+      const { publishWidgetAsset, WidgetAssetStoreError } =
+        await import("../packages/daemon/src/lib/widget-asset-store.ts");
+      const { readFileSync, watchFile, unwatchFile } = await import("node:fs");
+      const { basename } = await import("node:path");
+
+      const readStdin = async (): Promise<string> => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+        return Buffer.concat(chunks).toString("utf8");
+      };
+
+      let announcement: string;
+      let watchedFile: string | null = null;
+      let refreshAnnouncement: (() => string) | null = null;
+      try {
+        const id = paneWidgetId(positionals[1] ?? "");
+        const file = positionals[2];
+        if (id === "markdown") {
+          if (file) {
+            const publish = (): string => {
+              const asset = publishWidgetAsset(readFileSync(file), {
+                media: "text/markdown",
+                name: basename(file),
+              });
+              return buildMarkdownAssetAnnouncement(asset.assetId, basename(file));
+            };
+            announcement = publish();
+            watchedFile = file;
+            refreshAnnouncement = publish;
+          } else {
+            announcement = buildMarkdownAnnouncement(await readStdin());
+          }
+        } else if (id === "image") {
+          if (!file) throw new PaneWidgetRefusal("empty", "The image widget needs a file path.");
+          const publish = (): string => {
+            const media = imageMediaTypeFor(file);
+            if (!media) {
+              throw new PaneWidgetRefusal(
+                "unsupported-media",
+                `"${basename(file)}" is not a supported raster image.`,
+              );
+            }
+            const asset = publishWidgetAsset(readFileSync(file), {
+              media: media as
+                | "image/png"
+                | "image/jpeg"
+                | "image/gif"
+                | "image/webp"
+                | "image/avif",
+              name: basename(file),
+            });
+            return buildImageAssetAnnouncement(asset.assetId, { name: basename(file) });
+          };
+          announcement = publish();
+          watchedFile = file;
+          refreshAnnouncement = publish;
+        } else {
+          const source = file ? readFileSync(file, "utf8") : await readStdin();
+          announcement = buildCardAnnouncement(JSON.parse(source) as unknown);
+        }
+      } catch (error) {
+        const message =
+          error instanceof PaneWidgetRefusal || error instanceof WidgetAssetStoreError
+            ? error.message
+            : `The widget input could not be read: ${(error as Error).message}`;
+        if (json) {
+          console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+        } else {
+          console.error(message);
+        }
+        process.exit(1);
+      }
+
+      if (json) {
+        // Machine callers want the line to emit themselves, not a held pane.
+        console.log(JSON.stringify({ ok: true, announcement }, null, 2));
+        break;
+      }
+
+      process.stdout.write(announcement);
+      if (watchedFile && refreshAnnouncement) {
+        const source = watchedFile;
+        const refresh = refreshAnnouncement;
+        watchFile(source, { interval: 750 }, (current, previous) => {
+          if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) return;
+          try {
+            process.stdout.write(PANE_WIDGET_RESTORE_SEQUENCE + refresh());
+          } catch (error) {
+            process.stderr.write(
+              `tmux-ide widget could not refresh: ${(error as Error).message}\n`,
+            );
+          }
+        });
+      }
+      // Hold the pane. The process is doing nothing, but it is what Ctrl-C has
+      // to reach for the restore to be the user's own action rather than ours.
+      const hold = setInterval(() => undefined, 1 << 30);
+      const restore = (): void => {
+        clearInterval(hold);
+        if (watchedFile) unwatchFile(watchedFile);
+        process.stdout.write(PANE_WIDGET_RESTORE_SEQUENCE);
+        process.exit(0);
+      };
+      process.on("SIGINT", restore);
+      process.on("SIGTERM", restore);
       break;
     }
 

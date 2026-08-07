@@ -34,11 +34,37 @@ describe("SemanticPaneCatalog", () => {
         sessionId: "$1",
         windowId: "@2",
         runtimePaneId: "%3",
-        paneCount: 1,
+        windowStamp: null,
+        windowPaneCount: 1,
+        windowPaneIndex: 0,
         sessionWindowCount: 2,
       },
     });
     await expect(catalog.resolve({ ...target, runtimePaneId: "%999" } as never)).rejects.toThrow();
+  });
+
+  it("resolves a pane set from one trusted discovery snapshot", async () => {
+    let discoveries = 0;
+    const siblingTarget = { ...target, semanticPaneId: "pane.sibling" };
+    const catalog = new SemanticPaneCatalog({
+      discover: () => {
+        discoveries += 1;
+        return [
+          row({ windowStamp: "window.shared", windowPaneCount: 2 }),
+          row({
+            semanticPaneId: siblingTarget.semanticPaneId,
+            runtimePaneId: "%4",
+            windowStamp: "window.shared",
+            windowPaneCount: 2,
+          }),
+        ];
+      },
+    });
+
+    const resolved = await catalog.resolveMany([target, siblingTarget]);
+    expect(discoveries).toBe(1);
+    expect(resolved.map((pane) => pane.source.windowId)).toEqual(["@2", "@2"]);
+    expect(resolved.map((pane) => pane.source.runtimePaneId)).toEqual(["%3", "%4"]);
   });
 
   it("keeps generations stable and increments when trusted tmux identity churns", async () => {
@@ -174,10 +200,96 @@ describe("SemanticPaneCatalog", () => {
     );
   });
 
-  it("rejects split windows and malformed trusted runtime proof", async () => {
-    const split = new SemanticPaneCatalog({ discover: () => [row({ windowPaneCount: 2 })] });
-    await expectCode(split.resolve(target), "not-single-pane-window");
+  it("proves a whole multi-pane window by its durable window stamp", async () => {
+    const windowRows = (paneCount: number): TrustedSemanticPaneSnapshot[] =>
+      Array.from({ length: paneCount }, (_unused, index) =>
+        row({
+          semanticPaneId: index === 0 ? target.semanticPaneId : `pane.worker-${index}`,
+          runtimePaneId: `%${10 + index}`,
+          windowStamp: "window.workspace.alpha",
+          windowPaneCount: paneCount,
+        }),
+      );
 
+    const nine = new SemanticPaneCatalog({ discover: () => windowRows(9) });
+    await expect(nine.resolve(target)).resolves.toMatchObject({
+      bindingGeneration: 0,
+      source: {
+        windowId: "@2",
+        runtimePaneId: "%10",
+        windowStamp: "window.workspace.alpha",
+        windowPaneCount: 9,
+        windowPaneIndex: 0,
+      },
+    });
+
+    const two = new SemanticPaneCatalog({ discover: () => windowRows(2) });
+    await expect(two.resolve(target)).resolves.toMatchObject({
+      source: { windowStamp: "window.workspace.alpha", windowPaneCount: 2, windowPaneIndex: 0 },
+    });
+
+    const stampedSingle = new SemanticPaneCatalog({
+      discover: () => [row({ windowStamp: "window.workspace.alpha" })],
+    });
+    await expect(stampedSingle.resolve(target)).resolves.toMatchObject({
+      source: { windowStamp: "window.workspace.alpha", windowPaneCount: 1, windowPaneIndex: 0 },
+    });
+  });
+
+  it("fails closed on missing, inconsistent, or duplicated window stamps", async () => {
+    const unstampedMulti = new SemanticPaneCatalog({
+      discover: () => [
+        row({ windowPaneCount: 2 }),
+        row({ semanticPaneId: "pane.worker-1", runtimePaneId: "%4", windowPaneCount: 2 }),
+      ],
+    });
+    await expectCode(unstampedMulti.resolve(target), "missing-window-stamp");
+
+    const mixedMulti = new SemanticPaneCatalog({
+      discover: () => [
+        row({ windowStamp: "window.workspace.alpha", windowPaneCount: 2 }),
+        row({ semanticPaneId: "pane.worker-1", runtimePaneId: "%4", windowPaneCount: 2 }),
+      ],
+    });
+    await expectCode(mixedMulti.resolve(target), "window-stamp-inconsistent");
+
+    const disagreeing = new SemanticPaneCatalog({
+      discover: () => [
+        row({ windowStamp: "window.workspace.alpha", windowPaneCount: 2 }),
+        row({
+          semanticPaneId: "pane.worker-1",
+          runtimePaneId: "%4",
+          windowStamp: "window.workspace.beta",
+          windowPaneCount: 2,
+        }),
+      ],
+    });
+    await expectCode(disagreeing.resolve(target), "window-stamp-inconsistent");
+
+    const aliasedWindows = new SemanticPaneCatalog({
+      discover: () => [
+        row({ windowStamp: "window.workspace.alpha" }),
+        row({
+          workspaceName: "workspace.beta",
+          semanticPaneId: "pane.worker",
+          sessionId: "$4",
+          windowId: "@5",
+          runtimePaneId: "%6",
+          windowStamp: "window.workspace.alpha",
+        }),
+      ],
+    });
+    await expectCode(aliasedWindows.resolve(target), "duplicate-window-stamp");
+  });
+
+  it("rejects a reserved or malformed window stamp as an invalid runtime proof", async () => {
+    for (const windowStamp of ["terminal.discovered.window", "window:colon", "__proto__"]) {
+      const poisoned = new SemanticPaneCatalog({ discover: () => [row({ windowStamp })] });
+      await expectCode(poisoned.resolve(target), "invalid-runtime-proof");
+    }
+  });
+
+  it("rejects malformed trusted runtime proof", async () => {
     const malformed = new SemanticPaneCatalog({
       discover: () => [{ ...row(), runtimePaneId: "pane.worker" } as never],
     });

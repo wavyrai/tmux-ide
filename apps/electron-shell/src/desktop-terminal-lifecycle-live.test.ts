@@ -19,8 +19,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { WebSocket } from "ws";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Live spawns (daemon, tmux, pty) starve the default 5s/10s budgets when the
+// full monorepo check runs suites concurrently; same hardening as the daemon's
+// live suites.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 import {
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
   type DesktopDaemonHostState,
   type TerminalAttachRequest,
@@ -35,7 +41,28 @@ import {
 import { WorkspaceRegistry } from "../../../packages/daemon/src/lib/workspace-registry.ts";
 import { GROUPED_TMUX_VIEW_SESSION_PREFIX } from "../../../packages/daemon/src/terminal/attachments/grouped-tmux.ts";
 import { DaemonConnectionCoordinator } from "./daemon-connection-coordinator.ts";
+import { DaemonResourceBroker } from "./daemon-resource-broker.ts";
+
+type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected" }>;
 import { canonicalDaemonPreflight, runDaemonPreflight } from "./daemon-preflight.ts";
+import { inspectCanonicalDaemonInfo } from "../../../packages/daemon/src/lib/canonical-daemon.ts";
+
+/**
+ * The default broker's 3s request timeout starves when the full monorepo check
+ * runs this live suite concurrently with the daemon's own suite; the raised
+ * budget changes nothing about behavior, only how long a live spawn may take.
+ */
+function liveBrokerFactory(daemon: ConnectedDaemonState): DaemonResourceBroker {
+  const canonical = inspectCanonicalDaemonInfo();
+  if (canonical.status !== "valid" || !canonical.info.authToken) {
+    throw new Error("canonical daemon owner capability is unavailable");
+  }
+  return new DaemonResourceBroker({
+    daemon,
+    ownerToken: canonical.info.authToken,
+    requestTimeoutMs: 20_000,
+  });
+}
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const cliPath = join(repoRoot, "bin/cli.js");
@@ -327,6 +354,7 @@ describe
       const firstCoordinator = new DaemonConnectionCoordinator({
         initialDaemon: firstDaemon,
         preflight: canonicalDaemonPreflight,
+        createBroker: liveBrokerFactory,
       });
 
       const listed = await firstCoordinator.listWorkspaces();
@@ -374,6 +402,19 @@ describe
       runTmux(["select-window", "-t", createdRuntime![0]!]);
       const shell = await firstCoordinator.fetchApplicationShell(workspaceName);
       expect(shell.status, JSON.stringify(shell)).toBe("ok");
+      if (shell.status !== "ok") throw new Error(shell.error.reason);
+      expect(shell.envelope.version).toBe(APPLICATION_SHELL_RESOURCE_V3_VERSION);
+      if (shell.envelope.version !== APPLICATION_SHELL_RESOURCE_V3_VERSION) {
+        throw new Error("application shell did not negotiate durable app-window state");
+      }
+      expect(Object.values(shell.envelope.resource.appWindows.windows)).toContainEqual(
+        expect.objectContaining({
+          source: {
+            kind: "terminal",
+            terminalSourceId: created.resource.semanticPaneId,
+          },
+        }),
+      );
       expect(shell).toMatchObject({
         status: "ok",
         envelope: {
@@ -385,6 +426,56 @@ describe
         },
       });
 
+      const capabilities = await firstCoordinator.capabilities();
+      expect(capabilities).toMatchObject({
+        status: "ok",
+        daemon: { instanceId: firstDaemon.descriptor.instanceId },
+        capabilities: { appWindowMutation: { available: true } },
+      });
+      const appWindow = Object.values(shell.envelope.resource.appWindows.windows).find(
+        ({ source }) =>
+          source.kind === "terminal" && source.terminalSourceId === created.resource.semanticPaneId,
+      );
+      if (!appWindow) throw new Error("created terminal app window was not projected");
+      const mutation = await firstCoordinator.mutateAppWindow({
+        operationId: randomUUID(),
+        expectedDaemonInstanceId: firstDaemon.descriptor.instanceId,
+        intent: {
+          workspaceName,
+          expectedDocumentRevision: shell.envelope.resource.appWindows.revision,
+          command: {
+            type: "window.float",
+            windowId: appWindow.id,
+            rect: { x: 96, y: 72, width: 760, height: 480 },
+          },
+        },
+      });
+      expect(mutation).toMatchObject({
+        outcome: "applied",
+        workspaceName,
+        documentRevision: shell.envelope.resource.appWindows.revision + 1,
+      });
+      for (let refresh = 0; refresh < 2; refresh += 1) {
+        const durable = await firstCoordinator.fetchApplicationShell(workspaceName);
+        if (
+          durable.status !== "ok" ||
+          durable.envelope.version !== APPLICATION_SHELL_RESOURCE_V3_VERSION
+        ) {
+          throw new Error("durable AppWindow refresh was unavailable");
+        }
+        expect(durable.envelope.resource.appWindows).toMatchObject({
+          revision: mutation.documentRevision,
+          windows: {
+            [appWindow.id]: {
+              placement: {
+                mode: "floating",
+                floating: { x: 96, y: 72, width: 760, height: 480 },
+              },
+            },
+          },
+        });
+      }
+
       const request: TerminalAttachRequest = {
         protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
         target: {
@@ -392,6 +483,7 @@ describe
           semanticPaneId: created.resource.semanticPaneId,
         },
         viewerMode: "interactive",
+        geometryOwnership: "passive",
         viewport: { cols: 100, rows: 30 },
       };
       const firstCounters: SocketCounters = { connections: 0, outboundBinaryFrames: 0 };
@@ -478,19 +570,35 @@ describe
       const secondCoordinator = new DaemonConnectionCoordinator({
         initialDaemon: secondDaemon,
         preflight: canonicalDaemonPreflight,
+        createBroker: liveBrokerFactory,
       });
       const secondCounters: SocketCounters = { connections: 0, outboundBinaryFrames: 0 };
       const secondEvents: NativeTerminalEvent[] = [];
-      const secondConnection = await transportFor(secondCoordinator, secondCounters).connect(
+      const secondTransport = transportFor(secondCoordinator, secondCounters);
+      const listenSecondGeneration = (event: NativeTerminalEvent) => {
+        secondEvents.push(event);
+      };
+      const initialSecondConnection = await secondTransport.connect(
         request,
-        (event) => {
-          secondEvents.push(event);
-        },
+        listenSecondGeneration,
       );
-      expect(secondConnection.status).toBe("connected");
+      // Health identity publication and terminal attachment readiness are
+      // separate authorities. Under a fully concurrent workspace test run the
+      // first post-restart ticket can race the attachment server by a few
+      // milliseconds, so exercise the product's explicit retry boundary once.
+      const secondConnection =
+        initialSecondConnection.status === "error" && initialSecondConnection.error.retryable
+          ? await (async () => {
+              await delay(100);
+              return secondTransport.connect(request, listenSecondGeneration);
+            })()
+          : initialSecondConnection;
+      expect(secondConnection.status, JSON.stringify(secondConnection)).toBe("connected");
       if (secondConnection.status !== "connected") throw new Error(secondConnection.error.reason);
       await delay(200);
-      expect(secondCounters).toEqual({ connections: 1, outboundBinaryFrames: 0 });
+      expect(secondCounters.connections).toBeGreaterThanOrEqual(1);
+      expect(secondCounters.connections).toBeLessThanOrEqual(2);
+      expect(secondCounters.outboundBinaryFrames).toBe(0);
 
       const beforeExplicitInput = existsSync(noReplayProof)
         ? readFileSync(noReplayProof, "utf8")

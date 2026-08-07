@@ -8,7 +8,11 @@ import {
   ApplicationShellProjectionV1SchemaZ,
   ApplicationShellProjectionInputV1SchemaZ,
   ApplicationShellProjectionInputV2SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ,
+  ApplicationShellTerminalResourceSchemaZ,
   TerminalResourceAttachabilitySchemaZ,
+  TerminalResourceUnavailableReasonSchemaZ,
+  TerminalWindowResourceIdSchemaZ,
   applyApplicationShellInvocationV1,
   applicationShellActionTraceV1,
   applicationShellCommandInvocation,
@@ -20,6 +24,7 @@ import {
   ApplicationShellResourceSchemaZ,
   ApplicationShellResourceV1SchemaZ,
   ApplicationShellResourceV2SchemaZ,
+  ApplicationShellResourceV3SchemaZ,
 } from "../application-shell-resource.ts";
 import { COHESION_FIXTURE_V1 } from "../cohesion-fixture.ts";
 import {
@@ -158,6 +163,30 @@ describe("semantic application shell", () => {
     };
     expect(ApplicationShellResourceV2SchemaZ.parse(v2Envelope)).toEqual(v2Envelope);
     expect(ApplicationShellResourceSchemaZ.parse(v2Envelope)).toEqual(v2Envelope);
+    const v3Envelope = {
+      ...v2Envelope,
+      version: 3,
+      resource: {
+        ...v2Envelope.resource,
+        appWindows: {
+          version: 1,
+          revision: 0,
+          updatedAt: "2026-07-21T00:00:00.000Z",
+          windows: {},
+          dockRoot: null,
+          dockState: { mode: "collapsed", preferredHeight: null, focusZone: "canvas" },
+          floatingOrder: [],
+          focusedWindowId: null,
+          activeLayoutId: null,
+          layouts: {},
+        },
+      },
+    };
+    expect(ApplicationShellProjectionInputV3SchemaZ.parse(v3Envelope.resource)).toEqual(
+      v3Envelope.resource,
+    );
+    expect(ApplicationShellResourceV3SchemaZ.parse(v3Envelope)).toEqual(v3Envelope);
+    expect(ApplicationShellResourceSchemaZ.parse(v3Envelope)).toEqual(v3Envelope);
 
     expect(() =>
       projectApplicationShellV1({
@@ -194,6 +223,26 @@ describe("semantic application shell", () => {
         },
       }),
     ).toThrow(/fallback/u);
+
+    // The open workspace's own fleet correlation key is additive and optional:
+    // a V3 resource without it still parses, and one carrying a valid opaque
+    // `session.<digest>` token preserves it while a raw name/path is rejected.
+    expect(ApplicationShellProjectionInputV3SchemaZ.parse(v3Envelope.resource).fleetSessionId).toBe(
+      undefined,
+    );
+    const withFleetId = {
+      ...v3Envelope.resource,
+      fleetSessionId: "session.0123456789abcdef0123",
+    };
+    expect(ApplicationShellProjectionInputV3SchemaZ.parse(withFleetId)).toEqual(withFleetId);
+    for (const invalidFleetId of ["my-session", "/tmp/session", "$3", "session.short"]) {
+      expect(
+        ApplicationShellProjectionInputV3SchemaZ.safeParse({
+          ...v3Envelope.resource,
+          fleetSessionId: invalidFleetId,
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("uses terminal attachment admission identity for available resources", () => {
@@ -218,6 +267,54 @@ describe("semantic application shell", () => {
         semanticPaneId: "pane.portable-worker_2",
       }).success,
     ).toBe(true);
+  });
+
+  it("carries the additive window-level reasons and a wire-safe window grouping key", () => {
+    for (const reason of [
+      "missing-window-stamp",
+      "window-stamp-inconsistent",
+      "duplicate-window-stamp",
+      // Retained for wire compatibility.
+      "not-single-pane-window",
+    ]) {
+      expect(TerminalResourceUnavailableReasonSchemaZ.safeParse(reason).success).toBe(true);
+    }
+
+    expect(
+      TerminalWindowResourceIdSchemaZ.safeParse("terminal-window.0123456789abcdef0123").success,
+    ).toBe(true);
+    // Only a namespaced 20-char digest — never a raw window stamp or runtime id.
+    for (const invalid of [
+      "window.abcdef0123456789",
+      "@7",
+      "terminal-window.SHORT",
+      "terminal-window.0123456789abcdef012",
+      "terminal-window.0123456789abcdef01234",
+    ]) {
+      expect(TerminalWindowResourceIdSchemaZ.safeParse(invalid).success).toBe(false);
+    }
+
+    const base = {
+      id: "pane.grouped",
+      title: "Grouped",
+      kind: "terminal" as const,
+      active: true,
+    };
+    expect(
+      ApplicationShellTerminalResourceSchemaZ.safeParse({
+        ...base,
+        attachability: { status: "available", semanticPaneId: "pane.grouped" },
+        windowResourceId: "terminal-window.0123456789abcdef0123",
+      }).success,
+    ).toBe(true);
+    // The grouping key is only valid on an attachable resource.
+    expect(
+      ApplicationShellTerminalResourceSchemaZ.safeParse({
+        ...base,
+        attachability: { status: "unavailable", reason: "missing-window-stamp" },
+        windowResourceId: "terminal-window.0123456789abcdef0123",
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects duplicate non-null agent pane ids at every strict projection boundary", () => {

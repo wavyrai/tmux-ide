@@ -14,6 +14,13 @@ describe("daemon event contracts", () => {
       DaemonEventClientFrameSchemaZ.parse({ type: "subscribe", sessions: ["tmux-ide"] }),
     ).toEqual({ type: "subscribe", sessions: ["tmux-ide"] });
     expect(
+      DaemonEventClientFrameSchemaZ.parse({
+        type: "subscribe",
+        sessions: ["tmux-ide"],
+        afterSequence: 41,
+      }),
+    ).toEqual({ type: "subscribe", sessions: ["tmux-ide"], afterSequence: 41 });
+    expect(
       DaemonEventClientFrameSchemaZ.safeParse({ type: "unsubscribe", sessions: [] }).success,
     ).toBe(true);
     expect(DaemonEventClientFrameSchemaZ.safeParse({ type: "ping" }).success).toBe(true);
@@ -23,10 +30,50 @@ describe("daemon event contracts", () => {
       DaemonEventClientFrameSchemaZ.safeParse({
         type: "subscribe",
         sessions: [],
+        afterSequence: -1,
+      }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventClientFrameSchemaZ.safeParse({
+        type: "subscribe",
+        sessions: [],
         typo: true,
       }).success,
     ).toBe(false);
     expect(DaemonEventClientFrameSchemaZ.safeParse({ type: "ping", sessions: [] }).success).toBe(
+      false,
+    );
+  });
+
+  it("strictly parses replayable resource invalidations and gap recovery", () => {
+    const changed = {
+      type: "resource.changed",
+      sequence: 42,
+      workspaceName: "tmux-ide",
+      resource: "application-shell",
+      revision: 8,
+      causeOperationId: "10000000-0000-4000-8000-000000000001",
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(changed)).toEqual(changed);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...changed, sequence: 0 }).success).toBe(
+      false,
+    );
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ ...changed, resource: "everything" }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ ...changed, causeOperationId: null }).success,
+    ).toBe(true);
+
+    const gap = {
+      type: "snapshot-required",
+      afterSequence: 1,
+      oldestAvailableSequence: 20,
+      currentSequence: 42,
+      reason: "journal-gap",
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(gap)).toEqual(gap);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...gap, reason: "unknown" }).success).toBe(
       false,
     );
   });
@@ -81,6 +128,21 @@ describe("daemon event contracts", () => {
       { type: "action.complete", name: "project.launch", result: { ok: true } },
       { type: "config.changed", sessionName: "tmux-ide" },
       { type: "terminals.changed", sessionName: "tmux-ide" },
+      { type: "agent-status.changed", sessionName: "tmux-ide" },
+      {
+        type: "agent.turn-completed",
+        sessionName: "tmux-ide",
+        agentId: "agent.0123456789abcdef0123",
+        fromStatus: "working",
+        toStatus: "done",
+        at: "2026-07-23T12:00:00.000Z",
+      },
+      {
+        type: "workspace.promotion-completed",
+        workspaceName: "tmux-ide",
+        outcome: "promoted",
+        at: "2026-07-23T12:00:00.000Z",
+      },
       {
         type: "workspace.added",
         workspace: {
@@ -111,6 +173,84 @@ describe("daemon event contracts", () => {
         type: "hello",
         daemon: { ...daemon, authToken: "must-not-cross-wire" },
         sessions: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("strictly parses agent.turn-completed and rejects unsafe or unbounded shapes", () => {
+    const receipt = {
+      type: "agent.turn-completed",
+      sessionName: "tmux-ide",
+      agentId: "agent.0123456789abcdef0123",
+      fromStatus: "working",
+      toStatus: "idle",
+      at: "2026-07-23T12:00:00.000Z",
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(receipt)).toEqual(receipt);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, agentId: null }).success).toBe(
+      true,
+    );
+
+    // A raw tmux pane id, a raw durable stamp, or any non-digest value is
+    // rejected — only the minted `agent.<digest>` identity crosses the wire.
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, agentId: "%1" }).success).toBe(
+      false,
+    );
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        ...receipt,
+        agentId: "pane.promoted.0123456789abcdef0123",
+      }).success,
+    ).toBe(false);
+    // Completion is bounded to a finished turn: from working, to done|idle.
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, fromStatus: "blocked" }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, toStatus: "blocked" }).success,
+    ).toBe(false);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, at: "yesterday" }).success).toBe(
+      false,
+    );
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, unexpected: true }).success).toBe(
+      false,
+    );
+  });
+
+  it("strictly parses workspace.promotion-completed", () => {
+    const receipt = {
+      type: "workspace.promotion-completed",
+      workspaceName: "tmux-ide",
+      outcome: "replayed",
+      at: "2026-07-23T12:00:00.000Z",
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(receipt)).toEqual(receipt);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, outcome: "failed" }).success).toBe(
+      false,
+    );
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, workspaceName: "" }).success).toBe(
+      false,
+    );
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, unexpected: true }).success).toBe(
+      false,
+    );
+  });
+
+  it("strictly parses agent-status.changed and rejects missing or extra fields", () => {
+    expect(
+      DaemonEventServerFrameSchemaZ.parse({
+        type: "agent-status.changed",
+        sessionName: "tmux-ide",
+      }),
+    ).toEqual({ type: "agent-status.changed", sessionName: "tmux-ide" });
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ type: "agent-status.changed" }).success).toBe(
+      false,
+    );
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        type: "agent-status.changed",
+        sessionName: "tmux-ide",
+        unexpected: true,
       }).success,
     ).toBe(false);
   });

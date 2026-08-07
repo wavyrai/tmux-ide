@@ -83,6 +83,40 @@ function brokerHarness(
   };
   return {
     authority: {
+      capabilities: async () => ({
+        status: "ok",
+        daemon: identity,
+        capabilities: { appWindowMutation: { available: true } },
+      }),
+      fetchWidgetAsset: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      mutateAppWindow: async (request) => ({
+        operationId: request.operationId,
+        daemonInstanceId: identity.instanceId,
+        outcome: "applied",
+        workspaceName: request.intent.workspaceName,
+        documentRevision: request.intent.expectedDocumentRevision + 1,
+      }),
+      invokeVerb: async (request) => ({
+        operationId: request.operationId,
+        daemonInstanceId: identity.instanceId,
+        outcome: "applied",
+        workspaceName: request.intent.workspaceName,
+        verb: "workspace.pane.select",
+        semanticPaneId: "pane.stub",
+      }),
+      openWorkspace: async (request) => ({
+        operationId: request.operationId,
+        daemonInstanceId: identity.instanceId,
+        outcome: "created",
+        resource: {
+          resourceVersion: 1,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+        },
+      }),
       createWorkspacePane: async (request) => ({
         operationId: request.operationId,
         daemonInstanceId: identity.instanceId,
@@ -106,11 +140,48 @@ function brokerHarness(
           retryable: true,
         },
       }),
+      issuePaneStream: async () => ({
+        status: "error",
+        error: {
+          code: "attachment-unavailable",
+          reason: "Pane streaming is unavailable.",
+          retryable: true,
+        },
+      }),
       listWorkspaces: async () => {
         await pending?.promise;
         return { status: "ok", daemon: identity, workspaces: [{ workspaceName: "product" }] };
       },
+      promoteWorkspace: async (request) => ({
+        operationId: request.operationId,
+        daemonInstanceId: identity.instanceId,
+        outcome: "promoted",
+        resource: {
+          resourceVersion: 1,
+          workspaceName: "product",
+        },
+      }),
+      fetchFleetCatalog: async () => ({
+        status: "ok",
+        envelope: { version: 1, daemon: identity, sessions: [] },
+      }),
       fetchApplicationShell: async () => ({
+        status: "error",
+        error: { code: "workspace-not-found", reason: "not part of this test" },
+      }),
+      fetchWorkspaceFiles: async () => ({
+        status: "error",
+        error: { code: "workspace-not-found", reason: "not part of this test" },
+      }),
+      fetchWorkspaceFilePreview: async () => ({
+        status: "error",
+        error: { code: "workspace-not-found", reason: "not part of this test" },
+      }),
+      fetchWorkspaceChanges: async () => ({
+        status: "error",
+        error: { code: "workspace-not-found", reason: "not part of this test" },
+      }),
+      fetchWorkspaceChangeDiff: async () => ({
         status: "error",
         error: { code: "workspace-not-found", reason: "not part of this test" },
       }),
@@ -160,6 +231,23 @@ describe("main-process daemon connection coordinator", () => {
       { type: "connection.changed", state: "live", error: null },
       { type: "workspaces.changed" },
     ]);
+  });
+
+  it("wakes the retained broker transport when revalidation verifies the same authority", async () => {
+    const first = brokerHarness(A);
+    const retryTransport = vi.fn();
+    const createBroker = vi.fn(() => ({ ...first.authority, retryTransport }));
+    const coordinator = new DaemonConnectionCoordinator({
+      initialDaemon: A,
+      preflight: preflight(async () => A),
+      createBroker,
+    });
+
+    await expect(coordinator.refreshConnection()).resolves.toMatchObject({
+      outcome: "unchanged",
+    });
+    expect(retryTransport).toHaveBeenCalledOnce();
+    expect(first.dispose).not.toHaveBeenCalled();
   });
 
   it("replaces the broker and publishes policy state when the verified endpoint changes", async () => {
@@ -428,6 +516,7 @@ describe("main-process daemon connection coordinator", () => {
         protocolVersion: 1 as const,
         target: { workspaceName: "product", semanticPaneId: "pane.worker" },
         viewerMode: "interactive" as const,
+        geometryOwnership: "passive" as const,
         viewport: { cols: 120, rows: 40 },
       },
     };
@@ -445,6 +534,7 @@ describe("main-process daemon connection coordinator", () => {
         requestId: mutation.requestId,
         expiresAt: Date.now() + 30_000,
         effectiveViewerMode: "interactive",
+        effectiveGeometryOwnership: "passive",
       },
     });
 
@@ -473,5 +563,82 @@ describe("main-process daemon connection coordinator", () => {
     await expect(refresh).resolves.toMatchObject({ outcome: "superseded" });
     expect(createBroker).toHaveBeenCalledOnce();
     expect(first.dispose).toHaveBeenCalledOnce();
+  });
+
+  describe("environment catalog reconciliation", () => {
+    const ENVIRONMENT_ID = "0f4e9a7c-2f4a-4d55-9d2e-1f6cf3a3b210";
+    const withEnvironment = {
+      ...A,
+      descriptor: { ...A.descriptor, environmentId: ENVIRONMENT_ID },
+    } satisfies Extract<DesktopDaemonHostState, { status: "connected" }>;
+
+    it("reports the daemon-minted id to the catalog on the initial verified connect", () => {
+      const reconcileLocalCanonical = vi.fn();
+      const first = brokerHarness(withEnvironment);
+      new DaemonConnectionCoordinator({
+        initialDaemon: withEnvironment,
+        preflight: preflight(async () => withEnvironment),
+        createBroker: () => first.authority,
+        environmentReconciler: { reconcileLocalCanonical },
+      });
+      expect(reconcileLocalCanonical).toHaveBeenCalledExactlyOnceWith(ENVIRONMENT_ID);
+    });
+
+    it("reports again when a refresh installs a new verified generation", async () => {
+      const reconcileLocalCanonical = vi.fn();
+      const replacement = {
+        ...B,
+        descriptor: { ...B.descriptor, environmentId: ENVIRONMENT_ID },
+      } satisfies Extract<DesktopDaemonHostState, { status: "connected" }>;
+      const first = brokerHarness(A);
+      const second = brokerHarness(replacement);
+      const createBroker = vi
+        .fn<(daemon: typeof A | typeof B) => DaemonResourceAuthority>()
+        .mockReturnValueOnce(first.authority)
+        .mockReturnValueOnce(second.authority);
+      const coordinator = new DaemonConnectionCoordinator({
+        initialDaemon: A,
+        preflight: preflight(async () => replacement),
+        createBroker,
+        environmentReconciler: { reconcileLocalCanonical },
+      });
+      expect(reconcileLocalCanonical).not.toHaveBeenCalled();
+
+      await coordinator.refreshConnection();
+      expect(reconcileLocalCanonical).toHaveBeenCalledExactlyOnceWith(ENVIRONMENT_ID);
+    });
+
+    it("stays silent for a daemon that predates environment identity", () => {
+      const reconcileLocalCanonical = vi.fn();
+      const first = brokerHarness(A);
+      new DaemonConnectionCoordinator({
+        initialDaemon: A,
+        preflight: preflight(async () => A),
+        createBroker: () => first.authority,
+        environmentReconciler: { reconcileLocalCanonical },
+      });
+      expect(reconcileLocalCanonical).not.toHaveBeenCalled();
+    });
+
+    it("never lets catalog bookkeeping disturb connection authority", async () => {
+      const reconcileLocalCanonical = vi.fn(() => {
+        throw new Error("catalog write exploded");
+      });
+      const first = brokerHarness(withEnvironment);
+      const coordinator = new DaemonConnectionCoordinator({
+        initialDaemon: withEnvironment,
+        preflight: preflight(async () => withEnvironment),
+        createBroker: () => first.authority,
+        environmentReconciler: { reconcileLocalCanonical },
+      });
+
+      expect(coordinator.state()).toMatchObject({
+        status: "connected",
+        identity: { instanceId: A.descriptor.instanceId, environmentId: ENVIRONMENT_ID },
+      });
+      await expect(coordinator.refreshConnection()).resolves.toMatchObject({
+        outcome: "unchanged",
+      });
+    });
   });
 });

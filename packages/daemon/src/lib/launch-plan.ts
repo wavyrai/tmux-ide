@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { WORKSPACE_SEMANTIC_PANE_OPTION } from "@tmux-ide/contracts";
 import type { Pane, Row, PaneAction } from "../types.ts";
+import { agentHintForCommand } from "./agent-kind.ts";
 import { shellEscape } from "./shell.ts";
 
 export interface LaunchPaneAction extends PaneAction {
@@ -12,6 +13,16 @@ export interface LaunchPaneAction extends PaneAction {
 export interface LaunchPlanDiagnostic {
   code: "AMBIGUOUS_IMPLICIT_PANE_ID";
   message: string;
+}
+
+/** Stable identity for the single root window created by the CLI launcher. */
+export function semanticWindowIdForSession(session: string): string {
+  const digest = createHash("sha256")
+    .update("tmux-ide.launch.window.v1\0", "utf8")
+    .update(session, "utf8")
+    .digest("hex")
+    .slice(0, 20);
+  return `window.launch.${digest}`;
 }
 
 /**
@@ -39,13 +50,14 @@ export function semanticPaneIdForPane(pane: Pane): string {
 }
 
 export function paneIdentityOptions(
-  action: Pick<LaunchPaneAction, "semanticPaneId" | "paneRole" | "paneType" | "title">,
+  action: Pick<LaunchPaneAction, "semanticPaneId" | "paneRole" | "paneType" | "title" | "command">,
 ): ReadonlyArray<readonly [option: string, value: string]> {
   return [
     [WORKSPACE_SEMANTIC_PANE_OPTION, action.semanticPaneId],
     ["@ide_role", action.paneRole ?? "shell"],
     ["@ide_name", action.title ?? ""],
     ["@ide_type", action.paneType ?? "shell"],
+    ["@agent_hint", agentHintForCommand(action.command) ?? ""],
   ];
 }
 
