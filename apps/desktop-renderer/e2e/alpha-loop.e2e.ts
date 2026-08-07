@@ -2,12 +2,12 @@
  * Chain: the alpha loop — the path a user actually walks on a live fleet.
  *
  *   the fleet renders → open a second session from the sidebar → type into a
- *   terminal and see the bytes → mirror the workspace's panes → kill the open
+ *   terminal and see the bytes → compose every tmux pane in place → kill the open
  *   session out from under the app → get an honest, visible degraded state →
  *   watch the app recover when the session comes back.
  *
  * It is ONE test on purpose. Split into "the sidebar renders", "the terminal
- * attaches", "the mirror toggles", each part could pass on its own while the
+ * attaches", "the pane compositor paints", each part could pass on its own while the
  * loop a user walks is broken between them.
  *
  * Only the fleet construction and the kill are done outside the UI. The kill is
@@ -38,7 +38,7 @@ test.use({ scratchSessions: 2, promoteSessions: 1 });
 
 const MARKER = "E2E-MARKER-42";
 
-test("a live fleet opens, types, mirrors, survives its session being killed, and recovers", async ({
+test("a live fleet opens, types, composes panes, survives its session being killed, and recovers", async ({
   page,
   liveApp,
 }, testInfo) => {
@@ -413,46 +413,42 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
   ).toBeGreaterThan(10_000);
   await page.screenshot({ path: testInfo.outputPath("3-terminal-typed.png") });
 
-  // --- User path: mirror the workspace's panes ---------------------------
-  const mirrorToggle = page.locator("[data-mirror-toggle]");
-  await proveVisible(mirrorToggle, "the mirror toggle on the mirror deck", { minHeight: 16 });
-  // Bug this catches: the control loses its pressed state, so a user cannot
-  // tell whether mirroring is on without hunting for the nodes themselves.
+  // --- User path: tmux's panes are composed into its own layout -----------
+  // There is no separate mirror deck in the GUI-first path. The pane streams
+  // are the visible bodies of the non-overlapping tmux tiles, while one hidden
+  // whole-window attachment remains the geometry and keyboard owner.
+  const tiledArea = page.locator(".tiled-pane-area");
   await expect(
-    mirrorToggle,
-    "the mirror toggle does not report an off state before it is pressed",
-  ).toHaveAttribute("aria-pressed", "false");
-  await mirrorToggle.click();
-  await expect(
-    mirrorToggle,
-    "pressing the mirror toggle did not flip its pressed state",
-  ).toHaveAttribute("aria-pressed", "true");
+    tiledArea,
+    "the tiled workspace never promoted its live pane streams into the visible compositor",
+  ).toHaveAttribute("data-pane-compositor", "true", { timeout: 30_000 });
 
-  const mirrorNodes = page.locator("[data-mirror-node-id]");
+  const composedTiles = page.locator('.pane-tile[data-composed="true"]');
   await expect(
-    mirrorNodes.first(),
-    "no mirror node appeared after the toggle was pressed — the mirror is on and shows nothing",
+    composedTiles.first(),
+    "no composed pane appeared for a workspace that has attachable panes",
   ).toBeVisible({ timeout: 30_000 });
-  const mirrorCount = await mirrorNodes.count();
+  const composedCount = await composedTiles.count();
   expect(
-    mirrorCount,
-    "the mirror painted no nodes for a workspace that has attachable panes",
+    composedCount,
+    "the compositor painted no tiles for a workspace that has attachable panes",
   ).toBeGreaterThan(0);
-  const firstMirror = mirrorNodes.first();
-  const firstMirrorPane = await firstMirror.getAttribute("data-pane");
-  // The whole card, not just its header: a mirror node is placed inside the
-  // canvas above the controls, so the centre of the card itself is on screen
-  // and nothing of the app's own chrome covers it.
-  const mirrorProof = await proveVisible(firstMirror, "the first mirror node", {
-    minWidth: 120,
-    minHeight: 100,
-  });
-  // Bug this catches: the node is laid out below the fold or under the dock, so
-  // its frame technically exists and the user sees a strip or nothing at all.
+  const firstTile = composedTiles.first();
+  const firstComposedPane = await firstTile.getAttribute("data-pane");
+  const firstCompositorNode = firstTile.locator(".mirror-pane-node");
+  await expect(firstCompositorNode, "the first composed pane body is not visible").toBeVisible();
+  const compositorRect = await firstCompositorNode.boundingBox();
+  expect(compositorRect, "the first composed pane body has no measurable box").not.toBeNull();
+  expect(
+    compositorRect!.width >= 120 && compositorRect!.height >= 100,
+    `the first composed pane body is only ${Math.round(compositorRect!.width)}x${Math.round(compositorRect!.height)}px`,
+  ).toBe(true);
+  // Bug this catches: the pane body is laid out below the fold or under the
+  // dock, so its frame technically exists and the user sees a strip or nothing.
   const windowSize = page.viewportSize()!;
   expect(
-    mirrorProof.rect.y + mirrorProof.rect.height,
-    `the first mirror node ends at y=${Math.round(mirrorProof.rect.y + mirrorProof.rect.height)} ` +
+    compositorRect!.y + compositorRect!.height,
+    `the first composed pane ends at y=${Math.round(compositorRect!.y + compositorRect!.height)} ` +
       `in a ${windowSize.height}px window — its body is below the visible area`,
   ).toBeLessThanOrEqual(windowSize.height);
   const dockTop = await page
@@ -462,26 +458,26 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
     .then((box) => box?.y ?? windowSize.height)
     .catch(() => windowSize.height);
   expect(
-    mirrorProof.rect.y + mirrorProof.rect.height,
-    "the first mirror node's body runs under the dock",
+    compositorRect!.y + compositorRect!.height,
+    "the first composed pane body runs under the dock",
   ).toBeLessThanOrEqual(dockTop);
 
-  // Bug this catches: the node frame appears but its stream never seeds, so the
-  // user gets a labelled empty rectangle where a pane should be.
+  // Bug this catches: the tile frame appears but its stream never seeds, so the
+  // user gets labelled chrome around an empty rectangle.
   await expect
-    .poll(() => firstMirror.getAttribute("data-state"), {
+    .poll(() => firstCompositorNode.getAttribute("data-state"), {
       message:
-        "the mirror node never reached a live state — the frame is on screen with no pane " +
+        "the composed pane never reached a live state — the frame is on screen with no pane " +
         "content behind it",
       timeout: 30_000,
     })
     .toBe("live");
-  // Bug this catches: the mirror renders a terminal grid that never receives
-  // the pane's bytes — a live-looking node showing a blank screen.
+  // Bug this catches: the compositor renders a terminal grid that never
+  // receives the pane's bytes — a live-looking tile showing a blank screen.
   await expect
-    .poll(() => firstMirror.locator(".xterm-rows").first().innerText(), {
+    .poll(() => firstCompositorNode.locator(".xterm-rows").first().innerText(), {
       message:
-        "the mirror node painted no pane content — it reports a live stream but its terminal grid " +
+        "the composed pane painted no content — it reports a live stream but its terminal grid " +
         "is empty",
       timeout: 30_000,
     })
@@ -499,10 +495,10 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
    * stream the whole time, which is why every existing placement assertion
    * passed; only the pixels the user reads were somewhere else.
    */
-  const gridPlacement = await firstMirror.evaluate((element) => {
+  const gridPlacement = await firstCompositorNode.evaluate((element) => {
     const screen = element.querySelector(".xterm-screen");
     if (!screen) return null;
-    const card = element.getBoundingClientRect();
+    const card = element.parentElement?.getBoundingClientRect() ?? element.getBoundingClientRect();
     const grid = screen.getBoundingClientRect();
     return {
       card: { top: card.top, bottom: card.bottom, left: card.left, right: card.right },
@@ -510,7 +506,7 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
       viewport: { width: window.innerWidth, height: window.innerHeight },
     };
   });
-  expect(gridPlacement, "the mirror node has no rendered grid at all").not.toBeNull();
+  expect(gridPlacement, "the composed pane has no rendered grid at all").not.toBeNull();
   const placement = gridPlacement!;
   const slack = 1; // sub-pixel: a fractional scale cannot round to an escape.
   expect(
@@ -518,60 +514,66 @@ test("a live fleet opens, types, mirrors, survives its session being killed, and
       placement.grid.bottom <= placement.card.bottom + slack &&
       placement.grid.left >= placement.card.left - slack &&
       placement.grid.right <= placement.card.right + slack,
-    `the mirror's grid is rendered at ${JSON.stringify(placement.grid)} but its card is at ` +
+    `the composed pane's grid is rendered at ${JSON.stringify(placement.grid)} but its card is at ` +
       `${JSON.stringify(placement.card)} — the render escaped the card that frames it`,
   ).toBe(true);
   expect(
     placement.grid.bottom <= placement.viewport.height && placement.grid.top >= 0,
-    `the mirror's grid runs from ${Math.round(placement.grid.top)} to ` +
+    `the composed pane's grid runs from ${Math.round(placement.grid.top)} to ` +
       `${Math.round(placement.grid.bottom)} in a ${placement.viewport.height}px window — the ` +
-      "emulator stops painting outside the viewport, so the mirror would freeze mid-stream",
+      "emulator stops painting outside the viewport, so the pane would freeze mid-stream",
   ).toBe(true);
 
-  // Bug this catches — the defect this step was rewritten for: the mirror
-  // rebuilt every node's DOM on each stream update, so each tick threw away the
+  // Bug this catches — the defect this step was rewritten for: the compositor
+  // rebuilt every pane body's DOM on each stream update, so each tick threw away the
   // xterm instance and re-initialized it. Identity is asserted on the element
   // itself, across ticks driven by real typing into the mirrored pane.
-  const mirrorHandle = (await firstMirror.elementHandle())!;
+  const compositorHandle = (await firstCompositorNode.elementHandle())!;
   for (let tick = 0; tick < 3; tick += 1) {
     const echo = `MIRROR-TICK-${tick}`;
     /*
-     * Click near the TOP of the terminal body, not its centre.
-     *
-     * The mirror deck is placed below the durable windows and then pulled back
-     * into the visible canvas, and it is explicitly allowed to land over a
-     * window — a mirror the user turned on has to be the thing they can read.
-     * So the bottom of the terminal may be under the deck, and a centre click
-     * is a bet on how much of it is covered. The first line of the screen is
-     * where a user aims to focus a terminal anyway, and it is above the deck.
+     * Click near the top of the terminal BODY, below the one-row pane header.
+     * The header deliberately receives pointer input for drag, zoom, and menu
+     * actions; the transparent remainder forwards input to the whole-window
+     * attachment beneath the compositor.
      */
-    await terminal.locator(".xterm-screen").click({ position: { x: 24, y: 12 } });
+    await terminal.locator(".xterm-screen").click({ position: { x: 24, y: 48 } });
     await page.keyboard.type(`echo ${echo}`);
     await page.keyboard.press("Enter");
     await expect
-      .poll(() => firstMirror.locator(".xterm-rows").first().innerText(), {
-        message: `the mirror never streamed the output of tick ${tick}`,
+      .poll(() => firstCompositorNode.locator(".xterm-rows").first().innerText(), {
+        message: `the composed pane never streamed the output of tick ${tick}`,
         timeout: 20_000,
       })
       .toContain(echo);
-    const current = (await firstMirror.elementHandle())!;
+    const current = (await firstCompositorNode.elementHandle())!;
     expect(
-      await page.evaluate(([before, after]) => before === after, [mirrorHandle, current] as const),
-      "the mirror node was replaced by a stream update — its xterm re-initializes every tick, " +
+      await page.evaluate(([before, after]) => before === after, [
+        compositorHandle,
+        current,
+      ] as const),
+      "the composed pane was replaced by a stream update — its xterm re-initializes every tick, " +
         "which is the re-mount defect",
     ).toBe(true);
     expect(
-      await firstMirror.getAttribute("data-pane"),
-      "the mirror node list reordered under a stream update",
-    ).toBe(firstMirrorPane);
+      await firstCompositorNode.getAttribute("data-pane"),
+      "the composed pane list reordered under a stream update",
+    ).toBe(firstComposedPane);
   }
-  // And the node is STILL fully on screen after those ticks: placement must
+  // And the pane is STILL fully on screen after those ticks: placement must
   // survive re-measurement, not merely be right on the first paint.
-  await proveVisible(firstMirror, "the first mirror node after several stream updates", {
-    minWidth: 120,
-    minHeight: 100,
-  });
-  await page.screenshot({ path: testInfo.outputPath("4-mirror-on.png") });
+  await expect(
+    firstCompositorNode,
+    "the first composed pane disappeared after several stream updates",
+  ).toBeVisible();
+  const finalCompositorRect = await firstCompositorNode.boundingBox();
+  expect(
+    finalCompositorRect !== null &&
+      finalCompositorRect.width >= 120 &&
+      finalCompositorRect.height >= 100,
+    "the first composed pane collapsed after several stream updates",
+  ).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("4-pane-compositor-live.png") });
 
   // --- The session dies under the app ------------------------------------
   // Setup-level, and deliberately so: no in-app affordance can make a tmux

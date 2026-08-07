@@ -76,6 +76,7 @@ export async function createScratchFleet(
   const daemonInfoDir = join(root, "daemon");
   const registryDir = join(root, "registry");
   const settingsDir = join(root, "settings");
+  const stateDir = join(root, "state");
   const socketPath = join(root, "t.sock");
   const resolvedLength = realpathSync(root).length + "/t.sock".length;
   if (resolvedLength > MAX_UNIX_SOCKET_PATH) {
@@ -92,11 +93,23 @@ export async function createScratchFleet(
   ]);
 
   const tmuxBin = execFileSync("which", ["tmux"], { encoding: "utf8" }).trim();
+  const sharedEnvironment = {
+    TERM: process.env.TERM ?? "xterm-256color",
+    PATH: process.env.PATH ?? "",
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    TMUX_IDE_TMUX_BIN: tmuxBin,
+    TMUX_IDE_DAEMON_INFO_DIR: daemonInfoDir,
+    TMUX_IDE_REGISTRY_DIR: registryDir,
+    TMUX_IDE_SETTINGS_DIR: settingsDir,
+    TMUX_IDE_HOME: stateDir,
+    TMUX_IDE_CONFIG: join(stateDir, "config.json"),
+  };
   const runTmux = (argv: readonly string[]): string =>
     execFileSync(tmuxBin, ["-S", socketPath, ...argv], {
       cwd: root,
       encoding: "utf8",
-      env: { TERM: process.env.TERM ?? "xterm-256color", PATH: process.env.PATH ?? "" },
+      env: sharedEnvironment,
       stdio: ["ignore", "pipe", "pipe"],
     }).replace(/(?:\r?\n)+$/u, "");
 
@@ -181,8 +194,8 @@ export async function createScratchFleet(
       /*
        * `x` as the separator, not a tab.
        *
-       * `runTmux` deliberately gives tmux a minimal environment (TERM and PATH
-       * only), and without a locale tmux sanitizes non-printable characters out
+       * `runTmux` deliberately omits locale variables, and without a locale
+       * tmux sanitizes non-printable characters out
        * of `display-message -p` output — a tab comes back as `_`, so a
        * tab-separated format silently parses to NaN. `x` is what every other
        * geometry helper here uses, and it survives.
@@ -210,15 +223,8 @@ export async function createScratchFleet(
       runTmux(["send-keys", "-t", `${name}:`, "Enter"]);
     },
     environment: {
-      HOME: home,
-      XDG_CONFIG_HOME: join(home, ".config"),
+      ...sharedEnvironment,
       TMUX: `${socketPath},${serverPid},0`,
-      TMUX_IDE_TMUX_BIN: tmuxBin,
-      TMUX_IDE_DAEMON_INFO_DIR: daemonInfoDir,
-      TMUX_IDE_REGISTRY_DIR: registryDir,
-      TMUX_IDE_SETTINGS_DIR: settingsDir,
-      TMUX_IDE_HOME: join(root, "state"),
-      TMUX_IDE_CONFIG: join(root, "state", "config.json"),
     },
     dispose: async () => {
       await execFileAsync(tmuxBin, ["-S", socketPath, "kill-server"]).catch(() => undefined);

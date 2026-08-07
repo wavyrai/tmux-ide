@@ -79,6 +79,14 @@ type PaneManipulationPhase =
   | "rollback";
 
 /**
+ * A mutation can be accepted by tmux before its authoritative layout frame
+ * reaches the browser. Two seconds proved too short once pane streams, layout
+ * events, and multiple clients shared a busy daemon: the resize succeeded but
+ * the GUI announced a rollback just before the confirming frame arrived.
+ */
+const MANIPULATION_CONFIRM_TIMEOUT_MS = 5_000;
+
+/**
  * Return the stable pixels occupied by xterm's grid, excluding viewport
  * padding. The rows inside xterm can move with scrollback; the outer `.xterm`
  * box cannot. Before the renderer mounts, the viewport is the safe fallback.
@@ -719,7 +727,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
 
   const beginCommitTimeout = (): void => {
     clearCommitTimeout();
-    commitTimeout = setTimeout(() => settle(true), 2_000);
+    commitTimeout = setTimeout(() => settle(true), MANIPULATION_CONFIRM_TIMEOUT_MS);
   };
 
   const finishManipulation = (event: PointerEvent): void => {
