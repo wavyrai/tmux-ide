@@ -204,7 +204,17 @@ describe.skipIf(!hasTmux)("MirrorService live", () => {
     // ── Scenario 2: flood + stalled reader → %pause → sticky recovery ─────
     const floodIo = lastIo!;
     const floodStart = a.events.length;
-    runTmux(["send-keys", "-t", runtimePanes[0]!, "yes TMUX_IDE_BACKPRESSURE_FLOOD", "Enter"]);
+    // A bounded burst fills the client pipe without putting an unbounded wall
+    // of `%extended-output` in front of tmux's eventual `%pause` notice. That
+    // keeps the proof deterministic under coverage instrumentation: the
+    // parser has enough pressure to exercise, but only a few MiB to drain.
+    runTmux([
+      "send-keys",
+      "-t",
+      runtimePanes[0]!,
+      "yes TMUX_IDE_BACKPRESSURE_FLOOD | head -c 4194304",
+      "Enter",
+    ]);
     // The flood is demonstrably flowing before the reader stalls.
     await vi.waitFor(
       () => {
