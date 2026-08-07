@@ -17,16 +17,10 @@
   container-type: inline-size;
   color: var(--pane-text);
   border: 1px solid var(--pane-border);
+  border-radius: var(--tmi-radius-lg, 12px);
   background: var(--pane-body);
-  font-family:
-    "DM Sans",
-    Inter,
-    ui-sans-serif,
-    -apple-system,
-    BlinkMacSystemFont,
-    "SF Pro Text",
-    "Segoe UI",
-    sans-serif;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--pane-text) 5%, transparent);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
 .web-pane-frame[data-border-role="focused"] {
@@ -92,6 +86,7 @@
   overflow: hidden;
   border-bottom: 1px solid color-mix(in srgb, var(--pane-border), transparent 62%);
   background: var(--pane-header);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
 }
 
 .web-pane-frame__header[data-surface="headerActive"] {
@@ -117,7 +112,10 @@
   width: 30px;
   cursor: grab;
   opacity: 0.42;
-  transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    opacity 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 150ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .web-pane-frame:hover .web-pane-frame__grip,
@@ -169,7 +167,7 @@
 .web-pane-frame__title {
   color: var(--pane-text);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .web-pane-frame__subtitle {
@@ -256,8 +254,10 @@
   display: flex;
   height: 100%;
   flex: 0 0 auto;
-  align-items: stretch;
-  border-left: 1px solid color-mix(in srgb, var(--pane-border), transparent 68%);
+  gap: 2px;
+  align-items: center;
+  padding: 2px 3px;
+  border-left: 1px solid color-mix(in srgb, var(--pane-border), transparent 72%);
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -270,8 +270,14 @@
 }
 
 .web-pane-frame__action {
-  width: 30px;
+  width: 27px;
+  height: 27px;
+  border-radius: var(--tmi-radius-control, 8px);
   cursor: pointer;
+  transition:
+    color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 150ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .web-pane-frame__action:hover:not(:disabled),
@@ -284,6 +290,13 @@
 .web-pane-frame__action[data-state="pressed"] {
   color: var(--pane-text);
   background: var(--tmux-ide-selection-pressed, #303445);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .web-pane-frame__action:active:not(:disabled),
+  .web-pane-frame__grip:not(:disabled):active {
+    transform: scale(0.95);
+  }
 }
 
 .web-pane-frame__action:focus-visible,

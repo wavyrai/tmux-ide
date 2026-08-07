@@ -26,6 +26,7 @@ function mount(view: () => JSX.Element) {
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
   document.body.replaceChildren();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -139,6 +140,34 @@ describe("desktop UI primitives", () => {
     const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]')!;
 
     expect(button.getAttribute("aria-describedby")).toBe(`pane-status keyboard-hint ${tooltip.id}`);
+  });
+
+  it("delays the first pointer tooltip and makes the adjacent pass instant", () => {
+    vi.useFakeTimers();
+    const root = mount(() => (
+      <Tooltip content="Pane actions">
+        {(trigger) => (
+          <button type="button" aria-describedby={trigger["aria-describedby"]}>
+            Actions
+          </button>
+        )}
+      </Tooltip>
+    ));
+    const anchor = root.querySelector<HTMLElement>(".tmi-tooltip-anchor")!;
+    const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]')!;
+
+    anchor.dispatchEvent(new Event("pointerenter", { bubbles: true }));
+    expect(tooltip.dataset.open).toBe("false");
+    vi.advanceTimersByTime(419);
+    expect(tooltip.dataset.open).toBe("false");
+    vi.advanceTimersByTime(1);
+    expect(tooltip.dataset.open).toBe("true");
+
+    anchor.dispatchEvent(new Event("pointerleave", { bubbles: true }));
+    anchor.dispatchEvent(new Event("pointerenter", { bubbles: true }));
+    vi.advanceTimersByTime(0);
+    expect(tooltip.dataset.open).toBe("true");
+    expect(tooltip.dataset.instant).toBe("true");
   });
 
   it("moves tabs with the correct arrow keys and skips disabled tabs", () => {

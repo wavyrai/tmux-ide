@@ -22,7 +22,7 @@
      translucent panel would let the terminal text show through the document. */
   background: var(--tmux-ide-surface-raised, var(--sf-background));
   color: var(--tmux-ide-text-primary);
-  font-family: var(--desktop-ui-font, system-ui);
+  font-family: var(--desktop-ui-font, -apple-system, BlinkMacSystemFont, system-ui, sans-serif);
   font-size: var(--sf-text-body-2);
   line-height: 1.55;
 }
@@ -34,15 +34,16 @@
   align-items: baseline;
   justify-content: space-between;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--tmux-ide-border-subtle);
-  background: var(--tmux-ide-surface-sunken, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--tmux-ide-border-default) 76%, transparent);
+  background: color-mix(in oklab, var(--tmux-ide-surface-header) 90%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
 }
 
 .widget-surface__label {
   font-size: var(--sf-text-caption-2);
   font-weight: var(--sf-weight-medium);
   color: var(--tmux-ide-text-secondary);
-  letter-spacing: 0.02em;
+  letter-spacing: var(--sf-tracking-eyebrow, 0.04em);
   text-transform: uppercase;
 }
 
@@ -168,10 +169,12 @@
 
 .widget-markdown__code {
   padding: var(--tmi-space-3, 12px);
-  border: 1px solid var(--tmux-ide-border-subtle);
+  border: 1px solid color-mix(in srgb, var(--tmux-ide-border-default) 82%, transparent);
   border-radius: var(--tmi-radius-md, 8px);
   background: var(--tmux-ide-surface-sunken, transparent);
-  box-shadow: var(--tmi-shadow-inset-track);
+  box-shadow:
+    var(--tmi-shadow-inset-track),
+    inset 0 1px 0 color-mix(in srgb, white 3%, transparent);
   overflow-x: auto;
 }
 
@@ -183,9 +186,11 @@
 }
 
 .widget-markdown blockquote {
-  padding-left: var(--tmi-space-3, 12px);
-  border-left: 2px solid var(--tmux-ide-border-default);
+  padding: var(--tmi-space-2, 8px) var(--tmi-space-3, 12px);
+  border-left: 3px solid var(--tmux-ide-border-focused);
+  border-radius: 0 var(--tmi-radius-md, 8px) var(--tmi-radius-md, 8px) 0;
   color: var(--tmux-ide-text-secondary);
+  background: color-mix(in srgb, var(--tmux-ide-border-focused) 7%, transparent);
 }
 
 .widget-markdown hr {
@@ -202,6 +207,8 @@
 .widget-markdown table {
   border-collapse: collapse;
   font-size: var(--sf-text-caption-1);
+  border-radius: var(--tmi-radius-md, 8px);
+  overflow: hidden;
 }
 
 .widget-markdown th,

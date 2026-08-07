@@ -134,8 +134,15 @@ select:focus-visible,
 
   /* sfora's easing scale. */
   --sf-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --sf-ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
+  --sf-ease-in-quart: cubic-bezier(0.895, 0.03, 0.685, 0.22);
   --sf-ease-out-quad: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   --sf-ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --sf-duration-instant: 100ms;
+  --sf-duration-fast: 150ms;
+  --sf-duration-standard: 200ms;
+  --sf-duration-medium: 250ms;
+  --sf-duration-smooth: 300ms;
 }
 
 /*
@@ -237,12 +244,17 @@ select:focus-visible,
  * a card against the darker canvas, which is what keeps the macOS silhouette.
  */
 .app[data-theme="dark"] {
-  --sf-sidebar: oklch(12% 0.004 285.8);
-  --sf-background: oklch(14.05% 0.004 285.8);
-  --sf-section: oklch(27.41% 0.006 286);
-  --sf-card: oklch(16.8% 0.006 285.7);
-  --sf-popover: oklch(19.5% 0.008 285.7);
-  --sf-terminal: oklch(12% 0.004 285.8);
+  /*
+   * A macOS-dark hierarchy is charcoal, not black. The frame is lifted just
+   * enough to keep source-list rows readable while the terminal remains the
+   * deepest plane. Cards then rise in small, deliberate tonal steps.
+   */
+  --sf-sidebar: oklch(17.2% 0.006 285.8);
+  --sf-background: oklch(13.8% 0.005 285.8);
+  --sf-section: oklch(20.5% 0.007 286);
+  --sf-card: oklch(17.9% 0.006 285.7);
+  --sf-popover: oklch(22.6% 0.009 285.7);
+  --sf-terminal: oklch(11.8% 0.004 285.8);
   --sf-material-chrome: color-mix(in oklab, var(--sf-sidebar) 82%, transparent);
   --sf-material-sidebar: color-mix(in oklab, var(--sf-sidebar) 76%, transparent);
   --sf-material-toolbar: color-mix(in oklab, var(--sf-background) 84%, transparent);
@@ -257,10 +269,10 @@ select:focus-visible,
   /* Same derivation, lifted: tertiary is 3.47:1 on the grey section plane. */
   --sf-metadata: oklch(66% 0.012 286.1);
 
-  --sf-border: oklch(31.51% 0.007 286);
-  --sf-border-light: oklch(37.27% 0.008 286);
-  --sf-border-dark: oklch(23.37% 0.004 286.1);
-  --sf-sidebar-border: oklch(23.37% 0.004 286.1);
+  --sf-border: oklch(30.5% 0.008 286);
+  --sf-border-light: oklch(35% 0.008 286);
+  --sf-border-dark: oklch(23.5% 0.005 286.1);
+  --sf-sidebar-border: oklch(25% 0.006 286.1);
 
   --sf-primary: oklch(55% 0.016 286);
   --sf-primary-foreground: oklch(100% 0 0);
@@ -445,6 +457,8 @@ select:focus-visible,
    */
   --paper-hairline: 1px;
   --desktop-ease-smooth: var(--sf-ease-smooth);
+  --desktop-ease-out-fluid: var(--sf-ease-out-fluid);
+  --desktop-ease-in-quart: var(--sf-ease-in-quart);
   /*
    * The shell's regions, placed on the depth ramp. The titlebar, sidebar and
    * dock are one FRAME at the back plane; the workbench and canvas are the
@@ -857,7 +871,6 @@ select:focus-visible,
 .canvas-controls button:active:not(:disabled) {
   color: var(--tmux-ide-text-bright);
   background: var(--desktop-active);
-  transform: scale(0.96);
 }
 
 .primary-tabs button {
@@ -1800,7 +1813,7 @@ kbd {
 }
 
 .sidebar-row:active:not(:disabled) {
-  transform: scale(0.985);
+  background: var(--desktop-active);
 }
 
 /*
@@ -5824,7 +5837,7 @@ kbd {
 
 .window-tabs__tab:active:not(:disabled),
 .window-tabs__create:active {
-  transform: scale(0.96);
+  background: var(--desktop-active);
 }
 
 @media (hover: hover) {
@@ -6413,4 +6426,467 @@ kbd {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/* ==========================================================================
+ * m51 — Kowalski design-engineering pass
+ *
+ * One frame material, one raised-card recipe, one control language. Working
+ * surfaces stay opaque; only titlebar/sidebar/tool strips use material blur.
+ * This final layer intentionally owns visual treatment while the earlier
+ * component blocks continue to own geometry and interaction authority.
+ * ========================================================================== */
+
+.app {
+  --desktop-chrome-height: 52px;
+  --desktop-sidebar-width: 248px;
+  --desktop-dock-bar-height: 42px;
+  --desktop-panel-radius: var(--tmi-radius-lg);
+  --desktop-material-filter: saturate(1.28) blur(20px);
+  --desktop-control-highlight: inset 0 1px 0 color-mix(in oklab, white 18%, transparent);
+  --desktop-control-shadow: 0 1px 2px color-mix(in oklab, black 18%, transparent);
+  --desktop-card-ring: 0 0 0 1px color-mix(in oklab, var(--sf-foreground) 8%, transparent);
+  --desktop-card-shadow:
+    var(--desktop-card-ring), 0 1px 2px color-mix(in oklab, black 22%, transparent),
+    0 8px 24px -12px color-mix(in oklab, black 44%, transparent);
+}
+
+.app[data-theme="light"] {
+  --desktop-control-highlight: inset 0 1px 0 rgb(255 255 255 / 80%);
+  --desktop-control-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  --desktop-card-ring: 0 0 0 1px rgb(0 0 0 / 8%);
+  --desktop-card-shadow:
+    var(--desktop-card-ring), 0 1px 2px rgb(0 0 0 / 5%), 0 12px 32px -18px rgb(0 0 0 / 24%);
+}
+
+/* Frame and primary navigation */
+.titlebar {
+  border-bottom-color: color-mix(in oklab, var(--desktop-separator) 76%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in oklab, black 8%, transparent);
+}
+
+.titlebar__brand {
+  gap: var(--tmi-space-5);
+  padding-inline: 14px;
+  border-right-color: color-mix(in oklab, var(--desktop-separator) 76%, transparent);
+}
+
+.titlebar__product-mark,
+.project-monogram {
+  border-color: color-mix(in oklab, var(--tmux-ide-border-default) 80%, transparent);
+  border-radius: var(--tmi-radius-md);
+  background: linear-gradient(
+    145deg,
+    color-mix(in oklab, var(--desktop-raised) 96%, white 4%),
+    color-mix(in oklab, var(--desktop-raised) 82%, var(--desktop-active))
+  );
+  box-shadow: var(--desktop-control-highlight), var(--desktop-card-shadow);
+}
+
+.primary-tabs {
+  align-self: auto;
+  height: 36px;
+  margin-left: 8px;
+  padding: 3px;
+  border: 1px solid color-mix(in oklab, var(--desktop-separator) 78%, transparent);
+  border-radius: var(--tmi-radius-2lg);
+  background: color-mix(in oklab, var(--desktop-active) 70%, transparent);
+  box-shadow: inset 0 1px 2px color-mix(in oklab, black 10%, transparent);
+}
+
+.primary-tabs button {
+  height: 28px;
+  padding-inline: 11px;
+  border-radius: var(--tmi-radius-md);
+}
+
+.primary-tabs button.primary-tabs__tab--active {
+  border-color: color-mix(in oklab, var(--desktop-separator) 84%, transparent);
+  background: var(--desktop-raised);
+  box-shadow: var(--desktop-control-highlight), var(--desktop-control-shadow);
+}
+
+.palette-trigger,
+.create-pane-flow__trigger,
+.canvas-controls button,
+.fleet-sidebar__open-action,
+.mirror-pane-node__state button,
+.mirror-deck__toggle {
+  border-color: color-mix(in oklab, var(--desktop-separator) 82%, transparent);
+  background: color-mix(in oklab, var(--desktop-raised) 88%, transparent);
+  box-shadow: var(--desktop-control-highlight), var(--desktop-control-shadow);
+}
+
+.workspace-sidebar {
+  padding: 12px 9px 16px;
+  background:
+    linear-gradient(to bottom, color-mix(in oklab, white 3%, transparent), transparent 88px),
+    var(--sf-material-sidebar);
+}
+
+.workspace-sidebar__project {
+  height: 48px;
+  margin-bottom: 14px;
+  padding: 4px 7px;
+}
+
+.workspace-sidebar section {
+  margin-bottom: 18px;
+}
+
+.workspace-sidebar h2 {
+  padding-inline: 9px;
+  padding-bottom: 5px;
+  color: color-mix(in oklab, var(--tmux-ide-text-muted) 88%, transparent);
+}
+
+.sidebar-row {
+  min-height: 40px;
+  padding: 5px 9px;
+  border-radius: var(--tmi-radius-2lg);
+  transition:
+    color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    background-color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    border-color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    box-shadow var(--sf-duration-fast) var(--desktop-ease-smooth),
+    transform var(--sf-duration-fast) var(--desktop-ease-out-fluid);
+}
+
+.sidebar-row--agent {
+  min-height: 44px;
+  border-color: color-mix(in oklab, var(--desktop-separator) 72%, transparent);
+  background: color-mix(in oklab, var(--desktop-raised) 70%, transparent);
+  box-shadow: var(--desktop-control-highlight), var(--desktop-control-shadow);
+}
+
+.sidebar-row__agent-icon {
+  flex-basis: 26px;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--tmi-radius-md);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 18%, transparent);
+}
+
+.sidebar-row--active {
+  border-color: color-mix(in oklab, var(--sf-accent-blue-dark) 86%, black 14%);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--sf-accent-blue) 90%, white 10%),
+    var(--sf-accent-blue-dark)
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 28%, transparent),
+    0 1px 2px color-mix(in oklab, black 20%, transparent);
+}
+
+.fleet-sidebar {
+  padding-top: 12px;
+  border-top-color: color-mix(in oklab, var(--desktop-separator) 74%, transparent);
+}
+
+.fleet-sidebar__session[data-open="true"] {
+  padding: 2px;
+  border: 1px solid color-mix(in oklab, var(--desktop-separator) 70%, transparent);
+  border-radius: var(--tmi-radius-lg);
+  background: color-mix(in oklab, var(--desktop-active) 62%, transparent);
+}
+
+/* Window strip and terminal card mosaic */
+.window-tabs {
+  min-height: 40px;
+  gap: var(--tmi-space-3);
+  padding: 6px 10px;
+  border-bottom-color: color-mix(in oklab, var(--desktop-separator) 72%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in oklab, black 7%, transparent);
+}
+
+.window-tabs__tab,
+.window-tabs__create {
+  min-height: 28px;
+  border-radius: var(--tmi-radius-2lg);
+  background: transparent;
+  box-shadow: none;
+  transition:
+    color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    background-color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    border-color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    box-shadow var(--sf-duration-fast) var(--desktop-ease-smooth),
+    transform var(--sf-duration-fast) var(--desktop-ease-out-fluid);
+}
+
+.window-tabs__tab[data-active="true"] {
+  background: color-mix(in oklab, var(--desktop-raised) 92%, transparent);
+  border-color: color-mix(in oklab, var(--pane-identity-accent) 36%, var(--desktop-separator));
+  box-shadow: var(--desktop-control-highlight), var(--desktop-control-shadow);
+}
+
+.window-tabs__icon {
+  border-radius: var(--tmi-radius-md);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 22%, transparent);
+}
+
+.tiled-pane-area {
+  margin: 7px 8px 8px;
+  border-color: color-mix(in oklab, var(--tmux-ide-border-default) 86%, transparent);
+  border-radius: var(--tmi-radius-lg);
+  box-shadow: var(--desktop-card-shadow);
+}
+
+.pane-tile {
+  outline-color: color-mix(in oklab, var(--tmux-ide-border-default) 82%, transparent);
+  border-radius: var(--tmi-radius-sm);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, white 3%, transparent);
+}
+
+.pane-tile[data-active="true"] {
+  outline-color: color-mix(
+    in oklab,
+    var(--pane-identity-accent) 72%,
+    var(--tmux-ide-border-default)
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--pane-identity-accent) 28%, transparent),
+    inset 0 0 0 1px color-mix(in oklab, white 3%, transparent);
+}
+
+.pane-tile__header {
+  gap: var(--tmi-space-2);
+  padding-inline: var(--tmi-space-2);
+  border-bottom-color: color-mix(in oklab, var(--tmux-ide-border-default) 58%, transparent);
+  background: color-mix(
+    in oklab,
+    var(--tmi-surface-raised) 68%,
+    var(--tmux-ide-terminal-background)
+  );
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 4%, transparent);
+}
+
+.pane-tile__header[data-active="true"] {
+  background: color-mix(
+    in oklab,
+    var(--tmi-surface-raised) 84%,
+    var(--tmux-ide-terminal-background)
+  );
+  border-bottom-color: color-mix(in oklab, var(--pane-identity-accent) 64%, transparent);
+}
+
+.pane-tile__icon-badge {
+  width: 20px;
+  border: 1px solid color-mix(in oklab, var(--pane-identity-accent) 26%, transparent);
+  border-radius: var(--tmi-radius-sm);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 14%, transparent);
+}
+
+.pane-tile__status {
+  padding-inline: 5px;
+  border: 1px solid color-mix(in oklab, var(--desktop-separator) 60%, transparent);
+  background: color-mix(in oklab, var(--desktop-raised) 68%, transparent);
+}
+
+.pane-tile__action {
+  min-width: 20px;
+  align-self: stretch;
+  border-radius: var(--tmi-radius-sm);
+}
+
+.pane-drop-ghost__label,
+.pane-resize-hud,
+.app-window-canvas__mirror-status,
+.app-window-canvas__fleet-truncated,
+.app-window-canvas__verb-error {
+  border-color: color-mix(in oklab, var(--desktop-separator) 84%, transparent);
+  background: color-mix(in oklab, var(--desktop-raised) 94%, transparent);
+  -webkit-backdrop-filter: var(--desktop-material-filter);
+  backdrop-filter: var(--desktop-material-filter);
+  box-shadow: var(--desktop-card-shadow);
+}
+
+/* Cards, inspectors and honest system states */
+.runtime-state-card,
+.readiness-card,
+.fleet-sidebar__dialog,
+.create-pane-flow__dialog,
+.command-palette,
+.workspace-files__tree-region,
+.workspace-changes__list-region,
+.workspace-files__preview,
+.workspace-changes__diff {
+  border-color: color-mix(in oklab, var(--desktop-separator) 82%, transparent);
+  background: var(--desktop-raised);
+  box-shadow: var(--desktop-card-shadow);
+}
+
+.runtime-state-card,
+.readiness-card,
+.fleet-sidebar__dialog,
+.create-pane-flow__dialog,
+.command-palette {
+  border-radius: var(--tmi-radius-xl);
+}
+
+.command-palette {
+  overflow: hidden;
+  background: color-mix(in oklab, var(--tmux-ide-surface-command) 94%, transparent);
+  -webkit-backdrop-filter: var(--desktop-material-filter);
+  backdrop-filter: var(--desktop-material-filter);
+}
+
+.command-palette__query {
+  min-height: 42px;
+  border-color: color-mix(in oklab, var(--desktop-separator) 88%, transparent);
+  border-radius: var(--tmi-radius-2lg);
+  background: color-mix(in oklab, var(--desktop-raised) 84%, transparent);
+  box-shadow: inset 0 1px 2px color-mix(in oklab, black 9%, transparent);
+}
+
+.command-palette__query:focus-within {
+  border-color: var(--tmux-ide-border-focused);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--tmux-ide-border-focused) 20%, transparent),
+    inset 0 1px 2px color-mix(in oklab, black 9%, transparent);
+}
+
+.command-palette__option {
+  border-radius: var(--tmi-radius-2lg);
+}
+
+.command-palette__option--selected:not([aria-disabled="true"]) {
+  color: var(--sf-on-lit-blue);
+  border-color: color-mix(in oklab, var(--sf-accent-blue-dark) 78%, black 12%);
+  background: linear-gradient(to bottom, var(--sf-accent-blue), var(--sf-accent-blue-dark));
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 24%, transparent);
+}
+
+.command-palette__option--selected:not([aria-disabled="true"]) .command-palette__label,
+.command-palette__option--selected:not([aria-disabled="true"]) .command-palette__copy small,
+.command-palette__option--selected:not([aria-disabled="true"]) .command-palette__current {
+  color: inherit;
+}
+
+.command-palette__icon,
+.workspace-files__preview-icon,
+.workspace-changes__diff-icon,
+.workspace-files__state-icon,
+.workspace-changes__state-icon {
+  border-color: color-mix(in oklab, var(--desktop-separator) 78%, transparent);
+  border-radius: var(--tmi-radius-md);
+  background: color-mix(in oklab, var(--desktop-active) 72%, transparent);
+  box-shadow: var(--desktop-control-highlight), var(--desktop-control-shadow);
+}
+
+.workspace-files__row,
+.workspace-changes__row {
+  border-radius: var(--tmi-radius-md);
+  transition:
+    color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    background-color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    border-color var(--sf-duration-fast) var(--desktop-ease-smooth);
+}
+
+.workspace-files__row[aria-selected="true"],
+.workspace-changes__row[aria-selected="true"] {
+  background: color-mix(in oklab, var(--sf-accent-blue) 13%, var(--desktop-active));
+  box-shadow: inset 3px 0 0 var(--sf-accent-blue);
+}
+
+.workbench-dock__bar {
+  min-height: var(--desktop-dock-bar-height);
+  align-items: center;
+  padding: 4px 6px;
+  border-bottom-color: color-mix(in oklab, var(--desktop-separator) 76%, transparent);
+  background: color-mix(in oklab, var(--desktop-raised) 82%, transparent);
+}
+
+.workbench-dock__tabs {
+  gap: var(--tmi-space-1);
+}
+
+.workbench-dock__tab,
+.workbench-dock__action {
+  min-height: 32px;
+  border-radius: var(--tmi-radius-md);
+  transition:
+    color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    background-color var(--sf-duration-fast) var(--desktop-ease-smooth),
+    box-shadow var(--sf-duration-fast) var(--desktop-ease-smooth),
+    transform var(--sf-duration-fast) var(--desktop-ease-out-fluid);
+}
+
+.workbench-dock__tab[aria-selected="true"] {
+  border-color: transparent;
+  background: var(--desktop-raised);
+  box-shadow: var(--desktop-control-highlight), var(--desktop-control-shadow);
+}
+
+.workbench-dock__actions {
+  gap: var(--tmi-space-1);
+  padding-left: var(--tmi-space-2);
+  border-left-color: color-mix(in oklab, var(--desktop-separator) 72%, transparent);
+  background: transparent;
+}
+
+.status-strip {
+  border-top-color: color-mix(in oklab, var(--desktop-separator) 76%, transparent);
+  background: color-mix(in oklab, var(--sf-sidebar) 94%, transparent);
+}
+
+/* Native-feeling pointer response. Keyboard-triggered palettes and tab panels
+   remain instant; only the physical control under the pointer compresses. */
+.sidebar-row:active:not(:disabled),
+.window-tabs__tab:active:not(:disabled),
+.window-tabs__create:active,
+.primary-tabs button:active:not(:disabled),
+.palette-trigger:active:not(:disabled),
+.canvas-controls button:active:not(:disabled) {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sidebar-row:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .window-tabs__tab:active:not(:disabled),
+  .window-tabs__create:active,
+  .primary-tabs button:active:not(:disabled),
+  .palette-trigger:active:not(:disabled),
+  .canvas-controls button:active:not(:disabled),
+  .workbench-dock__tab:active:not(:disabled),
+  .workbench-dock__action:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .pane-tile__action:active:not(:disabled),
+  .create-pane-flow__trigger:active:not(:disabled),
+  .fleet-sidebar__open-action:active:not(:disabled) {
+    transform: scale(0.95);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-row:hover:not(.sidebar-row--active),
+  .workspace-files__row:hover,
+  .workspace-changes__row:hover {
+    background: color-mix(in oklab, var(--desktop-hover) 88%, transparent);
+  }
+
+  .window-tabs__tab:hover:not(:disabled),
+  .window-tabs__create:hover,
+  .workbench-dock__tab:hover:not(:disabled),
+  .workbench-dock__action:hover:not(:disabled) {
+    background: var(--desktop-hover);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .command-palette,
+  .pane-drop-ghost__label,
+  .pane-resize-hud,
+  .app-window-canvas__mirror-status,
+  .app-window-canvas__fleet-truncated,
+  .app-window-canvas__verb-error {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--tmux-ide-surface-command);
+  }
 }

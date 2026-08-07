@@ -24,6 +24,13 @@ interface TooltipPosition {
 
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 7;
+const POINTER_OPEN_DELAY_MS = 420;
+const POINTER_WARM_WINDOW_MS = 900;
+
+/* Toolbars should feel faster as the user moves across them: only the first
+ * pointer tooltip waits long enough to avoid accidental activation. Focus is
+ * always immediate and unanimated because keyboard navigation is deliberate. */
+let pointerTooltipWarmUntil = 0;
 
 function oppositePlacement(placement: TooltipPlacement): TooltipPlacement {
   return { top: "bottom", right: "left", bottom: "top", left: "right" }[
@@ -93,13 +100,18 @@ export function Tooltip(props: TooltipProps): JSX.Element {
   const [focusOpen, setFocusOpen] = createSignal(false);
   const [dismissed, setDismissed] = createSignal(false);
   const [positioned, setPositioned] = createSignal(false);
+  const [instant, setInstant] = createSignal(false);
   const [placement, setPlacement] = createSignal<TooltipPlacement>(props.placement ?? "top");
   const open = () => !dismissed() && (pointerOpen() || focusOpen());
   let anchor: HTMLSpanElement | undefined;
   let tooltip: HTMLSpanElement | undefined;
   let runtimeStyle: RuntimeStyleBinding | null = null;
+  let pointerTimer: number | undefined;
 
-  onCleanup(() => runtimeStyle?.dispose());
+  onCleanup(() => {
+    if (pointerTimer !== undefined) window.clearTimeout(pointerTimer);
+    runtimeStyle?.dispose();
+  });
 
   const positionTooltip = () => {
     if (!anchor || !tooltip) return;
@@ -117,12 +129,22 @@ export function Tooltip(props: TooltipProps): JSX.Element {
 
   const revealForPointer = () => {
     setDismissed(false);
-    setPointerOpen(true);
-    positionTooltip();
+    if (pointerTimer !== undefined) window.clearTimeout(pointerTimer);
+    const delay = Date.now() < pointerTooltipWarmUntil ? 0 : POINTER_OPEN_DELAY_MS;
+    setInstant(delay === 0);
+    pointerTimer = window.setTimeout(() => {
+      pointerTimer = undefined;
+      setPointerOpen(true);
+      pointerTooltipWarmUntil = Date.now() + POINTER_WARM_WINDOW_MS;
+      positionTooltip();
+    }, delay);
   };
 
   const revealForFocus = () => {
+    if (pointerTimer !== undefined) window.clearTimeout(pointerTimer);
+    pointerTimer = undefined;
     setDismissed(false);
+    setInstant(true);
     setFocusOpen(true);
     positionTooltip();
   };
@@ -163,6 +185,8 @@ export function Tooltip(props: TooltipProps): JSX.Element {
       class={`tmi-tooltip-anchor${props.class ? ` ${props.class}` : ""}`}
       onPointerEnter={revealForPointer}
       onPointerLeave={() => {
+        if (pointerTimer !== undefined) window.clearTimeout(pointerTimer);
+        pointerTimer = undefined;
         setPointerOpen(false);
         if (!focusOpen()) setPositioned(false);
       }}
@@ -189,6 +213,7 @@ export function Tooltip(props: TooltipProps): JSX.Element {
           data-placement={placement()}
           data-open={String(open())}
           data-positioned={String(positioned())}
+          data-instant={String(instant())}
           aria-hidden={open() ? undefined : "true"}
         >
           {props.content}
