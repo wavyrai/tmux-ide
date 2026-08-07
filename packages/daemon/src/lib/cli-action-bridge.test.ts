@@ -9,6 +9,87 @@ const OPERATION = "10000000-0000-4000-8000-000000000001";
 const INSTANCE = "20000000-0000-4000-8000-000000000002";
 
 describe("CLI owner action bridge", () => {
+  it("does not autostart a daemon when an interactive caller requests canonical-only dispatch", async () => {
+    const startEmbeddedDaemon = vi.fn();
+    const restore = __setCliActionBridgeDepsForTests({
+      readCanonicalDaemonInfo: () => null,
+      startEmbeddedDaemon,
+    });
+    try {
+      await expect(
+        tryDispatchAction(
+          "workspace.window.split",
+          {
+            workspaceName: "workspace.alpha",
+            semanticPaneId: "pane.source",
+            direction: "right",
+          },
+          { operationId: OPERATION, autostart: false },
+        ),
+      ).resolves.toBeNull();
+    } finally {
+      restore();
+    }
+    expect(startEmbeddedDaemon).not.toHaveBeenCalled();
+  });
+
+  it("gives multiplexer verbs one stable owner operation id across retry", async () => {
+    const canonical: CanonicalDaemonInfo = {
+      pid: process.pid,
+      port: 6060,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: "2.8.0",
+      instanceId: INSTANCE,
+      startedAt: "2026-07-22T00:00:00.000Z",
+      bindHostname: "127.0.0.1",
+      authToken: "owner-only-token",
+    };
+    const requests: RequestInit[] = [];
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(init ?? {});
+      if (requests.length === 1) throw new Error("connection closed after commit");
+      return Response.json({
+        ok: true,
+        result: {
+          operationId: OPERATION,
+          daemonInstanceId: INSTANCE,
+          outcome: "replayed",
+          workspaceName: "workspace.alpha",
+          verb: "workspace.window.split",
+          direction: "right",
+          semanticPaneId: "pane.created",
+          displayTitle: "Terminal",
+        },
+      });
+    });
+    const restore = __setCliActionBridgeDepsForTests({
+      fetch: fetch as typeof globalThis.fetch,
+      readCanonicalDaemonInfo: () => canonical,
+      isCanonicalDaemonAlive: async () => true,
+    });
+    try {
+      await expect(
+        tryDispatchAction(
+          "workspace.window.split",
+          {
+            workspaceName: "workspace.alpha",
+            semanticPaneId: "pane.source",
+            direction: "right",
+          },
+          { operationId: OPERATION, autostart: false },
+        ),
+      ).resolves.toMatchObject({ outcome: "replayed", operationId: OPERATION });
+    } finally {
+      restore();
+    }
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      const headers = new Headers(request.headers);
+      expect(headers.get("authorization")).toBe("Bearer owner-only-token");
+      expect(headers.get("x-tmux-ide-operation-id")).toBe(OPERATION);
+    }
+  });
+
   it("uses the owner-only token and one stable operation id across retry", async () => {
     const canonical: CanonicalDaemonInfo = {
       pid: process.pid,

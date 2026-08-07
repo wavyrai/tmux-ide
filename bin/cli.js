@@ -32594,15 +32594,6 @@ var init_control_channel = __esm({
       get inputErrorCount() {
         return this.core.inputErrorCount;
       }
-      /** TESTS ONLY — stop draining tmux's stdout to simulate a stalled renderer
-       *  (the flood/%pause live scenario). */
-      stallReaderForTest() {
-        this.proc?.stdout?.pause();
-      }
-      /** TESTS ONLY — resume the stalled reader. */
-      resumeReaderForTest() {
-        this.proc?.stdout?.resume();
-      }
       /**
        * Detach-before-kill hygiene: resume a stalled reader (the server must be
        * able to flush), ask tmux to detach us, and drain until the process exits;
@@ -41915,7 +41906,7 @@ function expectedDaemonVersion() {
     return "0.0.0";
   }
 }
-async function resolveCanonicalDaemon() {
+async function resolveCanonicalDaemon(options) {
   const existing = deps.readCanonicalDaemonInfo();
   if (existing) {
     if (await deps.isCanonicalDaemonAlive(existing)) {
@@ -41928,7 +41919,7 @@ async function resolveCanonicalDaemon() {
       };
     }
   }
-  if (process.env.TMUX_IDE_CLI_NO_AUTOSTART) {
+  if (!options.autostart || process.env.TMUX_IDE_CLI_NO_AUTOSTART) {
     return null;
   }
   const dir = deps.cwd();
@@ -41964,7 +41955,7 @@ async function tryDispatchAction(name, input, options = {}) {
   const dir = options.cwd ?? deps.cwd();
   const previousDeps = deps;
   deps = { ...deps, cwd: () => dir };
-  const daemon = await resolveCanonicalDaemon();
+  const daemon = await resolveCanonicalDaemon({ autostart: options.autostart ?? true });
   deps = previousDeps;
   if (!daemon) return null;
   const contract = ActionContractsZ[name];
@@ -42027,7 +42018,16 @@ var init_cli_action_bridge = __esm({
     });
     RETRY_SAFE_OWNER_ACTIONS = /* @__PURE__ */ new Set([
       "workspace.pane.create",
-      "workspace.open"
+      "workspace.open",
+      "workspace.window.split",
+      "workspace.window.kill",
+      "workspace.pane.kill",
+      "workspace.session.kill",
+      "workspace.rename",
+      "workspace.pane.zoom.toggle",
+      "workspace.pane.select",
+      "workspace.pane.swap",
+      "workspace.pane.resize"
     ]);
     deps = {
       fetch,

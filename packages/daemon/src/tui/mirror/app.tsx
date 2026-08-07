@@ -319,6 +319,10 @@ import {
   type TmuxBuffer,
 } from "./palette.ts";
 import {
+  executeTuiMultiplexerAction,
+  type TuiMultiplexerAction,
+} from "./multiplexer-action-executor.ts";
+import {
   adaptPaletteRowsToCommands,
   appendPalettePaste,
   dispatchPaletteCommand,
@@ -4335,6 +4339,29 @@ try {
       applicationRootController.setDockMode(nextMode, source);
     const executeFocusCommand = (target: SemanticFocusTarget, source: CommandSource) =>
       applicationRootController.moveFocus(target, source);
+    const executeSharedMultiplexerAction = async (
+      action: TuiMultiplexerAction,
+      target: { sessionName?: string; runtimePaneId?: string | null } = {},
+    ) => {
+      const activeMirror = mirror;
+      if (!activeMirror) {
+        setStatusNote("no active tmux workspace");
+        return;
+      }
+      const result = await executeTuiMultiplexerAction(
+        action,
+        {
+          sessionName: target.sessionName ?? curTarget(),
+          focusedRuntimePaneId:
+            target.runtimePaneId === undefined
+              ? activeMirror.focusedPane() || null
+              : target.runtimePaneId,
+          paneDescriptors: activeMirror.paneDescriptors(),
+        },
+        (command) => activeMirror.command(command),
+      );
+      setStatusNote(result.message);
+    };
     const runPaletteAction = async (a: PaletteAction) => {
       // Usage history (M24.4): every dispatched action bumps its stable key —
       // count + lastUsed feed the "recent" group and the ranking tie-break.
@@ -4427,80 +4454,45 @@ try {
           else enterDiff(workspaceDir());
           break;
         case "new-window":
-          void mirror?.command(`new-window -t ${curTarget()}:`).catch(() => {});
-          setStatusNote("new window");
+          await executeSharedMultiplexerAction(a);
           break;
-        case "rename-window": {
-          const idx = windowTabs().find((w) => w.active)?.index;
-          if (idx !== undefined) {
-            void mirror
-              ?.command(`rename-window -t ${curTarget()}:${idx} ${tmuxQuote(a.name)}`)
-              .catch(() => {});
-            setStatusNote(`renamed window → ${a.name}`);
-          }
+        case "rename-window":
+          await executeSharedMultiplexerAction(a);
           break;
-        }
         case "kill-window": {
-          const idx = windowTabs().find((w) => w.active)?.index;
-          if (idx !== undefined) {
-            const ok = await DialogConfirm.show({
-              title: "Close this window?",
-              body: "Closes every pane and process in the active tmux window.",
-              yesLabel: "Close window",
-              noLabel: "Keep window",
-              defaultNo: true,
-            });
-            if (!ok) break;
-            await mirror?.command(`kill-window -t ${curTarget()}:${idx}`).catch(() => {});
-            setStatusNote("killed window");
-          }
+          const ok = await DialogConfirm.show({
+            title: "Close this window?",
+            body: "Closes every pane and process in the active tmux window.",
+            yesLabel: "Close window",
+            noLabel: "Keep window",
+            defaultNo: true,
+          });
+          if (!ok) break;
+          await executeSharedMultiplexerAction(a);
           break;
         }
-        case "zoom-pane": {
-          const pid = mirror?.focusedPane();
-          if (pid) void mirror?.command(`resize-pane -Z -t ${pid}`).catch(() => {});
+        case "zoom-pane":
+          await executeSharedMultiplexerAction(a);
           break;
-        }
-        case "swap-pane": {
-          const pid = mirror?.focusedPane();
-          if (pid) void mirror?.command(`swap-pane -D -t ${pid}`).catch(() => {});
-          setStatusNote("swapped pane");
+        case "swap-pane":
+          await executeSharedMultiplexerAction(a);
           break;
-        }
-        case "split-pane-right": {
-          const pid = mirror?.focusedPane();
-          if (pid) {
-            void mirror
-              ?.command(`split-window -h -t ${pid} -c "#{pane_current_path}"`)
-              .catch(() => {});
-            setStatusNote("split pane right");
-          }
+        case "split-pane-right":
+          await executeSharedMultiplexerAction(a);
           break;
-        }
-        case "split-pane-down": {
-          const pid = mirror?.focusedPane();
-          if (pid) {
-            void mirror
-              ?.command(`split-window -v -t ${pid} -c "#{pane_current_path}"`)
-              .catch(() => {});
-            setStatusNote("split pane down");
-          }
+        case "split-pane-down":
+          await executeSharedMultiplexerAction(a);
           break;
-        }
         case "kill-pane": {
-          const pid = mirror?.focusedPane();
-          if (pid) {
-            const ok = await DialogConfirm.show({
-              title: "Close this pane?",
-              body: "Closes the active tmux pane and the process running inside it.",
-              yesLabel: "Close pane",
-              noLabel: "Keep pane",
-              defaultNo: true,
-            });
-            if (!ok) break;
-            await mirror?.command(`kill-pane -t ${pid}`).catch(() => {});
-            setStatusNote("closed pane");
-          }
+          const ok = await DialogConfirm.show({
+            title: "Close this pane?",
+            body: "Closes the active tmux pane and the process running inside it.",
+            yesLabel: "Close pane",
+            noLabel: "Keep pane",
+            defaultNo: true,
+          });
+          if (!ok) break;
+          await executeSharedMultiplexerAction(a);
           break;
         }
         case "break-pane": {
@@ -5802,18 +5794,18 @@ try {
           return;
         }
         if (id === "kill") {
-          execFile("tmux", ["kill-session", "-t", name], () =>
-            setTimeout(() => fleetRefresh?.(), 200),
-          );
-          setStatusNote(`killed ${name}`);
           closeMenu();
+          void executeSharedMultiplexerAction(
+            { kind: "kill-session" },
+            { sessionName: name, runtimePaneId: null },
+          ).then(() => setTimeout(() => fleetRefresh?.(), 200));
           return;
         }
         if (id === "rename" && val) {
-          execFile("tmux", ["rename-session", "-t", name, val], () =>
-            setTimeout(() => fleetRefresh?.(), 200),
-          );
-          setStatusNote(`renamed ${name} → ${val}`);
+          void executeSharedMultiplexerAction(
+            { kind: "rename-session", name: val },
+            { sessionName: name, runtimePaneId: null },
+          ).then(() => setTimeout(() => fleetRefresh?.(), 200));
         }
         closeMenu();
         return;
@@ -5863,17 +5855,21 @@ try {
         return;
       }
       if (m.region === "window") {
-        const sess = curTarget();
         const idx = m.windowIndex;
         if (id === "new") {
-          void mirror?.command(`new-window -t ${sess}:`).catch(() => {});
-          setStatusNote("new window");
+          void executeSharedMultiplexerAction({ kind: "new-window" });
         } else if (id === "rename" && val && idx !== undefined) {
-          void mirror?.command(`rename-window -t ${sess}:${idx} ${tmuxQuote(val)}`).catch(() => {});
-          setStatusNote(`renamed window → ${val}`);
+          if (windowTabs().find((window) => window.index === idx)?.active) {
+            void executeSharedMultiplexerAction({ kind: "rename-window", name: val });
+          } else {
+            setStatusNote("open that window before renaming it");
+          }
         } else if (id === "kill" && idx !== undefined) {
-          void mirror?.command(`kill-window -t ${sess}:${idx}`).catch(() => {});
-          setStatusNote("killed window");
+          if (windowTabs().find((window) => window.index === idx)?.active) {
+            void executeSharedMultiplexerAction({ kind: "kill-window" });
+          } else {
+            setStatusNote("open that window before closing it");
+          }
         }
         closeMenu();
         return;
@@ -5922,25 +5918,32 @@ try {
           closeMenu();
           return;
         }
-        const cmd =
+        const sharedAction: TuiMultiplexerAction | null =
           id === "split-h"
-            ? `split-window -h -t ${pid}`
+            ? { kind: "split-pane-right" }
             : id === "split-v"
-              ? `split-window -v -t ${pid}`
+              ? { kind: "split-pane-down" }
               : id === "zoom"
-                ? `resize-pane -Z -t ${pid}`
+                ? { kind: "zoom-pane" }
                 : id === "swap-next"
-                  ? `swap-pane -D -t ${pid}`
-                  : id === "break"
-                    ? // Pin the destination to THIS session — break-pane's default
-                      // `-t` resolves to the globally-active client's session, which
-                      // could fling the pane into an unrelated session.
-                      `break-pane -s ${pid} -t ${curTarget()}:`
-                    : id === "rotate"
-                      ? `rotate-window -t ${pid}`
-                      : id === "kill"
-                        ? `kill-pane -t ${pid}`
-                        : "";
+                  ? { kind: "swap-pane" }
+                  : id === "kill"
+                    ? { kind: "kill-pane" }
+                    : null;
+        if (sharedAction) {
+          closeMenu();
+          void executeSharedMultiplexerAction(sharedAction, { runtimePaneId: pid });
+          return;
+        }
+        const cmd =
+          id === "break"
+            ? // Pin the destination to THIS session — break-pane's default
+              // `-t` resolves to the globally-active client's session, which
+              // could fling the pane into an unrelated session.
+              `break-pane -s ${pid} -t ${curTarget()}:`
+            : id === "rotate"
+              ? `rotate-window -t ${pid}`
+              : "";
         if (cmd) void mirror?.command(cmd).catch(() => {});
         closeMenu();
         return;
