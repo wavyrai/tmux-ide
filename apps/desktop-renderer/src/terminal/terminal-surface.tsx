@@ -23,6 +23,7 @@ import { createWidgetMarkerByteWatcher, detectWidgetMarker } from "@tmux-ide/con
 import { resolveWidget, type WidgetResolution } from "./widgets/widget-registry.ts";
 import { WIDGET_SCAN_MAX_ROWS } from "./widgets/xterm-cell-rows.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "./xterm-renderer.ts";
+import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 
 export type TerminalSurfacePhase =
   | "unavailable"
@@ -153,12 +154,7 @@ export function readOnlyTerminalFitScale(input: {
   readonly gridWidth: number;
   readonly gridHeight: number;
 }): number {
-  const values = [
-    input.availableWidth,
-    input.availableHeight,
-    input.gridWidth,
-    input.gridHeight,
-  ];
+  const values = [input.availableWidth, input.availableHeight, input.gridWidth, input.gridHeight];
   if (values.some((value) => !Number.isFinite(value) || value <= 0)) return 1;
   return Math.min(
     1,
@@ -299,6 +295,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let pointerFocus = false;
   let rendererLoadGeneration = 0;
   let markerWatcher = createWidgetMarkerByteWatcher();
+  let viewportRuntimeStyle: RuntimeStyleBinding | null = null;
+  let appliedPassiveFitScale: string | null = null;
 
   const updateReadOnlyFitScale = (): void => {
     if (!mount) return;
@@ -314,8 +312,10 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           })
         : 1;
     const serialized = scale.toFixed(6);
-    if (mount.style.getPropertyValue("--terminal-passive-fit-scale") === serialized) return;
-    mount.style.setProperty("--terminal-passive-fit-scale", serialized);
+    if (appliedPassiveFitScale === serialized) return;
+    viewportRuntimeStyle ??= createRuntimeStyleBinding(mount);
+    viewportRuntimeStyle.update({ "--terminal-passive-fit-scale": serialized });
+    appliedPassiveFitScale = serialized;
     surface?.setAttribute("data-passive-fit-scale", scale.toFixed(4));
     mount.dispatchEvent(
       new CustomEvent("tmux-ide-terminal-grid-resized", {
@@ -992,6 +992,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       cancelConflictRetry();
       disposeAttachment();
       disposeRenderer();
+      viewportRuntimeStyle?.dispose();
+      viewportRuntimeStyle = null;
+      appliedPassiveFitScale = null;
     });
   });
 

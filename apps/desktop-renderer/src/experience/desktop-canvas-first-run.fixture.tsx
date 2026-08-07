@@ -88,6 +88,7 @@ export function mountDesktopCanvasFirstRunFixture(
           host={createBrowserHostCapabilities()}
           runtime="browser"
           platform="darwin"
+          experimentalSurfaces
           input={input}
           dataMode="runtime"
           paneFrames={paneFrames}

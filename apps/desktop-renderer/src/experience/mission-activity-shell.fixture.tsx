@@ -97,6 +97,7 @@ export function mountMissionActivityShellFixture(
           host={createBrowserHostCapabilities()}
           runtime="browser"
           platform="darwin"
+          experimentalSurfaces
           input={input(mode)}
           dataMode="runtime"
           paneFrames={paneFrames}

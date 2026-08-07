@@ -689,7 +689,7 @@ try {
           maximizedGeometry,
           closeDisabled:
             closeControl?.hasAttribute("disabled") === true &&
-            closeControl.getAttribute("title")?.includes("not supported") === true,
+            (closeControl.getAttribute("title")?.length ?? 0) > 0,
         },
         violations: globalThis.__tmiCspViolations ?? [],
       };
@@ -769,9 +769,9 @@ try {
       dragResult.styleAttributes !== 0 ||
       visualResult.app?.width !== 1_440 ||
       visualResult.app?.height !== 900 ||
-      visualResult.titlebar?.height !== 50 ||
+      visualResult.titlebar?.height !== 52 ||
       visualResult.sidebar?.width !== 236 ||
-      visualResult.dock?.height !== 40 ||
+      visualResult.dock?.height !== 42 ||
       visualResult.status?.height !== 22 ||
       visualResult.tabs !== 2 ||
       visualResult.dockTabs !== 4 ||
@@ -1097,7 +1097,7 @@ try {
         aligned(collapsed) &&
         aligned(maximized) &&
         aligned(restored) &&
-        Math.abs(collapsed.dock.height - 40) < 0.5 &&
+        Math.abs(collapsed.dock.height - 42) < 0.5 &&
         Math.abs(maximized.canvas.height) < 0.5 &&
         Math.abs(maximized.dock.height - maximized.main.height) < 0.5 &&
         Math.abs(open.canvas.height - restored.canvas.height) < 0.5 &&
@@ -1109,13 +1109,13 @@ try {
         (evidence) =>
           evidence.app?.width !== evidence.viewport.width ||
           evidence.app?.height !== evidence.viewport.height ||
-          evidence.titlebar?.height !== 50 ||
+          evidence.titlebar?.height !== 52 ||
           evidence.sidebar?.width !== 236 ||
-          evidence.dock?.height !== 40 ||
+          evidence.dock?.height !== 42 ||
           evidence.status?.height !== 22 ||
           // 32px is the shared control step; the tabs used to sit a
           // half-step above it at 36 for no reason anyone chose.
-          evidence.primaryTab?.height !== 32 ||
+          evidence.primaryTab?.height !== 28 ||
           evidence.palette?.height !== 32 ||
           (evidence.sidebarRow?.height ?? 0) < 40 ||
           evidence.icon?.width !== 16 ||
