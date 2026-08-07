@@ -1,5 +1,66 @@
 # m48 multiplexer-verb completeness audit
 
+> Historical note: the original audit below was the baseline that produced the
+> multiplexer-verb work. It is intentionally preserved as evidence, but its
+> reachability counts are no longer current. The current-main status is recorded
+> here first.
+
+## Current main — 2026-08-07
+
+The browser GUI now has an authoritative, versioned table of 15 multiplexer
+verbs in `packages/contracts/src/multiplexer-verbs.ts`. The browser uses that
+table for labels, descriptions, availability, menus, mutation dispatch, and
+feedback. The TUI command palette now consumes the same entries for the eight
+shared verbs it exposes instead of maintaining parallel copy and enablement
+rules.
+
+| Verb                 | Browser GUI                                                           | TUI                                    | Shared-contract status                                   |
+| -------------------- | --------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------- |
+| `session.new`        | Open-directory flow; native picker is unavailable in browser-dev host | “Open folder…” flow                    | Separate entry points; shared execution is still pending |
+| `session.kill`       | Session menu, daemon-authorized, confirmed                            | Not exposed                            | Browser only                                             |
+| `session.rename`     | Inline session rename                                                 | Not exposed                            | Browser only                                             |
+| `session.detach`     | Client-local detach                                                   | Quit/detach key path                   | Same intent, not yet one command descriptor              |
+| `window.new`         | Pane chrome and menu                                                  | Palette: “New terminal or agent”       | Shared identity, copy, and availability                  |
+| `window.kill`        | Pane menu, confirmed                                                  | Palette: “Close window”, confirmed     | Shared identity, copy, and availability                  |
+| `window.rename`      | Pane menu and inline rename                                           | Palette query action                   | Shared identity, copy, and availability                  |
+| `window.zoom.toggle` | Pane menu and double-click                                            | Palette: “Zoom pane”                   | Shared identity, copy, and availability                  |
+| `pane.split.right`   | Pane menu                                                             | Palette: “Split right”                 | Shared identity, copy, and availability                  |
+| `pane.split.down`    | Pane menu                                                             | Palette: “Split down”                  | Shared identity, copy, and availability                  |
+| `pane.kill`          | Two-step armed close                                                  | Confirmation dialog                    | Shared identity, copy, and availability                  |
+| `pane.select`        | Click/focus and menu state                                            | Direct terminal focus                  | Native on both surfaces; not one descriptor              |
+| `pane.swap`          | Drag between pane chromes                                             | Palette: “Swap panes”                  | Shared identity, copy, and availability                  |
+| `pane.resize`        | Drag a tmux split border                                              | Mouse border drag                      | Shared intent; gesture paths remain surface-specific     |
+| `stack.activate`     | App-layout stack selection                                            | Not applicable to the native tmux grid | Deliberately browser-only                                |
+
+### Live acceptance evidence
+
+- Browser GUI and TUI were connected to the same real `new-name` session.
+- Browser pane chrome exposed the correct enabled and disabled verbs for the
+  selected pane. “Split right” created a seventh real tmux pane; the two-step
+  close action returned the workspace to six panes.
+- The updated TUI palette displayed “Split right” and “Split down” from the
+  shared contract. Executing “Split right” created pane `%230` in the selected
+  pane's current working directory; the acceptance pane was then removed and the
+  workspace returned to six panes.
+- Focused TUI tests cover shared verb mapping, contract-derived descriptions and
+  categories, last-pane/last-window availability, and dispatch gating.
+
+### Next architecture card
+
+The remaining important gap is execution authority. Browser verbs travel through
+the daemon's typed, owner-authorized mutation path; the TUI still translates its
+shared palette actions into raw tmux commands locally. Add a typed
+`MultiplexerVerbInvocation` client in the TUI and route the common eight verbs
+through the daemon dispatcher. Keep a narrowly-scoped local fallback only for
+standalone/offline use. This gives browser, TUI, and future native clients one
+authorization policy, one revision model, one event stream, and one source of
+truth for multi-client conflict handling.
+
+Multi-client geometry belongs in the same card. Attaching the TUI while the web
+client was open caused tmux to renegotiate the window to the smaller terminal
+size. Client viewport geometry must remain local view state; only an explicit,
+leased layout mutation should resize authoritative tmux panes.
+
 Reconnaissance for the GUI-first milestone. The scope call makes terminals the
 product, so the question this answers is narrow and literal: **which tmux verbs
 can a person perform with the mouse today, and does the app tell the truth about

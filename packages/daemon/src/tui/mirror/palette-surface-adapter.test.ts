@@ -135,6 +135,42 @@ describe("live command palette adapter", () => {
     expect(executed).toEqual([quit]);
   });
 
+  it("uses the shared tmux availability rules for TUI pane and window verbs", () => {
+    const closePane: PaletteAction = { kind: "kill-pane", label: "Close pane" };
+    const splitRight: PaletteAction = { kind: "split-pane-right", label: "Split right" };
+    const closeWindow: PaletteAction = { kind: "kill-window", label: "Close window" };
+    const entries = adaptPaletteRowsToCommands(
+      [actionRow(closePane), actionRow(splitRight), actionRow(closeWindow)],
+      {
+        multiplexerFacts: {
+          workspaceConnected: true,
+          sessionWindowCount: 1,
+          windowPaneCount: 1,
+          windowZoomed: false,
+          targetIsActivePane: true,
+          targetIsDockedStackMember: false,
+        },
+      },
+    );
+
+    expect(entries[0]!.descriptor).toMatchObject({
+      category: "Pane",
+      icon: "close",
+      disabledReason: "this is the session's last pane",
+    });
+    expect(entries[1]!.descriptor).toMatchObject({
+      category: "Pane",
+      icon: "split-right",
+      disabledReason: null,
+    });
+    expect(entries[2]!.descriptor).toMatchObject({
+      category: "Window",
+      disabledReason: "this is the session's last window",
+    });
+    expect(paletteActionForCommand(entries, entries[0]!.id)).toBeNull();
+    expect(paletteActionForCommand(entries, entries[1]!.id)).toBe(splitRight);
+  });
+
   it.each([
     [
       "missing buffer",

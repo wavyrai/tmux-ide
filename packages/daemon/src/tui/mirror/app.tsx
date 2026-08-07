@@ -4124,6 +4124,14 @@ try {
           hasPath: Boolean(editorPath()),
           readOnlyReason: editorReadOnly(),
         },
+        multiplexerFacts: {
+          workspaceConnected: mode() === "mirror" && mirror !== null,
+          sessionWindowCount: windowTabs().length,
+          windowPaneCount: panes().length,
+          windowZoomed: panes().some((pane) => pane.zoomed),
+          targetIsActivePane: true,
+          targetIsDockedStackMember: false,
+        },
         fallbackGroup: paletteQuery().trim() ? "Results" : "Commands",
       });
     });
@@ -4327,7 +4335,7 @@ try {
       applicationRootController.setDockMode(nextMode, source);
     const executeFocusCommand = (target: SemanticFocusTarget, source: CommandSource) =>
       applicationRootController.moveFocus(target, source);
-    const runPaletteAction = (a: PaletteAction) => {
+    const runPaletteAction = async (a: PaletteAction) => {
       // Usage history (M24.4): every dispatched action bumps its stable key —
       // count + lastUsed feed the "recent" group and the ranking tie-break.
       setPaletteUsage((u) =>
@@ -4435,7 +4443,15 @@ try {
         case "kill-window": {
           const idx = windowTabs().find((w) => w.active)?.index;
           if (idx !== undefined) {
-            void mirror?.command(`kill-window -t ${curTarget()}:${idx}`).catch(() => {});
+            const ok = await DialogConfirm.show({
+              title: "Close this window?",
+              body: "Closes every pane and process in the active tmux window.",
+              yesLabel: "Close window",
+              noLabel: "Keep window",
+              defaultNo: true,
+            });
+            if (!ok) break;
+            await mirror?.command(`kill-window -t ${curTarget()}:${idx}`).catch(() => {});
             setStatusNote("killed window");
           }
           break;
@@ -4449,6 +4465,42 @@ try {
           const pid = mirror?.focusedPane();
           if (pid) void mirror?.command(`swap-pane -D -t ${pid}`).catch(() => {});
           setStatusNote("swapped pane");
+          break;
+        }
+        case "split-pane-right": {
+          const pid = mirror?.focusedPane();
+          if (pid) {
+            void mirror
+              ?.command(`split-window -h -t ${pid} -c "#{pane_current_path}"`)
+              .catch(() => {});
+            setStatusNote("split pane right");
+          }
+          break;
+        }
+        case "split-pane-down": {
+          const pid = mirror?.focusedPane();
+          if (pid) {
+            void mirror
+              ?.command(`split-window -v -t ${pid} -c "#{pane_current_path}"`)
+              .catch(() => {});
+            setStatusNote("split pane down");
+          }
+          break;
+        }
+        case "kill-pane": {
+          const pid = mirror?.focusedPane();
+          if (pid) {
+            const ok = await DialogConfirm.show({
+              title: "Close this pane?",
+              body: "Closes the active tmux pane and the process running inside it.",
+              yesLabel: "Close pane",
+              noLabel: "Keep pane",
+              defaultNo: true,
+            });
+            if (!ok) break;
+            await mirror?.command(`kill-pane -t ${pid}`).catch(() => {});
+            setStatusNote("closed pane");
+          }
           break;
         }
         case "break-pane": {
