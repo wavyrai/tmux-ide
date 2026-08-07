@@ -115,6 +115,11 @@ describe.skipIf(!hasTmux)("MirrorService live", () => {
           handlers,
           socketName,
           configFile: "/dev/null",
+          // Keep this live test independent of host pipe capacity. `yes`
+          // fills the control client's pipe immediately; the shorter policy
+          // then guarantees tmux, rather than a fixed wall-clock guess, is the
+          // component that declares the client behind.
+          pauseAfterSeconds: 1,
         });
         return lastIo;
       },
@@ -199,7 +204,13 @@ describe.skipIf(!hasTmux)("MirrorService live", () => {
     // ── Scenario 2: flood + stalled reader → %pause → sticky recovery ─────
     const floodIo = lastIo!;
     const floodStart = a.events.length;
-    runTmux(["send-keys", "-t", runtimePanes[0]!, "seq 1 999999999", "Enter"]);
+    runTmux([
+      "send-keys",
+      "-t",
+      runtimePanes[0]!,
+      "yes TMUX_IDE_BACKPRESSURE_FLOOD",
+      "Enter",
+    ]);
     // The flood is demonstrably flowing before the reader stalls.
     await vi.waitFor(
       () => {

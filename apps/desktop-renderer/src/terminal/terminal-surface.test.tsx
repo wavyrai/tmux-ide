@@ -1141,7 +1141,7 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
-  it("retires a typed connect failure before rejecting late output", async () => {
+  it("retires a retryable typed connect failure before rejecting late output", async () => {
     let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
     const transport = transportHarness(async (_request, nextListener) => {
       listener = nextListener;
@@ -1164,7 +1164,9 @@ describe("TerminalSurface", () => {
       root,
     );
     await vi.waitFor(() =>
-      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe(
+        "disconnected",
+      ),
     );
 
     await expect(
@@ -1214,6 +1216,51 @@ describe("TerminalSurface", () => {
     expect(attempts).toBe(3);
     expect(root.textContent).not.toContain("Terminal could not attach");
     dispose();
+  });
+
+  it("retries a transient replacement-lease failure without leaving a stale connected frame", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const attachment = attachmentHarness();
+    const transport = transportHarness(async () => {
+      attempts += 1;
+      return attempts === 1
+        ? {
+            status: "error" as const,
+            error: {
+              code: "attachment-unavailable" as const,
+              reason: "The terminal attachment issue failed.",
+              retryable: true,
+            },
+          }
+        : { status: "connected" as const, attachment };
+    });
+    const renderer = rendererHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe(
+      "disconnected",
+    );
+    expect(root.textContent).not.toContain("Terminal could not attach");
+
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected");
+    expect(attempts).toBe(2);
+    dispose();
+    vi.useRealTimers();
   });
 
   it("falls back to a passive read-only viewer when another client keeps control", async () => {
@@ -1437,7 +1484,7 @@ describe("TerminalSurface", () => {
     disposeOwnerRoot();
   });
 
-  it("retires a rejected connect before rejecting late output", async () => {
+  it("retires a rejected connect while retrying and rejects late output", async () => {
     let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
     const transport = transportHarness((_request, nextListener) => {
       listener = nextListener;
@@ -1457,7 +1504,9 @@ describe("TerminalSurface", () => {
       root,
     );
     await vi.waitFor(() =>
-      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe(
+        "disconnected",
+      ),
     );
 
     await expect(

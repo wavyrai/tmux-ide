@@ -586,6 +586,39 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     return operation;
   };
 
+  /**
+   * One retry owner for every transient attachment loss, including failures
+   * while issuing the replacement lease. Previously only a live socket close
+   * entered this loop: if the immediately following issue request raced daemon
+   * discovery, the surface stopped forever behind a stale painted frame.
+   */
+  const reconnectAfter = (message: string, activeGeneration: number): void => {
+    if (disposed || activeGeneration !== generation) return;
+    generation += 1;
+    disposeAttachment();
+    cancelReconnectRetry();
+    setReason(message);
+    setPhase("disconnected");
+    recordAttachPhase("disconnected");
+    const retryDelay = ATTACHMENT_RECONNECT_RETRY_MS[reconnectAttempt++];
+    if (retryDelay === undefined || !props.transport) {
+      setPhase("error");
+      recordAttachPhase("failed");
+      return;
+    }
+    const reconnectGeneration = generation;
+    reconnectRetry = setTimeout(() => {
+      reconnectRetry = null;
+      if (disposed || reconnectGeneration !== generation || !props.transport) return;
+      resetAttachTrace(true);
+      setReason("The terminal attachment closed. Reconnecting…");
+      setPhase("measuring");
+      const viewport = latestMeasuredViewport;
+      if (viewport) connect(viewport);
+      else scheduleFit();
+    }, retryDelay);
+  };
+
   const handleEvent = (
     event: NativeTerminalEvent,
     activeGeneration: number,
@@ -645,29 +678,12 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       }
       return;
     }
-    setReason(
+    reconnectAfter(
       event.error
         ? validatedTransportReason(event.error.reason)
         : "The native tmux attachment closed.",
+      activeGeneration,
     );
-    setPhase("disconnected");
-    recordAttachPhase("disconnected");
-    generation += 1;
-    disposeAttachment();
-    cancelReconnectRetry();
-    const retryDelay = ATTACHMENT_RECONNECT_RETRY_MS[reconnectAttempt++];
-    if (retryDelay === undefined || !props.transport) return;
-    const reconnectGeneration = generation;
-    reconnectRetry = setTimeout(() => {
-      reconnectRetry = null;
-      if (disposed || reconnectGeneration !== generation || !props.transport) return;
-      resetAttachTrace(true);
-      setReason("The terminal attachment closed. Reconnecting…");
-      setPhase("measuring");
-      const viewport = latestMeasuredViewport;
-      if (viewport) connect(viewport);
-      else scheduleFit();
-    }, retryDelay);
   };
 
   const failConnect = (message: string, activeGeneration: number): void => {
@@ -752,7 +768,11 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
             });
             return;
           }
-          failConnect(connectFailureMessage(result.error), activeGeneration);
+          if (result.error.retryable) {
+            reconnectAfter(connectFailureMessage(result.error), activeGeneration);
+          } else {
+            failConnect(connectFailureMessage(result.error), activeGeneration);
+          }
           return;
         }
         conflictAttempt = 0;
@@ -769,7 +789,10 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         if (props.focused) renderer?.focus();
       })
       .catch(() => {
-        failConnect("The native terminal transport could not attach this pane.", activeGeneration);
+        reconnectAfter(
+          "The native terminal transport could not attach this pane.",
+          activeGeneration,
+        );
       });
   };
 
