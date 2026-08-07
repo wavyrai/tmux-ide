@@ -203,7 +203,17 @@ describe.skipIf(!hasTmux)("MirrorService live", () => {
 
     // ── Scenario 2: flood + stalled reader → %pause → sticky recovery ─────
     const floodIo = lastIo!;
-    const floodStart = a.events.length;
+    // Prove the reader is live before deliberately parking it. Stalling first
+    // removes a scheduler race where a fast bounded producer could finish and
+    // drain before Node applied `pause()` to the child stream.
+    runTmux(["send-keys", "-t", runtimePanes[0]!, "echo BEFORE_STALL_$((21*2))", "Enter"]);
+    await vi.waitFor(
+      () => {
+        expect(textOf(a.events)).toContain("BEFORE_STALL_42");
+      },
+      { timeout: 10_000 },
+    );
+    floodIo.stallReaderForTest();
     // A bounded burst fills the client pipe without putting an unbounded wall
     // of `%extended-output` in front of tmux's eventual `%pause` notice. That
     // keeps the proof deterministic under coverage instrumentation: the
@@ -215,14 +225,6 @@ describe.skipIf(!hasTmux)("MirrorService live", () => {
       "yes TMUX_IDE_BACKPRESSURE_FLOOD | head -c 4194304",
       "Enter",
     ]);
-    // The flood is demonstrably flowing before the reader stalls.
-    await vi.waitFor(
-      () => {
-        expect(a.events.length).toBeGreaterThan(floodStart);
-      },
-      { timeout: 10_000 },
-    );
-    floodIo.stallReaderForTest();
     await new Promise((resolve) => setTimeout(resolve, 5_000));
     floodIo.resumeReaderForTest();
 
