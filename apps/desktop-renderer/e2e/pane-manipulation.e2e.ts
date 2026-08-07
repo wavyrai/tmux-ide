@@ -77,6 +77,19 @@ async function expectSameTerminal(
   ).toBe(true);
 }
 
+async function expectLiveCompositor(terminal: Locator, area: Locator, step: string): Promise<void> {
+  await expect(terminal, `${step}: the interactive attachment did not recover`).toHaveAttribute(
+    "data-phase",
+    "connected",
+    { timeout: 30_000 },
+  );
+  await expect(area, `${step}: the per-pane compositor did not recover`).toHaveAttribute(
+    "data-pane-compositor",
+    "true",
+    { timeout: 30_000 },
+  );
+}
+
 function expectLayoutRestored(before: readonly DomLayout[], after: readonly DomLayout[]): void {
   expect(
     after.map(({ semanticPaneId }) => semanticPaneId),
@@ -101,10 +114,12 @@ async function dragFromHeaderToTile(
   release: "drop" | "cancel",
 ): Promise<void> {
   const source = await sourceHeader.boundingBox();
-  const target = await targetTile.boundingBox();
   expect(source, "the pane drag handle has no pointer geometry").not.toBeNull();
+  // Resolve the live hit target after any confirmed-layout FLIP has settled.
+  await page.waitForTimeout(350);
+  await sourceHeader.hover({ position: { x: source!.width / 2, y: source!.height / 2 } });
+  const target = await targetTile.boundingBox();
   expect(target, "the pane drop target has no pointer geometry").not.toBeNull();
-  await page.mouse.move(source!.x + source!.width / 2, source!.y + source!.height / 2);
   await page.mouse.down();
   await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, {
     steps: 8,
@@ -187,6 +202,7 @@ test("resize previews locally; header drag cancels or swaps without remounting t
       )
       .toBe(true);
     await expectSameTerminal(page, originalTerminal!, terminal, "after splitting the window");
+    await expectLiveCompositor(terminal, area, "after splitting the window");
 
     // --- Resize: local preview first, then exact tmux confirmation ----------
     const border = page.locator('.pane-border[data-orientation="vertical"]').first();
@@ -205,9 +221,16 @@ test("resize previews locally; header drag cancels or swaps without remounting t
     const widthBeforePreview = (await sourceTile.boundingBox())!.width;
     const borderBox = (await border.boundingBox())!;
     await probe.mark("before-resize-grab");
-    await page.mouse.move(borderBox.x + borderBox.width / 2, borderBox.y + borderBox.height / 2);
+    await border.hover({
+      position: { x: borderBox.width / 2, y: borderBox.height / 2 },
+    });
+    const grabbedBorderBox = (await border.boundingBox())!;
     await page.mouse.down();
-    await page.mouse.move(borderBox.x - 100, borderBox.y + borderBox.height / 2, { steps: 2 });
+    await page.mouse.move(
+      grabbedBorderBox.x - 100,
+      grabbedBorderBox.y + grabbedBorderBox.height / 2,
+      { steps: 2 },
+    );
 
     await expect(
       area,
@@ -259,6 +282,7 @@ test("resize previews locally; header drag cancels or swaps without remounting t
       "the resize left equal panes, so the swap below cannot prove which pane moved",
     ).not.toBe(pane(unequal, targetPane!).width);
     await expectSameTerminal(page, originalTerminal!, terminal, "after confirmed resize");
+    await expectLiveCompositor(terminal, area, "after confirmed resize");
 
     // --- Drag cancel: drop affordance, Escape rollback, zero tmux mutation --
     const header = page.locator(`[data-pane-drag-handle="${sourcePane}"]`);
@@ -269,11 +293,11 @@ test("resize previews locally; header drag cancels or swaps without remounting t
     const tmuxBeforeCancel = tmuxLayoutSignature(tmuxPaneGeometry(liveApp.fleet, sessionName));
     const domBeforeCancel = await domLayout(page);
     const sourceHeaderBox = (await header.boundingBox())!;
+    await page.waitForTimeout(350);
+    await header.hover({
+      position: { x: sourceHeaderBox.width / 2, y: sourceHeaderBox.height / 2 },
+    });
     const targetBox = (await targetTile.boundingBox())!;
-    await page.mouse.move(
-      sourceHeaderBox.x + sourceHeaderBox.width / 2,
-      sourceHeaderBox.y + sourceHeaderBox.height / 2,
-    );
     await page.mouse.down();
     await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
       steps: 8,
@@ -315,6 +339,7 @@ test("resize previews locally; header drag cancels or swaps without remounting t
       "the cancel path never named its rollback phase",
     ).toContain("rollback");
     await expectSameTerminal(page, originalTerminal!, terminal, "after cancelled pane drag");
+    await expectLiveCompositor(terminal, area, "after cancelled pane drag");
 
     // --- Drag drop: unequal semantic panes swap in tmux --------------------
     const tmuxBeforeSwap = tmuxPaneGeometry(liveApp.fleet, sessionName);
@@ -366,6 +391,7 @@ test("resize previews locally; header drag cancels or swaps without remounting t
       "the completed pane swap left a stale drop target",
     ).toHaveCount(0);
     await expectSameTerminal(page, originalTerminal!, terminal, "after confirmed pane swap");
+    await expectLiveCompositor(terminal, area, "after confirmed pane swap");
 
     // The identity assertion above proves no remount; this proves that same
     // attachment still accepts input and repaints output after all mutations.
