@@ -12,7 +12,12 @@
  * to the top when the query looks like a path.
  */
 import { fuzzyFilter } from "../team/fuzzy.ts";
-import { CANONICAL_SURFACE_REGISTRY, type ProductSurfaceId } from "@tmux-ide/contracts";
+import {
+  CANONICAL_SURFACE_REGISTRY,
+  multiplexerVerb,
+  type MultiplexerVerbId,
+  type ProductSurfaceId,
+} from "@tmux-ide/contracts";
 import type { PaletteUsageEntry, Tab } from "./app-state.ts";
 import type { AgentRowInput } from "./agent-rows.ts";
 import type { HostedPanelView } from "./panel-host.ts";
@@ -52,6 +57,9 @@ export type PaletteAction =
   | { kind: "kill-window"; label: string }
   | { kind: "zoom-pane"; label: string }
   | { kind: "swap-pane"; label: string }
+  | { kind: "split-pane-right"; label: string }
+  | { kind: "split-pane-down"; label: string }
+  | { kind: "kill-pane"; label: string }
   | { kind: "break-pane"; label: string }
   | { kind: "rotate-window"; label: string }
   | { kind: "select-layout"; layout: string; label: string }
@@ -60,6 +68,44 @@ export type PaletteAction =
   | { kind: "resize-window"; label: string }
   | { kind: "settings"; id: SettingsCommandId; label: string }
   | { kind: "quit"; label: string };
+
+/**
+ * Join the OpenTUI palette to the renderer-neutral multiplexer contract.
+ *
+ * The TUI still owns presentation and execution, but it no longer invents the
+ * identity, copy, or availability rules for verbs that the browser also
+ * exposes. TUI-only power-user actions (rotate, layouts, break-pane, sync)
+ * deliberately return null until they become product-wide verbs.
+ */
+export function paletteMultiplexerVerbId(action: PaletteAction): MultiplexerVerbId | null {
+  switch (action.kind) {
+    case "new-window":
+      return "window.new";
+    case "rename-window":
+      return "window.rename";
+    case "kill-window":
+      return "window.kill";
+    case "zoom-pane":
+      return "window.zoom.toggle";
+    case "swap-pane":
+      return "pane.swap";
+    case "split-pane-right":
+      return "pane.split.right";
+    case "split-pane-down":
+      return "pane.split.down";
+    case "kill-pane":
+      return "pane.kill";
+    default:
+      return null;
+  }
+}
+
+function sharedVerbAction<Kind extends PaletteAction["kind"]>(
+  kind: Kind,
+  verbId: MultiplexerVerbId,
+): Extract<PaletteAction, { kind: Kind }> {
+  return { kind, label: multiplexerVerb(verbId).label } as Extract<PaletteAction, { kind: Kind }>;
+}
 
 /** The five tmux `select-layout` presets, offered one palette action each so the
  *  fuzzy filter finds "tiled" / "main-vertical" directly. Shared with the pane
@@ -209,10 +255,13 @@ export function staticPaletteActions(
     // belongs to the pane — agents' slash commands); this is the always-there
     // entry.
     actions.push({ kind: "search-scrollback", label: "Search scrollback" });
-    actions.push({ kind: "new-window", label: "New window" });
-    actions.push({ kind: "kill-window", label: "Kill window" });
-    actions.push({ kind: "zoom-pane", label: "Zoom pane" });
-    actions.push({ kind: "swap-pane", label: "Swap pane with next" });
+    actions.push(sharedVerbAction("new-window", "window.new"));
+    actions.push(sharedVerbAction("kill-window", "window.kill"));
+    actions.push(sharedVerbAction("zoom-pane", "window.zoom.toggle"));
+    actions.push(sharedVerbAction("swap-pane", "pane.swap"));
+    actions.push(sharedVerbAction("split-pane-right", "pane.split.right"));
+    actions.push(sharedVerbAction("split-pane-down", "pane.split.down"));
+    actions.push(sharedVerbAction("kill-pane", "pane.kill"));
     actions.push({ kind: "break-pane", label: "Break pane to window" });
     actions.push({ kind: "rotate-window", label: "Rotate panes" });
     actions.push({ kind: "sync-toggle", label: "Synchronize panes (toggle)" });
@@ -465,6 +514,9 @@ const TERMINAL_SUGGESTED_KINDS: ReadonlyArray<PaletteAction["kind"]> = [
   "kill-window",
   "zoom-pane",
   "swap-pane",
+  "split-pane-right",
+  "split-pane-down",
+  "kill-pane",
   "break-pane",
   "rotate-window",
 ];

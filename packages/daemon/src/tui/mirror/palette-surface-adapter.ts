@@ -1,6 +1,12 @@
-import { CANONICAL_SURFACE_REGISTRY, type ProductSurfaceId } from "@tmux-ide/contracts";
+import {
+  CANONICAL_SURFACE_REGISTRY,
+  multiplexerVerb,
+  multiplexerVerbAvailability,
+  type MultiplexerVerbFacts,
+  type ProductSurfaceId,
+} from "@tmux-ide/contracts";
 import type { Tab } from "./app-state.ts";
-import type { PaletteAction, PaletteRow } from "./palette.ts";
+import { paletteMultiplexerVerbId, type PaletteAction, type PaletteRow } from "./palette.ts";
 import type {
   CommandPaletteDescriptor,
   CommandPaletteProjection,
@@ -14,6 +20,8 @@ export interface PaletteSurfaceAdapterContext {
   currentSession?: string | null;
   syncOn?: boolean;
   saveState?: PaletteSaveState;
+  /** Shared tmux facts used by both the browser menus and this TUI palette. */
+  multiplexerFacts?: MultiplexerVerbFacts;
   /** Return a reason to disable an otherwise offered action. */
   disabledReason?: (action: PaletteAction) => string | null | undefined;
   fallbackGroup?: string;
@@ -145,6 +153,12 @@ function iconForAction(action: PaletteAction): WorkspaceIconId {
     case "swap-pane":
     case "rotate-window":
       return "move";
+    case "split-pane-right":
+      return "split-right";
+    case "split-pane-down":
+      return "split-down";
+    case "kill-pane":
+      return "close";
     case "break-pane":
       return "split-right";
     case "select-layout":
@@ -158,6 +172,11 @@ function iconForAction(action: PaletteAction): WorkspaceIconId {
 }
 
 function categoryForAction(action: PaletteAction): string {
+  const verbId = paletteMultiplexerVerbId(action);
+  if (verbId) {
+    const scope = multiplexerVerb(verbId).scope;
+    return scope === "session" ? "Session" : scope === "window" ? "Window" : "Pane";
+  }
   switch (action.kind) {
     case "surface":
     case "tab":
@@ -187,6 +206,9 @@ function categoryForAction(action: PaletteAction): string {
     case "kill-window":
     case "zoom-pane":
     case "swap-pane":
+    case "split-pane-right":
+    case "split-pane-down":
+    case "kill-pane":
     case "break-pane":
     case "rotate-window":
     case "sync-toggle":
@@ -202,6 +224,8 @@ function categoryForAction(action: PaletteAction): string {
 }
 
 function detailForAction(action: PaletteAction): string {
+  const verbId = paletteMultiplexerVerbId(action);
+  if (verbId) return multiplexerVerb(verbId).description;
   switch (action.kind) {
     case "surface":
     case "tab":
@@ -244,6 +268,12 @@ function detailForAction(action: PaletteAction): string {
       return "Toggle focus on the active terminal pane";
     case "swap-pane":
       return "Swap the active pane with the next pane";
+    case "split-pane-right":
+      return "Split the active pane and place a new shell on its right";
+    case "split-pane-down":
+      return "Split the active pane and place a new shell below it";
+    case "kill-pane":
+      return "Close the active tmux pane";
     case "break-pane":
       return "Move the active pane into its own window";
     case "rotate-window":
@@ -288,6 +318,14 @@ function disabledReason(
 ): string | null {
   const explicit = context.disabledReason?.(action)?.trim();
   if (explicit) return explicit;
+  const verbId = paletteMultiplexerVerbId(action);
+  if (verbId && context.multiplexerFacts) {
+    const availability = multiplexerVerbAvailability(
+      multiplexerVerb(verbId),
+      context.multiplexerFacts,
+    );
+    if (!availability.available) return availability.reason;
+  }
   if (action.kind === "save" && context.saveState) {
     if (!context.saveState.hasBuffer || !context.saveState.hasPath) return "No file is open";
     if (context.saveState.readOnlyReason) return "File is read-only";

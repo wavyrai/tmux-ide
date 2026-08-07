@@ -11,6 +11,7 @@ import {
   PALETTE_RECENT_LIMIT,
   goToFileActions,
   GO_FILE_CAP,
+  paletteMultiplexerVerbId,
   type PaletteAction,
   type PaletteRow,
 } from "./palette.ts";
@@ -219,7 +220,15 @@ describe("filterPaletteActions", () => {
     expect(off).not.toContain("sync-toggle");
     const on = staticPaletteActions(["a"], { terminal: true });
     expect(on.map((x) => x.kind)).toEqual(
-      expect.arrayContaining(["swap-pane", "break-pane", "rotate-window", "sync-toggle"]),
+      expect.arrayContaining([
+        "swap-pane",
+        "split-pane-right",
+        "split-pane-down",
+        "kill-pane",
+        "break-pane",
+        "rotate-window",
+        "sync-toggle",
+      ]),
     );
     // One select-layout action per preset, carrying the layout name.
     const layouts = on.filter((x) => x.kind === "select-layout");
@@ -229,6 +238,23 @@ describe("filterPaletteActions", () => {
       "main-horizontal",
       "main-vertical",
       "tiled",
+    ]);
+  });
+
+  it("maps every shared TUI tmux action to the renderer-neutral verb table", () => {
+    const actions = staticPaletteActions(["a"], { terminal: true });
+    expect(
+      actions
+        .map((action) => paletteMultiplexerVerbId(action))
+        .filter((verbId): verbId is NonNullable<typeof verbId> => verbId !== null),
+    ).toEqual([
+      "window.new",
+      "window.kill",
+      "window.zoom.toggle",
+      "pane.swap",
+      "pane.split.right",
+      "pane.split.down",
+      "pane.kill",
     ]);
   });
 
@@ -467,7 +493,14 @@ describe("paletteRows (M24.4 — grouped empty query)", () => {
     const suggested = ls.slice(sug + 1, cmd);
     expect(suggested[0]).toBe("New agent: claude (again)");
     expect(suggested).toEqual(
-      expect.arrayContaining(["New window", "Zoom pane", "Swap pane with next"]),
+      expect.arrayContaining([
+        "New terminal or agent",
+        "Zoom pane",
+        "Swap panes",
+        "Split right",
+        "Split down",
+        "Close pane",
+      ]),
     );
   });
 
