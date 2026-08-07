@@ -114,6 +114,19 @@ export const DEFAULT_APP_STATE: AppState = {
   filesShowIgnored: false,
 };
 
+/**
+ * Resolve the workspace context shown at startup. A concrete CLI target is an
+ * explicit navigation request and must override the previously persisted
+ * context; a bare Home launch restores the last workspace for quick return.
+ */
+export function startupContextSession(
+  target: string,
+  bareHome: boolean,
+  persistedContext: string | null,
+): string {
+  return bareHome ? (persistedContext ?? "") : target;
+}
+
 /** PURE — the "again" memory key for a spawn context: the concrete dir when
  *  known, else the session name (namespaced so a dirless session can't collide
  *  with a path), else null — nothing stable to remember under. */

@@ -275,6 +275,7 @@ import {
   isTab,
   rememberSpawn,
   spawnMemoryKey,
+  startupContextSession,
   type AppState,
   type PaletteUsageEntry,
   type Tab,
@@ -978,7 +979,7 @@ try {
     // onMount (after the FFI buffer + fleet arrive).
     const persisted: AppState = loadAppState();
     const [contextSession, setContextSession] = createSignal<string>(
-      persisted.contextSession ?? "",
+      startupContextSession(target, bareHome, persisted.contextSession),
     );
     const [contextDir, setContextDir] = createSignal<string>("");
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
@@ -1240,7 +1241,7 @@ try {
     );
 
     const [curTarget, setCurTarget] = createSignal(
-      bareHome ? (persisted.contextSession ?? "") : target,
+      startupContextSession(target, bareHome, persisted.contextSession),
     );
     // Size truth (M22.8): the actual tmux window size when a co-attached terminal
     // has shrunk it below our pinned canvas (else null). Set in the tick from the

@@ -17,6 +17,7 @@ import {
   rememberSpawn,
   serializeAppState,
   spawnMemoryKey,
+  startupContextSession,
   type AppState,
 } from "./app-state.ts";
 import type { LastSpawn } from "./agent-lifecycle.ts";
@@ -30,6 +31,17 @@ describe("isTab", () => {
     expect(isTab("mirror")).toBe(false);
     expect(isTab(2)).toBe(false);
     expect(isTab(null)).toBe(false);
+  });
+});
+
+describe("startupContextSession", () => {
+  it("makes an explicit target authoritative over persisted context", () => {
+    expect(startupContextSession("fixture", false, "previous")).toBe("fixture");
+  });
+
+  it("restores persisted context for a bare Home launch", () => {
+    expect(startupContextSession("", true, "previous")).toBe("previous");
+    expect(startupContextSession("", true, null)).toBe("");
   });
 });
 
