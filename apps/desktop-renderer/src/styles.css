@@ -6133,13 +6133,32 @@ kbd {
   transition: opacity 150ms var(--desktop-ease-smooth);
 }
 
-.pane-tile[data-communication-active="true"]::after {
+.pane-tile[data-communication-active="true"][data-communication-treatment="transfer"]::after {
   opacity: 1;
 }
 
-.pane-tile[data-communication-direction="outgoing"]::after {
+.pane-tile[data-communication-treatment="transfer"][data-communication-direction="outgoing"]::after {
   border-style: dashed;
   box-shadow: 0 0 14px color-mix(in display-p3, var(--pane-identity-accent) 22%, transparent);
+}
+
+/*
+ * Reading is observation, not focus. A restrained dotted rail preserves the
+ * real active-pane outline while still making agent inspection visible.
+ */
+.pane-tile[data-communication-active="true"][data-communication-treatment="observation"]::after {
+  inset: 1px 5px auto;
+  height: 10px;
+  border: 0;
+  border-top: 2px dotted color-mix(in display-p3, var(--tmux-ide-status-info) 82%, white 8%);
+  border-radius: 0;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in display-p3, var(--tmux-ide-status-info) 13%, transparent),
+    transparent
+  );
+  box-shadow: none;
+  opacity: 1;
 }
 
 /*
@@ -6498,6 +6517,12 @@ kbd {
   background: var(--tmux-ide-status-danger);
 }
 
+.pane-tile__interaction[data-treatment="observation"] {
+  border-style: dotted;
+  border-color: color-mix(in display-p3, var(--tmux-ide-status-info) 58%, transparent);
+  background: color-mix(in display-p3, var(--tmux-ide-status-info) 10%, transparent);
+}
+
 .pane-tile__communication {
   position: absolute;
   z-index: 25;
@@ -6567,6 +6592,22 @@ kbd {
   right: auto;
   left: 8px;
   border-style: dashed;
+}
+
+.pane-tile__communication[data-treatment="observation"] {
+  border-style: dotted;
+  border-color: color-mix(in display-p3, var(--tmux-ide-status-info) 62%, transparent);
+  background: color-mix(
+    in display-p3,
+    var(--tmux-ide-status-info) 10%,
+    var(--tmux-ide-surface-panel) 90%
+  );
+  box-shadow: 0 5px 16px color-mix(in display-p3, black 16%, transparent);
+}
+
+.pane-tile__communication[data-treatment="observation"] > i {
+  color: var(--tmux-ide-status-info);
+  background: color-mix(in display-p3, var(--tmux-ide-status-info) 18%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {

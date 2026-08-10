@@ -411,6 +411,20 @@ describe("PaneFrame projection", () => {
     );
   });
 
+  it("preserves explicit interaction badges in compact one-row chrome", () => {
+    const projection = projectPaneFrame({
+      width: 58,
+      height: 1,
+      title: "Editor",
+      kind: "terminals",
+      focused: false,
+      status: "READ",
+      statusTone: "working",
+    });
+    expect(projection.variant).toBe("compact");
+    expect(projection.chips[0]).toMatchObject({ kind: "status", label: "READ" });
+  });
+
   it("clips title and subtitle by terminal display width", () => {
     const projection = projectPaneFrame({
       width: 120,

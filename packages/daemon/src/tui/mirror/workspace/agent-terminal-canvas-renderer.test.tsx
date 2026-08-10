@@ -73,8 +73,8 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
     );
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("A        ┃B");
-    expect(frame.split("\n").filter((row) => row.includes("┃"))).toHaveLength(8);
+    expect(frame).toContain("A        ┊B");
+    expect(frame.split("\n").filter((row) => row.includes("┊"))).toHaveLength(8);
     setup.renderer.destroy();
   });
 

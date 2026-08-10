@@ -9,6 +9,22 @@ export const INTERACTION_ACTIVITY_LIMIT = 64;
 /** One shared transient presence window for DOM and OpenTUI chrome. */
 export const INTERACTION_PRESENCE_MS = 3_200;
 
+/**
+ * Replay restores Activity history, not transient visual presence. Keeping the
+ * time check in core prevents a reconnect from making every old pane read or
+ * send look live again in one renderer but not another.
+ */
+export function interactionPresenceIsFresh(
+  interaction: Pick<PaneInteractionProjection, "at"> | Pick<InteractionReceipt, "at">,
+  nowMs = Date.now(),
+  presenceMs = INTERACTION_PRESENCE_MS,
+): boolean {
+  const occurredAt = Date.parse(interaction.at);
+  if (!Number.isFinite(occurredAt)) return false;
+  const ageMs = nowMs - occurredAt;
+  return ageMs >= 0 && ageMs <= presenceMs;
+}
+
 export interface PaneInteractionProjection {
   /** The pane whose chrome owns this projection. */
   readonly paneId: string;
@@ -22,6 +38,55 @@ export interface PaneInteractionProjection {
   readonly label: string;
   readonly sequence: number;
   readonly at: string;
+}
+
+/**
+ * Renderer-neutral presence semantics shared by the web and OpenTUI hosts.
+ *
+ * Focus is intentionally absent: an interaction is evidence that one pane was
+ * observed or received input, never evidence that the user activated it.
+ */
+export type PaneInteractionPresenceRole =
+  | "read-source"
+  | "read-target"
+  | "send-source"
+  | "send-target";
+
+export interface PaneInteractionPresence {
+  readonly role: PaneInteractionPresenceRole;
+  readonly kind: "read" | "send";
+  readonly endpoint: "source" | "target";
+  readonly treatment: "observation" | "transfer";
+  readonly tone: "info" | "success" | "danger";
+  readonly badge: string;
+}
+
+/**
+ * Convert one pane projection into the single visual vocabulary every host
+ * consumes. Labels are deliberately terse enough for pane chrome; the full,
+ * privacy-safe relationship remains available through
+ * {@link paneInteractionRelationshipLabel} and the Activity feed.
+ */
+export function paneInteractionPresence(
+  interaction: PaneInteractionProjection,
+): PaneInteractionPresence {
+  const kind = interaction.operationKind === "workspace.pane.read" ? "read" : "send";
+  const endpoint = interaction.direction === "outgoing" ? "source" : "target";
+  const role: PaneInteractionPresenceRole = `${kind}-${endpoint}`;
+  const failed = interaction.phase === "failed";
+  let badge: string;
+  if (failed) badge = "FAILED";
+  else if (kind === "read") badge = endpoint === "source" ? "READING" : "READ";
+  else if (interaction.phase === "accepted") badge = endpoint === "source" ? "SENDING" : "INPUT";
+  else badge = endpoint === "source" ? "SENT" : "RECEIVED";
+  return {
+    role,
+    kind,
+    endpoint,
+    treatment: kind === "read" ? "observation" : "transfer",
+    tone: failed ? "danger" : kind === "read" ? "info" : "success",
+    badge,
+  };
 }
 
 export interface InteractionFeedState {

@@ -219,7 +219,9 @@ import type { ApplicationShellSessionState } from "@tmux-ide/daemon-client/appli
 import {
   INTERACTION_PRESENCE_MS,
   initialInteractionFeedState,
+  interactionPresenceIsFresh,
   interactionReceiptLabel,
+  paneInteractionPresence,
   paneInteractionRelationshipLabel,
   projectApplicationShellSession,
   reduceInteractionReceipt,
@@ -227,6 +229,7 @@ import {
   type InteractionFeedState,
 } from "../../../../core/src/index.ts";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
+import { FrameCoalescer } from "./frame-coalescer.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "./pane-surface.tsx";
 import { tapInputSent, tapInputTick } from "./perf-tap.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-terminal.ts";
@@ -1124,7 +1127,7 @@ try {
         const authority = await connectOpenTuiApplicationShellAuthority(sessionName, {
           onInteractionReceipt: (receipt) => {
             setInteractionFeed((current) => reduceInteractionReceipt(current, receipt));
-            markInteractionPresence(receipt.sequence);
+            if (interactionPresenceIsFresh(receipt)) markInteractionPresence(receipt.sequence);
           },
         });
         if (request !== daemonApplicationShellRequest) {
@@ -1963,14 +1966,8 @@ try {
           interaction && activeInteractionSequences().has(interaction.sequence)
             ? interaction
             : undefined;
-        const communicationRole = visibleInteraction
-          ? visibleInteraction.operationKind === "workspace.pane.read"
-            ? visibleInteraction.direction === "outgoing"
-              ? "read-source"
-              : "read-target"
-            : visibleInteraction.direction === "outgoing"
-              ? "send-source"
-              : "send-target"
+        const interactionPresence = visibleInteraction
+          ? paneInteractionPresence(visibleInteraction)
           : null;
         metadata.set(pane.id, {
           // SessionMirror may add title/currentCommand descriptors later. Null
@@ -1980,13 +1977,13 @@ try {
           subtitle: agent
             ? `${agent.displayName ? `${agent.kind} · ` : ""}${curTarget()} · ${pane.id}`
             : `${curTarget()} · ${pane.id}`,
-          status: visibleInteraction
-            ? `${paneInteractionRelationshipLabel(visibleInteraction, interactionPaneLabel)} · ${visibleInteraction.phase}`
+          status: interactionPresence
+            ? interactionPresence.badge
             : (agent?.statusText ?? agent?.state ?? appStatus),
-          statusTone: visibleInteraction
-            ? visibleInteraction.phase === "failed"
+          statusTone: interactionPresence
+            ? interactionPresence.tone === "danger"
               ? "blocked"
-              : visibleInteraction.phase === "accepted"
+              : interactionPresence.tone === "info"
                 ? "working"
                 : "done"
             : (agent?.state ?? appStatusTone),
@@ -1995,9 +1992,9 @@ try {
             agent?.state === "blocked" ||
             (!agent && appStatusTone === "blocked"),
           communication:
-            visibleInteraction && communicationRole
+            visibleInteraction && interactionPresence
               ? {
-                  role: communicationRole,
+                  role: interactionPresence.role,
                   label: paneInteractionRelationshipLabel(visibleInteraction, interactionPaneLabel),
                 }
               : null,
@@ -2434,8 +2431,10 @@ try {
     );
     const scrollOffsets = new Map<string, number>();
     let dirty = false;
+    let paneFrameCoalescer: FrameCoalescer | null = null;
     const markDirty = () => {
       dirty = true;
+      paneFrameCoalescer?.request();
     };
     // The framebuffer surfaces react directly to this identity change; the
     // fallback StyledRun path needs one fresh snapshot as well. Source xterm
@@ -5375,10 +5374,11 @@ try {
       // The mirror follows workspace identity, not which native surface owns
       // keyboard focus. Dock restore must not leave the terminal canvas blank.
       if (curTarget()) attach(curTarget());
-      const t = setInterval(() => {
+      const flushMirrorFrame = () => {
+        let continueAutoScroll = false;
         // Edge auto-scroll (M25.6): while a mirror drag parks the pointer at
         // the pane's top/bottom content row, extend ~1 row per state tick —
-        // the existing 8ms cadence, no new timers. The clamps stop it at the
+        // one row per renderer frame. The clamps stop it at the
         // scrollback top (up) / the live bottom (down); release or escape
         // clears the gesture (clearSelection / the release branch in `route`).
         if (mirror && dragAutoScroll && selecting?.surface === "mirror") {
@@ -5390,6 +5390,7 @@ try {
             scrollOffsets.set(paneId, next);
             extendSelection(lastDragPointer.x, lastDragPointer.y);
             dirty = true;
+            continueAutoScroll = true;
           }
         }
         if (!dirty || !mirror) return;
@@ -5414,6 +5415,8 @@ try {
         const pinned = lastPin;
         if (!pinned) {
           setPanes(raw);
+          tapInputTick();
+          if (continueAutoScroll) markDirty();
           return;
         }
         const effective = mirror.windowSize() ?? effectiveWindowSize(raw);
@@ -5443,7 +5446,13 @@ try {
           }
         }
         tapInputTick(); // t2: this paint consumed the dirty flag — close open input samples
-      }, 8);
+        if (continueAutoScroll) markDirty();
+      };
+      // Event-driven state publication: the first event after idle is flushed
+      // immediately and sustained output is capped to the renderer's 60 Hz
+      // budget. This replaces the unconditional 125 Hz wake-up loop.
+      paneFrameCoalescer = new FrameCoalescer(flushMirrorFrame);
+      if (dirty) paneFrameCoalescer.request();
       // Fleet via an ASYNC subprocess — the in-process data layer is a chain of
       // synchronous execs that blocks the event loop for seconds and swallows
       // input (mouse events die during the storm). The child does the work.
@@ -5514,7 +5523,8 @@ try {
         if (mode() === "diff") refreshStatus();
       }, 3000);
       cleanupRegistry.set("state-and-fleet-timers", () => {
-        clearInterval(t);
+        paneFrameCoalescer?.dispose();
+        paneFrameCoalescer = null;
         clearInterval(fleetTimer);
         clearInterval(diffTimer);
         if (saveTimer) clearTimeout(saveTimer);
@@ -7651,6 +7661,7 @@ try {
         lastDragPointer = { x, y };
         const rawRow = gy - HEADER_ROWS - pane.top;
         dragAutoScroll = rawRow <= 0 ? "up" : rawRow >= pane.height - 1 ? "down" : null;
+        if (dragAutoScroll) markDirty();
         setSelection({
           surface: "mirror",
           paneId: pane.id,

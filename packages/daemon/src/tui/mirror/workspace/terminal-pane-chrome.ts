@@ -7,6 +7,7 @@ import {
   type SemanticProductId,
 } from "@tmux-ide/contracts";
 import type { PaneFrameActionIntent } from "../../../ui/pane-frame/presenter.tsx";
+import type { PaneInteractionPresenceRole } from "@tmux-ide/core";
 import { terminalDisplayWidth } from "../panel-host.ts";
 import { iconButtonWidth, type RecipeTone, type Rect } from "../recipes.ts";
 import type { AgentTerminalCanvasProjection } from "./agent-terminal-canvas.ts";
@@ -46,11 +47,7 @@ export interface TerminalPaneChromeMetadata {
   communication?: TerminalPaneCommunication | null;
 }
 
-export type TerminalPaneCommunicationRole =
-  | "send-source"
-  | "send-target"
-  | "read-source"
-  | "read-target";
+export type TerminalPaneCommunicationRole = PaneInteractionPresenceRole;
 
 export interface TerminalPaneCommunication {
   readonly role: TerminalPaneCommunicationRole;
@@ -325,21 +322,27 @@ function projectCommunicationSegments(
   for (const pane of panes) {
     const communication = metadataByPane?.get(pane.id)?.communication;
     if (!communication) continue;
-    if (pane.top > 0) {
-      add(
-        pane,
-        communication,
-        { x: pane.left, y: pane.top - 1, width: pane.width, height: 1 },
-        "horizontal",
-      );
-    }
-    if (pane.top + pane.height < framebuffer.height) {
-      add(
-        pane,
-        communication,
-        { x: pane.left, y: pane.top + pane.height, width: pane.width, height: 1 },
-        "horizontal",
-      );
+    // A pane's horizontal separator is also where its title/status chrome is
+    // projected. Observation must never erase that explicit READ badge or look
+    // like the pane was selected, so reads use only the vertical observation
+    // rail. Sends retain the stronger transfer outline.
+    if (!communication.role.startsWith("read")) {
+      if (pane.top > 0) {
+        add(
+          pane,
+          communication,
+          { x: pane.left, y: pane.top - 1, width: pane.width, height: 1 },
+          "horizontal",
+        );
+      }
+      if (pane.top + pane.height < framebuffer.height) {
+        add(
+          pane,
+          communication,
+          { x: pane.left, y: pane.top + pane.height, width: pane.width, height: 1 },
+          "horizontal",
+        );
+      }
     }
     if (pane.left > 0) {
       add(

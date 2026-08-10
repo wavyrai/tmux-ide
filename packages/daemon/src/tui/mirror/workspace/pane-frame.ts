@@ -521,10 +521,19 @@ function statusChip(
 ): Omit<PaneFrameStatusChip, "start" | "width"> | null {
   if (!status) return null;
   const resolvedTone = recipeDomainTone(status.tone);
+  const explicitCompactLabel =
+    variant === "compact" &&
+    status.label === status.label.toUpperCase() &&
+    terminalDisplayWidth(status.label) <= 8;
   return {
     kind: "status",
     id: status.id,
-    label: variant === "compact" ? STATUS_GLYPHS[resolvedTone] : status.label,
+    // Short uppercase labels are deliberate transient protocol badges (READ,
+    // SENT, FAILED). Preserve them in one-row terminal chrome; collapsing them
+    // to the generic tone glyph loses the difference between observation,
+    // transfer, and actual focus.
+    label:
+      variant === "compact" && !explicitCompactLabel ? STATUS_GLYPHS[resolvedTone] : status.label,
     tone: resolvedTone,
   };
 }

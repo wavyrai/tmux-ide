@@ -322,6 +322,29 @@ describe("the layout-faithful workspace view", () => {
     );
 
     setFeed({
+      sequence: 41,
+      panes: {
+        "pane.b": {
+          paneId: "pane.b",
+          direction: "incoming",
+          sourcePaneId: null,
+          destinationPaneId: "pane.b",
+          operationKind: "workspace.pane.read",
+          operationId: "10000000-0000-4000-8000-000000000041",
+          phase: "observed",
+          origin: "external",
+          label: "external observed · pane read observed",
+          sequence: 41,
+          at: "2026-08-10T00:00:00.000Z",
+        },
+      },
+    });
+    expect(
+      root.querySelector<HTMLElement>('.pane-tile[data-pane="pane.b"]')!.dataset
+        .communicationActive,
+    ).toBeUndefined();
+
+    setFeed({
       sequence: 42,
       panes: {
         "pane.a": {
@@ -335,7 +358,7 @@ describe("the layout-faithful workspace view", () => {
           origin: "sdk",
           label: "sdk applied · delivered 12 characters + Enter",
           sequence: 42,
-          at: "2026-08-10T10:00:00.000Z",
+          at: new Date().toISOString(),
         },
         "pane.b": {
           paneId: "pane.b",
@@ -348,7 +371,7 @@ describe("the layout-faithful workspace view", () => {
           origin: "sdk",
           label: "sdk applied · delivered 12 characters + Enter",
           sequence: 42,
-          at: "2026-08-10T10:00:00.000Z",
+          at: new Date().toISOString(),
         },
       },
     });
@@ -357,11 +380,15 @@ describe("the layout-faithful workspace view", () => {
     const target = root.querySelector<HTMLElement>('.pane-tile[data-pane="pane.b"]')!;
     expect(source.dataset.communicationActive).toBe("true");
     expect(source.dataset.communicationDirection).toBe("outgoing");
+    expect(source.dataset.communicationRole).toBe("send-source");
+    expect(source.dataset.communicationTreatment).toBe("transfer");
     expect(source.querySelector(".pane-tile__communication")?.textContent).toContain(
       "Editor → Tests",
     );
     expect(target.dataset.communicationActive).toBe("true");
     expect(target.dataset.communicationDirection).toBe("incoming");
+    expect(target.dataset.communicationRole).toBe("send-target");
+    expect(target.dataset.communicationTreatment).toBe("transfer");
     expect(target.querySelector(".pane-tile__communication")?.textContent).toContain(
       "Editor → Tests",
     );
@@ -391,7 +418,7 @@ describe("the layout-faithful workspace view", () => {
         origin: "external",
         label: "external observed · input observed",
       }),
-    ).toEqual({ headline: "External input → pane.b", detail: "tmux send-keys" });
+    ).toEqual({ headline: "RECEIVED", detail: "External input → pane.b" });
     expect(
       paneCommunicationCopy({
         ...common,
@@ -400,8 +427,8 @@ describe("the layout-faithful workspace view", () => {
         label: "sdk applied · delivered 12 characters + Enter",
       }),
     ).toEqual({
-      headline: "SDK input → pane.b",
-      detail: "sdk applied · delivered 12 characters + Enter",
+      headline: "RECEIVED",
+      detail: "SDK input → pane.b",
     });
     expect(
       paneCommunicationCopy({
@@ -411,7 +438,7 @@ describe("the layout-faithful workspace view", () => {
         origin: "external",
         label: "external observed · pane read observed",
       }),
-    ).toEqual({ headline: "External reader reads pane.b", detail: "tmux capture-pane" });
+    ).toEqual({ headline: "READ", detail: "External reader reads pane.b" });
   });
 
   it("renders agent identity and live state in both the process tab and pane card", () => {

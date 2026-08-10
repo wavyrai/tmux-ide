@@ -124,6 +124,26 @@ describe("terminal pane chrome projection", () => {
     ).toBe(true);
   });
 
+  it("keeps read observation off horizontal title and status chrome", () => {
+    const panes = [
+      pane({ id: "%1", width: 59 }),
+      pane({ id: "%2", left: 60, width: 60, active: false }),
+      pane({ id: "%3", top: 39, width: 120, height: 1, active: false }),
+    ];
+    const metadata = new Map([
+      [
+        "%1",
+        {
+          communication: { role: "read-target" as const, label: "Editor reads Tests" },
+        },
+      ],
+    ]);
+    const layout = projectTerminalPaneChrome({ canvas, panes, metadataByPane: metadata });
+
+    expect(layout.communication.length).toBeGreaterThan(0);
+    expect(layout.communication.every((segment) => segment.orientation === "vertical")).toBe(true);
+  });
+
   it("compacts nested lower-pane chrome around a neighboring full-height body", () => {
     const panes = [
       pane({ id: "%1", width: 59 }),

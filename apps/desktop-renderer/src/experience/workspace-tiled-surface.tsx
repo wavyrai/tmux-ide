@@ -30,6 +30,8 @@ import { Index, Show, createEffect, createMemo, createSignal, onCleanup } from "
 import type { SemanticIconId } from "@tmux-ide/contracts";
 import {
   INTERACTION_PRESENCE_MS,
+  interactionPresenceIsFresh,
+  paneInteractionPresence,
   paneInteractionRelationshipLabel,
   type PaneInteractionProjection,
 } from "@tmux-ide/core";
@@ -101,23 +103,9 @@ export function paneCommunicationCopy(
   readonly headline: string;
   readonly detail: string;
 } {
+  const presence = paneInteractionPresence(interaction);
   const relationship = paneInteractionRelationshipLabel(interaction, paneLabel);
-  if (interaction.phase === "failed") {
-    return { headline: "Delivery failed", detail: relationship };
-  }
-  if (interaction.phase === "accepted") {
-    return { headline: "Sending to pane…", detail: relationship };
-  }
-  if (interaction.origin === "external" || interaction.phase === "observed") {
-    return {
-      headline: relationship,
-      detail:
-        interaction.operationKind === "workspace.pane.read"
-          ? "tmux capture-pane"
-          : "tmux send-keys",
-    };
-  }
-  return { headline: relationship, detail: interaction.label };
+  return { headline: presence.badge, detail: relationship };
 }
 
 /**
@@ -324,6 +312,15 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     const sequence = props.interactionSequence ?? 0;
     if (sequence <= observedInteractionSequence) return;
     observedInteractionSequence = sequence;
+    const latest = Object.values(props.paneInteractions ?? {}).find(
+      (interaction) => interaction.sequence === sequence,
+    );
+    if (!latest || !interactionPresenceIsFresh(latest)) {
+      if (communicationTimer !== null) clearTimeout(communicationTimer);
+      communicationTimer = null;
+      setHighlightedInteractionSequence(0);
+      return;
+    }
     setHighlightedInteractionSequence(sequence);
     if (communicationTimer !== null) clearTimeout(communicationTimer);
     communicationTimer = setTimeout(() => {
@@ -1426,6 +1423,10 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               const placement = createMemo(() => placementFor(tile().pane));
               const compositorNode = createMemo(() => compositorNodes().get(tile().pane));
               const interaction = createMemo(() => props.paneInteractions?.[tile().pane] ?? null);
+              const interactionPresence = createMemo(() => {
+                const value = interaction();
+                return value ? paneInteractionPresence(value) : null;
+              });
               const communicationActive = createMemo(
                 () =>
                   interaction()?.sequence === highlightedInteractionSequence() &&
@@ -1451,6 +1452,12 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   data-communication-active={communicationActive() ? "true" : undefined}
                   data-communication-direction={
                     communicationActive() ? interaction()?.direction : undefined
+                  }
+                  data-communication-role={
+                    communicationActive() ? interactionPresence()?.role : undefined
+                  }
+                  data-communication-treatment={
+                    communicationActive() ? interactionPresence()?.treatment : undefined
                   }
                   style={{
                     left: percent(rect().left),
@@ -1510,6 +1517,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                           class="pane-tile__communication"
                           data-phase={activeInteraction().phase}
                           data-direction={activeInteraction().direction}
+                          data-role={interactionPresence()?.role}
+                          data-treatment={interactionPresence()?.treatment}
                           role={activeInteraction().direction === "incoming" ? "status" : undefined}
                           aria-live={
                             activeInteraction().direction === "incoming" ? "polite" : undefined
@@ -1519,7 +1528,11 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                           }
                         >
                           <i aria-hidden="true">
-                            {activeInteraction().direction === "outgoing" ? "↗" : "↘"}
+                            {interactionPresence()?.kind === "read"
+                              ? "R"
+                              : activeInteraction().direction === "outgoing"
+                                ? "↗"
+                                : "↘"}
                           </i>
                           <span>
                             <strong>{copy().headline}</strong>
@@ -1909,11 +1922,13 @@ function PaneHeader(props: {
           <span
             class="pane-tile__interaction"
             data-phase={interaction().phase}
+            data-role={paneInteractionPresence(interaction()).role}
+            data-treatment={paneInteractionPresence(interaction()).treatment}
             title={interaction().label}
             aria-label={interaction().label}
           >
             <i aria-hidden="true" />
-            <span>{interaction().phase}</span>
+            <span>{paneInteractionPresence(interaction()).badge}</span>
           </span>
         )}
       </Show>

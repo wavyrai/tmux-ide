@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   initialInteractionFeedState,
   interactionForPane,
+  interactionPresenceIsFresh,
+  paneInteractionPresence,
   paneInteractionRelationshipLabel,
   reduceInteractionReceipt,
 } from "./interaction-receipts.ts";
@@ -21,6 +23,12 @@ const base = {
 };
 
 describe("interaction receipt reducer", () => {
+  it("keeps replay history without reviving stale visual presence", () => {
+    const now = Date.parse("2026-08-10T10:00:04.000Z");
+    expect(interactionPresenceIsFresh({ at: "2026-08-10T10:00:02.000Z" }, now)).toBe(true);
+    expect(interactionPresenceIsFresh({ at: "2026-08-10T09:59:59.000Z" }, now)).toBe(false);
+    expect(interactionPresenceIsFresh({ at: "not-a-date" }, now)).toBe(false);
+  });
   it("advances one operation in place and projects pane feedback", () => {
     const accepted = reduceInteractionReceipt(initialInteractionFeedState(), {
       ...base,
@@ -133,5 +141,43 @@ describe("interaction receipt reducer", () => {
       "External reader reads Tests",
     );
     expect(JSON.stringify(state)).not.toContain("content");
+  });
+
+  it("keeps observation, transfer, and focus as separate semantics", () => {
+    const read = reduceInteractionReceipt(initialInteractionFeedState(), {
+      ...base,
+      sequence: 1,
+      operationKind: "workspace.pane.read",
+      phase: "observed",
+      summary: { observedOnly: true },
+    });
+    expect(paneInteractionPresence(interactionForPane(read, "pane.alpha")!)).toEqual({
+      role: "read-target",
+      kind: "read",
+      endpoint: "target",
+      treatment: "observation",
+      tone: "info",
+      badge: "READ",
+    });
+
+    const send = reduceInteractionReceipt(initialInteractionFeedState(), {
+      ...base,
+      sequence: 1,
+      phase: "applied",
+      sourceSemanticPaneId: "pane.editor",
+      semanticPaneId: "pane.tests",
+    });
+    expect(paneInteractionPresence(interactionForPane(send, "pane.editor")!)).toMatchObject({
+      role: "send-source",
+      treatment: "transfer",
+      badge: "SENT",
+    });
+    expect(paneInteractionPresence(interactionForPane(send, "pane.tests")!)).toMatchObject({
+      role: "send-target",
+      badge: "RECEIVED",
+    });
+    expect(paneInteractionPresence(interactionForPane(send, "pane.tests")!)).not.toHaveProperty(
+      "focused",
+    );
   });
 });

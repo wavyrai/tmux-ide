@@ -22,6 +22,12 @@ function communicationGlyph(
   role: TerminalPaneCommunicationRole,
   orientation: "horizontal" | "vertical",
 ) {
+  if (role.startsWith("read")) {
+    // Observation is deliberately lighter than focus or input transfer: a
+    // dotted rail says "this pane was inspected" without looking activated.
+    if (orientation === "horizontal") return role === "read-target" ? "┈" : "·";
+    return role === "read-target" ? "┊" : "·";
+  }
   const target = role.endsWith("target");
   if (orientation === "horizontal") return target ? "━" : "┄";
   return target ? "┃" : "┊";
@@ -93,11 +99,7 @@ export function SharedTerminalPaneChromeLayer(props: SharedTerminalPaneChromeLay
             height={pane().layerRect.height}
             overflow="hidden"
           >
-            <PaneFrame
-              theme={props.theme}
-              projection={frame()}
-              communicationRole={pane().communication?.role}
-            />
+            <PaneFrame theme={props.theme} projection={frame()} />
           </box>
         );
       }}
