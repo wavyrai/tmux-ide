@@ -23,6 +23,7 @@ import { loadAppConfig } from "../packages/daemon/src/lib/app-config.ts";
 import { resolveConfig } from "../packages/daemon/src/lib/resolved-config.ts";
 import { resolveProjectConfigContext } from "../packages/daemon/src/lib/config-context.ts";
 import {
+  ensureCompiledTuiRuntimeDir,
   resolveTuiLaunch,
   findCompiledTui,
   isBunAvailable,
@@ -331,10 +332,14 @@ function execBunWidget(
     return;
   }
 
-  // Compiled binary: the JSX transform and native dylib are already baked in,
-  // so there is no bunfig to find — run from the user's actual cwd (also avoids
-  // a stray repo-root bunfig.toml preload the standalone binary can't resolve).
-  execFileSync(launch.bin, launch.argv, { stdio: "inherit", env });
+  // A compiled Bun executable still reads bunfig.toml from its cwd before the
+  // embedded app starts. Isolate it from the project checkout; TMUX_IDE_CWD
+  // preserves the user's real project directory for every app action.
+  execFileSync(launch.bin, launch.argv, {
+    stdio: "inherit",
+    cwd: ensureCompiledTuiRuntimeDir(),
+    env,
+  });
 }
 
 // The detachable cockpit (M23.2): instead of running the app in THIS terminal,
@@ -371,7 +376,7 @@ function launchHostedApp(scriptPath: string, appArgs: string[]): void {
     // Same cwd rule as execBunWidget: bun needs the repo root (bunfig preload),
     // the compiled binary must NOT run from it. The app's real env travels on
     // the pane command line — the tmux server's environment is not ours.
-    const cwd = launch.mode === "bun" ? resolve(__dirname, "..") : process.cwd();
+    const cwd = launch.mode === "bun" ? resolve(__dirname, "..") : ensureCompiledTuiRuntimeDir();
     const commandLine = hostedCommandLine(
       launch.bin,
       launch.argv,

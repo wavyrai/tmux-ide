@@ -23,7 +23,12 @@ import { runTmux } from "@tmux-ide/tmux-bridge";
 import type { ThemeConfig } from "../../types.ts";
 import { shellEscape } from "../../lib/shell.ts";
 import { SIDEBAR_PANE_OPTION } from "../team/sessions.ts";
-import { resolveTuiLaunch, findCompiledTui, isBunAvailable } from "../compiled.ts";
+import {
+  ensureCompiledTuiRuntimeDir,
+  resolveTuiLaunch,
+  findCompiledTui,
+  isBunAvailable,
+} from "../compiled.ts";
 
 export { SIDEBAR_PANE_OPTION };
 
@@ -77,9 +82,8 @@ export function sidebarWidgetCommand(
   }
 
   const escaped = launch.argv.map(shellEscape).join(" ");
-  // Both modes cd into the project dir first: bun needs a nearby bunfig only in
-  // a checkout (which sits above dir); the binary is self-contained.
-  return `cd ${shellEscape(dir)} && ${shellEscape(launch.bin)} ${escaped}`;
+  const cwd = launch.mode === "bun" ? dir : ensureCompiledTuiRuntimeDir();
+  return `cd ${shellEscape(cwd)} && ${shellEscape(launch.bin)} ${escaped}`;
 }
 
 /**

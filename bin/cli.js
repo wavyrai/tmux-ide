@@ -12619,8 +12619,9 @@ var init_tui_binary = __esm({
 });
 
 // packages/daemon/src/tui/compiled.ts
-import { existsSync as existsSync10 } from "node:fs";
-import { dirname as dirname11, resolve as resolve7 } from "node:path";
+import { existsSync as existsSync10, mkdirSync as mkdirSync8 } from "node:fs";
+import { homedir as homedir7 } from "node:os";
+import { dirname as dirname11, join as join11, resolve as resolve7 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { execFileSync as execFileSync5 } from "node:child_process";
 function resolveTuiLaunch(input) {
@@ -12668,6 +12669,14 @@ function isBunAvailable() {
   } catch {
     return false;
   }
+}
+function compiledTuiRuntimeDir(home = homedir7()) {
+  return join11(home, ".tmux-ide", "runtime", "compiled-tui");
+}
+function ensureCompiledTuiRuntimeDir(home = homedir7()) {
+  const dir = compiledTuiRuntimeDir(home);
+  mkdirSync8(dir, { recursive: true, mode: 448 });
+  return dir;
 }
 var __dirname, BINARY_RELS;
 var init_compiled = __esm({
@@ -12728,7 +12737,8 @@ function sidebarWidgetCommand(scriptPath, session, dir, theme) {
     return `cd ${shellEscape(dir)} && bun ${shellEscape(scriptPath)} ${args.map(shellEscape).join(" ")}`;
   }
   const escaped = launch2.argv.map(shellEscape).join(" ");
-  return `cd ${shellEscape(dir)} && ${shellEscape(launch2.bin)} ${escaped}`;
+  const cwd = launch2.mode === "bun" ? dir : ensureCompiledTuiRuntimeDir();
+  return `cd ${shellEscape(cwd)} && ${shellEscape(launch2.bin)} ${escaped}`;
 }
 function resolveSidebarConfig(raw) {
   if (raw === true) return { enabled: true, width: DEFAULT_SIDEBAR_WIDTH };
@@ -12846,7 +12856,7 @@ function resolveWidgetCommand(type, opts) {
   if (launch2.mode === "bun") {
     return `cd ${shellEscape(REPO_ROOT)} && bun ${escapedArgs}`;
   }
-  return `cd ${shellEscape(opts.dir)} && ${shellEscape(launch2.bin)} ${escapedArgs}`;
+  return `cd ${shellEscape(ensureCompiledTuiRuntimeDir())} && ${shellEscape(launch2.bin)} ${escapedArgs}`;
 }
 function resolveWidgetSpawn(type, opts) {
   const entry = WIDGET_ENTRY_POINTS[type];
@@ -12864,7 +12874,7 @@ function resolveWidgetSpawn(type, opts) {
   if (launch2.mode === "unavailable") {
     throw new Error(`Cannot launch ${type} widget: ${launch2.reasons.join("; ")}`);
   }
-  const cwd = launch2.mode === "bun" ? REPO_ROOT : opts.dir;
+  const cwd = launch2.mode === "bun" ? REPO_ROOT : ensureCompiledTuiRuntimeDir();
   return { cwd, cmd: [launch2.bin, ...launch2.argv] };
 }
 var __dirname3, WIDGET_ENTRY_POINTS, REPO_ROOT, WIDGET_TYPES;
@@ -12889,8 +12899,8 @@ var init_resolve = __esm({
 
 // packages/daemon/src/tui/team/keymap.ts
 import { existsSync as existsSync13, readFileSync as readFileSync10 } from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { join as join11 } from "node:path";
+import { homedir as homedir8 } from "node:os";
+import { join as join12 } from "node:path";
 var ACTION_ORDER, DEFAULT_KEYMAP;
 var init_keymap = __esm({
   "packages/daemon/src/tui/team/keymap.ts"() {
@@ -13319,15 +13329,15 @@ __export(welcome_exports, {
   welcomeMarkerPath: () => welcomeMarkerPath
 });
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync14, mkdirSync as mkdirSync8, writeFileSync as writeFileSync8 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
-import { dirname as dirname14, join as join12 } from "node:path";
+import { existsSync as existsSync14, mkdirSync as mkdirSync9, writeFileSync as writeFileSync8 } from "node:fs";
+import { homedir as homedir9 } from "node:os";
+import { dirname as dirname14, join as join13 } from "node:path";
 function renderKey2(tmuxKey) {
   return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
 }
 function welcomeMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join12(homedir8(), ".tmux-ide");
-  return join12(home, "welcomed");
+  const home = process.env.TMUX_IDE_HOME ?? join13(homedir9(), ".tmux-ide");
+  return join13(home, "welcomed");
 }
 function shouldShowWelcome() {
   return !existsSync14(welcomeMarkerPath()) && getAppConfig().welcome.show;
@@ -13335,7 +13345,7 @@ function shouldShowWelcome() {
 function markWelcomed() {
   const path2 = welcomeMarkerPath();
   try {
-    mkdirSync8(dirname14(path2), { recursive: true });
+    mkdirSync9(dirname14(path2), { recursive: true });
     writeFileSync8(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
@@ -13390,12 +13400,12 @@ __export(offer_exports, {
   shouldOfferIntegration: () => shouldOfferIntegration
 });
 import { execFileSync as execFileSync6, spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync15, mkdirSync as mkdirSync9, writeFileSync as writeFileSync9 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
-import { dirname as dirname15, join as join13 } from "node:path";
+import { existsSync as existsSync15, mkdirSync as mkdirSync10, writeFileSync as writeFileSync9 } from "node:fs";
+import { homedir as homedir10 } from "node:os";
+import { dirname as dirname15, join as join14 } from "node:path";
 function integrationOfferMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join13(homedir9(), ".tmux-ide");
-  return join13(home, "integration-offered");
+  const home = process.env.TMUX_IDE_HOME ?? join14(homedir10(), ".tmux-ide");
+  return join14(home, "integration-offered");
 }
 function shouldOfferIntegration(input) {
   return input.claudeOnPath && !input.integrationInstalled && !input.markerPresent && input.offerEnabled;
@@ -13403,7 +13413,7 @@ function shouldOfferIntegration(input) {
 function markIntegrationOffered() {
   const path2 = integrationOfferMarkerPath();
   try {
-    mkdirSync9(dirname15(path2), { recursive: true });
+    mkdirSync10(dirname15(path2), { recursive: true });
     writeFileSync9(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
@@ -13506,8 +13516,8 @@ var init_front_door = __esm({
 import { execFileSync as execFileSync7 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
 import { readdirSync as readdirSync2, readFileSync as readFileSync11, readlinkSync, statSync } from "node:fs";
-import { homedir as homedir10 } from "node:os";
-import { join as join14 } from "node:path";
+import { homedir as homedir11 } from "node:os";
+import { join as join15 } from "node:path";
 function codexIdFromOpenFiles(paths) {
   for (const path2 of paths) {
     const match = CODEX_ROLLOUT_RE.exec(path2);
@@ -13563,7 +13573,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   for (let offset = 0; offset <= MAX_SCAN_DAYS; offset++) {
     const day = new Date(nowMs - offset * 864e5);
     if (day.getTime() < cutoff - 864e5) break;
-    const dir = join14(
+    const dir = join15(
       root,
       String(day.getFullYear()),
       String(day.getMonth() + 1).padStart(2, "0"),
@@ -13572,7 +13582,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
     for (const name of io.listDir(dir)) {
       const parsed = parseCodexRolloutName(name);
       if (parsed && parsed.tsMs >= cutoff && parsed.tsMs <= nowMs + START_SLACK_MS) {
-        candidates.push({ tsMs: parsed.tsMs, path: join14(dir, name), id: parsed.id });
+        candidates.push({ tsMs: parsed.tsMs, path: join15(dir, name), id: parsed.id });
       }
     }
   }
@@ -13596,12 +13606,12 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   return null;
 }
 function cursorIdFromStateDir(chatsRoot, paneCwd, startMs, io) {
-  const hashed = join14(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
+  const hashed = join15(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
   const cutoff = startMs - START_SLACK_MS;
   let best = null;
   for (const name of io.listDir(hashed)) {
     if (!SAFE_SESSION_ID.test(name)) continue;
-    const mtime = io.mtimeMs(join14(hashed, name));
+    const mtime = io.mtimeMs(join15(hashed, name));
     if (mtime === null || mtime < cutoff) continue;
     if (!best || mtime > best.mtime) best = { name, mtime };
   }
@@ -13656,7 +13666,7 @@ function readOpenFiles(pid) {
     const paths = [];
     for (const name of names) {
       try {
-        const target = readlinkSync(join14(fdDir, name));
+        const target = readlinkSync(join15(fdDir, name));
         if (target.startsWith("/")) paths.push(target);
       } catch {
       }
@@ -13694,8 +13704,8 @@ function liveProbeIo() {
     openFiles: readOpenFiles,
     processStartMs: (pid) => processStartMs(pid),
     stateDir: liveStateDirIo,
-    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join14(homedir10(), ".codex", "sessions"),
-    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join14(homedir10(), ".cursor", "chats"),
+    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join15(homedir11(), ".codex", "sessions"),
+    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join15(homedir11(), ".cursor", "chats"),
     now: () => Date.now()
   };
 }
@@ -13824,9 +13834,9 @@ var init_project_probe = __esm({
 
 // packages/daemon/src/lib/project-registry.ts
 import { EventEmitter } from "node:events";
-import { existsSync as existsSync16, mkdirSync as mkdirSync10, readFileSync as readFileSync12, renameSync as renameSync5, writeFileSync as writeFileSync10 } from "node:fs";
-import { homedir as homedir11 } from "node:os";
-import { dirname as dirname16, isAbsolute as isAbsolute3, join as join15, resolve as resolve11 } from "node:path";
+import { existsSync as existsSync16, mkdirSync as mkdirSync11, readFileSync as readFileSync12, renameSync as renameSync5, writeFileSync as writeFileSync10 } from "node:fs";
+import { homedir as homedir12 } from "node:os";
+import { dirname as dirname16, isAbsolute as isAbsolute3, join as join16, resolve as resolve11 } from "node:path";
 import { z as z55 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
@@ -13862,10 +13872,10 @@ function buildRegisteredProject(probe, name, registeredAt) {
 function registryDir() {
   const override = process.env[REGISTRY_DIR_ENV];
   if (override && override.length > 0) return override;
-  return join15(homedir11(), ".tmux-ide");
+  return join16(homedir12(), ".tmux-ide");
 }
 function registryPath() {
-  return join15(registryDir(), "projects.json");
+  return join16(registryDir(), "projects.json");
 }
 function readDisk() {
   const path2 = registryPath();
@@ -13893,7 +13903,7 @@ function readDisk() {
 function writeDisk(projects) {
   const path2 = registryPath();
   const dir = dirname16(path2);
-  mkdirSync10(dir, { recursive: true });
+  mkdirSync11(dir, { recursive: true });
   const file = { version: 1, projects };
   const tmpPath = `${path2}.tmp`;
   writeFileSync10(tmpPath, JSON.stringify(file, null, 2) + "\n");
@@ -14123,10 +14133,10 @@ var init_chip = __esm({
 });
 
 // packages/daemon/src/lib/state-home.ts
-import { homedir as homedir12 } from "node:os";
-import { join as join16 } from "node:path";
+import { homedir as homedir13 } from "node:os";
+import { join as join17 } from "node:path";
 function stateHome() {
-  return process.env.TMUX_IDE_HOME ?? join16(homedir12(), ".tmux-ide");
+  return process.env.TMUX_IDE_HOME ?? join17(homedir13(), ".tmux-ide");
 }
 var init_state_home = __esm({
   "packages/daemon/src/lib/state-home.ts"() {
@@ -14144,8 +14154,8 @@ __export(events_exports, {
   formatEventLine: () => formatEventLine,
   shouldRotate: () => shouldRotate
 });
-import { appendFileSync, existsSync as existsSync17, mkdirSync as mkdirSync11, renameSync as renameSync6, statSync as statSync2 } from "node:fs";
-import { join as join17 } from "node:path";
+import { appendFileSync, existsSync as existsSync17, mkdirSync as mkdirSync12, renameSync as renameSync6, statSync as statSync2 } from "node:fs";
+import { join as join18 } from "node:path";
 function diffFleet(prev, next) {
   const state = /* @__PURE__ */ new Map();
   const events = [];
@@ -14172,13 +14182,13 @@ function formatEventLine(ev, paint = (_s, t) => t) {
   return `${isoTime(ev.ts)} ${ev.session} ${from} \u2192 ${paint(ev.to, ev.to)}`;
 }
 function eventsPath() {
-  return join17(stateHome(), "events.jsonl");
+  return join18(stateHome(), "events.jsonl");
 }
 function appendEvents(events, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
   if (events.length === 0) return;
   const path2 = eventsPath();
   try {
-    mkdirSync11(stateHome(), { recursive: true });
+    mkdirSync12(stateHome(), { recursive: true });
     if (existsSync17(path2) && shouldRotate(statSync2(path2).size)) {
       renameSync6(path2, `${path2}.1`);
     }
@@ -14684,10 +14694,10 @@ var init_notify = __esm({
 });
 
 // packages/daemon/src/tui/chrome/notify-state.ts
-import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, writeFileSync as writeFileSync11 } from "node:fs";
-import { join as join18 } from "node:path";
+import { existsSync as existsSync19, mkdirSync as mkdirSync13, readFileSync as readFileSync14, writeFileSync as writeFileSync11 } from "node:fs";
+import { join as join19 } from "node:path";
 function notifyStatePath() {
-  return join18(stateHome(), "notify-state.json");
+  return join19(stateHome(), "notify-state.json");
 }
 function serializeLastNotified(map, nowMs) {
   const lastNotified = {};
@@ -14723,7 +14733,7 @@ function loadLastNotified(nowMs = Date.now()) {
 }
 function saveLastNotified(map, nowMs = Date.now()) {
   try {
-    mkdirSync12(stateHome(), { recursive: true });
+    mkdirSync13(stateHome(), { recursive: true });
     writeFileSync11(notifyStatePath(), serializeLastNotified(map, nowMs));
   } catch {
   }
@@ -14737,9 +14747,9 @@ var init_notify_state = __esm({
 });
 
 // packages/daemon/src/tui/chrome/snapshot.ts
-import { existsSync as existsSync20, mkdirSync as mkdirSync13, readFileSync as readFileSync15, renameSync as renameSync7, writeFileSync as writeFileSync12 } from "node:fs";
-import { homedir as homedir13 } from "node:os";
-import { dirname as dirname18, join as join19 } from "node:path";
+import { existsSync as existsSync20, mkdirSync as mkdirSync14, readFileSync as readFileSync15, renameSync as renameSync7, writeFileSync as writeFileSync12 } from "node:fs";
+import { homedir as homedir14 } from "node:os";
+import { dirname as dirname18, join as join20 } from "node:path";
 import { z as z56 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
@@ -14854,12 +14864,12 @@ function collectFleetSnapshot(io = defaultIo) {
   return buildSnapshot(rawPanes, rawSessions, io.processTable());
 }
 function snapshotPath() {
-  return join19(homedir13(), ".tmux-ide", "snapshot.json");
+  return join20(homedir14(), ".tmux-ide", "snapshot.json");
 }
 function writeSnapshot(snapshot) {
   const path2 = snapshotPath();
   try {
-    mkdirSync13(dirname18(path2), { recursive: true });
+    mkdirSync14(dirname18(path2), { recursive: true });
     const tmp = `${path2}.tmp`;
     writeFileSync12(tmp, JSON.stringify(snapshot, null, 2) + "\n");
     if (existsSync20(path2)) {
@@ -15688,7 +15698,7 @@ import {
   fstatSync,
   linkSync as linkSync2,
   lstatSync,
-  mkdirSync as mkdirSync14,
+  mkdirSync as mkdirSync15,
   openSync as openSync2,
   readFileSync as readFileSync16,
   renameSync as renameSync8,
@@ -15696,18 +15706,18 @@ import {
   writeFileSync as writeFileSync13
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { homedir as homedir14 } from "node:os";
-import { dirname as dirname19, join as join20 } from "node:path";
+import { homedir as homedir15 } from "node:os";
+import { dirname as dirname19, join as join21 } from "node:path";
 function nonEmptyEnvironmentValue(name) {
   const value = process.env[name];
   return value !== void 0 && value.length > 0 ? value : void 0;
 }
 function getCanonicalDaemonInfoPath() {
-  const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV2) ?? join20(homedir14(), ".tmux-ide");
-  return join20(dir, DAEMON_INFO_FILE);
+  const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV2) ?? join21(homedir15(), ".tmux-ide");
+  return join21(dir, DAEMON_INFO_FILE);
 }
 function getCanonicalDaemonClaimPath() {
-  return join20(dirname19(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
+  return join21(dirname19(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
 }
 function observation(stat) {
   return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
@@ -15725,7 +15735,7 @@ function prepareCanonicalDaemonRoot(root) {
   let descriptor2;
   try {
     try {
-      mkdirSync14(root, { recursive: true, mode: 448 });
+      mkdirSync15(root, { recursive: true, mode: 448 });
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
@@ -15894,7 +15904,7 @@ function inspectCanonicalDaemonClaimPath(path2) {
     if ((claimStat.mode & 63) !== 0) {
       return { status: "invalid", detail: "daemon claim directory is not owner-only" };
     }
-    const ownerPath = join20(path2, DAEMON_CLAIM_OWNER_FILE);
+    const ownerPath = join21(path2, DAEMON_CLAIM_OWNER_FILE);
     const ownerStat = lstatSync(ownerPath);
     if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
       return { status: "invalid", detail: "daemon claim owner must be a real file" };
@@ -15976,8 +15986,8 @@ function tryAcquireCanonicalDaemonClaim() {
       acquiredAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     const candidate = `${path2}.${claim.claimId}.candidate`;
-    mkdirSync14(candidate, { mode: 448 });
-    writeFileSync13(join20(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
+    mkdirSync15(candidate, { mode: 448 });
+    writeFileSync13(join21(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
 `, {
       encoding: "utf-8",
       mode: 384
@@ -16685,25 +16695,25 @@ __export(skill_sync_exports, {
   syncSkill: () => syncSkill,
   versionMarker: () => versionMarker
 });
-import { existsSync as existsSync23, mkdirSync as mkdirSync16, readFileSync as readFileSync19, writeFileSync as writeFileSync15 } from "node:fs";
-import { homedir as homedir15 } from "node:os";
-import { dirname as dirname21, join as join22 } from "node:path";
+import { existsSync as existsSync23, mkdirSync as mkdirSync17, readFileSync as readFileSync19, writeFileSync as writeFileSync15 } from "node:fs";
+import { homedir as homedir16 } from "node:os";
+import { dirname as dirname21, join as join23 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 function claudeDir() {
-  return process.env.TMUX_IDE_CLAUDE_DIR ?? join22(homedir15(), ".claude");
+  return process.env.TMUX_IDE_CLAUDE_DIR ?? join23(homedir16(), ".claude");
 }
 function skillTargetDir() {
-  return join22(claudeDir(), "skills", "tmux-ide");
+  return join23(claudeDir(), "skills", "tmux-ide");
 }
 function skillTargetFile() {
-  return join22(skillTargetDir(), "SKILL.md");
+  return join23(skillTargetDir(), "SKILL.md");
 }
 function defaultSkillSource() {
   const here = dirname21(fileURLToPath8(import.meta.url));
   const candidates = [
-    join22(here, "../skill/SKILL.md"),
+    join23(here, "../skill/SKILL.md"),
     // bundled bin/cli.js → repo root
-    join22(here, "../../../../skill/SKILL.md")
+    join23(here, "../../../../skill/SKILL.md")
     // dev src/lib → repo root
   ];
   return candidates.find((c) => existsSync23(c)) ?? candidates[0];
@@ -16720,7 +16730,7 @@ function rewriteVersionMarker(content, version) {
   return content.replace(VERSION_MARKER_RE, versionMarker(version));
 }
 function installedSkillVersion(dir = skillTargetDir()) {
-  const file = join22(dir, "SKILL.md");
+  const file = join23(dir, "SKILL.md");
   if (!existsSync23(file)) return null;
   try {
     return parseSkillVersion(readFileSync19(file, "utf-8"));
@@ -16734,12 +16744,12 @@ function syncSkill({
 } = {}) {
   const rendered = rewriteVersionMarker(readFileSync19(source, "utf-8"), version);
   const dir = skillTargetDir();
-  const target = join22(dir, "SKILL.md");
+  const target = join23(dir, "SKILL.md");
   const existing = existsSync23(target) ? readFileSync19(target, "utf-8") : null;
   if (existing === rendered) {
     return { action: "unchanged", path: target, to: version };
   }
-  mkdirSync16(dir, { recursive: true });
+  mkdirSync17(dir, { recursive: true });
   writeFileSync15(target, rendered, "utf-8");
   if (existing === null) return { action: "installed", path: target, to: version };
   return { action: "updated", path: target, from: parseSkillVersion(existing), to: version };
@@ -17008,7 +17018,7 @@ var init_MonotonicPtyInput = __esm({
 
 // packages/daemon/src/terminal/NodePtyAdapter.ts
 import { chmodSync as chmodSync4, existsSync as existsSync25, statSync as statSync3 } from "node:fs";
-import { dirname as dirname23, join as join23 } from "node:path";
+import { dirname as dirname23, join as join24 } from "node:path";
 import { createRequire } from "node:module";
 import * as pty from "node-pty";
 function candidateSpawnHelperPaths() {
@@ -17021,9 +17031,9 @@ function candidateSpawnHelperPaths() {
   }
   const pkgDir = dirname23(pkgJsonPath);
   return [
-    join23(pkgDir, "build", "Release", "spawn-helper"),
-    join23(pkgDir, "build", "Debug", "spawn-helper"),
-    join23(pkgDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper")
+    join24(pkgDir, "build", "Release", "spawn-helper"),
+    join24(pkgDir, "build", "Debug", "spawn-helper"),
+    join24(pkgDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper")
   ];
 }
 function ensureNodePtySpawnHelperExecutable(options = {}) {
@@ -18043,9 +18053,9 @@ var init_pane_comms = __esm({
 
 // packages/daemon/src/lib/workspace-registry.ts
 import { EventEmitter as EventEmitter3 } from "node:events";
-import { existsSync as existsSync26, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
-import { homedir as homedir16 } from "node:os";
-import { dirname as dirname24, join as join24 } from "node:path";
+import { existsSync as existsSync26, mkdirSync as mkdirSync18, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
+import { homedir as homedir17 } from "node:os";
+import { dirname as dirname24, join as join25 } from "node:path";
 import { z as z57 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
@@ -18094,7 +18104,7 @@ var init_workspace_registry = __esm({
       workspaces = [];
       loaded = false;
       constructor(options = {}) {
-        this.dir = options.dir ?? process.env[REGISTRY_DIR_ENV3] ?? join24(homedir16(), ".tmux-ide");
+        this.dir = options.dir ?? process.env[REGISTRY_DIR_ENV3] ?? join25(homedir17(), ".tmux-ide");
         this.listSessions = options.listSessions ?? defaultListSessions;
         this.emitter.setMaxListeners(0);
       }
@@ -18195,7 +18205,7 @@ var init_workspace_registry = __esm({
       }
       // ----------------- io -----------------
       filePath() {
-        return join24(this.dir, "workspaces.json");
+        return join25(this.dir, "workspaces.json");
       }
       readDisk() {
         const path2 = this.filePath();
@@ -18212,7 +18222,7 @@ var init_workspace_registry = __esm({
       }
       writeDisk() {
         const path2 = this.filePath();
-        mkdirSync17(dirname24(path2), { recursive: true });
+        mkdirSync18(dirname24(path2), { recursive: true });
         const file = { version: 1, workspaces: this.workspaces };
         const tmp = `${path2}.tmp`;
         writeFileSync16(tmp, JSON.stringify(file, null, 2) + "\n");
@@ -19541,14 +19551,14 @@ var init_auth_token = __esm({
 });
 
 // packages/daemon/src/lib/app-settings.ts
-import { existsSync as existsSync27, mkdirSync as mkdirSync18, readFileSync as readFileSync21, renameSync as renameSync10, writeFileSync as writeFileSync17 } from "node:fs";
-import { dirname as dirname25, join as join25 } from "node:path";
-import { homedir as homedir17 } from "node:os";
+import { existsSync as existsSync27, mkdirSync as mkdirSync19, readFileSync as readFileSync21, renameSync as renameSync10, writeFileSync as writeFileSync17 } from "node:fs";
+import { dirname as dirname25, join as join26 } from "node:path";
+import { homedir as homedir18 } from "node:os";
 function settingsDir() {
-  return process.env.TMUX_IDE_SETTINGS_DIR ?? join25(homedir17(), ".tmux-ide");
+  return process.env.TMUX_IDE_SETTINGS_DIR ?? join26(homedir18(), ".tmux-ide");
 }
 function appSettingsPath() {
-  return join25(settingsDir(), "app-settings.json");
+  return join26(settingsDir(), "app-settings.json");
 }
 function normalizeSettings(value) {
   if (!value || typeof value !== "object") return structuredClone(DEFAULT_SETTINGS);
@@ -19570,7 +19580,7 @@ function readAppSettings() {
 }
 function writeAppSettings(next) {
   const path2 = appSettingsPath();
-  mkdirSync18(dirname25(path2), { recursive: true });
+  mkdirSync19(dirname25(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync17(tmp, `${JSON.stringify(normalizeSettings(next), null, 2)}
 `, "utf-8");
@@ -20140,7 +20150,7 @@ import {
   closeSync as closeSync3,
   fsyncSync,
   lstatSync as lstatSync2,
-  mkdirSync as mkdirSync19,
+  mkdirSync as mkdirSync20,
   openSync as openSync3,
   readFileSync as readFileSync22,
   renameSync as renameSync11,
@@ -20148,7 +20158,7 @@ import {
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync18
 } from "node:fs";
-import { isAbsolute as isAbsolute5, join as join26, relative as relative2, resolve as resolve22, sep as sep3, win32 } from "node:path";
+import { isAbsolute as isAbsolute5, join as join27, relative as relative2, resolve as resolve22, sep as sep3, win32 } from "node:path";
 function createProjectRuntimeRepository(resolution, options = {}) {
   return new ProjectRuntimeRepository(resolution, options);
 }
@@ -20519,7 +20529,7 @@ var init_project_runtime_repository = __esm({
           closeSync3(descriptor2);
         }
       },
-      mkdir: (path2) => mkdirSync19(path2, { recursive: true }),
+      mkdir: (path2) => mkdirSync20(path2, { recursive: true }),
       rename: renameSync11,
       unlink: unlinkSync2,
       isSymbolicLink: (path2) => {
@@ -20543,7 +20553,7 @@ var init_project_runtime_repository = __esm({
         validateSafeId(resolution.identityKey, "identity key");
         this.resolution = resolution;
         this.io = { ...defaultIo3, ...options.io };
-        this.runtimeRoot = join26(
+        this.runtimeRoot = join27(
           resolve22(options.home ?? options.stateHome ?? stateHome()),
           "projects",
           resolution.identityKey
@@ -20864,7 +20874,7 @@ var init_project_runtime_repository = __esm({
       assertNoSymbolicLink(displayPath, parts) {
         let current = this.runtimeRoot;
         for (const part of parts) {
-          current = join26(current, part);
+          current = join27(current, part);
           try {
             if (this.io.isSymbolicLink(current)) {
               throw new InvalidRuntimePathError(displayPath, "symbolic links are not allowed");
@@ -20886,7 +20896,7 @@ var init_project_runtime_repository = __esm({
       atomicWrite(target, data, displayPath) {
         const destinationDir = resolve22(target, "..");
         this.io.mkdir(destinationDir);
-        const tempPath = join26(
+        const tempPath = join27(
           destinationDir,
           `.tmp-${process.pid}-${tempCounter++}-${safeTempId(this.io.randomId())}`
         );
@@ -20908,7 +20918,7 @@ var init_project_runtime_repository = __esm({
       atomicWriteBytes(target, data, displayPath, durable) {
         const destinationDir = resolve22(target, "..");
         this.io.mkdir(destinationDir);
-        const tempPath = join26(
+        const tempPath = join27(
           destinationDir,
           `.tmp-${process.pid}-${tempCounter++}-${safeTempId(this.io.randomId())}`
         );
@@ -20933,7 +20943,7 @@ var init_project_runtime_repository = __esm({
       acquireWriterLock(options) {
         const timeoutMs = normalizeLockDuration(options?.timeoutMs, 2e3, 0, 6e4, "timeoutMs");
         const pollMs = normalizeLockDuration(options?.pollMs, 10, 1, 250, "pollMs");
-        const lockPath = join26(this.runtimeRoot, PROJECT_RUNTIME_WRITER_LOCK_FILENAME);
+        const lockPath = join27(this.runtimeRoot, PROJECT_RUNTIME_WRITER_LOCK_FILENAME);
         const lockDirectory = resolve22(lockPath, "..");
         this.io.mkdir(this.runtimeRoot);
         assertLockDirectory(this.runtimeRoot);
@@ -21021,7 +21031,7 @@ var init_project_runtime_repository = __esm({
           const relativePath = `recovery/${sha256(path2)}-${rawToken}-${operationId}`;
           const target = this.resolveRuntimePath(relativePath);
           try {
-            mkdirSync19(target, { mode: 448 });
+            mkdirSync20(target, { mode: 448 });
             this.io.fsyncDirectory(recoveryRoot);
             return { operationId, relativePath, target };
           } catch (error) {
@@ -22004,7 +22014,7 @@ var init_mission_repository = __esm({
 
 // packages/daemon/src/lib/workspace-pane-creation.ts
 import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync5, statSync as statSync6 } from "node:fs";
-import { delimiter as delimiter2, isAbsolute as isAbsolute6, join as join27, relative as relative3, sep as sep4 } from "node:path";
+import { delimiter as delimiter2, isAbsolute as isAbsolute6, join as join28, relative as relative3, sep as sep4 } from "node:path";
 function canonicalProjectDir(path2) {
   const canonical = realpathSync5(path2);
   if (!statSync6(canonical).isDirectory()) throw new Error("project root is not a directory");
@@ -22054,7 +22064,7 @@ function assertEffectiveConfigProvenance(workspace, canonicalRoot, source) {
 }
 function resolveTmuxExecutable() {
   const configured = process.env.TMUX_IDE_TMUX_BIN;
-  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter((entry) => entry.length > 0 && isAbsolute6(entry)).map((entry) => join27(entry, "tmux"));
+  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter((entry) => entry.length > 0 && isAbsolute6(entry)).map((entry) => join28(entry, "tmux"));
   for (const candidate of candidates) {
     try {
       if (!isAbsolute6(candidate)) continue;
@@ -30150,7 +30160,7 @@ var init_tmux_view_executor = __esm({
 
 // packages/daemon/src/terminal/attachments/pty-tmux-attachment-launcher.ts
 import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync9, statSync as statSync10 } from "node:fs";
-import { delimiter as delimiter3, isAbsolute as isAbsolute8, join as join28 } from "node:path";
+import { delimiter as delimiter3, isAbsolute as isAbsolute8, join as join29 } from "node:path";
 import { randomUUID as randomUUID5 } from "node:crypto";
 import { execFileSync as execFileSync12 } from "node:child_process";
 function defaultSchedule2(callback, delayMs) {
@@ -30179,7 +30189,7 @@ function selectorArgv(selector) {
 function resolveTmuxExecutable2(pathValue = process.env.PATH) {
   for (const directory of (pathValue ?? "").split(delimiter3)) {
     if (!directory || !isAbsolute8(directory)) continue;
-    const candidate = join28(directory, "tmux");
+    const candidate = join29(directory, "tmux");
     try {
       accessSync4(candidate, constants5.X_OK);
       if (!statSync10(candidate).isFile()) continue;
@@ -35005,10 +35015,10 @@ var init_active_projects = __esm({
 
 // packages/daemon/src/lib/environment-identity.ts
 import { randomUUID as randomUUID7 } from "node:crypto";
-import { linkSync as linkSync3, mkdirSync as mkdirSync20, readFileSync as readFileSync23, rmSync as rmSync3, writeFileSync as writeFileSync19 } from "node:fs";
-import { dirname as dirname26, join as join29 } from "node:path";
+import { linkSync as linkSync3, mkdirSync as mkdirSync21, readFileSync as readFileSync23, rmSync as rmSync3, writeFileSync as writeFileSync19 } from "node:fs";
+import { dirname as dirname26, join as join30 } from "node:path";
 function environmentIdentityPath() {
-  return join29(stateHome(), "environment.json");
+  return join30(stateHome(), "environment.json");
 }
 function readPersistedEnvironmentId(path2) {
   try {
@@ -35023,7 +35033,7 @@ function readPersistedEnvironmentId(path2) {
 function persistEnvironmentId(path2, environmentId) {
   const temporary = `${path2}.${process.pid}.${randomUUID7()}.tmp`;
   try {
-    mkdirSync20(dirname26(path2), { recursive: true });
+    mkdirSync21(dirname26(path2), { recursive: true });
     writeFileSync19(
       temporary,
       `${JSON.stringify({ environmentId, mintedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
@@ -35063,15 +35073,15 @@ var init_environment_identity = __esm({
 // packages/daemon/src/send.ts
 import { randomUUID as randomUUID8 } from "node:crypto";
 import { execFileSync as execFileSync13 } from "node:child_process";
-import { resolve as resolve23, join as join30 } from "node:path";
-import { existsSync as existsSync29, mkdirSync as mkdirSync21, writeFileSync as writeFileSync20 } from "node:fs";
+import { resolve as resolve23, join as join31 } from "node:path";
+import { existsSync as existsSync29, mkdirSync as mkdirSync22, writeFileSync as writeFileSync20 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
-  const dispatchDir = join30(dir, ".tasks", "dispatch");
-  if (!existsSync29(dispatchDir)) mkdirSync21(dispatchDir, { recursive: true });
+  const dispatchDir = join31(dir, ".tasks", "dispatch");
+  if (!existsSync29(dispatchDir)) mkdirSync22(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
   const filename = `send-${paneSlug}-${Date.now()}-${randomUUID8().slice(0, 8)}.md`;
-  const filePath = join30(dispatchDir, filename);
+  const filePath = join31(dispatchDir, filename);
   writeFileSync20(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
 }
@@ -35401,13 +35411,13 @@ var init_schemas = __esm({
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { existsSync as existsSync30, mkdirSync as mkdirSync22, readFileSync as readFileSync24, renameSync as renameSync12, writeFileSync as writeFileSync21 } from "node:fs";
-import { dirname as dirname27, join as join31 } from "node:path";
+import { existsSync as existsSync30, mkdirSync as mkdirSync23, readFileSync as readFileSync24, renameSync as renameSync12, writeFileSync as writeFileSync21 } from "node:fs";
+import { dirname as dirname27, join as join32 } from "node:path";
 function path(dir) {
-  return join31(dir, TERMINALS_FILE);
+  return join32(dir, TERMINALS_FILE);
 }
 function ensureDir(dir) {
-  mkdirSync22(dirname27(path(dir)), { recursive: true });
+  mkdirSync23(dirname27(path(dir)), { recursive: true });
 }
 function loadTerminals(dir) {
   const file = path(dir);
@@ -35493,8 +35503,8 @@ __export(auth_service_exports, {
 });
 import * as crypto2 from "node:crypto";
 import { readFileSync as readFileSync25, existsSync as existsSync31 } from "node:fs";
-import { join as join32 } from "node:path";
-import { homedir as homedir18 } from "node:os";
+import { join as join33 } from "node:path";
+import { homedir as homedir19 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
   return b.toString("base64url");
@@ -35636,8 +35646,8 @@ var init_auth_service = __esm({
       }
       checkSSHKeyAuthorization(userId, publicKey) {
         try {
-          const home = userId === process.env.USER ? homedir18() : `/home/${userId}`;
-          const authKeysPath = join32(home, ".ssh", "authorized_keys");
+          const home = userId === process.env.USER ? homedir19() : `/home/${userId}`;
+          const authKeysPath = join33(home, ".ssh", "authorized_keys");
           if (!existsSync31(authKeysPath)) return false;
           const authorizedKeys = readFileSync25(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
@@ -37171,8 +37181,8 @@ var init_inspect = __esm({
 
 // packages/daemon/src/lib/filesystem-browser.ts
 import { realpathSync as realpathSync11, readdirSync as readdirSync4, statSync as statSync12 } from "node:fs";
-import { homedir as homedir19 } from "node:os";
-import { isAbsolute as isAbsolute10, join as join33, resolve as resolve25, sep as sep5 } from "node:path";
+import { homedir as homedir20 } from "node:os";
+import { isAbsolute as isAbsolute10, join as join34, resolve as resolve25, sep as sep5 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
   const prefix = root.endsWith(sep5) ? root : root + sep5;
@@ -40376,20 +40386,20 @@ import {
   chmodSync as chmodSync5,
   existsSync as existsSync33,
   lstatSync as lstatSync4,
-  mkdirSync as mkdirSync23,
+  mkdirSync as mkdirSync24,
   readFileSync as readFileSync28,
   readdirSync as readdirSync6,
   renameSync as renameSync13,
   rmSync as rmSync4,
   writeFileSync as writeFileSync22
 } from "node:fs";
-import { join as join34 } from "node:path";
+import { join as join35 } from "node:path";
 function assetRoot() {
-  return join34(stateHome(), ASSET_DIRECTORY);
+  return join35(stateHome(), ASSET_DIRECTORY);
 }
 function ensureAssetRoot() {
   const root = assetRoot();
-  mkdirSync23(root, { recursive: true, mode: 448 });
+  mkdirSync24(root, { recursive: true, mode: 448 });
   chmodSync5(root, 448);
   return root;
 }
@@ -40405,8 +40415,8 @@ function safeName2(name) {
 }
 function assetPaths(root, assetId) {
   return {
-    data: join34(root, `${assetId}.bin`),
-    metadata: join34(root, `${assetId}.json`)
+    data: join35(root, `${assetId}.bin`),
+    metadata: join35(root, `${assetId}.json`)
   };
 }
 function parseMetadata(raw) {
@@ -40431,7 +40441,7 @@ function parseMetadata(raw) {
 }
 function pruneAssets(root, now = Date.now()) {
   const metadataFiles = readdirSync6(root).filter((name) => /^[0-9a-f]{64}\.json$/u.test(name)).map((name) => {
-    const path2 = join34(root, name);
+    const path2 = join35(root, name);
     try {
       const stat = lstatSync4(path2);
       return stat.isFile() && !stat.isSymbolicLink() ? { name, mtimeMs: stat.mtimeMs } : null;
@@ -40442,8 +40452,8 @@ function pruneAssets(root, now = Date.now()) {
   for (const [index, entry] of metadataFiles.entries()) {
     if (index < MAX_ASSET_FILES && now - entry.mtimeMs <= WIDGET_ASSET_RETENTION_MS) continue;
     const assetId = entry.name.slice(0, -".json".length);
-    rmSync4(join34(root, `${assetId}.json`), { force: true });
-    rmSync4(join34(root, `${assetId}.bin`), { force: true });
+    rmSync4(join35(root, `${assetId}.json`), { force: true });
+    rmSync4(join35(root, `${assetId}.bin`), { force: true });
   }
 }
 function publishWidgetAsset(bytes, options) {
@@ -40472,11 +40482,11 @@ function publishWidgetAsset(bytes, options) {
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   if (!existsSync33(paths.data)) {
-    const temporary = join34(root, `.${assetId}.${randomUUID10()}.bin`);
+    const temporary = join35(root, `.${assetId}.${randomUUID10()}.bin`);
     writeFileSync22(temporary, bytes, { mode: 384, flag: "wx" });
     renameSync13(temporary, paths.data);
   }
-  const metadataTemporary = join34(root, `.${assetId}.${randomUUID10()}.json`);
+  const metadataTemporary = join35(root, `.${assetId}.${randomUUID10()}.json`);
   writeFileSync22(metadataTemporary, `${JSON.stringify(metadata)}
 `, { mode: 384, flag: "wx" });
   renameSync13(metadataTemporary, paths.metadata);
@@ -40535,7 +40545,7 @@ __export(server_exports, {
 import { execFile as execFile4 } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync as existsSync34, readdirSync as readdirSync7 } from "node:fs";
-import { join as join35, dirname as dirname29, basename as basename14 } from "node:path";
+import { join as join36, dirname as dirname29, basename as basename14 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -40543,7 +40553,7 @@ import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
 import { z as z70 } from "zod";
 import { realpathSync as realpathSync14 } from "node:fs";
-import { homedir as homedir20 } from "node:os";
+import { homedir as homedir21 } from "node:os";
 import { isAbsolute as isAbsolute13, resolve as pathResolve } from "node:path";
 import { randomUUID as randomUUID11 } from "node:crypto";
 import { WebSocketServer as WebSocketServer3 } from "ws";
@@ -40636,7 +40646,7 @@ function sandboxResolveDir(rawDir) {
   if (trimmed.includes("\0")) {
     return { error: "invalid-path", message: "Path contains a null byte", status: 400 };
   }
-  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir20();
+  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir21();
   let candidate = trimmed;
   if (candidate === "~") {
     candidate = home;
@@ -41656,7 +41666,7 @@ function listAvailableTemplates() {
   const __filename = fileURLToPath10(import.meta.url);
   const __dir = dirname29(__filename);
   const configuredTemplatesDir = process.env.TMUX_IDE_TEMPLATES_DIR;
-  const templatesDir = configuredTemplatesDir && isAbsolute13(configuredTemplatesDir) ? configuredTemplatesDir : join35(__dir, "..", "..", "..", "..", "templates");
+  const templatesDir = configuredTemplatesDir && isAbsolute13(configuredTemplatesDir) ? configuredTemplatesDir : join36(__dir, "..", "..", "..", "..", "templates");
   if (!existsSync34(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
@@ -44335,11 +44345,11 @@ __export(server_exports2, {
   defaultControlSocketPath: () => defaultControlSocketPath,
   startControlServer: () => startControlServer
 });
-import { chmodSync as chmodSync6, existsSync as existsSync35, mkdirSync as mkdirSync24, statSync as statSync14, unlinkSync as unlinkSync3 } from "node:fs";
+import { chmodSync as chmodSync6, existsSync as existsSync35, mkdirSync as mkdirSync25, statSync as statSync14, unlinkSync as unlinkSync3 } from "node:fs";
 import { createServer as createServer2, connect } from "node:net";
-import { dirname as dirname31, join as join36 } from "node:path";
+import { dirname as dirname31, join as join37 } from "node:path";
 function defaultControlSocketPath() {
-  return join36(tuiStateHome(), "control.sock");
+  return join37(tuiStateHome(), "control.sock");
 }
 async function claimSocketPath(path2) {
   if (!existsSync35(path2)) return;
@@ -44372,7 +44382,7 @@ async function startControlServer(opts = {}) {
   const log = opts.log ?? (() => {
   });
   const tickMs = opts.tickMs ?? TICK_MS;
-  mkdirSync24(dirname31(socketPath), { recursive: true });
+  mkdirSync25(dirname31(socketPath), { recursive: true });
   await claimSocketPath(socketPath);
   const tracker = createStatusTracker();
   const handlers = createVerbHandlers({ tracker });
@@ -44721,7 +44731,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync17 } from "node:child_process";
-import { basename as basename15, dirname as dirname32, isAbsolute as isAbsolute14, join as join37, resolve as resolve29 } from "node:path";
+import { basename as basename15, dirname as dirname32, isAbsolute as isAbsolute14, join as join38, resolve as resolve29 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -44730,11 +44740,11 @@ function worktreeSessionName(project, branch) {
 }
 function defaultWorktreeBaseDir(repoDir) {
   const abs = resolve29(repoDir);
-  return join37(dirname32(abs), `${basename15(abs)}-worktrees`);
+  return join38(dirname32(abs), `${basename15(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
   const base = configuredDir && configuredDir.length > 0 ? isAbsolute14(configuredDir) ? configuredDir : resolve29(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
-  return join37(base, branch);
+  return join38(base, branch);
 }
 function parseWorktreeList(porcelain) {
   const entries = [];
@@ -44879,7 +44889,7 @@ __export(update_exports, {
 });
 import { execSync as execSync4 } from "node:child_process";
 import { existsSync as existsSync36 } from "node:fs";
-import { dirname as dirname33, join as join38 } from "node:path";
+import { dirname as dirname33, join as join39 } from "node:path";
 function detectPackageManager(cliPath) {
   const p = cliPath.toLowerCase();
   if (/(^|\/)\.?bun(\/|$)/.test(p)) return "bun";
@@ -44925,7 +44935,7 @@ function renderPlan(plan, { current, latest, dryRun }) {
 function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
-    if (existsSync36(join38(dir, ".git"))) return dir;
+    if (existsSync36(join39(dir, ".git"))) return dir;
     const parent = dirname33(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -45198,34 +45208,34 @@ import {
   existsSync as existsSync22,
   readFileSync as readFileSync18,
   writeFileSync as writeFileSync14,
-  mkdirSync as mkdirSync15,
+  mkdirSync as mkdirSync16,
   readdirSync as readdirSync3,
   copyFileSync as copyFileSync2
 } from "node:fs";
-import { resolve as resolve15, join as join21, basename as basename7, dirname as dirname20 } from "node:path";
+import { resolve as resolve15, join as join22, basename as basename7, dirname as dirname20 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 var __dirname4 = dirname20(fileURLToPath7(import.meta.url));
 function copyTemplateSkills(targetDir) {
   const created = [];
   const templateSkillsDir = resolve15(__dirname4, "..", "..", "..", "templates", "skills");
   if (!existsSync22(templateSkillsDir)) return created;
-  mkdirSync15(targetDir, { recursive: true });
+  mkdirSync16(targetDir, { recursive: true });
   for (const file of readdirSync3(templateSkillsDir)) {
     if (!file.endsWith(".md")) continue;
-    const destination = join21(targetDir, file);
-    copyFileSync2(join21(templateSkillsDir, file), destination);
+    const destination = join22(targetDir, file);
+    copyFileSync2(join22(templateSkillsDir, file), destination);
     created.push(destination);
   }
   return created;
 }
 function scaffoldLibraryStubs(dir) {
   const created = [];
-  const libraryDir = join21(dir, ".tmux-ide", "library");
+  const libraryDir = join22(dir, ".tmux-ide", "library");
   if (!existsSync22(libraryDir)) {
-    mkdirSync15(libraryDir, { recursive: true });
+    mkdirSync16(libraryDir, { recursive: true });
     created.push(libraryDir);
   }
-  const archPath = join21(libraryDir, "architecture.md");
+  const archPath = join22(libraryDir, "architecture.md");
   if (!existsSync22(archPath)) {
     writeFileSync14(
       archPath,
@@ -45233,7 +45243,7 @@ function scaffoldLibraryStubs(dir) {
     );
     created.push(archPath);
   }
-  const learningsPath = join21(libraryDir, "learnings.md");
+  const learningsPath = join22(libraryDir, "learnings.md");
   if (!existsSync22(learningsPath)) {
     writeFileSync14(
       learningsPath,
@@ -45245,11 +45255,11 @@ function scaffoldLibraryStubs(dir) {
 }
 function scaffoldValidationContract(dir) {
   const created = [];
-  const tasksDir = join21(dir, ".tasks");
+  const tasksDir = join22(dir, ".tasks");
   if (!existsSync22(tasksDir)) {
-    mkdirSync15(tasksDir, { recursive: true });
+    mkdirSync16(tasksDir, { recursive: true });
   }
-  const contractPath = join21(tasksDir, "validation-contract.md");
+  const contractPath = join22(tasksDir, "validation-contract.md");
   if (!existsSync22(contractPath)) {
     writeFileSync14(
       contractPath,
@@ -45263,7 +45273,7 @@ function scaffoldAgentsMd(dir, name) {
   const created = [];
   const agentsTemplatePath = resolve15(__dirname4, "..", "..", "..", "templates", "AGENTS.md");
   if (existsSync22(agentsTemplatePath)) {
-    const agentsPath = join21(dir, "AGENTS.md");
+    const agentsPath = join22(dir, "AGENTS.md");
     if (!existsSync22(agentsPath)) {
       const content = readFileSync18(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
       writeFileSync14(agentsPath, content);
@@ -45284,7 +45294,7 @@ function scaffoldTeamWorkspace(dir, name) {
 }
 function scaffoldMissionsWorkspace(dir, name) {
   const created = [];
-  const skillsDir = join21(dir, ".tmux-ide", "skills");
+  const skillsDir = join22(dir, ".tmux-ide", "skills");
   created.push(...copyTemplateSkills(skillsDir));
   created.push(...scaffoldTeamWorkspace(dir, name));
   return created;
@@ -45316,11 +45326,11 @@ async function init({
       created = scaffoldMissionsWorkspace(dir, name2);
     } else if (isTeamTemplate(template)) {
       created = [
-        ...copyTemplateSkills(join21(dir, ".tmux-ide", "skills")),
+        ...copyTemplateSkills(join22(dir, ".tmux-ide", "skills")),
         ...scaffoldTeamWorkspace(dir, name2)
       ];
     } else {
-      created = copyTemplateSkills(join21(dir, ".tmux-ide", "skills"));
+      created = copyTemplateSkills(join22(dir, ".tmux-ide", "skills"));
     }
     if (json2) {
       console.log(JSON.stringify({ created: true, template, name: name2, paths: created }));
@@ -45362,7 +45372,7 @@ async function init({
       console.log("Edit it to configure your workspace, then run: tmux-ide");
     }
   }
-  const skillsDir = join21(dir, ".tmux-ide", "skills");
+  const skillsDir = join22(dir, ".tmux-ide", "skills");
   if (!existsSync22(skillsDir)) {
     const created = copyTemplateSkills(skillsDir);
     if (created.length > 0 && !json2) {
@@ -46836,7 +46846,11 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     });
     return;
   }
-  execFileSync18(launch2.bin, launch2.argv, { stdio: "inherit", env });
+  execFileSync18(launch2.bin, launch2.argv, {
+    stdio: "inherit",
+    cwd: ensureCompiledTuiRuntimeDir(),
+    env
+  });
 }
 function launchHostedApp(scriptPath, appArgs) {
   const launch2 = resolveTuiLaunch({
@@ -46862,7 +46876,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve30(__dirname5, "..") : process.cwd();
+    const cwd = launch2.mode === "bun" ? resolve30(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,

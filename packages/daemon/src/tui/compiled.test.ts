@@ -4,10 +4,15 @@
  * `tmux-ide-tui` binary when installed).
  */
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveTuiLaunch } from "./compiled.ts";
+import {
+  compiledTuiRuntimeDir,
+  ensureCompiledTuiRuntimeDir,
+  resolveTuiLaunch,
+} from "./compiled.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../../..");
@@ -129,5 +134,24 @@ describe("build-tui script — CI-safe smoke (contract, not a real compile)", ()
   it("targets the daemon dist path the CLI probes for", () => {
     const src = readFileSync(script, "utf-8");
     expect(src).toMatch(/packages\/daemon\/dist\/tui/);
+  });
+});
+
+describe("compiled TUI runtime cwd", () => {
+  it("uses a dedicated directory outside the project cwd", () => {
+    expect(compiledTuiRuntimeDir("/Users/example")).toBe(
+      "/Users/example/.tmux-ide/runtime/compiled-tui",
+    );
+  });
+
+  it("creates the isolated directory recursively", () => {
+    const home = resolve(tmpdir(), `tmux-ide-compiled-test-${process.pid}-${Date.now()}`);
+    try {
+      const dir = ensureCompiledTuiRuntimeDir(home);
+      expect(dir).toBe(resolve(home, ".tmux-ide/runtime/compiled-tui"));
+      expect(existsSync(dir)).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

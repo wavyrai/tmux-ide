@@ -3,7 +3,12 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ThemeConfig } from "../types.ts";
 import { shellEscape } from "../lib/shell.ts";
-import { resolveTuiLaunch, findCompiledTui, isBunAvailable } from "../tui/compiled.ts";
+import {
+  ensureCompiledTuiRuntimeDir,
+  resolveTuiLaunch,
+  findCompiledTui,
+  isBunAvailable,
+} from "../tui/compiled.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -81,9 +86,10 @@ export function resolveWidgetCommand(type: string, opts: WidgetOptions): string 
     // preload is found; the project dir rides in via --dir.
     return `cd ${shellEscape(REPO_ROOT)} && bun ${escapedArgs}`;
   }
-  // Compiled binary: no bunfig to find (JSX + native dylib are baked in). Run
-  // from the pane's dir so a stray repo-root bunfig can't hijack the preload.
-  return `cd ${shellEscape(opts.dir)} && ${shellEscape(launch.bin)} ${escapedArgs}`;
+  // Compiled Bun executables still inspect bunfig.toml in their cwd before the
+  // embedded entry runs. Keep them in the private config-free runtime dir;
+  // the widget's project directory is already explicit in --dir.
+  return `cd ${shellEscape(ensureCompiledTuiRuntimeDir())} && ${shellEscape(launch.bin)} ${escapedArgs}`;
 }
 
 export interface WidgetSpawnSpec {
@@ -114,9 +120,9 @@ export function resolveWidgetSpawn(type: string, opts: WidgetOptions): WidgetSpa
   if (launch.mode === "unavailable") {
     throw new Error(`Cannot launch ${type} widget: ${launch.reasons.join("; ")}`);
   }
-  // Bun spawns from the repo root (bunfig preload); the binary spawns from the
-  // pane's dir (self-contained, avoids a stray bunfig preload).
-  const cwd = launch.mode === "bun" ? REPO_ROOT : opts.dir;
+  // Bun source needs the repo preload; the compiled executable must be
+  // isolated from every ambient bunfig. Project identity rides in --dir.
+  const cwd = launch.mode === "bun" ? REPO_ROOT : ensureCompiledTuiRuntimeDir();
   return { cwd, cmd: [launch.bin, ...launch.argv] };
 }
 

@@ -16,8 +16,9 @@
  * {@link resolveTuiLaunch} is a PURE decision (unit-tested); {@link findCompiledTui}
  * and {@link isBunAvailable} are the thin io probes that feed it.
  */
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { findDownloadedTui } from "../lib/tui-binary.ts";
@@ -123,4 +124,26 @@ export function isBunAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * A config-free cwd for the standalone Bun executable.
+ *
+ * Even a `bun build --compile` executable asks Bun to load `bunfig.toml` from
+ * its process cwd before the embedded application starts. Running the binary
+ * from a tmux-ide checkout therefore tries to resolve the checkout's
+ * `@opentui/solid/preload` as a runtime dependency and aborts before our
+ * dispatcher can run. The real project cwd is already carried explicitly via
+ * `TMUX_IDE_CWD` / `--dir`, so compiled surfaces start in this private,
+ * deliberately config-free directory instead.
+ */
+export function compiledTuiRuntimeDir(home = homedir()): string {
+  return join(home, ".tmux-ide", "runtime", "compiled-tui");
+}
+
+/** io — create and return the private cwd used by compiled TUI surfaces. */
+export function ensureCompiledTuiRuntimeDir(home = homedir()): string {
+  const dir = compiledTuiRuntimeDir(home);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
 }
