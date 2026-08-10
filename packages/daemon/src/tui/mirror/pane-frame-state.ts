@@ -1,9 +1,9 @@
 import type { LivePane } from "./session-mirror.ts";
 
 /**
- * Pane layout/chrome state is deliberately separate from terminal cell state.
- * A busy pane changes `version` (and often its cursor) on every parsed chunk,
- * but that must not invalidate application-shell geometry or pane chrome.
+ * Pane layout state is deliberately separate from terminal cells and focus.
+ * A busy pane changes `version` on every parsed chunk, while focus has its own
+ * synchronous control-plane signal; neither should invalidate shell geometry.
  */
 export function sameLivePaneStructure(
   previous: readonly LivePane[],
@@ -19,7 +19,6 @@ export function sameLivePaneStructure(
       left.top !== right.top ||
       left.width !== right.width ||
       left.height !== right.height ||
-      left.active !== right.active ||
       left.appMouse !== right.appMouse ||
       left.zoomed !== right.zoomed ||
       left.snapshot.scrollOffset !== right.snapshot.scrollOffset
@@ -28,6 +27,31 @@ export function sameLivePaneStructure(
     }
   }
   return true;
+}
+
+/**
+ * Resolve the pane that owns terminal input and chrome. Explicit control-plane
+ * focus wins while it belongs to the visible window; the geometry snapshot is
+ * only the bootstrap/fallback authority.
+ */
+export function activeLivePaneId(
+  panes: readonly LivePane[],
+  focusedPaneId: string | null,
+): string | null {
+  if (focusedPaneId && panes.some((pane) => pane.id === focusedPaneId)) return focusedPaneId;
+  return panes.find((pane) => pane.active)?.id ?? null;
+}
+
+/** Project focus into pane chrome without coupling it to terminal pixels. */
+export function withLivePaneFocus(
+  panes: readonly LivePane[],
+  focusedPaneId: string | null,
+): LivePane[] {
+  const activeId = activeLivePaneId(panes, focusedPaneId);
+  return panes.map((pane) => {
+    const active = pane.id === activeId;
+    return pane.active === active ? pane : { ...pane, active };
+  });
 }
 
 export interface LivePaneRuntime {

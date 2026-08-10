@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  SessionMirror,
   parsePaneGeometry,
   geometryFromLeaves,
   parseSessionPaneDescriptors,
@@ -148,5 +149,45 @@ describe("geometryFromLeaves", () => {
         zoomed: true,
       },
     ]);
+  });
+});
+
+describe("SessionMirror focus control plane", () => {
+  const harness = () => {
+    const events: Array<{ paneId: string; source: "local" | "tmux" }> = [];
+    const mirror = new SessionMirror({
+      target: "focus-test",
+      cols: 120,
+      rows: 40,
+      onFocusChanged: (paneId, source) => events.push({ paneId, source }),
+    });
+    const internals = mirror as unknown as {
+      geometry: PaneGeometry[];
+      onWindowPaneChanged(rest: string): void;
+    };
+    internals.geometry = [g("%1", 0, 0, 60, 40, true), g("%2", 61, 0, 59, 40)];
+    vi.spyOn(mirror, "command").mockImplementation(() => new Promise<string[]>(() => {}));
+    return { events, internals, mirror };
+  };
+
+  it("publishes local focus synchronously before tmux acknowledgement", () => {
+    const { events, mirror } = harness();
+
+    mirror.focus("%2");
+
+    expect(events).toEqual([{ paneId: "%2", source: "local" }]);
+    expect(mirror.focusedPane()).toBe("%2");
+  });
+
+  it("does not let an intermediate tmux notification rewind newer focus", () => {
+    const { events, internals, mirror } = harness();
+
+    mirror.focus("%2");
+    internals.onWindowPaneChanged("@1 %1");
+    expect(events).toEqual([{ paneId: "%2", source: "local" }]);
+    expect(mirror.focusedPane()).toBe("%2");
+
+    internals.onWindowPaneChanged("@1 %2");
+    expect(events.at(-1)).toEqual({ paneId: "%2", source: "tmux" });
   });
 });

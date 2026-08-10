@@ -230,7 +230,13 @@ import {
 } from "../../../../core/src/index.ts";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
 import { FrameCoalescer } from "./frame-coalescer.ts";
-import { livePaneRuntime, sameLivePaneRuntime, sameLivePaneStructure } from "./pane-frame-state.ts";
+import {
+  activeLivePaneId,
+  livePaneRuntime,
+  sameLivePaneRuntime,
+  sameLivePaneStructure,
+  withLivePaneFocus,
+} from "./pane-frame-state.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "./pane-surface.tsx";
 import { tapInputSent, tapInputTick } from "./perf-tap.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-terminal.ts";
@@ -1079,6 +1085,12 @@ try {
     const [panes, setPanes] = createSignal<LivePane[]>([], {
       equals: FB_PANES ? sameLivePaneStructure : false,
     });
+    // Focus is a synchronous control-plane signal. It must not wait behind the
+    // coalesced geometry/framebuffer publication path before chrome reacts.
+    const [focusedPaneId, setFocusedPaneId] = createSignal<string | null>(null);
+    const activeTerminalPaneId = createMemo(() => activeLivePaneId(panes(), focusedPaneId()));
+    const focusedPanes = createMemo(() => withLivePaneFocus(panes(), focusedPaneId()));
+    const paneIsFocused = (paneId: string): boolean => activeTerminalPaneId() === paneId;
     const [paneRuntime, setPaneRuntime] = createSignal<ReturnType<typeof livePaneRuntime>>(
       new Map(),
       { equals: sameLivePaneRuntime },
@@ -1316,16 +1328,16 @@ try {
         activeDockTool: activeDockTab(),
         focusZone:
           workbenchFocusZone() === "canvas"
-            ? canvasPanel() === "terminals" && panes().some((pane) => pane.active)
+            ? canvasPanel() === "terminals" && activeTerminalPaneId() !== null
               ? "terminal"
               : "canvas"
             : workbenchFocusZone() === "dock-tabs"
               ? "dock-tabs"
               : "dock-body",
-        focusedPaneId: panes().find((pane) => pane.active)?.id ?? null,
+        focusedPaneId: activeTerminalPaneId(),
         terminalInputPaneId:
           canvasPanel() === "terminals" && workbenchFocusZone() === "canvas"
-            ? (panes().find((pane) => pane.active)?.id ?? null)
+            ? activeTerminalPaneId()
             : null,
         paneIdentities: mirror?.paneDescriptors() ?? [],
         paletteOpen: paletteOpen(),
@@ -1879,7 +1891,7 @@ try {
     createEffect(() => {
       const sm = selectModePane();
       if (sm === null) return;
-      const focused = panes().find((p) => p.active)?.id;
+      const focused = activeTerminalPaneId();
       if (focused && focused !== sm && mirror?.focusedPane() !== sm) exitSelectMode();
     });
 
@@ -2020,7 +2032,7 @@ try {
     const terminalPaneChromeLayout = createMemo(() =>
       projectTerminalPaneChrome({
         canvas: terminalCanvasProjection(),
-        panes: panes(),
+        panes: focusedPanes(),
         metadataByPane: terminalPaneChromeMetadata(),
         hoveredAction: hoveredTerminalPaneAction(),
         pressedAction: pressedTerminalPaneAction(),
@@ -2949,6 +2961,7 @@ try {
       mirror = null;
       void previousSupervisor?.stop();
       scrollOffsets.clear();
+      setFocusedPaneId(null);
       setPanes([]);
       setStatus(`attaching ${name}…`);
       void connectDaemonApplicationShell(name);
@@ -2968,6 +2981,7 @@ try {
             cols: reconnectPin.cols,
             rows: reconnectPin.rows,
             onDirty: markDirty,
+            onFocusChanged: (paneId) => setFocusedPaneId(paneId),
             onStatus: () => {
               if (!tuiGeometryReadyMarked) {
                 tuiGeometryReadyMarked = true;
@@ -4424,12 +4438,12 @@ try {
             return {
               paneId: pane.id,
               session: contextSession(),
-              active: pane.active,
+              active: paneIsFocused(pane.id),
               title: descriptor?.title ?? descriptor?.role ?? descriptor?.currentCommand ?? pane.id,
             };
           }),
           sizeMismatch: windowMismatch() !== null,
-          appMousePane: panes().find((p) => p.active)?.appMouse === true,
+          appMousePane: panes().find((p) => paneIsFocused(p.id))?.appMouse === true,
           // Pins "New agent: <name> (again)" FIRST when this context has spawn
           // memory (M24.1) — F5 → Enter repeats the last spawn.
           againName: currentAgainName(),
@@ -6964,7 +6978,7 @@ try {
     // The focused pane and its window's zoom state, derived from the live geometry
     // (window_zoomed_flag is a window property, so every pane of the active window
     // reports the same value; reading the focused pane keeps the intent clear).
-    const focusedLivePane = () => panes().find((p) => p.active);
+    const focusedLivePane = () => panes().find((p) => paneIsFocused(p.id));
     const isZoomed = () => focusedLivePane()?.zoomed ?? false;
     const runHomeAction = (id: HomeActionId, itemIndex = clampedSel()) => {
       if (id === "open-folder") void openFolderFlow();
@@ -8724,7 +8738,7 @@ try {
                                       searchHl={terminalPalette().searchHighlight}
                                       searchCur={terminalPalette().searchCurrent}
                                       scrollOffset={pane()!.snapshot.scrollOffset}
-                                      paneFocused={pane()!.active}
+                                      paneFocused={paneIsFocused(id)}
                                       contentVersion={paneRuntimeFor(id)?.version ?? 0}
                                       selRange={mirrorSelForPane(id)}
                                       search={mirrorSearchForPane(pane()!)}

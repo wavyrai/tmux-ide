@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { LivePane } from "./session-mirror.ts";
-import { livePaneRuntime, sameLivePaneStructure, sameLivePaneRuntime } from "./pane-frame-state.ts";
+import {
+  activeLivePaneId,
+  livePaneRuntime,
+  sameLivePaneRuntime,
+  sameLivePaneStructure,
+  withLivePaneFocus,
+} from "./pane-frame-state.ts";
 
 function pane(overrides: Partial<LivePane> = {}): LivePane {
   return {
@@ -38,12 +44,37 @@ describe("pane frame state", () => {
     { height: 23 },
     { left: 1 },
     { top: 1 },
-    { active: false },
     { appMouse: true },
     { zoomed: true },
     { snapshot: { rows: [], cursorX: 0, cursorY: 0, scrollOffset: 1 } },
   ] satisfies Array<Partial<LivePane>>)("publishes structural change %#", (change) => {
     expect(sameLivePaneStructure([pane()], [pane(change)])).toBe(false);
+  });
+
+  it("keeps focus changes out of the structural invalidation domain", () => {
+    expect(
+      sameLivePaneStructure(
+        [pane({ id: "%1", active: true }), pane({ id: "%2", active: false })],
+        [pane({ id: "%1", active: false }), pane({ id: "%2", active: true })],
+      ),
+    ).toBe(true);
+  });
+
+  it("projects optimistic focus without mutating structural panes", () => {
+    const panes = [pane({ id: "%1", active: true }), pane({ id: "%2", active: false })];
+    const projected = withLivePaneFocus(panes, "%2");
+
+    expect(activeLivePaneId(panes, "%2")).toBe("%2");
+    expect(projected.map(({ id, active }) => [id, active])).toEqual([
+      ["%1", false],
+      ["%2", true],
+    ]);
+    expect(panes[0]!.active).toBe(true);
+  });
+
+  it("falls back to authoritative focus when an explicit pane is absent", () => {
+    const panes = [pane({ id: "%1", active: false }), pane({ id: "%2", active: true })];
+    expect(activeLivePaneId(panes, "%closed")).toBe("%2");
   });
 
   it("keeps scrollback depth in runtime rather than shell structure", () => {

@@ -162,6 +162,8 @@ export interface SessionMirrorOptions {
   rows: number;
   /** Called whenever any pane's content or the layout changed (coalesce upstream). */
   onDirty?: () => void;
+  /** Focus is latency-sensitive control state, independent from frame pixels. */
+  onFocusChanged?: (paneId: string, source: "local" | "tmux") => void;
   onStatus?: (msg: string) => void;
   onDescriptorStatus?: (status: SessionDescriptorDiscoveryDiagnostic | null) => void;
   onExit?: () => void;
@@ -191,6 +193,8 @@ export class SessionMirror {
   private descriptorDiagnostic: SessionDescriptorDiscoveryDiagnostic | null = null;
   private geometry: PaneGeometry[] = [];
   private focused = "";
+  /** Latest optimistic select-pane request awaiting ordered tmux confirmation. */
+  private pendingFocus = "";
   private syncQueued = false;
   // ── Push-geometry state (M23.5) ─────────────────────────────────────────
   /** The mirrored session's active window id (`@N`) — gates which
@@ -412,14 +416,25 @@ export class SessionMirror {
     // Converge the LOCAL focus to tmux truth too: a select-pane we issued
     // echoes back as this notification, and an external change (menu verb,
     // another client) should move our focus the same way.
-    if (this.geometry.some((g) => g.id === ev.paneId)) this.focused = ev.paneId;
+    if (this.geometry.some((g) => g.id === ev.paneId)) {
+      // During a rapid A → B sequence tmux may report A while B is already the
+      // newest local intent. Keep B as the input/chrome owner until its ordered
+      // confirmation arrives; geometry may still record the intermediate fact.
+      if (!this.pendingFocus || this.pendingFocus === ev.paneId) {
+        this.focused = ev.paneId;
+        if (this.pendingFocus === ev.paneId) this.pendingFocus = "";
+        this.opts.onFocusChanged?.(ev.paneId, "tmux");
+      }
+    }
     let changed = false;
     this.geometry = this.geometry.map((g) => {
       if (g.active === (g.id === ev.paneId)) return g;
       changed = true;
       return { ...g, active: g.id === ev.paneId };
     });
-    if (changed) this.opts.onDirty?.();
+    // A focus-aware host already received the control-plane event above. Do
+    // not also enqueue a full pane snapshot merely to repaint chrome.
+    if (changed && !this.opts.onFocusChanged) this.opts.onDirty?.();
   }
 
   /** `%subscription-changed` for the `mouse` subscription — a pane's app
@@ -557,9 +572,28 @@ export class SessionMirror {
   /** Focus a pane locally AND in tmux (so splits/new panes open where expected). */
   focus(id: string): void {
     if (!this.geometry.some((g) => g.id === id)) return;
+    const changed = this.focused !== id;
     this.focused = id;
-    void this.command(`select-pane -t ${id}`).catch(() => {});
-    this.opts.onDirty?.();
+    if (changed) {
+      this.pendingFocus = id;
+      this.opts.onFocusChanged?.(id, "local");
+    }
+    void this.command(`select-pane -t ${id}`)
+      .then(() => {
+        // tmux does not emit window-pane-changed when the pane was already
+        // active. A successful command boundary is still valid confirmation.
+        if (this.pendingFocus === id) {
+          this.pendingFocus = "";
+          this.opts.onFocusChanged?.(id, "tmux");
+        }
+      })
+      .catch(() => {
+        if (this.pendingFocus === id) {
+          this.pendingFocus = "";
+          this.queueSync();
+        }
+      });
+    if (!this.opts.onFocusChanged) this.opts.onDirty?.();
   }
 
   /** Type literal text into the focused pane — coalesced, fire-and-forget. */
@@ -726,6 +760,7 @@ export class SessionMirror {
       this.unseeded.delete(id);
       this.appMouseByPane.delete(id);
       if (this.focused === id) this.focused = "";
+      if (this.pendingFocus === id) this.pendingFocus = "";
     }
     for (const pane of all) {
       const mirror = this.mirrors.get(pane.id);
@@ -745,7 +780,16 @@ export class SessionMirror {
     }
     this.zoomedNow = all.some((p) => p.zoomed);
     const active = all.find((p) => p.active);
-    if (active) this.activePane = active.id;
+    if (active) {
+      this.activePane = active.id;
+      // A sync requested before a local select-pane may return older truth.
+      // Pending local focus owns the control plane until its notification or a
+      // failure-triggered reconciliation resolves it.
+      if (!this.pendingFocus) {
+        this.focused = active.id;
+        this.opts.onFocusChanged?.(active.id, "tmux");
+      }
+    }
     // Visible geometry: under zoom list-panes still reports the HIDDEN panes
     // at their unzoomed rects (measured on 3.7b: they overlap the zoomed pane
     // and would steal first-match hit-tests — D3). Only the active (= zoomed)
