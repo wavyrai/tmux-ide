@@ -230,6 +230,11 @@ import {
 } from "../../../../core/src/index.ts";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
 import { FrameCoalescer } from "./frame-coalescer.ts";
+import {
+  livePaneVersions,
+  sameLivePaneStructure,
+  sameLivePaneVersions,
+} from "./pane-frame-state.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "./pane-surface.tsx";
 import { tapInputSent, tapInputTick } from "./perf-tap.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-terminal.ts";
@@ -1072,7 +1077,15 @@ try {
     const [paletteFocusReturnTarget, setPaletteFocusReturnTarget] =
       createSignal<SemanticFocusTarget | null>(null);
     const [hover, setHover] = createSignal<{ region: HoverRegion; index: number } | null>(null);
-    const [panes, setPanes] = createSignal<LivePane[]>([]);
+    // Terminal pixels and shell structure have different invalidation domains.
+    // Content output publishes only the compact version map; geometry/chrome
+    // consumers remain asleep unless tmux actually changes pane structure.
+    const [panes, setPanes] = createSignal<LivePane[]>([], {
+      equals: FB_PANES ? sameLivePaneStructure : false,
+    });
+    const [paneVersions, setPaneVersions] = createSignal<ReadonlyMap<string, number>>(new Map(), {
+      equals: sameLivePaneVersions,
+    });
     let mirror: SessionMirror | null = null;
     const [daemonApplicationShellState, setDaemonApplicationShellState] =
       createSignal<ApplicationShellSessionState | null>(null);
@@ -5400,6 +5413,7 @@ try {
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
         const raw = mirror.panes(scrollOffsets, !FB_PANES, terminalPalette());
+        if (FB_PANES) setPaneVersions(livePaneVersions(raw));
         // Size truth (M22.8, event-driven M23.5): the effective window size is
         // the layout ROOT's WxH pushed by %layout-change (the pane bounding
         // box only seeds it before the first layout lands). When a co-attached
@@ -8709,7 +8723,7 @@ try {
                                       searchCur={terminalPalette().searchCurrent}
                                       scrollOffset={pane()!.snapshot.scrollOffset}
                                       paneFocused={pane()!.active}
-                                      contentVersion={pane()!.version}
+                                      contentVersion={paneVersions().get(id) ?? 0}
                                       selRange={mirrorSelForPane(id)}
                                       search={mirrorSearchForPane(pane()!)}
                                     />
