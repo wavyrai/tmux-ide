@@ -3,11 +3,12 @@
  *  between adjacent panes show the canvas background as a SEPARATOR. A "down"
  *  landing on a separator (a canvas-local cell inside no pane rect, flanked by
  *  two panes) starts a border drag; the router turns the drag delta into an
- *  ABSOLUTE new size and applies it via `resize-pane -t <a> -x|-y <cells>`
+ *  ABSOLUTE new size and applies it through the shared multiplexer authority
  *  (smoother than repeated -L/-R steps, and %layout-change resyncs the render).
  *  Keeping the hit-test + size math here (like spans/menu-model/diff-model) makes
- *  it unit-testable off the render loop. All coordinates are CANVAS-LOCAL: cx is
- *  `x - sidebarW`, cy is `y - TABBAR_H - HEADER_ROWS`. */
+ *  it unit-testable off the render loop. Pane coordinates are FRAMEBUFFER-LOCAL;
+ *  callers translate through the projected terminal canvas instead of repeating
+ *  shell/sidebar/chrome offsets. */
 
 /** The minimal pane rectangle the hit test needs (LivePane is assignable). */
 export interface PaneRect {
@@ -26,10 +27,28 @@ export interface PaneRect {
  *  to (a) and the far bound (b) the clamp protects. */
 export interface Separator {
   axis: "x" | "y";
+  /** Framebuffer-local separator column/row. */
+  position: number;
+  /** Covered interval on the perpendicular axis, end-exclusive. */
+  start: number;
+  end: number;
   aId: string;
   bId: string;
   aSize: number;
   bSize: number;
+}
+
+/** The framebuffer origin inside the app-owned terminal canvas. */
+export interface FramebufferOrigin {
+  x: number;
+  y: number;
+}
+
+export interface ResizeGuideRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /** Does pane `p` contain canvas cell (cx,cy)? */
@@ -53,16 +72,51 @@ export function separatorAt(panes: readonly PaneRect[], cx: number, cy: number):
     if (a.left + a.width !== cx) continue;
     if (cy < a.top || cy >= a.top + a.height) continue;
     const b = panes.find((q) => q.left === cx + 1 && cy >= q.top && cy < q.top + q.height);
-    if (b) return { axis: "x", aId: a.id, bId: b.id, aSize: a.width, bSize: b.width };
+    if (b)
+      return {
+        axis: "x",
+        position: cx,
+        start: Math.max(a.top, b.top),
+        end: Math.min(a.top + a.height, b.top + b.height),
+        aId: a.id,
+        bId: b.id,
+        aSize: a.width,
+        bSize: b.width,
+      };
   }
   // Horizontal separator: `a` ends at row cy, `b` begins at cy+1, both cover cx.
   for (const a of panes) {
     if (a.top + a.height !== cy) continue;
     if (cx < a.left || cx >= a.left + a.width) continue;
     const b = panes.find((q) => q.top === cy + 1 && cx >= q.left && cx < q.left + q.width);
-    if (b) return { axis: "y", aId: a.id, bId: b.id, aSize: a.height, bSize: b.height };
+    if (b)
+      return {
+        axis: "y",
+        position: cy,
+        start: Math.max(a.left, b.left),
+        end: Math.min(a.left + a.width, b.left + b.width),
+        aId: a.id,
+        bId: b.id,
+        aSize: a.height,
+        bSize: b.height,
+      };
   }
   return null;
+}
+
+/**
+ * Resolve a divider from APP-CANVAS coordinates using the exact projected
+ * framebuffer origin. This is the seam between Workbench layout and tmux pane
+ * geometry: focus rails and native pane chrome remain app-owned and can never
+ * skew the gutter hit-test.
+ */
+export function separatorAtCanvas(
+  panes: readonly PaneRect[],
+  framebuffer: FramebufferOrigin,
+  canvasX: number,
+  canvasY: number,
+): Separator | null {
+  return separatorAt(panes, canvasX - framebuffer.x, canvasY - framebuffer.y);
 }
 
 /**
@@ -78,8 +132,25 @@ export function resizedSize(sep: Separator, delta: number): number {
   return Math.max(MIN_PANE, Math.min(total - MIN_PANE, sep.aSize + delta));
 }
 
-/** PURE — the `resize-pane` command applying an absolute `size` to pane `aId`
- *  along `axis` (x = width, y = height). */
-export function resizeCommand(sep: Separator, size: number): string {
+/** Exact one-cell visual guide for hover/drag feedback. */
+export function resizeGuideRect(sep: Separator, delta = 0): ResizeGuideRect {
+  return sep.axis === "x"
+    ? {
+        x: sep.position + delta,
+        y: sep.start,
+        width: 1,
+        height: Math.max(1, sep.end - sep.start),
+      }
+    : {
+        x: sep.start,
+        y: sep.position + delta,
+        width: Math.max(1, sep.end - sep.start),
+        height: 1,
+      };
+}
+
+/** Standalone/local PREVIEW only. The release is committed through the shared
+ * daemon mutation so every renderer observes one durable operation receipt. */
+export function resizePreviewCommand(sep: Separator, size: number): string {
   return `resize-pane -t ${sep.aId} ${sep.axis === "x" ? "-x" : "-y"} ${size}`;
 }

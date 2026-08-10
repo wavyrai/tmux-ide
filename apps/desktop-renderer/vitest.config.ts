@@ -6,6 +6,11 @@ export default defineConfig({
   test: {
     css: true,
     environment: "node",
+    // Happy DOM style/layout fixtures are CPU-heavy. Unbounded worker forks
+    // make individual computed-style assertions miss their timeout while the
+    // same test completes in well under a second in isolation. Keep enough
+    // parallelism for throughput without oversubscribing the renderer gate.
+    maxWorkers: 4,
     // The app-level Playwright suite (`e2e/`) starts a tmux server, a daemon
     // and a browser per test. Vitest's default glob would claim those files
     // and run them without any of that, so they are excluded by directory

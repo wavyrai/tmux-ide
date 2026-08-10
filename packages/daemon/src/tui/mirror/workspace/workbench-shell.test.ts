@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { COHESION_FIXTURE_V1, projectApplicationShellV1 } from "@tmux-ide/contracts";
 import {
+  cycleWorkbenchFocusZone,
   projectWorkbenchShell,
   moveWorkbenchDockTab,
   workbenchShellHitTest,
@@ -33,6 +34,14 @@ function input(overrides: Partial<WorkbenchShellInput> = {}): WorkbenchShellInpu
 }
 
 describe("WorkbenchShell projection", () => {
+  it("cycles semantic focus and skips a collapsed dock body", () => {
+    expect(cycleWorkbenchFocusZone("canvas", "open")).toBe("dock-tabs");
+    expect(cycleWorkbenchFocusZone("dock-tabs", "open")).toBe("dock-body");
+    expect(cycleWorkbenchFocusZone("dock-body", "open")).toBe("canvas");
+    expect(cycleWorkbenchFocusZone("dock-tabs", "collapsed")).toBe("canvas");
+    expect(cycleWorkbenchFocusZone("canvas", "open", "previous")).toBe("dock-body");
+  });
+
   it.each([
     [80, 24, "compact"],
     [120, 40, "standard"],
@@ -45,6 +54,8 @@ describe("WorkbenchShell projection", () => {
     expect(projection.canvasBody.width + projection.canvasRail.width).toBe(width);
     expect(projection.dockBodyContent.width + projection.dockBodyRail.width).toBe(width);
     expect(projection.dock.y).toBe(projection.canvas.height);
+    expect(projection.dockSection.focused).toBe(false);
+    expect(projection.tabs[0]!.x).toBe(projection.dockSection.width);
     expect(projection.tabs.map((tab) => tab.id)).toEqual([
       "files",
       "changes",
@@ -104,6 +115,11 @@ describe("WorkbenchShell projection", () => {
     );
     expect(tiny.dockMode).toBe("collapsed");
     expect(tiny.focusZone).toBe("dock-tabs");
+    expect(tiny.dockSection.focused).toBe(true);
+
+    const dockOwned = projectWorkbenchShell(input({ focusZone: "dock-body" }));
+    expect(dockOwned.dockSection).toMatchObject({ focused: true });
+    expect(dockOwned.dockSection.label).toContain("▸ tools");
   });
 
   it("projects exact canvas, tab, action, and dock-body hit cells", () => {

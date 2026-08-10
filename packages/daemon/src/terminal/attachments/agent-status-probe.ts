@@ -34,6 +34,10 @@ import {
   type ProcEntry,
 } from "../../tui/detect/process-tree.ts";
 import { parseSnapshot } from "../../tui/detect/snapshot.ts";
+import {
+  INTERNAL_READ_OPERATION_MARKER,
+  INTERNAL_READ_OPERATION_OPTION,
+} from "../../lib/tmux-interaction-options.ts";
 
 /** The per-pane facts the pure projector consumes (see `ApplicationShellPanePresentationFacts`). */
 export interface AgentStatusPaneFacts {
@@ -179,8 +183,28 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
   const readProcessTable = deps.readProcessTable ?? defaultReadProcessTable;
   const capture =
     deps.capture ??
-    ((runtimePaneId: string, lines: number) =>
-      deps.run(["capture-pane", "-p", "-J", "-t", runtimePaneId, "-S", `-${lines}`]));
+    ((runtimePaneId: string, lines: number) => {
+      const result = deps.run([
+        "set-option",
+        "-p",
+        "-t",
+        runtimePaneId,
+        INTERNAL_READ_OPERATION_OPTION,
+        INTERNAL_READ_OPERATION_MARKER,
+        ";",
+        "capture-pane",
+        "-p",
+        "-J",
+        "-t",
+        runtimePaneId,
+        "-S",
+        `-${lines}`,
+      ]);
+      if (result === null) {
+        deps.run(["set-option", "-pu", "-t", runtimePaneId, INTERNAL_READ_OPERATION_OPTION]);
+      }
+      return result;
+    });
   const ttlSeconds = deps.scrapeCacheTtlSeconds ?? SCRAPE_CACHE_TTL_SECONDS;
   const captureBudget = deps.scrapeCaptureBudget ?? SCRAPE_CAPTURE_BUDGET;
 

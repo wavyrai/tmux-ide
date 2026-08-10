@@ -1,18 +1,26 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  WorkspaceCatalogResourceV1SchemaZ,
+  type ActionInput,
+  type ActionName,
+  type ActionResult,
   type CanonicalDaemonInfo,
-  type WorkspaceCatalogResourceV1,
 } from "@tmux-ide/contracts";
+import {
+  DaemonActionInvocationError,
+  dispatchOwnerAction,
+} from "@tmux-ide/daemon-client/owner-action-client";
 
-import { CliActionInvocationError, tryDispatchAction } from "../../lib/cli-action-bridge.ts";
 import {
   canonicalDaemonUrl,
   isCanonicalDaemonAlive,
   readCanonicalDaemonInfo,
 } from "../../lib/canonical-daemon.ts";
 import type { SessionPaneDescriptor } from "../../terminal/protocol/session-descriptor-discovery.ts";
+import {
+  fetchCanonicalWorkspaceCatalog,
+  workspaceNameForSession,
+} from "./canonical-workspace-routing.ts";
 
 export type TuiMultiplexerAction =
   | { kind: "rename-session"; name: string }
@@ -24,12 +32,14 @@ export type TuiMultiplexerAction =
   | { kind: "swap-pane" }
   | { kind: "split-pane-right" }
   | { kind: "split-pane-down" }
+  | { kind: "resize-pane"; axis: "cols" | "rows"; cells: number }
   | { kind: "kill-pane" };
 
 export interface TuiMultiplexerContext {
   readonly sessionName: string;
   readonly focusedRuntimePaneId: string | null;
   readonly paneDescriptors: readonly SessionPaneDescriptor[];
+  readonly viewportSize?: { readonly cols: number; readonly rows: number } | null;
 }
 
 export type TuiMultiplexerExecutionResult =
@@ -41,7 +51,12 @@ interface TuiMultiplexerExecutorDeps {
   readonly readCanonicalDaemonInfo: () => CanonicalDaemonInfo | null;
   readonly isCanonicalDaemonAlive: (info: CanonicalDaemonInfo) => Promise<boolean>;
   readonly fetch: typeof fetch;
-  readonly dispatchAction: typeof tryDispatchAction;
+  readonly dispatchAction: <Name extends ActionName>(
+    daemon: CanonicalDaemonInfo,
+    name: Name,
+    input: ActionInput<Name>,
+    options: { operationId: string; autostart: false },
+  ) => Promise<ActionResult<Name> | null>;
   readonly operationId: () => string;
 }
 
@@ -49,7 +64,14 @@ const DEFAULT_DEPS: TuiMultiplexerExecutorDeps = {
   readCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   fetch,
-  dispatchAction: tryDispatchAction,
+  dispatchAction: (daemon, name, input, options) =>
+    dispatchOwnerAction({
+      baseUrl: canonicalDaemonUrl("http", daemon.bindHostname, daemon.port),
+      ownerToken: daemon.authToken ?? "",
+      name,
+      input,
+      operationId: options.operationId,
+    }),
   operationId: randomUUID,
 };
 
@@ -64,8 +86,15 @@ function localCommand(action: TuiMultiplexerAction, context: TuiMultiplexerConte
       return `rename-session -t ${context.sessionName} ${tmuxQuote(action.name)}`;
     case "kill-session":
       return `kill-session -t ${context.sessionName}`;
-    case "new-window":
-      return `new-window -t ${context.sessionName}:`;
+    case "new-window": {
+      // tmux 3.5a can crash or retire a control-mode client when `new-window`
+      // runs on that channel. Tmuxy's production-proven equivalent is a split
+      // immediately broken into its own window, then sized to this viewport.
+      const resize = context.viewportSize
+        ? ` ; resize-window -x ${context.viewportSize.cols} -y ${context.viewportSize.rows}`
+        : "";
+      return `split-window -t ${tmuxQuote(context.sessionName)} ; break-pane${resize}`;
+    }
     case "rename-window":
       return pane ? `rename-window -t ${pane} ${tmuxQuote(action.name)}` : null;
     case "kill-window":
@@ -78,6 +107,10 @@ function localCommand(action: TuiMultiplexerAction, context: TuiMultiplexerConte
       return pane ? `split-window -h -t ${pane} -c "#{pane_current_path}"` : null;
     case "split-pane-down":
       return pane ? `split-window -v -t ${pane} -c "#{pane_current_path}"` : null;
+    case "resize-pane":
+      return pane
+        ? `resize-pane -t ${pane} ${action.axis === "cols" ? "-x" : "-y"} ${action.cells}`
+        : null;
     case "kill-pane":
       return pane ? `kill-pane -t ${pane}` : null;
   }
@@ -108,6 +141,8 @@ function successMessage(action: TuiMultiplexerAction, result?: unknown): string 
       return "split pane right";
     case "split-pane-down":
       return "split pane down";
+    case "resize-pane":
+      return `resized pane to ${action.cells} ${action.axis}`;
     case "kill-pane":
       return "closed pane";
   }
@@ -143,25 +178,10 @@ function swapTarget(context: TuiMultiplexerContext, source: SessionPaneDescripto
   return peers[(sourceIndex + 1) % peers.length]?.semanticPaneId ?? null;
 }
 
-async function fetchCatalog(
-  info: CanonicalDaemonInfo,
-  deps: TuiMultiplexerExecutorDeps,
-): Promise<WorkspaceCatalogResourceV1> {
-  const baseUrl = canonicalDaemonUrl("http", info.bindHostname, info.port);
-  const response = await deps.fetch(`${baseUrl}/api/resources/workspace-catalog`, {
-    signal: AbortSignal.timeout(1_000),
-  });
-  if (!response.ok) throw new Error(`workspace catalog returned HTTP ${response.status}`);
-  const catalog = WorkspaceCatalogResourceV1SchemaZ.parse(await response.json());
-  if (catalog.daemon.instanceId !== info.instanceId) {
-    throw new Error("daemon generation changed while resolving the workspace");
-  }
-  return catalog;
-}
-
 async function dispatch(
   action: TuiMultiplexerAction,
   context: TuiMultiplexerContext,
+  daemon: CanonicalDaemonInfo,
   workspaceName: string,
   operationId: string,
   deps: TuiMultiplexerExecutorDeps,
@@ -179,20 +199,23 @@ async function dispatch(
   switch (action.kind) {
     case "rename-session":
       return deps.dispatchAction(
+        daemon,
         "workspace.rename",
         { workspaceName, scope: "session", name: action.name },
         options,
       );
     case "kill-session":
-      return deps.dispatchAction("workspace.session.kill", { workspaceName }, options);
+      return deps.dispatchAction(daemon, "workspace.session.kill", { workspaceName }, options);
     case "new-window":
       return deps.dispatchAction(
+        daemon,
         "workspace.pane.create",
         { kind: "terminal", workspaceName },
         options,
       );
     case "rename-window":
       return deps.dispatchAction(
+        daemon,
         "workspace.rename",
         {
           workspaceName,
@@ -204,6 +227,7 @@ async function dispatch(
       );
     case "kill-window":
       return deps.dispatchAction(
+        daemon,
         "workspace.window.kill",
         {
           workspaceName,
@@ -213,6 +237,7 @@ async function dispatch(
       );
     case "zoom-pane":
       return deps.dispatchAction(
+        daemon,
         "workspace.pane.zoom.toggle",
         { workspaceName, semanticPaneId: pane!.semanticPaneId, desired: "toggle" },
         options,
@@ -221,6 +246,7 @@ async function dispatch(
       const targetSemanticPaneId = swapTarget(context, pane!.descriptor);
       if (!targetSemanticPaneId) throw new Error("this window has no other semantic pane to swap");
       return deps.dispatchAction(
+        daemon,
         "workspace.pane.swap",
         {
           workspaceName,
@@ -233,6 +259,7 @@ async function dispatch(
     case "split-pane-right":
     case "split-pane-down":
       return deps.dispatchAction(
+        daemon,
         "workspace.window.split",
         {
           workspaceName,
@@ -241,8 +268,21 @@ async function dispatch(
         },
         options,
       );
+    case "resize-pane":
+      return deps.dispatchAction(
+        daemon,
+        "workspace.pane.resize",
+        {
+          workspaceName,
+          semanticPaneId: pane!.semanticPaneId,
+          axis: action.axis,
+          cells: action.cells,
+        },
+        options,
+      );
     case "kill-pane":
       return deps.dispatchAction(
+        daemon,
         "workspace.pane.kill",
         { workspaceName, semanticPaneId: pane!.semanticPaneId },
         options,
@@ -285,9 +325,9 @@ export async function executeTuiMultiplexerAction(
   }
 
   try {
-    const catalog = await fetchCatalog(canonical, deps);
-    const workspace = catalog.workspaces.find((entry) => entry.sessionName === context.sessionName);
-    if (!workspace) {
+    const catalog = await fetchCanonicalWorkspaceCatalog(canonical, deps.fetch);
+    const workspaceName = workspaceNameForSession(catalog, context.sessionName);
+    if (!workspaceName) {
       return {
         status: "error",
         message: `the live daemon does not own session ${context.sessionName}`,
@@ -296,7 +336,8 @@ export async function executeTuiMultiplexerAction(
     const result = await dispatch(
       action,
       context,
-      workspace.workspaceName,
+      canonical,
+      workspaceName,
       deps.operationId(),
       deps,
     );
@@ -309,7 +350,7 @@ export async function executeTuiMultiplexerAction(
     return { status: "daemon", message: successMessage(action, result) };
   } catch (error) {
     const message =
-      error instanceof CliActionInvocationError
+      error instanceof DaemonActionInvocationError
         ? error.message
         : `tmux action unavailable: ${error instanceof Error ? error.message : String(error)}`;
     return { status: "error", message };

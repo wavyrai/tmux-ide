@@ -163,6 +163,15 @@ export interface WorkspacePaneManipulationUpdate {
   readonly ignored: boolean;
 }
 
+export interface WorkspacePaneManipulationUpdateOptions {
+  /**
+   * Whether a resize sample may produce a tmux wire command. Browser surfaces
+   * use local compositor feedback and commit once on release; the TUI's direct
+   * control channel can opt into latest-wins live wire previews.
+   */
+  readonly wireResize?: boolean;
+}
+
 export type WorkspacePaneCompletion =
   | { readonly kind: "noop" }
   | {
@@ -364,6 +373,35 @@ function mapRectTransform(from: TileRect, to: TileRect, box: WorkspaceGridBox): 
   };
 }
 
+function resizedTileRect(rect: TileRect, state: WorkspacePaneResize, movedCells: number): TileRect {
+  const vertical = state.border.orientation === "vertical";
+  const total = vertical ? state.snapshot.frame.cols : state.snapshot.frame.rows;
+  const delta = movedCells / total;
+  const owner = state.snapshot.tiles.find((tile) => tile.pane === state.border.pane);
+  const boundary = owner
+    ? vertical
+      ? owner.rect.left + owner.rect.width
+      : owner.rect.top + owner.rect.height
+    : vertical
+      ? state.border.rect.left
+      : state.border.rect.top;
+  const epsilon = 1 / Math.max(1, total * 2);
+  if (vertical) {
+    const right = rect.left + rect.width;
+    if (Math.abs(right - boundary) <= epsilon) return { ...rect, width: rect.width + delta };
+    if (Math.abs(rect.left - boundary) <= epsilon) {
+      return { ...rect, left: rect.left + delta, width: rect.width - delta };
+    }
+    return rect;
+  }
+  const bottom = rect.top + rect.height;
+  if (Math.abs(bottom - boundary) <= epsilon) return { ...rect, height: rect.height + delta };
+  if (Math.abs(rect.top - boundary) <= epsilon) {
+    return { ...rect, top: rect.top + delta, height: rect.height - delta };
+  }
+  return rect;
+}
+
 export function previewWorkspacePaneManipulation(
   state: WorkspacePaneManipulation,
 ): WorkspacePanePreview {
@@ -388,7 +426,20 @@ export function previewWorkspacePaneManipulation(
         scaleX: 1,
         scaleY: 1,
       },
-      placements,
+      /*
+       * Keep the pane's base width/height frozen during the gesture. Scaling
+       * the already-composited tile makes pointer feedback one transform per
+       * frame; changing its box would synchronously relayout and resize xterm's
+       * canvas on every sample.
+       */
+      placements: placements.map((placement) => ({
+        ...placement,
+        transform: mapRectTransform(
+          placement.rect,
+          resizedTileRect(placement.rect, state, movedCells),
+          state.gridBox,
+        ),
+      })),
     };
   }
 
@@ -425,6 +476,54 @@ export function previewWorkspacePaneManipulation(
   };
 }
 
+/**
+ * Project a released drag into its durable swap geometry.
+ *
+ * Live dragging deliberately keeps the source under the pointer. Once the
+ * pointer is released, that is no longer the useful visual truth: keeping the
+ * source at the release coordinate until tmux confirms makes the authoritative
+ * frame look like a second, unrelated jump. This projection puts both stable
+ * pane identities in their destination boxes while the daemon round-trip is in
+ * flight. When the confirmed frame arrives, removing these transforms is
+ * pixel-equivalent to adopting the new base rectangles.
+ */
+export function commitWorkspacePaneDragPreview(
+  state: WorkspacePaneDrag,
+): Extract<WorkspacePanePreview, { readonly kind: "drag" }> {
+  const placements = identityPlacements(state.snapshot);
+  const source = state.snapshot.tiles.find((tile) => tile.pane === state.sourcePane);
+  const target = state.snapshot.tiles.find((tile) => tile.pane === state.targetPane);
+
+  if (!state.activated || !source || !target) {
+    const preview = previewWorkspacePaneManipulation(state);
+    if (preview.kind !== "drag") throw new Error("drag state produced a non-drag preview");
+    return preview;
+  }
+
+  return {
+    kind: "drag",
+    sourcePane: state.sourcePane,
+    targetPane: target.pane,
+    activated: true,
+    dropRect: target.rect,
+    placements: placements.map((placement): PanePreviewPlacement => {
+      if (placement.pane === source.pane) {
+        return {
+          ...placement,
+          transform: mapRectTransform(source.rect, target.rect, state.gridBox),
+        };
+      }
+      if (placement.pane === target.pane) {
+        return {
+          ...placement,
+          transform: mapRectTransform(target.rect, source.rect, state.gridBox),
+        };
+      }
+      return placement;
+    }),
+  };
+}
+
 function resizeCommand(state: WorkspacePaneResize, cells: number): PaneResizeCommand {
   return { pane: state.border.pane, axis: axisOf(state.border), cells };
 }
@@ -448,10 +547,21 @@ function resizeWirePlan(
 function updateResize(
   state: WorkspacePaneResize,
   sample: WorkspacePointerSample,
+  wireResize: boolean,
 ): WorkspacePaneManipulationUpdate {
   const previewCells = snappedResize(state, sample);
   let next: WorkspacePaneResize = { ...state, current: sample, previewCells };
   let dispatch: PaneResizeWireDispatch | null = null;
+
+  if (!wireResize) {
+    next = { ...next, pendingWire: null };
+    return {
+      state: next,
+      preview: previewWorkspacePaneManipulation(next),
+      wire: EMPTY_WIRE,
+      ignored: false,
+    };
+  }
 
   if (
     previewCells === state.lastWiredCells ||
@@ -509,6 +619,7 @@ function updateDrag(
 export function updateWorkspacePaneManipulation(
   state: WorkspacePaneManipulation,
   sample: WorkspacePointerSample,
+  options: WorkspacePaneManipulationUpdateOptions = {},
 ): WorkspacePaneManipulationUpdate {
   if (state.kind === "idle" || state.pointerId !== sample.pointerId || !primary(sample)) {
     return {
@@ -518,7 +629,9 @@ export function updateWorkspacePaneManipulation(
       ignored: state.kind !== "idle",
     };
   }
-  return state.kind === "resize" ? updateResize(state, sample) : updateDrag(state, sample);
+  return state.kind === "resize"
+    ? updateResize(state, sample, options.wireResize ?? true)
+    : updateDrag(state, sample);
 }
 
 export function flushWorkspacePaneResizeWire(

@@ -120,6 +120,37 @@ describe("semantic workspace pane creation command", () => {
     });
   });
 
+  it("accepts split placement only through a durable semantic target", () => {
+    const invocation = workspacePaneCreateInvocation(
+      {
+        kind: "agent",
+        workspaceName: "tmux-ide",
+        harnessProfileId: "codex",
+        role: "implementer",
+        placement: {
+          kind: "split",
+          direction: "right",
+          targetSemanticPaneId: "pane.editor",
+        },
+      },
+      { kind: "keyboard", surface: "terminals" },
+    );
+    expect(invocation.args.placement).toEqual({
+      kind: "split",
+      direction: "right",
+      targetSemanticPaneId: "pane.editor",
+    });
+    expect(
+      WorkspacePaneCreateInvocationSchemaZ.safeParse({
+        ...invocation,
+        args: {
+          ...invocation.args,
+          placement: { kind: "split", direction: "right", targetSemanticPaneId: "%42" },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   const forbiddenRuntimeFields = [
     ["cwd", "/Users/example/project"],
     ["argv", ["codex", "--yolo"]],

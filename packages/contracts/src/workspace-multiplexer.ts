@@ -26,6 +26,7 @@ import {
   WorkspacePaneCreationWorkspaceNameSchemaZ,
   WorkspacePaneDisplayTitleSchemaZ,
 } from "./workspace-pane-creation.ts";
+import { AuthoredInteractionOriginSchemaZ } from "./interaction-receipts.ts";
 
 /**
  * A tmux window named either by its own durable stamp or by a pane inside it.
@@ -119,6 +120,25 @@ export const WorkspacePaneSelectArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend
 export type WorkspacePaneSelectArguments = z.infer<typeof WorkspacePaneSelectArgumentsSchemaZ>;
 
 /**
+ * Deliver literal terminal input through daemon authority. The text exists only
+ * on the mutation request; neither the result nor the interaction receipt can
+ * carry it back to another client.
+ */
+export const WorkspacePaneSendArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+  /**
+   * Optional owner-authenticated assertion that the send originated in this
+   * workspace pane. The daemon verifies the semantic stamp against live tmux
+   * state before returning it on the mutation result or interaction receipt.
+   */
+  sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.optional(),
+  semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+  text: z.string().min(1).max(1_048_576),
+  submit: z.boolean().default(true),
+  origin: AuthoredInteractionOriginSchemaZ,
+}).strict();
+export type WorkspacePaneSendArguments = z.infer<typeof WorkspacePaneSendArgumentsSchemaZ>;
+
+/**
  * Exchange the positions of two panes in one tmux window.
  *
  * Both ends are semantic identities. Runtime pane ids and tmux target syntax
@@ -188,6 +208,9 @@ export const WorkspaceMultiplexerIntentSchemaZ = z.discriminatedUnion("verb", [
   }).strict(),
   WorkspacePaneSelectArgumentsSchemaZ.extend({
     verb: z.literal("workspace.pane.select"),
+  }).strict(),
+  WorkspacePaneSendArgumentsSchemaZ.extend({
+    verb: z.literal("workspace.pane.send"),
   }).strict(),
   WorkspacePaneSwapArgumentsSchemaZ.extend({
     verb: z.literal("workspace.pane.swap"),
@@ -278,6 +301,17 @@ export const WorkspacePaneSelectResultSchemaZ = MutationEnvelopeSchemaZ.extend({
 }).strict();
 export type WorkspacePaneSelectResult = z.infer<typeof WorkspacePaneSelectResultSchemaZ>;
 
+export const WorkspacePaneSendResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+  verb: z.literal("workspace.pane.send"),
+  sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
+  semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+  origin: AuthoredInteractionOriginSchemaZ,
+  characterCount: z.number().int().nonnegative().max(1_048_576),
+  byteCount: z.number().int().nonnegative().max(4_194_304),
+  submitted: z.boolean(),
+}).strict();
+export type WorkspacePaneSendResult = z.infer<typeof WorkspacePaneSendResultSchemaZ>;
+
 export const WorkspacePaneSwapResultSchemaZ = MutationEnvelopeSchemaZ.extend({
   verb: z.literal("workspace.pane.swap"),
   sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
@@ -307,6 +341,7 @@ export const WorkspaceMultiplexerMutationResultSchemaZ = z.discriminatedUnion("v
   WorkspaceRenameResultSchemaZ,
   WorkspacePaneZoomToggleResultSchemaZ,
   WorkspacePaneSelectResultSchemaZ,
+  WorkspacePaneSendResultSchemaZ,
   WorkspacePaneSwapResultSchemaZ,
   WorkspacePaneResizeResultSchemaZ,
 ]);

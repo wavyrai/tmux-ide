@@ -15,3 +15,8 @@ export * from "./health.ts";
 export * from "./ensure.ts";
 export * from "./connection-supervisor.ts";
 export * from "./resource-replica.ts";
+export * from "./generation-bound-store.ts";
+export * from "./application-shell-session.ts";
+export * from "./direct-application-shell-transport.ts";
+export * from "./owner-action-client.ts";
+export * from "./workspace-pane-client.ts";

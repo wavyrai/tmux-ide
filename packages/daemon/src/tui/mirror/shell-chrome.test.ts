@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   shellChromeLayout,
   shellChromeVariant,
+  shellNavigationPresentation,
   shellOverlayWidth,
   shellSidebarHint,
   shellStatusLine,
@@ -47,21 +48,30 @@ describe("shell chrome responsive projection", () => {
 
   it("keeps surface tab labels and spans deterministic by variant", () => {
     const compact = shellSurfaceTabs(views, "files", "compact", 1);
-    expect(compact.map((tab) => tab.label)).toEqual([" ⌂ ", " ❯ ", " ▤ ", " ± ", " ◆ "]);
+    expect(compact.map((tab) => tab.label)).toEqual(["  ⌂ ", "  ❯ ", " ●▤ ", "  ± ", "  ◆ "]);
     expect(compact[1]!.hovered).toBe(true);
     expect(compact[2]!.selected).toBe(true);
-    expect(compact.map((tab) => tab.span.start)).toEqual([0, 3, 6, 9, 12]);
+    expect(compact.map((tab) => tab.span.start)).toEqual([0, 4, 8, 12, 16]);
 
-    const wide = shellSurfaceTabs(views, "missions", "wide", null);
+    const navigation = shellNavigationPresentation("wide", true);
+    const wide = shellSurfaceTabs(views, "missions", "wide", null, new Set(), {
+      startX: navigation.width,
+      navigationFocused: true,
+    });
     expect(wide[0]!.label).toContain("F1");
     expect(wide[4]!.label).toContain("F6");
     expect(wide[4]!.selected).toBe(true);
+    expect(wide[4]!.focused).toBe(true);
+    expect(wide[0]!.span.start).toBe(navigation.width);
+
+    const canvasOwned = shellSurfaceTabs(views, "terminal", "wide", null);
+    expect(canvasOwned[1]).toMatchObject({ selected: true, focused: false });
   });
 
   it("keeps attention inside fixed-width tab labels and spans", () => {
     const alerted = shellSurfaceTabs(views, "terminal", "standard", null, new Set(["terminal"]));
     const normal = shellSurfaceTabs(views, "terminal", "standard", null);
-    expect(alerted[1]!.label).toBe(" ! Terminal ");
+    expect(alerted[1]!.label).toBe(" !❯ Terminal ");
     expect(alerted[1]!.span).toEqual(normal[1]!.span);
     expect(alerted[2]!.span).toEqual(normal[2]!.span);
     expect(alerted.map((tab) => tab.span.start)).toEqual(normal.map((tab) => tab.span.start));
@@ -165,12 +175,35 @@ describe("shell chrome responsive projection", () => {
       {
         project: "project",
         mode: "Missions",
+        inputMode: "MISSION",
+        tool: "Changes",
+        dockMode: "open",
+        focus: "terminal",
         notification: "blocked agent",
         help: "F5 palette · ^q quit",
       },
       24,
     );
-    expect(compact).toContain("Missions");
+    expect(compact).toContain("MISSION");
+    expect(compact).toContain("terminal");
     expect(compact.length).toBeLessThanOrEqual(24);
+
+    const wide = shellStatusLine(
+      "wide",
+      {
+        project: "project",
+        mode: "Terminals",
+        inputMode: "TERMINAL INPUT",
+        tool: "Changes",
+        dockMode: "open",
+        focus: "changes",
+        notification: "ready",
+        help: "F5 palette",
+      },
+      160,
+    );
+    expect(wide).toContain("Terminals · TERMINAL INPUT");
+    expect(wide).toContain("tool Changes/open");
+    expect(wide).toContain("focus changes");
   });
 });

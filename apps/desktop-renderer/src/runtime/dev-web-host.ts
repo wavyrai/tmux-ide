@@ -196,6 +196,7 @@ function shellEventsForEveryWorkspace(
 export function projectDaemonServerFrame(
   frame: DaemonEventServerFrame,
   catalog: readonly DevWorkspaceCatalogEntry[],
+  daemonInstanceId?: string,
 ): readonly DesktopDaemonEvent[] {
   switch (frame.type) {
     case "snapshot":
@@ -211,14 +212,28 @@ export function projectDaemonServerFrame(
       return [{ type: "fleet.changed" }];
     case "resource.changed":
       if (frame.resource === "application-shell") {
+        const changed = (workspaceName: string): DesktopDaemonEvent => ({
+          type: "application-shell.changed",
+          workspaceName,
+          ...(daemonInstanceId
+            ? {
+                daemonInstanceId,
+                sequence: frame.sequence,
+                revision: frame.revision,
+                causeOperationId: frame.causeOperationId,
+              }
+            : {}),
+        });
         return frame.workspaceName === null
-          ? shellEventsForEveryWorkspace(catalog)
+          ? catalog.map((entry) => changed(entry.workspaceName))
           : catalog.some((entry) => entry.workspaceName === frame.workspaceName)
-            ? [{ type: "application-shell.changed", workspaceName: frame.workspaceName }]
+            ? [changed(frame.workspaceName)]
             : [];
       }
       if (frame.resource === "fleet-catalog") return [{ type: "fleet.changed" }];
       return [{ type: "workspaces.changed" }];
+    case "interaction.receipt":
+      return catalog.some((entry) => entry.workspaceName === frame.workspaceName) ? [frame] : [];
     case "snapshot-required":
       return [{ type: "workspaces.changed" }, ...shellEventsForEveryWorkspace(catalog)];
     case "workspace.added":
@@ -580,6 +595,29 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           }
           if (frame.data.sequence <= (previousSequence ?? -1)) return;
         }
+        if (frame.data.type === "interaction.receipt") {
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "observed",
+            daemonInstanceId: requireIdentity().instanceId,
+            sequence: frame.data.sequence,
+          });
+          eventReplica = transition.state;
+          if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+            for (const mapped of projectDaemonServerFrame(
+              {
+                type: "snapshot-required",
+                afterSequence: Math.max(0, frame.data.sequence - 1),
+                oldestAvailableSequence: null,
+                currentSequence: frame.data.sequence,
+                reason: "journal-gap",
+              },
+              catalogCache,
+            ))
+              emit(mapped);
+            establishEventCursor(requireIdentity().instanceId, frame.data.sequence);
+            return;
+          }
+        }
         if (
           frame.data.type === "action.complete" &&
           resourceEventsSupported &&
@@ -587,7 +625,12 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         ) {
           return;
         }
-        for (const mapped of projectDaemonServerFrame(frame.data, catalogCache)) emit(mapped);
+        for (const mapped of projectDaemonServerFrame(
+          frame.data,
+          catalogCache,
+          requireIdentity().instanceId,
+        ))
+          emit(mapped);
       });
       next.addEventListener("close", (event) => {
         signal.removeEventListener("abort", dispose);

@@ -145,10 +145,10 @@ describe("DOM experience adapter", () => {
       "rgb(19 19 26)",
     );
     expect(dark.variables[DOM_EXPERIENCE_VARIABLE.control.disabledForeground]).toBe(
-      "rgb(123 123 138 / 0.55)",
+      "rgb(138 138 138 / 0.55)",
     );
     expect(dark.variables[DOM_EXPERIENCE_VARIABLE.control.disabledForegroundHighContrast]).toBe(
-      "rgb(123 123 138)",
+      "rgb(138 138 138)",
     );
     expect(dark.variables[DOM_EXPERIENCE_VARIABLE.motion.fast]).toBe("90ms");
   });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { resolve, join } from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { getSessionState } from "@tmux-ide/tmux-bridge";
@@ -12,6 +13,9 @@ import {
 } from "./widgets/lib/pane-comms.ts";
 import { IdeError } from "./lib/errors.ts";
 import { resolveProjectConfigContext } from "./lib/config-context.ts";
+import { tryDispatchAction } from "./lib/cli-action-bridge.ts";
+import { isCanonicalDaemonAlive, readCanonicalDaemonInfo } from "./lib/canonical-daemon.ts";
+import { getDefaultWorkspaceRegistry } from "./lib/workspace-registry.ts";
 
 export const LONG_MESSAGE_THRESHOLD = 150;
 
@@ -169,6 +173,111 @@ export function deliverMessage(opts: {
   };
 }
 
+function semanticPaneId(paneId: string): string | null {
+  try {
+    const value = execFileSync(
+      "tmux",
+      ["display-message", "-p", "-t", paneId, "#{@tmux_ide_pane_id}"],
+      { encoding: "utf8" },
+    ).trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prove that this CLI process is running inside a pane of the target session.
+ * TMUX_PANE is runtime identity supplied by tmux itself; the semantic stamp is
+ * then resolved from that exact pane. A CLI launched outside tmux, or from a
+ * different workspace, stays honestly source-less.
+ */
+export function cliSourceSemanticPaneId(
+  session: string,
+  runtimePaneId: string | undefined = process.env.TMUX_PANE,
+  readIdentity: (runtimePaneId: string) => string = (paneId) =>
+    execFileSync(
+      "tmux",
+      ["display-message", "-p", "-t", paneId, `#{session_name}\t#{${"@tmux_ide_pane_id"}}`],
+      { encoding: "utf8" },
+    ),
+): string | null {
+  if (!runtimePaneId) return null;
+  try {
+    const identity = readIdentity(runtimePaneId).trim();
+    const separator = identity.indexOf("\t");
+    if (separator < 1 || identity.slice(0, separator) !== session) return null;
+    return identity.slice(separator + 1) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Use the canonical daemon when it is already authoritative for the session.
+ * A lost response is deliberately an error instead of a direct-tmux fallback:
+ * the stable operation id may already have committed and delivering again
+ * outside authority would duplicate user input.
+ */
+async function deliverMessageThroughDaemon(opts: {
+  session: string;
+  target: string;
+  message: string;
+  noEnter?: boolean;
+  dir: string;
+}): Promise<DeliverResult | null> {
+  const daemon = readCanonicalDaemonInfo();
+  if (!daemon || !(await isCanonicalDaemonAlive(daemon))) return null;
+
+  const state = getSessionState(opts.session);
+  if (!state.running) {
+    throw new IdeError(`Session "${opts.session}" is not running`, { code: "SESSION_NOT_FOUND" });
+  }
+  const pane = resolvePane(listSessionPanes(opts.session), opts.target);
+  if (!pane) return null;
+  const paneStamp = semanticPaneId(pane.id);
+  if (!paneStamp) return null;
+
+  const registry = getDefaultWorkspaceRegistry();
+  await registry.load();
+  const workspace = registry.list().find((candidate) => candidate.sessionName === opts.session);
+  if (!workspace) return null;
+
+  const busyStatus = getPaneBusyStatus(opts.session, pane.id);
+  const prepared = prepareMessage(opts.message, busyStatus);
+  const dispatch = opts.noEnter ? null : writeDispatchFile(opts.dir, pane.id, prepared);
+  const actualText = dispatch?.triggerCmd ?? prepared;
+  const operationId = randomUUID();
+  const sourceSemanticPaneId = cliSourceSemanticPaneId(opts.session);
+  const outcome = await tryDispatchAction(
+    "workspace.pane.send",
+    {
+      workspaceName: workspace.name,
+      ...(sourceSemanticPaneId ? { sourceSemanticPaneId } : {}),
+      semanticPaneId: paneStamp,
+      text: actualText,
+      submit: !opts.noEnter,
+      origin: "cli",
+    },
+    { cwd: opts.dir, operationId, autostart: false },
+  );
+  if (!outcome) {
+    throw new IdeError(
+      `The daemon did not confirm pane input operation ${operationId}; delivery was not repeated.`,
+      { code: "DAEMON_UNAVAILABLE" },
+    );
+  }
+  return {
+    ok: true,
+    session: opts.session,
+    target: { paneId: pane.id, name: pane.name, title: pane.title, role: pane.role },
+    message: prepared,
+    busyStatus,
+    sentViaFile: dispatch !== null,
+    ...(busyStatus === "agent" ? { warning: "agent_busy" as const } : {}),
+  };
+}
+
 export async function send(targetDir: string | undefined, opts: SendOptions): Promise<void> {
   const dir = resolve(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
@@ -186,7 +295,9 @@ export async function send(targetDir: string | undefined, opts: SendOptions): Pr
     });
   }
 
-  const result = deliverMessage({ session, target, message: rawMessage, noEnter, dir });
+  const result =
+    (await deliverMessageThroughDaemon({ session, target, message: rawMessage, noEnter, dir })) ??
+    deliverMessage({ session, target, message: rawMessage, noEnter, dir });
   const { message, busyStatus } = result;
   const pane = result.target;
 

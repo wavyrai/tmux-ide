@@ -150,6 +150,8 @@ describe("HostCapabilities-backed daemon transport", () => {
       onClose: vi.fn(),
       onError: vi.fn(),
       onTransportStateChanged: vi.fn(),
+      onOperationAcknowledged: vi.fn(),
+      onInteractionReceipt: vi.fn(),
     };
     const connection = transport.connectEvents(
       { daemon: DAEMON, workspaceName: "product" },
@@ -160,7 +162,29 @@ describe("HostCapabilities-backed daemon transport", () => {
 
     publish?.({ type: "connection.changed", state: "live", error: null });
     publish?.({ type: "application-shell.changed", workspaceName: "another-workspace" });
-    publish?.({ type: "application-shell.changed", workspaceName: "product" });
+    publish?.({
+      type: "application-shell.changed",
+      workspaceName: "product",
+      daemonInstanceId: DAEMON.instanceId,
+      sequence: 9,
+      revision: 4,
+      causeOperationId: "10000000-0000-4000-8000-000000000001",
+    });
+    const interaction = {
+      type: "interaction.receipt" as const,
+      sequence: 10,
+      operationId: "10000000-0000-4000-8000-000000000002",
+      origin: "cli" as const,
+      workspaceName: "product",
+      sourceSemanticPaneId: null,
+      semanticPaneId: "pane.editor",
+      operationKind: "workspace.pane.send" as const,
+      phase: "applied" as const,
+      summary: { characterCount: 4, byteCount: 4, submitted: true },
+      at: "2026-08-10T10:00:00.000Z",
+      resourceRevision: null,
+    };
+    publish?.(interaction);
     publish?.({
       type: "connection.changed",
       state: "degraded",
@@ -180,6 +204,13 @@ describe("HostCapabilities-backed daemon transport", () => {
     });
     expect(handlers.onVerifiedOpen).toHaveBeenCalledOnce();
     expect(handlers.onInvalidate).toHaveBeenCalledOnce();
+    expect(handlers.onOperationAcknowledged).toHaveBeenCalledWith({
+      daemonInstanceId: DAEMON.instanceId,
+      operationId: "10000000-0000-4000-8000-000000000001",
+      sequence: 9,
+      revision: 4,
+    });
+    expect(handlers.onInteractionReceipt).toHaveBeenCalledWith(interaction);
     expect(handlers.onPeerMismatch).toHaveBeenCalledTimes(2);
 
     publish?.({

@@ -38,6 +38,9 @@ function isSurface(value: string | undefined): value is Surface {
 }
 
 async function main(): Promise<void> {
+  // Carries process entry time across the lazy surface import. The app's
+  // opt-in profiler turns this into phase timings without IO on normal runs.
+  process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ??= String(Date.now());
   const surface = process.argv[2];
 
   if (!isSurface(surface)) {

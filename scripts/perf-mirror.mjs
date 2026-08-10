@@ -41,6 +41,18 @@ const cfg = {
   warmupMs: num(process.env.PERF_WARMUP_MS, 5000),
 };
 
+// Deliberately generous cross-machine release ceilings. They catch algorithmic
+// regressions and blocked event loops without pretending microbenchmarks are
+// identical on every developer/CI host. Override only to tighten a local run.
+const budgets = {
+  feedFloodP95: num(process.env.PERF_BUDGET_FEED_FLOOD_P95_MS, 1),
+  feedAltP95: num(process.env.PERF_BUDGET_FEED_ALT_P95_MS, 1),
+  snapshotFloodP95: num(process.env.PERF_BUDGET_SNAPSHOT_FLOOD_P95_MS, 4),
+  snapshotAltP95: num(process.env.PERF_BUDGET_SNAPSHOT_ALT_P95_MS, 6),
+  inputEchoP95: num(process.env.PERF_BUDGET_INPUT_ECHO_P95_MS, 15),
+  inputPaintP95: num(process.env.PERF_BUDGET_INPUT_PAINT_P95_MS, 50),
+};
+
 function num(v, d) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : d;
@@ -234,6 +246,19 @@ function table(rows) {
   return [head, "  " + "-".repeat(head.length - 2), ...rows].join("\n");
 }
 
+function assertBudget(label, summary, p95Limit, minimumSamples) {
+  if (summary.count < minimumSamples) {
+    throw new Error(
+      `${label}: expected at least ${minimumSamples} samples, observed ${summary.count}`,
+    );
+  }
+  if (summary.p95 > p95Limit) {
+    throw new Error(
+      `${label}: p95 ${summary.p95.toFixed(2)}ms exceeds ${p95Limit.toFixed(2)}ms budget`,
+    );
+  }
+}
+
 function machineInfo() {
   const cpu = os.cpus()[0]?.model ?? "unknown";
   let tmuxV = "unknown";
@@ -281,19 +306,39 @@ async function main() {
   process.stdout.write("  running ALT-SCREEN…\n\n");
   const alt = await scenarioAlt();
 
+  const summaries = {
+    idleFeed: summarize(idle.feed),
+    floodFeed: summarize(flood.feed),
+    altFeed: summarize(alt.feed),
+    idleSnapshot: summarize(idle.snap),
+    floodSnapshot: summarize(flood.snap),
+    altSnapshot: summarize(alt.snap),
+    inputEcho: summarize(input.echo),
+    inputPaint: summarize(input.paint),
+  };
   const rows = [
-    row("feed-parse ms/chunk [idle]", summarize(idle.feed)),
-    row("feed-parse ms/chunk [flood]", summarize(flood.feed)),
-    row("feed-parse ms/chunk [alt]", summarize(alt.feed)),
-    row("snapshot ms/tick [idle]", summarize(idle.snap)),
-    row("snapshot ms/tick [flood]", summarize(flood.snap)),
-    row("snapshot ms/tick [alt]", summarize(alt.snap)),
-    row("input echo ms (t1-t0)", summarize(input.echo)),
-    row("input paint ms (t2-t0)", summarize(input.paint)),
+    row("feed-parse ms/chunk [idle]", summaries.idleFeed),
+    row("feed-parse ms/chunk [flood]", summaries.floodFeed),
+    row("feed-parse ms/chunk [alt]", summaries.altFeed),
+    row("snapshot ms/tick [idle]", summaries.idleSnapshot),
+    row("snapshot ms/tick [flood]", summaries.floodSnapshot),
+    row("snapshot ms/tick [alt]", summaries.altSnapshot),
+    row("input echo ms (t1-t0)", summaries.inputEcho),
+    row("input paint ms (t2-t0)", summaries.inputPaint),
   ];
   process.stdout.write(table(rows) + "\n");
 
-  return { info, rows };
+  const streamMinimum = Math.max(10, Math.floor(cfg.floodMs / 250));
+  const inputMinimum = Math.max(10, Math.floor(cfg.keys * 0.8));
+  assertBudget("flood feed parse", summaries.floodFeed, budgets.feedFloodP95, streamMinimum);
+  assertBudget("alt-screen feed parse", summaries.altFeed, budgets.feedAltP95, streamMinimum);
+  assertBudget("flood snapshot", summaries.floodSnapshot, budgets.snapshotFloodP95, streamMinimum);
+  assertBudget("alt-screen snapshot", summaries.altSnapshot, budgets.snapshotAltP95, streamMinimum);
+  assertBudget("input echo", summaries.inputEcho, budgets.inputEchoP95, inputMinimum);
+  assertBudget("input paint", summaries.inputPaint, budgets.inputPaintP95, inputMinimum);
+  process.stdout.write("\n  budgets: all p95 latency and sample-count gates passed.\n");
+
+  return { info, rows, summaries, budgets };
 }
 
 let exitCode = 0;

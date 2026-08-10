@@ -2,6 +2,78 @@ import { describe, expect, it } from "vitest";
 import { DaemonEventClientFrameSchemaZ, DaemonEventServerFrameSchemaZ } from "../daemon-events.ts";
 
 describe("daemon event contracts", () => {
+  it("accepts strict privacy-safe interaction receipts and rejects literal input", () => {
+    const receipt = {
+      type: "interaction.receipt",
+      sequence: 8,
+      operationId: "10000000-0000-4000-8000-000000000001",
+      origin: "sdk",
+      workspaceName: "workspace.alpha",
+      sourceSemanticPaneId: null,
+      semanticPaneId: "pane.editor",
+      operationKind: "workspace.pane.send",
+      phase: "applied",
+      summary: { characterCount: 14, byteCount: 14, submitted: true },
+      at: "2026-08-10T10:00:00.000Z",
+      resourceRevision: null,
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(receipt)).toEqual(receipt);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ ...receipt, text: "private prompt" }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        ...receipt,
+        summary: { ...receipt.summary, prefix: "private" },
+      }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        ...receipt,
+        origin: "external",
+        operationKind: "workspace.pane.read",
+        phase: "observed",
+        summary: { observedOnly: true },
+      }).success,
+    ).toBe(true);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        ...receipt,
+        operationKind: "workspace.pane.read",
+        summary: receipt.summary,
+      }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        ...receipt,
+        origin: "external",
+        phase: "observed",
+        summary: { observedOnly: true },
+      }).success,
+    ).toBe(true);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        ...receipt,
+        origin: "external",
+        sourceSemanticPaneId: "pane.source",
+        phase: "observed",
+        summary: { observedOnly: true },
+      }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        ...receipt,
+        sourceSemanticPaneId: "pane.source",
+        phase: "accepted",
+      }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        ...receipt,
+        summary: { observedOnly: true, characterCount: 14 },
+      }).success,
+    ).toBe(false);
+  });
   const daemon = {
     protocolVersion: 1,
     productVersion: "2.8.0",

@@ -26,6 +26,7 @@ import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
 import {
   DaemonEventClientFrameSchemaZ,
   DaemonEventResourceChangedFrameSchemaZ,
+  InteractionReceiptSchemaZ,
   TerminalAttachmentSemanticPaneIdSchemaZ,
   type DaemonEventAgentTurnCompletedFrame,
   type DaemonEventClientFrame,
@@ -34,6 +35,9 @@ import {
   type DaemonEventServerFrame,
   type DaemonEventWorkspacePromotionCompletedFrame,
   type DaemonInstanceIdentity,
+  type InteractionReceipt,
+  type InteractionOrigin,
+  type InteractionSafeSummary,
   type DaemonSessionSnapshot,
   type Workspace,
 } from "@tmux-ide/contracts";
@@ -68,13 +72,15 @@ interface ClientHandle {
   broadcastWorkspacePromotionCompleted(frame: DaemonEventWorkspacePromotionCompletedFrame): void;
   broadcastFleetChanged(): void;
   broadcastResourceChanged(frame: DaemonEventResourceChangedFrame): void;
+  broadcastInteractionReceipt(frame: InteractionReceipt): void;
 }
 const allClients = new Set<ClientHandle>();
 
 const RESOURCE_EVENT_JOURNAL_LIMIT = 256;
 let resourceEventGeneration: string | null = null;
 let resourceEventSequence = 0;
-let resourceEventJournal: DaemonEventResourceChangedFrame[] = [];
+type ReplayableDaemonEventFrame = DaemonEventResourceChangedFrame | InteractionReceipt;
+let resourceEventJournal: ReplayableDaemonEventFrame[] = [];
 const resourceRevisions = new Map<string, number>();
 
 function useResourceEventGeneration(instanceId: string): void {
@@ -132,6 +138,48 @@ export function broadcastResourceChanged(
     resourceEventJournal.splice(0, resourceEventJournal.length - RESOURCE_EVENT_JOURNAL_LIMIT);
   }
   for (const client of allClients) client.broadcastResourceChanged(frame);
+  return frame;
+}
+
+export interface InteractionReceiptBroadcast {
+  readonly operationId: string;
+  readonly origin: InteractionOrigin;
+  readonly workspaceName: string;
+  readonly sourceSemanticPaneId?: string | null;
+  readonly semanticPaneId: string;
+  readonly operationKind?: InteractionReceipt["operationKind"];
+  readonly phase: InteractionReceipt["phase"];
+  readonly summary: InteractionSafeSummary;
+  readonly resourceRevision?: number | null;
+  readonly at?: string;
+}
+
+/** Record and fan out one privacy-safe interaction receipt on the shared journal. */
+export function broadcastInteractionReceipt(
+  receipt: InteractionReceiptBroadcast,
+  daemonInstanceId: string,
+): InteractionReceipt {
+  useResourceEventGeneration(daemonInstanceId);
+  const frame = InteractionReceiptSchemaZ.parse({
+    type: "interaction.receipt",
+    sequence: resourceEventSequence + 1,
+    operationId: receipt.operationId,
+    origin: receipt.origin,
+    workspaceName: receipt.workspaceName,
+    sourceSemanticPaneId: receipt.sourceSemanticPaneId ?? null,
+    semanticPaneId: receipt.semanticPaneId,
+    operationKind: receipt.operationKind ?? "workspace.pane.send",
+    phase: receipt.phase,
+    summary: receipt.summary,
+    at: receipt.at ?? new Date().toISOString(),
+    resourceRevision: receipt.resourceRevision ?? null,
+  });
+  resourceEventSequence = frame.sequence;
+  resourceEventJournal.push(frame);
+  if (resourceEventJournal.length > RESOURCE_EVENT_JOURNAL_LIMIT) {
+    resourceEventJournal.splice(0, resourceEventJournal.length - RESOURCE_EVENT_JOURNAL_LIMIT);
+  }
+  for (const client of allClients) client.broadcastInteractionReceipt(frame);
   return frame;
 }
 
@@ -432,6 +480,10 @@ export function handleWsEventsConnection(
     send(frame);
   };
 
+  const broadcastInteractionReceiptForClient = (frame: InteractionReceipt): void => {
+    send(frame);
+  };
+
   // Per-connection subscription to the current workspace-registry singleton.
   const workspaceRegistry = getDefaultWorkspaceRegistry();
   const unsubWorkspaceAdded = workspaceRegistry.on("workspace.added", (workspace) =>
@@ -454,6 +506,7 @@ export function handleWsEventsConnection(
     broadcastWorkspacePromotionCompleted: broadcastWorkspacePromotionCompletedForClient,
     broadcastFleetChanged: broadcastFleetChangedForClient,
     broadcastResourceChanged: broadcastResourceChangedForClient,
+    broadcastInteractionReceipt: broadcastInteractionReceiptForClient,
   };
   allClients.add(clientHandle);
   ensureSessionsPoller();

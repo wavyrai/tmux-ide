@@ -6,6 +6,7 @@ import {
   type DesktopDaemonWorkspaceSummary,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
+import { reconcileWorkspaceSelection } from "@tmux-ide/core";
 
 import {
   createDaemonCatalogAdapter,
@@ -243,8 +244,12 @@ export function createDesktopWorkspaceCatalogStore(
       suppressAutomaticSelection = true;
     }
     if (pendingSelection !== null) {
-      if (names.has(pendingSelection.workspaceName)) {
-        selectedWorkspaceName = pendingSelection.workspaceName;
+      const resolved = reconcileWorkspaceSelection({
+        liveWorkspaceIds: workspaces.map(({ workspaceName }) => workspaceName),
+        persistedWorkspaceId: pendingSelection.workspaceName,
+      });
+      if (resolved.workspaceId !== null) {
+        selectedWorkspaceName = resolved.workspaceId;
         selectedReason = pendingSelection.source;
         pendingSelection = null;
         suppressAutomaticSelection = false;
@@ -255,7 +260,14 @@ export function createDesktopWorkspaceCatalogStore(
       suppressAutomaticSelection = true;
     }
     if (workspaces.length === 1 && !suppressAutomaticSelection) {
-      selectedWorkspaceName = workspaces[0]!.workspaceName;
+      selectedWorkspaceName = reconcileWorkspaceSelection({
+        liveWorkspaceIds: workspaces.map(({ workspaceName }) => workspaceName),
+        fallback: "only-live",
+      }).workspaceId;
+      if (selectedWorkspaceName === null) {
+        unselectedReason = "no-live-workspaces";
+        return selectionWithoutWorkspace(workspaces.length, unselectedReason);
+      }
       selectedReason = "only-live-workspace";
       return { view: "workspace", workspaceName: selectedWorkspaceName, reason: selectedReason };
     }

@@ -20,6 +20,9 @@ import {
   ApplicationShellResourceSchemaZ,
 } from "./application-shell-resource.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
+import { InteractionReceiptSchemaZ } from "./interaction-receipts.ts";
+import { DesktopWorkspaceNameSchemaZ } from "./desktop-workspace-name.ts";
+export { DesktopWorkspaceNameSchemaZ } from "./desktop-workspace-name.ts";
 import { CommandAvailabilitySchemaZ } from "./commands.ts";
 import type { DesktopUpdateStatus } from "./desktop-update.ts";
 import {
@@ -168,20 +171,6 @@ export const DesktopDaemonCapabilityStateSchemaZ = z.discriminatedUnion("status"
     .strict(),
   z.object({ status: z.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict(),
 ]);
-
-export const DesktopWorkspaceNameSchemaZ = z
-  .string()
-  .trim()
-  .min(1)
-  .max(160)
-  .refine(
-    (value) =>
-      [...value].every((character) => {
-        const code = character.charCodeAt(0);
-        return code >= 32 && code !== 127;
-      }),
-    "workspace name contains control characters",
-  );
 
 export const DesktopDaemonCapabilityErrorCodeSchemaZ = z.enum([
   "preview-only",
@@ -407,8 +396,14 @@ export const DesktopDaemonEventSchemaZ = z.discriminatedUnion("type", [
     .object({
       type: z.literal("application-shell.changed"),
       workspaceName: DesktopWorkspaceNameSchemaZ,
+      /** Present for ordered v2 resource events; absent for legacy invalidations. */
+      daemonInstanceId: z.uuid().optional(),
+      sequence: z.number().int().nonnegative().optional(),
+      revision: z.number().int().nonnegative().optional(),
+      causeOperationId: z.uuid().nullable().optional(),
     })
     .strict(),
+  InteractionReceiptSchemaZ,
   z
     .object({
       type: z.literal("connection.changed"),

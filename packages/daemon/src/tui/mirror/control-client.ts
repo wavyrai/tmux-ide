@@ -50,6 +50,12 @@ export class ControlModeClient {
   private proc: ChildProcess | null = null;
   private readonly pending: Pending[] = [];
   private inReply = false;
+  /** tmux's initial greeting is an unsolicited flags=0 reply. Later flags=0
+   *  blocks are server-side hook commands and must never spend a client-command
+   *  FIFO slot (after-capture-pane/after-send-keys otherwise desynchronise every
+   *  request following them). */
+  private awaitingGreeting = true;
+  private currentReplyConsumesPending = false;
   private buffer = "";
   private discardedErrors = 0;
   private readonly opts: ControlClientOptions;
@@ -91,6 +97,25 @@ export class ControlModeClient {
     if (!proc?.stdin?.writable) return Promise.reject(new Error("control client not running"));
     return new Promise((resolve, reject) => {
       this.pending.push({ resolve, reject, lines: [] });
+      proc.stdin!.write(`${cmd}\n`);
+    });
+  }
+
+  /**
+   * Run one atomic tmux command-list and select one of its reply blocks.
+   * tmux emits one block per command even though the list arrives on one input
+   * line, so every block must have a FIFO sink before the write begins.
+   */
+  commandList(cmd: string, replyCount: number, resultIndex: number): Promise<string[]> {
+    const proc = this.proc;
+    if (!proc?.stdin?.writable) return Promise.reject(new Error("control client not running"));
+    if (replyCount < 1 || resultIndex < 0 || resultIndex >= replyCount) {
+      return Promise.reject(new Error("invalid control command-list reply selection"));
+    }
+    return new Promise((resolve, reject) => {
+      for (let index = 0; index < replyCount; index++) {
+        this.pending.push(index === resultIndex ? { resolve, reject, lines: [] } : DISCARDED);
+      }
       proc.stdin!.write(`${cmd}\n`);
     });
   }
@@ -171,9 +196,10 @@ export class ControlModeClient {
     switch (event.kind) {
       case "begin":
         this.inReply = true;
+        this.currentReplyConsumesPending = this.awaitingGreeting || event.flags !== 0;
         break;
       case "reply-line": {
-        const head = this.pending[0];
+        const head = this.currentReplyConsumesPending ? this.pending[0] : undefined;
         // Discarded (fire-and-forget) replies skip body collection entirely —
         // unless the debug placeholder brought its own lines buffer.
         if (head) head.lines?.push(event.line);
@@ -182,6 +208,12 @@ export class ControlModeClient {
       case "end":
       case "error": {
         this.inReply = false;
+        if (!this.currentReplyConsumesPending) {
+          this.currentReplyConsumesPending = false;
+          break;
+        }
+        this.currentReplyConsumesPending = false;
+        this.awaitingGreeting = false;
         const reply = this.pending.shift();
         if (!reply) break; // unsolicited block (e.g. greeting after a race)
         if (reply.discard) {

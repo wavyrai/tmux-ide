@@ -3,6 +3,7 @@ import { createMemo, For } from "solid-js";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { PaneFrame } from "./pane-frame.tsx";
 import type {
+  TerminalPaneCommunicationRole,
   TerminalPaneChromeLayout,
   TerminalPaneChromeProjection,
 } from "./terminal-pane-chrome.ts";
@@ -11,6 +12,47 @@ export interface SharedTerminalPaneChromeLayerProps {
   theme: SemanticThemeSnapshot;
   layout: TerminalPaneChromeLayout;
   layer: "native" | "framebuffer";
+}
+
+function communicationColor(theme: SemanticThemeSnapshot, role: TerminalPaneCommunicationRole) {
+  return role.startsWith("read") ? theme.roles.statusTone.info : theme.roles.statusTone.success;
+}
+
+function communicationGlyph(
+  role: TerminalPaneCommunicationRole,
+  orientation: "horizontal" | "vertical",
+) {
+  const target = role.endsWith("target");
+  if (orientation === "horizontal") return target ? "━" : "┄";
+  return target ? "┃" : "┊";
+}
+
+export function TerminalPaneCommunicationLayer(props: {
+  theme: SemanticThemeSnapshot;
+  layout: TerminalPaneChromeLayout;
+}) {
+  return (
+    <For each={props.layout.communication}>
+      {(segment) => (
+        <box
+          position="absolute"
+          left={segment.rect.x}
+          top={segment.rect.y}
+          width={segment.rect.width}
+          height={segment.rect.height}
+          overflow="hidden"
+        >
+          <text fg={communicationColor(props.theme, segment.role)}>
+            {segment.orientation === "horizontal"
+              ? communicationGlyph(segment.role, "horizontal").repeat(segment.rect.width)
+              : Array(segment.rect.height)
+                  .fill(communicationGlyph(segment.role, "vertical"))
+                  .join("\n")}
+          </text>
+        </box>
+      )}
+    </For>
+  );
 }
 
 function sameIds(left: readonly string[], right: readonly string[]): boolean {
@@ -51,7 +93,11 @@ export function SharedTerminalPaneChromeLayer(props: SharedTerminalPaneChromeLay
             height={pane().layerRect.height}
             overflow="hidden"
           >
-            <PaneFrame theme={props.theme} projection={frame()} />
+            <PaneFrame
+              theme={props.theme}
+              projection={frame()}
+              communicationRole={pane().communication?.role}
+            />
           </box>
         );
       }}

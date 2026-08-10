@@ -114,7 +114,7 @@ describe("seed recipe (the FIFO seam)", () => {
     const alpha = collect();
     channel.subscribePane("pane.alpha", alpha.onEvent);
     // The two probes left back-to-back.
-    const capture = sim.written.filter((cmd) => cmd.startsWith("capture-pane"));
+    const capture = sim.written.filter((cmd) => cmd.includes("capture-pane"));
     expect(capture).toHaveLength(1);
     expect(capture[0]).toContain("-t %1");
     expect(sim.written.some((cmd) => cmd.startsWith("display-message -p -t %1"))).toBe(true);

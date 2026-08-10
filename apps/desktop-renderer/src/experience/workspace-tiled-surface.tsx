@@ -28,6 +28,11 @@
  */
 import { Index, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { SemanticIconId } from "@tmux-ide/contracts";
+import {
+  INTERACTION_PRESENCE_MS,
+  paneInteractionRelationshipLabel,
+  type PaneInteractionProjection,
+} from "@tmux-ide/core";
 
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
@@ -56,6 +61,7 @@ import {
   beginWorkspacePaneDrag,
   beginWorkspacePaneResize,
   cancelWorkspacePaneManipulation,
+  commitWorkspacePaneDragPreview,
   createWorkspacePaneIdle,
   finishWorkspacePaneManipulation,
   flushWorkspacePaneResizeWire,
@@ -85,6 +91,34 @@ type PaneManipulationPhase =
  * the GUI announced a rollback just before the confirming frame arrived.
  */
 const MANIPULATION_CONFIRM_TIMEOUT_MS = 5_000;
+/** A communication stays legible without turning rapid agent traffic into noise. */
+export const PANE_COMMUNICATION_HIGHLIGHT_MS = INTERACTION_PRESENCE_MS;
+
+export function paneCommunicationCopy(
+  interaction: PaneInteractionProjection,
+  paneLabel: (semanticPaneId: string) => string = (semanticPaneId) => semanticPaneId,
+): {
+  readonly headline: string;
+  readonly detail: string;
+} {
+  const relationship = paneInteractionRelationshipLabel(interaction, paneLabel);
+  if (interaction.phase === "failed") {
+    return { headline: "Delivery failed", detail: relationship };
+  }
+  if (interaction.phase === "accepted") {
+    return { headline: "Sending to pane…", detail: relationship };
+  }
+  if (interaction.origin === "external" || interaction.phase === "observed") {
+    return {
+      headline: relationship,
+      detail:
+        interaction.operationKind === "workspace.pane.read"
+          ? "tmux capture-pane"
+          : "tmux send-keys",
+    };
+  }
+  return { headline: relationship, detail: interaction.label };
+}
 
 /**
  * Return the stable pixels occupied by xterm's grid, excluding viewport
@@ -141,6 +175,9 @@ export interface WorkspaceTiledSurfaceProps {
   readonly transport?: NativeTerminalTransport | null;
   /** Pane chrome models by semantic pane id, for status glyphs. */
   readonly paneFrames: readonly PaneFrameModel[];
+  readonly paneInteractions?: Readonly<Record<string, PaneInteractionProjection>>;
+  /** Latest shared receipt sequence; drives one transient destination highlight. */
+  readonly interactionSequence?: number;
   /**
    * Titles by semantic pane id, from the daemon's terminal inventory.
    *
@@ -275,33 +312,44 @@ function samePaneGeometry(
   );
 }
 
-function transformedRectForResize(
-  rect: TileRect,
-  state: WorkspacePaneResize,
-  preview: Extract<WorkspacePanePreview, { readonly kind: "resize" }>,
-): TileRect {
-  const vertical = state.border.orientation === "vertical";
-  const total = vertical ? state.snapshot.frame.cols : state.snapshot.frame.rows;
-  const delta = preview.movedCells / total;
-  const boundary = vertical ? state.border.rect.left : state.border.rect.top;
-  const epsilon = 1 / Math.max(1, total * 2);
-  if (vertical) {
-    const right = rect.left + rect.width;
-    if (Math.abs(right - boundary) <= epsilon) return { ...rect, width: rect.width + delta };
-    if (Math.abs(rect.left - boundary) <= epsilon) {
-      return { ...rect, left: rect.left + delta, width: rect.width - delta };
-    }
-    return rect;
-  }
-  const bottom = rect.top + rect.height;
-  if (Math.abs(bottom - boundary) <= epsilon) return { ...rect, height: rect.height + delta };
-  if (Math.abs(rect.top - boundary) <= epsilon) {
-    return { ...rect, top: rect.top + delta, height: rect.height - delta };
-  }
-  return rect;
-}
-
 export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
+  const [terminalFocusRequest, setTerminalFocusRequest] = createSignal(0);
+  const [highlightedInteractionSequence, setHighlightedInteractionSequence] = createSignal(0);
+  const mirrorSelections = new Map<string, string>();
+  let selectedMirrorPane: string | null = null;
+  let communicationTimer: ReturnType<typeof setTimeout> | null = null;
+  let observedInteractionSequence = 0;
+
+  createEffect(() => {
+    const sequence = props.interactionSequence ?? 0;
+    if (sequence <= observedInteractionSequence) return;
+    observedInteractionSequence = sequence;
+    setHighlightedInteractionSequence(sequence);
+    if (communicationTimer !== null) clearTimeout(communicationTimer);
+    communicationTimer = setTimeout(() => {
+      communicationTimer = null;
+      setHighlightedInteractionSequence(0);
+    }, PANE_COMMUNICATION_HIGHLIGHT_MS);
+  });
+  onCleanup(() => {
+    if (communicationTimer !== null) clearTimeout(communicationTimer);
+  });
+
+  const updateMirrorSelection = (pane: string, selection: string): void => {
+    if (selection.length === 0) mirrorSelections.delete(pane);
+    else {
+      mirrorSelections.set(pane, selection);
+      selectedMirrorPane = pane;
+    }
+  };
+
+  const copyMirrorSelection = (event: ClipboardEvent): void => {
+    if (!selectedMirrorPane) return;
+    const selection = mirrorSelections.get(selectedMirrorPane);
+    if (!selection || !event.clipboardData) return;
+    event.clipboardData.setData("text/plain", selection);
+    event.preventDefault();
+  };
   /**
    * The windows tmux still has.
    *
@@ -581,9 +629,26 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     // shell chrome, so its cancellation contract must run in capture before
     // terminal key handling can stop propagation.
     window.addEventListener("keydown", onManipulationKeyDown, { capture: true });
-    onCleanup(() =>
-      window.removeEventListener("keydown", onManipulationKeyDown, { capture: true }),
-    );
+    const cancelInterruptedPointerGesture = (): void => {
+      const currentPhase = phase();
+      if (
+        currentPhase === "dragging" ||
+        currentPhase === "drop-ready" ||
+        currentPhase === "resize-preview"
+      ) {
+        cancelManipulation();
+      }
+    };
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === "hidden") cancelInterruptedPointerGesture();
+    };
+    window.addEventListener("blur", cancelInterruptedPointerGesture);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onManipulationKeyDown, { capture: true });
+      window.removeEventListener("blur", cancelInterruptedPointerGesture);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    });
   }
 
   const currentGridBox = () => {
@@ -720,7 +785,14 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       }
       return;
     }
-    const updated = updateWorkspacePaneManipulation(state, pointerSample(event));
+    /*
+     * Pointer feedback is renderer-local. A verified daemon mutation per sample
+     * made the browser trail the TUI and caused layout/xterm work to queue behind
+     * the pointer. Release emits the one durable resize command below.
+     */
+    const updated = updateWorkspacePaneManipulation(state, pointerSample(event), {
+      wireResize: false,
+    });
     if (updated.ignored) return;
     setManipulation(updated.state);
     setLocalPreview(updated.preview);
@@ -743,12 +815,18 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     // The release coordinate is authoritative even when no pointermove landed
     // in that frame. Preview it without adopting its wire bookkeeping; finish
     // still compares against commands that were actually dispatched.
-    const preview = updateWorkspacePaneManipulation(state, releaseSample).preview;
+    const released = updateWorkspacePaneManipulation(state, releaseSample, {
+      wireResize: false,
+    });
+    const preview = released.preview;
     const finished = finishWorkspacePaneManipulation(state, releaseSample);
     if (finished.ignored || !finished.completion) return;
     clearResizeWireTimer();
-    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
     setManipulation(finished.state);
+    // Retire the transaction before releasing capture. `lostpointercapture`
+    // can fire synchronously in some engines; seeing the idle state keeps that
+    // cleanup signal from re-entering cancellation during a valid commit.
+    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
     dispatchResize(finished.wire);
 
     if (
@@ -762,8 +840,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       return;
     }
     if (finished.completion.kind === "swap") {
-      setCommittingState(state);
-      setCommittingPreview(preview);
+      const releasedDrag = released.state as WorkspacePaneDrag;
+      setCommittingState(releasedDrag);
+      setCommittingPreview(commitWorkspacePaneDragPreview(releasedDrag));
       setPhase("swap-committing");
       beginCommitTimeout();
       Promise.resolve(
@@ -791,8 +870,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     );
     if (cancelled.ignored) return;
     clearResizeWireTimer();
-    if (event) (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
     setManipulation(cancelled.state);
+    if (event) (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
     dispatchResize(cancelled.wire);
     settle(cancelled.completion?.kind === "cancelled" ? cancelled.completion.rolledBack : false);
   }
@@ -839,22 +918,27 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     const preview = displayPreview();
     return preview?.kind === "drag" ? preview : null;
   });
+  const pointerDragActive = createMemo(() => phase() === "dragging" || phase() === "drop-ready");
+  const pointerResizeActive = createMemo(() => phase() === "resize-preview");
   const displayState = createMemo(() => committingState() ?? manipulation());
   const displayTiles = createMemo(() => {
     const state = displayState();
-    return state && state.kind !== "idle" ? state.snapshot.tiles : tiles();
+    const visible = state && state.kind !== "idle" ? state.snapshot.tiles : tiles();
+    /*
+     * <Index> preserves DOM nodes by position, so its input must have an
+     * identity-stable order. tmux is free to restate panes in geometry order
+     * after a swap; feeding that order through would make an existing tile DOM
+     * node suddenly represent another pane, including its terminal renderer.
+     * Canonical pane order keeps a resize/swap as a style update on the same
+     * node — the same invariant tmuxy's PaneLayout enforces with stable keys.
+     */
+    return [...visible].sort((left, right) => left.pane.localeCompare(right.pane));
   });
   const displayBorders = createMemo(() => {
     const state = displayState();
-    return state && state.kind !== "idle" ? state.snapshot.borders : borders();
+    const visible = state && state.kind !== "idle" ? state.snapshot.borders : borders();
+    return [...visible].sort((left, right) => left.id.localeCompare(right.id));
   });
-  const rectForTile = (tile: ReturnType<typeof layoutTiles>[number]): TileRect => {
-    const state = displayState();
-    const preview = displayPreview();
-    return state?.kind === "resize" && preview?.kind === "resize"
-      ? transformedRectForResize(tile.rect, state, preview)
-      : tile.rect;
-  };
   const placementFor = (pane: string) =>
     displayPreview()?.placements.find((placement) => placement.pane === pane);
   const activeResize = createMemo<WorkspacePaneResize | null>(() => {
@@ -880,18 +964,32 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   };
   onCleanup(stopLayoutAnimations);
 
-  const paneLayoutSnapshot = (): readonly PaneLayoutSnapshot[] =>
-    [...(overlayElement?.querySelectorAll<HTMLElement>(".pane-tile[data-pane]") ?? [])].map(
-      (element) => {
-        const rect = element.getBoundingClientRect();
-        const pane = element.dataset.pane ?? "";
-        return {
-          pane,
-          title: titleFor(pane),
-          rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
-        };
+  const paneLayoutSnapshot = (): readonly PaneLayoutSnapshot[] => {
+    const overlayRect = overlayElement?.getBoundingClientRect();
+    if (!overlayRect) return [];
+
+    /*
+     * Snapshot authoritative layout coordinates, never painted DOM boxes.
+     *
+     * `getBoundingClientRect()` includes an in-flight CSS/WAAPI transform. A
+     * layout event that landed while the prior FLIP was settling therefore
+     * mistook an interpolated visual box for a new tmux position and started a
+     * second FLIP. This is the source of the visible swap -> revert -> swap
+     * sequence. Tile fractions are the untransformed tmux geometry, so repeated
+     * equivalent frames remain equivalent regardless of what the compositor is
+     * currently painting.
+     */
+    return tiles().map((tile) => ({
+      pane: tile.pane,
+      title: titleFor(tile.pane),
+      rect: {
+        left: overlayRect.left + tile.rect.left * overlayRect.width,
+        top: overlayRect.top + tile.rect.top * overlayRect.height,
+        width: tile.rect.width * overlayRect.width,
+        height: tile.rect.height * overlayRect.height,
       },
-    );
+    }));
+  };
 
   const paneTileElement = (pane: string): HTMLElement | undefined =>
     [...(overlayElement?.querySelectorAll<HTMLElement>(".pane-tile[data-pane]") ?? [])].find(
@@ -1074,7 +1172,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     if (moved.state.kind !== "drag" || moved.preview.kind !== "drag") return;
     setManipulation(createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }));
     setCommittingState(moved.state);
-    setCommittingPreview(moved.preview);
+    setCommittingPreview(commitWorkspacePaneDragPreview(moved.state));
     setPhase("swap-committing");
     beginCommitTimeout();
     Promise.resolve(
@@ -1266,6 +1364,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
           const active = tiles().find((tile) => tile.active)?.pane;
           if (pane && pane !== active) props.verbs.invoke("pane.select", pane);
         }}
+        onCopy={copyMirrorSelection}
       >
         <Show
           when={attachPane()}
@@ -1286,6 +1385,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               title={titleFor(semanticPaneId())}
               transport={props.transport}
               focused
+              focusRequest={terminalFocusRequest()}
               /*
                * THE GEOMETRY OWNER (m50.2, gap 1).
                *
@@ -1322,19 +1422,36 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         <div class="tiled-pane-area__overlay" ref={(element) => (overlayElement = element)}>
           <Index each={displayTiles()}>
             {(tile) => {
-              const rect = createMemo(() => rectForTile(tile()));
+              const rect = createMemo(() => tile().rect);
               const placement = createMemo(() => placementFor(tile().pane));
               const compositorNode = createMemo(() => compositorNodes().get(tile().pane));
+              const interaction = createMemo(() => props.paneInteractions?.[tile().pane] ?? null);
+              const communicationActive = createMemo(
+                () =>
+                  interaction()?.sequence === highlightedInteractionSequence() &&
+                  highlightedInteractionSequence() > 0,
+              );
+
               return (
                 <div
                   class="pane-tile"
                   data-pane={tile().pane}
                   data-active={tile().active}
-                  data-drop-target={dragPreview()?.targetPane === tile().pane ? "true" : undefined}
+                  data-drop-target={
+                    pointerDragActive() && dragPreview()?.targetPane === tile().pane
+                      ? "true"
+                      : undefined
+                  }
                   data-elevated={placement()?.elevated ?? false}
                   data-ending={endingPanes().has(tile().pane) ? "true" : undefined}
                   data-identity-icon={iconIdFor(tile().pane)}
                   data-composed={Boolean(compositorNode())}
+                  data-interaction-phase={interaction()?.phase}
+                  data-interaction-sequence={interaction()?.sequence}
+                  data-communication-active={communicationActive() ? "true" : undefined}
+                  data-communication-direction={
+                    communicationActive() ? interaction()?.direction : undefined
+                  }
                   style={{
                     left: percent(rect().left),
                     top: percent(rect().top),
@@ -1352,6 +1469,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                     icon={iconFor(tile().pane)}
                     iconId={iconIdFor(tile().pane)}
                     status={frameFor(tile().pane)?.status ?? null}
+                    interaction={interaction()}
+                    interactionActive={communicationActive()}
                     active={tile().active}
                     composed={Boolean(compositorNode())}
                     /*
@@ -1374,16 +1493,59 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                         desiredZoom: currentFrame()?.zoomed ? "unzoomed" : "zoomed",
                       })
                     }
-                    dragging={dragPreview()?.sourcePane === tile().pane}
+                    dragging={pointerDragActive() && dragPreview()?.sourcePane === tile().pane}
                     onPointerDown={(event) => beginPaneDrag(tile().pane, event)}
                     onPointerMove={moveManipulation}
                     onPointerUp={finishManipulation}
                     onPointerCancel={(event) => cancelManipulation(event)}
                     onKeyboardSwap={(key) => keyboardSwap(tile().pane, key)}
                   />
+                  <Show when={communicationActive() && interaction()}>
+                    {(activeInteraction) => {
+                      const copy = createMemo(() =>
+                        paneCommunicationCopy(activeInteraction(), titleFor),
+                      );
+                      return (
+                        <span
+                          class="pane-tile__communication"
+                          data-phase={activeInteraction().phase}
+                          data-direction={activeInteraction().direction}
+                          role={activeInteraction().direction === "incoming" ? "status" : undefined}
+                          aria-live={
+                            activeInteraction().direction === "incoming" ? "polite" : undefined
+                          }
+                          aria-hidden={
+                            activeInteraction().direction === "outgoing" ? "true" : undefined
+                          }
+                        >
+                          <i aria-hidden="true">
+                            {activeInteraction().direction === "outgoing" ? "↗" : "↘"}
+                          </i>
+                          <span>
+                            <strong>{copy().headline}</strong>
+                            <small>{copy().detail}</small>
+                          </span>
+                        </span>
+                      );
+                    }}
+                  </Show>
                   <Show when={compositorNode()}>
                     {(node) => (
-                      <div class="pane-tile__body" aria-hidden="true">
+                      <div
+                        class="pane-tile__body"
+                        aria-label={`${titleFor(tile().pane)} terminal output`}
+                        onPointerDown={(event) => {
+                          if (event.button !== 0) return;
+                          selectedMirrorPane = tile().pane;
+                          props.onFocusPane?.(tile().pane, "mouse");
+                        }}
+                        onPointerUp={(event) => {
+                          if (event.button !== 0) return;
+                          // Let xterm finish its selection transaction first,
+                          // then restore the one terminal that owns tmux input.
+                          queueMicrotask(() => setTerminalFocusRequest((value) => value + 1));
+                        }}
+                      >
                         <MirrorPaneNode
                           pane={node().pane}
                           title={node().title}
@@ -1395,6 +1557,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                           reducedMotion={props.reducedMotion}
                           themeKey={props.terminalThemeKey}
                           rendererFactory={props.mirror!.rendererFactory}
+                          onSelectionChange={(selection) =>
+                            updateMirrorSelection(tile().pane, selection)
+                          }
                         />
                       </div>
                     )}
@@ -1408,63 +1573,78 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
             }}
           </Index>
           <Index each={displayBorders()}>
-            {(border) => (
-              <div
-                class="pane-border"
-                data-pane-border={border().id}
-                data-orientation={border().orientation}
-                data-dragging={
-                  displayState()?.kind === "resize" &&
-                  (displayState() as WorkspacePaneResize).border.id === border().id
-                }
-                role="separator"
-                tabIndex={0}
-                aria-orientation={border().orientation}
-                aria-label={`Resize pane ${border().orientation === "vertical" ? "width" : "height"}`}
-                aria-valuemin={1}
-                aria-valuemax={
-                  border().orientation === "vertical"
-                    ? (displayState()?.snapshot.frame.cols ?? currentFrame()?.cols ?? 1)
-                    : (displayState()?.snapshot.frame.rows ?? currentFrame()?.rows ?? 1)
-                }
-                aria-valuenow={resizePreview()?.cells ?? border().cells}
-                aria-valuetext={`${resizePreview()?.cells ?? border().cells} ${border().orientation === "vertical" ? "columns" : "rows"}`}
-                style={{
-                  left: percent(border().rect.left),
-                  top: percent(border().rect.top),
-                  width: percent(border().rect.width),
-                  height: percent(border().rect.height),
-                  transform:
+            {(border) => {
+              const vertical = createMemo(() => border().orientation === "vertical");
+              return (
+                <div
+                  class="pane-border"
+                  data-pane-border={border().id}
+                  data-orientation={border().orientation}
+                  data-dragging={
+                    pointerResizeActive() &&
                     displayState()?.kind === "resize" &&
-                    (displayState() as WorkspacePaneResize).border.id === border().id &&
-                    resizePreview()
-                      ? `translate3d(${resizePreview()!.guideTransform.translateX}px, ${resizePreview()!.guideTransform.translateY}px, 0)`
-                      : undefined,
-                }}
-                onPointerDown={(event) => {
-                  if (event.button !== 0) return;
-                  event.preventDefault();
-                  beginResize(border().id, event);
-                }}
-                onPointerMove={moveManipulation}
-                onPointerUp={finishManipulation}
-                onPointerCancel={(event) => cancelManipulation(event)}
-                onKeyDown={(event) => {
-                  const vertical = border().orientation === "vertical";
-                  const decrease =
-                    (vertical && event.key === "ArrowLeft") ||
-                    (!vertical && event.key === "ArrowUp");
-                  const increase =
-                    (vertical && event.key === "ArrowRight") ||
-                    (!vertical && event.key === "ArrowDown");
-                  if (!decrease && !increase) return;
-                  event.preventDefault();
-                  keyboardResize(border(), increase ? 1 : -1);
-                }}
-              />
-            )}
+                    (displayState() as WorkspacePaneResize).border.id === border().id
+                  }
+                  role="separator"
+                  tabIndex={0}
+                  aria-orientation={border().orientation}
+                  aria-label={`Resize pane ${border().orientation === "vertical" ? "width" : "height"}`}
+                  aria-valuemin={1}
+                  aria-valuemax={
+                    border().orientation === "vertical"
+                      ? (displayState()?.snapshot.frame.cols ?? currentFrame()?.cols ?? 1)
+                      : (displayState()?.snapshot.frame.rows ?? currentFrame()?.rows ?? 1)
+                  }
+                  aria-valuenow={resizePreview()?.cells ?? border().cells}
+                  aria-valuetext={`${resizePreview()?.cells ?? border().cells} ${border().orientation === "vertical" ? "columns" : "rows"}`}
+                  style={{
+                    /*
+                     * Match tmuxy's edge geometry: a fixed 8px grab band, not
+                     * the whole separator cell. A horizontal separator cell is
+                     * also the lower pane's header row; consuming all of it made
+                     * that header resize instead of drag. The band straddles the
+                     * real edge and leaves the rest of the chrome available.
+                     */
+                    left: vertical()
+                      ? `calc(${percent(border().rect.left + border().rect.width / 2)} - 4px)`
+                      : percent(border().rect.left),
+                    top: vertical()
+                      ? percent(border().rect.top)
+                      : `calc(${percent(border().rect.top)} - 4px)`,
+                    width: vertical() ? "8px" : percent(border().rect.width),
+                    height: vertical() ? percent(border().rect.height) : "8px",
+                    transform:
+                      displayState()?.kind === "resize" &&
+                      (displayState() as WorkspacePaneResize).border.id === border().id &&
+                      resizePreview()
+                        ? `translate3d(${resizePreview()!.guideTransform.translateX}px, ${resizePreview()!.guideTransform.translateY}px, 0)`
+                        : undefined,
+                  }}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return;
+                    event.preventDefault();
+                    beginResize(border().id, event);
+                  }}
+                  onPointerMove={moveManipulation}
+                  onPointerUp={finishManipulation}
+                  onPointerCancel={(event) => cancelManipulation(event)}
+                  onKeyDown={(event) => {
+                    const isVertical = vertical();
+                    const decrease =
+                      (isVertical && event.key === "ArrowLeft") ||
+                      (!isVertical && event.key === "ArrowUp");
+                    const increase =
+                      (isVertical && event.key === "ArrowRight") ||
+                      (!isVertical && event.key === "ArrowDown");
+                    if (!decrease && !increase) return;
+                    event.preventDefault();
+                    keyboardResize(border(), increase ? 1 : -1);
+                  }}
+                />
+              );
+            }}
           </Index>
-          <Show when={dragPreview()?.dropRect}>
+          <Show when={pointerDragActive() && dragPreview()?.dropRect}>
             <div
               class="pane-drop-ghost"
               aria-hidden="true"
@@ -1480,7 +1660,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               </span>
             </div>
           </Show>
-          <Show when={activeResize() && resizePreview()}>
+          <Show when={pointerResizeActive() && activeResize() && resizePreview()}>
             <div
               class="pane-resize-hud-anchor"
               data-orientation={activeResize()!.border.orientation}
@@ -1607,6 +1787,8 @@ function PaneHeader(props: {
   readonly icon: IconArtwork;
   readonly iconId: SemanticIconId;
   readonly status: PaneFrameModel["status"] | null;
+  readonly interaction: PaneInteractionProjection | null;
+  readonly interactionActive: boolean;
   readonly active: boolean;
   /** Header owns a flex row; false means it still overlays tmux's separator. */
   readonly composed: boolean;
@@ -1643,6 +1825,7 @@ function PaneHeader(props: {
       class="pane-tile__header"
       data-hoisted={props.hoisted}
       data-active={props.active}
+      data-interaction-phase={props.interactionActive ? props.interaction?.phase : undefined}
       aria-hidden={!props.hoisted}
       style={
         props.hoisted
@@ -1680,6 +1863,7 @@ function PaneHeader(props: {
       onPointerMove={props.onPointerMove}
       onPointerUp={props.onPointerUp}
       onPointerCancel={props.onPointerCancel}
+      onLostPointerCapture={props.onPointerCancel}
     >
       <span class="pane-tile__icon-badge" data-identity-icon={props.iconId} aria-hidden="true">
         <Icon class="pane-tile__icon" icon={props.icon} size="dense" />
@@ -1704,15 +1888,32 @@ function PaneHeader(props: {
       >
         {props.title}
       </span>
-      <Show when={props.status}>
-        {(status) => (
+      <Show
+        when={props.interactionActive ? props.interaction : null}
+        fallback={
+          <Show when={props.status}>
+            {(status) => (
+              <span
+                class="pane-tile__status"
+                data-tone={status().tone}
+                title={status().description ?? status().label}
+              >
+                <i aria-hidden="true" />
+                <span>{status().label}</span>
+              </span>
+            )}
+          </Show>
+        }
+      >
+        {(interaction) => (
           <span
-            class="pane-tile__status"
-            data-tone={status().tone}
-            title={status().description ?? status().label}
+            class="pane-tile__interaction"
+            data-phase={interaction().phase}
+            title={interaction().label}
+            aria-label={interaction().label}
           >
             <i aria-hidden="true" />
-            <span>{status().label}</span>
+            <span>{interaction().phase}</span>
           </span>
         )}
       </Show>

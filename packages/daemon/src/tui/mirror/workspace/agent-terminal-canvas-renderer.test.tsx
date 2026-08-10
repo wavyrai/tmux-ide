@@ -12,7 +12,10 @@ import {
   type TerminalPaneChromeLayout,
   type TerminalPaneChromePane,
 } from "./terminal-pane-chrome.ts";
-import { SharedTerminalPaneChromeLayer } from "./terminal-pane-chrome-view.tsx";
+import {
+  SharedTerminalPaneChromeLayer,
+  TerminalPaneCommunicationLayer,
+} from "./terminal-pane-chrome-view.tsx";
 
 interface TestRenderable {
   getChildren(): readonly unknown[];
@@ -40,6 +43,41 @@ function colorKey(color: Parameters<typeof colorToThemeBytes>[0]): string {
 }
 
 describe("AgentTerminalCanvas OpenTUI renderer", () => {
+  it("renders target and source communication separators without repainting pane bodies", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const canvas = projectAgentTerminalCanvas({ width: 20, height: 10, chromeRows: 2 });
+    const layout = projectTerminalPaneChrome({
+      canvas,
+      panes: [
+        { id: "%1", left: 0, top: 0, width: 9, height: 8, active: true, zoomed: false },
+        { id: "%2", left: 10, top: 0, width: 10, height: 8, active: false, zoomed: false },
+      ],
+      metadataByPane: new Map([
+        ["%1", { communication: { role: "read-source", label: "Editor reads Tests" } }],
+        ["%2", { communication: { role: "read-target", label: "Editor reads Tests" } }],
+      ]),
+    });
+    const setup = await renderForTest(
+      () => (
+        <box width={20} height={8}>
+          <text position="absolute" left={0} top={0}>
+            A
+          </text>
+          <text position="absolute" left={10} top={0}>
+            B
+          </text>
+          <TerminalPaneCommunicationLayer theme={theme} layout={layout} />
+        </box>
+      ),
+      { width: 20, height: 8 },
+    );
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("A        ┃B");
+    expect(frame.split("\n").filter((row) => row.includes("┃"))).toHaveLength(8);
+    setup.renderer.destroy();
+  });
+
   it.each([
     [80, 24],
     [120, 40],

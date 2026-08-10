@@ -149,6 +149,23 @@ function withMissionWorkspace(): ApplicationShellProjectionInputV3 {
   });
 }
 
+function withTerminalInventory(activeResourceId: string): ApplicationShellProjectionInputV1 {
+  const input = createDefaultDomShellInput();
+  return ApplicationShellProjectionInputV1SchemaZ.parse({
+    ...input,
+    terminalInventory: {
+      activeResourceId,
+      resources: createDefaultDomPaneFrames().map((frame) => ({
+        id: frame.pane.id,
+        title: frame.title,
+        kind: "agent" as const,
+        active: frame.pane.id === activeResourceId,
+        attachability: { status: "available" as const, semanticPaneId: frame.pane.id },
+      })),
+    },
+  });
+}
+
 /**
  * Most chains here assert the canonical product surface — every dock tool, its
  * disabled reason, the full action trace — so they render with the m48
@@ -467,13 +484,21 @@ describe("visible DOM application shell", () => {
         selectedWindowIds: ["window.pm"],
       }),
     );
-    expect(onCommand).toHaveBeenCalledOnce();
-    expect(onCommand).toHaveBeenCalledWith(
+    expect(onCommand).toHaveBeenCalledTimes(2);
+    expect(onCommand.mock.calls.map(([invocation]) => invocation)).toEqual([
+      expect.objectContaining({
+        id: APPLICATION_SHELL_COMMAND_IDS.selectResource,
+        args: { surface: "terminals", resourceId: "agent.pm" },
+        source: { kind: "mouse", surface: "application-shell" },
+      }),
       expect.objectContaining({
         id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
         args: { target: { kind: "pane", paneId: "pane.pm", input: "terminal" } },
         source: { kind: "mouse", surface: "application-shell" },
       }),
+    ]);
+    expect(root.querySelector("#sidebar-agent-agent\\.pm")?.getAttribute("aria-pressed")).toBe(
+      "true",
     );
   });
 
@@ -529,9 +554,10 @@ describe("visible DOM application shell", () => {
     expect(input.getAttribute("aria-controls")).toBe("application-command-palette-list");
     expect(root.querySelector('[role="dialog"]')).not.toBeNull();
     expect(root.querySelector('[role="listbox"]')).not.toBeNull();
-    expect(root.querySelectorAll('.command-palette__group[role="group"]')).toHaveLength(2);
-    expect(root.querySelector("#palette-group-workspace")?.textContent).toBe("Workspace");
-    expect(root.querySelector("#palette-group-workbench")?.textContent).toBe("Workbench");
+    expect(root.querySelectorAll('.command-palette__group[role="group"]')).toHaveLength(3);
+    expect(root.querySelector("#palette-group-workspaces")?.textContent).toBe("Workspaces");
+    expect(root.querySelector("#palette-group-agents")?.textContent).toBe("Agents");
+    expect(root.querySelector("#palette-group-commands")?.textContent).toBe("Commands");
     expect(
       root.querySelector("#palette-option-terminals .command-palette__icon svg"),
     ).not.toBeNull();
@@ -1219,7 +1245,137 @@ describe("visible DOM application shell", () => {
         args: { surface: "terminals", resourceId: "agent.reviewer" },
         source: { kind: "mouse", surface: "sidebar" },
       }),
+      expect.objectContaining({
+        id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+        args: { target: { kind: "pane", paneId: "pane.reviewer", input: "terminal" } },
+        source: { kind: "mouse", surface: "application-shell" },
+      }),
     ]);
+  });
+
+  it("activates the correlated tmux pane when an agent is chosen in the sidebar", async () => {
+    const baseHost = host();
+    const invokeVerb = vi.fn(async () => ({
+      status: "ok" as const,
+      result: {
+        operationId: "11111111-1111-4111-8111-111111111111",
+        daemonInstanceId: "22222222-2222-4222-8222-222222222222",
+        outcome: "applied" as const,
+        workspaceName: "workspace.product",
+        verb: "workspace.pane.select" as const,
+        semanticPaneId: "pane.reviewer",
+      },
+    }));
+    const liveHost: HostCapabilities = {
+      ...baseHost,
+      daemon: { ...baseHost.daemon, invokeVerb },
+    };
+    const onCommand = vi.fn<(invocation: ApplicationShellCommandInvocation) => void>();
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={liveHost}
+            daemonState={{
+              status: "connected",
+              identity: {
+                protocolVersion: 1,
+                productVersion: "test",
+                instanceId: "22222222-2222-4222-8222-222222222222",
+                startedAt: "2026-08-08T00:00:00.000Z",
+              },
+            }}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={withTerminalInventory("pane.implementer")}
+            dataMode="runtime"
+            onCommand={onCommand}
+            paneFrames={createDefaultDomPaneFrames()}
+          />
+        ),
+        root,
+      ),
+    );
+
+    pointerClick(root.querySelector("#sidebar-agent-agent\\.reviewer")!);
+
+    expect(
+      root.querySelector("#sidebar-agent-agent\\.reviewer")?.getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(onCommand.mock.calls.map(([invocation]) => invocation.id)).toEqual([
+      APPLICATION_SHELL_COMMAND_IDS.selectResource,
+      APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+    ]);
+    await vi.waitFor(() =>
+      expect(invokeVerb).toHaveBeenCalledWith({
+        verbId: "pane.select",
+        intent: {
+          verb: "workspace.pane.select",
+          workspaceName: "workspace.product",
+          semanticPaneId: "pane.reviewer",
+        },
+      }),
+    );
+  });
+
+  it("reconciles the sidebar and local focus from a newer active-pane inventory", async () => {
+    const baseHost = host();
+    const liveHost: HostCapabilities = {
+      ...baseHost,
+      daemon: {
+        ...baseHost.daemon,
+        invokeVerb: vi.fn(async () => ({
+          status: "error" as const,
+          error: { code: "preview-only" as const, reason: "not invoked by reconciliation" },
+        })),
+      },
+    };
+    const [input, setInput] = createSignal(withTerminalInventory("pane.implementer"));
+    const onCommand = vi.fn<(invocation: ApplicationShellCommandInvocation) => void>();
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={liveHost}
+            daemonState={{
+              status: "connected",
+              identity: {
+                protocolVersion: 1,
+                productVersion: "test",
+                instanceId: "22222222-2222-4222-8222-222222222222",
+                startedAt: "2026-08-08T00:00:00.000Z",
+              },
+            }}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input()}
+            dataMode="runtime"
+            onCommand={onCommand}
+            paneFrames={createDefaultDomPaneFrames()}
+          />
+        ),
+        root,
+      ),
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        root.querySelector("#sidebar-agent-agent\\.implementer")?.getAttribute("aria-pressed"),
+      ).toBe("true"),
+    );
+    setInput(withTerminalInventory("pane.reviewer"));
+    await vi.waitFor(() =>
+      expect(
+        root.querySelector("#sidebar-agent-agent\\.reviewer")?.getAttribute("aria-pressed"),
+      ).toBe("true"),
+    );
+    expect(onCommand).not.toHaveBeenCalled();
   });
 });
 

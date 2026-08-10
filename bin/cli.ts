@@ -300,6 +300,7 @@ function execBunWidget(
     checkoutExists: existsSync(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
+    preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
   });
 
   if (launch.mode === "unavailable") {
@@ -350,6 +351,7 @@ function launchHostedApp(scriptPath: string, appArgs: string[]): void {
     checkoutExists: existsSync(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
+    preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
   });
   if (launch.mode === "unavailable") {
     throw new IdeError(

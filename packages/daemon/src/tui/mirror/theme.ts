@@ -11,6 +11,7 @@
  */
 import { RGBA } from "@opentui/core";
 import {
+  contrastRatio,
   deriveAttentionBlend,
   resolveVisualTheme,
   type BorderTokenRole,
@@ -29,6 +30,7 @@ import {
   type LegacyThemeOverrideProvenance,
 } from "../../lib/legacy-theme-compat.ts";
 import type { ResolvedThemeMode, ThemeModeSetting } from "../../lib/theme-mode.ts";
+import { XTERM_PALETTE } from "./ansi-palette.ts";
 
 export type { ResolvedThemeMode, ThemeModeSetting };
 
@@ -141,6 +143,25 @@ export interface ThemeStore {
   followRendererThemeMode(source: ThemeModeSource): () => void;
 }
 
+/** Renderer projection for terminal cells. xterm-headless keeps the original
+ * ANSI/truecolor values; the OpenTUI surface resolves them through this object
+ * at paint time. That separation lets a live theme change recolor existing
+ * scrollback without touching tmux, the PTY, or the terminal parser. */
+export interface TerminalPaletteProjection {
+  /** Packed `0xRRGGBB` defaults used by cells with no explicit SGR color. */
+  readonly foreground: number;
+  readonly background: number;
+  /** Complete, protocol-faithful indexed ANSI colors. */
+  readonly ansiForeground: readonly number[];
+  readonly ansiBackground: readonly number[];
+  /** Identity-preserving SGR 38;2 / 48;2 truecolor resolution. */
+  resolveForeground(color: number): number;
+  resolveBackground(color: number): number;
+  readonly cursorMarker: number;
+  readonly searchHighlight: number;
+  readonly searchCurrent: number;
+}
+
 const STANDARD_ANSI: readonly (readonly [number, number, number])[] = [
   [0, 0, 0],
   [128, 0, 0],
@@ -183,6 +204,83 @@ export function colorToThemeBytes(color: RGBA): RgbaByteTuple {
     return [byteChannel(r), byteChannel(g), byteChannel(b), byteChannel(a)];
   }
   return [byteChannel(color.r), byteChannel(color.g), byteChannel(color.b), byteChannel(color.a)];
+}
+
+/** Convert an OpenTUI semantic color into the framebuffer's packed RGB form. */
+export function colorToPackedRgb(color: RGBA): number {
+  const [r, g, b] = colorToThemeBytes(color);
+  return (r << 16) | (g << 8) | b;
+}
+
+function rendererNeutralFromRgba(color: RGBA): RendererNeutralColor {
+  const [red, green, blue, alpha] = colorToThemeBytes(color);
+  return { space: "srgb", red, green, blue, alpha };
+}
+
+/** WCAG contrast for an OpenTUI foreground/background pair. Keeping this at
+ * the host projection boundary lets every owned surface test the exact colours
+ * it will hand to the renderer instead of duplicating colour math. */
+export function themeContrastRatio(foreground: RGBA, background: RGBA): number {
+  return contrastRatio(rendererNeutralFromRgba(foreground), rendererNeutralFromRgba(background));
+}
+
+/** Prefer the requested semantic colour, but never let critical app chrome
+ * disappear when a terminal palette or user override creates a low-contrast
+ * pair. The candidate order remains meaningful; the most readable candidate
+ * is only used when none reaches the requested threshold. */
+export function readableThemeForeground(
+  background: RGBA,
+  candidates: readonly RGBA[],
+  minimumContrast = 4.5,
+): RGBA {
+  const unique = candidates.filter(
+    (candidate, index) =>
+      candidates.findIndex((other) => rgbaKey(other) === rgbaKey(candidate)) === index,
+  );
+  for (const candidate of unique) {
+    if (themeContrastRatio(candidate, background) >= minimumContrast) return candidate;
+  }
+  return unique.reduce((best, candidate) =>
+    themeContrastRatio(candidate, background) > themeContrastRatio(best, background)
+      ? candidate
+      : best,
+  );
+}
+
+export interface SemanticThemeContrastCheck {
+  readonly id:
+    | "primary-on-canvas"
+    | "secondary-on-panel"
+    | "muted-on-panel"
+    | "link-on-panel"
+    | "selection-text-on-selection";
+  readonly ratio: number;
+  readonly minimum: number;
+  readonly passes: boolean;
+}
+
+/** The legibility contract for app-owned chrome. Terminal cells have their own
+ * semantic projection contract in {@link createTerminalPaletteProjection};
+ * these checks cover the remaining owned surfaces. */
+export function semanticThemeContrastChecks(
+  snapshot: SemanticThemeSnapshot,
+): readonly SemanticThemeContrastCheck[] {
+  const pairs = [
+    ["primary-on-canvas", snapshot.roles.text.primary, snapshot.roles.surfaces.canvas],
+    ["secondary-on-panel", snapshot.roles.text.secondary, snapshot.roles.surfaces.panel],
+    ["muted-on-panel", snapshot.roles.text.muted, snapshot.roles.surfaces.panel],
+    ["link-on-panel", snapshot.roles.text.link, snapshot.roles.surfaces.panel],
+    [
+      "selection-text-on-selection",
+      snapshot.roles.selection.selectionText,
+      snapshot.roles.selection.selection,
+    ],
+  ] as const;
+  return pairs.map(([id, foreground, background]) => {
+    const minimum = 4.5;
+    const ratio = themeContrastRatio(foreground, background);
+    return { id, ratio, minimum, passes: ratio >= minimum };
+  });
 }
 
 function rgbaKey(color: RGBA): string {
@@ -235,6 +333,31 @@ function mix(base: RGBA, overlay: RGBA, amount: number, alphaByteOverride?: numb
     channel(baseB, overlayB),
     alphaByte,
   );
+}
+
+/** Build the terminal-cell view of a semantic OpenTUI theme. Explicit terminal
+ * colors remain protocol-faithful: all 256 xterm slots and 24-bit truecolor pass
+ * through unchanged. Only uncolored cells and tmux-ide-owned overlays follow
+ * the semantic theme. This keeps applications legible and visually intentional
+ * while the pane itself still belongs to the tmux-ide TUI. */
+export function createTerminalPaletteProjection(
+  snapshot: SemanticThemeSnapshot,
+): TerminalPaletteProjection {
+  const p = colorToPackedRgb;
+  const foreground = p(snapshot.roles.text.primary);
+  const background = p(snapshot.roles.surfaces.terminal);
+
+  return Object.freeze({
+    foreground,
+    background,
+    ansiForeground: XTERM_PALETTE,
+    ansiBackground: XTERM_PALETTE,
+    resolveForeground: (color: number) => color & 0xffffff,
+    resolveBackground: (color: number) => color & 0xffffff,
+    cursorMarker: p(snapshot.roles.selection.hover),
+    searchHighlight: p(snapshot.roles.selection.hover),
+    searchCurrent: p(snapshot.roles.selection.selection),
+  });
 }
 
 function cloneColor(color: RGBA): RGBA {

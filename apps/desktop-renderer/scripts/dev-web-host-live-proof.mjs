@@ -43,6 +43,8 @@ const DAEMON_READY_TIMEOUT_MS = 45_000;
 const VITE_READY_TIMEOUT_MS = 60_000;
 const FLEET_TIMEOUT_MS = 30_000;
 const STREAM_TIMEOUT_MS = 30_000;
+const LIVE_SHELL_BUDGET_MS = Number(process.env.WEB_BUDGET_LIVE_SHELL_MS ?? 5_000);
+const TERMINAL_READY_BUDGET_MS = Number(process.env.WEB_BUDGET_TERMINAL_READY_MS ?? 12_000);
 
 const cleanups = [];
 let failed = false;
@@ -280,16 +282,19 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
   const browser = await chromium.launch();
   cleanups.push(async () => browser.close());
   const page = await browser.newPage({ viewport: { width: 1_400, height: 900 } });
-  const consoleErrors = [];
+  const consoleProblems = [];
   const failedRequests = [];
   page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
+    if (message.type() === "error" || message.type() === "warning") {
+      consoleProblems.push(`${message.type()}: ${message.text()}`);
+    }
   });
   page.on("response", (response) => {
     if (!response.ok()) failedRequests.push(`${response.status()} ${response.url()}`);
   });
-  page.on("pageerror", (error) => consoleErrors.push(`pageerror: ${error.message}`));
+  page.on("pageerror", (error) => consoleProblems.push(`pageerror: ${error.message}`));
 
+  const pageLoadStartedAt = Date.now();
   await page.goto(`${pageUrl}?devHost=1`, { waitUntil: "domcontentloaded" });
 
   // (a) The app booted LIVE — not the preview fallback, not a hard error.
@@ -302,7 +307,16 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
     timeoutMs: FLEET_TIMEOUT_MS,
     intervalMs: 250,
   });
-  log(`rung a: the app booted live (data-shell-source="${shellSource}")`);
+  const liveShellMs = Date.now() - pageLoadStartedAt;
+  if (liveShellMs > LIVE_SHELL_BUDGET_MS) {
+    throw new Error(
+      `rung a exceeded live-shell budget: ${liveShellMs}ms > ${LIVE_SHELL_BUDGET_MS}ms`,
+    );
+  }
+  log(
+    `rung a: the app booted live in ${liveShellMs}ms ` +
+      `(budget ${LIVE_SHELL_BUDGET_MS}ms, data-shell-source="${shellSource}")`,
+  );
 
   // (b) The fleet catalog reached the page. Asserted at the host boundary
   //     first — the session name alone could have come from the app-shell
@@ -404,15 +418,28 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
   await page.screenshot({ path: screenshot, fullPage: false });
   log(`screenshot written to ${screenshot}`);
 
-  // (c) A pane-stream lease issues AND its WebSocket seeds — from the page's
-  //     own origin, through the host the page is actually running.
+  // (c) A passive pane-stream lease issues AND its WebSocket seeds — from the
+  //     page's own origin, through the host the page is actually running. The
+  //     tile already owns the one interactive lease; a second interactive
+  //     request would correctly fail with interactive-viewer-conflict.
   const stream = await page.evaluate(
-    async ({ workspaceName, timeoutMs }) => {
+    async ({ workspaceName, routeSessionName, timeoutMs }) => {
       const host = globalThis.window.tmuxIdeHost;
       if (!host) return { ok: false, reason: "globalThis.window.tmuxIdeHost is absent" };
       const shell = await host.daemon.fetchApplicationShell({ workspaceName });
       if (shell.status !== "ok") {
-        return { ok: false, reason: `application-shell: ${JSON.stringify(shell.error)}` };
+        const diagnostic = await fetch(
+          `/api/project/${encodeURIComponent(routeSessionName)}/application-shell?version=3`,
+          { cache: "no-store" },
+        )
+          .then(async (response) => ({ status: response.status, body: await response.text() }))
+          .catch((error) => ({ status: 0, body: String(error) }));
+        return {
+          ok: false,
+          reason:
+            `application-shell: ${JSON.stringify(shell.error)}; ` +
+            `daemon ${diagnostic.status}: ${diagnostic.body.slice(0, 500)}`,
+        };
       }
       const resources = shell.envelope.resource?.terminalInventory?.resources ?? [];
       const pane = resources.find((entry) => entry.attachability?.status === "available");
@@ -429,7 +456,7 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
         protocolVersion: 1,
         workspaceName,
         panes: [paneId],
-        viewerMode: "interactive",
+        viewerMode: "read-only",
       });
       if (issued.status !== "issued") {
         return { ok: false, reason: `issue: ${JSON.stringify(issued.error)}`, paneId };
@@ -485,7 +512,7 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
         });
       });
     },
-    { workspaceName, timeoutMs: STREAM_TIMEOUT_MS },
+    { workspaceName, routeSessionName: SESSION_NAME, timeoutMs: STREAM_TIMEOUT_MS },
   );
   if (!stream.ok)
     throw new Error(`rung c failed: ${stream.reason} (frames: ${stream.frames?.join(",")})`);
@@ -505,11 +532,23 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
     timeoutMs: 30_000,
     intervalMs: 500,
   });
-  log("rung d: the interactive terminal attachment settled");
+  const terminalReadyMs = Date.now() - pageLoadStartedAt;
+  if (terminalReadyMs > TERMINAL_READY_BUDGET_MS) {
+    throw new Error(
+      `rung d exceeded terminal-ready budget: ${terminalReadyMs}ms > ${TERMINAL_READY_BUDGET_MS}ms`,
+    );
+  }
+  log(
+    `rung d: the interactive terminal attachment settled in ${terminalReadyMs}ms ` +
+      `(budget ${TERMINAL_READY_BUDGET_MS}ms)`,
+  );
 
-  const cspRefusals = consoleErrors.filter((line) => /content security policy/iu.test(line));
+  const cspRefusals = consoleProblems.filter((line) => /content security policy/iu.test(line));
   if (cspRefusals.length > 0) {
     throw new Error(`the page logged CSP refusals:\n${cspRefusals.join("\n")}`);
+  }
+  if (consoleProblems.length > 0) {
+    throw new Error(`the page logged console warnings/errors:\n${consoleProblems.join("\n")}`);
   }
   if (failedRequests.length > 0) {
     log(

@@ -29,6 +29,12 @@ export interface ShellTabPresentation {
   attention: boolean;
 }
 
+export interface ShellNavigationPresentation {
+  label: string;
+  width: number;
+  focused: boolean;
+}
+
 export interface ShellSidebarHint {
   pre: string;
   btn: string;
@@ -129,13 +135,24 @@ export function shellChromeLayout(
 export function shellPanelCell(
   view: Pick<HostedPanelView, "glyph" | "title" | "shortcut">,
   variant: ShellChromeVariant,
+  selected = false,
   attention = false,
 ): string {
-  const glyph = attention ? "!" : view.glyph;
+  const glyph = `${attention ? "!" : selected ? "●" : " "}${view.glyph}`;
   if (variant === "compact") return ` ${glyph} `;
   const shortcut = view.shortcut ? `${view.shortcut.label} ` : "";
   if (variant === "standard") return ` ${glyph} ${view.title} `;
   return ` ${shortcut}${glyph} ${view.title} `;
+}
+
+/** Distinguishes the primary workspace switcher from the contextual tool dock. */
+export function shellNavigationPresentation(
+  variant: ShellChromeVariant,
+  focused: boolean,
+): ShellNavigationPresentation {
+  if (variant === "compact") return { label: "", width: 0, focused };
+  const label = ` ${focused ? "▸" : " "} workspace `;
+  return { label, width: terminalDisplayWidth(label), focused };
 }
 
 export function shellSurfaceTabs(
@@ -144,18 +161,20 @@ export function shellSurfaceTabs(
   variant: ShellChromeVariant,
   hoveredIndex: number | null,
   attentionViewIds: ReadonlySet<string> = new Set(),
+  options: { startX?: number; navigationFocused?: boolean } = {},
 ): readonly ShellTabPresentation[] {
-  let x = 0;
+  let x = Math.max(0, Math.floor(options.startX ?? 0));
   return views.map((view, index) => {
     const attention = attentionViewIds.has(view.id);
-    const label = shellPanelCell(view, variant, attention);
+    const selected = view.id === activeViewId;
+    const label = shellPanelCell(view, variant, selected, attention);
     const width = terminalDisplayWidth(label);
     const item: ShellTabPresentation = {
       id: view.id,
       label,
       span: { start: x, width },
-      selected: view.id === activeViewId,
-      focused: view.id === activeViewId,
+      selected,
+      focused: selected && options.navigationFocused === true,
       hovered: hoveredIndex === index,
       attention,
     };
@@ -275,7 +294,7 @@ export function shellVisualPalette(
     };
   }
   return {
-    fg: theme.roles.text.muted,
+    fg: theme.roles.text.secondary,
     bg: theme.roles.surfaces.panel,
     border: theme.roles.borders.subtle,
     marker: theme.glyphs.inactive,
@@ -288,12 +307,26 @@ export function shellStatusLine(
   input: {
     project: string;
     mode: string;
+    inputMode?: string | null;
+    tool?: string | null;
+    dockMode?: string | null;
+    focus?: string | null;
     notification: string | null;
     help: string;
   },
   width: number,
 ): string {
-  const context = variant === "compact" ? `${input.mode}` : `${input.project} · ${input.mode}`;
+  const workspace = input.mode.trim() || "workspace";
+  const inputMode = input.inputMode?.trim();
+  const tool = input.tool?.trim();
+  const dock = input.dockMode?.trim();
+  const focus = input.focus?.trim();
+  const context =
+    variant === "wide"
+      ? `${input.project} · ${inputMode ? `${workspace} · ${inputMode}` : `workspace ${workspace}`}${tool ? ` · tool ${tool}${dock ? `/${dock}` : ""}` : ""}${focus ? ` · focus ${focus}` : ""}`
+      : variant === "standard"
+        ? `${workspace}${inputMode ? ` · ${inputMode}` : ""}${tool ? ` · ${tool}${dock ? `/${dock}` : ""}` : ""}${focus ? ` · focus ${focus}` : ""}`
+        : `${inputMode || workspace}${focus ? ` · ${focus}` : ""}`;
   const note = input.notification ? ` · ${input.notification}` : "";
   const help = variant === "compact" ? input.help.split(" · ")[0] : input.help;
   const text = ` ${context}${note} · ${help}`;

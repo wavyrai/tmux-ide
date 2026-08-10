@@ -54,6 +54,23 @@ export class SimulatedChannel implements MirrorChannelIo {
     this.record(cmd);
   }
 
+  commandListInline(
+    cmd: string,
+    replyCount: number,
+    resultIndex: number,
+    onReply: (reply: { ok: boolean; lines: string[] }) => void,
+  ): void {
+    for (let index = 0; index < replyCount; index++) {
+      this.core.push(
+        index === resultIndex ? { kind: "inline", onReply, lines: [] } : { kind: "discard" },
+      );
+    }
+    this.written.push(cmd);
+    // The seed command-list is `set-option ; capture-pane`: acknowledge the
+    // marker command now and leave the selected capture reply manual.
+    this.reply([]);
+  }
+
   send(cmd: string): void {
     this.core.push({ kind: "discard" });
     this.record(cmd);
@@ -123,6 +140,9 @@ export function fixtureAutoReply(state: FixtureState): AutoReply {
     if (cmd.includes("qa:@tmux_ide_pane_id")) return state.descriptorRows;
     if (cmd.startsWith("list-panes -s")) return state.truthRows;
     if (cmd.startsWith("list-windows")) return state.windowRows;
+    // Product-owned seeds are one atomic `set-option ; capture-pane` command
+    // list. The capture reply remains manual just like a bare capture probe.
+    if (cmd.includes("capture-pane")) return null;
     if (cmd.startsWith("set-option")) return [];
     if (cmd.startsWith("send-keys") || cmd.startsWith("refresh-client")) return [];
     return null; // capture-pane / display-message: manual

@@ -67,9 +67,27 @@ export const WorkspacePaneDisplayTitleSchemaZ = z
   .refine((value) => value === value.trim(), "display title must not have outer whitespace")
   .refine((value) => !hasControlCharacters(value), "display title must not contain controls");
 
+/**
+ * Semantic placement for a new pane. The target of a split is another durable
+ * pane identity, never a live tmux `%` id. Omitting placement preserves the v1
+ * GUI behavior and means a detached new window.
+ */
+export const WorkspacePaneCreationPlacementSchemaZ = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("window") }).strict(),
+  z
+    .object({
+      kind: z.literal("split"),
+      direction: z.enum(["right", "down"]),
+      targetSemanticPaneId: WorkspacePaneCreationReferenceSchemaZ,
+    })
+    .strict(),
+]);
+export type WorkspacePaneCreationPlacement = z.infer<typeof WorkspacePaneCreationPlacementSchemaZ>;
+
 const WorkspacePaneCreationBaseArgumentsSchemaZ = z.object({
   workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ,
   displayTitle: WorkspacePaneDisplayTitleSchemaZ.optional(),
+  placement: WorkspacePaneCreationPlacementSchemaZ.optional(),
 });
 
 export const WorkspaceTerminalCreateArgumentsSchemaZ =

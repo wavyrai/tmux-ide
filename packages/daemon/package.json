@@ -77,22 +77,24 @@
     "test:vitest": "vitest run"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.11",
+    "@hono/node-server": "^2.1.0",
     "@hono/zod-validator": "^0.7.6",
     "@opentui/core": "^0.4.3",
     "@opentui/solid": "^0.4.3",
     "@parcel/watcher": "^2.5.6",
     "@tmux-ide/contracts": "workspace:*",
+    "@tmux-ide/core": "workspace:*",
     "@tmux-ide/daemon-client": "workspace:*",
     "@tmux-ide/tmux-bridge": "workspace:*",
     "@xterm/headless": "^6.0.0",
-    "hono": "^4.12.8",
+    "@xterm/addon-unicode11": "0.9.0",
+    "hono": "^4.12.34",
     "ignore": "^7.0.5",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^4.3.1",
     "node-pty": "1.2.0-beta.12",
     "solid-js": "1.9.12",
     "string-width": "^7.2.0",
-    "ws": "^8.20.0",
+    "ws": "^8.21.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -37,6 +37,13 @@ const childOutput = new WeakMap<
   ChildProcessWithoutNullStreams,
   { stdout: string; stderr: string }
 >();
+interface ChildExitResult {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+}
+const childCompletion = new WeakMap<ChildProcessWithoutNullStreams, Promise<ChildExitResult>>();
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "tmux-ide-headless-cli-"));
@@ -89,6 +96,19 @@ function spawnCli(args: string[]): ChildProcessWithoutNullStreams {
   childOutput.set(child, output);
   child.stdout.on("data", (chunk: Buffer) => (output.stdout += chunk.toString()));
   child.stderr.on("data", (chunk: Buffer) => (output.stderr += chunk.toString()));
+  // Subscribe at spawn time. With a large contender fleet, a child can close
+  // before the test reaches waitForExit; observing `close` here also guarantees
+  // stdout/stderr have drained before assertions read them.
+  const completion = new Promise<ChildExitResult>((resolveExit, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      resolveExit({ code, signal, stdout: output.stdout, stderr: output.stderr });
+    });
+  });
+  // Prevent an immediate spawn failure from becoming an unhandled rejection
+  // before the caller reaches waitForExit; waitForExit still observes it.
+  void completion.catch(() => undefined);
+  childCompletion.set(child, completion);
   return child;
 }
 
@@ -97,27 +117,41 @@ async function waitForExit(
   timeoutMs = 8_000,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }> {
   const output = childOutput.get(child) ?? { stdout: "", stderr: "" };
-  if (child.exitCode != null || child.signalCode != null) {
-    return {
-      code: child.exitCode,
-      signal: child.signalCode,
-      stdout: output.stdout,
-      stderr: output.stderr,
-    };
-  }
+  const completion = childCompletion.get(child);
+  if (!completion) throw new Error("CLI completion was not registered at spawn time");
   return await new Promise((resolveExit, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error(`CLI did not exit; stderr: ${output.stderr}`)),
-      timeoutMs,
+    const timeout = setTimeout(() => {
+      let alive: boolean;
+      try {
+        if (child.pid !== undefined) process.kill(child.pid, 0);
+        alive = child.pid !== undefined;
+      } catch {
+        alive = false;
+      }
+      let publishedOwner: number | null = null;
+      try {
+        publishedOwner =
+          (JSON.parse(readFileSync(daemonInfoPath(), "utf-8")) as { pid?: number }).pid ?? null;
+      } catch {
+        // Publication can legitimately still be absent while timing out.
+      }
+      reject(
+        new Error(
+          `CLI pid ${String(child.pid)} did not exit; alive=${String(alive)}; ` +
+            `publishedOwner=${String(publishedOwner)}; stderr: ${output.stderr}`,
+        ),
+      );
+    }, timeoutMs);
+    void completion.then(
+      (result) => {
+        clearTimeout(timeout);
+        resolveExit(result);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
     );
-    child.once("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.once("exit", (code, signal) => {
-      clearTimeout(timeout);
-      resolveExit({ code, signal, stdout: output.stdout, stderr: output.stderr });
-    });
   });
 }
 
@@ -133,6 +167,7 @@ async function waitUntil<T>(read: () => T | null, timeoutMs = 8_000): Promise<T>
 
 async function waitForDaemonInfo(
   accept: (info: CanonicalDaemonInfo) => boolean = () => true,
+  timeoutMs = 8_000,
 ): Promise<CanonicalDaemonInfo> {
   return await waitUntil(() => {
     try {
@@ -141,7 +176,7 @@ async function waitForDaemonInfo(
     } catch {
       return null;
     }
-  });
+  }, timeoutMs);
 }
 
 function writeLiveDaemonInfo(port: number, protocolVersion = DAEMON_WIRE_PROTOCOL_VERSION): void {
@@ -299,12 +334,14 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
 
   it("elects exactly one owner from simultaneous cold-start contenders", async () => {
     const contenders = Array.from({ length: 20 }, () => spawnCli(["--headless", "--json"]));
-    const info = await waitForDaemonInfo();
+    // Twenty full production bundles compete here. The test verifies atomic
+    // election, not aggregate module-loader latency under a saturated runner.
+    const info = await waitForDaemonInfo(() => true, 30_000);
     const owner = contenders.find((child) => child.pid === info.pid);
     expect(owner).toBeDefined();
 
     const losers = contenders.filter((child) => child !== owner);
-    const loserResults = await Promise.all(losers.map((child) => waitForExit(child, 20_000)));
+    const loserResults = await Promise.all(losers.map((child) => waitForExit(child, 45_000)));
     for (const result of loserResults) {
       expect(result, result.stderr).toMatchObject({ code: 0, signal: null });
       expect(JSON.parse(result.stdout.trim())).toMatchObject({
@@ -325,7 +362,7 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     owner?.kill("SIGTERM");
     await expect(waitForExit(owner!, 15_000)).resolves.toMatchObject({ code: 0, signal: null });
     await waitUntil(() => (existsSync(daemonInfoPath()) ? null : true));
-  }, 30_000);
+  }, 90_000);
 
   it("refuses takeover of a live daemon with an incompatible protocol", async () => {
     const port = await listenWithProtocol(2);

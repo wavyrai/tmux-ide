@@ -3,6 +3,7 @@ import { For, Show } from "solid-js";
 import type { HostedPanelView } from "./panel-host.ts";
 import {
   shellStatusLine,
+  shellNavigationPresentation,
   shellSurfaceTabs,
   shellVisualPalette,
   type ShellChromeLayout,
@@ -28,9 +29,12 @@ export interface ShellTabBarProps {
     context?: boolean;
     attention?: boolean;
   }[];
+  navigationFocused?: boolean;
 }
 
 export function ShellTabBar(props: ShellTabBarProps) {
+  const navigation = () =>
+    shellNavigationPresentation(props.variant, props.navigationFocused ?? false);
   const tabs = () =>
     shellSurfaceTabs(
       props.views,
@@ -38,6 +42,7 @@ export function ShellTabBar(props: ShellTabBarProps) {
       props.variant,
       props.hoveredIndex,
       props.attentionViewIds,
+      { startX: navigation().width, navigationFocused: props.navigationFocused },
     );
   return (
     <box
@@ -47,6 +52,14 @@ export function ShellTabBar(props: ShellTabBarProps) {
       backgroundColor={props.theme.roles.surfaces.header}
       overflow="hidden"
     >
+      <Show when={navigation().label}>
+        <text
+          fg={navigation().focused ? props.theme.roles.text.link : props.theme.roles.text.secondary}
+          attributes={navigation().focused ? 1 : 0}
+        >
+          {navigation().label}
+        </text>
+      </Show>
       <For each={tabs()}>
         {(tab) => {
           const palette = () =>
@@ -149,6 +162,10 @@ export interface ShellStatusStripProps {
   layout: ShellChromeLayout;
   project: string;
   mode: string;
+  inputMode?: string | null;
+  tool?: string | null;
+  dockMode?: string | null;
+  focus?: string | null;
   notification: string | null;
   help: string;
 }
@@ -167,6 +184,10 @@ export function ShellStatusStrip(props: ShellStatusStripProps) {
           {
             project: props.project,
             mode: props.mode,
+            inputMode: props.inputMode,
+            tool: props.tool,
+            dockMode: props.dockMode,
+            focus: props.focus,
             notification: props.notification,
             help: props.help,
           },

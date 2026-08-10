@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   separatorAt,
+  separatorAtCanvas,
+  resizePreviewCommand,
   resizedSize,
-  resizeCommand,
+  resizeGuideRect,
   MIN_PANE,
   type PaneRect,
 } from "./resize-model.ts";
@@ -26,6 +28,9 @@ describe("separatorAt", () => {
   it("resolves a vertical separator between left/right panes", () => {
     expect(separatorAt(sideBySide, 40, 10)).toEqual({
       axis: "x",
+      position: 40,
+      start: 0,
+      end: 24,
       aId: "%0",
       bId: "%1",
       aSize: 40,
@@ -41,6 +46,9 @@ describe("separatorAt", () => {
   it("resolves a horizontal separator between top/bottom panes", () => {
     expect(separatorAt(stacked, 30, 12)).toEqual({
       axis: "y",
+      position: 12,
+      start: 0,
+      end: 80,
       aId: "%0",
       bId: "%1",
       aSize: 12,
@@ -72,6 +80,17 @@ describe("separatorAt", () => {
   });
 });
 
+describe("separatorAtCanvas", () => {
+  it("removes projected native chrome before resolving a horizontal divider", () => {
+    expect(separatorAtCanvas(stacked, { x: 0, y: 2 }, 30, 14)?.axis).toBe("y");
+    expect(separatorAtCanvas(stacked, { x: 0, y: 2 }, 30, 12)).toBeNull();
+  });
+
+  it("removes a projected horizontal inset before resolving a vertical divider", () => {
+    expect(separatorAtCanvas(sideBySide, { x: 3, y: 2 }, 43, 12)?.axis).toBe("x");
+  });
+});
+
 describe("resizedSize", () => {
   const sep = separatorAt(sideBySide, 40, 10)!; // aSize 40, bSize 39, total 79
 
@@ -93,14 +112,31 @@ describe("resizedSize", () => {
   });
 });
 
-describe("resizeCommand", () => {
-  it("emits an absolute -x for a vertical separator", () => {
-    const sep = separatorAt(sideBySide, 40, 10)!;
-    expect(resizeCommand(sep, 50)).toBe("resize-pane -t %0 -x 50");
+describe("resizeGuideRect", () => {
+  it("tracks a vertical divider across the shared pane span", () => {
+    expect(resizeGuideRect(separatorAt(sideBySide, 40, 10)!, 7)).toEqual({
+      x: 47,
+      y: 0,
+      width: 1,
+      height: 24,
+    });
   });
 
-  it("emits an absolute -y for a horizontal separator", () => {
-    const sep = separatorAt(stacked, 30, 12)!;
-    expect(resizeCommand(sep, 16)).toBe("resize-pane -t %0 -y 16");
+  it("tracks a horizontal divider across the shared pane span", () => {
+    expect(resizeGuideRect(separatorAt(stacked, 30, 12)!, -3)).toEqual({
+      x: 0,
+      y: 9,
+      width: 80,
+      height: 1,
+    });
+  });
+});
+
+describe("resizePreviewCommand", () => {
+  it("emits the immediate tmux preview for either divider axis", () => {
+    expect(resizePreviewCommand(separatorAt(sideBySide, 40, 10)!, 50)).toBe(
+      "resize-pane -t %0 -x 50",
+    );
+    expect(resizePreviewCommand(separatorAt(stacked, 30, 12)!, 16)).toBe("resize-pane -t %0 -y 16");
   });
 });

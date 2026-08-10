@@ -31,6 +31,59 @@ afterEach(() => {
 });
 
 describe("command-backed action dispatcher compatibility", () => {
+  it("emits accepted and applied send receipts without exposing literal input", async () => {
+    const receipts = vi.fn();
+    const mutate = vi.fn(async (input) => ({
+      verb: "workspace.pane.send" as const,
+      outcome: "applied" as const,
+      operationId: input.operationId,
+      daemonInstanceId: input.expectedDaemonInstanceId,
+      workspaceName: input.intent.workspaceName,
+      sourceSemanticPaneId: "pane.orchestrator",
+      semanticPaneId: "pane.editor",
+      origin: "sdk" as const,
+      characterCount: 14,
+      byteCount: 14,
+      submitted: true,
+    }));
+    const app = new Hono();
+    app.post(
+      "/api/v2/action/:name",
+      createActionDispatcher({
+        broadcast: vi.fn(),
+        broadcastResourceChanged: vi.fn(),
+        broadcastInteractionReceipt: receipts,
+        daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+        workspaceMultiplexerBackend: { mutate },
+      }),
+    );
+    const response = await app.request("http://localhost/api/v2/action/workspace.pane.send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": "10000000-0000-4000-8000-000000000001",
+      },
+      body: JSON.stringify({
+        workspaceName: "workspace.alpha",
+        sourceSemanticPaneId: "pane.orchestrator",
+        semanticPaneId: "pane.editor",
+        text: "private prompt",
+        submit: true,
+        origin: "sdk",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(receipts.mock.calls.map(([receipt]) => receipt.phase)).toEqual(["accepted", "applied"]);
+    expect(receipts.mock.calls.map(([receipt]) => receipt.sourceSemanticPaneId)).toEqual([
+      null,
+      "pane.orchestrator",
+    ]);
+    expect(JSON.stringify(receipts.mock.calls)).not.toContain("private prompt");
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: expect.objectContaining({ text: "private prompt" }) }),
+    );
+  });
   it("keeps unknown action transport behavior unchanged", async () => {
     const { app } = actionApp();
     const response = await app.request("http://localhost/api/v2/action/no.suchAction", {

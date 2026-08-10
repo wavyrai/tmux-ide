@@ -127,12 +127,15 @@ export function decodeBase64Url(value: string): string | null {
 }
 
 export class WidgetMarkerTooLargeError extends Error {
-  constructor(readonly payloadCharacters: number) {
+  readonly payloadCharacters: number;
+
+  constructor(payloadCharacters: number) {
     super(
       `The widget payload encodes to ${payloadCharacters} characters, over the ` +
         `${WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS}-character marker limit.`,
     );
     this.name = "WidgetMarkerTooLargeError";
+    this.payloadCharacters = payloadCharacters;
   }
 }
 

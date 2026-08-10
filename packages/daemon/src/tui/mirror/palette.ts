@@ -22,6 +22,19 @@ import type { PaletteUsageEntry, Tab } from "./app-state.ts";
 import type { AgentRowInput } from "./agent-rows.ts";
 import type { HostedPanelView } from "./panel-host.ts";
 import { SETTINGS_PALETTE_COMMANDS, type SettingsCommandId } from "./settings-model.ts";
+import {
+  navigatorEntryMatches,
+  parseNavigatorQuery,
+  type NavigatorEntryScope,
+  type NavigatorStatus,
+} from "@tmux-ide/core";
+
+export interface PalettePaneInput {
+  paneId: string;
+  title: string;
+  session: string;
+  active: boolean;
+}
 
 /** One runnable palette entry. `label` is what the list shows and what the
  *  fuzzy filter scores; `kind` (+ payload) is what the app dispatches on. */
@@ -31,6 +44,7 @@ export type PaletteAction =
   | { kind: "view"; viewId: string; label: string }
   | { kind: "open-folder"; label: string }
   | { kind: "attach"; session: string; label: string }
+  | { kind: "jump-pane"; paneId: string; session: string; label: string }
   | { kind: "jump-agent"; paneId: string; session: string; windowIndex: number; label: string }
   // The lifecycle verbs (M23.1) — `agentKind` (not `kind`, taken by the action
   // discriminant) is the manifest id the restart flow resolves a launch
@@ -127,6 +141,8 @@ export interface PaletteContext {
    *  each, the keyboard twin of the sidebar's clickable agent rows. Already
    *  sorted attention-first by the caller (fleetAgents). */
   agents?: AgentRowInput[];
+  /** Current workspace panes, projected as first-class navigator targets. */
+  panes?: readonly PalettePaneInput[];
   /** A co-attached terminal has sized the tmux window away from our canvas
    *  (M22.8). Only then is the "Resize to fit this window" reclaim action worth
    *  offering — otherwise it is a no-op that clutters the list. */
@@ -218,6 +234,14 @@ export function staticPaletteActions(
       session: a.session,
       windowIndex: a.windowIndex,
       label: `Agent: ${a.kind} · ${a.session} (${a.state})`,
+    });
+  }
+  for (const pane of ctx.panes ?? []) {
+    actions.push({
+      kind: "jump-pane",
+      paneId: pane.paneId,
+      session: pane.session,
+      label: `Pane: ${pane.title} · ${pane.session}${pane.active ? " (active)" : ""}`,
     });
   }
   // The per-agent lifecycle verbs (M23.1), grouped after the jumps so an empty
@@ -424,6 +448,8 @@ export function paletteActionKey(a: PaletteAction): string {
       return `view:${a.viewId}`;
     case "attach":
       return `attach:${a.session}`;
+    case "jump-pane":
+      return `jump-pane:${a.session}:${a.paneId}`;
     case "jump-agent":
       return `jump-agent:${a.session}`;
     case "restart-agent":
@@ -439,6 +465,59 @@ export function paletteActionKey(a: PaletteAction): string {
     default:
       return a.kind;
   }
+}
+
+export function paletteActionNavigatorScope(action: PaletteAction): NavigatorEntryScope {
+  switch (action.kind) {
+    case "surface":
+    case "tab":
+    case "view":
+    case "open-folder":
+    case "attach":
+      return "workspaces";
+    case "jump-agent":
+    case "new-agent":
+    case "new-agent-again":
+    case "manage-team":
+    case "restart-agent":
+    case "stop-agent":
+      return "agents";
+    case "jump-pane":
+    case "new-window":
+    case "rename-window":
+    case "kill-window":
+    case "zoom-pane":
+    case "swap-pane":
+    case "split-pane-right":
+    case "split-pane-down":
+    case "kill-pane":
+    case "break-pane":
+    case "rotate-window":
+    case "select-layout":
+    case "sync-toggle":
+    case "select-text":
+    case "resize-window":
+      return "panes";
+    default:
+      return "commands";
+  }
+}
+
+function paletteActionNavigatorStatus(
+  action: PaletteAction,
+  agents: readonly AgentRowInput[],
+): NavigatorStatus | null {
+  if (
+    action.kind !== "jump-agent" &&
+    action.kind !== "restart-agent" &&
+    action.kind !== "stop-agent"
+  ) {
+    return null;
+  }
+  const state = agents.find((agent) => agent.paneId === action.paneId)?.state;
+  return state === "blocked" || state === "working" || state === "done" || state === "idle"
+    ? state
+    : null;
 }
 
 /** PURE — the usage comparator (frequency first, then recency): negative when
@@ -467,25 +546,40 @@ export function filterPaletteActions(
   sessions: string[],
   ctx: PaletteContext = {},
 ): PaletteAction[] {
-  const statics = staticPaletteActions(sessions, ctx);
-  const q = query.trim();
+  const parsed = parseNavigatorQuery(query);
+  const statics = staticPaletteActions(sessions, ctx).filter((action) =>
+    navigatorEntryMatches(
+      {
+        scope: paletteActionNavigatorScope(action),
+        status: paletteActionNavigatorStatus(action, ctx.agents ?? []),
+      },
+      parsed,
+    ),
+  );
+  const q = parsed.query.trim();
   const matched =
     q.length === 0
       ? statics
-      : fuzzyFilter(query, statics, (a) => a.label)
+      : fuzzyFilter(q, statics, (a) => a.label)
           .sort((x, y) => y.score - x.score || compareUsage(x.item, y.item, ctx.usage))
           .map((m) => m.item);
   if (q.length === 0) return matched;
-  const dynamic: PaletteAction[] = [{ kind: "open-file", path: q, label: `Open file: ${q}` }];
+  const dynamic: PaletteAction[] =
+    parsed.scope === "all" || parsed.scope === "commands"
+      ? [{ kind: "open-file", path: q, label: `Open file: ${q}` }]
+      : [];
   // On the Terminal surface a non-empty query also offers a rename-to-<query>
   // window verb (there is no way to fuzzy-match a name you are still typing —
   // same reasoning as the open-file entry).
-  if (ctx.terminal) {
+  if (ctx.terminal && (parsed.scope === "all" || parsed.scope === "panes")) {
     dynamic.push({ kind: "rename-window", name: q, label: `Rename window: ${q}` });
   }
   // "Go to file:" rows (M24.6) are APPENDED after everything so this addition
   // cannot disturb the existing result ranking.
-  const goFiles = goToFileActions(q, ctx.repoFiles ?? []);
+  const goFiles =
+    parsed.scope === "all" || parsed.scope === "commands"
+      ? goToFileActions(q, ctx.repoFiles ?? [])
+      : [];
   return looksLikePath(q)
     ? [...dynamic, ...matched, ...goFiles]
     : [...matched, ...dynamic, ...goFiles];

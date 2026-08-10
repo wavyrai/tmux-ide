@@ -50,6 +50,8 @@ export default [
       "scripts/**/*.ts",
       "src/**/*.ts",
       "packages/contracts/src/**/*.ts",
+      "packages/core/src/**/*.ts",
+      "packages/daemon-client/src/**/*.ts",
       "packages/sdk/src/**/*.ts",
       "packages/daemon/src/**/*.ts",
       "packages/tmux-bridge/src/**/*.ts",
@@ -156,6 +158,46 @@ export default [
                 "!**/packages/tmux-bridge/src/**",
               ],
               message: "tmux-bridge may only relative-import within itself or contracts",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/core/src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@tmux-ide/*", "!@tmux-ide/contracts"],
+              message: "core is renderer-neutral and may only import @tmux-ide/contracts",
+            },
+            {
+              group: ["**/packages/*/src/**", "!**/packages/core/src/**"],
+              message: "core may not reach into another package implementation",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/daemon-client/src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@tmux-ide/*", "!@tmux-ide/contracts"],
+              message: "daemon-client is renderer-neutral and may only import contracts",
+            },
+            {
+              group: ["**/packages/*/src/**", "!**/packages/daemon-client/src/**"],
+              message: "daemon-client may not reach into another package implementation",
             },
           ],
         },

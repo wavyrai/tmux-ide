@@ -23,7 +23,10 @@ import {
 import { computeAgentStates, computePortPanes } from "./session-monitor.ts";
 import { DaemonShutdownError, DaemonStartupError } from "./errors.ts";
 import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
-import { handleWsEventsConnection } from "../command-center/ws-events.ts";
+import {
+  broadcastInteractionReceipt,
+  handleWsEventsConnection,
+} from "../command-center/ws-events.ts";
 import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
 import { readAppSettings } from "./app-settings.ts";
@@ -36,6 +39,7 @@ import { WorkspaceOpenAuthority } from "./workspace-open.ts";
 import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
 import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
 import { WorkspaceMultiplexerAuthority } from "./workspace-multiplexer-verbs.ts";
+import { TmuxExternalInteractionObserver } from "./tmux-external-interaction-observer.ts";
 import {
   createNativeTerminalAttachmentRuntime,
   type NativeTerminalAttachmentRuntime,
@@ -968,6 +972,29 @@ export async function startEmbeddedDaemon(
       registry: workspaceRegistry,
       tmuxAuthority,
     });
+    const externalInteractionObserver = new TmuxExternalInteractionObserver({
+      daemonInstanceId: instanceId,
+      registry: workspaceRegistry,
+      tmuxAuthority,
+      onObserved: ({ workspaceName, semanticPaneId, operationKind }) => {
+        try {
+          broadcastInteractionReceipt(
+            {
+              operationId: randomUUID(),
+              origin: "external",
+              workspaceName,
+              semanticPaneId,
+              operationKind,
+              phase: "observed",
+              summary: { observedOnly: true },
+            },
+            instanceId,
+          );
+        } catch (error) {
+          if (!opts.silent) console.error("[daemon] External interaction receipt failed:", error);
+        }
+      },
+    });
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
@@ -1024,6 +1051,7 @@ export async function startEmbeddedDaemon(
         workspacePromotion.dispose(),
         appWindowMutation.dispose(),
         workspaceMultiplexer.dispose(),
+        externalInteractionObserver.dispose(),
       ]);
       throw error;
     }
@@ -1035,6 +1063,7 @@ export async function startEmbeddedDaemon(
       terminalAttachmentBoundary,
       paneStreamBoundary,
     } = startedServer;
+    externalInteractionObserver.start();
     const retirePaneStreamTransport = async (): Promise<readonly unknown[]> => {
       const results = await Promise.allSettled([
         Promise.resolve().then(() => paneStreamRuntime!.dispose()),
@@ -1054,6 +1083,12 @@ export async function startEmbeddedDaemon(
       const workspaceOpenDisposal = Promise.resolve().then(() => workspaceOpen.dispose());
       const workspacePromotionDisposal = Promise.resolve().then(() => workspacePromotion.dispose());
       const appWindowMutationDisposal = Promise.resolve().then(() => appWindowMutation.dispose());
+      const workspaceMultiplexerDisposal = Promise.resolve().then(() =>
+        workspaceMultiplexer.dispose(),
+      );
+      const externalInteractionDisposal = Promise.resolve().then(() =>
+        externalInteractionObserver.dispose(),
+      );
       const closePromise = Promise.resolve()
         .then(() => waitForServerClose(server))
         .catch(() => undefined);
@@ -1062,6 +1097,8 @@ export async function startEmbeddedDaemon(
         workspaceOpenDisposal,
         workspacePromotionDisposal,
         appWindowMutationDisposal,
+        workspaceMultiplexerDisposal,
+        externalInteractionDisposal,
         Promise.resolve().then(() => closeClients()),
         ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
         Promise.race([closePromise, delay(100)]),
@@ -1227,6 +1264,8 @@ export async function startEmbeddedDaemon(
             await capture(() => workspaceOpen.dispose());
             await capture(() => workspacePromotion.dispose());
             await capture(() => appWindowMutation.dispose());
+            await capture(() => workspaceMultiplexer.dispose());
+            await capture(() => externalInteractionObserver.dispose());
 
             let closePromise: Promise<void>;
             try {

@@ -6,6 +6,7 @@ import {
 } from "./daemon-resources.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import { DesktopWorkspaceNameSchemaZ } from "./desktop-host.ts";
+import { InteractionReceiptSchemaZ } from "./interaction-receipts.ts";
 
 /** Shared, browser-safe protocol for the daemon's unified /ws/events socket. */
 
@@ -280,6 +281,7 @@ export const DaemonEventServerFrameSchemaZ = z.discriminatedUnion("type", [
   DaemonEventConfigChangedFrameSchemaZ,
   DaemonEventTerminalsChangedFrameSchemaZ,
   DaemonEventResourceChangedFrameSchemaZ,
+  InteractionReceiptSchemaZ,
   DaemonEventSnapshotRequiredFrameSchemaZ,
   DaemonEventAgentStatusChangedFrameSchemaZ,
   DaemonEventAgentTurnCompletedFrameSchemaZ,

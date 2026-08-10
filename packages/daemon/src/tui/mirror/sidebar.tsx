@@ -34,6 +34,8 @@ import {
   type AgentRowInput,
 } from "./agent-rows.ts";
 import type { SemanticThemeSnapshot } from "./theme.ts";
+import { readableThemeForeground } from "./theme.ts";
+import { openTuiRecipeColors } from "./recipes.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 import type { ShellChromeVariant } from "./shell-chrome.ts";
 
@@ -83,27 +85,68 @@ export interface SidebarProps {
   onMouse?: (e: SidebarMouseEvent) => void;
 }
 
+/** Purpose-specific projection for the owned sidebar surface. The canonical
+ * recipe chooses the surface/text/border family; this final host projection
+ * assigns emphasis and guards critical navigation text against low-contrast
+ * terminal palettes and custom theme overrides. */
+export function sidebarThemePalette(theme: SemanticThemeSnapshot) {
+  const recipe = openTuiRecipeColors(theme, "sidebar");
+  const readable = (
+    background: typeof recipe.background,
+    ...candidates: (typeof recipe.foreground)[]
+  ) =>
+    readableThemeForeground(background, [
+      ...candidates,
+      theme.roles.text.primary,
+      theme.roles.text.bright,
+      theme.roles.text.inverse,
+    ]);
+  return {
+    surface: recipe.background,
+    separator: recipe.border,
+    title: readable(recipe.background, theme.roles.text.link),
+    label: readable(recipe.background, recipe.foreground),
+    metadata: readable(recipe.background, theme.roles.text.muted, recipe.foreground),
+    hoverSurface: theme.roles.selection.hover,
+    hoverLabel: readable(theme.roles.selection.hover, theme.roles.text.primary, recipe.foreground),
+    selectedSurface: theme.roles.selection.selection,
+    selectedLabel: readable(theme.roles.selection.selection, theme.roles.selection.selectionText),
+    attentionSurface: theme.derived.attentionSurface,
+    attentionLabel: readable(theme.derived.attentionSurface, theme.roles.text.primary),
+  } as const;
+}
+
 export function Sidebar(props: SidebarProps) {
   const theme = () => props.theme;
-  const statusColor = (status: AgentStatus) => {
-    if (status === "blocked") return theme().roles.statusTone.warning;
-    if (status === "working") return theme().roles.statusTone.info;
-    if (status === "done") return theme().roles.statusTone.success;
-    return theme().roles.statusTone.neutral;
+  const palette = () => sidebarThemePalette(theme());
+  const statusColor = (status: AgentStatus, background = palette().surface) => {
+    const preferred =
+      status === "blocked"
+        ? theme().roles.statusTone.warning
+        : status === "working"
+          ? theme().roles.statusTone.info
+          : status === "done"
+            ? theme().roles.statusTone.success
+            : theme().roles.statusTone.neutral;
+    return readableThemeForeground(
+      background,
+      [preferred, palette().label, theme().roles.text.bright, theme().roles.text.inverse],
+      3,
+    );
   };
   return (
     <box
       width={props.width}
       flexDirection="column"
-      backgroundColor={theme().roles.surfaces.panel}
+      backgroundColor={palette().surface}
       paddingLeft={1}
       overflow="hidden"
       onMouse={(e: SidebarMouseEvent) => props.onMouse?.(e)}
     >
-      <text fg={theme().roles.text.link} attributes={1}>
+      <text fg={palette().title} attributes={1}>
         {props.variant === "compact" ? "tmux" : "tmux-ide"}
       </text>
-      <text fg={theme().roles.text.muted}>{"─".repeat(props.width - 2)}</text>
+      <text fg={palette().separator}>{"─".repeat(props.width - 2)}</text>
       <box flexDirection="column">
         <For each={props.sessions}>
           {(s, i) => (
@@ -112,16 +155,31 @@ export function Sidebar(props: SidebarProps) {
               gap={1}
               backgroundColor={
                 s.name === props.current
-                  ? theme().roles.selection.selection
+                  ? palette().selectedSurface
                   : props.isHovered("sidebar", i())
-                    ? theme().roles.selection.hover
-                    : theme().roles.surfaces.panel
+                    ? palette().hoverSurface
+                    : palette().surface
               }
             >
-              <text fg={statusColor(s.status)}>{STATUS_GLYPH[s.status]}</text>
+              <text
+                fg={statusColor(
+                  s.status,
+                  s.name === props.current
+                    ? palette().selectedSurface
+                    : props.isHovered("sidebar", i())
+                      ? palette().hoverSurface
+                      : palette().surface,
+                )}
+              >
+                {STATUS_GLYPH[s.status]}
+              </text>
               <text
                 fg={
-                  s.name === props.current ? theme().roles.text.primary : theme().roles.text.muted
+                  s.name === props.current
+                    ? palette().selectedLabel
+                    : props.isHovered("sidebar", i())
+                      ? palette().hoverLabel
+                      : palette().label
                 }
               >
                 {s.name.slice(0, Math.max(1, props.width - (props.variant === "compact" ? 3 : 5)))}
@@ -143,12 +201,13 @@ export function Sidebar(props: SidebarProps) {
         <box
           flexDirection="row"
           backgroundColor={
-            props.isHovered("agentshdr", 0)
-              ? theme().roles.selection.hover
-              : theme().roles.surfaces.panel
+            props.isHovered("agentshdr", 0) ? palette().hoverSurface : palette().surface
           }
         >
-          <text fg={theme().roles.text.muted} attributes={1}>
+          <text
+            fg={props.isHovered("agentshdr", 0) ? palette().hoverLabel : palette().label}
+            attributes={1}
+          >
             {agentsHeaderLabel(
               props.agents.length,
               Math.max(1, props.width - AGENTS_ADD_CHIP.length - 2),
@@ -156,12 +215,8 @@ export function Sidebar(props: SidebarProps) {
           </text>
           <box flexGrow={1} />
           <text
-            fg={theme().roles.text.muted}
-            bg={
-              props.isHovered("agentschip", 0)
-                ? theme().roles.selection.hover
-                : theme().roles.surfaces.panel
-            }
+            fg={props.isHovered("agentschip", 0) ? palette().hoverLabel : palette().label}
+            bg={props.isHovered("agentschip", 0) ? palette().hoverSurface : palette().surface}
           >
             {AGENTS_ADD_CHIP}
           </text>
@@ -170,17 +225,13 @@ export function Sidebar(props: SidebarProps) {
           when={props.agents.length > 0}
           fallback={
             <box flexDirection="row">
-              <text fg={theme().roles.text.muted}>
+              <text fg={palette().metadata}>
                 {AGENTS_EMPTY_LINE.slice(0, Math.max(1, props.width - AGENTS_ADD_CHIP.length - 2))}
               </text>
               <box flexGrow={1} />
               <text
-                fg={theme().roles.text.muted}
-                bg={
-                  props.isHovered("agentschip", 1)
-                    ? theme().roles.selection.hover
-                    : theme().roles.surfaces.panel
-                }
+                fg={props.isHovered("agentschip", 1) ? palette().hoverLabel : palette().label}
+                bg={props.isHovered("agentschip", 1) ? palette().hoverSurface : palette().surface}
               >
                 {AGENTS_ADD_CHIP}
               </text>
@@ -206,20 +257,34 @@ export function Sidebar(props: SidebarProps) {
                   gap={1}
                   backgroundColor={
                     flashed()
-                      ? theme().derived.attentionSurface
+                      ? palette().attentionSurface
                       : hovered()
-                        ? theme().roles.selection.hover
-                        : theme().roles.surfaces.panel
+                        ? palette().hoverSurface
+                        : palette().surface
                   }
                 >
-                  <text fg={statusColor(a.state)} attributes={attn()}>
+                  <text
+                    fg={statusColor(
+                      a.state,
+                      flashed()
+                        ? palette().attentionSurface
+                        : hovered()
+                          ? palette().hoverSurface
+                          : palette().surface,
+                    )}
+                    attributes={attn()}
+                  >
                     {STATUS_GLYPH[a.state]}
                   </text>
                   <text
                     fg={
                       a.state === "blocked"
                         ? theme().roles.statusTone.warning
-                        : theme().roles.text.muted
+                        : flashed()
+                          ? palette().attentionLabel
+                          : hovered()
+                            ? palette().hoverLabel
+                            : palette().label
                     }
                     attributes={attn()}
                   >
@@ -227,7 +292,9 @@ export function Sidebar(props: SidebarProps) {
                   </text>
                   <Show when={ageShown()}>
                     <box flexGrow={1} />
-                    <text fg={theme().roles.text.muted}>{ageShown()}</text>
+                    <text fg={flashed() ? palette().attentionLabel : palette().metadata}>
+                      {ageShown()}
+                    </text>
                   </Show>
                 </box>
               );
@@ -240,18 +307,14 @@ export function Sidebar(props: SidebarProps) {
         hit-tests SIDEBAR_HINT_SPAN on the last screen row, and these three runs
         render the exact same cells. */}
       <box width={props.width} flexDirection="row" overflow="hidden">
-        <text fg={theme().roles.text.muted}>{props.hint.pre}</text>
+        <text fg={palette().metadata}>{props.hint.pre}</text>
         <text
-          fg={theme().roles.text.muted}
-          bg={
-            props.isHovered("sidebtn", 0)
-              ? theme().roles.selection.hover
-              : theme().roles.surfaces.panel
-          }
+          fg={props.isHovered("sidebtn", 0) ? palette().hoverLabel : palette().label}
+          bg={props.isHovered("sidebtn", 0) ? palette().hoverSurface : palette().surface}
         >
           {props.hint.btn}
         </text>
-        <text fg={theme().roles.text.muted}>{props.hint.post}</text>
+        <text fg={palette().metadata}>{props.hint.post}</text>
       </box>
     </box>
   );

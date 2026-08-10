@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeDispatchFile, LONG_MESSAGE_THRESHOLD } from "./send.ts";
+import { cliSourceSemanticPaneId, writeDispatchFile, LONG_MESSAGE_THRESHOLD } from "./send.ts";
 
 let tmpDir: string;
 
@@ -66,5 +66,23 @@ describe("writeDispatchFile", () => {
     } finally {
       Date.now = originalNow;
     }
+  });
+});
+
+describe("cliSourceSemanticPaneId", () => {
+  it("derives source identity from the exact tmux pane in the target session", () => {
+    expect(
+      cliSourceSemanticPaneId("workspace", "%7", (paneId) => {
+        expect(paneId).toBe("%7");
+        return "workspace\tpane.editor\n";
+      }),
+    ).toBe("pane.editor");
+  });
+
+  it("does not attribute sends from outside tmux or another session", () => {
+    expect(
+      cliSourceSemanticPaneId("workspace", undefined, () => "workspace\tpane.editor"),
+    ).toBeNull();
+    expect(cliSourceSemanticPaneId("workspace", "%7", () => "other\tpane.editor")).toBeNull();
   });
 });

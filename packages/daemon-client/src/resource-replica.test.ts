@@ -72,6 +72,13 @@ describe("resource replica", () => {
     expect(transition.state).toMatchObject({ phase: "stale", sequence: 11, reason: "changed" });
     expect(transition.effects).toEqual([
       {
+        type: "acknowledge-operation",
+        daemonInstanceId: GENERATION_A,
+        operationId: "operation-a",
+        sequence: 11,
+        revision: 5,
+      },
+      {
         type: "refresh-resource",
         daemonInstanceId: GENERATION_A,
         minimumRevision: 5,
@@ -87,6 +94,26 @@ describe("resource replica", () => {
     expect(duplicate).toEqual({ state: live(), effects: [] });
   });
 
+  it("acknowledges an observed idempotent mutation even when its resource revision is unchanged", () => {
+    const transition = advanceResourceReplica(live(), {
+      type: "changed",
+      daemonInstanceId: GENERATION_A,
+      sequence: 11,
+      revision: 4,
+      causeOperationId: "operation-unchanged",
+    });
+    expect(transition.state).toMatchObject({ phase: "live", sequence: 11, revision: 4 });
+    expect(transition.effects).toEqual([
+      {
+        type: "acknowledge-operation",
+        daemonInstanceId: GENERATION_A,
+        operationId: "operation-unchanged",
+        sequence: 11,
+        revision: 4,
+      },
+    ]);
+  });
+
   it("requests a full snapshot when any event sequence is missing", () => {
     const transition = advanceResourceReplica(live(), {
       type: "changed",
@@ -98,6 +125,16 @@ describe("resource replica", () => {
     expect(transition.effects).toEqual([
       { type: "request-snapshot", daemonInstanceId: GENERATION_A },
     ]);
+  });
+
+  it("advances over a contiguous interaction receipt without refreshing a resource", () => {
+    const transition = advanceResourceReplica(live(), {
+      type: "observed",
+      daemonInstanceId: GENERATION_A,
+      sequence: 11,
+    });
+    expect(transition.state).toMatchObject({ phase: "live", sequence: 11, revision: 4 });
+    expect(transition.effects).toEqual([]);
   });
 
   it("allows multiple clients to converge independently on one shared snapshot", () => {

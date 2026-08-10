@@ -12,6 +12,7 @@ import {
 } from "./shell-chrome.tsx";
 import {
   shellChromeLayout,
+  shellNavigationPresentation,
   shellSidebarHint,
   shellSurfaceTabs,
   shellVisualPalette,
@@ -78,7 +79,11 @@ function expectSidebarHintCells(frame: string, width: number, height: number): v
 
 function expectRenderedTabBoundaries(frame: string, width: number, height: number): void {
   const layout = shellChromeLayout(width, height, 28);
-  const tabs = shellSurfaceTabs(views, "terminal", layout.variant, null, new Set(["terminal"]));
+  const navigation = shellNavigationPresentation(layout.variant, true);
+  const tabs = shellSurfaceTabs(views, "terminal", layout.variant, null, new Set(["terminal"]), {
+    startX: navigation.width,
+    navigationFocused: true,
+  });
   const top = frameLines(frame)[0] ?? "";
   for (const tab of tabs) {
     expect(top.slice(tab.span.start, tab.span.start + tab.span.width)).toBe(tab.label);
@@ -91,7 +96,12 @@ function ShellChromeHarness(props: { width: number; height: number }) {
   const [hovered, setHovered] = createSignal<number | null>(null);
   const [message, setMessage] = createSignal("ready");
   const layout = () => shellChromeLayout(props.width, props.height, 28);
-  const tabs = () => shellSurfaceTabs(views, active(), layout().variant, hovered());
+  const navigation = () => shellNavigationPresentation(layout().variant, true);
+  const tabs = () =>
+    shellSurfaceTabs(views, active(), layout().variant, hovered(), new Set(["terminal"]), {
+      startX: navigation().width,
+      navigationFocused: true,
+    });
   const selectTab = (index: number) => {
     const tab = tabs()[index];
     if (!tab) return;
@@ -135,6 +145,7 @@ function ShellChromeHarness(props: { width: number; height: number }) {
         hoveredIndex={hovered()}
         note={message()}
         attentionViewIds={new Set(["terminal"])}
+        navigationFocused
         rightChips={[
           { id: "context", label: "⧉ web ", context: true },
           { id: "alert", label: "!blocked ", attention: true },
@@ -256,7 +267,11 @@ describe("ShellChrome OpenTUI renderer", () => {
   it("routes mouse hover/click from the same projected tab spans", async () => {
     const harness = await renderShell(120, 40);
     const layout = shellChromeLayout(120, 40, 28);
-    const tabs = shellSurfaceTabs(views, "terminal", layout.variant, null);
+    const navigation = shellNavigationPresentation(layout.variant, true);
+    const tabs = shellSurfaceTabs(views, "terminal", layout.variant, null, new Set(["terminal"]), {
+      startX: navigation.width,
+      navigationFocused: true,
+    });
     const frameTop = frameLines(harness.frame())[0]!;
     const visualFilesStart = frameTop.indexOf(tabs.find((tab) => tab.id === "files")!.label);
     expect(visualFilesStart).toBe(tabs.find((tab) => tab.id === "files")!.span.start);
@@ -322,14 +337,12 @@ describe("ShellChrome OpenTUI renderer", () => {
 
     setup = await renderForTest(() => <ThemeModeShell />, { width: 80, height: 4 });
     await setup.renderOnce();
-    const darkBg = setup
-      .captureSpans()
-      .lines[0]!.spans.find((span) => span.text.includes(" ❯ "))!.bg;
+    const darkBg = setup.captureSpans().lines[0]!.spans.find((span) => span.text.includes("❯"))!.bg;
     source.emit("light");
     await setup.renderOnce();
     const lightBg = setup
       .captureSpans()
-      .lines[0]!.spans.find((span) => span.text.includes(" ❯ "))!.bg;
+      .lines[0]!.spans.find((span) => span.text.includes("❯"))!.bg;
     expect(colorKey(lightBg)).not.toBe(colorKey(darkBg));
   });
 });

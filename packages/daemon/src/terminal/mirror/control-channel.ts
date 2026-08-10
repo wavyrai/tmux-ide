@@ -44,6 +44,14 @@ export interface MirrorChannelIo {
   /** Reply-matched command whose callback fires SYNCHRONOUSLY in channel read
    *  order — the seed recipe's primitive. */
   commandInline(cmd: string, onReply: (reply: ControlReply) => void): void;
+  /** Atomic command-list with one reply block per command; selects the block
+   *  delivered to the synchronous callback and discards the rest. */
+  commandListInline(
+    cmd: string,
+    replyCount: number,
+    resultIndex: number,
+    onReply: (reply: ControlReply) => void,
+  ): void;
   /** Fire-and-forget (input fast path): the reply block is consumed and
    *  dropped, errors counted. */
   send(cmd: string): void;
@@ -70,6 +78,11 @@ type ReplySink =
 export class ControlChannelCore {
   private buffer = "";
   private inReply = false;
+  /** The greeting is the sole flags=0 block that belongs to pending work.
+   *  Subsequent flags=0 blocks are tmux hook command results, emitted on the
+   *  initiating control client but not caused by an input line. */
+  private awaitingGreeting = true;
+  private currentReplyConsumesPending = false;
   private readonly pending: ReplySink[] = [];
   private discardedErrors = 0;
   private failed = false;
@@ -114,15 +127,22 @@ export class ControlChannelCore {
     switch (event.kind) {
       case "begin":
         this.inReply = true;
+        this.currentReplyConsumesPending = this.awaitingGreeting || event.flags !== 0;
         break;
       case "reply-line": {
-        const head = this.pending[0];
+        const head = this.currentReplyConsumesPending ? this.pending[0] : undefined;
         if (head && head.kind !== "discard") head.lines.push(event.line);
         break;
       }
       case "end":
       case "error": {
         this.inReply = false;
+        if (!this.currentReplyConsumesPending) {
+          this.currentReplyConsumesPending = false;
+          break;
+        }
+        this.currentReplyConsumesPending = false;
+        this.awaitingGreeting = false;
         const sink = this.pending.shift();
         if (!sink) break; // unsolicited block (greeting after a race)
         if (sink.kind === "discard") {
@@ -250,6 +270,29 @@ export class MirrorControlChannel implements MirrorChannelIo {
       return;
     }
     this.core.push({ kind: "inline", onReply, lines: [] });
+    proc.stdin.write(`${cmd}\n`);
+  }
+
+  commandListInline(
+    cmd: string,
+    replyCount: number,
+    resultIndex: number,
+    onReply: (reply: ControlReply) => void,
+  ): void {
+    const proc = this.proc;
+    if (!proc?.stdin?.writable) {
+      onReply({ ok: false, lines: ["control channel not running"] });
+      return;
+    }
+    if (replyCount < 1 || resultIndex < 0 || resultIndex >= replyCount) {
+      onReply({ ok: false, lines: ["invalid control command-list reply selection"] });
+      return;
+    }
+    for (let index = 0; index < replyCount; index++) {
+      this.core.push(
+        index === resultIndex ? { kind: "inline", onReply, lines: [] } : { kind: "discard" },
+      );
+    }
     proc.stdin.write(`${cmd}\n`);
   }
 

@@ -647,7 +647,12 @@ function baseTokens(appearance: ThemeAppearance): VisualTokensV1 {
     text: {
       primary: color(dark ? "dedee6" : "202027"),
       secondary: color(dark ? "a5a5b3" : "555563"),
-      muted: color(dark ? "7b7b8a" : "72727f"),
+      // Keep tertiary text off ANSI base slot 8. In 256-colour hosts OpenTUI
+      // quantizes close colours to palette entries; slot 8 is user-remappable
+      // and is near-black in several embedded terminals. These exact extended
+      // greys resolve to stable xterm-256 entries (245 dark / 242 light) while
+      // preserving readable contrast against the built-in panel surfaces.
+      muted: color(dark ? "8a8a8a" : "6c6c6c"),
       bright: color(dark ? "ffffff" : "09090d"),
       inverse: color(dark ? "101015" : "ffffff"),
       link: color(dark ? "62d9e8" : "006c7a"),

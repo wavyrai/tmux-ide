@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { createMemo, createRoot, createSignal } from "solid-js";
 import {
   APPLICATION_SHELL_COMMAND_IDS,
   CANONICAL_SURFACE_REGISTRY,
@@ -12,11 +13,13 @@ import {
 import {
   applicationShellPaletteInvocation,
   applicationShellSurfaceInvocations,
+  openTuiApplicationShellAuthorityInput,
   openTuiRuntimePaneId,
   openTuiSemanticPaneId,
   projectOpenTuiApplicationShell,
   reduceOpenTuiApplicationShellCommand,
   reduceOpenTuiApplicationShellCommands,
+  sameOpenTuiApplicationShellInput,
 } from "./application-shell-controller.ts";
 
 function projection(
@@ -48,6 +51,66 @@ function projection(
 }
 
 describe("OpenTUI canonical application-shell controller", () => {
+  it("keeps terminal paint churn off the semantic application-shell lane", () => {
+    const base = {
+      projectName: "tmux-ide",
+      rootLabel: "/workspace/tmux-ide",
+      workspaceName: "main",
+      activeMode: "terminals" as const,
+      dockMode: "open" as const,
+      activeDockTool: "files" as const,
+      focusZone: "terminal" as const,
+      focusedPaneId: "%7",
+      terminalInputPaneId: "%7",
+      paletteOpen: false,
+      sessions: [{ name: "main", status: "working" as const }],
+      activeSession: "main",
+      agents: [{ paneId: "%7", name: "Codex", kind: "codex", status: "working" as const }],
+      notification: "live",
+      connectionState: "connected" as const,
+    };
+
+    expect(
+      sameOpenTuiApplicationShellInput(base, {
+        ...base,
+        sessions: base.sessions.map((session) => ({ ...session })),
+        agents: base.agents.map((agent) => ({ ...agent })),
+      }),
+    ).toBe(true);
+    expect(
+      sameOpenTuiApplicationShellInput(base, {
+        ...base,
+        focusedPaneId: "%8",
+        terminalInputPaneId: "%8",
+      }),
+    ).toBe(false);
+
+    createRoot((dispose) => {
+      const [semanticInput, setSemanticInput] = createSignal(base, {
+        equals: sameOpenTuiApplicationShellInput,
+      });
+      let projectionCount = 0;
+      const projected = createMemo(() => {
+        projectionCount += 1;
+        return projectOpenTuiApplicationShell(semanticInput());
+      });
+      expect(projected().focus.appFocusedPaneId).toBe(openTuiSemanticPaneId("%7"));
+      for (let tick = 0; tick < 1_000; tick += 1) {
+        setSemanticInput({
+          ...base,
+          sessions: base.sessions.map((session) => ({ ...session })),
+          agents: base.agents.map((agent) => ({ ...agent })),
+        });
+        projected();
+      }
+      expect(projectionCount).toBe(1);
+      setSemanticInput({ ...base, focusedPaneId: "%8", terminalInputPaneId: "%8" });
+      expect(projected().focus.appFocusedPaneId).toBe(openTuiSemanticPaneId("%8"));
+      expect(projectionCount).toBe(2);
+      dispose();
+    });
+  });
+
   it("projects exactly the canonical surface identity, order, shortcuts, and commands", () => {
     const shell = projection();
     const projected = [...shell.primaryNavigation.items, ...shell.bottomDock.tools].map(
@@ -200,6 +263,38 @@ describe("OpenTUI canonical application-shell controller", () => {
     });
     expect(openTuiRuntimePaneId(openTuiSemanticPaneId("%7"), ["%6", "%7"])).toBe("%7");
     expect(openTuiRuntimePaneId(openTuiSemanticPaneId("%7"), ["%6"])).toBeNull();
+  });
+
+  it("uses daemon-owned pane identity in both authority projection and reverse focus routing", () => {
+    const paneIdentities = [
+      { runtimePaneId: "%7", semanticPaneId: "pane.01K2Y24E9Q9Y8ZHP7M4E2XH2AV" },
+    ] as const;
+    const input = {
+      projectName: "tmux-ide",
+      rootLabel: "/workspace/tmux-ide",
+      workspaceName: "main",
+      activeMode: "terminals" as const,
+      dockMode: "open" as const,
+      activeDockTool: "files" as const,
+      focusZone: "terminal" as const,
+      focusedPaneId: "%7",
+      terminalInputPaneId: "%7",
+      paneIdentities,
+      paletteOpen: false,
+      sessions: [{ name: "main", status: "working" as const }],
+      activeSession: "main",
+      agents: [{ paneId: "%7", name: "Codex", kind: "codex", status: "working" as const }],
+    };
+
+    const authority = openTuiApplicationShellAuthorityInput(input);
+    expect(authority.focus.appFocusedPaneId).toBe(paneIdentities[0].semanticPaneId);
+    expect(authority.workspace.sidebar.agents[0]?.paneId).toBe(paneIdentities[0].semanticPaneId);
+    expect(
+      openTuiRuntimePaneId(paneIdentities[0].semanticPaneId, ["%6", "%7"], paneIdentities),
+    ).toBe("%7");
+    expect(
+      openTuiRuntimePaneId(paneIdentities[0].semanticPaneId, ["%6"], paneIdentities),
+    ).toBeNull();
   });
 
   it("replays the shared canonical trace deterministically", () => {

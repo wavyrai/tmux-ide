@@ -45,6 +45,12 @@ describe("command palette ranking", () => {
     expect(rankDomPaletteEntries(paletteEntries, "").map(({ entry }) => entry.id)).toEqual([
       "home",
       "terminals",
+      "workspace:session.product",
+      "workspace:session.docs",
+      "agent:agent.pm",
+      "agent:agent.implementer",
+      "agent:agent.reviewer",
+      "agent:agent.recovery",
       "files",
       "changes",
       "missions",
@@ -52,7 +58,20 @@ describe("command palette ranking", () => {
     ]);
     expect(
       rankDomPaletteEntries([...paletteEntries].reverse(), "").map(({ entry }) => entry.id),
-    ).toEqual(["home", "terminals", "files", "changes", "missions", "activity"]);
+    ).toEqual([
+      "home",
+      "terminals",
+      "workspace:session.product",
+      "workspace:session.docs",
+      "agent:agent.pm",
+      "agent:agent.implementer",
+      "agent:agent.reviewer",
+      "agent:agent.recovery",
+      "files",
+      "changes",
+      "missions",
+      "activity",
+    ]);
   });
 });
 
@@ -89,8 +108,18 @@ describe("command palette interaction", () => {
 
     const input = root.querySelector<HTMLInputElement>('[role="combobox"]')!;
     await vi.waitFor(() => expect(document.activeElement).toBe(input));
-    expect(root.querySelectorAll('[role="group"]')).toHaveLength(2);
+    expect(root.querySelectorAll('[role="group"]')).toHaveLength(3);
     expect(input.getAttribute("aria-activedescendant")).toBe("palette-option-home");
+
+    const scopeButtons = [
+      ...root.querySelectorAll<HTMLButtonElement>(".command-palette__scopes button"),
+    ];
+    scopeButtons.find((button) => button.textContent === "Agents")!.click();
+    expect(root.querySelectorAll('[role="group"]')).toHaveLength(1);
+    expect(root.querySelector('[role="group"]')?.getAttribute("aria-labelledby")).toBe(
+      "palette-group-agents",
+    );
+    scopeButtons.find((button) => button.textContent === "All")!.click();
 
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
     expect(input.getAttribute("aria-activedescendant")).toBe("palette-option-missions");
@@ -106,7 +135,7 @@ describe("command palette interaction", () => {
     input.value = "nothing-matches-this";
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     expect(root.querySelector(".command-palette__empty")?.textContent).toContain(
-      "No commands found",
+      "No results found",
     );
     expect(input.getAttribute("aria-activedescendant")).toBeNull();
 

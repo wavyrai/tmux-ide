@@ -550,6 +550,7 @@ describe("TerminalSurface", () => {
     const transport = transportHarness(async () => ({ status: "connected", attachment }));
     const renderer = rendererHarness();
     const [focused, setFocused] = createSignal(false);
+    const [focusRequest, setFocusRequest] = createSignal(0);
     const [reducedMotion, setReducedMotion] = createSignal(false);
     const [themeKey, setThemeKey] = createSignal("dark:false");
     const root = document.body.appendChild(document.createElement("div"));
@@ -560,6 +561,7 @@ describe("TerminalSurface", () => {
           title="Codex"
           transport={transport}
           focused={focused()}
+          focusRequest={focusRequest()}
           reducedMotion={reducedMotion()}
           themeKey={themeKey()}
           rendererFactory={renderer.factory}
@@ -572,6 +574,8 @@ describe("TerminalSurface", () => {
     expect(renderer.renderer.focus).not.toHaveBeenCalled();
     setFocused(true);
     await vi.waitFor(() => expect(renderer.renderer.focus).toHaveBeenCalledOnce());
+    setFocusRequest(1);
+    await vi.waitFor(() => expect(renderer.renderer.focus).toHaveBeenCalledTimes(2));
     const themeRefreshesBeforeChange = vi.mocked(renderer.renderer.refreshTheme).mock.calls.length;
     setReducedMotion(true);
     setThemeKey("light:true");

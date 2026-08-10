@@ -63,6 +63,10 @@ import type {
 } from "./events.ts";
 import { FlowLedger } from "./flow-ledger.ts";
 import { PaneFeed } from "./pane-feed.ts";
+import {
+  INTERNAL_READ_OPERATION_MARKER,
+  INTERNAL_READ_OPERATION_OPTION,
+} from "../../lib/tmux-interaction-options.ts";
 
 /** Notifications whose payload cannot be applied directly — fall back to the
  *  debounced truth sync (same set the TUI SessionMirror uses). */
@@ -336,13 +340,22 @@ export class SessionChannel {
     this.input.flush();
     const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
     // Both probes ride one write burst; the FIFO reply order is the seam.
-    this.io.commandInline(`capture-pane -p -e -J -S -${history} -t ${runtime}`, (reply) => {
-      if (!reply.ok) {
-        sub.feed.abort(epoch);
-        return;
-      }
-      sub.feed.captureReply(epoch, reply.lines);
-    });
+    this.io.commandListInline(
+      `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${INTERNAL_READ_OPERATION_MARKER} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
+      2,
+      1,
+      (reply) => {
+        if (!reply.ok) {
+          // Successful captures consume the marker atomically inside the tmux
+          // after-capture-pane hook. The command-list also prevents a concurrent
+          // mirror from stealing the marker. Only failures need cleanup.
+          this.io.send(`set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}`);
+          sub.feed.abort(epoch);
+          return;
+        }
+        sub.feed.captureReply(epoch, reply.lines);
+      },
+    );
     this.io.commandInline(
       `display-message -p -t ${runtime} "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"`,
       (reply) => {

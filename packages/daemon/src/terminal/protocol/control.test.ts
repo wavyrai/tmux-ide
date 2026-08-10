@@ -32,9 +32,21 @@ describe("decodeControlBytes", () => {
 
 describe("parseControlLine", () => {
   it("parses begin/end/error with their reply number", () => {
-    expect(parseControlLine("%begin 123 7 0", false)).toEqual({ kind: "begin", num: 7 });
-    expect(parseControlLine("%end 123 7 0", true)).toEqual({ kind: "end", num: 7 });
-    expect(parseControlLine("%error 123 7 0", true)).toEqual({ kind: "error", num: 7 });
+    expect(parseControlLine("%begin 123 7 0", false)).toEqual({
+      kind: "begin",
+      num: 7,
+      flags: 0,
+    });
+    expect(parseControlLine("%end 123 7 1", true)).toEqual({
+      kind: "end",
+      num: 7,
+      flags: 1,
+    });
+    expect(parseControlLine("%error 123 7 1", true)).toEqual({
+      kind: "error",
+      num: 7,
+      flags: 1,
+    });
   });
 
   it("parses %output with pane id and decoded bytes", () => {

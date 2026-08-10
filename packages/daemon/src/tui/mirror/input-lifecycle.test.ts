@@ -63,6 +63,7 @@ describe("input lifecycle boundary", () => {
       key({ name: "tab", ctrl: true }),
       "global",
     ],
+    ["f8 is the reliable focus-cycle key", context(), key({ name: "f8" }), "global"],
     ["f5 is global palette", context(), key({ name: "f5" }), "global"],
     ["ctrl-p is global palette", context(), key({ name: "p", ctrl: true }), "global"],
     ["configured hosted shortcut is global", context(), key({ name: "f2" }), "global"],
@@ -157,6 +158,10 @@ describe("input lifecycle boundary", () => {
     expect(
       resolveInputLayer(context(), key({ name: "tab", ctrl: true }), { hosted: false }),
     ).toEqual({
+      kind: "global",
+      command: { kind: "cycle-composite-focus" },
+    });
+    expect(resolveInputLayer(context(), key({ name: "f8" }), { hosted: false })).toEqual({
       kind: "global",
       command: { kind: "cycle-composite-focus" },
     });

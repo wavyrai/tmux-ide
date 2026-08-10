@@ -43,6 +43,25 @@ export interface TerminalPaneChromeMetadata {
   agentActivity?: AgentActivity;
   domainStatus?: CanonicalDomainStatus;
   attentionKind?: PaneAttention;
+  communication?: TerminalPaneCommunication | null;
+}
+
+export type TerminalPaneCommunicationRole =
+  | "send-source"
+  | "send-target"
+  | "read-source"
+  | "read-target";
+
+export interface TerminalPaneCommunication {
+  readonly role: TerminalPaneCommunicationRole;
+  readonly label: string;
+}
+
+export interface TerminalPaneCommunicationSegment {
+  readonly paneId: string;
+  readonly role: TerminalPaneCommunicationRole;
+  readonly rect: Rect;
+  readonly orientation: "horizontal" | "vertical";
 }
 
 export interface TerminalPaneChromeActionTarget {
@@ -71,12 +90,14 @@ export interface TerminalPaneChromeProjection {
   layer: "native" | "framebuffer";
   frame: PaneFrameProjection | null;
   diagnostic: string | null;
+  communication: TerminalPaneCommunication | null;
 }
 
 export interface TerminalPaneChromeLayout {
   native: readonly TerminalPaneChromeProjection[];
   framebuffer: readonly TerminalPaneChromeProjection[];
   diagnostics: readonly string[];
+  communication: readonly TerminalPaneCommunicationSegment[];
 }
 
 export interface TerminalPaneChromeInput {
@@ -247,13 +268,97 @@ export function projectTerminalPaneChrome(
       layer,
       frame,
       diagnostic,
+      communication: input.metadataByPane?.get(pane.id)?.communication ?? null,
     };
     if (diagnostic) diagnostics.push(diagnostic);
     if (layer === "native") native.push(projection);
     else framebuffer.push(projection);
   }
 
-  return { native, framebuffer, diagnostics };
+  return {
+    native,
+    framebuffer,
+    diagnostics,
+    communication: projectCommunicationSegments(panes, input.metadataByPane, framebufferRect),
+  };
+}
+
+function communicationPriority(role: TerminalPaneCommunicationRole): number {
+  return role.endsWith("target") ? 2 : 1;
+}
+
+/**
+ * Project transient communication outlines exclusively onto tmux separator
+ * cells. No segment is allowed to overlap a pane body, preserving the exact
+ * terminal framebuffer while making collaboration visible around it.
+ */
+function projectCommunicationSegments(
+  panes: readonly TerminalPaneChromePane[],
+  metadataByPane: ReadonlyMap<string, TerminalPaneChromeMetadata> | undefined,
+  framebuffer: Rect,
+): readonly TerminalPaneCommunicationSegment[] {
+  const byRect = new Map<string, TerminalPaneCommunicationSegment>();
+  const bodies = panes.map((pane) => ({
+    x: pane.left,
+    y: pane.top,
+    width: pane.width,
+    height: pane.height,
+  }));
+  const add = (
+    pane: TerminalPaneChromePane,
+    communication: TerminalPaneCommunication,
+    rect: Rect,
+    orientation: TerminalPaneCommunicationSegment["orientation"],
+  ) => {
+    if (rect.width <= 0 || rect.height <= 0) return;
+    if (bodies.some((body) => overlaps(body, rect))) return;
+    const key = `${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
+    const previous = byRect.get(key);
+    if (
+      previous &&
+      communicationPriority(previous.role) > communicationPriority(communication.role)
+    ) {
+      return;
+    }
+    byRect.set(key, { paneId: pane.id, role: communication.role, rect, orientation });
+  };
+  for (const pane of panes) {
+    const communication = metadataByPane?.get(pane.id)?.communication;
+    if (!communication) continue;
+    if (pane.top > 0) {
+      add(
+        pane,
+        communication,
+        { x: pane.left, y: pane.top - 1, width: pane.width, height: 1 },
+        "horizontal",
+      );
+    }
+    if (pane.top + pane.height < framebuffer.height) {
+      add(
+        pane,
+        communication,
+        { x: pane.left, y: pane.top + pane.height, width: pane.width, height: 1 },
+        "horizontal",
+      );
+    }
+    if (pane.left > 0) {
+      add(
+        pane,
+        communication,
+        { x: pane.left - 1, y: pane.top, width: 1, height: pane.height },
+        "vertical",
+      );
+    }
+    if (pane.left + pane.width < framebuffer.width) {
+      add(
+        pane,
+        communication,
+        { x: pane.left + pane.width, y: pane.top, width: 1, height: pane.height },
+        "vertical",
+      );
+    }
+  }
+  return [...byRect.values()];
 }
 
 export function terminalPaneChromeHitTest(

@@ -278,6 +278,10 @@ async function smokeSize(cols, rows) {
   );
   assertFrameBounds(updated, cols, rows, `${cols}x${rows} interaction`);
 
+  // Let the reactive selection frame settle before the next key. Without this
+  // boundary, a fast detached tmux host can deliver Enter during the same
+  // OpenTUI commit that moved the selected mission.
+  await new Promise((resolveWait) => setTimeout(resolveWait, 150));
   await sendKeys(["Enter"]);
   const detail = await waitForFrame(
     rows,

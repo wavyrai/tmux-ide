@@ -6,10 +6,16 @@
   "exports": {
     ".": "./src/index.ts",
     "./connection-supervisor": "./src/connection-supervisor.ts",
-    "./resource-replica": "./src/resource-replica.ts"
+    "./resource-replica": "./src/resource-replica.ts",
+    "./generation-bound-store": "./src/generation-bound-store.ts",
+    "./application-shell-session": "./src/application-shell-session.ts",
+    "./direct-application-shell-transport": "./src/direct-application-shell-transport.ts",
+    "./owner-action-client": "./src/owner-action-client.ts",
+    "./workspace-pane-client": "./src/workspace-pane-client.ts"
   },
   "main": "src/index.ts",
   "scripts": {
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "bun test src"
   },

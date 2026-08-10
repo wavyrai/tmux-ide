@@ -18,6 +18,11 @@ import {
   type WorkspacePaneCreateInvocation,
 } from "@tmux-ide/contracts";
 import {
+  initialInteractionFeedState,
+  reduceInteractionReceipt,
+  type InteractionFeedState,
+} from "@tmux-ide/core";
+import {
   For,
   Match,
   Show,
@@ -647,9 +652,24 @@ function recoveryPresentation(phase: DesktopDaemonRecoveryPhase): {
 }
 
 function LiveWorkspace(props: LiveWorkspaceProps) {
+  const [acknowledgedOperationIds, setAcknowledgedOperationIds] = createSignal<readonly string[]>(
+    [],
+  );
+  const [interactionFeed, setInteractionFeed] = createSignal<InteractionFeedState>(
+    initialInteractionFeedState(),
+    { equals: false },
+  );
   const store = createSolidDesktopApplicationShellResourceStore({
     target: props.target,
     transport: createHostDaemonTransport(props.host),
+    onOperationAcknowledged: ({ operationId }) => {
+      setAcknowledgedOperationIds((current) =>
+        current.includes(operationId) ? current : [...current.slice(-63), operationId],
+      );
+    },
+    onInteractionReceipt: (receipt) => {
+      setInteractionFeed((current) => reduceInteractionReceipt(current, receipt));
+    },
   });
   createEffect(() => store.setTarget(props.target));
 
@@ -690,6 +710,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
       "\u0000",
     );
     if (key === workspaceSurfaceKey) return;
+    setInteractionFeed(initialInteractionFeedState());
     // A new workspace generation retires renderer-owned expansion and selection.
     workspaceSurfaceKey = key;
     setFilesExpandedIds(new Set<WorkspaceFileResourceId>());
@@ -1192,10 +1213,18 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             reducedMotion={props.reducedMotion}
             terminalThemeKey={props.terminalThemeKey}
             onCommand={props.onCommand}
+            acknowledgedOperationIds={acknowledgedOperationIds()}
+            interactionFeed={interactionFeed()}
             terminalPanes={ready().terminalPanes}
             createPaneFlow={{
               catalogs: createPaneCatalogs(),
               initialWorkspaceName: props.target.workspaceName,
+              initialSemanticPaneId: ready().input.focus.appFocusedPaneId,
+              initialPaneLabel:
+                ready().terminalPanes.find(
+                  (pane) =>
+                    pane.terminalTarget?.semanticPaneId === ready().input.focus.appFocusedPaneId,
+                )?.model.title ?? "Beside active pane",
               onCommand: createWorkspacePane,
             }}
             onPaneAction={props.onPaneAction}

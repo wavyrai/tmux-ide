@@ -43,6 +43,12 @@ export type ResourceReplicaInput<Value> =
       readonly causeOperationId?: string;
     }
   | {
+      /** A contiguous journal event that does not invalidate this resource. */
+      readonly type: "observed";
+      readonly daemonInstanceId: string;
+      readonly sequence: number;
+    }
+  | {
       readonly type: "gap";
       readonly daemonInstanceId: string;
       readonly sequence: number;
@@ -56,6 +62,14 @@ export type ResourceReplicaEffect =
       readonly type: "refresh-resource";
       readonly daemonInstanceId: string;
       readonly minimumRevision: number;
+    }
+  | {
+      /** A contiguous authority event causally observed one submitted mutation. */
+      readonly type: "acknowledge-operation";
+      readonly daemonInstanceId: string;
+      readonly operationId: string;
+      readonly sequence: number;
+      readonly revision: number;
     }
   | { readonly type: "retire-generation"; readonly daemonInstanceId: string };
 
@@ -198,6 +212,23 @@ export function advanceResourceReplica<Value>(
     };
   }
 
+  if (input.type === "observed") {
+    if (previous.sequence === null) {
+      return {
+        state: { ...previous, phase: "syncing", reason: "initial" },
+        effects: [{ type: "request-snapshot", daemonInstanceId: input.daemonInstanceId }],
+      };
+    }
+    if (input.sequence <= previous.sequence) return { state: previous, effects: [] };
+    if (input.sequence !== previous.sequence + 1) {
+      return {
+        state: { ...previous, phase: "stale", reason: "event-gap" },
+        effects: [{ type: "request-snapshot", daemonInstanceId: input.daemonInstanceId }],
+      };
+    }
+    return { state: { ...previous, sequence: input.sequence }, effects: [] };
+  }
+
   if (previous.sequence === null) {
     return {
       state: { ...previous, phase: "syncing", reason: "initial" },
@@ -213,10 +244,21 @@ export function advanceResourceReplica<Value>(
       effects: [{ type: "request-snapshot", daemonInstanceId: input.daemonInstanceId }],
     };
   }
+  const acknowledgement: readonly ResourceReplicaEffect[] = input.causeOperationId
+    ? [
+        {
+          type: "acknowledge-operation",
+          daemonInstanceId: input.daemonInstanceId,
+          operationId: input.causeOperationId,
+          sequence: input.sequence,
+          revision: input.revision,
+        },
+      ]
+    : [];
   if (previous.revision !== null && input.revision <= previous.revision) {
     return {
       state: { ...previous, sequence: input.sequence },
-      effects: [],
+      effects: acknowledgement,
     };
   }
   return {
@@ -227,6 +269,7 @@ export function advanceResourceReplica<Value>(
       reason: "changed",
     },
     effects: [
+      ...acknowledgement,
       {
         type: "refresh-resource",
         daemonInstanceId: input.daemonInstanceId,

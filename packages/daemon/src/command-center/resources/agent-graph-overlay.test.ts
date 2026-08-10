@@ -93,7 +93,12 @@ async function missionWithAttempts(
   }[],
   title = "Ship the agent graph",
 ): Promise<MissionRepositorySnapshot> {
-  const repository = await MissionRepository.open(scratchDir());
+  // Projection tests need the real event/replay repository semantics, not a
+  // durability benchmark. macOS can occasionally stall a temporary-directory
+  // fsync for several seconds, making this otherwise pure suite timing-racy.
+  const repository = await MissionRepository.open(scratchDir(), {
+    io: { fsyncFile: () => {}, fsyncDirectory: () => {} },
+  });
   const user: MissionActor = { type: "user" };
   const mission = repository.create({ title, objective: "objective", actor: user });
   members.forEach((member, index) => {

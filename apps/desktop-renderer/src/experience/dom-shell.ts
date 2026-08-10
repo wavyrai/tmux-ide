@@ -1,11 +1,9 @@
 import {
   APPLICATION_SHELL_COMMAND_IDS,
   ApplicationShellProjectionInputV1SchemaZ,
-  ApplicationShellReplayStateV1SchemaZ,
   COHESION_FIXTURE_V1,
   applicationShellCommandInvocation,
   commandsToOpenSurface,
-  projectApplicationShellV1,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionV1,
@@ -16,11 +14,21 @@ import {
   type SemanticIconId,
   type SurfaceCommandTemplate,
 } from "@tmux-ide/contracts";
+import {
+  createApplicationShellReplayState,
+  projectApplicationShellSession,
+  reconcileApplicationShellReplayState,
+  type NavigatorEntryScope,
+  type NavigatorStatus,
+} from "@tmux-ide/core";
 import type {
   WorkbenchDockHostProjection,
   WorkbenchDockHostTabId,
 } from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
-import { paneFrameModelFromCohesionPane } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+import {
+  agentHarnessIcon,
+  paneFrameModelFromCohesionPane,
+} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { NO_HIDDEN_DOCK_TOOLS } from "./experimental-surfaces.ts";
 
@@ -38,10 +46,14 @@ export interface DomWorkbenchGeometry {
 
 export type DomShellVariant = "compact" | "standard" | "wide";
 
-export type DomPaletteGroupId = "workspace" | "workbench";
+export type DomPaletteGroupId = "workspaces" | "agents" | "panes" | "commands";
+
+export type DomPaletteTarget =
+  | { readonly kind: "agent"; readonly agentId: string }
+  | { readonly kind: "pane"; readonly resourceId: string };
 
 export interface DomPaletteEntry {
-  readonly id: ProductSurfaceId;
+  readonly id: string;
   readonly icon: SemanticIconId;
   readonly label: string;
   readonly description: string;
@@ -53,9 +65,12 @@ export interface DomPaletteEntry {
     readonly order: number;
   };
   readonly rank: number;
+  readonly scope: NavigatorEntryScope;
+  readonly status: NavigatorStatus | null;
   readonly current: boolean;
   readonly disabledReason: string | null;
   readonly commands: readonly SurfaceCommandTemplate[];
+  readonly target?: DomPaletteTarget;
 }
 
 export interface DomApplicationShellProjection extends Omit<
@@ -97,99 +112,7 @@ export function createDomShellReplayState(
   input: ApplicationShellProjectionInputV1,
   hiddenDockTools: ReadonlySet<ProductSurfaceId> = NO_HIDDEN_DOCK_TOOLS,
 ): ApplicationShellReplayStateV1 {
-  return ApplicationShellReplayStateV1SchemaZ.parse({
-    activeMode: input.workspace.activeMode,
-    dockMode: input.dock.mode,
-    activeDockTool: visibleDockTool(input.dock.activeTool, input, hiddenDockTools),
-    focus: input.focus,
-    selectedResources: [],
-  });
-}
-
-function sameDomShellIdentity(
-  left: ApplicationShellProjectionInputV1,
-  right: ApplicationShellProjectionInputV1,
-): boolean {
-  return left.project.id === right.project.id && left.workspace.id === right.workspace.id;
-}
-
-function availablePaneIds(input: ApplicationShellProjectionInputV1): ReadonlySet<string> {
-  return new Set([
-    ...(input.terminalInventory?.resources.map(({ id }) => id) ?? []),
-    ...input.workspace.sidebar.agents.flatMap((agent) =>
-      agent.paneId === null ? [] : [agent.paneId],
-    ),
-    ...[
-      input.focus.appFocusedPaneId,
-      input.focus.terminalInputPaneId,
-      input.focus.layoutSelectedPaneId,
-    ].flatMap((paneId) => (paneId === null ? [] : [paneId])),
-  ]);
-}
-
-function focusTargetIsAvailable(
-  target: ApplicationShellReplayStateV1["focus"]["overlays"][number]["focusReturnTarget"],
-  paneIds: ReadonlySet<string>,
-): boolean {
-  return target.kind !== "pane" || paneIds.has(target.paneId);
-}
-
-function focusIsAvailable(
-  focus: ApplicationShellReplayStateV1["focus"],
-  input: ApplicationShellProjectionInputV1,
-): boolean {
-  const paneIds = availablePaneIds(input);
-  const referencedPaneIds = [
-    focus.appFocusedPaneId,
-    focus.terminalInputPaneId,
-    focus.layoutSelectedPaneId,
-  ];
-  return (
-    referencedPaneIds.every((paneId) => paneId === null || paneIds.has(paneId)) &&
-    focus.overlays.every((overlay) => focusTargetIsAvailable(overlay.focusReturnTarget, paneIds))
-  );
-}
-
-function availableDockTool(
-  preferred: DockToolId,
-  input: ApplicationShellProjectionInputV1,
-): DockToolId {
-  const preferredTool = input.dock.tools.find((tool) => tool.id === preferred);
-  if (preferredTool?.disabledReason === null) return preferred;
-  const snapshotTool = input.dock.tools.find((tool) => tool.id === input.dock.activeTool);
-  if (snapshotTool?.disabledReason === null) return input.dock.activeTool;
-  return input.dock.tools.find((tool) => tool.disabledReason === null)?.id ?? input.dock.activeTool;
-}
-
-/**
- * Redirect a withheld dock tool onto one the reader can actually see. Identity
- * when nothing is hidden, so an unflagged shell keeps the exact selection the
- * snapshot asked for — including a tool the daemon marked unavailable, which
- * still has an honest disabled body to show.
- */
-function visibleDockTool(
-  preferred: DockToolId,
-  input: ApplicationShellProjectionInputV1,
-  hiddenDockTools: ReadonlySet<ProductSurfaceId>,
-): DockToolId {
-  if (!hiddenDockTools.has(preferred)) return preferred;
-  const visible = input.dock.tools.filter((tool) => !hiddenDockTools.has(tool.id));
-  return visible.find((tool) => tool.disabledReason === null)?.id ?? visible[0]?.id ?? preferred;
-}
-
-function reconcileResourceSelections(
-  state: ApplicationShellReplayStateV1,
-  input: ApplicationShellProjectionInputV1,
-): ApplicationShellReplayStateV1["selectedResources"] {
-  const terminalResourceIds = new Set([
-    ...input.workspace.sidebar.sessions.map(({ id }) => id),
-    ...input.workspace.sidebar.agents.map(({ id }) => id),
-    ...(input.terminalInventory?.resources.map(({ id }) => id) ?? []),
-  ]);
-  return state.selectedResources.filter(
-    (selection) =>
-      selection.surface !== "terminals" || terminalResourceIds.has(selection.resourceId),
-  );
+  return createApplicationShellReplayState(input, hiddenDockTools);
 }
 
 /**
@@ -203,27 +126,7 @@ export function reconcileDomShellReplayState(
   current: ApplicationShellReplayStateV1,
   hiddenDockTools: ReadonlySet<ProductSurfaceId> = NO_HIDDEN_DOCK_TOOLS,
 ): ApplicationShellReplayStateV1 {
-  const snapshotState = createDomShellReplayState(nextInput, hiddenDockTools);
-  if (!sameDomShellIdentity(previousInput, nextInput)) {
-    return ApplicationShellReplayStateV1SchemaZ.parse({
-      ...snapshotState,
-      activeDockTool: visibleDockTool(
-        availableDockTool(snapshotState.activeDockTool, nextInput),
-        nextInput,
-        hiddenDockTools,
-      ),
-    });
-  }
-  return ApplicationShellReplayStateV1SchemaZ.parse({
-    ...current,
-    activeDockTool: visibleDockTool(
-      availableDockTool(current.activeDockTool, nextInput),
-      nextInput,
-      hiddenDockTools,
-    ),
-    focus: focusIsAvailable(current.focus, nextInput) ? current.focus : snapshotState.focus,
-    selectedResources: reconcileResourceSelections(current, nextInput),
-  });
+  return reconcileApplicationShellReplayState(previousInput, nextInput, current, hiddenDockTools);
 }
 
 export function projectDomApplicationShell(
@@ -231,12 +134,7 @@ export function projectDomApplicationShell(
   state: ApplicationShellReplayStateV1,
   hiddenDockTools: ReadonlySet<ProductSurfaceId> = NO_HIDDEN_DOCK_TOOLS,
 ): DomApplicationShellProjection {
-  const shell = projectApplicationShellV1({
-    ...input,
-    workspace: { ...input.workspace, activeMode: state.activeMode },
-    dock: { ...input.dock, mode: state.dockMode, activeTool: state.activeDockTool },
-    focus: state.focus,
-  });
+  const shell = projectApplicationShellSession(input, state);
   /*
    * The canonical projection is registry-driven: it always emits every dock
    * tool the product knows about, and placement is the host's business. Hiding
@@ -396,7 +294,7 @@ export function projectDomWorkbenchDock(
 export function createDomPaletteEntries(
   shell: ApplicationShellProjectionV1,
 ): readonly DomPaletteEntry[] {
-  return [...shell.primaryNavigation.items, ...shell.bottomDock.tools]
+  const navigation = [...shell.primaryNavigation.items, ...shell.bottomDock.tools]
     .sort((left, right) =>
       left.kind === right.kind ? left.order - right.order : left.kind === "primary-mode" ? -1 : 1,
     )
@@ -415,13 +313,88 @@ export function createDomPaletteEntries(
           : ["panel", "tool", "bottom", "dock", surface.id],
       group:
         surface.kind === "primary-mode"
-          ? { id: "workspace" as const, label: "Workspace", order: 0 }
-          : { id: "workbench" as const, label: "Workbench", order: 1 },
+          ? { id: "workspaces" as const, label: "Workspaces", order: 0 }
+          : { id: "commands" as const, label: "Commands", order: 3 },
       rank: surface.order,
+      scope: surface.kind === "primary-mode" ? ("workspaces" as const) : ("commands" as const),
+      status: null,
       current: surface.active,
       disabledReason: surface.disabledReason,
       commands: commandsToOpenSurface({ surface: surface.id }),
     }));
+
+  const sessions: DomPaletteEntry[] = shell.sidebar.sessions.map((session, rank) => ({
+    id: `workspace:${session.id}`,
+    icon: "home",
+    label: session.label,
+    description: `Workspace session · ${session.state}`,
+    shortcut: "",
+    keywords: ["workspace", "session", session.state, session.id],
+    group: { id: "workspaces", label: "Workspaces", order: 0 },
+    rank: 100 + rank,
+    scope: "workspaces",
+    status:
+      session.state === "connected"
+        ? "working"
+        : session.state === "reconnecting"
+          ? "idle"
+          : "blocked",
+    current: session.active,
+    disabledReason: null,
+    commands: commandsToOpenSurface({ surface: "terminals", resourceId: session.id }),
+  }));
+
+  const agentStatus = (
+    agent: ApplicationShellProjectionV1["sidebar"]["agents"][number],
+  ): NavigatorStatus => {
+    if (agent.attention || agent.activity === "disconnected") return "blocked";
+    if (agent.activity === "running") return "working";
+    if (agent.activity === "complete") return "done";
+    return "idle";
+  };
+  const agents: DomPaletteEntry[] = shell.sidebar.agents.map((agent, rank) => ({
+    id: `agent:${agent.id}`,
+    icon: agentHarnessIcon(agent.harness),
+    label: agent.name,
+    description: `${agent.harness} · ${agent.activity}${agent.attention ? " · needs attention" : ""}`,
+    shortcut: "",
+    keywords: ["agent", agent.harness, agent.activity, agent.id],
+    group: { id: "agents", label: "Agents", order: 1 },
+    rank,
+    scope: "agents",
+    status: agentStatus(agent),
+    current: agent.paneId !== null && shell.terminalInventory?.activeResourceId === agent.paneId,
+    disabledReason: agent.paneId === null ? "Agent has no terminal pane" : null,
+    commands: [],
+    target: { kind: "agent", agentId: agent.id },
+  }));
+
+  const panes: DomPaletteEntry[] = (shell.terminalInventory?.resources ?? []).map(
+    (resource, rank) => ({
+      id: `pane:${resource.id}`,
+      icon: "terminals",
+      label: resource.title,
+      description:
+        resource.attachability.status === "available"
+          ? `${resource.kind === "agent" ? "Agent terminal" : "Terminal pane"} · ready`
+          : `Terminal pane · ${resource.attachability.reason}`,
+      shortcut: "",
+      keywords: ["pane", "terminal", resource.kind, resource.id],
+      group: { id: "panes", label: "Panes", order: 2 },
+      rank,
+      scope: "panes",
+      status: resource.active ? "working" : "idle",
+      current: resource.active,
+      disabledReason:
+        resource.attachability.status === "available"
+          ? null
+          : `Pane unavailable: ${resource.attachability.reason}`,
+      commands: [],
+      target: { kind: "pane", resourceId: resource.id },
+    }),
+  );
+
+  return [...navigation, ...sessions, ...agents, ...panes];
 }
 
 export function invocationFromSurfaceCommand(

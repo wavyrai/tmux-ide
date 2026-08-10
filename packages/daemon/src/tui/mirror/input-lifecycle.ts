@@ -120,7 +120,10 @@ export function resolveGlobalCommand(
   context: TuiInputContext,
   event: TuiKeyEvent,
 ): TuiGlobalCommand | null {
-  if (event.ctrl && event.name === "tab" && context.compositeCycleAvailable) {
+  if (
+    context.compositeCycleAvailable &&
+    (event.name === "f8" || (event.ctrl && event.name === "tab"))
+  ) {
     return { kind: "cycle-composite-focus" };
   }
   if (event.name === "f5" || (event.ctrl && event.name === "p")) {

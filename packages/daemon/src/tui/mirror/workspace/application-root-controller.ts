@@ -144,13 +144,10 @@ export function applicationSidebarResizePointerPhase(input: {
 }): ApplicationSidebarResizePointerPhase {
   if (input.active) {
     if (input.type === "drag") return "update";
-    if (
-      input.type === "up" ||
-      input.type === "drag-end" ||
-      input.type === "drop" ||
-      input.type === "out"
-    )
-      return "end";
+    // OpenTUI emits `out` whenever a captured pointer crosses a child renderable
+    // boundary. It is motion, not a terminal-level release, so ending here makes
+    // a resize stop after the first cell it crosses.
+    if (input.type === "up" || input.type === "drag-end" || input.type === "drop") return "end";
     return "consume";
   }
   return input.type === "down" && input.button !== 2 && isApplicationSidebarResizeBoundary(input)

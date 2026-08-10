@@ -145,6 +145,59 @@ describe("runHeadlessDaemon", () => {
     });
   });
 
+  it("waits for a freshly published canonical daemon to become attachable", async () => {
+    const info = daemonInfo({ startedAt: new Date().toISOString() });
+    const harness = createHarness({ state: validState(info), alive: true });
+    const probeIdentity = harness.deps.probeCanonicalDaemonIdentity;
+    let attempts = 0;
+
+    await expect(
+      runHeadlessDaemon(
+        { json: true },
+        {
+          ...harness.deps,
+          probeCanonicalDaemonIdentity: async (candidate) => {
+            attempts += 1;
+            if (attempts < 3) return null;
+            return await probeIdentity(candidate);
+          },
+        },
+      ),
+    ).resolves.toBe("already-running");
+
+    expect(attempts).toBe(3);
+    expect(harness.startOptions).toEqual([]);
+    expect(JSON.parse(harness.lines[0]!)).toMatchObject({
+      status: "already-running",
+      pid: info.pid,
+    });
+  });
+
+  it("keeps its elected generation through a transient self-probe failure", async () => {
+    const harness = createHarness();
+    const probeIdentity = harness.deps.probeCanonicalDaemonIdentity;
+    let attempts = 0;
+    const running = runHeadlessDaemon(
+      { json: true },
+      {
+        ...harness.deps,
+        probeCanonicalDaemonIdentity: async (candidate) => {
+          attempts += 1;
+          if (attempts < 3) return null;
+          return await probeIdentity(candidate);
+        },
+      },
+    );
+
+    await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
+    expect(attempts).toBe(3);
+    expect(harness.startOptions).toHaveLength(1);
+    expect(JSON.parse(harness.lines[0]!)).toMatchObject({ status: "ready", pid: 321 });
+
+    harness.signals.get("SIGTERM")?.();
+    await expect(running).resolves.toBe("stopped");
+  });
+
   it("leaves stale removal to the claimed starter and stops on SIGTERM", async () => {
     const harness = createHarness({
       state: validState(daemonInfo({ pid: 999_999 })),

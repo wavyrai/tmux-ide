@@ -8,7 +8,7 @@ import {
   type HostCapabilities,
 } from "@tmux-ide/contracts";
 
-import { createTmuxIdeSdk } from "./index.ts";
+import { createTmuxIdeDaemonSdk, createTmuxIdeOwnerSdk, createTmuxIdeSdk } from "./index.ts";
 
 function createHost(dispatch: (request: DaemonResourceRequest) => Promise<unknown>) {
   const host: HostCapabilities = {
@@ -49,6 +49,28 @@ function createHost(dispatch: (request: DaemonResourceRequest) => Promise<unknow
 }
 
 describe("createTmuxIdeSdk", () => {
+  it("creates the same validated daemon SDK without desktop-only capabilities", async () => {
+    const dispatch = vi.fn(async () => ({
+      status: "error",
+      error: { code: "daemon-unavailable", reason: "offline" },
+    }));
+    const daemon = createHost(dispatch).daemon;
+    const sdk = createTmuxIdeDaemonSdk(daemon);
+
+    await expect(sdk.request({ resource: "capabilities" })).resolves.toEqual({
+      status: "error",
+      error: { code: "daemon-unavailable", reason: "offline" },
+    });
+    expect(sdk.resources).toEqual(DAEMON_RESOURCE_KINDS);
+    expect(dispatch).toHaveBeenCalledWith({ resource: "capabilities" });
+  });
+
+  it("rejects incomplete daemon-only hosts before making a request", () => {
+    expect(() => createTmuxIdeDaemonSdk({ subscribe: async () => ({ status: "error" }) })).toThrow(
+      /incomplete/,
+    );
+  });
+
   it("exposes the complete derived daemon vocabulary", () => {
     const sdk = createTmuxIdeSdk(createHost(async () => ({ status: "error" })));
 
@@ -104,5 +126,97 @@ describe("createTmuxIdeSdk", () => {
     expect(() => createTmuxIdeSdk({ ...createHost(async () => ({})), apiVersion: 999 })).toThrow(
       /incompatible/,
     );
+  });
+});
+
+describe("createTmuxIdeOwnerSdk", () => {
+  it("sends one semantic SDK action and never exposes its literal input in the result", async () => {
+    const request = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body)) as { text: string };
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          result: {
+            verb: "workspace.pane.send",
+            outcome: "applied",
+            operationId: init?.headers
+              ? (init.headers as Record<string, string>)["X-Tmux-Ide-Operation-Id"]
+              : "",
+            daemonInstanceId: "11111111-1111-4111-8111-111111111111",
+            workspaceName: "alpha",
+            sourceSemanticPaneId: "pane.agent",
+            semanticPaneId: "pane.editor",
+            origin: "sdk",
+            characterCount: Array.from(parsed.text).length,
+            byteCount: new TextEncoder().encode(parsed.text).length,
+            submitted: true,
+          },
+        }),
+      );
+    });
+    const sdk = createTmuxIdeOwnerSdk({
+      baseUrl: "http://127.0.0.1:4020/",
+      ownerToken: "secret",
+      fetch: request as typeof fetch,
+    });
+    const result = await sdk.sendPane(
+      {
+        workspaceName: "alpha",
+        sourceSemanticPaneId: "pane.agent",
+        semanticPaneId: "pane.editor",
+        text: "private prompt",
+        submit: true,
+      },
+      { operationId: "10000000-0000-4000-8000-000000000001" },
+    );
+
+    expect(result).toMatchObject({ origin: "sdk", characterCount: 14, submitted: true });
+    expect(JSON.stringify(result)).not.toContain("private prompt");
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toMatchObject({
+      sourceSemanticPaneId: "pane.agent",
+    });
+  });
+
+  it("retries an ambiguous transport failure with the same operation id", async () => {
+    const operationIds: string[] = [];
+    const request = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      operationIds.push((init?.headers as Record<string, string>)["X-Tmux-Ide-Operation-Id"]!);
+      if (operationIds.length === 1) throw new Error("response lost");
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          result: {
+            verb: "workspace.pane.send",
+            outcome: "replayed",
+            operationId: operationIds[0],
+            daemonInstanceId: "11111111-1111-4111-8111-111111111111",
+            workspaceName: "alpha",
+            sourceSemanticPaneId: null,
+            semanticPaneId: "pane.editor",
+            origin: "sdk",
+            characterCount: 2,
+            byteCount: 2,
+            submitted: false,
+          },
+        }),
+      );
+    });
+    const sdk = createTmuxIdeOwnerSdk({
+      baseUrl: "http://127.0.0.1:4020/",
+      ownerToken: "secret",
+      fetch: request as typeof fetch,
+    });
+
+    await expect(
+      sdk.sendPane(
+        { workspaceName: "alpha", semanticPaneId: "pane.editor", text: "hi", submit: false },
+        { operationId: "10000000-0000-4000-8000-000000000002" },
+      ),
+    ).resolves.toMatchObject({ outcome: "replayed" });
+    expect(operationIds).toEqual([
+      "10000000-0000-4000-8000-000000000002",
+      "10000000-0000-4000-8000-000000000002",
+    ]);
   });
 });

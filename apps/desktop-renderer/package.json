@@ -16,9 +16,11 @@
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.2.3",
     "@tmux-ide/contracts": "workspace:*",
+    "@tmux-ide/core": "workspace:*",
     "@tmux-ide/daemon-client": "workspace:*",
     "@tmux-ide/sdk": "workspace:*",
     "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-unicode11": "0.9.0",
     "@xterm/xterm": "6.0.0",
     "mermaid": "^11.16.1",
     "solid-js": "1.9.12",

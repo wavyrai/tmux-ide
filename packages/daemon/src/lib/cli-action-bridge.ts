@@ -47,6 +47,7 @@ const RETRY_SAFE_OWNER_ACTIONS: ReadonlySet<ActionName> = new Set([
   "workspace.rename",
   "workspace.pane.zoom.toggle",
   "workspace.pane.select",
+  "workspace.pane.send",
   "workspace.pane.swap",
   "workspace.pane.resize",
 ]);

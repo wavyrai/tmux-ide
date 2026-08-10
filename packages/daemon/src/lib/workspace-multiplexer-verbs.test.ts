@@ -262,6 +262,13 @@ class FakeTmux {
         }
         return "";
       }
+      case "send-keys": {
+        if (args[1] !== "-t") throw new Error(`unsupported send-keys: ${args.join(" ")}`);
+        this.#pane(args[2]!);
+        if (args[3] === "-l" && args[4] === "--" && typeof args[5] === "string") return "";
+        if (args[3] === "Enter" && args.length === 4) return "";
+        throw new Error(`unsupported send-keys: ${args.join(" ")}`);
+      }
       default:
         throw new Error(`unsupported tmux command: ${command}`);
     }
@@ -520,6 +527,76 @@ describe("the multiplexer authority", () => {
         ),
         "operation_conflict",
       );
+    });
+  });
+
+  describe("send", () => {
+    it("delivers literal text and submit separately, then returns only safe metadata", async () => {
+      const text = "hello; $(never-run) \ud83d\udc4b";
+      const result = await authority.mutate(
+        request({
+          verb: "workspace.pane.send",
+          sourceSemanticPaneId: "pane.two",
+          semanticPaneId: "pane.one",
+          text,
+          submit: true,
+          origin: "sdk",
+        }),
+      );
+
+      expect(tmux.calls).toContainEqual(["send-keys", "-t", "%0", "-l", "--", text]);
+      expect(tmux.calls).toContainEqual(["send-keys", "-t", "%0", "Enter"]);
+      expect(result).toMatchObject({
+        verb: "workspace.pane.send",
+        outcome: "applied",
+        sourceSemanticPaneId: "pane.two",
+        semanticPaneId: "pane.one",
+        origin: "sdk",
+        submitted: true,
+        characterCount: Array.from(text).length,
+        byteCount: Buffer.byteLength(text, "utf8"),
+      });
+      expect(JSON.stringify(result)).not.toContain(text);
+    });
+
+    it("refuses an unverified source identity before sending any input", async () => {
+      const sendsBefore = tmux.calls.filter((args) => args[0] === "send-keys").length;
+      await expectRefusal(
+        authority.mutate(
+          request({
+            verb: "workspace.pane.send",
+            sourceSemanticPaneId: "pane.not-in-workspace",
+            semanticPaneId: "pane.one",
+            text: "never delivered",
+            submit: true,
+            origin: "sdk",
+          }),
+        ),
+        "pane_not_found",
+      );
+      expect(tmux.calls.filter((args) => args[0] === "send-keys")).toHaveLength(sendsBefore);
+    });
+
+    it("replays one operation id without delivering terminal input twice", async () => {
+      const operationId = randomUUID();
+      const mutation = request(
+        {
+          verb: "workspace.pane.send",
+          semanticPaneId: "pane.one",
+          text: "only once",
+          submit: false,
+          origin: "cli",
+        },
+        operationId,
+      );
+      const first = await authority.mutate(mutation);
+      const sendsAfterFirst = tmux.calls.filter((args) => args[0] === "send-keys").length;
+      const second = await authority.mutate(mutation);
+
+      expect(first.outcome).toBe("applied");
+      expect(second).toEqual({ ...first, outcome: "replayed" });
+      expect(tmux.calls.filter((args) => args[0] === "send-keys")).toHaveLength(sendsAfterFirst);
+      expect(tmux.calls.filter((args) => args[0] === "send-keys")).toHaveLength(1);
     });
   });
 

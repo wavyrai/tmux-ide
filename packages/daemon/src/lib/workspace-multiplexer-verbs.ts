@@ -37,6 +37,8 @@ import {
   type WorkspacePaneTmuxAuthority,
 } from "./workspace-pane-creation.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
+import { internalSendOperationMarker } from "./tmux-external-interaction-observer.ts";
+import { INTERNAL_SEND_OPERATION_OPTION } from "./tmux-interaction-options.ts";
 
 const MAX_OPERATIONS = 128;
 
@@ -441,6 +443,8 @@ export class WorkspaceMultiplexerAuthority {
         return this.#zoom(intent, sessionName, envelope);
       case "workspace.pane.select":
         return this.#select(intent, sessionName, envelope);
+      case "workspace.pane.send":
+        return this.#send(intent, sessionName, envelope);
       case "workspace.pane.swap":
         return this.#swap(intent, sessionName, envelope);
       case "workspace.pane.resize":
@@ -834,6 +838,66 @@ export class WorkspaceMultiplexerAuthority {
       verb: "workspace.pane.select",
       outcome: wasActive ? "unchanged" : "applied",
       semanticPaneId: intent.semanticPaneId,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // send
+  // -------------------------------------------------------------------------
+
+  /**
+   * Deliver literal bytes to a semantically addressed pane. A successful tmux
+   * command plus a post-send identity read-back proves that the resolved pane
+   * survived the operation; terminal output remains the independent observation
+   * lane and is intentionally not parsed for prompt content.
+   */
+  #send(
+    intent: Extract<WorkspaceMultiplexerIntent, { verb: "workspace.pane.send" }>,
+    sessionName: string,
+    envelope: { operationId: string; daemonInstanceId: string; workspaceName: string },
+  ): WorkspaceMultiplexerMutationResult {
+    const before = this.#panes(sessionName);
+    const pane = resolvePaneRow(before, intent.semanticPaneId);
+    const sourcePane = intent.sourceSemanticPaneId
+      ? resolvePaneRow(before, intent.sourceSemanticPaneId)
+      : null;
+    this.#io.runTmux([
+      "set-option",
+      "-p",
+      "-t",
+      pane.paneId,
+      INTERNAL_SEND_OPERATION_OPTION,
+      internalSendOperationMarker(this.#daemonInstanceId, envelope.operationId),
+    ]);
+    try {
+      this.#io.runTmux(["send-keys", "-t", pane.paneId, "-l", "--", intent.text]);
+      if (intent.submit) this.#io.runTmux(["send-keys", "-t", pane.paneId, "Enter"]);
+    } finally {
+      try {
+        this.#io.runTmux(["set-option", "-pu", "-t", pane.paneId, INTERNAL_SEND_OPERATION_OPTION]);
+      } catch {
+        // The pane may have exited while input was delivered. Read-back below
+        // still decides whether the overall mutation can be verified.
+      }
+    }
+
+    const observed = resolvePaneRow(this.#panes(sessionName), intent.semanticPaneId);
+    if (observed.paneId !== pane.paneId) {
+      throw new WorkspaceMultiplexerError("mutation_unverified", {
+        operationId: envelope.operationId,
+        reason: "pane_identity_changed_during_send",
+      });
+    }
+    return {
+      ...envelope,
+      verb: "workspace.pane.send",
+      outcome: "applied",
+      sourceSemanticPaneId: sourcePane?.semanticPaneId ?? null,
+      semanticPaneId: intent.semanticPaneId,
+      origin: intent.origin,
+      characterCount: Array.from(intent.text).length,
+      byteCount: Buffer.byteLength(intent.text, "utf8"),
+      submitted: intent.submit,
     };
   }
 

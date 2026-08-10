@@ -1707,12 +1707,20 @@ export class DaemonResourceBroker {
             this.#emit({
               type: "application-shell.changed",
               workspaceName: workspace.workspaceName,
+              daemonInstanceId: instanceId,
+              sequence: frame.sequence,
+              revision: frame.revision,
+              causeOperationId: frame.causeOperationId,
             });
           }
         } else if (this.#workspaceCatalog.has(frame.workspaceName)) {
           this.#emit({
             type: "application-shell.changed",
             workspaceName: frame.workspaceName,
+            daemonInstanceId: instanceId,
+            sequence: frame.sequence,
+            revision: frame.revision,
+            causeOperationId: frame.causeOperationId,
           });
         }
       } else if (frame.resource === "fleet-catalog") {
@@ -1720,6 +1728,22 @@ export class DaemonResourceBroker {
       } else {
         this.#emit({ type: "workspaces.changed" });
       }
+      return;
+    }
+    if (frame.type === "interaction.receipt") {
+      const instanceId = this.#daemon.descriptor.instanceId;
+      const transition = advanceResourceReplica(this.#eventReplica, {
+        type: "observed",
+        daemonInstanceId: instanceId,
+        sequence: frame.sequence,
+      });
+      this.#eventReplica = transition.state;
+      if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+        this.#invalidateEveryResource();
+        this.#establishEventCursor(instanceId, frame.sequence);
+        return;
+      }
+      if (this.#workspaceCatalog.has(frame.workspaceName)) this.#emit(frame);
       return;
     }
     switch (frame.type) {
@@ -1851,7 +1875,7 @@ export class DaemonResourceBroker {
     const event = DesktopDaemonEventSchemaZ.parse(raw);
     for (const subscription of this.#subscriptions.values()) {
       if (
-        event.type === "application-shell.changed" &&
+        (event.type === "application-shell.changed" || event.type === "interaction.receipt") &&
         !subscription.workspaceNames.has(event.workspaceName)
       ) {
         continue;

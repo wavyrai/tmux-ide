@@ -16,6 +16,7 @@ import {
 import { ActionChip, Badge, IconButton, StatusChip } from "../recipes.tsx";
 import { recipePalette } from "../recipes.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
+import type { TerminalPaneCommunicationRole } from "./terminal-pane-chrome.ts";
 import type { PaneFrameChip, PaneFrameProjection } from "./pane-frame.ts";
 
 export interface PaneFrameHeaderProps {
@@ -27,6 +28,7 @@ interface OpenTuiPaneFrameHostContext {
   theme: () => SemanticThemeSnapshot;
   projection: () => PaneFrameProjection;
   inputOwner: () => boolean;
+  communicationRole: () => TerminalPaneCommunicationRole | null;
 }
 
 const OpenTuiPaneFrameContext = createContext<OpenTuiPaneFrameHostContext>();
@@ -237,11 +239,22 @@ function semanticBorderColor(
   return theme.roles.borders[role];
 }
 
+function communicationColor(
+  theme: SemanticThemeSnapshot,
+  role: TerminalPaneCommunicationRole | null,
+) {
+  if (role?.startsWith("read")) return theme.roles.statusTone.info;
+  if (role?.startsWith("send")) return theme.roles.statusTone.success;
+  return null;
+}
+
 function OpenTuiRoot(props: PaneFrameRootLeafProps) {
   const host = useOpenTuiPaneFrameHost();
   const projection = host.projection;
   const glyphs = () => borderGlyphs(projection().borderStyle);
-  const border = () => semanticBorderColor(host.theme(), props.appearance);
+  const border = () =>
+    communicationColor(host.theme(), host.communicationRole()) ??
+    semanticBorderColor(host.theme(), props.appearance);
   return (
     <box
       id={`pane-frame:${props.pane.id}:root`}
@@ -307,7 +320,11 @@ function OpenTuiHeader(props: PaneFrameHeaderLeafProps) {
       top={projection().header.y}
       width={projection().header.width}
       height={projection().header.height}
-      backgroundColor={host.theme().roles.surfaces[props.appearance.header.surface]}
+      backgroundColor={
+        host.communicationRole()
+          ? host.theme().roles.surfaces.headerActive
+          : host.theme().roles.surfaces[props.appearance.header.surface]
+      }
       overflow="hidden"
     >
       {props.children}
@@ -340,7 +357,9 @@ function OpenTuiGrip(props: PaneFrameGripLeafProps) {
 function OpenTuiTitle(props: PaneFrameTitleLeafProps) {
   const host = useOpenTuiPaneFrameHost();
   const projection = host.projection;
-  const titleColor = () => host.theme().roles.text[props.appearance.header.text];
+  const titleColor = () =>
+    communicationColor(host.theme(), host.communicationRole()) ??
+    host.theme().roles.text[props.appearance.header.text];
   return (
     <>
       <box
@@ -468,6 +487,7 @@ export interface PaneFrameProps extends PaneFrameHeaderProps {
   inputOwner?: boolean;
   onActionActivate?: Parameters<typeof PaneFramePresenter>[0]["onActionActivate"];
   onGripActivate?: Parameters<typeof PaneFramePresenter>[0]["onGripActivate"];
+  communicationRole?: TerminalPaneCommunicationRole | null;
 }
 
 export function PaneFrame(props: PaneFrameProps) {
@@ -475,6 +495,7 @@ export function PaneFrame(props: PaneFrameProps) {
     theme: () => props.theme,
     projection: () => props.projection,
     inputOwner: () => props.inputOwner === true,
+    communicationRole: () => props.communicationRole ?? null,
   };
   return (
     <OpenTuiPaneFrameContext.Provider value={context}>

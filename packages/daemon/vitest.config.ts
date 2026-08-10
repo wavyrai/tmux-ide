@@ -24,9 +24,10 @@ export default defineConfig({
     css: true,
     environment: "node",
     // The live suites spawn real daemons/tmux/pty; at unbounded parallelism
-    // those spawns starve their budgets. 6 workers is the configuration the
-    // isolation hardening was proven at (3x fully green under ambient load).
-    maxWorkers: 6,
+    // those spawns starve their budgets. Four workers leaves enough process and
+    // PTY headroom for the 20-contender election and live terminal suites even
+    // while a developer has the real GUI/TUI stack open beside the test run.
+    maxWorkers: 4,
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     // These import `bun:test` and are run by `bun test` (see the root
     // package.json `test:daemon-bun` / `test:tui-renderer` scripts and the
@@ -90,6 +91,7 @@ export default defineConfig({
       "src/tui/mirror/missions-surface-renderer.test.tsx",
       "src/tui/mirror/recipes-gallery-renderer.test.tsx",
       "src/tui/mirror/shell-chrome-renderer.test.tsx",
+      "src/tui/mirror/sidebar-renderer.test.tsx",
       "src/tui/mirror/testing/renderer-harness.test.ts",
       "src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx",
       "src/tui/mirror/workspace/application-shell-renderer.test.tsx",

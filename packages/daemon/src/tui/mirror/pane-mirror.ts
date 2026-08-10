@@ -9,9 +9,11 @@
  *
  * Fidelity notes (M21.6 — the current truth):
  *  - Colors resolve to packed 0xRRGGBB here (256-palette + truecolor + the
- *    16 base colors), so the renderer never needs a palette.
+ *    16 base colors). The source grid remains unchanged; an optional renderer
+ *    palette projection applies the live OpenTUI defaults while preserving
+ *    explicit ANSI/truecolor values.
  *  - Attributes carried, mapped onto OpenTUI's TextAttributes bitmask:
- *    bold, dim, italic, underline, blink, strikethrough. INVERSE is NOT set as
+ *    bold, dim, italic, underline, blink, hidden, strikethrough. INVERSE is NOT set as
  *    an attribute — it renders as a fg/bg SWAP in the blit (a framebuffer cell
  *    carrying the INVERSE bit does not flush as reverse; see blit.ts), so it
  *    composes with the selection/cursor swaps.
@@ -32,6 +34,7 @@
  *    a pane can go.
  */
 import { Terminal } from "@xterm/headless";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import {
   writeCell,
   writeContinuation,
@@ -41,6 +44,10 @@ import {
 } from "./blit.ts";
 import { AckWriter } from "./ack-writer.ts";
 import { extractSelection, type Cell } from "./selection.ts";
+import type { TerminalPaletteProjection } from "./theme.ts";
+import { XTERM_PALETTE } from "./ansi-palette.ts";
+
+export { XTERM_PALETTE } from "./ansi-palette.ts";
 
 /** OpenTUI TextAttributes bit values (kept literal to avoid the dep here). */
 const ATTR_BOLD = 1;
@@ -49,6 +56,7 @@ const ATTR_ITALIC = 4;
 const ATTR_UNDERLINE = 8;
 const ATTR_BLINK = 16;
 const ATTR_INVERSE = 32;
+const ATTR_HIDDEN = 64;
 const ATTR_STRIKETHROUGH = 128;
 
 /** A run of same-styled text within a row. Colors are packed 0xRRGGBB. */
@@ -68,30 +76,6 @@ export interface MirrorSnapshot {
   cursorY: number;
   /** How many lines above the live viewport this snapshot starts (0 = live). */
   scrollOffset: number;
-}
-
-/** The standard xterm 256-color palette as packed 0xRRGGBB. */
-export const XTERM_PALETTE: readonly number[] = buildXtermPalette();
-
-function buildXtermPalette(): number[] {
-  const base = [
-    0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, 0x7f7f7f,
-    0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
-  ];
-  const palette = [...base];
-  const levels = [0, 95, 135, 175, 215, 255];
-  for (let i = 16; i < 232; i++) {
-    const n = i - 16;
-    const r = levels[Math.floor(n / 36)]!;
-    const g = levels[Math.floor(n / 6) % 6]!;
-    const b = levels[n % 6]!;
-    palette.push((r << 16) | (g << 8) | b);
-  }
-  for (let i = 232; i < 256; i++) {
-    const v = 8 + 10 * (i - 232);
-    palette.push((v << 16) | (v << 8) | v);
-  }
-  return palette;
 }
 
 /** The live cursor state a surface needs to drive the hardware cursor (M21.6). */
@@ -126,6 +110,9 @@ export interface BlitOptions {
   dirtyRows: number[];
   /** OUT — multi-codepoint grapheme cells to re-write via `setCell`. */
   graphemes?: GraphemeOverride[];
+  /** Optional renderer-owned palette projection. The xterm grid retains its
+   *  source SGR values; this affects only the pixels written for this frame. */
+  palette?: TerminalPaletteProjection;
 }
 
 /** True iff the shadow slice at `off` equals `data` (an exact per-row cell-data
@@ -192,6 +179,11 @@ export class PaneMirror {
     this.cols = cols;
     this.rows = rows;
     this.term = new Terminal({ cols, rows, allowProposedApi: true, scrollback });
+    // Unicode 6 classifies many modern emoji as one cell while OpenTUI/the host
+    // terminal paints them as two. Pin both renderers to xterm's Unicode 11
+    // width provider so the parser grid and the pixels advance identically.
+    this.term.loadAddon(new Unicode11Addon());
+    this.term.unicode.activeVersion = "11";
     this.term.onWriteParsed(() => this._version++);
     this.term.onScroll(() => {
       this._pendingScroll++;
@@ -303,7 +295,12 @@ export class PaneMirror {
    *   cursor/offset metadata (rows `[]`) — the framebuffer-blit path (M21.3)
    *   reads cells via {@link blit} instead, so it skips the run rebuild entirely.
    */
-  snapshot(scrollOffset = 0, withCursor = false, includeRows = true): MirrorSnapshot {
+  snapshot(
+    scrollOffset = 0,
+    withCursor = false,
+    includeRows = true,
+    palette?: TerminalPaletteProjection,
+  ): MirrorSnapshot {
     const buf = this.term.buffer.active;
     const offset = Math.max(0, Math.min(scrollOffset, buf.viewportY));
     if (!includeRows) {
@@ -328,12 +325,22 @@ export class PaneMirror {
           if (cell.getWidth() === 0) continue; // spacer half of a wide glyph
 
           let cellFg: number | null = null;
-          if (cell.isFgRGB()) cellFg = cell.getFgColor();
-          else if (cell.isFgPalette()) cellFg = XTERM_PALETTE[cell.getFgColor()] ?? null;
+          if (cell.isFgRGB()) {
+            const color = cell.getFgColor();
+            cellFg = palette ? palette.resolveForeground(color) : color;
+          } else if (cell.isFgPalette()) {
+            const index = cell.getFgColor();
+            cellFg = palette?.ansiForeground[index] ?? XTERM_PALETTE[index] ?? null;
+          }
 
           let cellBg: number | null = null;
-          if (cell.isBgRGB()) cellBg = cell.getBgColor();
-          else if (cell.isBgPalette()) cellBg = XTERM_PALETTE[cell.getBgColor()] ?? null;
+          if (cell.isBgRGB()) {
+            const color = cell.getBgColor();
+            cellBg = palette ? palette.resolveBackground(color) : color;
+          } else if (cell.isBgPalette()) {
+            const index = cell.getBgColor();
+            cellBg = palette?.ansiBackground[index] ?? XTERM_PALETTE[index] ?? null;
+          }
 
           let cellAttrs = 0;
           if (cell.isBold()) cellAttrs |= ATTR_BOLD;
@@ -342,6 +349,7 @@ export class PaneMirror {
           if (cell.isUnderline()) cellAttrs |= ATTR_UNDERLINE;
           if (cell.isBlink()) cellAttrs |= ATTR_BLINK;
           if (cell.isInverse()) cellAttrs |= ATTR_INVERSE;
+          if (cell.isInvisible()) cellAttrs |= ATTR_HIDDEN;
           if (cell.isStrikethrough()) cellAttrs |= ATTR_STRIKETHROUGH;
           // The cursor renders as an inverse cell in the focused, live pane.
           if (isCursorRow && x === buf.cursorX) cellAttrs ^= ATTR_INVERSE;
@@ -484,6 +492,7 @@ export class PaneMirror {
         defaultFg,
         defaultBg,
         opts.graphemes,
+        opts.palette,
       );
       if (this._shadow && data) this._shadow.set(data, y * rowLen);
       opts.dirtyRows.push(y);
@@ -520,6 +529,7 @@ export class PaneMirror {
     defaultFg: number,
     defaultBg: number,
     graphemes?: GraphemeOverride[],
+    palette?: TerminalPaletteProjection,
   ): void {
     const buf = this.term.buffer.active;
     const line = y < this.rows ? buf.getLine(baseY + y) : null;
@@ -537,12 +547,22 @@ export class PaneMirror {
       }
 
       let fg: number | null = null;
-      if (cell.isFgRGB()) fg = cell.getFgColor();
-      else if (cell.isFgPalette()) fg = XTERM_PALETTE[cell.getFgColor()] ?? null;
+      if (cell.isFgRGB()) {
+        const color = cell.getFgColor();
+        fg = palette ? palette.resolveForeground(color) : color;
+      } else if (cell.isFgPalette()) {
+        const index = cell.getFgColor();
+        fg = palette?.ansiForeground[index] ?? XTERM_PALETTE[index] ?? null;
+      }
 
       let bg: number | null = null;
-      if (cell.isBgRGB()) bg = cell.getBgColor();
-      else if (cell.isBgPalette()) bg = XTERM_PALETTE[cell.getBgColor()] ?? null;
+      if (cell.isBgRGB()) {
+        const color = cell.getBgColor();
+        bg = palette ? palette.resolveBackground(color) : color;
+      } else if (cell.isBgPalette()) {
+        const index = cell.getBgColor();
+        bg = palette?.ansiBackground[index] ?? XTERM_PALETTE[index] ?? null;
+      }
 
       let attrs = 0;
       if (cell.isBold()) attrs |= ATTR_BOLD;
@@ -550,6 +570,7 @@ export class PaneMirror {
       if (cell.isItalic()) attrs |= ATTR_ITALIC;
       if (cell.isUnderline()) attrs |= ATTR_UNDERLINE;
       if (cell.isBlink()) attrs |= ATTR_BLINK;
+      if (cell.isInvisible()) attrs |= ATTR_HIDDEN;
       if (cell.isStrikethrough()) attrs |= ATTR_STRIKETHROUGH;
       // Reverse video (app INVERSE) renders as a fg/bg SWAP, not the INVERSE
       // attribute bit — a framebuffer cell carrying that bit does not flush as
@@ -559,17 +580,29 @@ export class PaneMirror {
 
       const chars = cell.getChars();
       const codepoint = chars ? (chars.codePointAt(0) ?? SPACE_CODE) : SPACE_CODE;
-      if (inverted) {
-        const rFg = fg === null ? defaultFg : fg;
-        const rBg = bg === null ? defaultBg : bg;
-        writeCell(buffers, idx, codepoint, rBg, rFg, attrs, dfR, dfG, dfB, dbR, dbG, dbB);
-      } else {
-        writeCell(buffers, idx, codepoint, fg, bg, attrs, dfR, dfG, dfB, dbR, dbG, dbB);
-      }
+      const renderedFg = inverted ? (bg === null ? defaultBg : bg) : fg;
+      const renderedBg = inverted ? (fg === null ? defaultFg : fg) : bg;
+      writeCell(
+        buffers,
+        idx,
+        codepoint,
+        renderedFg,
+        renderedBg,
+        attrs,
+        dfR,
+        dfG,
+        dfB,
+        dbR,
+        dbG,
+        dbB,
+      );
       // A grapheme wider than its base codepoint (ZWJ/flag emoji, combining marks)
       // can't live in a single u32 — record it for the native setCell re-write.
       if (graphemes && chars.length > (codepoint > 0xffff ? 2 : 1)) {
-        graphemes.push({ x, y, chars, fg, bg, attrs });
+        // Use the exact colors written above. The PaneSurface post-pass replaces
+        // this cell with `setCell`; carrying the source colors here would undo
+        // inverse video only for combined/ZWJ graphemes.
+        graphemes.push({ x, y, chars, fg: renderedFg, bg: renderedBg, attrs });
       }
     }
   }

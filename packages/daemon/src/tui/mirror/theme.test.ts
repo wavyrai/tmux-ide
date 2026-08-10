@@ -14,13 +14,19 @@ import {
   LIGHT_THEME,
   LEGACY_THEME_ALIAS_IDS,
   colorToThemeBytes,
+  colorToPackedRgb,
   createSemanticThemeSnapshot,
   createSemanticThemeStore,
+  createTerminalPaletteProjection,
+  readableThemeForeground,
+  semanticThemeContrastChecks,
+  themeContrastRatio,
   type ResolvedThemeMode,
   type ThemeModeSource,
 } from "./theme.ts";
 import { THEME_PRESETS } from "./settings-model.ts";
 import { parseAppConfig } from "../../lib/app-config.ts";
+import { XTERM_PALETTE } from "./ansi-palette.ts";
 
 function rgbaKey(color: { r: number; g: number; b: number; a: number }): string {
   return colorToThemeBytes(color as Parameters<typeof colorToThemeBytes>[0]).join(",");
@@ -116,6 +122,62 @@ describe("semantic theme snapshots", () => {
       expectCanonicalColorProjection(createSemanticThemeSnapshot(config), expected);
     }
     expect(Object.isFrozen(COHESION_FIXTURE_V1)).toBe(true);
+  });
+
+  it("keeps every owned chrome text pair readable in dark and light mode", () => {
+    for (const snapshot of [DARK_THEME, LIGHT_THEME]) {
+      const checks = semanticThemeContrastChecks(snapshot);
+      expect(checks.map((check) => check.id)).toEqual([
+        "primary-on-canvas",
+        "secondary-on-panel",
+        "muted-on-panel",
+        "link-on-panel",
+        "selection-text-on-selection",
+      ]);
+      expect(checks.every((check) => check.passes)).toBe(true);
+      expect(checks.every((check) => check.ratio >= check.minimum)).toBe(true);
+    }
+  });
+
+  it("themes terminal defaults while preserving the complete ANSI and truecolor gamut", () => {
+    const dark = createTerminalPaletteProjection(DARK_THEME);
+    const light = createTerminalPaletteProjection(LIGHT_THEME);
+
+    expect(dark.ansiForeground).toHaveLength(256);
+    expect(dark.ansiBackground).toHaveLength(256);
+    expect(dark.foreground).toBe(colorToPackedRgb(DARK_THEME.roles.text.primary));
+    expect(dark.background).toBe(colorToPackedRgb(DARK_THEME.roles.surfaces.terminal));
+    expect(dark.ansiForeground).toBe(XTERM_PALETTE);
+    expect(dark.ansiBackground).toBe(XTERM_PALETTE);
+    expect(light.ansiForeground).toBe(XTERM_PALETTE);
+    expect(light.ansiBackground).toBe(XTERM_PALETTE);
+    expect(dark.ansiForeground.slice(0, 16)).toEqual(XTERM_PALETTE.slice(0, 16));
+    expect(dark.ansiForeground.slice(16, 232)).toEqual(XTERM_PALETTE.slice(16, 232));
+    expect(dark.ansiForeground.slice(232)).toEqual(XTERM_PALETTE.slice(232));
+
+    // Appearance changes update only the terminal-owned defaults/overlays.
+    expect(light.foreground).not.toBe(dark.foreground);
+    expect(light.background).not.toBe(dark.background);
+    const source = 0x32a8e6;
+    expect(dark.resolveForeground(source)).toBe(source);
+    expect(light.resolveForeground(source)).toBe(source);
+    expect(dark.resolveBackground(source)).toBe(source);
+    expect(light.searchCurrent).toBe(colorToPackedRgb(LIGHT_THEME.roles.selection.selection));
+  });
+
+  it("keeps built-in muted colours on stable extended-palette values", () => {
+    expect(rgbaKey(DARK_THEME.roles.text.muted)).toBe("138,138,138,255");
+    expect(rgbaKey(LIGHT_THEME.roles.text.muted)).toBe("108,108,108,255");
+  });
+
+  it("repairs an unreadable requested foreground from semantic fallbacks", () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const repaired = readableThemeForeground(theme.roles.surfaces.panel, [
+      theme.roles.surfaces.panel,
+      theme.roles.text.primary,
+    ]);
+    expect(rgbaKey(repaired)).toBe(rgbaKey(theme.roles.text.primary));
+    expect(themeContrastRatio(repaired, theme.roles.surfaces.panel)).toBeGreaterThanOrEqual(4.5);
   });
 
   it("does not treat parser-filled legacy defaults as canonical theme overrides", () => {

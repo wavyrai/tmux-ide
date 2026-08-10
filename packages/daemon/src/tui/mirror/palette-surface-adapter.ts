@@ -84,6 +84,8 @@ function actionPayload(action: PaletteAction): string {
       return action.viewId;
     case "attach":
       return action.session;
+    case "jump-pane":
+      return `${action.session}:${action.paneId}`;
     case "jump-agent":
       return `${action.session}:${action.paneId}`;
     case "restart-agent":
@@ -129,6 +131,7 @@ function iconForAction(action: PaletteAction): WorkspaceIconId {
     case "save":
       return "files";
     case "attach":
+    case "jump-pane":
     case "jump-agent":
     case "new-agent":
     case "new-agent-again":
@@ -184,6 +187,8 @@ function categoryForAction(action: PaletteAction): string {
     case "open-folder":
     case "attach":
       return "Navigation";
+    case "jump-pane":
+      return "Panes";
     case "jump-agent":
     case "new-agent":
     case "new-agent-again":
@@ -235,6 +240,8 @@ function detailForAction(action: PaletteAction): string {
       return "Open or create a workspace from a folder";
     case "attach":
       return `Open the ${action.session} workspace`;
+    case "jump-pane":
+      return `Focus ${action.session} pane ${action.paneId}`;
     case "jump-agent":
       return `Focus ${action.session} pane ${action.paneId}`;
     case "new-agent":
@@ -298,6 +305,7 @@ function isCurrent(action: PaletteAction, context: PaletteSurfaceAdapterContext)
   if (action.kind === "tab") return action.tab === context.currentTab;
   if (action.kind === "view") return action.viewId === context.currentViewId;
   if (action.kind === "attach") return action.session === context.currentSession;
+  if (action.kind === "jump-pane") return false;
   if (action.kind === "sync-toggle") return context.syncOn === true;
   return false;
 }
@@ -308,6 +316,7 @@ function statusForAction(
 ): string | null {
   if (action.kind === "sync-toggle") return context.syncOn ? "on" : "off";
   if (action.kind === "jump-agent") return action.session;
+  if (action.kind === "jump-pane") return action.session;
   if (action.kind === "attach" && action.session === context.currentSession) return "current";
   return null;
 }

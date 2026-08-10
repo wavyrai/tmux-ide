@@ -85,6 +85,8 @@ export interface RecordingMirrorRenderer extends MirrorTerminalRenderer {
   readonly commits: MirrorRendererCommit[];
   /** Stand in for the emulator's grid, so widget detection can be exercised. */
   setCellRows(rows: readonly WidgetCellRow[]): void;
+  /** Stand in for xterm's painted selection. */
+  emitSelection(selection: string): void;
 }
 
 export function createRecordingMirrorRendererFactory(): {
@@ -99,6 +101,8 @@ export function createRecordingMirrorRendererFactory(): {
     // hands the rows over directly rather than pretending to be an emulator.
     const cellRows: WidgetCellRow[] = [];
     let gridOverlay: { box: GridOverlayBox; scale: number } | null = null;
+    let selection = "";
+    const selectionListeners = new Set<(value: string) => void>();
     const renderer: RecordingMirrorRenderer = {
       commits,
       open: () => undefined,
@@ -131,6 +135,15 @@ export function createRecordingMirrorRendererFactory(): {
         commits.push({ kind: "fit" });
       },
       setReducedMotion: () => undefined,
+      getSelection: () => selection,
+      onSelectionChange: (listener) => {
+        selectionListeners.add(listener);
+        return { dispose: () => selectionListeners.delete(listener) };
+      },
+      emitSelection: (value) => {
+        selection = value;
+        for (const listener of selectionListeners) listener(value);
+      },
       dispose: () => undefined,
     };
     renderers.push(renderer);

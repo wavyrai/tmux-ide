@@ -251,7 +251,7 @@ async function launchElectron(fleet) {
   child.stderr.on("data", (chunk) => (electronOutput += chunk.toString()));
   let exitCode = null;
   child.once("exit", (code) => (exitCode = code));
-  cleanups.push(async () => {
+  const cleanupElectron = async () => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     child.kill("SIGTERM");
     await pollUntil({
@@ -259,8 +259,22 @@ async function launchElectron(fleet) {
       detail: "electron shutdown",
       timeoutMs: 8_000,
       intervalMs: 100,
-    }).catch(() => child.kill("SIGKILL"));
-  });
+    }).catch(async () => {
+      child.kill("SIGKILL");
+      await pollUntil({
+        probe: () => (child.exitCode !== null || child.signalCode !== null ? true : null),
+        detail: "forced electron shutdown",
+        timeoutMs: 2_000,
+        intervalMs: 100,
+      }).catch(() => undefined);
+    });
+    // A wedged platform process must not retain the smoke harness through its
+    // ChildProcess pipes. The exact PID was already signalled above; releasing
+    // these local handles lets the remaining scratch cleanup finish honestly.
+    child.stdout.destroy();
+    child.stderr.destroy();
+    child.unref();
+  };
   log(`launched the built app (electron pid ${child.pid})`);
 
   const canonical = await pollUntil({
@@ -293,6 +307,9 @@ async function launchElectron(fleet) {
       }).catch(() => process.kill(canonical.pid, "SIGKILL"));
     }
   });
+  // Cleanups run in reverse. Retire the Electron owner before its daemon child;
+  // killing the child first can strand Electron in macOS's exiting state.
+  cleanups.push(cleanupElectron);
   log(`daemon ready on port ${canonical.port} (pid ${canonical.pid})`);
   return { child, canonical };
 }

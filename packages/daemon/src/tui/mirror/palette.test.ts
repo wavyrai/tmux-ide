@@ -181,6 +181,43 @@ describe("parseBufferList", () => {
 });
 
 describe("filterPaletteActions", () => {
+  it("shares universal scope and agent-status filters with the GUI navigator", () => {
+    const agents = [
+      {
+        paneId: "%4",
+        windowIndex: 1,
+        session: "web",
+        kind: "claude",
+        state: "blocked" as const,
+        since: null,
+      },
+      {
+        paneId: "%5",
+        windowIndex: 1,
+        session: "web",
+        kind: "codex",
+        state: "working" as const,
+        since: null,
+      },
+    ];
+    const panes = [
+      { paneId: "%4", session: "web", title: "Editor", active: true },
+      { paneId: "%8", session: "web", title: "Tests", active: false },
+    ];
+
+    expect(filterPaletteActions("@agents #blocked", ["web"], { agents, panes })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "jump-agent", paneId: "%4" })]),
+    );
+    expect(
+      filterPaletteActions("@agents #blocked", ["web"], { agents, panes }).some(
+        (action) => action.kind === "jump-agent" && action.paneId === "%5",
+      ),
+    ).toBe(false);
+    expect(filterPaletteActions("@panes tests", ["web"], { agents, panes })).toEqual([
+      expect.objectContaining({ kind: "jump-pane", paneId: "%8" }),
+    ]);
+  });
+
   it("returns every static action for an empty query, no open-file entry", () => {
     const actions = filterPaletteActions("", ["alpha"]);
     expect(actions.some((a) => a.kind === "open-file")).toBe(false);

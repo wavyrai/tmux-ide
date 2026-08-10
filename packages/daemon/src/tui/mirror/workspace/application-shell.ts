@@ -2,6 +2,7 @@ import type { ApplicationShellProjectionV1 } from "@tmux-ide/contracts";
 import type { HostedPanelView } from "../panel-host.ts";
 import {
   shellChromeLayout,
+  shellNavigationPresentation,
   shellSidebarHint,
   shellSurfaceTabs,
   type ShellChromeLayout,
@@ -26,6 +27,7 @@ export interface ApplicationShellProjection {
   semantic: ApplicationShellProjectionV1;
   views: readonly HostedPanelView[];
   tabs: readonly ShellTabPresentation[];
+  navigation: ReturnType<typeof shellNavigationPresentation>;
   sidebarHint: ShellSidebarHint;
   sessions: readonly {
     name: string;
@@ -53,6 +55,8 @@ function sessionStatus(
 /** Host geometry around the one renderer-neutral application-shell projection. */
 export function projectApplicationShell(input: ApplicationShellInput): ApplicationShellProjection {
   const layout = shellChromeLayout(input.width, input.height, input.preferredSidebarWidth);
+  const navigationFocused = input.shell.focus.zone === "primary-navigation";
+  const navigation = shellNavigationPresentation(layout.variant, navigationFocused);
   const contentHeight = Math.max(0, layout.main.height - layout.status.height);
   const views: HostedPanelView[] = input.shell.primaryNavigation.items.map((surface) => ({
     id: surface.id,
@@ -92,7 +96,12 @@ export function projectApplicationShell(input: ApplicationShellInput): Applicati
           .filter(({ attention }) => attention)
           .map(({ id }) => id),
       ),
+      {
+        startX: navigation.width,
+        navigationFocused: input.shell.focus.zone === "primary-navigation",
+      },
     ),
+    navigation,
     sidebarHint: shellSidebarHint(layout.variant, input.quitHint, layout.sidebar.width),
     sessions: input.shell.sidebar.sessions.map((session) => ({
       name: session.label,

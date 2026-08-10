@@ -67,6 +67,11 @@ export interface WorkbenchDockHostProjection {
   readonly dockBody: WorkbenchDockHostRect;
   readonly dockBodyRail: WorkbenchDockHostRect;
   readonly dockBodyContent: WorkbenchDockHostRect;
+  readonly dockSection?: {
+    readonly label: string;
+    readonly width: number;
+    readonly focused: boolean;
+  };
   readonly tabs: readonly WorkbenchDockHostTab[];
   readonly actions: readonly WorkbenchDockHostAction[];
 }

@@ -27,6 +27,8 @@ export interface MirrorPaneNodeProps {
   readonly reducedMotion?: boolean;
   readonly themeKey?: string;
   readonly rendererFactory?: MirrorTerminalRendererFactory;
+  /** Reports xterm's painted selection to the workspace copy authority. */
+  readonly onSelectionChange?: (selection: string) => void;
 }
 
 /**
@@ -47,6 +49,7 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
   let markerWatcher = createWidgetMarkerByteWatcher();
   let widgetScan: ReturnType<typeof setTimeout> | null = null;
   let renderer: MirrorTerminalRenderer | null = null;
+  let selectionSubscription: { dispose(): void } | null = null;
   let unregister: (() => void) | null = null;
   let containerObserver: ResizeObserver | null = null;
   let overlayElement: HTMLDivElement | undefined;
@@ -108,6 +111,10 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
     }
     renderer = next;
     renderer.open(mount);
+    selectionSubscription?.dispose();
+    selectionSubscription = next.onSelectionChange((selection) =>
+      props.onSelectionChange?.(selection),
+    );
     renderer.refreshTheme();
     observeContainer(next, mount);
     attachSink(next);
@@ -200,6 +207,9 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
       containerObserver = null;
       unregister?.();
       unregister = null;
+      selectionSubscription?.dispose();
+      selectionSubscription = null;
+      props.onSelectionChange?.("");
       const active = renderer;
       renderer = null;
       try {

@@ -254,4 +254,16 @@ describe("desktop host contract", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("carries an optional causal receipt with application-shell invalidations", () => {
+    const event = {
+      type: "application-shell.changed",
+      workspaceName: "product",
+      daemonInstanceId: "22222222-2222-4222-8222-222222222222",
+      sequence: 9,
+      revision: 4,
+      causeOperationId: "10000000-0000-4000-8000-000000000001",
+    };
+    expect(DesktopDaemonEventSchemaZ.parse(event)).toEqual(event);
+  });
 });

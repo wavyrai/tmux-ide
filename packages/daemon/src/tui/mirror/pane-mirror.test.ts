@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { PaneMirror } from "./pane-mirror.ts";
+import { DARK_THEME, LIGHT_THEME, createTerminalPaletteProjection } from "./theme.ts";
 
 /** xterm parses writes on its own write-buffer flush (a timer), so poll the
  *  mirror until the content lands (the real app reads on a 16ms render tick). */
@@ -45,6 +46,74 @@ function arrays(w: number, h: number) {
     attributes: new Uint32Array(w * h),
   };
 }
+
+function packedCell(channels: Uint16Array, cell: number): number {
+  const offset = cell * 4;
+  return (channels[offset]! << 16) | (channels[offset + 1]! << 8) | channels[offset + 2]!;
+}
+
+describe("PaneMirror terminal theme projection", () => {
+  it("recolors indexed ANSI and truecolor cells without changing the xterm grid", async () => {
+    const m = new PaneMirror(8, 2);
+    m.write("\x1b[31mR\x1b[38;2;10;200;30mT");
+    await flushed(m, "RT");
+    const dark = createTerminalPaletteProjection(DARK_THEME);
+    const light = createTerminalPaletteProjection(LIGHT_THEME);
+    const buffers = arrays(8, 2);
+
+    const dirtyRows: number[] = [];
+    m.blit(buffers, 8, 2, 0, dark.foreground, dark.background, {
+      full: true,
+      dirtyRows,
+      palette: dark,
+    });
+    expect(packedCell(buffers.fg, 0)).toBe(dark.ansiForeground[1]);
+    expect(packedCell(buffers.fg, 1)).toBe(dark.resolveForeground(0x0ac81e));
+
+    dirtyRows.length = 0;
+    m.blit(buffers, 8, 2, 0, light.foreground, light.background, {
+      // PaneSurface forces this on palette identity changes; raw cell bytes are
+      // intentionally identical, so a palette change alone cannot dirty them.
+      full: true,
+      dirtyRows,
+      palette: light,
+    });
+    expect(dirtyRows).toHaveLength(2);
+    expect(packedCell(buffers.fg, 0)).toBe(light.ansiForeground[1]);
+    expect(packedCell(buffers.fg, 1)).toBe(light.resolveForeground(0x0ac81e));
+
+    const snapshot = m.snapshot(0, false, true, light);
+    expect(snapshot.rows[0]?.[0]?.fg).toBe(light.ansiForeground[1]);
+    m.dispose();
+  });
+
+  it("preserves Claude's explicit xterm black logo background", async () => {
+    const m = new PaneMirror(12, 2);
+    // Claude deliberately paints the five middle block cells on ANSI slot 16
+    // and then restores the terminal default with SGR 49. Slot 16 is protocol
+    // black; treating it as a theme accent produces the grey logo halo that
+    // this regression guards against.
+    m.write("\x1b[38;5;174m \u2590\x1b[48;5;16m\u259b\u2588\u2588\u2588\u259c\x1b[49m\u258c");
+    await flushed(m, " \u2590\u259b\u2588\u2588\u2588\u259c\u258c");
+
+    const palette = createTerminalPaletteProjection(DARK_THEME);
+    const buffers = arrays(12, 2);
+    m.blit(buffers, 12, 2, 0, palette.foreground, palette.background, {
+      full: true,
+      dirtyRows: [],
+      palette,
+    });
+
+    expect(palette.ansiBackground[16]).toBe(0x000000);
+    for (let cell = 2; cell <= 6; cell++) {
+      expect(packedCell(buffers.bg, cell)).toBe(0x000000);
+      expect(packedCell(buffers.fg, cell)).toBe(palette.ansiForeground[174]);
+    }
+    expect(packedCell(buffers.bg, 1)).toBe(palette.background);
+    expect(packedCell(buffers.bg, 7)).toBe(palette.background);
+    m.dispose();
+  });
+});
 
 /** Blit and return the rows written this call. */
 function blit(

@@ -1,6 +1,8 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import type { TerminalAttachmentViewport } from "@tmux-ide/contracts";
+import { XTERM_PALETTE_HEX } from "@tmux-ide/core";
 
 import type { WidgetCellRow } from "@tmux-ide/contracts";
 import { readWidgetCellRows } from "./widgets/xterm-cell-rows.ts";
@@ -68,22 +70,6 @@ export const TERMINAL_THEME_TOKEN = {
   cursor: "--tmux-ide-terminal-cursor",
   cursorAccent: "--tmux-ide-terminal-cursor-accent",
   selectionBackground: "--tmux-ide-terminal-selection",
-  black: "--tmux-ide-terminal-ansi-black",
-  red: "--tmux-ide-terminal-ansi-red",
-  green: "--tmux-ide-terminal-ansi-green",
-  yellow: "--tmux-ide-terminal-ansi-yellow",
-  blue: "--tmux-ide-terminal-ansi-blue",
-  magenta: "--tmux-ide-terminal-ansi-magenta",
-  cyan: "--tmux-ide-terminal-ansi-cyan",
-  white: "--tmux-ide-terminal-ansi-white",
-  brightBlack: "--tmux-ide-terminal-ansi-bright-black",
-  brightRed: "--tmux-ide-terminal-ansi-bright-red",
-  brightGreen: "--tmux-ide-terminal-ansi-bright-green",
-  brightYellow: "--tmux-ide-terminal-ansi-bright-yellow",
-  brightBlue: "--tmux-ide-terminal-ansi-bright-blue",
-  brightMagenta: "--tmux-ide-terminal-ansi-bright-magenta",
-  brightCyan: "--tmux-ide-terminal-ansi-bright-cyan",
-  brightWhite: "--tmux-ide-terminal-ansi-bright-white",
 } as const satisfies Record<string, `--tmux-ide-terminal-${string}`>;
 
 type TerminalThemeRole = keyof typeof TERMINAL_THEME_TOKEN;
@@ -94,28 +80,29 @@ type TerminalThemeRole = keyof typeof TERMINAL_THEME_TOKEN;
  * effect in isolated fixtures rendered without the app token cascade — the same
  * convention ui-system.css uses for its primitive fallbacks.
  */
-export const TERMINAL_THEME_FALLBACK: Readonly<Record<TerminalThemeRole, string>> = Object.freeze({
+export const TERMINAL_THEME_FALLBACK: Readonly<ITheme> = Object.freeze({
   background: "#12131a",
   foreground: "#e6e8f2",
   cursor: "#c7d4ff",
   cursorAccent: "#12131a",
   selectionBackground: "#33406b",
-  black: "#2a2c37",
-  red: "#f0748c",
-  green: "#7fd88f",
-  yellow: "#e6c67a",
-  blue: "#8bb4ff",
-  magenta: "#cba6f7",
-  cyan: "#7fd4d8",
-  white: "#cdd0da",
-  brightBlack: "#5c6072",
-  brightRed: "#ff92a6",
-  brightGreen: "#9ce8a8",
-  brightYellow: "#f4d99a",
-  brightBlue: "#aecbff",
-  brightMagenta: "#ddc4ff",
-  brightCyan: "#a3e8ec",
-  brightWhite: "#f6f8fc",
+  black: XTERM_PALETTE_HEX[0],
+  red: XTERM_PALETTE_HEX[1],
+  green: XTERM_PALETTE_HEX[2],
+  yellow: XTERM_PALETTE_HEX[3],
+  blue: XTERM_PALETTE_HEX[4],
+  magenta: XTERM_PALETTE_HEX[5],
+  cyan: XTERM_PALETTE_HEX[6],
+  white: XTERM_PALETTE_HEX[7],
+  brightBlack: XTERM_PALETTE_HEX[8],
+  brightRed: XTERM_PALETTE_HEX[9],
+  brightGreen: XTERM_PALETTE_HEX[10],
+  brightYellow: XTERM_PALETTE_HEX[11],
+  brightBlue: XTERM_PALETTE_HEX[12],
+  brightMagenta: XTERM_PALETTE_HEX[13],
+  brightCyan: XTERM_PALETTE_HEX[14],
+  brightWhite: XTERM_PALETTE_HEX[15],
+  extendedAnsi: XTERM_PALETTE_HEX.slice(16),
 });
 
 export type TerminalTokenReader = Pick<CSSStyleDeclaration, "getPropertyValue">;
@@ -126,9 +113,9 @@ function readToken(reader: TerminalTokenReader, name: string, fallback: string):
 
 /** Projects the app's CSS terminal tokens into a complete xterm theme. */
 export function resolveTerminalTheme(reader: TerminalTokenReader): ITheme {
-  const theme: Record<TerminalThemeRole, string> = { ...TERMINAL_THEME_FALLBACK };
+  const theme: ITheme = { ...TERMINAL_THEME_FALLBACK };
   for (const role of Object.keys(TERMINAL_THEME_TOKEN) as TerminalThemeRole[]) {
-    theme[role] = readToken(reader, TERMINAL_THEME_TOKEN[role], TERMINAL_THEME_FALLBACK[role]);
+    theme[role] = readToken(reader, TERMINAL_THEME_TOKEN[role], TERMINAL_THEME_FALLBACK[role]!);
   }
   return theme;
 }
@@ -143,7 +130,10 @@ export const createXtermRenderer: TerminalRendererFactory = ({ reducedMotion, la
   let fitAddon: FitAddon | null = null;
   const encoder = new TextEncoder();
   const terminal = new Terminal({
-    allowProposedApi: false,
+    // Required by the official Unicode 11 width addon. tmux-ide uses the
+    // proposed surface only during local renderer construction; none of it is
+    // exposed across the daemon/client contract.
+    allowProposedApi: true,
     convertEol: false,
     cursorBlink: !reducedMotion,
     cursorStyle: "block",
@@ -158,6 +148,8 @@ export const createXtermRenderer: TerminalRendererFactory = ({ reducedMotion, la
     tabStopWidth: 4,
     theme: TERMINAL_THEME_FALLBACK,
   });
+  terminal.loadAddon(new Unicode11Addon());
+  terminal.unicode.activeVersion = "11";
 
   const applyTheme = (): void => {
     if (!container) return;

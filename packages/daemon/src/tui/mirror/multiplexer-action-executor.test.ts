@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DAEMON_WIRE_PROTOCOL_VERSION, type CanonicalDaemonInfo } from "@tmux-ide/contracts";
 
-import { CliActionInvocationError } from "../../lib/cli-action-bridge.ts";
+import { DaemonActionInvocationError } from "@tmux-ide/daemon-client/owner-action-client";
 import type { SessionPaneDescriptor } from "../../terminal/protocol/session-descriptor-discovery.ts";
 import { executeTuiMultiplexerAction } from "./multiplexer-action-executor.ts";
 
@@ -74,6 +74,21 @@ function catalog(instanceId = INSTANCE): Response {
 }
 
 describe("TUI multiplexer action executor", () => {
+  it("rewrites standalone new-window through the control-mode-safe split and break flow", async () => {
+    const runLocal = vi.fn(async () => undefined);
+    const sizedContext = { ...context(), viewportSize: { cols: 120, rows: 40 } };
+
+    await expect(
+      executeTuiMultiplexerAction({ kind: "new-window" }, sizedContext, runLocal, {
+        readCanonicalDaemonInfo: () => null,
+      }),
+    ).resolves.toEqual({ status: "local", message: "new window" });
+
+    expect(runLocal).toHaveBeenCalledWith(
+      "split-window -t 'renamed-session' ; break-pane ; resize-window -x 120 -y 40",
+    );
+  });
+
   it("uses raw control-mode tmux only when no canonical daemon exists", async () => {
     const runLocal = vi.fn(async () => undefined);
     const dispatchAction = vi.fn();
@@ -104,6 +119,7 @@ describe("TUI multiplexer action executor", () => {
     ).resolves.toEqual({ status: "daemon", message: "split pane down" });
 
     expect(dispatchAction).toHaveBeenCalledWith(
+      canonical,
       "workspace.window.split",
       {
         workspaceName: "project-stable-identity",
@@ -127,6 +143,7 @@ describe("TUI multiplexer action executor", () => {
     });
 
     expect(dispatchAction).toHaveBeenCalledWith(
+      canonical,
       "workspace.pane.swap",
       {
         workspaceName: "project-stable-identity",
@@ -135,6 +152,52 @@ describe("TUI multiplexer action executor", () => {
       },
       { operationId: OPERATION, autostart: false },
     );
+  });
+
+  it("routes pane resize through daemon authority with the durable pane identity", async () => {
+    const dispatchAction = vi.fn(async () => ({ outcome: "applied", cells: 52 }));
+
+    await expect(
+      executeTuiMultiplexerAction(
+        { kind: "resize-pane", axis: "cols", cells: 52 },
+        context(),
+        vi.fn(),
+        {
+          readCanonicalDaemonInfo: () => canonical,
+          isCanonicalDaemonAlive: async () => true,
+          fetch: vi.fn(async () => catalog()) as typeof fetch,
+          dispatchAction: dispatchAction as never,
+          operationId: () => OPERATION,
+        },
+      ),
+    ).resolves.toEqual({ status: "daemon", message: "resized pane to 52 cols" });
+
+    expect(dispatchAction).toHaveBeenCalledWith(
+      canonical,
+      "workspace.pane.resize",
+      {
+        workspaceName: "project-stable-identity",
+        semanticPaneId: "pane.source",
+        axis: "cols",
+        cells: 52,
+      },
+      { operationId: OPERATION, autostart: false },
+    );
+  });
+
+  it("keeps resize available in standalone mode", async () => {
+    const runLocal = vi.fn(async () => undefined);
+
+    await expect(
+      executeTuiMultiplexerAction(
+        { kind: "resize-pane", axis: "rows", cells: 18 },
+        context(),
+        runLocal,
+        { readCanonicalDaemonInfo: () => null },
+      ),
+    ).resolves.toEqual({ status: "local", message: "resized pane to 18 rows" });
+
+    expect(runLocal).toHaveBeenCalledWith("resize-pane -t %1 -y 18");
   });
 
   it("routes session-menu rename through the stable workspace identity", async () => {
@@ -156,6 +219,7 @@ describe("TUI multiplexer action executor", () => {
     ).resolves.toEqual({ status: "daemon", message: "renamed session → fresh-name" });
 
     expect(dispatchAction).toHaveBeenCalledWith(
+      canonical,
       "workspace.rename",
       {
         workspaceName: "project-stable-identity",
@@ -169,7 +233,7 @@ describe("TUI multiplexer action executor", () => {
   it("surfaces a typed daemon refusal without bypassing it locally", async () => {
     const runLocal = vi.fn(async () => undefined);
     const dispatchAction = vi.fn(async () => {
-      throw new CliActionInvocationError({
+      throw new DaemonActionInvocationError({
         code: "bad_request",
         message: "This is the session's last window. Close the session instead.",
       });

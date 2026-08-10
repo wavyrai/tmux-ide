@@ -1,9 +1,10 @@
 import type { TestRendererOptions, TestRendererSetup } from "@opentui/core/testing";
 import { testRender, type JSX } from "@opentui/solid";
-import { afterEach, expect } from "bun:test";
+import { expect } from "bun:test";
 import { terminalDisplayWidth } from "../panel-host.ts";
+import { openTuiTestRendererRegistry } from "../../../../test-support/opentui-renderer-preload.ts";
 
-const activeRenderers = new Set<TestRendererSetup>();
+const activeRenderers = openTuiTestRendererRegistry();
 
 /**
  * Mount a Solid/OpenTUI tree and register it for deterministic teardown.
@@ -31,10 +32,6 @@ export function destroyAllTestRenderers(): void {
   for (const setup of activeRenderers) setup.renderer.destroy();
   activeRenderers.clear();
 }
-
-afterEach(() => {
-  destroyAllTestRenderers();
-});
 
 export function frameLines(frame: string): string[] {
   const lines = frame.endsWith("\n") ? frame.slice(0, -1).split("\n") : frame.split("\n");

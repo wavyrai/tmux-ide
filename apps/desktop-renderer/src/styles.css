@@ -632,8 +632,10 @@ select:focus-visible,
  *
  * The chrome's own light/dark tokens are untouched — this block ends at the
  * grid. `--tmux-ide-surface-terminal` (the chrome-side token for terminal-
- * adjacent panels) still follows the theme; only the emulator's own sixteen
- * colors plus ground, ink, cursor and selection are pinned here.
+ * adjacent panels) still follows the theme; only the emulator's ground, ink,
+ * cursor and selection are pinned here. Explicit ANSI colors are
+ * terminal protocol data and come from @tmux-ide/core's canonical xterm ramp;
+ * CSS cannot remap application output.
  *
  * Keyed on both `.app` and a bare `[data-theme]` so isolated fixtures resolve
  * without the full app shell and so it still wins inside the runtime cascade.
@@ -648,22 +650,6 @@ select:focus-visible,
   --tmux-ide-terminal-cursor: #c7d4ff;
   --tmux-ide-terminal-cursor-accent: #12131a;
   --tmux-ide-terminal-selection: #33406b;
-  --tmux-ide-terminal-ansi-black: #2a2c37;
-  --tmux-ide-terminal-ansi-red: #f0748c;
-  --tmux-ide-terminal-ansi-green: #7fd88f;
-  --tmux-ide-terminal-ansi-yellow: #e6c67a;
-  --tmux-ide-terminal-ansi-blue: #8bb4ff;
-  --tmux-ide-terminal-ansi-magenta: #cba6f7;
-  --tmux-ide-terminal-ansi-cyan: #7fd4d8;
-  --tmux-ide-terminal-ansi-white: #cdd0da;
-  --tmux-ide-terminal-ansi-bright-black: #5c6072;
-  --tmux-ide-terminal-ansi-bright-red: #ff92a6;
-  --tmux-ide-terminal-ansi-bright-green: #9ce8a8;
-  --tmux-ide-terminal-ansi-bright-yellow: #f4d99a;
-  --tmux-ide-terminal-ansi-bright-blue: #aecbff;
-  --tmux-ide-terminal-ansi-bright-magenta: #ddc4ff;
-  --tmux-ide-terminal-ansi-bright-cyan: #a3e8ec;
-  --tmux-ide-terminal-ansi-bright-white: #f6f8fc;
 }
 
 .titlebar {
@@ -4923,6 +4909,53 @@ kbd {
   background: var(--tmux-ide-border-subtle);
 }
 
+.command-palette__scopes {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: var(--tmi-space-2);
+  padding: 8px 14px 0;
+  overflow-x: auto;
+}
+
+.command-palette__scopes button {
+  min-height: 24px;
+  padding: 2px 9px;
+  border: 1px solid var(--tmux-ide-border-subtle);
+  border-radius: 999px;
+  color: var(--tmux-ide-text-secondary);
+  background: var(--tmux-ide-surface-panel);
+  font: inherit;
+  font-size: var(--sf-text-caption-3);
+}
+
+.command-palette__scopes button:hover,
+.command-palette__scopes button:focus-visible,
+.command-palette__scopes .command-palette__scope--active {
+  border-color: var(--tmux-ide-border-focused);
+  color: var(--tmux-ide-text-bright);
+  background: color-mix(in display-p3, var(--tmux-ide-border-focused) 14%, var(--desktop-active));
+}
+
+.command-palette__scopes button:focus-visible {
+  outline: 2px solid var(--tmux-ide-border-focused);
+  outline-offset: 1px;
+}
+
+.command-palette__scopes > span {
+  margin-left: auto;
+  color: var(--tmux-ide-text-muted);
+  font-size: var(--sf-text-caption-3);
+  white-space: nowrap;
+}
+
+.command-palette__scopes code {
+  font-family: var(--tmux-ide-font-mono);
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
+}
+
 .command-palette__list {
   min-height: 0;
   padding: 4px 8px 10px;
@@ -5200,6 +5233,16 @@ kbd {
   padding: 16px;
 }
 
+.create-pane-flow__back {
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  color: var(--tmux-ide-text-link);
+  background: transparent;
+  font-size: var(--sf-text-caption-3);
+  cursor: pointer;
+}
+
 .create-pane-flow__kind-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5229,6 +5272,14 @@ kbd {
   color: var(--tmux-ide-text-primary);
   border-color: var(--tmux-ide-border-focused);
   background: var(--tmux-ide-selection-hover);
+}
+
+.create-pane-flow__kind-card:disabled {
+  color: var(--tmux-ide-control-disabled-foreground);
+  border-color: var(--tmux-ide-border-subtle);
+  background: var(--tmux-ide-control-disabled-background);
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
 .create-pane-flow__kind-card > svg {
@@ -5288,6 +5339,52 @@ kbd {
   font-size: var(--sf-text-caption-3);
   letter-spacing: var(--sf-tracking-eyebrow);
   text-transform: uppercase;
+}
+
+.create-pane-flow__target-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--tmi-space-5);
+  padding: 9px 10px;
+  border: 1px solid var(--tmux-ide-border-subtle);
+  border-radius: var(--tmux-ide-shape-control);
+  background: var(--tmux-ide-surface-panel);
+}
+
+.create-pane-flow__target-summary > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.create-pane-flow__target-summary small,
+.create-pane-flow__target-summary em {
+  color: var(--tmux-ide-text-muted);
+  font-size: var(--sf-text-caption-3);
+  font-style: normal;
+}
+
+.create-pane-flow__target-summary strong {
+  color: var(--tmux-ide-text-bright);
+  font-size: var(--sf-text-caption-2);
+  font-weight: var(--sf-weight-medium);
+}
+
+.create-pane-flow__target-summary button {
+  padding: 0;
+  border: 0;
+  color: var(--tmux-ide-text-link);
+  background: transparent;
+  font-size: var(--sf-text-caption-3);
+  cursor: pointer;
+}
+
+.create-pane-flow__empty {
+  display: block;
+  margin-top: 8px;
+  color: var(--tmux-ide-text-muted);
+  font-size: var(--sf-text-caption-3);
 }
 
 .create-pane-flow__field,
@@ -6016,6 +6113,36 @@ kbd {
 }
 
 /*
+ * One new interaction receipt lights the destination pane as a whole. This is
+ * a short, interruptible state transition rather than a looping animation:
+ * repeated send-keys traffic extends the highlight instead of stacking pulses
+ * or repainting terminal pixels.
+ */
+.pane-tile::after {
+  position: absolute;
+  z-index: 24;
+  inset: 1px;
+  border: 2px solid color-mix(in display-p3, var(--pane-identity-accent) 76%, white 10%);
+  border-radius: 2px;
+  box-shadow:
+    inset 0 0 22px color-mix(in display-p3, var(--pane-identity-accent) 13%, transparent),
+    0 0 18px color-mix(in display-p3, var(--pane-identity-accent) 28%, transparent);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms var(--desktop-ease-smooth);
+}
+
+.pane-tile[data-communication-active="true"]::after {
+  opacity: 1;
+}
+
+.pane-tile[data-communication-direction="outgoing"]::after {
+  border-style: dashed;
+  box-shadow: 0 0 14px color-mix(in display-p3, var(--pane-identity-accent) 22%, transparent);
+}
+
+/*
  * Tmuxy-style pane composition.
  *
  * The whole-window attachment remains mounted underneath as the keyboard,
@@ -6050,6 +6177,16 @@ kbd {
   pointer-events: none;
 }
 
+/*
+ * The composed xterm is the terminal the user can see, so it must own text
+ * selection. The window-level xterm underneath remains the sole keyboard and
+ * geometry client; WorkspaceTiledSurface restores its focus after the pointer
+ * gesture and forwards copy from this mirror's xterm selection.
+ */
+.pane-tile[data-composed="true"] > .pane-tile__body {
+  pointer-events: auto;
+}
+
 .pane-tile[data-identity-icon="agent-claude"] {
   --pane-identity-accent: var(--sf-agent-claude);
 }
@@ -6073,17 +6210,32 @@ kbd {
 
 .tiled-pane-area[data-manipulation-phase="swap-committing"] .pane-tile,
 .tiled-pane-area[data-manipulation-phase="resize-committing"] .pane-tile,
-.tiled-pane-area[data-manipulation-phase="rollback"] .pane-tile,
-.tiled-pane-area[data-manipulation-phase="idle"] .pane-tile {
+.tiled-pane-area[data-manipulation-phase="rollback"] .pane-tile {
   transition:
     transform 150ms var(--desktop-ease-smooth),
     opacity 150ms var(--desktop-ease-smooth);
 }
 
+.tiled-pane-area[data-manipulation-phase="idle"] .pane-tile {
+  /*
+   * The committed preview and the confirming tmux frame are pixel-equivalent:
+   * the former is an old base rect plus a transform, the latter is the new base
+   * rect with no transform. Transitioning the transform while changing that
+   * base rect makes the pane visibly jump away and fly back. Idle structural
+   * changes use the explicit FLIP path instead, so this handoff must be atomic.
+   */
+  transition: none;
+}
+
 .pane-tile[data-elevated="true"] {
   z-index: 20;
   outline-color: var(--tmi-accent);
-  filter: drop-shadow(0 8px 16px color-mix(in oklab, black 38%, transparent));
+  /* Keep the moving pane on its existing compositor layer. A moving CSS
+     filter repaints the terminal texture on every pointer sample; a shadow on
+     the transformed layer preserves the same elevation without that tax. */
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, white 5%, transparent),
+    0 8px 18px color-mix(in oklab, black 34%, transparent);
 }
 
 .pane-tile[data-drop-target="true"] {
@@ -6313,6 +6465,183 @@ kbd {
   background: var(--tmux-ide-status-attention, currentColor);
 }
 
+.pane-tile__interaction {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  align-items: center;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in oklab, var(--pane-identity-accent) 42%, transparent);
+  border-radius: var(--tmi-radius-xl);
+  color: var(--tmux-ide-text-secondary);
+  background: color-mix(in oklab, var(--pane-identity-accent) 12%, transparent);
+  font-size: 0.6rem;
+  white-space: nowrap;
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth);
+}
+
+.pane-tile__interaction > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tmux-ide-status-info);
+}
+
+.pane-tile__interaction[data-phase="applied"] > i,
+.pane-tile__interaction[data-phase="observed"] > i {
+  background: var(--tmux-ide-status-success);
+}
+
+.pane-tile__interaction[data-phase="failed"] > i {
+  background: var(--tmux-ide-status-danger);
+}
+
+.pane-tile__communication {
+  position: absolute;
+  z-index: 25;
+  top: 24px;
+  right: 8px;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  max-width: min(260px, calc(100% - 16px));
+  padding: 6px 9px 6px 7px;
+  border: 1px solid color-mix(in display-p3, var(--pane-identity-accent) 54%, transparent);
+  border-radius: var(--tmux-ide-shape-control);
+  color: var(--tmux-ide-text-primary);
+  background: color-mix(
+    in display-p3,
+    var(--pane-identity-accent) 15%,
+    var(--tmux-ide-surface-panel) 85%
+  );
+  box-shadow: var(--tmi-shadow-raised);
+  opacity: 1;
+  pointer-events: none;
+  transition: opacity 150ms var(--desktop-ease-smooth);
+}
+
+.pane-tile__communication > i {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--tmux-ide-terminal-background);
+  background: var(--pane-identity-accent);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.pane-tile__communication > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.pane-tile__communication strong,
+.pane-tile__communication small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-tile__communication strong {
+  font-size: var(--sf-text-caption-2);
+  font-weight: var(--sf-weight-medium);
+}
+
+.pane-tile__communication small {
+  color: var(--tmux-ide-text-muted);
+  font-size: var(--sf-text-caption-3);
+}
+
+.pane-tile__communication[data-phase="failed"] {
+  border-color: color-mix(in display-p3, var(--tmux-ide-status-danger) 60%, transparent);
+}
+
+.pane-tile__communication[data-direction="outgoing"] {
+  right: auto;
+  left: 8px;
+  border-style: dashed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-tile::after,
+  .pane-tile__communication,
+  .pane-tile__interaction {
+    transition: none;
+  }
+}
+
+.interaction-activity {
+  flex: 0 0 auto;
+  max-height: 180px;
+  overflow: auto;
+  border-bottom: 1px solid var(--desktop-separator);
+  background: color-mix(in oklab, var(--desktop-raised) 54%, transparent);
+}
+
+.interaction-activity > header,
+.interaction-activity li {
+  display: flex;
+  gap: var(--tmi-space-2);
+  align-items: center;
+  padding: 7px 10px;
+}
+
+.interaction-activity > header {
+  justify-content: space-between;
+  color: var(--tmux-ide-text-secondary);
+  font-size: var(--sf-text-caption-2);
+}
+
+.interaction-activity ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.interaction-activity li {
+  border-top: 1px solid color-mix(in oklab, var(--desktop-separator) 65%, transparent);
+}
+.interaction-activity li > i {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--tmux-ide-status-info);
+}
+.interaction-activity li[data-phase="applied"] > i,
+.interaction-activity li[data-phase="observed"] > i {
+  background: var(--tmux-ide-status-success);
+}
+.interaction-activity li[data-phase="failed"] > i {
+  background: var(--tmux-ide-status-danger);
+}
+.interaction-activity li > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.interaction-activity li strong {
+  color: var(--tmux-ide-text-primary);
+  font-size: var(--sf-text-caption-2);
+}
+.interaction-activity li small {
+  overflow: hidden;
+  color: var(--tmux-ide-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.interaction-activity li code {
+  color: var(--tmux-ide-text-muted);
+  font-size: var(--sf-text-caption-3);
+}
+
 @container (max-width: 220px) {
   .pane-tile__status > span {
     display: none;
@@ -6323,9 +6652,6 @@ kbd {
   position: absolute;
   pointer-events: auto;
   background: transparent;
-  /* The handle is one cell wide, which is thinner than a comfortable grab
-     target, so the hit area is widened outward without moving what is drawn. */
-  outline: 3px solid transparent;
   z-index: 30;
   touch-action: none;
   transform-origin: 0 0;

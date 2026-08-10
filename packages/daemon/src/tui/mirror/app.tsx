@@ -212,6 +212,20 @@ import {
   type RuntimeConnection,
   type RuntimeConnectionSupervisor,
 } from "@tmux-ide/daemon-client/connection-supervisor";
+import type { ApplicationShellSessionState } from "@tmux-ide/daemon-client/application-shell-session";
+// Relative on purpose: npm installations can run the shipped TUI source before
+// a compiled TUI binary is available. Keeping the shared core source in the
+// root tarball avoids requiring a separately-installed workspace package.
+import {
+  INTERACTION_PRESENCE_MS,
+  initialInteractionFeedState,
+  interactionReceiptLabel,
+  paneInteractionRelationshipLabel,
+  projectApplicationShellSession,
+  reduceInteractionReceipt,
+  reconcileWorkspaceSelection,
+  type InteractionFeedState,
+} from "../../../../core/src/index.ts";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "./pane-surface.tsx";
 import { tapInputSent, tapInputTick } from "./perf-tap.ts";
@@ -222,13 +236,11 @@ import { Sidebar } from "./sidebar.tsx";
 import { type CommandSource, type SemanticFocusTarget } from "@tmux-ide/contracts";
 import {
   ACCENT,
-  BADGE_BG,
   DEFAULT_BG,
   DEFAULT_FG,
-  HOVER_BG,
   MUTED,
-  TAB_ACTIVE_BG,
   createSemanticThemeStore,
+  createTerminalPaletteProjection,
 } from "./theme.ts";
 import { homeFooterHints, type FleetRollup } from "../team/home.ts";
 import {
@@ -243,6 +255,7 @@ import {
   clickToCursor,
   type ReadOnlyReason,
 } from "./editor-buffer.ts";
+import { shouldActivateFilesAfterEditorOpen, type EditorOpenOrigin } from "./editor-open-policy.ts";
 import {
   classifyDiff,
   untrackedDiffText,
@@ -298,7 +311,13 @@ import {
 import { registerProject, ProjectAlreadyRegisteredError } from "../../lib/project-registry.ts";
 import { resolveProjectConfigContext } from "../../lib/config-context.ts";
 import { createProjectRuntimeRepository } from "../../lib/project-runtime-repository.ts";
-import { separatorAt, resizedSize, resizeCommand, type Separator } from "./resize-model.ts";
+import {
+  separatorAtCanvas,
+  resizedSize,
+  resizeGuideRect,
+  resizePreviewCommand,
+  type Separator,
+} from "./resize-model.ts";
 import {
   effectiveWindowSize,
   detectSizeMismatchWithRepin,
@@ -349,7 +368,9 @@ import {
   type HostedPanelKind,
   type HostedPanelView,
 } from "./panel-host.ts";
+import { trackPanelHostDirectory } from "./panel-host-reactive.ts";
 import {
+  cycleWorkbenchFocusZone,
   projectWorkbenchShell,
   workbenchDockNavigationTarget,
   workbenchShellHitTest,
@@ -361,10 +382,18 @@ import { WorkbenchShell } from "./workspace/workbench-shell.tsx";
 import { applicationShellHitTest, projectApplicationShell } from "./workspace/application-shell.ts";
 import { ApplicationShell } from "./workspace/application-shell.tsx";
 import {
+  applicationShellReplayState,
+  openTuiApplicationShellAuthorityInput,
   openTuiRuntimePaneId,
   projectOpenTuiApplicationShell,
+  sameOpenTuiApplicationShellInput,
+  type OpenTuiApplicationShellInput,
   type OpenTuiApplicationShellEffect,
 } from "./workspace/application-shell-controller.ts";
+import {
+  connectOpenTuiApplicationShellAuthority,
+  type OpenTuiApplicationShellAuthority,
+} from "./application-shell-daemon-session.ts";
 import {
   createApplicationRootController,
   routeApplicationSidebarResizePointer,
@@ -390,7 +419,10 @@ import {
   type TerminalPaneChromeHoverTarget,
   type TerminalPaneChromeMetadata,
 } from "./workspace/terminal-pane-chrome.ts";
-import { SharedTerminalPaneChromeLayer } from "./workspace/terminal-pane-chrome-view.tsx";
+import {
+  SharedTerminalPaneChromeLayer,
+  TerminalPaneCommunicationLayer,
+} from "./workspace/terminal-pane-chrome-view.tsx";
 import {
   workbenchCanvasPanelForShortcut,
   workbenchCanvasShortcutForPanel,
@@ -457,6 +489,7 @@ import {
   createTuiLifecycleExecutor,
   resolveInputLayer,
 } from "./input-lifecycle.ts";
+import { tuiEscapeFocusTarget, tuiInteractionPresentation } from "./interaction-flow.ts";
 import {
   createRendererCommandExecutor,
   rendererInvocationForGlobal,
@@ -632,6 +665,7 @@ import {
   type SpawnPlacement,
   type SpawnWhere,
 } from "./agent-lifecycle.ts";
+import { executeTuiAgentProvisioning } from "./agent-provisioning-executor.ts";
 import { getManifests } from "../detect/manifest-loader.ts";
 import { agentsByPane } from "./agent-chip.ts";
 import { scrollThumb, trackZone, pageTop, dragTop } from "./scrollbar-model.ts";
@@ -716,6 +750,21 @@ const zzlog = (m: string) => {
     appendFileSync("/tmp/zz-route.log", m + "\n");
   } catch {}
 };
+
+const TUI_PERF_LOG = process.env.TMUX_IDE_TUI_PERF_LOG;
+const TUI_LAUNCH_EPOCH_MS = Number(process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ?? Date.now());
+const tuiPerfMark = (phase: string) => {
+  if (!TUI_PERF_LOG) return;
+  try {
+    appendFileSync(
+      TUI_PERF_LOG,
+      `${JSON.stringify({ phase, elapsedMs: Date.now() - TUI_LAUNCH_EPOCH_MS, at: new Date().toISOString() })}\n`,
+    );
+  } catch {
+    // Profiling is opt-in diagnostics and must never affect the TUI lifecycle.
+  }
+};
+tuiPerfMark("module-loaded");
 
 // Focused-pane gutter hairline (M22.7): the ACCENT family, drawn as │/─ glyphs
 // so the gutter stays visually thin (a filled bar read as extra padding — user
@@ -805,10 +854,6 @@ type RouteEvent = {
   stopPropagation?: () => void;
 };
 
-// Packed 0xRRGGBB twins of the defaults, for the framebuffer-blit path (M21.3):
-// the blit writes packed channels straight into the buffer, no RGBA per cell.
-const DEFAULT_FG_PACKED = 0xd4d4d8;
-const DEFAULT_BG_PACKED = 0x101016;
 // The <pane_surface> framebuffer blit is now the DEFAULT (M21.4); TMUX_IDE_FB_PANES=0
 // is an opt-OUT kill switch (kept one release) that falls back to the StyledRun
 // <For> path below. The kill switch's removal + the StyledRun deletion are the
@@ -861,7 +906,8 @@ const PALETTE_ROWS = 10;
 // the protocol ignore the request (legacy encoding, no behavior change);
 // `app.kittyKeys: false` opts out entirely. The ⌘K hint only shows while the
 // request is actually made.
-const KITTY_KEYS = loadAppConfig().app.kittyKeys;
+const STARTUP_CONFIG = loadAppConfig();
+const KITTY_KEYS = STARTUP_CONFIG.app.kittyKeys;
 const TABBAR_PALETTE_LABEL = KITTY_KEYS ? "F5 ⌘K palette " : "F5 ⌘ palette ";
 // The palette rows' right-aligned keycaps (M24.4) — the settings keybind
 // viewer's enumeration, minus `quit` when HOSTED (^q detaches there; the
@@ -883,15 +929,6 @@ const WELCOME_ACTION_LABEL = "▸ open a folder — press f";
 // quit" hint reads "detach" so the keycap tells the truth.
 const HOSTED = process.env.TMUX_IDE_HOSTED === "1";
 const QUIT_HINT = HOSTED ? "^q detach" : "^q quit";
-// Scrollback-search highlight backgrounds (M20.3), packed 0xRRGGBB to sit in a
-// run's `bg` (search paints a bg, distinct from selection's inverse video, so
-// the two coexist). Every visible match gets the dim accent; the CURRENT match
-// (the n/N cursor) gets the bright accent so it reads apart from the rest.
-const SEARCH_HL = 0x3a4e7a; // dim accent-blue — all matches
-const SEARCH_CUR = 0x82aaff; // bright accent (== ACCENT) — current match
-const PALETTE_BG = RGBA.fromInts(28, 30, 42, 255);
-const PALETTE_BORDER = RGBA.fromInts(70, 78, 110, 255);
-const TABBAR_BG = RGBA.fromInts(18, 18, 26, 255);
 const DIR_FG = RGBA.fromInts(150, 180, 250, 255);
 // Scrollbar track/thumb (M19.5). The track is a faint tint over the pane bg;
 // the thumb a brighter block. Both are drawn as single-cell bg fills in the
@@ -943,6 +980,21 @@ const appRenderer = await createCliRenderer({
   consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
   onDestroy: () => hostAutowrap?.restore(),
 });
+tuiPerfMark("renderer-created");
+if (TUI_PERF_LOG) {
+  const firstFrame = async () => {
+    tuiPerfMark("first-frame");
+    appRenderer.removeFrameCallback(firstFrame);
+  };
+  appRenderer.setFrameCallback(firstFrame);
+}
+// Start terminal color discovery before mounting, but never put it on the
+// first-frame critical path. The semantic theme store follows the renderer's
+// resolved mode and repaints when discovery settles; delaying mount here made
+// every system-themed launch pay a guaranteed 200ms blank-screen tax.
+if (STARTUP_CONFIG.theme.mode === "system") {
+  void appRenderer.getPalette({ size: 16 }).catch(() => undefined);
+}
 hostAutowrap = installHostAutowrapGuard((sequence) => writeSync(process.stdout.fd, sequence), {
   onExit: (listener) => process.once("exit", listener),
   offExit: (listener) => process.removeListener("exit", listener),
@@ -955,10 +1007,15 @@ try {
     // a bare side-effect import of the module gets DCE'd by the transpiler.
     if (FB_PANES) registerPaneSurface();
     const dims = useTerminalDimensions();
-    const semanticThemeStore = createSemanticThemeStore(loadAppConfig().theme, {
+    const semanticThemeStore = createSemanticThemeStore(STARTUP_CONFIG.theme, {
       rendererMode: appRenderer.themeMode,
     });
     const [semanticTheme, setSemanticTheme] = createSignal(semanticThemeStore.getSnapshot());
+    const terminalPalette = createMemo(() => createTerminalPaletteProjection(semanticTheme()));
+    // Keep the native clear/background color synchronized with the semantic
+    // canvas. This removes transparent/default-color flashes during resize and
+    // makes every painted and unpainted cell obey the same theme authority.
+    createEffect(() => appRenderer.setBackgroundColor(semanticTheme().roles.surfaces.canvas));
     const disposeSemanticThemeStore = semanticThemeStore.subscribe(() =>
       setSemanticTheme(semanticThemeStore.getSnapshot()),
     );
@@ -978,9 +1035,14 @@ try {
     // and context restore below; the open editor file / diff selection restore in
     // onMount (after the FFI buffer + fleet arrive).
     const persisted: AppState = loadAppState();
-    const [contextSession, setContextSession] = createSignal<string>(
-      startupContextSession(target, bareHome, persisted.contextSession),
-    );
+    // A bare launch cannot trust a persisted session until the live fleet has
+    // confirmed it. Keep the renderer unattached during that short discovery
+    // window; an explicit CLI target remains authoritative immediately.
+    const initialContextSession = bareHome
+      ? ""
+      : startupContextSession(target, false, persisted.contextSession);
+    let startupWorkspaceReconciled = !bareHome;
+    const [contextSession, setContextSession] = createSignal<string>(initialContextSession);
     const [contextDir, setContextDir] = createSignal<string>("");
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const fleet = (): Array<{ name: string; status: AgentStatus }> =>
@@ -1009,6 +1071,82 @@ try {
     const [hover, setHover] = createSignal<{ region: HoverRegion; index: number } | null>(null);
     const [panes, setPanes] = createSignal<LivePane[]>([]);
     let mirror: SessionMirror | null = null;
+    const [daemonApplicationShellState, setDaemonApplicationShellState] =
+      createSignal<ApplicationShellSessionState | null>(null);
+    const [interactionFeed, setInteractionFeed] = createSignal<InteractionFeedState>(
+      initialInteractionFeedState(),
+      { equals: false },
+    );
+    const [activeInteractionSequences, setActiveInteractionSequences] = createSignal<
+      ReadonlySet<number>
+    >(new Set(), { equals: false });
+    const interactionPresenceTimers = new Map<number, ReturnType<typeof setTimeout>>();
+    const clearInteractionPresence = () => {
+      for (const timer of interactionPresenceTimers.values()) clearTimeout(timer);
+      interactionPresenceTimers.clear();
+      setActiveInteractionSequences(new Set());
+    };
+    const markInteractionPresence = (sequence: number) => {
+      // Presence is a user-facing acknowledgement, so its readable lifetime
+      // starts when this client receives the event. Replay/transport latency
+      // must not silently consume the whole highlight before it can paint.
+      setActiveInteractionSequences((current) => new Set([...current, sequence]));
+      const previous = interactionPresenceTimers.get(sequence);
+      if (previous) clearTimeout(previous);
+      interactionPresenceTimers.set(
+        sequence,
+        setTimeout(() => {
+          interactionPresenceTimers.delete(sequence);
+          setActiveInteractionSequences((current) => {
+            const next = new Set(current);
+            next.delete(sequence);
+            return next;
+          });
+        }, INTERACTION_PRESENCE_MS),
+      );
+    };
+    let daemonApplicationShellAuthority: OpenTuiApplicationShellAuthority | null = null;
+    let disposeDaemonApplicationShellSubscription: (() => void) | null = null;
+    let daemonApplicationShellRequest = 0;
+    const retireDaemonApplicationShell = () => {
+      disposeDaemonApplicationShellSubscription?.();
+      disposeDaemonApplicationShellSubscription = null;
+      daemonApplicationShellAuthority?.session.dispose();
+      daemonApplicationShellAuthority = null;
+      setDaemonApplicationShellState(null);
+      setInteractionFeed(initialInteractionFeedState());
+      clearInteractionPresence();
+    };
+    const connectDaemonApplicationShell = async (sessionName: string) => {
+      const request = ++daemonApplicationShellRequest;
+      retireDaemonApplicationShell();
+      try {
+        const authority = await connectOpenTuiApplicationShellAuthority(sessionName, {
+          onInteractionReceipt: (receipt) => {
+            setInteractionFeed((current) => reduceInteractionReceipt(current, receipt));
+            markInteractionPresence(receipt.sequence);
+          },
+        });
+        if (request !== daemonApplicationShellRequest) {
+          authority?.session.dispose();
+          return;
+        }
+        if (!authority) return;
+        daemonApplicationShellAuthority = authority;
+        setDaemonApplicationShellState(authority.session.getState());
+        disposeDaemonApplicationShellSubscription = authority.session.subscribe(
+          setDaemonApplicationShellState,
+        );
+      } catch {
+        // Standalone OpenTUI remains a supported fallback when no daemon owns
+        // this tmux session. The local semantic projection stays authoritative.
+        if (request === daemonApplicationShellRequest) setDaemonApplicationShellState(null);
+      }
+    };
+    onCleanup(() => {
+      daemonApplicationShellRequest += 1;
+      retireDaemonApplicationShell();
+    });
     // The bundled CLI — the async fleet poll and `detect --write` both shell out
     // to it (resolved once; `node <cliPath> …`). The CLI forwards its own
     // node-runnable path as TMUX_IDE_CLI; prefer it, because in the COMPILED TUI
@@ -1150,8 +1288,8 @@ try {
     const [hoveredDockTab, setHoveredDockTab] = createSignal<WorkbenchDockTabId | null>(null);
     const [activitySelectedId, setActivitySelectedId] = createSignal<string | null>(null);
     const [activityScrollOffset, setActivityScrollOffset] = createSignal(0);
-    const semanticApplicationShell = createMemo(() =>
-      projectOpenTuiApplicationShell({
+    const semanticApplicationShellInput = createMemo<OpenTuiApplicationShellInput>(
+      () => ({
         projectName: basename(contextDir() || invokeCwd) || "tmux-ide",
         rootLabel: contextDir() || invokeCwd,
         workspaceName: contextSession() || target || "tmux-ide",
@@ -1171,6 +1309,7 @@ try {
           canvasPanel() === "terminals" && workbenchFocusZone() === "canvas"
             ? (panes().find((pane) => pane.active)?.id ?? null)
             : null,
+        paneIdentities: mirror?.paneDescriptors() ?? [],
         paletteOpen: paletteOpen(),
         paletteFocusReturnTarget: paletteFocusReturnTarget(),
         sessions: fleet(),
@@ -1188,7 +1327,21 @@ try {
         notification: status(),
         connectionState: status() === "live" || status() === "home" ? "connected" : "reconnecting",
       }),
+      undefined,
+      { equals: sameOpenTuiApplicationShellInput },
     );
+    const standaloneApplicationShell = createMemo(() =>
+      projectOpenTuiApplicationShell(semanticApplicationShellInput()),
+    );
+    const semanticApplicationShell = createMemo(() => {
+      const localInput = semanticApplicationShellInput();
+      const authorityInput =
+        daemonApplicationShellState()?.data ?? openTuiApplicationShellAuthorityInput(localInput);
+      return projectApplicationShellSession(
+        authorityInput,
+        applicationShellReplayState(standaloneApplicationShell()),
+      );
+    });
     const applicationShellProjection = createMemo(() =>
       projectApplicationShell({
         width: dims().width,
@@ -1240,9 +1393,7 @@ try {
       defaultMissionWorkspaceModel(),
     );
 
-    const [curTarget, setCurTarget] = createSignal(
-      startupContextSession(target, bareHome, persisted.contextSession),
-    );
+    const [curTarget, setCurTarget] = createSignal(initialContextSession);
     // Size truth (M22.8): the actual tmux window size when a co-attached terminal
     // has shrunk it below our pinned canvas (else null). Set in the tick from the
     // RAW pane geometry (before the letterbox offset is baked into `panes()`), it
@@ -1523,6 +1674,7 @@ try {
     let panelHostResolved = false;
     const loadPanelHostForDir = (dir: string) => {
       const generation = panelGeneration.next();
+      let loadStage = "resolve project config";
       // Finish the old project's pending debounce against its still-live
       // repository before `beginLoad` invalidates that controller generation.
       flushWorkspaceUiState();
@@ -1545,9 +1697,11 @@ try {
           if (!panelGeneration.isCurrent(generation)) return;
           const resolved = context.resolved;
           if (!resolved) return;
+          loadStage = "open workspace state";
           const repository = createProjectRuntimeRepository(resolved.resolution);
           const loadedUi = loadWorkspaceUiState(repository);
           if (!workspaceUiController.completeLoad(uiGeneration, repository, loadedUi)) return;
+          loadStage = "publish workspace state";
           setWorkspaceUiState(loadedUi.state);
           const hasPersistedWorkspaceUi = !loadedUi.diagnostics.some((entry) =>
             ["MISSING", "READ_FAILED", "MALFORMED", "UNSUPPORTED_VERSION"].includes(entry.code),
@@ -1558,6 +1712,7 @@ try {
             id: activeViewId(),
             panel: activePanel(),
           };
+          loadStage = "project configured views";
           const nextViews = viewsFromResolvedConfig(resolved);
           const state = {
             filesLoaded: fileNodes().length > 0,
@@ -1591,8 +1746,11 @@ try {
                 ? "terminals"
                 : "home";
           const nextCanvasView = canvasViewForPanel(nextViews, nextCanvasPanel);
+          loadStage = "publish configured views";
           setHostedViews(nextViews);
+          loadStage = "run initial activation";
           runActivationEffects(nextPlan.effects);
+          loadStage = "restore active view";
           setActiveViewId(nextCanvasView.id);
           setCanvasPanel(nextCanvasPanel);
           const explicitDockTab = requestedPanel ? dockTabForPanel(requestedPanel) : null;
@@ -1606,6 +1764,7 @@ try {
                   : ("canvas" as const),
               };
           const restoredActiveDockTab = explicitDockTab ?? restoredDock.activeTab;
+          loadStage = "restore dock";
           setActiveDockTab(restoredActiveDockTab);
           setDockMode(explicitDockTab ? "open" : restoredDock.mode);
           setPreferredDockHeight(restoredDock.preferredHeight);
@@ -1613,12 +1772,15 @@ try {
           setActivitySelectedId(loadedUi.state.surfaces.activity.selectedRowId);
           setActivityScrollOffset(loadedUi.state.surfaces.activity.scrollOffset);
           hydratedWorkspaceSurfaceIds.add("activity");
+          loadStage = "hydrate active view";
           hydrateActiveWorkspaceView({ firstProjectLoad });
           const restoredDockPanel = panelForDockTab(restoredActiveDockTab);
           if (restoredDockPanel !== "activity") {
+            loadStage = "activate restored dock panel";
             runPanelActivation(restoredDockPanel);
             const restoredDockView = nativeHostedViewForPanel(nextViews, restoredDockPanel);
             if (restoredDockView.id !== nextPlan.view?.id) {
+              loadStage = "hydrate restored dock panel";
               hydrateWorkspaceView(restoredDockView, { firstProjectLoad });
             }
           }
@@ -1640,12 +1802,10 @@ try {
           setHostedViews(nextViews);
           setActiveViewId(nextActive.id);
           panelHostResolved = true;
-          setStatusNote(`config views unavailable: ${(error as Error).message}`);
+          setStatusNote(`config views unavailable (${loadStage}): ${(error as Error).message}`);
         });
     };
-    createEffect(() => {
-      loadPanelHostForDir(contextDir() || invokeCwd);
-    });
+    trackPanelHostDirectory(() => contextDir() || invokeCwd, loadPanelHostForDir);
     createEffect(() => {
       workspaceUiState();
       const repository = workspaceUiController.snapshot().repository;
@@ -1771,6 +1931,20 @@ try {
       if (hoveredTerminalPaneAction() !== null) setHoveredTerminalPaneAction(null);
       if (pressedTerminalPaneAction() !== null) setPressedTerminalPaneAction(null);
     };
+    const interactionPaneLabel = (semanticPaneId: string): string => {
+      const descriptor = mirror
+        ?.paneDescriptors()
+        .find((candidate) => candidate.semanticPaneId === semanticPaneId);
+      if (!descriptor) return semanticPaneId;
+      const agent = agentByPane().get(descriptor.runtimePaneId);
+      return (
+        agent?.displayName ??
+        agent?.kind ??
+        descriptor.title ??
+        descriptor.currentCommand ??
+        semanticPaneId
+      );
+    };
     const terminalPaneChromeMetadata = createMemo(() => {
       const metadata = new Map<string, TerminalPaneChromeMetadata>();
       const appStatus = status();
@@ -1781,6 +1955,23 @@ try {
           : "working";
       for (const pane of panes()) {
         const agent = agentByPane().get(pane.id);
+        const semanticPaneId = mirror
+          ?.paneDescriptors()
+          .find((descriptor) => descriptor.runtimePaneId === pane.id)?.semanticPaneId;
+        const interaction = semanticPaneId ? interactionFeed().panes[semanticPaneId] : undefined;
+        const visibleInteraction =
+          interaction && activeInteractionSequences().has(interaction.sequence)
+            ? interaction
+            : undefined;
+        const communicationRole = visibleInteraction
+          ? visibleInteraction.operationKind === "workspace.pane.read"
+            ? visibleInteraction.direction === "outgoing"
+              ? "read-source"
+              : "read-target"
+            : visibleInteraction.direction === "outgoing"
+              ? "send-source"
+              : "send-target"
+          : null;
         metadata.set(pane.id, {
           // SessionMirror may add title/currentCommand descriptors later. Null
           // deliberately leaves that seam to the pure projection, which falls
@@ -1789,9 +1980,27 @@ try {
           subtitle: agent
             ? `${agent.displayName ? `${agent.kind} · ` : ""}${curTarget()} · ${pane.id}`
             : `${curTarget()} · ${pane.id}`,
-          status: agent?.statusText ?? agent?.state ?? appStatus,
-          statusTone: agent?.state ?? appStatusTone,
-          attention: agent?.state === "blocked" || (!agent && appStatusTone === "blocked"),
+          status: visibleInteraction
+            ? `${paneInteractionRelationshipLabel(visibleInteraction, interactionPaneLabel)} · ${visibleInteraction.phase}`
+            : (agent?.statusText ?? agent?.state ?? appStatus),
+          statusTone: visibleInteraction
+            ? visibleInteraction.phase === "failed"
+              ? "blocked"
+              : visibleInteraction.phase === "accepted"
+                ? "working"
+                : "done"
+            : (agent?.state ?? appStatusTone),
+          attention:
+            visibleInteraction?.phase === "failed" ||
+            agent?.state === "blocked" ||
+            (!agent && appStatusTone === "blocked"),
+          communication:
+            visibleInteraction && communicationRole
+              ? {
+                  role: communicationRole,
+                  label: paneInteractionRelationshipLabel(visibleInteraction, interactionPaneLabel),
+                }
+              : null,
         });
       }
       return metadata;
@@ -1838,11 +2047,12 @@ try {
     // A separate gesture machine from text selection: a "down" on the sidebar/main
     // boundary starts a `sidebar` drag (updates `sidebarW`); a "down" on a pane
     // separator (a canvas gutter cell between two panes) starts a `border` drag
-    // (emits absolute `resize-pane -x|-y` over the control client). Only ONE of
+    // (emits absolute resize intents through the shared daemon authority). Only ONE of
     // {selecting, dragging} is ever live — selection starts only from an IN-pane
-    // down, a border drag only from a GUTTER down, so they never fight. `originCx/
-    // originCy` are the canvas-local cell the border drag began at; `lastSize`
-    // dedupes identical resize commands across drag ticks.
+    // down, a border drag only from a GUTTER down, so they never fight. Border
+    // deltas stay in SCREEN space after the projected framebuffer has resolved
+    // the press; this keeps pointer capture stable while tmux reflows underneath.
+    // `lastSize` dedupes identical resize intents across drag ticks.
     // A scrollbar-thumb drag is the FOURTH drag-origin (after sidebar / border /
     // text-selection): a "down" on a thumb cell captures the surface + the
     // pointer's offset within the thumb, then each tick maps the pointer row to an
@@ -1854,7 +2064,7 @@ try {
       | { surface: "mirror"; paneId: string; scrollbackDepth: number };
     type DragState =
       | { kind: "sidebar" }
-      | { kind: "border"; sep: Separator; originCx: number; originCy: number; lastSize: number }
+      | { kind: "border"; sep: Separator; originPointer: number; lastSize: number }
       | {
           kind: "scrollbar";
           grabOffset: number;
@@ -1864,6 +2074,31 @@ try {
           surface: ScrollSurface;
         };
     let dragging: DragState | null = null;
+    const [hoveredPaneSeparator, setHoveredPaneSeparator] = createSignal<Separator | null>(null, {
+      equals: (a, b) =>
+        a === b ||
+        (a !== null &&
+          b !== null &&
+          a.axis === b.axis &&
+          a.position === b.position &&
+          a.start === b.start &&
+          a.end === b.end &&
+          a.aId === b.aId &&
+          a.bId === b.bId),
+    });
+    const [activePaneResize, setActivePaneResize] = createSignal<{
+      sep: Separator;
+      delta: number;
+    } | null>(null);
+    const paneResizeGuide = createMemo(() => {
+      const active = activePaneResize();
+      const sep = active?.sep ?? hoveredPaneSeparator();
+      if (!sep) return null;
+      return {
+        rect: resizeGuideRect(sep, active?.delta ?? 0),
+        active: active !== null,
+      };
+    });
 
     // ── DEFERRED PRESS (M24.2) ───────────────────────────────────────────────
     // A left press on a select-default app-mouse pane is WITHHELD: if the
@@ -1965,7 +2200,30 @@ try {
                 : ("idle" as const),
           attention: entry.outcome === "failed",
         }));
-      return [...agentRows, ...missionRows];
+      const interactionRows: ActivityRowDto[] = interactionFeed().activity.map((receipt) => ({
+        kind: "event" as const,
+        id: `interaction:${receipt.operationId}`,
+        sequence: receipt.sequence,
+        timestampText: receipt.at.slice(11, 16),
+        source: paneInteractionRelationshipLabel(
+          {
+            origin: receipt.origin,
+            sourcePaneId: receipt.sourceSemanticPaneId,
+            destinationPaneId: receipt.semanticPaneId,
+          },
+          interactionPaneLabel,
+        ),
+        message: interactionReceiptLabel(receipt),
+        detail: `${receipt.workspaceName} · ${receipt.origin}`,
+        status:
+          receipt.phase === "failed"
+            ? ("blocked" as const)
+            : receipt.phase === "accepted"
+              ? ("working" as const)
+              : ("done" as const),
+        attention: receipt.phase === "failed",
+      }));
+      return [...agentRows, ...missionRows, ...interactionRows];
     });
     const activityProjection = createMemo(() => {
       const rows = activityRows();
@@ -2179,6 +2437,13 @@ try {
     const markDirty = () => {
       dirty = true;
     };
+    // The framebuffer surfaces react directly to this identity change; the
+    // fallback StyledRun path needs one fresh snapshot as well. Source xterm
+    // buffers stay untouched in both cases.
+    createEffect(() => {
+      terminalPalette();
+      markDirty();
+    });
 
     // ── EDITOR (M18.2) ──────────────────────────────────────────────────────
     // The native EditBuffer holds text + cursor; Solid can't see its mutations,
@@ -2222,7 +2487,7 @@ try {
       },
     );
 
-    const openEditor = (rawPath: string, line?: number) => {
+    const openEditor = (rawPath: string, line?: number, origin: EditorOpenOrigin = "user") => {
       const path = rawPath.startsWith("~/")
         ? `${process.env.HOME ?? ""}${rawPath.slice(1)}`
         : rawPath;
@@ -2257,7 +2522,7 @@ try {
       setEditorMsg("");
       setEditorRev((r) => r + 1);
       setFilesFocus("editor");
-      if (activePanel() !== "files") setTab("files");
+      if (shouldActivateFilesAfterEditorOpen(activePanel(), origin)) setTab("files");
     };
 
     const toggleEditor = () => {
@@ -2656,6 +2921,7 @@ try {
     let repinInFlight: RepinState | null = null;
     let pendingAttachTarget: string | null = null;
     let mirrorSupervisor: RuntimeConnectionSupervisor<SessionMirror> | null = null;
+    let tuiGeometryReadyMarked = false;
     const attach = (name: string) => {
       const pin = terminalCanvasProjection().tmuxSize ?? lastPin;
       if (!pin) {
@@ -2671,6 +2937,7 @@ try {
       scrollOffsets.clear();
       setPanes([]);
       setStatus(`attaching ${name}…`);
+      void connectDaemonApplicationShell(name);
       // A fresh mirror pins at the current canvas size — no re-pin in flight.
       lastPin = pin;
       repinInFlight = null;
@@ -2688,6 +2955,10 @@ try {
             rows: reconnectPin.rows,
             onDirty: markDirty,
             onStatus: () => {
+              if (!tuiGeometryReadyMarked) {
+                tuiGeometryReadyMarked = true;
+                tuiPerfMark("tmux-geometry-ready");
+              }
               markDirty();
               void candidate.windows().then(setWindowTabs);
             },
@@ -3185,7 +3456,7 @@ try {
           void revealPath(selectedPath);
         }
         const openPath = absoluteProjectPath(root, entry.openPath);
-        if (openPath) openEditor(openPath);
+        if (openPath) openEditor(openPath, undefined, "workspace-hydration");
       } else if (entry.panel === "diff") {
         hydratedWorkspaceSurfaceIds.add("diff");
         pendingDiffFile = entry.selectedPath;
@@ -3656,6 +3927,37 @@ try {
       const { key } = spawnMemoryFor(ctx);
       if (key) setLastSpawns((m) => rememberSpawn(m, key, { kind, command, placement }));
       if (kind === CUSTOM_KIND_ID) setCustomCommands((l) => addCustomCommand(l, command));
+
+      // Registered workspace + built-in harness + new window is now the same
+      // semantic, daemon-owned mutation used by the GUI. A live daemon failure
+      // fails closed in the executor, so we cannot duplicate an ambiguously
+      // completed creation by falling through to raw tmux.
+      const sharedCreation = await executeTuiAgentProvisioning({
+        sessionName: ctx.session ?? null,
+        kind,
+        command,
+        displayTitle: label,
+        placement,
+        targetSemanticPaneId:
+          ctx.paneId === undefined
+            ? null
+            : (mirror
+                ?.paneDescriptors()
+                .find((descriptor) => descriptor.runtimePaneId === ctx.paneId)?.semanticPaneId ??
+              null),
+      });
+      if (sharedCreation.status === "daemon") {
+        setStatusNote(sharedCreation.message);
+        watchCreatedSession(ctx.session!);
+        setTimeout(() => fleetRefresh?.(), 300);
+        return;
+      }
+      if (sharedCreation.status === "error") {
+        setStatusNote(sharedCreation.message);
+        setTimeout(() => fleetRefresh?.(), 300);
+        return;
+      }
+
       /** Post-spawn follow-ups against the printed pane id: title the pane
        *  (or its window), stamp the launch argv. Best-effort, async. */
       const decorate = (stdout: string) => {
@@ -4101,6 +4403,17 @@ try {
           terminal: mode() === "mirror",
           surface: tab(),
           agents: fleetAgents(),
+          panes: panes().map((pane) => {
+            const descriptor = mirror
+              ?.paneDescriptors()
+              .find(({ runtimePaneId }) => runtimePaneId === pane.id);
+            return {
+              paneId: pane.id,
+              session: contextSession(),
+              active: pane.active,
+              title: descriptor?.title ?? descriptor?.role ?? descriptor?.currentCommand ?? pane.id,
+            };
+          }),
           sizeMismatch: windowMismatch() !== null,
           appMousePane: panes().find((p) => p.active)?.appMouse === true,
           // Pins "New agent: <name> (again)" FIRST when this context has spawn
@@ -4148,6 +4461,8 @@ try {
         commands: paletteEntries().map((entry) => entry.descriptor),
         selectedCommandId: paletteSelectedCommandId(),
         scrollTop: paletteTop(),
+        title: "Navigator",
+        queryPlaceholder: "Search · @workspaces @agents @panes @commands",
       }),
     );
     /** The legacy centered geometry is now exclusively the paste-buffer level. */
@@ -4211,16 +4526,24 @@ try {
     });
     const rendererCommandExecutor = createRendererCommandExecutor({
       context: () => ({
-        // Composite workspace views no longer own runtime pixels/input in the
-        // native workbench, so their legacy cycle command remains unavailable.
-        compositeFocusAvailable: false,
+        // Ctrl-Tab now walks the native workbench's semantic focus ring. The
+        // command name remains wire-compatible with the earlier composite host.
+        compositeFocusAvailable: true,
         editorAvailable:
           Boolean(editBuffer) || (mode() === "diff" && Boolean(diffVisibleFiles()[diffSel()])),
       }),
       effects: {
         openPalette,
         runLifecycle: (command) => lifecycleExecutor.run(command),
-        cycleCompositeFocus: () => {},
+        cycleCompositeFocus: () => {
+          setWorkbenchFocusZone(
+            cycleWorkbenchFocusZone(
+              workbenchProjection().focusZone,
+              workbenchProjection().dockMode,
+            ),
+          );
+          touchedWorkspaceDock = true;
+        },
         activateShortcut: (key) => {
           const view = canvasHostedViews().find((candidate) => candidate.shortcut?.key === key);
           if (view) selectView(view.id);
@@ -4251,6 +4574,7 @@ try {
         const runtimePaneId = openTuiRuntimePaneId(
           target.paneId,
           panes().map((pane) => pane.id),
+          mirror?.paneDescriptors() ?? [],
         );
         if (runtimePaneId && mirror) mirror.focus(runtimePaneId);
       } else if (target.zone === "dock-tabs") {
@@ -4343,12 +4667,15 @@ try {
     const executeSharedMultiplexerAction = async (
       action: TuiMultiplexerAction,
       target: { sessionName?: string; runtimePaneId?: string | null } = {},
+      options: { announce?: boolean } = {},
     ) => {
       const activeMirror = mirror;
       if (!activeMirror) {
-        setStatusNote("no active tmux workspace");
-        return;
+        if (options.announce !== false) setStatusNote("no active tmux workspace");
+        return { status: "error", message: "no active tmux workspace" } as const;
       }
+      const windowsBefore =
+        action.kind === "new-window" ? new Set(windowTabs().map((window) => window.index)) : null;
       const result = await executeTuiMultiplexerAction(
         action,
         {
@@ -4358,10 +4685,71 @@ try {
               ? activeMirror.focusedPane() || null
               : target.runtimePaneId,
           paneDescriptors: activeMirror.paneDescriptors(),
+          viewportSize: terminalCanvasProjection().tmuxSize,
         },
-        (command) => activeMirror.command(command),
+        (command) =>
+          action.kind === "new-window"
+            ? activeMirror.commandList(command, terminalCanvasProjection().tmuxSize ? 3 : 2)
+            : activeMirror.command(command),
       );
-      setStatusNote(result.message);
+      if (action.kind === "new-window" && result.status !== "error") {
+        // Daemon creation is intentionally detached for idempotent authority.
+        // Selecting is client UX: reconcile the server-confirmed window list,
+        // then activate exactly the newly-created real tmux window. Every
+        // attached GUI/TUI consequently observes the same tmux current-window.
+        const nextWindows = await activeMirror.windows();
+        setWindowTabs(nextWindows);
+        const created = nextWindows.find((window) => !windowsBefore?.has(window.index));
+        if (created && !created.active) activeMirror.switchWindow(created.index);
+      }
+      if (options.announce !== false) setStatusNote(result.message);
+      return result;
+    };
+    /**
+     * A drag has two phases. Motion is an ephemeral, latest-wins preview sent
+     * straight over the already-open tmux control channel; release is one
+     * semantic daemon mutation. The preview gives cell-rate feedback without an
+     * HTTP/verification round-trip per cell, while the commit still produces the
+     * same durable operation/receipt observed by GUI and TUI clients.
+     */
+    let pendingPaneResizePreview: { sep: Separator; cells: number } | null = null;
+    let paneResizePreviewPump: Promise<void> | null = null;
+    const drainPaneResizePreview = (): Promise<void> => {
+      if (paneResizePreviewPump) return paneResizePreviewPump;
+      paneResizePreviewPump = (async () => {
+        while (pendingPaneResizePreview) {
+          const preview = pendingPaneResizePreview;
+          pendingPaneResizePreview = null;
+          try {
+            await mirror?.command(resizePreviewCommand(preview.sep, preview.cells));
+          } catch (error) {
+            setStatusNote(
+              `resize preview failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+      })().finally(() => {
+        paneResizePreviewPump = null;
+        if (pendingPaneResizePreview) void drainPaneResizePreview();
+      });
+      return paneResizePreviewPump;
+    };
+    const queuePaneResizePreview = (sep: Separator, cells: number) => {
+      pendingPaneResizePreview = { sep, cells };
+      void drainPaneResizePreview();
+    };
+    const commitPaneResize = async (sep: Separator, cells: number) => {
+      // Wait until the final preview has reached tmux so the authority observes
+      // the exact released layout rather than racing an older in-flight cell.
+      while (pendingPaneResizePreview || paneResizePreviewPump) {
+        await drainPaneResizePreview();
+      }
+      const result = await executeSharedMultiplexerAction(
+        { kind: "resize-pane", axis: sep.axis === "x" ? "cols" : "rows", cells },
+        { runtimePaneId: sep.aId },
+        { announce: false },
+      );
+      setStatusNote(result.status === "error" ? result.message : `pane resized to ${cells} cells`);
     };
     const runPaletteAction = async (a: PaletteAction) => {
       // Usage history (M24.4): every dispatched action bumps its stable key —
@@ -4416,6 +4804,11 @@ try {
           break;
         case "attach":
           openWorkspace(a.session, dirForSession(a.session));
+          break;
+        case "jump-pane":
+          selectPanel("terminals");
+          if (a.session !== contextSession()) openWorkspace(a.session, dirForSession(a.session));
+          else mirror?.focus(a.paneId);
           break;
         case "jump-agent":
           jumpToAgent(a);
@@ -4611,12 +5004,11 @@ try {
       dialogRev();
       return dialogStack.top();
     };
-    // Live-preview accent (the theme picker's onMove) — tints the DIALOG chrome
-    // only: the app's own surface colors are const RGBAs and the config theme
-    // drives the tmux chrome + widgets, which re-read config on their next
-    // build. The picker says so in its footer (scoped honestly, M22.4).
+    // Live-preview accent for the picker. The semantic store is the authority
+    // for chrome AND terminal-cell projection, so moving through choices can
+    // preview the complete cockpit without mutating tmux or its PTYs.
     const [previewAccent, setPreviewAccent] = createSignal<RGBA | null>(null);
-    const dlgAccent = () => previewAccent() ?? ACCENT;
+    const dlgAccent = () => previewAccent() ?? semanticTheme().roles.text.link;
     const dlgSelect = () => {
       const e = dialogTop();
       return e && e.spec.kind === "select" ? e : null;
@@ -4683,14 +5075,21 @@ try {
       const choice = await DialogSelect.show({
         title: "Accent color",
         items,
-        footerHint: "previews here · chrome + widgets: after re-adopt",
-        onMove: (item) => setPreviewAccent(rgbOf(item.id)),
+        footerHint: "live preview · updates chrome + terminal palette",
+        onMove: (item) => {
+          setPreviewAccent(rgbOf(item.id));
+          semanticThemeStore.configure({ ...cfg.theme, accent: item.id });
+        },
       });
-      setPreviewAccent(null); // Escape reverts; a commit re-themes via config
-      if (!choice) return false;
+      setPreviewAccent(null);
+      if (!choice) {
+        semanticThemeStore.configure(cfg.theme);
+        return false;
+      }
       if (choice.item.id !== before) {
         updateAppConfig(themePatch(choice.item.id));
-        setStatusNote(`accent saved — ${HINT_READOPT}`);
+        semanticThemeStore.configure({ ...cfg.theme, accent: choice.item.id });
+        setStatusNote("accent saved — chrome and terminals updated");
       }
       return true;
     };
@@ -4914,6 +5313,9 @@ try {
     // the burst so only the released width lands.
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
     createEffect(() => {
+      // Do not erase a remembered workspace while a bare launch is still
+      // waiting for the first live fleet snapshot that can validate it.
+      if (!startupWorkspaceReconciled) return;
       const snapshot: AppState = {
         lastTab: tab(),
         contextSession: contextSession() || null,
@@ -4955,6 +5357,7 @@ try {
     });
 
     onMount(() => {
+      tuiPerfMark("solid-mounted");
       // Copy relies on the surrounding tmux capturing our OSC52: turn on
       // set-clipboard (so the sequence lands in tmux's paste buffer AND is
       // forwarded to the real terminal — through ssh) and allow-passthrough,
@@ -4995,7 +5398,7 @@ try {
         // FB path: fetch geometry + cursor/offset + per-pane version only (no
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
-        const raw = mirror.panes(scrollOffsets, !FB_PANES);
+        const raw = mirror.panes(scrollOffsets, !FB_PANES, terminalPalette());
         // Size truth (M22.8, event-driven M23.5): the effective window size is
         // the layout ROOT's WxH pushed by %layout-change (the pane bounding
         // box only seeds it before the first layout lands). When a co-attached
@@ -5058,8 +5461,34 @@ try {
           if (err) return;
           try {
             const data = JSON.parse(stdout) as { projects?: FleetProject[] };
-            setProjectsData(data.projects ?? []);
-            noteAttention(data.projects ?? []);
+            const projects = data.projects ?? [];
+            setProjectsData(projects);
+            noteAttention(projects);
+            if (!startupWorkspaceReconciled) {
+              const liveSessions = projects.flatMap((project) =>
+                project.sessions.map((session) => session.name),
+              );
+              if (liveSessions.length > 0) {
+                startupWorkspaceReconciled = true;
+                const selection = reconcileWorkspaceSelection({
+                  liveWorkspaceIds: liveSessions,
+                  persistedWorkspaceId: persisted.contextSession,
+                  fallback: "first-live",
+                });
+                const restoredSession = selection.workspaceId;
+                if (!restoredSession) return;
+                const restoredDir = dirForSession(restoredSession) ?? invokeCwd;
+                setContextSession(restoredSession);
+                setContextDir(restoredDir);
+                setDiffDir(restoredDir);
+                setCurTarget(restoredSession);
+                attach(restoredSession);
+                if (persisted.lastTab === "terminal") selectPanel("terminals");
+                if (selection.rejectedSource === "persisted") {
+                  setStatusNote(`restored live workspace ${restoredSession}`);
+                }
+              }
+            }
             // Reconcile a RESTORED context session to its project dir once the
             // fleet lands (persistence carries the name, not the dir). One-shot:
             // only while contextDir is still unresolved.
@@ -5388,7 +5817,9 @@ try {
               out,
               m.col,
               m.col + len - 1,
-              idx === ps.current ? SEARCH_CUR : SEARCH_HL,
+              idx === ps.current
+                ? terminalPalette().searchCurrent
+                : terminalPalette().searchHighlight,
             );
           });
           return out;
@@ -5667,7 +6098,7 @@ try {
       if (gy === 0) {
         const i = spanHit(windowSpans(), x);
         const tabs = windowTabs();
-        const w = i >= 0 ? tabs[i] : tabs.find((t) => t.active);
+        const w = i >= 0 && i < tabs.length ? tabs[i] : tabs.find((t) => t.active);
         if (!w) return null;
         return {
           region: "window",
@@ -6053,7 +6484,7 @@ try {
           configuredShortcutKeys: canvasHostedViews().flatMap((view) =>
             view.shortcut ? [view.shortcut.key] : [],
           ),
-          compositeCycleAvailable: false,
+          compositeCycleAvailable: true,
         },
         evt,
         { hosted: HOSTED },
@@ -6099,6 +6530,20 @@ try {
         } else {
           executeRendererCommand(rendererInvocationForGlobal(layer.command));
         }
+        return;
+      }
+      const escapeTarget =
+        evt.name === "escape"
+          ? tuiEscapeFocusTarget({
+              focusZone: workbenchProjection().focusZone,
+              layer: layer.kind,
+            })
+          : null;
+      if (escapeTarget) {
+        executeFocusCommand(
+          { kind: "zone", zone: escapeTarget },
+          { kind: "keyboard", surface: "workbench" },
+        );
         return;
       }
       if (workbenchProjection().focusZone === "dock-tabs") {
@@ -6435,8 +6880,23 @@ try {
      *  exactly matching the rendered `flexDirection="row" gap={1}` row. Shared by
      *  the router (click + hover hit test) and, cell-for-cell, by the render. The
      *  labels MUST equal the rendered segment strings for the math to hold. */
+    const WINDOW_ADD_LABEL = " + ";
     const windowLabels = () => windowTabs().map((w) => ` ${w.index}:${w.name} `);
-    const windowSpans = createMemo(() => spans(windowLabels(), sidebarW() + 1, 1));
+    // The final span is the visible new-window button. Keeping it in the same
+    // geometry model as the tabs prevents render/hover/click cell drift.
+    const windowSpans = createMemo(() =>
+      spans([...windowLabels(), WINDOW_ADD_LABEL], sidebarW() + 1, 1),
+    );
+    const activateWindowStripAt = (screenX: number) => {
+      const i = spanHit(windowSpans(), screenX);
+      const tabs = windowTabs();
+      if (i === tabs.length) {
+        void executeSharedMultiplexerAction({ kind: "new-window" });
+        return;
+      }
+      const window = tabs[i];
+      if (window) mirror?.switchWindow(window.index);
+    };
 
     // ── HEADER-ROW AFFORDANCE BUTTONS (M19.5) ────────────────────────────────
     // Clickable chips on the always-present header rows, right-aligned so their
@@ -6522,13 +6982,15 @@ try {
       const tabs = windowTabs();
       const activeIdx = tabs.findIndex((w) => w.active);
       const label = (w: { index: number; name: string }) => ` ${w.index}:${w.name} `;
+      const pre = tabs.slice(0, Math.max(0, activeIdx)).map(label);
+      const post = tabs.slice(activeIdx + 1).map(label);
       return {
-        pre: tabs.slice(0, Math.max(0, activeIdx)).map(label).join(" "),
+        // Inter-label gaps live in the strings, not flexbox. Empty text nodes
+        // otherwise still consumed gap cells and made the visible + button
+        // drift away from the shared hit-test spans.
+        pre: pre.length > 0 ? `${pre.join(" ")} ` : "",
         active: activeIdx >= 0 ? label(tabs[activeIdx]!) : "",
-        post: tabs
-          .slice(activeIdx + 1)
-          .map(label)
-          .join(" "),
+        post: post.length > 0 ? ` ${post.join(" ")}` : "",
       };
     });
 
@@ -6798,6 +7260,14 @@ try {
     const terminalRouteX = (screenX: number) =>
       agentTerminalCanvasRouteX(screenX, workbenchProjection().canvasBody.x);
 
+    /** Screen pointer → app-terminal-canvas coordinates. The Workbench owns the
+     * focus rail, so this is the only valid entrance to tmux framebuffer math. */
+    const terminalCanvasPoint = (e: RouteEvent): { x: number; y: number } | null => {
+      if (canvasPanel() !== "terminals" || e.y < TABBAR_H || e.x < sidebarW()) return null;
+      const hit = workbenchShellHitTest(workbenchProjection(), e.x - sidebarW(), e.y - TABBAR_H);
+      return hit?.kind === "canvas" ? { x: hit.localX, y: hit.localY } : null;
+    };
+
     /** Finish a terminal gesture that crosses into app-native chrome. Selection
      *  is committed, deferred clicks are cancelled, and forwarded app-mouse
      *  presses receive exactly one rail-corrected release. */
@@ -6825,18 +7295,24 @@ try {
       const applicationHit = applicationShellHitTest(applicationShellProjection(), e.x, e.y);
       if (applicationHit?.kind === "status-strip") {
         clearTerminalPaneActionState();
+        setHoveredPaneSeparator(null);
         return true;
       }
       if (e.y < TABBAR_H || e.x < sidebarW()) {
         clearTerminalPaneActionState();
+        setHoveredPaneSeparator(null);
         return false;
       }
       const hit = workbenchShellHitTest(workbenchProjection(), e.x - sidebarW(), e.y - TABBAR_H);
       if (!hit) {
         clearTerminalPaneActionState();
+        setHoveredPaneSeparator(null);
         return false;
       }
-      if (hit.kind !== "canvas") clearTerminalPaneActionState();
+      if (hit.kind !== "canvas") {
+        clearTerminalPaneActionState();
+        setHoveredPaneSeparator(null);
+      }
       const releaseAtBoundary =
         hit.kind !== "canvas" &&
         (e.type === "up" || e.type === "drag-end" || e.type === "drop" || e.type === "out");
@@ -6850,6 +7326,16 @@ try {
           setPressedTerminalPaneAction(null);
         }
         if (canvasPanel() === "terminals") {
+          if (e.type === "move" || e.type === "over") {
+            setHoveredPaneSeparator(
+              separatorAtCanvas(
+                panes(),
+                terminalCanvasProjection().framebuffer,
+                hit.localX,
+                hit.localY,
+              ),
+            );
+          }
           const paneChromeIntent = terminalPaneChromePointerIntent(
             terminalPaneChromeLayout(),
             hit.localX,
@@ -6902,6 +7388,7 @@ try {
           }
         } else {
           clearTerminalPaneActionState();
+          setHoveredPaneSeparator(null);
         }
         const terminalPolicy =
           canvasPanel() === "terminals"
@@ -7203,6 +7690,45 @@ try {
         },
       );
 
+    /** Active non-sidebar gestures own the pointer until release, even when the
+     * pointer crosses a modal, status strip, dock, or terminal pane. */
+    const routeCapturedDragPointer = (e: RouteEvent): boolean => {
+      if (!dragging || dragging.kind === "sidebar") return false;
+      const isDrag = e.type === "drag";
+      const isEnd = e.type === "up" || e.type === "drag-end" || e.type === "drop";
+      if (isDrag || isEnd) {
+        if (dragging.kind === "scrollbar") {
+          const row = e.y - dragging.top0;
+          const top = dragTop(row, dragging.grabOffset, dragging.contentLen, dragging.viewH);
+          applyScrollTop(dragging.surface, top);
+        } else {
+          const pointer = dragging.sep.axis === "x" ? e.x : e.y;
+          const size = resizedSize(dragging.sep, pointer - dragging.originPointer);
+          if (size !== dragging.lastSize) {
+            dragging.lastSize = size;
+            setActivePaneResize({
+              sep: dragging.sep,
+              delta: size - dragging.sep.aSize,
+            });
+            queuePaneResizePreview(dragging.sep, size);
+          }
+        }
+        if (isEnd) {
+          if (dragging.kind === "border" && dragging.lastSize !== dragging.sep.aSize) {
+            void commitPaneResize(dragging.sep, dragging.lastSize);
+          }
+          dragging = null;
+          setActivePaneResize(null);
+          setHoveredPaneSeparator(null);
+          setNote("");
+        }
+        return true;
+      }
+      // Motion variants that do not carry a drag phase are still captured so
+      // hover/click routing cannot steal the gesture.
+      return true;
+    };
+
     const route = (e: RouteEvent) => {
       const { type, y } = e;
       const screenX = e.x;
@@ -7217,6 +7743,7 @@ try {
       // dialogs, menus, palettes, or the status strip can consume its release.
       // New seam presses retain their normal lower priority below.
       if (dragging?.kind === "sidebar" && routeSidebarResizePointer(e, true)) return;
+      if (routeCapturedDragPointer(e)) return;
       // While a DIALOG is open it OWNS pointer routing (M22.4) — topmost, so
       // checked before the menu and the palette, with the SAME pure geometry the
       // render places the box with (dialogGeomNow / dialogRowAt / dialogContains
@@ -7385,6 +7912,26 @@ try {
       // canvas rail can see them. This prevents a resize press/drag/release from
       // leaking into an agent terminal at any responsive width.
       if (routeSidebarResizePointer(e, false)) return;
+      // The window strip is app chrome above the workbench canvas. Route it
+      // before the workbench focus rail; otherwise that full-canvas owner
+      // consumes tab and + presses before the strip's span model can see them.
+      if (mode() === "mirror" && e.y === TABBAR_H && e.x >= sidebarW()) {
+        zzlog(
+          `window-strip x=${e.x} sidebar=${sidebarW()} spans=${windowSpans()
+            .map((span) => `${span.start}+${span.width}`)
+            .join(",")}`,
+        );
+        if (type === "move" || type === "over" || type === "drag") {
+          resolveHover(e.x, e.y);
+          return;
+        }
+        if (type === "down" && e.button === 2) {
+          openMenu(e.x, e.y, screenX);
+          return;
+        }
+        if (type === "down") activateWindowStripAt(e.x);
+        return;
+      }
       if (!dragging && routeWorkbenchPointer(e)) return;
       if (e.y >= TABBAR_H && e.x >= sidebarW()) {
         const shellHit = workbenchShellHitTest(
@@ -7497,19 +8044,27 @@ try {
       // starts a border drag. Neither fights selection: selection begins only from
       // an in-pane down, never a boundary/gutter cell.
       if (type === "down" && e.button !== 2) {
-        if (mode() === "mirror" && x > sidebarW()) {
-          const dgy = y - TABBAR_H;
-          if (dgy >= HEADER_ROWS) {
-            const cx = x - sidebarW();
-            const cy = dgy - HEADER_ROWS;
-            const sep = separatorAt(panes(), cx, cy);
-            if (sep) {
-              setHoverIf(null);
-              dragging = { kind: "border", sep, originCx: cx, originCy: cy, lastSize: sep.aSize };
-              setStatusNote("resizing…");
-              return;
-            }
-          }
+        const canvasPoint = terminalCanvasPoint(e);
+        const sep = canvasPoint
+          ? separatorAtCanvas(
+              panes(),
+              terminalCanvasProjection().framebuffer,
+              canvasPoint.x,
+              canvasPoint.y,
+            )
+          : null;
+        if (sep) {
+          setHoverIf(null);
+          setHoveredPaneSeparator(null);
+          setActivePaneResize({ sep, delta: 0 });
+          dragging = {
+            kind: "border",
+            sep,
+            originPointer: sep.axis === "x" ? screenX : y,
+            lastSize: sep.aSize,
+          };
+          setStatusNote("resizing pane…");
+          return;
         }
         // A press on a VISIBLE scrollbar cell is the fourth drag-origin. On the
         // thumb it captures the grab offset and begins an absolute-scroll drag; on
@@ -7535,45 +8090,6 @@ try {
           }
           return;
         }
-      }
-      // A drag while a resize gesture is live reflows the sidebar / resizes panes,
-      // suppressing hover; a release ends it (and persists the sidebar width via
-      // the debounced save effect that reads `sidebarW()`). The SAME apply runs on
-      // the terminal "up" as on each "drag" tick: OpenTUI coalesces rapid motion
-      // events, so honoring the release coordinate guarantees the final position
-      // sticks even when intermediate drags were dropped.
-      if (dragging) {
-        const isDrag = type === "drag";
-        const isEnd = type === "up" || type === "drag-end" || type === "drop" || type === "out";
-        if (isDrag || isEnd) {
-          if (dragging.kind === "sidebar") {
-            return; // owned by applicationSidebarResizePointerPhase above
-          } else if (dragging.kind === "scrollbar") {
-            // Absolute scroll: the pointer's row within the track maps to a top,
-            // honoring the grab offset so the thumb tracks the cursor 1:1.
-            const row = y - dragging.top0;
-            const top = dragTop(row, dragging.grabOffset, dragging.contentLen, dragging.viewH);
-            applyScrollTop(dragging.surface, top);
-          } else {
-            const cx = x - sidebarW();
-            const cy = y - TABBAR_H - HEADER_ROWS;
-            const delta =
-              dragging.sep.axis === "x" ? cx - dragging.originCx : cy - dragging.originCy;
-            const size = resizedSize(dragging.sep, delta);
-            if (size !== dragging.lastSize) {
-              dragging.lastSize = size;
-              void mirror?.command(resizeCommand(dragging.sep, size)).catch(() => {});
-            }
-          }
-          if (isEnd) {
-            dragging = null;
-            setNote("");
-          }
-          return;
-        }
-        // Any other event type mid-drag (move/over/out) is swallowed — hover stays
-        // suppressed until the gesture ends.
-        return;
       }
       // A DEFERRED press (M24.2) resolves on the next event: a drag that leaves
       // the press cell starts the selection the press was withheld for (nothing
@@ -7837,9 +8353,7 @@ try {
       // lays out, so the formerly-swallowed segment clicks now land.
       if (gy === 0) {
         if (type !== "down") return;
-        const i = spanHit(windowSpans(), x);
-        const w = windowTabs()[i];
-        if (w) mirror?.switchWindow(w.index);
+        activateWindowStripAt(x);
         return;
       }
       const cx = x - sidebarW();
@@ -7931,17 +8445,38 @@ try {
         </box>
       </Show>
     );
+    const interaction = createMemo(() => {
+      dialogRev();
+      return tuiInteractionPresentation({
+        dialogOpen: dialogStack.depth() > 0,
+        menuOpen: Boolean(menu()),
+        paletteOpen: paletteOpen(),
+        searchOpen: Boolean(search()),
+        surface: mode() === "mirror" ? "mirror" : mode(),
+        focusZone: workbenchProjection().focusZone,
+        dockMode: workbenchProjection().dockMode,
+        activeDockTab: activeDockTab(),
+        missionMode: missionWorkspaceModel().mode,
+        editorFocus: filesFocus(),
+        editorFilterOpen: filesQuery() !== null,
+        diffFilterOpen: diffFilter() !== null,
+        homePromptOpen: pathPrompt() !== null || sessionPrompt() !== null,
+        hosted: HOSTED,
+      });
+    });
     return (
       <box
         flexDirection="column"
         flexGrow={1}
-        backgroundColor={DEFAULT_BG}
+        backgroundColor={semanticTheme().roles.surfaces.canvas}
         onMouse={(e: RouteEvent) => route(e)}
       >
         <ApplicationShell
           theme={semanticTheme()}
           projection={applicationShellProjection()}
-          help={`${QUIT_HINT} · F5 palette`}
+          help={interaction().help}
+          interactionMode={interaction().mode}
+          focusLabel={interaction().focus}
           note={note()}
           rightChips={tabbarButtons().defs.map((button, index) => ({
             id: button.id,
@@ -7996,16 +8531,39 @@ try {
                 way late-mounted boxes do; `route` hit-tests `windowSpans`, whose
                 labels equal these run strings. Active = accent+tint, hover =
                 subtle tint. */}
-                        <box paddingLeft={1} flexDirection="row" gap={1}>
-                          <text fg={MUTED}>{windowStripParts().pre}</text>
-                          <text fg={ACCENT} bg={TAB_ACTIVE_BG}>
+                        <box paddingLeft={1} flexDirection="row">
+                          <text fg={semanticTheme().roles.text.secondary}>
+                            {windowStripParts().pre}
+                          </text>
+                          <text
+                            fg={semanticTheme().roles.selection.selectionText}
+                            bg={semanticTheme().roles.selection.selection}
+                          >
                             {windowStripParts().active}
                           </text>
-                          <text fg={MUTED}>{windowStripParts().post}</text>
+                          <text fg={semanticTheme().roles.text.secondary}>
+                            {windowStripParts().post}
+                          </text>
+                          <text fg={semanticTheme().roles.text.secondary}> </text>
+                          <text
+                            fg={semanticTheme().roles.text.primary}
+                            bg={
+                              isHovered("windowtab", windowTabs().length)
+                                ? semanticTheme().colors.buttonHover
+                                : semanticTheme().roles.surfaces.header
+                            }
+                            attributes={1}
+                          >
+                            {WINDOW_ADD_LABEL}
+                          </text>
                           {/* Window-level indicators remain on row zero; pane-level
                   zoom/split controls now live in each pane's own chrome row. */}
                           <Show when={isZoomed()}>
-                            <text fg={ACCENT} bg={TAB_ACTIVE_BG} attributes={1}>
+                            <text
+                              fg={semanticTheme().roles.selection.selectionText}
+                              bg={semanticTheme().roles.selection.selection}
+                              attributes={1}
+                            >
                               {` ${focusedLivePane()?.id ?? ""} [Z] `}
                             </text>
                           </Show>
@@ -8033,7 +8591,7 @@ try {
                         position="relative"
                         width={terminalCanvasProjection().framebuffer.width}
                         height={terminalCanvasProjection().framebuffer.height}
-                        backgroundColor={GUTTER_BG}
+                        backgroundColor={semanticTheme().roles.surfaces.terminal}
                         overflow="hidden"
                       >
                         {/* M21.3 — framebuffer blit (flagged). ONE <pane_surface> per
@@ -8054,7 +8612,7 @@ try {
                                   width={pane.width}
                                   height={pane.height}
                                   flexDirection="column"
-                                  backgroundColor={DEFAULT_BG}
+                                  backgroundColor={semanticTheme().roles.surfaces.terminal}
                                   overflow="hidden"
                                 >
                                   <For each={paneSelRows(pane)}>
@@ -8063,8 +8621,14 @@ try {
                                         <For each={runs}>
                                           {(run) => (
                                             <text
-                                              fg={packedToRgba(run.fg, DEFAULT_FG)}
-                                              bg={packedToRgba(run.bg, DEFAULT_BG)}
+                                              fg={packedToRgba(
+                                                run.fg,
+                                                semanticTheme().roles.text.primary,
+                                              )}
+                                              bg={packedToRgba(
+                                                run.bg,
+                                                semanticTheme().roles.surfaces.terminal,
+                                              )}
                                               attributes={run.attributes}
                                             >
                                               {run.text}
@@ -8083,12 +8647,19 @@ try {
                                         selectModePane() === pane.id && selectBadgeLabel(pane.width)
                                       }
                                     >
-                                      <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                                      <text
+                                        fg={semanticTheme().roles.text.primary}
+                                        bg={BUTTON_ACTIVE_BG}
+                                        attributes={1}
+                                      >
                                         {selectBadgeLabel(pane.width)!}
                                       </text>
                                     </Show>
                                     <Show when={pane.snapshot.scrollOffset > 0}>
-                                      <text fg={DEFAULT_FG} bg={BADGE_BG}>
+                                      <text
+                                        fg={semanticTheme().roles.text.primary}
+                                        bg={semanticTheme().roles.surfaces.headerActive}
+                                      >
                                         {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
                                       </text>
                                     </Show>
@@ -8112,7 +8683,7 @@ try {
                                     top={pane()!.top}
                                     width={pane()!.width}
                                     height={pane()!.height}
-                                    backgroundColor={DEFAULT_BG}
+                                    backgroundColor={semanticTheme().roles.surfaces.terminal}
                                     overflow="hidden"
                                   >
                                     <pane_surface
@@ -8120,10 +8691,11 @@ try {
                                       height={pane()!.height}
                                       mirror={mirror!}
                                       paneId={id}
-                                      defaultFg={DEFAULT_FG_PACKED}
-                                      defaultBg={DEFAULT_BG_PACKED}
-                                      searchHl={SEARCH_HL}
-                                      searchCur={SEARCH_CUR}
+                                      defaultFg={terminalPalette().foreground}
+                                      defaultBg={terminalPalette().background}
+                                      terminalPalette={terminalPalette()}
+                                      searchHl={terminalPalette().searchHighlight}
+                                      searchCur={terminalPalette().searchCurrent}
                                       scrollOffset={pane()!.snapshot.scrollOffset}
                                       paneFocused={pane()!.active}
                                       contentVersion={pane()!.version}
@@ -8139,12 +8711,19 @@ try {
                                           selectModePane() === id && selectBadgeLabel(pane()!.width)
                                         }
                                       >
-                                        <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                                        <text
+                                          fg={semanticTheme().roles.text.primary}
+                                          bg={BUTTON_ACTIVE_BG}
+                                          attributes={1}
+                                        >
                                           {selectBadgeLabel(pane()!.width)!}
                                         </text>
                                       </Show>
                                       <Show when={pane()!.snapshot.scrollOffset > 0}>
-                                        <text fg={DEFAULT_FG} bg={BADGE_BG}>
+                                        <text
+                                          fg={semanticTheme().roles.text.primary}
+                                          bg={semanticTheme().roles.surfaces.headerActive}
+                                        >
                                           {` ↑${pane()!.snapshot.scrollOffset}/${pane()!.scrollbackDepth} `}
                                         </text>
                                       </Show>
@@ -8156,6 +8735,10 @@ try {
                             }}
                           </For>
                         </Show>
+                        <TerminalPaneCommunicationLayer
+                          theme={semanticTheme()}
+                          layout={terminalPaneChromeLayout()}
+                        />
                         {/* Lower-pane headers reuse only tmux's existing horizontal
                   separator cells. Focus belongs to this semantic pane chrome,
                   while the pure projection proves no emitted rectangle
@@ -8165,6 +8748,26 @@ try {
                           layout={terminalPaneChromeLayout()}
                           layer="framebuffer"
                         />
+                        {/* Pointer affordance for tmux-native pane dividers. The
+                  quiet guide appears on hover; the saturated guide follows the
+                  clamped preview position during capture. It is an overlay only
+                  and never changes framebuffer/tmux size calculations. */}
+                        <Show when={paneResizeGuide()}>
+                          {(guide) => (
+                            <box
+                              position="absolute"
+                              left={guide().rect.x}
+                              top={guide().rect.y}
+                              width={guide().rect.width}
+                              height={guide().rect.height}
+                              backgroundColor={
+                                guide().active
+                                  ? semanticTheme().colors.accent
+                                  : semanticTheme().colors.accentMuted
+                              }
+                            />
+                          )}
+                        </Show>
                         {/* Size-truth hint (M22.8): quiet, dismiss-free, shown ONLY while
                   a co-attached terminal has sized the window away from our canvas
                   (the letterboxed grid is centered beneath it). It states the
@@ -8172,8 +8775,15 @@ try {
                   moment the sizes agree. A handler-less box in the top gutter, so
                   no pointer routing changes. */}
                         <Show when={windowMismatch()}>
-                          <box position="absolute" left={1} top={0} backgroundColor={BADGE_BG}>
-                            <text fg={MUTED}>{` ${formatSizeHint(windowMismatch()!)} `}</text>
+                          <box
+                            position="absolute"
+                            left={1}
+                            top={0}
+                            backgroundColor={semanticTheme().roles.surfaces.headerActive}
+                          >
+                            <text
+                              fg={semanticTheme().roles.text.secondary}
+                            >{` ${formatSizeHint(windowMismatch()!)} `}</text>
                           </box>
                         </Show>
                       </box>
@@ -8184,18 +8794,18 @@ try {
                           width={terminalCanvasProjection().footer.width}
                           height={terminalCanvasProjection().footer.height}
                           flexDirection="row"
-                          backgroundColor={PALETTE_BG}
+                          backgroundColor={semanticTheme().roles.surfaces.command}
                           paddingLeft={1}
                           paddingRight={1}
                         >
-                          <text fg={ACCENT} attributes={1}>
+                          <text fg={semanticTheme().roles.text.link} attributes={1}>
                             {search()!.editing ? "/" : "search "}
                           </text>
                           <text
-                            fg={DEFAULT_FG}
+                            fg={semanticTheme().roles.text.primary}
                           >{`${search()!.query}${search()!.editing ? "▏" : ""}`}</text>
                           <box flexGrow={1} />
-                          <text fg={MUTED}>{searchStatus()}</text>
+                          <text fg={semanticTheme().roles.text.muted}>{searchStatus()}</text>
                         </box>
                       ) : undefined
                     }
@@ -8273,38 +8883,46 @@ try {
               top={palettePos(dims().width, dims().height, paletteW()).top}
               width={paletteW()}
               flexDirection="column"
-              backgroundColor={PALETTE_BG}
+              backgroundColor={semanticTheme().roles.surfaces.command}
               border
-              borderColor={PALETTE_BORDER}
+              borderColor={semanticTheme().roles.borders.focused}
               paddingLeft={1}
               paddingRight={1}
             >
               <box flexDirection="row">
-                <text fg={ACCENT} attributes={1}>
+                <text fg={semanticTheme().roles.text.link} attributes={1}>
                   {"⎘ Paste buffer"}
                 </text>
                 <box flexGrow={1} />
-                <text fg={MUTED}>{"esc back"}</text>
+                <text fg={semanticTheme().roles.text.muted}>{"esc back"}</text>
               </box>
-              <text fg={MUTED}>{"─".repeat(paletteW() - 4)}</text>
+              <text fg={semanticTheme().roles.borders.subtle}>{"─".repeat(paletteW() - 4)}</text>
               <For each={paletteBuffers()!.slice(paletteTop(), paletteTop() + PALETTE_ROWS)}>
                 {(b, i) => (
                   <box
                     height={1}
                     flexDirection="row"
                     backgroundColor={
-                      paletteTop() + i() === paletteSel() ? TAB_ACTIVE_BG : PALETTE_BG
+                      paletteTop() + i() === paletteSel()
+                        ? semanticTheme().roles.selection.selection
+                        : semanticTheme().roles.surfaces.command
                     }
                   >
-                    <text fg={paletteTop() + i() === paletteSel() ? DEFAULT_FG : MUTED}>
+                    <text
+                      fg={
+                        paletteTop() + i() === paletteSel()
+                          ? semanticTheme().roles.selection.selectionText
+                          : semanticTheme().roles.text.secondary
+                      }
+                    >
                       {`${paletteTop() + i() === paletteSel() ? "› " : "  "}${b.name}  `}
                     </text>
-                    <text fg={MUTED}>{b.preview}</text>
+                    <text fg={semanticTheme().roles.text.muted}>{b.preview}</text>
                   </box>
                 )}
               </For>
               <Show when={paletteBuffers()!.length === 0}>
-                <text fg={MUTED}>{"  no buffers"}</text>
+                <text fg={semanticTheme().roles.text.muted}>{"  no buffers"}</text>
               </Show>
             </box>
           </Show>
@@ -8325,13 +8943,13 @@ try {
             top={menu()!.top}
             width={menu()!.width}
             flexDirection="column"
-            backgroundColor={PALETTE_BG}
+            backgroundColor={semanticTheme().roles.surfaces.command}
             border
-            borderColor={PALETTE_BORDER}
+            borderColor={semanticTheme().roles.borders.focused}
             paddingLeft={1}
             paddingRight={1}
           >
-            <text fg={ACCENT} attributes={1}>
+            <text fg={semanticTheme().roles.text.link} attributes={1}>
               {menu()!
                 .title.slice(0, menu()!.width - 4)
                 .padEnd(menu()!.width - 4)}
@@ -8359,9 +8977,15 @@ try {
                   return base;
                 };
                 const fg = () =>
-                  armed() ? DIFF_DEL_FG : selected() || inputting() ? DEFAULT_FG : MUTED;
+                  armed()
+                    ? DIFF_DEL_FG
+                    : selected() || inputting()
+                      ? semanticTheme().roles.selection.selectionText
+                      : semanticTheme().roles.text.secondary;
                 const bg = () =>
-                  selected() || armed() || inputting() ? TAB_ACTIVE_BG : PALETTE_BG;
+                  selected() || armed() || inputting()
+                    ? semanticTheme().roles.selection.selection
+                    : semanticTheme().roles.surfaces.command;
                 return (
                   <box height={1} backgroundColor={bg()}>
                     <text fg={fg()}>{body().slice(0, innerW()).padEnd(innerW())}</text>
@@ -8382,13 +9006,13 @@ try {
             top={submenuGeom()!.top}
             width={submenuGeom()!.width}
             flexDirection="column"
-            backgroundColor={PALETTE_BG}
+            backgroundColor={semanticTheme().roles.surfaces.command}
             border
-            borderColor={PALETTE_BORDER}
+            borderColor={semanticTheme().roles.borders.focused}
             paddingLeft={1}
             paddingRight={1}
           >
-            <text fg={ACCENT} attributes={1}>
+            <text fg={semanticTheme().roles.text.link} attributes={1}>
               {(menu()!.items[menuSub()!]?.label ?? "")
                 .slice(0, submenuGeom()!.width - 4)
                 .padEnd(submenuGeom()!.width - 4)}
@@ -8398,8 +9022,21 @@ try {
                 const innerW = () => submenuGeom()!.width - 4;
                 const selected = () => menuSubSel() === i();
                 return (
-                  <box height={1} backgroundColor={selected() ? TAB_ACTIVE_BG : PALETTE_BG}>
-                    <text fg={selected() ? DEFAULT_FG : MUTED}>
+                  <box
+                    height={1}
+                    backgroundColor={
+                      selected()
+                        ? semanticTheme().roles.selection.selection
+                        : semanticTheme().roles.surfaces.command
+                    }
+                  >
+                    <text
+                      fg={
+                        selected()
+                          ? semanticTheme().roles.selection.selectionText
+                          : semanticTheme().roles.text.secondary
+                      }
+                    >
                       {`${selected() ? "› " : "  "}${it.label}`.slice(0, innerW()).padEnd(innerW())}
                     </text>
                   </box>
@@ -8425,9 +9062,9 @@ try {
             top={dialogPos(dims().width, dims().height, dialogW()).top}
             width={dialogW()}
             flexDirection="column"
-            backgroundColor={PALETTE_BG}
+            backgroundColor={semanticTheme().roles.surfaces.command}
             border
-            borderColor={previewAccent() ?? PALETTE_BORDER}
+            borderColor={previewAccent() ?? semanticTheme().roles.borders.focused}
             paddingLeft={1}
             paddingRight={1}
           >
@@ -8439,10 +9076,12 @@ try {
                 <text fg={dlgAccent()} attributes={1}>
                   {"▸ "}
                 </text>
-                <text fg={DEFAULT_FG}>{`${dlgSelect()!.state.query}▏`}</text>
+                <text
+                  fg={semanticTheme().roles.text.primary}
+                >{`${dlgSelect()!.state.query}▏`}</text>
               </box>
             </Show>
-            <text fg={MUTED}>{"─".repeat(dialogInnerWidth())}</text>
+            <text fg={semanticTheme().roles.borders.subtle}>{"─".repeat(dialogInnerWidth())}</text>
             <For each={dlgVisibleItems()}>
               {(item, i) => {
                 const abs = () => dlgSelect()!.state.top + i();
@@ -8458,13 +9097,26 @@ try {
                     innerW: item.swatch ? dialogInnerWidth() - 2 : dialogInnerWidth(),
                   }).slice(2);
                 const markerFg = () =>
-                  item.current ? dlgAccent() : selected() ? DEFAULT_FG : MUTED;
-                const bodyFg = () => (armed() ? DIFF_DEL_FG : selected() ? DEFAULT_FG : MUTED);
+                  item.current
+                    ? dlgAccent()
+                    : selected()
+                      ? semanticTheme().roles.selection.selectionText
+                      : semanticTheme().roles.text.secondary;
+                const bodyFg = () =>
+                  armed()
+                    ? DIFF_DEL_FG
+                    : selected()
+                      ? semanticTheme().roles.selection.selectionText
+                      : semanticTheme().roles.text.secondary;
                 return (
                   <box
                     height={1}
                     flexDirection="row"
-                    backgroundColor={selected() || armed() ? TAB_ACTIVE_BG : PALETTE_BG}
+                    backgroundColor={
+                      selected() || armed()
+                        ? semanticTheme().roles.selection.selection
+                        : semanticTheme().roles.surfaces.command
+                    }
                   >
                     <text fg={markerFg()}>{dialogMarker(item, selected())}</text>
                     <Show when={item.swatch}>
@@ -8480,9 +9132,11 @@ try {
               }}
             </For>
             <Show when={dlgVisibleItems().length === 0}>
-              <text fg={MUTED}>{"  no matches"}</text>
+              <text fg={semanticTheme().roles.text.muted}>{"  no matches"}</text>
             </Show>
-            <text fg={MUTED}>{selectFooter(dlgSelectSpec()).slice(0, dialogInnerWidth())}</text>
+            <text fg={semanticTheme().roles.text.muted}>
+              {selectFooter(dlgSelectSpec()).slice(0, dialogInnerWidth())}
+            </text>
           </box>
         </Show>
         <Show when={dlgPrompt()}>
@@ -8492,30 +9146,40 @@ try {
             top={dialogPos(dims().width, dims().height, dialogW()).top}
             width={dialogW()}
             flexDirection="column"
-            backgroundColor={PALETTE_BG}
+            backgroundColor={semanticTheme().roles.surfaces.command}
             border
-            borderColor={PALETTE_BORDER}
+            borderColor={semanticTheme().roles.borders.focused}
             paddingLeft={1}
             paddingRight={1}
           >
-            <text fg={ACCENT} attributes={1}>
+            <text fg={semanticTheme().roles.text.link} attributes={1}>
               {dlgPromptSpec().title.slice(0, dialogInnerWidth()).padEnd(dialogInnerWidth())}
             </text>
-            <text fg={MUTED}>{"─".repeat(dialogInnerWidth())}</text>
+            <text fg={semanticTheme().roles.borders.subtle}>{"─".repeat(dialogInnerWidth())}</text>
             <box flexDirection="row">
-              <text fg={ACCENT} attributes={1}>
+              <text fg={semanticTheme().roles.text.link} attributes={1}>
                 {"▸ "}
               </text>
               <Show
                 when={dlgPrompt()!.state.input.length === 0 && dlgPromptSpec().placeholder}
-                fallback={<text fg={DEFAULT_FG}>{`${dlgPrompt()!.state.input}▏`}</text>}
+                fallback={
+                  <text
+                    fg={semanticTheme().roles.text.primary}
+                  >{`${dlgPrompt()!.state.input}▏`}</text>
+                }
               >
-                <text fg={DEFAULT_FG}>{"▏"}</text>
-                <text fg={MUTED}>{` ${dlgPromptSpec().placeholder}`}</text>
+                <text fg={semanticTheme().roles.text.primary}>{"▏"}</text>
+                <text
+                  fg={semanticTheme().roles.text.muted}
+                >{` ${dlgPromptSpec().placeholder}`}</text>
               </Show>
             </box>
             <text
-              fg={promptFooter(dlgPromptSpec(), dlgPrompt()!.state).error ? DIFF_DEL_FG : MUTED}
+              fg={
+                promptFooter(dlgPromptSpec(), dlgPrompt()!.state).error
+                  ? semanticTheme().roles.statusTone.danger
+                  : semanticTheme().roles.text.muted
+              }
             >
               {promptFooter(dlgPromptSpec(), dlgPrompt()!.state).text.slice(0, dialogInnerWidth())}
             </text>
@@ -8528,36 +9192,49 @@ try {
             top={dialogPos(dims().width, dims().height, dialogW()).top}
             width={dialogW()}
             flexDirection="column"
-            backgroundColor={PALETTE_BG}
+            backgroundColor={semanticTheme().roles.surfaces.command}
             border
-            borderColor={PALETTE_BORDER}
+            borderColor={semanticTheme().roles.borders.focused}
             paddingLeft={1}
             paddingRight={1}
           >
-            <text fg={ACCENT} attributes={1}>
+            <text fg={semanticTheme().roles.text.link} attributes={1}>
               {dlgConfirmSpec().title.slice(0, dialogInnerWidth()).padEnd(dialogInnerWidth())}
             </text>
-            <text fg={MUTED}>{"─".repeat(dialogInnerWidth())}</text>
+            <text fg={semanticTheme().roles.borders.subtle}>{"─".repeat(dialogInnerWidth())}</text>
             <For
               each={
                 dlgConfirmSpec().body ? wrapText(dlgConfirmSpec().body!, dialogInnerWidth()) : []
               }
             >
-              {(line) => <text fg={MUTED}>{line || " "}</text>}
+              {(line) => <text fg={semanticTheme().roles.text.secondary}>{line || " "}</text>}
             </For>
             <For each={confirmOptions(dlgConfirmSpec())}>
               {(label, i) => {
                 const selected = () => dlgConfirm()!.state.sel === i();
                 return (
-                  <box height={1} backgroundColor={selected() ? TAB_ACTIVE_BG : PALETTE_BG}>
-                    <text fg={selected() ? DEFAULT_FG : MUTED}>
+                  <box
+                    height={1}
+                    backgroundColor={
+                      selected()
+                        ? semanticTheme().roles.selection.selection
+                        : semanticTheme().roles.surfaces.command
+                    }
+                  >
+                    <text
+                      fg={
+                        selected()
+                          ? semanticTheme().roles.selection.selectionText
+                          : semanticTheme().roles.text.secondary
+                      }
+                    >
                       {`${selected() ? "› " : "  "}${label}`.slice(0, dialogInnerWidth())}
                     </text>
                   </box>
                 );
               }}
             </For>
-            <text fg={MUTED}>{confirmFooter()}</text>
+            <text fg={semanticTheme().roles.text.muted}>{confirmFooter()}</text>
           </box>
         </Show>
       </box>

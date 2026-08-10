@@ -1,4 +1,10 @@
 import type { WorkspaceAgentRole, WorkspacePaneCreateInvocation } from "@tmux-ide/contracts";
+import {
+  projectProvisioningTargets,
+  provisioningPlacementForTarget,
+  targetFirstProvisioningStage,
+  type ProvisioningTarget,
+} from "@tmux-ide/core";
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 
 import { DomIcon } from "./dom-icon.tsx";
@@ -17,6 +23,8 @@ export interface CreatePaneFlowProps {
   readonly open: boolean;
   readonly catalogs: CreatePaneFlowCatalogs;
   readonly initialWorkspaceName?: string;
+  readonly initialSemanticPaneId?: string | null;
+  readonly initialPaneLabel?: string;
   readonly onOpenChange: (open: boolean, source: InteractionSource) => void;
   readonly onCommand: (invocation: WorkspacePaneCreateInvocation) => void | Promise<void>;
 }
@@ -104,6 +112,14 @@ function focusInvalidField(field: CreatePaneField): void {
  */
 export function CreatePaneFlow(props: CreatePaneFlowProps) {
   const projection = createMemo(() => projectCreatePaneFlow(props.catalogs));
+  const targets = createMemo(() =>
+    projectProvisioningTargets(projection().workspaces.items, {
+      workspaceName: props.initialWorkspaceName ?? "",
+      semanticPaneId: props.initialSemanticPaneId,
+      paneLabel: props.initialPaneLabel,
+    }),
+  );
+  const [targetId, setTargetId] = createSignal("");
   const [kind, setKind] = createSignal<CreatePaneKind | null>(null);
   const [workspaceName, setWorkspaceName] = createSignal("");
   const [displayTitle, setDisplayTitle] = createSignal("");
@@ -117,6 +133,7 @@ export function CreatePaneFlow(props: CreatePaneFlowProps) {
   let overlay: HTMLDivElement | undefined;
   let dialog: HTMLElement | undefined;
   let form: HTMLFormElement | undefined;
+  let firstTargetButton: HTMLButtonElement | undefined;
   let firstKindButton: HTMLButtonElement | undefined;
   let previousFocus: HTMLElement | null = null;
   let lastInteractionSource: Exclude<InteractionSource, "program"> = "keyboard";
@@ -124,6 +141,7 @@ export function CreatePaneFlow(props: CreatePaneFlowProps) {
   let disposed = false;
 
   const resetDraft = (): void => {
+    setTargetId("");
     setKind(null);
     setWorkspaceName(enabledInitialWorkspace(props.initialWorkspaceName, projection()));
     setDisplayTitle("");
@@ -147,7 +165,7 @@ export function CreatePaneFlow(props: CreatePaneFlowProps) {
             document.activeElement instanceof HTMLElement ? document.activeElement : null;
           resetDraft();
           queueMicrotask(() => {
-            if (!disposed) firstKindButton?.focus();
+            if (!disposed) firstTargetButton?.focus();
           });
           return;
         }
@@ -187,6 +205,22 @@ export function CreatePaneFlow(props: CreatePaneFlowProps) {
     });
   };
 
+  const selectedTarget = createMemo<ProvisioningTarget | null>(
+    () => targets().find((target) => target.id === targetId()) ?? null,
+  );
+  const stage = createMemo(() => targetFirstProvisioningStage(selectedTarget(), kind()));
+
+  const chooseTarget = (target: ProvisioningTarget): void => {
+    if (!target.available) return;
+    setTargetId(target.id);
+    setWorkspaceName(target.workspaceName);
+    setErrors({});
+    setDispatchError(false);
+    queueMicrotask(() => {
+      if (!disposed) firstKindButton?.focus();
+    });
+  };
+
   const chooseKind = (nextKind: CreatePaneKind): void => {
     setKind(nextKind);
     setErrors({});
@@ -205,6 +239,17 @@ export function CreatePaneFlow(props: CreatePaneFlowProps) {
     });
   };
 
+  const backToTarget = (): void => {
+    setTargetId("");
+    setWorkspaceName("");
+    setKind(null);
+    setErrors({});
+    setDispatchError(false);
+    queueMicrotask(() => {
+      if (!disposed) firstTargetButton?.focus();
+    });
+  };
+
   const submit = async (source: Exclude<InteractionSource, "program">): Promise<void> => {
     const selectedKind = kind();
     if (!selectedKind || dispatching()) return;
@@ -217,6 +262,9 @@ export function CreatePaneFlow(props: CreatePaneFlowProps) {
         harnessProfileId: harnessProfileId(),
         role: role(),
         missionId: missionId(),
+        ...(selectedTarget()
+          ? { placement: provisioningPlacementForTarget(selectedTarget()!) }
+          : {}),
       },
       { kind: source, surface: "create-pane-dialog" },
     );
@@ -347,11 +395,47 @@ export function CreatePaneFlow(props: CreatePaneFlowProps) {
             </button>
           </header>
           <p id={DIALOG_DESCRIPTION_ID} class="create-pane-flow__description">
-            tmux-ide resolves processes, directories, and panes. Choose only the product resources
-            you want to create.
+            Choose where it belongs, what to create, then its product-level details. tmux-ide keeps
+            processes, directories, and runtime pane targets behind daemon authority.
           </p>
 
-          <div class="create-pane-flow__kind" hidden={kind() !== null}>
+          <div class="create-pane-flow__kind" hidden={stage() !== "target"}>
+            <p class="create-pane-flow__eyebrow">Where should it go?</p>
+            <div class="create-pane-flow__kind-grid" role="group" aria-label="Creation target">
+              <For each={targets()}>
+                {(target, index) => (
+                  <button
+                    ref={(element) => {
+                      if (index() === 0) firstTargetButton = element;
+                    }}
+                    type="button"
+                    class="create-pane-flow__kind-card"
+                    data-enter-action="true"
+                    disabled={!target.available}
+                    onClick={() => chooseTarget(target)}
+                  >
+                    <DomIcon id={target.kind === "pane" ? "terminals" : "home"} usage="rail" />
+                    <strong>{target.label}</strong>
+                    <span>{target.description}</span>
+                    <kbd>↵</kbd>
+                  </button>
+                )}
+              </For>
+            </div>
+            <Show when={projection().workspaces.status === "loading"}>
+              <small class="create-pane-flow__empty">Loading workspace targets…</small>
+            </Show>
+            <Show when={projection().workspaces.status === "ready" && targets().length === 0}>
+              <small class="create-pane-flow__empty">
+                Open a project from Home, then return here to create its first terminal.
+              </small>
+            </Show>
+          </div>
+
+          <div class="create-pane-flow__kind" hidden={stage() !== "kind"}>
+            <button type="button" class="create-pane-flow__back" onClick={backToTarget}>
+              ← Choose target
+            </button>
             <p class="create-pane-flow__eyebrow">What do you want to add?</p>
             <div class="create-pane-flow__kind-grid" role="group" aria-label="Creation type">
               <button
@@ -387,7 +471,7 @@ export function CreatePaneFlow(props: CreatePaneFlowProps) {
               form = element;
             }}
             class="create-pane-flow__form"
-            hidden={kind() === null}
+            hidden={stage() !== "details"}
             novalidate
             onSubmit={(event) => {
               event.preventDefault();
@@ -403,66 +487,16 @@ export function CreatePaneFlow(props: CreatePaneFlowProps) {
               </span>
             </div>
 
-            <label class="create-pane-flow__field" for={WORKSPACE_FIELD_ID}>
+            <div class="create-pane-flow__target-summary">
               <span>
-                Workspace <b aria-hidden="true">*</b>
+                <small>Target</small>
+                <strong>{selectedTarget()?.label}</strong>
+                <em>{selectedTarget()?.description}</em>
               </span>
-              <select
-                id={WORKSPACE_FIELD_ID}
-                value={workspaceName()}
-                disabled={projection().workspaces.status !== "ready"}
-                required
-                aria-required="true"
-                aria-invalid={Boolean(errors().workspaceName)}
-                aria-describedby={
-                  errors().workspaceName ? `${WORKSPACE_FIELD_ID}-error` : undefined
-                }
-                onChange={(event) => {
-                  setWorkspaceName(event.currentTarget.value);
-                  clearError("workspaceName");
-                }}
-              >
-                <option value="">
-                  {projection().workspaces.status === "loading"
-                    ? "Loading workspaces…"
-                    : projection().workspaces.status === "unavailable"
-                      ? "Workspaces unavailable"
-                      : projection().workspaces.items.length === 0
-                        ? "No workspaces available"
-                        : "Choose a workspace…"}
-                </option>
-                <For each={projection().workspaces.items}>
-                  {(workspace) => (
-                    <option value={workspace.name} disabled={!workspace.available}>
-                      {workspace.label}
-                      {workspace.available ? "" : " — unavailable"}
-                    </option>
-                  )}
-                </For>
-              </select>
-              <Show when={errors().workspaceName}>
-                {(message) => (
-                  <small
-                    id={`${WORKSPACE_FIELD_ID}-error`}
-                    class="create-pane-flow__error"
-                    role="alert"
-                    tabIndex={-1}
-                  >
-                    {message()}
-                  </small>
-                )}
-              </Show>
-              <Show
-                when={
-                  projection().workspaces.status === "ready" &&
-                  projection().workspaces.items.length === 0
-                }
-              >
-                <small class="create-pane-flow__empty">
-                  Open a project from Home, then return here to create its first terminal.
-                </small>
-              </Show>
-            </label>
+              <button type="button" onClick={backToTarget}>
+                Change
+              </button>
+            </div>
 
             <label class="create-pane-flow__field" for={TITLE_FIELD_ID}>
               <span>

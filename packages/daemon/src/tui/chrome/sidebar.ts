@@ -68,6 +68,7 @@ export function sidebarWidgetCommand(
     checkoutExists: existsSync(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
+    preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
   });
   if (launch.mode === "unavailable") {
     // Keep the pane command well-formed; the pane shows bun's own error. This

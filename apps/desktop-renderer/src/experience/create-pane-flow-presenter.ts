@@ -6,6 +6,7 @@ import {
   workspacePaneCreateInvocation,
   type CommandSource,
   type WorkspaceAgentRole,
+  type WorkspacePaneCreationPlacement,
   type WorkspacePaneCreateInvocation,
 } from "@tmux-ide/contracts";
 
@@ -61,6 +62,7 @@ export interface CreatePaneDraft {
   readonly harnessProfileId: string;
   readonly role: WorkspaceAgentRole;
   readonly missionId: string;
+  readonly placement?: WorkspacePaneCreationPlacement;
 }
 
 export type CreatePaneField =
@@ -313,6 +315,7 @@ export function createPaneSubmission(
   const common = {
     workspaceName: draft.workspaceName,
     ...(displayTitle ? { displayTitle } : {}),
+    ...(draft.placement ? { placement: draft.placement } : {}),
   };
   const invocation =
     draft.kind === "terminal"

@@ -35,7 +35,12 @@ import {
   type CursorState,
 } from "./pane-mirror.ts";
 import type { CellArrays } from "./blit.ts";
+import type { TerminalPaletteProjection } from "./theme.ts";
 import { tapInputOutput, tapRepin, tapResize } from "./perf-tap.ts";
+import {
+  INTERNAL_READ_OPERATION_MARKER,
+  INTERNAL_READ_OPERATION_OPTION,
+} from "../../lib/tmux-interaction-options.ts";
 import {
   parseLayout,
   parseLayoutChange,
@@ -456,7 +461,11 @@ export class SessionMirror {
    *   framebuffer-blit path, M21.3) returns geometry + cursor/offset only and
    *   skips the run rebuild — the `<pane_surface>` reads cells via {@link blitPane}.
    */
-  panes(scrollOffsets?: ReadonlyMap<string, number>, includeRows = true): LivePane[] {
+  panes(
+    scrollOffsets?: ReadonlyMap<string, number>,
+    includeRows = true,
+    palette?: TerminalPaletteProjection,
+  ): LivePane[] {
     const focused = this.focusedPane();
     return this.geometry.map((g) => {
       const mirror = this.mirrors.get(g.id);
@@ -467,7 +476,7 @@ export class SessionMirror {
         scrollbackDepth: mirror?.scrollbackDepth() ?? 0,
         version: mirror?.contentVersion() ?? 0,
         snapshot:
-          mirror?.snapshot(offset, g.id === focused, includeRows) ??
+          mirror?.snapshot(offset, g.id === focused, includeRows, palette) ??
           ({ rows: [], cursorX: 0, cursorY: 0, scrollOffset: 0 } as const),
       };
     });
@@ -572,6 +581,12 @@ export class SessionMirror {
   command(cmd: string): Promise<string[]> {
     this.input.flush();
     return this.client.command(cmd);
+  }
+
+  /** Run a compound control-mode command while reserving every reply block. */
+  commandList(cmd: string, replyCount: number, resultIndex = replyCount - 1): Promise<string[]> {
+    this.input.flush();
+    return this.client.commandList(cmd, replyCount, resultIndex);
   }
 
   /** Windows (tabs) of the mirrored session, for the app's tab strip. `sync` is
@@ -762,8 +777,17 @@ export class SessionMirror {
       const mirror = this.mirrors.get(pane.id);
       if (!mirror) continue;
       const seedReply = this.client
-        .command(`capture-pane -p -e -J -S -2000 -t ${pane.id}`)
-        .catch(() => [] as string[]);
+        .commandList(
+          `set-option -p -t ${pane.id} ${INTERNAL_READ_OPERATION_OPTION} ${INTERNAL_READ_OPERATION_MARKER} ; capture-pane -p -e -J -S -2000 -t ${pane.id}`,
+          2,
+          1,
+        )
+        .catch(() => {
+          // A successful capture consumes the marker in after-capture-pane.
+          // The command-list makes mark + capture indivisible to other clients.
+          this.client.send(`set-option -pu -t ${pane.id} ${INTERNAL_READ_OPERATION_OPTION}`);
+          return [] as string[];
+        });
       // The pane's REAL cursor (D2): the seed replay leaves xterm's cursor
       // wherever the last captured byte fell — and the trailing CRLF the seed
       // used to append scrolled one extra row on a full viewport, drifting

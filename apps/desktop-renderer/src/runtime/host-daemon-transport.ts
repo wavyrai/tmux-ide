@@ -71,7 +71,26 @@ function eventToHandler(
     return;
   }
   if (event.type === "application-shell.changed") {
-    if (event.workspaceName === workspaceName) handlers.onInvalidate();
+    if (event.workspaceName === workspaceName) {
+      if (
+        event.causeOperationId &&
+        event.daemonInstanceId &&
+        event.sequence !== undefined &&
+        event.revision !== undefined
+      ) {
+        handlers.onOperationAcknowledged?.({
+          daemonInstanceId: event.daemonInstanceId,
+          operationId: event.causeOperationId,
+          sequence: event.sequence,
+          revision: event.revision,
+        });
+      }
+      handlers.onInvalidate();
+    }
+    return;
+  }
+  if (event.type === "interaction.receipt") {
+    if (event.workspaceName === workspaceName) handlers.onInteractionReceipt?.(event);
     return;
   }
   if (event.type === "daemon-generation.changed") {

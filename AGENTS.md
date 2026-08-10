@@ -111,7 +111,9 @@ The project is written in TypeScript. Source lives in `src/`, compiled output in
 - `app/project.yml` — XcodeGen build config
 - `app/TmuxIde/` — App source (services, models, UI, terminal bridge)
 - Consumes command-center REST/SSE/WebSocket APIs
-- Infinite canvas UI (workspace > columns > tiles)
+- Tiled terminal workbench UI (workspace > rows > panes)
+- Infinite-canvas experiments are outside the current architecture. Do not add
+  an external or closed-source canvas SDK to the core, TUI, or web GUI.
 
 ### Other
 

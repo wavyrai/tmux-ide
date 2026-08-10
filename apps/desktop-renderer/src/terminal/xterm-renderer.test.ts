@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { XTERM_PALETTE_HEX } from "@tmux-ide/core";
 
 import {
   TERMINAL_FONT_FAMILY,
@@ -98,13 +99,37 @@ describe("resolveTerminalTheme", () => {
     const theme = resolveTerminalTheme(readerFrom({}));
     for (const role of THEME_ROLES) {
       expect(theme[role]).toBe(TERMINAL_THEME_FALLBACK[role]);
-      expect(theme[role]).toMatch(/^#[0-9a-f]{6}$/u);
+      expect(theme[role]!).toMatch(/^#[0-9a-f]{6}$/u);
     }
   });
 
+  it("keeps all explicit ANSI colors protocol-faithful instead of CSS-themed", () => {
+    const theme = resolveTerminalTheme(readerFrom(DARK_TOKENS));
+    expect([
+      theme.black,
+      theme.red,
+      theme.green,
+      theme.yellow,
+      theme.blue,
+      theme.magenta,
+      theme.cyan,
+      theme.white,
+      theme.brightBlack,
+      theme.brightRed,
+      theme.brightGreen,
+      theme.brightYellow,
+      theme.brightBlue,
+      theme.brightMagenta,
+      theme.brightCyan,
+      theme.brightWhite,
+    ]).toEqual(XTERM_PALETTE_HEX.slice(0, 16));
+    expect(theme.extendedAnsi).toEqual(XTERM_PALETTE_HEX.slice(16));
+    expect(theme.red).not.toBe(DARK_TOKENS["--tmux-ide-terminal-ansi-red"]);
+  });
+
   it("never emits an empty color for a whitespace-only token", () => {
-    const theme = resolveTerminalTheme(readerFrom({ "--tmux-ide-terminal-red": "   " }));
-    expect(theme.red).toBe(TERMINAL_THEME_FALLBACK.red);
+    const theme = resolveTerminalTheme(readerFrom({ "--tmux-ide-terminal-foreground": "   " }));
+    expect(theme.foreground).toBe(TERMINAL_THEME_FALLBACK.foreground);
   });
 
   it("trims surrounding whitespace from resolved token values", () => {

@@ -1,5 +1,6 @@
 import { terminalDisplayWidth } from "../panel-host.ts";
 import type { SemanticIconId } from "@tmux-ide/contracts";
+import { cycleWorkspaceFocusZone } from "@tmux-ide/core";
 import type { Rect } from "../recipes.ts";
 import { clipWorkspaceText } from "./text.ts";
 import { workspaceIcon } from "./icons.ts";
@@ -69,6 +70,12 @@ export interface WorkbenchDockActionProjection {
   width: number;
 }
 
+export interface WorkbenchDockSectionProjection {
+  label: string;
+  width: number;
+  focused: boolean;
+}
+
 export interface WorkbenchShellProjection {
   width: number;
   height: number;
@@ -86,6 +93,7 @@ export interface WorkbenchShellProjection {
   dockBody: Rect;
   dockBodyRail: Rect;
   dockBodyContent: Rect;
+  dockSection: WorkbenchDockSectionProjection;
   tabs: readonly WorkbenchDockTabProjection[];
   actions: readonly WorkbenchDockActionProjection[];
   requestedActiveDockTab: WorkbenchDockTabId;
@@ -159,6 +167,7 @@ export function projectWorkbenchShell(input: WorkbenchShellInput): WorkbenchShel
   const dockBodyRail = contentRail(dockBody);
   const dockBodyContent = contentBody(dockBody);
   const focusZone = effectiveFocusZone(input.focusZone, canvas, dockBody);
+  const dockSection = projectDockSection(variant, focusZone !== "canvas");
   const activeDockTab = enabledDockTab(
     input.activeDockTab,
     input.dockTools,
@@ -166,7 +175,14 @@ export function projectWorkbenchShell(input: WorkbenchShellInput): WorkbenchShel
   );
   const actions = projectDockActions(width, variant, dockMode);
   const tabRight = Math.max(0, (actions[0]?.x ?? width) - (actions.length > 0 ? 1 : 0));
-  const tabs = projectDockTabs(input, variant, focusZone, tabRight, activeDockTab);
+  const tabs = projectDockTabs(
+    input,
+    variant,
+    focusZone,
+    tabRight,
+    activeDockTab,
+    dockSection.width,
+  );
 
   return {
     width,
@@ -190,6 +206,7 @@ export function projectWorkbenchShell(input: WorkbenchShellInput): WorkbenchShel
     dockBody,
     dockBodyRail,
     dockBodyContent,
+    dockSection,
     tabs,
     actions,
     requestedActiveDockTab: input.activeDockTab,
@@ -214,6 +231,18 @@ export function moveWorkbenchDockTab(
       { name: direction === "next" ? "right" : "left" },
     ) ?? active
   );
+}
+
+/**
+ * One predictable Ctrl-Tab path through the workbench. A collapsed dock has no
+ * body in the focus order; reverse traversal uses the exact same ring.
+ */
+export function cycleWorkbenchFocusZone(
+  current: WorkbenchFocusZone,
+  dockMode: WorkbenchDockMode,
+  direction: "next" | "previous" = "next",
+): WorkbenchFocusZone {
+  return cycleWorkspaceFocusZone(current, dockMode, direction);
 }
 
 export function workbenchShellHitTest(
@@ -277,8 +306,9 @@ function projectDockTabs(
   focusZone: WorkbenchFocusZone,
   rightEdge: number,
   activeDockTab: WorkbenchDockTabId,
+  startX: number,
 ): WorkbenchDockTabProjection[] {
-  let x = 0;
+  let x = startX;
   const dockTools = input.dockTools;
   return dockTools.map((definition, index) => {
     const id = definition.id as WorkbenchDockTabId;
@@ -308,6 +338,15 @@ function projectDockTabs(
     x += width;
     return projection;
   });
+}
+
+function projectDockSection(
+  variant: WorkbenchVariant,
+  focused: boolean,
+): WorkbenchDockSectionProjection {
+  if (variant === "compact") return { label: "", width: 0, focused };
+  const label = ` ${focused ? "▸" : " "} tools `;
+  return { label, width: terminalDisplayWidth(label), focused };
 }
 
 function projectDockActions(

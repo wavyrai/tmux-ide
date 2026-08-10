@@ -44,6 +44,8 @@ export type WorkspacePaneCreationErrorCode =
   | "harness_not_allowed"
   | "harness_unavailable"
   | "mission_not_found"
+  | "pane_not_found"
+  | "ambiguous_target"
   | "operation_conflict"
   | "operation_capacity"
   | "pane_creation_failed"
@@ -57,6 +59,8 @@ const ERROR_MESSAGES: Readonly<Record<WorkspacePaneCreationErrorCode, string>> =
   harness_not_allowed: "The requested harness is not in the workspace capability catalog.",
   harness_unavailable: "The requested harness is not currently launchable.",
   mission_not_found: "The requested mission is not present in the workspace mission repository.",
+  pane_not_found: "The requested split target is no longer present in this workspace.",
+  ambiguous_target: "The requested split target does not have a unique live identity.",
   operation_conflict: "The operation id was already used for a different pane intent.",
   operation_capacity: "The daemon has reached its bounded pane-creation operation capacity.",
   pane_creation_failed: "tmux could not create and verify the requested pane.",
@@ -91,7 +95,8 @@ interface RuntimePaneIdentity {
   readonly paneId: string;
   readonly windowId: string;
   readonly creationId: string;
-  readonly provisionalWindowName: string;
+  readonly scope: "window" | "pane";
+  readonly provisionalWindowName: string | null;
   readonly ownershipProof: "create-output" | "creation-marker";
 }
 
@@ -486,7 +491,8 @@ function fingerprint(request: WorkspacePaneCreateMutationRequest): string {
 function parseCreatedRuntime(
   output: string,
   creationId: string,
-  provisionalName: string,
+  scope: RuntimePaneIdentity["scope"],
+  provisionalName: string | null,
 ): RuntimePaneIdentity {
   const match = /^(%[0-9]+)\t(@[0-9]+)$/u.exec(output);
   if (!match) throw new WorkspacePaneCreationError("pane_creation_failed");
@@ -494,6 +500,7 @@ function parseCreatedRuntime(
     paneId: match[1]!,
     windowId: match[2]!,
     creationId,
+    scope,
     provisionalWindowName: provisionalName,
     ownershipProof: "create-output",
   };
@@ -566,7 +573,7 @@ function inspectArgs(runtime: RuntimePaneIdentity): readonly string[] {
       "#{@ide_name}",
       `#{${HARNESS_OPTION}}`,
       `#{${MISSION_OPTION}}`,
-      "#{window_name}",
+      runtime.scope === "window" ? "#{window_name}" : "#{pane_title}",
     ].join("\t"),
   ];
 }
@@ -734,11 +741,34 @@ export class WorkspacePaneCreationAuthority {
       this.#assertActive(request.operationId);
       const title = defaultTitle(request.intent, harness);
       const resource = resourceFor(request, title, resolvedMissionId);
-      const recoveredSuccess = this.#completedRuntime(
+      const placement = request.intent.placement ?? ({ kind: "window" } as const);
+      const runtimeScope = placement.kind === "window" ? "window" : "pane";
+      const markerRuntime = this.#runtimeForCreationMarker(
         workspace.sessionName,
         request.operationId,
-        resource,
+        runtimeScope,
       );
+      let recoveredSuccess: RuntimePaneIdentity | null = null;
+      if (markerRuntime) {
+        const inspected = this.#io.runTmux(inspectArgs(markerRuntime));
+        if (inspectMatches(inspected, markerRuntime, resource)) {
+          recoveredSuccess = markerRuntime;
+        } else if (this.#canResumeMarkedRuntime(markerRuntime, resource)) {
+          runtime = markerRuntime;
+        } else {
+          throw new WorkspacePaneCreationError("pane_resource_changed", {
+            operationId: request.operationId,
+            workspaceName: workspace.name,
+          });
+        }
+      } else {
+        recoveredSuccess = this.#completedRuntime(
+          workspace.sessionName,
+          request.operationId,
+          resource,
+          runtimeScope,
+        );
+      }
       if (recoveredSuccess) {
         const result = WorkspacePaneCreateMutationResultSchemaZ.parse({
           operationId: request.operationId,
@@ -754,54 +784,101 @@ export class WorkspacePaneCreationAuthority {
         });
         return result;
       }
-      const provisionalName = provisionalWindowName(request.operationId);
-      if (
-        this.#provisionalRuntimes(workspace.sessionName, provisionalName, request.operationId)
-          .length > 0
-      ) {
-        throw new WorkspacePaneCreationError("pane_resource_changed", {
-          operationId: request.operationId,
-          workspaceName: workspace.name,
-        });
-      }
-      const createArgs = [
-        "new-window",
-        "-d",
-        "-P",
-        "-F",
-        "#{pane_id}\t#{window_id}",
-        "-t",
-        `=${workspace.sessionName}:`,
-        "-c",
-        canonicalRoot,
-        "-n",
-        provisionalName,
-      ];
-      for (const [key, value] of Object.entries(harness?.environment ?? {}).sort(([a], [b]) =>
-        a.localeCompare(b),
-      )) {
-        createArgs.push("-e", `${key}=${value}`);
-      }
-      if (harness) createArgs.push(harness.command.map(shellEscape).join(" "));
-      let createOutput: string;
-      try {
-        createOutput = this.#io.runTmux(createArgs);
-      } catch (error) {
-        if (this.#io.creationFailureCannotHaveMutated(error)) throw error;
-        throw new WorkspacePaneCreationError(
-          "pane_cleanup_unproven",
-          { operationId: request.operationId, workspaceName: workspace.name },
-          error,
-        );
-      }
-      try {
-        runtime = parseCreatedRuntime(createOutput, request.operationId, provisionalName);
-      } catch (error) {
-        throw new WorkspacePaneCreationError(
-          "pane_cleanup_unproven",
-          { operationId: request.operationId, workspaceName: workspace.name },
-          error,
-        );
+      const provisionalName =
+        placement.kind === "window" ? provisionalWindowName(request.operationId) : null;
+      if (!runtime) {
+        if (
+          provisionalName !== null &&
+          this.#provisionalRuntimes(workspace.sessionName, provisionalName, request.operationId)
+            .length > 0
+        ) {
+          throw new WorkspacePaneCreationError("pane_resource_changed", {
+            operationId: request.operationId,
+            workspaceName: workspace.name,
+          });
+        }
+        const createArgs =
+          placement.kind === "window"
+            ? [
+                "new-window",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}\t#{window_id}",
+                "-t",
+                `=${workspace.sessionName}:`,
+                "-c",
+                canonicalRoot,
+                "-n",
+                provisionalName!,
+              ]
+            : [
+                "split-window",
+                placement.direction === "right" ? "-h" : "-v",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}\t#{window_id}",
+                "-t",
+                this.#resolveSemanticPane(workspace.sessionName, placement.targetSemanticPaneId),
+                "-c",
+                canonicalRoot,
+              ];
+        for (const [key, value] of Object.entries(harness?.environment ?? {}).sort(([a], [b]) =>
+          a.localeCompare(b),
+        )) {
+          createArgs.push("-e", `${key}=${value}`);
+        }
+        if (harness) createArgs.push(harness.command.map(shellEscape).join(" "));
+        // A split has no provisional window name to recover by. Stamp the
+        // creation marker in the same tmux command queue as the split so a lost
+        // HTTP response or daemon crash cannot turn a retry into a second pane.
+        // `{next}` is resolved relative to the split source and names the pane
+        // tmux just inserted beside it, even though `-d` keeps the source active.
+        if (placement.kind === "split") {
+          createArgs.push(
+            ";",
+            "set-option",
+            "-p",
+            "-t",
+            "{next}",
+            CREATION_OPTION,
+            request.operationId,
+          );
+        }
+        let createOutput: string | null = null;
+        try {
+          createOutput = this.#io.runTmux(createArgs);
+        } catch (error) {
+          runtime =
+            placement.kind === "split"
+              ? this.#runtimeForCreationMarker(workspace.sessionName, request.operationId, "pane")
+              : null;
+          if (!runtime) {
+            if (this.#io.creationFailureCannotHaveMutated(error)) throw error;
+            throw new WorkspacePaneCreationError(
+              "pane_cleanup_unproven",
+              { operationId: request.operationId, workspaceName: workspace.name },
+              error,
+            );
+          }
+        }
+        if (!runtime) {
+          try {
+            runtime = parseCreatedRuntime(
+              createOutput!,
+              request.operationId,
+              runtimeScope,
+              provisionalName,
+            );
+          } catch (error) {
+            throw new WorkspacePaneCreationError(
+              "pane_cleanup_unproven",
+              { operationId: request.operationId, workspaceName: workspace.name },
+              error,
+            );
+          }
+        }
       }
       this.#assertActive(request.operationId);
 
@@ -818,12 +895,22 @@ export class WorkspacePaneCreationAuthority {
       for (const [option, value] of options) {
         this.#io.runTmux(["set-option", "-p", "-t", runtime.paneId, option, value]);
       }
-      this.#io.runTmux([
-        "rename-window",
-        "-t",
-        runtime.windowId,
-        tmuxFormatLiteral(resource.displayTitle),
-      ]);
+      if (runtime.scope === "window") {
+        this.#io.runTmux([
+          "rename-window",
+          "-t",
+          runtime.windowId,
+          tmuxFormatLiteral(resource.displayTitle),
+        ]);
+      } else {
+        this.#io.runTmux([
+          "select-pane",
+          "-t",
+          runtime.paneId,
+          "-T",
+          tmuxFormatLiteral(resource.displayTitle),
+        ]);
+      }
       const inspected = this.#io.runTmux(inspectArgs(runtime));
       if (!inspectMatches(inspected, runtime, resource)) {
         throw new WorkspacePaneCreationError("pane_creation_failed", {
@@ -858,7 +945,7 @@ export class WorkspacePaneCreationAuthority {
               },
               error,
             );
-      if (runtime && !this.#cleanupOwnedWindow(runtime)) {
+      if (runtime && !this.#cleanupOwnedRuntime(runtime)) {
         return this.#rememberFailure(
           request,
           requestFingerprint,
@@ -923,7 +1010,38 @@ export class WorkspacePaneCreationAuthority {
     });
   }
 
-  #cleanupOwnedWindow(runtime: RuntimePaneIdentity): boolean {
+  #resolveSemanticPane(sessionName: string, semanticPaneId: string): string {
+    const output = this.#io.runTmux([
+      "list-panes",
+      "-s",
+      "-t",
+      `=${sessionName}`,
+      "-F",
+      `#{pane_id}\t#{${SEMANTIC_PANE_OPTION}}`,
+    ]);
+    const matches = output
+      .split("\n")
+      .filter(Boolean)
+      .flatMap((line) => {
+        const [paneId, semanticId, extra] = line.split("\t");
+        if (extra !== undefined || !/^%[0-9]+$/u.test(paneId ?? "")) {
+          throw new WorkspacePaneCreationError("workspace_unavailable", {
+            reason: "pane_listing_shape",
+          });
+        }
+        return semanticId === semanticPaneId ? [paneId!] : [];
+      });
+    if (matches.length === 0) {
+      throw new WorkspacePaneCreationError("pane_not_found", { semanticPaneId });
+    }
+    if (matches.length > 1) {
+      throw new WorkspacePaneCreationError("ambiguous_target", { semanticPaneId });
+    }
+    return matches[0]!;
+  }
+
+  #cleanupOwnedRuntime(runtime: RuntimePaneIdentity): boolean {
+    if (runtime.scope === "pane") return this.#cleanupOwnedPane(runtime);
     try {
       const proof = this.#io.runTmux([
         "list-panes",
@@ -937,6 +1055,7 @@ export class WorkspacePaneCreationAuthority {
       const provisionalNameProvesPreMarkerOwnership =
         runtime.ownershipProof === "create-output" &&
         marker === "" &&
+        runtime.provisionalWindowName !== null &&
         windowName === runtime.provisionalWindowName;
       if (
         extra !== undefined ||
@@ -959,10 +1078,113 @@ export class WorkspacePaneCreationAuthority {
     }
   }
 
+  #cleanupOwnedPane(runtime: RuntimePaneIdentity): boolean {
+    try {
+      const proof = this.#io.runTmux([
+        "display-message",
+        "-p",
+        "-t",
+        runtime.paneId,
+        `#{pane_id}\t#{window_id}\t#{${CREATION_OPTION}}`,
+      ]);
+      if (proof !== `${runtime.paneId}\t${runtime.windowId}\t${runtime.creationId}`) return false;
+      this.#io.runTmux(["kill-pane", "-t", runtime.paneId]);
+      return true;
+    } catch {
+      try {
+        this.#io.runTmux(["display-message", "-p", "-t", runtime.paneId, "#{pane_id}"]);
+        return false;
+      } catch (error) {
+        return this.#io.isMissingTmuxTarget(error);
+      }
+    }
+  }
+
+  #runtimeForCreationMarker(
+    sessionName: string,
+    creationId: string,
+    scope: RuntimePaneIdentity["scope"],
+  ): RuntimePaneIdentity | null {
+    const output = this.#io.runTmux([
+      "list-panes",
+      "-s",
+      "-t",
+      `=${sessionName}`,
+      "-F",
+      `#{pane_id}\t#{window_id}\t#{${CREATION_OPTION}}`,
+    ]);
+    const matches = output
+      .split("\n")
+      .filter(Boolean)
+      .flatMap((line) => {
+        const [paneId, windowId, marker, extra] = line.split("\t");
+        if (
+          extra !== undefined ||
+          !/^%[0-9]+$/u.test(paneId ?? "") ||
+          !/^@[0-9]+$/u.test(windowId ?? "")
+        ) {
+          throw new WorkspacePaneCreationError("pane_resource_changed", { creationId });
+        }
+        return marker === creationId
+          ? [
+              {
+                paneId: paneId!,
+                windowId: windowId!,
+                creationId,
+                scope,
+                provisionalWindowName:
+                  scope === "window" ? provisionalWindowName(creationId) : null,
+                ownershipProof: "creation-marker" as const,
+              },
+            ]
+          : [];
+      });
+    if (matches.length === 0) return null;
+    if (matches.length > 1) {
+      throw new WorkspacePaneCreationError("pane_resource_changed", { creationId });
+    }
+    return matches[0]!;
+  }
+
+  #canResumeMarkedRuntime(
+    runtime: RuntimePaneIdentity,
+    resource: WorkspacePaneCreatedResource,
+  ): boolean {
+    const output = this.#io.runTmux([
+      "display-message",
+      "-p",
+      "-t",
+      runtime.paneId,
+      [
+        "#{pane_id}",
+        "#{window_id}",
+        `#{${SEMANTIC_PANE_OPTION}}`,
+        `#{${CREATION_OPTION}}`,
+        "#{@ide_type}",
+        "#{@ide_role}",
+        "#{@ide_name}",
+        `#{${HARNESS_OPTION}}`,
+        `#{${MISSION_OPTION}}`,
+      ].join("\t"),
+    ]);
+    const fields = output.split("\t");
+    if (
+      fields.length !== 9 ||
+      fields[0] !== runtime.paneId ||
+      fields[1] !== runtime.windowId ||
+      fields[3] !== runtime.creationId
+    ) {
+      return false;
+    }
+    const expected = expectedPaneFacts(resource, runtime.creationId);
+    return fields.slice(2).every((value, index) => value === "" || value === expected[index]);
+  }
+
   #completedRuntime(
     sessionName: string,
     creationId: string,
     resource: WorkspacePaneCreatedResource,
+    scope: RuntimePaneIdentity["scope"],
   ): RuntimePaneIdentity | null {
     const output = this.#io.runTmux([
       "list-panes",
@@ -990,7 +1212,8 @@ export class WorkspacePaneCreationAuthority {
         paneId: paneId!,
         windowId: windowId!,
         creationId,
-        provisionalWindowName: provisionalWindowName(creationId),
+        scope,
+        provisionalWindowName: scope === "window" ? provisionalWindowName(creationId) : null,
         ownershipProof: "creation-marker",
       });
     }
@@ -1003,15 +1226,17 @@ export class WorkspacePaneCreationAuthority {
     if (!inspectMatches(inspected, runtime, resource)) {
       throw new WorkspacePaneCreationError("pane_resource_changed", { creationId });
     }
-    const topology = this.#io.runTmux([
-      "list-panes",
-      "-t",
-      runtime.windowId,
-      "-F",
-      "#{pane_id}\t#{window_panes}",
-    ]);
-    if (topology !== `${runtime.paneId}\t1`) {
-      throw new WorkspacePaneCreationError("pane_resource_changed", { creationId });
+    if (scope === "window") {
+      const topology = this.#io.runTmux([
+        "list-panes",
+        "-t",
+        runtime.windowId,
+        "-F",
+        "#{pane_id}\t#{window_panes}",
+      ]);
+      if (topology !== `${runtime.paneId}\t1`) {
+        throw new WorkspacePaneCreationError("pane_resource_changed", { creationId });
+      }
     }
     return runtime;
   }

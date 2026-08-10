@@ -51,6 +51,7 @@ import type {
   PaneFrameGripIntent,
   PaneFrameModel,
 } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import { paneInteractionRelationshipLabel, type InteractionFeedState } from "@tmux-ide/core";
 import type {
   WorkbenchDockHostActionId,
   WorkbenchDockHostMode,
@@ -156,11 +157,17 @@ export interface DomApplicationShellProps {
   readonly reducedMotion?: boolean;
   readonly terminalThemeKey?: string;
   readonly onCommand?: (invocation: ApplicationShellCommandInvocation) => void;
+  /** Bounded causal receipts observed on this workspace's authority stream. */
+  readonly acknowledgedOperationIds?: readonly string[];
+  /** Replayable privacy-safe interaction feedback projected by shared core. */
+  readonly interactionFeed?: InteractionFeedState;
   readonly paneFrames?: readonly PaneFrameModel[];
   readonly terminalPanes?: readonly ApplicationShellTerminalPaneFrame[];
   readonly createPaneFlow?: {
     readonly catalogs: CreatePaneFlowCatalogs;
     readonly initialWorkspaceName: string;
+    readonly initialSemanticPaneId?: string | null;
+    readonly initialPaneLabel?: string;
     readonly onCommand: (invocation: WorkspacePaneCreateInvocation) => void | Promise<void>;
   };
   readonly onPaneAction?: (
@@ -338,6 +345,13 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const [paletteTransitionSource, setPaletteTransitionSource] = createSignal<"keyboard" | "mouse">(
     "keyboard",
   );
+  const [pendingAgentPaneSelection, setPendingAgentPaneSelection] = createSignal<string | null>(
+    null,
+  );
+  const [pendingAgentPaneOperationId, setPendingAgentPaneOperationId] = createSignal<string | null>(
+    null,
+  );
+  let pendingAgentPaneSelectionTimer: ReturnType<typeof setTimeout> | null = null;
   let titlebarStyle: RuntimeStyleBinding | null = null;
   let workbenchStyle: RuntimeStyleBinding | null = null;
   let previousInput = input();
@@ -423,6 +437,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   onCleanup(() => {
     titlebarStyle?.dispose();
     workbenchStyle?.dispose();
+    if (pendingAgentPaneSelectionTimer !== null) {
+      clearTimeout(pendingAgentPaneSelectionTimer);
+    }
   });
   const appWindowDocument = createMemo(() => {
     const value = input();
@@ -1017,6 +1034,122 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     props.onCommand?.(invocation);
   };
 
+  const sidebarAgentForPaneResource = (
+    paneResourceId: string,
+  ): ApplicationShellProjectionV1["sidebar"]["agents"][number] | null =>
+    shell().sidebar.agents.find((agent) => agent.paneId === paneResourceId) ?? null;
+
+  const paneResourceIdForSemanticPane = (semanticPaneId: string): string => {
+    const resource = shell().terminalInventory?.resources.find(
+      (candidate) =>
+        candidate.attachability.status === "available" &&
+        candidate.attachability.semanticPaneId === semanticPaneId,
+    );
+    return resource?.id ?? semanticPaneId;
+  };
+
+  const selectSidebarAgentForPane = (
+    paneResourceId: string,
+    source: "keyboard" | "mouse" | "programmatic",
+    surface: CommandSource["surface"] = "application-shell",
+  ): void => {
+    const agent = sidebarAgentForPaneResource(paneResourceId);
+    if (!agent || shell().sidebar.selectedResourceId === agent.id) return;
+    dispatch(
+      applicationShellCommandInvocation(
+        APPLICATION_SHELL_COMMAND_IDS.selectResource,
+        { surface: "terminals", resourceId: agent.id },
+        {
+          kind: source === "programmatic" ? "keyboard" : source,
+          surface,
+        },
+      ),
+    );
+  };
+
+  const beginPendingAgentPaneSelection = (paneResourceId: string): void => {
+    if (pendingAgentPaneSelectionTimer !== null) {
+      clearTimeout(pendingAgentPaneSelectionTimer);
+    }
+    setPendingAgentPaneSelection(paneResourceId);
+    setPendingAgentPaneOperationId(null);
+    // A selection is optimistic only while the daemon is expected to publish
+    // its fresh inventory. If that event never arrives, return to canonical
+    // tmux state instead of leaving the sidebar and terminal disagreeing.
+    pendingAgentPaneSelectionTimer = setTimeout(() => {
+      pendingAgentPaneSelectionTimer = null;
+      setPendingAgentPaneSelection(null);
+      setPendingAgentPaneOperationId(null);
+    }, 4_000);
+  };
+
+  const clearPendingAgentPaneSelection = (): void => {
+    if (pendingAgentPaneSelectionTimer !== null) {
+      clearTimeout(pendingAgentPaneSelectionTimer);
+      pendingAgentPaneSelectionTimer = null;
+    }
+    setPendingAgentPaneSelection(null);
+    setPendingAgentPaneOperationId(null);
+  };
+
+  createEffect(() => {
+    const operationId = pendingAgentPaneOperationId();
+    if (operationId && props.acknowledgedOperationIds?.includes(operationId)) {
+      clearPendingAgentPaneSelection();
+    }
+  });
+
+  createEffect(() => {
+    if (!workspaceConnected()) return;
+    const inventory = shell().terminalInventory;
+    if (!inventory?.activeResourceId) return;
+
+    const pending = pendingAgentPaneSelection();
+    if (pending) {
+      if (pending === inventory.activeResourceId) {
+        clearPendingAgentPaneSelection();
+      }
+      return;
+    }
+
+    const activeAgent = sidebarAgentForPaneResource(inventory.activeResourceId);
+    if (!activeAgent) return;
+    if (
+      shell().sidebar.selectedResourceId === activeAgent.id &&
+      shell().focus.terminalInputPaneId === inventory.activeResourceId
+    ) {
+      return;
+    }
+
+    // This is reconciliation from a daemon snapshot, not a new user command.
+    // Apply it locally so a second browser client changing tmux updates this
+    // client's chrome without echoing another mutation back to the daemon.
+    setState((current) => {
+      const focused = applyApplicationShellInvocationV1(
+        current,
+        applicationShellCommandInvocation(
+          APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+          {
+            target: {
+              kind: "pane",
+              paneId: inventory.activeResourceId!,
+              input: "terminal",
+            },
+          },
+          { kind: "keyboard", surface: "application-shell" },
+        ),
+      );
+      return applyApplicationShellInvocationV1(
+        focused,
+        applicationShellCommandInvocation(
+          APPLICATION_SHELL_COMMAND_IDS.selectResource,
+          { surface: "terminals", resourceId: activeAgent.id },
+          { kind: "keyboard", surface: "application-shell" },
+        ),
+      );
+    });
+  });
+
   createEffect(() => {
     const current = clientViewState();
     const projection = shell();
@@ -1042,6 +1175,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     if (windowId === null) return;
     const window = appWindowDocument()?.windows[windowId];
     if (!window || window.source.kind !== "terminal") return;
+    selectSidebarAgentForPane(window.source.terminalSourceId, source);
     dispatch(
       applicationShellCommandInvocation(
         APPLICATION_SHELL_COMMAND_IDS.moveFocus,
@@ -1073,6 +1207,58 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       });
     }
     moveTerminalFocus(windowId, source);
+  };
+
+  const activateSidebarAgent = (
+    agent: ApplicationShellProjectionV1["sidebar"]["agents"][number],
+    source: "keyboard" | "mouse",
+  ): void => {
+    const paneResourceId = agent.paneId;
+    const semanticPaneId = paneResourceId ? semanticPaneIdFor(paneResourceId) : null;
+    const willSelectTmuxPane =
+      paneResourceId !== null && semanticPaneId !== null && workspaceConnected();
+    if (willSelectTmuxPane) beginPendingAgentPaneSelection(paneResourceId);
+
+    dispatch(
+      applicationShellCommandInvocation(
+        APPLICATION_SHELL_COMMAND_IDS.selectResource,
+        { surface: "terminals", resourceId: agent.id },
+        { kind: source, surface: "sidebar" },
+      ),
+    );
+    if (!paneResourceId) return;
+
+    const appWindow = Object.values(appWindowDocument()?.windows ?? {}).find(
+      (window) =>
+        window.source.kind === "terminal" && window.source.terminalSourceId === paneResourceId,
+    );
+    if (appWindow) {
+      applyClientWindowFocus(appWindow.id, source);
+    } else {
+      dispatch(
+        applicationShellCommandInvocation(
+          APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+          {
+            target: { kind: "pane", paneId: paneResourceId, input: "terminal" },
+          },
+          { kind: source, surface: "application-shell" },
+        ),
+      );
+    }
+
+    if (!willSelectTmuxPane || !semanticPaneId) return;
+    void verbAccess
+      .invoke("pane.select", {
+        workspaceName: verbWorkspaceName(),
+        semanticPaneId,
+      })
+      .then((result) => {
+        if (result.status === "error") {
+          clearPendingAgentPaneSelection();
+        } else {
+          setPendingAgentPaneOperationId(result.result.operationId);
+        }
+      }, clearPendingAgentPaneSelection);
   };
 
   const acceptCanvasClientViewState = (next: ClientViewStateV1): void => {
@@ -1178,6 +1364,42 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
 
   const activatePaletteEntry = (entry: DomPaletteEntry, sourceKind: "keyboard" | "mouse"): void => {
     closePalette(sourceKind);
+    const target = entry.target;
+    if (target?.kind === "agent") {
+      const agent = shell().sidebar.agents.find(({ id }) => id === target.agentId);
+      if (agent) activateSidebarAgent(agent, sourceKind);
+      return;
+    }
+    if (target?.kind === "pane") {
+      const resource = shell().terminalInventory?.resources.find(
+        ({ id }) => id === target.resourceId,
+      );
+      if (!resource || resource.attachability.status !== "available") return;
+      const agent = sidebarAgentForPaneResource(resource.id);
+      if (agent) {
+        activateSidebarAgent(agent, sourceKind);
+        return;
+      }
+      dispatch(
+        applicationShellCommandInvocation(
+          APPLICATION_SHELL_COMMAND_IDS.selectResource,
+          { surface: "terminals", resourceId: resource.id },
+          { kind: sourceKind, surface: "command-palette" },
+        ),
+      );
+      dispatch(
+        applicationShellCommandInvocation(
+          APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+          { target: { kind: "pane", paneId: resource.id, input: "terminal" } },
+          { kind: sourceKind, surface: "command-palette" },
+        ),
+      );
+      void verbAccess.invoke("pane.select", {
+        workspaceName: verbWorkspaceName(),
+        semanticPaneId: resource.attachability.semanticPaneId,
+      });
+      return;
+    }
     const source = { kind: "palette", surface: "command-palette" } as const;
     for (const command of entry.commands) dispatch(invocationFromSurfaceCommand(command, source));
   };
@@ -1251,24 +1473,64 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                 (tool.data.kind === "missions" || tool.data.kind === "activity")
               }
             >
-              <MissionActivitySurface
-                mode={tool.id === "activity" ? "activity" : "missions"}
-                resource={missionWorkspace()}
-                selectedMissionId={
-                  state().selectedResources.find(({ surface }) => surface === "missions")
-                    ?.resourceId ?? null
-                }
-                selectedActivityId={
-                  state().selectedResources.find(({ surface }) => surface === "activity")
-                    ?.resourceId ?? null
-                }
-                onSelectMission={(missionId) => selectResource("missions", missionId)}
-                onSelectActivity={(activityId) => selectResource("activity", activityId)}
-                onOpenMissions={openMissionFromActivity}
-                onOpenActivity={openMissionActivity}
-                onOpenTerminals={returnToTerminals}
-                onRefresh={props.onRefreshResource}
-              />
+              <>
+                <Show
+                  when={tool.id === "activity" && (props.interactionFeed?.activity.length ?? 0) > 0}
+                >
+                  <section class="interaction-activity" aria-label="Terminal interactions">
+                    <header>
+                      <strong>Terminal interactions</strong>
+                      <span>privacy-safe receipts</span>
+                    </header>
+                    <ol>
+                      <For each={props.interactionFeed?.activity ?? []}>
+                        {(receipt) => (
+                          <li data-phase={receipt.phase}>
+                            <i aria-hidden="true" />
+                            <span>
+                              <strong>
+                                {paneInteractionRelationshipLabel(
+                                  {
+                                    origin: receipt.origin,
+                                    sourcePaneId: receipt.sourceSemanticPaneId,
+                                    destinationPaneId: receipt.semanticPaneId,
+                                  },
+                                  (paneId) => paneTitles().get(paneId) ?? paneId,
+                                )}
+                              </strong>
+                              <small>
+                                {receipt.origin} · {receipt.phase} ·{" "}
+                                {"observedOnly" in receipt.summary
+                                  ? "input observed"
+                                  : `${receipt.summary.characterCount} characters${receipt.summary.submitted ? " + Enter" : ""}`}
+                              </small>
+                            </span>
+                            <code>#{receipt.sequence}</code>
+                          </li>
+                        )}
+                      </For>
+                    </ol>
+                  </section>
+                </Show>
+                <MissionActivitySurface
+                  mode={tool.id === "activity" ? "activity" : "missions"}
+                  resource={missionWorkspace()}
+                  selectedMissionId={
+                    state().selectedResources.find(({ surface }) => surface === "missions")
+                      ?.resourceId ?? null
+                  }
+                  selectedActivityId={
+                    state().selectedResources.find(({ surface }) => surface === "activity")
+                      ?.resourceId ?? null
+                  }
+                  onSelectMission={(missionId) => selectResource("missions", missionId)}
+                  onSelectActivity={(activityId) => selectResource("activity", activityId)}
+                  onOpenMissions={openMissionFromActivity}
+                  onOpenActivity={openMissionActivity}
+                  onOpenTerminals={returnToTerminals}
+                  onRefresh={props.onRefreshResource}
+                />
+              </>
             </Match>
             <Match when={tool.data.kind === "files"}>
               <WorkspaceFilesSurface
@@ -1362,6 +1624,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               open={createPaneOpen()}
               catalogs={flow().catalogs}
               initialWorkspaceName={flow().initialWorkspaceName}
+              initialSemanticPaneId={flow().initialSemanticPaneId}
+              initialPaneLabel={flow().initialPaneLabel}
               onOpenChange={setCreatePaneOpen}
               onCommand={flow().onCommand}
             />
@@ -1509,16 +1773,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   aria-label={`${agent().name}, ${agent().activity}${agent().attention ? ", needs attention" : ""}`}
                   aria-pressed={shell().sidebar.selectedResourceId === agent().id}
                   onClick={(event) =>
-                    dispatch(
-                      applicationShellCommandInvocation(
-                        APPLICATION_SHELL_COMMAND_IDS.selectResource,
-                        { surface: "terminals", resourceId: agent().id },
-                        {
-                          kind: event.detail === 0 ? "keyboard" : "mouse",
-                          surface: "sidebar",
-                        },
-                      ),
-                    )
+                    activateSidebarAgent(agent(), event.detail === 0 ? "keyboard" : "mouse")
                   }
                 >
                   <i data-state={activityTone(agent().activity)} />
@@ -1763,6 +2018,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                     workspaceName={verbWorkspaceName()}
                     transport={props.terminalTransport}
                     paneFrames={renderedPaneFrames()}
+                    paneInteractions={props.interactionFeed?.panes}
+                    interactionSequence={props.interactionFeed?.sequence}
                     livePanes={livePaneIds()}
                     fallbackPane={activeSemanticPaneId()}
                     paneTitles={paneTitles()}
@@ -1810,21 +2067,23 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                         openSource: "contextmenu",
                       })
                     }
-                    onFocusPane={(semanticPaneId, source) =>
+                    onFocusPane={(semanticPaneId, source) => {
+                      const paneResourceId = paneResourceIdForSemanticPane(semanticPaneId);
+                      selectSidebarAgentForPane(paneResourceId, source);
                       dispatch(
                         applicationShellCommandInvocation(
                           APPLICATION_SHELL_COMMAND_IDS.moveFocus,
                           {
                             target: {
                               kind: "pane",
-                              paneId: semanticPaneId,
+                              paneId: paneResourceId,
                               input: "terminal",
                             },
                           },
                           { kind: source, surface: "application-shell" },
                         ),
-                      )
-                    }
+                      );
+                    }}
                   />
                 </Show>
               }

@@ -4,7 +4,9 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 
 import {
+  PANE_COMMUNICATION_HIGHLIGHT_MS,
   WorkspaceTiledSurface,
+  paneCommunicationCopy,
   renderedTerminalGridRect,
   terminalGridOverlayBox,
 } from "./workspace-tiled-surface.tsx";
@@ -38,6 +40,20 @@ const SPLIT = layout({
   panes: [
     { pane: "pane.a", left: 0, top: 0, width: 99, height: 50, active: true },
     { pane: "pane.b", left: 100, top: 0, width: 100, height: 50, active: false },
+  ],
+});
+
+const SWAPPED_SPLIT = layout({
+  panes: [
+    { pane: "pane.a", left: 100, top: 0, width: 100, height: 50, active: true },
+    { pane: "pane.b", left: 0, top: 0, width: 99, height: 50, active: false },
+  ],
+});
+
+const STACKED = layout({
+  panes: [
+    { pane: "pane.a", left: 0, top: 0, width: 200, height: 24, active: true },
+    { pane: "pane.b", left: 0, top: 25, width: 200, height: 25, active: false },
   ],
 });
 
@@ -237,6 +253,167 @@ describe("the layout-faithful workspace view", () => {
     expect(headers.every((header) => !header.style.height.includes("calc"))).toBe(true);
   });
 
+  it("selects and copies text from the visible composed pane", () => {
+    const recording = createRecordingMirrorRendererFactory();
+    const onFocusPane = vi.fn();
+    const mirror: AppWindowCanvasMirrorProps = {
+      enabled: true,
+      onToggle: vi.fn(),
+      nodes: [
+        {
+          pane: "pane.a",
+          title: "Editor",
+          frame: null,
+          state: { kind: "live", flowPaused: false },
+          registerSink: () => () => undefined,
+        },
+      ],
+      connection: { kind: "connected" },
+      onRetry: vi.fn(),
+      rendererFactory: recording.factory,
+    };
+    const { root } = renderSurface([layout()], { mirror, onFocusPane });
+    const body = root.querySelector<HTMLElement>(
+      '.pane-tile[data-composed="true"] > .pane-tile__body',
+    )!;
+
+    body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+    expect(onFocusPane).toHaveBeenCalledWith("pane.a", "mouse");
+
+    recording.renderers[0]!.emitSelection("selected terminal text");
+    const setData = vi.fn();
+    const copy = new Event("copy", { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(copy, "clipboardData", { value: { setData } });
+    body.dispatchEvent(copy);
+
+    expect(setData).toHaveBeenCalledWith("text/plain", "selected terminal text");
+    expect(copy.defaultPrevented).toBe(true);
+  });
+
+  it("highlights both endpoints of an authenticated pane relationship", () => {
+    vi.useFakeTimers();
+    const [feed, setFeed] = createSignal<{
+      sequence: number;
+      panes: NonNullable<Parameters<typeof WorkspaceTiledSurface>[0]["paneInteractions"]>;
+    }>({ sequence: 0, panes: {} });
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WorkspaceTiledSurface
+            layouts={[SPLIT]}
+            workspaceName="workspace.product"
+            transport={null}
+            paneFrames={[]}
+            paneTitles={
+              new Map([
+                ["pane.a", "Editor"],
+                ["pane.b", "Tests"],
+              ])
+            }
+            verbs={{ workspaceConnected: true, invoke: vi.fn() }}
+            paneInteractions={feed().panes}
+            interactionSequence={feed().sequence}
+          />
+        ),
+        root,
+      ),
+    );
+
+    setFeed({
+      sequence: 42,
+      panes: {
+        "pane.a": {
+          paneId: "pane.a",
+          direction: "outgoing",
+          sourcePaneId: "pane.a",
+          destinationPaneId: "pane.b",
+          operationKind: "workspace.pane.send",
+          operationId: "10000000-0000-4000-8000-000000000042",
+          phase: "applied",
+          origin: "sdk",
+          label: "sdk applied · delivered 12 characters + Enter",
+          sequence: 42,
+          at: "2026-08-10T10:00:00.000Z",
+        },
+        "pane.b": {
+          paneId: "pane.b",
+          direction: "incoming",
+          sourcePaneId: "pane.a",
+          destinationPaneId: "pane.b",
+          operationKind: "workspace.pane.send",
+          operationId: "10000000-0000-4000-8000-000000000042",
+          phase: "applied",
+          origin: "sdk",
+          label: "sdk applied · delivered 12 characters + Enter",
+          sequence: 42,
+          at: "2026-08-10T10:00:00.000Z",
+        },
+      },
+    });
+
+    const source = root.querySelector<HTMLElement>('.pane-tile[data-pane="pane.a"]')!;
+    const target = root.querySelector<HTMLElement>('.pane-tile[data-pane="pane.b"]')!;
+    expect(source.dataset.communicationActive).toBe("true");
+    expect(source.dataset.communicationDirection).toBe("outgoing");
+    expect(source.querySelector(".pane-tile__communication")?.textContent).toContain(
+      "Editor → Tests",
+    );
+    expect(target.dataset.communicationActive).toBe("true");
+    expect(target.dataset.communicationDirection).toBe("incoming");
+    expect(target.querySelector(".pane-tile__communication")?.textContent).toContain(
+      "Editor → Tests",
+    );
+
+    vi.advanceTimersByTime(PANE_COMMUNICATION_HIGHLIGHT_MS);
+    expect(source.dataset.communicationActive).toBeUndefined();
+    expect(target.dataset.communicationActive).toBeUndefined();
+    expect(target.querySelector(".pane-tile__communication")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("uses honest privacy-safe copy for observed and authored pane sends", () => {
+    const common = {
+      paneId: "pane.b",
+      direction: "incoming" as const,
+      sourcePaneId: null,
+      destinationPaneId: "pane.b",
+      operationKind: "workspace.pane.send" as const,
+      operationId: "10000000-0000-4000-8000-000000000042",
+      sequence: 42,
+      at: "2026-08-10T10:00:00.000Z",
+    } as const;
+    expect(
+      paneCommunicationCopy({
+        ...common,
+        phase: "observed",
+        origin: "external",
+        label: "external observed · input observed",
+      }),
+    ).toEqual({ headline: "External input → pane.b", detail: "tmux send-keys" });
+    expect(
+      paneCommunicationCopy({
+        ...common,
+        phase: "applied",
+        origin: "sdk",
+        label: "sdk applied · delivered 12 characters + Enter",
+      }),
+    ).toEqual({
+      headline: "SDK input → pane.b",
+      detail: "sdk applied · delivered 12 characters + Enter",
+    });
+    expect(
+      paneCommunicationCopy({
+        ...common,
+        operationKind: "workspace.pane.read",
+        phase: "observed",
+        origin: "external",
+        label: "external observed · pane read observed",
+      }),
+    ).toEqual({ headline: "External reader reads pane.b", detail: "tmux capture-pane" });
+  });
+
   it("renders agent identity and live state in both the process tab and pane card", () => {
     const base = createDefaultDomPaneFrames()[0]!;
     const frame = {
@@ -371,17 +548,133 @@ describe("the layout-faithful workspace view", () => {
     expect(invoke).toHaveBeenCalledWith("pane.swap", "pane.a", {
       swapTargetSemanticPaneId: "pane.b",
     });
+    expect(root.querySelector(".pane-drop-ghost")).toBeNull();
+    expect(root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPhase).toBe(
+      "swap-committing",
+    );
+    expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')!.dataset.elevated).toBe("false");
+  });
+
+  it("adopts the confirming tmux swap without replaying a FLIP transition", async () => {
+    /*
+     * Regression: release painted the optimistic destination, then the
+     * confirming frame cleared its transform under an idle CSS transition and
+     * FLIP sampled that interpolated box. The pane visibly moved, reverted and
+     * moved again. A confirmed direct manipulation is already at its final
+     * pixels, so adopting the authoritative base geometry must be animation-free.
+     */
+    const [frames, setFrames] = createSignal<readonly PaneStreamLayoutEvent[]>([SPLIT]);
+    const invoke = vi.fn((verb: string) => {
+      if (verb === "pane.swap") setFrames([SWAPPED_SPLIT]);
+      return Promise.resolve({ status: "ok" as const });
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WorkspaceTiledSurface
+            layouts={frames()}
+            workspaceName="workspace.product"
+            transport={null}
+            paneFrames={[]}
+            verbs={{ workspaceConnected: true, invoke }}
+          />
+        ),
+        root,
+      ),
+    );
+    const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
+    overlay.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1_000, height: 500, right: 1_000, bottom: 500 }) as DOMRect;
+    const animate = vi.fn(() => ({
+      cancel: vi.fn(),
+      finished: Promise.resolve(),
+    }));
+    for (const tile of root.querySelectorAll<HTMLElement>(".pane-tile")) {
+      Object.defineProperty(tile, "animate", { configurable: true, value: animate });
+    }
+    // Let the initial authoritative snapshot seed before the gesture begins.
+    await Promise.resolve();
+
+    const header = root.querySelector<HTMLElement>('[data-pane="pane.a"] .pane-tile__header')!;
+    header.setPointerCapture = () => undefined;
+    header.releasePointerCapture = () => undefined;
+    const pointer = (type: string, x: number): PointerEvent => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 10 });
+      Object.defineProperties(event, {
+        pointerId: { value: 8 },
+        isPrimary: { value: true },
+        pointerType: { value: "mouse" },
+      });
+      return event as PointerEvent;
+    };
+    header.dispatchEvent(pointer("pointerdown", 250));
+    header.dispatchEvent(pointer("pointermove", 750));
+    header.dispatchEvent(pointer("pointerup", 750));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const area = root.querySelector<HTMLElement>(".tiled-pane-area")!;
+    expect(area.dataset.manipulationPhase).toBe("idle");
+    expect(area.dataset.layoutTransitionRevision).toBe("0");
+    expect(animate).not.toHaveBeenCalled();
+    expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')!.style.left).toBe("49.7500%");
+    expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')!.style.transform).toBe("");
   });
 
   it("puts a draggable border on tmux's own border cell, and none when there is one pane", () => {
     const { root } = renderSurface([SPLIT]);
     const border = root.querySelector<HTMLElement>(".pane-border")!;
     expect(border.dataset.orientation).toBe("vertical");
-    expect(border.style.left).toBe("49.5000%");
+    expect(border.style.left).toBe("calc(49.7500% - 4px)");
+    expect(border.style.width).toBe("8px");
     expect(border.tabIndex).toBe(0);
     expect(border.getAttribute("aria-valuenow")).toBe("99");
     expect(border.getAttribute("aria-valuemax")).toBe("200");
     expect(renderSurface([layout()]).root.querySelectorAll(".pane-border")).toHaveLength(0);
+  });
+
+  it("keeps pointer resize on the compositor and commits to tmux only on release", () => {
+    const { root, invoke } = renderSurface([SPLIT]);
+    const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
+    overlay.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1_000, height: 500, right: 1_000, bottom: 500 }) as DOMRect;
+    const border = root.querySelector<HTMLElement>('.pane-border[data-orientation="vertical"]')!;
+    border.setPointerCapture = () => undefined;
+    border.releasePointerCapture = () => undefined;
+    const pointer = (type: string, x: number): PointerEvent => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 200 });
+      Object.defineProperties(event, {
+        pointerId: { value: 9 },
+        isPrimary: { value: true },
+        pointerType: { value: "mouse" },
+      });
+      return event as PointerEvent;
+    };
+    const left = root.querySelector<HTMLElement>('[data-pane="pane.a"]')!;
+    const right = root.querySelector<HTMLElement>('[data-pane="pane.b"]')!;
+    const baseWidths = [left.style.width, right.style.width];
+
+    border.dispatchEvent(pointer("pointerdown", 500));
+    border.dispatchEvent(pointer("pointermove", 550));
+
+    expect([left.style.width, right.style.width]).toEqual(baseWidths);
+    expect(left.style.transform).toContain("scale(");
+    expect(right.style.transform).toContain("scale(");
+    expect(invoke.mock.calls.filter(([verb]) => verb === "pane.resize")).toHaveLength(0);
+
+    border.dispatchEvent(pointer("pointerup", 550));
+    expect(invoke.mock.calls.filter(([verb]) => verb === "pane.resize")).toEqual([
+      ["pane.resize", "pane.a", { resize: { axis: "cols", cells: 109 } }],
+    ]);
+  });
+
+  it("keeps horizontal resize authority on the edge instead of consuming panel chrome", () => {
+    const { root } = renderSurface([STACKED]);
+    const border = root.querySelector<HTMLElement>('.pane-border[data-orientation="horizontal"]')!;
+    expect(border.style.top).toMatch(/^calc\(.+% - 4px\)$/u);
+    expect(border.style.height).toBe("8px");
   });
 
   it("resizes a focused separator one cell with its directional arrow key", () => {
@@ -455,7 +748,10 @@ describe("the layout-faithful workspace view", () => {
     expect(root.querySelector(".pane-resize-hud")?.textContent).toContain("101 cols");
     expect(root.querySelector(".pane-resize-hud")?.textContent).toContain("+2");
     border.dispatchEvent(pointer("pointerup", 505));
-    expect(root.querySelector(".pane-resize-hud")?.textContent).toContain("101 cols");
+    expect(root.querySelector(".pane-resize-hud")).toBeNull();
+    expect(root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPhase).toBe(
+      "resize-committing",
+    );
 
     const resizes = invoke.mock.calls.filter(([verbId]) => verbId === "pane.resize");
     expect(resizes.length, "the release did not flush a resize").toBe(1);

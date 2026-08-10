@@ -3,6 +3,12 @@ import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from
 import { EmptyState } from "../ui-system/index.ts";
 import { DomIcon } from "./dom-icon.tsx";
 import type { DomPaletteEntry } from "./dom-shell.ts";
+import {
+  NAVIGATOR_SCOPES,
+  navigatorEntryMatches,
+  parseNavigatorQuery,
+  type NavigatorScope,
+} from "@tmux-ide/core";
 
 export interface CommandPaletteProps {
   readonly open: boolean;
@@ -103,6 +109,7 @@ function edgeEnabledIndex(entries: readonly DomPaletteEntry[], fromEnd: boolean)
 
 export function CommandPalette(props: CommandPaletteProps) {
   const [query, setQuery] = createSignal("");
+  const [selectedScope, setSelectedScope] = createSignal<NavigatorScope>("all");
   const [selectedIndex, setSelectedIndex] = createSignal(0);
   const [hoveredIndex, setHoveredIndex] = createSignal<number | null>(null);
   let overlay: HTMLDivElement | undefined;
@@ -110,9 +117,19 @@ export function CommandPalette(props: CommandPaletteProps) {
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   const options: Array<HTMLElement | undefined> = [];
 
-  const filteredEntries = createMemo(() =>
-    rankDomPaletteEntries(props.entries, query()).map(({ entry }) => entry),
+  const parsedQuery = createMemo(() => parseNavigatorQuery(query()));
+  const effectiveScope = createMemo(() =>
+    parsedQuery().scope === "all" ? selectedScope() : parsedQuery().scope,
   );
+  const filteredEntries = createMemo(() => {
+    const parsed = parsedQuery();
+    return rankDomPaletteEntries(
+      props.entries.filter((entry) =>
+        navigatorEntryMatches(entry, { scope: effectiveScope(), status: parsed.status }),
+      ),
+      parsed.query,
+    ).map(({ entry }) => entry);
+  });
   const groupedEntries = createMemo(() => {
     const groups = new Map<
       string,
@@ -152,6 +169,7 @@ export function CommandPalette(props: CommandPaletteProps) {
           closeTimer = undefined;
         }
         setQuery("");
+        setSelectedScope("all");
         setSelectedIndex(edgeEnabledIndex(props.entries, false));
         setHoveredIndex(null);
         queueMicrotask(() => input?.focus());
@@ -234,9 +252,9 @@ export function CommandPalette(props: CommandPaletteProps) {
         onKeyDown={handleKeyDown}
       >
         <header class="command-palette__header">
-          <h2 id="application-command-palette-title">Command menu</h2>
+          <h2 id="application-command-palette-title">Navigator</h2>
           <p id="application-command-palette-description">
-            Navigate the workspace and open workbench tools
+            Find workspaces, agents, panes, and commands
           </p>
         </header>
         <div class="command-palette__query">
@@ -248,7 +266,7 @@ export function CommandPalette(props: CommandPaletteProps) {
             id={PALETTE_INPUT_ID}
             type="text"
             role="combobox"
-            aria-label="Search commands"
+            aria-label="Search everything"
             aria-autocomplete="list"
             aria-expanded={props.open}
             aria-controls={PALETTE_LIST_ID}
@@ -257,12 +275,33 @@ export function CommandPalette(props: CommandPaletteProps) {
             }
             aria-keyshortcuts="ArrowDown ArrowUp Home End Enter Escape"
             autocomplete="off"
-            placeholder="Search commands…"
+            placeholder="Search everything…"
             value={query()}
             onInput={(event) => setQuery(event.currentTarget.value)}
           />
           <kbd>Esc</kbd>
         </div>
+        <nav class="command-palette__scopes" aria-label="Navigator scopes">
+          <For each={NAVIGATOR_SCOPES}>
+            {(scope) => (
+              <button
+                type="button"
+                classList={{ "command-palette__scope--active": effectiveScope() === scope }}
+                aria-pressed={effectiveScope() === scope}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setSelectedScope(scope);
+                  queueMicrotask(() => input?.focus());
+                }}
+              >
+                {scope[0]!.toLocaleUpperCase() + scope.slice(1)}
+              </button>
+            )}
+          </For>
+          <span>
+            <code>#blocked</code> <code>#working</code>
+          </span>
+        </nav>
         <div class="command-palette__rule" />
         <div
           id={PALETTE_LIST_ID}
@@ -331,10 +370,10 @@ export function CommandPalette(props: CommandPaletteProps) {
               size="compact"
               live="polite"
               icon={<DomIcon id="search" usage="action" />}
-              title="No commands found"
+              title="No results found"
               description={
                 <>
-                  Nothing matches <strong>{query()}</strong>. Try a surface, panel, or tool name.
+                  Nothing matches <strong>{query()}</strong> in {effectiveScope()}.
                 </>
               }
             />
@@ -351,7 +390,7 @@ export function CommandPalette(props: CommandPaletteProps) {
           <span>
             <kbd>Esc</kbd> Close
           </span>
-          <span class="command-palette__count">{filteredEntries().length} commands</span>
+          <span class="command-palette__count">{filteredEntries().length} results</span>
         </footer>
       </section>
     </div>

@@ -190,6 +190,43 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const DAEMON_ATTACHABILITY_TIMEOUT_MS = 15_000;
+const DAEMON_ATTACHABILITY_POLL_MS = 25;
+
+function isTransientAttachabilityError(error: unknown): error is IdeError {
+  return (
+    error instanceof IdeError &&
+    (error.code === "DAEMON_IDENTITY_UNAVAILABLE" || error.code === "DAEMON_UNHEALTHY")
+  );
+}
+
+async function waitForAttachableDaemon(
+  deps: HeadlessDaemonDependencies,
+  info: CanonicalDaemonInfo,
+  options: HeadlessDaemonOptions,
+  timeoutMs = DAEMON_ATTACHABILITY_TIMEOUT_MS,
+  shouldAbort: () => boolean = () => false,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      await assertAttachableDaemon(deps, info, options);
+      return;
+    } catch (error) {
+      if (!isTransientAttachabilityError(error)) throw error;
+      if (shouldAbort() || Date.now() >= deadline) throw error;
+    }
+    await delay(DAEMON_ATTACHABILITY_POLL_MS);
+  }
+}
+
+function publishedStartupGraceMs(state: CanonicalDaemonInfoState): number {
+  if (state.status !== "valid") return 0;
+  const startedAt = Date.parse(state.info.startedAt);
+  if (!Number.isFinite(startedAt)) return 0;
+  return Math.max(0, DAEMON_ATTACHABILITY_TIMEOUT_MS - Math.max(0, Date.now() - startedAt));
+}
+
 async function waitForCanonicalWinner(
   deps: HeadlessDaemonDependencies,
   options: HeadlessDaemonOptions,
@@ -201,12 +238,7 @@ async function waitForCanonicalWinner(
       const winner = await findLiveCanonicalDaemon(deps, options);
       if (winner) return winner;
     } catch (error) {
-      if (
-        !(error instanceof IdeError) ||
-        (error.code !== "DAEMON_IDENTITY_UNAVAILABLE" && error.code !== "DAEMON_UNHEALTHY")
-      ) {
-        throw error;
-      }
+      if (!isTransientAttachabilityError(error)) throw error;
       // The claim winner has published enough metadata to identify its PID but
       // has not completed the endpoint handshake yet.
     }
@@ -237,7 +269,25 @@ export async function runHeadlessDaemon(
   deps.onSignal("SIGINT", requestStop);
   deps.onSignal("SIGTERM", requestStop);
   try {
-    const existing = await findLiveCanonicalDaemon(deps, options);
+    let existing: CanonicalDaemonInfo | null;
+    try {
+      existing = await findLiveCanonicalDaemon(deps, options);
+    } catch (error) {
+      if (!isTransientAttachabilityError(error)) throw error;
+
+      // A freshly published owner may still be starting its HTTP accept loop,
+      // especially when many CLI bundles cold-start together. Give only that
+      // young generation a bounded stabilization window; an older unhealthy
+      // owner remains a fail-fast error and is never silently replaced.
+      const startupGraceMs = publishedStartupGraceMs(deps.inspectCanonicalDaemonInfo());
+      if (startupGraceMs <= 0) throw error;
+      existing = await waitForCanonicalWinner(deps, options, startupGraceMs);
+      if (!existing) {
+        // Distinguish a winner which died during startup (safe to claim) from
+        // one which remains alive but unavailable (must still be refused).
+        existing = await findLiveCanonicalDaemon(deps, options);
+      }
+    }
     if (existing) {
       emitStatus(deps, options.json === true, "already-running", existing);
       return "already-running";
@@ -326,7 +376,16 @@ export async function runHeadlessDaemon(
       });
     }
     try {
-      await assertAttachableDaemon(deps, info, options);
+      // Publication precedes the external handshake. Under CPU or module-load
+      // contention, one 750ms loopback probe is not a sound reason for the
+      // elected owner to tear itself down and trigger generation churn.
+      await waitForAttachableDaemon(
+        deps,
+        info,
+        options,
+        DAEMON_ATTACHABILITY_TIMEOUT_MS,
+        () => signalRequested,
+      );
     } catch (error) {
       await handle.stop().catch(() => undefined);
       if (signalRequested) {

@@ -349,6 +349,7 @@ const APP_KEY_ROWS: ReadonlyArray<{ label: string; keycap: string; paletteAction
   { label: "Changes", keycap: "F4", paletteAction: "surface:changes" },
   { label: "Missions", keycap: "F6", paletteAction: "surface:missions" },
   { label: "Activity", keycap: "F9", paletteAction: "surface:activity" },
+  { label: "Cycle workspace focus", keycap: "F8 · ^tab" },
   { label: "Save file", keycap: "^s", paletteAction: "save" },
   { label: "Back to Home", keycap: "^g" },
   { label: "Toggle editor", keycap: "^e" },

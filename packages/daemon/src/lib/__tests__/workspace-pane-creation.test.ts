@@ -50,7 +50,12 @@ class FakeTmux {
   failOption: string | null = null;
   mutateOwnerOnFailure = false;
   windowName = "";
+  paneTitle = "";
   paneCount = 1;
+  sourceExists = false;
+  sourcePaneId = "%1";
+  sourceWindowId = "@1";
+  sourceSemanticPaneId = "pane.editor";
   readonly missingTargets = new Set<string>();
   malformedCreateOutput = false;
   throwAfterCreate = false;
@@ -74,6 +79,17 @@ class FakeTmux {
         this.paneCount = 1;
         if (this.throwAfterCreate) throw new Error("uncertain create failure");
         return this.malformedCreateOutput ? "malformed" : `${this.paneId}\t${this.windowId}`;
+      case "split-window":
+        this.creations += 1;
+        this.paneId = `%${6 + this.creations}`;
+        this.windowId = this.sourceWindowId;
+        this.exists = true;
+        this.options.clear();
+        this.paneTitle = "";
+        this.paneCount = 2;
+        if (args.includes(";")) this.options.set("@tmux_ide_creation_id", args.at(-1)!);
+        if (this.throwAfterCreate) throw new Error("uncertain create failure");
+        return this.malformedCreateOutput ? "malformed" : `${this.paneId}\t${this.windowId}`;
       case "set-option": {
         const option = args.at(-2)!;
         const value = args.at(-1)!;
@@ -90,7 +106,12 @@ class FakeTmux {
         const target = args[args.indexOf("-t") + 1];
         if (target && this.missingTargets.has(target)) throw new Error("missing target");
         if (target === `=${this.windowId}`) return this.windowId;
-        return [
+        if (args.at(-1) === "#{pane_id}\t#{window_id}\t#{@tmux_ide_creation_id}") {
+          return [this.paneId, this.windowId, this.options.get("@tmux_ide_creation_id") ?? ""].join(
+            "\t",
+          );
+        }
+        const paneFacts = [
           this.paneId,
           this.windowId,
           this.options.get("@tmux_ide_pane_id") ?? "",
@@ -100,11 +121,33 @@ class FakeTmux {
           this.options.get("@ide_name") ?? "",
           this.options.get("@tmux_ide_harness") ?? "",
           this.options.get("@tmux_ide_mission") ?? "",
-          this.windowName,
+        ];
+        if (!args.at(-1)?.includes("#{pane_title}") && !args.at(-1)?.includes("#{window_name}")) {
+          return paneFacts.join("\t");
+        }
+        return [
+          ...paneFacts,
+          args.at(-1)?.includes("#{pane_title}") ? this.paneTitle : this.windowName,
         ].join("\t");
       }
       case "list-panes":
         if (args.includes("-s")) {
+          const format = args.at(-1);
+          if (format === "#{pane_id}\t#{@tmux_ide_pane_id}") {
+            return [
+              ...(this.sourceExists ? [`${this.sourcePaneId}\t${this.sourceSemanticPaneId}`] : []),
+              ...(this.exists
+                ? [`${this.paneId}\t${this.options.get("@tmux_ide_pane_id") ?? ""}`]
+                : []),
+            ].join("\n");
+          }
+          if (format === "#{pane_id}\t#{window_id}\t#{@tmux_ide_creation_id}") {
+            return this.exists
+              ? [this.paneId, this.windowId, this.options.get("@tmux_ide_creation_id") ?? ""].join(
+                  "\t",
+                )
+              : "";
+          }
           if (!this.exists) return "";
           return [
             this.paneId,
@@ -140,9 +183,17 @@ class FakeTmux {
       case "rename-window":
         this.windowName = args.at(-1)!;
         return "";
+      case "select-pane":
+        this.paneTitle = args.at(-1)!;
+        return "";
       case "kill-window":
         if (!this.exists) throw new Error("missing");
         this.exists = false;
+        return "";
+      case "kill-pane":
+        if (!this.exists) throw new Error("missing");
+        this.exists = false;
+        this.paneCount = 1;
         return "";
       default:
         throw new Error(`unexpected tmux command ${String(args[0])}`);
@@ -275,6 +326,138 @@ describe("WorkspacePaneCreationAuthority", () => {
       role: "implementer",
       missionId: "mis_alpha",
     });
+  });
+
+  it("creates and replays an agent split using only a durable target identity", async () => {
+    const fake = new FakeTmux();
+    fake.sourceExists = true;
+    const { authority } = rig({ fake });
+    const splitRequest = request({
+      intent: {
+        kind: "agent",
+        workspaceName: "workspace.alpha",
+        displayTitle: "Reviewer",
+        harnessProfileId: "codex",
+        role: "reviewer",
+        placement: {
+          kind: "split",
+          direction: "right",
+          targetSemanticPaneId: "pane.editor",
+        },
+      },
+    });
+
+    const created = await authority.create(splitRequest);
+    expect(fake.calls.find((call) => call[0] === "split-window")).toEqual([
+      "split-window",
+      "-h",
+      "-d",
+      "-P",
+      "-F",
+      "#{pane_id}\t#{window_id}",
+      "-t",
+      "%1",
+      "-c",
+      "/canonical/project",
+      "-e",
+      "LANG=en_US.UTF-8",
+      "-e",
+      "TMUX_IDE_ROLE=worker",
+      "'/opt/bin/codex' '--approval-mode' 'safe'",
+      ";",
+      "set-option",
+      "-p",
+      "-t",
+      "{next}",
+      "@tmux_ide_creation_id",
+      OPERATION,
+    ]);
+    expect(fake.calls.some((call) => call[0] === "new-window")).toBe(false);
+    expect(fake.paneTitle).toBe("Reviewer");
+    expect(created.resource.semanticPaneId).toBe("pane.10000000000040008000000000000001");
+
+    const replayed = await authority.create(splitRequest);
+    expect(replayed.outcome).toBe("replayed");
+    expect(fake.creations).toBe(1);
+  });
+
+  it("refuses a split whose semantic target is absent without mutating tmux", async () => {
+    const { authority, fake } = rig();
+    await expect(
+      authority.create(
+        request({
+          intent: {
+            kind: "agent",
+            workspaceName: "workspace.alpha",
+            harnessProfileId: "codex",
+            role: "implementer",
+            placement: {
+              kind: "split",
+              direction: "down",
+              targetSemanticPaneId: "pane.missing",
+            },
+          },
+        }),
+      ),
+    ).rejects.toSatisfy((error: unknown) => errorCode(error) === "pane_not_found");
+    expect(fake.creations).toBe(0);
+  });
+
+  it("recovers an ambiguously returned split by its atomically queued creation marker", async () => {
+    const fake = new FakeTmux();
+    fake.sourceExists = true;
+    fake.throwAfterCreate = true;
+    const { authority } = rig({ fake });
+
+    const result = await authority.create(
+      request({
+        intent: {
+          kind: "agent",
+          workspaceName: "workspace.alpha",
+          harnessProfileId: "codex",
+          role: "implementer",
+          placement: {
+            kind: "split",
+            direction: "down",
+            targetSemanticPaneId: "pane.editor",
+          },
+        },
+      }),
+    );
+
+    expect(result.outcome).toBe("created");
+    expect(fake.creations).toBe(1);
+    expect(fake.options.get("@tmux_ide_creation_id")).toBe(OPERATION);
+  });
+
+  it("resumes a split left between its atomic marker and semantic stamping", async () => {
+    const fake = new FakeTmux();
+    fake.sourceExists = true;
+    fake.exists = true;
+    fake.windowId = fake.sourceWindowId;
+    fake.paneCount = 2;
+    fake.options.set("@tmux_ide_creation_id", OPERATION);
+    const { authority } = rig({ fake });
+
+    const result = await authority.create(
+      request({
+        intent: {
+          kind: "agent",
+          workspaceName: "workspace.alpha",
+          harnessProfileId: "codex",
+          role: "implementer",
+          placement: {
+            kind: "split",
+            direction: "right",
+            targetSemanticPaneId: "pane.editor",
+          },
+        },
+      }),
+    );
+
+    expect(result.outcome).toBe("created");
+    expect(fake.creations).toBe(0);
+    expect(fake.options.get("@tmux_ide_pane_id")).toBe("pane.10000000000040008000000000000001");
   });
 
   it("loads a workspace-defined harness capability without accepting renderer command data", async () => {

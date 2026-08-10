@@ -7,9 +7,9 @@
  * binary (see scripts/build-tui.mjs) which bundles every surface behind a
  * `<surface> [flags]` argv dispatcher and needs no runtime.
  *
- * Order is "checkout first, binary second": a dev machine that happens to have
- * built the binary still uses its live `.tsx` sources. The binary is consulted
- * only when the checkout sources or `bun` are missing. {@link findCompiledTui}
+ * Order is "compiled first, source fallback": interactive startup should not
+ * pay Bun's 1s+ TypeScript/JSX module load on every launch. Developers can set
+ * `TMUX_IDE_TUI_SOURCE=1` to opt into live `.tsx` sources. {@link findCompiledTui}
  * probes the shipped/local compiled binary first, then a per-platform binary
  * downloaded at runtime into `~/.tmux-ide/bin/` (see lib/tui-binary.ts).
  *
@@ -42,6 +42,8 @@ export interface TuiResolveInput {
   bunAvailable: boolean;
   /** Absolute path to the compiled `tmux-ide-tui`, or null if not found. */
   compiledBinary: string | null;
+  /** Explicit development override; ordinary launches prefer the fast binary. */
+  preferSource?: boolean;
 }
 
 /**
@@ -50,6 +52,9 @@ export interface TuiResolveInput {
  * caller surfaces an actionable message built from `reasons`.
  */
 export function resolveTuiLaunch(input: TuiResolveInput): TuiLaunch {
+  if (input.compiledBinary && !input.preferSource) {
+    return { mode: "binary", bin: input.compiledBinary, argv: [input.surface, ...input.args] };
+  }
   if (input.checkoutExists && input.bunAvailable) {
     return { mode: "bun", bin: "bun", argv: [input.scriptPath, ...input.args] };
   }

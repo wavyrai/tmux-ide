@@ -5,6 +5,7 @@ import {
   _detachProjectRegistryListenerForTests,
   _resetResourceEventJournalForTests,
   _stopSessionsPollerForTests,
+  broadcastInteractionReceipt,
   broadcastResourceChanged,
   handleWsEventsConnection,
 } from "../../command-center/ws-events.ts";
@@ -163,6 +164,57 @@ describe("/ws/events client frame protocol", () => {
       expect.objectContaining({ type: "resource.changed", sequence: 3, revision: 9 }),
     ]);
     socket.disconnect();
+  });
+
+  it("orders privacy-safe interaction receipts with resources for every client and replay", () => {
+    const left = new ProtocolWebSocket();
+    const right = new ProtocolWebSocket();
+    handleWsEventsConnection(left, daemonIdentity);
+    handleWsEventsConnection(right, daemonIdentity);
+    left.sent.length = 0;
+    right.sent.length = 0;
+    left.receive(JSON.stringify({ type: "subscribe", sessions: [], afterSequence: 0 }));
+    right.receive(JSON.stringify({ type: "subscribe", sessions: [], afterSequence: 0 }));
+    left.sent.length = 0;
+    right.sent.length = 0;
+
+    broadcastResourceChanged(
+      { workspaceName: "tmux-ide", resource: "application-shell" },
+      daemonIdentity.instanceId,
+    );
+    broadcastInteractionReceipt(
+      {
+        operationId: "10000000-0000-4000-8000-000000000001",
+        origin: "cli",
+        workspaceName: "tmux-ide",
+        semanticPaneId: "pane.editor",
+        phase: "applied",
+        summary: { characterCount: 17, byteCount: 17, submitted: true },
+        at: "2026-08-10T10:00:00.000Z",
+      },
+      daemonIdentity.instanceId,
+    );
+
+    expect(frames(left)).toEqual(frames(right));
+    expect(
+      frames(left).map((frame) => [frame.type, "sequence" in frame ? frame.sequence : null]),
+    ).toEqual([
+      ["resource.changed", 1],
+      ["interaction.receipt", 2],
+    ]);
+    expect(JSON.stringify(frames(left))).not.toContain("prompt");
+
+    const replay = new ProtocolWebSocket();
+    handleWsEventsConnection(replay, daemonIdentity);
+    replay.sent.length = 0;
+    replay.receive(JSON.stringify({ type: "subscribe", sessions: [], afterSequence: 1 }));
+    expect(frames(replay)).toEqual([
+      expect.objectContaining({ type: "interaction.receipt", sequence: 2 }),
+    ]);
+
+    left.disconnect();
+    right.disconnect();
+    replay.disconnect();
   });
 
   it("requires a snapshot when a reconnect cursor fell behind the bounded journal", () => {

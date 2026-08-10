@@ -1,0 +1,202 @@
+import { describe, expect, it } from "vitest";
+
+import type { WorkspaceRegistry } from "./workspace-registry.ts";
+import {
+  TmuxExternalInteractionObserver,
+  internalSendOperationMarker,
+  parseTmuxInputHookRecords,
+  type ExternalTmuxInteractionObserverIo,
+} from "./tmux-external-interaction-observer.ts";
+import { INTERNAL_READ_OPERATION_MARKER } from "./tmux-interaction-options.ts";
+
+const DAEMON = "21f2625e-d1a5-4ad2-9068-b1426bcc6651";
+const OPERATION = "8be47b5a-43da-4632-9930-e1aba61c8da6";
+const FIELD = "|tmux-ide-input-field-v1|";
+const EVENT = "|tmux-ide-input-event-v1|";
+const SEND = "workspace.pane.send";
+const READ = "workspace.pane.read";
+
+function registry(): WorkspaceRegistry {
+  return {
+    list: () => [
+      {
+        name: "workspace.project",
+        sessionName: "project",
+        projectDir: "/project",
+      },
+    ],
+  } as unknown as WorkspaceRegistry;
+}
+
+function harness(raw: string): {
+  observer: TmuxExternalInteractionObserver;
+  calls: readonly (readonly string[])[];
+  observed: readonly {
+    workspaceName: string;
+    semanticPaneId: string;
+    operationKind: typeof SEND | typeof READ;
+  }[];
+} {
+  const calls: (readonly string[])[] = [];
+  const observed: {
+    workspaceName: string;
+    semanticPaneId: string;
+    operationKind: typeof SEND | typeof READ;
+  }[] = [];
+  let buffer = raw;
+  const io: ExternalTmuxInteractionObserverIo = {
+    runTmux: (args) => {
+      calls.push([...args]);
+      if (args[0] === "show-hooks") {
+        return args[2] === "after-capture-pane"
+          ? "after-capture-pane[2] display-message user-capture\nafter-capture-pane[5] run-shell tmux-ide-interaction-v1-stale"
+          : "after-send-keys[3] display-message user-hook\nafter-send-keys[7] run-shell tmux-ide-interaction-v1-stale";
+      }
+      if (args[0] === "list-buffers") return "tmux-ide-interaction-v1-stale\nclipboard";
+      if (args[0] === "set-buffer" && args.includes("-n")) return "";
+      if (args[0] === "show-buffer") return buffer;
+      if (args[0] === "delete-buffer") {
+        buffer = "";
+        return "";
+      }
+      if (args[0] === "display-message") return "project\tpane.editor";
+      return "";
+    },
+    waitForSignal: async () => undefined,
+    delay: async () => undefined,
+  };
+  return {
+    observer: new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      io,
+      onObserved: (interaction) => observed.push(interaction),
+    }),
+    calls,
+    observed,
+  };
+}
+
+function statefulHookHarness(): {
+  observer: TmuxExternalInteractionObserver;
+  calls: readonly (readonly string[])[];
+  removeHooks(): void;
+} {
+  const calls: (readonly string[])[] = [];
+  const hooks = new Map<string, string>();
+  const io: ExternalTmuxInteractionObserverIo = {
+    runTmux: (args) => {
+      calls.push([...args]);
+      if (args[0] === "show-hooks") return hooks.get(args[2]!) ?? String(args[2]);
+      if (args[0] === "list-buffers") return "";
+      if (args[0] === "set-hook" && args[1] === "-ag") {
+        hooks.set(args[2]!, `${args[2]}[0] ${args[3]}`);
+      }
+      if (args[0] === "set-hook" && args[1] === "-gu") {
+        const name = args[2]!.replace(/\[[0-9]+\]$/u, "");
+        hooks.delete(name);
+      }
+      return "";
+    },
+    waitForSignal: async () => undefined,
+    delay: async () => undefined,
+  };
+  return {
+    observer: new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      io,
+      onObserved: () => {},
+    }),
+    calls,
+    removeHooks: () => hooks.clear(),
+  };
+}
+
+describe("tmux external interaction observer", () => {
+  it("parses only closed runtime metadata and never accepts payload-shaped fields", () => {
+    expect(
+      parseTmuxInputHookRecords(
+        `%9${FIELD}${FIELD}${SEND}${EVENT}%10${FIELD}marker${FIELD}${READ}${EVENT}bad${FIELD}secret${FIELD}extra${EVENT}`,
+      ),
+    ).toEqual([
+      { runtimePaneId: "%9", operationMarker: null, operationKind: SEND },
+      { runtimePaneId: "%10", operationMarker: "marker", operationKind: READ },
+    ]);
+  });
+
+  it("preserves user hooks while replacing stale product hooks", () => {
+    const { observer, calls } = harness("");
+    observer.install();
+
+    expect(calls).toContainEqual(["set-hook", "-gu", "after-send-keys[7]"]);
+    expect(calls).toContainEqual(["set-hook", "-gu", "after-capture-pane[5]"]);
+    expect(calls).not.toContainEqual(["set-hook", "-gu", "after-send-keys[3]"]);
+    const installs = calls.filter((args) => args[0] === "set-hook" && args[1] === "-ag");
+    expect(installs).toHaveLength(2);
+    expect(installs[0]?.[3]).toContain("#{q:@tmux_ide_send_operation}");
+    expect(installs[1]?.[3]).toContain("#{q:@tmux_ide_read_operation}");
+    expect(installs[1]?.[3]).toContain("'set-option' '-pu' '-t' '#{pane_id}'");
+    expect(installs[1]?.[3]).toContain("'@tmux_ide_read_operation'");
+    expect(installs.every((install) => !install[3]?.includes("run-shell -C"))).toBe(true);
+    expect(installs.every((install) => install[3]?.includes("#{pane_id}"))).toBe(true);
+    expect(installs.every((install) => !install[3]?.includes("pane_input"))).toBe(true);
+  });
+
+  it("self-heals both hooks after an external tmux config reload removes them", () => {
+    const { observer, calls, removeHooks } = statefulHookHarness();
+    observer.install();
+    const firstInstalls = calls.filter((args) => args[0] === "set-hook" && args[1] === "-ag");
+    expect(firstInstalls).toHaveLength(2);
+
+    observer.reconcileHooks();
+    expect(calls.filter((args) => args[0] === "set-hook" && args[1] === "-ag")).toHaveLength(2);
+
+    removeHooks();
+    observer.reconcileHooks();
+    expect(calls.filter((args) => args[0] === "set-hook" && args[1] === "-ag")).toHaveLength(4);
+  });
+
+  it("projects external sends but suppresses sends marked by this daemon generation", () => {
+    const own = internalSendOperationMarker(DAEMON, OPERATION);
+    const { observer, observed } = harness(
+      `%9${FIELD}${FIELD}${SEND}${EVENT}%9${FIELD}${own}${FIELD}${SEND}${EVENT}%9${FIELD}another-daemon:${OPERATION}${FIELD}${READ}${EVENT}`,
+    );
+    observer.drain();
+
+    expect(observed).toEqual([
+      {
+        workspaceName: "workspace.project",
+        semanticPaneId: "pane.editor",
+        operationKind: SEND,
+      },
+      {
+        workspaceName: "workspace.project",
+        semanticPaneId: "pane.editor",
+        operationKind: READ,
+      },
+    ]);
+  });
+
+  it("suppresses product-owned mirror reads while preserving raw external reads", () => {
+    const { observer, observed } = harness(
+      `%9${FIELD}${INTERNAL_READ_OPERATION_MARKER}${FIELD}${READ}${EVENT}%9${FIELD}${FIELD}${READ}${EVENT}`,
+    );
+    observer.drain();
+    expect(observed).toEqual([
+      {
+        workspaceName: "workspace.project",
+        semanticPaneId: "pane.editor",
+        operationKind: READ,
+      },
+    ]);
+  });
+});

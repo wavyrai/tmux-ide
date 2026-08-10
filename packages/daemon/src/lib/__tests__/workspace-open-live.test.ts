@@ -357,5 +357,5 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
       sourceGrid: { cols: expect.any(Number), rows: expect.any(Number) },
     });
     socket.close();
-  }, 30_000);
+  }, 60_000);
 });

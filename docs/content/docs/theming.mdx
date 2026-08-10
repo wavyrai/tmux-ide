@@ -98,6 +98,33 @@ tmux colors (`colourN` or `#rrggbb`).
 | `glyphs.active`   | `●`         | Filled state glyph     |
 | `glyphs.inactive` | `○`         | Hollow state glyph     |
 
+## TUI-owned surfaces
+
+The full-screen TUI owns its chrome instead of inheriting whatever colours a
+child program happens to leave in the terminal. New and migrated surfaces use a
+theme pipeline with three boundaries:
+
+1. `@tmux-ide/contracts` defines renderer-neutral roles for canvas, panels,
+   headers, text strength, borders, status, selection, density, shape, motion,
+   typography and focus.
+2. The OpenTUI host projects those roles to `RGBA` once and follows the
+   renderer's light/dark mode when `theme.mode` is `system`.
+3. Each migrated product surface consumes a named recipe such as `sidebar`,
+   `application-bar`, `bottom-dock` or `command-palette`. Components choose a
+   role by purpose rather than carrying a private palette.
+
+Navigation labels use the sidebar recipe's readable text rung, selection labels
+use `selectionText`, and tertiary metadata alone uses `muted`. Critical
+foreground/background pairs are contrast-checked at the OpenTUI projection
+boundary. A low-contrast custom value falls back through the owned text ladder
+instead of making navigation disappear.
+
+The built-in muted greys deliberately use stable extended xterm-256 entries,
+not ANSI base slot 8. Base slots are terminal-profile aliases and can be nearly
+black even when the source RGB looked grey. Mirrored tmux pane contents are the
+exception: their ANSI colours belong to the program running in that pane and
+remain untouched.
+
 ## `updater`
 
 The chrome tick loop and snapshot cadence.

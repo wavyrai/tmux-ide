@@ -7,7 +7,16 @@ import {
   type TerminalAttachmentViewerMode,
   type TerminalAttachmentViewport,
 } from "@tmux-ide/contracts";
-import { Match, Show, Switch, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import {
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 
 import {
   isNativeTerminalOutput,
@@ -110,6 +119,8 @@ export interface TerminalSurfaceProps {
   readonly title: string;
   readonly transport?: NativeTerminalTransport | null;
   readonly focused?: boolean;
+  /** Monotonic request used when a composed mirror returns keyboard authority. */
+  readonly focusRequest?: number;
   readonly reducedMotion?: boolean;
   readonly themeKey?: string;
   readonly onFocus?: (source: "keyboard" | "mouse") => void;
@@ -245,6 +256,11 @@ const OUTPUT_NOT_CONSUMED = new Error("Terminal output was not consumed by the r
  * it never creates a process, resolves a tmux target, or opens a network path.
  */
 export function TerminalSurface(props: TerminalSurfaceProps) {
+  // Capture the nested host getter while this component has a Solid owner.
+  // Terminal connection/retry callbacks run asynchronously; reading the
+  // compiler-generated getter for the first time from one of those callbacks
+  // creates an unowned memo that can never be disposed.
+  const terminalTransport = createMemo(() => props.transport ?? null);
   /**
    * The render consequence of ownership, named once.
    *
@@ -258,9 +274,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const ownsGeometry = (): boolean => effectiveGeometryOwnership() === "owner";
   const sizePassive = (): boolean => !ownsGeometry();
   const [phase, setPhase] = createSignal<TerminalSurfacePhase>(
-    props.transport ? "measuring" : "unavailable",
+    terminalTransport() ? "measuring" : "unavailable",
   );
-  const initialAttachPhase: TerminalSurfaceAttachPhase = props.transport
+  const initialAttachPhase: TerminalSurfaceAttachPhase = terminalTransport()
     ? "renderer-loading"
     : "unavailable";
   const [attachPhase, setAttachPhase] =
@@ -268,7 +284,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const [attachTrace, setAttachTrace] = createSignal<readonly TerminalSurfaceAttachTraceEntry[]>([
     { phase: initialAttachPhase, atMs: 0 },
   ]);
-  const [attachAttempt, setAttachAttempt] = createSignal(props.transport ? 1 : 0);
+  const [attachAttempt, setAttachAttempt] = createSignal(terminalTransport() ? 1 : 0);
   const [reason, setReason] = createSignal<string | null>(null);
   const [hasValidatedFrame, setHasValidatedFrame] = createSignal(false);
   const [sourceGrid, setSourceGrid] = createSignal<TerminalAttachmentViewport | null>(null);
@@ -286,7 +302,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let outputTail = Promise.resolve();
   let activeOutputEpoch = outputEpoch();
   let observedTarget = `${props.target.workspaceName}\0${props.target.semanticPaneId}`;
-  let observedTransport = props.transport;
+  let observedTransport = terminalTransport();
   let currentViewport: TerminalAttachmentViewport | null = null;
   let latestMeasuredViewport: TerminalAttachmentViewport | null = null;
   let pendingResize: TerminalAttachmentViewport | null = null;
@@ -601,7 +617,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     setPhase("disconnected");
     recordAttachPhase("disconnected");
     const retryDelay = ATTACHMENT_RECONNECT_RETRY_MS[reconnectAttempt++];
-    if (retryDelay === undefined || !props.transport) {
+    if (retryDelay === undefined || !terminalTransport()) {
       setPhase("error");
       recordAttachPhase("failed");
       return;
@@ -609,7 +625,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     const reconnectGeneration = generation;
     reconnectRetry = setTimeout(() => {
       reconnectRetry = null;
-      if (disposed || reconnectGeneration !== generation || !props.transport) return;
+      if (disposed || reconnectGeneration !== generation || !terminalTransport()) return;
       resetAttachTrace(true);
       setReason("The terminal attachment closed. Reconnecting…");
       setPhase("measuring");
@@ -696,7 +712,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   };
 
   const connect = (viewport: TerminalAttachmentViewport): void => {
-    if (!props.transport || attachment || phase() === "connecting" || disposed) return;
+    const transport = terminalTransport();
+    if (!transport || attachment || phase() === "connecting" || disposed) return;
     const activeGeneration = ++generation;
     setReason(null);
     setPhase("connecting");
@@ -714,7 +731,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       failConnect("The semantic terminal target or viewport is invalid.", activeGeneration);
       return;
     }
-    void props.transport
+    void transport
       .connect(request, (event) => handleEvent(event, activeGeneration))
       .then((result) => {
         if (disposed || activeGeneration !== generation) {
@@ -817,7 +834,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     updateReadOnlyFitScale();
     const viewport = usableViewport(renderer?.fit() ?? null);
     if (!viewport) {
-      if (!attachment && props.transport) {
+      if (!attachment && terminalTransport()) {
         setPhase("measuring");
         recordAttachPhase("waiting-for-viewport");
       }
@@ -872,8 +889,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     setSourceGrid(null);
     setClientViewport(null);
     setHasValidatedFrame(false);
-    resetAttachTrace(Boolean(props.transport));
-    setPhase(props.transport ? "measuring" : "unavailable");
+    resetAttachTrace(Boolean(terminalTransport()));
+    setPhase(terminalTransport() ? "measuring" : "unavailable");
     ensureRenderer();
     scheduleFit();
   };
@@ -998,7 +1015,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
     renderer = nextRenderer;
     renderer.open(mount);
-    if (props.transport) recordAttachPhase("renderer-ready");
+    if (terminalTransport()) recordAttachPhase("renderer-ready");
     renderer.refreshTheme();
     renderer.setReducedMotion(props.reducedMotion ?? false);
     if (props.focused) renderer.focus();
@@ -1013,7 +1030,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   };
 
   const ensureRenderer = (): void => {
-    if (renderer || disposed || !mount || (!props.transport && !props.rendererFactory)) return;
+    if (renderer || disposed || !mount || (!terminalTransport() && !props.rendererFactory)) return;
     const activeLoad = ++rendererLoadGeneration;
     const options = {
       reducedMotion: props.reducedMotion ?? false,
@@ -1050,6 +1067,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   });
 
   createEffect(() => {
+    void props.focusRequest;
     if (props.focused) renderer?.focus();
   });
 
@@ -1069,7 +1087,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
 
   createEffect(() => {
     const nextTarget = `${props.target.workspaceName}\0${props.target.semanticPaneId}`;
-    const nextTransport = props.transport;
+    const nextTransport = terminalTransport();
     if (nextTarget === observedTarget && nextTransport === observedTransport) return;
     observedTarget = nextTarget;
     observedTransport = nextTransport;
@@ -1099,9 +1117,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     <div
       class="terminal-surface"
       data-phase={phase()}
-      data-attach-phase={props.transport ? attachPhase() : undefined}
-      data-attach-attempt={props.transport ? attachAttempt() : undefined}
-      data-attach-trace={props.transport ? JSON.stringify(attachTrace()) : undefined}
+      data-attach-phase={terminalTransport() ? attachPhase() : undefined}
+      data-attach-attempt={terminalTransport() ? attachAttempt() : undefined}
+      data-attach-trace={terminalTransport() ? JSON.stringify(attachTrace()) : undefined}
       data-focused={props.focused ?? false}
       data-viewer-mode={viewerMode()}
       data-size-passive={sizePassive()}

@@ -18,29 +18,31 @@ const base = {
   args: ["--session=s", "--dir=/proj"],
 };
 
-describe("resolveTuiLaunch — order is checkout-first, binary-second", () => {
-  it("uses bun from the checkout when both sources and bun are present", () => {
+describe("resolveTuiLaunch — fast binary with an explicit source override", () => {
+  it("uses the compiled binary when both paths are present", () => {
     const launch = resolveTuiLaunch({
       ...base,
       checkoutExists: true,
       bunAvailable: true,
       compiledBinary: "/usr/local/bin/tmux-ide-tui",
     });
-    expect(launch.mode).toBe("bun");
-    if (launch.mode !== "bun") throw new Error("unreachable");
-    expect(launch.bin).toBe("bun");
-    // Bun runs the .tsx entry directly — no surface token.
-    expect(launch.argv).toEqual([base.scriptPath, ...base.args]);
+    expect(launch.mode).toBe("binary");
+    if (launch.mode !== "binary") throw new Error("unreachable");
+    expect(launch.bin).toBe("/usr/local/bin/tmux-ide-tui");
+    expect(launch.argv).toEqual([base.surface, ...base.args]);
   });
 
-  it("prefers bun even when a compiled binary also exists (dev machine)", () => {
+  it("uses live checkout sources only when development mode asks for them", () => {
     const launch = resolveTuiLaunch({
       ...base,
       checkoutExists: true,
       bunAvailable: true,
       compiledBinary: "/some/tmux-ide-tui",
+      preferSource: true,
     });
     expect(launch.mode).toBe("bun");
+    if (launch.mode !== "bun") throw new Error("unreachable");
+    expect(launch.argv).toEqual([base.scriptPath, ...base.args]);
   });
 
   it("falls back to the binary when the checkout sources are absent (installed)", () => {

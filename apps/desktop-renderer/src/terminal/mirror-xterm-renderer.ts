@@ -1,4 +1,5 @@
 import { Terminal } from "@xterm/xterm";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import type { TerminalAttachmentViewport } from "@tmux-ide/contracts";
 
 import type { PaneMirrorSeedBatch } from "./pane-stream-transport.ts";
@@ -39,6 +40,13 @@ export interface MirrorTerminalRenderer {
    */
   fitToContainer(): void;
   setReducedMotion(reducedMotion: boolean): void;
+  /** The text currently selected in this visible, read-only pane renderer. */
+  getSelection(): string;
+  /**
+   * Observe xterm's selection rather than DOM Selection: xterm paints its own
+   * selection layer, so `window.getSelection()` cannot see terminal text.
+   */
+  onSelectionChange(listener: (selection: string) => void): { dispose(): void };
   /** The most recent `maxRows` grid rows, as cells — see the interactive twin. */
   readCellRows(maxRows: number): WidgetCellRow[];
   /**
@@ -130,7 +138,8 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
   let appliedTransform: string | null = null;
   const encoder = new TextEncoder();
   const terminal = new Terminal({
-    allowProposedApi: false,
+    // Required by the official Unicode 11 width addon; see xterm-renderer.ts.
+    allowProposedApi: true,
     convertEol: false,
     cursorBlink: false,
     cursorStyle: "block",
@@ -145,6 +154,8 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
     tabStopWidth: 4,
     theme: TERMINAL_THEME_FALLBACK,
   });
+  terminal.loadAddon(new Unicode11Addon());
+  terminal.unicode.activeVersion = "11";
   void reducedMotion;
 
   const applyTheme = (): void => {
@@ -244,6 +255,12 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
     },
     setReducedMotion() {
       // Mirror cursors never blink; reduced motion changes nothing here.
+    },
+    getSelection() {
+      return terminal.getSelection();
+    },
+    onSelectionChange(listener) {
+      return terminal.onSelectionChange(() => listener(terminal.getSelection()));
     },
     readCellRows(maxRows) {
       return readWidgetCellRows(terminal, maxRows);

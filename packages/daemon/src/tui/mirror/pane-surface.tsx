@@ -33,6 +33,7 @@ import type { CursorState } from "./pane-mirror.ts";
 import { swapCells, paintBg, type GraphemeOverride } from "./blit.ts";
 import { rowSelectionRange, visibleSelRows, type Cell } from "./selection.ts";
 import type { SearchMatch } from "./search-model.ts";
+import type { TerminalPaletteProjection } from "./theme.ts";
 
 /** The scrollback-search highlight payload for one pane: matches keyed by
  *  ABSOLUTE buffer line (mapped to a visible row via `baseY`), the query length,
@@ -53,6 +54,8 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
   /** Packed `0xRRGGBB` for the terminal default fg/bg (a cell whose color is null). */
   defaultFg: number;
   defaultBg: number;
+  /** Theme-owned ANSI/truecolor projection applied during the framebuffer blit. */
+  terminalPalette: TerminalPaletteProjection;
   /** Packed `0xRRGGBB` for a search match bg / the current-match bg. */
   searchHl: number;
   searchCur: number;
@@ -79,10 +82,6 @@ function packedRgba(packed: number): RGBA {
 }
 
 const PERF = !!process.env.TMUX_IDE_ZZ_PERF;
-/** Quiet marker background for an unfocused pane's cursor cell (M21.6) — a muted
- *  slate that reads as "the cursor is here" without competing with the focused
- *  pane's real hardware cursor. */
-const MARKER_BG = 0x3b4250;
 /** Log the rows-blitted count per walk (M21.4 acceptance: flood repaints only
  *  dirty rows). Env-gated so it costs nothing in production. */
 const ROW_TAP = !!process.env.TMUX_IDE_FB_ROWS;
@@ -106,8 +105,10 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   private _defaultBg = 0x101016;
   private _defaultFgRgba: RGBA = packedRgba(0xd4d4d8);
   private _defaultBgRgba: RGBA = packedRgba(0x101016);
+  private _terminalPalette: TerminalPaletteProjection | undefined;
   private _searchHl = 0;
   private _searchCur = 0;
+  private _cursorMarker = 0x3b4250;
   private _scrollOffset = 0;
   private _focusedPane = false;
   private _contentVersion = -1;
@@ -150,18 +151,38 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     this.invalidate();
   }
   set defaultFg(v: number) {
+    if (v === this._defaultFg) return;
     this._defaultFg = v;
     this._defaultFgRgba = packedRgba(v);
+    this._forceFull = true;
+    this.invalidate();
   }
   set defaultBg(v: number) {
+    if (v === this._defaultBg) return;
     this._defaultBg = v;
     this._defaultBgRgba = packedRgba(v);
+    this._forceFull = true;
+    this.invalidate();
+  }
+  set terminalPalette(v: TerminalPaletteProjection) {
+    if (v === this._terminalPalette) return;
+    this._terminalPalette = v;
+    this._cursorMarker = v.cursorMarker;
+    // The xterm cell-data shadow intentionally contains source colors, so its
+    // bytes do not change with the theme. Force one repaint to recolor every
+    // existing cell and scrollback row visible in this surface.
+    this._forceFull = true;
+    this.invalidate();
   }
   set searchHl(v: number) {
+    if (v === this._searchHl) return;
     this._searchHl = v;
+    this.invalidate();
   }
   set searchCur(v: number) {
+    if (v === this._searchCur) return;
     this._searchCur = v;
+    this.invalidate();
   }
 
   // ── Reactive props: a change flips _needsWalk so the next paint re-blits. ──
@@ -281,6 +302,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
         forceRows,
         dirtyRows: this._dirtyRows,
         graphemes: this._graphemes,
+        palette: this._terminalPalette,
       },
     );
 
@@ -326,7 +348,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     // Unfocused quiet cursor marker — a muted block on the cursor cell (its row
     // is in forceRows, so it was freshly repainted this walk).
     if (markerRow >= 0 && cur) {
-      paintBg(buffers, w, markerRow, cur.x, cur.x, MARKER_BG);
+      paintBg(buffers, w, markerRow, cur.x, cur.x, this._cursorMarker);
     }
     this._lastMarkerRow = markerRow;
     this._prevSelRows = newSelRows;

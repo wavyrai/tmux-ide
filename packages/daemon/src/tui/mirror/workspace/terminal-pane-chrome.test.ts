@@ -76,6 +76,54 @@ describe("terminal pane chrome projection", () => {
     ).toBe(true);
   });
 
+  it("projects communication outlines only onto safe tmux separator cells", () => {
+    const panes = [
+      pane({ id: "%1", width: 59 }),
+      pane({ id: "%2", left: 60, width: 60, active: false }),
+    ];
+    const metadata = new Map([
+      [
+        "%1",
+        {
+          communication: { role: "send-source" as const, label: "Editor → Tests" },
+        },
+      ],
+      [
+        "%2",
+        {
+          communication: { role: "send-target" as const, label: "Editor → Tests" },
+        },
+      ],
+    ]);
+    const layout = projectTerminalPaneChrome({ canvas, panes, metadataByPane: metadata });
+
+    expect(layout.native.map((item) => [item.paneId, item.communication?.role])).toEqual([
+      ["%1", "send-source"],
+      ["%2", "send-target"],
+    ]);
+    expect(layout.communication).toEqual([
+      {
+        paneId: "%2",
+        role: "send-target",
+        rect: { x: 59, y: 0, width: 1, height: 38 },
+        orientation: "vertical",
+      },
+    ]);
+    expect(
+      layout.communication.every((segment) =>
+        panes.every(
+          (candidate) =>
+            !(
+              segment.rect.x < candidate.left + candidate.width &&
+              segment.rect.x + segment.rect.width > candidate.left &&
+              segment.rect.y < candidate.top + candidate.height &&
+              segment.rect.y + segment.rect.height > candidate.top
+            ),
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("compacts nested lower-pane chrome around a neighboring full-height body", () => {
     const panes = [
       pane({ id: "%1", width: 59 }),

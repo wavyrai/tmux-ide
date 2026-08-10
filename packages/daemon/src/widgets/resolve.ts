@@ -68,6 +68,7 @@ export function resolveWidgetCommand(type: string, opts: WidgetOptions): string 
     checkoutExists: existsSync(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
+    preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
   });
 
   if (launch.mode === "unavailable") {
@@ -107,6 +108,7 @@ export function resolveWidgetSpawn(type: string, opts: WidgetOptions): WidgetSpa
     checkoutExists: existsSync(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
+    preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
   });
 
   if (launch.mode === "unavailable") {

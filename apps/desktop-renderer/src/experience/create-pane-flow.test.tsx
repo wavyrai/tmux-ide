@@ -44,6 +44,7 @@ function renderFlow(
     async () => undefined,
   ),
   initialWorkspaceName?: string,
+  initialSemanticPaneId?: string,
 ) {
   const root = document.createElement("div");
   document.body.append(root);
@@ -56,6 +57,8 @@ function renderFlow(
         open={open()}
         catalogs={catalogsAccessor()}
         initialWorkspaceName={initialWorkspaceName}
+        initialSemanticPaneId={initialSemanticPaneId}
+        initialPaneLabel="Editor"
         onOpenChange={(nextOpen, source) => {
           openChanges.push({ open: nextOpen, source });
           setOpen(nextOpen);
@@ -101,6 +104,18 @@ function pointerClick(element: Element): void {
   element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
 }
 
+function targetCards(root: Element): NodeListOf<HTMLButtonElement> {
+  return root.querySelectorAll<HTMLButtonElement>(
+    '[aria-label="Creation target"] .create-pane-flow__kind-card',
+  );
+}
+
+function kindCards(root: Element): NodeListOf<HTMLButtonElement> {
+  return root.querySelectorAll<HTMLButtonElement>(
+    '[aria-label="Creation type"] .create-pane-flow__kind-card',
+  );
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const dispose of disposers.splice(0)) dispose();
@@ -114,7 +129,7 @@ describe("native create terminal / agent flow", () => {
     const overlay = root.querySelector<HTMLElement>(".create-pane-flow__overlay")!;
     const dialog = root.querySelector<HTMLElement>("#create-pane-flow-dialog")!;
     const close = root.querySelector<HTMLButtonElement>(".create-pane-flow__close")!;
-    const kindCards = root.querySelectorAll<HTMLButtonElement>(".create-pane-flow__kind-card");
+    const targets = targetCards(root);
 
     expect(trigger.textContent).toContain("+");
     expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
@@ -122,15 +137,15 @@ describe("native create terminal / agent flow", () => {
     trigger.focus();
     trigger.click();
 
-    await vi.waitFor(() => expect(document.activeElement).toBe(kindCards[0]));
+    await vi.waitFor(() => expect(document.activeElement).toBe(targets[0]));
     expect(overlay.getAttribute("aria-hidden")).toBe("false");
     expect(overlay.dataset.transitionSource).toBe("keyboard");
     expect(dialog.getAttribute("aria-modal")).toBe("true");
 
     close.focus();
     key(close, "Tab", { shiftKey: true });
-    expect(document.activeElement).toBe(kindCards[1]);
-    key(kindCards[1]!, "Tab");
+    expect(document.activeElement).toBe(targets[1]);
+    key(targets[1]!, "Tab");
     expect(document.activeElement).toBe(close);
 
     key(close, "Escape");
@@ -150,16 +165,15 @@ describe("native create terminal / agent flow", () => {
     const trigger = root.querySelector<HTMLButtonElement>("#create-pane-flow-trigger")!;
     trigger.focus();
     trigger.click();
-    const terminal = root.querySelectorAll<HTMLButtonElement>(".create-pane-flow__kind-card")[0]!;
-    await vi.waitFor(() => expect(document.activeElement).toBe(terminal));
+    const target = targetCards(root)[0]!;
+    await vi.waitFor(() => expect(document.activeElement).toBe(target));
 
+    key(target, "Enter");
+    const terminal = kindCards(root)[0]!;
+    await vi.waitFor(() => expect(document.activeElement).toBe(terminal));
     key(terminal, "Enter");
-    const workspace = root.querySelector<HTMLSelectElement>("#create-pane-flow-workspace")!;
-    await vi.waitFor(() => expect(document.activeElement).toBe(workspace));
-    expect(workspace.value).toBe("tmux-ide");
-    expect(workspace.required).toBe(true);
-    expect(workspace.getAttribute("aria-required")).toBe("true");
     const title = root.querySelector<HTMLInputElement>("#create-pane-flow-display-title")!;
+    await vi.waitFor(() => expect(document.activeElement).toBe(title));
     change(title, "Release shell");
     key(title, "Enter");
 
@@ -172,6 +186,7 @@ describe("native create terminal / agent flow", () => {
         kind: "terminal",
         workspaceName: "tmux-ide",
         displayTitle: "Release shell",
+        placement: { kind: "window" },
       },
     });
     expect(onCommand.mock.calls[0]?.[0].args).not.toHaveProperty("cwd");
@@ -179,17 +194,40 @@ describe("native create terminal / agent flow", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
+  it("offers the active pane first and projects a semantic split target", async () => {
+    const onCommand = vi.fn<(invocation: WorkspacePaneCreateInvocation) => Promise<void>>(
+      async () => undefined,
+    );
+    const { root } = renderFlow(readyCatalogs(), onCommand, "tmux-ide", "pane.editor");
+    root.querySelector<HTMLButtonElement>("#create-pane-flow-trigger")!.click();
+    expect(targetCards(root)[0]!.textContent).toContain("Editor");
+    targetCards(root)[0]!.click();
+    kindCards(root)[0]!.click();
+    root.querySelector<HTMLButtonElement>(".create-pane-flow__submit")!.click();
+
+    await vi.waitFor(() => expect(onCommand).toHaveBeenCalledTimes(1));
+    expect(onCommand.mock.calls[0]![0].args).toMatchObject({
+      workspaceName: "tmux-ide",
+      placement: {
+        kind: "split",
+        direction: "right",
+        targetSemanticPaneId: "pane.editor",
+      },
+    });
+  });
+
   it("submits an agent using only exposed harness, role, and mission resources", async () => {
     const onCommand = vi.fn<(invocation: WorkspacePaneCreateInvocation) => Promise<void>>(
       async () => undefined,
     );
-    const { root } = renderFlow(readyCatalogs(), onCommand);
+    const { root } = renderFlow(readyCatalogs(), onCommand, "tmux-ide");
     pointerClick(root.querySelector("#create-pane-flow-trigger")!);
-    const agent = root.querySelectorAll<HTMLButtonElement>(".create-pane-flow__kind-card")[1]!;
+    const target = targetCards(root)[0]!;
     await vi.waitFor(() => expect(document.activeElement).not.toBeNull());
+    pointerClick(target);
+    const agent = kindCards(root)[1]!;
     pointerClick(agent);
 
-    change(root.querySelector<HTMLSelectElement>("#create-pane-flow-workspace")!, "tmux-ide");
     change(
       root.querySelector<HTMLSelectElement>("#create-pane-flow-harness")!,
       "codex-implementer",
@@ -217,6 +255,7 @@ describe("native create terminal / agent flow", () => {
         harnessProfileId: "codex-implementer",
         role: "reviewer",
         missionId: "parity",
+        placement: { kind: "window" },
       },
     });
     expect(onCommand.mock.calls[0]?.[0].args).not.toHaveProperty("argv");
@@ -226,7 +265,7 @@ describe("native create terminal / agent flow", () => {
   it("keeps stable dialog/form nodes while switching kind and open state", async () => {
     const { root } = renderFlow(readyCatalogs(), undefined, "tmux-ide");
     const overlay = root.querySelector(".create-pane-flow__overlay");
-    const workspace = root.querySelector("#create-pane-flow-workspace");
+    const targetSummary = root.querySelector(".create-pane-flow__target-summary");
     const harness = root.querySelector("#create-pane-flow-harness");
     const trigger = root.querySelector<HTMLButtonElement>("#create-pane-flow-trigger")!;
 
@@ -234,8 +273,9 @@ describe("native create terminal / agent flow", () => {
     await vi.waitFor(() =>
       expect(root.querySelector(".create-pane-flow__kind")?.hasAttribute("hidden")).toBe(false),
     );
-    root.querySelectorAll<HTMLButtonElement>(".create-pane-flow__kind-card")[1]!.click();
-    expect(root.querySelector("#create-pane-flow-workspace")).toBe(workspace);
+    targetCards(root)[0]!.click();
+    kindCards(root)[1]!.click();
+    expect(root.querySelector(".create-pane-flow__target-summary")).toBe(targetSummary);
     expect(root.querySelector("#create-pane-flow-harness")).toBe(harness);
     root.querySelector<HTMLButtonElement>(".create-pane-flow__form-heading button")!.click();
     root.querySelector<HTMLButtonElement>(".create-pane-flow__close")!.click();
@@ -246,54 +286,49 @@ describe("native create terminal / agent flow", () => {
     );
 
     expect(root.querySelector(".create-pane-flow__overlay")).toBe(overlay);
-    expect(root.querySelector("#create-pane-flow-workspace")).toBe(workspace);
+    expect(root.querySelector(".create-pane-flow__target-summary")).toBe(targetSummary);
     expect(root.querySelector("#create-pane-flow-harness")).toBe(harness);
   });
 
   it("shows explicit loading and empty states instead of guessing resources", async () => {
     const { root } = renderFlow({
-      workspaces: { status: "loading" },
+      workspaces: readyCatalogs().workspaces,
       harnessProfiles: { status: "ready", items: [] },
       missions: { status: "unavailable" },
     });
     root.querySelector<HTMLButtonElement>("#create-pane-flow-trigger")!.click();
-    const agent = root.querySelectorAll<HTMLButtonElement>(".create-pane-flow__kind-card")[1]!;
+    targetCards(root)[0]!.click();
+    const agent = kindCards(root)[1]!;
     await vi.waitFor(() => expect(document.activeElement).toBeDefined());
     agent.click();
 
-    const workspace = root.querySelector<HTMLSelectElement>("#create-pane-flow-workspace")!;
     const harness = root.querySelector<HTMLSelectElement>("#create-pane-flow-harness")!;
     const mission = root.querySelector<HTMLSelectElement>("#create-pane-flow-mission")!;
     const title = root.querySelector<HTMLInputElement>("#create-pane-flow-display-title")!;
     await vi.waitFor(() => expect(document.activeElement).toBe(title));
-    expect(workspace.disabled).toBe(true);
-    expect(workspace.textContent).toContain("Loading workspaces");
     expect(harness.textContent).toContain("No agent profiles available");
     expect(root.textContent).toContain("No profiles are exposed yet");
     expect(mission.disabled).toBe(true);
     expect(mission.textContent).toContain("Missions unavailable");
 
     root.querySelector<HTMLButtonElement>(".create-pane-flow__submit")!.click();
-    await vi.waitFor(() =>
-      expect(root.textContent).toContain("Workspace choices are still loading"),
-    );
-    expect(document.activeElement).toBe(root.querySelector(`#create-pane-flow-workspace-error`));
+    await vi.waitFor(() => expect(root.textContent).toContain("No agent profile is available yet"));
+    expect(document.activeElement).toBe(root.querySelector(`#create-pane-flow-harness`));
   });
 
   it.each(["loading", "unavailable"] as const)(
-    "focuses the first enabled form field when workspace choices are %s",
+    "fails closed at the target stage when workspace choices are %s",
     async (status) => {
       const { root } = renderFlow({
         ...readyCatalogs(),
         workspaces: { status },
       });
       root.querySelector<HTMLButtonElement>("#create-pane-flow-trigger")!.click();
-      root.querySelectorAll<HTMLButtonElement>(".create-pane-flow__kind-card")[0]!.click();
-
-      const workspace = root.querySelector<HTMLSelectElement>("#create-pane-flow-workspace")!;
-      const title = root.querySelector<HTMLInputElement>("#create-pane-flow-display-title")!;
-      expect(workspace.disabled).toBe(true);
-      await vi.waitFor(() => expect(document.activeElement).toBe(title));
+      expect(targetCards(root)).toHaveLength(0);
+      expect(root.querySelector<HTMLFormElement>(".create-pane-flow__form")!.hidden).toBe(true);
+      expect(root.textContent).toContain(
+        status === "loading" ? "Loading workspace targets" : "Where should it go?",
+      );
     },
   );
 
@@ -305,7 +340,8 @@ describe("native create terminal / agent flow", () => {
     );
     const { root } = renderFlow(readyCatalogs(), onCommand, "tmux-ide");
     root.querySelector<HTMLButtonElement>("#create-pane-flow-trigger")!.click();
-    root.querySelectorAll<HTMLButtonElement>(".create-pane-flow__kind-card")[0]!.click();
+    targetCards(root)[0]!.click();
+    kindCards(root)[0]!.click();
     const title = root.querySelector<HTMLInputElement>("#create-pane-flow-display-title")!;
     change(title, "Keep me");
     root.querySelector<HTMLButtonElement>(".create-pane-flow__submit")!.click();
@@ -329,7 +365,8 @@ describe("native create terminal / agent flow", () => {
       const onCommand = vi.fn(() => pending.promise);
       const { root, openChanges, dispose } = renderFlow(readyCatalogs(), onCommand, "tmux-ide");
       root.querySelector<HTMLButtonElement>("#create-pane-flow-trigger")!.click();
-      root.querySelectorAll<HTMLButtonElement>(".create-pane-flow__kind-card")[0]!.click();
+      targetCards(root)[0]!.click();
+      kindCards(root)[0]!.click();
       root.querySelector<HTMLButtonElement>(".create-pane-flow__submit")!.click();
       await vi.waitFor(() => expect(onCommand).toHaveBeenCalledTimes(1));
 
@@ -348,7 +385,8 @@ describe("native create terminal / agent flow", () => {
     const [catalogs, setCatalogs] = createSignal(readyCatalogs());
     const { root, onCommand } = renderFlow(catalogs, undefined, "tmux-ide");
     root.querySelector<HTMLButtonElement>("#create-pane-flow-trigger")!.click();
-    root.querySelectorAll<HTMLButtonElement>(".create-pane-flow__kind-card")[1]!.click();
+    targetCards(root)[0]!.click();
+    kindCards(root)[1]!.click();
     change(
       root.querySelector<HTMLSelectElement>("#create-pane-flow-harness")!,
       "codex-implementer",

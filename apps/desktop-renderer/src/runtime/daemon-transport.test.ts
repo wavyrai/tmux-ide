@@ -286,6 +286,7 @@ describe("browser-safe daemon transport", () => {
     const secondSocket = new FakeSocket();
     const sockets = [firstSocket, secondSocket];
     const onInvalidate = vi.fn();
+    const onOperationAcknowledged = vi.fn();
     const transport = createDirectLoopbackDaemonTransport({
       descriptor,
       resolveSessionName,
@@ -299,6 +300,7 @@ describe("browser-safe daemon transport", () => {
       onMalformedFrame: vi.fn(),
       onClose: vi.fn(),
       onError: vi.fn(),
+      onOperationAcknowledged,
     };
 
     const first = transport.connectEvents(
@@ -327,10 +329,16 @@ describe("browser-safe daemon transport", () => {
         workspaceName: "project",
         resource: "application-shell",
         revision: 5,
-        causeOperationId: null,
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
       }),
     );
     expect(onInvalidate).toHaveBeenCalledOnce();
+    expect(onOperationAcknowledged).toHaveBeenCalledWith({
+      daemonInstanceId: daemonIdentity.instanceId,
+      operationId: "10000000-0000-4000-8000-000000000001",
+      sequence: 1,
+      revision: 5,
+    });
     first.close();
 
     transport.connectEvents({ daemon: daemonIdentity, workspaceName: "project" }, handlers);

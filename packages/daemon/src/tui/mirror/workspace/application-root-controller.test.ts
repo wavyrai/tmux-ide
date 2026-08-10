@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SemanticFocusTarget } from "@tmux-ide/contracts";
 import { TuiCleanupRegistry } from "../input-lifecycle.ts";
 import {
+  applicationSidebarResizePointerPhase,
   createApplicationRootController,
   routeApplicationSidebarResizePointer,
 } from "./application-root-controller.ts";
@@ -200,6 +201,20 @@ describe("production application root controller", () => {
       }
     },
   );
+
+  it("keeps a captured sidebar resize alive across OpenTUI child-boundary out events", () => {
+    expect(
+      applicationSidebarResizePointerPhase({
+        type: "out",
+        active: true,
+        x: 40,
+        y: 10,
+        button: 0,
+        sidebarWidth: 28,
+        tabbarHeight: 1,
+      }),
+    ).toBe("consume");
+  });
 
   it("keeps active resize ownership before status and inactive starts after it in app.tsx", () => {
     const app = readFileSync(fileURLToPath(new URL("../app.tsx", import.meta.url)), "utf8");

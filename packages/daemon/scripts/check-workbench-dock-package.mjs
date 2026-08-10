@@ -105,6 +105,16 @@ try {
   mkdirSync(installedScope, { recursive: true });
   run("tar", ["-xzf", tarball, "-C", extractionRoot], consumerRoot, "pipe");
   renameSync(join(extractionRoot, "package"), join(installedScope, "daemon"));
+  // The packed daemon externalizes the renderer-neutral packages exactly as a
+  // registry install would. Materialize those workspace dependencies in this
+  // offline consumer instead of accidentally resolving them from the repo.
+  for (const dependency of ["contracts", "core"]) {
+    symlinkSync(
+      join(repoRoot, "packages", dependency),
+      join(installedScope, dependency),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  }
   for (const dependency of ["happy-dom", "solid-js", "string-width"]) {
     symlinkSync(
       join(packageRoot, "node_modules", dependency),

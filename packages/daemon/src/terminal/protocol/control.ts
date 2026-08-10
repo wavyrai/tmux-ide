@@ -16,9 +16,9 @@
  */
 
 export type ControlEvent =
-  | { kind: "begin"; num: number }
-  | { kind: "end"; num: number }
-  | { kind: "error"; num: number }
+  | { kind: "begin"; num: number; flags: number }
+  | { kind: "end"; num: number; flags: number }
+  | { kind: "error"; num: number; flags: number }
   | { kind: "output"; pane: string; data: Uint8Array }
   /** `%extended-output %N age … : data` — the framing tmux switches to once a
    *  client attaches with pause flags (`attach -f pause-after=N`). `ageMs` is
@@ -66,13 +66,20 @@ function isOctal(code: number | undefined): boolean {
 export function parseControlLine(line: string, insideReply: boolean): ControlEvent {
   if (line.startsWith("%end ") || line.startsWith("%error ")) {
     const isError = line.startsWith("%error ");
-    const num = Number(line.split(" ")[2] ?? -1);
-    return { kind: isError ? "error" : "end", num };
+    const parts = line.split(" ");
+    const num = Number(parts[2] ?? -1);
+    const flags = Number(parts[3] ?? -1);
+    return { kind: isError ? "error" : "end", num, flags };
   }
   if (insideReply) return { kind: "reply-line", line };
 
   if (line.startsWith("%begin ")) {
-    return { kind: "begin", num: Number(line.split(" ")[2] ?? -1) };
+    const parts = line.split(" ");
+    return {
+      kind: "begin",
+      num: Number(parts[2] ?? -1),
+      flags: Number(parts[3] ?? -1),
+    };
   }
   if (line.startsWith("%output ")) {
     const rest = line.slice("%output ".length);

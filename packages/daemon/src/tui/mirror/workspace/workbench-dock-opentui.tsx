@@ -58,6 +58,18 @@ export function createOpenTuiWorkbenchDockHost(
           backgroundColor={theme().roles.surfaces.panelRaised}
           overflow="hidden"
         >
+          <Show when={props.projection.dockSection?.label}>
+            <text
+              fg={
+                props.projection.dockSection?.focused
+                  ? theme().roles.text.link
+                  : theme().roles.text.secondary
+              }
+              attributes={props.projection.dockSection?.focused ? 1 : 0}
+            >
+              {props.projection.dockSection?.label}
+            </text>
+          </Show>
           {props.children}
         </box>
       );

@@ -5,6 +5,7 @@ import {
   beginWorkspacePaneDrag,
   beginWorkspacePaneResize,
   cancelWorkspacePaneManipulation,
+  commitWorkspacePaneDragPreview,
   createWorkspacePaneIdle,
   finishWorkspacePaneManipulation,
   flushWorkspacePaneResizeWire,
@@ -158,9 +159,33 @@ describe("workspace pane manipulation", () => {
       movedCells: 1,
       guideTransform: { translateX: 10, translateY: 0 },
     });
+    if (snapped.preview.kind !== "resize") throw new Error("expected resize preview");
+    const left = snapped.preview.placements.find(({ pane }) => pane === "pane.a")!;
+    const upperRight = snapped.preview.placements.find(({ pane }) => pane === "pane.b")!;
+    expect(left.transform.translateX).toBe(0);
+    expect(left.transform.scaleX).toBeGreaterThan(1);
+    expect(upperRight.transform.translateX).toBeCloseTo(10);
+    expect(upperRight.transform.scaleX).toBeLessThan(1);
     expect(snapped.wire.dispatch).toEqual({
       command: { pane: "pane.a", axis: "cols", cells: 40 },
       reason: "live",
+    });
+  });
+
+  it("supports compositor-only resize feedback with one final wire commit", () => {
+    const sample = pointer(535, 200, 30);
+    const local = updateWorkspacePaneManipulation(resize(), sample, { wireResize: false });
+    expect(local.preview).toMatchObject({ kind: "resize", cells: 43, movedCells: 4 });
+    expect(local.wire).toEqual({ dispatch: null, trailing: null });
+    expect((local.state as WorkspacePaneResize).lastWiredCells).toBeNull();
+
+    const finished = finishWorkspacePaneManipulation(local.state, sample);
+    expect(finished.wire).toEqual({
+      dispatch: {
+        command: { pane: "pane.a", axis: "cols", cells: 43 },
+        reason: "final",
+      },
+      trailing: null,
     });
   });
 
@@ -362,5 +387,29 @@ describe("workspace pane manipulation", () => {
     expect(cancelled.completion).toEqual({ kind: "cancelled", rolledBack: true });
     expect(cancelled.preview).toEqual(previewWorkspacePaneManipulation(cancelled.state));
     expect(cancelled.preview.kind).toBe("idle");
+  });
+
+  it("settles a released drag into destination geometry before daemon confirmation", () => {
+    const moved = updateWorkspacePaneManipulation(drag(), pointer(800, 400, 20));
+    expect(moved.state.kind).toBe("drag");
+    const committed = commitWorkspacePaneDragPreview(moved.state as WorkspacePaneDrag);
+    const source = committed.placements.find((placement) => placement.pane === "pane.a");
+    const target = committed.placements.find((placement) => placement.pane === "pane.c");
+
+    expect(committed).toMatchObject({
+      kind: "drag",
+      sourcePane: "pane.a",
+      targetPane: "pane.c",
+      activated: true,
+    });
+    expect(source).toMatchObject({ opacity: 1, elevated: false });
+    expect(source?.transform.translateX).toBeCloseTo(395);
+    expect(source?.transform.translateY).toBeCloseTo(190);
+    expect(source?.transform.scaleX).toBeCloseTo(1.5316, 4);
+    expect(source?.transform.scaleY).toBeCloseTo(0.62);
+    expect(target?.transform.translateX).toBeCloseTo(-395);
+    expect(target?.transform.translateY).toBeCloseTo(-190);
+    expect(target?.transform.scaleX).toBeCloseTo(0.6529, 4);
+    expect(target?.transform.scaleY).toBeCloseTo(1.6129, 4);
   });
 });

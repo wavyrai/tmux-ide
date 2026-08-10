@@ -6,15 +6,16 @@ import { homedir } from "node:os";
 // Workspace-package links — MUST run before the Claude gate below.
 //
 // The TUI sources (packages/daemon/src/**, run via bun) import the workspace
-// packages @tmux-ide/tmux-bridge and @tmux-ide/contracts. In a dev checkout
-// pnpm symlinks them into node_modules; an npm install has no such links, so
-// recreate them (their package.json mains point at shipped src/index.ts,
-// which bun runs directly). Best-effort: never fail an install.
+// packages @tmux-ide/tmux-bridge, @tmux-ide/contracts, and
+// @tmux-ide/daemon-client. In a dev checkout pnpm symlinks them into
+// node_modules; an npm install has no such links, so recreate them (their
+// package.json mains point at shipped src/index.ts, which bun runs directly).
+// Best-effort: never fail an install.
 // ---------------------------------------------------------------------------
 try {
   const pkgRoot = dirname(import.meta.dirname);
   const scopeDir = resolve(pkgRoot, "node_modules", "@tmux-ide");
-  for (const name of ["tmux-bridge", "contracts"]) {
+  for (const name of ["tmux-bridge", "contracts", "daemon-client"]) {
     const target = resolve(pkgRoot, "packages", name);
     const link = resolve(scopeDir, name);
     if (!existsSync(target) || existsSync(link)) continue;
