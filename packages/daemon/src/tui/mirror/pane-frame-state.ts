@@ -22,7 +22,6 @@ export function sameLivePaneStructure(
       left.active !== right.active ||
       left.appMouse !== right.appMouse ||
       left.zoomed !== right.zoomed ||
-      left.scrollbackDepth !== right.scrollbackDepth ||
       left.snapshot.scrollOffset !== right.snapshot.scrollOffset
     ) {
       return false;
@@ -31,17 +30,34 @@ export function sameLivePaneStructure(
   return true;
 }
 
-export function livePaneVersions(panes: readonly LivePane[]): ReadonlyMap<string, number> {
-  return new Map(panes.map((pane) => [pane.id, pane.version]));
+export interface LivePaneRuntime {
+  readonly version: number;
+  readonly scrollbackDepth: number;
 }
 
-export function sameLivePaneVersions(
-  previous: ReadonlyMap<string, number>,
-  next: ReadonlyMap<string, number>,
+export function livePaneRuntime(panes: readonly LivePane[]): ReadonlyMap<string, LivePaneRuntime> {
+  return new Map(
+    panes.map((pane) => [
+      pane.id,
+      { version: pane.version, scrollbackDepth: pane.scrollbackDepth },
+    ]),
+  );
+}
+
+export function sameLivePaneRuntime(
+  previous: ReadonlyMap<string, LivePaneRuntime>,
+  next: ReadonlyMap<string, LivePaneRuntime>,
 ): boolean {
   if (previous.size !== next.size) return false;
-  for (const [paneId, version] of previous) {
-    if (next.get(paneId) !== version) return false;
+  for (const [paneId, runtime] of previous) {
+    const candidate = next.get(paneId);
+    if (
+      !candidate ||
+      candidate.version !== runtime.version ||
+      candidate.scrollbackDepth !== runtime.scrollbackDepth
+    ) {
+      return false;
+    }
   }
   return true;
 }

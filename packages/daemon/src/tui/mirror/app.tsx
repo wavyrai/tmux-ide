@@ -230,11 +230,7 @@ import {
 } from "../../../../core/src/index.ts";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
 import { FrameCoalescer } from "./frame-coalescer.ts";
-import {
-  livePaneVersions,
-  sameLivePaneStructure,
-  sameLivePaneVersions,
-} from "./pane-frame-state.ts";
+import { livePaneRuntime, sameLivePaneRuntime, sameLivePaneStructure } from "./pane-frame-state.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "./pane-surface.tsx";
 import { tapInputSent, tapInputTick } from "./perf-tap.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-terminal.ts";
@@ -1083,9 +1079,15 @@ try {
     const [panes, setPanes] = createSignal<LivePane[]>([], {
       equals: FB_PANES ? sameLivePaneStructure : false,
     });
-    const [paneVersions, setPaneVersions] = createSignal<ReadonlyMap<string, number>>(new Map(), {
-      equals: sameLivePaneVersions,
-    });
+    const [paneRuntime, setPaneRuntime] = createSignal<ReturnType<typeof livePaneRuntime>>(
+      new Map(),
+      { equals: sameLivePaneRuntime },
+    );
+    const paneRuntimeFor = (paneId: string) => paneRuntime().get(paneId);
+    const paneScrollbackDepth = (pane: LivePane): number =>
+      FB_PANES
+        ? (paneRuntimeFor(pane.id)?.scrollbackDepth ?? pane.scrollbackDepth)
+        : pane.scrollbackDepth;
     let mirror: SessionMirror | null = null;
     const [daemonApplicationShellState, setDaemonApplicationShellState] =
       createSignal<ApplicationShellSessionState | null>(null);
@@ -5413,7 +5415,7 @@ try {
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
         const raw = mirror.panes(scrollOffsets, !FB_PANES, terminalPalette());
-        if (FB_PANES) setPaneVersions(livePaneVersions(raw));
+        if (FB_PANES) setPaneRuntime(livePaneRuntime(raw));
         // Size truth (M22.8, event-driven M23.5): the effective window size is
         // the layout ROOT's WxH pushed by %layout-change (the pane bounding
         // box only seeds it before the first layout lands). When a co-attached
@@ -5565,7 +5567,7 @@ try {
      *  the geometry `offsetForMatch` needs to place a match line on screen. */
     const paneScrollGeometry = (paneId: string): { depth: number; viewH: number } => {
       const p = panes().find((x) => x.id === paneId);
-      return { depth: p?.scrollbackDepth ?? 0, viewH: p?.height ?? 0 };
+      return { depth: p ? paneScrollbackDepth(p) : 0, viewH: p?.height ?? 0 };
     };
     /** Scroll the pane so its CURRENT match sits mid-viewport, and re-render. */
     const jumpToCurrent = (paneId: string) => {
@@ -5883,7 +5885,7 @@ try {
         matches: ps.matches,
         current: ps.current,
         len: ps.query.length,
-        baseY: pane.scrollbackDepth - pane.snapshot.scrollOffset,
+        baseY: paneScrollbackDepth(pane) - pane.snapshot.scrollOffset,
       };
     };
 
@@ -5949,7 +5951,7 @@ try {
       };
     };
     const mirrorScrollGeom = (pane: LivePane): ScrollGeom => {
-      const depth = pane.scrollbackDepth;
+      const depth = paneScrollbackDepth(pane);
       const viewH = pane.height;
       // The pane shows the last `viewH` rows of a (depth + viewH)-line buffer, so a
       // scroll offset of `n` lines up puts the first visible line at depth - n.
@@ -6023,7 +6025,7 @@ try {
       const cur = scrollOffsets.get(pane.id) ?? 0;
       const next =
         direction === "up"
-          ? Math.min(cur + SCROLL_STEP, pane.scrollbackDepth)
+          ? Math.min(cur + SCROLL_STEP, paneScrollbackDepth(pane))
           : Math.max(cur - SCROLL_STEP, 0);
       scrollOffsets.set(pane.id, next);
       markDirty();
@@ -8723,7 +8725,7 @@ try {
                                       searchCur={terminalPalette().searchCurrent}
                                       scrollOffset={pane()!.snapshot.scrollOffset}
                                       paneFocused={pane()!.active}
-                                      contentVersion={paneVersions().get(id) ?? 0}
+                                      contentVersion={paneRuntimeFor(id)?.version ?? 0}
                                       selRange={mirrorSelForPane(id)}
                                       search={mirrorSearchForPane(pane()!)}
                                     />
@@ -8749,7 +8751,7 @@ try {
                                           fg={semanticTheme().roles.text.primary}
                                           bg={semanticTheme().roles.surfaces.headerActive}
                                         >
-                                          {` ↑${pane()!.snapshot.scrollOffset}/${pane()!.scrollbackDepth} `}
+                                          {` ↑${pane()!.snapshot.scrollOffset}/${paneScrollbackDepth(pane()!)} `}
                                         </text>
                                       </Show>
                                     </box>

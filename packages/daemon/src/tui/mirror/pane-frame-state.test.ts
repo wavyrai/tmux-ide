@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LivePane } from "./session-mirror.ts";
-import {
-  livePaneVersions,
-  sameLivePaneStructure,
-  sameLivePaneVersions,
-} from "./pane-frame-state.ts";
+import { livePaneRuntime, sameLivePaneStructure, sameLivePaneRuntime } from "./pane-frame-state.ts";
 
 function pane(overrides: Partial<LivePane> = {}): LivePane {
   return {
@@ -34,7 +30,7 @@ describe("pane frame state", () => {
     ];
 
     expect(sameLivePaneStructure(previous, next)).toBe(true);
-    expect(sameLivePaneVersions(livePaneVersions(previous), livePaneVersions(next))).toBe(false);
+    expect(sameLivePaneRuntime(livePaneRuntime(previous), livePaneRuntime(next))).toBe(false);
   });
 
   it.each([
@@ -45,25 +41,37 @@ describe("pane frame state", () => {
     { active: false },
     { appMouse: true },
     { zoomed: true },
-    { scrollbackDepth: 1 },
     { snapshot: { rows: [], cursorX: 0, cursorY: 0, scrollOffset: 1 } },
   ] satisfies Array<Partial<LivePane>>)("publishes structural change %#", (change) => {
     expect(sameLivePaneStructure([pane()], [pane(change)])).toBe(false);
   });
 
-  it("compares pane versions by identity and value", () => {
+  it("keeps scrollback depth in runtime rather than shell structure", () => {
+    const previous = [pane()];
+    const next = [pane({ version: 2, scrollbackDepth: 40 })];
+
+    expect(sameLivePaneStructure(previous, next)).toBe(true);
+    expect(sameLivePaneRuntime(livePaneRuntime(previous), livePaneRuntime(next))).toBe(false);
+  });
+
+  it("compares pane runtime by identity and value", () => {
     expect(
-      sameLivePaneVersions(
+      sameLivePaneRuntime(
         new Map([
-          ["%1", 4],
-          ["%2", 9],
+          ["%1", { version: 4, scrollbackDepth: 10 }],
+          ["%2", { version: 9, scrollbackDepth: 20 }],
         ]),
         new Map([
-          ["%1", 4],
-          ["%2", 9],
+          ["%1", { version: 4, scrollbackDepth: 10 }],
+          ["%2", { version: 9, scrollbackDepth: 20 }],
         ]),
       ),
     ).toBe(true);
-    expect(sameLivePaneVersions(new Map([["%1", 4]]), new Map([["%2", 4]]))).toBe(false);
+    expect(
+      sameLivePaneRuntime(
+        new Map([["%1", { version: 4, scrollbackDepth: 10 }]]),
+        new Map([["%2", { version: 4, scrollbackDepth: 10 }]]),
+      ),
+    ).toBe(false);
   });
 });
