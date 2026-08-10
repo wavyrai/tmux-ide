@@ -89,6 +89,7 @@ export default defineConfig({
       "src/tui/mirror/changes-terminal-surface-renderer.test.tsx",
       "src/tui/mirror/home-files-surface-renderer.test.tsx",
       "src/tui/mirror/missions-surface-renderer.test.tsx",
+      "src/tui/mirror/pane-surface-renderer.test.tsx",
       "src/tui/mirror/recipes-gallery-renderer.test.tsx",
       "src/tui/mirror/shell-chrome-renderer.test.tsx",
       "src/tui/mirror/sidebar-renderer.test.tsx",

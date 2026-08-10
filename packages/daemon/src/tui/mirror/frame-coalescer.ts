@@ -15,8 +15,29 @@ export interface FrameCoalescerClock {
 
 const SYSTEM_CLOCK: FrameCoalescerClock = {
   now: () => performance.now(),
-  schedule: (run, delayMs) => setTimeout(run, delayMs),
-  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  schedule: (run, delayMs) => {
+    if (delayMs <= 0) {
+      const handle = { kind: "microtask" as const, cancelled: false };
+      queueMicrotask(() => {
+        if (!handle.cancelled) run();
+      });
+      return handle;
+    }
+    return setTimeout(run, delayMs);
+  },
+  cancel: (handle) => {
+    if (
+      typeof handle === "object" &&
+      handle !== null &&
+      "kind" in handle &&
+      handle.kind === "microtask" &&
+      "cancelled" in handle
+    ) {
+      handle.cancelled = true;
+      return;
+    }
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
 };
 
 export class FrameCoalescer {

@@ -253,7 +253,6 @@ export class SessionMirror {
           tapResize("output", `${pane} ${mirror.cols}x${mirror.rows} ${data.length}b`);
         }
         mirror?.write(data);
-        opts.onDirty?.();
       },
       onNotify: (name, rest) => {
         if (process.env.TMUX_IDE_MIRROR_DEBUG) {
@@ -375,9 +374,9 @@ export class SessionMirror {
         // right size NOW so its very first %output parses into correct
         // geometry; the content seed rides the queued slow sync.
         const created = new PaneMirror(leaf.width, leaf.height);
-        // Dirty must re-arm when bytes have PARSED, not just when they were
-        // enqueued (onOutput) — with ack-paced writes an enqueue-time dirty can
-        // be consumed by the tick before the grid changed, dropping the frame.
+        // Parsed-grid completion is the single paint authority. Publishing on
+        // enqueue as well would schedule a redundant old-grid frame before the
+        // ack-paced write lands.
         created.onParsed = () => this.opts.onDirty?.();
         this.mirrors.set(leaf.id, created);
         this.unseeded.add(leaf.id);
@@ -766,9 +765,9 @@ export class SessionMirror {
       const mirror = this.mirrors.get(pane.id);
       if (!mirror) {
         const created = new PaneMirror(pane.width, pane.height);
-        // Dirty must re-arm when bytes have PARSED, not just when they were
-        // enqueued (onOutput) — with ack-paced writes an enqueue-time dirty can
-        // be consumed by the tick before the grid changed, dropping the frame.
+        // Parsed-grid completion is the single paint authority. Publishing on
+        // enqueue as well would schedule a redundant old-grid frame before the
+        // ack-paced write lands.
         created.onParsed = () => this.opts.onDirty?.();
         this.mirrors.set(pane.id, created);
         this.unseeded.add(pane.id);

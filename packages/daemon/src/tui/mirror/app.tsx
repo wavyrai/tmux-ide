@@ -4,7 +4,8 @@
  * Sidebar (live fleet, click to switch session) · window tab strip · pane
  * canvas at exact tmux geometry with full color/attribute fidelity, local
  * scrollback (wheel; ↑n/depth badge; any key snaps live), real SGR mouse
- * forwarding into panes whose app enabled mouse mode, 60fps-paced (8ms state tick + targetFps 60 paint)
+ * forwarding into panes whose app enabled mouse mode, request-driven up to 60fps
+ * (8ms coalesced state publication + 30fps renderer target / 60fps burst ceiling)
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
  * untouched) — except HOSTED (M23.2): launched by `tmux-ide app --detachable`
  * inside the internal `_tmux-ide-app` session (TMUX_IDE_HOSTED=1), ^q puts the
@@ -980,14 +981,19 @@ const appRenderer = await createCliRenderer({
   // exit is Ctrl-Q; OpenTUI otherwise destroys the renderer before Ctrl-C can
   // reliably pass through to the mirrored pane.
   exitOnCtrlC: false,
-  // targetFps stays EXPLICIT: @opentui 0.4.3 silently defaults it to 30
-  // (maxFps already defaults to 60). Re-confirmed on the 0.4.3 bump (M21.2).
-  targetFps: 60,
+  // OpenCode's proven cadence: a 30fps continuous target keeps native renderer
+  // work bounded, while maxFps 60 still services explicit input/output renders
+  // at one frame per 16.7ms. Our FrameCoalescer remains request-driven at 60Hz.
+  targetFps: 30,
   maxFps: 60,
+  // Focus belongs to tmux-ide's one semantic focus owner. Native auto-focus can
+  // otherwise race the optimistic pane-focus projection on pointer down.
+  autoFocus: false,
   // `{}` requests kitty's default disambiguation + alternate-key flags.
   useKittyKeyboard: KITTY_KEYS ? {} : null,
   // OpenTUI's error console is an in-app overlay; keep it development-only.
   consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
+  openConsoleOnError: !!process.env.TMUX_IDE_MIRROR_DEBUG,
   onDestroy: () => hostAutowrap?.restore(),
 });
 tuiPerfMark("renderer-created");

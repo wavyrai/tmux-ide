@@ -38,6 +38,28 @@ class ManualClock implements FrameCoalescerClock {
 }
 
 describe("FrameCoalescer", () => {
+  it("publishes the first system-clock request in a microtask", async () => {
+    let flushes = 0;
+    const coalescer = new FrameCoalescer(() => flushes++);
+
+    coalescer.request();
+    coalescer.request();
+    expect(flushes).toBe(0);
+    await Promise.resolve();
+    expect(flushes).toBe(1);
+    coalescer.dispose();
+  });
+
+  it("cancels a pending system-clock microtask on dispose", async () => {
+    let flushes = 0;
+    const coalescer = new FrameCoalescer(() => flushes++);
+
+    coalescer.request();
+    coalescer.dispose();
+    await Promise.resolve();
+    expect(flushes).toBe(0);
+  });
+
   it("flushes the first idle request immediately and coalesces a burst", () => {
     const clock = new ManualClock();
     let flushes = 0;

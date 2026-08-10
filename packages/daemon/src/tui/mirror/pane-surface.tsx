@@ -121,7 +121,6 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
    *  blank so the mirror's shadow must be refilled). */
   private _forceFull = true;
   private _lastScroll = -1;
-  private _lastFocused = false;
   /** Rows the selection/search highlighted last walk — repainted this walk so a
    *  vacated highlight's fg/bg swap is cleared, not stranded. */
   private _prevSelRows: number[] = [];
@@ -249,14 +248,13 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     const w = fb.width;
     const h = fb.height;
 
-    // View-wide changes force a full repaint; content dirtiness is the mirror's job.
-    const full =
-      this._forceFull ||
-      this._scrollOffset !== this._lastScroll ||
-      this._focusedPane !== this._lastFocused;
+    // View-wide changes force a full repaint; content dirtiness is the mirror's
+    // job. Focus is deliberately NOT view-wide: the old/new cursor-marker rows
+    // below are the only framebuffer cells it can change, while pane chrome and
+    // the hardware cursor live outside the terminal cell buffer.
+    const full = this._forceFull || this._scrollOffset !== this._lastScroll;
     this._forceFull = false;
     this._lastScroll = this._scrollOffset;
-    this._lastFocused = this._focusedPane;
 
     // The view's absolute→visible mapping (M25.6), re-read every walk: both the
     // selection (absolute cells) and the search matches (absolute lines) resolve
