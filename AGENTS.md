@@ -1,11 +1,13 @@
 # tmux-ide
 
-A CLI tool that turns any project into a tmux-powered terminal IDE using `.tmux-ide/workspace.yml`.
+A visual, agent-aware IDE for ordinary tmux sessions. `.tmux-ide/workspace.yml`
+is an optional declarative layout preset.
 
 ## Quick Start
 
 ```bash
-tmux-ide              # Launch IDE from .tmux-ide/workspace.yml, or compatible ide.yml
+tmux-ide              # Visual tmux app; configless by default
+tmux-ide app [session] # Explicit app entry; optionally open a live session
 tmux-ide init         # Scaffold .tmux-ide/workspace.yml (auto-detects stack)
 tmux-ide inspect      # Show resolved config + live tmux state
 tmux-ide stop         # Kill session
@@ -43,7 +45,8 @@ terminal:
         - title: Shell
 ```
 
-Legacy `ide.yml` files are still supported through a compatibility adapter. Use
+The project file is optional: the app discovers and manages ordinary live tmux
+sessions without one. Legacy `ide.yml` files are still supported through a compatibility adapter. Use
 `tmux-ide migrate --dry-run` to preview conversion and `tmux-ide migrate --write`
 to create `.tmux-ide/workspace.yml`.
 

@@ -46,6 +46,12 @@ import { AckWriter } from "./ack-writer.ts";
 import { extractSelection, type Cell } from "./selection.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
 import { XTERM_PALETTE } from "./ansi-palette.ts";
+import {
+  createWidgetMarkerByteWatcher,
+  detectWidgetMarker,
+  type WidgetCellRow,
+  type WidgetMarker,
+} from "@tmux-ide/contracts";
 
 export { XTERM_PALETTE } from "./ansi-palette.ts";
 
@@ -128,6 +134,12 @@ function shadowMatches(shadow: Uint32Array, off: number, data: Uint32Array): boo
 
 export class PaneMirror {
   private readonly term: Terminal;
+  /** Rich-widget detection stays off the hot path until the raw byte stream
+   *  contains the versioned sentinel. While a widget is active we rescan after
+   *  each committed write so Ctrl-C/ED3 restores the terminal immediately. */
+  private readonly widgetBytes = createWidgetMarkerByteWatcher();
+  private widgetScanPending = false;
+  private activeWidget: WidgetMarker | null = null;
   /** Ack-paced writes (M21.5): xterm's `write` is async with a completion
    *  callback; chunks arriving mid-parse buffer here and follow as ONE joined
    *  write from the callback, so parser backpressure never queues unbounded
@@ -138,7 +150,10 @@ export class PaneMirror {
   onParsed?: () => void;
   private readonly writer = new AckWriter(
     (data, done) => this.term.write(data, done),
-    () => this.onParsed?.(),
+    () => {
+      if (this.widgetScanPending || this.activeWidget !== null) this.refreshWidgetMarker();
+      this.onParsed?.();
+    },
   );
   cols: number;
   rows: number;
@@ -234,7 +249,9 @@ export class PaneMirror {
   write(data: Uint8Array | string): void {
     // Normalize to bytes so the pacer coalesces freely; a JS string encodes to
     // the same UTF-8 xterm would have decoded it from.
-    this.writer.write(typeof data === "string" ? new TextEncoder().encode(data) : data);
+    const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+    if (this.widgetBytes.observe(bytes)) this.widgetScanPending = true;
+    this.writer.write(bytes);
   }
 
   resize(cols: number, rows: number): void {
@@ -252,6 +269,40 @@ export class PaneMirror {
     // by nature and clamps safely.)
     this._lastViewportY = this.term.buffer.active.viewportY;
     this._version++;
+    if (this.activeWidget !== null) this.refreshWidgetMarker();
+  }
+
+  /** Current in-band rich widget, or null. Detection runs only after the byte
+   *  gate trips; this accessor is therefore O(1) on every normal render tick. */
+  widgetMarker(): WidgetMarker | null {
+    return this.activeWidget;
+  }
+
+  private refreshWidgetMarker(): void {
+    this.widgetScanPending = false;
+    this.activeWidget = detectWidgetMarker(this.widgetCellRows());
+  }
+
+  /** Cell-accurate buffer projection, including xterm's wrap bit. This is the
+   *  only representation from which a long, wrapped marker can be recovered. */
+  private widgetCellRows(): WidgetCellRow[] {
+    const buf = this.term.buffer.active;
+    const cell = buf.getNullCell();
+    const rows: WidgetCellRow[] = [];
+    for (let y = 0; y < buf.length; y++) {
+      const line = buf.getLine(y);
+      if (!line) {
+        rows.push({ cells: [], wrapped: false });
+        continue;
+      }
+      const cells: string[] = [];
+      for (let x = 0; x < this.cols; x++) {
+        line.getCell(x, cell);
+        cells.push(cell.getWidth() === 0 ? "" : cell.getChars() || " ");
+      }
+      rows.push({ cells, wrapped: line.isWrapped });
+    }
+    return rows;
   }
 
   /** Monotonic count of lines trimmed off the scrollback top (M25.6) — the

@@ -36,6 +36,8 @@ import {
 } from "./pane-mirror.ts";
 import type { CellArrays } from "./blit.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
+import { initialWindowSizeCommands } from "./window-size-policy.ts";
+import type { WidgetMarker } from "@tmux-ide/contracts";
 import { tapInputOutput, tapRepin, tapResize } from "./perf-tap.ts";
 import {
   INTERNAL_READ_OPERATION_MARKER,
@@ -299,7 +301,17 @@ export class SessionMirror {
 
   async start(): Promise<void> {
     await this.client.start();
-    await this.client.command(`refresh-client -C ${this.opts.cols}x${this.opts.rows}`);
+    // Size belongs to the initial attach handshake. A cooperative `-C` vote can
+    // lose to an older attached terminal and letterbox the very first frame, so
+    // the visual client claims the measured canvas and releases it on dispose.
+    this.sizeMode = "manual";
+    for (const command of initialWindowSizeCommands({
+      target: this.opts.target,
+      cols: this.opts.cols,
+      rows: this.opts.rows,
+    })) {
+      await this.client.command(command);
+    }
     // ONE control-mode subscription (M23.5): tmux re-evaluates the format on
     // its ~1s tick and pushes `%subscription-changed` per pane on change — the
     // push source for appMouse. The argument is DOUBLE-QUOTED on the control
@@ -526,6 +538,11 @@ export class SessionMirror {
    *  blit path (which omits styled rows). Empty for an unknown pane. */
   visibleRowTexts(id: string, scrollOffset = 0): string[] {
     return this.mirrors.get(id)?.visibleRowTexts(scrollOffset) ?? [];
+  }
+
+  /** Renderer-neutral rich content currently announced by a pane. */
+  widgetMarker(id: string): WidgetMarker | null {
+    return this.mirrors.get(id)?.widgetMarker() ?? null;
   }
 
   /** A pane's LIVE scrollback depth (M25.6) — read at event time by the drag

@@ -13,6 +13,20 @@ tmux-ide widget card apps/desktop-renderer/src/terminal/widgets/examples/agent-s
 # Ctrl-C returns the pane to a shell.
 ```
 
+The same marker and asset contract is consumed by every host:
+
+| Content   | Web / Electron GUI                        | OpenTUI app                                     |
+| --------- | ----------------------------------------- | ----------------------------------------------- |
+| Markdown  | Semantic elements, Mermaid when requested | Native OpenTUI `MarkdownRenderable`             |
+| GIF/image | Raster `<img>`; GIFs animate              | Named fallback unless a pixel protocol is owned |
+| Card      | Interactive registered component          | Shared text projection                          |
+
+This is also what “React widgets” means in tmuxy: a marker selects a component
+already registered by the trusted frontend build. It does **not** send React
+source or arbitrary HTML through tmux. tmux-ide keeps the same boundary:
+host-native components are registered code, descriptors are strict data, and
+raw HTML is never executed.
+
 ## The marker
 
 One line, four space-separated fields, wrapped in SGR 8 (conceal) so a terminal

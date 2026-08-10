@@ -197,9 +197,9 @@ function printHelp() {
   console.log(`${bold("tmux-ide")} — Terminal IDE powered by tmux
 
 ${bold("Usage:")}
-  ${cyan("tmux-ide")}                    ${dim("Launch workspace config, or open the team cockpit if none")}
+  ${cyan("tmux-ide")}                    ${dim("Open the visual tmux app (workspace config is optional)")}
   ${cyan("tmux-ide --headless")}         ${dim("Run the canonical daemon in this foreground process")}
-  ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory (cockpit if no config)")}
+  ${cyan("tmux-ide <path>")}             ${dim("Open a configured workspace, or visually manage tmux from that folder")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
   ${cyan("tmux-ide setup --edit")}       ${dim("Open config tree editor")}
   ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}

@@ -12192,7 +12192,7 @@ var init_app_config = __esm({
       integrations: { offer: true },
       worktrees: { dir: "" },
       app: {
-        frontDoor: false,
+        frontDoor: true,
         detachable: false,
         dragSelect: "agents",
         newAgentCwd: "pane",
@@ -43496,7 +43496,7 @@ var require_package = __commonJS({
     module.exports = {
       name: "tmux-ide",
       version: "2.8.0",
-      description: "Turn any project into a tmux-powered terminal IDE with .tmux-ide/workspace.yml",
+      description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
         "tmux-ide": "bin/cli.js"
@@ -43548,7 +43548,7 @@ var require_package = __commonJS({
         check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
-        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
+        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
         "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
         "test:tui-perf": "bun scripts/perf-mirror.mjs",
@@ -46731,9 +46731,9 @@ function printHelp() {
   console.log(`${bold3("tmux-ide")} \u2014 Terminal IDE powered by tmux
 
 ${bold3("Usage:")}
-  ${cyan2("tmux-ide")}                    ${dim3("Launch workspace config, or open the team cockpit if none")}
+  ${cyan2("tmux-ide")}                    ${dim3("Open the visual tmux app (workspace config is optional)")}
   ${cyan2("tmux-ide --headless")}         ${dim3("Run the canonical daemon in this foreground process")}
-  ${cyan2("tmux-ide <path>")}             ${dim3("Launch from a specific directory (cockpit if no config)")}
+  ${cyan2("tmux-ide <path>")}             ${dim3("Open a configured workspace, or visually manage tmux from that folder")}
   ${cyan2("tmux-ide setup")}              ${dim3("Interactive TUI setup wizard")}
   ${cyan2("tmux-ide setup --edit")}       ${dim3("Open config tree editor")}
   ${cyan2("tmux-ide settings")}           ${dim3("Interactive TUI config manager")}

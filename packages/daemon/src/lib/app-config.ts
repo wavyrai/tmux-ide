@@ -175,10 +175,9 @@ export interface AppIntegrations {
 /** The unified-app front-door decision (M22.6). */
 export interface AppApp {
   /**
-   * Whether bare `tmux-ide` (no ide.yml here, no `--team`) launches the unified
-   * app (`tmux-ide app`) instead of the classic team cockpit. Default false —
-   * the flip is opt-in until the default-entry decision is made. `tmux-ide team`
-   * (the explicit cockpit) and a project's `ide.yml` auto-launch are unaffected.
+   * Whether bare `tmux-ide` (no workspace config here, no `--team`) launches
+   * the unified visual tmux app. Default true: a project file is an optional
+   * declarative preset, never the admission ticket to managing live tmux.
    */
   frontDoor: boolean;
   /**
@@ -284,7 +283,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   integrations: { offer: true },
   worktrees: { dir: "" },
   app: {
-    frontDoor: false,
+    frontDoor: true,
     detachable: false,
     dragSelect: "agents",
     newAgentCwd: "pane",

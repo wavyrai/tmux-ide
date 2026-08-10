@@ -119,10 +119,10 @@ use `~/.tmux-ide/config.json` instead — see [Theming & config](/docs/theming).
 `~/.tmux-ide/config.json` (override the path with `TMUX_IDE_CONFIG`) — the same
 file that holds the shared theme. Two things worth knowing for 2.7:
 
-- **`app.frontDoor`** flips the default entry point: with `{ "app": { "frontDoor": true } }`,
-  bare `tmux-ide` launches the unified app (`tmux-ide app`) instead of the home
-  cockpit. Default `false`; project config auto-launch and `tmux-ide team` are
-  unaffected.
+- **`app.frontDoor`** controls the default entry point. Bare `tmux-ide` launches
+  the unified visual app by default (`true`); set it to `false` to restore the
+  historical home cockpit. Project config auto-launch and explicit
+  `tmux-ide team` are unaffected.
 - **`app.detachable`** makes plain `tmux-ide app` run hosted: the app lives in
   a tmux session of its own and your terminal attaches to it, so the cockpit
   survives the terminal and reattaches from anywhere (`^q` detaches instead of

@@ -113,17 +113,38 @@ The Terminal tab is a live mirror of your panes, and it's agent-aware:
   Code, vim) captures the mouse. Right-click → **"Select text…"** pauses mouse
   forwarding so you can drag-select and copy (via SSH-transparent OSC52); the
   wheel scrolls history while you select.
-- **Size honesty** — when another attached terminal sizes the shared window
-  smaller, the app centers the view and says so; the palette's **"Resize to fit
-  this window"** reclaims the full canvas.
+- **Immediate size authority** — the first attach claims the measured terminal
+  canvas before the initial pane seed, then follows later terminal resizes. The
+  manual window-size override is released when the app exits so other attached
+  tmux clients regain normal ownership.
+
+### Rich pane content
+
+A pane can opt into a host-native document surface without ceasing to be a real
+tmux pane:
+
+```bash
+tmux-ide widget markdown README.md
+tmux-ide widget image demo.gif
+printf '%s' '{"title":"Build","items":[{"type":"progress","value":72}]}' | tmux-ide widget card
+```
+
+Markdown renders through OpenTUI in the terminal app and semantic components in
+the web/Electron GUI. Raster images and animated GIFs render in the GUI; a
+generic terminal gets an explicit fallback until tmux-ide has negotiated a
+pixel-image protocol. Cards select trusted, registered host components. Raw HTML
+or React source is never executed from pane output—the tmuxy-style boundary is
+strict data selecting code that shipped with the host. Press **Ctrl-C** to clear
+the document and return to the underlying terminal.
 
 ### Home v2
 
 The app's Home tab greets first-run users with a plain-language welcome instead
 of an empty grid. **Open folder…** is a real filesystem picker — choose a
 directory and the app opens it as a terminal workspace, optionally remembering it
-as a project. Recently opened folders are one click away, and the optional
-`app.frontDoor` config flag makes bare `tmux-ide` open the app. See
+as a project. Recently opened folders are one click away, and bare `tmux-ide`
+opens this app by default; `app.frontDoor: false` restores the historical
+cockpit entry if desired. See
 [Getting started](/docs/getting-started#start-anywhere-with-the-app).
 
 ### Keep it running — even from your phone

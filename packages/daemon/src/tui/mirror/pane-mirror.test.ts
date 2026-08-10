@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { PaneMirror } from "./pane-mirror.ts";
 import { DARK_THEME, LIGHT_THEME, createTerminalPaletteProjection } from "./theme.ts";
+import { widgetMarkerAnnouncement } from "@tmux-ide/contracts";
 
 /** xterm parses writes on its own write-buffer flush (a timer), so poll the
  *  mirror until the content lands (the real app reads on a 16ms render tick). */
@@ -34,6 +35,40 @@ describe("PaneMirror.bufferLines", () => {
     m.write("hello");
     const buf = await flushed(m, "hello");
     expect(buf.some((l) => l === "hello")).toBe(true);
+    m.dispose();
+  });
+});
+
+describe("PaneMirror rich widget detection", () => {
+  it("detects a wrapped concealed marker only after the emulator commits it", async () => {
+    const m = new PaneMirror(18, 8);
+    m.write(widgetMarkerAnnouncement("markdown", { text: "# Plan\n\nA **real** document." }));
+    await flushed(m, "TMUXIDE-WIDGET/1");
+
+    expect(m.widgetMarker()).toMatchObject({
+      id: "markdown",
+      args: { text: "# Plan\n\nA **real** document." },
+    });
+    m.dispose();
+  });
+
+  it("removes the widget when the pane clears its screen and history", async () => {
+    const m = new PaneMirror(40, 6);
+    m.write(widgetMarkerAnnouncement("markdown", { text: "# Plan" }));
+    await flushed(m, "TMUXIDE-WIDGET/1");
+    expect(m.widgetMarker()?.id).toBe("markdown");
+
+    m.write("\u001b[2J\u001b[3J\u001b[Hshell restored");
+    await flushed(m, "shell restored");
+    expect(m.widgetMarker()).toBe(null);
+    m.dispose();
+  });
+
+  it("does not scan ordinary output into a widget", async () => {
+    const m = new PaneMirror(40, 4);
+    m.write("ordinary terminal output");
+    await flushed(m, "ordinary terminal output");
+    expect(m.widgetMarker()).toBe(null);
     m.dispose();
   });
 });

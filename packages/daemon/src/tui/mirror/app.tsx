@@ -206,7 +206,7 @@ import { readdir, readFile, writeFile, rename, rm, stat } from "node:fs/promises
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
-import { RGBA, EditBuffer, createCliRenderer, decodePasteBytes } from "@opentui/core";
+import { RGBA, EditBuffer, SyntaxStyle, createCliRenderer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import {
   createRuntimeConnectionSupervisor,
@@ -239,6 +239,9 @@ import {
   withLivePaneFocus,
 } from "./pane-frame-state.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "./pane-surface.tsx";
+import { readWidgetAsset } from "../../lib/widget-asset-store.ts";
+import { resolveTuiWidgetSurface, type TuiWidgetSurface } from "./widget-surface-model.ts";
+import { TuiRichWidgetSurface } from "./widget-surface.tsx";
 import { tapInputSent, tapInputTick } from "./perf-tap.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-terminal.ts";
 import { execFile, spawn } from "node:child_process";
@@ -1028,6 +1031,40 @@ try {
     });
     const [semanticTheme, setSemanticTheme] = createSignal(semanticThemeStore.getSnapshot());
     const terminalPalette = createMemo(() => createTerminalPaletteProjection(semanticTheme()));
+    const createMarkdownSyntaxStyle = () => {
+      const theme = semanticTheme();
+      return SyntaxStyle.fromStyles({
+        default: { fg: theme.roles.text.primary },
+        "markup.heading": { fg: theme.colors.accent, bold: true },
+        "markup.strong": { fg: theme.roles.text.primary, bold: true },
+        "markup.italic": { fg: theme.roles.text.secondary, italic: true },
+        "markup.raw": {
+          fg: theme.roles.text.primary,
+          bg: theme.roles.surfaces.headerActive,
+        },
+        "markup.raw.block": {
+          fg: theme.roles.text.primary,
+          bg: theme.roles.surfaces.headerActive,
+        },
+        "markup.link": { fg: theme.colors.accent, underline: true },
+        "markup.link.label": { fg: theme.colors.accent, underline: true },
+        "markup.link.url": { fg: theme.roles.text.secondary, underline: true },
+        "markup.quote": { fg: theme.roles.text.secondary, italic: true },
+        "markup.list": { fg: theme.colors.accent },
+      });
+    };
+    let ownedMarkdownSyntaxStyle = createMarkdownSyntaxStyle();
+    const [markdownSyntaxStyle, setMarkdownSyntaxStyle] = createSignal(ownedMarkdownSyntaxStyle);
+    createEffect(() => {
+      // Rebuild only when the semantic theme changes. The terminal grid and
+      // rich Markdown then share one palette authority.
+      semanticTheme();
+      const next = createMarkdownSyntaxStyle();
+      const previous = ownedMarkdownSyntaxStyle;
+      ownedMarkdownSyntaxStyle = next;
+      setMarkdownSyntaxStyle(next);
+      previous.destroy();
+    });
     // Keep the native clear/background color synchronized with the semantic
     // canvas. This removes transparent/default-color flashes during resize and
     // makes every painted and unpainted cell obey the same theme authority.
@@ -1037,6 +1074,7 @@ try {
     );
     const disposeRendererThemeMode = semanticThemeStore.followRendererThemeMode(appRenderer);
     onCleanup(() => {
+      ownedMarkdownSyntaxStyle.destroy();
       disposeRendererThemeMode();
       disposeSemanticThemeStore();
     });
@@ -1447,6 +1485,29 @@ try {
       equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]),
     });
     const panesById = createMemo(() => new Map(panes().map((p) => [p.id, p])));
+    const richWidgetCache = new Map<
+      string,
+      { marker: NonNullable<ReturnType<SessionMirror["widgetMarker"]>>; surface: TuiWidgetSurface }
+    >();
+    const richWidgetFor = (paneId: string): TuiWidgetSurface | null => {
+      // Per-pane version is the reactive gate. The marker accessor itself is
+      // O(1), and asset decoding happens once per marker identity.
+      paneRuntimeFor(paneId)?.version;
+      const marker = mirror?.widgetMarker(paneId) ?? null;
+      if (!marker) {
+        richWidgetCache.delete(paneId);
+        return null;
+      }
+      const cached = richWidgetCache.get(paneId);
+      if (cached?.marker === marker) return cached.surface;
+      const surface = resolveTuiWidgetSurface(marker, readWidgetAsset);
+      if (!surface) {
+        richWidgetCache.delete(paneId);
+        return null;
+      }
+      richWidgetCache.set(paneId, { marker, surface });
+      return surface;
+    };
     const [windowTabs, setWindowTabs] = createSignal<WindowTab[]>([]);
     // The fleet payload's per-pane entries join directly to tmux's live %pane_id.
     // Drag policy and pane chrome consume this same authority-derived map.
@@ -2967,6 +3028,7 @@ try {
       mirror = null;
       void previousSupervisor?.stop();
       scrollOffsets.clear();
+      richWidgetCache.clear();
       setFocusedPaneId(null);
       setPanes([]);
       setStatus(`attaching ${name}…`);
@@ -8492,6 +8554,19 @@ try {
         </box>
       </Show>
     );
+    const richWidgetOverlay = (paneId: string) => (
+      <Show when={richWidgetFor(paneId)}>
+        {(surface) => (
+          <TuiRichWidgetSurface
+            surface={surface()}
+            theme={semanticTheme()}
+            syntaxStyle={markdownSyntaxStyle()}
+            width={panesById().get(paneId)?.width ?? 1}
+            height={panesById().get(paneId)?.height ?? 1}
+          />
+        )}
+      </Show>
+    );
     const interaction = createMemo(() => {
       dialogRev();
       return tuiInteractionPresentation({
@@ -8685,6 +8760,7 @@ try {
                                       </box>
                                     )}
                                   </For>
+                                  {richWidgetOverlay(pane.id)}
                                   {/* Top-right badge family: the select-mode chip (M22.9,
                             passive text runs — presses bubble to the router) then
                             the scroll badge. */}
@@ -8749,6 +8825,7 @@ try {
                                       selRange={mirrorSelForPane(id)}
                                       search={mirrorSearchForPane(pane()!)}
                                     />
+                                    {richWidgetOverlay(id)}
                                     {/* Top-right badge family: the select-mode chip
                               (M22.9, passive text runs — presses bubble to the
                               router) then the scroll badge. */}

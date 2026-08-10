@@ -245,13 +245,13 @@ describe("parseAppConfig — mistyped fields fall back to default", () => {
     expect(parseAppConfig({ worktrees: "nope" }).worktrees).toEqual(DEFAULT_APP_CONFIG.worktrees);
   });
 
-  it("app.frontDoor — defaults to false and coerces a mistyped value back to it", () => {
-    expect(DEFAULT_APP_CONFIG.app.frontDoor).toBe(false);
-    expect(parseAppConfig(undefined).app.frontDoor).toBe(false);
-    expect(parseAppConfig({ app: { frontDoor: "yes" } }).app.frontDoor).toBe(false);
-    expect(parseAppConfig({ app: "nope" }).app.frontDoor).toBe(false);
-    // An explicit true opts into the front-door flip.
+  it("app.frontDoor — defaults to the configless visual app and accepts an opt-out", () => {
+    expect(DEFAULT_APP_CONFIG.app.frontDoor).toBe(true);
+    expect(parseAppConfig(undefined).app.frontDoor).toBe(true);
+    expect(parseAppConfig({ app: { frontDoor: "yes" } }).app.frontDoor).toBe(true);
+    expect(parseAppConfig({ app: "nope" }).app.frontDoor).toBe(true);
     expect(parseAppConfig({ app: { frontDoor: true } }).app.frontDoor).toBe(true);
+    expect(parseAppConfig({ app: { frontDoor: false } }).app.frontDoor).toBe(false);
   });
 
   it("app.detachable — defaults to false and coerces a mistyped value back to it", () => {

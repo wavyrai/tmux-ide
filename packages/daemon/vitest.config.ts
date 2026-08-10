@@ -93,6 +93,7 @@ export default defineConfig({
       "src/tui/mirror/recipes-gallery-renderer.test.tsx",
       "src/tui/mirror/shell-chrome-renderer.test.tsx",
       "src/tui/mirror/sidebar-renderer.test.tsx",
+      "src/tui/mirror/widget-surface-renderer.test.tsx",
       "src/tui/mirror/testing/renderer-harness.test.ts",
       "src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx",
       "src/tui/mirror/workspace/application-shell-renderer.test.tsx",
