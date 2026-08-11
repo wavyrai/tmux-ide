@@ -1127,10 +1127,10 @@ try {
           evidence.styleElements !== 0 ||
           evidence.violations.some(({ directive }) => directive.startsWith("style-src")) ||
           evidence.consoleViolations.length > 0 ||
-          evidence.paletteEvidence.groups !== 2 ||
-          evidence.paletteEvidence.options !== 6 ||
-          evidence.paletteEvidence.icons !== 6 ||
-          evidence.paletteEvidence.shortcuts !== 6 ||
+          evidence.paletteEvidence.groups !== 4 ||
+          evidence.paletteEvidence.options !== 16 ||
+          evidence.paletteEvidence.icons !== 16 ||
+          evidence.paletteEvidence.shortcuts !== 16 ||
           !evidence.paletteEvidence.width ||
           evidence.paletteEvidence.width > 680 ||
           !evidence.paletteEvidence.height ||
@@ -1140,7 +1140,7 @@ try {
           evidence.paletteEvidence.keyboardOverlayDuration !== "0s" ||
           evidence.paletteEvidence.keyboardPaletteDuration !== "0s" ||
           !evidence.paletteEvidence.keyboardFocusReturned ||
-          !evidence.paletteEvidence.emptyText?.includes("No commands found") ||
+          !evidence.paletteEvidence.emptyText?.includes("No results found") ||
           evidence.paletteEvidence.pointerOpen.source !== "mouse" ||
           evidence.paletteEvidence.pointerOpen.overlayDuration !== "0.15s, 0s" ||
           evidence.paletteEvidence.pointerOpen.paletteDuration !== "0.15s, 0.15s" ||

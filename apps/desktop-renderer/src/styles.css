@@ -6837,64 +6837,6 @@ kbd {
   }
 }
 
-.mirror-deck {
-  flex: 0 0 auto;
-  padding: 0 var(--tmi-space-2) var(--tmi-space-2);
-}
-
-.mirror-deck__controls {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.mirror-deck__toggle {
-  padding: var(--tmi-space-1) var(--tmi-space-3);
-  border: 1px solid var(--tmux-ide-border-default);
-  border-radius: var(--tmi-radius-control);
-  color: var(--tmux-ide-text-muted);
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-
-.mirror-deck__toggle[aria-pressed="true"] {
-  color: var(--tmux-ide-text-bright);
-  background: var(--desktop-active);
-}
-
-.mirror-deck__nodes {
-  display: flex;
-  gap: var(--tmi-space-2);
-  margin-top: var(--tmi-space-2);
-  overflow-x: auto;
-}
-
-.mirror-deck__node {
-  position: relative;
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  width: 320px;
-  height: 200px;
-  border: 1px solid var(--tmux-ide-border-default);
-  border-radius: var(--tmi-radius-control);
-  overflow: hidden;
-}
-
-.mirror-deck__title {
-  flex: 0 0 auto;
-  padding: 0 var(--tmi-space-2);
-  color: var(--tmux-ide-text-muted);
-  font-size: 0.75rem;
-  line-height: 1.8;
-}
-
-.mirror-deck__node .mirror-pane-node {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
 /* ==========================================================================
  * m51 — Kowalski design-engineering pass
  *
@@ -6977,8 +6919,7 @@ kbd {
 .create-pane-flow__trigger,
 .canvas-controls button,
 .fleet-sidebar__open-action,
-.mirror-pane-node__state button,
-.mirror-deck__toggle {
+.mirror-pane-node__state button {
   border-color: color-mix(in oklab, var(--desktop-separator) 82%, transparent);
   background: color-mix(in oklab, var(--desktop-raised) 88%, transparent);
   box-shadow: var(--desktop-control-highlight), var(--desktop-control-shadow);

@@ -624,7 +624,18 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const semanticPaneIdFor = (resourceId: string): string | null => {
     const inventory = shell().terminalInventory;
     if (!inventory) return null;
-    const resource = inventory.resources.find(({ id }) => id === resourceId);
+    /*
+     * Canvas frames address panes by resource id; authoritative tiled-layout
+     * frames already carry the semantic pane id. Context-menu targets can come
+     * from either surface, so accepting only the former made a confirmed tiled
+     * pane verb disappear whenever those two identities differed (most visibly
+     * on a freshly split pane whose inventory projection had just advanced).
+     */
+    const resource = inventory.resources.find(
+      ({ id, attachability }) =>
+        id === resourceId ||
+        (attachability.status === "available" && attachability.semanticPaneId === resourceId),
+    );
     return resource?.attachability.status === "available"
       ? resource.attachability.semanticPaneId
       : null;
@@ -784,9 +795,30 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
    * painting over the whole-window xterm. The hidden whole-window attachment
    * remains the input/geometry client; these streams are the visible pixels.
    */
-  const tiledPaneCompositorEnabled = createMemo(
-    () => !experimentalSurfaces && dataMode() === "runtime" && mirrorTransport() !== null,
-  );
+  const tiledPaneCompositorEnabled = createMemo(() => {
+    if (experimentalSurfaces || dataMode() !== "runtime" || mirrorTransport() === null) {
+      return false;
+    }
+
+    /*
+     * A pane stream is a compositor primitive, not a second rendering path for
+     * an ordinary one-pane window. Mounting it for every runtime workspace put
+     * a read-only xterm directly over the interactive xterm even when there was
+     * nothing to compose. Besides wasting a stream and emulator, the foreign
+     * screen owned hit testing while the live terminal beneath owned input.
+     *
+     * Start the compositor only when tmux actually has a multi-pane window.
+     * Inventory is available before the first layout stream, so this decision
+     * does not depend on a late frame and remains true while that frame settles.
+     */
+    const paneCounts = new Map<string, number>();
+    for (const resource of shell().terminalInventory?.resources ?? []) {
+      if (resource.attachability.status !== "available") continue;
+      const window = resource.windowResourceId ?? resource.id;
+      paneCounts.set(window, (paneCounts.get(window) ?? 0) + 1);
+    }
+    return [...paneCounts.values()].some((count) => count > 1);
+  });
   let activeMirrorKey = "";
   createEffect(() => {
     const transport = mirrorTransport();

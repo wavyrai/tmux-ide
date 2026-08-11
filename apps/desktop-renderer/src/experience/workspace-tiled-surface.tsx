@@ -398,12 +398,20 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   });
   const compositorNodes = createMemo(() => {
     const mirror = props.mirror;
-    return new Map(mirror?.enabled ? mirror.nodes.map((node) => [node.pane, node] as const) : []);
+    return new Map(
+      mirror?.enabled && tiles().length > 1
+        ? mirror.nodes.map((node) => [node.pane, node] as const)
+        : [],
+    );
   });
   const paneCompositorEnabled = createMemo(() => {
     const visible = tiles();
     const nodes = compositorNodes();
-    return visible.length > 0 && visible.every((tile) => nodes.has(tile.pane));
+    // One pane already has one authoritative interactive renderer. Pane
+    // streams exist here only to compose a multi-pane tmux window; using one
+    // for a single pane creates two overlapping xterms with split pixel/input
+    // ownership and lets the mirror intercept the live terminal's hit tests.
+    return visible.length > 1 && visible.every((tile) => nodes.has(tile.pane));
   });
   const borders = createMemo(() => {
     const frame = currentFrame();
@@ -1712,59 +1720,6 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
           </span>
         </div>
       </div>
-      <Show when={paneCompositorEnabled() ? undefined : props.mirror}>
-        {(mirror) => (
-          <div class="mirror-deck" data-enabled={mirror().enabled}>
-            <div class="mirror-deck__controls">
-              <button
-                type="button"
-                class="mirror-deck__toggle"
-                aria-pressed={mirror().enabled}
-                data-mirror-toggle="true"
-                onClick={() => mirror().onToggle(!mirror().enabled)}
-              >
-                Mirror
-              </button>
-            </div>
-            <Show when={mirror().enabled}>
-              {/*
-               * `Index`, never `For`.
-               *
-               * The node list is rebuilt on every stream tick, so `For` — which
-               * keys by reference — would throw away each node's DOM and
-               * re-initialize its xterm several times a second. That is the
-               * re-mount defect the mirror was fixed for once already; the
-               * element identity is what the suite asserts across ticks.
-               */}
-              <div class="mirror-deck__nodes">
-                <Index each={mirror().nodes}>
-                  {(node) => (
-                    <div
-                      class="mirror-deck__node"
-                      data-mirror-node-id={`mirror:${node().pane}`}
-                      data-pane={node().pane}
-                      data-state={node().state.kind}
-                    >
-                      <span class="mirror-deck__title">{node().title}</span>
-                      <MirrorPaneNode
-                        pane={node().pane}
-                        title={node().title}
-                        state={node().state}
-                        connection={mirror().connection}
-                        faultLabel={mirror().faultLabel}
-                        registerSink={node().registerSink}
-                        onRetry={mirror().onRetry}
-                        reducedMotion={props.reducedMotion}
-                        themeKey={props.terminalThemeKey}
-                      />
-                    </div>
-                  )}
-                </Index>
-              </div>
-            </Show>
-          </div>
-        )}
-      </Show>
       <AttachmentReporter area={() => areaElement} onChange={props.onAttachmentChanged} />
     </div>
   );

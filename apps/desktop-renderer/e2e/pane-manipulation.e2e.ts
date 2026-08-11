@@ -26,7 +26,9 @@ import {
 test.use({ scratchSessions: 1, promoteSessions: 1 });
 
 const INITIAL_MARKER = "MANIPULATION-SEED-41C7";
-const LIVE_MARKER = "MANIPULATION-STILL-LIVE-8A2D";
+// Keep the proof on one physical row even after a vertical split; the visible
+// pane stream is narrower than the hidden whole-window controller by design.
+const LIVE_MARKER = "STILL-LIVE-8A2D";
 
 interface DomLayout {
   readonly semanticPaneId: string;
@@ -393,10 +395,18 @@ test("resize previews locally; header drag cancels or swaps without remounting t
     await expectSameTerminal(page, originalTerminal!, terminal, "after confirmed pane swap");
     await expectLiveCompositor(terminal, area, "after confirmed pane swap");
 
-    // The identity assertion above proves no remount; this proves that same
-    // attachment still accepts input and repaints output after all mutations.
-    const beforeTyping = await paintFingerprint(terminal);
-    await terminal.locator(".xterm-screen").click({ position: { x: 28, y: 24 } });
+    // The identity assertion above proves the geometry/input attachment did
+    // not remount. In a split window the visible per-pane compositor owns
+    // pixels and hit testing, so exercise the pane body a user actually clicks
+    // rather than reaching through it to the intentionally hidden controller.
+    const visiblePane = page.locator('.pane-tile[data-composed="true"] .mirror-pane-node').first();
+    await proveVisible(visiblePane, "the active composed pane after manipulation", {
+      minWidth: 80,
+      minHeight: 40,
+      timeoutMs: 30_000,
+    });
+    const beforeTyping = await paintFingerprint(visiblePane);
+    await visiblePane.click({ position: { x: 28, y: 24 } });
     await page.keyboard.type(`echo ${LIVE_MARKER}`);
     await page.keyboard.press("Enter");
     await expect
@@ -406,11 +416,15 @@ test("resize previews locally; header drag cancels or swaps without remounting t
       })
       .toContain(LIVE_MARKER);
     await proveVisible(
-      terminal.locator(".xterm-rows > div").filter({ hasText: LIVE_MARKER }).first(),
+      visiblePane.locator(".xterm-rows > div").filter({ hasText: LIVE_MARKER }).first(),
       `the post-manipulation terminal row showing "${LIVE_MARKER}"`,
       { minWidth: 80, minHeight: 4, timeoutMs: 30_000 },
     );
-    provePaintChanged(beforeTyping, await paintFingerprint(terminal), "the manipulated terminal");
+    provePaintChanged(
+      beforeTyping,
+      await paintFingerprint(visiblePane),
+      "the visible manipulated terminal",
+    );
     await expectSameTerminal(page, originalTerminal!, terminal, "after post-swap terminal input");
 
     // --- Header double-click: tmux zoom, then exact restoration ------------
