@@ -21,6 +21,47 @@ export const SESSION_RUNTIME_CONTRACT_VERSION = 1 as const;
 export const SessionRuntimeGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
 export type SessionRuntimeGeneration = z.infer<typeof SessionRuntimeGenerationSchemaZ>;
 
+/** Stable authenticated product-client identity; never a renderer-local pane address. */
+export const SessionRuntimeClientIdSchemaZ = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((value) => !/[\0\r\n]/u.test(value));
+export type SessionRuntimeClientId = z.infer<typeof SessionRuntimeClientIdSchemaZ>;
+
+export const SessionRuntimeControllerRoleSchemaZ = z.enum(["controller", "viewer"]);
+export type SessionRuntimeControllerRole = z.infer<typeof SessionRuntimeControllerRoleSchemaZ>;
+
+const SessionRuntimeSessionNameSchemaZ = z
+  .string()
+  .min(1)
+  .max(256)
+  .refine((value) => !/[\0\r\n]/u.test(value));
+
+/** One generation- and revision-pinned capability for both input and geometry. */
+export const SessionRuntimeControllerLeaseSchemaZ = z
+  .object({
+    generation: SessionRuntimeGenerationSchemaZ,
+    session: SessionRuntimeSessionNameSchemaZ,
+    clientId: SessionRuntimeClientIdSchemaZ,
+    token: z.uuid(),
+    revision: z.number().int().positive(),
+  })
+  .strict();
+export type SessionRuntimeControllerLease = z.infer<typeof SessionRuntimeControllerLeaseSchemaZ>;
+
+export const SessionRuntimeControllerSnapshotSchemaZ = z
+  .object({
+    generation: SessionRuntimeGenerationSchemaZ,
+    session: SessionRuntimeSessionNameSchemaZ,
+    controllerClientId: SessionRuntimeClientIdSchemaZ.nullable(),
+    revision: z.number().int().nonnegative(),
+  })
+  .strict();
+export type SessionRuntimeControllerSnapshot = z.infer<
+  typeof SessionRuntimeControllerSnapshotSchemaZ
+>;
+
 export const TerminalReplicaRevisionSchemaZ = z.number().int().nonnegative();
 export type TerminalReplicaRevision = z.infer<typeof TerminalReplicaRevisionSchemaZ>;
 

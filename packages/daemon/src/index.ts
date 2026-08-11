@@ -278,9 +278,18 @@ export {
 } from "./terminal/pane-stream/runtime.ts";
 export {
   SessionRuntimeRegistry,
+  SessionRuntimeControllerLeaseError,
   type SessionRuntimeConsumer,
+  type SessionRuntimeControllerLease,
+  type SessionRuntimeControllerLeaseErrorCode,
+  type SessionRuntimeControllerRole,
+  type SessionRuntimeControllerSnapshot,
   type SessionRuntimeRegistryOptions,
 } from "./terminal/session-runtime/registry.ts";
+export {
+  createSessionRuntimeMultiplexerBackend,
+  type SessionRuntimeMultiplexerBackendOptions,
+} from "./terminal/session-runtime/multiplexer-backend.ts";
 export {
   TerminalInputAuthority,
   TerminalInputAuthorityConflictError,
