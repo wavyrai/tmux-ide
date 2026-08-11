@@ -160,6 +160,44 @@ describe("/ws/events client frame protocol", () => {
     socket.disconnect();
   });
 
+  it("serializes an unversioned removal behind a pending acknowledged install", async () => {
+    let install!: (value: { status: "installed" }) => void;
+    const release = vi.fn();
+    _setResourceObservationOverrideForTests(() => ({
+      release,
+      ready: new Promise((resolve) => {
+        install = resolve;
+      }),
+    }));
+    const interest = { resource: "workspace-files", workspaceName: "alpha" } as const;
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.sent.length = 0;
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interests: [interest],
+        interestRevision: 1,
+      }),
+    );
+    socket.receive(JSON.stringify({ type: "unsubscribe", sessions: [], interests: [interest] }));
+    expect(release).not.toHaveBeenCalled();
+    install({ status: "installed" });
+    await flushProtocol();
+    expect(frames(socket).filter(({ type }) => type === "resource.interests-ack")).toEqual([
+      {
+        type: "resource.interests-ack",
+        interestRevision: 1,
+        sequence: 0,
+        unavailableInterests: [],
+      },
+    ]);
+    expect(release).toHaveBeenCalledOnce();
+    socket.disconnect();
+  });
+
   it("reports an unavailable observer in the ack and retries the same key", async () => {
     const release = vi.fn();
     let attempt = 0;
@@ -209,14 +247,26 @@ describe("/ws/events client frame protocol", () => {
     socket.disconnect();
   });
 
-  it("keeps semantic hello and delivery free of raw path-bearing frames", () => {
-    const socket = new ProtocolWebSocket();
-    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
-    expect(frames(socket)[0]).toMatchObject({ type: "hello", sessions: [] });
-    socket.receive(JSON.stringify({ type: "subscribe", sessions: ["secret"], legacyEvents: true }));
-    expect(JSON.stringify(frames(socket))).not.toContain("projectDir");
-    expect(frames(socket).some(({ type }) => type === "snapshot")).toBe(false);
-    socket.disconnect();
+  it("keeps semantic hello and delivery free of real path-bearing session facts", () => {
+    const restore = _setTmuxRunner((args) => {
+      if (args[0] === "list-sessions") return "secret";
+      if (args[0] === "display-message") return "/Users/private/secret-project";
+      return "";
+    });
+    try {
+      const socket = new ProtocolWebSocket();
+      handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+      expect(frames(socket)[0]).toMatchObject({ type: "hello", sessions: [] });
+      socket.receive(
+        JSON.stringify({ type: "subscribe", sessions: ["secret"], legacyEvents: true }),
+      );
+      expect(JSON.stringify(frames(socket))).not.toContain("/Users/private/secret-project");
+      expect(JSON.stringify(frames(socket))).not.toContain("projectDir");
+      expect(frames(socket).some(({ type }) => type === "snapshot")).toBe(false);
+      socket.disconnect();
+    } finally {
+      restore();
+    }
   });
 
   it("binds the initial hello to the supplied daemon generation", () => {

@@ -13,7 +13,11 @@ export type ObservableWorkspaceResource =
   | "workspace-missions";
 
 export type StopWorkspaceWatch = () => void | Promise<void>;
-export type StartPathWatch = (path: string, onChanged: () => void) => Promise<StopWorkspaceWatch>;
+export type StartPathWatch = (
+  path: string,
+  onChanged: () => void,
+  onUnavailable: (error: Error) => void,
+) => Promise<StopWorkspaceWatch>;
 
 export interface WorkspaceObservationReady {
   readonly status: "installed" | "unavailable";
@@ -36,6 +40,7 @@ export interface WorkspaceResourceObserverOptions {
   readonly resolveMissionRoot?: (projectDir: string) => Promise<string>;
   readonly resolveGitRoot?: (projectDir: string) => string | null;
   readonly debounceMs?: number;
+  readonly retryMs?: number;
   readonly setTimeout?: typeof globalThis.setTimeout;
   readonly clearTimeout?: typeof globalThis.clearTimeout;
 }
@@ -49,6 +54,8 @@ interface WatchSlot {
   start: Promise<WorkspaceObservationReady> | null;
   stop: StopWorkspaceWatch | null;
   status: WorkspaceObservationReady["status"] | null;
+  retry: ReturnType<typeof setTimeout> | null;
+  retryAttempt: number;
 }
 
 interface WorkspaceEntry {
@@ -62,7 +69,16 @@ interface WorkspaceEntry {
 }
 
 function slot(): WatchSlot {
-  return { epoch: 0, source: null, path: null, start: null, stop: null, status: null };
+  return {
+    epoch: 0,
+    source: null,
+    path: null,
+    start: null,
+    stop: null,
+    status: null,
+    retry: null,
+    retryAttempt: 0,
+  };
 }
 
 function resolveGitDirectory(projectDir: string): string | null {
@@ -81,22 +97,36 @@ function resolveGitDirectory(projectDir: string): string | null {
   }
 }
 
-export const startProjectResourceWatch: StartPathWatch = async (projectDir, onChanged) =>
+export const startProjectResourceWatch: StartPathWatch = async (
+  projectDir,
+  onChanged,
+  onUnavailable,
+) =>
   watchDirectory(projectDir, onChanged, {
     debounceMs: 40,
     ignore: ["node_modules", ".git", "dist", "build", ".next", ".turbo", "coverage"],
     requireInstalled: true,
+    onUnavailable,
   });
 
-export const startGitResourceWatch: StartPathWatch = async (gitDir, onChanged) =>
+export const startGitResourceWatch: StartPathWatch = async (gitDir, onChanged, onUnavailable) =>
   watchDirectory(gitDir, onChanged, {
     debounceMs: 40,
     ignore: ["objects", "logs"],
     requireInstalled: true,
+    onUnavailable,
   });
 
-export const startMissionResourceWatch: StartPathWatch = async (runtimeRoot, onChanged) =>
-  watchDirectory(runtimeRoot, onChanged, { debounceMs: 40, requireInstalled: true });
+export const startMissionResourceWatch: StartPathWatch = async (
+  runtimeRoot,
+  onChanged,
+  onUnavailable,
+) =>
+  watchDirectory(runtimeRoot, onChanged, {
+    debounceMs: 40,
+    requireInstalled: true,
+    onUnavailable,
+  });
 
 function refCount(entry: WorkspaceEntry, resource?: ObservableWorkspaceResource): number {
   if (resource) return entry.refs.get(resource) ?? 0;
@@ -119,6 +149,7 @@ export class WorkspaceResourceObserver {
   readonly #resolveMissionRoot: (projectDir: string) => Promise<string>;
   readonly #resolveGitRoot: (projectDir: string) => string | null;
   readonly #debounceMs: number;
+  readonly #retryMs: number;
   readonly #setTimeout: typeof globalThis.setTimeout;
   readonly #clearTimeout: typeof globalThis.clearTimeout;
   readonly #entries = new Map<string, WorkspaceEntry>();
@@ -139,6 +170,7 @@ export class WorkspaceResourceObserver {
       (async (projectDir) => (await openProjectRuntimeRepository(projectDir)).runtimeRoot);
     this.#resolveGitRoot = options.resolveGitRoot ?? resolveGitDirectory;
     this.#debounceMs = options.debounceMs ?? 75;
+    this.#retryMs = options.retryMs ?? 250;
     this.#setTimeout = options.setTimeout ?? globalThis.setTimeout;
     this.#clearTimeout = options.clearTimeout ?? globalThis.clearTimeout;
     this.#unsubscribeAdded = this.#registry.on("workspace.added", (workspace) => {
@@ -281,7 +313,7 @@ export class WorkspaceResourceObserver {
     if (current.source === projectDir && (current.start || current.stop)) {
       return current.start ?? Promise.resolve({ status: current.status ?? "installed" });
     }
-    if (current.start || current.stop) this.#retireSlot(current);
+    this.#retireSlot(current);
     const epoch = ++current.epoch;
     current.source = projectDir;
     current.path = null;
@@ -293,7 +325,10 @@ export class WorkspaceResourceObserver {
       })
       .then((result) => result)
       .catch(() => {
-        if (current.epoch === epoch) current.status = "unavailable";
+        if (current.epoch === epoch) {
+          current.status = "unavailable";
+          this.#scheduleRetry(entry, "missions");
+        }
         return { status: "unavailable" } as const;
       })
       .finally(() => {
@@ -336,7 +371,13 @@ export class WorkspaceResourceObserver {
     const current = entry.slots[channel];
     let pending!: Promise<WorkspaceObservationReady>;
     pending = Promise.resolve()
-      .then(() => startWatch(path, () => this.#markDirty(entry, channel)))
+      .then(() =>
+        startWatch(
+          path,
+          () => this.#markDirty(entry, channel, epoch),
+          (error) => this.#watchUnavailable(entry, channel, epoch, error),
+        ),
+      )
       .then(async (stop) => {
         if (
           this.#disposed ||
@@ -348,10 +389,14 @@ export class WorkspaceResourceObserver {
         }
         current.stop = stop;
         current.status = "installed";
+        current.retryAttempt = 0;
         return { status: "installed" } as const;
       })
       .catch(() => {
-        if (current.epoch === epoch) current.status = "unavailable";
+        if (current.epoch === epoch) {
+          current.status = "unavailable";
+          this.#scheduleRetry(entry, channel);
+        }
         return { status: "unavailable" } as const;
       })
       .finally(() => {
@@ -364,8 +409,9 @@ export class WorkspaceResourceObserver {
     return pending;
   }
 
-  #markDirty(entry: WorkspaceEntry, channel: Channel): void {
+  #markDirty(entry: WorkspaceEntry, channel: Channel, epoch: number): void {
     if (this.#disposed || this.#entries.get(entry.workspaceName) !== entry) return;
+    if (entry.slots[channel].epoch !== epoch) return;
     if (channel === "project") entry.projectDirty = true;
     else if (channel === "git") entry.gitDirty = true;
     else entry.missionsDirty = true;
@@ -389,6 +435,87 @@ export class WorkspaceResourceObserver {
     entry.timer.unref?.();
   }
 
+  #watchUnavailable(entry: WorkspaceEntry, channel: Channel, epoch: number, _error: Error): void {
+    if (this.#disposed || this.#entries.get(entry.workspaceName) !== entry) return;
+    const current = entry.slots[channel];
+    if (current.epoch !== epoch) return;
+    this.#retireSlot(current);
+    current.status = "unavailable";
+    this.#scheduleRetry(entry, channel);
+  }
+
+  #channelNeeded(entry: WorkspaceEntry, channel: Channel): boolean {
+    if (channel === "project") {
+      return refCount(entry, "workspace-files") > 0 || refCount(entry, "workspace-changes") > 0;
+    }
+    if (channel === "git") return refCount(entry, "workspace-changes") > 0;
+    return refCount(entry, "workspace-missions") > 0;
+  }
+
+  #scheduleRetry(entry: WorkspaceEntry, channel: Channel): void {
+    const current = entry.slots[channel];
+    if (
+      this.#disposed ||
+      this.#entries.get(entry.workspaceName) !== entry ||
+      !this.#channelNeeded(entry, channel) ||
+      current.retry
+    ) {
+      return;
+    }
+    const delay = Math.min(4_000, this.#retryMs * 2 ** current.retryAttempt);
+    current.retryAttempt += 1;
+    current.retry = this.#setTimeout(() => {
+      current.retry = null;
+      void this.#retryChannel(entry, channel).catch(() => this.#scheduleRetry(entry, channel));
+    }, delay);
+    current.retry.unref?.();
+  }
+
+  async #retryChannel(entry: WorkspaceEntry, channel: Channel): Promise<void> {
+    if (
+      this.#disposed ||
+      this.#entries.get(entry.workspaceName) !== entry ||
+      !this.#channelNeeded(entry, channel)
+    ) {
+      return;
+    }
+    const workspace = this.#registry.get(entry.workspaceName);
+    if (!workspace) return;
+    let ready: WorkspaceObservationReady;
+    if (channel === "project") {
+      ready = await this.#ensureSlot(entry, channel, workspace.projectDir, this.#startProjectWatch);
+    } else if (channel === "git") {
+      const gitDir = this.#resolveGitRoot(workspace.projectDir);
+      if (!gitDir) {
+        this.#scheduleRetry(entry, channel);
+        return;
+      }
+      ready = await this.#ensureSlot(entry, channel, gitDir, this.#startGitWatch);
+    } else {
+      ready = await this.#ensureMissionSlot(entry, workspace.projectDir);
+    }
+    if (ready.status !== "installed") {
+      this.#scheduleRetry(entry, channel);
+      return;
+    }
+    // The watcher was blind between failure and recovery. Force the demanded
+    // projections to refetch once so no change in that interval remains stale.
+    if (channel === "project") {
+      if (refCount(entry, "workspace-files")) {
+        this.#emit({ workspaceName: entry.workspaceName, resource: "workspace-files" });
+      }
+      if (refCount(entry, "workspace-changes")) {
+        this.#emit({ workspaceName: entry.workspaceName, resource: "workspace-changes" });
+      }
+    } else if (channel === "git") {
+      if (refCount(entry, "workspace-changes")) {
+        this.#emit({ workspaceName: entry.workspaceName, resource: "workspace-changes" });
+      }
+    } else if (refCount(entry, "workspace-missions")) {
+      this.#emit({ workspaceName: entry.workspaceName, resource: "workspace-missions" });
+    }
+  }
+
   #retireEntry(entry: WorkspaceEntry): void {
     if (entry.timer) this.#clearTimeout(entry.timer);
     entry.timer = null;
@@ -404,6 +531,8 @@ export class WorkspaceResourceObserver {
 
   #retireSlot(current: WatchSlot): void {
     current.epoch += 1;
+    if (current.retry) this.#clearTimeout(current.retry);
+    current.retry = null;
     const stop = current.stop;
     current.stop = null;
     current.start = null;

@@ -870,7 +870,10 @@ export function handleWsEventsConnection(
     const parsed: DaemonEventClientFrame = result.data;
 
     if (parsed.type === "subscribe") {
-      if (parsed.interestRevision === undefined) {
+      // Preserve the legacy protocol's synchronous fast path when there is
+      // nothing to order against. Once an acknowledged install is pending,
+      // every later mutation joins the same per-socket queue.
+      if (parsed.interestRevision === undefined && interestMutation === null) {
         applyLegacyPreference(parsed.legacyEvents);
         for (const interest of parsed.interests ?? []) subscribeInterest(interest);
         replayAfter(parsed.afterSequence);
@@ -903,7 +906,7 @@ export function handleWsEventsConnection(
       return;
     }
     if (parsed.type === "unsubscribe") {
-      if (parsed.interestRevision === undefined) {
+      if (parsed.interestRevision === undefined && interestMutation === null) {
         if (parsed.legacyEvents !== undefined) applyLegacyPreference(parsed.legacyEvents);
         for (const name of parsed.sessions) unsubscribe(name);
         for (const interest of parsed.interests ?? []) unsubscribeInterest(interest);

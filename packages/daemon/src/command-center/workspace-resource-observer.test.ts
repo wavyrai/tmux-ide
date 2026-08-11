@@ -1,8 +1,12 @@
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "@tmux-ide/contracts";
 
+import { createProjectRuntimeRepository } from "../lib/project-runtime-repository.ts";
 import { WorkspaceResourceObserver, type StartPathWatch } from "./workspace-resource-observer.ts";
 
 class FakeRegistry {
@@ -33,10 +37,11 @@ class FakeRegistry {
 }
 
 function harness() {
-  const starts: Array<{ path: string; changed: () => void }> = [];
+  const starts: Array<{ path: string; changed: () => void; unavailable: (error: Error) => void }> =
+    [];
   const stops: ReturnType<typeof vi.fn>[] = [];
-  const start: StartPathWatch = async (path, changed) => {
-    starts.push({ path, changed });
+  const start: StartPathWatch = async (path, changed, unavailable) => {
+    starts.push({ path, changed, unavailable });
     const stop = vi.fn();
     stops.push(stop);
     return stop;
@@ -128,6 +133,35 @@ describe("WorkspaceResourceObserver", () => {
     expect(project.stops[1]).toHaveBeenCalledOnce();
   });
 
+  it("ignores late callbacks from a retired watcher epoch", async () => {
+    vi.useFakeTimers();
+    const registry = new FakeRegistry();
+    registry.add("app", "/repo/one");
+    const project = harness();
+    const emit = vi.fn();
+    const observer = new WorkspaceResourceObserver({
+      registry,
+      emit,
+      startProjectWatch: project.start,
+      debounceMs: 10,
+    });
+    const handle = observer.acquire("app", "workspace-files");
+    await handle.ready;
+    registry.add("app", "/repo/two");
+    await settle();
+    expect(project.starts.map(({ path }) => path)).toEqual(["/repo/one", "/repo/two"]);
+
+    project.starts[0]!.changed();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(emit).not.toHaveBeenCalled();
+
+    project.starts[1]!.changed();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(emit).toHaveBeenCalledWith({ workspaceName: "app", resource: "workspace-files" });
+    handle.release();
+    await observer.dispose();
+  });
+
   it("shares N-client demand and coalesces a physical burst into one projection fanout", async () => {
     vi.useFakeTimers();
     const registry = new FakeRegistry();
@@ -162,6 +196,50 @@ describe("WorkspaceResourceObserver", () => {
     await observer.dispose();
   });
 
+  it("degrades a dead installed watcher and recovers under retained demand", async () => {
+    vi.useFakeTimers();
+    const registry = new FakeRegistry();
+    registry.add("app");
+    const project = harness();
+    const emit = vi.fn();
+    const observer = new WorkspaceResourceObserver({
+      registry,
+      emit,
+      startProjectWatch: project.start,
+      retryMs: 25,
+    });
+    const handle = observer.acquire("app", "workspace-files");
+    await expect(handle.ready).resolves.toEqual({ status: "installed" });
+    expect(observer.state()[0]?.projectWatching).toBe(true);
+
+    project.starts[0]!.unavailable(new Error("native watcher died"));
+    await settle();
+    expect(observer.state()[0]?.projectWatching).toBe(false);
+    expect(project.stops[0]).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(25);
+    await settle();
+    expect(project.starts).toHaveLength(2);
+    expect(observer.state()[0]?.projectWatching).toBe(true);
+    expect(emit).toHaveBeenCalledOnce();
+    expect(emit).toHaveBeenCalledWith({
+      workspaceName: "app",
+      resource: "workspace-files",
+    });
+
+    // A duplicate death signal and a callback from the retired generation are
+    // inert after the replacement has taken ownership.
+    project.starts[0]!.unavailable(new Error("duplicate"));
+    project.starts[0]!.changed();
+    await vi.advanceTimersByTimeAsync(75);
+    expect(project.starts).toHaveLength(2);
+    expect(emit).toHaveBeenCalledOnce();
+
+    handle.release();
+    await observer.dispose();
+    expect(project.stops[1]).toHaveBeenCalledOnce();
+  });
+
   it("never derives mission invalidations from source edits", async () => {
     vi.useFakeTimers();
     const registry = new FakeRegistry();
@@ -191,6 +269,67 @@ describe("WorkspaceResourceObserver", () => {
     files.release();
     mission.release();
     await observer.dispose();
+  });
+
+  it("observes a real write in the project runtime mission root", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-mission-watch-"));
+    const projectDir = join(root, "project");
+    const home = join(root, "state");
+    const repository = createProjectRuntimeRepository(
+      {
+        inputDir: projectDir,
+        projectRoot: projectDir,
+        identityKey: `path-${"a".repeat(64)}`,
+        identitySource: "path",
+        identityAnchor: projectDir,
+        config: { kind: "none", path: null, explicit: false },
+        workspaceConfigPath: null,
+        legacyConfigPath: null,
+        hasLegacyConfigAtInput: false,
+      },
+      { home },
+    );
+    // Materialize the authority root before installing the native watcher.
+    repository.writeDocument(
+      "missions/bootstrap.json",
+      { state: "ready" },
+      {
+        expectedRevision: null,
+      },
+    );
+    const registry = new FakeRegistry();
+    registry.add("app", projectDir);
+    const emit = vi.fn();
+    const observer = new WorkspaceResourceObserver({
+      registry,
+      emit,
+      resolveMissionRoot: async () => repository.runtimeRoot,
+      debounceMs: 10,
+    });
+    try {
+      const mission = observer.acquire("app", "workspace-missions");
+      await expect(mission.ready).resolves.toEqual({ status: "installed" });
+      repository.writeDocument(
+        "missions/live.json",
+        { state: "changed" },
+        {
+          expectedRevision: null,
+        },
+      );
+      await vi.waitFor(
+        () => {
+          expect(emit).toHaveBeenCalledWith({
+            workspaceName: "app",
+            resource: "workspace-missions",
+          });
+        },
+        { timeout: 3_000, interval: 25 },
+      );
+      mission.release();
+    } finally {
+      await observer.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("reports synchronous and asynchronous install failures honestly, then retries after re-acquire", async () => {

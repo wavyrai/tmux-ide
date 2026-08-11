@@ -48,10 +48,18 @@ function fsWatchDirectory(
   ignore: string[],
   debounceMs: number,
   requireInstalled: boolean,
+  onUnavailable: (error: Error) => void,
 ): () => Promise<void> {
   const ignoreSet = new Set(ignore);
   let timeout: ReturnType<typeof setTimeout> | null = null;
   let handle: FSWatcher | null = null;
+  let stopping = false;
+  let unavailable = false;
+  const reportUnavailable = (error: Error): void => {
+    if (stopping || unavailable) return;
+    unavailable = true;
+    onUnavailable(error);
+  };
   try {
     handle = fsWatch(dir, { recursive: true }, (_event, filename) => {
       if (!filename) return;
@@ -60,6 +68,10 @@ function fsWatchDirectory(
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => onChange([{ type: "update", path: join(dir, rel) }]), debounceMs);
     });
+    handle.on("error", reportUnavailable);
+    handle.on("close", () => {
+      reportUnavailable(new Error(`Directory watcher closed unexpectedly for ${dir}`));
+    });
   } catch (error) {
     // Legacy widgets tolerate a missing watcher and remain manually
     // refreshable. Daemon resource observers request an honest installation
@@ -67,6 +79,7 @@ function fsWatchDirectory(
     if (requireInstalled) throw error;
   }
   return async () => {
+    stopping = true;
     if (timeout) clearTimeout(timeout);
     handle?.close();
   };
@@ -75,21 +88,45 @@ function fsWatchDirectory(
 export async function watchDirectory(
   dir: string,
   onChange: (events: WatchEvent[]) => void,
-  options?: { debounceMs?: number; ignore?: string[]; requireInstalled?: boolean },
+  options?: {
+    debounceMs?: number;
+    ignore?: string[];
+    requireInstalled?: boolean;
+    /** Called once when an installed native watcher dies unexpectedly. */
+    onUnavailable?: (error: Error) => void;
+  },
 ): Promise<() => Promise<void>> {
   const debounceMs = options?.debounceMs ?? 300;
   const ignore = options?.ignore ?? ["node_modules", ".git", "dist", "build", ".next"];
 
   const native = await loadParcel();
   if (!native) {
-    return fsWatchDirectory(dir, onChange, ignore, debounceMs, options?.requireInstalled ?? false);
+    return fsWatchDirectory(
+      dir,
+      onChange,
+      ignore,
+      debounceMs,
+      options?.requireInstalled ?? false,
+      options?.onUnavailable ?? (() => undefined),
+    );
   }
 
   let timeout: ReturnType<typeof setTimeout> | null = null;
+  let stopping = false;
+  let unavailable = false;
+  const reportUnavailable = (error: Error): void => {
+    if (stopping || unavailable) return;
+    unavailable = true;
+    options?.onUnavailable?.(error);
+  };
   const subscription = await native.subscribe(
     dir,
     (err, events) => {
-      if (err) return;
+      if (err) {
+        reportUnavailable(err);
+        return;
+      }
+      if (stopping || unavailable) return;
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => onChange(events as unknown as WatchEvent[]), debounceMs);
     },
@@ -97,6 +134,7 @@ export async function watchDirectory(
   );
 
   return async () => {
+    stopping = true;
     if (timeout) clearTimeout(timeout);
     await subscription.unsubscribe();
   };
