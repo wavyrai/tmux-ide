@@ -204,6 +204,11 @@ export interface DomApplicationShellProps {
   readonly connectionHealth?: DesktopConnectionHealth;
   readonly filesSurface?: FilesSurfaceProps;
   readonly changesSurface?: ChangesSurfaceProps;
+  /** Renderer-owned resource sessions acquire/release demand from this signal. */
+  readonly onActiveDockToolChange?: (demand: {
+    readonly tool: ProductSurfaceId;
+    readonly active: boolean;
+  }) => void;
   /** Fixture/preview override of the live fleet-catalog store state. */
   readonly fleetState?: DesktopFleetCatalogState;
   /** Fixture/preview override of the promote action (defaults to the host mutation). */
@@ -362,6 +367,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   let returnFocusId: string | null = null;
 
   const shell = createMemo(() => projectDomApplicationShell(input(), state(), hiddenTools));
+  createEffect(() => {
+    const dock = shell().bottomDock;
+    props.onActiveDockToolChange?.({ tool: dock.activeTool, active: dock.mode !== "collapsed" });
+  });
   const missionWorkspace = createMemo(() => {
     const value = input();
     return "appWindows" in value ? value.missionWorkspace : undefined;

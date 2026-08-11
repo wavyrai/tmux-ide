@@ -29,6 +29,7 @@ interface WorkspaceChangesStoreOptionsBase {
   readonly host: Pick<HostCapabilities, "daemon">;
   readonly target: unknown;
   readonly clock?: WorkspaceResourceClock;
+  readonly active?: boolean;
 }
 
 const CATALOG_KEY = "__changes__";
@@ -62,6 +63,7 @@ export interface WorkspaceChangesCatalogStore {
   getState(): WorkspaceChangesCatalogState;
   subscribe(listener: (state: WorkspaceChangesCatalogState) => void): () => void;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   refresh(): void;
   dispose(): void;
 }
@@ -69,6 +71,7 @@ export interface WorkspaceChangesCatalogStore {
 export interface SolidWorkspaceChangesCatalogStore {
   readonly state: Accessor<WorkspaceChangesCatalogState>;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   refresh(): void;
   dispose(): void;
 }
@@ -83,7 +86,8 @@ export function createWorkspaceChangesCatalogStore(
     {
       host: options.host,
       eagerKey: CATALOG_KEY,
-      invalidatesOn: ["workspaces.changed"],
+      invalidatesOn: ["workspace-changes.changed"],
+      resourceInterest: "workspace-changes",
       async fetch(target): Promise<TargetPinnedFetchResult<WorkspaceChangesCatalogResourceV1>> {
         const result = await options.host.daemon.fetchWorkspaceChanges({
           workspaceName: target.workspaceName,
@@ -155,12 +159,13 @@ export function createWorkspaceChangesCatalogStore(
       },
     },
     options.target,
-    { clock: options.clock },
+    { clock: options.clock, active: options.active },
   );
   return {
     getState: () => store.getState(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     refresh: () => store.refresh(),
     dispose: () => store.dispose(),
   };
@@ -183,6 +188,7 @@ export function createSolidWorkspaceChangesCatalogStore(
   return {
     state,
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     refresh: () => store.refresh(),
     dispose,
   };
@@ -219,6 +225,7 @@ export interface WorkspaceChangeDiffStore {
   getState(): WorkspaceChangeDiffState;
   subscribe(listener: (state: WorkspaceChangeDiffState) => void): () => void;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   load(changeId: string): void;
   clear(): void;
   dispose(): void;
@@ -227,6 +234,7 @@ export interface WorkspaceChangeDiffStore {
 export interface SolidWorkspaceChangeDiffStore {
   readonly state: Accessor<WorkspaceChangeDiffState>;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   load(changeId: string): void;
   clear(): void;
   dispose(): void;
@@ -294,6 +302,8 @@ export function createWorkspaceChangeDiffStore(
     {
       host: options.host,
       singleSlot: true,
+      invalidatesOn: ["workspace-changes.changed"],
+      resourceInterest: "workspace-changes",
       async fetch(
         target,
         changeId,
@@ -372,12 +382,13 @@ export function createWorkspaceChangeDiffStore(
       },
     },
     options.target,
-    { clock: options.clock },
+    { clock: options.clock, active: options.active },
   );
   return {
     getState: () => store.getState(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     load: (changeId) => store.load(changeId),
     clear: () => {
       const changeId = store.getState().changeId;
@@ -404,6 +415,7 @@ export function createSolidWorkspaceChangeDiffStore(
   return {
     state,
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     load: (changeId) => store.load(changeId),
     clear: () => store.clear(),
     dispose,

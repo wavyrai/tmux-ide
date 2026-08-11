@@ -90,6 +90,7 @@ import {
   createSolidWorkspaceFilePreviewStore,
   createSolidWorkspaceFilesCatalogStore,
 } from "./workspace-files-store.ts";
+import { createSolidWorkspaceMissionsStore } from "./workspace-missions-store.ts";
 import {
   changeDiffSurfaceModel,
   changeEntriesById,
@@ -679,19 +680,53 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
   const filesCatalog = createSolidWorkspaceFilesCatalogStore({
     host: props.host,
     target: props.target,
+    active: false,
   });
   const filePreview = createSolidWorkspaceFilePreviewStore({
     host: props.host,
     target: props.target,
+    active: false,
   });
   const changesCatalog = createSolidWorkspaceChangesCatalogStore({
     host: props.host,
     target: props.target,
+    active: false,
   });
   const changeDiff = createSolidWorkspaceChangeDiffStore({
     host: props.host,
     target: props.target,
+    active: false,
   });
+  const missions = createSolidWorkspaceMissionsStore({
+    host: props.host,
+    target: props.target,
+    active: false,
+  });
+  const activateDockResource = (demand: {
+    readonly tool: string;
+    readonly active: boolean;
+  }): void => {
+    const filesActive = demand.active && demand.tool === "files";
+    const changesActive = demand.active && demand.tool === "changes";
+    const missionsActive =
+      demand.active && (demand.tool === "missions" || demand.tool === "activity");
+    filesCatalog.setActive(filesActive);
+    filePreview.setActive(filesActive);
+    changesCatalog.setActive(changesActive);
+    changeDiff.setActive(changesActive);
+    missions.setActive(missionsActive);
+  };
+  const inputWithLazyMissions = (input: ApplicationShellProjectionInputV1) => {
+    const missionState = missions.state();
+    if (missionState.status !== "loaded" || !("appWindows" in input)) return input;
+    return {
+      ...input,
+      missionWorkspace: missionState.resource.missionWorkspace,
+      ...(missionState.resource.agentGraphOverlay
+        ? { agentGraphOverlay: missionState.resource.agentGraphOverlay }
+        : {}),
+    };
+  };
   const [filesExpandedIds, setFilesExpandedIds] = createSignal<
     ReadonlySet<WorkspaceFileResourceId>
   >(new Set<WorkspaceFileResourceId>());
@@ -706,6 +741,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     filePreview.setTarget(target);
     changesCatalog.setTarget(target);
     changeDiff.setTarget(target);
+    missions.setTarget(target);
     const key = [target.daemon.instanceId, target.daemon.startedAt, target.workspaceName].join(
       "\u0000",
     );
@@ -1206,7 +1242,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             runtime={props.runtime}
             platform={props.platform}
             windowState={props.windowState}
-            input={ready().input}
+            input={inputWithLazyMissions(ready().input)}
             dataMode="runtime"
             terminalWorkspaceName={props.target.workspaceName}
             terminalTransport={props.terminalTransport}
@@ -1235,9 +1271,12 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             }
             appWindowMutationUnavailableReason={appWindowMutationUnavailableReason()}
             connectionHealth={connectionHealth()}
-            onRefreshResource={() => store.refresh()}
+            onRefreshResource={() =>
+              missions.state().status === "inactive" ? store.refresh() : missions.refresh()
+            }
             filesSurface={filesSurface()}
             changesSurface={changesSurface()}
+            onActiveDockToolChange={activateDockResource}
           />
           <Show when={notice()}>
             {(current) => (

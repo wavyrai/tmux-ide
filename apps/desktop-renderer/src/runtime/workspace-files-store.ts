@@ -31,6 +31,7 @@ interface WorkspaceFilesStoreOptionsBase {
   readonly host: Pick<HostCapabilities, "daemon">;
   readonly target: unknown;
   readonly clock?: WorkspaceResourceClock;
+  readonly active?: boolean;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -54,6 +55,7 @@ export interface WorkspaceFilesCatalogStore {
   getState(): WorkspaceFilesCatalogState;
   subscribe(listener: (state: WorkspaceFilesCatalogState) => void): () => void;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   /** Load the workspace root catalog (also triggered automatically on a new target). */
   loadRoot(): void;
   /** Load a child directory's catalog for tree expansion. */
@@ -68,6 +70,7 @@ export interface WorkspaceFilesCatalogStore {
 export interface SolidWorkspaceFilesCatalogStore {
   readonly state: Accessor<WorkspaceFilesCatalogState>;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   loadRoot(): void;
   loadDirectory(directoryId: string): void;
   dropDirectory(directoryId: string): void;
@@ -105,7 +108,8 @@ export function createWorkspaceFilesCatalogStore(
     {
       host: options.host,
       eagerKey: ROOT_KEY,
-      invalidatesOn: ["workspaces.changed"],
+      invalidatesOn: ["workspace-files.changed"],
+      resourceInterest: "workspace-files",
       async fetch(target, key): Promise<TargetPinnedFetchResult<WorkspaceFilesCatalogResourceV1>> {
         const result = await options.host.daemon.fetchWorkspaceFiles(
           key === ROOT_KEY
@@ -168,12 +172,13 @@ export function createWorkspaceFilesCatalogStore(
       },
     },
     options.target,
-    { clock: options.clock },
+    { clock: options.clock, active: options.active },
   );
   return {
     getState: () => store.getState(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     loadRoot: () => store.load(ROOT_KEY),
     loadDirectory: (directoryId) => store.load(directoryId),
     dropDirectory: (directoryId) => {
@@ -202,6 +207,7 @@ export function createSolidWorkspaceFilesCatalogStore(
   return {
     state,
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     loadRoot: () => store.loadRoot(),
     loadDirectory: (directoryId) => store.loadDirectory(directoryId),
     dropDirectory: (directoryId) => store.dropDirectory(directoryId),
@@ -241,6 +247,7 @@ export interface WorkspaceFilePreviewStore {
   getState(): WorkspaceFilePreviewState;
   subscribe(listener: (state: WorkspaceFilePreviewState) => void): () => void;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   load(fileId: string): void;
   clear(): void;
   dispose(): void;
@@ -249,6 +256,7 @@ export interface WorkspaceFilePreviewStore {
 export interface SolidWorkspaceFilePreviewStore {
   readonly state: Accessor<WorkspaceFilePreviewState>;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   load(fileId: string): void;
   clear(): void;
   dispose(): void;
@@ -261,6 +269,8 @@ export function createWorkspaceFilePreviewStore(
     {
       host: options.host,
       singleSlot: true,
+      invalidatesOn: ["workspace-files.changed"],
+      resourceInterest: "workspace-files",
       async fetch(
         target,
         fileId,
@@ -334,12 +344,13 @@ export function createWorkspaceFilePreviewStore(
       },
     },
     options.target,
-    { clock: options.clock },
+    { clock: options.clock, active: options.active },
   );
   return {
     getState: () => store.getState(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     load: (fileId) => store.load(fileId),
     clear: () => {
       const fileId = store.getState().fileId;
@@ -366,6 +377,7 @@ export function createSolidWorkspaceFilePreviewStore(
   return {
     state,
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     load: (fileId) => store.load(fileId),
     clear: () => store.clear(),
     dispose,
