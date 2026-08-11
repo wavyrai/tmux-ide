@@ -49,6 +49,12 @@ export interface TerminalReplicaInterpreterOptions {
   readonly rows: number;
   readonly scrollback?: number;
   readonly onUpdate?: (update: CanonicalTerminalReplicaUpdate) => void;
+  readonly onRawCommit?: (record: {
+    readonly baseRevision: number;
+    readonly revision: number;
+    readonly chunks: readonly Uint8Array[];
+    readonly contiguous: boolean;
+  }) => void;
 }
 
 export interface TerminalReplicaInterpreterStats {
@@ -69,6 +75,7 @@ export class TerminalReplicaInterpreter {
   readonly #incarnation: string;
   readonly #scrollback: number;
   readonly #listeners = new Set<(update: CanonicalTerminalReplicaUpdate) => void>();
+  readonly #onRawCommit: TerminalReplicaInterpreterOptions["onRawCommit"];
   #terminal: Terminal;
   #tail: Promise<void> = Promise.resolve();
   #revision = 0;
@@ -88,6 +95,9 @@ export class TerminalReplicaInterpreter {
   #widgetGate = false;
   #markerTail = "";
   #pendingResize: { cols: number; rows: number } | null = null;
+  #pendingRaw: Uint8Array[] = [];
+  #pendingRawBytes = 0;
+  #rawContinuityLost = false;
   #syncRecovery: ReturnType<typeof setTimeout> | null = null;
   #bootstrap: TerminalReplicaSnapshot["bootstrap"] = {
     kind: "painted-capture",
@@ -116,6 +126,7 @@ export class TerminalReplicaInterpreter {
     this.#incarnation = options.incarnation;
     this.#revision = options.initialRevision ?? 0;
     this.#scrollback = options.scrollback ?? 5000;
+    this.#onRawCommit = options.onRawCommit;
     this.#terminal = this.#createTerminal(options.cols, options.rows);
     this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
     this.#seedReady = new Promise((resolve, reject) => {
@@ -196,6 +207,7 @@ export class TerminalReplicaInterpreter {
       const replacement = this.#createTerminal(operation.cols, operation.rows);
       try {
         for (const chunk of operation.chunks) {
+          this.#admitRaw(chunk);
           this.#observeMarkerBytes(chunk);
           await writeTerminal(replacement, chunk);
         }
@@ -259,6 +271,7 @@ export class TerminalReplicaInterpreter {
 
   async #write(data: Uint8Array): Promise<void> {
     if (this.#closed) return;
+    this.#admitRaw(data);
     this.#stats.parseBatches += 1;
     this.#observeMarkerBytes(data);
     await writeTerminal(this.#terminal, data);
@@ -328,6 +341,7 @@ export class TerminalReplicaInterpreter {
       this.#snapshot = next;
       this.#needsSeed = false;
       this.#resolveSeedReady();
+      this.#emitRaw(revision, revision);
       this.#emit(this.#seed(revision, next));
       return;
     }
@@ -356,7 +370,27 @@ export class TerminalReplicaInterpreter {
     };
     this.#revision = revision;
     this.#snapshot = next;
+    this.#emitRaw(baseRevision, revision);
     this.#emit(update);
+  }
+
+  #emitRaw(baseRevision: number, revision: number): void {
+    const chunks = this.#pendingRaw;
+    this.#pendingRaw = [];
+    this.#pendingRawBytes = 0;
+    const contiguous = !this.#rawContinuityLost;
+    this.#rawContinuityLost = false;
+    if (!this.#onRawCommit || (chunks.length === 0 && contiguous)) return;
+    this.#onRawCommit({ baseRevision, revision, chunks, contiguous });
+  }
+
+  #admitRaw(data: Uint8Array): void {
+    if (this.#pendingRawBytes + data.byteLength <= 4 * 1024 * 1024) {
+      this.#pendingRaw.push(data);
+      this.#pendingRawBytes += data.byteLength;
+    } else {
+      this.#rawContinuityLost = true;
+    }
   }
 
   #project(dirty?: { start: number; end: number }): TerminalReplicaSnapshot {

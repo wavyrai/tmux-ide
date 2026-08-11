@@ -9,10 +9,19 @@ export interface TerminalReplicaSubscription {
   close(): Promise<void>;
 }
 
+export type TerminalReplicaSourceSubscription = TerminalReplicaSubscription;
+export interface TerminalReplicaCommittedRaw {
+  readonly baseRevision: number;
+  readonly revision: number;
+  readonly bytes: Uint8Array;
+  readonly contiguous: boolean;
+}
+
 /** One parser/replica owner for one semantic pane inside one SessionRuntime. */
 export class SessionRuntimeTerminalReplicaOwner {
   readonly #interpreter: TerminalReplicaInterpreter;
   readonly #listeners = new Set<(update: CanonicalTerminalReplicaUpdate) => void>();
+  readonly #rawListeners = new Set<(record: TerminalReplicaCommittedRaw) => void>();
   readonly #onClosed: (() => void) | undefined;
   readonly #onFault: ((error: unknown) => void) | undefined;
   readonly #start: Promise<void>;
@@ -56,6 +65,31 @@ export class SessionRuntimeTerminalReplicaOwner {
             // A client projection cannot block sibling subscribers.
           }
         }
+      },
+      onRawCommit: (record) => {
+        // Schedule observers outside the parser stack. Registration happens
+        // before the matching canonical callback schedules delivery.
+        queueMicrotask(() => {
+          const size = record.chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+          const bytes = new Uint8Array(size);
+          let offset = 0;
+          for (const chunk of record.chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          for (const listener of this.#rawListeners) {
+            try {
+              listener({
+                baseRevision: record.baseRevision,
+                revision: record.revision,
+                bytes,
+                contiguous: record.contiguous,
+              });
+            } catch {
+              // Compatibility observers are isolated from parser ownership.
+            }
+          }
+        });
       },
     });
     this.#start = mirror
@@ -102,6 +136,24 @@ export class SessionRuntimeTerminalReplicaOwner {
     };
   }
 
+  async subscribeSource(
+    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    onRaw: (record: TerminalReplicaCommittedRaw) => void,
+  ): Promise<TerminalReplicaSourceSubscription> {
+    const canonical = await this.subscribe(listener);
+    this.#rawListeners.add(onRaw);
+    let closed = false;
+    return {
+      ...canonical,
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        this.#rawListeners.delete(onRaw);
+        await canonical.close();
+      },
+    };
+  }
+
   async dispose(
     reason: "pane-closed" | "session-restarted" | "runtime-disposed" = "runtime-disposed",
   ): Promise<void> {
@@ -112,6 +164,7 @@ export class SessionRuntimeTerminalReplicaOwner {
     await this.#upstream?.close();
     this.#upstream = null;
     this.#listeners.clear();
+    this.#rawListeners.clear();
   }
 
   #observePane(event: MirrorPaneEvent): void {
