@@ -253,9 +253,8 @@ describe("the layout-faithful workspace view", () => {
     expect(headers.every((header) => !header.style.height.includes("calc"))).toBe(true);
   });
 
-  it("selects and copies text from the visible composed pane", () => {
+  it("keeps a single-pane window on its one interactive terminal renderer", () => {
     const recording = createRecordingMirrorRendererFactory();
-    const onFocusPane = vi.fn();
     const mirror: AppWindowCanvasMirrorProps = {
       enabled: true,
       onToggle: vi.fn(),
@@ -272,7 +271,42 @@ describe("the layout-faithful workspace view", () => {
       onRetry: vi.fn(),
       rendererFactory: recording.factory,
     };
-    const { root } = renderSurface([layout()], { mirror, onFocusPane });
+    const { root } = renderSurface([layout()], { mirror });
+
+    expect(root.querySelector(".tiled-pane-area")?.getAttribute("data-pane-compositor")).toBe(
+      "false",
+    );
+    expect(root.querySelectorAll('.pane-tile[data-composed="true"]')).toHaveLength(0);
+    expect(root.querySelectorAll(".pane-tile__body > .mirror-pane-node")).toHaveLength(0);
+  });
+
+  it("selects and copies text from the visible composed pane", () => {
+    const recording = createRecordingMirrorRendererFactory();
+    const onFocusPane = vi.fn();
+    const mirror: AppWindowCanvasMirrorProps = {
+      enabled: true,
+      onToggle: vi.fn(),
+      nodes: [
+        {
+          pane: "pane.a",
+          title: "Editor",
+          frame: null,
+          state: { kind: "live", flowPaused: false },
+          registerSink: () => () => undefined,
+        },
+        {
+          pane: "pane.b",
+          title: "Tests",
+          frame: null,
+          state: { kind: "live", flowPaused: false },
+          registerSink: () => () => undefined,
+        },
+      ],
+      connection: { kind: "connected" },
+      onRetry: vi.fn(),
+      rendererFactory: recording.factory,
+    };
+    const { root } = renderSurface([SPLIT], { mirror, onFocusPane });
     const body = root.querySelector<HTMLElement>(
       '.pane-tile[data-composed="true"] > .pane-tile__body',
     )!;

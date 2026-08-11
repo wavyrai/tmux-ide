@@ -413,167 +413,30 @@ test("a live fleet opens, types, composes panes, survives its session being kill
   ).toBeGreaterThan(10_000);
   await page.screenshot({ path: testInfo.outputPath("3-terminal-typed.png") });
 
-  // --- User path: tmux's panes are composed into its own layout -----------
-  // There is no separate mirror deck in the GUI-first path. The pane streams
-  // are the visible bodies of the non-overlapping tmux tiles, while one hidden
-  // whole-window attachment remains the geometry and keyboard owner.
+  // --- A one-pane window has exactly one visible terminal -----------------
+  // Pane streams are a compositor primitive for split windows. Starting one
+  // for an ordinary one-pane window used to mount a second xterm directly over
+  // the live interactive terminal: the mirror owned pointer hit-testing while
+  // the covered terminal owned input. With nothing to compose, the interactive
+  // attachment is both the only renderer and the only visible pixel owner.
   const tiledArea = page.locator(".tiled-pane-area");
   await expect(
     tiledArea,
-    "the tiled workspace never promoted its live pane streams into the visible compositor",
-  ).toHaveAttribute("data-pane-compositor", "true", { timeout: 30_000 });
-
-  const composedTiles = page.locator('.pane-tile[data-composed="true"]');
+    "a single-pane workspace mounted the pane-stream compositor over its interactive terminal",
+  ).toHaveAttribute("data-pane-compositor", "false");
   await expect(
-    composedTiles.first(),
-    "no composed pane appeared for a workspace that has attachable panes",
-  ).toBeVisible({ timeout: 30_000 });
-  const composedCount = await composedTiles.count();
-  expect(
-    composedCount,
-    "the compositor painted no tiles for a workspace that has attachable panes",
-  ).toBeGreaterThan(0);
-  const firstTile = composedTiles.first();
-  const firstComposedPane = await firstTile.getAttribute("data-pane");
-  const firstCompositorNode = firstTile.locator(".mirror-pane-node");
-  await expect(firstCompositorNode, "the first composed pane body is not visible").toBeVisible();
-  const compositorRect = await firstCompositorNode.boundingBox();
-  expect(compositorRect, "the first composed pane body has no measurable box").not.toBeNull();
-  expect(
-    compositorRect!.width >= 120 && compositorRect!.height >= 100,
-    `the first composed pane body is only ${Math.round(compositorRect!.width)}x${Math.round(compositorRect!.height)}px`,
-  ).toBe(true);
-  // Bug this catches: the pane body is laid out below the fold or under the
-  // dock, so its frame technically exists and the user sees a strip or nothing.
-  const windowSize = page.viewportSize()!;
-  expect(
-    compositorRect!.y + compositorRect!.height,
-    `the first composed pane ends at y=${Math.round(compositorRect!.y + compositorRect!.height)} ` +
-      `in a ${windowSize.height}px window — its body is below the visible area`,
-  ).toBeLessThanOrEqual(windowSize.height);
-  const dockTop = await page
-    .locator(".workbench-dock, [data-workbench-dock]")
-    .first()
-    .boundingBox()
-    .then((box) => box?.y ?? windowSize.height)
-    .catch(() => windowSize.height);
-  expect(
-    compositorRect!.y + compositorRect!.height,
-    "the first composed pane body runs under the dock",
-  ).toBeLessThanOrEqual(dockTop);
-
-  // Bug this catches: the tile frame appears but its stream never seeds, so the
-  // user gets labelled chrome around an empty rectangle.
-  await expect
-    .poll(() => firstCompositorNode.getAttribute("data-state"), {
-      message:
-        "the composed pane never reached a live state — the frame is on screen with no pane " +
-        "content behind it",
-      timeout: 30_000,
-    })
-    .toBe("live");
-  // Bug this catches: the compositor renders a terminal grid that never
-  // receives the pane's bytes — a live-looking tile showing a blank screen.
-  await expect
-    .poll(() => firstCompositorNode.locator(".xterm-rows").first().innerText(), {
-      message:
-        "the composed pane painted no content — it reports a live stream but its terminal grid " +
-        "is empty",
-      timeout: 30_000,
-    })
-    .toMatch(/\S/u);
-
-  /*
-   * The GRID is inside the card, not merely the card inside the window.
-   *
-   * Bug this catches (m50.2): the letterbox fit scaled the emulator about its
-   * own centre, which is the centre of the card only while the grid still fits
-   * it. Once the app owned tmux's window geometry the element laid out at grid
-   * size — far larger than the card — and the render was parked around a point
-   * outside it: measured 180px below the card and off the bottom of the window,
-   * where xterm stops painting. The card stayed on screen and reported a live
-   * stream the whole time, which is why every existing placement assertion
-   * passed; only the pixels the user reads were somewhere else.
-   */
-  const gridPlacement = await firstCompositorNode.evaluate((element) => {
-    const screen = element.querySelector(".xterm-screen");
-    if (!screen) return null;
-    const card = element.parentElement?.getBoundingClientRect() ?? element.getBoundingClientRect();
-    const grid = screen.getBoundingClientRect();
-    return {
-      card: { top: card.top, bottom: card.bottom, left: card.left, right: card.right },
-      grid: { top: grid.top, bottom: grid.bottom, left: grid.left, right: grid.right },
-      viewport: { width: window.innerWidth, height: window.innerHeight },
-    };
+    page.locator('.pane-tile[data-composed="true"]'),
+    "a single pane received a duplicate composed terminal body",
+  ).toHaveCount(0);
+  await expect(
+    page.locator(".mirror-deck"),
+    "the disabled one-pane compositor leaked its legacy mirror deck into the workspace",
+  ).toHaveCount(0);
+  await proveVisible(terminal.locator(".xterm-screen"), "the one authoritative terminal screen", {
+    minWidth: 120,
+    minHeight: 100,
   });
-  expect(gridPlacement, "the composed pane has no rendered grid at all").not.toBeNull();
-  const placement = gridPlacement!;
-  const slack = 1; // sub-pixel: a fractional scale cannot round to an escape.
-  expect(
-    placement.grid.top >= placement.card.top - slack &&
-      placement.grid.bottom <= placement.card.bottom + slack &&
-      placement.grid.left >= placement.card.left - slack &&
-      placement.grid.right <= placement.card.right + slack,
-    `the composed pane's grid is rendered at ${JSON.stringify(placement.grid)} but its card is at ` +
-      `${JSON.stringify(placement.card)} — the render escaped the card that frames it`,
-  ).toBe(true);
-  expect(
-    placement.grid.bottom <= placement.viewport.height && placement.grid.top >= 0,
-    `the composed pane's grid runs from ${Math.round(placement.grid.top)} to ` +
-      `${Math.round(placement.grid.bottom)} in a ${placement.viewport.height}px window — the ` +
-      "emulator stops painting outside the viewport, so the pane would freeze mid-stream",
-  ).toBe(true);
-
-  // Bug this catches — the defect this step was rewritten for: the compositor
-  // rebuilt every pane body's DOM on each stream update, so each tick threw away the
-  // xterm instance and re-initialized it. Identity is asserted on the element
-  // itself, across ticks driven by real typing into the mirrored pane.
-  const compositorHandle = (await firstCompositorNode.elementHandle())!;
-  for (let tick = 0; tick < 3; tick += 1) {
-    const echo = `MIRROR-TICK-${tick}`;
-    /*
-     * Click near the top of the terminal BODY, below the one-row pane header.
-     * The header deliberately receives pointer input for drag, zoom, and menu
-     * actions; the transparent remainder forwards input to the whole-window
-     * attachment beneath the compositor.
-     */
-    await terminal.locator(".xterm-screen").click({ position: { x: 24, y: 48 } });
-    await page.keyboard.type(`echo ${echo}`);
-    await page.keyboard.press("Enter");
-    await expect
-      .poll(() => firstCompositorNode.locator(".xterm-rows").first().innerText(), {
-        message: `the composed pane never streamed the output of tick ${tick}`,
-        timeout: 20_000,
-      })
-      .toContain(echo);
-    const current = (await firstCompositorNode.elementHandle())!;
-    expect(
-      await page.evaluate(([before, after]) => before === after, [
-        compositorHandle,
-        current,
-      ] as const),
-      "the composed pane was replaced by a stream update — its xterm re-initializes every tick, " +
-        "which is the re-mount defect",
-    ).toBe(true);
-    expect(
-      await firstCompositorNode.getAttribute("data-pane"),
-      "the composed pane list reordered under a stream update",
-    ).toBe(firstComposedPane);
-  }
-  // And the pane is STILL fully on screen after those ticks: placement must
-  // survive re-measurement, not merely be right on the first paint.
-  await expect(
-    firstCompositorNode,
-    "the first composed pane disappeared after several stream updates",
-  ).toBeVisible();
-  const finalCompositorRect = await firstCompositorNode.boundingBox();
-  expect(
-    finalCompositorRect !== null &&
-      finalCompositorRect.width >= 120 &&
-      finalCompositorRect.height >= 100,
-    "the first composed pane collapsed after several stream updates",
-  ).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath("4-pane-compositor-live.png") });
+  await page.screenshot({ path: testInfo.outputPath("4-single-terminal-authority.png") });
 
   // --- The session dies under the app ------------------------------------
   // Setup-level, and deliberately so: no in-app affordance can make a tmux
