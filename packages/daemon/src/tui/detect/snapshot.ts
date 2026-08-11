@@ -7,10 +7,6 @@
  * unit-tested; `readPaneSnapshot` is the thin tmux I/O wrapper.
  */
 import { runTmux } from "@tmux-ide/tmux-bridge";
-import {
-  INTERNAL_READ_OPERATION_MARKER,
-  INTERNAL_READ_OPERATION_OPTION,
-} from "../../lib/tmux-interaction-options.ts";
 
 export interface PaneSnapshot {
   /** Last N non-empty lines, ANSI-stripped, trailing whitespace trimmed. */
@@ -66,34 +62,14 @@ export function parseSnapshot(raw: string, opts: { lines?: number } = {}): PaneS
 export function readPaneSnapshot(target: string, opts: { lines?: number } = {}): PaneSnapshot {
   const lines = opts.lines ?? DEFAULT_LINES;
   try {
-    const raw = runTmux(
-      [
-        "set-option",
-        "-p",
-        "-t",
-        target,
-        INTERNAL_READ_OPERATION_OPTION,
-        INTERNAL_READ_OPERATION_MARKER,
-        ";",
-        "capture-pane",
-        "-t",
-        target,
-        "-p",
-        "-J",
-        "-S",
-        `-${lines}`,
-      ],
-      { encoding: "utf-8" },
-    ) as string;
-    // One tmux command-list owns both operations, so another GUI/TUI reader
-    // cannot consume this pane-scoped marker between mark and capture.
+    // OpenTUI is a separate process from the daemon observer. Do not mint an
+    // in-memory "internal" registration it cannot redeem; this read remains
+    // honestly observable as external until the TUI transport cutover.
+    const raw = runTmux(["capture-pane", "-t", target, "-p", "-J", "-S", `-${lines}`], {
+      encoding: "utf-8",
+    }) as string;
     return parseSnapshot(raw, { lines });
   } catch {
-    try {
-      runTmux(["set-option", "-pu", "-t", target, INTERNAL_READ_OPERATION_OPTION]);
-    } catch {
-      // The pane may have closed between marker installation and cleanup.
-    }
     return { bottomNonEmpty: [], text: "", raw: "" };
   }
 }

@@ -63,14 +63,6 @@ export function createSessionRuntimeMultiplexerBackend(
     }
   };
 
-  const withTrustedOrigin = (
-    intent: SessionRuntimeSemanticIntent,
-    origin: "gui" | "cli" | "sdk",
-  ): SessionRuntimeSemanticIntent =>
-    intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read"
-      ? { ...intent, origin }
-      : intent;
-
   const acquireOwner = (session: string): OwnerUse => {
     let owner = owners.get(session);
     if (!owner) {
@@ -101,6 +93,7 @@ export function createSessionRuntimeMultiplexerBackend(
       request: WorkspaceMultiplexerMutationRequest,
       authenticatedHostClientId?: string,
       sourcePaneCredential?: string,
+      ownerAuthorized = false,
     ): Promise<WorkspaceMultiplexerMutationResult> => {
       const session = options.resolveSession(request.intent.workspaceName);
       if (!session) {
@@ -123,7 +116,7 @@ export function createSessionRuntimeMultiplexerBackend(
           options.registry.submitAuthenticatedIntent(
             authenticatedContext,
             request.operationId,
-            withTrustedOrigin(request.intent as SessionRuntimeSemanticIntent, "gui"),
+            request.intent as SessionRuntimeSemanticIntent,
           ),
         );
         if (!result) throw new Error("Session mutation completed without a mutation result");
@@ -140,7 +133,7 @@ export function createSessionRuntimeMultiplexerBackend(
           options.registry.submitPaneCredentialIntent(
             session,
             request.operationId,
-            withTrustedOrigin(request.intent as SessionRuntimeSemanticIntent, "cli"),
+            request.intent as SessionRuntimeSemanticIntent,
             credentialSource,
             () => {
               const current = options.resolvePaneSourceCredential?.(
@@ -157,6 +150,9 @@ export function createSessionRuntimeMultiplexerBackend(
         if (!result) throw new Error("Session mutation completed without a mutation result");
         return result;
       }
+      if (!ownerAuthorized) {
+        throw new Error("Semantic mutation requires a live host, pane, or owner principal");
+      }
       const owner = acquireOwner(session);
       try {
         const lease = owner.consumer.acquireController();
@@ -164,7 +160,7 @@ export function createSessionRuntimeMultiplexerBackend(
           owner.consumer.submitIntent(
             lease,
             request.operationId,
-            withTrustedOrigin(request.intent as SessionRuntimeSemanticIntent, "sdk"),
+            request.intent as SessionRuntimeSemanticIntent,
           ),
         );
         if (!result) throw new Error("Session mutation completed without a mutation result");

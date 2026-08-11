@@ -64,8 +64,8 @@ import type {
 import { FlowLedger } from "./flow-ledger.ts";
 import { PaneFeed } from "./pane-feed.ts";
 import {
-  INTERNAL_READ_OPERATION_MARKER,
   INTERNAL_READ_OPERATION_OPTION,
+  registerInternalReadOperation,
 } from "../../lib/tmux-interaction-options.ts";
 
 /** Notifications whose payload cannot be applied directly — fall back to the
@@ -339,9 +339,10 @@ export class SessionChannel {
     // Keystroke ordering: pending coalesced input leaves before the probes.
     this.input.flush();
     const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
+    const internalReadMarker = registerInternalReadOperation(runtime);
     // Both probes ride one write burst; the FIFO reply order is the seam.
     this.io.commandListInline(
-      `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${INTERNAL_READ_OPERATION_MARKER} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
+      `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
       2,
       1,
       (reply) => {

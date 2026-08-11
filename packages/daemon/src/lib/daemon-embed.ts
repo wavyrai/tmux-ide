@@ -1071,7 +1071,7 @@ export async function startEmbeddedDaemon(
               semanticPaneId,
               operationKind,
             }) ?? false;
-          if (consumed) return;
+          if (consumed) return true;
         }
         try {
           broadcastInteractionReceipt(
@@ -1093,6 +1093,7 @@ export async function startEmbeddedDaemon(
         } catch (error) {
           if (!opts.silent) console.error("[daemon] External interaction receipt failed:", error);
         }
+        return false;
       },
     });
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;

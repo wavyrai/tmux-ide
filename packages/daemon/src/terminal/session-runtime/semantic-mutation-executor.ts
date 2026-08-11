@@ -23,6 +23,13 @@ export interface SessionRuntimeTmuxObservation {
   readonly operationKind: "workspace.pane.send" | "workspace.pane.read";
 }
 
+export interface SessionRuntimeSubmissionAuthority {
+  /** Trusted submitting surface, established outside caller-authored intent JSON. */
+  readonly origin: AuthoredInteractionOrigin;
+  readonly authenticatedSourceSemanticPaneId?: string | null;
+  readonly authorizeBeforeEffect?: () => void;
+}
+
 export type SessionRuntimeReceiptInput = Omit<InteractionReceipt, "type" | "sequence">;
 
 export interface SessionSemanticMutationExecutorOptions {
@@ -94,9 +101,7 @@ export class SessionSemanticMutationExecutor {
   submit(
     rawOperationId: string,
     rawIntent: SessionRuntimeSemanticIntent,
-    authenticatedSourceSemanticPaneId: string | null = null,
-    authorizeBeforeEffect?: () => void,
-    authenticatedOrigin?: AuthoredInteractionOrigin,
+    authority: SessionRuntimeSubmissionAuthority,
   ): Promise<SessionRuntimeIntentResult> {
     if (this.#disposed) {
       return Promise.reject(
@@ -104,12 +109,18 @@ export class SessionSemanticMutationExecutor {
       );
     }
     const operationId = z.uuid().parse(rawOperationId);
-    const intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+    let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+    // Caller JSON never decides attribution. Normalize authored send/read
+    // intent before fingerprinting and before the sole synchronous effect.
+    if (intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read") {
+      intent = { ...intent, origin: authority.origin };
+    }
+    const authenticatedSourceSemanticPaneId = authority.authenticatedSourceSemanticPaneId ?? null;
     const session = this.#options.resolveSession(intent.workspaceName);
     // All unresolved workspace names share one bounded refusal bucket. Never
     // retain an attacker-controlled workspace-name alias as a ledger key.
     const ledger = this.#ledger(session ?? MISSING_SESSION_LEDGER);
-    const origin = authenticatedOrigin ?? ("origin" in intent ? intent.origin : "sdk");
+    const origin = authority.origin;
     const fingerprint = JSON.stringify([intent, authenticatedSourceSemanticPaneId, origin]);
     const existing = ledger.get(operationId);
     if (existing) {
@@ -153,7 +164,7 @@ export class SessionSemanticMutationExecutor {
           operationId,
           intent,
           authenticatedSourceSemanticPaneId,
-          authorizeBeforeEffect,
+          authority.authorizeBeforeEffect,
           origin,
         ),
       () =>
@@ -162,7 +173,7 @@ export class SessionSemanticMutationExecutor {
           operationId,
           intent,
           authenticatedSourceSemanticPaneId,
-          authorizeBeforeEffect,
+          authority.authorizeBeforeEffect,
           origin,
         ),
     );

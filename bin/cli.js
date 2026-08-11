@@ -11918,17 +11918,6 @@ var init_process_tree = __esm({
   }
 });
 
-// packages/daemon/src/lib/tmux-interaction-options.ts
-var INTERNAL_SEND_OPERATION_OPTION, INTERNAL_READ_OPERATION_OPTION, INTERNAL_READ_OPERATION_MARKER;
-var init_tmux_interaction_options = __esm({
-  "packages/daemon/src/lib/tmux-interaction-options.ts"() {
-    "use strict";
-    INTERNAL_SEND_OPERATION_OPTION = "@tmux_ide_send_operation";
-    INTERNAL_READ_OPERATION_OPTION = "@tmux_ide_read_operation";
-    INTERNAL_READ_OPERATION_MARKER = "tmux-ide-internal-read-v1";
-  }
-});
-
 // packages/daemon/src/tui/detect/snapshot.ts
 function stripAnsi(input) {
   return input.replace(ANSI, "");
@@ -11943,31 +11932,11 @@ function parseSnapshot(raw, opts = {}) {
 function readPaneSnapshot(target, opts = {}) {
   const lines = opts.lines ?? DEFAULT_LINES;
   try {
-    const raw = runTmux(
-      [
-        "set-option",
-        "-p",
-        "-t",
-        target,
-        INTERNAL_READ_OPERATION_OPTION,
-        INTERNAL_READ_OPERATION_MARKER,
-        ";",
-        "capture-pane",
-        "-t",
-        target,
-        "-p",
-        "-J",
-        "-S",
-        `-${lines}`
-      ],
-      { encoding: "utf-8" }
-    );
+    const raw = runTmux(["capture-pane", "-t", target, "-p", "-J", "-S", `-${lines}`], {
+      encoding: "utf-8"
+    });
     return parseSnapshot(raw, { lines });
   } catch {
-    try {
-      runTmux(["set-option", "-pu", "-t", target, INTERNAL_READ_OPERATION_OPTION]);
-    } catch {
-    }
     return { bottomNonEmpty: [], text: "", raw: "" };
   }
 }
@@ -11976,7 +11945,6 @@ var init_snapshot = __esm({
   "packages/daemon/src/tui/detect/snapshot.ts"() {
     "use strict";
     init_src2();
-    init_tmux_interaction_options();
     ANSI = /[\u001b\u009b][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
     DEFAULT_LINES = 20;
   }
@@ -26519,6 +26487,40 @@ var init_app_window_mutation2 = __esm({
   }
 });
 
+// packages/daemon/src/lib/tmux-interaction-options.ts
+import { randomUUID as randomUUID4 } from "node:crypto";
+function registerInternalReadOperation(runtimePaneId) {
+  const now = Date.now();
+  for (const [marker2, registration] of internalReads) {
+    if (registration.expiresAt <= now) internalReads.delete(marker2);
+  }
+  while (internalReads.size >= INTERNAL_READ_CAPACITY) {
+    internalReads.delete(internalReads.keys().next().value);
+  }
+  const marker = `${INTERNAL_READ_PREFIX}${randomUUID4()}`;
+  internalReads.set(marker, { paneId: runtimePaneId, expiresAt: now + INTERNAL_READ_TTL_MS });
+  return marker;
+}
+function consumeInternalReadOperation(marker, runtimePaneId, operationKind) {
+  if (marker === null || !marker.startsWith(INTERNAL_READ_PREFIX)) return false;
+  const registration = internalReads.get(marker);
+  if (!registration) return false;
+  internalReads.delete(marker);
+  return operationKind === "workspace.pane.read" && registration.paneId === runtimePaneId && registration.expiresAt > Date.now();
+}
+var INTERNAL_SEND_OPERATION_OPTION, INTERNAL_READ_OPERATION_OPTION, INTERNAL_READ_PREFIX, INTERNAL_READ_TTL_MS, INTERNAL_READ_CAPACITY, internalReads;
+var init_tmux_interaction_options = __esm({
+  "packages/daemon/src/lib/tmux-interaction-options.ts"() {
+    "use strict";
+    INTERNAL_SEND_OPERATION_OPTION = "@tmux_ide_send_operation";
+    INTERNAL_READ_OPERATION_OPTION = "@tmux_ide_read_operation";
+    INTERNAL_READ_PREFIX = "tmux-ide-internal-read-v2:";
+    INTERNAL_READ_TTL_MS = 1e4;
+    INTERNAL_READ_CAPACITY = 512;
+    internalReads = /* @__PURE__ */ new Map();
+  }
+});
+
 // packages/daemon/src/lib/tmux-external-interaction-observer.ts
 import { execFile as execFile3 } from "node:child_process";
 import { z as z60 } from "zod";
@@ -26705,7 +26707,7 @@ var init_tmux_external_interaction_observer = __esm({
         try {
           this.#io.runTmux(["set-buffer", "-b", this.#bufferName, "-n", drainName]);
         } catch {
-          return;
+          return false;
         }
         let raw;
         try {
@@ -26713,7 +26715,11 @@ var init_tmux_external_interaction_observer = __esm({
         } finally {
           this.#deleteBuffer(drainName);
         }
-        for (const record of parseTmuxInputHookRecords(raw)) this.#project(record);
+        let consumed = false;
+        for (const record of parseTmuxInputHookRecords(raw)) {
+          consumed = this.#project(record) || consumed;
+        }
+        return consumed;
       }
       async #run() {
         while (this.#active && !this.#abort.signal.aborted) {
@@ -26729,8 +26735,12 @@ var init_tmux_external_interaction_observer = __esm({
         }
       }
       #project(record) {
-        if (record.operationKind === "workspace.pane.read" && record.operationMarker === INTERNAL_READ_OPERATION_MARKER) {
-          return;
+        if (consumeInternalReadOperation(
+          record.operationMarker,
+          record.runtimePaneId,
+          record.operationKind
+        )) {
+          return true;
         }
         const ownPrefix = `${this.#daemonInstanceId}:`;
         const authoredOperationId = record.operationMarker?.startsWith(ownPrefix) ? record.operationMarker.slice(ownPrefix.length) : null;
@@ -26745,16 +26755,16 @@ var init_tmux_external_interaction_observer = __esm({
             `#{session_name}	#{${"@tmux_ide_pane_id"}}`
           ]);
         } catch {
-          return;
+          return false;
         }
         const separator = identity.indexOf("	");
-        if (separator < 1) return;
+        if (separator < 1) return false;
         const sessionName = identity.slice(0, separator);
         const semanticPaneId3 = identity.slice(separator + 1);
-        if (!WorkspacePaneCreationReferenceSchemaZ.safeParse(semanticPaneId3).success) return;
+        if (!WorkspacePaneCreationReferenceSchemaZ.safeParse(semanticPaneId3).success) return false;
         const workspace = this.#registry.list().find((entry) => entry.sessionName === sessionName);
-        if (!workspace) return;
-        this.#onObserved({
+        if (!workspace) return false;
+        return this.#onObserved({
           workspaceName: workspace.name,
           semanticPaneId: semanticPaneId3,
           operationKind: record.operationKind,
@@ -27449,22 +27459,84 @@ var init_workspace_multiplexer_verbs = __esm({
         const before = this.#panes(sessionName);
         const pane = resolvePaneRow(before, intent.semanticPaneId);
         const sourcePane = intent.sourceSemanticPaneId ? resolvePaneRow(before, intent.sourceSemanticPaneId) : null;
-        const input = intent.submit ? `${intent.text}\r` : intent.text;
-        this.#io.runTmux([
-          "set-option",
-          "-p",
-          "-t",
-          pane.paneId,
-          INTERNAL_SEND_OPERATION_OPTION,
-          internalInteractionOperationMarker(this.#daemonInstanceId, envelope.operationId),
-          ";",
-          "send-keys",
-          "-t",
-          pane.paneId,
-          "-l",
-          "--",
-          input
-        ]);
+        const marker = internalInteractionOperationMarker(this.#daemonInstanceId, envelope.operationId);
+        if (intent.submit) {
+          const buffer = `tmux-ide-send-${envelope.operationId}`;
+          try {
+            this.#io.runTmux([
+              "set-buffer",
+              "-b",
+              buffer,
+              "--",
+              intent.text,
+              ";",
+              "paste-buffer",
+              "-d",
+              "-b",
+              buffer,
+              "-t",
+              pane.paneId,
+              ";",
+              "set-option",
+              "-p",
+              "-t",
+              pane.paneId,
+              INTERNAL_SEND_OPERATION_OPTION,
+              marker,
+              ";",
+              "send-keys",
+              "-t",
+              pane.paneId,
+              "Enter"
+            ]);
+          } catch (error) {
+            try {
+              this.#io.runTmux(["delete-buffer", "-b", buffer]);
+            } catch {
+            }
+            try {
+              this.#io.runTmux([
+                "set-option",
+                "-pu",
+                "-t",
+                pane.paneId,
+                INTERNAL_SEND_OPERATION_OPTION
+              ]);
+            } catch {
+            }
+            throw error;
+          }
+        } else {
+          try {
+            this.#io.runTmux([
+              "set-option",
+              "-p",
+              "-t",
+              pane.paneId,
+              INTERNAL_SEND_OPERATION_OPTION,
+              marker,
+              ";",
+              "send-keys",
+              "-t",
+              pane.paneId,
+              "-l",
+              "--",
+              intent.text
+            ]);
+          } catch (error) {
+            try {
+              this.#io.runTmux([
+                "set-option",
+                "-pu",
+                "-t",
+                pane.paneId,
+                INTERNAL_SEND_OPERATION_OPTION
+              ]);
+            } catch {
+            }
+            throw error;
+          }
+        }
         const observed = resolvePaneRow(this.#panes(sessionName), intent.semanticPaneId);
         if (observed.paneId !== pane.paneId) {
           throw new WorkspaceMultiplexerError("mutation_unverified", {
@@ -28841,8 +28913,9 @@ var init_session_channel = __esm({
         const epoch = sub.feed.beginReseed();
         this.input.flush();
         const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
+        const internalReadMarker = registerInternalReadOperation(runtime);
         this.io.commandListInline(
-          `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${INTERNAL_READ_OPERATION_MARKER} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
+          `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
           2,
           1,
           (reply) => {
@@ -29712,17 +29785,21 @@ var init_semantic_mutation_executor = __esm({
       constructor(options) {
         this.#options = options;
       }
-      submit(rawOperationId, rawIntent, authenticatedSourceSemanticPaneId = null, authorizeBeforeEffect, authenticatedOrigin) {
+      submit(rawOperationId, rawIntent, authority) {
         if (this.#disposed) {
           return Promise.reject(
             new SessionRuntimeIntentError("rejected", "Session semantic mutation executor is disposed")
           );
         }
         const operationId = z61.uuid().parse(rawOperationId);
-        const intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+        let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+        if (intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read") {
+          intent = { ...intent, origin: authority.origin };
+        }
+        const authenticatedSourceSemanticPaneId = authority.authenticatedSourceSemanticPaneId ?? null;
         const session = this.#options.resolveSession(intent.workspaceName);
         const ledger = this.#ledger(session ?? MISSING_SESSION_LEDGER);
-        const origin = authenticatedOrigin ?? ("origin" in intent ? intent.origin : "sdk");
+        const origin = authority.origin;
         const fingerprint2 = JSON.stringify([intent, authenticatedSourceSemanticPaneId, origin]);
         const existing = ledger.get(operationId);
         if (existing) {
@@ -29762,7 +29839,7 @@ var init_semantic_mutation_executor = __esm({
             operationId,
             intent,
             authenticatedSourceSemanticPaneId,
-            authorizeBeforeEffect,
+            authority.authorizeBeforeEffect,
             origin
           ),
           () => this.#run(
@@ -29770,7 +29847,7 @@ var init_semantic_mutation_executor = __esm({
             operationId,
             intent,
             authenticatedSourceSemanticPaneId,
-            authorizeBeforeEffect,
+            authority.authorizeBeforeEffect,
             origin
           )
         );
@@ -29988,7 +30065,7 @@ var init_semantic_mutation_executor = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/registry.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 import { z as z62 } from "zod";
 function authoredOriginForSurface(surface) {
   if (surface === "opentui") return "tui";
@@ -30026,7 +30103,7 @@ var init_registry2 = __esm({
         this.#mirror = new MirrorService(options.mirror);
         this.#semanticMutations = options.semanticMutations ? new SessionSemanticMutationExecutor(options.semanticMutations) : null;
         this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
-        this.#createControllerToken = options.createControllerToken ?? randomUUID4;
+        this.#createControllerToken = options.createControllerToken ?? randomUUID5;
         this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
           this.#sessions.get(session)?.noteControlExit();
         });
@@ -30083,9 +30160,11 @@ var init_registry2 = __esm({
         return this.#semanticMutations.submit(
           operationId,
           { ...intent, sourceSemanticPaneId: semanticPaneId3 },
-          semanticPaneId3,
-          authorizeBeforeEffect,
-          "cli"
+          {
+            origin: "cli",
+            authenticatedSourceSemanticPaneId: semanticPaneId3,
+            authorizeBeforeEffect
+          }
         );
       }
       submitAuthenticatedIntent(handle, operationId, intent) {
@@ -30177,13 +30256,11 @@ var init_registry2 = __esm({
         if (!this.#semanticMutations) {
           return Promise.reject(new Error("Session semantic mutations are unavailable"));
         }
-        return this.#semanticMutations.submit(
-          operationId,
-          intent,
+        return this.#semanticMutations.submit(operationId, intent, {
+          origin: authenticatedOrigin ?? "sdk",
           authenticatedSourceSemanticPaneId,
-          authorizeBeforeEffect,
-          authenticatedOrigin
-        );
+          authorizeBeforeEffect
+        });
       }
       observeTmuxInteraction(observation2) {
         return this.#semanticMutations?.observe(observation2) ?? false;
@@ -31015,7 +31092,7 @@ var init_grouped_tmux = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash11, randomBytes as randomBytes3, randomUUID as randomUUID5, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash11, randomBytes as randomBytes3, randomUUID as randomUUID6, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 import { z as z66 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -31088,7 +31165,7 @@ var init_lease_manager = __esm({
         this.#viewExecutor = options.viewExecutor;
         this.#now = options.now ?? Date.now;
         this.#randomBytes = options.randomBytes ?? randomBytes3;
-        this.#createId = options.createId ?? randomUUID5;
+        this.#createId = options.createId ?? randomUUID6;
         this.#ticketTtlMs = positiveDuration(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#leaseTtlMs = positiveDuration(options.leaseTtlMs, 6e4, "leaseTtlMs");
         this.#maxLeaseTtlMs = positiveDuration(
@@ -33461,7 +33538,7 @@ var init_tmux_view_executor = __esm({
 // packages/daemon/src/terminal/attachments/pty-tmux-attachment-launcher.ts
 import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync9, statSync as statSync10 } from "node:fs";
 import { delimiter as delimiter3, isAbsolute as isAbsolute8, join as join29 } from "node:path";
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID7 } from "node:crypto";
 import { execFileSync as execFileSync12 } from "node:child_process";
 function defaultSchedule2(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
@@ -33651,7 +33728,7 @@ var init_pty_tmux_attachment_launcher = __esm({
         if (existing) this.#dispose(existing);
         this.#reservedAttachments.add(request.identity.attachmentId);
         const lifecycleEpoch = this.#lifecycleEpoch;
-        const attemptId = randomUUID6();
+        const attemptId = randomUUID7();
         let resolveOutcome;
         const outcome = new Promise((resolve31) => {
           resolveOutcome = resolve31;
@@ -34729,7 +34806,7 @@ function createTmuxAgentStatusProbe(deps2) {
       "-t",
       runtimePaneId,
       INTERNAL_READ_OPERATION_OPTION,
-      INTERNAL_READ_OPERATION_MARKER,
+      registerInternalReadOperation(runtimePaneId),
       ";",
       "capture-pane",
       "-p",
@@ -34982,7 +35059,7 @@ var init_terminal_attachment_upgrade = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash12, randomBytes as randomBytes4, randomUUID as randomUUID7, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+import { createHash as createHash12, randomBytes as randomBytes4, randomUUID as randomUUID8, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 import { z as z70 } from "zod";
 function positiveDuration2(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -35035,7 +35112,7 @@ var init_lease_manager2 = __esm({
         this.#instanceId = BindingIdSchemaZ3.parse(options.daemonInstanceId);
         this.#now = options.now ?? Date.now;
         this.#randomBytes = options.randomBytes ?? randomBytes4;
-        this.#createId = options.createId ?? randomUUID7;
+        this.#createId = options.createId ?? randomUUID8;
         this.#ticketTtlMs = positiveDuration2(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#redemptionProcessingTtlMs = positiveDuration2(
           options.redemptionProcessingTtlMs,
@@ -36462,7 +36539,6 @@ function createSessionRuntimeMultiplexerBackend(options) {
       throw error;
     }
   };
-  const withTrustedOrigin = (intent, origin) => intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read" ? { ...intent, origin } : intent;
   const acquireOwner = (session) => {
     let owner = owners.get(session);
     if (!owner) {
@@ -36487,7 +36563,7 @@ function createSessionRuntimeMultiplexerBackend(options) {
     await owner.consumer.close();
   };
   return {
-    mutate: async (request, authenticatedHostClientId, sourcePaneCredential) => {
+    mutate: async (request, authenticatedHostClientId, sourcePaneCredential, ownerAuthorized = false) => {
       const session = options.resolveSession(request.intent.workspaceName);
       if (!session) {
         throw new Error(`Workspace ${request.intent.workspaceName} has no live tmux session`);
@@ -36506,7 +36582,7 @@ function createSessionRuntimeMultiplexerBackend(options) {
           () => options.registry.submitAuthenticatedIntent(
             authenticatedContext,
             request.operationId,
-            withTrustedOrigin(request.intent, "gui")
+            request.intent
           )
         );
         if (!result) throw new Error("Session mutation completed without a mutation result");
@@ -36523,7 +36599,7 @@ function createSessionRuntimeMultiplexerBackend(options) {
           () => options.registry.submitPaneCredentialIntent(
             session,
             request.operationId,
-            withTrustedOrigin(request.intent, "cli"),
+            request.intent,
             credentialSource,
             () => {
               const current = options.resolvePaneSourceCredential?.(
@@ -36540,6 +36616,9 @@ function createSessionRuntimeMultiplexerBackend(options) {
         if (!result) throw new Error("Session mutation completed without a mutation result");
         return result;
       }
+      if (!ownerAuthorized) {
+        throw new Error("Semantic mutation requires a live host, pane, or owner principal");
+      }
       const owner = acquireOwner(session);
       try {
         const lease = owner.consumer.acquireController();
@@ -36547,7 +36626,7 @@ function createSessionRuntimeMultiplexerBackend(options) {
           () => owner.consumer.submitIntent(
             lease,
             request.operationId,
-            withTrustedOrigin(request.intent, "sdk")
+            request.intent
           )
         );
         if (!result) throw new Error("Session mutation completed without a mutation result");
@@ -36673,7 +36752,7 @@ var init_active_projects = __esm({
 });
 
 // packages/daemon/src/lib/environment-identity.ts
-import { randomUUID as randomUUID8 } from "node:crypto";
+import { randomUUID as randomUUID9 } from "node:crypto";
 import { linkSync as linkSync3, mkdirSync as mkdirSync21, readFileSync as readFileSync23, rmSync as rmSync3, writeFileSync as writeFileSync19 } from "node:fs";
 import { dirname as dirname26, join as join30 } from "node:path";
 function environmentIdentityPath() {
@@ -36690,7 +36769,7 @@ function readPersistedEnvironmentId(path2) {
   }
 }
 function persistEnvironmentId(path2, environmentId) {
-  const temporary = `${path2}.${process.pid}.${randomUUID8()}.tmp`;
+  const temporary = `${path2}.${process.pid}.${randomUUID9()}.tmp`;
   try {
     mkdirSync21(dirname26(path2), { recursive: true });
     writeFileSync19(
@@ -36716,7 +36795,7 @@ function readOrMintEnvironmentId() {
     rmSync3(path2, { force: true });
   } catch {
   }
-  const minted = randomUUID8();
+  const minted = randomUUID9();
   persistEnvironmentId(path2, minted);
   return readPersistedEnvironmentId(path2) ?? minted;
 }
@@ -36730,7 +36809,7 @@ var init_environment_identity = __esm({
 });
 
 // packages/daemon/src/send.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID10 } from "node:crypto";
 import { execFileSync as execFileSync13 } from "node:child_process";
 import { resolve as resolve23, join as join31 } from "node:path";
 import { existsSync as existsSync29, mkdirSync as mkdirSync22, writeFileSync as writeFileSync20 } from "node:fs";
@@ -36739,7 +36818,7 @@ function writeDispatchFile(dir, paneId, message) {
   const dispatchDir = join31(dir, ".tasks", "dispatch");
   if (!existsSync29(dispatchDir)) mkdirSync22(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
-  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID9().slice(0, 8)}.md`;
+  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID10().slice(0, 8)}.md`;
   const filePath = join31(dispatchDir, filename);
   writeFileSync20(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
@@ -36877,7 +36956,7 @@ async function deliverMessageThroughDaemon(opts) {
   const prepared = prepareMessage(opts.message, busyStatus);
   const dispatch = opts.noEnter ? null : writeDispatchFile(opts.dir, pane.id, prepared);
   const actualText = dispatch?.triggerCmd ?? prepared;
-  const operationId = randomUUID9();
+  const operationId = randomUUID10();
   const sourceSemanticPaneId = cliSourceSemanticPaneId(opts.session);
   const sourcePaneCredential = cliPaneSourceCredential();
   const outcome = await tryDispatchAction(
@@ -37012,6 +37091,32 @@ var init_log = __esm({
       warn: (component, msg, data) => writeStructuredLog("warn", component, msg, data),
       error: (component, msg, data) => writeStructuredLog("error", component, msg, data)
     };
+  }
+});
+
+// packages/daemon/src/command-center/actions/semantic-multiplexer-actions.ts
+function isSemanticMultiplexerActionName(actionName) {
+  return semanticMultiplexerActionNames.has(actionName);
+}
+var SEMANTIC_MULTIPLEXER_ACTION_NAMES, semanticMultiplexerActionNames;
+var init_semantic_multiplexer_actions = __esm({
+  "packages/daemon/src/command-center/actions/semantic-multiplexer-actions.ts"() {
+    "use strict";
+    SEMANTIC_MULTIPLEXER_ACTION_NAMES = [
+      "workspace.window.split",
+      "workspace.window.kill",
+      "workspace.pane.kill",
+      "workspace.session.kill",
+      "workspace.rename",
+      "workspace.pane.zoom.toggle",
+      "workspace.pane.select",
+      "workspace.pane.send",
+      "workspace.pane.swap",
+      "workspace.pane.resize"
+    ];
+    semanticMultiplexerActionNames = new Set(
+      SEMANTIC_MULTIPLEXER_ACTION_NAMES
+    );
   }
 });
 
@@ -38018,7 +38123,12 @@ async function runVerb(verb, input, context, deps2) {
       expectedDaemonInstanceId: context.daemonInstanceId,
       intent: { ...input, verb }
     };
-    return context.hostClientId || context.sourcePaneCredential ? await authority.mutate(request, context.hostClientId, context.sourcePaneCredential) : await authority.mutate(request);
+    return await authority.mutate(
+      request,
+      context.hostClientId,
+      context.sourcePaneCredential,
+      context.ownerAuthorized
+    );
   } catch (error) {
     if (!(error instanceof WorkspaceMultiplexerError)) throw error;
     throw new ActionError({
@@ -38423,6 +38533,13 @@ var init_command_definitions = __esm({
 });
 
 // packages/daemon/src/command-center/actions/dispatcher.ts
+function markActionOwnerAuthorized(context) {
+  ownerAuthorizedContexts.add(context);
+}
+function shouldBroadcastGenericActionComplete(actionName, result, unchangedAppWindowMutation) {
+  if (unchangedAppWindowMutation) return false;
+  return !(isSemanticMultiplexerActionName(actionName) && WorkspaceMultiplexerMutationResultSchemaZ.safeParse(result).success);
+}
 function resourceChangesForAction(actionName, result) {
   if (actionName === "workspace.app-window.mutate") {
     const mutation = AppWindowMutationResultSchemaZ.safeParse(result);
@@ -38602,6 +38719,7 @@ function createActionDispatcher(deps2 = {}) {
       daemonInstanceId: deps2.daemonInstanceId,
       hostClientId: c.req.header("X-Tmux-Ide-Host-Client-Id"),
       sourcePaneCredential: c.req.header(PANE_SOURCE_CREDENTIAL_HEADER),
+      ownerAuthorized: ownerAuthorizedContexts.has(c),
       workspacePaneCreationBackend: deps2.workspacePaneCreationBackend,
       workspaceOpenBackend: deps2.workspaceOpenBackend,
       workspacePromotionBackend: deps2.workspacePromotionBackend,
@@ -38622,7 +38740,11 @@ function createActionDispatcher(deps2 = {}) {
       return c.json(outputZodErrorEnvelope(outputParsed.error), 200);
     }
     const unchangedAppWindowMutation = actionName === "workspace.app-window.mutate" && typeof outputParsed.data === "object" && outputParsed.data !== null && "outcome" in outputParsed.data && outputParsed.data.outcome === "unchanged";
-    if (!unchangedAppWindowMutation) {
+    if (shouldBroadcastGenericActionComplete(
+      actionName,
+      outputParsed.data,
+      unchangedAppWindowMutation
+    )) {
       try {
         broadcast(actionName, outputParsed.data);
       } catch (err) {
@@ -38653,6 +38775,7 @@ function createActionDispatcher(deps2 = {}) {
     return c.json({ ok: true, result: outputParsed.data }, 200);
   };
 }
+var ownerAuthorizedContexts;
 var init_dispatcher = __esm({
   "packages/daemon/src/command-center/actions/dispatcher.ts"() {
     "use strict";
@@ -38663,6 +38786,8 @@ var init_dispatcher = __esm({
     init_ws_events();
     init_src();
     init_command_definitions();
+    init_semantic_multiplexer_actions();
+    ownerAuthorizedContexts = /* @__PURE__ */ new WeakSet();
   }
 });
 
@@ -42034,7 +42159,7 @@ __export(widget_asset_store_exports, {
   publishWidgetAsset: () => publishWidgetAsset,
   readWidgetAsset: () => readWidgetAsset
 });
-import { createHash as createHash15, randomUUID as randomUUID11 } from "node:crypto";
+import { createHash as createHash15, randomUUID as randomUUID12 } from "node:crypto";
 import {
   chmodSync as chmodSync5,
   existsSync as existsSync33,
@@ -42135,11 +42260,11 @@ function publishWidgetAsset(bytes, options) {
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   if (!existsSync33(paths.data)) {
-    const temporary = join35(root, `.${assetId}.${randomUUID11()}.bin`);
+    const temporary = join35(root, `.${assetId}.${randomUUID12()}.bin`);
     writeFileSync22(temporary, bytes, { mode: 384, flag: "wx" });
     renameSync13(temporary, paths.data);
   }
-  const metadataTemporary = join35(root, `.${assetId}.${randomUUID11()}.json`);
+  const metadataTemporary = join35(root, `.${assetId}.${randomUUID12()}.json`);
   writeFileSync22(metadataTemporary, `${JSON.stringify(metadata)}
 `, { mode: 384, flag: "wx" });
   renameSync13(metadataTemporary, paths.metadata);
@@ -42208,7 +42333,7 @@ import { z as z74 } from "zod";
 import { realpathSync as realpathSync14 } from "node:fs";
 import { homedir as homedir21 } from "node:os";
 import { isAbsolute as isAbsolute13, resolve as pathResolve } from "node:path";
-import { randomUUID as randomUUID12 } from "node:crypto";
+import { randomUUID as randomUUID13 } from "node:crypto";
 import { WebSocketServer as WebSocketServer3 } from "ws";
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -42248,8 +42373,12 @@ function requireHostCapability(ownerToken) {
     const actionName = c.req.param("name");
     const requirement = actionName ? GATED_ACTIONS[actionName] : void 0;
     if (!requirement) return next();
-    const denied = gate(c);
-    if (denied) return denied;
+    const semanticPrincipal = isSemanticMultiplexerActionName(actionName ?? "") && (c.req.header("X-Tmux-Ide-Host-Client-Id") !== void 0 || c.req.header(PANE_SOURCE_CREDENTIAL_HEADER) !== void 0);
+    if (!semanticPrincipal) {
+      const denied = gate(c);
+      if (denied) return denied;
+      markActionOwnerAuthorized(c);
+    }
     if (requirement === "owner-and-operation-id" && !z74.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
@@ -42339,7 +42468,7 @@ function createApp(options = {}) {
   const authService = options.authService ?? new AuthService();
   const daemonIdentity = options.daemonIdentity ?? {
     productVersion: "0.0.0",
-    instanceId: randomUUID12(),
+    instanceId: randomUUID13(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const daemonInstanceIdentity = DaemonInstanceIdentitySchemaZ.parse({
@@ -42770,7 +42899,7 @@ function createApp(options = {}) {
         });
         scripted = true;
       }
-      if (!id) id = randomUUID12();
+      if (!id) id = randomUUID13();
       try {
         const upsertInput = {
           id,
@@ -43214,7 +43343,7 @@ function createApp(options = {}) {
     if (!existsSync34(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
-    const jobId = randomUUID12();
+    const jobId = randomUUID13();
     const command2 = process.env.TMUX_IDE_INIT_COMMAND ?? "tmux-ide";
     void (async () => {
       try {
@@ -43393,6 +43522,7 @@ var init_server = __esm({
     init_config_context();
     init_ide_config2();
     init_log();
+    init_semantic_multiplexer_actions();
     init_workspace_registry();
     init_src();
     init_schemas();
@@ -43404,6 +43534,7 @@ var init_server = __esm({
     init_middleware();
     init_ws_events();
     init_dispatcher();
+    init_pane_source_credentials();
     init_project_registry();
     init_project_init_runner();
     init_registry();
@@ -43454,6 +43585,7 @@ var init_server = __esm({
       "workspace.rename": "owner-and-operation-id",
       "workspace.pane.zoom.toggle": "owner-and-operation-id",
       "workspace.pane.select": "owner-and-operation-id",
+      "workspace.pane.send": "owner-and-operation-id",
       "workspace.pane.swap": "owner-and-operation-id",
       "workspace.pane.resize": "owner-and-operation-id",
       "project.launch": "owner",
@@ -43488,7 +43620,7 @@ var init_types = __esm({
 
 // packages/daemon/src/lib/daemon-embed.ts
 import { execFileSync as execFileSync14 } from "node:child_process";
-import { randomBytes as randomBytes7, randomUUID as randomUUID13 } from "node:crypto";
+import { randomBytes as randomBytes7, randomUUID as randomUUID14 } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire as createRequire2 } from "node:module";
 import { performance } from "node:perf_hooks";
@@ -44124,7 +44256,7 @@ async function startEmbeddedDaemon(opts) {
     validatePort(port);
     const dir = process.cwd();
     const productVersion = resolveDaemonProductVersion(opts.productVersion);
-    const instanceId = randomUUID13();
+    const instanceId = randomUUID14();
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
     const environmentId = readOrMintEnvironmentId();
     const workspaceRegistry = getDefaultWorkspaceRegistry();
@@ -44197,12 +44329,12 @@ async function startEmbeddedDaemon(opts) {
             semanticPaneId: semanticPaneId3,
             operationKind
           }) ?? false;
-          if (consumed) return;
+          if (consumed) return true;
         }
         try {
           broadcastInteractionReceipt(
             {
-              operationId: randomUUID13(),
+              operationId: randomUUID14(),
               origin: "external",
               workspaceName,
               target: { kind: "pane", semanticPaneId: semanticPaneId3 },
@@ -44216,6 +44348,7 @@ async function startEmbeddedDaemon(opts) {
         } catch (error) {
           if (!opts.silent) console.error("[daemon] External interaction receipt failed:", error);
         }
+        return false;
       }
     });
     let terminalAttachmentRuntime = null;
@@ -44629,7 +44762,7 @@ var init_daemon_embed = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { randomUUID as randomUUID15 } from "node:crypto";
 import { z as z75 } from "zod";
 function timeoutSignal2(ms) {
   const controller = new AbortController();
@@ -44711,7 +44844,7 @@ async function tryDispatchAction(name, input, options = {}) {
   if (!daemon) return null;
   const contract = ActionContractsZ[name];
   const parsedInput = contract.input.parse(input);
-  const operationId = RETRY_SAFE_OWNER_ACTIONS.has(name) ? options.operationId ?? randomUUID14() : null;
+  const operationId = RETRY_SAFE_OWNER_ACTIONS.has(name) ? options.operationId ?? randomUUID15() : null;
   if (operationId && !daemon.ownerToken) {
     await stopTransientDaemon(daemon);
     return null;

@@ -117,6 +117,21 @@ function rig(
   return { executor, receipts };
 }
 
+function submit(
+  executor: SessionSemanticMutationExecutor,
+  operationId: string,
+  intent: SessionRuntimeSemanticIntent,
+  authenticatedSourceSemanticPaneId: string | null = null,
+  authorizeBeforeEffect?: () => void,
+  origin: "gui" | "tui" | "cli" | "sdk" = "sdk",
+) {
+  return executor.submit(operationId, intent, {
+    origin,
+    authenticatedSourceSemanticPaneId,
+    authorizeBeforeEffect,
+  });
+}
+
 describe("SessionSemanticMutationExecutor", () => {
   it("publishes result-derived accepted and observed receipts for all eleven intents", async () => {
     const intents: SessionRuntimeSemanticIntent[] = [
@@ -181,7 +196,7 @@ describe("SessionSemanticMutationExecutor", () => {
     executor = built.executor;
 
     for (const [index, intent] of intents.entries()) {
-      await executor.submit(operationId(index + 100), intent);
+      await submit(executor, operationId(index + 100), intent);
     }
 
     expect(built.receipts).toHaveLength(intents.length * 2);
@@ -214,7 +229,7 @@ describe("SessionSemanticMutationExecutor", () => {
       },
     });
     let authorized = true;
-    const first = executor.submit(OP_A, send());
+    const first = submit(executor, OP_A, send());
     const resizeIntent = {
       verb: "workspace.pane.resize",
       workspaceName: "alpha",
@@ -222,7 +237,7 @@ describe("SessionSemanticMutationExecutor", () => {
       axis: "cols",
       cells: 80,
     } as const;
-    const queued = executor.submit(OP_B, resizeIntent, null, () => {
+    const queued = submit(executor, OP_B, resizeIntent, null, () => {
       if (!authorized) throw new Error("controller became stale");
     });
     await vi.waitFor(() => expect(started).toEqual([OP_A]));
@@ -252,8 +267,8 @@ describe("SessionSemanticMutationExecutor", () => {
       },
     });
     let authorized = true;
-    const first = executor.submit(OP_A, send());
-    const queued = executor.submit(OP_B, send("alpha", "pane.beta"), "pane.source", () => {
+    const first = submit(executor, OP_A, send());
+    const queued = submit(executor, OP_B, send("alpha", "pane.beta"), "pane.source", () => {
       if (!authorized) throw new Error("principal became stale");
     });
     await vi.waitFor(() => expect(started).toEqual([OP_A]));
@@ -288,8 +303,8 @@ describe("SessionSemanticMutationExecutor", () => {
         return resultFor(operationId, intent);
       },
     });
-    const first = executor.submit(OP_A, send(), "pane.source", firstGuard);
-    const replay = executor.submit(OP_A, send(), "pane.source", replayGuard);
+    const first = submit(executor, OP_A, send(), "pane.source", firstGuard);
+    const replay = submit(executor, OP_A, send(), "pane.source", replayGuard);
     expect(replay).toBe(first);
     await vi.waitFor(() => expect(started).toEqual([OP_A]));
     executor.observe({
@@ -312,8 +327,8 @@ describe("SessionSemanticMutationExecutor", () => {
         return resultFor(operationId, intent);
       },
     });
-    const first = executor.submit(OP_A, send());
-    const second = executor.submit(OP_B, send("alpha", "pane.beta"));
+    const first = submit(executor, OP_A, send());
+    const second = submit(executor, OP_B, send("alpha", "pane.beta"));
 
     await vi.waitFor(() => expect(started).toEqual([OP_A]));
     executor.observe({
@@ -349,21 +364,21 @@ describe("SessionSemanticMutationExecutor", () => {
         return resultFor(id, intent);
       },
     });
-    const sent = executor.submit(operationId(20), send());
-    const resized = executor.submit(operationId(21), {
+    const sent = submit(executor, operationId(20), send());
+    const resized = submit(executor, operationId(21), {
       verb: "workspace.pane.resize",
       workspaceName: "alpha",
       semanticPaneId: "pane.alpha",
       axis: "cols",
       cells: 80,
     });
-    const read = executor.submit(operationId(22), {
+    const read = submit(executor, operationId(22), {
       verb: "workspace.pane.read",
       workspaceName: "alpha",
       semanticPaneId: "pane.alpha",
       origin: "sdk",
     });
-    const split = executor.submit(operationId(23), {
+    const split = submit(executor, operationId(23), {
       verb: "workspace.window.split",
       workspaceName: "alpha",
       semanticPaneId: "pane.alpha",
@@ -413,8 +428,8 @@ describe("SessionSemanticMutationExecutor", () => {
       axis: "cols",
       cells: 80,
     } as const;
-    const first = await executor.submit(OP_A, intent);
-    const retry = await executor.submit(OP_A, intent);
+    const first = await submit(executor, OP_A, intent);
+    const retry = await submit(executor, OP_A, intent);
     expect(execute).toHaveBeenCalledOnce();
     expect(first).toMatchObject({ outcome: "applied", cells: 72 });
     expect(retry).toMatchObject({ outcome: "replayed", cells: 72 });
@@ -430,8 +445,8 @@ describe("SessionSemanticMutationExecutor", () => {
         return resultFor(operationId, intent);
       },
     });
-    const alpha = executor.submit(OP_A, send("alpha", "pane.alpha"));
-    const beta = executor.submit(OP_B, send("beta", "pane.beta"));
+    const alpha = submit(executor, OP_A, send("alpha", "pane.alpha"));
+    const beta = submit(executor, OP_B, send("beta", "pane.beta"));
     await vi.waitFor(() => expect(new Set(started)).toEqual(new Set([OP_A, OP_B])));
 
     executor.observe({
@@ -464,14 +479,14 @@ describe("SessionSemanticMutationExecutor", () => {
     const { executor } = rig({ execute });
     const alphaPending = Array.from(
       { length: SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY },
-      (_, index) => executor.submit(operationId(index + 1), send("alpha", "pane.alpha")),
+      (_, index) => submit(executor, operationId(index + 1), send("alpha", "pane.alpha")),
     );
     await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
     await expect(
-      executor.submit(operationId(10_000), send("alpha", "pane.alpha")),
+      submit(executor, operationId(10_000), send("alpha", "pane.alpha")),
     ).rejects.toMatchObject({ outcome: "rejected" });
     await expect(
-      executor.submit(operationId(10_001), {
+      submit(executor, operationId(10_001), {
         verb: "workspace.pane.resize",
         workspaceName: "beta",
         semanticPaneId: "pane.beta",
@@ -493,8 +508,8 @@ describe("SessionSemanticMutationExecutor", () => {
         return resultFor(id, intent);
       },
     });
-    const alpha = executor.submit(OP_A, send("alpha", "pane.alpha"));
-    const beta = executor.submit(OP_A, send("beta", "pane.beta"));
+    const alpha = submit(executor, OP_A, send("alpha", "pane.alpha"));
+    const beta = submit(executor, OP_A, send("beta", "pane.beta"));
     await vi.waitFor(() => expect(new Set(started)).toEqual(new Set(["alpha", "beta"])));
     executor.observe({
       operationId: OP_A,
@@ -527,7 +542,8 @@ describe("SessionSemanticMutationExecutor", () => {
         return resultFor(id, intent);
       },
     });
-    const completed = executor.submit(
+    const completed = submit(
+      executor,
       OP_A,
       {
         verb: "workspace.pane.resize",
@@ -560,8 +576,8 @@ describe("SessionSemanticMutationExecutor", () => {
       axis: "cols",
       cells: 80,
     } as const;
-    await executor.submit(OP_A, intent, null, undefined, "gui");
-    await expect(executor.submit(OP_A, intent, null, undefined, "tui")).rejects.toMatchObject({
+    await submit(executor, OP_A, intent, null, undefined, "gui");
+    await expect(submit(executor, OP_A, intent, null, undefined, "tui")).rejects.toMatchObject({
       outcome: "rejected",
     });
     expect(execute).toHaveBeenCalledOnce();
@@ -577,7 +593,7 @@ describe("SessionSemanticMutationExecutor", () => {
     const disconnect = executor.onReceipt(disconnected);
     disconnect();
 
-    const submitted = executor.submit(OP_A, send());
+    const submitted = submit(executor, OP_A, send());
     await vi.waitFor(() => expect(slow).toHaveBeenCalledTimes(1));
     executor.observe({
       operationId: OP_A,
@@ -595,8 +611,8 @@ describe("SessionSemanticMutationExecutor", () => {
       resultFor(operationId, intent),
     );
     const { executor, receipts } = rig({ execute });
-    const first = executor.submit(OP_A, send());
-    const retry = executor.submit(OP_A, send());
+    const first = submit(executor, OP_A, send());
+    const retry = submit(executor, OP_A, send());
     await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
     executor.observe({
       operationId: OP_A,
@@ -605,7 +621,7 @@ describe("SessionSemanticMutationExecutor", () => {
       operationKind: "workspace.pane.send",
     });
     await Promise.all([first, retry]);
-    await executor.submit(OP_A, send());
+    await submit(executor, OP_A, send());
     expect(execute).toHaveBeenCalledTimes(1);
     expect(receipts.map((receipt) => receipt.phase)).toEqual(["accepted", "observed"]);
     await executor.dispose();
@@ -616,11 +632,11 @@ describe("SessionSemanticMutationExecutor", () => {
       resultFor(operationId, intent),
     );
     const { executor, receipts } = rig({ execute });
-    const first = executor.submit(OP_A, send());
+    const first = submit(executor, OP_A, send());
     await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
 
     await expect(
-      executor.submit(OP_A, { ...send(), semanticPaneId: "pane.other" }),
+      submit(executor, OP_A, { ...send(), semanticPaneId: "pane.other" }),
     ).rejects.toMatchObject({ outcome: "rejected" });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(receipts.map((receipt) => receipt.phase)).toEqual(["accepted"]);
@@ -653,7 +669,7 @@ describe("SessionSemanticMutationExecutor", () => {
     executor = built.executor;
 
     for (let index = 1; index <= SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY + 1; index += 1) {
-      await executor.submit(operationId(index), send());
+      await submit(executor, operationId(index), send());
     }
 
     expect(execute).toHaveBeenCalledTimes(SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY + 1);
@@ -667,13 +683,13 @@ describe("SessionSemanticMutationExecutor", () => {
     );
     const { executor, receipts } = rig({ execute });
     const pending = Array.from({ length: SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY }, (_, index) =>
-      executor.submit(operationId(index + 1), send()),
+      submit(executor, operationId(index + 1), send()),
     );
-    const firstRetry = executor.submit(operationId(1), send());
+    const firstRetry = submit(executor, operationId(1), send());
     expect(firstRetry).toBe(pending[0]);
 
     await expect(
-      executor.submit(operationId(SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY + 1), send()),
+      submit(executor, operationId(SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY + 1), send()),
     ).rejects.toMatchObject({ outcome: "rejected" });
     expect(receipts).toHaveLength(SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY);
 
@@ -688,14 +704,14 @@ describe("SessionSemanticMutationExecutor", () => {
         throw new Error("no pane");
       },
     });
-    await expect(rejected.executor.submit(OP_A, send())).rejects.toMatchObject({
+    await expect(submit(rejected.executor, OP_A, send())).rejects.toMatchObject({
       outcome: "rejected",
     });
     expect(rejected.receipts.map((receipt) => receipt.phase)).toEqual(["accepted", "rejected"]);
     await rejected.executor.dispose();
 
     const timedOut = rig({ timeout: 5 });
-    await expect(timedOut.executor.submit(OP_B, send())).rejects.toMatchObject({
+    await expect(submit(timedOut.executor, OP_B, send())).rejects.toMatchObject({
       outcome: "timed-out",
     });
     expect(timedOut.receipts.map((receipt) => receipt.phase)).toEqual(["accepted", "timed-out"]);
@@ -705,7 +721,7 @@ describe("SessionSemanticMutationExecutor", () => {
   it("rejects a structural success that cannot produce verb-matched proof", async () => {
     const broken = rig({ execute: () => undefined });
     await expect(
-      broken.executor.submit(OP_A, {
+      submit(broken.executor, OP_A, {
         verb: "workspace.pane.resize",
         workspaceName: "alpha",
         semanticPaneId: "pane.alpha",
@@ -725,7 +741,7 @@ describe("SessionSemanticMutationExecutor", () => {
       timeout: 1,
     });
     await expect(
-      refused.executor.submit(OP_A, {
+      submit(refused.executor, OP_A, {
         verb: "workspace.pane.resize",
         workspaceName: "alpha",
         semanticPaneId: "pane.alpha",
@@ -750,8 +766,8 @@ describe("SessionSemanticMutationExecutor", () => {
       axis: "cols",
       cells: 80,
     } as const;
-    const first = await executor.submit(OP_A, intent).catch((error: unknown) => error);
-    const retry = await executor.submit(OP_A, intent).catch((error: unknown) => error);
+    const first = await submit(executor, OP_A, intent).catch((error: unknown) => error);
+    const retry = await submit(executor, OP_A, intent).catch((error: unknown) => error);
     expect(retry).toBe(first);
     expect(execute).toHaveBeenCalledOnce();
     expect(receipts.map(({ phase }) => phase)).toEqual(["accepted", "rejected"]);
@@ -766,8 +782,8 @@ describe("SessionSemanticMutationExecutor", () => {
         return resultFor(operationId, intent);
       },
     });
-    const first = executor.submit(OP_A, send());
-    const second = executor.submit(OP_B, send("alpha", "pane.beta"));
+    const first = submit(executor, OP_A, send());
+    const second = submit(executor, OP_B, send("alpha", "pane.beta"));
     await vi.waitFor(() => expect(started).toEqual([OP_A]));
 
     const disposed = executor.dispose();

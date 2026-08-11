@@ -35,8 +35,8 @@ import {
 } from "../../tui/detect/process-tree.ts";
 import { parseSnapshot } from "../../tui/detect/snapshot.ts";
 import {
-  INTERNAL_READ_OPERATION_MARKER,
   INTERNAL_READ_OPERATION_OPTION,
+  registerInternalReadOperation,
 } from "../../lib/tmux-interaction-options.ts";
 
 /** The per-pane facts the pure projector consumes (see `ApplicationShellPanePresentationFacts`). */
@@ -190,7 +190,7 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
         "-t",
         runtimePaneId,
         INTERNAL_READ_OPERATION_OPTION,
-        INTERNAL_READ_OPERATION_MARKER,
+        registerInternalReadOperation(runtimePaneId),
         ";",
         "capture-pane",
         "-p",

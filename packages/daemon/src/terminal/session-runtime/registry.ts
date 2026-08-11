@@ -219,9 +219,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return this.#semanticMutations.submit(
       operationId,
       { ...intent, sourceSemanticPaneId: semanticPaneId },
-      semanticPaneId,
-      authorizeBeforeEffect,
-      "cli",
+      {
+        origin: "cli",
+        authenticatedSourceSemanticPaneId: semanticPaneId,
+        authorizeBeforeEffect,
+      },
     );
   }
 
@@ -337,13 +339,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     if (!this.#semanticMutations) {
       return Promise.reject(new Error("Session semantic mutations are unavailable"));
     }
-    return this.#semanticMutations.submit(
-      operationId,
-      intent,
+    return this.#semanticMutations.submit(operationId, intent, {
+      origin: authenticatedOrigin ?? "sdk",
       authenticatedSourceSemanticPaneId,
       authorizeBeforeEffect,
-      authenticatedOrigin,
-    );
+    });
   }
 
   observeTmuxInteraction(observation: SessionRuntimeTmuxObservation): boolean {

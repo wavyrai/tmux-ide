@@ -857,28 +857,93 @@ export class WorkspaceMultiplexerAuthority {
     const sourcePane = intent.sourceSemanticPaneId
       ? resolvePaneRow(before, intent.sourceSemanticPaneId)
       : null;
-    // A submitted message is one literal PTY write (text + carriage return),
-    // hence one after-send-keys hook. The marker, effect, and cleanup are one
-    // tmux command list so unrelated send-keys cannot interleave inside the
-    // daemon-authored attribution window. The synchronous pinned after-hook
-    // records and unsets the marker before tmux advances this command queue;
-    // unsetting here would run before the after-hook can observe it.
-    const input = intent.submit ? `${intent.text}\r` : intent.text;
-    this.#io.runTmux([
-      "set-option",
-      "-p",
-      "-t",
-      pane.paneId,
-      INTERNAL_SEND_OPERATION_OPTION,
-      internalInteractionOperationMarker(this.#daemonInstanceId, envelope.operationId),
-      ";",
-      "send-keys",
-      "-t",
-      pane.paneId,
-      "-l",
-      "--",
-      input,
-    ]);
+    // `send-keys -l` treats a trailing carriage return as literal input rather
+    // than the Enter key. For submitted text, paste the caller bytes from a
+    // private one-shot tmux buffer, then mark and send exactly one Enter key.
+    // This preserves literal-data safety and gives the after-send hook exactly
+    // one authoritative completion edge. Non-submitted input remains one
+    // marked literal send.
+    const marker = internalInteractionOperationMarker(this.#daemonInstanceId, envelope.operationId);
+    if (intent.submit) {
+      const buffer = `tmux-ide-send-${envelope.operationId}`;
+      try {
+        this.#io.runTmux([
+          "set-buffer",
+          "-b",
+          buffer,
+          "--",
+          intent.text,
+          ";",
+          "paste-buffer",
+          "-d",
+          "-b",
+          buffer,
+          "-t",
+          pane.paneId,
+          ";",
+          "set-option",
+          "-p",
+          "-t",
+          pane.paneId,
+          INTERNAL_SEND_OPERATION_OPTION,
+          marker,
+          ";",
+          "send-keys",
+          "-t",
+          pane.paneId,
+          "Enter",
+        ]);
+      } catch (error) {
+        try {
+          this.#io.runTmux(["delete-buffer", "-b", buffer]);
+        } catch {
+          // The one-shot paste already removed it, or the server disappeared.
+        }
+        try {
+          this.#io.runTmux([
+            "set-option",
+            "-pu",
+            "-t",
+            pane.paneId,
+            INTERNAL_SEND_OPERATION_OPTION,
+          ]);
+        } catch {
+          // The pane may have disappeared with the failed send.
+        }
+        throw error;
+      }
+    } else {
+      try {
+        this.#io.runTmux([
+          "set-option",
+          "-p",
+          "-t",
+          pane.paneId,
+          INTERNAL_SEND_OPERATION_OPTION,
+          marker,
+          ";",
+          "send-keys",
+          "-t",
+          pane.paneId,
+          "-l",
+          "--",
+          intent.text,
+        ]);
+      } catch (error) {
+        try {
+          this.#io.runTmux([
+            "set-option",
+            "-pu",
+            "-t",
+            pane.paneId,
+            INTERNAL_SEND_OPERATION_OPTION,
+          ]);
+        } catch {
+          // The pane may have disappeared with the failed send.
+        }
+        throw error;
+      }
+    }
 
     const observed = resolvePaneRow(this.#panes(sessionName), intent.semanticPaneId);
     if (observed.paneId !== pane.paneId) {

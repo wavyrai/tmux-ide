@@ -212,6 +212,36 @@ class FakeTmux {
         }
         return "";
       }
+      case "set-buffer": {
+        if (
+          args[1] !== "-b" ||
+          args[3] !== "--" ||
+          args[5] !== ";" ||
+          args[6] !== "paste-buffer" ||
+          args[7] !== "-d" ||
+          args[8] !== "-b" ||
+          args[9] !== args[2] ||
+          args[10] !== "-t" ||
+          args[12] !== ";" ||
+          args[13] !== "set-option" ||
+          args[14] !== "-p" ||
+          args[15] !== "-t" ||
+          args[16] !== args[11] ||
+          args[19] !== ";" ||
+          args[20] !== "send-keys" ||
+          args[21] !== "-t" ||
+          args[22] !== args[11] ||
+          args[23] !== "Enter" ||
+          args.length !== 24
+        ) {
+          throw new Error(`unsupported submitted send: ${args.join(" ")}`);
+        }
+        const pane = this.#pane(args[11]!);
+        pane.options.set(args[17]!, args[18]!);
+        // Model the synchronous pinned after-hook after the sole Enter key.
+        pane.options.delete(args[17]!);
+        return "";
+      }
       case "split-window": {
         const source = this.#pane(args[7]!);
         const pane = this.addPane(source.windowId);
@@ -554,6 +584,19 @@ describe("the multiplexer authority", () => {
       );
 
       expect(tmux.calls).toContainEqual([
+        "set-buffer",
+        "-b",
+        `tmux-ide-send-${operationId}`,
+        "--",
+        text,
+        ";",
+        "paste-buffer",
+        "-d",
+        "-b",
+        `tmux-ide-send-${operationId}`,
+        "-t",
+        "%0",
+        ";",
         "set-option",
         "-p",
         "-t",
@@ -564,9 +607,7 @@ describe("the multiplexer authority", () => {
         "send-keys",
         "-t",
         "%0",
-        "-l",
-        "--",
-        `${text}\r`,
+        "Enter",
       ]);
       expect(result).toMatchObject({
         verb: "workspace.pane.send",

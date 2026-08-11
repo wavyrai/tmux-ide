@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { WorkspaceMultiplexerMutationResultSchemaZ } from "@tmux-ide/contracts";
 import { ActionContractsZ } from "./contract.ts";
-import { createActionDispatcher } from "./dispatcher.ts";
+import { createActionDispatcher, shouldBroadcastGenericActionComplete } from "./dispatcher.ts";
 import { setDaemonShutdownBackend } from "./handlers/daemon-shutdown.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
 import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
@@ -31,6 +32,23 @@ afterEach(() => {
 });
 
 describe("command-backed action dispatcher compatibility", () => {
+  it("broadcasts a non-semantic action even when test data has a multiplexer result shape", () => {
+    const multiplexerResult = {
+      verb: "workspace.pane.select",
+      outcome: "applied",
+      operationId: "10000000-0000-4000-8000-000000000001",
+      daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+      workspaceName: "workspace.alpha",
+      semanticPaneId: "pane.target",
+    };
+    expect(WorkspaceMultiplexerMutationResultSchemaZ.safeParse(multiplexerResult).success).toBe(
+      true,
+    );
+    expect(shouldBroadcastGenericActionComplete("daemon.shutdown", multiplexerResult, false)).toBe(
+      true,
+    );
+  });
+
   it("forwards trusted host and pane credentials out-of-band to the runtime backend", async () => {
     const mutate = vi.fn(async (input) => ({
       verb: "workspace.pane.send" as const,
@@ -76,6 +94,7 @@ describe("command-backed action dispatcher compatibility", () => {
       expect.objectContaining({ intent: expect.objectContaining({ text: "hello" }) }),
       "trusted-host",
       "trusted-pane-credential",
+      false,
     );
   });
 
@@ -94,10 +113,11 @@ describe("command-backed action dispatcher compatibility", () => {
       submitted: true,
     }));
     const app = new Hono();
+    const broadcast = vi.fn();
     app.post(
       "/api/v2/action/:name",
       createActionDispatcher({
-        broadcast: vi.fn(),
+        broadcast,
         broadcastResourceChanged: vi.fn(),
         daemonInstanceId: "20000000-0000-4000-8000-000000000002",
         workspaceMultiplexerBackend: { mutate },
@@ -122,7 +142,11 @@ describe("command-backed action dispatcher compatibility", () => {
     expect(response.status).toBe(200);
     expect(mutate).toHaveBeenCalledWith(
       expect.objectContaining({ intent: expect.objectContaining({ text: "private prompt" }) }),
+      undefined,
+      undefined,
+      false,
     );
+    expect(broadcast).not.toHaveBeenCalled();
   });
   it("keeps unknown action transport behavior unchanged", async () => {
     const { app } = actionApp();
