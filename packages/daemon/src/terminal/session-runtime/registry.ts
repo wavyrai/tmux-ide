@@ -11,6 +11,11 @@ import {
   type SessionRuntimeGeneration,
   type SessionRuntimeSemanticIntent,
   type CanonicalTerminalReplicaUpdate,
+  type TerminalDeliveryAck,
+  type TerminalDeliveryNack,
+  type TerminalDeliveryOffer,
+  type TerminalDeliveryServerMessage,
+  type TerminalDeliveryVisibility,
 } from "@tmux-ide/contracts";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -36,6 +41,10 @@ import {
   SessionRuntimeTerminalReplicaOwner,
   type TerminalReplicaSubscription,
 } from "./terminal-replica-owner.ts";
+import {
+  SessionRuntimeTerminalDeliveryHub,
+  type TerminalDeliveryConnection,
+} from "./terminal-delivery-hub.ts";
 
 export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
@@ -104,6 +113,11 @@ export interface SessionRuntimeConsumer {
     semanticPaneId: string,
     onUpdate: (update: CanonicalTerminalReplicaUpdate) => void,
   ): Promise<TerminalReplicaSubscription>;
+  openTerminalDelivery(
+    semanticPaneId: string,
+    offer: TerminalDeliveryOffer,
+    onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+  ): Promise<TerminalDeliveryConnection>;
   close(): Promise<void>;
 }
 
@@ -416,6 +430,7 @@ class SessionRuntime {
   readonly #consumersByClientId = new Map<string, SessionRuntimeConsumerImpl>();
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
+  readonly #terminalDeliveryHub: SessionRuntimeTerminalDeliveryHub;
   readonly #createControllerToken: () => string;
   readonly #submitAuthorized: (
     runtime: SessionRuntime,
@@ -450,6 +465,11 @@ class SessionRuntime {
     this.#mirror = mirror;
     this.#createControllerToken = createControllerToken;
     this.#submitAuthorized = submitAuthorized;
+    this.#terminalDeliveryHub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      session,
+      (semanticPaneId) => this.#terminalReplicaOwner(semanticPaneId),
+    );
   }
 
   connect(surface: string, clientId: string): SessionRuntimeConsumer {
@@ -624,6 +644,31 @@ class SessionRuntime {
     // revision epoch. This is intentionally separate from transport readiness:
     // the retained tmux channel may remain healthy while one pane parser fails.
     await this.#restartBarrier;
+    const owner = this.#terminalReplicaOwner(semanticPaneId);
+    try {
+      return await owner.subscribe(onUpdate);
+    } catch (error) {
+      if (this.#terminalReplicas.get(semanticPaneId) === owner) {
+        this.#terminalReplicas.delete(semanticPaneId);
+      }
+      await owner.dispose("session-restarted");
+      throw error;
+    }
+  }
+
+  async openTerminalDelivery(
+    clientId: string,
+    semanticPaneId: string,
+    offer: TerminalDeliveryOffer,
+    onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+  ): Promise<TerminalDeliveryConnection> {
+    await this.whenReady();
+    await this.#restartBarrier;
+    this.#assertConnected(clientId);
+    return await this.#terminalDeliveryHub.open(clientId, semanticPaneId, offer, onMessage);
+  }
+
+  #terminalReplicaOwner(semanticPaneId: string): SessionRuntimeTerminalReplicaOwner {
     let owner = this.#terminalReplicas.get(semanticPaneId);
     if (!owner) {
       const clock = this.#terminalReplicaClocks.get(semanticPaneId) ?? { epoch: 0, revision: -1 };
@@ -664,15 +709,7 @@ class SessionRuntime {
       owner = candidate;
       this.#terminalReplicas.set(semanticPaneId, owner);
     }
-    try {
-      return await owner.subscribe(onUpdate);
-    } catch (error) {
-      if (this.#terminalReplicas.get(semanticPaneId) === owner) {
-        this.#terminalReplicas.delete(semanticPaneId);
-      }
-      await owner.dispose("session-restarted");
-      throw error;
-    }
+    return owner;
   }
 
   release(consumer: SessionRuntimeConsumerImpl): void {
@@ -690,6 +727,7 @@ class SessionRuntime {
     const owners = [...this.#terminalReplicas.values()];
     this.#terminalReplicas.clear();
     this.#restartBarrier = this.#restartBarrier.then(async () => {
+      await this.#terminalDeliveryHub.resetForSessionRestart();
       await Promise.allSettled(owners.map((owner) => owner.dispose("session-restarted")));
       await retention?.close();
       for (const clock of this.#terminalReplicaClocks.values()) clock.epoch += 1;
@@ -708,6 +746,7 @@ class SessionRuntime {
       [...this.#terminalReplicas.values()].map((owner) => owner.dispose("runtime-disposed")),
     );
     this.#terminalReplicas.clear();
+    await this.#terminalDeliveryHub.close();
     await this.#restartBarrier;
     await this.#retention?.close();
     this.#retention = null;
@@ -789,6 +828,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   readonly clientId: string;
   readonly #subscriptions = new Set<MirrorSubscription>();
   readonly #replicaSubscriptions = new Set<TerminalReplicaSubscription>();
+  readonly #deliveryConnections = new Set<TerminalDeliveryConnection>();
   #closed = false;
 
   constructor(
@@ -893,18 +933,54 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     return subscription;
   }
 
+  async openTerminalDelivery(
+    semanticPaneId: string,
+    offer: TerminalDeliveryOffer,
+    onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+  ): Promise<TerminalDeliveryConnection> {
+    this.#assertOpen();
+    const upstream = await this.#runtime.openTerminalDelivery(
+      this.clientId,
+      semanticPaneId,
+      offer,
+      onMessage,
+    );
+    if (this.#closed) {
+      await upstream.close();
+      throw new Error(`SessionRuntime consumer ${this.surface} is closed`);
+    }
+    let closed = false;
+    const connection: TerminalDeliveryConnection = {
+      negotiation: upstream.negotiation,
+      ack: (ack: TerminalDeliveryAck) => upstream.ack(ack),
+      nack: (nack: TerminalDeliveryNack) => upstream.nack(nack),
+      setVisibility: (visibility: TerminalDeliveryVisibility) => upstream.setVisibility(visibility),
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        this.#deliveryConnections.delete(connection);
+        await upstream.close();
+      },
+    };
+    this.#deliveryConnections.add(connection);
+    return connection;
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
     const subscriptions = [...this.#subscriptions];
     const replicaSubscriptions = [...this.#replicaSubscriptions];
+    const deliveryConnections = [...this.#deliveryConnections];
     this.#subscriptions.clear();
     this.#replicaSubscriptions.clear();
+    this.#deliveryConnections.clear();
     // Authority retirement is synchronous. A slow/frozen mirror subscription
     // must never keep controller leases or previously issued handles alive.
     this.#runtime.release(this);
     await Promise.allSettled(subscriptions.map((subscription) => subscription.close()));
     await Promise.allSettled(replicaSubscriptions.map((subscription) => subscription.close()));
+    await Promise.allSettled(deliveryConnections.map((connection) => connection.close()));
   }
 
   #assertOpen(): void {

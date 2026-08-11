@@ -3,6 +3,7 @@ export * from "./interaction-flow.ts";
 export * from "./workspace-selection.ts";
 export * from "./terminal-conformance.ts";
 export * from "./terminal-replica.ts";
+export * from "./terminal-delivery.ts";
 export * from "./interaction-receipts.ts";
 export * from "./agent-provisioning.ts";
 export * from "./navigator.ts";
