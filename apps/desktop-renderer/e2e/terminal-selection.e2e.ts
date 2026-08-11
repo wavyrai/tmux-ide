@@ -50,12 +50,33 @@ test("xterm pointer selection copies text without mutating tmux", async ({ page,
   await expect(
     page.locator(".terminal-surface__viewport .xterm-selection div").first(),
   ).toBeVisible();
+  await page.evaluate(() => {
+    const observed = window as Window & { __tmuxIdeCopiedText?: string };
+    observed.__tmuxIdeCopiedText = "";
+    window.addEventListener(
+      "copy",
+      (event) => {
+        // This window-level bubble listener runs after the tiled surface's
+        // copy authority has populated the browser ClipboardEvent. Reading
+        // that payload is deterministic in headless Linux; the OS clipboard
+        // backing navigator.clipboard is not.
+        observed.__tmuxIdeCopiedText = event.clipboardData?.getData("text/plain") ?? "";
+      },
+      { once: true },
+    );
+  });
   await page.keyboard.press(process.platform === "darwin" ? "Meta+c" : "Control+c");
   await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()), {
-      message: "the live xterm selection did not reach the clipboard",
-      timeout: 10_000,
-    })
+    .poll(
+      () =>
+        page.evaluate(
+          () => (window as Window & { __tmuxIdeCopiedText?: string }).__tmuxIdeCopiedText ?? "",
+        ),
+      {
+        message: "the live xterm selection did not populate the browser copy event",
+        timeout: 10_000,
+      },
+    )
     .toContain(marker);
 
   expect(liveApp.fleet.countPanes(session)).toBe(before.panes);
