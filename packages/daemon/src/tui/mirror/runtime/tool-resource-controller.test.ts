@@ -109,14 +109,18 @@ describe("OpenTUI demand-driven tool resources", () => {
       toolFetches: 0,
       subprocessLaunches: 0,
       idleWakeups: 0,
-      renderPasses: 0,
+      scheduledWakeups: 0,
+      nativeRenderPasses: 0,
       activeInterests: 0,
     });
-    controller.noteRenderPass();
-    expect(controller.getMetrics().renderPasses).toBe(1);
-    controller.noteWakeup();
+    controller.noteNativeRenderPass();
+    expect(controller.getMetrics().nativeRenderPasses).toBe(1);
+    controller.noteScheduledWakeup();
     controller.noteSubprocessLaunch();
-    expect(controller.getMetrics()).toMatchObject({ idleWakeups: 1, subprocessLaunches: 1 });
+    expect(controller.getMetrics()).toMatchObject({
+      scheduledWakeups: 1,
+      subprocessLaunches: 1,
+    });
     controller.dispose();
   });
 
@@ -151,7 +155,7 @@ describe("OpenTUI demand-driven tool resources", () => {
     await settle();
     expect(log).toEqual([]);
 
-    readiness.observeTerminalRender();
+    readiness.observeTerminalFrameCommitted();
     await settle();
     expect(new Set(log)).toEqual(
       new Set(["fetch:fleet", "fetch:sessions", "fetch:projects", "fetch:files"]),

@@ -7,8 +7,8 @@ export type TerminalToolReadinessState =
  * Event-driven admission gate for terminal-adjacent resources.
  *
  * A rejected first viewport fit is diagnostic, not a permanent deadlock: the
- * first observed layout proves geometry, then the subsequent terminal render
- * admits tools while retaining the degraded fit status. A later successful
+ * first observed layout proves geometry, then the subsequent committed native
+ * terminal frame admits tools while retaining the degraded fit status. A later successful
  * geometry settlement clears the degradation. No retry interval or polling
  * loop exists.
  */
@@ -40,8 +40,8 @@ export class TerminalToolReadinessGate {
     this.#publish({ phase: "degraded", reason });
   }
 
-  /** A frame observed before geometry does not satisfy the ordering proof. */
-  observeTerminalRender(): void {
+  /** A committed native frame observed before geometry does not satisfy the ordering proof. */
+  observeTerminalFrameCommitted(): void {
     if (!this.#geometryObserved) return;
     this.#admit();
     if (this.#state.phase === "waiting") this.#publish({ phase: "ready" });

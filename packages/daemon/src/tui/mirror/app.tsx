@@ -728,6 +728,10 @@ import {
 } from "./selection.ts";
 import { readCanonicalDaemonInfo } from "../../lib/canonical-daemon.ts";
 import {
+  parseSessionPaneDescriptors,
+  SESSION_PANE_DESCRIPTOR_FORMAT,
+} from "../../terminal/protocol/session-descriptor-discovery.ts";
+import {
   createTuiToolResourceAdapter,
   createTuiToolResourceController,
   type TuiDockResourceKey,
@@ -1229,6 +1233,44 @@ const mountTuiRoot = () => {
       });
       reconcileFleetResources();
     };
+    let localDescriptorRequest = 0;
+    let localDescriptorSignature: string | null = null;
+    const refreshLocalRuntimeDescriptors = (
+      sessionName: string,
+      candidate: SemanticSessionView,
+    ): void => {
+      const semanticIds = candidate
+        .paneDescriptors()
+        .map(({ semanticPaneId }) => semanticPaneId)
+        .filter((paneId): paneId is string => paneId !== null)
+        .sort();
+      const signature = `${sessionName}\0${semanticIds.join("\0")}`;
+      if (semanticIds.length === 0 || signature === localDescriptorSignature) return;
+      localDescriptorSignature = signature;
+      const request = ++localDescriptorRequest;
+      execFile(
+        "tmux",
+        ["list-panes", "-s", "-t", `=${sessionName}`, "-F", SESSION_PANE_DESCRIPTOR_FORMAT],
+        { encoding: "utf8" },
+        (error, stdout) => {
+          if (
+            request !== localDescriptorRequest ||
+            semanticView !== candidate ||
+            localDescriptorSignature !== signature
+          )
+            return;
+          if (error) {
+            localDescriptorSignature = null;
+            setStatusNote("local tmux identity discovery unavailable");
+            return;
+          }
+          candidate.setRuntimeDescriptors(
+            parseSessionPaneDescriptors(stdout.trimEnd().split("\n")),
+          );
+          reconcileAuthoritativeAgents();
+        },
+      );
+    };
     let terminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
     applicationLifecycle.registerCloser("terminal-workspace", () => {
       terminalWorkspaceAdapter?.dispose();
@@ -1236,6 +1278,10 @@ const mountTuiRoot = () => {
     });
     const [sessionRuntimeLane, setSessionRuntimeLane] =
       createSignal<OpenTuiSessionRuntimeLane | null>(null);
+    const terminalRenderSourceEpoch = (): number => {
+      sessionRuntimeLane();
+      return terminalWorkspaceAdapter?.renderEpoch ?? 0;
+    };
     const [semanticPaneVersions, setSemanticPaneVersions] = createSignal<
       ReadonlyMap<string, number>
     >(new Map(), { equals: false });
@@ -1448,6 +1494,7 @@ const mountTuiRoot = () => {
           const inventory = state.data?.terminalInventory;
           if (inventory && semanticView) {
             semanticView.setInventory(inventory);
+            refreshLocalRuntimeDescriptors(sessionName, semanticView);
             reconcileAuthoritativeAgents();
             void reconcileSessionRuntimeLane(sessionName, semanticView);
           }
@@ -1830,6 +1877,15 @@ const mountTuiRoot = () => {
         if (state.phase === "degraded") setStatusNote(`terminal fit degraded: ${state.reason}`);
       },
     );
+    let terminalFramePublicationPending = false;
+    const acknowledgeTerminalFramePublication = () => {
+      toolResources.noteNativeRenderPass();
+      if (!terminalFramePublicationPending) return;
+      terminalFramePublicationPending = false;
+      terminalToolReadiness.observeTerminalFrameCommitted();
+    };
+    appRenderer.on("frame", acknowledgeTerminalFramePublication);
+    onCleanup(() => appRenderer.off("frame", acknowledgeTerminalFramePublication));
     const clearSelection = () => {
       selecting = null;
       dragAutoScroll = null;
@@ -3310,6 +3366,8 @@ const mountTuiRoot = () => {
       const previousSupervisor = mirrorSupervisor;
       mirrorSupervisor = null;
       semanticView = null;
+      localDescriptorRequest += 1;
+      localDescriptorSignature = null;
       void previousSupervisor?.stop();
       retireSessionRuntimeLane();
       terminalWorkspaceAdapter?.dispose();
@@ -3372,6 +3430,7 @@ const mountTuiRoot = () => {
           const inventory = daemonApplicationShellState()?.data?.terminalInventory;
           if (inventory) {
             semanticView.setInventory(inventory);
+            refreshLocalRuntimeDescriptors(name, semanticView);
             reconcileAuthoritativeAgents();
           }
           setStatus("live");
@@ -5951,13 +6010,12 @@ const mountTuiRoot = () => {
         }
         if (!dirty || !semanticView) return;
         dirty = false;
-        toolResources.noteRenderPass();
         const t0 = performance.now();
         // FB path: fetch geometry + cursor/offset + per-pane version only (no
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
         const raw = semanticView.panes(scrollOffsets, !FB_PANES, terminalPalette());
-        terminalToolReadiness.observeTerminalRender();
+        if (raw.length > 0) terminalFramePublicationPending = true;
         if (FB_PANES) setPaneRuntime(livePaneRuntime(raw));
         // Size truth (M22.8, event-driven M23.5): the effective window size is
         // the layout ROOT's WxH pushed by %layout-change (the pane bounding
@@ -6011,7 +6069,7 @@ const mountTuiRoot = () => {
       // immediately and sustained output is capped to the renderer's 60 Hz
       // budget. This replaces the unconditional 125 Hz wake-up loop.
       paneFrameCoalescer = new FrameCoalescer(flushMirrorFrame, 1000 / 60, undefined, () =>
-        toolResources.noteWakeup(),
+        toolResources.noteScheduledWakeup(),
       );
       if (dirty) paneFrameCoalescer.request();
       cleanupRegistry.set("state-and-presentation-timers", () => {
@@ -7330,9 +7388,9 @@ const mountTuiRoot = () => {
     // this barrier after both root hooks so an automation/host that observes it
     // can send lifecycle input without racing a merely-painted first frame.
     onMount(() => {
-      // A targeted launch admits tool demand only after the semantic lane has
-      // fitted real terminal geometry. Configless Home has no terminal target;
-      // its fleet catalog is the bootstrap mechanism used to choose one.
+      // A targeted launch admits tool demand only after semantic geometry and
+      // the following native frame commit. Configless Home has no terminal
+      // target; its fleet catalog is the bootstrap mechanism used to choose one.
       publishToolReadiness = () => {
         if (!bareHome) return;
         const daemon = readCanonicalDaemonInfo();
@@ -9240,6 +9298,7 @@ const mountTuiRoot = () => {
                                         paneRuntimeFor(id)?.version ??
                                         0
                                       }
+                                      sourceEpoch={terminalRenderSourceEpoch()}
                                       selRange={mirrorSelForPane(id)}
                                       search={mirrorSearchForPane(pane()!)}
                                     />

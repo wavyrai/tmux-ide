@@ -49,10 +49,20 @@ describe("production OpenTUI data path", () => {
     expect(source).not.toContain("slot.resource.kind) !== slot.updatedAt");
   });
 
-  it("admits targeted tool demand only after semantic viewport fit", () => {
+  it("admits targeted tool demand only after geometry and a committed native frame", () => {
     expect(source).toContain("runtimeLaneFitKey = fitKey");
-    expect(source).toContain("toolResources.markTerminalReady()");
+    expect(source).toContain('appRenderer.on("frame", acknowledgeTerminalFramePublication)');
+    expect(source).toContain("terminalToolReadiness.observeTerminalFrameCommitted()");
+    expect(source).not.toContain("terminalToolReadiness.observeTerminalRender()");
     expect(source).toContain("toolResources.markCatalogReady()");
+  });
+
+  it("builds actionable agent rows from generation-bound local tmux identity proof", () => {
+    expect(source).toContain('"list-panes", "-s", "-t", `=${sessionName}`');
+    expect(source).toContain("SESSION_PANE_DESCRIPTOR_FORMAT");
+    expect(source).toContain("candidate.setRuntimeDescriptors(");
+    expect(source).toContain("parseSessionPaneDescriptors(stdout.trimEnd().split");
+    expect(source).toContain("projectAuthoritativeAgentRows");
   });
 
   it("releases tools only when the dock collapses", () => {

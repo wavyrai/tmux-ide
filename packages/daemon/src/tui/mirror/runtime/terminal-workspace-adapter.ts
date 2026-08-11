@@ -71,6 +71,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
   readonly #lifecycle: TuiApplicationLifecycle;
   #lane: OpenTuiSessionRuntimeLane | null = null;
   #generation = 0;
+  #renderEpoch = 0;
   #disposed = false;
 
   constructor(options: {
@@ -89,6 +90,11 @@ export class OpenTuiTerminalWorkspaceAdapter {
 
   get lane(): OpenTuiSessionRuntimeLane | null {
     return this.#lane;
+  }
+
+  /** Bumps whenever the retained facade adopts or retires a backing source. */
+  get renderEpoch(): number {
+    return this.#renderEpoch;
   }
 
   connect(
@@ -120,12 +126,14 @@ export class OpenTuiTerminalWorkspaceAdapter {
         return () => {};
       }
       this.#lane = lane;
+      this.#renderEpoch += 1;
       this.#retainedSource.setSource(lane.source);
       this.view.setSource(lane.source);
       resolveConnection(lane);
       return () => {
         if (this.#lane === lane) {
           this.#lane = null;
+          this.#renderEpoch += 1;
           this.#retainedSource.setSource(null);
           this.view.setSource(this.#emptySource);
         }
@@ -179,6 +187,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
     this.#generation += 1;
     this.#slot.dispose();
     this.#lane = null;
+    this.#renderEpoch += 1;
     this.#retainedSource.setSource(null);
     this.view.dispose();
   }

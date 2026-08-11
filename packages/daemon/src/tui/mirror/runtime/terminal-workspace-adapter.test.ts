@@ -42,10 +42,12 @@ describe("OpenTUI terminal workspace adapter", () => {
     const source = adapter.renderSource;
     const first = lane("alpha");
     const second = lane("alpha-next");
+    const initialRenderEpoch = adapter.renderEpoch;
 
     adapter.connect("generation-a", async () => first);
     await settle();
     expect(adapter.lane).toBe(first);
+    expect(adapter.renderEpoch).toBeGreaterThan(initialRenderEpoch);
     expect(adapter.sendText("pane.editor", "hello")).toBe(true);
     expect(first.sendText).toHaveBeenCalledWith("pane.editor", "hello");
 
@@ -55,6 +57,7 @@ describe("OpenTUI terminal workspace adapter", () => {
     expect(adapter.lane).toBe(second);
     expect(adapter.view).toBe(view);
     expect(adapter.renderSource).toBe(source);
+    expect(adapter.renderEpoch).toBeGreaterThan(initialRenderEpoch + 1);
 
     await lifecycle.shutdown("host");
     expect(second.close).toHaveBeenCalledOnce();

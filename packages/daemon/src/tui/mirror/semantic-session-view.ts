@@ -54,7 +54,8 @@ export interface SemanticSessionViewOptions {
 export class SemanticSessionView {
   readonly #options: SemanticSessionViewOptions;
   #source: SemanticTerminalRenderSource | null = null;
-  #descriptors: SessionPaneDescriptor[] = [];
+  #inventoryDescriptors: SessionPaneDescriptor[] = [];
+  #runtimeDescriptors: SessionPaneDescriptor[] = [];
   #layouts = new Map<string, Extract<PaneStreamServerFrame, { type: "layout" }>>();
   #focused = "";
   #richPlacementCache = new Map<
@@ -76,7 +77,7 @@ export class SemanticSessionView {
   }
 
   setInventory(inventory: ApplicationShellTerminalInventory): void {
-    this.#descriptors = inventory.resources
+    this.#inventoryDescriptors = inventory.resources
       .filter((resource) => resource.attachability.status === "available")
       .map((resource) => ({
         runtimePaneId: resource.id,
@@ -98,6 +99,17 @@ export class SemanticSessionView {
     this.#options.onDirty?.();
   }
 
+  /** Accept generation-bound, process-local tmux identity proof. Raw ids stay local. */
+  setRuntimeDescriptors(descriptors: readonly SessionPaneDescriptor[]): void {
+    this.#runtimeDescriptors = descriptors
+      .filter(
+        (descriptor) =>
+          /^%[0-9]+$/u.test(descriptor.runtimePaneId) && descriptor.semanticPaneId !== null,
+      )
+      .map((descriptor) => ({ ...descriptor }));
+    this.#options.onDirty?.();
+  }
+
   acceptLayout(frame: Extract<PaneStreamServerFrame, { type: "layout" }>): void {
     const key = frame.semanticWindowId ?? `unverified:${frame.windowName ?? "window"}`;
     this.#layouts.set(key, frame);
@@ -110,7 +122,21 @@ export class SemanticSessionView {
   }
 
   paneDescriptors(): SessionPaneDescriptor[] {
-    return this.#descriptors.map((descriptor) => ({ ...descriptor }));
+    const runtimeBySemantic = new Map<string, SessionPaneDescriptor[]>();
+    for (const descriptor of this.#runtimeDescriptors) {
+      const semanticPaneId = descriptor.semanticPaneId!;
+      runtimeBySemantic.set(semanticPaneId, [
+        ...(runtimeBySemantic.get(semanticPaneId) ?? []),
+        descriptor,
+      ]);
+    }
+    return this.#inventoryDescriptors.map((descriptor) => ({
+      ...(descriptor.semanticPaneId
+        ? runtimeBySemantic.get(descriptor.semanticPaneId)?.length === 1
+          ? runtimeBySemantic.get(descriptor.semanticPaneId)![0]!
+          : descriptor
+        : descriptor),
+    }));
   }
 
   panes(
@@ -250,6 +276,8 @@ export class SemanticSessionView {
   dispose(): void {
     this.#layouts.clear();
     this.#source = null;
+    this.#inventoryDescriptors = [];
+    this.#runtimeDescriptors = [];
     this.#richPlacementCache.clear();
   }
 }

@@ -206,6 +206,44 @@ describe("push resource session", () => {
     });
   });
 
+  it("serially converges A to B to C when desired interests mutate during the B ACK", async () => {
+    const updates: string[][] = [];
+    const acknowledgements: Array<() => void> = [];
+    const session = createPushResourceSession(
+      adapter({
+        connect: () => ({
+          status: "connected",
+          close: () => undefined,
+          updateInterests: (next) => {
+            updates.push([...next].sort());
+            return new Promise<void>((resolve) => acknowledgements.push(resolve));
+          },
+        }),
+      }),
+      { generation: "one" },
+    );
+    const releaseFiles = session.activate("files");
+    await turn();
+
+    session.activate("changes");
+    expect(updates).toEqual([["changes", "files"]]);
+    releaseFiles();
+    session.activate("terminal");
+    expect(updates).toEqual([["changes", "files"]]);
+
+    acknowledgements.shift()!();
+    await turn();
+    expect(updates).toEqual([
+      ["changes", "files"],
+      ["changes", "terminal"],
+    ]);
+
+    acknowledgements.shift()!();
+    await turn();
+    expect(session.getMetrics().activeInterests).toBe(2);
+    expect(session.getState().slots.get("terminal")?.status).toBe("loaded");
+  });
+
   it("establishes subscription interest before the initial read", async () => {
     let events: PushResourceEventHandlers<Key> | null = null;
     let finishConnect: (() => void) | null = null;

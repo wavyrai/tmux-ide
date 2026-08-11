@@ -61,8 +61,10 @@ export interface TuiToolResourceMetrics {
   readonly statePublications: number;
   readonly dirtyUpdates: number;
   readonly subprocessLaunches: number;
+  /** Event-store maintenance wakeups; structurally zero without an idle timer. */
   readonly idleWakeups: number;
-  readonly renderPasses: number;
+  readonly scheduledWakeups: number;
+  readonly nativeRenderPasses: number;
   readonly activeInterests: number;
 }
 
@@ -632,8 +634,8 @@ export interface TuiToolResourceController {
     ) => void,
   ): () => void;
   getMetrics(): TuiToolResourceMetrics;
-  noteRenderPass(): void;
-  noteWakeup(): void;
+  noteNativeRenderPass(): void;
+  noteScheduledWakeup(): void;
   noteSubprocessLaunch(): void;
   dispose(): void;
 }
@@ -654,8 +656,8 @@ export function createTuiToolResourceController(
   let publications = 0;
   let dirtyUpdates = 0;
   let previousState = session.getState();
-  let renderPasses = 0;
-  let idleWakeups = 0;
+  let nativeRenderPasses = 0;
+  let scheduledWakeups = 0;
   let subprocessLaunches = 0;
 
   const reconcile = (): void => {
@@ -710,16 +712,17 @@ export function createTuiToolResourceController(
         statePublications: publications,
         dirtyUpdates,
         subprocessLaunches,
-        idleWakeups,
-        renderPasses,
+        idleWakeups: metrics.idleWakeups,
+        scheduledWakeups,
+        nativeRenderPasses,
         activeInterests: metrics.activeInterests,
       };
     },
-    noteRenderPass() {
-      renderPasses += 1;
+    noteNativeRenderPass() {
+      nativeRenderPasses += 1;
     },
-    noteWakeup() {
-      idleWakeups += 1;
+    noteScheduledWakeup() {
+      scheduledWakeups += 1;
     },
     noteSubprocessLaunch() {
       subprocessLaunches += 1;

@@ -19,7 +19,7 @@ describe("TerminalToolReadinessGate", () => {
     expect(admit).not.toHaveBeenCalled();
     expect(gate.snapshot().phase).toBe("degraded");
 
-    gate.observeTerminalRender();
+    gate.observeTerminalFrameCommitted();
     expect(admit).toHaveBeenCalledTimes(1);
     expect(gate.snapshot().phase).toBe("degraded");
 
@@ -33,11 +33,11 @@ describe("TerminalToolReadinessGate", () => {
     const admit = vi.fn();
     const gate = new TerminalToolReadinessGate(admit);
 
-    gate.observeTerminalRender();
+    gate.observeTerminalFrameCommitted();
     gate.observeGeometry();
     expect(admit).not.toHaveBeenCalled();
 
-    gate.observeTerminalRender();
+    gate.observeTerminalFrameCommitted();
     expect(admit).toHaveBeenCalledTimes(1);
   });
 });

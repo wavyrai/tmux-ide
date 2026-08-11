@@ -260,6 +260,8 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
   let updateSubscriptionInterests:
     | ((keys: ReadonlySet<string>) => void | PromiseLike<void>)
     | null = null;
+  let installedInterestSignature = "";
+  let interestConvergenceRunning = false;
 
   const closeEvents = (resetRetry = true): void => {
     subscriptionEpoch += 1;
@@ -275,6 +277,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     }
     updateSubscriptionInterests = null;
     installedInterestRevision = -1;
+    installedInterestSignature = "";
     if (subscriptionRetryTimer !== null) {
       try {
         clock.clearTimeout(subscriptionRetryTimer);
@@ -468,6 +471,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
         subscriptionRetryAttempt = 0;
         subscriptionRetryTimer = null;
         eventPhase = "live";
+        installedInterestSignature = interestSignature(connectKeys);
       } else if (subscriptionController === controller) {
         subscriptionController = null;
         eventPhase = "degraded";
@@ -537,6 +541,73 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
       });
   };
 
+  /**
+   * Serialize physical interest mutations. Each pass owns an immutable target
+   * snapshot; mutations arriving during its ACK are observed only by the next
+   * pass. Reads and invalidations are admitted after the physically installed
+   * signature exactly matches the latest desired signature.
+   */
+  const convergeInstalledInterests = (expectedGeneration: number): void => {
+    if (interestConvergenceRunning) return;
+    interestConvergenceRunning = true;
+    void (async () => {
+      try {
+        while (
+          current(expectedGeneration) &&
+          closeSubscription !== null &&
+          updateSubscriptionInterests !== null
+        ) {
+          const updater = updateSubscriptionInterests;
+          const subscription = closeSubscription;
+          const targetSnapshot = new Set(eventInterests());
+          const targetSignature = interestSignature(targetSnapshot);
+          if (targetSignature === installedInterestSignature) {
+            installedInterestRevision = interestRevision;
+            synchronizeAfterInterestInstall(expectedGeneration, interestRevision);
+            return;
+          }
+          installedInterestRevision = -1;
+          try {
+            await updater(targetSnapshot);
+          } catch {
+            if (
+              current(expectedGeneration) &&
+              updater === updateSubscriptionInterests &&
+              subscription === closeSubscription
+            ) {
+              closeEvents();
+              connectEvents(expectedGeneration, interestRevision);
+            }
+            return;
+          }
+          if (
+            !current(expectedGeneration) ||
+            updater !== updateSubscriptionInterests ||
+            subscription !== closeSubscription
+          )
+            return;
+          installedInterestSignature = targetSignature;
+          if (targetSignature === interestSignature(eventInterests())) {
+            installedInterestRevision = interestRevision;
+            synchronizeAfterInterestInstall(expectedGeneration, interestRevision);
+            return;
+          }
+        }
+      } finally {
+        interestConvergenceRunning = false;
+        if (
+          !disposed &&
+          target !== null &&
+          closeSubscription !== null &&
+          updateSubscriptionInterests !== null &&
+          installedInterestSignature !== interestSignature(eventInterests())
+        ) {
+          convergeInstalledInterests(generation);
+        }
+      }
+    })();
+  };
+
   const reconcileInterests = (expectedGeneration: number): void => {
     if (!current(expectedGeneration)) return;
     interestRevision += 1;
@@ -547,28 +618,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
       return;
     }
     if (closeSubscription !== null && updateSubscriptionInterests !== null) {
-      const keys = eventInterests();
-      installedInterestRevision = -1;
-      let operation: void | PromiseLike<void>;
-      try {
-        operation = updateSubscriptionInterests(keys);
-      } catch {
-        closeEvents();
-        connectEvents(expectedGeneration, revision);
-        return;
-      }
-      void Promise.resolve(operation).then(
-        () => {
-          if (!current(expectedGeneration) || revision !== interestRevision) return;
-          installedInterestRevision = revision;
-          synchronizeAfterInterestInstall(expectedGeneration, revision);
-        },
-        () => {
-          if (!current(expectedGeneration) || revision !== interestRevision) return;
-          closeEvents();
-          connectEvents(expectedGeneration, revision);
-        },
-      );
+      convergeInstalledInterests(expectedGeneration);
       return;
     }
     closeEvents();

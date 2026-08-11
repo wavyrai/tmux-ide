@@ -63,6 +63,8 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
   paneFocused?: boolean;
   /** Bumps (coalesced, once per state tick) when this pane's content changed. */
   contentVersion?: number;
+  /** Retained-source generation; forces a full blit even when content version restarts equal. */
+  sourceEpoch?: number;
   /** The drag selection on THIS pane (already surface/pane-filtered and
    *  ordered), or null. ABSOLUTE buffer lines (M25.6): the walk maps them to
    *  visible rows per-frame against the pane's live baseY (depth − offset), so
@@ -135,6 +137,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   private _scrollOffset = 0;
   private _focusedPane = false;
   private _contentVersion = -1;
+  private _sourceEpoch = -1;
   private _sel: { start: Cell; end: Cell } | null = null;
   private _search: PaneSearchHighlight | null = null;
   private _needsWalk = true;
@@ -227,6 +230,12 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   set contentVersion(v: number) {
     if (v === this._contentVersion) return;
     this._contentVersion = v;
+    this.invalidate();
+  }
+  set sourceEpoch(v: number) {
+    if (v === this._sourceEpoch) return;
+    this._sourceEpoch = v;
+    this._forceFull = true;
     this.invalidate();
   }
   set selRange(v: { start: Cell; end: Cell } | null) {
