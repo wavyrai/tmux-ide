@@ -582,6 +582,7 @@ export class DaemonResourceBroker {
   #nextInterestRevision = 0;
   #lastSentInterestRevision = 0;
   #lastAckedInterestRevision = 0;
+  readonly #unavailableInterestKeys = new Set<string>();
   #socketPeerVerified = false;
   #socketOpened = false;
   #eventCursorSent = false;
@@ -1311,9 +1312,11 @@ export class DaemonResourceBroker {
   async subscribe(
     request: DesktopDaemonEventSubscriptionRequest | readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
+    signal?: AbortSignal,
   ): Promise<BrokerSubscriptionResult> {
     if (this.#daemon.status !== "connected") return this.#disconnectedResult();
     if (this.#disposed) return { status: "error", error: daemonCapabilityError("disposed") };
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
     const parsed = DesktopDaemonEventSubscriptionRequestSchemaZ.safeParse(
       Array.isArray(request) ? { workspaceNames: request } : request,
     );
@@ -1333,6 +1336,7 @@ export class DaemonResourceBroker {
       ) {
         return { status: "error", error: daemonCapabilityError("workspace-not-found") };
       }
+      if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
       const id = ++this.#nextSubscription;
       let resolveReady: ((result: BrokerSubscriptionResult) => void) | null = null;
       const ready =
@@ -1341,6 +1345,16 @@ export class DaemonResourceBroker {
           : new Promise<BrokerSubscriptionResult>((resolve) => {
               resolveReady = resolve;
             });
+      let active = true;
+      const subscribed: BrokerSubscriptionResult = {
+        status: "subscribed",
+        unsubscribe: () => {
+          if (!active) return;
+          active = false;
+          this.#subscriptions.delete(id);
+          this.#synchronizeSocket();
+        },
+      };
       this.#subscriptions.set(id, {
         workspaceNames: new Set(parsed.data.workspaceNames),
         resourceInterests:
@@ -1356,8 +1370,30 @@ export class DaemonResourceBroker {
         readyRevision: null,
         readySettled: parsed.data.resourceInterests === undefined,
         resolveReady,
-        readySuccess: null,
+        readySuccess: subscribed,
       });
+      let readyTimeout: ReturnType<typeof setTimeout> | null = null;
+      const abortPending = (): void => {
+        if (!active) return;
+        active = false;
+        const subscription = this.#subscriptions.get(id);
+        if (!subscription) return;
+        this.#subscriptions.delete(id);
+        if (!subscription.readySettled) {
+          subscription.readySettled = true;
+          subscription.resolveReady?.({
+            status: "error",
+            error: daemonCapabilityError("disposed"),
+          });
+        }
+        this.#synchronizeSocket();
+      };
+      signal?.addEventListener("abort", abortPending, { once: true });
+      const clearPendingGuards = (): void => {
+        signal?.removeEventListener("abort", abortPending);
+        if (readyTimeout !== null) clearTimeout(readyTimeout);
+        readyTimeout = null;
+      };
       const transportBefore = this.#supervisor.state();
       this.#synchronizeSocket();
       // A late joiner immediately learns the derived transport state instead
@@ -1377,19 +1413,12 @@ export class DaemonResourceBroker {
           error: null,
         });
       }
-      let active = true;
-      const subscribed: BrokerSubscriptionResult = {
-        status: "subscribed",
-        unsubscribe: () => {
-          if (!active) return;
-          active = false;
-          this.#subscriptions.delete(id);
-          this.#synchronizeSocket();
-        },
-      };
-      const installedSubscription = this.#subscriptions.get(id);
-      if (installedSubscription) installedSubscription.readySuccess = subscribed;
-      if (ready === null) return subscribed;
+      if (ready === null) {
+        clearPendingGuards();
+        return signal?.aborted
+          ? { status: "error", error: daemonCapabilityError("disposed") }
+          : subscribed;
+      }
       const subscription = this.#subscriptions.get(id);
       if (
         subscription &&
@@ -1400,7 +1429,17 @@ export class DaemonResourceBroker {
         subscription.readySettled = true;
         subscription.resolveReady?.(subscribed);
       }
-      const settled = await ready;
+      readyTimeout = setTimeout(() => {
+        const pending = this.#subscriptions.get(id);
+        if (!pending || pending.readySettled) return;
+        pending.readySettled = true;
+        pending.resolveReady?.({
+          status: "error",
+          error: daemonCapabilityError("event-unavailable"),
+        });
+      }, this.#eventHandshakeTimeoutMs);
+      readyTimeout.unref?.();
+      const settled = await ready.finally(clearPendingGuards);
       if (settled.status === "error") {
         this.#subscriptions.delete(id);
         this.#synchronizeSocket();
@@ -1743,6 +1782,13 @@ export class DaemonResourceBroker {
   }
 
   #transportStateChanged(state: DesktopDaemonTransportState): void {
+    if (state.phase === "stopped") {
+      this.#emit({
+        type: "connection.changed",
+        state: "degraded",
+        error: state.error ?? daemonCapabilityError("event-unavailable"),
+      });
+    }
     this.#emit({ type: "transport.changed", transport: state });
     if (state.phase === "connected") {
       this.#emit({ type: "connection.changed", state: "live", error: null });
@@ -1808,7 +1854,7 @@ export class DaemonResourceBroker {
           : 0;
       this.#establishEventCursor(parsed.data.daemon.instanceId, resumeSequence);
       this.#sendSubscriptionDelta(this.#requiredSessions(), this.#requiredInterests());
-      this.#supervisor.verified();
+      if (this.#lastSentInterestRevision === 0) this.#supervisor.verified();
       return;
     }
     if (parsed.data.type === "hello") {
@@ -1837,6 +1883,7 @@ export class DaemonResourceBroker {
         frame.interestRevision,
       );
       const unavailable = new Set(frame.unavailableInterests.map(resourceInterestKey));
+      for (const key of unavailable) this.#unavailableInterestKeys.add(key);
       for (const subscription of this.#subscriptions.values()) {
         if (
           subscription.readySettled ||
@@ -1857,6 +1904,23 @@ export class DaemonResourceBroker {
                 error: daemonCapabilityError("event-unavailable"),
               }),
         );
+      }
+      if (
+        frame.interestRevision >= this.#lastSentInterestRevision &&
+        this.#lastSentInterestRevision > 0
+      ) {
+        const unavailableRequired = [...this.#requiredInterests().keys()].some((key) =>
+          this.#unavailableInterestKeys.has(key),
+        );
+        if (unavailableRequired) {
+          this.#failSocket(
+            daemonCapabilityError("event-unavailable"),
+            1011,
+            "resource observer unavailable",
+          );
+        } else {
+          this.#supervisor.verified();
+        }
       }
       return;
     }
@@ -2168,6 +2232,9 @@ export class DaemonResourceBroker {
     const removedInterests = [...this.#sentInterests]
       .filter(([key]) => !requiredInterests.has(key))
       .map(([, interest]) => interest);
+    for (const interest of removedInterests) {
+      this.#unavailableInterestKeys.delete(resourceInterestKey(interest));
+    }
     const addedInterests = [...requiredInterests]
       .filter(([key]) => !this.#sentInterests.has(key))
       .map(([, interest]) => interest);
@@ -2233,6 +2300,7 @@ export class DaemonResourceBroker {
         subscription.readyRevision = this.#lastSentInterestRevision;
       }
       if (this.#lastAckedInterestRevision >= subscription.readyRevision) {
+        subscription.readySettled = true;
         subscription.resolveReady(subscription.readySuccess);
       }
     }
@@ -2280,6 +2348,7 @@ export class DaemonResourceBroker {
     this.#sentSessions.clear();
     this.#sentInterests.clear();
     this.#sentInterestMode = "unsent";
+    this.#unavailableInterestKeys.clear();
     this.#eventCursorSent = false;
     this.#resourceEventsSupported = false;
   }

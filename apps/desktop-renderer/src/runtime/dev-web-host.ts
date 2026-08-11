@@ -89,6 +89,7 @@ import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 const REQUEST_TIMEOUT_MS = 5_000;
 const PROMOTE_TIMEOUT_MS = 15_000;
 const EVENTS_PATH = "/ws/events";
+const MAX_EVENT_FRAME_BYTES = 512 * 1024;
 
 function capabilityError(
   code: DesktopDaemonCapabilityErrorCode,
@@ -136,7 +137,7 @@ function browserWindowState(): DesktopWindowState {
 function browserWebSocketUrl(config: DevWebHostConfig, daemonUrl: string): string {
   if (config.transport === "direct") return daemonUrl;
   const parsed = new URL(daemonUrl);
-  return `${config.daemonWebSocketOrigin}${parsed.pathname}`;
+  return `${config.daemonWebSocketOrigin}${parsed.pathname}${parsed.search}`;
 }
 
 function subscribeMedia(listener: (state: DesktopThemeState) => void): () => void {
@@ -681,7 +682,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * daemon publishes only non-secret invalidations over it.
    */
   function sendEventSubscriptionDelta(): void {
-    if (!eventSocket || !socketVerified) return;
+    if (!eventSocket) return;
     const requiredSessions = requiredEventSessions();
     const requiredInterests = requiredEventInterests();
     if (eventSocketSemantic !== desiredSemanticMode()) {
@@ -805,6 +806,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           browserWebSocketUrl(config, `${config.daemonWebSocketOrigin}${eventsPath}`),
         ),
       );
+      let helloVerified = false;
       let connected = false;
       let resourceEventsSupported = false;
       let closedResolve!: (reason: unknown) => void;
@@ -812,18 +814,34 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         closedResolve = settle;
       });
       const dispose = () => next.close(1000, "connection supervisor stopped");
+      const finishConnected = (): void => {
+        if (connected) return;
+        connected = true;
+        socketVerified = true;
+        resolve({ value: true, closed, dispose });
+      };
       signal.addEventListener("abort", dispose, { once: true });
       next.addEventListener("message", (event) => {
-        if (typeof event.data !== "string") return;
+        if (
+          typeof event.data !== "string" ||
+          new TextEncoder().encode(event.data).byteLength > MAX_EVENT_FRAME_BYTES
+        ) {
+          next.close(browserInitiatedWebSocketCloseCode(1009), "event frame is too large");
+          return;
+        }
         let raw: unknown;
         try {
           raw = JSON.parse(event.data);
         } catch {
+          next.close(browserInitiatedWebSocketCloseCode(1002), "malformed event frame");
           return;
         }
         const frame = DaemonEventServerFrameSchemaZ.safeParse(raw);
-        if (!frame.success) return;
-        if (!connected) {
+        if (!frame.success) {
+          next.close(browserInitiatedWebSocketCloseCode(1002), "invalid event frame");
+          return;
+        }
+        if (!helloVerified) {
           if (frame.data.type !== "hello" || !sameIdentity(frame.data.daemon, identity)) {
             next.close(browserInitiatedWebSocketCloseCode(1008), "daemon generation mismatch");
             return;
@@ -835,19 +853,21 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           establishEventCursor(frame.data.daemon.instanceId, resumeSequence);
           resourceEventsSupported = frame.data.eventSequence !== undefined;
           eventSocket = next;
-          socketVerified = true;
           sentSessions = new Set();
           sentInterests = new Map();
           sentInterestMode = "unsent";
           eventCursorSent = false;
           lastSentInterestRevision = 0;
           lastAckedInterestRevision = 0;
+          helloVerified = true;
           sendEventSubscriptionDelta();
-          connected = true;
-          resolve({ value: true, closed, dispose });
+          if (lastSentInterestRevision === 0) finishConnected();
           return;
         }
-        if (frame.data.type === "hello") return;
+        if (frame.data.type === "hello") {
+          next.close(browserInitiatedWebSocketCloseCode(1002), "duplicate daemon hello");
+          return;
+        }
         if (frame.data.type === "resource.interests-ack") {
           const transition = advanceResourceReplica(eventReplica, {
             type: "observed",
@@ -896,6 +916,19 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
                   }
                 : (subscription.readySuccess ?? { status: "error", error: DISPOSED }),
             );
+          }
+          if (frame.data.interestRevision >= lastSentInterestRevision) {
+            const unavailableRequired = [...requiredEventInterests().keys()].some((key) =>
+              unavailable.has(key),
+            );
+            if (unavailableRequired) {
+              next.close(
+                browserInitiatedWebSocketCloseCode(1011),
+                "daemon resource observer unavailable",
+              );
+            } else {
+              finishConnected();
+            }
           }
           return;
         }

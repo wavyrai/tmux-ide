@@ -193,12 +193,14 @@ export function createTargetPinnedStore<TResource, TState>(
               failure: { code: result.code, reason: result.reason },
             };
       },
-      connect(target, _keys, handlers) {
+      connect(target, _keys, handlers, signal) {
         if (invalidatesOn.size === 0) {
           return { status: "connected", close: () => undefined };
         }
         const subscribe = adapter.host.daemon.subscribe;
         if (typeof subscribe !== "function") return { status: "unavailable" };
+        let installed = false;
+        let unavailableBeforeInstall = false;
         try {
           return subscribe(
             {
@@ -213,12 +215,27 @@ export function createTargetPinnedStore<TResource, TState>(
             },
             (event) => {
               if (invalidatesOn.has(event.type)) handlers.invalidate();
+              if (event.type === "connection.changed" && event.state === "degraded") {
+                if (installed) handlers.unavailable();
+                else unavailableBeforeInstall = true;
+              }
             },
-          ).then((result) =>
-            result.status === "subscribed"
-              ? ({ status: "connected", close: result.unsubscribe } as const)
-              : ({ status: "unavailable" } as const),
-          );
+            signal,
+          ).then((result) => {
+            if (result.status !== "subscribed") return { status: "unavailable" } as const;
+            if (signal.aborted || unavailableBeforeInstall) {
+              result.unsubscribe();
+              return { status: "unavailable" } as const;
+            }
+            installed = true;
+            return {
+              status: "connected",
+              close: () => {
+                installed = false;
+                result.unsubscribe();
+              },
+            } as const;
+          });
         } catch {
           return { status: "unavailable" };
         }

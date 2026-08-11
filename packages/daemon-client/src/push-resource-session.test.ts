@@ -305,6 +305,43 @@ describe("push resource session", () => {
     expect(clock.timers.size).toBe(0);
   });
 
+  it("retires an installed event source, reads through degradation, and reconnects", async () => {
+    const clock = new FakeClock();
+    const handlers: PushResourceEventHandlers<Key>[] = [];
+    let connects = 0;
+    let closes = 0;
+    let fetches = 0;
+    const session = createPushResourceSession(
+      adapter({
+        connect: (_target, _keys, next) => {
+          handlers.push(next);
+          connects += 1;
+          return { status: "connected", close: () => closes++ };
+        },
+        fetch: async () => ok(`snapshot-${++fetches}`),
+      }),
+      { generation: "one" },
+      { clock, retry: { initialDelayMs: 10, maximumDelayMs: 10, maximumAttempts: 2 } },
+    );
+    session.activate("files");
+    await turn();
+    expect(session.getState().eventPhase).toBe("live");
+    expect(fetches).toBe(1);
+
+    handlers[0]!.unavailable();
+    await turn();
+    expect(closes).toBe(1);
+    expect(session.getState().eventPhase).toBe("degraded");
+    expect(fetches).toBe(2);
+    expect(clock.timers.size).toBe(1);
+
+    clock.advanceBy(10);
+    await turn();
+    expect(connects).toBe(2);
+    expect(session.getState().eventPhase).toBe("live");
+    expect(fetches).toBe(3);
+  });
+
   it("does not let a stale-generation invalidation microtask erase the new generation", async () => {
     const microtasks = new Microtasks();
     const handlers: PushResourceEventHandlers<Key>[] = [];

@@ -67,6 +67,8 @@ export type PushResourceFetchResult<TResource, TFailure> =
 export interface PushResourceEventHandlers<TKey extends string> {
   /** Omit keys to invalidate every active interest. */
   invalidate(keys?: readonly TKey[]): void;
+  /** The installed event source retired and reads must temporarily carry freshness. */
+  unavailable(): void;
 }
 
 export type PushResourceConnectResult =
@@ -254,7 +256,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     | ((keys: ReadonlySet<string>) => void | PromiseLike<void>)
     | null = null;
 
-  const closeEvents = (): void => {
+  const closeEvents = (resetRetry = true): void => {
     subscriptionEpoch += 1;
     pendingSubscriptionEpoch = null;
     const close = closeSubscription;
@@ -276,7 +278,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
       }
       subscriptionRetryTimer = null;
     }
-    subscriptionRetryAttempt = 0;
+    if (resetRetry) subscriptionRetryAttempt = 0;
     eventPhase = "idle";
     if (!close) return;
     metric.subscriptionsClosed += 1;
@@ -489,6 +491,29 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
         connectKeys,
         {
           invalidate: (keys) => invalidate(keys, expectedGeneration),
+          unavailable: () => {
+            if (
+              !current(expectedGeneration) ||
+              epoch !== subscriptionEpoch ||
+              expectedInterestRevision !== interestRevision ||
+              closeSubscription === null
+            ) {
+              return;
+            }
+            closeEvents(false);
+            eventPhase = "degraded";
+            synchronizeAfterInterestInstall(expectedGeneration, expectedInterestRevision);
+            publish();
+            if (subscriptionRetryAttempt >= retry.maximumAttempts) return;
+            const attempt = subscriptionRetryAttempt++;
+            subscriptionRetryTimer = clock.setTimeout(
+              () => {
+                subscriptionRetryTimer = null;
+                connectEvents(expectedGeneration, expectedInterestRevision);
+              },
+              boundedRetryDelay(attempt, retry, random),
+            );
+          },
         },
         controller.signal,
       );

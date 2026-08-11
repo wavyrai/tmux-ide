@@ -101,7 +101,15 @@ const DEV_HOST_SESSION_TOKEN =
 export function developmentWebSocketUrl(webSocketUrl: string, token: string): string {
   if (!DEV_HOST_SESSION_TOKEN.test(token)) throw new TypeError("Invalid development host session");
   const parsed = new URL(webSocketUrl);
-  if (parsed.search || parsed.hash) throw new TypeError("Development socket URL must be canonical");
+  const daemonParameters = [...parsed.searchParams];
+  const semanticEvents =
+    parsed.pathname === "/ws/events" &&
+    daemonParameters.length === 1 &&
+    daemonParameters[0]?.[0] === "mode" &&
+    daemonParameters[0]?.[1] === "semantic";
+  if ((daemonParameters.length > 0 && !semanticEvents) || parsed.hash) {
+    throw new TypeError("Development socket URL must be canonical");
+  }
   parsed.searchParams.set(DEV_HOST_SESSION_QUERY_PARAMETER, token);
   return parsed.toString();
 }
@@ -120,10 +128,16 @@ export function consumeDevelopmentWebSocketSession(
   const tokens = parsed.searchParams.getAll(DEV_HOST_SESSION_QUERY_PARAMETER);
   if (tokens.length !== 1 || !DEV_HOST_SESSION_TOKEN.test(tokens[0]!)) return null;
   parsed.searchParams.delete(DEV_HOST_SESSION_QUERY_PARAMETER);
-  // These privileged sockets do not have daemon-owned query parameters. Refuse
-  // extras rather than accidentally forwarding browser authority downstream.
-  if ([...parsed.searchParams].length > 0 || parsed.hash) return null;
-  return { token: tokens[0]!, forwardPath: parsed.pathname };
+  const daemonParameters = [...parsed.searchParams];
+  const semanticEvents =
+    parsed.pathname === "/ws/events" &&
+    daemonParameters.length === 1 &&
+    daemonParameters[0]?.[0] === "mode" &&
+    daemonParameters[0]?.[1] === "semantic";
+  // Only the daemon's documented semantic-events selector may cross the
+  // browser authority boundary. All other query authority remains rejected.
+  if ((daemonParameters.length > 0 && !semanticEvents) || parsed.hash) return null;
+  return { token: tokens[0]!, forwardPath: `${parsed.pathname}${parsed.search}` };
 }
 
 /**

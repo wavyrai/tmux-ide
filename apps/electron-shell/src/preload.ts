@@ -5,6 +5,7 @@ import {
   DaemonResourceRequestSchemaZ,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
+  DesktopDaemonSubscriptionRequestIdSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
   DesktopThemeStateSchemaZ,
@@ -127,12 +128,38 @@ const capabilities: HostCapabilities = Object.freeze({
     subscribe: async (
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,
+      signal?: AbortSignal,
     ) => {
       const parsed = DesktopDaemonEventSubscriptionRequestSchemaZ.parse(request);
-      const result = DesktopDaemonSubscribeWireResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonSubscribe, parsed),
-      );
+      if (signal?.aborted) {
+        return {
+          status: "error" as const,
+          error: { code: "disposed" as const, reason: "The daemon subscription was cancelled." },
+        };
+      }
+      const requestId = DesktopDaemonSubscriptionRequestIdSchemaZ.parse(crypto.randomUUID());
+      const cancel = () => {
+        void ipcRenderer.invoke(HOST_IPC.daemonCancelSubscribe, requestId).catch(() => undefined);
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      let result: ReturnType<typeof DesktopDaemonSubscribeWireResultSchemaZ.parse>;
+      try {
+        result = DesktopDaemonSubscribeWireResultSchemaZ.parse(
+          await ipcRenderer.invoke(HOST_IPC.daemonSubscribe, parsed, requestId),
+        );
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+      }
       if (result.status === "error") return result;
+      if (signal?.aborted) {
+        void ipcRenderer
+          .invoke(HOST_IPC.daemonUnsubscribe, result.subscriptionId)
+          .catch(() => undefined);
+        return {
+          status: "error" as const,
+          error: { code: "disposed" as const, reason: "The daemon subscription was cancelled." },
+        };
+      }
       daemonListeners.set(result.subscriptionId, listener);
       for (const event of earlyDaemonEvents.get(result.subscriptionId) ?? []) {
         deliverDaemonEvent(listener, event);

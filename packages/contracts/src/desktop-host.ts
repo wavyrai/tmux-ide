@@ -371,6 +371,9 @@ export const DesktopDaemonSubscriptionIdSchemaZ = z
   .string()
   .regex(/^desktop-subscription-[1-9][0-9]{0,9}$/u);
 
+/** Renderer-minted correlation id used only to cancel an in-flight subscribe IPC. */
+export const DesktopDaemonSubscriptionRequestIdSchemaZ = z.uuid();
+
 /**
  * Derived transport health of the single daemon event connection, published by
  * the main-process connection supervisor — the ONE owner of transport retry.
@@ -691,6 +694,7 @@ export interface HostCapabilities {
     subscribe(
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,
+      signal?: AbortSignal,
     ): Promise<DesktopDaemonHostSubscriptionResult>;
   };
 }

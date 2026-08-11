@@ -16,6 +16,7 @@ import {
   DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonStartupReadinessResultSchemaZ,
   DesktopDaemonSubscriptionIdSchemaZ,
+  DesktopDaemonSubscriptionRequestIdSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
   DesktopUpdateStatusSchemaZ,
@@ -34,6 +35,7 @@ import {
   type DaemonInstanceIdentity,
   type DaemonResourceKind,
   type DesktopDaemonCapabilityState,
+  type DesktopDaemonHostSubscriptionResult,
   type DesktopHostBootstrap,
   type DesktopPlatform,
   type DesktopThemeState,
@@ -215,8 +217,13 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     readonly generation: number;
     readonly unsubscribe: () => void;
   }
+  interface PendingDaemonSubscriptionAuthority {
+    readonly generation: number;
+    readonly controller: AbortController;
+  }
 
   const daemonSubscriptions = new Map<string, DaemonSubscriptionAuthority>();
+  const pendingDaemonSubscriptions = new Map<string, PendingDaemonSubscriptionAuthority>();
   let nextDaemonSubscription = 0;
   let nextRendererGeneration = 0;
   let rendererAuthority: RendererAuthority | null = null;
@@ -224,8 +231,13 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
   let unbindWindow: (() => void) | null = null;
 
   const releaseRenderer = (): void => {
-    const active = rendererAuthority !== null || daemonSubscriptions.size > 0;
+    const active =
+      rendererAuthority !== null ||
+      daemonSubscriptions.size > 0 ||
+      pendingDaemonSubscriptions.size > 0;
     rendererAuthority = null;
+    for (const pending of pendingDaemonSubscriptions.values()) pending.controller.abort();
+    pendingDaemonSubscriptions.clear();
     for (const subscription of daemonSubscriptions.values()) subscription.unsubscribe();
     daemonSubscriptions.clear();
     if (active) deps.daemonResources.releaseRenderer();
@@ -956,24 +968,44 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
   });
   handle(HOST_IPC.daemonSubscribe, async (event, ...args) => {
     const authority = trustedRendererAuthority(event);
-    if (args.length !== 1) {
+    if (args.length < 1 || args.length > 2) {
       return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
     }
     const request = DesktopDaemonEventSubscriptionRequestSchemaZ.safeParse(args[0]);
     if (!request.success) {
       return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
     }
+    const requestId = DesktopDaemonSubscriptionRequestIdSchemaZ.safeParse(
+      args.length === 2 ? args[1] : randomUUID(),
+    );
+    if (!requestId.success || pendingDaemonSubscriptions.has(requestId.data)) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
     const subscriptionId = DesktopDaemonSubscriptionIdSchemaZ.parse(
       `desktop-subscription-${++nextDaemonSubscription}`,
     );
-    const result = await deps.daemonResources.subscribe(request.data, (daemonEvent) => {
-      const window = currentAuthorityWindow(authority.generation);
-      if (!window) return;
-      window.webContents.send(
-        HOST_IPC.daemonEvent,
-        DesktopDaemonEventWireEnvelopeSchemaZ.parse({ subscriptionId, event: daemonEvent }),
+    const controller = new AbortController();
+    const pending = { generation: authority.generation, controller };
+    pendingDaemonSubscriptions.set(requestId.data, pending);
+    let result: DesktopDaemonHostSubscriptionResult;
+    try {
+      result = await deps.daemonResources.subscribe(
+        request.data,
+        (daemonEvent) => {
+          const window = currentAuthorityWindow(authority.generation);
+          if (!window) return;
+          window.webContents.send(
+            HOST_IPC.daemonEvent,
+            DesktopDaemonEventWireEnvelopeSchemaZ.parse({ subscriptionId, event: daemonEvent }),
+          );
+        },
+        controller.signal,
       );
-    });
+    } finally {
+      if (pendingDaemonSubscriptions.get(requestId.data) === pending) {
+        pendingDaemonSubscriptions.delete(requestId.data);
+      }
+    }
     if (result.status === "error") {
       assertRendererAuthority(event, authority.generation);
       return result;
@@ -989,6 +1021,22 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       unsubscribe: result.unsubscribe,
     });
     return DesktopDaemonSubscribeWireResultSchemaZ.parse({ status: "subscribed", subscriptionId });
+  });
+  handle(HOST_IPC.daemonCancelSubscribe, (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const requestId = DesktopDaemonSubscriptionRequestIdSchemaZ.safeParse(args[0]);
+    if (!requestId.success) {
+      return { status: "error" as const, error: daemonCapabilityError("invalid-request") };
+    }
+    const pending = pendingDaemonSubscriptions.get(requestId.data);
+    if (pending?.generation === authority.generation) {
+      pendingDaemonSubscriptions.delete(requestId.data);
+      pending.controller.abort();
+    }
+    return { status: "ok" as const };
   });
   handle(HOST_IPC.daemonUnsubscribe, (event, ...args) => {
     const authority = trustedRendererAuthority(event);

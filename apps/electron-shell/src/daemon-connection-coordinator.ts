@@ -105,6 +105,7 @@ export interface DaemonResourceAuthority {
   subscribe(
     request: DesktopDaemonEventSubscriptionRequest | readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
+    signal?: AbortSignal,
   ): Promise<BrokerSubscriptionResult>;
   /**
    * Explicit transport wakeup: interrupts a scheduled event-socket backoff and
@@ -665,33 +666,41 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   async subscribe(
     request: DesktopDaemonEventSubscriptionRequest | readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
+    signal?: AbortSignal,
   ): Promise<BrokerSubscriptionResult> {
+    if (signal?.aborted) {
+      return { status: "error", error: daemonCapabilityError("disposed") };
+    }
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
     const id = ++this.#nextSubscription;
     const earlyEvents: DesktopDaemonEvent[] = [];
-    const result = await broker.subscribe(request, (event) => {
-      const subscription = this.#subscriptions.get(id);
-      if (
-        broker !== this.#broker ||
-        rendererGeneration !== this.#rendererGeneration ||
-        this.#disposed
-      ) {
-        return;
-      }
-      if (!subscription) {
-        // A verified socket can emit its live handoff before subscribe()
-        // resolves. Preserve only this tiny, bounded local race window.
-        if (earlyEvents.length < 8) earlyEvents.push(event);
-        return;
-      }
-      try {
-        subscription.listener(event);
-      } catch {
-        // One renderer listener cannot destabilize connection ownership.
-      }
-    });
+    const result = await broker.subscribe(
+      request,
+      (event) => {
+        const subscription = this.#subscriptions.get(id);
+        if (
+          broker !== this.#broker ||
+          rendererGeneration !== this.#rendererGeneration ||
+          this.#disposed
+        ) {
+          return;
+        }
+        if (!subscription) {
+          // A verified socket can emit its live handoff before subscribe()
+          // resolves. Preserve only this tiny, bounded local race window.
+          if (earlyEvents.length < 8) earlyEvents.push(event);
+          return;
+        }
+        try {
+          subscription.listener(event);
+        } catch {
+          // One renderer listener cannot destabilize connection ownership.
+        }
+      },
+      signal,
+    );
     if (result.status === "error") return result;
     if (
       this.#broker !== broker ||

@@ -485,16 +485,50 @@ describe("host IPC trust boundary", () => {
     ).toMatchObject({ status: "error", error: { code: "renderer-origin-unavailable" } });
     expect(daemonResources.issueTerminalAttachment).not.toHaveBeenCalled();
 
+    let pendingSignal: AbortSignal | undefined;
+    vi.mocked(daemonResources.subscribe).mockImplementationOnce(
+      async (_request, _listener, signal) =>
+        new Promise((resolve) => {
+          pendingSignal = signal;
+          signal?.addEventListener(
+            "abort",
+            () =>
+              resolve({
+                status: "error",
+                error: { code: "disposed", reason: "subscription cancelled" },
+              }),
+            { once: true },
+          );
+        }),
+    );
+    const pendingSubscribe = handlers.get(HOST_IPC.daemonSubscribe)?.(
+      trustedEvent,
+      { workspaceNames: ["product"] },
+      "11111111-1111-4111-8111-111111111111",
+    );
+    await vi.waitFor(() => expect(pendingSignal).toBeDefined());
+    expect(
+      await handlers.get(HOST_IPC.daemonCancelSubscribe)?.(
+        trustedEvent,
+        "11111111-1111-4111-8111-111111111111",
+      ),
+    ).toEqual({ status: "ok" });
+    expect(pendingSignal?.aborted).toBe(true);
+    await expect(pendingSubscribe).resolves.toMatchObject({
+      status: "error",
+      error: { code: "disposed" },
+    });
+
     const subscribed = await handlers.get(HOST_IPC.daemonSubscribe)?.(trustedEvent, {
       workspaceNames: ["product"],
     });
     expect(subscribed).toEqual({
       status: "subscribed",
-      subscriptionId: "desktop-subscription-1",
+      subscriptionId: "desktop-subscription-2",
     });
     publishDaemonEvent?.({ type: "workspaces.changed" });
     expect(webContents.send).toHaveBeenCalledWith(HOST_IPC.daemonEvent, {
-      subscriptionId: "desktop-subscription-1",
+      subscriptionId: "desktop-subscription-2",
       event: { type: "workspaces.changed" },
     });
 
@@ -565,7 +599,7 @@ describe("host IPC trust boundary", () => {
     expect(webContents.send).toHaveBeenCalledTimes(1);
 
     mainFrame.url = "file:///trusted/renderer/index.html";
-    await handlers.get(HOST_IPC.daemonUnsubscribe)?.(trustedEvent, "desktop-subscription-1");
+    await handlers.get(HOST_IPC.daemonUnsubscribe)?.(trustedEvent, "desktop-subscription-2");
     expect(stopDaemonSubscription).toHaveBeenCalledOnce();
 
     // A same-location bootstrap still creates a new renderer document
@@ -1246,6 +1280,7 @@ describe("host IPC single daemon request channel (m45.3)", () => {
     expect([...h.handlers.keys()].filter((channel) => channel.includes("/daemon/")).sort()).toEqual(
       [
         HOST_IPC.daemonEvent,
+        HOST_IPC.daemonCancelSubscribe,
         HOST_IPC.daemonRequest,
         HOST_IPC.daemonSubscribe,
         HOST_IPC.daemonUnsubscribe,

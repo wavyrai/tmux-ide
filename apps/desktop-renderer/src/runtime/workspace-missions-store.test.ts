@@ -57,6 +57,7 @@ describe("workspace missions push store", () => {
         resourceInterests: [{ resource: "workspace-missions", workspaceName: "product workspace" }],
       },
       expect.any(Function),
+      expect.any(AbortSignal),
     );
     expect(store.getState()).toMatchObject({
       status: "loaded",

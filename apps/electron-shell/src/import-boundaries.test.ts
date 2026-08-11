@@ -59,6 +59,7 @@ describe("desktop process boundaries", () => {
       HOST_IPC.updateGetStatus,
       HOST_IPC.daemonRequest,
       HOST_IPC.daemonSubscribe,
+      HOST_IPC.daemonCancelSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/send");
@@ -76,6 +77,7 @@ describe("desktop process boundaries", () => {
     expect(daemonChannels).toEqual([
       HOST_IPC.daemonRequest,
       HOST_IPC.daemonSubscribe,
+      HOST_IPC.daemonCancelSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);
     // Seventeen after the content-addressed widget asset read joined the same
