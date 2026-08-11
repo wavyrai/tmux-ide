@@ -63,6 +63,8 @@ const KNOWN_INVERSIONS: readonly string[] = [
   "terminal/attachments/agent-status-probe.ts -> tui/detect/manifest.ts",
   "terminal/attachments/agent-status-probe.ts -> tui/detect/process-tree.ts",
   "terminal/attachments/agent-status-probe.ts -> tui/detect/snapshot.ts",
+  // Temporary test-only differential oracle; production imports remain adapter -> engine.
+  "terminal/session-runtime/terminal-replica-shadow-projections.test.ts -> tui/mirror/pane-mirror.ts",
 ];
 
 function sourceFiles(root: string): string[] {

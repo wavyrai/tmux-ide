@@ -10,6 +10,7 @@ import {
   type SessionRuntimeControllerSnapshot,
   type SessionRuntimeGeneration,
   type SessionRuntimeSemanticIntent,
+  type CanonicalTerminalReplicaUpdate,
 } from "@tmux-ide/contracts";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -31,6 +32,10 @@ import {
   type SessionRuntimeTmuxObservation,
   type SessionSemanticMutationExecutorOptions,
 } from "./semantic-mutation-executor.ts";
+import {
+  SessionRuntimeTerminalReplicaOwner,
+  type TerminalReplicaSubscription,
+} from "./terminal-replica-owner.ts";
 
 export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
@@ -95,6 +100,10 @@ export interface SessionRuntimeConsumer {
     onEvent: (event: MirrorPaneEvent) => void,
     onLayout?: (event: MirrorLayoutEvent) => void,
   ): Promise<MirrorSubscription>;
+  subscribeReplica(
+    semanticPaneId: string,
+    onUpdate: (update: CanonicalTerminalReplicaUpdate) => void,
+  ): Promise<TerminalReplicaSubscription>;
   close(): Promise<void>;
 }
 
@@ -405,6 +414,8 @@ class SessionRuntime {
   readonly #mirror: MirrorService;
   readonly #consumers = new Set<SessionRuntimeConsumerImpl>();
   readonly #consumersByClientId = new Map<string, SessionRuntimeConsumerImpl>();
+  readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
+  readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
   readonly #createControllerToken: () => string;
   readonly #submitAuthorized: (
     runtime: SessionRuntime,
@@ -604,6 +615,66 @@ class SessionRuntime {
     });
   }
 
+  async subscribeReplica(
+    semanticPaneId: string,
+    onUpdate: (update: CanonicalTerminalReplicaUpdate) => void,
+  ): Promise<TerminalReplicaSubscription> {
+    await this.whenReady();
+    // A replacement parser must never overlap the faulted owner's terminal or
+    // revision epoch. This is intentionally separate from transport readiness:
+    // the retained tmux channel may remain healthy while one pane parser fails.
+    await this.#restartBarrier;
+    let owner = this.#terminalReplicas.get(semanticPaneId);
+    if (!owner) {
+      const clock = this.#terminalReplicaClocks.get(semanticPaneId) ?? { epoch: 0, revision: -1 };
+      const initialRevision = clock.revision + 1;
+      let candidate: SessionRuntimeTerminalReplicaOwner;
+      candidate = new SessionRuntimeTerminalReplicaOwner(
+        this.generation,
+        this.session,
+        semanticPaneId,
+        this.#mirror,
+        {
+          incarnation: `${this.generation}:${clock.epoch}`,
+          initialRevision,
+          onRevision: (revision) => {
+            const current = this.#terminalReplicaClocks.get(semanticPaneId) ?? clock;
+            if (revision > current.revision) current.revision = revision;
+            this.#terminalReplicaClocks.set(semanticPaneId, current);
+          },
+          onClosed: () => {
+            if (this.#terminalReplicas.get(semanticPaneId) !== candidate) return;
+            this.#terminalReplicas.delete(semanticPaneId);
+            const current = this.#terminalReplicaClocks.get(semanticPaneId) ?? clock;
+            current.epoch += 1;
+            this.#terminalReplicaClocks.set(semanticPaneId, current);
+          },
+          onFault: () => {
+            if (this.#terminalReplicas.get(semanticPaneId) !== candidate) return;
+            this.#terminalReplicas.delete(semanticPaneId);
+            this.#restartBarrier = this.#restartBarrier.then(async () => {
+              await candidate.dispose("session-restarted");
+              const current = this.#terminalReplicaClocks.get(semanticPaneId) ?? clock;
+              current.epoch += 1;
+              this.#terminalReplicaClocks.set(semanticPaneId, current);
+            });
+          },
+        },
+      );
+      owner = candidate;
+      this.#terminalReplicas.set(semanticPaneId, owner);
+    }
+    try {
+      return await owner.subscribe(onUpdate);
+    } catch (error) {
+      if (this.#terminalReplicas.get(semanticPaneId) === owner) {
+        this.#terminalReplicas.delete(semanticPaneId);
+      }
+      await owner.dispose("session-restarted");
+      throw error;
+    }
+  }
+
   release(consumer: SessionRuntimeConsumerImpl): void {
     this.#consumers.delete(consumer);
     if (this.#consumersByClientId.get(consumer.clientId) === consumer) {
@@ -616,9 +687,13 @@ class SessionRuntime {
     const retention = this.#retention;
     this.#retention = null;
     this.#startPromise = null;
-    if (retention) {
-      this.#restartBarrier = this.#restartBarrier.then(() => retention.close());
-    }
+    const owners = [...this.#terminalReplicas.values()];
+    this.#terminalReplicas.clear();
+    this.#restartBarrier = this.#restartBarrier.then(async () => {
+      await Promise.allSettled(owners.map((owner) => owner.dispose("session-restarted")));
+      await retention?.close();
+      for (const clock of this.#terminalReplicaClocks.values()) clock.epoch += 1;
+    });
   }
 
   async dispose(): Promise<void> {
@@ -629,6 +704,10 @@ class SessionRuntime {
     this.#clearController();
     this.#completedHandoffs.clear();
     this.#releasedLeases.clear();
+    await Promise.allSettled(
+      [...this.#terminalReplicas.values()].map((owner) => owner.dispose("runtime-disposed")),
+    );
+    this.#terminalReplicas.clear();
     await this.#restartBarrier;
     await this.#retention?.close();
     this.#retention = null;
@@ -709,6 +788,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   readonly session: string;
   readonly clientId: string;
   readonly #subscriptions = new Set<MirrorSubscription>();
+  readonly #replicaSubscriptions = new Set<TerminalReplicaSubscription>();
   #closed = false;
 
   constructor(
@@ -789,15 +869,42 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     return subscription;
   }
 
+  async subscribeReplica(
+    semanticPaneId: string,
+    onUpdate: (update: CanonicalTerminalReplicaUpdate) => void,
+  ): Promise<TerminalReplicaSubscription> {
+    this.#assertOpen();
+    const upstream = await this.#runtime.subscribeReplica(semanticPaneId, onUpdate);
+    if (this.#closed) {
+      await upstream.close();
+      throw new Error(`SessionRuntime consumer ${this.surface} is closed`);
+    }
+    let closed = false;
+    const subscription: TerminalReplicaSubscription = {
+      ...upstream,
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        this.#replicaSubscriptions.delete(subscription);
+        await upstream.close();
+      },
+    };
+    this.#replicaSubscriptions.add(subscription);
+    return subscription;
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
     const subscriptions = [...this.#subscriptions];
+    const replicaSubscriptions = [...this.#replicaSubscriptions];
     this.#subscriptions.clear();
+    this.#replicaSubscriptions.clear();
     // Authority retirement is synchronous. A slow/frozen mirror subscription
     // must never keep controller leases or previously issued handles alive.
     this.#runtime.release(this);
     await Promise.allSettled(subscriptions.map((subscription) => subscription.close()));
+    await Promise.allSettled(replicaSubscriptions.map((subscription) => subscription.close()));
   }
 
   #assertOpen(): void {

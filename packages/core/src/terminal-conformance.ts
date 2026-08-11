@@ -299,4 +299,42 @@ export const TERMINAL_CONFORMANCE_FIXTURES: readonly TerminalConformanceFixture[
       },
     ],
   },
+  {
+    id: "codex-truecolor-status",
+    description: "Codex status text preserves explicit P3-ready truecolor channels",
+    cols: 12,
+    rows: 2,
+    writes: ["\u001b[38;2;99;102;241mCODEX\u001b[0m"],
+    cells: [
+      { row: 0, column: 0, chars: "C", width: 1, foreground: rgb(0x6366f1), background: DEFAULT },
+      { row: 0, column: 1, chars: "O", width: 1, foreground: rgb(0x6366f1), background: DEFAULT },
+    ],
+  },
+  {
+    id: "opencode-indexed-status",
+    description: "OpenCode indexed accent and inverse status remain application-owned",
+    cols: 12,
+    rows: 2,
+    writes: ["\u001b[38;5;75;48;5;234;7mOC\u001b[0m"],
+    cells: [
+      {
+        row: 0,
+        column: 0,
+        chars: "O",
+        width: 1,
+        foreground: indexed(75),
+        background: indexed(234),
+        attributes: ["inverse"],
+      },
+      {
+        row: 0,
+        column: 1,
+        chars: "C",
+        width: 1,
+        foreground: indexed(75),
+        background: indexed(234),
+        attributes: ["inverse"],
+      },
+    ],
+  },
 ]);

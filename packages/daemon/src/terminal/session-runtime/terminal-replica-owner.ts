@@ -1,0 +1,175 @@
+import type { CanonicalTerminalReplicaUpdate, SessionRuntimeGeneration } from "@tmux-ide/contracts";
+import type { MirrorLayoutEvent, MirrorPaneEvent } from "../mirror/events.ts";
+import type { MirrorService, MirrorSubscription } from "../mirror/mirror-service.ts";
+import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
+
+export interface TerminalReplicaSubscription {
+  readonly generation: SessionRuntimeGeneration;
+  readonly semanticPaneId: string;
+  close(): Promise<void>;
+}
+
+/** One parser/replica owner for one semantic pane inside one SessionRuntime. */
+export class SessionRuntimeTerminalReplicaOwner {
+  readonly #interpreter: TerminalReplicaInterpreter;
+  readonly #listeners = new Set<(update: CanonicalTerminalReplicaUpdate) => void>();
+  readonly #onClosed: (() => void) | undefined;
+  readonly #onFault: ((error: unknown) => void) | undefined;
+  readonly #start: Promise<void>;
+  #upstream: MirrorSubscription | null = null;
+  #disposed = false;
+  #cols = 80;
+  #rows = 24;
+  #reseed: { cols: number; rows: number; chunks: Uint8Array[] } | null = null;
+  #bootstrapped = false;
+
+  constructor(
+    readonly generation: SessionRuntimeGeneration,
+    readonly session: string,
+    readonly semanticPaneId: string,
+    mirror: MirrorService,
+    options: {
+      readonly incarnation: string;
+      readonly initialRevision: number;
+      readonly onRevision?: (revision: number) => void;
+      readonly onClosed?: () => void;
+      readonly onFault?: (error: unknown) => void;
+    },
+  ) {
+    this.#onClosed = options.onClosed;
+    this.#onFault = options.onFault;
+    this.#interpreter = new TerminalReplicaInterpreter({
+      generation,
+      workspaceName: session,
+      semanticPaneId,
+      incarnation: options.incarnation,
+      initialRevision: options.initialRevision,
+      cols: this.#cols,
+      rows: this.#rows,
+      onUpdate: (update) => {
+        if (update.type === "terminal.seed") this.#bootstrapped = true;
+        options.onRevision?.(update.revision);
+        for (const listener of this.#listeners) {
+          try {
+            listener(update);
+          } catch {
+            // A client projection cannot block sibling subscribers.
+          }
+        }
+      },
+    });
+    this.#start = mirror
+      .subscribe({
+        session,
+        semanticPaneId,
+        onEvent: (event) => this.#observePane(event),
+        onLayout: (event) => this.#observeLayout(event),
+      })
+      .then((subscription) => {
+        if (this.#disposed) return subscription.close();
+        this.#upstream = subscription;
+      });
+  }
+
+  async subscribe(
+    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+  ): Promise<TerminalReplicaSubscription> {
+    if (this.#disposed) throw new Error("Terminal replica owner is disposed");
+    try {
+      await this.#start;
+      await this.#interpreter.whenSeeded();
+      this.#listeners.add(listener);
+      const seed = this.#interpreter.currentSeed();
+      if (!seed) throw new Error("Terminal replica bootstrap did not produce a seed");
+      try {
+        listener(seed);
+      } catch {
+        // Bootstrap delivery has the same client-isolation rule as live frames.
+      }
+    } catch (error) {
+      this.#listeners.delete(listener);
+      throw error;
+    }
+    let closed = false;
+    return {
+      generation: this.generation,
+      semanticPaneId: this.semanticPaneId,
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        this.#listeners.delete(listener);
+      },
+    };
+  }
+
+  async dispose(
+    reason: "pane-closed" | "session-restarted" | "runtime-disposed" = "runtime-disposed",
+  ): Promise<void> {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    await this.#interpreter.enqueue({ type: "close", reason });
+    await this.#start.catch(() => undefined);
+    await this.#upstream?.close();
+    this.#upstream = null;
+    this.#listeners.clear();
+  }
+
+  #observePane(event: MirrorPaneEvent): void {
+    if (event.type === "reset") {
+      this.#cols = event.cols;
+      this.#rows = event.rows;
+      this.#reseed = { cols: event.cols, rows: event.rows, chunks: [] };
+    } else if (event.type === "seed" || event.type === "delta") {
+      if (this.#reseed) this.#reseed.chunks.push(event.data.slice());
+      else this.#supervise(this.#interpreter.enqueue({ type: "write", data: event.data }));
+    } else if (event.type === "cursor") {
+      const reseed = this.#reseed;
+      this.#reseed = null;
+      this.#supervise(
+        reseed
+          ? this.#interpreter.enqueue({
+              type: "reseed",
+              ...reseed,
+              cursor: { x: event.x, y: event.y },
+              bootstrap: "painted-capture",
+            })
+          : this.#interpreter.enqueue({ type: "cursor", x: event.x, y: event.y }),
+      );
+    } else if (event.type === "closed") {
+      const closed = this.#interpreter.enqueue({ type: "close", reason: "pane-closed" });
+      this.#supervise(closed);
+      void closed.then(
+        async () => {
+          await this.dispose("pane-closed");
+          this.#onClosed?.();
+        },
+        () => undefined,
+      );
+    }
+  }
+
+  #observeLayout(event: MirrorLayoutEvent): void {
+    const pane = event.panes.find((candidate) => candidate.semanticPaneId === this.semanticPaneId);
+    if (!pane || (pane.width === this.#cols && pane.height === this.#rows)) return;
+    this.#cols = pane.width;
+    this.#rows = pane.height;
+    if (this.#reseed) {
+      this.#reseed.cols = pane.width;
+      this.#reseed.rows = pane.height;
+      return;
+    }
+    if (!this.#bootstrapped) {
+      return;
+    }
+    this.#supervise(
+      this.#interpreter.enqueue({ type: "resize", cols: pane.width, rows: pane.height }),
+    );
+  }
+
+  #supervise(operation: Promise<void>): void {
+    void operation.catch((error) => {
+      this.#interpreter.abort(error);
+      this.#onFault?.(error);
+    });
+  }
+}
