@@ -26,6 +26,22 @@ function sendIntent() {
   };
 }
 
+function sendResult(operationId: string, intent: ReturnType<typeof sendIntent>) {
+  return {
+    operationId,
+    daemonInstanceId: GENERATION,
+    workspaceName: intent.workspaceName,
+    verb: intent.verb,
+    outcome: "applied" as const,
+    sourceSemanticPaneId: null,
+    semanticPaneId: intent.semanticPaneId,
+    origin: intent.origin,
+    characterCount: 9,
+    byteCount: 9,
+    submitted: intent.submit,
+  };
+}
+
 describe("SessionRuntimeTransportBinder", () => {
   it("never promotes a passive cross-transport pane into an authorship grant", async () => {
     const registry = new SessionRuntimeRegistry({
@@ -163,7 +179,11 @@ describe("SessionRuntimeTransportBinder", () => {
         .mockReturnValueOnce("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
       semanticMutations: {
         resolveSession: (workspaceName) => `${workspaceName}-session`,
-        execute: async (operationId) => void executed.push(operationId),
+        execute: (operationId, intent) => {
+          if (intent.verb !== "workspace.pane.send") throw new Error("unexpected intent");
+          executed.push(operationId);
+          return sendResult(operationId, intent);
+        },
         publishReceipt: (receipt) => ({ type: "interaction.receipt", sequence: 1, ...receipt }),
       },
     });
@@ -231,7 +251,11 @@ describe("SessionRuntimeTransportBinder", () => {
       createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       semanticMutations: {
         resolveSession: (workspaceName) => `${workspaceName}-session`,
-        execute: async (operationId) => void executed.push(operationId),
+        execute: (operationId, intent) => {
+          if (intent.verb !== "workspace.pane.send") throw new Error("unexpected intent");
+          executed.push(operationId);
+          return sendResult(operationId, intent);
+        },
         publishReceipt: (receipt) => ({ type: "interaction.receipt", sequence: 1, ...receipt }),
       },
     });

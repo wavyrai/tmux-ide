@@ -1100,23 +1100,16 @@ export async function startEmbeddedDaemon(
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
       const selector = tmuxAuthority.socketSelector;
-      const executeRuntimeIntent = async (
-        operationId: string,
-        intent: SessionRuntimeSemanticIntent,
-        authorizeBeforeEffect?: () => void,
-      ) => {
+      const executeRuntimeIntent = (operationId: string, intent: SessionRuntimeSemanticIntent) => {
         if (intent.verb === "workspace.pane.read") {
-          await workspaceMultiplexer.readPane(operationId, intent);
+          workspaceMultiplexer.readPane(operationId, intent);
           return;
         }
-        return await workspaceMultiplexer.mutate(
-          {
-            operationId,
-            expectedDaemonInstanceId: instanceId,
-            intent,
-          },
-          authorizeBeforeEffect,
-        );
+        return workspaceMultiplexer.mutate({
+          operationId,
+          expectedDaemonInstanceId: instanceId,
+          intent,
+        });
       };
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
@@ -1126,7 +1119,6 @@ export async function startEmbeddedDaemon(
           execute: executeRuntimeIntent,
           publishReceipt: (receipt) => broadcastInteractionReceipt(receipt, instanceId),
         },
-        executeAuthorized: executeRuntimeIntent,
         mirror: {
           executable: tmuxAuthority.executablePath,
           ...(selector.kind === "path" ? { socketPath: selector.path } : {}),

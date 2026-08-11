@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { SessionRuntimeSemanticIntent } from "@tmux-ide/contracts";
 import type { MirrorServiceOptions } from "../mirror/mirror-service.ts";
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
 import {
@@ -39,26 +40,58 @@ function send(workspaceName = "alpha") {
   };
 }
 
+function resultFor(operationId: string, intent: SessionRuntimeSemanticIntent) {
+  const base = {
+    operationId,
+    daemonInstanceId: GENERATION_A,
+    workspaceName: intent.workspaceName,
+    outcome: "applied" as const,
+  };
+  if (intent.verb === "workspace.pane.send") {
+    return {
+      ...base,
+      verb: intent.verb,
+      sourceSemanticPaneId: intent.sourceSemanticPaneId ?? null,
+      semanticPaneId: intent.semanticPaneId,
+      origin: intent.origin,
+      characterCount: 5,
+      byteCount: 5,
+      submitted: intent.submit,
+    };
+  }
+  if (intent.verb === "workspace.pane.resize") {
+    return {
+      ...base,
+      verb: intent.verb,
+      semanticPaneId: intent.semanticPaneId,
+      axis: intent.axis,
+      cells: intent.cells,
+    };
+  }
+  throw new Error(`unhandled test intent ${intent.verb}`);
+}
+
 function controllerRig(generation = GENERATION_A) {
   const base = rig(generation);
   const executed: string[] = [];
   const tokens = [TOKEN_A, TOKEN_B, TOKEN_C];
   let tokenIndex = 0;
+  let sequence = 0;
   const registry = new SessionRuntimeRegistry({
     generation,
     mirror: base.mirror,
     createControllerToken: () => tokens[tokenIndex++]!,
     semanticMutations: {
       resolveSession: (workspaceName) => `${workspaceName}-session`,
-      execute: async (_operationId, intent) => {
+      execute: (operationId, intent) => {
         executed.push(intent.verb);
+        return resultFor(operationId, intent);
       },
-      publishReceipt: () => {
-        throw new Error("receipt publication is not expected in controller authorization tests");
-      },
-    },
-    executeAuthorized: async (_operationId, intent) => {
-      executed.push(intent.verb);
+      publishReceipt: (receipt) => ({
+        type: "interaction.receipt",
+        sequence: (sequence += 1),
+        ...receipt,
+      }),
     },
   });
   return { registry, executed, sims: base.sims };
@@ -104,8 +137,9 @@ describe("SessionRuntimeRegistry", () => {
       mirror: base.mirror,
       semanticMutations: {
         resolveSession: () => "alpha-session",
-        execute: async (_operationId, intent) => {
+        execute: (operationId, intent) => {
           if (intent.verb === "workspace.pane.send") executed.push(intent);
+          return resultFor(operationId, intent);
         },
         publishReceipt: (receipt) => {
           receipts.push(receipt);
@@ -149,7 +183,10 @@ describe("SessionRuntimeRegistry", () => {
       createControllerToken: () => TOKEN_A,
       semanticMutations: {
         resolveSession: () => "alpha-session",
-        execute: async (operationId) => void executed.push(operationId),
+        execute: (operationId, intent) => {
+          executed.push(operationId);
+          return resultFor(operationId, intent);
+        },
         publishReceipt: (receipt) => {
           receipts.push(receipt);
           return { type: "interaction.receipt", sequence: (sequence += 1), ...receipt };
@@ -204,7 +241,10 @@ describe("SessionRuntimeRegistry", () => {
       mirror: base.mirror,
       semanticMutations: {
         resolveSession: () => "alpha-session",
-        execute: async (operationId) => void executed.push(operationId),
+        execute: (operationId, intent) => {
+          executed.push(operationId);
+          return resultFor(operationId, intent);
+        },
         publishReceipt: (receipt) => ({
           type: "interaction.receipt",
           sequence: (sequence += 1),
@@ -255,8 +295,9 @@ describe("SessionRuntimeRegistry", () => {
       createControllerToken: () => TOKEN_A,
       semanticMutations: {
         resolveSession: () => "alpha-session",
-        execute: async (_operationId, intent) => {
+        execute: (operationId, intent) => {
           if (intent.verb === "workspace.pane.send") executed.push(intent);
+          return resultFor(operationId, intent);
         },
         publishReceipt: (receipt) => {
           receipts.push(receipt);
@@ -289,6 +330,35 @@ describe("SessionRuntimeRegistry", () => {
     await registry.dispose();
   });
 
+  it("publishes authenticated GUI origin for a structural intent with no caller origin field", async () => {
+    const base = rig();
+    const receipts: Array<{ phase: string; origin: string; operationKind: string }> = [];
+    let sequence = 0;
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: base.mirror,
+      createControllerToken: () => TOKEN_A,
+      semanticMutations: {
+        resolveSession: () => "alpha-session",
+        execute: (operationId, intent) => resultFor(operationId, intent),
+        publishReceipt: (receipt) => {
+          receipts.push(receipt);
+          return { type: "interaction.receipt", sequence: (sequence += 1), ...receipt };
+        },
+      },
+    });
+    const gui = registry.connect("alpha-session", "terminal-attachment", "client:gui");
+    const lease = gui.acquireController();
+    const handle = registry.createExecutionHandle(gui, lease, []);
+    await registry.submitAuthenticatedIntent(handle, OP_A, resize());
+    expect(receipts).toMatchObject([
+      { phase: "accepted", origin: "gui", operationKind: "workspace.pane.resize" },
+      { phase: "observed", origin: "gui", operationKind: "workspace.pane.resize" },
+    ]);
+    await gui.close();
+    await registry.dispose();
+  });
+
   it("strips naked source claims and rejects cross-client or stale source capabilities", async () => {
     const base = rig();
     const executed: Array<{ sourceSemanticPaneId?: string }> = [];
@@ -299,8 +369,9 @@ describe("SessionRuntimeRegistry", () => {
       createControllerToken: () => TOKEN_A,
       semanticMutations: {
         resolveSession: () => "alpha-session",
-        execute: async (_operationId, intent) => {
+        execute: (operationId, intent) => {
           if (intent.verb === "workspace.pane.send") executed.push(intent);
+          return resultFor(operationId, intent);
         },
         publishReceipt: (receipt) => ({
           type: "interaction.receipt",

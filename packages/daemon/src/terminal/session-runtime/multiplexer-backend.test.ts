@@ -10,6 +10,8 @@ import type {
 } from "./registry.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
 import { createSessionRuntimeMultiplexerBackend } from "./multiplexer-backend.ts";
+import { WorkspaceMultiplexerError } from "../../lib/workspace-multiplexer-verbs.ts";
+import { SessionRuntimeIntentError } from "./semantic-mutation-executor.ts";
 import { SessionRuntimeTransportBinder } from "./transport-binding.ts";
 
 const GENERATION = "11111111-1111-4111-8111-111111111111";
@@ -201,10 +203,21 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
       generation: GENERATION,
       semanticMutations: {
         resolveSession: () => "alpha-session",
-        execute: async () => ({ outcome: "applied" }) as never,
+        execute: (operationId, intent) => {
+          if (intent.verb !== "workspace.pane.resize") throw new Error("unexpected intent");
+          return {
+            operationId,
+            daemonInstanceId: GENERATION,
+            workspaceName: intent.workspaceName,
+            verb: intent.verb,
+            outcome: "applied",
+            semanticPaneId: intent.semanticPaneId,
+            axis: intent.axis,
+            cells: intent.cells,
+          };
+        },
         publishReceipt: (receipt) => ({ type: "interaction.receipt", sequence: 1, ...receipt }),
       },
-      executeAuthorized: async () => ({ outcome: "applied" }) as never,
     });
     const backend = createSessionRuntimeMultiplexerBackend({
       registry,
@@ -224,6 +237,56 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
     expect(gui.acquireController()).toMatchObject({ clientId: "host:gui" });
     await gui.close();
     await registry.dispose();
+  });
+
+  it("preserves typed multiplexer refusals but retains the runtime envelope for generic failures", async () => {
+    const refusal = new WorkspaceMultiplexerError("single_pane_window");
+    const build = (failure: Error) => {
+      const registry = new SessionRuntimeRegistry({
+        generation: GENERATION,
+        semanticMutations: {
+          resolveSession: () => "alpha-session",
+          execute: () => {
+            throw failure;
+          },
+          publishReceipt: (receipt) => ({ type: "interaction.receipt", sequence: 1, ...receipt }),
+        },
+      });
+      return {
+        registry,
+        backend: createSessionRuntimeMultiplexerBackend({
+          registry,
+          resolveSession: () => "alpha-session",
+        }),
+      };
+    };
+    const typed = build(refusal);
+    await expect(
+      typed.backend.mutate(
+        request({
+          verb: "workspace.pane.resize",
+          workspaceName: "alpha",
+          semanticPaneId: "pane.alpha",
+          axis: "cols",
+          cells: 80,
+        }),
+      ),
+    ).rejects.toBe(refusal);
+    await typed.registry.dispose();
+
+    const generic = build(new Error("generic effect failure"));
+    await expect(
+      generic.backend.mutate(
+        request({
+          verb: "workspace.pane.resize",
+          workspaceName: "alpha",
+          semanticPaneId: "pane.alpha",
+          axis: "cols",
+          cells: 80,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(SessionRuntimeIntentError);
+    await generic.registry.dispose();
   });
 
   it("keeps anonymous owner access explicit and releases authority after each settled action", async () => {

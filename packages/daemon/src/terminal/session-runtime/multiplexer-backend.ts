@@ -4,7 +4,9 @@ import type {
   WorkspaceMultiplexerMutationResult,
 } from "@tmux-ide/contracts";
 import type { WorkspaceMultiplexerBackend } from "../../command-center/actions/handlers/workspace-multiplexer.ts";
+import { WorkspaceMultiplexerError } from "../../lib/workspace-multiplexer-verbs.ts";
 import type { SessionRuntimeConsumer, SessionRuntimeRegistry } from "./registry.ts";
+import { SessionRuntimeIntentError } from "./semantic-mutation-executor.ts";
 import { SessionRuntimeTransportBinder } from "./transport-binding.ts";
 
 export interface SessionRuntimeMultiplexerBackendOptions {
@@ -44,6 +46,22 @@ export function createSessionRuntimeMultiplexerBackend(
   const owners = new Map<string, OwnerUse>();
   const transportBinder = new SessionRuntimeTransportBinder(options.registry);
   let ownerEpoch = 0;
+
+  const submit = async <T>(work: () => Promise<T>): Promise<T> => {
+    try {
+      return await work();
+    } catch (error) {
+      // The executor owns lifecycle receipts, but command-center handlers still
+      // need the multiplexer authority's typed refusal for stable HTTP mapping.
+      if (
+        error instanceof SessionRuntimeIntentError &&
+        error.cause instanceof WorkspaceMultiplexerError
+      ) {
+        throw error.cause;
+      }
+      throw error;
+    }
+  };
 
   const withTrustedOrigin = (
     intent: SessionRuntimeSemanticIntent,
@@ -101,10 +119,12 @@ export function createSessionRuntimeMultiplexerBackend(
         if (!authenticatedContext) {
           throw new Error("Authenticated host has no live controller grant for this mutation");
         }
-        const result = await options.registry.submitAuthenticatedIntent(
-          authenticatedContext,
-          request.operationId,
-          withTrustedOrigin(request.intent as SessionRuntimeSemanticIntent, "gui"),
+        const result = await submit(() =>
+          options.registry.submitAuthenticatedIntent(
+            authenticatedContext,
+            request.operationId,
+            withTrustedOrigin(request.intent as SessionRuntimeSemanticIntent, "gui"),
+          ),
         );
         if (!result) throw new Error("Session mutation completed without a mutation result");
         return result;
@@ -116,21 +136,23 @@ export function createSessionRuntimeMultiplexerBackend(
       );
       if (sourcePaneCredential) {
         if (!credentialSource) throw new Error("Pane source credential is invalid or stale");
-        const result = await options.registry.submitPaneCredentialIntent(
-          session,
-          request.operationId,
-          withTrustedOrigin(request.intent as SessionRuntimeSemanticIntent, "cli"),
-          credentialSource,
-          () => {
-            const current = options.resolvePaneSourceCredential?.(
-              sourcePaneCredential,
-              session,
-              claimedSource,
-            );
-            if (current !== credentialSource) {
-              throw new Error("Pane source credential became invalid before execution");
-            }
-          },
+        const result = await submit(() =>
+          options.registry.submitPaneCredentialIntent(
+            session,
+            request.operationId,
+            withTrustedOrigin(request.intent as SessionRuntimeSemanticIntent, "cli"),
+            credentialSource,
+            () => {
+              const current = options.resolvePaneSourceCredential?.(
+                sourcePaneCredential,
+                session,
+                claimedSource,
+              );
+              if (current !== credentialSource) {
+                throw new Error("Pane source credential became invalid before execution");
+              }
+            },
+          ),
         );
         if (!result) throw new Error("Session mutation completed without a mutation result");
         return result;
@@ -138,10 +160,12 @@ export function createSessionRuntimeMultiplexerBackend(
       const owner = acquireOwner(session);
       try {
         const lease = owner.consumer.acquireController();
-        const result = await owner.consumer.submitIntent(
-          lease,
-          request.operationId,
-          withTrustedOrigin(request.intent as SessionRuntimeSemanticIntent, "sdk"),
+        const result = await submit(() =>
+          owner.consumer.submitIntent(
+            lease,
+            request.operationId,
+            withTrustedOrigin(request.intent as SessionRuntimeSemanticIntent, "sdk"),
+          ),
         );
         if (!result) throw new Error("Session mutation completed without a mutation result");
         return result;
