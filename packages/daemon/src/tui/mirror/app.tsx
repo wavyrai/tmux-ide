@@ -600,6 +600,7 @@ import {
 import { adoptMarkArgv, updaterProbeArgv, updaterSpawnArgv } from "../chrome/front-door.ts";
 import { APP_HOST_SESSION } from "./hosted.ts";
 import { publishTuiInputReady } from "../readiness.ts";
+import { AsyncDisposableSlot } from "../async-disposable-slot.ts";
 import {
   ATTENTION_FLASH_MS,
   attentionNoteLine,
@@ -3981,8 +3982,7 @@ try {
     // tab is backgrounded they only mark it stale (refreshed on tab return).
     // The watcher ignores .git, so index-only changes (external staging) ride
     // the 3s status poll armed in onMount instead.
-    let stopFilesWatch: (() => Promise<void>) | null = null;
-    let filesWatchDir = "";
+    const filesWatch = new AsyncDisposableSlot<string>();
     let filesStale = false;
     const onFilesWatchEvent = () => {
       if (mode() === "editor") {
@@ -3992,25 +3992,11 @@ try {
       }
     };
     const ensureFilesWatch = (root: string) => {
-      if (filesWatchDir === root) return;
-      filesWatchDir = root;
-      const prev = stopFilesWatch;
-      stopFilesWatch = null;
-      void prev?.().catch(() => {});
-      void watchDirectory(root, onFilesWatchEvent, { ignore: [...ALWAYS_IGNORE] })
-        .then((stop) => {
-          if (filesWatchDir !== root) {
-            void stop().catch(() => {});
-            return;
-          }
-          stopFilesWatch = stop;
-        })
-        .catch(() => {
-          // watcher unavailable — the Files-tab status poll still runs, and
-          // `r` / toggles / mutations refresh on demand.
-        });
+      filesWatch.ensure(root, () =>
+        watchDirectory(root, onFilesWatchEvent, { ignore: [...ALWAYS_IGNORE] }),
+      );
     };
-    cleanupRegistry.set("files-watch", () => void stopFilesWatch?.().catch(() => {}));
+    cleanupRegistry.set("files-watch", () => filesWatch.dispose());
     /** A tab switch back onto a stale Files surface catches up in one shot. */
     const catchUpFilesIfStale = () => {
       if (!filesStale) return;

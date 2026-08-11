@@ -69,13 +69,20 @@ function tmuxEnv(runtimePath) {
   };
 }
 
-async function waitUntil(predicate, timeoutMs, description) {
+async function waitUntil(predicate, timeoutMs, description, diagnostics) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
   }
-  throw new Error(`Timed out waiting for ${description}`);
+  const detail = (() => {
+    try {
+      return diagnostics?.() ?? "";
+    } catch (error) {
+      return `diagnostics failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  })();
+  throw new Error(`Timed out waiting for ${description}${detail ? `\n${detail}` : ""}`);
 }
 
 function findTarball(prefix) {
@@ -161,6 +168,24 @@ async function runInstalledTuiGate(installedCli) {
       encoding: "utf8",
       stdio,
     });
+  const gateDiagnostics = () => {
+    const frame = tmuxResult(["capture-pane", "-p", "-t", `=${hostSession}:0.0`]);
+    const pane = tmuxResult([
+      "list-panes",
+      "-t",
+      `=${hostSession}`,
+      "-F",
+      "pid=#{pane_pid} dead=#{pane_dead} status=#{pane_dead_status} command=#{pane_current_command}",
+    ]);
+    const readiness = existsSync(readyPath) ? readFileSync(readyPath, "utf8").trim() : "missing";
+    const stderr = existsSync(stderrPath) ? readFileSync(stderrPath, "utf8").trim() : "";
+    return [
+      `readiness: ${readiness}`,
+      `pane: ${pane.status === 0 ? pane.stdout.trim() : pane.stderr.trim()}`,
+      `frame:\n${frame.status === 0 ? frame.stdout : frame.stderr}`,
+      `stderr:\n${stderr || "(empty)"}`,
+    ].join("\n");
+  };
 
   for (const forbidden of ["bunfig.toml", "node_modules", join(".tmux-ide", "workspace.yml")]) {
     if (existsSync(join(launchDir, forbidden))) {
@@ -237,6 +262,7 @@ async function runInstalledTuiGate(installedCli) {
       },
       20_000,
       "the installed TUI's input-ready barrier",
+      gateDiagnostics,
     );
 
     if (!existsSync(statusPath)) {
@@ -251,7 +277,12 @@ async function runInstalledTuiGate(installedCli) {
       const quit = tmuxResult(["send-keys", "-t", `=${hostSession}:0.0`, "C-q"]);
       if (quit.status !== 0) throw new Error(`Could not ask installed TUI to exit: ${quit.stderr}`);
     }
-    await waitUntil(() => existsSync(statusPath), 10_000, "the installed TUI's clean exit");
+    await waitUntil(
+      () => existsSync(statusPath),
+      10_000,
+      "the installed TUI's clean exit",
+      gateDiagnostics,
+    );
 
     const status = readFileSync(statusPath, "utf8").trim();
     const stderr = existsSync(stderrPath) ? readFileSync(stderrPath, "utf8") : "";
