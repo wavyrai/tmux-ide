@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { initialWindowSizeCommands } from "./window-size-policy.ts";
+import { initialWindowSizeCommands, windowSizeClaimNeedsCorrection } from "./window-size-policy.ts";
 
 describe("initial visual-client window size", () => {
   it("claims the measured canvas before the first state snapshot", () => {
@@ -27,5 +27,22 @@ describe("initial visual-client window size", () => {
         "resize-window -t 'Thijs'\\''s work; next' -x 80 -y 24",
       ],
     );
+  });
+
+  it("verifies the first layout snapshot against the measured canvas", () => {
+    const claim = { target: "work", cols: 180, rows: 61 };
+    expect(windowSizeClaimNeedsCorrection(claim, null)).toBe(true);
+    expect(windowSizeClaimNeedsCorrection(claim, { cols: 179, rows: 61 })).toBe(true);
+    expect(windowSizeClaimNeedsCorrection(claim, { cols: 180, rows: 60 })).toBe(true);
+    expect(windowSizeClaimNeedsCorrection(claim, { cols: 180, rows: 61 })).toBe(false);
+  });
+
+  it("compares against the same normalized dimensions sent to tmux", () => {
+    expect(
+      windowSizeClaimNeedsCorrection(
+        { target: "work", cols: 120.9, rows: 0 },
+        { cols: 120, rows: 1 },
+      ),
+    ).toBe(false);
   });
 });

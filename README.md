@@ -82,6 +82,22 @@ Every surface has a **prefix twin** (`prefix` then a letter) that works under ev
 | Sidebar — a fleet nav column                   | `prefix b`            | `⌥b`           |
 | Panels — explorer / changes / config           | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
 
+### Show rich content in a pane
+
+Use the file you already have; tmux-ide selects the renderer from its extension
+and live-refreshes the surface when the file changes:
+
+```bash
+tmux-ide show README.md
+tmux-ide show demo.gif
+tmux-ide show build-status.json
+```
+
+Markdown, PNG, JPEG, GIF, WebP, AVIF, and declarative card JSON are
+supported. Press `Ctrl-C` to restore the ordinary terminal. The explicit
+`tmux-ide widget <markdown|image|card>` form remains available as the low-level
+protocol surface for scripts and stdin.
+
 ## Optional: describe a layout with workspace.yml
 
 Adopt works on any session. If you'd rather have tmux-ide build the layout, scaffold `.tmux-ide/workspace.yml`:

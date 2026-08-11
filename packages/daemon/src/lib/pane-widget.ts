@@ -21,7 +21,8 @@ export type PaneWidgetRefusalReason =
   | "unsupported-media"
   | "too-large"
   | "empty"
-  | "unknown-widget";
+  | "unknown-widget"
+  | "unsupported-source";
 
 export class PaneWidgetRefusal extends Error {
   constructor(
@@ -148,6 +149,25 @@ export function paneWidgetId(value: string): PaneWidgetId {
   throw new PaneWidgetRefusal(
     "unknown-widget",
     `"${value}" is not a widget. Available: ${PANE_WIDGET_IDS.join(", ")}.`,
+  );
+}
+
+/**
+ * Resolve the friendly `tmux-ide show <file>` surface by the file itself.
+ * `widget` remains the low-level explicit protocol; humans should not have to
+ * remember a renderer name that the extension already states unambiguously.
+ */
+export function paneWidgetIdForFile(fileName: string): PaneWidgetId {
+  const extension = extname(fileName).toLowerCase();
+  if ([".md", ".markdown"].includes(extension)) return "markdown";
+  if (IMAGE_MEDIA_BY_EXTENSION.has(extension)) return "image";
+  if (extension === ".json") return "card";
+  const name = basename(fileName) || fileName || "input";
+  throw new PaneWidgetRefusal(
+    "unsupported-source",
+    `tmux-ide cannot infer how to show "${name}". Supported: Markdown ` +
+      `(.md, .markdown), raster images (${[...IMAGE_MEDIA_BY_EXTENSION.keys()].join(", ")}), ` +
+      `and declarative cards (.json).`,
   );
 }
 

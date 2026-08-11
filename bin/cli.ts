@@ -153,6 +153,7 @@ const knownCommands = new Set([
   "cheatsheet",
   "welcome",
   "menu",
+  "show",
   "popup",
   "sidebar-toggle",
   "worktree",
@@ -229,6 +230,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide menu")} [--client N]  ${dim("Open the right-click actions menu (⌥m / right-click any pane or the bar)")}
   ${cyan("tmux-ide popup")} <widget>     ${dim("Open a widget as a floating panel (explorer/changes/config; ⌥e/⌥g/⌥,)")}
   ${cyan("tmux-ide widget")} <markdown|image|card> [file]  ${dim("Render rich live content in the current pane")}
+  ${cyan("tmux-ide show")} <file>          ${dim("Show Markdown, images, GIFs, or cards by file type")}
   ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the app nav column (⌥b on adopted sessions)")}
   ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim("Add a git worktree (new branch) + open a session in it")}
@@ -242,7 +244,8 @@ ${bold("Usage:")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan("tmux-ide update --manifests")} ${dim("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan("tmux-ide skill-sync")}         ${dim("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
-  ${cyan("tmux-ide widget <name> [file]")} ${dim("Render markdown or an image inside this pane (Ctrl-C restores it)")}
+  ${cyan("tmux-ide show <file>")}          ${dim("Show rich content inside this pane (Ctrl-C restores it)")}
+  ${cyan("tmux-ide widget <name> [file]")} ${dim("Low-level explicit rich-content command")}
   ${cyan("tmux-ide validate")} [--json]  ${dim("Validate workspace config")}
   ${cyan("tmux-ide detect")} [--json]    ${dim("Detect project stack")}
   ${cyan("tmux-ide detect --write")}     ${dim("Detect and write .tmux-ide/workspace.yml")}
@@ -1789,6 +1792,7 @@ try {
       break;
     }
 
+    case "show":
     case "widget": {
       /*
        * Opt this pane into rich rendering (m49.7).
@@ -1815,6 +1819,7 @@ try {
         buildMarkdownAssetAnnouncement,
         imageMediaTypeFor,
         paneWidgetId,
+        paneWidgetIdForFile,
       } = await import("../packages/daemon/src/lib/pane-widget.ts");
       const { publishWidgetAsset, WidgetAssetStoreError } =
         await import("../packages/daemon/src/lib/widget-asset-store.ts");
@@ -1831,8 +1836,14 @@ try {
       let watchedFile: string | null = null;
       let refreshAnnouncement: (() => string) | null = null;
       try {
-        const id = paneWidgetId(positionals[1] ?? "");
-        const file = positionals[2];
+        const friendlyShow = command === "show";
+        const file = friendlyShow ? positionals[1] : positionals[2];
+        if (friendlyShow && !file) {
+          throw new PaneWidgetRefusal("empty", "Usage: tmux-ide show <file>");
+        }
+        const id = friendlyShow
+          ? paneWidgetIdForFile(file ?? "")
+          : paneWidgetId(positionals[1] ?? "");
         if (id === "markdown") {
           if (file) {
             const publish = (): string => {
@@ -1905,7 +1916,7 @@ try {
             process.stdout.write(PANE_WIDGET_RESTORE_SEQUENCE + refresh());
           } catch (error) {
             process.stderr.write(
-              `tmux-ide widget could not refresh: ${(error as Error).message}\n`,
+              `tmux-ide ${command} could not refresh: ${(error as Error).message}\n`,
             );
           }
         });

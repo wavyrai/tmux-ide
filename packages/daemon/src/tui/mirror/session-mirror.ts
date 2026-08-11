@@ -36,7 +36,7 @@ import {
 } from "./pane-mirror.ts";
 import type { CellArrays } from "./blit.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
-import { initialWindowSizeCommands } from "./window-size-policy.ts";
+import { initialWindowSizeCommands, windowSizeClaimNeedsCorrection } from "./window-size-policy.ts";
 import type { WidgetMarker } from "@tmux-ide/contracts";
 import { tapInputOutput, tapRepin, tapResize } from "./perf-tap.ts";
 import {
@@ -319,6 +319,21 @@ export class SessionMirror {
     // shape). Best-effort: an old tmux without -B just degrades to sync-only.
     await this.client.command(`refresh-client -B "mouse:%*:#{mouse_any_flag}"`).catch(() => {});
     await this.sync();
+    // tmux can acknowledge resize-window before the active layout snapshot has
+    // caught up. Verify the first authoritative snapshot and re-assert once on
+    // mismatch. This is an attach barrier, not a retry timer: normal startup
+    // pays no extra round-trip and the render loop remains event-driven.
+    const claim = {
+      target: this.opts.target,
+      cols: this.opts.cols,
+      rows: this.opts.rows,
+    };
+    if (windowSizeClaimNeedsCorrection(claim, this.winSize)) {
+      for (const command of initialWindowSizeCommands(claim)) {
+        await this.client.command(command);
+      }
+      await this.sync();
+    }
   }
 
   /** The mirrored window's authoritative size (layout root WxH), or null
@@ -679,9 +694,8 @@ export class SessionMirror {
     tapRepin(cols, rows); // debug tap: assert one re-pin per settled size change
     tapResize("repin", `${cols}x${rows}`);
     await this.client.command(`refresh-client -C ${cols}x${rows}`).catch(() => {});
-    // Under the manual policy `refresh-client -C` no longer drives the window
-    // size, so a terminal/sidebar resize after a reclaim must resize the window
-    // directly to keep it matched to our canvas.
+    // Under the manual policy `refresh-client -C` does not drive the window
+    // size, so every terminal/sidebar resize also resizes the window directly.
     if (this.sizeMode === "manual") {
       await this.client
         .command(`resize-window -t ${this.opts.target} -x ${cols} -y ${rows}`)
@@ -691,12 +705,10 @@ export class SessionMirror {
   }
 
   /**
-   * Reclaim the window at our current canvas size (M22.8 — the palette's "Resize
-   * to fit this window"). A co-attached smaller terminal wins `window-size
-   * latest`; the ONLY mechanism that overrides it and HOLDS is `window-size
-   * manual` + `resize-window` (measured — a bare `refresh-client -C` re-issue
-   * does not re-win). We flip to the manual policy so subsequent resizes keep the
-   * window matched, and {@link dispose} reverts the option on detach.
+   * Re-assert the window at our current canvas size (M22.8 — the palette's
+   * "Resize to fit this window"). The attach handshake already owns a manual
+   * claim; this is the explicit recovery action if another client or command
+   * changed it. {@link dispose} releases the option on detach.
    */
   async resizeToFit(): Promise<void> {
     const { cols, rows } = this.opts;
@@ -714,12 +726,11 @@ export class SessionMirror {
   dispose(): void {
     this.input.flush(); // last typed bytes leave before the detach
     // Detach cleanliness (M22.8): a `window-size manual` override we set to
-    // reclaim the window lingers on the session past our client's death — it
+    // own the visual window lingers on the session past our client's death — it
     // would leave a still-attached real terminal permanently letterboxed. Revert
     // it out-of-band (a plain tmux call, independent of the control client we are
     // about to tear down) so the remaining clients reclaim their own size. The
-    // "auto" policy needs no cleanup: tmux drops our size vote when the control
-    // client dies (measured). Sync + guarded — dispose runs at shutdown/re-attach,
+    // "auto" policy needs no cleanup. Sync + guarded — dispose runs at shutdown/re-attach,
     // not the render loop, and correctness here outranks the brief block.
     if (this.sizeMode === "manual") {
       try {

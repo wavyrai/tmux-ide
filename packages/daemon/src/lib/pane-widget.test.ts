@@ -16,6 +16,7 @@ import {
   buildMarkdownAnnouncement,
   imageMediaTypeFor,
   paneWidgetId,
+  paneWidgetIdForFile,
 } from "./pane-widget.ts";
 
 /** The marker as the emulator would hold it: conceal codes stripped, no newline. */
@@ -133,6 +134,14 @@ describe("the helper's surface", () => {
     expect(paneWidgetId("image")).toBe("image");
     expect(paneWidgetId("card")).toBe("card");
     expect(() => paneWidgetId("mermaid")).toThrow(/Available: markdown, image, card/u);
+  });
+
+  it("infers the friendly show command from a file extension", () => {
+    expect(paneWidgetIdForFile("README.MD")).toBe("markdown");
+    expect(paneWidgetIdForFile("notes.markdown")).toBe("markdown");
+    expect(paneWidgetIdForFile("demo.gif")).toBe("image");
+    expect(paneWidgetIdForFile("status.json")).toBe("card");
+    expect(() => paneWidgetIdForFile("script.ts")).toThrow(/cannot infer how to show/u);
   });
 
   it("emits compact asset references and validated declarative cards", () => {

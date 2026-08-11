@@ -44979,7 +44979,8 @@ __export(pane_widget_exports, {
   buildMarkdownAnnouncement: () => buildMarkdownAnnouncement,
   buildMarkdownAssetAnnouncement: () => buildMarkdownAssetAnnouncement,
   imageMediaTypeFor: () => imageMediaTypeFor,
-  paneWidgetId: () => paneWidgetId
+  paneWidgetId: () => paneWidgetId,
+  paneWidgetIdForFile: () => paneWidgetIdForFile
 });
 import { basename as basename16, extname } from "node:path";
 function imageMediaTypeFor(fileName) {
@@ -45046,6 +45047,17 @@ function paneWidgetId(value) {
   throw new PaneWidgetRefusal(
     "unknown-widget",
     `"${value}" is not a widget. Available: ${PANE_WIDGET_IDS.join(", ")}.`
+  );
+}
+function paneWidgetIdForFile(fileName) {
+  const extension = extname(fileName).toLowerCase();
+  if ([".md", ".markdown"].includes(extension)) return "markdown";
+  if (IMAGE_MEDIA_BY_EXTENSION.has(extension)) return "image";
+  if (extension === ".json") return "card";
+  const name = basename16(fileName) || fileName || "input";
+  throw new PaneWidgetRefusal(
+    "unsupported-source",
+    `tmux-ide cannot infer how to show "${name}". Supported: Markdown (.md, .markdown), raster images (${[...IMAGE_MEDIA_BY_EXTENSION.keys()].join(", ")}), and declarative cards (.json).`
   );
 }
 var PaneWidgetRefusal, IMAGE_MEDIA_BY_EXTENSION, PANE_WIDGET_IMAGE_MAX_BYTES, PANE_WIDGET_IDS, PANE_WIDGET_RESTORE_SEQUENCE;
@@ -46694,6 +46706,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "cheatsheet",
   "welcome",
   "menu",
+  "show",
   "popup",
   "sidebar-toggle",
   "worktree",
@@ -46763,6 +46776,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide menu")} [--client N]  ${dim3("Open the right-click actions menu (\u2325m / right-click any pane or the bar)")}
   ${cyan2("tmux-ide popup")} <widget>     ${dim3("Open a widget as a floating panel (explorer/changes/config; \u2325e/\u2325g/\u2325,)")}
   ${cyan2("tmux-ide widget")} <markdown|image|card> [file]  ${dim3("Render rich live content in the current pane")}
+  ${cyan2("tmux-ide show")} <file>          ${dim3("Show Markdown, images, GIFs, or cards by file type")}
   ${cyan2("tmux-ide sidebar-toggle")} [--session S]  ${dim3("Toggle the app nav column (\u2325b on adopted sessions)")}
   ${cyan2("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim3("Add a git worktree (new branch) + open a session in it")}
@@ -46776,7 +46790,8 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide update")} [--dry-run] ${dim3("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan2("tmux-ide update --manifests")} ${dim3("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan2("tmux-ide skill-sync")}         ${dim3("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
-  ${cyan2("tmux-ide widget <name> [file]")} ${dim3("Render markdown or an image inside this pane (Ctrl-C restores it)")}
+  ${cyan2("tmux-ide show <file>")}          ${dim3("Show rich content inside this pane (Ctrl-C restores it)")}
+  ${cyan2("tmux-ide widget <name> [file]")} ${dim3("Low-level explicit rich-content command")}
   ${cyan2("tmux-ide validate")} [--json]  ${dim3("Validate workspace config")}
   ${cyan2("tmux-ide detect")} [--json]    ${dim3("Detect project stack")}
   ${cyan2("tmux-ide detect --write")}     ${dim3("Detect and write .tmux-ide/workspace.yml")}
@@ -47959,6 +47974,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       }
       break;
     }
+    case "show":
     case "widget": {
       const {
         PaneWidgetRefusal: PaneWidgetRefusal2,
@@ -47968,7 +47984,8 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         buildMarkdownAnnouncement: buildMarkdownAnnouncement2,
         buildMarkdownAssetAnnouncement: buildMarkdownAssetAnnouncement2,
         imageMediaTypeFor: imageMediaTypeFor2,
-        paneWidgetId: paneWidgetId2
+        paneWidgetId: paneWidgetId2,
+        paneWidgetIdForFile: paneWidgetIdForFile2
       } = await Promise.resolve().then(() => (init_pane_widget(), pane_widget_exports));
       const { publishWidgetAsset: publishWidgetAsset2, WidgetAssetStoreError: WidgetAssetStoreError2 } = await Promise.resolve().then(() => (init_widget_asset_store(), widget_asset_store_exports));
       const { readFileSync: readFileSync29, watchFile, unwatchFile } = await import("node:fs");
@@ -47982,8 +47999,12 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       let watchedFile = null;
       let refreshAnnouncement = null;
       try {
-        const id = paneWidgetId2(positionals[1] ?? "");
-        const file = positionals[2];
+        const friendlyShow = command === "show";
+        const file = friendlyShow ? positionals[1] : positionals[2];
+        if (friendlyShow && !file) {
+          throw new PaneWidgetRefusal2("empty", "Usage: tmux-ide show <file>");
+        }
+        const id = friendlyShow ? paneWidgetIdForFile2(file ?? "") : paneWidgetId2(positionals[1] ?? "");
         if (id === "markdown") {
           if (file) {
             const publish = () => {
@@ -48045,7 +48066,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             process.stdout.write(PANE_WIDGET_RESTORE_SEQUENCE2 + refresh());
           } catch (error) {
             process.stderr.write(
-              `tmux-ide widget could not refresh: ${error.message}
+              `tmux-ide ${command} could not refresh: ${error.message}
 `
             );
           }
