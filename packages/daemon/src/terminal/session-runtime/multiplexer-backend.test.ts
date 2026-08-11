@@ -188,7 +188,10 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
       axis: "cols",
       cells: 80,
     });
-    await Promise.all([h.backend.mutate(mutation), h.backend.mutate(mutation)]);
+    await Promise.all([
+      h.backend.mutate(mutation, undefined, undefined, true),
+      h.backend.mutate(mutation, undefined, undefined, true),
+    ]);
     expect(h.connect).toHaveBeenCalledOnce();
     expect(h.submitIntent).toHaveBeenCalledTimes(2);
     expect(h.submitIntent.mock.calls.map((call) => call[1])).toEqual([
@@ -231,6 +234,9 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
         axis: "cols",
         cells: 80,
       }),
+      undefined,
+      undefined,
+      true,
     );
     expect(registry.activeControllerLeaseCount()).toBe(0);
     const gui = registry.connect("alpha-session", "terminal-attachment", "host:gui");
@@ -270,6 +276,9 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
           axis: "cols",
           cells: 80,
         }),
+        undefined,
+        undefined,
+        true,
       ),
     ).rejects.toBe(refusal);
     await typed.registry.dispose();
@@ -284,6 +293,9 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
           axis: "cols",
           cells: 80,
         }),
+        undefined,
+        undefined,
+        true,
       ),
     ).rejects.toBeInstanceOf(SessionRuntimeIntentError);
     await generic.registry.dispose();
@@ -293,7 +305,7 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
     const h = rig();
     const verbs = intents();
     for (const [index, intent] of verbs.entries()) {
-      await h.backend.mutate(request(intent, OPERATION_IDS[index]!));
+      await h.backend.mutate(request(intent, OPERATION_IDS[index]!), undefined, undefined, true);
     }
 
     expect(h.connect).toHaveBeenCalledTimes(verbs.length);
@@ -309,7 +321,7 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
     );
     expect(
       h.submitIntent.mock.calls.find((call) => call[2].verb === "workspace.pane.send")?.[2],
-    ).toMatchObject({ origin: "sdk" });
+    ).toMatchObject({ origin: "gui" });
   });
 
   it("uses an exact live authenticated host grant and never manufactures an owner", async () => {
@@ -334,7 +346,7 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
 
     await h.backend.mutate(request(intent), "host-a");
     expect(h.submitAuthenticatedIntent).toHaveBeenCalledOnce();
-    expect(h.submitAuthenticatedIntent.mock.calls[0]![2]).toMatchObject({ origin: "gui" });
+    expect(h.submitAuthenticatedIntent.mock.calls[0]![2]).toEqual(intent);
     expect(h.submitIntent).not.toHaveBeenCalled();
     expect(h.connect).toHaveBeenCalledTimes(1);
     await binding.close();
@@ -377,6 +389,23 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
     );
     expect(h.connect).not.toHaveBeenCalled();
     expect(h.submitPaneCredentialIntent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a direct semantic mutation with no authenticated principal", async () => {
+    const h = rig();
+    await expect(
+      h.backend.mutate(
+        request({
+          verb: "workspace.pane.resize",
+          workspaceName: "alpha",
+          semanticPaneId: "pane.alpha",
+          axis: "cols",
+          cells: 80,
+        }),
+      ),
+    ).rejects.toThrow("requires a live host, pane, or owner principal");
+    expect(h.connect).not.toHaveBeenCalled();
+    expect(h.submitIntent).not.toHaveBeenCalled();
   });
 
   it("re-resolves a pane credential at the final effect boundary", async () => {

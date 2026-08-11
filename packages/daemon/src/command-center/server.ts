@@ -29,6 +29,7 @@ import { IdeConfigSchema } from "../schemas/ide-config.ts";
 import { getLogBuffer, subscribeLogs, type LogEntry } from "../lib/log.ts";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { isSemanticMultiplexerActionName } from "./actions/semantic-multiplexer-actions.ts";
 import {
   getDefaultWorkspaceRegistry,
   WorkspaceAlreadyExistsError,
@@ -80,7 +81,8 @@ import { AuthService } from "../lib/auth/auth-service.ts";
 import { authMiddleware } from "../lib/auth/middleware.ts";
 import type { AuthConfig } from "../lib/auth/types.ts";
 import { handleWsEventsConnection, broadcastInitOutput, broadcastInitError } from "./ws-events.ts";
-import { createActionDispatcher } from "./actions/dispatcher.ts";
+import { createActionDispatcher, markActionOwnerAuthorized } from "./actions/dispatcher.ts";
+import { PANE_SOURCE_CREDENTIAL_HEADER } from "../lib/pane-source-credentials.ts";
 import {
   listProjects,
   getProject,
@@ -287,6 +289,7 @@ const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">
   "workspace.rename": "owner-and-operation-id",
   "workspace.pane.zoom.toggle": "owner-and-operation-id",
   "workspace.pane.select": "owner-and-operation-id",
+  "workspace.pane.send": "owner-and-operation-id",
   "workspace.pane.swap": "owner-and-operation-id",
   "workspace.pane.resize": "owner-and-operation-id",
   "project.launch": "owner",
@@ -306,8 +309,15 @@ function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
     const actionName = c.req.param("name");
     const requirement = actionName ? GATED_ACTIONS[actionName] : undefined;
     if (!requirement) return next();
-    const denied = gate(c);
-    if (denied) return denied;
+    const semanticPrincipal =
+      isSemanticMultiplexerActionName(actionName ?? "") &&
+      (c.req.header("X-Tmux-Ide-Host-Client-Id") !== undefined ||
+        c.req.header(PANE_SOURCE_CREDENTIAL_HEADER) !== undefined);
+    if (!semanticPrincipal) {
+      const denied = gate(c);
+      if (denied) return denied;
+      markActionOwnerAuthorized(c);
+    }
     if (
       requirement === "owner-and-operation-id" &&
       !z.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success

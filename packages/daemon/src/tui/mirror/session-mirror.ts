@@ -40,10 +40,6 @@ import { initialWindowSizeCommands, windowSizeClaimNeedsCorrection } from "./win
 import type { WidgetMarker } from "@tmux-ide/contracts";
 import { tapInputOutput, tapRepin, tapResize } from "./perf-tap.ts";
 import {
-  INTERNAL_READ_OPERATION_MARKER,
-  INTERNAL_READ_OPERATION_OPTION,
-} from "../../lib/tmux-interaction-options.ts";
-import {
   parseLayout,
   parseLayoutChange,
   parseWindowPaneChanged,
@@ -848,15 +844,10 @@ export class SessionMirror {
       const mirror = this.mirrors.get(pane.id);
       if (!mirror) continue;
       const seedReply = this.client
-        .commandList(
-          `set-option -p -t ${pane.id} ${INTERNAL_READ_OPERATION_OPTION} ${INTERNAL_READ_OPERATION_MARKER} ; capture-pane -p -e -J -S -2000 -t ${pane.id}`,
-          2,
-          1,
-        )
+        // This OpenTUI process cannot redeem the daemon's in-memory internal
+        // read registrations. Keep the capture unmarked and honestly external.
+        .command(`capture-pane -p -e -J -S -2000 -t ${pane.id}`)
         .catch(() => {
-          // A successful capture consumes the marker in after-capture-pane.
-          // The command-list makes mark + capture indivisible to other clients.
-          this.client.send(`set-option -pu -t ${pane.id} ${INTERNAL_READ_OPERATION_OPTION}`);
           return [] as string[];
         });
       // The pane's REAL cursor (D2): the seed replay leaves xterm's cursor

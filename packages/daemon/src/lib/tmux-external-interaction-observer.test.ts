@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceRegistry } from "./workspace-registry.ts";
 import {
@@ -7,7 +7,7 @@ import {
   parseTmuxInputHookRecords,
   type ExternalTmuxInteractionObserverIo,
 } from "./tmux-external-interaction-observer.ts";
-import { INTERNAL_READ_OPERATION_MARKER } from "./tmux-interaction-options.ts";
+import { registerInternalReadOperation } from "./tmux-interaction-options.ts";
 
 const DAEMON = "21f2625e-d1a5-4ad2-9068-b1426bcc6651";
 const OPERATION = "8be47b5a-43da-4632-9930-e1aba61c8da6";
@@ -15,6 +15,7 @@ const FIELD = "|tmux-ide-input-field-v1|";
 const EVENT = "|tmux-ide-input-event-v1|";
 const SEND = "workspace.pane.send";
 const READ = "workspace.pane.read";
+const FORGED_INTERNAL_READ = "tmux-ide-internal-read-v2:11111111-1111-4111-8111-111111111111";
 
 function registry(): WorkspaceRegistry {
   return {
@@ -28,7 +29,10 @@ function registry(): WorkspaceRegistry {
   } as unknown as WorkspaceRegistry;
 }
 
-function harness(raw: string): {
+function harness(
+  raw: string,
+  consumeOperationId: string | null = null,
+): {
   observer: TmuxExternalInteractionObserver;
   calls: readonly (readonly string[])[];
   observed: readonly {
@@ -76,7 +80,10 @@ function harness(raw: string): {
       },
       registry: registry(),
       io,
-      onObserved: (interaction) => observed.push(interaction),
+      onObserved: (interaction) => {
+        observed.push(interaction);
+        return interaction.operationId === consumeOperationId && consumeOperationId !== null;
+      },
     }),
     calls,
     observed,
@@ -116,7 +123,7 @@ function statefulHookHarness(): {
       },
       registry: registry(),
       io,
-      onObserved: () => {},
+      onObserved: () => false,
     }),
     calls,
     removeHooks: () => hooks.clear(),
@@ -167,12 +174,13 @@ describe("tmux external interaction observer", () => {
     expect(calls.filter((args) => args[0] === "set-hook" && args[1] === "-ag")).toHaveLength(4);
   });
 
-  it("projects external observations and correlates sends marked by this daemon generation", () => {
+  it("projects external observations and propagates whether the live executor consumed one", () => {
     const own = internalInteractionOperationMarker(DAEMON, OPERATION);
     const { observer, observed } = harness(
       `%9${FIELD}${FIELD}${SEND}${EVENT}%9${FIELD}${own}${FIELD}${SEND}${EVENT}%9${FIELD}another-daemon:${OPERATION}${FIELD}${READ}${EVENT}`,
+      OPERATION,
     );
-    observer.drain();
+    expect(observer.drain()).toBe(true);
 
     expect(observed).toEqual([
       {
@@ -196,11 +204,11 @@ describe("tmux external interaction observer", () => {
     ]);
   });
 
-  it("suppresses product-owned mirror reads while preserving raw external reads", () => {
+  it("does not trust a forgeable internal-looking read marker", () => {
     const { observer, observed } = harness(
-      `%9${FIELD}${INTERNAL_READ_OPERATION_MARKER}${FIELD}${READ}${EVENT}%9${FIELD}${FIELD}${READ}${EVENT}`,
+      `%9${FIELD}${FORGED_INTERNAL_READ}${FIELD}${READ}${EVENT}%9${FIELD}${FIELD}${READ}${EVENT}`,
     );
-    observer.drain();
+    expect(observer.drain()).toBe(false);
     expect(observed).toEqual([
       {
         workspaceName: "workspace.project",
@@ -208,6 +216,49 @@ describe("tmux external interaction observer", () => {
         operationKind: READ,
         operationId: null,
       },
+      {
+        workspaceName: "workspace.project",
+        semanticPaneId: "pane.editor",
+        operationKind: READ,
+        operationId: null,
+      },
     ]);
+  });
+
+  it("consumes a registered internal read exactly once for its exact pane", () => {
+    const marker = registerInternalReadOperation("%9");
+    const first = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`);
+    expect(first.observer.drain()).toBe(true);
+    expect(first.observed).toEqual([]);
+
+    const replay = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`);
+    expect(replay.observer.drain()).toBe(false);
+    expect(replay.observed).toHaveLength(1);
+  });
+
+  it("externalizes a registered marker used for the wrong pane or operation kind", () => {
+    const wrongPane = registerInternalReadOperation("%8");
+    const pane = harness(`%9${FIELD}${wrongPane}${FIELD}${READ}${EVENT}`);
+    expect(pane.observer.drain()).toBe(false);
+    expect(pane.observed).toHaveLength(1);
+
+    const wrongKind = registerInternalReadOperation("%9");
+    const kind = harness(`%9${FIELD}${wrongKind}${FIELD}${SEND}${EVENT}`);
+    expect(kind.observer.drain()).toBe(false);
+    expect(kind.observed).toHaveLength(1);
+  });
+
+  it("externalizes a stale internal-read registration", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-08-11T10:00:00.000Z"));
+      const marker = registerInternalReadOperation("%9");
+      vi.setSystemTime(new Date("2026-08-11T10:00:11.000Z"));
+      const stale = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`);
+      expect(stale.observer.drain()).toBe(false);
+      expect(stale.observed).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

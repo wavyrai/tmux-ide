@@ -46,6 +46,7 @@ import type { WorkspaceMultiplexerBackend } from "./handlers/workspace-multiplex
 import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
 import type { WorkspacePromotionBackend } from "./handlers/workspace-promote.ts";
 import type { AppWindowMutationBackend } from "./handlers/app-window-mutate.ts";
+import { isSemanticMultiplexerActionName } from "./semantic-multiplexer-actions.ts";
 
 export interface DispatcherDeps {
   /** Override the WS broadcaster (tests / non-default daemons). */
@@ -68,9 +69,28 @@ export interface DispatcherDeps {
   workspaceMultiplexerBackend?: WorkspaceMultiplexerBackend;
 }
 
+const ownerAuthorizedContexts = new WeakSet<object>();
+
+/** Stamp set only by the owner-auth middleware after bearer verification. */
+export function markActionOwnerAuthorized(context: object): void {
+  ownerAuthorizedContexts.add(context);
+}
+
 interface DispatchOk {
   ok: true;
   result: unknown;
+}
+
+export function shouldBroadcastGenericActionComplete(
+  actionName: ActionName,
+  result: unknown,
+  unchangedAppWindowMutation: boolean,
+): boolean {
+  if (unchangedAppWindowMutation) return false;
+  return !(
+    isSemanticMultiplexerActionName(actionName) &&
+    WorkspaceMultiplexerMutationResultSchemaZ.safeParse(result).success
+  );
 }
 
 function resourceChangesForAction(
@@ -285,6 +305,7 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       daemonInstanceId: deps.daemonInstanceId,
       hostClientId: c.req.header("X-Tmux-Ide-Host-Client-Id"),
       sourcePaneCredential: c.req.header(PANE_SOURCE_CREDENTIAL_HEADER),
+      ownerAuthorized: ownerAuthorizedContexts.has(c),
       workspacePaneCreationBackend: deps.workspacePaneCreationBackend,
       workspaceOpenBackend: deps.workspaceOpenBackend,
       workspacePromotionBackend: deps.workspacePromotionBackend,
@@ -314,7 +335,13 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       outputParsed.data !== null &&
       "outcome" in outputParsed.data &&
       outputParsed.data.outcome === "unchanged";
-    if (!unchangedAppWindowMutation) {
+    if (
+      shouldBroadcastGenericActionComplete(
+        actionName,
+        outputParsed.data,
+        unchangedAppWindowMutation,
+      )
+    ) {
       // Fire-and-forget: subscribers learn about durable state changes via WS.
       try {
         broadcast(actionName, outputParsed.data);

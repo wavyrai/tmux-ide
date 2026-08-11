@@ -102,6 +102,8 @@ try {
     "SessionRuntimeSourcePaneBinding",
     "executeAuthorized",
     "The daemon has reached its bounded multiplexer operation capacity.",
+    "tmux-ide-internal-read-v1",
+    "withTrustedOrigin",
   ]) {
     if (installedBundle.includes(removed)) {
       throw new Error(`Installed CLI still contains removed authority architecture: ${removed}`);
@@ -112,6 +114,9 @@ try {
     "X-Tmux-Ide-Pane-Source-Credential",
     "X-Tmux-Ide-Host-Client-Id",
     "submitPaneCredentialIntent",
+    "SessionSemanticMutationExecutor",
+    "registerInternalReadOperation",
+    "Semantic mutation requires a live host, pane, or owner principal",
   ]) {
     if (!installedBundle.includes(required)) {
       throw new Error(

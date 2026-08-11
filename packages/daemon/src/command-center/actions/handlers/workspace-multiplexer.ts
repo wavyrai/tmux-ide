@@ -23,6 +23,7 @@ export interface WorkspaceMultiplexerBackend {
     input: WorkspaceMultiplexerMutationRequest,
     authenticatedHostClientId?: string,
     sourcePaneCredential?: string,
+    ownerAuthorized?: boolean,
   ): Promise<WorkspaceMultiplexerMutationResult>;
 }
 
@@ -51,9 +52,12 @@ async function runVerb(
       expectedDaemonInstanceId: context.daemonInstanceId,
       intent: { ...input, verb } as WorkspaceMultiplexerIntent,
     };
-    return context.hostClientId || context.sourcePaneCredential
-      ? await authority.mutate(request, context.hostClientId, context.sourcePaneCredential)
-      : await authority.mutate(request);
+    return await authority.mutate(
+      request,
+      context.hostClientId,
+      context.sourcePaneCredential,
+      context.ownerAuthorized,
+    );
   } catch (error) {
     if (!(error instanceof WorkspaceMultiplexerError)) throw error;
     throw new ActionError({

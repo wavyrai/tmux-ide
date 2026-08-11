@@ -7,7 +7,7 @@ import type { WorkspacePaneTmuxAuthority } from "./workspace-pane-creation.ts";
 import { createPinnedWorkspaceTmuxRunner } from "./workspace-pane-creation.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
 import {
-  INTERNAL_READ_OPERATION_MARKER,
+  consumeInternalReadOperation,
   INTERNAL_READ_OPERATION_OPTION,
   INTERNAL_SEND_OPERATION_OPTION,
 } from "./tmux-interaction-options.ts";
@@ -141,7 +141,7 @@ export class TmuxExternalInteractionObserver {
   readonly #daemonInstanceId: string;
   readonly #registry: WorkspaceRegistry;
   readonly #io: ExternalTmuxInteractionObserverIo;
-  readonly #onObserved: (interaction: ExternalTmuxInteraction) => void;
+  readonly #onObserved: (interaction: ExternalTmuxInteraction) => boolean;
   readonly #bufferName: string;
   readonly #signalChannel: string;
   readonly #tmuxCommandPrefix: readonly string[];
@@ -157,7 +157,12 @@ export class TmuxExternalInteractionObserver {
     tmuxAuthority: WorkspacePaneTmuxAuthority;
     registry?: WorkspaceRegistry;
     io?: Partial<ExternalTmuxInteractionObserverIo>;
-    onObserved: (interaction: ExternalTmuxInteraction) => void;
+    /**
+     * Returns true only when a live, product-authored operation consumed the
+     * observation. Internal-looking metadata is not authority: a false return
+     * must fall through to the caller's honest external-observation path.
+     */
+    onObserved: (interaction: ExternalTmuxInteraction) => boolean;
   }) {
     this.#daemonInstanceId = options.daemonInstanceId;
     this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
@@ -257,12 +262,12 @@ export class TmuxExternalInteractionObserver {
   }
 
   /** Atomically detach and drain the current event buffer. */
-  drain(): void {
+  drain(): boolean {
     const drainName = `${this.#bufferName}-drain-${++this.#drainSequence}`;
     try {
       this.#io.runTmux(["set-buffer", "-b", this.#bufferName, "-n", drainName]);
     } catch {
-      return;
+      return false;
     }
     let raw: string;
     try {
@@ -270,7 +275,11 @@ export class TmuxExternalInteractionObserver {
     } finally {
       this.#deleteBuffer(drainName);
     }
-    for (const record of parseTmuxInputHookRecords(raw)) this.#project(record);
+    let consumed = false;
+    for (const record of parseTmuxInputHookRecords(raw)) {
+      consumed = this.#project(record) || consumed;
+    }
+    return consumed;
   }
 
   async #run(): Promise<void> {
@@ -289,12 +298,15 @@ export class TmuxExternalInteractionObserver {
     }
   }
 
-  #project(record: TmuxInputHookRecord): void {
+  #project(record: TmuxInputHookRecord): boolean {
     if (
-      record.operationKind === "workspace.pane.read" &&
-      record.operationMarker === INTERNAL_READ_OPERATION_MARKER
+      consumeInternalReadOperation(
+        record.operationMarker,
+        record.runtimePaneId,
+        record.operationKind,
+      )
     ) {
-      return;
+      return true;
     }
     const ownPrefix = `${this.#daemonInstanceId}:`;
     const authoredOperationId = record.operationMarker?.startsWith(ownPrefix)
@@ -311,16 +323,16 @@ export class TmuxExternalInteractionObserver {
         `#{session_name}\t#{${"@tmux_ide_pane_id"}}`,
       ]);
     } catch {
-      return;
+      return false;
     }
     const separator = identity.indexOf("\t");
-    if (separator < 1) return;
+    if (separator < 1) return false;
     const sessionName = identity.slice(0, separator);
     const semanticPaneId = identity.slice(separator + 1);
-    if (!WorkspacePaneCreationReferenceSchemaZ.safeParse(semanticPaneId).success) return;
+    if (!WorkspacePaneCreationReferenceSchemaZ.safeParse(semanticPaneId).success) return false;
     const workspace = this.#registry.list().find((entry) => entry.sessionName === sessionName);
-    if (!workspace) return;
-    this.#onObserved({
+    if (!workspace) return false;
+    return this.#onObserved({
       workspaceName: workspace.name,
       semanticPaneId,
       operationKind: record.operationKind,

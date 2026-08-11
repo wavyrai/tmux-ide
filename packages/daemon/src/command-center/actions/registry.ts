@@ -81,12 +81,15 @@ export interface ActionExecutionContext {
       input: WorkspaceMultiplexerMutationRequest,
       authenticatedHostClientId?: string,
       sourcePaneCredential?: string,
+      ownerAuthorized?: boolean,
     ): Promise<WorkspaceMultiplexerMutationResult>;
   };
   /** Owner-authenticated host principal injected outside request JSON. */
   readonly hostClientId?: string;
   /** Generation-scoped local tmux pane proof, carried only in a header. */
   readonly sourcePaneCredential?: string;
+  /** Verified owner bearer fact injected by middleware, never request JSON. */
+  readonly ownerAuthorized?: boolean;
 }
 
 export type ActionHandler<N extends ActionName> = (

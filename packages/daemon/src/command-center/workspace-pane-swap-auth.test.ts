@@ -78,10 +78,39 @@ describe("workspace pane swap host capability", () => {
       ok: true,
       result: { verb: "workspace.pane.swap", outcome: "applied", ...INPUT },
     });
-    expect(mutate).toHaveBeenCalledWith({
-      operationId: OPERATION_ID,
-      expectedDaemonInstanceId: expect.any(String),
-      intent: { verb: "workspace.pane.swap", ...INPUT },
+    expect(mutate).toHaveBeenCalledWith(
+      {
+        operationId: OPERATION_ID,
+        expectedDaemonInstanceId: expect.any(String),
+        intent: { verb: "workspace.pane.swap", ...INPUT },
+      },
+      undefined,
+      undefined,
+      true,
+    );
+  });
+
+  it("does not treat loopback as owner authority for pane sends", async () => {
+    const mutate = vi.fn();
+    const app = createApp({
+      remoteAccess: { ownerToken: HOST_TOKEN },
+      workspaceMultiplexerBackend: { mutate },
     });
+    const response = await app.request("http://127.0.0.1/api/v2/action/workspace.pane.send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": OPERATION_ID,
+      },
+      body: JSON.stringify({
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.target",
+        text: "hello",
+        submit: true,
+        origin: "sdk",
+      }),
+    });
+    expect(response.status).toBe(401);
+    expect(mutate).not.toHaveBeenCalled();
   });
 });
