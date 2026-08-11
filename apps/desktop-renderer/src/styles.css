@@ -6508,12 +6508,12 @@ kbd {
   background: var(--tmux-ide-status-info);
 }
 
-.pane-tile__interaction[data-phase="applied"] > i,
 .pane-tile__interaction[data-phase="observed"] > i {
   background: var(--tmux-ide-status-success);
 }
 
-.pane-tile__interaction[data-phase="failed"] > i {
+.pane-tile__interaction[data-phase="rejected"] > i,
+.pane-tile__interaction[data-phase="timed-out"] > i {
   background: var(--tmux-ide-status-danger);
 }
 
@@ -6584,7 +6584,8 @@ kbd {
   font-size: var(--sf-text-caption-3);
 }
 
-.pane-tile__communication[data-phase="failed"] {
+.pane-tile__communication[data-phase="rejected"],
+.pane-tile__communication[data-phase="timed-out"] {
   border-color: color-mix(in display-p3, var(--tmux-ide-status-danger) 60%, transparent);
 }
 
@@ -6655,11 +6656,11 @@ kbd {
   border-radius: 50%;
   background: var(--tmux-ide-status-info);
 }
-.interaction-activity li[data-phase="applied"] > i,
 .interaction-activity li[data-phase="observed"] > i {
   background: var(--tmux-ide-status-success);
 }
-.interaction-activity li[data-phase="failed"] > i {
+.interaction-activity li[data-phase="rejected"] > i,
+.interaction-activity li[data-phase="timed-out"] > i {
   background: var(--tmux-ide-status-danger);
 }
 .interaction-activity li > span {

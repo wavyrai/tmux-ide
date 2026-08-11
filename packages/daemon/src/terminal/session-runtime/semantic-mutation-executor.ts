@@ -325,8 +325,9 @@ export class SessionSemanticMutationExecutor {
   ): void {
     const summary =
       intent.verb === "workspace.pane.read"
-        ? ({ observedOnly: true } as const)
+        ? ({ operationKind: intent.verb, observedOnly: true } as const)
         : {
+            operationKind: intent.verb,
             characterCount: Array.from(intent.text).length,
             byteCount: Buffer.byteLength(intent.text, "utf8"),
             submitted: intent.submit,
@@ -337,10 +338,14 @@ export class SessionSemanticMutationExecutor {
         origin: intent.origin,
         workspaceName: intent.workspaceName,
         sourceSemanticPaneId: phase === "observed" ? authenticatedSourceSemanticPaneId : null,
-        semanticPaneId: intent.semanticPaneId,
+        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
         operationKind: intent.verb,
         phase,
         summary,
+        proof:
+          phase === "observed"
+            ? { operationKind: intent.verb, observed: true, semanticPaneId: intent.semanticPaneId }
+            : null,
         at: (this.#options.now ?? (() => new Date()))().toISOString(),
         resourceRevision: null,
       }),

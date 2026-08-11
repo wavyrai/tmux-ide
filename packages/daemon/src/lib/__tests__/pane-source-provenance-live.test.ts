@@ -180,7 +180,8 @@ describe.skipIf(!hasTmux).sequential("authenticated pane provenance, full daemon
         frame.type === "interaction.receipt" &&
         frame.origin === "cli" &&
         frame.phase === "observed" &&
-        frame.semanticPaneId === "pane.tests",
+        frame.target.kind === "pane" &&
+        frame.target.semanticPaneId === "pane.tests",
     )) as InteractionReceipt;
     expect(observed.sourceSemanticPaneId).toBe("pane.editor");
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -188,7 +189,8 @@ describe.skipIf(!hasTmux).sequential("authenticated pane provenance, full daemon
       events.frames.filter(
         (frame) =>
           frame.type === "interaction.receipt" &&
-          frame.semanticPaneId === "pane.tests" &&
+          frame.target.kind === "pane" &&
+          frame.target.semanticPaneId === "pane.tests" &&
           frame.origin === "external" &&
           frame.operationKind === "workspace.pane.send",
       ),
@@ -210,7 +212,8 @@ describe.skipIf(!hasTmux).sequential("authenticated pane provenance, full daemon
       (frame) =>
         frame.type === "interaction.receipt" &&
         frame.origin === "external" &&
-        frame.semanticPaneId === "pane.tests",
+        frame.target.kind === "pane" &&
+        frame.target.semanticPaneId === "pane.tests",
     )) as InteractionReceipt;
     expect(external).toMatchObject({ phase: "observed", sourceSemanticPaneId: null });
 

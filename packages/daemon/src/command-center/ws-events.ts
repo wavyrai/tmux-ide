@@ -146,10 +146,11 @@ export interface InteractionReceiptBroadcast {
   readonly origin: InteractionOrigin;
   readonly workspaceName: string;
   readonly sourceSemanticPaneId?: string | null;
-  readonly semanticPaneId: string;
-  readonly operationKind?: InteractionReceipt["operationKind"];
+  readonly target: InteractionReceipt["target"];
+  readonly operationKind: InteractionReceipt["operationKind"];
   readonly phase: InteractionReceipt["phase"];
   readonly summary: InteractionSafeSummary;
+  readonly proof: InteractionReceipt["proof"];
   readonly resourceRevision?: number | null;
   readonly at?: string;
 }
@@ -167,10 +168,11 @@ export function broadcastInteractionReceipt(
     origin: receipt.origin,
     workspaceName: receipt.workspaceName,
     sourceSemanticPaneId: receipt.sourceSemanticPaneId ?? null,
-    semanticPaneId: receipt.semanticPaneId,
-    operationKind: receipt.operationKind ?? "workspace.pane.send",
+    target: receipt.target,
+    operationKind: receipt.operationKind,
     phase: receipt.phase,
     summary: receipt.summary,
+    proof: receipt.proof,
     at: receipt.at ?? new Date().toISOString(),
     resourceRevision: receipt.resourceRevision ?? null,
   });

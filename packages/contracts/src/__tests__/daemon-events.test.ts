@@ -10,10 +10,20 @@ describe("daemon event contracts", () => {
       origin: "sdk",
       workspaceName: "workspace.alpha",
       sourceSemanticPaneId: null,
-      semanticPaneId: "pane.editor",
+      target: { kind: "pane", semanticPaneId: "pane.editor" },
       operationKind: "workspace.pane.send",
-      phase: "applied",
-      summary: { characterCount: 14, byteCount: 14, submitted: true },
+      phase: "observed",
+      summary: {
+        operationKind: "workspace.pane.send",
+        characterCount: 14,
+        byteCount: 14,
+        submitted: true,
+      },
+      proof: {
+        operationKind: "workspace.pane.send",
+        observed: true,
+        semanticPaneId: "pane.editor",
+      },
       at: "2026-08-10T10:00:00.000Z",
       resourceRevision: null,
     } as const;
@@ -33,7 +43,12 @@ describe("daemon event contracts", () => {
         origin: "external",
         operationKind: "workspace.pane.read",
         phase: "observed",
-        summary: { observedOnly: true },
+        summary: { operationKind: "workspace.pane.read", observedOnly: true },
+        proof: {
+          operationKind: "workspace.pane.read",
+          observed: true,
+          semanticPaneId: "pane.editor",
+        },
       }).success,
     ).toBe(true);
     expect(
@@ -41,6 +56,11 @@ describe("daemon event contracts", () => {
         ...receipt,
         operationKind: "workspace.pane.read",
         summary: receipt.summary,
+        proof: {
+          operationKind: "workspace.pane.read",
+          observed: true,
+          semanticPaneId: "pane.editor",
+        },
       }).success,
     ).toBe(false);
     expect(
@@ -48,7 +68,7 @@ describe("daemon event contracts", () => {
         ...receipt,
         origin: "external",
         phase: "observed",
-        summary: { observedOnly: true },
+        summary: { operationKind: "workspace.pane.send", observedOnly: true },
       }).success,
     ).toBe(true);
     expect(

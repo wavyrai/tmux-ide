@@ -4887,7 +4887,7 @@ var init_desktop_workspace_name = __esm({
 
 // packages/contracts/src/interaction-receipts.ts
 import { z as z30 } from "zod";
-var InteractionOriginSchemaZ, AuthoredInteractionOriginSchemaZ, InteractionOperationKindSchemaZ, InteractionPhaseSchemaZ, KnownPaneSendSafeSummarySchemaZ, ObservedPaneSendSafeSummarySchemaZ, PaneSendSafeSummarySchemaZ, PaneReadSafeSummarySchemaZ, InteractionSafeSummarySchemaZ, InteractionReceiptSchemaZ;
+var InteractionOriginSchemaZ, AuthoredInteractionOriginSchemaZ, InteractionOperationKindSchemaZ, InteractionPhaseSchemaZ, InteractionWindowReferenceSchemaZ, InteractionTargetSchemaZ, MutationOutcomeSchemaZ, InteractionSafeSummarySchemaZ, InteractionProofSchemaZ, InteractionReceiptSchemaZ;
 var init_interaction_receipts = __esm({
   "packages/contracts/src/interaction-receipts.ts"() {
     "use strict";
@@ -4896,33 +4896,126 @@ var init_interaction_receipts = __esm({
     InteractionOriginSchemaZ = z30.enum(["gui", "tui", "cli", "sdk", "external"]);
     AuthoredInteractionOriginSchemaZ = z30.enum(["gui", "tui", "cli", "sdk"]);
     InteractionOperationKindSchemaZ = z30.enum([
+      "workspace.window.split",
+      "workspace.window.kill",
+      "workspace.pane.kill",
+      "workspace.session.kill",
+      "workspace.rename",
+      "workspace.pane.zoom.toggle",
+      "workspace.pane.select",
       "workspace.pane.send",
+      "workspace.pane.swap",
+      "workspace.pane.resize",
       "workspace.pane.read"
     ]);
-    InteractionPhaseSchemaZ = z30.enum([
-      "accepted",
-      "applied",
-      "observed",
-      "rejected",
-      "timed-out",
-      "failed"
+    InteractionPhaseSchemaZ = z30.enum(["accepted", "observed", "rejected", "timed-out"]);
+    InteractionWindowReferenceSchemaZ = z30.discriminatedUnion("by", [
+      z30.object({
+        by: z30.literal("window"),
+        semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ
+      }).strict(),
+      z30.object({ by: z30.literal("pane"), semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ }).strict()
     ]);
-    KnownPaneSendSafeSummarySchemaZ = z30.object({
-      characterCount: z30.number().int().nonnegative().max(1048576),
-      byteCount: z30.number().int().nonnegative().max(4194304),
-      submitted: z30.boolean()
-    }).strict();
-    ObservedPaneSendSafeSummarySchemaZ = z30.object({
-      observedOnly: z30.literal(true)
-    }).strict();
-    PaneSendSafeSummarySchemaZ = z30.union([
-      KnownPaneSendSafeSummarySchemaZ,
-      ObservedPaneSendSafeSummarySchemaZ
+    InteractionTargetSchemaZ = z30.discriminatedUnion("kind", [
+      z30.object({ kind: z30.literal("session") }).strict(),
+      z30.object({ kind: z30.literal("window"), target: InteractionWindowReferenceSchemaZ }).strict(),
+      z30.object({ kind: z30.literal("pane"), semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ }).strict()
     ]);
-    PaneReadSafeSummarySchemaZ = ObservedPaneSendSafeSummarySchemaZ;
+    MutationOutcomeSchemaZ = z30.enum(["applied", "unchanged", "replayed"]);
     InteractionSafeSummarySchemaZ = z30.union([
-      PaneSendSafeSummarySchemaZ,
-      PaneReadSafeSummarySchemaZ
+      z30.object({
+        operationKind: z30.literal("workspace.window.split"),
+        direction: z30.enum(["right", "down"])
+      }).strict(),
+      z30.object({ operationKind: z30.literal("workspace.window.kill") }).strict(),
+      z30.object({ operationKind: z30.literal("workspace.pane.kill") }).strict(),
+      z30.object({ operationKind: z30.literal("workspace.session.kill") }).strict(),
+      z30.object({ operationKind: z30.literal("workspace.rename"), scope: z30.enum(["session", "window"]) }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.zoom.toggle"),
+        desired: z30.enum(["toggle", "zoomed", "unzoomed"])
+      }).strict(),
+      z30.object({ operationKind: z30.literal("workspace.pane.select") }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.send"),
+        characterCount: z30.number().int().nonnegative().max(1048576),
+        byteCount: z30.number().int().nonnegative().max(4194304),
+        submitted: z30.boolean()
+      }).strict(),
+      z30.object({ operationKind: z30.literal("workspace.pane.send"), observedOnly: z30.literal(true) }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.swap"),
+        targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.resize"),
+        axis: z30.enum(["cols", "rows"]),
+        cells: z30.number().int().min(1).max(4096)
+      }).strict(),
+      z30.object({ operationKind: z30.literal("workspace.pane.read"), observedOnly: z30.literal(true) }).strict()
+    ]);
+    InteractionProofSchemaZ = z30.discriminatedUnion("operationKind", [
+      z30.object({
+        operationKind: z30.literal("workspace.window.split"),
+        outcome: MutationOutcomeSchemaZ,
+        direction: z30.enum(["right", "down"]),
+        semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.window.kill"),
+        outcome: MutationOutcomeSchemaZ,
+        remainingWindowCount: z30.number().int().positive()
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.kill"),
+        outcome: MutationOutcomeSchemaZ,
+        semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+        windowClosed: z30.boolean(),
+        remainingWindowCount: z30.number().int().positive()
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.session.kill"),
+        outcome: MutationOutcomeSchemaZ
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.rename"),
+        outcome: MutationOutcomeSchemaZ,
+        scope: z30.enum(["session", "window"])
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.zoom.toggle"),
+        outcome: MutationOutcomeSchemaZ,
+        semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+        zoomed: z30.boolean()
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.select"),
+        outcome: MutationOutcomeSchemaZ,
+        semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.send"),
+        observed: z30.literal(true),
+        semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.swap"),
+        outcome: MutationOutcomeSchemaZ,
+        sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+        targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.resize"),
+        outcome: MutationOutcomeSchemaZ,
+        semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+        axis: z30.enum(["cols", "rows"]),
+        cells: z30.number().int().positive()
+      }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.pane.read"),
+        observed: z30.literal(true),
+        semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
+      }).strict()
     ]);
     InteractionReceiptSchemaZ = z30.object({
       type: z30.literal("interaction.receipt"),
@@ -4930,20 +5023,136 @@ var init_interaction_receipts = __esm({
       operationId: z30.uuid(),
       origin: InteractionOriginSchemaZ,
       workspaceName: DesktopWorkspaceNameSchemaZ,
-      /**
-       * Authenticated source identity for an authored pane-to-pane send. This is
-       * null for raw tmux traffic and for authored sends that did not originate
-       * inside a pane. Daemon authority, never a renderer, decides when a claimed
-       * source is disclosed only after tmux observation authenticates the send.
-       */
+      /** Authenticated source identity, disclosed only for an observed authored send. */
       sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable().default(null),
-      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      target: InteractionTargetSchemaZ,
       operationKind: InteractionOperationKindSchemaZ,
       phase: InteractionPhaseSchemaZ,
       summary: InteractionSafeSummarySchemaZ,
+      proof: InteractionProofSchemaZ.nullable(),
       at: z30.iso.datetime({ offset: true }),
       resourceRevision: z30.number().int().nonnegative().nullable()
     }).strict().superRefine((receipt, context) => {
+      if (receipt.summary.operationKind !== receipt.operationKind) {
+        context.addIssue({
+          code: "custom",
+          path: ["summary", "operationKind"],
+          message: "interaction summary must match the receipt operation"
+        });
+      }
+      if (receipt.proof?.operationKind !== void 0 && receipt.proof.operationKind !== receipt.operationKind) {
+        context.addIssue({
+          code: "custom",
+          path: ["proof", "operationKind"],
+          message: "interaction proof must match the receipt operation"
+        });
+      }
+      if (receipt.phase === "observed" && receipt.proof === null) {
+        context.addIssue({
+          code: "custom",
+          path: ["proof"],
+          message: "observed receipts require proof"
+        });
+      }
+      if (receipt.phase !== "observed" && receipt.proof !== null) {
+        context.addIssue({
+          code: "custom",
+          path: ["proof"],
+          message: "only observed receipts may carry proof"
+        });
+      }
+      if (receipt.origin === "external" && !("observedOnly" in receipt.summary && receipt.summary.observedOnly)) {
+        context.addIssue({
+          code: "custom",
+          path: ["summary"],
+          message: "external observations require a presence-only summary"
+        });
+      }
+      const paneVerb = receipt.operationKind.startsWith("workspace.pane.");
+      if (paneVerb && receipt.target.kind !== "pane") {
+        context.addIssue({
+          code: "custom",
+          path: ["target"],
+          message: "pane verbs require a pane target"
+        });
+      }
+      if (receipt.operationKind === "workspace.window.split" && receipt.target.kind !== "pane") {
+        context.addIssue({
+          code: "custom",
+          path: ["target"],
+          message: "window split requires its anchor pane target"
+        });
+      }
+      if (receipt.operationKind === "workspace.window.kill" && receipt.target.kind !== "window") {
+        context.addIssue({
+          code: "custom",
+          path: ["target"],
+          message: "window kill requires a window target"
+        });
+      }
+      if (receipt.operationKind === "workspace.session.kill" && receipt.target.kind !== "session") {
+        context.addIssue({
+          code: "custom",
+          path: ["target"],
+          message: "session kill requires a session target"
+        });
+      }
+      if (receipt.operationKind === "workspace.rename") {
+        const renameSummary = receipt.summary.operationKind === "workspace.rename" ? receipt.summary : null;
+        if (renameSummary !== null && receipt.target.kind !== renameSummary.scope) {
+          context.addIssue({
+            code: "custom",
+            path: ["target"],
+            message: "rename target must match its scope"
+          });
+        }
+        const renameProof = receipt.proof?.operationKind === "workspace.rename" ? receipt.proof : null;
+        if (renameSummary !== null && renameProof !== null && renameSummary.scope !== renameProof.scope) {
+          context.addIssue({
+            code: "custom",
+            path: ["proof", "scope"],
+            message: "rename proof scope must match the request summary"
+          });
+        }
+      }
+      if (receipt.operationKind === "workspace.window.split" && receipt.summary.operationKind === "workspace.window.split" && receipt.proof?.operationKind === "workspace.window.split" && receipt.summary.direction !== receipt.proof.direction) {
+        context.addIssue({
+          code: "custom",
+          path: ["proof", "direction"],
+          message: "split proof direction must match the request summary"
+        });
+      }
+      if (receipt.operationKind.startsWith("workspace.pane.") && receipt.target.kind === "pane" && receipt.proof !== null) {
+        const proofPaneId = "semanticPaneId" in receipt.proof ? receipt.proof.semanticPaneId : receipt.proof.operationKind === "workspace.pane.swap" ? receipt.proof.sourceSemanticPaneId : null;
+        if (proofPaneId !== null && proofPaneId !== receipt.target.semanticPaneId) {
+          context.addIssue({
+            code: "custom",
+            path: ["proof"],
+            message: "interaction proof pane must match the semantic target"
+          });
+        }
+      }
+      if (receipt.operationKind === "workspace.pane.swap" && receipt.summary.operationKind === "workspace.pane.swap" && receipt.proof?.operationKind === "workspace.pane.swap" && receipt.summary.targetSemanticPaneId !== receipt.proof.targetSemanticPaneId) {
+        context.addIssue({
+          code: "custom",
+          path: ["proof", "targetSemanticPaneId"],
+          message: "swap proof target must match the request summary"
+        });
+      }
+      if (receipt.operationKind === "workspace.pane.resize" && receipt.summary.operationKind === "workspace.pane.resize" && receipt.proof?.operationKind === "workspace.pane.resize" && receipt.summary.axis !== receipt.proof.axis) {
+        context.addIssue({
+          code: "custom",
+          path: ["proof", "axis"],
+          message: "resize proof axis must match the request summary"
+        });
+      }
+      if (receipt.operationKind === "workspace.pane.zoom.toggle" && receipt.summary.operationKind === "workspace.pane.zoom.toggle" && receipt.proof?.operationKind === "workspace.pane.zoom.toggle" && receipt.summary.desired !== "toggle" && receipt.proof.zoomed !== (receipt.summary.desired === "zoomed")) {
+        context.addIssue({
+          code: "custom",
+          path: ["proof", "zoomed"],
+          message: "absolute zoom proof must match the requested state"
+        });
+      }
       if (receipt.origin === "external") {
         if (receipt.sourceSemanticPaneId !== null) {
           context.addIssue({
@@ -4952,20 +5161,13 @@ var init_interaction_receipts = __esm({
             message: "external tmux observations cannot claim a source pane"
           });
         }
-        if (receipt.phase !== "observed" || !("observedOnly" in receipt.summary)) {
+        if (receipt.phase !== "observed" || !["workspace.pane.send", "workspace.pane.read"].includes(receipt.operationKind)) {
           context.addIssue({
             code: "custom",
             path: ["phase"],
-            message: "external tmux traffic is observation-only"
+            message: "external tmux traffic is an observed pane send or read only"
           });
         }
-      }
-      if (receipt.operationKind === "workspace.pane.read" && !("observedOnly" in receipt.summary)) {
-        context.addIssue({
-          code: "custom",
-          path: ["summary"],
-          message: "pane reads are presence-only and may not retain captured content"
-        });
       }
       if (receipt.sourceSemanticPaneId !== null && receipt.phase !== "observed") {
         context.addIssue({
@@ -19233,10 +19435,11 @@ function broadcastInteractionReceipt(receipt, daemonInstanceId2) {
     origin: receipt.origin,
     workspaceName: receipt.workspaceName,
     sourceSemanticPaneId: receipt.sourceSemanticPaneId ?? null,
-    semanticPaneId: receipt.semanticPaneId,
-    operationKind: receipt.operationKind ?? "workspace.pane.send",
+    target: receipt.target,
+    operationKind: receipt.operationKind,
     phase: receipt.phase,
     summary: receipt.summary,
+    proof: receipt.proof,
     at: receipt.at ?? (/* @__PURE__ */ new Date()).toISOString(),
     resourceRevision: receipt.resourceRevision ?? null
   });
@@ -29613,7 +29816,8 @@ var init_semantic_mutation_executor = __esm({
         return result;
       }
       #publish(operationId, intent, phase, authenticatedSourceSemanticPaneId = null) {
-        const summary = intent.verb === "workspace.pane.read" ? { observedOnly: true } : {
+        const summary = intent.verb === "workspace.pane.read" ? { operationKind: intent.verb, observedOnly: true } : {
+          operationKind: intent.verb,
           characterCount: Array.from(intent.text).length,
           byteCount: Buffer.byteLength(intent.text, "utf8"),
           submitted: intent.submit
@@ -29624,10 +29828,11 @@ var init_semantic_mutation_executor = __esm({
             origin: intent.origin,
             workspaceName: intent.workspaceName,
             sourceSemanticPaneId: phase === "observed" ? authenticatedSourceSemanticPaneId : null,
-            semanticPaneId: intent.semanticPaneId,
+            target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
             operationKind: intent.verb,
             phase,
             summary,
+            proof: phase === "observed" ? { operationKind: intent.verb, observed: true, semanticPaneId: intent.semanticPaneId } : null,
             at: (this.#options.now ?? (() => /* @__PURE__ */ new Date()))().toISOString(),
             resourceRevision: null
           })
@@ -43836,10 +44041,11 @@ async function startEmbeddedDaemon(opts) {
               operationId: randomUUID13(),
               origin: "external",
               workspaceName,
-              semanticPaneId: semanticPaneId3,
+              target: { kind: "pane", semanticPaneId: semanticPaneId3 },
               operationKind,
               phase: "observed",
-              summary: { observedOnly: true }
+              summary: operationKind === "workspace.pane.read" ? { operationKind, observedOnly: true } : { operationKind, observedOnly: true },
+              proof: { operationKind, observed: true, semanticPaneId: semanticPaneId3 }
             },
             instanceId
           );

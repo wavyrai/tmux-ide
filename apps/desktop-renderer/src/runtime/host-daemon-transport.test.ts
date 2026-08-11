@@ -177,10 +177,20 @@ describe("HostCapabilities-backed daemon transport", () => {
       origin: "cli" as const,
       workspaceName: "product",
       sourceSemanticPaneId: null,
-      semanticPaneId: "pane.editor",
+      target: { kind: "pane" as const, semanticPaneId: "pane.editor" },
       operationKind: "workspace.pane.send" as const,
-      phase: "applied" as const,
-      summary: { characterCount: 4, byteCount: 4, submitted: true },
+      phase: "observed" as const,
+      summary: {
+        operationKind: "workspace.pane.send" as const,
+        characterCount: 4,
+        byteCount: 4,
+        submitted: true,
+      },
+      proof: {
+        operationKind: "workspace.pane.send" as const,
+        observed: true as const,
+        semanticPaneId: "pane.editor",
+      },
       at: "2026-08-10T10:00:00.000Z",
       resourceRevision: null,
     };
