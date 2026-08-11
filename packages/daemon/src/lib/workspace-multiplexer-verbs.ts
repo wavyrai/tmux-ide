@@ -3,8 +3,7 @@
  * and resize.
  *
  * This is the tmux authority the m48 audit found missing. It follows the
- * `workspace.pane.create` discipline deliberately and in full — one serialized
- * queue per tmux session, operation-id idempotency with a request fingerprint, a pinned tmux
+ * `workspace.pane.create` discipline deliberately and in full — a pinned tmux
  * executable and socket resolved once per daemon generation, semantic-id
  * resolution that never trusts a renderer-supplied tmux target, and a read-back
  * verification after every mutation. Where creation proves a pane exists, these
@@ -44,8 +43,6 @@ import {
   INTERNAL_SEND_OPERATION_OPTION,
 } from "./tmux-interaction-options.ts";
 
-const MAX_OPERATIONS = 128;
-
 const CREATION_OPTION = "@tmux_ide_creation_id";
 const SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
 const SEMANTIC_WINDOW_OPTION = "@tmux_ide_window_id";
@@ -58,8 +55,6 @@ export type WorkspaceMultiplexerErrorCode =
   | "pane_not_found"
   | "window_not_found"
   | "ambiguous_target"
-  | "operation_conflict"
-  | "operation_capacity"
   /** Refused: killing it would take the whole session with it. */
   | "last_window_refused"
   /** Refused: killing it would take the whole session with it. */
@@ -80,8 +75,6 @@ const ERROR_MESSAGES: Readonly<Record<WorkspaceMultiplexerErrorCode, string>> = 
   pane_not_found: "No pane in this workspace carries the requested semantic identity.",
   window_not_found: "No window in this workspace carries the requested identity.",
   ambiguous_target: "The requested identity names more than one live tmux object.",
-  operation_conflict: "The operation id was already used for a different intent.",
-  operation_capacity: "The daemon has reached its bounded multiplexer operation capacity.",
   last_window_refused:
     "This is the session's last window. Close the session instead if that is what you mean.",
   last_pane_refused:
@@ -254,13 +247,6 @@ function tmuxFormatLiteral(value: string): string {
   return value.replaceAll("#", "##");
 }
 
-interface OperationRecord {
-  readonly fingerprint: string;
-  readonly status: "success" | "error";
-  readonly result?: WorkspaceMultiplexerMutationResult;
-  readonly error?: WorkspaceMultiplexerError;
-}
-
 export interface WorkspaceMultiplexerIo {
   readonly runTmux: (args: readonly string[]) => string;
   readonly canonicalProjectDir: (path: string) => string;
@@ -284,8 +270,6 @@ export class WorkspaceMultiplexerAuthority {
   readonly #daemonInstanceId: string;
   readonly #registry: WorkspaceRegistry;
   readonly #io: WorkspaceMultiplexerIo;
-  readonly #operations = new Map<string, OperationRecord>();
-  readonly #tails = new Map<string, Promise<void>>();
   #disposed = false;
 
   constructor(options: {
@@ -307,30 +291,13 @@ export class WorkspaceMultiplexerAuthority {
     };
   }
 
-  /** Serialized per tmux session: read-decide-mutate never interleaves locally. */
-  mutate(
-    raw: WorkspaceMultiplexerMutationRequest,
-    authorizeBeforeEffect?: () => void,
-  ): Promise<WorkspaceMultiplexerMutationResult> {
-    return Promise.resolve().then(() => {
-      const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
-      const session = this.#registry.get(request.intent.workspaceName)?.sessionName;
-      const queue = session ?? `missing:${request.intent.workspaceName}`;
-      const previous = this.#tails.get(queue) ?? Promise.resolve();
-      const run = previous.then(
-        () => this.#mutate(request, authorizeBeforeEffect),
-        () => this.#mutate(request, authorizeBeforeEffect),
-      );
-      const tail = run.then(
-        () => undefined,
-        () => undefined,
-      );
-      this.#tails.set(queue, tail);
-      void tail.finally(() => {
-        if (this.#tails.get(queue) === tail) this.#tails.delete(queue);
-      });
-      return run;
-    });
+  /**
+   * Execute immediately in the caller's already-serialized semantic lane.
+   * The returned promise is only an API envelope: no second queue or replay
+   * ledger is allowed below SessionSemanticMutationExecutor.
+   */
+  mutate(raw: WorkspaceMultiplexerMutationRequest): WorkspaceMultiplexerMutationResult {
+    return this.#mutate(raw);
   }
 
   /**
@@ -339,7 +306,7 @@ export class WorkspaceMultiplexerAuthority {
    * the command-list and verifies that its semantic target survived it.
    * SessionRuntimeRegistry serializes this lane with authored sends.
    */
-  async readPane(operationId: string, intent: SessionRuntimePaneReadIntent): Promise<void> {
+  readPane(operationId: string, intent: SessionRuntimePaneReadIntent): void {
     if (this.#disposed) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "authority_disposed",
@@ -390,16 +357,10 @@ export class WorkspaceMultiplexerAuthority {
 
   dispose(): Promise<void> {
     this.#disposed = true;
-    return Promise.allSettled(this.#tails.values()).then(() => {
-      this.#tails.clear();
-      this.#operations.clear();
-    });
+    return Promise.resolve();
   }
 
-  async #mutate(
-    raw: WorkspaceMultiplexerMutationRequest,
-    authorizeBeforeEffect?: () => void,
-  ): Promise<WorkspaceMultiplexerMutationResult> {
+  #mutate(raw: WorkspaceMultiplexerMutationRequest): WorkspaceMultiplexerMutationResult {
     if (this.#disposed) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "authority_disposed",
@@ -411,53 +372,16 @@ export class WorkspaceMultiplexerAuthority {
         operationId: request.operationId,
       });
     }
-    const requestFingerprint = JSON.stringify(request);
-    const existing = this.#operations.get(request.operationId);
-    if (existing) {
-      if (existing.fingerprint !== requestFingerprint) {
-        throw new WorkspaceMultiplexerError("operation_conflict", {
-          operationId: request.operationId,
-        });
-      }
-      if (existing.status === "error") throw existing.error!;
-      return WorkspaceMultiplexerMutationResultSchemaZ.parse({
-        ...existing.result!,
-        outcome: "replayed",
-      });
-    }
-    if (this.#operations.size >= MAX_OPERATIONS) {
-      // Bounded FIFO. An evicted id loses only its replay guarantee; the world
-      // it already changed is unaffected.
-      const oldest = this.#operations.keys().next().value as string | undefined;
-      if (oldest !== undefined) this.#operations.delete(oldest);
-    }
-
     const workspace = this.#registry.get(request.intent.workspaceName);
     if (!workspace) {
-      const error = new WorkspaceMultiplexerError("workspace_not_found", {
+      throw new WorkspaceMultiplexerError("workspace_not_found", {
         operationId: request.operationId,
         workspaceName: request.intent.workspaceName,
       });
-      this.#operations.set(request.operationId, {
-        fingerprint: requestFingerprint,
-        status: "error",
-        error,
-      });
-      throw error;
     }
 
     try {
-      // This authority has its own per-session queue. Recheck only after that
-      // wait, immediately before the synchronous read/decide/tmux effect lane.
-      authorizeBeforeEffect?.();
-      const result = await this.#perform(request, workspace);
-      const parsed = WorkspaceMultiplexerMutationResultSchemaZ.parse(result);
-      this.#operations.set(request.operationId, {
-        fingerprint: requestFingerprint,
-        status: "success",
-        result: parsed,
-      });
-      return parsed;
+      return WorkspaceMultiplexerMutationResultSchemaZ.parse(this.#perform(request, workspace));
     } catch (error) {
       const mapped =
         error instanceof WorkspaceMultiplexerError
@@ -470,11 +394,6 @@ export class WorkspaceMultiplexerAuthority {
               },
               error,
             );
-      this.#operations.set(request.operationId, {
-        fingerprint: requestFingerprint,
-        status: "error",
-        error: mapped,
-      });
       throw mapped;
     }
   }
@@ -493,10 +412,10 @@ export class WorkspaceMultiplexerAuthority {
     return parseMultiplexerPaneRows(output);
   }
 
-  async #perform(
+  #perform(
     request: WorkspaceMultiplexerMutationRequest,
     workspace: Workspace,
-  ): Promise<WorkspaceMultiplexerMutationResult> {
+  ): WorkspaceMultiplexerMutationResult {
     const intent = request.intent;
     const sessionName = workspace.sessionName;
     const envelope = {

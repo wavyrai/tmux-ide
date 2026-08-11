@@ -297,14 +297,16 @@ class FakeTmux {
 
 const DAEMON_ID = "11111111-1111-4111-8111-111111111111";
 
-async function expectRefusal(
-  promise: Promise<unknown>,
+function expectRefusal(
+  run: () => unknown,
   code: WorkspaceMultiplexerErrorCode,
-): Promise<WorkspaceMultiplexerError> {
-  const error = await promise.then(
-    () => null,
-    (caught: unknown) => caught,
-  );
+): WorkspaceMultiplexerError {
+  let error: unknown = null;
+  try {
+    run();
+  } catch (caught) {
+    error = caught;
+  }
   expect(error).toBeInstanceOf(WorkspaceMultiplexerError);
   expect((error as WorkspaceMultiplexerError).code).toBe(code);
   return error as WorkspaceMultiplexerError;
@@ -433,42 +435,21 @@ describe("the multiplexer authority", () => {
 
   it("refuses a request from a different daemon generation", async () => {
     await expectRefusal(
-      authority.mutate({
-        operationId: randomUUID(),
-        expectedDaemonInstanceId: randomUUID(),
-        intent: { verb: "workspace.session.kill", workspaceName: "work" },
-      }),
+      () =>
+        authority.mutate({
+          operationId: randomUUID(),
+          expectedDaemonInstanceId: randomUUID(),
+          intent: { verb: "workspace.session.kill", workspaceName: "work" },
+        }),
       "daemon_instance_mismatch",
     );
   });
 
   it("refuses an unregistered workspace", async () => {
     await expectRefusal(
-      authority.mutate(request({ verb: "workspace.session.kill", workspaceName: "ghost" })),
+      () => authority.mutate(request({ verb: "workspace.session.kill", workspaceName: "ghost" })),
       "workspace_not_found",
     );
-  });
-
-  it("rechecks queued structural authority after the multiplexer queue and before tmux effect", async () => {
-    let controllerLive = true;
-    const first = authority.mutate(
-      request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" }),
-      () => queueMicrotask(() => (controllerLive = false)),
-    );
-    const stale = authority.mutate(
-      request({
-        verb: "workspace.pane.resize",
-        semanticPaneId: "pane.one",
-        axis: "cols",
-        cells: 80,
-      }),
-      () => {
-        if (!controllerLive) throw new Error("controller handed off while queued");
-      },
-    );
-    await first;
-    await expect(stale).rejects.toMatchObject({ code: "mutation_failed" });
-    expect(tmux.calls.filter((args) => args[0] === "resize-pane")).toHaveLength(0);
   });
 
   describe("split", () => {
@@ -522,13 +503,14 @@ describe("the multiplexer authority", () => {
         error: new Error("option refused"),
       };
       await expectRefusal(
-        authority.mutate(
-          request({
-            verb: "workspace.window.split",
-            semanticPaneId: "pane.one",
-            direction: "right",
-          }),
-        ),
+        () =>
+          authority.mutate(
+            request({
+              verb: "workspace.window.split",
+              semanticPaneId: "pane.one",
+              direction: "right",
+            }),
+          ),
         "mutation_failed",
       );
       // The half-built pane must not survive the failure.
@@ -550,25 +532,6 @@ describe("the multiplexer authority", () => {
         (first as { semanticPaneId: string }).semanticPaneId,
       );
       expect(tmux.panes.length).toBe(paneCount);
-    });
-
-    it("refuses to reuse an operation id for a different intent", async () => {
-      const operationId = randomUUID();
-      await authority.mutate(
-        request(
-          { verb: "workspace.window.split", semanticPaneId: "pane.one", direction: "right" },
-          operationId,
-        ),
-      );
-      await expectRefusal(
-        authority.mutate(
-          request(
-            { verb: "workspace.window.split", semanticPaneId: "pane.one", direction: "down" },
-            operationId,
-          ),
-        ),
-        "operation_conflict",
-      );
     });
   });
 
@@ -621,41 +584,20 @@ describe("the multiplexer authority", () => {
     it("refuses an unverified source identity before sending any input", async () => {
       const sendsBefore = tmux.calls.filter((args) => args.includes("send-keys")).length;
       await expectRefusal(
-        authority.mutate(
-          request({
-            verb: "workspace.pane.send",
-            sourceSemanticPaneId: "pane.not-in-workspace",
-            semanticPaneId: "pane.one",
-            text: "never delivered",
-            submit: true,
-            origin: "sdk",
-          }),
-        ),
+        () =>
+          authority.mutate(
+            request({
+              verb: "workspace.pane.send",
+              sourceSemanticPaneId: "pane.not-in-workspace",
+              semanticPaneId: "pane.one",
+              text: "never delivered",
+              submit: true,
+              origin: "sdk",
+            }),
+          ),
         "pane_not_found",
       );
       expect(tmux.calls.filter((args) => args.includes("send-keys"))).toHaveLength(sendsBefore);
-    });
-
-    it("replays one operation id without delivering terminal input twice", async () => {
-      const operationId = randomUUID();
-      const mutation = request(
-        {
-          verb: "workspace.pane.send",
-          semanticPaneId: "pane.one",
-          text: "only once",
-          submit: false,
-          origin: "cli",
-        },
-        operationId,
-      );
-      const first = await authority.mutate(mutation);
-      const sendsAfterFirst = tmux.calls.filter((args) => args.includes("send-keys")).length;
-      const second = await authority.mutate(mutation);
-
-      expect(first.outcome).toBe("applied");
-      expect(second).toEqual({ ...first, outcome: "replayed" });
-      expect(tmux.calls.filter((args) => args.includes("send-keys"))).toHaveLength(sendsAfterFirst);
-      expect(tmux.calls.filter((args) => args.includes("send-keys"))).toHaveLength(1);
     });
   });
 
@@ -709,12 +651,13 @@ describe("the multiplexer authority", () => {
         }),
       );
       const error = await expectRefusal(
-        authority.mutate(
-          request({
-            verb: "workspace.window.kill",
-            target: { by: "window", semanticWindowId: "win.editor" },
-          }),
-        ),
+        () =>
+          authority.mutate(
+            request({
+              verb: "workspace.window.kill",
+              target: { by: "window", semanticWindowId: "win.editor" },
+            }),
+          ),
         "last_window_refused",
       );
       expect(error.message).toMatch(/Close the session instead/u);
@@ -745,7 +688,8 @@ describe("the multiplexer authority", () => {
         }),
       );
       await expectRefusal(
-        authority.mutate(request({ verb: "workspace.pane.kill", semanticPaneId: "pane.one" })),
+        () =>
+          authority.mutate(request({ verb: "workspace.pane.kill", semanticPaneId: "pane.one" })),
         "last_pane_refused",
       );
       expect(tmux.sessionName).toBe("work");
@@ -910,14 +854,15 @@ describe("the multiplexer authority", () => {
 
     it("refuses a one-pane window, which has no border to move", async () => {
       await expectRefusal(
-        authority.mutate(
-          request({
-            verb: "workspace.pane.resize",
-            semanticPaneId: "pane.one",
-            axis: "cols",
-            cells: 40,
-          }),
-        ),
+        () =>
+          authority.mutate(
+            request({
+              verb: "workspace.pane.resize",
+              semanticPaneId: "pane.one",
+              axis: "cols",
+              cells: 40,
+            }),
+          ),
         "single_pane_window",
       );
       expect(tmux.calls.some((args) => args[0] === "resize-pane")).toBe(false);
@@ -927,28 +872,30 @@ describe("the multiplexer authority", () => {
       split();
       tmux.windows[0]!.zoomed = true;
       await expectRefusal(
-        authority.mutate(
-          request({
-            verb: "workspace.pane.resize",
-            semanticPaneId: "pane.one",
-            axis: "cols",
-            cells: 40,
-          }),
-        ),
+        () =>
+          authority.mutate(
+            request({
+              verb: "workspace.pane.resize",
+              semanticPaneId: "pane.one",
+              axis: "cols",
+              cells: 40,
+            }),
+          ),
         "zoomed_window_refused",
       );
     });
 
     it("refuses a pane that no longer carries the requested stamp", async () => {
       await expectRefusal(
-        authority.mutate(
-          request({
-            verb: "workspace.pane.resize",
-            semanticPaneId: "pane.gone",
-            axis: "cols",
-            cells: 40,
-          }),
-        ),
+        () =>
+          authority.mutate(
+            request({
+              verb: "workspace.pane.resize",
+              semanticPaneId: "pane.gone",
+              axis: "cols",
+              cells: 40,
+            }),
+          ),
         "pane_not_found",
       );
     });
@@ -1009,13 +956,14 @@ describe("the multiplexer authority", () => {
 
     it("refuses panes in different windows before invoking tmux", async () => {
       await expectRefusal(
-        authority.mutate(
-          request({
-            verb: "workspace.pane.swap",
-            sourceSemanticPaneId: "pane.one",
-            targetSemanticPaneId: "pane.two",
-          }),
-        ),
+        () =>
+          authority.mutate(
+            request({
+              verb: "workspace.pane.swap",
+              sourceSemanticPaneId: "pane.one",
+              targetSemanticPaneId: "pane.two",
+            }),
+          ),
         "different_window_refused",
       );
       expect(tmux.calls.some((args) => args[0] === "swap-pane")).toBe(false);
@@ -1024,13 +972,14 @@ describe("the multiplexer authority", () => {
     it("refuses a missing target semantic identity", async () => {
       split();
       await expectRefusal(
-        authority.mutate(
-          request({
-            verb: "workspace.pane.swap",
-            sourceSemanticPaneId: "pane.one",
-            targetSemanticPaneId: "pane.missing",
-          }),
-        ),
+        () =>
+          authority.mutate(
+            request({
+              verb: "workspace.pane.swap",
+              sourceSemanticPaneId: "pane.one",
+              targetSemanticPaneId: "pane.missing",
+            }),
+          ),
         "pane_not_found",
       );
     });
@@ -1039,13 +988,14 @@ describe("the multiplexer authority", () => {
       split();
       tmux.ignoreSwap = true;
       await expectRefusal(
-        authority.mutate(
-          request({
-            verb: "workspace.pane.swap",
-            sourceSemanticPaneId: "pane.one",
-            targetSemanticPaneId: "pane.split",
-          }),
-        ),
+        () =>
+          authority.mutate(
+            request({
+              verb: "workspace.pane.swap",
+              sourceSemanticPaneId: "pane.one",
+              targetSemanticPaneId: "pane.split",
+            }),
+          ),
         "mutation_unverified",
       );
     });
@@ -1105,25 +1055,17 @@ describe("the multiplexer authority", () => {
     it("refuses a pane that no longer carries the requested stamp", async () => {
       tmux.panes[0]!.options.delete("@tmux_ide_pane_id");
       await expectRefusal(
-        authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" })),
+        () =>
+          authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" })),
         "pane_not_found",
       );
     });
   });
 
-  it("replays a remembered refusal instead of re-running it", async () => {
-    const operationId = randomUUID();
-    const intent = { verb: "workspace.pane.select", semanticPaneId: "pane.absent" };
-    await expectRefusal(authority.mutate(request(intent, operationId)), "pane_not_found");
-    const callCount = tmux.calls.length;
-    await expectRefusal(authority.mutate(request(intent, operationId)), "pane_not_found");
-    expect(tmux.calls.length).toBe(callCount);
-  });
-
   it("stops admitting verbs once disposed", async () => {
     await authority.dispose();
     await expectRefusal(
-      authority.mutate(request({ verb: "workspace.session.kill" })),
+      () => authority.mutate(request({ verb: "workspace.session.kill" })),
       "workspace_unavailable",
     );
   });

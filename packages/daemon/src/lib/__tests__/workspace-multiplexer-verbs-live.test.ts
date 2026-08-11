@@ -97,7 +97,7 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const mutate = (intent: Record<string, unknown>, operationId = randomUUID()) =>
+  const mutate = async (intent: Record<string, unknown>, operationId = randomUUID()) =>
     authority.mutate({
       operationId,
       expectedDaemonInstanceId: DAEMON_ID,

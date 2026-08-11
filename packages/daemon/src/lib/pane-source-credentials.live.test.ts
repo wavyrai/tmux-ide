@@ -111,7 +111,7 @@ describe.skipIf(!hasTmux).sequential("pane source credentials, live tmux", () =>
       generation: randomUUID(),
       semanticMutations: {
         resolveSession: (workspaceName) => (workspaceName === "alpha" ? session : null),
-        execute: async (operationId, intent) => {
+        execute: (operationId, intent) => {
           if (intent.verb !== "workspace.pane.send") throw new Error("unexpected read");
           run(["send-keys", "-t", targetPane, "-l", "--", intent.text]);
           if (intent.submit) run(["send-keys", "-t", targetPane, "Enter"]);
@@ -123,7 +123,19 @@ describe.skipIf(!hasTmux).sequential("pane source credentials, live tmux", () =>
               operationKind: "workspace.pane.send",
             }),
           );
-          return { outcome: "applied" } as never;
+          return {
+            operationId,
+            daemonInstanceId: registry.generation,
+            workspaceName: intent.workspaceName,
+            verb: intent.verb,
+            outcome: "applied",
+            sourceSemanticPaneId: intent.sourceSemanticPaneId ?? null,
+            semanticPaneId: intent.semanticPaneId,
+            origin: intent.origin,
+            characterCount: Array.from(intent.text).length,
+            byteCount: Buffer.byteLength(intent.text, "utf8"),
+            submitted: intent.submit,
+          };
         },
         publishReceipt: (receipt) => {
           const published = {

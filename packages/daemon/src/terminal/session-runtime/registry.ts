@@ -3,6 +3,7 @@ import {
   SessionRuntimeControllerLeaseSchemaZ,
   SessionRuntimeGenerationSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
+  type AuthoredInteractionOrigin,
   type InteractionReceipt,
   type SessionRuntimeControllerLease,
   type SessionRuntimeControllerRole,
@@ -35,12 +36,6 @@ export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
   readonly mirror?: MirrorServiceOptions;
   readonly semanticMutations?: SessionSemanticMutationExecutorOptions;
-  /** Executes controller-authorized verbs that do not yet need tmux observation. */
-  readonly executeAuthorized?: (
-    operationId: string,
-    intent: SessionRuntimeSemanticIntent,
-    authorizeBeforeEffect?: () => void,
-  ) => Promise<SessionRuntimeIntentResult>;
   /** Deterministic seam for lease tests. Production uses cryptographic UUIDs. */
   readonly createControllerToken?: () => string;
 }
@@ -50,6 +45,13 @@ export type {
   SessionRuntimeControllerRole,
   SessionRuntimeControllerSnapshot,
 } from "@tmux-ide/contracts";
+
+function authoredOriginForSurface(surface: string): AuthoredInteractionOrigin {
+  if (surface === "opentui") return "tui";
+  if (surface === "command-center") return "sdk";
+  if (surface === "cli") return "cli";
+  return "gui";
+}
 
 export type SessionRuntimeControllerLeaseErrorCode =
   | "controller-conflict"
@@ -126,13 +128,6 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly generation: SessionRuntimeGeneration;
   readonly #mirror: MirrorService;
   readonly #semanticMutations: SessionSemanticMutationExecutor | null;
-  readonly #executeAuthorized:
-    | ((
-        operationId: string,
-        intent: SessionRuntimeSemanticIntent,
-        authorizeBeforeEffect?: () => void,
-      ) => Promise<SessionRuntimeIntentResult>)
-    | null;
   readonly #resolveSession: ((workspaceName: string) => string | null) | null;
   readonly #createControllerToken: () => string;
   readonly #sessions = new Map<string, SessionRuntime>();
@@ -147,7 +142,6 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#semanticMutations = options.semanticMutations
       ? new SessionSemanticMutationExecutor(options.semanticMutations)
       : null;
-    this.#executeAuthorized = options.executeAuthorized ?? null;
     this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
     this.#createControllerToken = options.createControllerToken ?? randomUUID;
     this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
@@ -227,6 +221,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       { ...intent, sourceSemanticPaneId: semanticPaneId },
       semanticPaneId,
       authorizeBeforeEffect,
+      "cli",
     );
   }
 
@@ -274,6 +269,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       normalizedIntent,
       authenticatedSourceSemanticPaneId,
       () => this.#assertExecutionHandle(handle, state.sourceSemanticPaneId ?? undefined),
+      authoredOriginForSurface(state.consumer.surface),
     );
   }
 
@@ -316,6 +312,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     rawIntent: SessionRuntimeSemanticIntent,
     authenticatedSourceSemanticPaneId: string | null = null,
     authorizeBeforeEffect?: () => void,
+    authenticatedOrigin?: AuthoredInteractionOrigin,
   ): Promise<SessionRuntimeIntentResult> {
     if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
     runtime.assertController(lease);
@@ -337,12 +334,6 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
         intent = sourceLess;
       }
     }
-    if (intent.verb !== "workspace.pane.send" && intent.verb !== "workspace.pane.read") {
-      if (!this.#executeAuthorized) {
-        return Promise.reject(new Error("Authorized session mutations are unavailable"));
-      }
-      return this.#executeAuthorized(operationId, intent, authorizeBeforeEffect);
-    }
     if (!this.#semanticMutations) {
       return Promise.reject(new Error("Session semantic mutations are unavailable"));
     }
@@ -351,6 +342,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       intent,
       authenticatedSourceSemanticPaneId,
       authorizeBeforeEffect,
+      authenticatedOrigin,
     );
   }
 
@@ -401,8 +393,8 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       session,
       this.#mirror,
       this.#createControllerToken,
-      (owner, lease, operationId, intent): Promise<SessionRuntimeIntentResult> =>
-        this.#submitAuthorizedIntent(owner, lease, operationId, intent),
+      (owner, lease, operationId, intent, origin): Promise<SessionRuntimeIntentResult> =>
+        this.#submitAuthorizedIntent(owner, lease, operationId, intent, null, undefined, origin),
     );
     this.#sessions.set(session, runtime);
     return runtime;
@@ -419,6 +411,7 @@ class SessionRuntime {
     lease: SessionRuntimeControllerLease,
     operationId: string,
     intent: SessionRuntimeSemanticIntent,
+    origin: AuthoredInteractionOrigin,
   ) => Promise<SessionRuntimeIntentResult>;
   #retention: Awaited<ReturnType<MirrorService["retainSession"]>> | null = null;
   #startPromise: Promise<void> | null = null;
@@ -440,6 +433,7 @@ class SessionRuntime {
       lease: SessionRuntimeControllerLease,
       operationId: string,
       intent: SessionRuntimeSemanticIntent,
+      origin: AuthoredInteractionOrigin,
     ) => Promise<SessionRuntimeIntentResult>,
   ) {
     this.#mirror = mirror;
@@ -562,7 +556,15 @@ class SessionRuntime {
   ): Promise<SessionRuntimeIntentResult> {
     try {
       this.assertController(lease, callerClientId);
-      return this.#submitAuthorized(this, lease, operationId, intent);
+      const surface = this.#consumersByClientId.get(callerClientId)?.surface;
+      if (surface === undefined) throw new Error("Session runtime consumer disappeared");
+      return this.#submitAuthorized(
+        this,
+        lease,
+        operationId,
+        intent,
+        authoredOriginForSurface(surface),
+      );
     } catch (error) {
       return Promise.reject(error);
     }

@@ -100,6 +100,8 @@ try {
     "terminal/input-authority",
     "SessionRuntimeClientCapability",
     "SessionRuntimeSourcePaneBinding",
+    "executeAuthorized",
+    "The daemon has reached its bounded multiplexer operation capacity.",
   ]) {
     if (installedBundle.includes(removed)) {
       throw new Error(`Installed CLI still contains removed authority architecture: ${removed}`);
