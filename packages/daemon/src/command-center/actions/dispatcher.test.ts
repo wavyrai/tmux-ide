@@ -31,8 +31,7 @@ afterEach(() => {
 });
 
 describe("command-backed action dispatcher compatibility", () => {
-  it("emits accepted and applied send receipts without exposing literal input", async () => {
-    const receipts = vi.fn();
+  it("delegates pane send and its receipt lifecycle to the runtime backend", async () => {
     const mutate = vi.fn(async (input) => ({
       verb: "workspace.pane.send" as const,
       outcome: "applied" as const,
@@ -52,7 +51,6 @@ describe("command-backed action dispatcher compatibility", () => {
       createActionDispatcher({
         broadcast: vi.fn(),
         broadcastResourceChanged: vi.fn(),
-        broadcastInteractionReceipt: receipts,
         daemonInstanceId: "20000000-0000-4000-8000-000000000002",
         workspaceMultiplexerBackend: { mutate },
       }),
@@ -74,12 +72,6 @@ describe("command-backed action dispatcher compatibility", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(receipts.mock.calls.map(([receipt]) => receipt.phase)).toEqual(["accepted", "applied"]);
-    expect(receipts.mock.calls.map(([receipt]) => receipt.sourceSemanticPaneId)).toEqual([
-      null,
-      "pane.orchestrator",
-    ]);
-    expect(JSON.stringify(receipts.mock.calls)).not.toContain("private prompt");
     expect(mutate).toHaveBeenCalledWith(
       expect.objectContaining({ intent: expect.objectContaining({ text: "private prompt" }) }),
     );

@@ -600,6 +600,36 @@ describe("the multiplexer authority", () => {
     });
   });
 
+  describe("session runtime read", () => {
+    it("marks and captures one semantic pane in one tmux command-list", async () => {
+      const operationId = randomUUID();
+      await authority.readPane(operationId, {
+        verb: "workspace.pane.read",
+        workspaceName: "work",
+        semanticPaneId: "pane.one",
+        origin: "sdk",
+      });
+
+      expect(tmux.calls).toContainEqual([
+        "set-option",
+        "-p",
+        "-t",
+        "%0",
+        "@tmux_ide_read_operation",
+        `${DAEMON_ID}:${operationId}`,
+        ";",
+        "capture-pane",
+        "-p",
+        "-e",
+        "-J",
+        "-S",
+        "-2000",
+        "-t",
+        "%0",
+      ]);
+    });
+  });
+
   describe("kill", () => {
     it("kills a window and reports what is left", async () => {
       const result = await authority.mutate(

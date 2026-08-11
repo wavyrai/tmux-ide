@@ -1,6 +1,8 @@
 import {
   SessionRuntimeGenerationSchemaZ,
+  type InteractionReceipt,
   type SessionRuntimeGeneration,
+  type SessionRuntimeSemanticIntent,
 } from "@tmux-ide/contracts";
 import type {
   MirrorLayoutEvent,
@@ -14,10 +16,17 @@ import {
   type MirrorSubscription,
 } from "../mirror/mirror-service.ts";
 import type { PaneStreamMirror } from "../pane-stream/pane-stream-websocket.ts";
+import {
+  SessionSemanticMutationExecutor,
+  type SessionRuntimeIntentResult,
+  type SessionRuntimeTmuxObservation,
+  type SessionSemanticMutationExecutorOptions,
+} from "./semantic-mutation-executor.ts";
 
 export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
   readonly mirror?: MirrorServiceOptions;
+  readonly semanticMutations?: SessionSemanticMutationExecutorOptions;
 }
 
 export interface SessionRuntimeConsumer {
@@ -45,6 +54,7 @@ export interface SessionRuntimeConsumer {
 export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly generation: SessionRuntimeGeneration;
   readonly #mirror: MirrorService;
+  readonly #semanticMutations: SessionSemanticMutationExecutor | null;
   readonly #sessions = new Map<string, SessionRuntime>();
   readonly #stopExitObserver: () => void;
   #disposed = false;
@@ -53,6 +63,9 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   constructor(options: SessionRuntimeRegistryOptions) {
     this.generation = SessionRuntimeGenerationSchemaZ.parse(options.generation);
     this.#mirror = new MirrorService(options.mirror);
+    this.#semanticMutations = options.semanticMutations
+      ? new SessionSemanticMutationExecutor(options.semanticMutations)
+      : null;
     this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
       this.#sessions.get(session)?.noteControlExit();
     });
@@ -72,6 +85,25 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return await this.#mirror.subscribe(request);
   }
 
+  submitIntent(
+    operationId: string,
+    intent: SessionRuntimeSemanticIntent,
+  ): Promise<SessionRuntimeIntentResult> {
+    if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
+    if (!this.#semanticMutations) {
+      return Promise.reject(new Error("Session semantic mutations are unavailable"));
+    }
+    return this.#semanticMutations.submit(operationId, intent);
+  }
+
+  observeTmuxInteraction(observation: SessionRuntimeTmuxObservation): void {
+    this.#semanticMutations?.observe(observation);
+  }
+
+  onReceipt(listener: (receipt: InteractionReceipt) => void): () => void {
+    return this.#semanticMutations?.onReceipt(listener) ?? (() => undefined);
+  }
+
   sessionCount(): number {
     return this.#sessions.size;
   }
@@ -85,6 +117,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       this.#disposed = true;
       this.#stopExitObserver();
       this.#disposePromise = (async () => {
+        await this.#semanticMutations?.dispose();
         await Promise.allSettled([...this.#sessions.values()].map((runtime) => runtime.dispose()));
         this.#sessions.clear();
         await this.#mirror.dispose();

@@ -15,6 +15,14 @@ describe("session runtime architecture contract", () => {
     expect(SessionRuntimeSemanticIntentSchemaZ.safeParse({ ...intent, paneId: "%7" }).success).toBe(
       false,
     );
+    expect(
+      SessionRuntimeSemanticIntentSchemaZ.safeParse({
+        verb: "workspace.window.split",
+        workspaceName: "project",
+        semanticPaneId: "pane.editor",
+        direction: "right",
+      }).success,
+    ).toBe(true);
   });
 
   it.each(["accepted", "observed", "rejected", "timed-out"] as const)(

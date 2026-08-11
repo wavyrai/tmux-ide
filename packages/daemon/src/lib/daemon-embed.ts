@@ -29,6 +29,7 @@ import {
 } from "../command-center/ws-events.ts";
 import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
+import type { WorkspaceMultiplexerBackend } from "../command-center/actions/handlers/workspace-multiplexer.ts";
 import { readAppSettings } from "./app-settings.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
 import {
@@ -699,7 +700,7 @@ async function startHttpServer({
   workspaceOpenBackend: WorkspaceOpenAuthority;
   workspacePromotionBackend: WorkspacePromotionAuthority;
   appWindowMutationBackend: AppWindowMutationAuthority;
-  workspaceMultiplexerBackend: WorkspaceMultiplexerAuthority;
+  workspaceMultiplexerBackend: WorkspaceMultiplexerBackend;
   workspaceRegistry: WorkspaceRegistry;
   terminalAttachmentRuntime: NativeTerminalAttachmentRuntime;
   paneStreamRuntime: PaneStreamRuntime;
@@ -973,11 +974,21 @@ export async function startEmbeddedDaemon(
       registry: workspaceRegistry,
       tmuxAuthority,
     });
+    let sessionRuntimeRegistry: SessionRuntimeRegistry | null = null;
     const externalInteractionObserver = new TmuxExternalInteractionObserver({
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
       tmuxAuthority,
-      onObserved: ({ workspaceName, semanticPaneId, operationKind }) => {
+      onObserved: ({ workspaceName, semanticPaneId, operationKind, operationId }) => {
+        if (operationId) {
+          sessionRuntimeRegistry?.observeTmuxInteraction({
+            operationId,
+            workspaceName,
+            semanticPaneId,
+            operationKind,
+          });
+          return;
+        }
         try {
           broadcastInteractionReceipt(
             {
@@ -997,7 +1008,6 @@ export async function startEmbeddedDaemon(
       },
     });
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
-    let sessionRuntimeRegistry: SessionRuntimeRegistry | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
@@ -1020,6 +1030,22 @@ export async function startEmbeddedDaemon(
       const selector = tmuxAuthority.socketSelector;
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
+        semanticMutations: {
+          resolveSession: (workspaceName) =>
+            workspaceRegistry.get(workspaceName)?.sessionName ?? null,
+          execute: async (operationId, intent) => {
+            if (intent.verb === "workspace.pane.read") {
+              await workspaceMultiplexer.readPane(operationId, intent);
+              return;
+            }
+            return await workspaceMultiplexer.mutate({
+              operationId,
+              expectedDaemonInstanceId: instanceId,
+              intent,
+            });
+          },
+          publishReceipt: (receipt) => broadcastInteractionReceipt(receipt, instanceId),
+        },
         mirror: {
           executable: tmuxAuthority.executablePath,
           ...(selector.kind === "path" ? { socketPath: selector.path } : {}),
@@ -1035,6 +1061,19 @@ export async function startEmbeddedDaemon(
         inputAuthority: terminalAttachmentRuntime.inputAuthority,
         semanticPaneCatalog: terminalAttachmentRuntime.semanticPaneCatalog,
       });
+      const orderedMultiplexerBackend: WorkspaceMultiplexerBackend = {
+        mutate: async (request) => {
+          if (request.intent.verb !== "workspace.pane.send") {
+            return await workspaceMultiplexer.mutate(request);
+          }
+          const result = await sessionRuntimeRegistry!.submitIntent(
+            request.operationId,
+            request.intent,
+          );
+          if (!result) throw new Error("Pane send completed without a mutation result");
+          return result;
+        },
+      };
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,
@@ -1049,7 +1088,7 @@ export async function startEmbeddedDaemon(
         workspaceOpenBackend: workspaceOpen,
         workspacePromotionBackend: workspacePromotion,
         appWindowMutationBackend: appWindowMutation,
-        workspaceMultiplexerBackend: workspaceMultiplexer,
+        workspaceMultiplexerBackend: orderedMultiplexerBackend,
         workspaceRegistry,
         terminalAttachmentRuntime,
         paneStreamRuntime,
