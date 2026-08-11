@@ -26,7 +26,7 @@
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { mkdirSync, readFileSync, chmodSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, chmodSync, statSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -62,6 +62,10 @@ await build({
           if (id.startsWith("node:")) return { external: true };
           // Workspace packages → bundle.
           if (id.startsWith("@tmux-ide/")) return undefined;
+          // xterm/headless is CommonJS and its named ESM import is not usable
+          // when left bare under stock Node. It is pure JS, so bundle the
+          // canonical replica parser and Unicode width addon into the CLI.
+          if (id === "@xterm/headless" || id === "@xterm/addon-unicode11") return undefined;
           // Everything else → external.
           return { external: true };
         });
@@ -82,9 +86,24 @@ await build({
   minify: false,
 });
 
+// Some bundled CommonJS dependencies contain literal C0 bytes inside string
+// constants. They are valid JavaScript, but make git treat the generated CLI
+// as binary and violate the package source hygiene gate. Escaping a literal
+// byte inside the generated string preserves its runtime value exactly.
+const generated = readFileSync(outfile, "utf8");
+const disallowedC0Source = String.raw`[\x00-\x08\x0b\x0c\x0e-\x1f]`;
+const normalized = generated.replace(
+  new RegExp(disallowedC0Source, "gu"),
+  (value) => `\\x${value.charCodeAt(0).toString(16).padStart(2, "0")}`,
+);
+if (normalized !== generated) writeFileSync(outfile, normalized, "utf8");
+
 // Verify the shebang survived, the file is executable, and there's
 // exactly one shebang line — a regression here ships a broken bin.
 const compiled = readFileSync(outfile, "utf-8");
+if (new RegExp(disallowedC0Source, "u").test(compiled)) {
+  throw new Error("[build-cli] generated CLI still contains a disallowed raw control byte");
+}
 if (!compiled.startsWith("#!/usr/bin/env node\n")) {
   throw new Error(
     `[build-cli] expected node shebang at offset 0, got: ${JSON.stringify(compiled.slice(0, 32))}`,

@@ -40,6 +40,7 @@ export * from "./desktop-missions.ts";
 export * from "./experience-identifiers.ts";
 export * from "./semantic-identity.ts";
 export * from "./session-runtime.ts";
+export * from "./terminal-replica.ts";
 export * from "./experience-shell.ts";
 export * from "./application-shell.ts";
 export * from "./application-shell-resource.ts";

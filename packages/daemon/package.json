@@ -86,7 +86,7 @@
     "@tmux-ide/core": "workspace:*",
     "@tmux-ide/daemon-client": "workspace:*",
     "@tmux-ide/tmux-bridge": "workspace:*",
-    "@xterm/headless": "^6.0.0",
+    "@xterm/headless": "6.0.0",
     "@xterm/addon-unicode11": "0.9.0",
     "hono": "^4.12.34",
     "ignore": "^7.0.5",

@@ -14,6 +14,16 @@ import {
   type WorkspaceMultiplexerMutationResult,
 } from "./workspace-multiplexer.ts";
 import { WorkspaceIdSchemaZ, type WorkspaceId } from "./workspace-state.ts";
+import type {
+  TerminalReplicaPatchPayload,
+  TerminalReplicaSnapshot,
+  TerminalReplicaTombstonePayload,
+} from "./terminal-replica.ts";
+import {
+  TerminalReplicaPatchPayloadSchemaZ,
+  TerminalReplicaSnapshotSchemaZ,
+  TerminalReplicaTombstonePayloadSchemaZ,
+} from "./terminal-replica.ts";
 
 /** Architecture-level contract version. Payload encodings land in m56.2. */
 export const SESSION_RUNTIME_CONTRACT_VERSION = 1 as const;
@@ -70,8 +80,30 @@ export interface TerminalReplicaAddress {
   readonly semanticPaneId: TerminalAttachmentSemanticPaneId;
 }
 
+export interface TerminalReplicaFrameMetadata {
+  readonly incarnation: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly stateHash: string;
+  readonly hashAlgorithm: "fnv1a64-v1";
+}
+
+export const TerminalReplicaFrameMetadataSchemaZ = z
+  .object({
+    workspaceName: WorkspaceIdSchemaZ,
+    semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+    generation: SessionRuntimeGenerationSchemaZ,
+    incarnation: z.string().min(1).max(256),
+    cols: z.number().int().positive(),
+    rows: z.number().int().positive(),
+    stateHash: z.string().regex(/^[0-9a-f]{16}$/u),
+    hashAlgorithm: z.literal("fnv1a64-v1"),
+  })
+  .strict();
+
 /** A complete generation-bound renderer seed. Snapshot remains host-neutral. */
-export interface TerminalReplicaSeed<Snapshot = unknown> extends TerminalReplicaAddress {
+export interface TerminalReplicaSeed<Snapshot = unknown>
+  extends TerminalReplicaAddress, TerminalReplicaFrameMetadata {
   readonly type: "terminal.seed";
   readonly generation: SessionRuntimeGeneration;
   readonly revision: TerminalReplicaRevision;
@@ -79,7 +111,8 @@ export interface TerminalReplicaSeed<Snapshot = unknown> extends TerminalReplica
 }
 
 /** A patch is valid only against exactly `baseRevision` in the same generation. */
-export interface TerminalReplicaPatch<Patch = unknown> extends TerminalReplicaAddress {
+export interface TerminalReplicaPatch<Patch = unknown>
+  extends TerminalReplicaAddress, TerminalReplicaFrameMetadata {
   readonly type: "terminal.patch";
   readonly generation: SessionRuntimeGeneration;
   readonly baseRevision: TerminalReplicaRevision;
@@ -87,9 +120,51 @@ export interface TerminalReplicaPatch<Patch = unknown> extends TerminalReplicaAd
   readonly patch: Patch;
 }
 
-export type TerminalReplicaUpdate<Snapshot = unknown, Patch = unknown> =
+export interface TerminalReplicaTombstone<Tombstone = unknown>
+  extends TerminalReplicaAddress, TerminalReplicaFrameMetadata {
+  readonly type: "terminal.tombstone";
+  readonly generation: SessionRuntimeGeneration;
+  readonly baseRevision: TerminalReplicaRevision;
+  readonly revision: TerminalReplicaRevision;
+  readonly tombstone: Tombstone;
+}
+
+export type TerminalReplicaUpdate<Snapshot = unknown, Patch = unknown, Tombstone = unknown> =
   | TerminalReplicaSeed<Snapshot>
-  | TerminalReplicaPatch<Patch>;
+  | TerminalReplicaPatch<Patch>
+  | TerminalReplicaTombstone<Tombstone>;
+
+export type CanonicalTerminalReplicaSeed = TerminalReplicaSeed<TerminalReplicaSnapshot>;
+export type CanonicalTerminalReplicaPatch = TerminalReplicaPatch<TerminalReplicaPatchPayload>;
+export type CanonicalTerminalReplicaTombstone =
+  TerminalReplicaTombstone<TerminalReplicaTombstonePayload>;
+export type CanonicalTerminalReplicaUpdate =
+  | CanonicalTerminalReplicaSeed
+  | CanonicalTerminalReplicaPatch
+  | CanonicalTerminalReplicaTombstone;
+
+export const CanonicalTerminalReplicaSeedSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
+  type: z.literal("terminal.seed"),
+  revision: TerminalReplicaRevisionSchemaZ,
+  snapshot: TerminalReplicaSnapshotSchemaZ,
+}).strict();
+export const CanonicalTerminalReplicaPatchSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
+  type: z.literal("terminal.patch"),
+  baseRevision: TerminalReplicaRevisionSchemaZ,
+  revision: TerminalReplicaRevisionSchemaZ,
+  patch: TerminalReplicaPatchPayloadSchemaZ,
+}).strict();
+export const CanonicalTerminalReplicaTombstoneSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
+  type: z.literal("terminal.tombstone"),
+  baseRevision: TerminalReplicaRevisionSchemaZ,
+  revision: TerminalReplicaRevisionSchemaZ,
+  tombstone: TerminalReplicaTombstonePayloadSchemaZ,
+}).strict();
+export const CanonicalTerminalReplicaUpdateSchemaZ = z.discriminatedUnion("type", [
+  CanonicalTerminalReplicaSeedSchemaZ,
+  CanonicalTerminalReplicaPatchSchemaZ,
+  CanonicalTerminalReplicaTombstoneSchemaZ,
+]);
 
 export const SessionRuntimePaneReadIntentSchemaZ = z
   .object({
