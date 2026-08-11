@@ -25,6 +25,7 @@ const SafeStringSchemaZ = (max: number) =>
     .max(max)
     .refine((value) => !value.includes("\0"), "text must not contain NUL bytes");
 export const WorkspaceIdSchemaZ = PortableWorkspaceIdSchemaZ;
+export type WorkspaceId = z.infer<typeof WorkspaceIdSchemaZ>;
 const NullableTextSchemaZ = (max: number) => SafeStringSchemaZ(max).nullable();
 const AbsolutePathSchemaZ = SafeStringSchemaZ(4096).refine(
   (value) => /^(?:[/\\]{1,2}|[A-Za-z]:[/\\])/u.test(value),

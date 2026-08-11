@@ -8,9 +8,12 @@ import {
   fixtureState,
   FIXTURE,
 } from "./__tests__/simulated-channel.ts";
-import { MirrorService } from "./mirror-service.ts";
+import { MirrorService, type MirrorServiceOptions } from "./mirror-service.ts";
 
-function rig(): { service: MirrorService; sims: Map<string, SimulatedChannel[]> } {
+function rig(options: MirrorServiceOptions = {}): {
+  service: MirrorService;
+  sims: Map<string, SimulatedChannel[]>;
+} {
   const sims = new Map<string, SimulatedChannel[]>();
   const service = new MirrorService({
     createIo: (session, handlers) => {
@@ -28,6 +31,7 @@ function rig(): { service: MirrorService; sims: Map<string, SimulatedChannel[]> 
       return sim;
     },
     generatePaneId: () => "pane.mirror.gen1",
+    ...options,
   });
   return { service, sims };
 }
@@ -37,6 +41,18 @@ async function subscribed(service: MirrorService, session: string, pane: string)
 }
 
 describe("MirrorService refcounting", () => {
+  it("rejects a second control-mode owner for the same server session", async () => {
+    const first = rig();
+    const second = rig();
+    const subscription = await subscribed(first.service, FIXTURE.session, "pane.alpha");
+    await expect(subscribed(second.service, FIXTURE.session, "pane.alpha")).rejects.toThrow(
+      /control-mode authority already exists/,
+    );
+    await subscription.close();
+    const successor = await subscribed(second.service, FIXTURE.session, "pane.alpha");
+    await successor.close();
+  });
+
   it("shares one channel per session across subscriptions and disposes with the last one", async () => {
     const { service, sims } = rig();
     const first = await subscribed(service, FIXTURE.session, "pane.alpha");

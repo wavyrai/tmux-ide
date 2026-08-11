@@ -16,7 +16,12 @@ import {
   type MirrorChannelIo,
 } from "./control-channel.ts";
 import type { MirrorLayoutEvent, MirrorPaneEvent, MirrorSessionDescription } from "./events.ts";
-import { SessionChannel } from "./session-channel.ts";
+import { SessionChannel, type SessionChannelOptions } from "./session-channel.ts";
+import {
+  controlModeAuthorityKey,
+  processControlModeOwnershipRegistry,
+  type ControlModeOwnershipRegistry,
+} from "./control-mode-ownership.ts";
 
 export interface MirrorServiceOptions {
   /** `tmux -L <name>` for every channel — isolated servers in tests. */
@@ -33,6 +38,8 @@ export interface MirrorServiceOptions {
   createIo?: (session: string, handlers: MirrorChannelHandlers) => MirrorChannelIo;
   generatePaneId?: () => string;
   generateWindowId?: () => string;
+  /** Test seam; production uses the daemon-generation process registry. */
+  controlModeOwnershipRegistry?: ControlModeOwnershipRegistry;
 }
 
 export interface MirrorSubscribeRequest {
@@ -59,12 +66,15 @@ interface ChannelEntry {
   channel: SessionChannel;
   started: Promise<void>;
   refs: number;
+  releaseAuthority: () => void;
 }
 
 export class MirrorService {
   private readonly opts: MirrorServiceOptions;
   private readonly channels = new Map<string, ChannelEntry>();
   private readonly pendingDisposals = new Set<Promise<void>>();
+  private readonly drainingChannels = new Map<string, Promise<void>>();
+  private readonly owner = Symbol("MirrorService control-mode owner");
   private disposed = false;
 
   constructor(opts: MirrorServiceOptions = {}) {
@@ -132,38 +142,67 @@ export class MirrorService {
     this.disposed = true;
     const entries = [...this.channels.values()];
     this.channels.clear();
-    await Promise.allSettled(entries.map((entry) => entry.channel.dispose()));
+    await Promise.allSettled(
+      entries.map(async (entry) => {
+        try {
+          await entry.channel.dispose();
+        } finally {
+          entry.releaseAuthority();
+        }
+      }),
+    );
     await Promise.allSettled([...this.pendingDisposals]);
   }
 
   private async acquire(session: string): Promise<ChannelEntry> {
     if (this.disposed) throw new Error("MirrorService is disposed");
+    await this.drainingChannels.get(session);
+    if (this.disposed) throw new Error("MirrorService is disposed");
     let entry = this.channels.get(session);
     if (!entry) {
-      const channel = new SessionChannel({
-        session,
-        createIo: (handlers) =>
-          this.opts.createIo?.(session, handlers) ??
-          new MirrorControlChannel({
-            session,
-            handlers,
-            socketName: this.opts.socketName,
-            socketPath: this.opts.socketPath,
-            executable: this.opts.executable,
-            configFile: this.opts.configFile,
-            pauseAfterSeconds: this.opts.pauseAfterSeconds,
-          }),
-        historyLines: this.opts.historyLines,
-        generatePaneId: this.opts.generatePaneId,
-        generateWindowId: this.opts.generateWindowId,
-        onExit: () => {
-          // The channel died underneath its subscribers (tmux exit/detach):
-          // drop the entry so the next acquire starts fresh; open handles
-          // already received their `closed` events.
-          if (this.channels.get(session)?.channel === channel) this.channels.delete(session);
-        },
-      });
-      entry = { channel, started: channel.start(), refs: 0 };
+      const releaseAuthority = (
+        this.opts.controlModeOwnershipRegistry ?? processControlModeOwnershipRegistry
+      ).claim(
+        controlModeAuthorityKey(session, {
+          socketName: this.opts.socketName,
+          socketPath: this.opts.socketPath,
+        }),
+        this.owner,
+      );
+      let channel: SessionChannel;
+      try {
+        const channelOptions: SessionChannelOptions = {
+          session,
+          createIo: (handlers) =>
+            this.opts.createIo?.(session, handlers) ??
+            new MirrorControlChannel({
+              session,
+              handlers,
+              socketName: this.opts.socketName,
+              socketPath: this.opts.socketPath,
+              executable: this.opts.executable,
+              configFile: this.opts.configFile,
+              pauseAfterSeconds: this.opts.pauseAfterSeconds,
+            }),
+          historyLines: this.opts.historyLines,
+          generatePaneId: this.opts.generatePaneId,
+          generateWindowId: this.opts.generateWindowId,
+          onExit: () => {
+            // The channel died underneath its subscribers (tmux exit/detach):
+            // drop the entry so the next acquire starts fresh; open handles
+            // already received their `closed` events.
+            if (this.channels.get(session)?.channel === channel) {
+              this.channels.delete(session);
+              releaseAuthority();
+            }
+          },
+        };
+        channel = new SessionChannel(channelOptions);
+      } catch (cause) {
+        releaseAuthority();
+        throw cause;
+      }
+      entry = { channel, started: channel.start(), refs: 0, releaseAuthority };
       this.channels.set(session, entry);
     }
     entry.refs += 1;
@@ -180,8 +219,15 @@ export class MirrorService {
     entry.refs -= 1;
     if (entry.refs > 0) return;
     if (this.channels.get(session) === entry) this.channels.delete(session);
-    const disposal = entry.channel.dispose().catch(() => {});
+    const disposal = entry.channel
+      .dispose()
+      .catch(() => {})
+      .finally(() => entry.releaseAuthority());
+    this.drainingChannels.set(session, disposal);
     this.pendingDisposals.add(disposal);
-    void disposal.finally(() => this.pendingDisposals.delete(disposal));
+    void disposal.finally(() => {
+      this.pendingDisposals.delete(disposal);
+      if (this.drainingChannels.get(session) === disposal) this.drainingChannels.delete(session);
+    });
   }
 }

@@ -16,7 +16,14 @@ export const InteractionOperationKindSchemaZ = z.enum([
 ]);
 export type InteractionOperationKind = z.infer<typeof InteractionOperationKindSchemaZ>;
 
-export const InteractionPhaseSchemaZ = z.enum(["accepted", "applied", "observed", "failed"]);
+export const InteractionPhaseSchemaZ = z.enum([
+  "accepted",
+  "applied",
+  "observed",
+  "rejected",
+  "timed-out",
+  "failed",
+]);
 export type InteractionPhase = z.infer<typeof InteractionPhaseSchemaZ>;
 
 /**
