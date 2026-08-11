@@ -10,6 +10,7 @@ import {
   commitTerminalDelivery,
   completeTerminalDelivery,
   createTerminalDeliveryClientState,
+  encodeAnsiTerminalPatchRepresentation,
   encodeSemanticTerminalUpdate,
   hashTerminalDeliveryRepresentation,
   hashTerminalReplicaSnapshot,
@@ -53,6 +54,20 @@ function seedEnvelope(): { envelope: TerminalDeliveryEnvelope; bytes: Uint8Array
 }
 
 describe("terminal delivery client", () => {
+  it("encodes ordinary ANSI deltas from dirty rows without inspecting the full grid", () => {
+    const snapshot = blankTerminalReplicaSnapshot(4, 3);
+    const inaccessibleGrid = new Proxy(snapshot.grid, {
+      get() {
+        throw new Error("unchanged grid row was inspected");
+      },
+    });
+    const target = { ...snapshot, grid: inaccessibleGrid };
+    const bytes = encodeAnsiTerminalPatchRepresentation(
+      { rows: [{ index: 1, row: snapshot.grid[1]! }] },
+      target,
+    );
+    expect(new TextDecoder().decode(bytes)).toContain("\u001b[2;1H");
+  });
   it("negotiates deterministically and rejects unsupported rich ANSI", () => {
     expect(
       negotiateTerminalDelivery(

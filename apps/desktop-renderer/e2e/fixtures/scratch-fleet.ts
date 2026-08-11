@@ -36,7 +36,7 @@ export interface ScratchFleet {
   /** The session's CURRENT window name — what a window tab click must change. */
   readonly currentWindow: (name: string) => string;
   /** Every pane of the session's current window, as `width x height` cells. */
-  readonly paneSizes: (name: string) => readonly string[];
+  readonly paneSizes: (name: string, windowName?: string) => readonly string[];
   /**
    * The session's current WINDOW size in cells, as tmux reports it — the ground
    * truth for whether the app's attachment actually owns the geometry (m50.2).
@@ -211,8 +211,14 @@ export async function createScratchFleet(
       ]).split("x");
       return { cols: Number(cols), rows: Number(rows) };
     },
-    paneSizes: (name) =>
-      runTmux(["list-panes", "-t", `${name}:`, "-F", "#{pane_width}x#{pane_height}"])
+    paneSizes: (name, windowName) =>
+      runTmux([
+        "list-panes",
+        "-t",
+        windowName === undefined ? `${name}:` : `=${name}:=${windowName}`,
+        "-F",
+        "#{pane_width}x#{pane_height}",
+      ])
         .split("\n")
         .filter(Boolean),
     // `<session>:` is the session's current window, active pane. A bare `=name`

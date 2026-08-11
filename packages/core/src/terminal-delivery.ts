@@ -155,6 +155,30 @@ export function encodeAnsiTerminalRepresentation(
   return bytes;
 }
 
+/**
+ * Encode an admitted semantic patch from its explicit dirty rows.
+ *
+ * The patch is the canonical change set; comparing every immutable grid row
+ * again in the renderer turns a one-line terminal update into O(screen rows)
+ * work. Dimension changes remain a full repaint, while ordinary deltas touch
+ * only `patch.rows` plus the cursor.
+ */
+export function encodeAnsiTerminalPatchRepresentation(
+  patch: TerminalReplicaPatchPayload,
+  target: TerminalReplicaSnapshot,
+): Uint8Array {
+  if (patch.dimensions) return encodeAnsiTerminalRepresentation(null, target);
+  let output = "";
+  for (const { index, row } of patch.rows) {
+    output += `\u001b[${index + 1};1H${renderAnsiRow(row)}\u001b[K`;
+  }
+  output += `\u001b[${target.cursor.y + 1};${target.cursor.x + 1}H`;
+  output += target.cursor.hidden ? "\u001b[?25l" : "\u001b[?25h";
+  const bytes = new TextEncoder().encode(output);
+  assertRepresentationSize(bytes);
+  return bytes;
+}
+
 export interface TerminalDeliveryClientState {
   readonly negotiated: TerminalDeliveryNegotiated;
   readonly workspaceName: string;

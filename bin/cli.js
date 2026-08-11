@@ -39329,6 +39329,7 @@ var init_terminal_delivery_hub = __esm({
             sending: false,
             retireAfterDrain: false,
             lastAck: null,
+            sourceClosedFlight: null,
             backgroundTimer: null
           };
           this.#clients.set(key, client);
@@ -39671,6 +39672,9 @@ var init_terminal_delivery_hub = __esm({
         const flight = client.inFlight;
         if (!flight) {
           if (client.lastAck && JSON.stringify(client.lastAck) === JSON.stringify(ack)) return;
+          const closed = client.sourceClosedFlight;
+          if (closed && ack.workspaceName === closed.workspaceName && ack.semanticPaneId === closed.semanticPaneId && ack.generation === closed.generation && ack.incarnation === closed.incarnation && ack.deliveryNonce === closed.deliveryNonce && ack.transactionId === closed.transactionId && ack.canonicalRevision === closed.canonicalRevision && ack.canonicalStateHash === closed.canonicalStateHash && ack.representationHash === closed.representationHash)
+            return;
           this.#fault(client, "protocol-violation", "ACK has no in-flight transaction");
           return;
         }
@@ -39702,13 +39706,22 @@ var init_terminal_delivery_hub = __esm({
       }
       #fault(client, reason, message) {
         client.outgoing.length = 0;
+        if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
         client.inFlight = null;
-        this.#enqueue(client, {
+        const fault = {
           type: "terminal.delivery.fault",
           reason,
           message: message.slice(0, 1024),
           deliveryNonce: client.negotiated.deliveryNonce
-        });
+        };
+        if (reason === "source-closed" && client.sending) {
+          void Promise.resolve(client.accept(fault)).then(
+            () => this.#closeClient(client),
+            () => this.#closeClient(client)
+          );
+          return;
+        }
+        this.#enqueue(client, fault);
         client.retireAfterDrain = true;
       }
       #enqueue(client, message) {
@@ -40535,6 +40548,14 @@ function assertLiveScope(shared, lease, semanticPaneId3) {
     );
   }
 }
+function assertLiveControllerPrincipal(shared, lease) {
+  if (shared.lease !== lease) {
+    throw new SessionRuntimeControllerLeaseError(
+      "stale-controller-lease",
+      "The host no longer owns session controller authority."
+    );
+  }
+}
 var TransportSchemaZ, LeaseIdSchemaZ, HostClientIdSchemaZ, clientsByRegistry, SessionRuntimeTransportBinding, SessionRuntimeTransportBinder;
 var init_transport_binding = __esm({
   "packages/daemon/src/terminal/session-runtime/transport-binding.ts"() {
@@ -40791,7 +40812,10 @@ var init_transport_binding = __esm({
           shared.consumer,
           lease,
           grants,
-          (semanticPaneId3) => assertLiveScope(shared, lease, semanticPaneId3)
+          (semanticPaneId3) => {
+            if (semanticPaneId3 === void 0) assertLiveControllerPrincipal(shared, lease);
+            else assertLiveScope(shared, lease, semanticPaneId3);
+          }
         );
         return sourceSemanticPaneId === void 0 ? base : this.registry.bindExecutionSource(base, sourceSemanticPaneId);
       }
@@ -40804,14 +40828,14 @@ var init_transport_binding = __esm({
         }
         if (interactive) {
           shared.interactiveRefs -= 1;
-          if (shared.interactiveRefs === 0 && shared.lease) {
-            const retired = shared.lease;
-            shared.lease = null;
-            shared.consumer.releaseController(retired);
-          }
         }
         shared.refs -= 1;
         if (shared.refs > 0) return;
+        if (shared.lease) {
+          const retired = shared.lease;
+          shared.lease = null;
+          shared.consumer.releaseController(retired);
+        }
         for (const [key, candidate] of this.#clients) {
           if (candidate === shared) this.#clients.delete(key);
         }
@@ -41856,6 +41880,7 @@ var init_direct_websocket = __esm({
     init_terminal_attachment_stream();
     init_src();
     init_lease_manager();
+    init_registry2();
     TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL = TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL;
     TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES = 4 * 1024;
     TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES = 4 * 1024;
@@ -42266,9 +42291,10 @@ var init_direct_websocket = __esm({
                 "Terminal attachment redemption was rejected."
               );
             }
-            const sessionRuntimeBinding = this.#bindSessionRuntime?.(activeDescriptor) ?? null;
+            let sessionRuntimeBinding = null;
             let live;
             try {
+              sessionRuntimeBinding = this.#bindSessionRuntime?.(activeDescriptor) ?? null;
               live = new TerminalAttachmentLiveConnection({
                 onRetire: (connection) => this.#trackRetiringRelease(connection),
                 socket,
@@ -42451,13 +42477,13 @@ var init_direct_websocket = __esm({
         this.beginRedemption();
         void this.#onRedeem(this, frame, socket).catch((error) => {
           if (!this.#open) return;
-          const code = error instanceof TerminalAttachmentAdmissionError ? error.code : error instanceof AttachmentLeaseError && error.code === "ticket-expired" ? "ticket-expired" : "attachment-unavailable";
+          const code = error instanceof TerminalAttachmentAdmissionError ? error.code : error instanceof AttachmentLeaseError && error.code === "ticket-expired" ? "ticket-expired" : error instanceof SessionRuntimeControllerLeaseError && error.code === "controller-conflict" ? "interactive-viewer-conflict" : "attachment-unavailable";
           try {
             sendControl(socket, {
               type: "error",
               protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
               code,
-              retryable: code === "live-capacity-exhausted" || code === "ticket-expired"
+              retryable: code === "live-capacity-exhausted" || code === "ticket-expired" || code === "interactive-viewer-conflict"
             });
           } catch {
           }
@@ -46204,7 +46230,11 @@ var init_pane_stream_websocket = __esm({
         if (message.type === "terminal.delivery") {
           const channel = this.#panes.get(pane);
           if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
-          this.#sendFrame(pane, { type: "terminal-delivery-envelope", pane, envelope: message });
+          this.#sendFrame(pane, {
+            type: "terminal-delivery-envelope",
+            pane,
+            envelope: { ...message, workspaceName: this.#descriptor.workspaceName }
+          });
         } else if (message.type === "terminal.delivery.chunk") {
           this.#sendFrame(pane, {
             type: "terminal-delivery-chunk",
@@ -46215,12 +46245,12 @@ var init_pane_stream_websocket = __esm({
           });
         } else {
           this.#sendFrame(pane, { type: "terminal-delivery-fault", pane, fault: message });
+          return;
         }
         await this.#awaitSemanticCredit(pane);
       }
       #awaitSemanticCredit(pane) {
-        const aggregateHigh = (this.#socket.bufferedAmount ?? 0) > this.#maxSocketBufferedBytes >> 2;
-        if (!aggregateHigh && !this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
+        if (!this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
         return new Promise((resolve31) => {
           const waiters = this.#semanticDrainWaiters.get(pane) ?? [];
           waiters.push(resolve31);
@@ -46453,7 +46483,7 @@ var init_pane_stream_websocket = __esm({
           if (channel.frozenByWire) this.#evaluateResume(pane);
           else this.#evaluateStall(pane);
           const waiters = this.#semanticDrainWaiters.get(pane);
-          if (waiters && this.#ledger.shouldResume(this.#clientId, pane) && buffered <= this.#maxSocketBufferedBytes >> 3) {
+          if (waiters && this.#ledger.shouldResume(this.#clientId, pane)) {
             this.#semanticDrainWaiters.delete(pane);
             for (const resolve31 of waiters) resolve31();
           }
@@ -46481,13 +46511,13 @@ var init_pane_stream_websocket = __esm({
         if (frame.type === "terminal-delivery-ack") {
           const channel = this.#deliveryChannel(frame.ack);
           if (!channel) return;
-          channel.delivery.ack(frame.ack);
+          channel.delivery.ack({ ...frame.ack, workspaceName: this.#descriptor.sessionName });
           return;
         }
         if (frame.type === "terminal-delivery-nack") {
           const channel = this.#deliveryChannel(frame.nack);
           if (!channel) return;
-          channel.delivery.nack(frame.nack);
+          channel.delivery.nack({ ...frame.nack, workspaceName: this.#descriptor.sessionName });
           return;
         }
         if (frame.type === "terminal-delivery-visibility") {

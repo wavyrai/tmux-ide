@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  blankTerminalReplicaSnapshot,
+  encodeSemanticTerminalUpdate,
+  hashTerminalDeliveryRepresentation,
+  hashTerminalReplicaSnapshot,
+  negotiateTerminalDelivery,
+  splitTerminalDeliveryChunks,
+} from "@tmux-ide/core";
 
 import {
   PANE_STREAM_MAX_DESCRIPTOR_LIFETIME_MS,
@@ -23,6 +31,20 @@ const PANE_B = "pane.workspace.b2";
 
 function encodeBase64(text: string): string {
   return Buffer.from(text, "utf8").toString("base64");
+}
+
+function encodeBytesBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
+}
+
+function sendSemanticReady(socket: FakeSocket, pane = PANE_A): void {
+  const negotiation = negotiateTerminalDelivery(
+    { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: true },
+    "20000000-0000-4000-8000-000000000001",
+    "20000000-0000-4000-8000-000000000002",
+  );
+  if (!negotiation.accepted) throw new Error("semantic negotiation failed");
+  socket.serverSends({ type: "terminal-delivery-ready", pane, negotiation });
 }
 
 interface Scheduled {
@@ -136,6 +158,7 @@ function harness(options: {
   panes?: readonly string[];
   deferApplies?: boolean;
   listeners?: Partial<PaneStreamSessionListeners>;
+  terminalDelivery?: null;
 }): Harness {
   const clock = new Clock();
   const socket = new FakeSocket();
@@ -147,6 +170,7 @@ function harness(options: {
     createWebSocket: () => socket,
     now: clock.now,
     schedule: clock.schedule,
+    ...(options.terminalDelivery === null ? { terminalDelivery: null } : {}),
   });
   const connect = transport.connect(
     { workspaceName: "workspace-a", panes: options.panes ?? [PANE_A, PANE_B] },
@@ -263,9 +287,20 @@ describe("pane-stream transport admission", () => {
     });
   });
 
-  it("sends exactly one redeem frame committing to delivery acks", async () => {
+  it("sends exactly one redeem frame without claiming the legacy ACK lane", async () => {
     const h = await liveHarness();
     expect(h.socket.sent).toHaveLength(1);
+    expect(JSON.parse(h.socket.sent[0]!)).toEqual({
+      type: "redeem",
+      protocolVersion: 1,
+      ticket: TICKET,
+      requestId: REQUEST_ID,
+      daemonInstanceId: DAEMON_INSTANCE_ID,
+    });
+  });
+
+  it("retains cumulative delivery ACKs for the explicit legacy profile", async () => {
+    const h = await liveHarness({ terminalDelivery: null });
     expect(JSON.parse(h.socket.sent[0]!)).toEqual({
       type: "redeem",
       protocolVersion: 1,
@@ -337,6 +372,113 @@ describe("pane-stream transport admission", () => {
 });
 
 describe("pane-stream transport demultiplexing", () => {
+  it("accepts semantic negotiation exactly once", async () => {
+    const h = await liveHarness();
+    sendSemanticReady(h.socket);
+    sendSemanticReady(h.socket);
+    await flushMicrotasks();
+    expect(h.ends).toEqual([expect.objectContaining({ code: "protocol-error", retryable: false })]);
+  });
+
+  it("rejects legacy terminal bytes after semantic cutover", async () => {
+    const h = await liveHarness();
+    sendSemanticReady(h.socket);
+    h.socket.serverSends({ type: "output", pane: PANE_A, seq: 1, data: encodeBase64("stale") });
+    await flushMicrotasks();
+    expect(h.events).toHaveLength(0);
+    expect(h.ends).toEqual([expect.objectContaining({ code: "protocol-error", retryable: false })]);
+  });
+
+  it("never resurrects a semantic lane after a delivery fault", async () => {
+    const h = await liveHarness();
+    h.socket.serverSends({
+      type: "terminal-delivery-fault",
+      pane: PANE_A,
+      fault: {
+        type: "terminal.delivery.fault",
+        reason: "source-closed",
+        message: "source closed",
+        deliveryNonce: "20000000-0000-4000-8000-000000000002",
+      },
+    });
+    sendSemanticReady(h.socket);
+    await flushMicrotasks();
+    // The invalid resurrection retires the session before the queued fault
+    // paint can run; importantly, no stale terminal state reaches the sink.
+    expect(h.events).toEqual([]);
+    expect(h.ends).toEqual([expect.objectContaining({ code: "protocol-error", retryable: false })]);
+  });
+
+  it("applies a semantic seed atomically and ACKs only after the renderer settles", async () => {
+    const h = await liveHarness({ deferApplies: true });
+    const generation = "20000000-0000-4000-8000-000000000001";
+    const deliveryNonce = "20000000-0000-4000-8000-000000000002";
+    const transactionId = "20000000-0000-4000-8000-000000000003";
+    const negotiation = negotiateTerminalDelivery(
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: true },
+      generation,
+      deliveryNonce,
+    );
+    if (!negotiation.accepted) throw new Error("semantic negotiation failed");
+    const snapshot = blankTerminalReplicaSnapshot(12, 4);
+    const bytes = encodeSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+    const incarnation = `${generation}:0`;
+    h.socket.serverSends({
+      type: "terminal-delivery-ready",
+      pane: PANE_A,
+      negotiation,
+    });
+    h.socket.serverSends({
+      type: "terminal-delivery-envelope",
+      pane: PANE_A,
+      envelope: {
+        type: "terminal.delivery",
+        workspaceName: "workspace-a",
+        semanticPaneId: PANE_A,
+        generation,
+        incarnation,
+        deliveryNonce,
+        transactionId,
+        protocolVersion: 1,
+        encoding: "semantic-v1",
+        frame: "seed",
+        baseRevision: null,
+        canonicalRevision: 0,
+        canonicalStateHash: hashTerminalReplicaSnapshot(snapshot),
+        representationHash: hashTerminalDeliveryRepresentation(bytes),
+        representationBytes: bytes.byteLength,
+        chunkCount: splitTerminalDeliveryChunks(transactionId, bytes).length,
+        canonicalEquivalent: true,
+        history: "complete",
+        richPlacements: true,
+      },
+    });
+    for (const chunk of splitTerminalDeliveryChunks(transactionId, bytes)) {
+      h.socket.serverSends({
+        type: "terminal-delivery-chunk",
+        pane: PANE_A,
+        transactionId,
+        index: chunk.index,
+        data: encodeBytesBase64(chunk.bytes),
+      });
+    }
+    await flushMicrotasks();
+    expect(h.events).toHaveLength(1);
+    expect(h.events[0]).toMatchObject({ pane: PANE_A, event: { type: "seed-batch" } });
+    expect(h.socket.sent).toHaveLength(1);
+    h.settleApply();
+    await flushMicrotasks();
+    expect(JSON.parse(h.socket.sent[1]!)).toMatchObject({
+      type: "terminal-delivery-ack",
+      ack: {
+        workspaceName: "workspace-a",
+        semanticPaneId: PANE_A,
+        canonicalRevision: 0,
+        transactionId,
+      },
+    });
+  });
+
   it("delivers per-pane events in wire order with decoded bytes", async () => {
     const h = await liveHarness();
     h.socket.serverSends({ type: "output", pane: PANE_A, seq: 1, data: encodeBase64("alpha") });

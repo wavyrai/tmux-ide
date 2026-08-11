@@ -149,23 +149,23 @@ describe("the layout-faithful workspace view", () => {
     expect(tabs.map((tab) => tab.dataset.active)).toEqual(["false", "true"]);
   });
 
-  it("selects a window through tmux when its tab is clicked", () => {
-    /*
-     * Bug this catches: the tab switches which window the APP shows and never
-     * tells tmux, so an attached ssh client stays on the old window and the two
-     * views of one session disagree about where the user is.
-     */
-    const { root, invoke } = renderSurface([
-      layout({ semanticWindowId: "window.editor", currentWindow: true }),
-      layout({
-        semanticWindowId: "window.shell",
-        windowName: "shell",
-        currentWindow: false,
-        panes: [{ pane: "pane.z", left: 0, top: 0, width: 200, height: 50, active: true }],
-      }),
-    ]);
+  it("selects a window in this client without mutating shared tmux focus", () => {
+    const selectView = vi.fn();
+    const { root, invoke } = renderSurface(
+      [
+        layout({ semanticWindowId: "window.editor", currentWindow: true }),
+        layout({
+          semanticWindowId: "window.shell",
+          windowName: "shell",
+          currentWindow: false,
+          panes: [{ pane: "pane.z", left: 0, top: 0, width: 200, height: 50, active: true }],
+        }),
+      ],
+      { onSelectViewPane: selectView },
+    );
     root.querySelectorAll<HTMLButtonElement>(".window-tabs__tab")[1]!.click();
-    expect(invoke).toHaveBeenCalledWith("pane.select", "pane.z");
+    expect(selectView).toHaveBeenCalledWith("pane.z", "mouse");
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("does not re-select the window the user is already in", () => {
@@ -434,6 +434,51 @@ describe("the layout-faithful workspace view", () => {
     vi.useRealTimers();
   });
 
+  it("does not clear a pane receipt when an unrelated global receipt arrives", () => {
+    vi.useFakeTimers();
+    const receipt = {
+      paneId: "pane.b",
+      direction: "incoming" as const,
+      sourcePaneId: "pane.a",
+      destinationPaneId: "pane.b",
+      operationKind: "workspace.pane.send" as const,
+      operationId: "10000000-0000-4000-8000-000000000042",
+      phase: "observed" as const,
+      origin: "sdk" as const,
+      label: "sdk observed · delivered 12 characters + Enter",
+      sequence: 42,
+      at: new Date().toISOString(),
+    };
+    const [feed, setFeed] = createSignal({ sequence: 42, panes: { "pane.b": receipt } });
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WorkspaceTiledSurface
+            layouts={[SPLIT]}
+            workspaceName="workspace.product"
+            transport={null}
+            paneFrames={[]}
+            verbs={{ workspaceConnected: true, invoke: vi.fn() }}
+            paneInteractions={feed().panes}
+            interactionSequence={feed().sequence}
+          />
+        ),
+        root,
+      ),
+    );
+    const target = root.querySelector<HTMLElement>('[data-pane="pane.b"]')!;
+    expect(target.dataset.communicationActive).toBe("true");
+    setFeed({ sequence: 99, panes: { "pane.b": receipt } });
+    expect(target.dataset.communicationActive).toBe("true");
+    vi.advanceTimersByTime(PANE_COMMUNICATION_HIGHLIGHT_MS - 1);
+    expect(target.dataset.communicationActive).toBe("true");
+    vi.advanceTimersByTime(1);
+    expect(target.dataset.communicationActive).toBeUndefined();
+    vi.useRealTimers();
+  });
+
   it("uses honest privacy-safe copy for observed and authored pane sends", () => {
     const common = {
       paneId: "pane.b",
@@ -526,6 +571,23 @@ describe("the layout-faithful workspace view", () => {
     // One row of a tile that is 25 pane rows plus the borrowed separator row.
     expect(headers[1]!.style.top).toBe("1px");
     expect(headers[1]!.style.height).toBe(`calc(${((1 / 26) * 100).toFixed(4)}% - 1px)`);
+
+    // The tmux layout can be one resize behind xterm. Once xterm has painted,
+    // its real cell height owns chrome geometry so a stale 1/26 fraction cannot
+    // cover two 14px terminal rows in a tall browser viewport.
+    const area = root.querySelector<HTMLElement>(".tiled-pane-area")!;
+    const viewport = area.querySelector<HTMLElement>(".terminal-surface__viewport")!;
+    const grid = document.createElement("div");
+    grid.className = "xterm";
+    const rows = document.createElement("div");
+    rows.className = "xterm-rows";
+    const paintedRow = document.createElement("div");
+    paintedRow.getBoundingClientRect = () => ({ height: 14 }) as DOMRect;
+    rows.append(paintedRow);
+    grid.append(rows);
+    viewport.append(grid);
+    area.dispatchEvent(new Event("tmux-ide-terminal-grid-resized"));
+    expect(headers[1]!.style.height).toBe("calc(14px - 1px)");
   });
 
   it("arms the pane header's close before it kills anything", () => {
@@ -582,7 +644,7 @@ describe("the layout-faithful workspace view", () => {
     expect(renderSurface([SPLIT]).root.querySelectorAll(".pane-tile")).toHaveLength(2);
   });
 
-  it("uses the whole panel header as the drag handle", () => {
+  it("uses the whole panel header as the drag handle", async () => {
     const { root, invoke } = renderSurface([SPLIT]);
     const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
     overlay.getBoundingClientRect = () =>
@@ -601,6 +663,7 @@ describe("the layout-faithful workspace view", () => {
     };
     header.dispatchEvent(pointer("pointerdown", 250));
     header.dispatchEvent(pointer("pointermove", 750));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(root.querySelector(".pane-drop-ghost__label")?.textContent).toContain(
       "Swap with Terminal",
     );
@@ -614,6 +677,38 @@ describe("the layout-faithful workspace view", () => {
       "swap-committing",
     );
     expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')!.dataset.elevated).toBe("false");
+  });
+
+  it("commits before a synchronous lostpointercapture cleanup can cancel the swap", async () => {
+    const { root, invoke } = renderSurface([SPLIT]);
+    const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
+    overlay.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1_000, height: 500, right: 1_000, bottom: 500 }) as DOMRect;
+    const header = root.querySelector<HTMLElement>('[data-pane="pane.a"] .pane-tile__header')!;
+    header.setPointerCapture = () => undefined;
+    header.releasePointerCapture = () => {
+      header.dispatchEvent(new Event("lostpointercapture", { bubbles: true }));
+    };
+    const pointer = (type: string, x: number): PointerEvent => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 10 });
+      Object.defineProperties(event, {
+        pointerId: { value: 27 },
+        isPrimary: { value: true },
+        pointerType: { value: "mouse" },
+      });
+      return event as PointerEvent;
+    };
+    header.dispatchEvent(pointer("pointerdown", 250));
+    header.dispatchEvent(pointer("pointermove", 750));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    header.dispatchEvent(pointer("pointerup", 750));
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("pane.swap", "pane.a", {
+      swapTargetSemanticPaneId: "pane.b",
+    });
+    expect(root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPhase).toBe(
+      "swap-committing",
+    );
   });
 
   it("adopts the confirming tmux swap without replaying a FLIP transition", async () => {
@@ -684,6 +779,110 @@ describe("the layout-faithful workspace view", () => {
     expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')!.style.transform).toBe("");
   });
 
+  it("keeps each browser client's viewed window local while sharing canonical layout", () => {
+    const windows = [
+      layout({ semanticWindowId: "window.editor", windowName: "editor", currentWindow: true }),
+      layout({
+        semanticWindowId: "window.shell",
+        windowName: "shell",
+        currentWindow: false,
+        panes: [{ pane: "pane.z", left: 0, top: 0, width: 200, height: 50, active: true }],
+      }),
+    ];
+    const [viewA, setViewA] = createSignal<string | null>("pane.a");
+    const [viewB, setViewB] = createSignal<string | null>("pane.a");
+    const invoke = vi.fn();
+    const roots = [document.createElement("div"), document.createElement("div")];
+    for (const root of roots) document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WorkspaceTiledSurface
+            layouts={windows}
+            workspaceName="workspace.product"
+            transport={null}
+            paneFrames={[]}
+            verbs={{ workspaceConnected: true, invoke }}
+            viewPane={viewA()}
+            onSelectViewPane={(pane) => setViewA(pane)}
+          />
+        ),
+        roots[0]!,
+      ),
+      render(
+        () => (
+          <WorkspaceTiledSurface
+            layouts={windows}
+            workspaceName="workspace.product"
+            transport={null}
+            paneFrames={[]}
+            verbs={{ workspaceConnected: true, invoke }}
+            viewPane={viewB()}
+            onSelectViewPane={(pane) => setViewB(pane)}
+          />
+        ),
+        roots[1]!,
+      ),
+    );
+    roots[0]!.querySelectorAll<HTMLButtonElement>(".window-tabs__tab")[1]!.click();
+    expect(viewA()).toBe("pane.z");
+    expect(viewB()).toBe("pane.a");
+    expect(roots[0]!.querySelector<HTMLElement>('.pane-tile[data-pane="pane.z"]')).not.toBeNull();
+    expect(roots[1]!.querySelector<HTMLElement>('.pane-tile[data-pane="pane.a"]')).not.toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("retains a pane's terminal owner when an earlier semantic id is inserted", () => {
+    const recording = createRecordingMirrorRendererFactory();
+    const node = (pane: string) => ({
+      pane,
+      title: pane,
+      frame: null,
+      state: { kind: "live", flowPaused: false } as const,
+      registerSink: () => () => undefined,
+    });
+    const mirror: AppWindowCanvasMirrorProps = {
+      enabled: true,
+      onToggle: vi.fn(),
+      nodes: [node("pane.a"), node("pane.b"), node("pane.0")],
+      connection: { kind: "connected" },
+      onRetry: vi.fn(),
+      rendererFactory: recording.factory,
+    };
+    const [frames, setFrames] = createSignal<readonly PaneStreamLayoutEvent[]>([SPLIT]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WorkspaceTiledSurface
+            layouts={frames()}
+            workspaceName="workspace.product"
+            transport={null}
+            paneFrames={[]}
+            verbs={{ workspaceConnected: true, invoke: vi.fn() }}
+            mirror={mirror}
+          />
+        ),
+        root,
+      ),
+    );
+    const paneA = root.querySelector<HTMLElement>('[data-pane="pane.a"]')!;
+    const paneATerminal = paneA.querySelector(".mirror-pane-node");
+    setFrames([
+      layout({
+        panes: [
+          { pane: "pane.0", left: 0, top: 0, width: 65, height: 50, active: false },
+          { pane: "pane.a", left: 66, top: 0, width: 66, height: 50, active: true },
+          { pane: "pane.b", left: 133, top: 0, width: 67, height: 50, active: false },
+        ],
+      }),
+    ]);
+    expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')).toBe(paneA);
+    expect(paneA.querySelector(".mirror-pane-node")).toBe(paneATerminal);
+    expect(recording.renderers).toHaveLength(3);
+  });
+
   it("puts a draggable border on tmux's own border cell, and none when there is one pane", () => {
     const { root } = renderSurface([SPLIT]);
     const border = root.querySelector<HTMLElement>(".pane-border")!;
@@ -729,6 +928,91 @@ describe("the layout-faithful workspace view", () => {
     expect(invoke.mock.calls.filter(([verb]) => verb === "pane.resize")).toEqual([
       ["pane.resize", "pane.a", { resize: { axis: "cols", cells: 109 } }],
     ]);
+  });
+
+  it("settles on tmux's clamped resize result without rolling back to the requested size", async () => {
+    const [frames, setFrames] = createSignal<readonly PaneStreamLayoutEvent[]>([SPLIT]);
+    let resolveMutation!: (value: {
+      status: "ok";
+      result: {
+        operationId: string;
+        daemonInstanceId: string;
+        outcome: "applied";
+        workspaceName: string;
+        verb: "workspace.pane.resize";
+        semanticPaneId: string;
+        axis: "cols";
+        cells: number;
+      };
+    }) => void;
+    const invoke = vi.fn(
+      () =>
+        new Promise<Parameters<typeof resolveMutation>[0]>((resolve) => {
+          resolveMutation = resolve;
+        }),
+    );
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WorkspaceTiledSurface
+            layouts={frames()}
+            workspaceName="workspace.product"
+            transport={null}
+            paneFrames={[]}
+            verbs={{ workspaceConnected: true, invoke }}
+            reducedMotion
+          />
+        ),
+        root,
+      ),
+    );
+    const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
+    overlay.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1_000, height: 500, right: 1_000, bottom: 500 }) as DOMRect;
+    const border = root.querySelector<HTMLElement>(".pane-border")!;
+    border.setPointerCapture = () => undefined;
+    border.releasePointerCapture = () => undefined;
+    const pointer = (type: string, x: number): PointerEvent => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 200 });
+      Object.defineProperties(event, { pointerId: { value: 19 }, isPrimary: { value: true } });
+      return event as PointerEvent;
+    };
+    border.dispatchEvent(pointer("pointerdown", 500));
+    border.dispatchEvent(pointer("pointerup", 550));
+    resolveMutation({
+      status: "ok",
+      result: {
+        operationId: "30000000-0000-4000-8000-000000000001",
+        daemonInstanceId: "30000000-0000-4000-8000-000000000002",
+        outcome: "applied",
+        workspaceName: "workspace.product",
+        verb: "workspace.pane.resize",
+        semanticPaneId: "pane.a",
+        axis: "cols",
+        cells: 105,
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPreviewCells,
+    ).toBe("105");
+    setFrames([
+      layout({
+        panes: [
+          { pane: "pane.a", left: 0, top: 0, width: 105, height: 50, active: true },
+          { pane: "pane.b", left: 106, top: 0, width: 94, height: 50, active: false },
+        ],
+      }),
+    ]);
+    await Promise.resolve();
+    expect(root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPhase).toBe(
+      "idle",
+    );
+    expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')!.style.transform).toBe("");
+    expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')!.style.width).toBe("52.7500%");
   });
 
   it("keeps horizontal resize authority on the edge instead of consuming panel chrome", () => {
@@ -803,6 +1087,7 @@ describe("the layout-faithful workspace view", () => {
       "resize-preview",
     );
     border.dispatchEvent(pointer("pointermove", 505));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(
       root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPreviewCells,
     ).toBe("101");
@@ -818,6 +1103,50 @@ describe("the layout-faithful workspace view", () => {
     expect(resizes.length, "the release did not flush a resize").toBe(1);
     expect(resizes[0]![1]).toBe("pane.a");
     expect(resizes[0]![2]).toEqual({ resize: { axis: "cols", cells: 101 } });
+  });
+
+  it("coalesces pointer floods to one preview frame and one durable resize", () => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let frameId = 0;
+    const originalRequest = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = (callback) => {
+      callbacks.set(++frameId, callback);
+      return frameId;
+    };
+    globalThis.cancelAnimationFrame = (id) => callbacks.delete(id);
+    try {
+      const { root, invoke } = renderSurface([SPLIT]);
+      const border = root.querySelector<HTMLElement>(".pane-border")!;
+      const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
+      overlay.getBoundingClientRect = () =>
+        ({ left: 0, top: 0, width: 1_000, height: 500, right: 1_000, bottom: 500 }) as DOMRect;
+      border.setPointerCapture = () => undefined;
+      border.releasePointerCapture = () => undefined;
+      // Mirror mounting schedules an unrelated fit frame. This assertion owns
+      // only the manipulation compositor's frame budget.
+      callbacks.clear();
+      const pointer = (type: string, x: number): PointerEvent => {
+        const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 200 });
+        Object.defineProperties(event, { pointerId: { value: 17 }, isPrimary: { value: true } });
+        return event as PointerEvent;
+      };
+      border.dispatchEvent(pointer("pointerdown", 495));
+      for (let x = 496; x < 996; x += 1) border.dispatchEvent(pointer("pointermove", x));
+      expect(callbacks).toHaveLength(1);
+      expect(invoke).not.toHaveBeenCalled();
+      const callback = [...callbacks.values()][0]!;
+      callbacks.clear();
+      callback(performance.now());
+      expect(
+        root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPreviewCells,
+      ).toBe("199");
+      border.dispatchEvent(pointer("pointerup", 995));
+      expect(invoke.mock.calls.filter(([verb]) => verb === "pane.resize")).toHaveLength(1);
+    } finally {
+      globalThis.requestAnimationFrame = originalRequest;
+      globalThis.cancelAnimationFrame = originalCancel;
+    }
   });
 
   it("prunes a window whose panes the daemon no longer reports as attachable", () => {

@@ -65,6 +65,18 @@ function assertLiveScope(
   }
 }
 
+function assertLiveControllerPrincipal(
+  shared: SharedClient,
+  lease: SessionRuntimeControllerLease,
+): void {
+  if (shared.lease !== lease) {
+    throw new SessionRuntimeControllerLeaseError(
+      "stale-controller-lease",
+      "The host no longer owns session controller authority.",
+    );
+  }
+}
+
 const clientsByRegistry = new WeakMap<object, Map<string, SharedClient>>();
 
 export class SessionRuntimeTransportBinding {
@@ -369,7 +381,10 @@ export class SessionRuntimeTransportBinder {
       shared.consumer,
       lease,
       grants,
-      (semanticPaneId) => assertLiveScope(shared, lease, semanticPaneId),
+      (semanticPaneId) => {
+        if (semanticPaneId === undefined) assertLiveControllerPrincipal(shared, lease);
+        else assertLiveScope(shared, lease, semanticPaneId);
+      },
     );
     return sourceSemanticPaneId === undefined
       ? base
@@ -389,16 +404,18 @@ export class SessionRuntimeTransportBinder {
     }
     if (interactive) {
       shared.interactiveRefs -= 1;
-      if (shared.interactiveRefs === 0 && shared.lease) {
-        // Passive visibility may keep the shared consumer alive, but never its
-        // controller lease or any execution handle derived from that lease.
-        const retired = shared.lease;
-        shared.lease = null;
-        shared.consumer.releaseController(retired);
-      }
     }
     shared.refs -= 1;
     if (shared.refs > 0) return;
+    if (shared.lease) {
+      // A same-host passive session channel keeps the controller PRINCIPAL
+      // continuous across interactive pane retargeting. It contributes no
+      // source-pane grant and cannot type; the lease retires with the last
+      // host/session ref, while a passive-only host never acquires one.
+      const retired = shared.lease;
+      shared.lease = null;
+      shared.consumer.releaseController(retired);
+    }
     for (const [key, candidate] of this.#clients) {
       if (candidate === shared) this.#clients.delete(key);
     }

@@ -58,6 +58,15 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
+/** Semantic delivery is projected to ANSI row patches before the xterm sink. */
+function visibleTerminalText(value: string): string {
+  const ansiEscapeSequence = new RegExp(
+    `${String.fromCharCode(27)}(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])`,
+    "gu",
+  );
+  return value.replace(ansiEscapeSequence, "");
+}
+
 async function waitUntil<T>(read: () => T | null, message: string, timeoutMs = 10_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -278,6 +287,7 @@ describe
       const ends: (PaneStreamTransportError | null)[] = [];
       const paneText = (pane: string): string =>
         Buffer.concat(paneBytes.get(pane) ?? []).toString("utf8");
+      const visiblePaneText = (pane: string): string => visibleTerminalText(paneText(pane));
 
       const transport = createPaneStreamTransport({
         createWebSocket: auditingWebSocketFactory(transcript),
@@ -337,10 +347,10 @@ describe
       const markerOne = `M43_ONE_${randomUUID().slice(0, 8)}`;
       runTmux(["send-keys", "-t", `=${sessionName}:0.0`, `echo ${markerOne}`, "Enter"]);
       await waitUntil(
-        () => (paneText(PANE_ONE).includes(markerOne) ? true : null),
+        () => (visiblePaneText(PANE_ONE).includes(markerOne) ? true : null),
         "external tmux input must stream into the mirror node",
       );
-      expect(paneText(PANE_TWO)).not.toContain(markerOne);
+      expect(visiblePaneText(PANE_TWO)).not.toContain(markerOne);
 
       // Flood pane two; pane one must stay independently live DURING the flood.
       runTmux([
@@ -351,13 +361,13 @@ describe
         "Enter",
       ]);
       await waitUntil(
-        () => (paneText(PANE_TWO).includes("FLOOD-") ? true : null),
+        () => (visiblePaneText(PANE_TWO).includes("FLOOD-") ? true : null),
         "flood output must reach the flooded pane's node",
       );
       const markerDuringFlood = `M43_LIVE_${randomUUID().slice(0, 8)}`;
       runTmux(["send-keys", "-t", `=${sessionName}:0.0`, `echo ${markerDuringFlood}`, "Enter"]);
       await waitUntil(
-        () => (paneText(PANE_ONE).includes(markerDuringFlood) ? true : null),
+        () => (visiblePaneText(PANE_ONE).includes(markerDuringFlood) ? true : null),
         "the sibling pane must stay live while another pane floods",
       );
       expect(ends).toEqual([]);
@@ -374,13 +384,14 @@ describe
       const markerAfterClose = `M43_POST_${randomUUID().slice(0, 8)}`;
       runTmux(["send-keys", "-t", `=${sessionName}:0.0`, `echo ${markerAfterClose}`, "Enter"]);
       await waitUntil(
-        () => (paneText(PANE_ONE).includes(markerAfterClose) ? true : null),
+        () => (visiblePaneText(PANE_ONE).includes(markerAfterClose) ? true : null),
         "surviving panes must stay live after a sibling pane closes",
       );
       expect(ends).toEqual([]);
 
-      // Wire transcript audit: one redeem, one ready, per-pane seeds, cumulative
-      // consumed acks flowing back, and the pane-three closed frame.
+      // Wire transcript audit: one redeem, one lease ready, one semantic lane
+      // per pane, semantic ACKs flowing back, and an honest pane-three close at
+      // the renderer boundary (the wire close is a semantic tombstone envelope).
       expect(transcript.filter(({ type }) => type === "redeem")).toHaveLength(1);
       expect(transcript.filter(({ type }) => type === "ready")).toHaveLength(1);
       expect(transcript[0]).toMatchObject({ direction: "sent", type: "redeem" });
@@ -389,24 +400,20 @@ describe
           transcript.some(
             (record) =>
               record.direction === "received" &&
-              record.type === "seed-batch" &&
+              record.type === "terminal-delivery-ready" &&
               record.pane === pane,
           ),
-          `transcript must carry the ${pane} seed-batch`,
+          `transcript must negotiate the ${pane} semantic lane`,
         ).toBe(true);
       }
       expect(
-        transcript.filter((record) => record.direction === "sent" && record.type === "consumed")
-          .length,
+        transcript.filter(
+          (record) => record.direction === "sent" && record.type === "terminal-delivery-ack",
+        ).length,
       ).toBeGreaterThan(0);
-      expect(
-        transcript.some(
-          (record) =>
-            record.direction === "received" &&
-            record.type === "closed" &&
-            record.pane === PANE_THREE,
-        ),
-      ).toBe(true);
+      expect(paneEvents.some((event) => event.pane === PANE_THREE && event.type === "closed")).toBe(
+        true,
+      );
       expect(
         transcript.filter((record) => record.direction === "sent" && record.type === "input"),
       ).toHaveLength(0);

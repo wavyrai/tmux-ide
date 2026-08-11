@@ -2,7 +2,8 @@
  * Chain: the mouse reaches tmux, through the layout-faithful view.
  *
  *   the window tabs show the session's real windows → clicking an inactive tab
- *   moves tmux's OWN current window → right-click a pane tile for the verb menu,
+ *   changes this client's visible window without stealing shared tmux focus →
+ *   right-click a pane tile for the verb menu,
  *   in sections → rename the window and see both the tab and `tmux list-windows`
  *   change → split from the menu and watch the view re-tile to match the layout
  *   frame → drag the new border and watch the tmux pane actually resize → close
@@ -65,7 +66,7 @@ test("the mouse reaches the multiplexer: switch windows, rename, split, resize, 
     })
     .toEqual([...startingWindows].sort());
 
-  // --- Clicking an inactive tab moves tmux's current window ----------------
+  // --- Clicking an inactive tab changes only this renderer's local view ----
   const inactiveTab = page.locator('.window-tabs__tab[data-active="false"]').first();
   await proveVisible(inactiveTab, "the inactive window tab", { minWidth: 30, minHeight: 16 });
   const targetWindow = (await inactiveTab.innerText()).trim();
@@ -75,21 +76,23 @@ test("the mouse reaches the multiplexer: switch windows, rename, split, resize, 
   );
   await inactiveTab.click();
 
-  /*
-   * Bug this catches: the tab switches which window the APP shows and never
-   * tells tmux, so a client attached over ssh stays on the old window and the
-   * two views of one session disagree about where the user is.
-   */
+  // Browser tabs are per-client navigation. A second browser or ssh client
+  // keeps its own focus; later mutations remain semantically addressed to the
+  // pane visible here rather than relying on tmux's process-global current one.
   await expect
     .poll(() => liveApp.fleet.currentWindow(session), {
-      message: "clicking the window tab did not change tmux's own current window",
+      message: "local browser navigation stole tmux focus from another client",
       timeout: 30_000,
     })
-    .toBe(targetWindow);
+    .toBe(startingCurrent);
   await expect(
     page.locator('.window-tabs__tab[data-active="true"]'),
-    "tmux switched windows but the tab strip still marks the old one",
+    "the local tab strip did not mark the selected window",
   ).toHaveText(targetWindow, { timeout: 30_000 });
+  await expect(
+    page.locator('.pane-tile[data-active="true"]'),
+    "the active tile did not follow the locally selected window",
+  ).toHaveCount(1, { timeout: 30_000 });
   await page.screenshot({ path: testInfo.outputPath("1-window-tabs.png") });
 
   // --- The verb menu, on a pane tile ---------------------------------------
@@ -202,7 +205,7 @@ test("the mouse reaches the multiplexer: switch windows, rename, split, resize, 
             .sort((left, right) => left - right),
         );
         const cells = liveApp.fleet
-          .paneSizes(session)
+          .paneSizes(session, RENAMED)
           .map((size) => Number(size.split("x")[0]))
           .sort((left, right) => left - right);
         if (widths.length !== 2 || cells.length !== 2 || widths[0]! === 0) return "not measurable";
@@ -224,7 +227,7 @@ test("the mouse reaches the multiplexer: switch windows, rename, split, resize, 
   const border = page.locator(".pane-border").first();
   await proveVisible(border, "the draggable pane border", { minWidth: 1, minHeight: 20 });
   const borderBox = (await border.boundingBox())!;
-  const sizesBefore = liveApp.fleet.paneSizes(session).join(",");
+  const sizesBefore = liveApp.fleet.paneSizes(session, RENAMED).join(",");
 
   await page.mouse.move(borderBox.x + borderBox.width / 2, borderBox.y + borderBox.height / 2);
   await page.mouse.down();
@@ -241,7 +244,7 @@ test("the mouse reaches the multiplexer: switch windows, rename, split, resize, 
    * in its purest form, since a resize has no other observable effect.
    */
   await expect
-    .poll(() => liveApp.fleet.paneSizes(session).join(","), {
+    .poll(() => liveApp.fleet.paneSizes(session, RENAMED).join(","), {
       message: "the border drag never reached tmux — the panes are the same size",
       timeout: 30_000,
     })

@@ -388,6 +388,50 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await hub.close();
   });
 
+  it("preempts a blocked representation with source close and tolerates its racing ACK", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    let releaseRepresentation!: () => void;
+    const blockedRepresentation = new Promise<void>((resolve) => {
+      releaseRepresentation = resolve;
+    });
+    const connection = await hub.open(
+      "slow",
+      "pane-a",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      (message) => {
+        messages.push(message);
+        return message.type === "terminal.delivery" ? blockedRepresentation : undefined;
+      },
+    );
+    owner.emit(seed());
+    await settle();
+    const displaced = messages[0] as TerminalDeliveryEnvelope;
+
+    owner.emit(tombstone(1));
+    await settle();
+    expect(messages.at(-1)).toMatchObject({
+      type: "terminal.delivery.fault",
+      reason: "source-closed",
+    });
+
+    // The renderer may have applied the representation immediately before it
+    // observed close. That authenticated ACK belongs to the displaced flight,
+    // and must not transform honest lifecycle racing into protocol failure.
+    connection.ack(ack(displaced));
+    expect(
+      messages.filter(
+        (message) =>
+          message.type === "terminal.delivery.fault" && message.reason === "protocol-violation",
+      ),
+    ).toHaveLength(0);
+    releaseRepresentation();
+    await settle();
+    await connection.close();
+    await hub.close();
+  });
+
   it("accepts only an exact duplicate ACK and faults mutated replays", async () => {
     const owner = new FakeOwner();
     const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);

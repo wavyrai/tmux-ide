@@ -68,6 +68,10 @@ const TARGET_B: TerminalAttachmentSemanticTarget = {
   workspaceName: "workspace-b",
   semanticPaneId: "agent-b",
 };
+const TARGET_C: TerminalAttachmentSemanticTarget = {
+  workspaceName: "workspace-c",
+  semanticPaneId: "agent-c",
+};
 
 function connectedState(
   clientViewport: TerminalAttachmentViewport = { cols: 80, rows: 24 },
@@ -904,13 +908,17 @@ describe("TerminalSurface", () => {
     blockedWrite.resolve();
   });
 
-  it("retires the old attachment and reconnects when the semantic target changes", async () => {
+  it("retires pane-scoped authority immediately when the semantic target changes", async () => {
     const attachments = [attachmentHarness(), attachmentHarness()];
+    const replacement = deferred<NativeTerminalConnectResult>();
     const listeners: Array<(event: NativeTerminalEvent) => void | Promise<void>> = [];
     let connectionIndex = 0;
     const transport = transportHarness(async (_request, listener) => {
       listeners.push(listener);
-      return { status: "connected", attachment: attachments[connectionIndex++]! };
+      const index = connectionIndex++;
+      return index === 0
+        ? { status: "connected", attachment: attachments[0]! }
+        : replacement.promise;
     });
     const rendererFleet = rendererFleetHarness();
     const blockedWrite = deferred<void>();
@@ -939,6 +947,11 @@ describe("TerminalSurface", () => {
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(rendererFleet.instances).toHaveLength(2));
     const newRenderer = rendererFleet.instances[1]!;
+    // Pane-scoped input authority is not a continuity token. The daemon binder
+    // retains the host/session principal through the passive pane stream while
+    // this old interactive grant is retired immediately.
+    expect(attachments[0]!.dispose).toHaveBeenCalledOnce();
+    replacement.resolve({ status: "connected", attachment: attachments[1]! });
     expect(attachments[0]!.dispose).toHaveBeenCalledOnce();
     expect(oldRenderer.renderer.dispose).toHaveBeenCalledOnce();
     expect(oldRenderer.disposeInput).toHaveBeenCalledOnce();
@@ -952,6 +965,44 @@ describe("TerminalSurface", () => {
     blockedWrite.resolve();
     await Promise.resolve();
     expect(newRenderer.writes).toEqual([new Uint8Array([2])]);
+    dispose();
+  });
+
+  it("fences rapid A to pending B to C retargets without retaining A's pane grant", async () => {
+    const attachments = [attachmentHarness(), attachmentHarness(), attachmentHarness()];
+    const b = deferred<NativeTerminalConnectResult>();
+    const c = deferred<NativeTerminalConnectResult>();
+    let connectionIndex = 0;
+    const transport = transportHarness(async () => {
+      const index = connectionIndex++;
+      if (index === 0) return { status: "connected", attachment: attachments[0]! };
+      return index === 1 ? b.promise : c.promise;
+    });
+    const [target, setTarget] = createSignal(TARGET_A);
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={target()}
+          title="Codex"
+          transport={transport}
+          rendererFactory={rendererFleetHarness().factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    setTarget(TARGET_B);
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    setTarget(TARGET_C);
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(3));
+    expect(attachments[0]!.dispose).toHaveBeenCalledOnce();
+    b.resolve({ status: "connected", attachment: attachments[1]! });
+    await vi.waitFor(() => expect(attachments[1]!.dispose).toHaveBeenCalledOnce());
+    expect(attachments[0]!.dispose).toHaveBeenCalledOnce();
+    c.resolve({ status: "connected", attachment: attachments[2]! });
+    expect(attachments[0]!.dispose).toHaveBeenCalledOnce();
+    expect(attachments[2]!.dispose).not.toHaveBeenCalled();
     dispose();
   });
 
@@ -1263,6 +1314,52 @@ describe("TerminalSurface", () => {
     await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
     expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected");
     expect(attempts).toBe(2);
+    dispose();
+    vi.useRealTimers();
+  });
+
+  it("keeps session continuity without retaining a failed replacement's old pane grant", async () => {
+    vi.useFakeTimers();
+    const oldAttachment = attachmentHarness();
+    const replacement = attachmentHarness();
+    let attempts = 0;
+    const transport = transportHarness(async () => {
+      attempts += 1;
+      if (attempts === 1) return { status: "connected", attachment: oldAttachment };
+      if (attempts === 2) {
+        return {
+          status: "error" as const,
+          error: {
+            code: "attachment-unavailable" as const,
+            reason: "replacement issue raced discovery",
+            retryable: true,
+          },
+        };
+      }
+      return { status: "connected" as const, attachment: replacement };
+    });
+    const [target, setTarget] = createSignal(TARGET_A);
+    const renderer = rendererFleetHarness();
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={target()}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    setTarget(TARGET_B);
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    expect(oldAttachment.dispose).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(3));
+    expect(oldAttachment.dispose).toHaveBeenCalledOnce();
+    expect(replacement.dispose).not.toHaveBeenCalled();
     dispose();
     vi.useRealTimers();
   });
