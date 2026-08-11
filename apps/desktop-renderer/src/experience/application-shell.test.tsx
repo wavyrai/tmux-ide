@@ -442,6 +442,15 @@ describe("visible DOM application shell", () => {
         () => (
           <DomApplicationShell
             host={host()}
+            daemonState={{
+              status: "connected",
+              identity: {
+                protocolVersion: 1,
+                productVersion: "test",
+                instanceId: "22222222-2222-4222-8222-222222222222",
+                startedAt: "2026-08-08T00:00:00.000Z",
+              },
+            }}
             runtime="browser"
             platform="darwin"
             windowState={WINDOW_STATE}
@@ -720,8 +729,9 @@ describe("visible DOM application shell", () => {
       }),
     );
     expect(pane.getAttribute("data-border-role")).toBe("focused");
-    expect(pane.getAttribute("data-terminal-input-owner")).toBe("true");
-    expect(otherPane.getAttribute("data-terminal-input-owner")).toBe("false");
+    // Local DOM focus is orthogonal to the shared controller/input owner.
+    expect(pane.getAttribute("data-terminal-input-owner")).toBe("false");
+    expect(otherPane.getAttribute("data-terminal-input-owner")).toBe("true");
     expect(pane.querySelector(".terminal-surface__viewport")).toBe(terminalMount);
     expect(styles).toContain(
       '.agent-grid[data-has-maximized="true"] > .web-pane-frame:not([data-structure="maximized"])',
@@ -1253,7 +1263,7 @@ describe("visible DOM application shell", () => {
     ]);
   });
 
-  it("activates the correlated tmux pane when an agent is chosen in the sidebar", async () => {
+  it("changes only this client's view when an agent is chosen in the sidebar", async () => {
     const baseHost = host();
     const invokeVerb = vi.fn(async () => ({
       status: "ok" as const,
@@ -1309,19 +1319,11 @@ describe("visible DOM application shell", () => {
       APPLICATION_SHELL_COMMAND_IDS.selectResource,
       APPLICATION_SHELL_COMMAND_IDS.moveFocus,
     ]);
-    await vi.waitFor(() =>
-      expect(invokeVerb).toHaveBeenCalledWith({
-        verbId: "pane.select",
-        intent: {
-          verb: "workspace.pane.select",
-          workspaceName: "workspace.product",
-          semanticPaneId: "pane.reviewer",
-        },
-      }),
-    );
+    await Promise.resolve();
+    expect(invokeVerb).not.toHaveBeenCalled();
   });
 
-  it("reconciles the sidebar and local focus from a newer active-pane inventory", async () => {
+  it("keeps local sidebar selection when canonical tmux focus changes", async () => {
     const baseHost = host();
     const liveHost: HostCapabilities = {
       ...baseHost,
@@ -1372,10 +1374,81 @@ describe("visible DOM application shell", () => {
     setInput(withTerminalInventory("pane.reviewer"));
     await vi.waitFor(() =>
       expect(
-        root.querySelector("#sidebar-agent-agent\\.reviewer")?.getAttribute("aria-pressed"),
+        root.querySelector("#sidebar-agent-agent\\.implementer")?.getAttribute("aria-pressed"),
       ).toBe("true"),
     );
     expect(onCommand).not.toHaveBeenCalled();
+  });
+
+  it("repairs sidebar and pane chrome together when the viewed pane becomes unavailable", async () => {
+    const [input, setInput] = createSignal(withTerminalInventory("pane.implementer"));
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            daemonState={{
+              status: "connected",
+              identity: {
+                protocolVersion: 1,
+                productVersion: "test",
+                instanceId: "22222222-2222-4222-8222-222222222222",
+                startedAt: "2026-08-08T00:00:00.000Z",
+              },
+            }}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input()}
+            dataMode="runtime"
+            paneFrames={createDefaultDomPaneFrames()}
+            experimentalSurfaces
+          />
+        ),
+        root,
+      ),
+    );
+    pointerClick(root.querySelector("#primary-tab-terminals")!);
+    await vi.waitFor(() =>
+      expect(
+        root.querySelector("#sidebar-agent-agent\\.implementer")?.getAttribute("aria-pressed"),
+      ).toBe("true"),
+    );
+
+    const replacement = withTerminalInventory("pane.reviewer");
+    setInput(
+      ApplicationShellProjectionInputV1SchemaZ.parse({
+        ...replacement,
+        terminalInventory: {
+          ...replacement.terminalInventory!,
+          resources: replacement.terminalInventory!.resources.map((resource) =>
+            resource.id === "pane.implementer"
+              ? {
+                  ...resource,
+                  active: false,
+                  attachability: {
+                    status: "unavailable" as const,
+                    reason: "not-single-pane-window" as const,
+                  },
+                }
+              : resource,
+          ),
+        },
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        root.querySelector("#sidebar-agent-agent\\.reviewer")?.getAttribute("aria-pressed"),
+      ).toBe("true");
+      // This is the single local-view source consumed by both rendered pane
+      // chrome and WorkspaceTiledSurface's `viewPane` prop.
+      expect(root.querySelector(".shell-workbench")?.getAttribute("data-view-pane-resource")).toBe(
+        "pane.reviewer",
+      );
+    });
   });
 });
 

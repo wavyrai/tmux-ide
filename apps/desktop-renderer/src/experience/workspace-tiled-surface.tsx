@@ -26,8 +26,17 @@
  * between two panes, and the drag handles plus persistent panel header sit on
  * those reserved cells; a tile's output region stays transparent.
  */
-import { Index, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import type { SemanticIconId } from "@tmux-ide/contracts";
+import {
+  For,
+  Index,
+  Show,
+  batch,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js";
+import type { SemanticIconId, WorkspaceMultiplexerMutationResult } from "@tmux-ide/contracts";
 import {
   INTERACTION_PRESENCE_MS,
   interactionPresenceIsFresh,
@@ -85,6 +94,7 @@ type PaneManipulationPhase =
   | "drop-ready"
   | "swap-committing"
   | "rollback";
+type PaneTransactionState = "idle" | "previewing" | "committing" | "settled" | "rejected";
 
 /**
  * A mutation can be accepted by tmux before its authoritative layout frame
@@ -140,7 +150,10 @@ export function terminalGridOverlayBox(area: HTMLElement): {
   };
 }
 
-type TiledVerbResult = void | Promise<{ readonly status: "ok" | "error" }>;
+type TiledVerbResult = void | Promise<
+  | { readonly status: "ok"; readonly result?: WorkspaceMultiplexerMutationResult }
+  | { readonly status: "error"; readonly error?: unknown }
+>;
 
 export interface TiledSurfaceVerbs {
   readonly workspaceConnected: boolean;
@@ -220,6 +233,9 @@ export interface WorkspaceTiledSurfaceProps {
     pointer: { readonly x: number; readonly y: number },
   ) => void;
   readonly onFocusPane?: (semanticPaneId: string, source: "keyboard" | "mouse") => void;
+  /** This browser view's pane selection; never interpreted as shared tmux focus. */
+  readonly viewPane?: string | null;
+  readonly onSelectViewPane?: (semanticPaneId: string, source: "keyboard" | "mouse") => void;
   /**
    * The window whose tab is being renamed, named by a pane inside it. The tab
    * is where a rename belongs: it is where the name is READ, so it is where a
@@ -309,7 +325,12 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   let observedInteractionSequence = 0;
 
   createEffect(() => {
-    const sequence = props.interactionSequence ?? 0;
+    // Pane presence has its own revision lane. A newer unrelated receipt (for
+    // example resize) must not erase a still-fresh read/send relationship.
+    const sequence = Math.max(
+      0,
+      ...Object.values(props.paneInteractions ?? {}).map((interaction) => interaction.sequence),
+    );
     if (sequence <= observedInteractionSequence) return;
     observedInteractionSequence = sequence;
     const latest = Object.values(props.paneInteractions ?? {}).find(
@@ -364,19 +385,37 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   });
   const tabs = createMemo<readonly WindowTab[]>(() => {
     const fromFrames = windowTabs(frames());
-    if (fromFrames.length > 0) return fromFrames;
+    if (fromFrames.length > 0) {
+      const selectedFrame = frames().find((frame) =>
+        frame.panes.some((pane) => pane.pane === props.viewPane),
+      );
+      if (!selectedFrame) return fromFrames;
+      const selectedKey = windowTabKey(selectedFrame);
+      return fromFrames.map((tab, index) => ({
+        ...tab,
+        active: frames()[index] ? windowTabKey(frames()[index]!) === selectedKey : false,
+      }));
+    }
     return (props.fallbackWindows ?? []).map((window) => ({
       semanticWindowId: null,
       label: window.label,
-      active: window.active,
+      active: props.viewPane ? window.panes.includes(props.viewPane) : window.active,
       paneCount: window.panes.length,
       zoomed: false,
       addressPane: window.panes[0] ?? null,
     }));
   });
-  const currentFrame = createMemo<LayoutFrame | null>(
-    () => frames().find((frame) => frame.currentWindow) ?? frames()[0] ?? null,
-  );
+  const currentFrame = createMemo<LayoutFrame | null>(() => {
+    const selected = props.viewPane;
+    return (
+      (selected
+        ? frames().find((frame) => frame.panes.some((pane) => pane.pane === selected))
+        : null) ??
+      frames().find((frame) => frame.currentWindow) ??
+      frames()[0] ??
+      null
+    );
+  });
   const tiles = createMemo(() => {
     const frame = currentFrame();
     if (frame) return layoutTiles(frame);
@@ -584,13 +623,46 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   // A transaction freezes the frame it began on. Pointer feedback is local and
   // compositor-only; tmux mutations are confirmations of that preview, never
   // the source of the preview itself.
-  const [manipulation, setManipulation] = createSignal<WorkspacePaneManipulation | null>(null);
-  const [localPreview, setLocalPreview] = createSignal<WorkspacePanePreview | null>(null);
-  const [committingState, setCommittingState] = createSignal<
-    WorkspacePaneResize | WorkspacePaneDrag | null
-  >(null);
-  const [committingPreview, setCommittingPreview] = createSignal<WorkspacePanePreview | null>(null);
-  const [phase, setPhase] = createSignal<PaneManipulationPhase>("idle");
+  interface PaneTransactionSnapshot {
+    readonly manipulation: WorkspacePaneManipulation | null;
+    readonly localPreview: WorkspacePanePreview | null;
+    readonly committingState: WorkspacePaneResize | WorkspacePaneDrag | null;
+    readonly committingPreview: WorkspacePanePreview | null;
+    readonly phase: PaneManipulationPhase;
+    readonly state: PaneTransactionState;
+  }
+  const [paneTransaction, setPaneTransaction] = createSignal<PaneTransactionSnapshot>({
+    manipulation: null,
+    localPreview: null,
+    committingState: null,
+    committingPreview: null,
+    phase: "idle",
+    state: "idle",
+  });
+  const manipulation = () => paneTransaction().manipulation;
+  const localPreview = () => paneTransaction().localPreview;
+  const committingState = () => paneTransaction().committingState;
+  const committingPreview = () => paneTransaction().committingPreview;
+  const phase = () => paneTransaction().phase;
+  const transactionState = () => paneTransaction().state;
+  const setManipulation = (value: WorkspacePaneManipulation | null): void => {
+    setPaneTransaction((current) => ({ ...current, manipulation: value }));
+  };
+  const setLocalPreview = (value: WorkspacePanePreview | null): void => {
+    setPaneTransaction((current) => ({ ...current, localPreview: value }));
+  };
+  const setCommittingState = (value: WorkspacePaneResize | WorkspacePaneDrag | null): void => {
+    setPaneTransaction((current) => ({ ...current, committingState: value }));
+  };
+  const setCommittingPreview = (value: WorkspacePanePreview | null): void => {
+    setPaneTransaction((current) => ({ ...current, committingPreview: value }));
+  };
+  const setPhase = (value: PaneManipulationPhase): void => {
+    setPaneTransaction((current) => ({ ...current, phase: value }));
+  };
+  const setTransactionState = (value: PaneTransactionState): void => {
+    setPaneTransaction((current) => ({ ...current, state: value }));
+  };
   const [lastConfirmedCells, setLastConfirmedCells] = createSignal<number | null>(null);
   const [endingPanes, setEndingPanes] = createSignal<ReadonlySet<string>>(new Set());
   const [lastLayoutTransition, setLastLayoutTransition] = createSignal<
@@ -605,6 +677,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     readonly x: number;
     readonly y: number;
   } | null = null;
+  let transactionId = 0;
+  let pendingPointerSample: WorkspacePointerSample | null = null;
+  let previewAnimationFrame: number | null = null;
 
   const clearResizeWireTimer = (): void => {
     if (resizeWireTimer !== null) clearTimeout(resizeWireTimer);
@@ -623,6 +698,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     clearResizeWireTimer();
     clearCommitTimeout();
     clearTouchLongPress();
+    if (previewAnimationFrame !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(previewAnimationFrame);
+    }
   });
   if (typeof window !== "undefined") {
     const onManipulationKeyDown = (event: KeyboardEvent): void => {
@@ -666,23 +744,37 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     };
   };
 
-  const settle = (rolledBack = false): void => {
+  const settle = (rolledBack = false, expectedTransactionId = transactionId): void => {
+    if (expectedTransactionId !== transactionId) return;
     clearResizeWireTimer();
     clearCommitTimeout();
-    setCommittingState(null);
-    setCommittingPreview(null);
-    setLocalPreview(null);
-    setPhase(rolledBack ? "rollback" : "idle");
     const frame = currentFrame();
-    setManipulation(
-      frame ? createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }) : null,
-    );
+    // One reactive publication: consumers can never observe authoritative new
+    // geometry with the old preview transform still attached.
+    setPaneTransaction({
+      manipulation: frame
+        ? createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion })
+        : null,
+      localPreview: null,
+      committingState: null,
+      committingPreview: null,
+      phase: rolledBack ? "rollback" : "idle",
+      state: rolledBack ? "rejected" : "settled",
+    });
+    const id = transactionId;
     if (rolledBack) {
       const settleMs = props.reducedMotion ? 0 : 150;
       commitTimeout = setTimeout(() => {
+        if (id !== transactionId) return;
         commitTimeout = null;
-        setPhase("idle");
+        setPaneTransaction((current) => ({ ...current, phase: "idle", state: "idle" }));
       }, settleMs);
+    } else {
+      queueMicrotask(() => {
+        if (id === transactionId && transactionState() === "settled") {
+          setTransactionState("idle");
+        }
+      });
     }
   };
 
@@ -718,12 +810,35 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     clearResizeWireTimer();
     if (plan.dispatch) {
       const { pane, axis, cells } = plan.dispatch.command;
+      const issuedFor = transactionId;
       Promise.resolve(props.verbs.invoke("pane.resize", pane, { resize: { axis, cells } })).then(
         (result) => {
-          if (mutationFailed(result) && phase() === "resize-preview") cancelManipulation();
+          if (issuedFor !== transactionId) return;
+          if (mutationFailed(result)) {
+            if (phase() === "resize-preview") cancelManipulation();
+            else if (phase() === "resize-committing") settle(true, issuedFor);
+            return;
+          }
+          if (
+            result &&
+            result.status === "ok" &&
+            result.result?.verb === "workspace.pane.resize" &&
+            phase() === "resize-committing"
+          ) {
+            const pending = committingState();
+            if (pending?.kind !== "resize") return;
+            const actual = result.result.cells;
+            const adjusted: WorkspacePaneResize = { ...pending, previewCells: actual };
+            batch(() => {
+              setCommittingState(adjusted);
+              setCommittingPreview(previewWorkspacePaneManipulation(adjusted));
+            });
+          }
         },
         () => {
+          if (issuedFor !== transactionId) return;
           if (phase() === "resize-preview") cancelManipulation();
+          else if (phase() === "resize-committing") settle(true, issuedFor);
         },
       );
     }
@@ -749,12 +864,18 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       { borderId, pointer: pointerSample(event), gridBox: currentGridBox() },
     );
     if (started.kind !== "resize") return;
+    transactionId += 1;
     event.preventDefault();
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     setLastConfirmedCells(started.border.cells);
-    setManipulation(started);
-    setLocalPreview(previewWorkspacePaneManipulation(started));
-    setPhase("resize-preview");
+    setPaneTransaction({
+      manipulation: started,
+      localPreview: previewWorkspacePaneManipulation(started),
+      committingState: null,
+      committingPreview: null,
+      phase: "resize-preview",
+      state: "previewing",
+    });
   };
 
   const beginPaneDrag = (pane: string, event: PointerEvent): void => {
@@ -766,12 +887,18 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       { pane, pointer: pointerSample(event), gridBox: currentGridBox() },
     );
     if (started.kind !== "drag") return;
+    transactionId += 1;
     event.preventDefault();
     event.stopPropagation();
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    setManipulation(started);
-    setLocalPreview(previewWorkspacePaneManipulation(started));
-    setPhase("dragging");
+    setPaneTransaction({
+      manipulation: started,
+      localPreview: previewWorkspacePaneManipulation(started),
+      committingState: null,
+      committingPreview: null,
+      phase: "dragging",
+      state: "previewing",
+    });
     if (event.pointerType === "touch") {
       pendingTouchDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
       touchLongPressTimer = setTimeout(() => {
@@ -779,6 +906,39 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         pendingTouchDrag = null;
       }, 400);
     }
+  };
+
+  const applyPointerPreview = (sample: WorkspacePointerSample): void => {
+    const state = manipulation();
+    if (!state || state.kind === "idle") return;
+    /*
+     * Pointer feedback is renderer-local. A verified daemon mutation per sample
+     * made the browser trail the TUI and caused layout/xterm work to queue behind
+     * the pointer. Release emits the one durable resize command below.
+     */
+    const updated = updateWorkspacePaneManipulation(state, sample, {
+      wireResize: false,
+    });
+    if (updated.ignored) return;
+    setPaneTransaction((current) => ({
+      ...current,
+      manipulation: updated.state,
+      localPreview: updated.preview,
+      phase:
+        updated.preview.kind === "drag"
+          ? updated.preview.targetPane
+            ? "drop-ready"
+            : "dragging"
+          : current.phase,
+    }));
+    dispatchResize(updated.wire);
+  };
+
+  const flushPointerPreview = (): void => {
+    previewAnimationFrame = null;
+    const sample = pendingPointerSample;
+    pendingPointerSample = null;
+    if (sample) applyPointerPreview(sample);
   };
 
   const moveManipulation = (event: PointerEvent): void => {
@@ -790,32 +950,30 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       }
       return;
     }
-    /*
-     * Pointer feedback is renderer-local. A verified daemon mutation per sample
-     * made the browser trail the TUI and caused layout/xterm work to queue behind
-     * the pointer. Release emits the one durable resize command below.
-     */
-    const updated = updateWorkspacePaneManipulation(state, pointerSample(event), {
-      wireResize: false,
-    });
-    if (updated.ignored) return;
-    setManipulation(updated.state);
-    setLocalPreview(updated.preview);
-    if (updated.preview.kind === "drag") {
-      setPhase(updated.preview.targetPane ? "drop-ready" : "dragging");
+    pendingPointerSample = pointerSample(event);
+    if (previewAnimationFrame !== null) return;
+    if (typeof requestAnimationFrame === "function") {
+      previewAnimationFrame = requestAnimationFrame(flushPointerPreview);
+    } else {
+      // Deterministic non-browser/test fallback.
+      flushPointerPreview();
     }
-    dispatchResize(updated.wire);
   };
 
-  const beginCommitTimeout = (): void => {
+  const beginCommitTimeout = (id = transactionId): void => {
     clearCommitTimeout();
-    commitTimeout = setTimeout(() => settle(true), MANIPULATION_CONFIRM_TIMEOUT_MS);
+    commitTimeout = setTimeout(() => settle(true, id), MANIPULATION_CONFIRM_TIMEOUT_MS);
   };
 
   const finishManipulation = (event: PointerEvent): void => {
     const state = manipulation();
     if (!state || state.kind === "idle") return;
     clearTouchLongPress();
+    if (previewAnimationFrame !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(previewAnimationFrame);
+      previewAnimationFrame = null;
+    }
+    pendingPointerSample = null;
     const releaseSample = pointerSample(event);
     // The release coordinate is authoritative even when no pointermove landed
     // in that frame. Preview it without adopting its wire bookkeeping; finish
@@ -827,7 +985,6 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     const finished = finishWorkspacePaneManipulation(state, releaseSample);
     if (finished.ignored || !finished.completion) return;
     clearResizeWireTimer();
-    setManipulation(finished.state);
     // Retire the transaction before releasing capture. `lostpointercapture`
     // can fire synchronously in some engines; seeing the idle state keeps that
     // cleanup signal from re-entering cancellation during a valid commit.
@@ -838,17 +995,28 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       finished.completion.kind === "resize" &&
       (finished.completion.changed || finished.wire.dispatch !== null)
     ) {
-      setCommittingState(state);
-      setCommittingPreview(preview);
-      setPhase("resize-committing");
+      setPaneTransaction({
+        manipulation: finished.state,
+        localPreview: null,
+        committingState: state,
+        committingPreview: preview,
+        phase: "resize-committing",
+        state: "committing",
+      });
       beginCommitTimeout();
       return;
     }
     if (finished.completion.kind === "swap") {
       const releasedDrag = released.state as WorkspacePaneDrag;
-      setCommittingState(releasedDrag);
-      setCommittingPreview(commitWorkspacePaneDragPreview(releasedDrag));
-      setPhase("swap-committing");
+      const issuedFor = transactionId;
+      setPaneTransaction({
+        manipulation: finished.state,
+        localPreview: null,
+        committingState: releasedDrag,
+        committingPreview: commitWorkspacePaneDragPreview(releasedDrag),
+        phase: "swap-committing",
+        state: "committing",
+      });
       beginCommitTimeout();
       Promise.resolve(
         props.verbs.invoke("pane.swap", finished.completion.sourcePane, {
@@ -856,9 +1024,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         }),
       ).then(
         (result) => {
-          if (mutationFailed(result)) settle(true);
+          if (mutationFailed(result)) settle(true, issuedFor);
         },
-        () => settle(true),
+        () => settle(true, issuedFor),
       );
       return;
     }
@@ -875,10 +1043,14 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     );
     if (cancelled.ignored) return;
     clearResizeWireTimer();
+    const cancelledId = transactionId;
     setManipulation(cancelled.state);
     if (event) (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
     dispatchResize(cancelled.wire);
-    settle(cancelled.completion?.kind === "cancelled" ? cancelled.completion.rolledBack : false);
+    settle(
+      cancelled.completion?.kind === "cancelled" ? cancelled.completion.rolledBack : false,
+      cancelledId,
+    );
   }
 
   createEffect(() => {
@@ -939,6 +1111,10 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
      */
     return [...visible].sort((left, right) => left.pane.localeCompare(right.pane));
   });
+  // Key the retained DOM/xterm owner by semantic pane id. Layout objects are
+  // replaced on every canonical frame; using them (or array position) as the
+  // keyed value can retarget an existing renderer to another pane on insert.
+  const displayPaneIds = createMemo(() => displayTiles().map(({ pane }) => pane));
   const displayBorders = createMemo(() => {
     const state = displayState();
     const visible = state && state.kind !== "idle" ? state.snapshot.borders : borders();
@@ -1175,10 +1351,16 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       atMs: atMs + 1,
     });
     if (moved.state.kind !== "drag" || moved.preview.kind !== "drag") return;
-    setManipulation(createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }));
-    setCommittingState(moved.state);
-    setCommittingPreview(commitWorkspacePaneDragPreview(moved.state));
-    setPhase("swap-committing");
+    const movedDrag = moved.state;
+    transactionId += 1;
+    const issuedFor = transactionId;
+    batch(() => {
+      setManipulation(createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }));
+      setCommittingState(movedDrag);
+      setCommittingPreview(commitWorkspacePaneDragPreview(movedDrag));
+      setPhase("swap-committing");
+      setTransactionState("committing");
+    });
     beginCommitTimeout();
     Promise.resolve(
       props.verbs.invoke("pane.swap", sourcePane, {
@@ -1186,9 +1368,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       }),
     ).then(
       (result) => {
-        if (mutationFailed(result)) settle(true);
+        if (mutationFailed(result)) settle(true, issuedFor);
       },
-      () => settle(true),
+      () => settle(true, issuedFor),
     );
   };
 
@@ -1215,24 +1397,47 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       atMs: performance.now(),
     });
     if (moved.state.kind !== "resize" || moved.preview.kind !== "resize") return;
-    setLastConfirmedCells(border.cells);
-    setManipulation(createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }));
-    setCommittingState(moved.state);
-    setCommittingPreview(moved.preview);
-    setPhase("resize-committing");
+    const movedResize = moved.state;
+    const movedResizePreview = moved.preview;
+    transactionId += 1;
+    const issuedFor = transactionId;
+    batch(() => {
+      setLastConfirmedCells(border.cells);
+      setManipulation(createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }));
+      setCommittingState(movedResize);
+      setCommittingPreview(movedResizePreview);
+      setPhase("resize-committing");
+      setTransactionState("committing");
+    });
     beginCommitTimeout();
     Promise.resolve(
       props.verbs.invoke("pane.resize", border.pane, {
         resize: {
           axis: border.orientation === "vertical" ? "cols" : "rows",
-          cells: moved.preview.cells,
+          cells: movedResizePreview.cells,
         },
       }),
     ).then(
       (result) => {
-        if (mutationFailed(result)) settle(true);
+        if (issuedFor !== transactionId) return;
+        if (mutationFailed(result)) {
+          settle(true, issuedFor);
+          return;
+        }
+        if (result && result.status === "ok" && result.result?.verb === "workspace.pane.resize") {
+          const pending = committingState();
+          if (pending?.kind !== "resize") return;
+          const adjusted: WorkspacePaneResize = {
+            ...pending,
+            previewCells: result.result.cells,
+          };
+          batch(() => {
+            setCommittingState(adjusted);
+            setCommittingPreview(previewWorkspacePaneManipulation(adjusted));
+          });
+        }
       },
-      () => settle(true),
+      () => settle(true, issuedFor),
     );
   };
 
@@ -1265,7 +1470,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               }
               onClick={() => {
                 const pane = tab().addressPane;
-                if (pane && !tab().active) props.verbs.invoke("pane.select", pane);
+                if (pane && !tab().active) props.onSelectViewPane?.(pane, "mouse");
               }}
               onContextMenu={(event) => {
                 const pane = tab().addressPane;
@@ -1350,6 +1555,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         data-zoomed={currentFrame()?.zoomed ?? false}
         data-focus-zone="canvas"
         data-manipulation-phase={phase()}
+        data-transaction-state={transactionState()}
         data-manipulation-preview-cells={resizePreview()?.cells}
         data-last-confirmed-cells={lastConfirmedCells() ?? undefined}
         data-last-layout-transition={lastLayoutTransition()}
@@ -1366,8 +1572,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           const pane = tileAtPointer(event);
-          const active = tiles().find((tile) => tile.active)?.pane;
-          if (pane && pane !== active) props.verbs.invoke("pane.select", pane);
+          if (pane && pane !== props.viewPane) props.onSelectViewPane?.(pane, "mouse");
         }}
         onCopy={copyMirrorSelection}
       >
@@ -1425,12 +1630,13 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         </Show>
 
         <div class="tiled-pane-area__overlay" ref={(element) => (overlayElement = element)}>
-          <Index each={displayTiles()}>
-            {(tile) => {
+          <For each={displayPaneIds()}>
+            {(paneId) => {
+              const tile = createMemo(() => displayTiles().find(({ pane }) => pane === paneId)!);
               const rect = createMemo(() => tile().rect);
-              const placement = createMemo(() => placementFor(tile().pane));
-              const compositorNode = createMemo(() => compositorNodes().get(tile().pane));
-              const interaction = createMemo(() => props.paneInteractions?.[tile().pane] ?? null);
+              const placement = createMemo(() => placementFor(paneId));
+              const compositorNode = createMemo(() => compositorNodes().get(paneId));
+              const interaction = createMemo(() => props.paneInteractions?.[paneId] ?? null);
               const interactionPresence = createMemo(() => {
                 const value = interaction();
                 return value ? paneInteractionPresence(value) : null;
@@ -1444,16 +1650,17 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               return (
                 <div
                   class="pane-tile"
-                  data-pane={tile().pane}
-                  data-active={tile().active}
+                  data-pane={paneId}
+                  data-active={
+                    (props.viewPane ?? tiles().find((entry) => entry.active)?.pane) === paneId
+                  }
+                  data-tmux-active={tile().active}
                   data-drop-target={
-                    pointerDragActive() && dragPreview()?.targetPane === tile().pane
-                      ? "true"
-                      : undefined
+                    pointerDragActive() && dragPreview()?.targetPane === paneId ? "true" : undefined
                   }
                   data-elevated={placement()?.elevated ?? false}
-                  data-ending={endingPanes().has(tile().pane) ? "true" : undefined}
-                  data-identity-icon={iconIdFor(tile().pane)}
+                  data-ending={endingPanes().has(paneId) ? "true" : undefined}
+                  data-identity-icon={iconIdFor(paneId)}
                   data-composed={Boolean(compositorNode())}
                   data-interaction-phase={interaction()?.phase}
                   data-interaction-sequence={interaction()?.sequence}
@@ -1479,14 +1686,16 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   }}
                 >
                   <PaneHeader
-                    pane={tile().pane}
-                    title={titleFor(tile().pane)}
-                    icon={iconFor(tile().pane)}
-                    iconId={iconIdFor(tile().pane)}
-                    status={frameFor(tile().pane)?.status ?? null}
+                    pane={paneId}
+                    title={titleFor(paneId)}
+                    icon={iconFor(paneId)}
+                    iconId={iconIdFor(paneId)}
+                    status={frameFor(paneId)?.status ?? null}
                     interaction={interaction()}
                     interactionActive={communicationActive()}
-                    active={tile().active}
+                    active={
+                      (props.viewPane ?? tiles().find((entry) => entry.active)?.pane) === paneId
+                    }
                     composed={Boolean(compositorNode())}
                     /*
                      * The header's share of its own tile.
@@ -1501,19 +1710,19 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                      */
                     heightFraction={tile().headerRows / (tile().cells.rows + tile().headerRows)}
                     hoisted={tile().headerRows === 1}
-                    onOpenMenu={(pointer) => props.onOpenPaneMenu?.(tile().pane, pointer)}
-                    onClose={() => closePane(tile().pane)}
+                    onOpenMenu={(pointer) => props.onOpenPaneMenu?.(paneId, pointer)}
+                    onClose={() => closePane(paneId)}
                     onToggleZoom={() =>
-                      props.verbs.invoke("window.zoom.toggle", tile().pane, {
+                      props.verbs.invoke("window.zoom.toggle", paneId, {
                         desiredZoom: currentFrame()?.zoomed ? "unzoomed" : "zoomed",
                       })
                     }
-                    dragging={pointerDragActive() && dragPreview()?.sourcePane === tile().pane}
-                    onPointerDown={(event) => beginPaneDrag(tile().pane, event)}
+                    dragging={pointerDragActive() && dragPreview()?.sourcePane === paneId}
+                    onPointerDown={(event) => beginPaneDrag(paneId, event)}
                     onPointerMove={moveManipulation}
                     onPointerUp={finishManipulation}
                     onPointerCancel={(event) => cancelManipulation(event)}
-                    onKeyboardSwap={(key) => keyboardSwap(tile().pane, key)}
+                    onKeyboardSwap={(key) => keyboardSwap(paneId, key)}
                   />
                   <Show when={communicationActive() && interaction()}>
                     {(activeInteraction) => {
@@ -1554,17 +1763,26 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                     {(node) => (
                       <div
                         class="pane-tile__body"
-                        aria-label={`${titleFor(tile().pane)} terminal output`}
+                        aria-label={`${titleFor(paneId)} terminal output`}
                         onPointerDown={(event) => {
                           if (event.button !== 0) return;
-                          selectedMirrorPane = tile().pane;
-                          props.onFocusPane?.(tile().pane, "mouse");
+                          // Selection/copy owns the pointer in terminal output.
+                          // Never let it bubble into layout drag or tmux focus.
+                          event.stopPropagation();
+                          selectedMirrorPane = paneId;
+                          props.onSelectViewPane?.(paneId, "mouse");
+                          props.onFocusPane?.(paneId, "mouse");
                         }}
                         onPointerUp={(event) => {
                           if (event.button !== 0) return;
                           // Let xterm finish its selection transaction first,
-                          // then restore the one terminal that owns tmux input.
-                          queueMicrotask(() => setTerminalFocusRequest((value) => value + 1));
+                          // then restore input only for a click. A selection
+                          // keeps visible xterm ownership through Copy.
+                          queueMicrotask(() => {
+                            if ((mirrorSelections.get(paneId) ?? "").length === 0) {
+                              setTerminalFocusRequest((value) => value + 1);
+                            }
+                          });
                         }}
                       >
                         <MirrorPaneNode
@@ -1579,20 +1797,23 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                           themeKey={props.terminalThemeKey}
                           rendererFactory={props.mirror!.rendererFactory}
                           onSelectionChange={(selection) =>
-                            updateMirrorSelection(tile().pane, selection)
+                            updateMirrorSelection(paneId, selection)
                           }
                         />
                       </div>
                     )}
                   </Show>
                   <span class="sr-only">
-                    {titleFor(tile().pane)}
-                    {tile().active ? ", active pane" : ""}
+                    {titleFor(paneId)}
+                    {(props.viewPane ?? tiles().find((entry) => entry.active)?.pane) === paneId
+                      ? ", selected in this view"
+                      : ""}
+                    {tile().active ? ", tmux input owner" : ""}
                   </span>
                 </div>
               );
             }}
-          </Index>
+          </For>
           <Index each={displayBorders()}>
             {(border) => {
               const vertical = createMemo(() => border().orientation === "vertical");

@@ -11,7 +11,20 @@ import {
   type PaneStreamIssueDescriptor,
   type PaneStreamLeaseRequest,
   type PaneStreamServerFrame,
+  type TerminalDeliveryAck,
+  type TerminalDeliveryOffer,
 } from "@tmux-ide/contracts";
+import {
+  TerminalDeliveryAssembler,
+  admitTerminalDeliveryChunk,
+  admitTerminalDeliveryEnvelope,
+  commitTerminalDelivery,
+  completeTerminalDelivery,
+  createTerminalDeliveryClientState,
+  decodeSemanticTerminalUpdate,
+  encodeAnsiTerminalRepresentation,
+  type TerminalDeliveryClientState,
+} from "@tmux-ide/core";
 import { browserWebSocketHandshakeUrl } from "../runtime/browser-websocket-session.ts";
 import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 
@@ -167,6 +180,8 @@ export interface PaneStreamTransportDependencies {
   readonly now?: () => number;
   readonly schedule?: (callback: () => void, delayMs: number) => () => void;
   readonly issueTimeoutMs?: number;
+  /** Default is the canonical semantic lane; null is the legacy compatibility profile. */
+  readonly terminalDelivery?: TerminalDeliveryOffer | null;
 }
 
 /**
@@ -251,6 +266,7 @@ function decodeBase64(value: string): Uint8Array | null {
 }
 
 interface SafeStreamDescriptor {
+  readonly workspaceName: string;
   readonly webSocketUrl: string;
   readonly daemonInstanceId: string;
   readonly requestId: string;
@@ -286,9 +302,13 @@ function validateIssueDescriptor(
     ticket: descriptor.redemptionTicket,
     requestId: descriptor.requestId,
     daemonInstanceId: descriptor.daemonInstanceId,
-    deliveryAcks: true,
+    // Semantic delivery owns its transaction ACK lifecycle. Advertising the
+    // legacy cumulative renderer ACK lane at the same time is an invalid dual
+    // ownership claim and the daemon correctly rejects it.
+    ...(request.terminalDelivery ? {} : { deliveryAcks: true }),
   });
   return {
+    workspaceName: request.workspaceName,
     webSocketUrl: descriptor.webSocketUrl,
     daemonInstanceId: descriptor.daemonInstanceId,
     requestId: descriptor.requestId,
@@ -318,6 +338,9 @@ interface PaneChannel {
   pendingApplies: number;
   applyTail: Promise<void>;
   closed: boolean;
+  semanticPhase: "awaiting" | "live" | "faulted";
+  semanticDelivery: TerminalDeliveryClientState | null;
+  semanticAssembler: TerminalDeliveryAssembler | null;
 }
 
 class PaneStreamSession {
@@ -363,6 +386,9 @@ class PaneStreamSession {
         pendingApplies: 0,
         applyTail: Promise.resolve(),
         closed: false,
+        semanticPhase: "awaiting",
+        semanticDelivery: null,
+        semanticAssembler: null,
       });
     }
     this.#connectPromise = new Promise((resolve) => {
@@ -617,11 +643,131 @@ class PaneStreamSession {
       return;
     }
 
-    // This renderer still requests the raw-v1 delivery profile. Keep its
-    // parser closed over that profile instead of relying on every future
-    // server-frame variant to happen to carry the legacy pane/sequence pair.
-    // Semantic delivery/control acknowledgements on this socket therefore
-    // fail closed until this client explicitly negotiates and consumes them.
+    const addressedChannel = "pane" in frame ? this.#panes.get(frame.pane) : undefined;
+    if ("pane" in frame && (!addressedChannel || addressedChannel.closed)) {
+      // Pane lanes are monotonic. Once closed/faulted, no later ready, seed or
+      // patch can resurrect the lane or reset its generation/revision.
+      this.#protocolFailure();
+      return;
+    }
+
+    if (frame.type === "terminal-delivery-ready") {
+      const channel = addressedChannel!;
+      if (
+        channel.semanticPhase !== "awaiting" ||
+        channel.semanticDelivery !== null ||
+        !frame.negotiation.accepted
+      ) {
+        this.#protocolFailure();
+        return;
+      }
+      channel.semanticDelivery = createTerminalDeliveryClientState(
+        frame.negotiation.negotiated,
+        this.#descriptor.workspaceName,
+        frame.pane,
+      );
+      channel.semanticPhase = "live";
+      channel.semanticAssembler = null;
+      return;
+    }
+    if (frame.type === "terminal-delivery-envelope") {
+      const channel = addressedChannel!;
+      if (
+        channel.semanticPhase !== "live" ||
+        !channel.semanticDelivery ||
+        frame.envelope.semanticPaneId !== frame.pane
+      ) {
+        this.#protocolFailure();
+        return;
+      }
+      const next = admitTerminalDeliveryEnvelope(channel.semanticDelivery, frame.envelope);
+      if (next.failed) {
+        this.#protocolFailure();
+        return;
+      }
+      channel.semanticDelivery = next;
+      channel.semanticAssembler = new TerminalDeliveryAssembler(frame.envelope);
+      return;
+    }
+    if (frame.type === "terminal-delivery-chunk") {
+      const channel = addressedChannel!;
+      if (
+        channel.semanticPhase !== "live" ||
+        !channel.semanticDelivery ||
+        !channel.semanticAssembler
+      ) {
+        this.#protocolFailure();
+        return;
+      }
+      try {
+        const decoded = decodeBase64(frame.data);
+        if (!decoded) throw new TypeError("Terminal delivery chunk was not base64");
+        const bytes = new Uint8Array(decoded);
+        channel.semanticAssembler.write({
+          type: "terminal.delivery.chunk",
+          transactionId: frame.transactionId,
+          index: frame.index,
+          bytes,
+        });
+        channel.semanticDelivery = admitTerminalDeliveryChunk(channel.semanticDelivery, {
+          type: "terminal.delivery.chunk",
+          transactionId: frame.transactionId,
+          index: frame.index,
+          bytes,
+        });
+        const envelope = channel.semanticDelivery.inFlight;
+        if (!envelope || channel.semanticDelivery.nextChunk !== envelope.chunkCount) return;
+        const staged = completeTerminalDelivery(
+          channel.semanticDelivery,
+          channel.semanticAssembler,
+        );
+        // Decode before commit so malformed semantic payloads retire the lane.
+        decodeSemanticTerminalUpdate(staged.bytes);
+        const previousSnapshot = channel.semanticDelivery.canonicalSnapshot;
+        const committed = commitTerminalDelivery(channel.semanticDelivery, staged);
+        channel.semanticDelivery = committed.state;
+        channel.semanticAssembler = null;
+        const snapshot = committed.state.canonicalSnapshot;
+        if (!snapshot) {
+          this.#deliverSemantic(channel, { type: "closed" }, committed.ack);
+          return;
+        }
+        const ansi = encodeAnsiTerminalRepresentation(previousSnapshot, snapshot);
+        const requiresAtomicReset =
+          !previousSnapshot ||
+          previousSnapshot.cols !== snapshot.cols ||
+          previousSnapshot.rows !== snapshot.rows;
+        this.#deliverSemantic(
+          channel,
+          requiresAtomicReset
+            ? {
+                type: "seed-batch",
+                batch: {
+                  reset: { cols: snapshot.cols, rows: snapshot.rows },
+                  seed: ansi,
+                  held: [],
+                  cursor: { x: snapshot.cursor.x, y: snapshot.cursor.y },
+                },
+              }
+            : { type: "output", bytes: ansi },
+          committed.ack,
+        );
+      } catch {
+        this.#protocolFailure();
+      }
+      return;
+    }
+    if (frame.type === "terminal-delivery-fault") {
+      const channel = addressedChannel!;
+      channel.semanticPhase = "faulted";
+      channel.closed = true;
+      channel.semanticAssembler = null;
+      this.#deliverSemantic(channel, { type: "closed" }, null);
+      return;
+    }
+
+    // Keep the legacy parser closed over the old sequenced profile. Semantic
+    // delivery frames were consumed above and use transaction acknowledgements.
     if (
       frame.type !== "seed-batch" &&
       frame.type !== "output" &&
@@ -635,6 +781,18 @@ class PaneStreamSession {
 
     const channel = this.#panes.get(frame.pane);
     if (!channel || channel.closed || frame.seq !== channel.receivedSeq + 1) {
+      this.#protocolFailure();
+      return;
+    }
+    if (
+      channel.semanticPhase === "live" &&
+      (frame.type === "seed-batch" ||
+        frame.type === "output" ||
+        frame.type === "cursor" ||
+        frame.type === "flow")
+    ) {
+      // Negotiation is a one-way cutover. Accepting legacy bytes afterwards
+      // creates two competing revision lanes and can repaint stale terminal state.
       this.#protocolFailure();
       return;
     }
@@ -725,6 +883,50 @@ class PaneStreamSession {
           1013,
           "renderer-consumer-failed",
         );
+      })
+      .finally(() => {
+        channel.pendingApplies -= 1;
+      });
+  }
+
+  #deliverSemantic(
+    channel: PaneChannel,
+    event: PaneMirrorEvent,
+    ack: TerminalDeliveryAck | null,
+  ): void {
+    if (channel.pendingApplies >= PANE_STREAM_MAX_PENDING_EVENTS_PER_PANE) {
+      this.#retire(
+        transportError(
+          "renderer-backpressure",
+          "The renderer could not keep up with the pane stream.",
+          true,
+        ),
+        1013,
+        "renderer-backpressure",
+      );
+      return;
+    }
+    channel.pendingApplies += 1;
+    channel.applyTail = channel.applyTail
+      .then(async () => {
+        if (this.#phase === "closed") return;
+        await this.#listeners.onPaneEvent(channel.pane, event);
+        if (ack && this.#socket.readyState === WS_OPEN) {
+          this.#socket.send(JSON.stringify({ type: "terminal-delivery-ack", ack }));
+        }
+      })
+      .catch(() => {
+        if (this.#phase !== "closed") {
+          this.#retire(
+            transportError(
+              "renderer-consumer-failed",
+              "The renderer could not consume the pane stream.",
+              true,
+            ),
+            1013,
+            "renderer-consumer-failed",
+          );
+        }
       })
       .finally(() => {
         channel.pendingApplies -= 1;
@@ -862,6 +1064,14 @@ export function createPaneStreamTransport(
   const schedule = dependencies.schedule ?? defaultSchedule;
   const createWebSocket = dependencies.createWebSocket ?? defaultCreateWebSocket;
   const issueTimeoutMs = boundedIssueTimeout(dependencies.issueTimeoutMs);
+  const terminalDelivery =
+    dependencies.terminalDelivery === undefined
+      ? ({
+          protocolVersions: [1],
+          encodings: ["semantic-v1"],
+          richPlacements: true,
+        } as const)
+      : dependencies.terminalDelivery;
 
   return Object.freeze({
     connect: async (
@@ -873,6 +1083,7 @@ export function createPaneStreamTransport(
         workspaceName: request.workspaceName,
         panes: request.panes,
         viewerMode: "read-only",
+        ...(terminalDelivery ? { terminalDelivery } : {}),
       });
       if (
         !parsedRequest.success ||

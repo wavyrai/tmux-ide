@@ -52,6 +52,18 @@ export interface OpenPaneStreamClientOptions {
   readonly onFault?: (error: Error) => void;
 }
 
+export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
+  OpenPaneStreamClientOptions,
+  | "createSocket"
+  | "origin"
+  | "hostClientId"
+  | "onNegotiated"
+  | "onTerminalDelivery"
+  | "onLayout"
+  | "onInputAck"
+  | "onFault"
+>;
+
 export interface PaneStreamRuntimeClient {
   readonly daemonInstanceId: string;
   readonly requestId: string;
@@ -119,11 +131,11 @@ export async function openPaneStreamRuntimeClient(
   ) {
     throw new Error("Pane-stream issue returned another daemon generation");
   }
-  return await connectIssued(options, issued.descriptor);
+  return await connectIssuedPaneStreamRuntimeClient(options, issued.descriptor);
 }
 
-async function connectIssued(
-  options: OpenPaneStreamClientOptions,
+export async function connectIssuedPaneStreamRuntimeClient(
+  options: ConnectIssuedPaneStreamRuntimeClientOptions,
   descriptor: PaneStreamIssueDescriptor,
 ): Promise<PaneStreamRuntimeClient> {
   const socket = options.createSocket(descriptor, {
@@ -322,7 +334,7 @@ async function connectIssued(
 }
 
 function routeFrame(
-  options: OpenPaneStreamClientOptions,
+  options: ConnectIssuedPaneStreamRuntimeClientOptions,
   frame: PaneStreamServerFrame,
   fail: (message: string) => void,
 ): void {

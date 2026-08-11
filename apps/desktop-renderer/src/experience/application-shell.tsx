@@ -30,6 +30,7 @@ import {
   Match,
   Show,
   Switch,
+  batch,
   createComputed,
   createEffect,
   createMemo,
@@ -349,13 +350,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const [paletteTransitionSource, setPaletteTransitionSource] = createSignal<"keyboard" | "mouse">(
     "keyboard",
   );
-  const [pendingAgentPaneSelection, setPendingAgentPaneSelection] = createSignal<string | null>(
-    null,
-  );
-  const [pendingAgentPaneOperationId, setPendingAgentPaneOperationId] = createSignal<string | null>(
-    null,
-  );
-  let pendingAgentPaneSelectionTimer: ReturnType<typeof setTimeout> | null = null;
+  // Presentation selection belongs to this renderer view. tmux's active pane
+  // remains canonical input-owner state, but it must never overwrite what a
+  // second browser tab is looking at or make sidebar navigation mutate tmux.
+  const [viewPaneResourceId, setViewPaneResourceId] = createSignal<string | null>(null);
   let titlebarStyle: RuntimeStyleBinding | null = null;
   let workbenchStyle: RuntimeStyleBinding | null = null;
   let previousInput = input();
@@ -441,9 +439,6 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   onCleanup(() => {
     titlebarStyle?.dispose();
     workbenchStyle?.dispose();
-    if (pendingAgentPaneSelectionTimer !== null) {
-      clearTimeout(pendingAgentPaneSelectionTimer);
-    }
   });
   const appWindowDocument = createMemo(() => {
     const value = input();
@@ -565,7 +560,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       structure: appearance.structure,
       applicationFocus: {
         pane: focused,
-        terminalInput: focused,
+        // Viewing a pane is not controller ownership. Preserve the daemon's
+        // input-owner fact so a passive browser never paints a lying cursor.
+        terminalInput: appearance.accessibility.terminalInputOwner,
         windowActive: appearance.header.windowActive,
       },
       agentActivity: appearance.header.agentActivity,
@@ -573,7 +570,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       attention: appearance.status.attention,
       layoutInteraction: {
         editable: true,
-        selected: appearance.accessibility.layoutSelected,
+        selected: focused,
         dragging: false,
         resizing: false,
         previewing: false,
@@ -587,7 +584,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       },
     });
   const renderedPaneFrames = createMemo<readonly PaneFrameModel[]>(() => {
-    const localTerminalFocus = shell().focus.terminalInputPaneId;
+    const localTerminalFocus = viewPaneResourceId() ?? shell().focus.terminalInputPaneId;
     if (!localTerminalFocus) return paneFrames();
     return paneFrames().map((model) => ({
       ...model,
@@ -981,7 +978,11 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     const attachable = inventory.resources.filter(
       (resource) => resource.attachability.status === "available",
     );
-    const active = attachable.find((resource) => resource.active) ?? attachable[0];
+    const viewed = viewPaneResourceId();
+    const active =
+      attachable.find((resource) => resource.id === viewed) ??
+      attachable.find((resource) => resource.active) ??
+      attachable[0];
     return active?.attachability.status === "available"
       ? active.attachability.semanticPaneId
       : null;
@@ -1089,6 +1090,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     source: "keyboard" | "mouse" | "programmatic",
     surface: CommandSource["surface"] = "application-shell",
   ): void => {
+    setViewPaneResourceId(paneResourceId);
     const agent = sidebarAgentForPaneResource(paneResourceId);
     if (!agent || shell().sidebar.selectedResourceId === agent.id) return;
     dispatch(
@@ -1103,86 +1105,51 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     );
   };
 
-  const beginPendingAgentPaneSelection = (paneResourceId: string): void => {
-    if (pendingAgentPaneSelectionTimer !== null) {
-      clearTimeout(pendingAgentPaneSelectionTimer);
-    }
-    setPendingAgentPaneSelection(paneResourceId);
-    setPendingAgentPaneOperationId(null);
-    // A selection is optimistic only while the daemon is expected to publish
-    // its fresh inventory. If that event never arrives, return to canonical
-    // tmux state instead of leaving the sidebar and terminal disagreeing.
-    pendingAgentPaneSelectionTimer = setTimeout(() => {
-      pendingAgentPaneSelectionTimer = null;
-      setPendingAgentPaneSelection(null);
-      setPendingAgentPaneOperationId(null);
-    }, 4_000);
-  };
-
-  const clearPendingAgentPaneSelection = (): void => {
-    if (pendingAgentPaneSelectionTimer !== null) {
-      clearTimeout(pendingAgentPaneSelectionTimer);
-      pendingAgentPaneSelectionTimer = null;
-    }
-    setPendingAgentPaneSelection(null);
-    setPendingAgentPaneOperationId(null);
-  };
-
-  createEffect(() => {
-    const operationId = pendingAgentPaneOperationId();
-    if (operationId && props.acknowledgedOperationIds?.includes(operationId)) {
-      clearPendingAgentPaneSelection();
-    }
-  });
-
   createEffect(() => {
     if (!workspaceConnected()) return;
     const inventory = shell().terminalInventory;
-    if (!inventory?.activeResourceId) return;
-
-    const pending = pendingAgentPaneSelection();
-    if (pending) {
-      if (pending === inventory.activeResourceId) {
-        clearPendingAgentPaneSelection();
-      }
-      return;
-    }
-
-    const activeAgent = sidebarAgentForPaneResource(inventory.activeResourceId);
-    if (!activeAgent) return;
-    if (
-      shell().sidebar.selectedResourceId === activeAgent.id &&
-      shell().focus.terminalInputPaneId === inventory.activeResourceId
-    ) {
-      return;
-    }
-
-    // This is reconciliation from a daemon snapshot, not a new user command.
-    // Apply it locally so a second browser client changing tmux updates this
-    // client's chrome without echoing another mutation back to the daemon.
-    setState((current) => {
-      const focused = applyApplicationShellInvocationV1(
-        current,
-        applicationShellCommandInvocation(
-          APPLICATION_SHELL_COMMAND_IDS.moveFocus,
-          {
-            target: {
-              kind: "pane",
-              paneId: inventory.activeResourceId!,
-              input: "terminal",
-            },
-          },
-          { kind: "keyboard", surface: "application-shell" },
-        ),
-      );
-      return applyApplicationShellInvocationV1(
-        focused,
-        applicationShellCommandInvocation(
-          APPLICATION_SHELL_COMMAND_IDS.selectResource,
-          { surface: "terminals", resourceId: activeAgent.id },
-          { kind: "keyboard", surface: "application-shell" },
-        ),
-      );
+    if (!inventory) return;
+    // A discovered resource is not necessarily viewable. Repair local view
+    // from the same attachable subset used by the tiled surface so sidebar,
+    // tile and chrome change together when a pane is retired.
+    const attachable = inventory.resources.filter(
+      (resource) => resource.attachability.status === "available",
+    );
+    const live = new Set(attachable.map(({ id }) => id));
+    const selected = viewPaneResourceId();
+    if (selected && live.has(selected)) return;
+    // First fit and stale-reference repair are local. Later canonical focus
+    // changes are exposed as input ownership, not promoted into view selection.
+    const next =
+      (inventory.activeResourceId && live.has(inventory.activeResourceId)
+        ? inventory.activeResourceId
+        : null) ??
+      attachable.find((resource) => resource.active)?.id ??
+      attachable[0]?.id ??
+      null;
+    if (!next) return;
+    const activeAgent = sidebarAgentForPaneResource(next);
+    batch(() => {
+      setViewPaneResourceId(next);
+      if (!activeAgent) return;
+      setState((current) => {
+        const focused = applyApplicationShellInvocationV1(
+          current,
+          applicationShellCommandInvocation(
+            APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+            { target: { kind: "pane", paneId: next, input: "terminal" } },
+            { kind: "keyboard", surface: "application-shell" },
+          ),
+        );
+        return applyApplicationShellInvocationV1(
+          focused,
+          applicationShellCommandInvocation(
+            APPLICATION_SHELL_COMMAND_IDS.selectResource,
+            { surface: "terminals", resourceId: activeAgent.id },
+            { kind: "keyboard", surface: "application-shell" },
+          ),
+        );
+      });
     });
   });
 
@@ -1250,10 +1217,6 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     source: "keyboard" | "mouse",
   ): void => {
     const paneResourceId = agent.paneId;
-    const semanticPaneId = paneResourceId ? semanticPaneIdFor(paneResourceId) : null;
-    const willSelectTmuxPane =
-      paneResourceId !== null && semanticPaneId !== null && workspaceConnected();
-    if (willSelectTmuxPane) beginPendingAgentPaneSelection(paneResourceId);
 
     dispatch(
       applicationShellCommandInvocation(
@@ -1263,6 +1226,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       ),
     );
     if (!paneResourceId) return;
+    setViewPaneResourceId(paneResourceId);
 
     const appWindow = Object.values(appWindowDocument()?.windows ?? {}).find(
       (window) =>
@@ -1281,20 +1245,6 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         ),
       );
     }
-
-    if (!willSelectTmuxPane || !semanticPaneId) return;
-    void verbAccess
-      .invoke("pane.select", {
-        workspaceName: verbWorkspaceName(),
-        semanticPaneId,
-      })
-      .then((result) => {
-        if (result.status === "error") {
-          clearPendingAgentPaneSelection();
-        } else {
-          setPendingAgentPaneOperationId(result.result.operationId);
-        }
-      }, clearPendingAgentPaneSelection);
   };
 
   const acceptCanvasClientViewState = (next: ClientViewStateV1): void => {
@@ -1716,6 +1666,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         class="shell-workbench"
         data-shell-source={dataMode()}
         data-sidebar-collapsed={sidebarCollapsed()}
+        data-view-pane-resource={viewPaneResourceId() ?? undefined}
       >
         <aside class="workspace-sidebar" aria-label="Workspace overview" data-focus-zone="sidebar">
           <div class="workspace-sidebar__project">
@@ -2056,6 +2007,11 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                     interactionSequence={props.interactionFeed?.sequence}
                     livePanes={livePaneIds()}
                     fallbackPane={activeSemanticPaneId()}
+                    viewPane={activeSemanticPaneId()}
+                    onSelectViewPane={(semanticPaneId, source) => {
+                      const paneResourceId = paneResourceIdForSemanticPane(semanticPaneId);
+                      selectSidebarAgentForPane(paneResourceId, source);
+                    }}
                     paneTitles={paneTitles()}
                     fallbackWindows={inventoryWindows()}
                     reducedMotion={props.reducedMotion}
