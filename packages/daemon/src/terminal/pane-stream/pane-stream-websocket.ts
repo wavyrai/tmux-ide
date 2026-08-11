@@ -1168,7 +1168,14 @@ export class PaneStreamLiveConnection {
     if (message.type === "terminal.delivery") {
       const channel = this.#panes.get(pane);
       if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
-      this.#sendFrame(pane, { type: "terminal-delivery-envelope", pane, envelope: message });
+      // SessionRuntime keys canonical replicas by the tmux session, while the
+      // public pane-stream lease is keyed by its workspace identity. Translate
+      // at this boundary so the renderer has one coherent address vocabulary.
+      this.#sendFrame(pane, {
+        type: "terminal-delivery-envelope",
+        pane,
+        envelope: { ...message, workspaceName: this.#descriptor.workspaceName },
+      });
     } else if (message.type === "terminal.delivery.chunk") {
       this.#sendFrame(pane, {
         type: "terminal-delivery-chunk",
@@ -1179,13 +1186,19 @@ export class PaneStreamLiveConnection {
       });
     } else {
       this.#sendFrame(pane, { type: "terminal-delivery-fault", pane, fault: message });
+      // Lifecycle/control truth must never queue behind bulk terminal bytes.
+      // The hard socket-wide ceiling still closes a genuinely wedged client in
+      // #drainNow; a source-close frame itself is small and immediately useful.
+      return;
     }
     await this.#awaitSemanticCredit(pane);
   }
 
   #awaitSemanticCredit(pane: string): Promise<void> {
-    const aggregateHigh = (this.#socket.bufferedAmount ?? 0) > this.#maxSocketBufferedBytes >> 2;
-    if (!aggregateHigh && !this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
+    // Backpressure is pane-local. Aggregate pressure is guarded by the hard
+    // socket ceiling in #drainNow, but must not let a noisy sibling prevent a
+    // pane-close (or any other pane's next semantic delivery) from surfacing.
+    if (!this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
     return new Promise((resolve) => {
       const waiters = this.#semanticDrainWaiters.get(pane) ?? [];
       waiters.push(resolve);
@@ -1457,11 +1470,7 @@ export class PaneStreamLiveConnection {
       if (channel.frozenByWire) this.#evaluateResume(pane);
       else this.#evaluateStall(pane);
       const waiters = this.#semanticDrainWaiters.get(pane);
-      if (
-        waiters &&
-        this.#ledger.shouldResume(this.#clientId, pane) &&
-        buffered <= this.#maxSocketBufferedBytes >> 3
-      ) {
+      if (waiters && this.#ledger.shouldResume(this.#clientId, pane)) {
         this.#semanticDrainWaiters.delete(pane);
         for (const resolve of waiters) resolve();
       }
@@ -1494,13 +1503,13 @@ export class PaneStreamLiveConnection {
     if (frame.type === "terminal-delivery-ack") {
       const channel = this.#deliveryChannel(frame.ack);
       if (!channel) return;
-      channel.delivery!.ack(frame.ack);
+      channel.delivery!.ack({ ...frame.ack, workspaceName: this.#descriptor.sessionName });
       return;
     }
     if (frame.type === "terminal-delivery-nack") {
       const channel = this.#deliveryChannel(frame.nack);
       if (!channel) return;
-      channel.delivery!.nack(frame.nack);
+      channel.delivery!.nack({ ...frame.nack, workspaceName: this.#descriptor.sessionName });
       return;
     }
     if (frame.type === "terminal-delivery-visibility") {

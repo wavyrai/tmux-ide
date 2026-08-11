@@ -22,6 +22,7 @@ import {
   completeTerminalDelivery,
   createTerminalDeliveryClientState,
   decodeSemanticTerminalUpdate,
+  encodeAnsiTerminalPatchRepresentation,
   encodeAnsiTerminalRepresentation,
   type TerminalDeliveryClientState,
 } from "@tmux-ide/core";
@@ -114,7 +115,12 @@ export interface PaneMirrorSeedBatch {
 
 export type PaneMirrorEvent =
   | { readonly type: "seed-batch"; readonly batch: PaneMirrorSeedBatch }
-  | { readonly type: "output"; readonly bytes: Uint8Array }
+  | {
+      readonly type: "output";
+      readonly bytes: Uint8Array;
+      /** Lazily materialized canonical repaint retained for sink handoff. */
+      readonly replay?: () => PaneMirrorSeedBatch;
+    }
   | { readonly type: "cursor"; readonly x: number; readonly y: number }
   | {
       readonly type: "flow";
@@ -722,7 +728,7 @@ class PaneStreamSession {
           channel.semanticAssembler,
         );
         // Decode before commit so malformed semantic payloads retire the lane.
-        decodeSemanticTerminalUpdate(staged.bytes);
+        const semanticUpdate = decodeSemanticTerminalUpdate(staged.bytes);
         const previousSnapshot = channel.semanticDelivery.canonicalSnapshot;
         const committed = commitTerminalDelivery(channel.semanticDelivery, staged);
         channel.semanticDelivery = committed.state;
@@ -732,7 +738,10 @@ class PaneStreamSession {
           this.#deliverSemantic(channel, { type: "closed" }, committed.ack);
           return;
         }
-        const ansi = encodeAnsiTerminalRepresentation(previousSnapshot, snapshot);
+        const ansi =
+          semanticUpdate.frame === "patch"
+            ? encodeAnsiTerminalPatchRepresentation(semanticUpdate.patch, snapshot)
+            : encodeAnsiTerminalRepresentation(previousSnapshot, snapshot);
         const requiresAtomicReset =
           !previousSnapshot ||
           previousSnapshot.cols !== snapshot.cols ||
@@ -749,7 +758,19 @@ class PaneStreamSession {
                   cursor: { x: snapshot.cursor.x, y: snapshot.cursor.y },
                 },
               }
-            : { type: "output", bytes: ansi },
+            : {
+                type: "output",
+                bytes: ansi,
+                // Snapshot state already exists for semantic validation. Keep
+                // it by reference and do the full-grid ANSI materialization
+                // only if a replacement sink actually asks for a repaint.
+                replay: () => ({
+                  reset: { cols: snapshot.cols, rows: snapshot.rows },
+                  seed: encodeAnsiTerminalRepresentation(null, snapshot),
+                  held: [],
+                  cursor: { x: snapshot.cursor.x, y: snapshot.cursor.y },
+                }),
+              },
           committed.ack,
         );
       } catch {

@@ -571,6 +571,23 @@ describe("the layout-faithful workspace view", () => {
     // One row of a tile that is 25 pane rows plus the borrowed separator row.
     expect(headers[1]!.style.top).toBe("1px");
     expect(headers[1]!.style.height).toBe(`calc(${((1 / 26) * 100).toFixed(4)}% - 1px)`);
+
+    // The tmux layout can be one resize behind xterm. Once xterm has painted,
+    // its real cell height owns chrome geometry so a stale 1/26 fraction cannot
+    // cover two 14px terminal rows in a tall browser viewport.
+    const area = root.querySelector<HTMLElement>(".tiled-pane-area")!;
+    const viewport = area.querySelector<HTMLElement>(".terminal-surface__viewport")!;
+    const grid = document.createElement("div");
+    grid.className = "xterm";
+    const rows = document.createElement("div");
+    rows.className = "xterm-rows";
+    const paintedRow = document.createElement("div");
+    paintedRow.getBoundingClientRect = () => ({ height: 14 }) as DOMRect;
+    rows.append(paintedRow);
+    grid.append(rows);
+    viewport.append(grid);
+    area.dispatchEvent(new Event("tmux-ide-terminal-grid-resized"));
+    expect(headers[1]!.style.height).toBe("calc(14px - 1px)");
   });
 
   it("arms the pane header's close before it kills anything", () => {
@@ -660,6 +677,38 @@ describe("the layout-faithful workspace view", () => {
       "swap-committing",
     );
     expect(root.querySelector<HTMLElement>('[data-pane="pane.a"]')!.dataset.elevated).toBe("false");
+  });
+
+  it("commits before a synchronous lostpointercapture cleanup can cancel the swap", async () => {
+    const { root, invoke } = renderSurface([SPLIT]);
+    const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;
+    overlay.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1_000, height: 500, right: 1_000, bottom: 500 }) as DOMRect;
+    const header = root.querySelector<HTMLElement>('[data-pane="pane.a"] .pane-tile__header')!;
+    header.setPointerCapture = () => undefined;
+    header.releasePointerCapture = () => {
+      header.dispatchEvent(new Event("lostpointercapture", { bubbles: true }));
+    };
+    const pointer = (type: string, x: number): PointerEvent => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 10 });
+      Object.defineProperties(event, {
+        pointerId: { value: 27 },
+        isPrimary: { value: true },
+        pointerType: { value: "mouse" },
+      });
+      return event as PointerEvent;
+    };
+    header.dispatchEvent(pointer("pointerdown", 250));
+    header.dispatchEvent(pointer("pointermove", 750));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    header.dispatchEvent(pointer("pointerup", 750));
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("pane.swap", "pane.a", {
+      swapTargetSemanticPaneId: "pane.b",
+    });
+    expect(root.querySelector<HTMLElement>(".tiled-pane-area")!.dataset.manipulationPhase).toBe(
+      "swap-committing",
+    );
   });
 
   it("adopts the confirming tmux swap without replaying a FLIP transition", async () => {

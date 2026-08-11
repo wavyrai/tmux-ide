@@ -207,6 +207,7 @@ function harness(
     maxInputFramesPerWindow?: number;
     maxInputBytesPerWindow?: number;
     inputRateWindowMs?: number;
+    maxSocketBufferedBytes?: number;
     bindSessionRuntime?: ConstructorParameters<
       typeof PaneStreamAdmissionCoordinator
     >[0]["bindSessionRuntime"];
@@ -267,6 +268,7 @@ function harness(
     maxInputFramesPerWindow: options.maxInputFramesPerWindow,
     maxInputBytesPerWindow: options.maxInputBytesPerWindow,
     inputRateWindowMs: options.inputRateWindowMs,
+    maxSocketBufferedBytes: options.maxSocketBufferedBytes,
     now,
     schedule: scheduler.schedule,
   });
@@ -791,6 +793,49 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(h.mirror.subs).toHaveLength(0);
     expect(h.mirror.layoutHandlers).toHaveLength(1);
     expect(h.deliveryListeners.size).toBe(2);
+    const transactionId = "00000000-0000-4000-8000-000000000095";
+    await h.deliveryListeners.get("pane.shell")?.({
+      type: "terminal.delivery",
+      workspaceName: SESSION,
+      semanticPaneId: "pane.shell",
+      generation: INSTANCE,
+      incarnation: `${INSTANCE}:0`,
+      deliveryNonce: "00000000-0000-4000-8000-000000000098",
+      transactionId,
+      protocolVersion: 1,
+      encoding: "semantic-v1",
+      frame: "seed",
+      baseRevision: null,
+      canonicalRevision: 0,
+      canonicalStateHash: "1111111111111111",
+      representationHash: "2222222222222222",
+      representationBytes: 1,
+      chunkCount: 1,
+      canonicalEquivalent: true,
+      history: "complete",
+      richPlacements: false,
+    } as never);
+    expect(socket.framesOfType("terminal-delivery-envelope")[0]).toMatchObject({
+      envelope: { workspaceName: "workspace.alpha" },
+    });
+    socket.message({
+      type: "terminal-delivery-ack",
+      ack: {
+        type: "terminal.delivery.ack",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.shell",
+        generation: INSTANCE,
+        incarnation: `${INSTANCE}:0`,
+        deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        transactionId,
+        canonicalRevision: 0,
+        canonicalStateHash: "1111111111111111",
+        representationHash: "2222222222222222",
+      },
+    });
+    expect(h.deliveryAcks).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceName: SESSION, transactionId }),
+    );
     h.deliveryListeners.get("pane.editor")?.({
       type: "terminal.delivery.fault",
       reason: "source-closed",
@@ -864,6 +909,27 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(socket.framesOfType("viewport-ack")).toEqual([
       { type: "viewport-ack", seq: 1, cols: 132, rows: 44 },
     ]);
+  });
+
+  it("does not park a sibling source-close behind aggregate semantic output pressure", async () => {
+    const h = harness({ maxSocketBufferedBytes: 2_000 });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+
+    // Raise aggregate buffered bytes without exhausting shell's pane-local
+    // ledger. The sibling close callback must settle immediately.
+    socket.send(JSON.stringify({ padding: "x".repeat(600) }));
+    const close = h.deliveryListeners.get("pane.shell")!({
+      type: "terminal.delivery.fault",
+      reason: "source-closed",
+      message: "closed",
+      deliveryNonce: "00000000-0000-4000-8000-000000000098",
+    } as never) as unknown;
+    await expect(Promise.resolve(close)).resolves.toBeUndefined();
+    expect(socket.framesOfType("terminal-delivery-fault")).toHaveLength(1);
   });
 
   it("meters renderer backlog for acking clients and thaws on consumed frames", async () => {

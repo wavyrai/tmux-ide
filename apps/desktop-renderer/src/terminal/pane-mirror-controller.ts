@@ -86,6 +86,7 @@ export interface PaneMirrorControllerDependencies {
 const DEFAULT_RECONNECT_INITIAL_DELAY_MS = 250;
 const DEFAULT_RECONNECT_MAXIMUM_DELAY_MS = 4_000;
 const DEFAULT_RECONNECT_MAXIMUM_ATTEMPTS = 4;
+const CANDIDATE_READY_TIMEOUT_MS = 5_000;
 /**
  * Events that arrive before the pane's node registers its sink are buffered
  * and replayed in order on registration (the mount/connect race). There is no
@@ -93,6 +94,7 @@ const DEFAULT_RECONNECT_MAXIMUM_ATTEMPTS = 4;
  * the session reconnects for a fresh seed instead of splicing a gap.
  */
 const MAX_BUFFERED_EVENTS_PER_PANE = 1_024;
+const MAX_STAGED_CANDIDATE_EVENTS = 1_024;
 
 type MirrorSinkEvent =
   | PaneMirrorEvent
@@ -100,11 +102,28 @@ type MirrorSinkEvent =
 
 interface SinkChannel {
   sink: MirrorPaneSink | null;
+  sinkEpoch: number;
   readonly buffer: MirrorSinkEvent[];
-  /** True once this lease's atomic seed has reached (or passed) the channel. */
-  seedSeen: boolean;
+  /** Latest complete terminal representation, bounded to one atomic repaint. */
+  replay: PaneMirrorSeedBatch | (() => PaneMirrorSeedBatch) | null;
+  /** Latest authoritative pane geometry. */
+  geometry: { readonly cols: number; readonly rows: number } | null;
   /** Serializes buffered replay and live events so paint order is wire order. */
   tail: Promise<void>;
+}
+
+type StagedCandidateEvent =
+  | { readonly kind: "layout"; readonly layout: PaneStreamLayoutEvent }
+  | { readonly kind: "pane"; readonly pane: string; readonly event: PaneMirrorEvent };
+
+interface CandidateSession {
+  readonly generation: number;
+  readonly panes: readonly string[];
+  readonly staged: StagedCandidateEvent[];
+  readonly seeded: Set<string>;
+  readonly laidOut: Set<string>;
+  session: PaneStreamSessionHandle | null;
+  cancelDeadline: (() => void) | null;
 }
 
 function defaultSchedule(callback: () => void, delayMs: number): () => void {
@@ -145,11 +164,12 @@ export class PaneMirrorController {
   #transportState: DesktopDaemonTransportState = { phase: "idle" };
   #fault: PaneStreamTransportError | null = null;
   #session: PaneStreamSessionHandle | null = null;
+  #activeGeneration = 0;
+  #candidate: CandidateSession | null = null;
   #cancelRetry: (() => void) | null = null;
   #attempt = 0;
   #generation = 0;
   #disposed = false;
-  #freshSeedScheduled = false;
 
   constructor(dependencies: PaneMirrorControllerDependencies) {
     this.#transport = dependencies.transport;
@@ -186,7 +206,7 @@ export class PaneMirrorController {
    * place in the tab strip rather than appending a new tab per frame.
    */
   #onLayout(generation: number, layout: PaneStreamLayoutEvent): void {
-    if (this.#disposed || generation !== this.#generation) return;
+    if (this.#disposed || generation !== this.#activeGeneration) return;
     const key = layoutWindowKey(layout);
     const index = this.#layouts.findIndex((known) => layoutWindowKey(known) === key);
     if (index >= 0) this.#layouts[index] = layout;
@@ -222,41 +242,53 @@ export class PaneMirrorController {
    */
   registerPaneSink(pane: string, sink: MirrorPaneSink): () => void {
     const channel = this.#channel(pane);
-    const needsFreshSeed =
-      channel.seedSeen && !channel.buffer.some((event) => event.type === "seed-batch");
+    const sinkEpoch = ++channel.sinkEpoch;
     channel.sink = sink;
     const buffered = channel.buffer.splice(0, channel.buffer.length);
-    for (const event of buffered) {
+    if (channel.replay) {
+      const replay = typeof channel.replay === "function" ? channel.replay() : channel.replay;
       channel.tail = channel.tail
-        .then(() => (channel.sink === sink ? this.#applyToSink(sink, event) : undefined))
+        .then(() =>
+          channel.sink === sink && channel.sinkEpoch === sinkEpoch
+            ? sink.applySeedBatch(replay)
+            : undefined,
+        )
+        .catch(() => undefined);
+    } else if (channel.geometry) {
+      const geometry = channel.geometry;
+      channel.tail = channel.tail
+        .then(() =>
+          channel.sink === sink && channel.sinkEpoch === sinkEpoch
+            ? sink.applyGeometry(geometry.cols, geometry.rows)
+            : undefined,
+        )
         .catch(() => undefined);
     }
-    if (needsFreshSeed) this.#scheduleFreshSeed();
+    for (const event of buffered) {
+      channel.tail = channel.tail
+        .then(() =>
+          channel.sink === sink && channel.sinkEpoch === sinkEpoch
+            ? this.#applyToSink(sink, event)
+            : undefined,
+        )
+        .catch(() => undefined);
+    }
     return () => {
       if (channel.sink === sink) channel.sink = null;
     };
   }
 
-  /**
-   * A pane node can be remounted after its one-shot seed was consumed (HMR,
-   * view reparenting, or a recovered renderer). The protocol intentionally has
-   * no per-pane reseed verb, so coalesce all such registrations into one fresh
-   * lease. That gives every mounted sink a new atomic seed without retaining an
-   * unbounded replay log of terminal output in the renderer process.
-   */
-  #scheduleFreshSeed(): void {
-    if (this.#disposed || this.#freshSeedScheduled) return;
-    this.#freshSeedScheduled = true;
-    queueMicrotask(() => {
-      this.#freshSeedScheduled = false;
-      if (!this.#disposed) this.retry();
-    });
-  }
-
   #channel(pane: string): SinkChannel {
     let channel = this.#channels.get(pane);
     if (!channel) {
-      channel = { sink: null, buffer: [], seedSeen: false, tail: Promise.resolve() };
+      channel = {
+        sink: null,
+        sinkEpoch: 0,
+        buffer: [],
+        replay: null,
+        geometry: null,
+        tail: Promise.resolve(),
+      };
       this.#channels.set(pane, channel);
     }
     return channel;
@@ -275,7 +307,36 @@ export class PaneMirrorController {
 
   #enqueueSinkEvent(pane: string, event: MirrorSinkEvent): void | Promise<void> {
     const channel = this.#channel(pane);
+    if (event.type === "geometry") {
+      channel.geometry = { cols: event.cols, rows: event.rows };
+      if (channel.replay && typeof channel.replay !== "function") {
+        channel.replay = { ...channel.replay, reset: channel.geometry };
+      }
+    } else if (event.type === "seed-batch") {
+      channel.replay = event.batch;
+    } else if (event.type === "output" && event.replay) {
+      channel.replay = event.replay;
+    } else if (event.type === "output" && channel.replay && typeof channel.replay !== "function") {
+      if (channel.replay.held.length >= MAX_BUFFERED_EVENTS_PER_PANE) {
+        this.#scheduleReconnect({
+          code: "mirror-replay-overflow",
+          reason: "The retained terminal replay exceeded its bounded legacy tail.",
+          retryable: true,
+        });
+      } else {
+        channel.replay = { ...channel.replay, held: [...channel.replay.held, event.bytes] };
+      }
+    } else if (event.type === "cursor" && channel.replay && typeof channel.replay !== "function") {
+      channel.replay = { ...channel.replay, cursor: { x: event.x, y: event.y } };
+    }
     if (!channel.sink) {
+      if (event.type === "geometry") return;
+      if (
+        channel.replay &&
+        (event.type === "seed-batch" || event.type === "output" || event.type === "cursor")
+      ) {
+        return;
+      }
       if (channel.buffer.length >= MAX_BUFFERED_EVENTS_PER_PANE) {
         this.#scheduleReconnect({
           code: "mirror-sink-missing",
@@ -287,8 +348,14 @@ export class PaneMirrorController {
       channel.buffer.push(event);
       return;
     }
+    const sink = channel.sink;
+    const sinkEpoch = channel.sinkEpoch;
     channel.tail = channel.tail
-      .then(() => (channel.sink ? this.#applyToSink(channel.sink, event) : undefined))
+      .then(() =>
+        channel.sink === sink && channel.sinkEpoch === sinkEpoch
+          ? this.#applyToSink(sink, event)
+          : undefined,
+      )
       .catch(() => undefined);
     return channel.tail;
   }
@@ -304,6 +371,7 @@ export class PaneMirrorController {
     this.#attempt = 0;
     this.#cancelRetry?.();
     this.#cancelRetry = null;
+    this.#retireCandidate();
     this.#retireSession();
     this.#connect();
   }
@@ -316,18 +384,23 @@ export class PaneMirrorController {
       return;
     }
     this.#panes = next;
-    this.#paneStates = new Map(next.map((pane) => [pane, { kind: "connecting" } as const]));
     this.#attempt = 0;
     this.#cancelRetry?.();
     this.#cancelRetry = null;
-    this.#retireSession();
-    this.#connect();
+    if (!this.#session) {
+      this.#paneStates = new Map(next.map((pane) => [pane, { kind: "connecting" } as const]));
+      this.#connect();
+      return;
+    }
+    this.#connectCandidate(next);
   }
 
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#generation += 1;
+    this.#activeGeneration = 0;
+    this.#retireCandidate();
     this.#cancelRetry?.();
     this.#cancelRetry = null;
     this.#retireSession();
@@ -343,6 +416,18 @@ export class PaneMirrorController {
       } catch {
         // The session is already the retired generation.
       }
+    }
+  }
+
+  #retireCandidate(): void {
+    const candidate = this.#candidate;
+    this.#candidate = null;
+    candidate?.cancelDeadline?.();
+    if (!candidate?.session) return;
+    try {
+      candidate.session.dispose();
+    } catch {
+      // The candidate never became authoritative; teardown is best-effort.
     }
   }
 
@@ -367,16 +452,201 @@ export class PaneMirrorController {
     this.#emit();
   }
 
+  /**
+   * Establish a changed pane-set beside the live lease. The old session keeps
+   * painting (and its layouts remain authoritative) until redemption of the
+   * candidate succeeds. A newer candidate fences every callback/result from an
+   * older one, so a slow issue call can never roll the surface backwards.
+   */
+  #connectCandidate(panes: readonly string[]): void {
+    this.#retireCandidate();
+    const generation = ++this.#generation;
+    const candidate: CandidateSession = {
+      generation,
+      panes: [...panes],
+      staged: [],
+      seeded: new Set(),
+      laidOut: new Set(),
+      session: null,
+      cancelDeadline: null,
+    };
+    this.#candidate = candidate;
+    candidate.cancelDeadline = this.#schedule(() => {
+      if (
+        this.#disposed ||
+        this.#candidate !== candidate ||
+        candidate.generation !== this.#generation
+      )
+        return;
+      this.#retireCandidate();
+      this.#fault = {
+        code: "candidate-ready-timeout",
+        reason: "The replacement pane stream did not provide a complete initial layout and seed.",
+        retryable: true,
+      };
+      this.#emit();
+    }, CANDIDATE_READY_TIMEOUT_MS);
+    void this.#transport
+      .connect(
+        { workspaceName: this.#workspaceName, panes: candidate.panes },
+        {
+          onPaneEvent: (pane, event) => {
+            if (generation === this.#activeGeneration) {
+              return this.#onPaneEvent(generation, pane, event);
+            }
+            if (
+              this.#disposed ||
+              generation !== this.#generation ||
+              this.#candidate?.generation !== generation
+            )
+              return;
+            if (!this.#stageCandidate(candidate, { kind: "pane", pane, event })) return;
+            if (event.type === "seed-batch" || event.type === "closed") {
+              candidate.seeded.add(pane);
+            }
+            if (event.type === "closed") candidate.laidOut.add(pane);
+            this.#commitCandidateIfReady(candidate);
+          },
+          onLayout: (layout) => {
+            if (generation === this.#activeGeneration) {
+              this.#onLayout(generation, layout);
+              return;
+            }
+            if (
+              this.#disposed ||
+              generation !== this.#generation ||
+              this.#candidate?.generation !== generation
+            )
+              return;
+            if (!this.#stageCandidate(candidate, { kind: "layout", layout })) return;
+            for (const pane of layout.panes) {
+              if (pane.pane) candidate.laidOut.add(pane.pane);
+            }
+            this.#commitCandidateIfReady(candidate);
+          },
+          onEnd: (error) => {
+            if (generation === this.#activeGeneration) {
+              this.#onEnd(generation, error);
+              return;
+            }
+            if (generation !== this.#generation || this.#candidate?.generation !== generation)
+              return;
+            this.#retireCandidate();
+            if (error && !this.#session) this.#scheduleReconnect(error);
+            else {
+              if (error) this.#fault = error;
+              this.#emit();
+            }
+          },
+        },
+      )
+      .then((result) => {
+        if (
+          this.#disposed ||
+          generation !== this.#generation ||
+          this.#candidate?.generation !== generation
+        ) {
+          if (result.status === "connected") result.session.dispose();
+          return;
+        }
+        if (result.status === "error") {
+          this.#retireCandidate();
+          if (!this.#session) this.#scheduleReconnect(result.error);
+          else {
+            this.#fault = result.error;
+            this.#emit();
+          }
+          return;
+        }
+
+        candidate.session = result.session;
+        this.#commitCandidateIfReady(candidate);
+      })
+      .catch(() => {
+        if (
+          this.#disposed ||
+          generation !== this.#generation ||
+          this.#candidate?.generation !== generation
+        )
+          return;
+        this.#retireCandidate();
+        const error: PaneStreamTransportError = {
+          code: "attachment-unavailable",
+          reason: "The pane stream candidate could not be established.",
+          retryable: true,
+        };
+        if (!this.#session) this.#scheduleReconnect(error);
+        else {
+          this.#fault = error;
+          this.#emit();
+        }
+      });
+  }
+
+  #stageCandidate(candidate: CandidateSession, event: StagedCandidateEvent): boolean {
+    if (candidate.staged.length >= MAX_STAGED_CANDIDATE_EVENTS) {
+      this.#retireCandidate();
+      this.#fault = {
+        code: "candidate-staging-overflow",
+        reason:
+          "The replacement pane stream did not become paint-ready within its bounded staging window.",
+        retryable: true,
+      };
+      this.#emit();
+      return false;
+    }
+    candidate.staged.push(event);
+    return true;
+  }
+
+  #commitCandidateIfReady(candidate: CandidateSession): void {
+    if (
+      this.#disposed ||
+      this.#candidate !== candidate ||
+      candidate.generation !== this.#generation ||
+      !candidate.session ||
+      candidate.panes.some((pane) => !candidate.seeded.has(pane) || !candidate.laidOut.has(pane))
+    ) {
+      return;
+    }
+    const previous = this.#session;
+    this.#session = candidate.session;
+    this.#activeGeneration = candidate.generation;
+    candidate.cancelDeadline?.();
+    this.#candidate = null;
+    this.#paneStates = new Map(
+      candidate.panes.map((pane) => [pane, { kind: "connecting" } as const]),
+    );
+    const retainedPanes = new Set(candidate.panes);
+    for (const [pane, channel] of this.#channels) {
+      if (!retainedPanes.has(pane)) this.#channels.delete(pane);
+      else channel.buffer.length = 0;
+    }
+    this.#setTransport({ phase: "connected" }, null);
+    for (const staged of candidate.staged) {
+      if (staged.kind === "layout") this.#onLayout(candidate.generation, staged.layout);
+      else void this.#onPaneEvent(candidate.generation, staged.pane, staged.event);
+    }
+    try {
+      previous?.dispose();
+    } catch {
+      // The candidate is already active; an old-handle teardown fault must not
+      // invalidate the successful handoff.
+    }
+  }
+
   #connect(): void {
     if (this.#disposed || this.#panes.length === 0) return;
     const generation = ++this.#generation;
+    this.#activeGeneration = generation;
     // A new lease reseeds every pane; bytes buffered for the old one are stale.
     // The layouts are NOT cleared: tmux re-sends a frame per window on
     // subscribe, and blanking the tab strip for the width of a reconnect would
     // make a recoverable stream drop look like the session losing its windows.
     for (const channel of this.#channels.values()) {
       channel.buffer.length = 0;
-      channel.seedSeen = false;
+      channel.replay = null;
+      channel.geometry = null;
     }
     for (const [pane, state] of this.#paneStates) {
       if (state.kind !== "ended") this.#paneStates.set(pane, { kind: "connecting" });
@@ -401,6 +671,7 @@ export class PaneMirrorController {
           return;
         }
         this.#session = result.session;
+        this.#activeGeneration = generation;
         this.#attempt = 0;
         this.#setTransport({ phase: "connected" }, null);
       })
@@ -415,7 +686,7 @@ export class PaneMirrorController {
   }
 
   #onPaneEvent(generation: number, pane: string, event: PaneMirrorEvent): void | Promise<void> {
-    if (this.#disposed || generation !== this.#generation) return;
+    if (this.#disposed || generation !== this.#activeGeneration) return;
     const current = this.#paneStates.get(pane);
     if (!current) return;
     if (event.type === "closed") {
@@ -430,15 +701,18 @@ export class PaneMirrorController {
       return;
     }
     if (event.type === "seed-batch" && current.kind !== "ended") {
-      this.#channel(pane).seedSeen = true;
       this.#setPaneState(pane, { kind: "live", flowPaused: false });
     }
     return this.#enqueueSinkEvent(pane, event);
   }
 
   #onEnd(generation: number, error: PaneStreamTransportError | null): void {
-    if (this.#disposed || generation !== this.#generation) return;
+    if (this.#disposed || generation !== this.#activeGeneration) return;
     this.#session = null;
+    if (this.#candidate) {
+      this.#setTransport({ phase: "connecting" }, error);
+      return;
+    }
     if (error === null) {
       // Clean end: every leased pane closed in tmux. Nothing to reconnect to.
       this.#setTransport({ phase: "idle" }, null);
@@ -471,7 +745,8 @@ export class PaneMirrorController {
     );
     this.#cancelRetry = this.#schedule(() => {
       this.#cancelRetry = null;
-      if (this.#disposed || generation !== this.#generation) return;
+      if (this.#disposed || generation !== this.#generation || this.#session || this.#candidate)
+        return;
       this.#connect();
     }, delay);
   }

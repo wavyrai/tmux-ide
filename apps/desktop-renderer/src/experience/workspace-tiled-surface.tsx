@@ -150,6 +150,15 @@ export function terminalGridOverlayBox(area: HTMLElement): {
   };
 }
 
+/** The row xterm actually painted, rather than the possibly stale tmux frame ratio. */
+export function renderedTerminalRowHeight(area: HTMLElement): number | null {
+  const row = area.querySelector<HTMLElement>(
+    ".terminal-surface__viewport > .xterm .xterm-rows > div",
+  );
+  const height = row?.getBoundingClientRect().height ?? 0;
+  return Number.isFinite(height) && height > 0 ? height : null;
+}
+
 type TiledVerbResult = void | Promise<
   | { readonly status: "ok"; readonly result?: WorkspaceMultiplexerMutationResult }
   | { readonly status: "error"; readonly error?: unknown }
@@ -344,10 +353,12 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     }
     setHighlightedInteractionSequence(sequence);
     if (communicationTimer !== null) clearTimeout(communicationTimer);
+    const occurredAt = Date.parse(latest.at);
+    const remainingMs = Math.max(0, PANE_COMMUNICATION_HIGHLIGHT_MS - (Date.now() - occurredAt));
     communicationTimer = setTimeout(() => {
       communicationTimer = null;
       setHighlightedInteractionSequence(0);
-    }, PANE_COMMUNICATION_HIGHLIGHT_MS);
+    }, remainingMs);
   });
   onCleanup(() => {
     if (communicationTimer !== null) clearTimeout(communicationTimer);
@@ -514,6 +525,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     width: 0,
     height: 0,
   });
+  const [paintedRowHeight, setPaintedRowHeight] = createSignal<number | null>(null);
 
   const positionOverlay = (): void => {
     if (!overlayElement || !areaElement) return;
@@ -531,6 +543,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     // grid's true padding inset for an owner and its clipping/letterbox offset
     // for a passive viewer; re-centring only the dimensions loses both.
     const box = terminalGridOverlayBox(areaElement);
+    setPaintedRowHeight(renderedTerminalRowHeight(areaElement));
     overlayStyle.update({
       left: `${box.left}px`,
       top: `${box.top}px`,
@@ -985,11 +998,6 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     const finished = finishWorkspacePaneManipulation(state, releaseSample);
     if (finished.ignored || !finished.completion) return;
     clearResizeWireTimer();
-    // Retire the transaction before releasing capture. `lostpointercapture`
-    // can fire synchronously in some engines; seeing the idle state keeps that
-    // cleanup signal from re-entering cancellation during a valid commit.
-    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
-    dispatchResize(finished.wire);
 
     if (
       finished.completion.kind === "resize" &&
@@ -1003,6 +1011,11 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         phase: "resize-committing",
         state: "committing",
       });
+      // Some engines dispatch lostpointercapture synchronously. Publish the
+      // committing state first so that cleanup cannot cancel/roll back a valid
+      // release or race a second settlement.
+      (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+      dispatchResize(finished.wire);
       beginCommitTimeout();
       return;
     }
@@ -1017,6 +1030,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         phase: "swap-committing",
         state: "committing",
       });
+      (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+      dispatchResize(finished.wire);
       beginCommitTimeout();
       Promise.resolve(
         props.verbs.invoke("pane.swap", finished.completion.sourcePane, {
@@ -1031,6 +1046,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       return;
     }
     settle(false);
+    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+    dispatchResize(finished.wire);
   };
 
   function cancelManipulation(event?: PointerEvent): void {
@@ -1709,6 +1726,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                      * make chrome obscure terminal content.
                      */
                     heightFraction={tile().headerRows / (tile().cells.rows + tile().headerRows)}
+                    paintedRowHeight={paintedRowHeight()}
                     hoisted={tile().headerRows === 1}
                     onOpenMenu={(pointer) => props.onOpenPaneMenu?.(paneId, pointer)}
                     onClose={() => closePane(paneId)}
@@ -1982,6 +2000,8 @@ function PaneHeader(props: {
   /** Header owns a flex row; false means it still overlays tmux's separator. */
   readonly composed: boolean;
   readonly heightFraction: number;
+  /** Measured xterm cell height; frame-derived fraction is bootstrap fallback only. */
+  readonly paintedRowHeight: number | null;
   readonly hoisted: boolean;
   readonly dragging: boolean;
   readonly onPointerDown: (event: PointerEvent) => void;
@@ -2029,7 +2049,10 @@ function PaneHeader(props: {
                 // device pixel of the preceding content row; painting from the
                 // exact boundary made that last pixel look clipped at HiDPI.
                 top: "1px",
-                height: `calc(${percent(props.heightFraction)} - 1px)`,
+                height:
+                  props.paintedRowHeight === null
+                    ? `calc(${percent(props.heightFraction)} - 1px)`
+                    : `calc(${props.paintedRowHeight}px - 1px)`,
               }
           : undefined
       }

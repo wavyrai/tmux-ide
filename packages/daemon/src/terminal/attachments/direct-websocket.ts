@@ -39,6 +39,7 @@ import type {
   ClaimedPtyTmuxAttachment,
   PtyTmuxAttachmentClaimKey,
 } from "./pty-tmux-attachment-launcher.ts";
+import { SessionRuntimeControllerLeaseError } from "../session-runtime/registry.ts";
 
 export { TERMINAL_ATTACHMENT_REDEEM_PATH };
 /** @deprecated Import the authoritative shared subprotocol constant from contracts. */
@@ -761,9 +762,10 @@ export class TerminalAttachmentAdmissionCoordinator {
             "Terminal attachment redemption was rejected.",
           );
         }
-        const sessionRuntimeBinding = this.#bindSessionRuntime?.(activeDescriptor) ?? null;
+        let sessionRuntimeBinding: SessionRuntimeRedeemedTransportBinding | null = null;
         let live: TerminalAttachmentLiveConnection;
         try {
+          sessionRuntimeBinding = this.#bindSessionRuntime?.(activeDescriptor) ?? null;
           live = new TerminalAttachmentLiveConnection({
             onRetire: (connection) => this.#trackRetiringRelease(connection),
             socket,
@@ -999,13 +1001,19 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
           ? error.code
           : error instanceof AttachmentLeaseError && error.code === "ticket-expired"
             ? "ticket-expired"
-            : "attachment-unavailable";
+            : error instanceof SessionRuntimeControllerLeaseError &&
+                error.code === "controller-conflict"
+              ? "interactive-viewer-conflict"
+              : "attachment-unavailable";
       try {
         sendControl(socket, {
           type: "error",
           protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
           code,
-          retryable: code === "live-capacity-exhausted" || code === "ticket-expired",
+          retryable:
+            code === "live-capacity-exhausted" ||
+            code === "ticket-expired" ||
+            code === "interactive-viewer-conflict",
         });
       } catch {
         // Closing below is the fail-closed response.

@@ -116,6 +116,8 @@ interface ClientState {
   sending: boolean;
   retireAfterDrain: boolean;
   lastAck: TerminalDeliveryAck | null;
+  /** Delivery displaced by authoritative source close; its racing ACK is benign. */
+  sourceClosedFlight: TerminalDeliveryEnvelope | null;
   backgroundTimer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -198,6 +200,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         sending: false,
         retireAfterDrain: false,
         lastAck: null,
+        sourceClosedFlight: null,
         backgroundTimer: null,
       };
       this.#clients.set(key, client);
@@ -600,6 +603,20 @@ export class SessionRuntimeTerminalDeliveryHub {
     const flight = client.inFlight;
     if (!flight) {
       if (client.lastAck && JSON.stringify(client.lastAck) === JSON.stringify(ack)) return;
+      const closed = client.sourceClosedFlight;
+      if (
+        closed &&
+        ack.workspaceName === closed.workspaceName &&
+        ack.semanticPaneId === closed.semanticPaneId &&
+        ack.generation === closed.generation &&
+        ack.incarnation === closed.incarnation &&
+        ack.deliveryNonce === closed.deliveryNonce &&
+        ack.transactionId === closed.transactionId &&
+        ack.canonicalRevision === closed.canonicalRevision &&
+        ack.canonicalStateHash === closed.canonicalStateHash &&
+        ack.representationHash === closed.representationHash
+      )
+        return;
       this.#fault(client, "protocol-violation", "ACK has no in-flight transaction");
       return;
     }
@@ -656,13 +673,26 @@ export class SessionRuntimeTerminalDeliveryHub {
     message: string,
   ): void {
     client.outgoing.length = 0;
+    if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
     client.inFlight = null;
-    this.#enqueue(client, {
+    const fault: TerminalDeliveryServerMessage = {
       type: "terminal.delivery.fault",
       reason,
       message: message.slice(0, 1024),
       deliveryNonce: client.negotiated.deliveryNonce,
-    });
+    };
+    if (reason === "source-closed" && client.sending) {
+      // A data callback may be waiting for renderer credit. Source closure is
+      // authoritative control state, so send it out-of-band and retire after
+      // that small frame has reached the transport instead of waiting behind
+      // a transaction which can no longer become current.
+      void Promise.resolve(client.accept(fault)).then(
+        () => this.#closeClient(client),
+        () => this.#closeClient(client),
+      );
+      return;
+    }
+    this.#enqueue(client, fault);
     client.retireAfterDrain = true;
   }
 

@@ -316,7 +316,7 @@ describe("SessionRuntimeTransportBinder", () => {
     await first.close();
   });
 
-  it("retires the last interactive lease while a passive sibling remains readable", async () => {
+  it("retains session authority but no source grant across an interactive retarget", async () => {
     const executed: string[] = [];
     const registry = new SessionRuntimeRegistry({
       generation: GENERATION,
@@ -357,12 +357,20 @@ describe("SessionRuntimeTransportBinder", () => {
     await vi.waitFor(() => expect(executed).toEqual([OP_A]));
 
     await interactive.close();
-    expect(registry.activeControllerLeaseCount()).toBe(0);
-    expect(binder.resolveExecutionHandle("alpha-session", "web:document-a")).toBeUndefined();
+    expect(registry.activeControllerLeaseCount()).toBe(1);
+    const sessionHandle = binder.resolveExecutionHandle("alpha-session", "web:document-a");
+    expect(sessionHandle).toBeTruthy();
+    expect(() => registry.assertExecutionHandle(sessionHandle!)).not.toThrow();
+    expect(
+      binder.resolveExecutionHandle("alpha-session", "web:document-a", "pane.editor"),
+    ).toBeUndefined();
+    expect(
+      binder.resolveExecutionHandle("alpha-session", "web:document-a", "pane.tests"),
+    ).toBeUndefined();
     expect(passive.toJSON()).toMatchObject({ interactive: false, clientId: "web:document-a" });
     expect(() => passive.assertController()).toThrow("Passive transport has no input authority");
     expect(() => registry.assertExecutionHandle(source)).toThrowError(
-      expect.objectContaining({ code: "stale-controller-lease" }),
+      expect.objectContaining({ code: "invalid-source-pane-binding" }),
     );
 
     registry.observeTmuxInteraction({
@@ -386,6 +394,27 @@ describe("SessionRuntimeTransportBinder", () => {
     replacement.assertController("pane.editor");
     expect(registry.activeControllerLeaseCount()).toBe(1);
     await replacement.close();
+    expect(registry.activeControllerLeaseCount()).toBe(1);
+    await passive.close();
+    expect(registry.activeControllerLeaseCount()).toBe(0);
+    await registry.dispose();
+  });
+
+  it("never grants a controller principal to a passive-only host", async () => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const passive = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000002",
+      session: "alpha",
+      hostClientId: "web:passive-only",
+      allowedSourcePaneIds: ["pane.tests"],
+      interactive: false,
+    });
+    expect(binder.resolveExecutionHandle("alpha", "web:passive-only")).toBeUndefined();
     expect(registry.activeControllerLeaseCount()).toBe(0);
     await passive.close();
     await registry.dispose();

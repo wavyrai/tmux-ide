@@ -62,6 +62,14 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 12; i += 1) await Promise.resolve();
 }
 
+function deferred<T>(): { readonly promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 interface FakeSessionHandle {
   readonly request: PaneStreamRequest;
   readonly listeners: PaneStreamSessionListeners;
@@ -269,17 +277,18 @@ describe("pane mirror controller lifecycle", () => {
     h.controller.registerPaneSink(PANE_A, sink);
     await flush();
     expect(sink.seeds).toHaveLength(1);
-    expect(sink.outputs).toEqual(["early"]);
+    expect(sink.outputs).toEqual([]);
+    expect(sink.seeds[0]!.held.map((bytes) => new TextDecoder().decode(bytes))).toEqual(["early"]);
     // A live event after registration lands after the replayed backlog.
     await session.listeners.onPaneEvent(PANE_A, {
       type: "output",
       bytes: new TextEncoder().encode("late"),
     });
     await flush();
-    expect(sink.outputs).toEqual(["early", "late"]);
+    expect(sink.outputs).toEqual(["late"]);
   });
 
-  it("releases one fresh seed lease when a painted pane renderer remounts", async () => {
+  it("replays one retained canonical batch when a painted pane renderer remounts", async () => {
     const h = controllerHarness([PANE_A]);
     const firstSink = recordingSink();
     const unregister = h.controller.registerPaneSink(PANE_A, firstSink);
@@ -298,16 +307,39 @@ describe("pane mirror controller lifecycle", () => {
     h.controller.registerPaneSink(PANE_A, replacementSink);
     await flush();
 
-    expect(first.dispose).toHaveBeenCalledOnce();
-    expect(h.transport.sessions).toHaveLength(2);
-    expect(h.controller.state().panes.get(PANE_A)).toEqual({ kind: "connecting" });
-    await h.transport.latest().listeners.onPaneEvent(PANE_A, {
-      type: "seed-batch",
-      batch: seedBatch("replacement"),
-    });
-    await flush();
+    expect(first.dispose).not.toHaveBeenCalled();
+    expect(h.transport.sessions).toHaveLength(1);
     expect(replacementSink.seeds.map((batch) => new TextDecoder().decode(batch.seed))).toEqual([
-      "replacement",
+      "first",
+    ]);
+  });
+
+  it("never applies an old sink's queued delta to its replacement before replay", async () => {
+    const h = controllerHarness([PANE_A]);
+    const blocked = deferred<void>();
+    const first = recordingSink();
+    first.applyOutput = vi.fn(() => blocked.promise);
+    const unregister = h.controller.registerPaneSink(PANE_A, first);
+    h.controller.start();
+    await flush();
+    const session = h.transport.latest();
+    await session.listeners.onPaneEvent(PANE_A, {
+      type: "seed-batch",
+      batch: seedBatch("base"),
+    });
+    const pending = session.listeners.onPaneEvent(PANE_A, {
+      type: "output",
+      bytes: new TextEncoder().encode("queued"),
+    });
+    unregister();
+    const replacement = recordingSink();
+    h.controller.registerPaneSink(PANE_A, replacement);
+    blocked.resolve(undefined);
+    await pending;
+    await flush();
+    expect(replacement.calls).toEqual(["seed"]);
+    expect(replacement.seeds[0]!.held.map((bytes) => new TextDecoder().decode(bytes))).toEqual([
+      "queued",
     ]);
   });
 
@@ -412,16 +444,220 @@ describe("pane mirror controller lifecycle", () => {
     expect(h.controller.state().panes.get(PANE_A)).toEqual({ kind: "ended" });
   });
 
-  it("re-issues a new lease when the pane set changes", async () => {
+  it("keeps the active lease until the changed pane set has layouts and seeds", async () => {
     const h = controllerHarness([PANE_A]);
     h.controller.start();
     await flush();
     const first = h.transport.latest();
+    first.listeners.onLayout?.(layout(100, 30));
     h.controller.setPanes([PANE_A, PANE_B]);
     await flush();
-    expect(first.dispose).toHaveBeenCalled();
+    expect(first.dispose).not.toHaveBeenCalled();
+    expect(h.controller.state().layouts[0]?.rows).toBe(30);
     expect(h.transport.sessions).toHaveLength(2);
-    expect(h.transport.latest().request.panes).toEqual([PANE_A, PANE_B]);
+    const candidate = h.transport.latest();
+    expect(candidate.request.panes).toEqual([PANE_A, PANE_B]);
+    candidate.listeners.onLayout?.(layout(180, 50));
+    await candidate.listeners.onPaneEvent(PANE_A, {
+      type: "seed-batch",
+      batch: seedBatch("a"),
+    });
+    expect(first.dispose).not.toHaveBeenCalled();
+    await candidate.listeners.onPaneEvent(PANE_B, {
+      type: "seed-batch",
+      batch: seedBatch("b"),
+    });
+    await flush();
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(h.controller.state().layouts[0]?.rows).toBe(50);
+    expect(h.controller.state().panes.get(PANE_B)).toEqual({ kind: "live", flowPaused: false });
+    await h.clock.advance(5_000);
+    expect(candidate.dispose).not.toHaveBeenCalled();
+  });
+
+  it("treats a pane closed before its first layout as candidate-ready", async () => {
+    const h = controllerHarness([PANE_A]);
+    h.controller.start();
+    await flush();
+    const active = h.transport.latest();
+    h.controller.setPanes([PANE_A, PANE_B]);
+    await flush();
+    const candidate = h.transport.latest();
+    candidate.listeners.onLayout?.({
+      ...layout(),
+      panes: [{ pane: PANE_A, left: 0, top: 0, width: 160, height: 40, active: true }],
+    });
+    await candidate.listeners.onPaneEvent(PANE_A, {
+      type: "seed-batch",
+      batch: seedBatch("a"),
+    });
+    candidate.listeners.onPaneEvent(PANE_B, { type: "closed" });
+    await flush();
+    expect(active.dispose).toHaveBeenCalledOnce();
+    expect(h.controller.state().panes.get(PANE_B)).toEqual({ kind: "ended" });
+  });
+
+  it("retires an incomplete candidate at its bounded readiness deadline", async () => {
+    const h = controllerHarness([PANE_A]);
+    h.controller.start();
+    await flush();
+    const active = h.transport.latest();
+    h.controller.setPanes([PANE_A, PANE_B]);
+    await flush();
+    const candidate = h.transport.latest();
+    await h.clock.advance(5_000);
+    expect(candidate.dispose).toHaveBeenCalledOnce();
+    expect(active.dispose).not.toHaveBeenCalled();
+    expect(h.controller.state().fault?.code).toBe("candidate-ready-timeout");
+  });
+
+  it("never lets a stale pane-set candidate commit over the newest request", async () => {
+    const h = controllerHarness([PANE_A]);
+    h.controller.start();
+    await flush();
+    const active = h.transport.latest();
+    h.controller.setPanes([PANE_A, PANE_B]);
+    h.controller.setPanes([PANE_B]);
+    await flush();
+    const stale = h.transport.sessions[1]!;
+    const newest = h.transport.sessions[2]!;
+    expect(stale.dispose).toHaveBeenCalledOnce();
+    stale.listeners.onLayout?.(layout(170, 41));
+    await stale.listeners.onPaneEvent(PANE_A, {
+      type: "seed-batch",
+      batch: seedBatch("stale"),
+    });
+    expect(active.dispose).not.toHaveBeenCalled();
+    newest.listeners.onLayout?.({
+      ...layout(190, 55),
+      panes: [{ pane: PANE_B, left: 0, top: 0, width: 190, height: 55, active: true }],
+    });
+    await newest.listeners.onPaneEvent(PANE_B, {
+      type: "seed-batch",
+      batch: seedBatch("newest"),
+    });
+    await flush();
+    expect(active.dispose).toHaveBeenCalledOnce();
+    expect(h.controller.state().panes.has(PANE_A)).toBe(false);
+    expect(h.controller.state().panes.get(PANE_B)).toEqual({ kind: "live", flowPaused: false });
+  });
+
+  it("retires a connected candidate that is superseded before its first complete paint", async () => {
+    const h = controllerHarness([PANE_A]);
+    h.controller.start();
+    await flush();
+    h.controller.setPanes([PANE_A, PANE_B]);
+    await flush();
+    const waiting = h.transport.latest();
+    expect(waiting.dispose).not.toHaveBeenCalled();
+    h.controller.setPanes([PANE_B]);
+    expect(waiting.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("retires a connected candidate when the controller is disposed", async () => {
+    const h = controllerHarness([PANE_A]);
+    h.controller.start();
+    await flush();
+    const active = h.transport.latest();
+    h.controller.setPanes([PANE_A, PANE_B]);
+    await flush();
+    const waiting = h.transport.latest();
+    h.controller.dispose();
+    expect(active.dispose).toHaveBeenCalledOnce();
+    expect(waiting.dispose).toHaveBeenCalledOnce();
+    await h.clock.advance(5_000);
+    expect(waiting.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("lets a ready candidate take over when the active lease ends during handoff", async () => {
+    const h = controllerHarness([PANE_A]);
+    h.controller.start();
+    await flush();
+    const active = h.transport.latest();
+    h.controller.setPanes([PANE_A, PANE_B]);
+    await flush();
+    const candidate = h.transport.latest();
+    active.listeners.onEnd({ code: "stream-closed", reason: "old ended", retryable: true });
+    expect(h.controller.state().transport.phase).toBe("connecting");
+    candidate.listeners.onLayout?.(layout());
+    await candidate.listeners.onPaneEvent(PANE_A, {
+      type: "seed-batch",
+      batch: seedBatch("a"),
+    });
+    await candidate.listeners.onPaneEvent(PANE_B, {
+      type: "seed-batch",
+      batch: seedBatch("b"),
+    });
+    await flush();
+    expect(h.controller.state().transport.phase).toBe("connected");
+    await h.clock.advance(5_000);
+    expect(h.transport.sessions).toHaveLength(2);
+    // A late close callback from the retired active generation is inert.
+    active.listeners.onEnd({ code: "stream-closed", reason: "late", retryable: true });
+    expect(h.controller.state().transport.phase).toBe("connected");
+  });
+
+  it("explicit retry fences and retires an in-flight connected candidate", async () => {
+    const h = controllerHarness([PANE_A]);
+    h.controller.start();
+    await flush();
+    const active = h.transport.latest();
+    h.controller.setPanes([PANE_A, PANE_B]);
+    await flush();
+    const candidate = h.transport.latest();
+    h.controller.retry();
+    await flush();
+    expect(active.dispose).toHaveBeenCalledOnce();
+    expect(candidate.dispose).toHaveBeenCalledOnce();
+    expect(h.transport.sessions).toHaveLength(3);
+    expect(h.controller.state().transport.phase).toBe("connected");
+  });
+
+  it("prunes retained replay for panes removed by a committed candidate", async () => {
+    const h = controllerHarness([PANE_A]);
+    const firstSink = recordingSink();
+    h.controller.registerPaneSink(PANE_A, firstSink);
+    h.controller.start();
+    await flush();
+    await h.transport.latest().listeners.onPaneEvent(PANE_A, {
+      type: "seed-batch",
+      batch: seedBatch("removed"),
+    });
+    h.controller.setPanes([PANE_B]);
+    await flush();
+    const candidate = h.transport.latest();
+    candidate.listeners.onLayout?.({
+      ...layout(),
+      panes: [{ pane: PANE_B, left: 0, top: 0, width: 160, height: 40, active: true }],
+    });
+    await candidate.listeners.onPaneEvent(PANE_B, {
+      type: "seed-batch",
+      batch: seedBatch("kept"),
+    });
+    await flush();
+    const removedSink = recordingSink();
+    h.controller.registerPaneSink(PANE_A, removedSink);
+    await flush();
+    expect(removedSink.seeds).toEqual([]);
+  });
+
+  it("bounds a noisy candidate while a sibling never becomes seed-ready", async () => {
+    const h = controllerHarness([PANE_A]);
+    h.controller.start();
+    await flush();
+    const active = h.transport.latest();
+    h.controller.setPanes([PANE_A, PANE_B]);
+    await flush();
+    const candidate = h.transport.latest();
+    for (let index = 0; index < 1_025; index += 1) {
+      candidate.listeners.onPaneEvent(PANE_A, {
+        type: "output",
+        bytes: new Uint8Array([index % 255]),
+      });
+    }
+    expect(candidate.dispose).toHaveBeenCalledOnce();
+    expect(active.dispose).not.toHaveBeenCalled();
+    expect(h.controller.state().fault?.code).toBe("candidate-staging-overflow");
   });
 
   it("discards stale buffered bytes across a reconnect", async () => {

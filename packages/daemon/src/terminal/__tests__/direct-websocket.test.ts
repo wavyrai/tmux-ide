@@ -24,6 +24,7 @@ import type { ClaimedPtyTmuxAttachment } from "../attachments/pty-tmux-attachmen
 import { DEFAULT_PTY_INPUT_LIMITS, MonotonicPtyInput } from "../MonotonicPtyInput.ts";
 import type { PtyInputLimits } from "../PtyAdapter.ts";
 import { attachTerminalAttachmentWebSocket } from "../../server/terminal-attachment-upgrade.ts";
+import { SessionRuntimeControllerLeaseError } from "../session-runtime/registry.ts";
 
 const INSTANCE_ID = "daemon-instance-1";
 const ORIGIN = "tmux-ide://app";
@@ -391,6 +392,36 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
     await vi.waitFor(() => expect(bindSessionRuntime).toHaveBeenCalledOnce());
     socket.close();
     await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  });
+
+  it("preserves a controller conflict at redemption for passive-viewer fallback", async () => {
+    const { coordinator, client } = rig({
+      bindSessionRuntime: () => {
+        throw new SessionRuntimeControllerLeaseError(
+          "controller-conflict",
+          "Another browser document owns the session controller.",
+        );
+      },
+    });
+    const issued = await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption(issued.redemptionTicket));
+
+    await vi.waitFor(() =>
+      expect(
+        socket.sent
+          .filter((entry) => typeof entry.data === "string")
+          .map((entry) => JSON.parse(entry.data as string)),
+      ).toContainEqual({
+        type: "error",
+        protocolVersion: 1,
+        code: "interactive-viewer-conflict",
+        retryable: true,
+      }),
+    );
+    expect(client.disposed).toBe(1);
+    expect(socket.closes.at(-1)).toEqual({ code: 1008, reason: "redemption-rejected" });
   });
 
   it("issues one renderer descriptor while retaining only bounded redacted state", async () => {
