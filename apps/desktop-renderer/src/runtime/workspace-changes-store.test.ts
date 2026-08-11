@@ -130,7 +130,10 @@ describe("workspace changes catalog store", () => {
       status: "loaded",
       resource: { status: "ready", branch: "main" },
     });
-    expect(fetchWorkspaceChanges).toHaveBeenCalledWith({ workspaceName: "product workspace" });
+    expect(fetchWorkspaceChanges).toHaveBeenCalledWith(
+      { workspaceName: "product workspace" },
+      expect.any(AbortSignal),
+    );
     store.dispose();
   });
 
@@ -200,10 +203,13 @@ describe("workspace change diff store", () => {
       changeId: "change.changechangechange01",
       resource: { status: "ready" },
     });
-    expect(fetchWorkspaceChangeDiff).toHaveBeenCalledWith({
-      workspaceName: "product workspace",
-      changeId: "change.changechangechange01",
-    });
+    expect(fetchWorkspaceChangeDiff).toHaveBeenCalledWith(
+      {
+        workspaceName: "product workspace",
+        changeId: "change.changechangechange01",
+      },
+      expect.any(AbortSignal),
+    );
     store.dispose();
   });
 

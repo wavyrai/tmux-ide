@@ -245,8 +245,18 @@ describe("host IPC trust boundary", () => {
         },
       }),
     ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
-    expect(daemonResources.fetchApplicationShell).toHaveBeenNthCalledWith(1, "product", 3);
-    expect(daemonResources.fetchApplicationShell).toHaveBeenNthCalledWith(2, "product", 2);
+    expect(daemonResources.fetchApplicationShell).toHaveBeenNthCalledWith(
+      1,
+      "product",
+      3,
+      expect.any(AbortSignal),
+    );
+    expect(daemonResources.fetchApplicationShell).toHaveBeenNthCalledWith(
+      2,
+      "product",
+      2,
+      expect.any(AbortSignal),
+    );
     expect(daemonResources.fetchApplicationShell).toHaveBeenCalledTimes(2);
 
     expect(
@@ -258,10 +268,13 @@ describe("host IPC trust boundary", () => {
         },
       }),
     ).toMatchObject({ status: "error", error: { reason: "files sentinel" } });
-    expect(daemonResources.fetchWorkspaceFiles).toHaveBeenCalledWith({
-      workspaceName: "product",
-      directoryId: "file.rootrootrootroot01",
-    });
+    expect(daemonResources.fetchWorkspaceFiles).toHaveBeenCalledWith(
+      {
+        workspaceName: "product",
+        directoryId: "file.rootrootrootroot01",
+      },
+      expect.any(AbortSignal),
+    );
     expect(
       await handlers.get(HOST_IPC.daemonRequest)?.(trustedEvent, {
         resource: "fetchWorkspaceFiles",
@@ -296,10 +309,13 @@ describe("host IPC trust boundary", () => {
         },
       }),
     ).toMatchObject({ status: "error", error: { reason: "diff sentinel" } });
-    expect(daemonResources.fetchWorkspaceChangeDiff).toHaveBeenCalledWith({
-      workspaceName: "product",
-      changeId: "change.changechangechange01",
-    });
+    expect(daemonResources.fetchWorkspaceChangeDiff).toHaveBeenCalledWith(
+      {
+        workspaceName: "product",
+        changeId: "change.changechangechange01",
+      },
+      expect.any(AbortSignal),
+    );
 
     expect(
       await handlers.get(HOST_IPC.daemonRequest)?.(trustedEvent, { resource: "fetchFleetCatalog" }),
@@ -1280,6 +1296,7 @@ describe("host IPC single daemon request channel (m45.3)", () => {
     expect([...h.handlers.keys()].filter((channel) => channel.includes("/daemon/")).sort()).toEqual(
       [
         HOST_IPC.daemonEvent,
+        HOST_IPC.daemonCancelRequest,
         HOST_IPC.daemonCancelSubscribe,
         HOST_IPC.daemonRequest,
         HOST_IPC.daemonSubscribe,
@@ -1288,6 +1305,35 @@ describe("host IPC single daemon request channel (m45.3)", () => {
         .filter((channel) => channel !== HOST_IPC.daemonEvent)
         .sort(),
     );
+    h.registration.dispose();
+  });
+
+  it("cancels an in-flight GUI resource read at the main-process authority", async () => {
+    let readSignal: AbortSignal | undefined;
+    const fetchWorkspaceFiles = vi.fn(
+      async (_request: unknown, signal?: AbortSignal) =>
+        new Promise((resolve) => {
+          readSignal = signal;
+          signal?.addEventListener(
+            "abort",
+            () => resolve({ status: "error", error: { code: "disposed", reason: "cancelled" } }),
+            { once: true },
+          );
+        }),
+    );
+    const h = harness({ daemonOverrides: { fetchWorkspaceFiles } });
+    const requestId = "22222222-2222-4222-8222-222222222222";
+    const pending = h.handlers.get(HOST_IPC.daemonRequest)?.(
+      h.event,
+      { resource: "fetchWorkspaceFiles", request: { workspaceName: "product" } },
+      requestId,
+    );
+    await vi.waitFor(() => expect(readSignal).toBeDefined());
+    expect(await h.handlers.get(HOST_IPC.daemonCancelRequest)?.(h.event, requestId)).toEqual({
+      status: "ok",
+    });
+    expect(readSignal?.aborted).toBe(true);
+    await expect(pending).resolves.toMatchObject({ status: "error", error: { code: "disposed" } });
     h.registration.dispose();
   });
 

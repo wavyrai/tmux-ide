@@ -13,6 +13,7 @@ import {
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   DesktopDaemonCapabilitiesResultSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
+  DesktopDaemonRequestIdSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonStartupReadinessResultSchemaZ,
   DesktopDaemonSubscriptionIdSchemaZ,
@@ -221,9 +222,14 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     readonly generation: number;
     readonly controller: AbortController;
   }
+  interface PendingDaemonRequestAuthority {
+    readonly generation: number;
+    readonly controller: AbortController;
+  }
 
   const daemonSubscriptions = new Map<string, DaemonSubscriptionAuthority>();
   const pendingDaemonSubscriptions = new Map<string, PendingDaemonSubscriptionAuthority>();
+  const pendingDaemonRequests = new Map<string, PendingDaemonRequestAuthority>();
   let nextDaemonSubscription = 0;
   let nextRendererGeneration = 0;
   let rendererAuthority: RendererAuthority | null = null;
@@ -234,8 +240,11 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     const active =
       rendererAuthority !== null ||
       daemonSubscriptions.size > 0 ||
-      pendingDaemonSubscriptions.size > 0;
+      pendingDaemonSubscriptions.size > 0 ||
+      pendingDaemonRequests.size > 0;
     rendererAuthority = null;
+    for (const pending of pendingDaemonRequests.values()) pending.controller.abort();
+    pendingDaemonRequests.clear();
     for (const pending of pendingDaemonSubscriptions.values()) pending.controller.abort();
     pendingDaemonSubscriptions.clear();
     for (const subscription of daemonSubscriptions.values()) subscription.unsubscribe();
@@ -892,7 +901,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
    */
   handle(HOST_IPC.daemonRequest, async (event, ...args) => {
     const authority = trustedRendererAuthority(event);
-    if (args.length !== 1) throw new Error("desktop daemon request was invalid");
+    if (args.length < 1 || args.length > 2) throw new Error("desktop daemon request was invalid");
     const named = args[0];
     const kind =
       typeof named === "object" && named !== null
@@ -906,65 +915,99 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     const parsed = DaemonResourceRequestSchemaZ.safeParse(named);
     if (!parsed.success) return invalidDaemonRequestResult(kind);
     const daemonRequest = parsed.data;
-    switch (daemonRequest.resource) {
-      case "capabilities":
-        return capabilities(event, authority.generation);
-      case "refreshConnection":
-        return refreshConnection(event, authority.generation);
-      case "startupReadiness":
-        return startupReadiness(event, authority.generation);
-      case "listWorkspaces":
-        return readResource(event, authority.generation, () =>
-          deps.daemonResources.listWorkspaces(),
-        );
-      case "fetchFleetCatalog":
-        return readResource(event, authority.generation, () =>
-          deps.daemonResources.fetchFleetCatalog(),
-        );
-      case "fetchWidgetAsset":
-        return readResource(event, authority.generation, () =>
-          deps.daemonResources.fetchWidgetAsset(daemonRequest.request),
-        );
-      case "fetchApplicationShell":
-        return readResource(event, authority.generation, () =>
-          deps.daemonResources.fetchApplicationShell(
-            daemonRequest.request.workspaceName,
-            daemonRequest.request.resourceVersion,
-          ),
-        );
-      case "fetchWorkspaceFiles":
-        return readResource(event, authority.generation, () =>
-          deps.daemonResources.fetchWorkspaceFiles(daemonRequest.request),
-        );
-      case "fetchWorkspaceFilePreview":
-        return readResource(event, authority.generation, () =>
-          deps.daemonResources.fetchWorkspaceFilePreview(daemonRequest.request),
-        );
-      case "fetchWorkspaceChanges":
-        return readResource(event, authority.generation, () =>
-          deps.daemonResources.fetchWorkspaceChanges(daemonRequest.request),
-        );
-      case "fetchWorkspaceChangeDiff":
-        return readResource(event, authority.generation, () =>
-          deps.daemonResources.fetchWorkspaceChangeDiff(daemonRequest.request),
-        );
-      case "fetchWorkspaceMissions":
-        return readResource(event, authority.generation, () =>
-          deps.daemonResources.fetchWorkspaceMissions(daemonRequest.request),
-        );
-      case "promoteWorkspace":
-        return promoteWorkspace(event, authority, { data: daemonRequest.request });
-      case "createWorkspacePane":
-        return createWorkspacePane(event, authority, { data: daemonRequest.request });
-      case "mutateAppWindow":
-        return mutateAppWindow(event, authority, { data: daemonRequest.request });
-      case "invokeVerb":
-        return invokeVerb(event, authority, { data: daemonRequest.request });
-      case "issueTerminalAttachment":
-        return issueTerminalAttachment(event, authority, { data: daemonRequest.request });
-      case "issuePaneStream":
-        return issuePaneStream(event, authority, { data: daemonRequest.request });
+    const requestId = DesktopDaemonRequestIdSchemaZ.safeParse(
+      args.length === 2 ? args[1] : randomUUID(),
+    );
+    if (!requestId.success || pendingDaemonRequests.has(requestId.data)) {
+      return invalidDaemonRequestResult(kind);
     }
+    const controller = new AbortController();
+    const pending = { generation: authority.generation, controller };
+    pendingDaemonRequests.set(requestId.data, pending);
+    const run = async (): Promise<unknown> => {
+      switch (daemonRequest.resource) {
+        case "capabilities":
+          return capabilities(event, authority.generation);
+        case "refreshConnection":
+          return refreshConnection(event, authority.generation);
+        case "startupReadiness":
+          return startupReadiness(event, authority.generation);
+        case "listWorkspaces":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.listWorkspaces(controller.signal),
+          );
+        case "fetchFleetCatalog":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.fetchFleetCatalog(controller.signal),
+          );
+        case "fetchWidgetAsset":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.fetchWidgetAsset(daemonRequest.request, controller.signal),
+          );
+        case "fetchApplicationShell":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.fetchApplicationShell(
+              daemonRequest.request.workspaceName,
+              daemonRequest.request.resourceVersion,
+              controller.signal,
+            ),
+          );
+        case "fetchWorkspaceFiles":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.fetchWorkspaceFiles(daemonRequest.request, controller.signal),
+          );
+        case "fetchWorkspaceFilePreview":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.fetchWorkspaceFilePreview(
+              daemonRequest.request,
+              controller.signal,
+            ),
+          );
+        case "fetchWorkspaceChanges":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.fetchWorkspaceChanges(daemonRequest.request, controller.signal),
+          );
+        case "fetchWorkspaceChangeDiff":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.fetchWorkspaceChangeDiff(daemonRequest.request, controller.signal),
+          );
+        case "fetchWorkspaceMissions":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.fetchWorkspaceMissions(daemonRequest.request, controller.signal),
+          );
+        case "promoteWorkspace":
+          return promoteWorkspace(event, authority, { data: daemonRequest.request });
+        case "createWorkspacePane":
+          return createWorkspacePane(event, authority, { data: daemonRequest.request });
+        case "mutateAppWindow":
+          return mutateAppWindow(event, authority, { data: daemonRequest.request });
+        case "invokeVerb":
+          return invokeVerb(event, authority, { data: daemonRequest.request });
+        case "issueTerminalAttachment":
+          return issueTerminalAttachment(event, authority, { data: daemonRequest.request });
+        case "issuePaneStream":
+          return issuePaneStream(event, authority, { data: daemonRequest.request });
+      }
+    };
+    try {
+      return await run();
+    } finally {
+      if (pendingDaemonRequests.get(requestId.data) === pending) {
+        pendingDaemonRequests.delete(requestId.data);
+      }
+    }
+  });
+  handle(HOST_IPC.daemonCancelRequest, (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) return { status: "error" as const };
+    const requestId = DesktopDaemonRequestIdSchemaZ.safeParse(args[0]);
+    if (!requestId.success) return { status: "error" as const };
+    const pending = pendingDaemonRequests.get(requestId.data);
+    if (pending?.generation === authority.generation) {
+      pendingDaemonRequests.delete(requestId.data);
+      pending.controller.abort();
+    }
+    return { status: "ok" as const };
   });
   handle(HOST_IPC.daemonSubscribe, async (event, ...args) => {
     const authority = trustedRendererAuthority(event);

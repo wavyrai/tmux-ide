@@ -123,6 +123,7 @@ describe("push resource session", () => {
     await turn();
     expect(fetches).toBe(1);
     expect(clock.timers.size).toBe(0);
+    expect(session.getMetrics().idleWakeups).toBe(0);
   });
 
   it("coalesces an invalidation burst into one refetch and ignores terminal traffic", async () => {

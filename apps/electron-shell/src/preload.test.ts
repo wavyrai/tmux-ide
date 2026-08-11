@@ -190,4 +190,70 @@ describe("desktop preload daemon bridge", () => {
     expect(result.status).toBe("subscribed");
     expect(received).toEqual([earlyEvent]);
   });
+
+  it("cancels a pending resource IPC when renderer demand closes", async () => {
+    const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
+    let settleRead!: (value: unknown) => void;
+    electron.invoke.mockImplementation(
+      async (channel: string, _value: unknown, requestId?: string) => {
+        if (channel === HOST_IPC.daemonRequest) {
+          expect(requestId).toMatch(/^[0-9a-f-]{36}$/iu);
+          return new Promise((resolve) => {
+            settleRead = resolve;
+          });
+        }
+        expect(channel).toBe(HOST_IPC.daemonCancelRequest);
+        settleRead({ status: "error", error: { code: "disposed", reason: "cancelled" } });
+        return { status: "ok" };
+      },
+    );
+    const controller = new AbortController();
+    const pending = capabilities.daemon.fetchWorkspaceFiles(
+      { workspaceName: "product" },
+      controller.signal,
+    );
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(
+      electron.invoke.mock.calls.some(([channel]) => channel === HOST_IPC.daemonCancelRequest),
+    ).toBe(true);
+    electron.invoke.mockReset();
+  });
+
+  it("clears unclaimed early events across repeated failed subscribe churn", async () => {
+    const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
+    const earlyEvent: DesktopDaemonEvent = { type: "workspaces.changed" };
+    for (let index = 1; index <= 65; index += 1) {
+      electron.invoke.mockImplementationOnce(async () => {
+        electron.listeners.get(HOST_IPC.daemonEvent)?.(
+          {},
+          {
+            subscriptionId: `desktop-subscription-${index}`,
+            event: earlyEvent,
+          },
+        );
+        return { status: "error", error: { code: "event-unavailable", reason: "failed" } };
+      });
+      await expect(
+        capabilities.daemon.subscribe({ workspaceNames: ["product"] }, vi.fn()),
+      ).resolves.toMatchObject({
+        status: "error",
+      });
+    }
+    const received: DesktopDaemonEvent[] = [];
+    electron.invoke.mockImplementationOnce(async () => {
+      electron.listeners.get(HOST_IPC.daemonEvent)?.(
+        {},
+        {
+          subscriptionId: "desktop-subscription-66",
+          event: earlyEvent,
+        },
+      );
+      return { status: "subscribed", subscriptionId: "desktop-subscription-66" };
+    });
+    await capabilities.daemon.subscribe({ workspaceNames: ["product"] }, (event) =>
+      received.push(event),
+    );
+    expect(received).toEqual([earlyEvent]);
+  });
 });

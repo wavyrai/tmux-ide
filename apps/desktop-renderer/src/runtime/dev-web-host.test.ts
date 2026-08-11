@@ -243,6 +243,46 @@ describe("development web host route keying", () => {
     host.dispose();
   });
 
+  it("aborts a browser-host HTTP resource read when demand closes", async () => {
+    let resourceSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/v2/capabilities") {
+          return new Response(
+            JSON.stringify({
+              status: "ok",
+              daemon: IDENTITY,
+              capabilities: { appWindowMutation: { available: true } },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.pathname === "/api/resources/workspace-catalog") {
+          return new Response(
+            JSON.stringify({ version: 1, daemon: IDENTITY, workspaces: [...CATALOG] }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        resourceSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          resourceSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const controller = new AbortController();
+    const pending = host.daemon.fetchWorkspaceFiles({ workspaceName: "alpha" }, controller.signal);
+    await vi.waitFor(() => expect(resourceSignal).toBeDefined());
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({ status: "error", error: { code: "disposed" } });
+    expect(resourceSignal?.aborted).toBe(true);
+    host.dispose();
+  });
+
   it("keeps the owner bearer out of gateway requests and rewrites redemption sockets", async () => {
     const gatewayConfig = {
       daemonOrigin: "http://127.0.0.1:5173",
@@ -552,6 +592,179 @@ describe("development gateway host sessions", () => {
     expect(bootstrapCount).toBe(1);
     expect(actionCount).toBe(1);
     warned.mockRestore();
+    host.dispose();
+  });
+});
+
+class FakeEventSocket {
+  readonly sent: string[] = [];
+  readonly close = vi.fn();
+  readonly listeners = new Map<string, Array<(event: unknown) => void>>();
+  constructor(readonly url: string) {}
+  addEventListener(type: string, listener: (event: unknown) => void): void {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+  send(value: string): void {
+    this.sent.push(value);
+  }
+  emit(type: string, event: unknown = {}): void {
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+  message(value: unknown): void {
+    this.emit("message", { data: JSON.stringify(value) });
+  }
+}
+
+describe("development event authority barriers", () => {
+  const CONFIG = {
+    daemonOrigin: "http://127.0.0.1:6060",
+    daemonWebSocketOrigin: "ws://127.0.0.1:6060",
+    ownerToken: "owner-token",
+    transport: "direct" as const,
+  };
+
+  function eventHost() {
+    const sockets: FakeEventSocket[] = [];
+    vi.stubGlobal(
+      "WebSocket",
+      class extends FakeEventSocket {
+        constructor(url: string) {
+          super(url);
+          sockets.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              status: "ok",
+              daemon: IDENTITY,
+              capabilities: { appWindowMutation: { available: true } },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+      ),
+    );
+    return { sockets, host: createDevWebHostCapabilities(CONFIG) };
+  }
+
+  it("ignores an ACK from a retired physical attempt", async () => {
+    const { sockets, host } = eventHost();
+    let explicitSettled = false;
+    const explicit = host.daemon
+      .subscribe(
+        {
+          workspaceNames: [],
+          resourceInterests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+        },
+        vi.fn(),
+      )
+      .then((result) => {
+        explicitSettled = true;
+        return result;
+      });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const retired = sockets[0]!;
+    retired.emit("open");
+    retired.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    const retiredRevision = JSON.parse(retired.sent[0]!).interestRevision as number;
+
+    const legacy = await host.daemon.subscribe({ workspaceNames: ["alpha"] }, vi.fn());
+    expect(legacy.status).toBe("subscribed");
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    retired.message({
+      type: "resource.interests-ack",
+      interestRevision: retiredRevision,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await Promise.resolve();
+    expect(explicitSettled).toBe(false);
+
+    const current = sockets[1]!;
+    current.emit("open");
+    current.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    const currentRevision = JSON.parse(current.sent[0]!).interestRevision as number;
+    current.message({
+      type: "resource.interests-ack",
+      interestRevision: currentRevision,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    expect((await explicit).status).toBe("subscribed");
+    host.dispose();
+  });
+
+  it("does not forget an unavailable required interest across later revisions", async () => {
+    const { sockets, host } = eventHost();
+    const first = host.daemon.subscribe(
+      {
+        workspaceNames: [],
+        resourceInterests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+      },
+      vi.fn(),
+    );
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit("open");
+    socket.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    const revisionOne = JSON.parse(socket.sent[0]!).interestRevision as number;
+    const secondEvents: unknown[] = [];
+    const second = host.daemon.subscribe(
+      {
+        workspaceNames: [],
+        resourceInterests: [{ resource: "workspace-changes", workspaceName: "alpha" }],
+      },
+      (event) => secondEvents.push(event),
+    );
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
+    const revisionTwo = JSON.parse(socket.sent[1]!).interestRevision as number;
+    socket.message({
+      type: "resource.interests-ack",
+      interestRevision: revisionOne,
+      sequence: 0,
+      unavailableInterests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+    });
+    socket.message({
+      type: "resource.interests-ack",
+      interestRevision: revisionTwo,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    expect(socket.close).toHaveBeenCalledWith(4011, "daemon resource observer unavailable");
+    expect(secondEvents).not.toContainEqual({
+      type: "connection.changed",
+      state: "live",
+      error: null,
+    });
+    await expect(first).resolves.toMatchObject({ status: "error" });
+    host.dispose();
+    await expect(second).resolves.toMatchObject({ status: "subscribed" });
+  });
+
+  it("retires an explicit interest immediately when its ACK barrier is cancelled", async () => {
+    const { sockets, host } = eventHost();
+    const controller = new AbortController();
+    const pending = host.daemon.subscribe(
+      {
+        workspaceNames: [],
+        resourceInterests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+      },
+      vi.fn(),
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit("open");
+    socket.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({ status: "error", error: { code: "disposed" } });
+    expect(socket.close).toHaveBeenCalledWith(1000, "connection supervisor stopped");
     host.dispose();
   });
 });

@@ -1994,6 +1994,34 @@ describe("Electron main daemon workspace read resources", () => {
     );
   });
 
+  it("aborts the underlying HTTP read when renderer demand closes", async () => {
+    let resourceSignal: AbortSignal | undefined;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        if (input.toString().endsWith("/api/resources/workspace-catalog")) {
+          return json(WORKSPACE_CATALOG);
+        }
+        resourceSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          resourceSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      },
+    });
+    const controller = new AbortController();
+    const pending = broker.fetchWorkspaceFiles(
+      { workspaceName: "product workspace" },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(resourceSignal).toBeDefined());
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({ status: "error", error: { code: "disposed" } });
+    expect(resourceSignal?.aborted).toBe(true);
+  });
+
   it("passes a directory id as a query for incremental tree expansion", async () => {
     const requests: string[] = [];
     const broker = new DaemonResourceBroker({

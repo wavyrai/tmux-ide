@@ -45,6 +45,8 @@ export interface PushResourceSessionState<TTarget, TKey extends string, TResourc
 }
 
 export interface PushResourceSessionMetrics {
+  /** Structurally zero: this event-driven store owns no maintenance/idle timer. */
+  readonly idleWakeups: 0;
   readonly activeInterests: number;
   readonly fetchesStarted: number;
   readonly fetchesSettled: number;
@@ -54,6 +56,7 @@ export interface PushResourceSessionMetrics {
   readonly invalidationsCoalesced: number;
   readonly subscriptionsOpened: number;
   readonly subscriptionsClosed: number;
+  readonly publications: number;
 }
 
 export type PushResourceTargetValidation<TTarget, TFailure> =
@@ -196,6 +199,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     invalidationsCoalesced: 0,
     subscriptionsOpened: 0,
     subscriptionsClosed: 0,
+    publications: 0,
   };
 
   const snapshotState = (): PushResourceSessionState<TTarget, TKey, TResource, TFailure> => ({
@@ -219,6 +223,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
   };
 
   const publish = (): void => {
+    metric.publications += 1;
     state = snapshotState();
     for (const listener of [...listeners]) notify(listener, state);
   };
@@ -618,7 +623,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
 
   const session: PushResourceSession<TTarget, TKey, TResource, TFailure> = {
     getState: () => state,
-    getMetrics: () => ({ activeInterests: interests.size, ...metric }),
+    getMetrics: () => ({ idleWakeups: 0, activeInterests: interests.size, ...metric }),
     subscribe(listener) {
       if (disposed) {
         notify(listener, state);

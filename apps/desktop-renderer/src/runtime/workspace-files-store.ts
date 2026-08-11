@@ -71,6 +71,7 @@ export interface WorkspaceFilesCatalogStore {
 
 export interface SolidWorkspaceFilesCatalogStore {
   readonly state: Accessor<WorkspaceFilesCatalogState>;
+  getMetrics(): TargetPinnedStoreMetrics;
   setTarget(target: unknown): void;
   setActive(active: boolean): void;
   loadRoot(): void;
@@ -112,11 +113,16 @@ export function createWorkspaceFilesCatalogStore(
       eagerKey: ROOT_KEY,
       invalidatesOn: ["workspace-files.changed"],
       resourceInterest: "workspace-files",
-      async fetch(target, key): Promise<TargetPinnedFetchResult<WorkspaceFilesCatalogResourceV1>> {
+      async fetch(
+        target,
+        key,
+        signal,
+      ): Promise<TargetPinnedFetchResult<WorkspaceFilesCatalogResourceV1>> {
         const result = await options.host.daemon.fetchWorkspaceFiles(
           key === ROOT_KEY
             ? { workspaceName: target.workspaceName }
             : { workspaceName: target.workspaceName, directoryId: key },
+          signal,
         );
         if (result.status === "error") {
           return { status: "failed", code: result.error.code, reason: result.error.reason };
@@ -209,6 +215,7 @@ export function createSolidWorkspaceFilesCatalogStore(
   onCleanup(dispose);
   return {
     state,
+    getMetrics: () => store.getMetrics(),
     setTarget: (next) => store.setTarget(next),
     setActive: (active) => store.setActive(active),
     loadRoot: () => store.loadRoot(),
@@ -259,6 +266,7 @@ export interface WorkspaceFilePreviewStore {
 
 export interface SolidWorkspaceFilePreviewStore {
   readonly state: Accessor<WorkspaceFilePreviewState>;
+  getMetrics(): TargetPinnedStoreMetrics;
   setTarget(target: unknown): void;
   setActive(active: boolean): void;
   load(fileId: string): void;
@@ -278,11 +286,15 @@ export function createWorkspaceFilePreviewStore(
       async fetch(
         target,
         fileId,
+        signal,
       ): Promise<TargetPinnedFetchResult<WorkspaceFilePreviewResourceV1>> {
-        const result = await options.host.daemon.fetchWorkspaceFilePreview({
-          workspaceName: target.workspaceName,
-          fileId: fileId as WorkspaceFileResourceId,
-        });
+        const result = await options.host.daemon.fetchWorkspaceFilePreview(
+          {
+            workspaceName: target.workspaceName,
+            fileId: fileId as WorkspaceFileResourceId,
+          },
+          signal,
+        );
         if (result.status === "error") {
           return { status: "failed", code: result.error.code, reason: result.error.reason };
         }
@@ -381,6 +393,7 @@ export function createSolidWorkspaceFilePreviewStore(
   onCleanup(dispose);
   return {
     state,
+    getMetrics: () => store.getMetrics(),
     setTarget: (next) => store.setTarget(next),
     setActive: (active) => store.setActive(active),
     load: (fileId) => store.load(fileId),

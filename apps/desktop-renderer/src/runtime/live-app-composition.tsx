@@ -91,6 +91,7 @@ import {
   createSolidWorkspaceFilesCatalogStore,
 } from "./workspace-files-store.ts";
 import { createSolidWorkspaceMissionsStore } from "./workspace-missions-store.ts";
+import { createGuiResourceTelemetry } from "./gui-resource-telemetry.ts";
 import {
   changeDiffSurfaceModel,
   changeEntriesById,
@@ -702,6 +703,15 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     target: props.target,
     active: false,
   });
+  const resourceTelemetry = createGuiResourceTelemetry([
+    filesCatalog,
+    filePreview,
+    changesCatalog,
+    changeDiff,
+    missions,
+  ]);
+  resourceTelemetry.recordRenderPass();
+  onCleanup(resourceTelemetry.exposeDebugAccessor());
   const activateDockResource = (demand: {
     readonly tool: string;
     readonly active: boolean;

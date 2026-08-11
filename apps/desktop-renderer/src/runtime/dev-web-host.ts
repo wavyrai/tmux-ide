@@ -44,6 +44,7 @@ import {
   WorkspaceChangesCatalogEnvelopeV1SchemaZ,
   WorkspaceFilePreviewEnvelopeV1SchemaZ,
   WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+  WorkspaceMissionsEnvelopeV1SchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
   WorkspacePromotionFailureSchemaZ,
@@ -325,6 +326,8 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   let nextInterestRevision = 0;
   let lastSentInterestRevision = 0;
   let lastAckedInterestRevision = 0;
+  const unavailableInterestKeys = new Set<string>();
+  let eventSocketEpoch = 0;
   let eventReplica: ResourceReplicaState<null> = initialResourceReplica();
   let socketSupervisor: RuntimeConnectionSupervisor<true> | null = null;
   let stopSocketStateSubscription: (() => void) | null = null;
@@ -383,9 +386,13 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     init: { readonly method: "GET" | "POST"; readonly body?: unknown },
     extraHeaders: Readonly<Record<string, string>> = {},
     timeoutMs = REQUEST_TIMEOUT_MS,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     if (disposed) throw new DevHostFailure(DISPOSED);
+    if (signal?.aborted) throw new DevHostFailure(DISPOSED);
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    signal?.addEventListener("abort", cancel, { once: true });
     controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -455,9 +462,10 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       return await response.json();
     } catch (error) {
       if (error instanceof DevHostFailure) throw error;
-      throw new DevHostFailure(disposed ? DISPOSED : REQUEST_FAILED);
+      throw new DevHostFailure(disposed || signal?.aborted ? DISPOSED : REQUEST_FAILED);
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
       controllers.delete(controller);
     }
   }
@@ -491,10 +499,16 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * the production broker does, so a daemon restart mid-session surfaces as a
    * generation mismatch instead of silently mixing two generations.
    */
-  async function loadIdentity(): Promise<DaemonInstanceIdentity> {
+  async function loadIdentity(signal?: AbortSignal): Promise<DaemonInstanceIdentity> {
     if (identity) return identity;
     const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
-      await request("/api/v2/capabilities", { method: "POST", body: {} }),
+      await request(
+        "/api/v2/capabilities",
+        { method: "POST", body: {} },
+        {},
+        REQUEST_TIMEOUT_MS,
+        signal,
+      ),
     );
     if (result.status !== "ok") throw new DevHostFailure(result.error);
     identity = result.daemon;
@@ -510,9 +524,17 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     return identity;
   }
 
-  async function workspaceCatalog(): Promise<readonly DevWorkspaceCatalogEntry[]> {
+  async function workspaceCatalog(
+    signal?: AbortSignal,
+  ): Promise<readonly DevWorkspaceCatalogEntry[]> {
     const parsed = WorkspaceCatalogResourceV1SchemaZ.safeParse(
-      await request("/api/resources/workspace-catalog", { method: "GET" }),
+      await request(
+        "/api/resources/workspace-catalog",
+        { method: "GET" },
+        {},
+        REQUEST_TIMEOUT_MS,
+        signal,
+      ),
     );
     if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
     if (!sameIdentity(parsed.data.daemon, requireIdentity())) {
@@ -528,8 +550,11 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     return catalogCache;
   }
 
-  async function catalogEntryFor(workspaceName: string): Promise<DevWorkspaceCatalogEntry> {
-    const entry = (await workspaceCatalog()).find(
+  async function catalogEntryFor(
+    workspaceName: string,
+    signal?: AbortSignal,
+  ): Promise<DevWorkspaceCatalogEntry> {
+    const entry = (await workspaceCatalog(signal)).find(
       (candidate) => candidate.workspaceName === workspaceName,
     );
     if (!entry) {
@@ -554,16 +579,23 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     workspaceName: string,
     pathname: (encodedName: string) => string,
     schema: Schema,
+    signal?: AbortSignal,
   ): Promise<
     | { status: "ok"; envelope: z.infer<Schema> }
     | { status: "error"; error: DesktopDaemonCapabilityError }
   > {
     try {
-      await loadIdentity();
-      const entry = await catalogEntryFor(workspaceName);
+      await loadIdentity(signal);
+      const entry = await catalogEntryFor(workspaceName, signal);
       const routeName = daemonWorkspaceRouteName(resource, entry);
       const parsed = schema.safeParse(
-        await request(pathname(encodeURIComponent(routeName)), { method: "GET" }),
+        await request(
+          pathname(encodeURIComponent(routeName)),
+          { method: "GET" },
+          {},
+          REQUEST_TIMEOUT_MS,
+          signal,
+        ),
       );
       if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
       return { status: "ok", envelope: parsed.data };
@@ -695,6 +727,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     const removedInterests = [...sentInterests]
       .filter(([key]) => !requiredInterests.has(key))
       .map(([, interest]) => interest);
+    for (const interest of removedInterests) unavailableInterestKeys.delete(interestKey(interest));
     const addedInterests = [...requiredInterests]
       .filter(([key]) => !sentInterests.has(key))
       .map(([, interest]) => interest);
@@ -799,6 +832,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   async function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
     await loadDevHostSession();
     return new Promise((resolve, reject) => {
+      const attemptEpoch = ++eventSocketEpoch;
       eventSocketSemantic = desiredSemanticMode();
       const eventsPath = eventSocketSemantic ? `${EVENTS_PATH}?mode=semantic` : EVENTS_PATH;
       const next = new WebSocket(
@@ -822,6 +856,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       };
       signal.addEventListener("abort", dispose, { once: true });
       next.addEventListener("message", (event) => {
+        if (attemptEpoch !== eventSocketEpoch) return;
         if (
           typeof event.data !== "string" ||
           new TextEncoder().encode(event.data).byteLength > MAX_EVENT_FRAME_BYTES
@@ -859,6 +894,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           eventCursorSent = false;
           lastSentInterestRevision = 0;
           lastAckedInterestRevision = 0;
+          unavailableInterestKeys.clear();
           helloVerified = true;
           sendEventSubscriptionDelta();
           if (lastSentInterestRevision === 0) finishConnected();
@@ -894,6 +930,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
             frame.data.interestRevision,
           );
           const unavailable = new Set(frame.data.unavailableInterests.map(interestKey));
+          for (const key of unavailable) unavailableInterestKeys.add(key);
           for (const subscription of subscriptions.values()) {
             if (
               subscription.readySettled ||
@@ -903,7 +940,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
               continue;
             subscription.readySettled = true;
             const failed = (subscription.request.resourceInterests ?? []).some((interest) =>
-              unavailable.has(interestKey(interest)),
+              unavailableInterestKeys.has(interestKey(interest)),
             );
             subscription.resolveReady?.(
               failed
@@ -919,7 +956,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           }
           if (frame.data.interestRevision >= lastSentInterestRevision) {
             const unavailableRequired = [...requiredEventInterests().keys()].some((key) =>
-              unavailable.has(key),
+              unavailableInterestKeys.has(key),
             );
             if (unavailableRequired) {
               next.close(
@@ -1032,6 +1069,8 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           emit(mapped);
       });
       next.addEventListener("close", (event) => {
+        if (attemptEpoch !== eventSocketEpoch) return;
+        eventSocketEpoch += 1;
         if (eventSocket === next) {
           eventSocket = null;
           sentSessions.clear();
@@ -1051,11 +1090,14 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           reject(reason);
         }
       });
-      next.addEventListener("error", () => next.close());
+      next.addEventListener("error", () => {
+        if (attemptEpoch === eventSocketEpoch) next.close();
+      });
     });
   }
 
   function releaseSocket(): void {
+    eventSocketEpoch += 1;
     const current = socketSupervisor;
     socketSupervisor = null;
     socketVerified = false;
@@ -1066,6 +1108,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     eventCursorSent = false;
     lastSentInterestRevision = 0;
     lastAckedInterestRevision = 0;
+    unavailableInterestKeys.clear();
     stopSocketStateSubscription?.();
     stopSocketStateSubscription = null;
     void current?.stop();
@@ -1080,12 +1123,21 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * transport and credential custody, which is the honest difference, rather
    * than in how many resources each of them remembered to implement.
    */
-  async function dispatchDaemonResource(daemonRequest: DaemonResourceRequest): Promise<unknown> {
+  async function dispatchDaemonResource(
+    daemonRequest: DaemonResourceRequest,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     switch (daemonRequest.resource) {
       case "capabilities":
         try {
           const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
-            await request("/api/v2/capabilities", { method: "POST", body: {} }),
+            await request(
+              "/api/v2/capabilities",
+              { method: "POST", body: {} },
+              {},
+              REQUEST_TIMEOUT_MS,
+              signal,
+            ),
           );
           if (result.status === "ok") identity = result.daemon;
           return result;
@@ -1096,7 +1148,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         const previous = identity;
         identity = null;
         try {
-          const next = await loadIdentity();
+          const next = await loadIdentity(signal);
           if (previous && !sameIdentity(previous, next)) {
             return {
               outcome: "generation-replaced",
@@ -1128,8 +1180,8 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       }
       case "listWorkspaces":
         try {
-          await loadIdentity();
-          const workspaces = (await workspaceCatalog()).map(({ workspaceName }) => ({
+          await loadIdentity(signal);
+          const workspaces = (await workspaceCatalog(signal)).map(({ workspaceName }) => ({
             workspaceName,
           }));
           return { status: "ok", daemon: requireIdentity(), workspaces };
@@ -1138,9 +1190,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         }
       case "fetchFleetCatalog":
         try {
-          await loadIdentity();
+          await loadIdentity(signal);
           const parsed = FleetCatalogResourceV1SchemaZ.safeParse(
-            await request("/api/resources/fleet-catalog", { method: "GET" }),
+            await request(
+              "/api/resources/fleet-catalog",
+              { method: "GET" },
+              {},
+              REQUEST_TIMEOUT_MS,
+              signal,
+            ),
           );
           if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
           if (!sameIdentity(parsed.data.daemon, requireIdentity())) {
@@ -1154,13 +1212,16 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         }
       case "fetchWidgetAsset":
         try {
-          await loadIdentity();
+          await loadIdentity(signal);
           const asset = WidgetAssetSchemaZ.parse(
             await request(
               `/api/widget-assets/${encodeURIComponent(daemonRequest.request.assetId)}`,
               {
                 method: "GET",
               },
+              {},
+              REQUEST_TIMEOUT_MS,
+              signal,
             ),
           );
           return { status: "ok", asset };
@@ -1169,7 +1230,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         }
       case "fetchApplicationShell": {
         try {
-          await loadIdentity();
+          await loadIdentity(signal);
         } catch (error) {
           return { status: "error", error: failureOf(error) };
         }
@@ -1180,6 +1241,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/application-shell?version=${version}`,
           ApplicationShellResourceV3SchemaZ,
+          signal,
         );
       }
       case "fetchWorkspaceFiles": {
@@ -1191,6 +1253,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/files${query}`,
           WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+          signal,
         );
       }
       case "fetchWorkspaceFilePreview": {
@@ -1200,6 +1263,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/file-preview?fileId=${fileId}`,
           WorkspaceFilePreviewEnvelopeV1SchemaZ,
+          signal,
         );
       }
       case "fetchWorkspaceChanges":
@@ -1208,6 +1272,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/changes`,
           WorkspaceChangesCatalogEnvelopeV1SchemaZ,
+          signal,
         );
       case "fetchWorkspaceChangeDiff": {
         const changeId = encodeURIComponent(daemonRequest.request.changeId);
@@ -1216,8 +1281,17 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/change-diff?changeId=${changeId}`,
           WorkspaceChangeDiffEnvelopeV1SchemaZ,
+          signal,
         );
       }
+      case "fetchWorkspaceMissions":
+        return workspaceResource(
+          "fetchWorkspaceMissions",
+          daemonRequest.request.workspaceName,
+          (name) => `/api/project/${name}/missions`,
+          WorkspaceMissionsEnvelopeV1SchemaZ,
+          signal,
+        );
       case "promoteWorkspace":
         try {
           const raw = await action("workspace.promote", daemonRequest.request, PROMOTE_TIMEOUT_MS);
@@ -1427,8 +1501,10 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       subscribe: async (
         subscriptionRequest: DesktopDaemonEventSubscriptionRequest,
         listener: (event: DesktopDaemonEvent) => void,
+        signal?: AbortSignal,
       ): Promise<DesktopDaemonHostSubscriptionResult> => {
         if (disposed) return { status: "error", error: DISPOSED };
+        if (signal?.aborted) return { status: "error", error: DISPOSED };
         if (!DesktopDaemonEventSubscriptionRequestSchemaZ.safeParse(subscriptionRequest).success) {
           return { status: "error", error: INVALID_REQUEST };
         }
@@ -1453,6 +1529,18 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           readySuccess: null,
           resolveReady,
         });
+        const cancelPending = (): void => {
+          const pending = subscriptions.get(subscriptionId);
+          if (!pending) return;
+          subscriptions.delete(subscriptionId);
+          if (!pending.readySettled) {
+            pending.readySettled = true;
+            pending.resolveReady?.({ status: "error", error: DISPOSED });
+          }
+          if (subscriptions.size === 0) releaseSocket();
+          else sendEventSubscriptionDelta();
+        };
+        signal?.addEventListener("abort", cancelPending, { once: true });
         ensureSocket();
         sendEventSubscriptionDelta();
         // A subscriber joining an ALREADY-verified socket would otherwise never
@@ -1470,6 +1558,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         const subscribed: DesktopDaemonHostSubscriptionResult = {
           status: "subscribed",
           unsubscribe: () => {
+            signal?.removeEventListener("abort", cancelPending);
             subscriptions.delete(subscriptionId);
             if (subscriptions.size === 0) releaseSocket();
             else sendEventSubscriptionDelta();
@@ -1477,7 +1566,10 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         };
         const subscription = subscriptions.get(subscriptionId);
         if (subscription) subscription.readySuccess = subscribed;
-        if (ready === null) return subscribed;
+        if (ready === null) {
+          signal?.removeEventListener("abort", cancelPending);
+          return signal?.aborted ? { status: "error", error: DISPOSED } : subscribed;
+        }
         if (
           subscription &&
           socketVerified &&
@@ -1500,6 +1592,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           });
         }, REQUEST_TIMEOUT_MS);
         const settled = await ready.finally(() => {
+          signal?.removeEventListener("abort", cancelPending);
           if (timeout !== null) clearTimeout(timeout);
           timeout = null;
         });
@@ -1507,6 +1600,10 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           subscriptions.delete(subscriptionId);
           if (subscriptions.size === 0) releaseSocket();
           else sendEventSubscriptionDelta();
+        }
+        if (signal?.aborted && settled.status === "subscribed") {
+          settled.unsubscribe();
+          return { status: "error", error: DISPOSED };
         }
         return settled;
       },

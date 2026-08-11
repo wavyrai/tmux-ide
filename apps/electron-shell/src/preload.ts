@@ -5,6 +5,7 @@ import {
   DaemonResourceRequestSchemaZ,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
+  DesktopDaemonRequestIdSchemaZ,
   DesktopDaemonSubscriptionRequestIdSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
@@ -69,9 +70,26 @@ function onValidatedEvent<T>(
  * the schema its own variant declares — so a malformed request never reaches
  * main and a malformed answer never reaches application code.
  */
-async function requestDaemonResource(request: DaemonResourceRequest): Promise<unknown> {
+async function requestDaemonResource(
+  request: DaemonResourceRequest,
+  signal?: AbortSignal,
+): Promise<unknown> {
   const parsed = DaemonResourceRequestSchemaZ.parse(request);
-  const result = await ipcRenderer.invoke(HOST_IPC.daemonRequest, parsed);
+  if (signal?.aborted)
+    throw Object.assign(new Error("Daemon resource read was cancelled."), { name: "AbortError" });
+  const requestId = DesktopDaemonRequestIdSchemaZ.parse(crypto.randomUUID());
+  const cancel = () => {
+    void ipcRenderer.invoke(HOST_IPC.daemonCancelRequest, requestId).catch(() => undefined);
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  let result: unknown;
+  try {
+    result = await ipcRenderer.invoke(HOST_IPC.daemonRequest, parsed, requestId);
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+  }
+  if (signal?.aborted)
+    throw Object.assign(new Error("Daemon resource read was cancelled."), { name: "AbortError" });
   return DAEMON_RESOURCE_RESULT_SCHEMAS[parsed.resource].parse(result);
 }
 
@@ -150,8 +168,12 @@ const capabilities: HostCapabilities = Object.freeze({
       } finally {
         signal?.removeEventListener("abort", cancel);
       }
-      if (result.status === "error") return result;
+      if (result.status === "error") {
+        earlyDaemonEvents.clear();
+        return result;
+      }
       if (signal?.aborted) {
+        earlyDaemonEvents.delete(result.subscriptionId);
         void ipcRenderer
           .invoke(HOST_IPC.daemonUnsubscribe, result.subscriptionId)
           .catch(() => undefined);

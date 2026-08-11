@@ -1072,10 +1072,10 @@ export class DaemonResourceBroker {
     }
   }
 
-  async listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult> {
+  async listWorkspaces(signal?: AbortSignal): Promise<DesktopDaemonListWorkspacesResult> {
     if (this.#daemon.status !== "connected") return this.#disconnectedResult();
     try {
-      const workspaces = await this.#loadWorkspaceCatalog();
+      const workspaces = await this.#loadWorkspaceCatalog(signal);
       const result: DesktopDaemonListWorkspacesResult = {
         status: "ok",
         daemon: daemonIdentity(this.#daemon),
@@ -1090,6 +1090,7 @@ export class DaemonResourceBroker {
   async fetchApplicationShell(
     workspaceName: string,
     resourceVersion: DesktopDaemonFetchApplicationShellRequest["resourceVersion"] = APPLICATION_SHELL_RESOURCE_V3_VERSION,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchApplicationShellResult> {
     if (this.#daemon.status !== "connected") return this.#disconnectedResult();
     try {
@@ -1098,7 +1099,7 @@ export class DaemonResourceBroker {
         resourceVersion,
       });
       if (!request.success) throw new BrokerFailure(daemonCapabilityError("invalid-request"));
-      const workspaces = await this.#loadWorkspaceCatalog();
+      const workspaces = await this.#loadWorkspaceCatalog(signal);
       const workspace = workspaces.find(
         (candidate) => candidate.workspaceName === request.data.workspaceName,
       );
@@ -1111,6 +1112,8 @@ export class DaemonResourceBroker {
           negotiatedVersion === APPLICATION_SHELL_RESOURCE_V3_VERSION
             ? APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES
             : this.#maxResponseBytes,
+          false,
+          signal,
         );
       } catch (error) {
         if (
@@ -1124,6 +1127,8 @@ export class DaemonResourceBroker {
         raw = await this.#requestJson(
           `/api/project/${encodeURIComponent(daemonWorkspaceRouteName("fetchApplicationShell", workspace))}/application-shell?version=${negotiatedVersion}`,
           this.#maxResponseBytes,
+          false,
+          signal,
         );
       }
       const parsed =
@@ -1144,7 +1149,10 @@ export class DaemonResourceBroker {
     }
   }
 
-  async fetchWorkspaceFiles(request: unknown): Promise<DesktopDaemonFetchWorkspaceFilesResult> {
+  async fetchWorkspaceFiles(
+    request: unknown,
+    signal?: AbortSignal,
+  ): Promise<DesktopDaemonFetchWorkspaceFilesResult> {
     const parsed = DesktopDaemonFetchWorkspaceFilesRequestSchemaZ.safeParse(request);
     if (!parsed.success) {
       return { status: "error", error: daemonCapabilityError("invalid-request") };
@@ -1157,11 +1165,13 @@ export class DaemonResourceBroker {
       parsed.data.workspaceName,
       (name) => `/api/project/${name}/files${query}`,
       WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+      signal,
     );
   }
 
   async fetchWorkspaceFilePreview(
     request: unknown,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult> {
     const parsed = DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ.safeParse(request);
     if (!parsed.success) {
@@ -1173,10 +1183,14 @@ export class DaemonResourceBroker {
       parsed.data.workspaceName,
       (name) => `/api/project/${name}/file-preview?fileId=${fileId}`,
       WorkspaceFilePreviewEnvelopeV1SchemaZ,
+      signal,
     );
   }
 
-  async fetchWorkspaceChanges(request: unknown): Promise<DesktopDaemonFetchWorkspaceChangesResult> {
+  async fetchWorkspaceChanges(
+    request: unknown,
+    signal?: AbortSignal,
+  ): Promise<DesktopDaemonFetchWorkspaceChangesResult> {
     const parsed = DesktopDaemonFetchWorkspaceChangesRequestSchemaZ.safeParse(request);
     if (!parsed.success) {
       return { status: "error", error: daemonCapabilityError("invalid-request") };
@@ -1186,11 +1200,13 @@ export class DaemonResourceBroker {
       parsed.data.workspaceName,
       (name) => `/api/project/${name}/changes`,
       WorkspaceChangesCatalogEnvelopeV1SchemaZ,
+      signal,
     );
   }
 
   async fetchWorkspaceMissions(
     request: unknown,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceMissionsResult> {
     const parsed = DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ.safeParse(request);
     if (!parsed.success) {
@@ -1201,11 +1217,13 @@ export class DaemonResourceBroker {
       parsed.data.workspaceName,
       (name) => `/api/project/${name}/missions`,
       WorkspaceMissionsEnvelopeV1SchemaZ,
+      signal,
     );
   }
 
   async fetchWorkspaceChangeDiff(
     request: unknown,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult> {
     const parsed = DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ.safeParse(request);
     if (!parsed.success) {
@@ -1217,6 +1235,7 @@ export class DaemonResourceBroker {
       parsed.data.workspaceName,
       (name) => `/api/project/${name}/change-diff?changeId=${changeId}`,
       WorkspaceChangeDiffEnvelopeV1SchemaZ,
+      signal,
     );
   }
 
@@ -1226,7 +1245,7 @@ export class DaemonResourceBroker {
    * single generation-stamped resource — but the same owner authorization,
    * bounded read, and daemon-generation check apply.
    */
-  async fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult> {
+  async fetchFleetCatalog(signal?: AbortSignal): Promise<DesktopDaemonFetchFleetCatalogResult> {
     if (this.#daemon.status !== "connected") return this.#disconnectedResult();
     if (!this.#ownerToken) {
       return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
@@ -1236,6 +1255,7 @@ export class DaemonResourceBroker {
         "/api/resources/fleet-catalog",
         this.#maxResponseBytes,
         true,
+        signal,
       );
       const parsed = FleetCatalogResourceV1SchemaZ.safeParse(raw);
       if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
@@ -1248,7 +1268,10 @@ export class DaemonResourceBroker {
     }
   }
 
-  async fetchWidgetAsset(request: WidgetAssetRequest): Promise<WidgetAssetResult> {
+  async fetchWidgetAsset(
+    request: WidgetAssetRequest,
+    signal?: AbortSignal,
+  ): Promise<WidgetAssetResult> {
     if (this.#daemon.status !== "connected") return this.#disconnectedResult();
     if (!this.#ownerToken) {
       return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
@@ -1258,6 +1281,7 @@ export class DaemonResourceBroker {
         `/api/widget-assets/${encodeURIComponent(request.assetId)}`,
         24 * 1024 * 1024,
         true,
+        signal,
       );
       const parsed = WidgetAssetResultSchemaZ.safeParse({ status: "ok", asset: raw });
       if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
@@ -1282,6 +1306,7 @@ export class DaemonResourceBroker {
     workspaceName: string,
     buildPath: (encodedRouteName: string) => string,
     envelopeSchema: z.ZodType<TEnvelope>,
+    signal?: AbortSignal,
   ): Promise<
     { status: "ok"; envelope: TEnvelope } | { status: "error"; error: DesktopDaemonCapabilityError }
   > {
@@ -1290,13 +1315,14 @@ export class DaemonResourceBroker {
       return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
     }
     try {
-      const workspaces = await this.#loadWorkspaceCatalog();
+      const workspaces = await this.#loadWorkspaceCatalog(signal);
       const workspace = workspaces.find((candidate) => candidate.workspaceName === workspaceName);
       if (!workspace) throw new BrokerFailure(daemonCapabilityError("workspace-not-found"));
       const raw = await this.#requestJson(
         buildPath(encodeURIComponent(daemonWorkspaceRouteName(resource, workspace))),
         this.#maxResponseBytes,
         true,
+        signal,
       );
       const parsed = envelopeSchema.safeParse(raw);
       if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
@@ -1487,12 +1513,17 @@ export class DaemonResourceBroker {
     return daemonCapabilityError(this.#disposed ? "disposed" : "request-failed");
   }
 
-  async #loadWorkspaceCatalog(): Promise<WorkspaceCatalogEntry[]> {
+  async #loadWorkspaceCatalog(signal?: AbortSignal): Promise<WorkspaceCatalogEntry[]> {
     if (this.#daemon.status !== "connected") {
       throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
     }
     const expectedDaemon = daemonIdentity(this.#daemon);
-    const raw = await this.#requestJson("/api/resources/workspace-catalog");
+    const raw = await this.#requestJson(
+      "/api/resources/workspace-catalog",
+      this.#maxResponseBytes,
+      false,
+      signal,
+    );
     const parsed = WorkspaceCatalogResourceV1SchemaZ.safeParse(raw);
     if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
     if (!sameIdentity(parsed.data.daemon, expectedDaemon)) {
@@ -1528,8 +1559,10 @@ export class DaemonResourceBroker {
     pathname: string,
     maximumResponseBytes = this.#maxResponseBytes,
     authorize = false,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     if (this.#disposed) throw new BrokerFailure(daemonCapabilityError("disposed"));
+    if (signal?.aborted) throw new BrokerFailure(daemonCapabilityError("disposed"));
     if (this.#daemon.status !== "connected") {
       throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
     }
@@ -1545,6 +1578,8 @@ export class DaemonResourceBroker {
     const headers: Record<string, string> = { accept: "application/json" };
     if (authorize && this.#ownerToken) headers.Authorization = `Bearer ${this.#ownerToken}`;
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    signal?.addEventListener("abort", cancel, { once: true });
     this.#controllers.add(controller);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_resolve, reject) => {
@@ -1580,12 +1615,14 @@ export class DaemonResourceBroker {
       return result;
     } catch (error) {
       if (error instanceof BrokerFailure) throw error;
+      if (signal?.aborted) throw new BrokerFailure(daemonCapabilityError("disposed"));
       if (requestGeneration !== this.#rendererGeneration || this.#disposed) {
         throw new BrokerFailure(daemonCapabilityError("disposed"));
       }
       throw new BrokerFailure(daemonCapabilityError("request-failed"));
     } finally {
       controller.abort();
+      signal?.removeEventListener("abort", cancel);
       this.#controllers.delete(controller);
       if (timeout) clearTimeout(timeout);
     }

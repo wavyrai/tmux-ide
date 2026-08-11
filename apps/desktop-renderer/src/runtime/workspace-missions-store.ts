@@ -49,6 +49,7 @@ export interface WorkspaceMissionsStore {
 
 export interface SolidWorkspaceMissionsStore {
   readonly state: Accessor<WorkspaceMissionsState>;
+  getMetrics(): TargetPinnedStoreMetrics;
   setTarget(target: unknown): void;
   setActive(active: boolean): void;
   refresh(): void;
@@ -67,10 +68,11 @@ export function createWorkspaceMissionsStore(options: {
       eagerKey: MISSIONS_KEY,
       invalidatesOn: ["workspace-missions.changed"],
       resourceInterest: "workspace-missions",
-      async fetch(target) {
-        const result = await options.host.daemon.fetchWorkspaceMissions({
-          workspaceName: target.workspaceName,
-        });
+      async fetch(target, _key, signal) {
+        const result = await options.host.daemon.fetchWorkspaceMissions(
+          { workspaceName: target.workspaceName },
+          signal,
+        );
         if (result.status === "error") {
           return { status: "failed", code: result.error.code, reason: result.error.reason };
         }
@@ -166,6 +168,7 @@ export function createSolidWorkspaceMissionsStore(
   onCleanup(dispose);
   return {
     state,
+    getMetrics: () => store.getMetrics(),
     setTarget: (target) => store.setTarget(target),
     setActive: (active) => store.setActive(active),
     refresh: () => store.refresh(),

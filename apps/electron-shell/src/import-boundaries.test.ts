@@ -58,6 +58,7 @@ describe("desktop process boundaries", () => {
       HOST_IPC.onboardingAcknowledgeIntro,
       HOST_IPC.updateGetStatus,
       HOST_IPC.daemonRequest,
+      HOST_IPC.daemonCancelRequest,
       HOST_IPC.daemonSubscribe,
       HOST_IPC.daemonCancelSubscribe,
       HOST_IPC.daemonUnsubscribe,
@@ -76,6 +77,7 @@ describe("desktop process boundaries", () => {
     const daemonChannels = HOST_INVOKE_CHANNELS.filter((channel) => channel.includes("/daemon/"));
     expect(daemonChannels).toEqual([
       HOST_IPC.daemonRequest,
+      HOST_IPC.daemonCancelRequest,
       HOST_IPC.daemonSubscribe,
       HOST_IPC.daemonCancelSubscribe,
       HOST_IPC.daemonUnsubscribe,

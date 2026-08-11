@@ -308,14 +308,23 @@ export function daemonWorkspaceRouteName(
  */
 export type DaemonResourceMethods = {
   readonly [K in DaemonResourceKind]: DaemonResourceRequestFor<K> extends { request: infer R }
-    ? (request: R) => Promise<DaemonResourceResult<K>>
-    : () => Promise<DaemonResourceResult<K>>;
+    ? (request: R, signal?: AbortSignal) => Promise<DaemonResourceResult<K>>
+    : (signal?: AbortSignal) => Promise<DaemonResourceResult<K>>;
 };
 
 /** One dispatcher over the union: what a host implements once instead of fifteen times. */
 export type DaemonResourceDispatcher = <K extends DaemonResourceKind>(
   request: DaemonResourceRequestFor<K>,
+  signal?: AbortSignal,
 ) => Promise<DaemonResourceResult<K>>;
+
+const REQUESTLESS_DAEMON_RESOURCES: ReadonlySet<DaemonResourceKind> = new Set([
+  "capabilities",
+  "refreshConnection",
+  "listWorkspaces",
+  "fetchFleetCatalog",
+  "startupReadiness",
+]);
 
 /**
  * Build the named methods over one dispatcher.
@@ -324,14 +333,16 @@ export type DaemonResourceDispatcher = <K extends DaemonResourceKind>(
  * host) so none of them re-lists the resources.
  */
 export function createDaemonResourceMethods(
-  dispatch: (request: DaemonResourceRequest) => Promise<unknown>,
+  dispatch: (request: DaemonResourceRequest, signal?: AbortSignal) => Promise<unknown>,
 ): DaemonResourceMethods {
-  const methods: Record<string, (request?: unknown) => Promise<unknown>> = {};
+  const methods: Record<string, (request?: unknown, signal?: AbortSignal) => Promise<unknown>> = {};
   for (const resource of DAEMON_RESOURCE_KINDS) {
-    methods[resource] = (request?: unknown) =>
-      dispatch(
-        (request === undefined ? { resource } : { resource, request }) as DaemonResourceRequest,
-      );
+    methods[resource] = (request?: unknown, signal?: AbortSignal) => {
+      if (REQUESTLESS_DAEMON_RESOURCES.has(resource)) {
+        return dispatch({ resource } as DaemonResourceRequest, request as AbortSignal | undefined);
+      }
+      return dispatch({ resource, request } as DaemonResourceRequest, signal);
+    };
   }
   return methods as unknown as DaemonResourceMethods;
 }
