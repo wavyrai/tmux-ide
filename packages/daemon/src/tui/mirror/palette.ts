@@ -265,10 +265,6 @@ export function staticPaletteActions(
   }
   actions.push({ kind: "save", label: "Save file" });
   actions.push({ kind: "refresh-diff", label: "Refresh diff" });
-  // Paste target is the focused surface (a pane, or the editor buffer), so this
-  // is offered on every surface — selecting it opens a second-level list of the
-  // tmux paste buffers rather than dispatching directly.
-  actions.push({ kind: "paste-buffer", label: "Paste buffer…" });
   // The SETTINGS category (M22.4) — every setting is a command; "Settings…" is
   // the categorized umbrella over the same dialogs. Offered on every surface.
   for (const c of SETTINGS_PALETTE_COMMANDS) {
@@ -286,16 +282,10 @@ export function staticPaletteActions(
     actions.push(sharedVerbAction("split-pane-right", "pane.split.right"));
     actions.push(sharedVerbAction("split-pane-down", "pane.split.down"));
     actions.push(sharedVerbAction("kill-pane", "pane.kill"));
-    actions.push({ kind: "break-pane", label: "Break pane to window" });
-    actions.push({ kind: "rotate-window", label: "Rotate panes" });
-    actions.push({ kind: "sync-toggle", label: "Synchronize panes (toggle)" });
     // Selection entry on app-mouse panes (M22.9) — the pane menu verb's
     // keyboard twin, offered only where forwarding blocks a direct drag.
     if (ctx.appMousePane) {
       actions.push({ kind: "select-text", label: "Select text in pane" });
-    }
-    for (const layout of LAYOUT_PRESETS) {
-      actions.push({ kind: "select-layout", layout, label: `Layout: ${layout}` });
     }
     // Only when a co-attached terminal is dictating the window size — the reclaim
     // is a no-op otherwise, and we never fight the other terminal unasked.

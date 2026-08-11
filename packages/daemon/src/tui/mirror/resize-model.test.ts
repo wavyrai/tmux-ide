@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   separatorAt,
   separatorAtCanvas,
-  resizePreviewCommand,
   resizedSize,
   resizeGuideRect,
   MIN_PANE,
@@ -129,14 +128,5 @@ describe("resizeGuideRect", () => {
       width: 80,
       height: 1,
     });
-  });
-});
-
-describe("resizePreviewCommand", () => {
-  it("emits the immediate tmux preview for either divider axis", () => {
-    expect(resizePreviewCommand(separatorAt(sideBySide, 40, 10)!, 50)).toBe(
-      "resize-pane -t %0 -x 50",
-    );
-    expect(resizePreviewCommand(separatorAt(stacked, 30, 12)!, 16)).toBe("resize-pane -t %0 -y 16");
   });
 });

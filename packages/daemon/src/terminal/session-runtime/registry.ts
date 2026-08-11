@@ -103,6 +103,13 @@ export interface SessionRuntimeConsumer {
     operationId: string,
     intent: SessionRuntimeSemanticIntent,
   ): Promise<SessionRuntimeIntentResult>;
+  sendInput(
+    lease: SessionRuntimeControllerLease,
+    semanticPaneId: string,
+    kind: "text" | "key",
+    data: string,
+  ): void;
+  fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void;
   describe(): Promise<MirrorSessionDescription>;
   subscribe(
     semanticPaneId: string,
@@ -114,6 +121,7 @@ export interface SessionRuntimeConsumer {
     onUpdate: (update: CanonicalTerminalReplicaUpdate) => void,
   ): Promise<TerminalReplicaSubscription>;
   openTerminalDelivery(
+    deliverySubscriberId: string,
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
@@ -416,8 +424,23 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       session,
       this.#mirror,
       this.#createControllerToken,
-      (owner, lease, operationId, intent, origin): Promise<SessionRuntimeIntentResult> =>
-        this.#submitAuthorizedIntent(owner, lease, operationId, intent, null, undefined, origin),
+      (
+        owner,
+        lease,
+        operationId,
+        intent,
+        origin,
+        authorizeBeforeEffect,
+      ): Promise<SessionRuntimeIntentResult> =>
+        this.#submitAuthorizedIntent(
+          owner,
+          lease,
+          operationId,
+          intent,
+          null,
+          authorizeBeforeEffect,
+          origin,
+        ),
     );
     this.#sessions.set(session, runtime);
     return runtime;
@@ -438,6 +461,7 @@ class SessionRuntime {
     operationId: string,
     intent: SessionRuntimeSemanticIntent,
     origin: AuthoredInteractionOrigin,
+    authorizeBeforeEffect: () => void,
   ) => Promise<SessionRuntimeIntentResult>;
   #retention: Awaited<ReturnType<MirrorService["retainSession"]>> | null = null;
   #startPromise: Promise<void> | null = null;
@@ -460,6 +484,7 @@ class SessionRuntime {
       operationId: string,
       intent: SessionRuntimeSemanticIntent,
       origin: AuthoredInteractionOrigin,
+      authorizeBeforeEffect: () => void,
     ) => Promise<SessionRuntimeIntentResult>,
   ) {
     this.#mirror = mirror;
@@ -595,10 +620,33 @@ class SessionRuntime {
         operationId,
         intent,
         authoredOriginForSurface(surface),
+        () => this.assertController(lease, callerClientId),
       );
     } catch (error) {
       return Promise.reject(error);
     }
+  }
+
+  sendInput(
+    clientId: string,
+    lease: SessionRuntimeControllerLease,
+    semanticPaneId: string,
+    kind: "text" | "key",
+    data: string,
+  ): void {
+    this.assertController(lease, clientId);
+    if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId, data);
+    else this.#mirror.sendKey(this.session, semanticPaneId, data);
+  }
+
+  fitViewport(
+    clientId: string,
+    lease: SessionRuntimeControllerLease,
+    cols: number,
+    rows: number,
+  ): void {
+    this.assertController(lease, clientId);
+    this.#mirror.fitViewport(this.session, cols, rows);
   }
 
   async whenReady(): Promise<void> {
@@ -658,6 +706,7 @@ class SessionRuntime {
 
   async openTerminalDelivery(
     clientId: string,
+    deliverySubscriberId: string,
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
@@ -665,7 +714,12 @@ class SessionRuntime {
     await this.whenReady();
     await this.#restartBarrier;
     this.#assertConnected(clientId);
-    return await this.#terminalDeliveryHub.open(clientId, semanticPaneId, offer, onMessage);
+    return await this.#terminalDeliveryHub.open(
+      deliverySubscriberId,
+      semanticPaneId,
+      offer,
+      onMessage,
+    );
   }
 
   #terminalReplicaOwner(semanticPaneId: string): SessionRuntimeTerminalReplicaOwner {
@@ -879,6 +933,21 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     return this.#runtime.submitIntent(this.clientId, lease, operationId, intent);
   }
 
+  sendInput(
+    lease: SessionRuntimeControllerLease,
+    semanticPaneId: string,
+    kind: "text" | "key",
+    data: string,
+  ): void {
+    this.#assertOpen();
+    this.#runtime.sendInput(this.clientId, lease, semanticPaneId, kind, data);
+  }
+
+  fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void {
+    this.#assertOpen();
+    this.#runtime.fitViewport(this.clientId, lease, cols, rows);
+  }
+
   async describe(): Promise<MirrorSessionDescription> {
     this.#assertOpen();
     return await this.#runtime.describe();
@@ -934,6 +1003,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   }
 
   async openTerminalDelivery(
+    deliverySubscriberId: string,
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
@@ -941,6 +1011,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     this.#assertOpen();
     const upstream = await this.#runtime.openTerminalDelivery(
       this.clientId,
+      deliverySubscriberId,
       semanticPaneId,
       offer,
       onMessage,

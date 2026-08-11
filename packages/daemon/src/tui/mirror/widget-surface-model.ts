@@ -91,6 +91,14 @@ export function resolveTuiWidgetSurface(
   marker: WidgetMarker,
   readAsset: TuiWidgetAssetReader,
 ): TuiWidgetSurface | null {
+  const semanticPlacement =
+    marker.args &&
+    typeof marker.args === "object" &&
+    "semanticPlacement" in marker.args &&
+    marker.args.semanticPlacement &&
+    typeof marker.args.semanticPlacement === "object"
+      ? marker.args.semanticPlacement
+      : null;
   if (marker.id === "markdown") {
     const inline = InlinePaneMarkdownWidgetArgsSchemaZ.safeParse(marker.args);
     if (inline.success) {
@@ -103,7 +111,15 @@ export function resolveTuiWidgetSurface(
     }
 
     const assetArgs = AssetPaneMarkdownWidgetArgsSchemaZ.safeParse(marker.args);
-    if (!assetArgs.success) return null;
+    if (!assetArgs.success) {
+      if (!semanticPlacement) return null;
+      return {
+        kind: "fallback",
+        label: "Markdown",
+        title: null,
+        text: "Rich Markdown placement is active. Its authenticated content is unavailable in this terminal replica.",
+      };
+    }
     const asset = readAsset(assetArgs.data.assetId);
     if (!asset || asset.media !== "text/markdown") {
       return {
@@ -133,7 +149,15 @@ export function resolveTuiWidgetSurface(
   }
 
   const fallback = tuiWidgetFallback(marker);
-  if (!fallback) return null;
+  if (!fallback) {
+    if (!semanticPlacement) return null;
+    return {
+      kind: "fallback",
+      label: marker.id,
+      title: null,
+      text: `Rich ${marker.id} placement is active. This terminal renders its canonical text fallback.`,
+    };
+  }
   return {
     kind: "fallback",
     label: fallback.label,

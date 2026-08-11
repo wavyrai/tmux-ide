@@ -329,7 +329,14 @@ describe("OpenTUI canonical application-shell controller", () => {
     expect(app).not.toContain("RENDERER_COMMAND_IDS.openPalette");
     expect(app).not.toContain("rendererInvocationForCanvas(");
     expect(app).not.toContain("rendererInvocationForDock(");
-    expect(app).toContain("if (runtimePaneId && mirror) mirror.focus(runtimePaneId)");
+    expect(app).toContain("submitSemanticPaneFocus(runtimePaneId)");
+    expect(app).toContain('verb: "workspace.pane.select"');
+    expect(app).toContain("mirror={semanticReplica()!.lane.source}");
+    expect(app).not.toContain("semanticView={semanticReplica()?.lane.source");
+    expect(app).toContain("semanticViewportAcknowledged()");
+    expect(app).not.toMatch(
+      /semanticView\?*\.(?:command|commandList|switchWindow|sendTextTo|sendKey)\(/u,
+    );
     expect(app.match(/<ApplicationShell\b/gu)).toHaveLength(1);
     expect(app.match(/<WorkbenchShell\b/gu)).toHaveLength(1);
     expect(app.match(/\buseKeyboard\(/gu)).toHaveLength(1);

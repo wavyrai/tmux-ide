@@ -100,6 +100,7 @@ export default defineConfig({
       "src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx",
       "src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
       "src/tui/mirror/workspace/pane-frame-renderer.test.tsx",
+      "src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx",
       "src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx",
       "src/tui/mirror/workspace/workbench-shell-renderer.test.tsx",
       "src/ui/web/utils/color.test.ts",

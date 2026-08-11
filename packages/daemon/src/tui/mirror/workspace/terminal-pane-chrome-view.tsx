@@ -37,28 +37,45 @@ export function TerminalPaneCommunicationLayer(props: {
   theme: SemanticThemeSnapshot;
   layout: TerminalPaneChromeLayout;
 }) {
+  const segments = () => props.layout.communication;
+  const segmentIds = createMemo(() => segments().map(communicationSegmentIdentity), undefined, {
+    equals: sameIds,
+  });
+  const segmentsById = createMemo(
+    () => new Map(segments().map((segment) => [communicationSegmentIdentity(segment), segment])),
+  );
   return (
-    <For each={props.layout.communication}>
-      {(segment) => (
-        <box
-          position="absolute"
-          left={segment.rect.x}
-          top={segment.rect.y}
-          width={segment.rect.width}
-          height={segment.rect.height}
-          overflow="hidden"
-        >
-          <text fg={communicationColor(props.theme, segment.role)}>
-            {segment.orientation === "horizontal"
-              ? communicationGlyph(segment.role, "horizontal").repeat(segment.rect.width)
-              : Array(segment.rect.height)
-                  .fill(communicationGlyph(segment.role, "vertical"))
-                  .join("\n")}
-          </text>
-        </box>
-      )}
+    <For each={segmentIds()}>
+      {(segmentId) => {
+        const segment = () => segmentsById().get(segmentId)!;
+        return (
+          <box
+            id={`terminal-pane-communication:${segmentId}`}
+            position="absolute"
+            left={segment().rect.x}
+            top={segment().rect.y}
+            width={segment().rect.width}
+            height={segment().rect.height}
+            overflow="hidden"
+          >
+            <text fg={communicationColor(props.theme, segment().role)}>
+              {segment().orientation === "horizontal"
+                ? communicationGlyph(segment().role, "horizontal").repeat(segment().rect.width)
+                : Array(segment().rect.height)
+                    .fill(communicationGlyph(segment().role, "vertical"))
+                    .join("\n")}
+            </text>
+          </box>
+        );
+      }}
     </For>
   );
+}
+
+function communicationSegmentIdentity(
+  segment: TerminalPaneChromeLayout["communication"][number],
+): string {
+  return `${segment.paneId}:${segment.orientation}:${segment.rect.x}:${segment.rect.y}`;
 }
 
 function sameIds(left: readonly string[], right: readonly string[]): boolean {

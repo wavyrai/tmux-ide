@@ -66,20 +66,6 @@ export const MENU_ITEMS: Record<MenuRegion, MenuItem[]> = {
     { id: "split-v", label: "Split vertical" },
     { id: "zoom", label: "Zoom toggle" },
     { id: "swap-next", label: "Swap with next" },
-    { id: "break", label: "Break to window" },
-    { id: "rotate", label: "Rotate panes" },
-    {
-      id: "layouts",
-      label: "Layouts",
-      children: [
-        { id: "layout:even-horizontal", label: "even-horizontal" },
-        { id: "layout:even-vertical", label: "even-vertical" },
-        { id: "layout:main-horizontal", label: "main-horizontal" },
-        { id: "layout:main-vertical", label: "main-vertical" },
-        { id: "layout:tiled", label: "tiled" },
-      ],
-    },
-    { id: "sync-toggle", label: "Synchronize panes", checkbox: true },
     { id: "kill", label: "Kill pane", danger: true },
   ],
   window: [

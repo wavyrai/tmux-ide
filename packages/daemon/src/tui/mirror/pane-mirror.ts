@@ -105,6 +105,9 @@ interface CoreServiceInternal {
 
 /** Per-call inputs for the incremental {@link PaneMirror.blit} (M21.4). */
 export interface BlitOptions {
+  /** Stable retained surface identity. Semantic replicas permit one painter so
+   * row dirtiness cannot be consumed by a sibling framebuffer. */
+  consumerId?: object;
   /** Repaint every visible row and refill the shadow (first frame, resize, a
    *  scrolled/searching view, or any time the framebuffer may be out of sync). */
   full: boolean;

@@ -40,7 +40,7 @@ describe("SessionDescriptorDiscovery", () => {
     expect(decodeTmuxArgument('"bad stamp\\tvalue"')).toBe("bad stamp\tvalue");
   });
 
-  it("recovers UTF-8 cwd and title values from ControlModeClient latin1 byte strings", () => {
+  it("recovers UTF-8 cwd and title values from tmux control-feed latin1 byte strings", () => {
     const cwd = "/repo/café 😀";
     const title = "Review café 😀";
     const replyLine = controlModeBytes(

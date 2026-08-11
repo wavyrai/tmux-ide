@@ -137,6 +137,28 @@ describe("build-tui script — CI-safe smoke (contract, not a real compile)", ()
   });
 });
 
+describe("packed-install OpenTUI gate", () => {
+  const script = resolve(repoRoot, "scripts/pack-check-run.mjs");
+
+  it("launches the installed CLI against an ordinary configless tmux session", () => {
+    const src = readFileSync(script, "utf-8");
+    expect(src).toMatch(/tmux-ide-tui-\$\{platformTag\}-\$\{packageVersion\}/);
+    expect(src).toMatch(/installedCli\)} app/);
+    expect(src).toMatch(/ordinary-isolated/);
+    expect(src).toMatch(/preload not found/);
+    expect(src).toMatch(/NODE_PATH: ""/);
+  });
+
+  it("cannot leak a host-only compiled binary into the universal tarball", () => {
+    const pkg = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf-8")) as {
+      files: string[];
+    };
+    expect(pkg.files).not.toContain("packages/daemon/dist");
+    expect(pkg.files).toContain("packages/daemon/dist/**/*.js");
+    expect(pkg.files).toContain("packages/daemon/dist/native/**");
+  });
+});
+
 describe("compiled TUI runtime cwd", () => {
   it("uses a dedicated directory outside the project cwd", () => {
     expect(compiledTuiRuntimeDir("/Users/example")).toBe(

@@ -21,7 +21,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { isSpawnWhere, type LastSpawn } from "./agent-lifecycle.ts";
 
-/** The four top-level surfaces. `terminal` is the SessionMirror, `files` the
+/** The four top-level surfaces. `terminal` is the semantic pane view, `files` the
  *  editor + file list, `diff` the git panel, `home` the fleet cockpit. */
 export type Tab = "home" | "terminal" | "files" | "diff";
 

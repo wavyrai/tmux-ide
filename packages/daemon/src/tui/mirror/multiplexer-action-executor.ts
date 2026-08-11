@@ -89,11 +89,9 @@ function localCommand(action: TuiMultiplexerAction, context: TuiMultiplexerConte
     case "new-window": {
       // tmux 3.5a can crash or retire a control-mode client when `new-window`
       // runs on that channel. Tmuxy's production-proven equivalent is a split
-      // immediately broken into its own window, then sized to this viewport.
-      const resize = context.viewportSize
-        ? ` ; resize-window -x ${context.viewportSize.cols} -y ${context.viewportSize.rows}`
-        : "";
-      return `split-window -t ${tmuxQuote(context.sessionName)} ; break-pane${resize}`;
+      // immediately broken into its own window. Geometry belongs to the
+      // SessionRuntime viewport lease and is never embedded in this command.
+      return `split-window -t ${tmuxQuote(context.sessionName)} ; break-pane`;
     }
     case "rename-window":
       return pane ? `rename-window -t ${pane} ${tmuxQuote(action.name)}` : null;

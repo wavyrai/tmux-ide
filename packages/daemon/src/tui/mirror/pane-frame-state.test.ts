@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { LivePane } from "./session-mirror.ts";
+import type { LivePane } from "./semantic-session-view.ts";
 import {
   activeLivePaneId,
   livePaneRuntime,
+  paneChromeInteractionState,
+  projectPaneChromeState,
+  resolvePaneChromeVisualState,
+  samePaneChromeState,
   sameLivePaneRuntime,
   sameLivePaneStructure,
   withLivePaneFocus,
 } from "./pane-frame-state.ts";
+import type { PaneInteractionProjection } from "@tmux-ide/core";
 
 function pane(overrides: Partial<LivePane> = {}): LivePane {
   return {
@@ -21,6 +26,25 @@ function pane(overrides: Partial<LivePane> = {}): LivePane {
     scrollbackDepth: 0,
     version: 1,
     snapshot: { rows: [], cursorX: 0, cursorY: 0, scrollOffset: 0 },
+    ...overrides,
+  };
+}
+
+function interaction(
+  overrides: Partial<PaneInteractionProjection> = {},
+): PaneInteractionProjection {
+  return {
+    paneId: "pane.tests",
+    direction: "incoming",
+    sourcePaneId: "pane.editor",
+    destinationPaneId: "pane.tests",
+    operationKind: "workspace.pane.send",
+    operationId: "00000000-0000-4000-8000-000000000001",
+    phase: "accepted",
+    origin: "tui",
+    label: "tui accepted · send 1 character",
+    sequence: 1,
+    at: "2026-08-11T18:00:00.000Z",
     ...overrides,
   };
 }
@@ -104,5 +128,98 @@ describe("pane frame state", () => {
         new Map([["%2", { version: 4, scrollbackDepth: 10 }]]),
       ),
     ).toBe(false);
+  });
+
+  it("keeps keyboard focus, controller ownership and attention orthogonal", () => {
+    const controller = projectPaneChromeState({
+      keyboardFocused: false,
+      inputOwned: true,
+      attention: "warning",
+    });
+    expect(controller).toMatchObject({
+      keyboardFocus: "blurred",
+      inputOwnership: "controller",
+      reading: null,
+      sending: null,
+      attention: "warning",
+    });
+    expect(resolvePaneChromeVisualState(controller).primaryMarker).toBe("input-owner");
+
+    const attention = projectPaneChromeState({
+      keyboardFocused: true,
+      inputOwned: false,
+      attention: "requested",
+    });
+    expect(resolvePaneChromeVisualState(attention).primaryMarker).toBe("attention");
+
+    const focus = projectPaneChromeState({ keyboardFocused: true, inputOwned: false });
+    expect(resolvePaneChromeVisualState(focus).primaryMarker).toBe("keyboard-focus");
+  });
+
+  it("uses the canonical receipt vocabulary for read and send state", () => {
+    const read = projectPaneChromeState({
+      keyboardFocused: false,
+      inputOwned: false,
+      interaction: interaction({
+        direction: "outgoing",
+        operationKind: "workspace.pane.read",
+        phase: "observed",
+      }),
+      paneLabel: (paneId) => (paneId === "pane.editor" ? "Editor" : "Tests"),
+    });
+    expect(read.reading).toMatchObject({
+      role: "read-source",
+      kind: "read",
+      endpoint: "source",
+      treatment: "observation",
+      badge: "READING",
+      tone: "info",
+      label: "Editor reads Tests",
+    });
+    expect(read.sending).toBeNull();
+    expect(resolvePaneChromeVisualState(read)).toMatchObject({
+      primaryMarker: "idle",
+      communication: { role: "read-source" },
+    });
+
+    const send = projectPaneChromeState({
+      keyboardFocused: false,
+      inputOwned: false,
+      interaction: interaction({ direction: "incoming", phase: "rejected" }),
+    });
+    expect(send.sending).toMatchObject({
+      role: "send-target",
+      treatment: "transfer",
+      badge: "FAILED",
+      tone: "danger",
+    });
+    expect(send.keyboardFocus).toBe("blurred");
+  });
+
+  it("resolves overlapping send before read without discarding either fact", () => {
+    const read = paneChromeInteractionState(
+      interaction({ direction: "outgoing", operationKind: "workspace.pane.read" }),
+    );
+    const send = paneChromeInteractionState(interaction({ direction: "incoming" }));
+    const state = {
+      ...projectPaneChromeState({ keyboardFocused: false, inputOwned: false }),
+      reading: read,
+      sending: send,
+    };
+    expect(resolvePaneChromeVisualState(state).communication).toBe(send);
+    expect(state.reading).toBe(read);
+  });
+
+  it("compares chrome independently and never mutates terminal content runtime", () => {
+    const live = [pane({ version: 14, scrollbackDepth: 8 })];
+    const runtimeBefore = livePaneRuntime(live);
+    const first = projectPaneChromeState({ keyboardFocused: false, inputOwned: false });
+    const equal = projectPaneChromeState({ keyboardFocused: false, inputOwned: false });
+    const focused = projectPaneChromeState({ keyboardFocused: true, inputOwned: false });
+
+    expect(samePaneChromeState(first, equal)).toBe(true);
+    expect(samePaneChromeState(first, focused)).toBe(false);
+    expect(live[0]!.version).toBe(14);
+    expect(sameLivePaneRuntime(runtimeBefore, livePaneRuntime(live))).toBe(true);
   });
 });

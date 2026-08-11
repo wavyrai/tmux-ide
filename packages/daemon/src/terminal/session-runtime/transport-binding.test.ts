@@ -128,6 +128,7 @@ describe("SessionRuntimeTransportBinder", () => {
       clientId: "electron:renderer-a",
       acquireController: vi.fn(() => LEASE),
       releaseController: vi.fn(),
+      fitViewport: vi.fn(),
       close,
     } as unknown as SessionRuntimeConsumer;
     const baseHandle = Object.freeze(Object.create(null)) as object;
@@ -147,6 +148,7 @@ describe("SessionRuntimeTransportBinder", () => {
       hostClientId: "electron:renderer-a",
       allowedSourcePaneIds: ["pane.editor"],
       interactive: true,
+      ownsGeometry: true,
     });
     const sibling = binder.bind({
       transport: "terminal-attachment",
@@ -155,6 +157,7 @@ describe("SessionRuntimeTransportBinder", () => {
       hostClientId: "electron:renderer-a",
       allowedSourcePaneIds: ["pane.editor"],
       interactive: true,
+      ownsGeometry: true,
     });
 
     expect(registry.connect).toHaveBeenCalledOnce();
@@ -167,6 +170,150 @@ describe("SessionRuntimeTransportBinder", () => {
     expect(close).not.toHaveBeenCalled();
     await sibling.close();
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps overlapping same-host reconnect delivery lifecycles independent", async () => {
+    const deliveryCloses = new Map<string, ReturnType<typeof vi.fn>>();
+    const consumer = {
+      generation: GENERATION,
+      session: "alpha",
+      surface: "pane-stream",
+      clientId: "web:document-a",
+      acquireController: vi.fn(() => LEASE),
+      releaseController: vi.fn(),
+      fitViewport: vi.fn(),
+      close: vi.fn(async () => undefined),
+      openTerminalDelivery: vi.fn(
+        async (subscriberId: string, _paneId: string, _offer: unknown, _accept: unknown) => {
+          const close = vi.fn(async () => undefined);
+          deliveryCloses.set(subscriberId, close);
+          return {
+            negotiation: {
+              accepted: true,
+              negotiated: {
+                protocolVersion: 1,
+                encoding: "semantic-v1",
+                richPlacements: false,
+                generation: GENERATION,
+                deliveryNonce: "00000000-0000-4000-8000-000000000099",
+              },
+            },
+            ack: vi.fn(),
+            nack: vi.fn(),
+            setVisibility: vi.fn(),
+            close,
+          };
+        },
+      ),
+    } as unknown as SessionRuntimeConsumer;
+    const handle = Object.freeze(Object.create(null)) as object;
+    const registry = {
+      generation: GENERATION,
+      connect: vi.fn(() => consumer),
+      createExecutionHandle: vi.fn(() => handle),
+      bindExecutionSource: vi.fn(() => handle),
+      assertExecutionHandle: vi.fn(),
+      submitAuthenticatedIntent: vi.fn(),
+    };
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const firstLeaseId = "00000000-0000-4000-8000-000000000001";
+    const secondLeaseId = "00000000-0000-4000-8000-000000000002";
+    const first = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: firstLeaseId,
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+      ownsGeometry: true,
+    });
+    const replacement = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: secondLeaseId,
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+      ownsGeometry: true,
+    });
+    const offer = {
+      protocolVersions: [1],
+      encodings: ["semantic-v1"],
+      richPlacements: false,
+    } as const;
+    const oldDelivery = await first.openTerminalDelivery("pane.editor", offer, vi.fn());
+    const newDelivery = await replacement.openTerminalDelivery("pane.editor", offer, vi.fn());
+
+    const subscriberIds = consumer.openTerminalDelivery.mock.calls.map((call) => call[0]);
+    expect(subscriberIds).toEqual([
+      `web:document-a:${firstLeaseId}`,
+      `web:document-a:${secondLeaseId}`,
+    ]);
+    await oldDelivery.close();
+    expect(() => first.fitViewport(120, 40)).toThrowError(
+      expect.objectContaining({ code: "invalid-client-capability" }),
+    );
+    replacement.fitViewport(132, 44);
+    expect(consumer.fitViewport).toHaveBeenCalledWith(LEASE, 132, 44);
+    await first.close();
+    expect(deliveryCloses.get(subscriberIds[0]!)).toHaveBeenCalledOnce();
+    expect(deliveryCloses.get(subscriberIds[1]!)).not.toHaveBeenCalled();
+    replacement.assertController("pane.editor");
+
+    await newDelivery.close();
+    await replacement.close();
+    expect(deliveryCloses.get(subscriberIds[1]!)).toHaveBeenCalledOnce();
+  });
+
+  it("restores geometry authority to an older live same-host transport when its replacement closes", async () => {
+    const consumer = {
+      generation: GENERATION,
+      session: "alpha",
+      surface: "pane-stream",
+      clientId: "web:document-a",
+      acquireController: vi.fn(() => LEASE),
+      releaseController: vi.fn(),
+      fitViewport: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } as unknown as SessionRuntimeConsumer;
+    const handle = Object.freeze(Object.create(null)) as object;
+    const registry = {
+      generation: GENERATION,
+      connect: vi.fn(() => consumer),
+      createExecutionHandle: vi.fn(() => handle),
+      bindExecutionSource: vi.fn(() => handle),
+      assertExecutionHandle: vi.fn(),
+      submitAuthenticatedIntent: vi.fn(),
+    };
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const first = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000001",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+      ownsGeometry: true,
+    });
+    const replacement = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000002",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+      ownsGeometry: true,
+    });
+
+    expect(() => first.fitViewport(120, 40)).toThrowError(
+      expect.objectContaining({ code: "invalid-client-capability" }),
+    );
+    replacement.fitViewport(132, 44);
+    await replacement.close();
+    first.fitViewport(120, 40);
+    expect(consumer.fitViewport).toHaveBeenLastCalledWith(LEASE, 120, 40);
+
+    await first.close();
   });
 
   it("retires the last interactive lease while a passive sibling remains readable", async () => {

@@ -1,4 +1,126 @@
-import type { LivePane } from "./session-mirror.ts";
+import type { PaneAttention } from "@tmux-ide/contracts";
+import {
+  paneInteractionPresence,
+  paneInteractionRelationshipLabel,
+  type PaneInteractionPresence,
+  type PaneInteractionPresenceRole,
+  type PaneInteractionProjection,
+} from "@tmux-ide/core";
+import type { LivePane } from "./semantic-session-view.ts";
+
+export type PaneChromeKeyboardFocus = "focused" | "blurred";
+export type PaneChromeInputOwnership = "controller" | "viewer";
+
+export interface PaneChromeInteractionState extends PaneInteractionPresence {
+  /** Privacy-safe relationship text produced by the shared receipt vocabulary. */
+  readonly label: string;
+}
+
+export interface PaneChromeState {
+  /** Keyboard routing. This is never inferred from receipt activity. */
+  readonly keyboardFocus: PaneChromeKeyboardFocus;
+  /** SessionRuntime controller/input authority, independent from keyboard routing. */
+  readonly inputOwnership: PaneChromeInputOwnership;
+  /** Read and send remain orthogonal even if two transient operations overlap. */
+  readonly reading: PaneChromeInteractionState | null;
+  readonly sending: PaneChromeInteractionState | null;
+  readonly attention: PaneAttention;
+}
+
+export interface PaneChromeStateInput {
+  readonly keyboardFocused: boolean;
+  readonly inputOwned: boolean;
+  readonly attention?: PaneAttention;
+  readonly interaction?: PaneInteractionProjection | null;
+  readonly paneLabel?: (semanticPaneId: string) => string;
+}
+
+export type PaneChromePrimaryMarker = "input-owner" | "attention" | "keyboard-focus" | "idle";
+
+export interface PaneChromeVisualState {
+  /** Marker precedence is independent from the communication treatment. */
+  readonly primaryMarker: PaneChromePrimaryMarker;
+  /** Transfer is stronger than observation when their short presence windows overlap. */
+  readonly communication: PaneChromeInteractionState | null;
+}
+
+/**
+ * Project receipt-backed pane chrome state without reinterpreting operation
+ * kinds, phases, labels, badges, or tones locally. Those facts belong to core
+ * so DOM and OpenTUI surfaces cannot drift.
+ */
+export function projectPaneChromeState(input: PaneChromeStateInput): PaneChromeState {
+  const interaction = input.interaction
+    ? paneChromeInteractionState(input.interaction, input.paneLabel)
+    : null;
+  return Object.freeze({
+    keyboardFocus: input.keyboardFocused ? "focused" : "blurred",
+    inputOwnership: input.inputOwned ? "controller" : "viewer",
+    reading: interaction?.kind === "read" ? interaction : null,
+    sending: interaction?.kind === "send" ? interaction : null,
+    attention: input.attention ?? "none",
+  });
+}
+
+export function paneChromeInteractionState(
+  interaction: PaneInteractionProjection,
+  paneLabel?: (semanticPaneId: string) => string,
+): PaneChromeInteractionState {
+  const presence = paneInteractionPresence(interaction);
+  return Object.freeze({
+    ...presence,
+    label: paneInteractionRelationshipLabel(interaction, paneLabel),
+  });
+}
+
+/**
+ * Deterministic visual precedence. Input ownership, attention and keyboard
+ * focus share the marker channel; read/send use a separate badge/rail channel
+ * and therefore can never masquerade as focus.
+ */
+export function resolvePaneChromeVisualState(state: PaneChromeState): PaneChromeVisualState {
+  const primaryMarker: PaneChromePrimaryMarker =
+    state.inputOwnership === "controller"
+      ? "input-owner"
+      : state.attention !== "none"
+        ? "attention"
+        : state.keyboardFocus === "focused"
+          ? "keyboard-focus"
+          : "idle";
+  return Object.freeze({
+    primaryMarker,
+    communication: state.sending ?? state.reading,
+  });
+}
+
+export function samePaneChromeState(left: PaneChromeState, right: PaneChromeState): boolean {
+  return (
+    left.keyboardFocus === right.keyboardFocus &&
+    left.inputOwnership === right.inputOwnership &&
+    samePaneChromeInteraction(left.reading, right.reading) &&
+    samePaneChromeInteraction(left.sending, right.sending) &&
+    left.attention === right.attention
+  );
+}
+
+function samePaneChromeInteraction(
+  left: PaneChromeInteractionState | null,
+  right: PaneChromeInteractionState | null,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    left.role === right.role &&
+    left.kind === right.kind &&
+    left.endpoint === right.endpoint &&
+    left.treatment === right.treatment &&
+    left.tone === right.tone &&
+    left.badge === right.badge &&
+    left.label === right.label
+  );
+}
+
+export type { PaneInteractionPresenceRole };
 
 /**
  * Pane layout state is deliberately separate from terminal cells and focus.

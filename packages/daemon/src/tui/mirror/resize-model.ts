@@ -148,9 +148,3 @@ export function resizeGuideRect(sep: Separator, delta = 0): ResizeGuideRect {
         height: 1,
       };
 }
-
-/** Standalone/local PREVIEW only. The release is committed through the shared
- * daemon mutation so every renderer observes one durable operation receipt. */
-export function resizePreviewCommand(sep: Separator, size: number): string {
-  return `resize-pane -t ${sep.aId} ${sep.axis === "x" ? "-x" : "-y"} ${size}`;
-}

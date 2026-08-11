@@ -57,7 +57,7 @@ export function parseCursorProbe(line: string): CursorProbe | null {
  * PURE — capture reply lines to seed bytes. The control client reads replies
  * as latin1 (one JS char per wire byte), so the reply is a byte string in
  * disguise: re-encode latin1 → bytes before the VT parser sees it, or every
- * multibyte glyph shatters into mojibake (the session-mirror lesson).
+ * multibyte glyph shatters into mojibake (the retained mirror lesson).
  */
 export function seedBytesFromCapture(lines: readonly string[]): Uint8Array {
   return Buffer.from(lines.join("\r\n"), "latin1");

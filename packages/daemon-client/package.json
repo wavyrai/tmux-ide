@@ -11,7 +11,8 @@
     "./application-shell-session": "./src/application-shell-session.ts",
     "./direct-application-shell-transport": "./src/direct-application-shell-transport.ts",
     "./owner-action-client": "./src/owner-action-client.ts",
-    "./workspace-pane-client": "./src/workspace-pane-client.ts"
+    "./workspace-pane-client": "./src/workspace-pane-client.ts",
+    "./pane-stream-client": "./src/pane-stream-client.ts"
   },
   "main": "src/index.ts",
   "scripts": {

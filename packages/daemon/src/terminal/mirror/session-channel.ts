@@ -69,7 +69,7 @@ import {
 } from "../../lib/tmux-interaction-options.ts";
 
 /** Notifications whose payload cannot be applied directly — fall back to the
- *  debounced truth sync (same set the TUI SessionMirror uses). */
+ *  debounced truth sync (shared by all semantic terminal clients). */
 const STRUCTURAL_NOTIFICATIONS = new Set([
   "window-add",
   "window-close",
@@ -99,6 +99,10 @@ export interface PaneSubscriptionHandle {
   thaw(): void;
   sendText(text: string): void;
   sendKey(key: string): void;
+  close(): void;
+}
+
+export interface LayoutSubscriptionHandle {
   close(): void;
 }
 
@@ -145,6 +149,7 @@ export class SessionChannel {
   private readonly windowsByRuntime = new Map<string, WindowRecord>();
   private readonly layoutByWindow = new Map<string, ParsedLayout & { zoomed: boolean }>();
   private readonly activePaneByWindow = new Map<string, string>();
+  private readonly layoutSubscribers = new Set<(event: MirrorLayoutEvent) => void>();
   private readonly truthActive = new Map<string, boolean>();
   private readonly truthWindow = new Map<string, string>();
   private currentWindow = "";
@@ -269,6 +274,49 @@ export class SessionChannel {
     };
   }
 
+  /** Session geometry without a dummy pane feed or terminal-content seed. */
+  subscribeLayout(onLayout: (event: MirrorLayoutEvent) => void): LayoutSubscriptionHandle {
+    if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+    this.layoutSubscribers.add(onLayout);
+    for (const windowRuntimeId of this.layoutByWindow.keys()) {
+      const event = this.layoutEventFor(windowRuntimeId);
+      if (event) onLayout(event);
+    }
+    let closed = false;
+    return {
+      close: () => {
+        if (closed) return;
+        closed = true;
+        this.layoutSubscribers.delete(onLayout);
+      },
+    };
+  }
+
+  /** Controller-authorized input fast path. It deliberately reuses the one
+   * session InputCoalescer, so literal/key ordering and tmux application-mode
+   * named-key semantics are identical for GUI, TUI and direct subscribers. */
+  sendText(semanticPaneId: string, text: string): void {
+    const pane = this.panesBySemantic.get(semanticPaneId);
+    if (!pane)
+      throw new Error(`unknown semantic pane ${semanticPaneId} in session ${this.opts.session}`);
+    this.input.literal(pane.runtimeId, text);
+  }
+
+  sendKey(semanticPaneId: string, key: string): void {
+    const pane = this.panesBySemantic.get(semanticPaneId);
+    if (!pane)
+      throw new Error(`unknown semantic pane ${semanticPaneId} in session ${this.opts.session}`);
+    this.input.key(pane.runtimeId, key);
+  }
+
+  fitViewport(cols: number, rows: number): void {
+    if (!Number.isSafeInteger(cols) || !Number.isSafeInteger(rows) || cols < 2 || rows < 2) {
+      throw new RangeError("viewport must contain positive bounded terminal cells");
+    }
+    this.input.flush();
+    this.io.send(`refresh-client -C ${cols}x${rows}`);
+  }
+
   subscriberCount(): number {
     let count = 0;
     for (const pane of this.panesByRuntime.values()) count += pane.subs.size;
@@ -312,6 +360,7 @@ export class SessionChannel {
       }
       pane.subs.clear();
     }
+    this.layoutSubscribers.clear();
     await this.io.dispose();
   }
 
@@ -529,6 +578,7 @@ export class SessionChannel {
   private emitLayout(windowRuntimeId: string): void {
     const event = this.layoutEventFor(windowRuntimeId);
     if (!event) return;
+    for (const subscriber of this.layoutSubscribers) subscriber(event);
     for (const pane of this.panesByRuntime.values()) {
       for (const sub of pane.subs) {
         if (!sub.closed && sub.onLayout) sub.onLayout(event);

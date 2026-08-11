@@ -28,9 +28,9 @@ import {
 } from "@opentui/core";
 import { extend } from "@opentui/solid";
 import { appendFileSync } from "node:fs";
-import type { SessionMirror } from "./session-mirror.ts";
 import type { CursorState } from "./pane-mirror.ts";
-import { swapCells, paintBg, type GraphemeOverride } from "./blit.ts";
+import type { BlitOptions } from "./pane-mirror.ts";
+import { swapCells, paintBg, type CellArrays, type GraphemeOverride } from "./blit.ts";
 import { rowSelectionRange, visibleSelRows, type Cell } from "./selection.ts";
 import type { SearchMatch } from "./search-model.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
@@ -49,7 +49,7 @@ export interface PaneSearchHighlight {
 export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRenderable> {
   width: number;
   height: number;
-  mirror: SessionMirror;
+  mirror: TerminalPaneRenderSource;
   paneId: string;
   /** Packed `0xRRGGBB` for the terminal default fg/bg (a cell whose color is null). */
   defaultFg: number;
@@ -70,6 +70,29 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
   selRange?: { start: Cell; end: Cell } | null;
   search?: PaneSearchHighlight | null;
 }
+
+/**
+ * Renderer-facing hot-path port implemented by the semantic runtime delivery
+ * adapter. Keeping this port deliberately tiny prevents transport or immutable
+ * replica snapshots from entering Solid.
+ */
+export interface TerminalPaneRenderSource {
+  scrollbackDepth(paneId: string): number;
+  cursorState(paneId: string): CursorState | null;
+  blitPane(
+    paneId: string,
+    buffers: CellArrays,
+    width: number,
+    height: number,
+    scrollOffset: number,
+    defaultFg: number,
+    defaultBg: number,
+    options: BlitOptions,
+  ): void;
+  releasePane?(paneId: string, consumerId: object): void;
+}
+
+const hardwareCursorOwner = new WeakMap<RenderContext, PaneSurfaceRenderable>();
 
 const rgbaCache = new Map<number, RGBA>();
 function packedRgba(packed: number): RGBA {
@@ -99,7 +122,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   // and applies EVERY other prop afterward via these setters — so the constructor
   // must default the framebuffer size (like the reference renderable) and each
   // field must have a safe default until its setter fires.
-  private _mirror: SessionMirror | null = null;
+  private _mirror: TerminalPaneRenderSource | null = null;
   private _paneId = "";
   private _defaultFg = 0xd4d4d8;
   private _defaultBg = 0x101016;
@@ -140,13 +163,18 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   }
 
   // ── Constant props (delivered via setters post-construction, then stable). ──
-  set mirror(v: SessionMirror) {
+  set mirror(v: TerminalPaneRenderSource) {
+    if (v === this._mirror) return;
+    this._mirror?.releasePane?.(this._paneId, this);
     this._mirror = v;
-    this._needsWalk = true;
+    this._forceFull = true;
+    this.invalidate();
   }
   set paneId(v: string) {
     if (v === this._paneId) return;
+    this._mirror?.releasePane?.(this._paneId, this);
     this._paneId = v;
+    this._forceFull = true;
     this.invalidate();
   }
   set defaultFg(v: number) {
@@ -193,6 +221,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   set paneFocused(v: boolean) {
     if (v === this._focusedPane) return;
     this._focusedPane = v;
+    if (!v) this.releaseHardwareCursor();
     this.invalidate();
   }
   set contentVersion(v: number) {
@@ -296,6 +325,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
       this._defaultFg,
       this._defaultBg,
       {
+        consumerId: this,
         full,
         forceRows,
         dirtyRows: this._dirtyRows,
@@ -382,7 +412,12 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
    * carry a painted marker instead).
    */
   private updateHardwareCursor(c: CursorState | null, w: number, h: number): void {
-    if (!this._focusedPane || !c) return;
+    if (!this._focusedPane) return;
+    hardwareCursorOwner.set(this._ctx, this);
+    if (!c) {
+      this._ctx.setCursorPosition(this.x + 1, this.y + 1, false);
+      return;
+    }
     const inBounds = c.x >= 0 && c.x < w && c.y >= 0 && c.y < h;
     const live = this._scrollOffset === 0;
     const visible = live && inBounds && !c.hidden;
@@ -397,6 +432,18 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
         blinking: c.blink,
       });
     }
+  }
+
+  private releaseHardwareCursor(): void {
+    if (hardwareCursorOwner.get(this._ctx) !== this) return;
+    hardwareCursorOwner.delete(this._ctx);
+    this._ctx.setCursorPosition(1, 1, false);
+  }
+
+  override destroy(): void {
+    this.releaseHardwareCursor();
+    this._mirror?.releasePane?.(this._paneId, this);
+    super.destroy();
   }
 
   /** Visible rows covered by the current drag selection (clamped), or []. The

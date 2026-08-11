@@ -1,21 +1,42 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const root = process.cwd();
 const tmpRoot = mkdtempSync(join(tmpdir(), "tmux-ide-pack-run-"));
 const tarballDir = join(tmpRoot, "tarballs");
 const projectDir = join(tmpRoot, "project");
+const launchDir = join(tmpRoot, "configless-cwd");
 const homeDir = join(tmpRoot, "home");
+// tmux's AF_UNIX path ceiling is only ~104 bytes on macOS. tmpdir() expands to
+// a long /var/folders path there, so keep this one disposable socket root under
+// the deliberately short /tmp spelling.
+const tmuxTmpDir = mkdtempSync("/tmp/tip-");
 mkdirSync(tarballDir, { recursive: true });
 mkdirSync(projectDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
+mkdirSync(launchDir, { recursive: true });
+chmodSync(tmuxTmpDir, 0o700);
 
 function run(command, args, opts = {}) {
   const res = spawnSync(command, args, {
     cwd: opts.cwd ?? root,
-    env: { ...process.env, HOME: homeDir, npm_config_cache: join(tmpRoot, "npm-cache") },
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      npm_config_cache: join(tmpRoot, "npm-cache"),
+      ...opts.env,
+    },
     encoding: "utf-8",
     stdio: opts.stdio ?? "pipe",
   });
@@ -25,6 +46,36 @@ function run(command, args, opts = {}) {
     );
   }
   return res;
+}
+
+function shQuote(value) {
+  return `'${String(value).replaceAll("'", `'\\''`)}'`;
+}
+
+function tmuxEnv(runtimePath) {
+  const tmuxPath = run("sh", ["-c", "command -v tmux"]).stdout.trim();
+  return {
+    HOME: homeDir,
+    TMUX_TMPDIR: tmuxTmpDir,
+    TMUX_IDE_HOME: join(homeDir, ".tmux-ide"),
+    NODE_PATH: "",
+    BUN_INSTALL: "",
+    // Do not let the installed smoke accidentally resolve tools from this
+    // checkout's node_modules/.bin. The compiled TUI needs neither Bun nor the
+    // repository after it has been built.
+    PATH: [runtimePath, dirname(process.execPath), dirname(tmuxPath), "/usr/bin", "/bin"]
+      .filter((value, index, values) => value && values.indexOf(value) === index)
+      .join(":"),
+  };
+}
+
+async function waitUntil(predicate, timeoutMs, description) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  throw new Error(`Timed out waiting for ${description}`);
 }
 
 function findTarball(prefix) {
@@ -76,6 +127,136 @@ async function waitForChild(child, timeoutMs = 20_000) {
   return { ...exit, ...childOutput.get(child) };
 }
 
+async function runInstalledTuiGate(installedCli) {
+  const packageVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+  const platformTag = `${process.platform}-${process.arch}`;
+  if (!new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]).has(platformTag)) {
+    throw new Error(`Installed TUI gate has no release binary for ${platformTag}`);
+  }
+
+  // Model the real release/download layout rather than smuggling a checkout
+  // path through TMUX_IDE_TUI_BIN. The installed CLI must discover this exact
+  // versioned binary from its clean HOME by itself.
+  const downloadedTui = join(
+    homeDir,
+    ".tmux-ide",
+    "bin",
+    `tmux-ide-tui-${platformTag}-${packageVersion}`,
+  );
+  run("bun", ["scripts/build-tui.mjs", "--outfile", downloadedTui], { stdio: "inherit" });
+
+  const socketName = `p${process.pid}`;
+  const targetSession = "ordinary-isolated";
+  const hostSession = "installed-tui-gate";
+  const statusPath = join(tmpRoot, "installed-tui.status");
+  const stderrPath = join(tmpRoot, "installed-tui.stderr");
+  const launcherPath = join(tmpRoot, "launch-installed-tui.sh");
+  const runtimeEnv = tmuxEnv(dirname(installedCli));
+  const tmuxArgs = (...args) => ["-L", socketName, ...args];
+  const tmuxResult = (args, stdio = "pipe") =>
+    spawnSync("tmux", tmuxArgs(...args), {
+      cwd: launchDir,
+      env: { ...process.env, ...runtimeEnv },
+      encoding: "utf8",
+      stdio,
+    });
+
+  for (const forbidden of ["bunfig.toml", "node_modules", join(".tmux-ide", "workspace.yml")]) {
+    if (existsSync(join(launchDir, forbidden))) {
+      throw new Error(`Installed TUI gate cwd unexpectedly contains ${forbidden}`);
+    }
+  }
+  const leakedHostBinary = join(
+    projectDir,
+    "node_modules",
+    "tmux-ide",
+    "packages",
+    "daemon",
+    "dist",
+    "tui",
+    "tmux-ide-tui",
+  );
+  if (existsSync(leakedHostBinary)) {
+    throw new Error("Universal npm tarball leaked a host-only compiled TUI binary");
+  }
+
+  writeFileSync(
+    launcherPath,
+    [
+      "#!/bin/sh",
+      `${shQuote(installedCli)} app ${shQuote(targetSession)} 2>${shQuote(stderrPath)}`,
+      "status=$?",
+      `printf '%s\\n' "$status" > ${shQuote(statusPath)}`,
+      'exit "$status"',
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  chmodSync(launcherPath, 0o700);
+
+  let captured = "";
+  try {
+    const target = tmuxResult([
+      "new-session",
+      "-d",
+      "-s",
+      targetSession,
+      "-x",
+      "100",
+      "-y",
+      "30",
+      "-c",
+      launchDir,
+    ]);
+    if (target.status !== 0) {
+      throw new Error(`Could not create isolated target session: ${target.stderr}`);
+    }
+    const host = tmuxResult([
+      "new-session",
+      "-d",
+      "-s",
+      hostSession,
+      "-x",
+      "120",
+      "-y",
+      "36",
+      "-c",
+      launchDir,
+      launcherPath,
+    ]);
+    if (host.status !== 0) throw new Error(`Could not launch installed TUI: ${host.stderr}`);
+
+    await waitUntil(
+      () => {
+        if (existsSync(statusPath)) return true;
+        const frame = tmuxResult(["capture-pane", "-p", "-t", `=${hostSession}:0.0`]);
+        if (frame.status === 0) captured = frame.stdout;
+        return captured.includes("tmux-ide");
+      },
+      20_000,
+      "the installed TUI's first frame",
+    );
+
+    if (!existsSync(statusPath)) {
+      const quit = tmuxResult(["send-keys", "-t", `=${hostSession}:0.0`, "C-q"]);
+      if (quit.status !== 0) throw new Error(`Could not ask installed TUI to exit: ${quit.stderr}`);
+    }
+    await waitUntil(() => existsSync(statusPath), 10_000, "the installed TUI's clean exit");
+
+    const status = readFileSync(statusPath, "utf8").trim();
+    const stderr = existsSync(stderrPath) ? readFileSync(stderrPath, "utf8") : "";
+    const transcript = `${captured}\n${stderr}`;
+    if (status !== "0") {
+      throw new Error(`Installed configless TUI exited ${status}:\n${transcript}`);
+    }
+    if (/preload not found|@opentui\/solid\/preload/iu.test(transcript)) {
+      throw new Error(`Installed configless TUI attempted a checkout preload:\n${transcript}`);
+    }
+  } finally {
+    tmuxResult(["kill-server"]);
+  }
+}
+
 try {
   // The public root package contains the compiled root entrypoint and bundles
   // workspace-owned TypeScript. The private @tmux-ide/daemon workspace package
@@ -91,6 +272,7 @@ try {
   run("npx", ["tmux-ide", "--version"], { cwd: projectDir, stdio: "inherit" });
 
   const installedCli = join(projectDir, "node_modules", ".bin", "tmux-ide");
+  await runInstalledTuiGate(installedCli);
   const installedBundle = readFileSync(
     join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
     "utf8",
@@ -234,6 +416,7 @@ try {
     }
   }
   rmSync(tmpRoot, { recursive: true, force: true });
+  rmSync(tmuxTmpDir, { recursive: true, force: true });
 }
 
 if (cleanupError) throw cleanupError;

@@ -22,25 +22,14 @@ describe("MENU_ITEMS", () => {
       "split-v",
       "zoom",
       "swap-next",
-      "break",
-      "rotate",
-      "layouts",
-      "sync-toggle",
       "kill",
     ]);
     expect(MENU_ITEMS.window.map((i) => i.id)).toEqual(["new", "rename", "kill"]);
   });
 
-  it("gives the pane menu a Layouts submenu and a sync checkbox", () => {
-    const layouts = MENU_ITEMS.pane.find((i) => i.id === "layouts");
-    expect(layouts?.children?.map((c) => c.id)).toEqual([
-      "layout:even-horizontal",
-      "layout:even-vertical",
-      "layout:main-horizontal",
-      "layout:main-vertical",
-      "layout:tiled",
-    ]);
-    expect(MENU_ITEMS.pane.find((i) => i.id === "sync-toggle")?.checkbox).toBe(true);
+  it("does not expose pane mutations without semantic daemon verbs", () => {
+    expect(MENU_ITEMS.pane.find((i) => i.id === "layouts")).toBeUndefined();
+    expect(MENU_ITEMS.pane.find((i) => i.id === "sync-toggle")).toBeUndefined();
   });
 
   it("marks destructive items danger and text-entry items input", () => {
@@ -61,7 +50,7 @@ describe("MENU_ITEMS", () => {
 describe("menuDims", () => {
   it("heights to top border + header + items + bottom border", () => {
     expect(menuDims("s", MENU_ITEMS.difffile).height).toBe(2 + 3); // 2 items
-    expect(menuDims("s", MENU_ITEMS.pane).height).toBe(9 + 3); // 9 items
+    expect(menuDims("s", MENU_ITEMS.pane).height).toBe(5 + 3); // 5 items
   });
 
   it("reserves the submenu caret width for a children item", () => {

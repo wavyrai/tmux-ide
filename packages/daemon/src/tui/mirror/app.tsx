@@ -36,7 +36,7 @@
  * wheel outside select mode); pure logic in selection.ts (paneDragDefault /
  * routePanePress).
  *
- * SELECTION SURVIVES SCROLLING (M25.6): mirror selections anchor in ABSOLUTE
+ * SELECTION SURVIVES SCROLLING (M25.6): semanticView selections anchor in ABSOLUTE
  * xterm buffer lines (absLine = scrollbackDepth − scrollOffset + viewportRow),
  * not viewport cells — so scrolling mid-drag keeps the highlight on its text
  * and a selection can span many screens. While a drag is live the wheel over
@@ -44,7 +44,7 @@
  * — even on app-mouse panes), and holding the pointer at the pane's top/bottom
  * content row auto-scrolls ~1 row per 8ms state tick (clamped at the
  * scrollback top / the live bottom). The release copy extracts the FULL
- * absolute span straight from the pane's buffer (SessionMirror.extractText,
+ * absolute span straight from the pane's buffer (SemanticSessionView.extractText,
  * built capped so a runaway span never materializes unbounded — the 1 MB
  * clipboard cap still refuses over-limit selections). Buffer rotation at the
  * scrollback cap mid-drag is compensated via PaneMirror.lineTrim (the anchor
@@ -58,9 +58,9 @@
  * position (F5 remains the palette; later views remain mouse/palette selectable); the tab bar is also
  * clickable with fixed x-span math from the same rendered labels. The active
  * hosted view ID is the source of truth; `mode()` is derived from its panel kind
- * (home|mirror|editor|diff|missions). CRITICAL for the IDE feel: switching AWAY
+ * (home|semanticView|editor|diff|missions). CRITICAL for the IDE feel: switching AWAY
  * from Terminal does NOT
- * dispose the SessionMirror — it keeps streaming in the background (dirty flags
+ * dispose the SemanticSessionView — it keeps streaming in the background (dirty flags
  * accumulate; a back-switch is instant); the editor buffer and diff selection
  * likewise survive tab round trips. One WORKSPACE CONTEXT per session
  * (`openWorkspace`): choosing a session on Home/sidebar/palette points the
@@ -106,7 +106,7 @@
  * or enter spins up a detached session in the project dir and opens it; the
  * footer gains [n new session] and every row a right-aligned verb chip), a
  * session MIRROR (the
- * SessionMirror canvas), the built-in FILES tab (M18.2 editor + a one-level file
+ * SemanticSessionView canvas), the built-in FILES tab (M18.2 editor + a one-level file
  * list; tmux stays the engine running servers/agents while files are edited
  * natively by us), or the git DIFF panel (M18.3 — the working-tree diff of the
  * workspace dir). `route` branches on `mode()` so a tab-bar click, a home-row
@@ -143,7 +143,7 @@
  * events the app routes centrally and trip the late-mount landmine below. So we
  * render the viewport OURSELVES (gutter + text runs, cursor as an inverse span)
  * and drive the buffer from the central `useKeyboard`/`route` — same discipline
- * as the mirror. A `editorRev()` signal bumps after each mutation to re-derive
+ * as the semanticView. A `editorRev()` signal bumps after each mutation to re-derive
  * the line array (EditBuffer mutations are invisible to Solid). Pure math
  * (binary sniff, read-only class, gutter, viewport, click→cursor) is unit-tested
  * in editor-buffer.ts. `^s` saves atomically (temp+rename); files ≥1 MB or with
@@ -189,10 +189,11 @@
  * reason (deeper seeds froze input for ~15s per attach).
  *
  * Run (repo-root bunfig preload):
- *   bun packages/daemon/src/tui/mirror/app.tsx              # home panel
- *   bun packages/daemon/src/tui/mirror/app.tsx --target <session>
+ *   bun packages/daemon/src/tui/semanticView/app.tsx              # home panel
+ *   bun packages/daemon/src/tui/semanticView/app.tsx --target <session>
  */
 import { parseArgs } from "node:util";
+import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
   readFileSync,
@@ -230,11 +231,13 @@ import {
   reconcileWorkspaceSelection,
   type InteractionFeedState,
 } from "../../../../core/src/index.ts";
-import { SessionMirror, type LivePane } from "./session-mirror.ts";
+import { SemanticSessionView, type LivePane } from "./semantic-session-view.ts";
+import type { RichPlacementProjection } from "./rich-placement-projection.ts";
 import { FrameCoalescer } from "./frame-coalescer.ts";
 import {
   activeLivePaneId,
   livePaneRuntime,
+  projectPaneChromeState,
   sameLivePaneRuntime,
   sameLivePaneStructure,
   withLivePaneFocus,
@@ -326,13 +329,12 @@ import {
 import { registerProject, ProjectAlreadyRegisteredError } from "../../lib/project-registry.ts";
 import { resolveProjectConfigContext } from "../../lib/config-context.ts";
 import { createProjectRuntimeRepository } from "../../lib/project-runtime-repository.ts";
+import { separatorAtCanvas, resizedSize, resizeGuideRect, type Separator } from "./resize-model.ts";
 import {
-  separatorAtCanvas,
-  resizedSize,
-  resizeGuideRect,
-  resizePreviewCommand,
-  type Separator,
-} from "./resize-model.ts";
+  ResizeTransactionController,
+  type ResizeTransactionObservation,
+  type ResizeTransactionState,
+} from "./resize-transaction.ts";
 import {
   effectiveWindowSize,
   detectSizeMismatchWithRepin,
@@ -400,6 +402,7 @@ import {
   applicationShellReplayState,
   openTuiApplicationShellAuthorityInput,
   openTuiRuntimePaneId,
+  openTuiSemanticPaneIdForRuntime,
   projectOpenTuiApplicationShell,
   sameOpenTuiApplicationShellInput,
   type OpenTuiApplicationShellInput,
@@ -409,6 +412,10 @@ import {
   connectOpenTuiApplicationShellAuthority,
   type OpenTuiApplicationShellAuthority,
 } from "./application-shell-daemon-session.ts";
+import {
+  connectOpenTuiSessionRuntime,
+  type OpenTuiSessionRuntimeLane,
+} from "./application-shell-daemon-runtime.ts";
 import {
   createApplicationRootController,
   routeApplicationSidebarResizePointer,
@@ -620,13 +627,7 @@ import {
   AGENTS_GAP_ROWS,
   type AgentRowInput,
 } from "./agent-rows.ts";
-import {
-  findMatches,
-  visitOrder,
-  stepMatch,
-  offsetForMatch,
-  type SearchMatch,
-} from "./search-model.ts";
+import { visitOrder, stepMatch, offsetForMatch, type SearchMatch } from "./search-model.ts";
 import {
   ALWAYS_IGNORE,
   ancestorDirs,
@@ -728,8 +729,8 @@ const { values } = parseArgs({
 });
 const target = values.target ?? "";
 // Bare launch (no `--target`, or the explicit `home` pseudo-target) opens the
-// HOME panel instead of a session mirror; a real target boots straight to the
-// mirror exactly as before. `--diff <dir>` boots straight into the diff panel
+// HOME panel instead of a session semanticView; a real target boots straight to the
+// semanticView exactly as before. `--diff <dir>` boots straight into the diff panel
 // (for testing / direct entry).
 const startDiff = values.diff !== undefined;
 const bareHome = target === "" || target === "home";
@@ -902,7 +903,7 @@ const STATUS_LETTER_FG: Record<string, RGBA> = {
   "?": MUTED,
 };
 // Add/del BACKGROUND fills layered UNDER the DIFF_FG classes (M24.5). Values
-// mirror the widget theme's diffAddedBg/diffRemovedBg (widgets/lib/theme.ts:27-34)
+// semanticView the widget theme's diffAddedBg/diffRemovedBg (widgets/lib/theme.ts:27-34)
 // — that theme is the future token source once the app's const surface colors
 // move onto the theming pipeline.
 const DIFF_ADD_BG = RGBA.fromInts(20, 60, 30, 255);
@@ -1145,7 +1146,129 @@ try {
       FB_PANES
         ? (paneRuntimeFor(pane.id)?.scrollbackDepth ?? pane.scrollbackDepth)
         : pane.scrollbackDepth;
-    let mirror: SessionMirror | null = null;
+    let semanticView: SemanticSessionView | null = null;
+    const [sessionRuntimeLane, setSessionRuntimeLane] =
+      createSignal<OpenTuiSessionRuntimeLane | null>(null);
+    const [semanticPaneVersions, setSemanticPaneVersions] = createSignal<
+      ReadonlyMap<string, number>
+    >(new Map(), { equals: false });
+    let sessionRuntimeLaneKey: string | null = null;
+    let sessionRuntimeLaneRequest = 0;
+    let runtimeLaneFitKey: string | null = null;
+    let pendingSemanticFocus: { session: string; paneId: string } | null = null;
+    const semanticWindowOrder: string[] = [];
+    const semanticWindowActivePane = new Map<string, string>();
+    const semanticPaneCanonicalSize = new Map<string, { cols: number; rows: number }>();
+    let observePendingResizeLayout: () => void = () => {};
+    const semanticPaneIdForRuntime = (runtimePaneId: string): string =>
+      openTuiSemanticPaneIdForRuntime(runtimePaneId, semanticView?.paneDescriptors() ?? []);
+    const runtimePaneIdForSemantic = (semanticPaneId: string): string =>
+      semanticView
+        ?.paneDescriptors()
+        .find((descriptor) => descriptor.semanticPaneId === semanticPaneId)?.runtimePaneId ??
+      semanticPaneId;
+    const semanticReplicaForRuntime = (runtimePaneId: string) => {
+      const lane = sessionRuntimeLane();
+      if (!lane) return null;
+      // SemanticSessionView panes are already keyed by durable ids; sidebar
+      // actions may still arrive with raw runtime ids. Resolve both without
+      // synthesizing a second `pane.*` identity around an already-semantic id.
+      const semanticPaneId = lane.source.replica(runtimePaneId)
+        ? runtimePaneId
+        : semanticPaneIdForRuntime(runtimePaneId);
+      return { lane, semanticPaneId };
+    };
+    const retireSessionRuntimeLane = () => {
+      sessionRuntimeLaneRequest += 1;
+      sessionRuntimeLaneKey = null;
+      sessionRuntimeLane()?.close();
+      setSessionRuntimeLane(null);
+      runtimeLaneFitKey = null;
+      semanticWindowOrder.length = 0;
+      semanticWindowActivePane.clear();
+      semanticPaneCanonicalSize.clear();
+      setSemanticPaneVersions(new Map());
+    };
+    const reconcileSessionRuntimeLane = async (
+      sessionName: string,
+      candidate: SemanticSessionView,
+    ): Promise<void> => {
+      const semanticPaneIds = candidate
+        .paneDescriptors()
+        .map((descriptor) => descriptor.semanticPaneId)
+        .filter((paneId): paneId is string => paneId !== null)
+        .sort();
+      if (semanticPaneIds.length === 0) return;
+      const key = `${sessionName}\0${semanticPaneIds.join("\0")}`;
+      if (sessionRuntimeLaneKey === key) return;
+      const request = ++sessionRuntimeLaneRequest;
+      sessionRuntimeLaneKey = key;
+      sessionRuntimeLane()?.close();
+      setSessionRuntimeLane(null);
+      runtimeLaneFitKey = null;
+      setSemanticPaneVersions(new Map());
+      try {
+        const lane = await connectOpenTuiSessionRuntime({
+          sessionName,
+          semanticPaneIds,
+          onPaneChange: (paneId, change) => {
+            if (request !== sessionRuntimeLaneRequest) return;
+            setSemanticPaneVersions((current) => {
+              const next = new Map(current);
+              next.set(paneId, change.version);
+              return next;
+            });
+            markDirty();
+          },
+          onLayout: (frame) => {
+            if (request !== sessionRuntimeLaneRequest || semanticView !== candidate) return;
+            const windowKey =
+              frame.semanticWindowId ?? `unverified:${frame.windowName ?? "window"}`;
+            if (!semanticWindowOrder.includes(windowKey)) semanticWindowOrder.push(windowKey);
+            const activePane =
+              frame.panes.find((pane) => pane.active)?.pane ?? frame.panes[0]?.pane;
+            if (activePane) semanticWindowActivePane.set(windowKey, activePane);
+            for (const pane of frame.panes) {
+              if (pane.pane)
+                semanticPaneCanonicalSize.set(pane.pane, { cols: pane.width, rows: pane.height });
+            }
+            candidate.acceptLayout(frame);
+            observePendingResizeLayout();
+            void candidate.windows().then(setWindowTabs);
+            markDirty();
+          },
+          onFault: () => {
+            if (request !== sessionRuntimeLaneRequest) return;
+            sessionRuntimeLaneKey = null;
+            sessionRuntimeLane()?.close();
+            setSessionRuntimeLane(null);
+            runtimeLaneFitKey = null;
+            setSemanticPaneVersions(new Map());
+            markDirty();
+            const retry = setTimeout(() => {
+              if (request === sessionRuntimeLaneRequest && semanticView === candidate) {
+                void reconcileSessionRuntimeLane(sessionName, candidate);
+              }
+            }, 1_000);
+            retry.unref?.();
+          },
+        });
+        if (request !== sessionRuntimeLaneRequest) {
+          lane?.close();
+          return;
+        }
+        candidate.setSource(lane.source);
+        setSessionRuntimeLane(lane);
+        if (
+          pendingSemanticFocus?.session === sessionName &&
+          submitSemanticPaneFocus(pendingSemanticFocus.paneId) === "submitted"
+        ) {
+          pendingSemanticFocus = null;
+        }
+      } catch {
+        if (request === sessionRuntimeLaneRequest) sessionRuntimeLaneKey = null;
+      }
+    };
     const [daemonApplicationShellState, setDaemonApplicationShellState] =
       createSignal<ApplicationShellSessionState | null>(null);
     const [interactionFeed, setInteractionFeed] = createSignal<InteractionFeedState>(
@@ -1208,10 +1331,17 @@ try {
         }
         if (!authority) return;
         daemonApplicationShellAuthority = authority;
-        setDaemonApplicationShellState(authority.session.getState());
-        disposeDaemonApplicationShellSubscription = authority.session.subscribe(
-          setDaemonApplicationShellState,
-        );
+        const applyDaemonShellState = (state: ApplicationShellSessionState) => {
+          setDaemonApplicationShellState(state);
+          const inventory = state.data?.terminalInventory;
+          if (inventory && semanticView) {
+            semanticView.setInventory(inventory);
+            void reconcileSessionRuntimeLane(sessionName, semanticView);
+          }
+        };
+        applyDaemonShellState(authority.session.getState());
+        disposeDaemonApplicationShellSubscription =
+          authority.session.subscribe(applyDaemonShellState);
       } catch {
         // Standalone OpenTUI remains a supported fallback when no daemon owns
         // this tmux session. The local semantic projection stays authoritative.
@@ -1221,6 +1351,7 @@ try {
     onCleanup(() => {
       daemonApplicationShellRequest += 1;
       retireDaemonApplicationShell();
+      retireSessionRuntimeLane();
     });
     // The bundled CLI — the async fleet poll and `detect --write` both shell out
     // to it (resolved once; `node <cliPath> …`). The CLI forwards its own
@@ -1384,7 +1515,7 @@ try {
           canvasPanel() === "terminals" && workbenchFocusZone() === "canvas"
             ? activeTerminalPaneId()
             : null,
-        paneIdentities: mirror?.paneDescriptors() ?? [],
+        paneIdentities: semanticView?.paneDescriptors() ?? [],
         paletteOpen: paletteOpen(),
         paletteFocusReturnTarget: paletteFocusReturnTarget(),
         sessions: fleet(),
@@ -1488,26 +1619,37 @@ try {
     const panesById = createMemo(() => new Map(panes().map((p) => [p.id, p])));
     const richWidgetCache = new Map<
       string,
-      { marker: NonNullable<ReturnType<SessionMirror["widgetMarker"]>>; surface: TuiWidgetSurface }
-    >();
-    const richWidgetFor = (paneId: string): TuiWidgetSurface | null => {
-      // Per-pane version is the reactive gate. The marker accessor itself is
-      // O(1), and asset decoding happens once per marker identity.
-      paneRuntimeFor(paneId)?.version;
-      const marker = mirror?.widgetMarker(paneId) ?? null;
-      if (!marker) {
-        richWidgetCache.delete(paneId);
-        return null;
+      {
+        marker: RichPlacementProjection["marker"];
+        surface: TuiWidgetSurface;
       }
-      const cached = richWidgetCache.get(paneId);
+    >();
+    const richWidgetFor = (placement: RichPlacementProjection): TuiWidgetSurface | null => {
+      const cached = richWidgetCache.get(placement.renderableId);
+      const marker = placement.marker;
       if (cached?.marker === marker) return cached.surface;
       const surface = resolveTuiWidgetSurface(marker, readWidgetAsset);
       if (!surface) {
-        richWidgetCache.delete(paneId);
+        richWidgetCache.delete(placement.renderableId);
         return null;
       }
-      richWidgetCache.set(paneId, { marker, surface });
+      richWidgetCache.set(placement.renderableId, { marker, surface });
       return surface;
+    };
+    const richPlacementsFor = (paneId: string): readonly RichPlacementProjection[] => {
+      paneRuntimeFor(paneId)?.version;
+      const pane = panesById().get(paneId);
+      if (!pane || pane.snapshot.scrollOffset > 0) return [];
+      return (
+        semanticView
+          ?.richPlacements(paneId, {
+            row: 0,
+            column: 0,
+            rows: pane.height,
+            columns: pane.width,
+          })
+          .filter((placement) => placement.visible && placement.hostRect !== null) ?? []
+      );
     };
     const [windowTabs, setWindowTabs] = createSignal<WindowTab[]>([]);
     // The fleet payload's per-pane entries join directly to tmux's live %pane_id.
@@ -1532,7 +1674,7 @@ try {
     const [sel, setSel] = createSignal(0);
 
     // ── SELECTION & CLIPBOARD (M19.4; absolute-space M25.6) ──────────────────
-    // The visible selection (drives inverse-tint on the mirror/editor render) and
+    // The visible selection (drives inverse-tint on the semanticView/editor render) and
     // the gesture state machine driving it. `selecting` marks a drag in progress
     // (null = none, discrete word/line selections leave it null); `selAnchor` is
     // where the drag began — for the MIRROR that's an ABSOLUTE buffer cell
@@ -1941,7 +2083,7 @@ try {
     // when the terminal passes shift through (see RouteEvent.modifiers).
     const [selectModePane, setSelectModePane] = createSignal<string | null>(null);
     const enterSelectMode = (paneId: string) => {
-      mirror?.focus(paneId);
+      if (submitSemanticPaneFocus(paneId) !== "submitted") return;
       clearSelection();
       setSelectModePane(paneId);
       setStatusNote("select text: drag to copy · esc to exit");
@@ -1953,14 +2095,14 @@ try {
     };
     // Focus leaving the pane clears the mode. The reactive panes() lags one
     // 8ms tick behind an enterSelectMode focus call, so only clear when the
-    // mirror's SYNCHRONOUS focus agrees the pane lost focus (mirror.focus sets
+    // semanticView's SYNCHRONOUS focus agrees the pane lost focus (semanticView.focus sets
     // it before the tick re-derives `active`). Window/session switches drop the
     // pane from panes() and move both focus answers — the mode clears then too.
     createEffect(() => {
       const sm = selectModePane();
       if (sm === null) return;
       const focused = activeTerminalPaneId();
-      if (focused && focused !== sm && mirror?.focusedPane() !== sm) exitSelectMode();
+      if (focused && focused !== sm && semanticView?.focusedPane() !== sm) exitSelectMode();
     });
 
     // ── IMPLICIT DRAG-SELECT DEFAULT (M24.2) ─────────────────────────────────
@@ -1977,7 +2119,7 @@ try {
     const dragOverrides = new Map<string, PaneDragDefault>();
     const paneDrag = (paneId: string): PaneDragDefault =>
       paneDragDefault(
-        agentByPane().get(paneId),
+        agentByPane().get(runtimePaneIdForSemantic(paneId)),
         dragSelectPolicy,
         dragOverrides.get(paneId) ?? null,
       );
@@ -1986,14 +2128,11 @@ try {
      *  not a window switch). Piggybacks on the 3s fleet tick; one control-mode
      *  round-trip, only while overrides exist at all. */
     const pruneDragOverrides = () => {
-      if (dragOverrides.size === 0 || !mirror) return;
-      void mirror
-        .command('list-panes -a -F "#{pane_id}"')
-        .then((lines) => {
-          const alive = new Set(lines.map((l) => l.trim()));
-          for (const id of [...dragOverrides.keys()]) if (!alive.has(id)) dragOverrides.delete(id);
-        })
-        .catch(() => {});
+      if (dragOverrides.size === 0 || !semanticView) return;
+      const alive = new Set(
+        semanticView.paneDescriptors().map(({ runtimePaneId }) => runtimePaneId),
+      );
+      for (const id of [...dragOverrides.keys()]) if (!alive.has(id)) dragOverrides.delete(id);
     };
 
     // ── SCROLLBACK SEARCH (M20.3) ────────────────────────────────────────────
@@ -2008,7 +2147,7 @@ try {
     // scrollOffset via `offsetForMatch`.
     interface PaneSearch {
       query: string;
-      matches: SearchMatch[];
+      matches: Array<SearchMatch & { columns?: number }>;
       current: number;
     }
     const [search, setSearch] = createSignal<{ query: string; editing: boolean } | null>(null);
@@ -2030,7 +2169,7 @@ try {
       if (pressedTerminalPaneAction() !== null) setPressedTerminalPaneAction(null);
     };
     const interactionPaneLabel = (semanticPaneId: string): string => {
-      const descriptor = mirror
+      const descriptor = semanticView
         ?.paneDescriptors()
         .find((candidate) => candidate.semanticPaneId === semanticPaneId);
       if (!descriptor) return semanticPaneId;
@@ -2052,8 +2191,8 @@ try {
           ? "done"
           : "working";
       for (const pane of panes()) {
-        const agent = agentByPane().get(pane.id);
-        const semanticPaneId = mirror
+        const agent = agentByPane().get(runtimePaneIdForSemantic(pane.id));
+        const semanticPaneId = semanticView
           ?.paneDescriptors()
           .find((descriptor) => descriptor.runtimePaneId === pane.id)?.semanticPaneId;
         const interaction = semanticPaneId ? interactionFeed().panes[semanticPaneId] : undefined;
@@ -2064,8 +2203,14 @@ try {
         const interactionPresence = visibleInteraction
           ? paneInteractionPresence(visibleInteraction)
           : null;
+        const attentionKind =
+          visibleInteraction?.phase === "rejected" || visibleInteraction?.phase === "timed-out"
+            ? "warning"
+            : agent?.state === "blocked" || (!agent && appStatusTone === "blocked")
+              ? "requested"
+              : "none";
         metadata.set(pane.id, {
-          // SessionMirror may add title/currentCommand descriptors later. Null
+          // SemanticSessionView may add title/currentCommand descriptors later. Null
           // deliberately leaves that seam to the pure projection, which falls
           // back to the always-distinct live %pane_id today.
           title: agent?.displayName ?? agent?.kind ?? null,
@@ -2087,6 +2232,14 @@ try {
             visibleInteraction?.phase === "timed-out" ||
             agent?.state === "blocked" ||
             (!agent && appStatusTone === "blocked"),
+          attentionKind,
+          chromeState: projectPaneChromeState({
+            keyboardFocused: paneIsFocused(pane.id),
+            inputOwned: sessionRuntimeLane()?.ownsInput === true,
+            attention: attentionKind,
+            interaction: visibleInteraction ?? null,
+            paneLabel: interactionPaneLabel,
+          }),
           communication:
             visibleInteraction && interactionPresence
               ? {
@@ -2183,6 +2336,91 @@ try {
       sep: Separator;
       delta: number;
     } | null>(null);
+    const [resizeTransactionState, setResizeTransactionState] =
+      createSignal<ResizeTransactionState>({ phase: "idle", canonicalCells: null, outcome: null });
+    let acceptedResize: ResizeTransactionObservation | null = null;
+    const resizeTransaction = new ResizeTransactionController({
+      timeoutMs: 10_000,
+      operationId: randomUUID,
+      now: () => performance.now(),
+      schedule: (callback, delayMs) => {
+        const timer = setTimeout(callback, delayMs);
+        timer.unref?.();
+        return () => clearTimeout(timer);
+      },
+      submit: ({ operationId, intent }) => {
+        const lane = sessionRuntimeLane();
+        if (!lane?.ownsGeometry || lane.workspaceName !== intent.workspaceName) {
+          throw new Error("No semantic geometry authority is available");
+        }
+        void lane.submit(intent, operationId).then(
+          (result) => {
+            if (result?.verb !== "workspace.pane.resize") {
+              resizeTransaction.reject({
+                operationId,
+                code: "invalid-result",
+                message: "Daemon returned no observed pane size",
+              });
+              return;
+            }
+            acceptedResize = {
+              operationId,
+              workspaceName: intent.workspaceName,
+              semanticPaneId: intent.semanticPaneId,
+              axis: intent.axis,
+              cells: result.cells,
+            };
+            observePendingResizeLayout();
+          },
+          (error: unknown) => {
+            resizeTransaction.reject({
+              operationId,
+              code:
+                error && typeof error === "object" && "code" in error
+                  ? String(error.code)
+                  : "submit-failed",
+              message: error instanceof Error ? error.message : String(error),
+            });
+          },
+        );
+      },
+      onState: (state) => {
+        if (state.phase === "idle") acceptedResize = null;
+        setResizeTransactionState(state);
+        if (state.phase === "dragging" || state.phase === "pending") {
+          const active = activePaneResize();
+          if (active) {
+            setActivePaneResize({
+              sep: active.sep,
+              delta: state.previewCells - state.canonicalCells,
+            });
+          }
+          if (state.phase === "pending") setStatusNote("applying pane resize…");
+          return;
+        }
+        setActivePaneResize(null);
+        const outcome = state.outcome;
+        if (outcome?.kind === "settled") {
+          setStatusNote(`pane resized to ${outcome.cells} cells`);
+        } else if (outcome?.kind === "reverted") {
+          setStatusNote(
+            outcome.reason.kind === "timed-out" ? "pane resize timed out" : outcome.reason.message,
+          );
+        }
+      },
+    });
+    observePendingResizeLayout = () => {
+      const state = resizeTransaction.state();
+      const accepted = acceptedResize;
+      if (state.phase !== "pending" || !accepted || accepted.operationId !== state.operationId)
+        return;
+      const size = semanticPaneCanonicalSize.get(accepted.semanticPaneId);
+      if (!size) return;
+      const observedCells = accepted.axis === "cols" ? size.cols : size.rows;
+      if (observedCells !== accepted.cells) return;
+      resizeTransaction.observeLayout({ ...accepted, cells: observedCells });
+    };
+    onCleanup(() => resizeTransaction.dispose());
     const paneResizeGuide = createMemo(() => {
       const active = activePaneResize();
       const sep = active?.sep ?? hoveredPaneSeparator();
@@ -3008,7 +3246,7 @@ try {
     let lastPin: Size | null = terminalCanvasProjection().tmuxSize;
     let repinInFlight: RepinState | null = null;
     let pendingAttachTarget: string | null = null;
-    let mirrorSupervisor: RuntimeConnectionSupervisor<SessionMirror> | null = null;
+    let mirrorSupervisor: RuntimeConnectionSupervisor<SemanticSessionView> | null = null;
     let tuiGeometryReadyMarked = false;
     const attach = (name: string) => {
       const pin = terminalCanvasProjection().tmuxSize ?? lastPin;
@@ -3020,29 +3258,28 @@ try {
       pendingAttachTarget = null;
       const previousSupervisor = mirrorSupervisor;
       mirrorSupervisor = null;
-      mirror = null;
+      semanticView = null;
       void previousSupervisor?.stop();
+      retireSessionRuntimeLane();
       scrollOffsets.clear();
       richWidgetCache.clear();
       setFocusedPaneId(null);
       setPanes([]);
       setStatus(`attaching ${name}…`);
       void connectDaemonApplicationShell(name);
-      // A fresh mirror pins at the current canvas size — no re-pin in flight.
+      // A fresh semanticView pins at the current canvas size — no re-pin in flight.
       lastPin = pin;
       repinInFlight = null;
-      const supervisor = createRuntimeConnectionSupervisor<SessionMirror>({
-        connect: async ({ signal }): Promise<RuntimeConnection<SessionMirror>> => {
+      const supervisor = createRuntimeConnectionSupervisor<SemanticSessionView>({
+        connect: async ({ signal }): Promise<RuntimeConnection<SemanticSessionView>> => {
           const reconnectPin = terminalCanvasProjection().tmuxSize ?? lastPin ?? pin;
           lastPin = reconnectPin;
           let close!: (reason: unknown) => void;
           const closed = new Promise<unknown>((resolve) => {
             close = resolve;
           });
-          const candidate = new SessionMirror({
+          const candidate = new SemanticSessionView({
             target: name,
-            cols: reconnectPin.cols,
-            rows: reconnectPin.rows,
             onDirty: markDirty,
             onFocusChanged: (paneId) => setFocusedPaneId(paneId),
             onStatus: () => {
@@ -3052,8 +3289,8 @@ try {
               }
               markDirty();
               void candidate.windows().then(setWindowTabs);
+              void reconcileSessionRuntimeLane(name, candidate);
             },
-            onExit: () => close(new Error("tmux control client exited")),
           });
           let retired = false;
           const dispose = () => {
@@ -3076,15 +3313,18 @@ try {
       supervisor.subscribe((state) => {
         if (mirrorSupervisor !== supervisor) return;
         if (state.phase === "live" && state.value) {
-          mirror = state.value;
+          semanticView = state.value;
+          const inventory = daemonApplicationShellState()?.data?.terminalInventory;
+          if (inventory) semanticView.setInventory(inventory);
           setStatus("live");
           void state.value.windows().then(setWindowTabs);
+          void reconcileSessionRuntimeLane(name, state.value);
           markDirty();
         } else if (state.phase === "reconnecting") {
-          mirror = null;
+          semanticView = null;
           setStatus(`reconnecting ${name} (attempt ${state.attempt})…`);
         } else if (state.phase === "failed") {
-          mirror = null;
+          semanticView = null;
           setStatus("tmux connection failed");
         }
       });
@@ -3092,24 +3332,46 @@ try {
     };
     createEffect(() => {
       const next = terminalCanvasProjection().tmuxSize;
+      const runtimeLane = sessionRuntimeLane();
       // A maximized layout can hide the framebuffer entirely. Keep the live
       // tmux window at its last visible size until the canvas returns.
       if (!next) return;
-      if (pendingAttachTarget && !mirror) {
+      if (pendingAttachTarget && !semanticView) {
         const targetName = pendingAttachTarget;
         lastPin = next;
         attach(targetName);
         return;
       }
-      if (lastPin && next.cols === lastPin.cols && next.rows === lastPin.rows) return;
+      const fitKey = runtimeLane
+        ? `${runtimeLane.connectionIdentity}:${next.cols}x${next.rows}`
+        : null;
+      if (
+        lastPin &&
+        next.cols === lastPin.cols &&
+        next.rows === lastPin.rows &&
+        (!runtimeLane || runtimeLaneFitKey === fitKey)
+      )
+        return;
       if (lastPin) repinInFlight = { prev: lastPin, at: performance.now() };
       lastPin = next;
-      void mirror?.resize(next.cols, next.rows);
+      if (runtimeLane?.ownsGeometry && fitKey) {
+        void runtimeLane.fitViewport(next.cols, next.rows).then(
+          () => {
+            if (sessionRuntimeLane() === runtimeLane) runtimeLaneFitKey = fitKey;
+          },
+          (error: unknown) => {
+            if (sessionRuntimeLane() === runtimeLane) {
+              runtimeLaneFitKey = null;
+              setStatusNote(error instanceof Error ? error.message : "viewport fit rejected");
+            }
+          },
+        );
+      }
     });
     /** Re-query the mirrored session's windows into `windowTabs` — used after a
      *  NON-structural change tmux won't notify us about (a `synchronize-panes`
      *  toggle) so the `[SYNC]` chip and the menu checkbox reflect it promptly. */
-    const refreshWindows = () => void mirror?.windows().then(setWindowTabs);
+    const refreshWindows = () => void semanticView?.windows().then(setWindowTabs);
     /** The active window's `synchronize-panes` state (the toggle's live value). */
     const syncOn = () => windowTabs().find((w) => w.active)?.sync ?? false;
 
@@ -3119,7 +3381,7 @@ try {
      *  a pure tab flip; only a DIFFERENT session (re)attaches. */
     const switchTarget = (name: string) => {
       clearSelection();
-      if (name === curTarget() && mirror) {
+      if (name === curTarget() && semanticView) {
         selectPanel("terminals");
         refreshFocusRecord();
         return;
@@ -3129,7 +3391,7 @@ try {
       attach(name);
       refreshFocusRecord();
     };
-    /** ^g / F1 — show the HOME tab. The mirror is KEPT ALIVE (it keeps streaming
+    /** ^g / F1 — show the HOME tab. The semanticView is KEPT ALIVE (it keeps streaming
      *  in the background so a back-switch is instant); the session is untouched. */
     const goHome = () => {
       clearSelection();
@@ -3618,12 +3880,9 @@ try {
             snapshotActiveWorkspaceView();
             setCurTarget(intent.session);
             selectViewForPanel(intent.viewId, "terminals");
+            if (intent.paneId)
+              pendingSemanticFocus = { session: intent.session, paneId: intent.paneId };
             attach(intent.session);
-            if (intent.paneId) {
-              execFile("tmux", ["select-pane", "-t", intent.paneId], (error) => {
-                if (error) setStatusNote(`pane unavailable: ${intent.paneId}`);
-              });
-            }
           })
           .catch(() => {
             setStatusNote(
@@ -3783,23 +4042,10 @@ try {
       switchTarget(session);
     };
 
-    /** Jump to a fleet agent (M22.2 — a sidebar row click or a palette
-     *  jump-agent action): switch the workspace to its session, select its
-     *  window, focus its exact pane. `openWorkspace` points the terminal at the
-     *  session (attaching a fresh SessionMirror when it differs from the current
-     *  one). The window/pane targeting goes through tmux DIRECTLY (async execFile,
-     *  the render-loop law) rather than the live mirror: `select-window` /
-     *  `select-pane` are exactly what `mirror.switchWindow`/`focus` run under the
-     *  hood, but issuing them straight to tmux works BOTH for the already-attached
-     *  session and for a just-requested attach whose control client hasn't started
-     *  yet (its mirror only lists the active window's panes, so `mirror.focus`
-     *  would no-op on a pane in another window). tmux becomes authoritative and
-     *  the live control client converges via its own notification stream. */
+    /** Jump to a fleet agent after the target session's semantic lane is live. */
     const jumpToAgent = (a: Pick<AgentRowInput, "session" | "windowIndex" | "paneId">) => {
+      pendingSemanticFocus = { session: a.session, paneId: a.paneId };
       openWorkspace(a.session, dirForSession(a.session));
-      execFile("tmux", ["select-window", "-t", `${a.session}:${a.windowIndex}`], () => {
-        execFile("tmux", ["select-pane", "-t", a.paneId], () => {});
-      });
     };
 
     /** FRONT DOOR (M25.1): a session the app itself creates is WATCHED — the
@@ -3841,7 +4087,7 @@ try {
 
     // ── AGENT LIFECYCLE (M23.1) — spawn / restart / stop / close ────────────
     // The verbs go to tmux DIRECTLY (async execFile — the render-loop law, and
-    // the target agent may live in a session the mirror isn't attached to).
+    // the target agent may live in a session the semanticView isn't attached to).
     // The kind list / launch commands / exact argv are pure in
     // agent-lifecycle.ts; only the dialog flows and the io live here.
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -4032,7 +4278,7 @@ try {
         targetSemanticPaneId:
           ctx.paneId === undefined
             ? null
-            : (mirror
+            : (semanticView
                 ?.paneDescriptors()
                 .find((descriptor) => descriptor.runtimePaneId === ctx.paneId)?.semanticPaneId ??
               null),
@@ -4176,7 +4422,7 @@ try {
         return {
           session: curTarget(),
           dir: dirForSession(curTarget()) ?? (contextDir() || null),
-          paneId: mirror?.focusedPane() ?? undefined,
+          paneId: semanticView?.focusedPane() ?? undefined,
         };
       }
       if (mode() === "home") return homeAgentContext(selectedHomeItem());
@@ -4495,7 +4741,7 @@ try {
           surface: tab(),
           agents: fleetAgents(),
           panes: panes().map((pane) => {
-            const descriptor = mirror
+            const descriptor = semanticView
               ?.paneDescriptors()
               .find(({ runtimePaneId }) => runtimePaneId === pane.id);
             return {
@@ -4534,7 +4780,7 @@ try {
           readOnlyReason: editorReadOnly(),
         },
         multiplexerFacts: {
-          workspaceConnected: mode() === "mirror" && mirror !== null,
+          workspaceConnected: mode() === "mirror" && semanticView !== null,
           sessionWindowCount: windowTabs().length,
           windowPaneCount: panes().length,
           windowZoomed: panes().some((pane) => pane.zoomed),
@@ -4652,6 +4898,80 @@ try {
       },
     });
     const executeRendererCommand = rendererCommandExecutor.execute;
+    const sendSemanticTerminalText = (runtimePaneId: string, text: string): boolean => {
+      const replica = semanticReplicaForRuntime(runtimePaneId);
+      if (text.length === 0) return false;
+      if (!replica) {
+        if (!semanticView) return false;
+        setStatusNote("terminal runtime is reconnecting");
+        return true;
+      }
+      if (!replica.lane.ownsInput) {
+        setStatusNote("view only · another client owns terminal input");
+        return true;
+      }
+      replica.lane.sendText(replica.semanticPaneId, text);
+      return true;
+    };
+    const sendSemanticTerminalKey = (runtimePaneId: string, key: string): boolean => {
+      const replica = semanticReplicaForRuntime(runtimePaneId);
+      if (!replica) {
+        if (!semanticView) return false;
+        setStatusNote("terminal runtime is reconnecting");
+        return true;
+      }
+      if (!replica.lane.ownsInput) {
+        setStatusNote("view only · another client owns terminal input");
+        return true;
+      }
+      replica.lane.sendKey(replica.semanticPaneId, key);
+      return true;
+    };
+    const semanticViewportAcknowledged = (): boolean => {
+      const lane = sessionRuntimeLane();
+      const size = terminalCanvasProjection().tmuxSize;
+      return Boolean(
+        lane?.ownsInput &&
+        size &&
+        runtimeLaneFitKey === `${lane.connectionIdentity}:${size.cols}x${size.rows}`,
+      );
+    };
+    const submitSemanticPaneFocus = (
+      runtimePaneId: string,
+    ): "submitted" | "passive" | "unavailable" => {
+      const replica = semanticReplicaForRuntime(runtimePaneId);
+      if (!replica) {
+        setStatusNote("terminal runtime is reconnecting");
+        return "unavailable";
+      }
+      if (!replica.lane.ownsInput) {
+        setStatusNote("view only · another client owns terminal input");
+        return "passive";
+      }
+      // Optimistic local chrome is renderer state only; the daemon remains the
+      // sole tmux mutation authority and the following layout reconciles it.
+      setFocusedPaneId(runtimePaneId);
+      void replica.lane
+        .submit({
+          verb: "workspace.pane.select",
+          workspaceName: replica.lane.workspaceName,
+          semanticPaneId: replica.semanticPaneId,
+        })
+        .catch((error: unknown) => {
+          setFocusedPaneId(semanticView?.focusedPane() || null);
+          setStatusNote(error instanceof Error ? error.message : "pane focus rejected");
+        });
+      return "submitted";
+    };
+    const activateSemanticWindow = (windowIndex: number): boolean => {
+      const key = semanticWindowOrder[windowIndex];
+      const semanticPaneId = key ? semanticWindowActivePane.get(key) : undefined;
+      if (!semanticPaneId) {
+        setStatusNote("window is not yet available in the semantic runtime");
+        return false;
+      }
+      return submitSemanticPaneFocus(semanticPaneId) === "submitted";
+    };
     const applyApplicationShellFocus = (target: SemanticFocusTarget) => {
       if (target.kind === "dock-tool") {
         setActiveDockTab(target.tool);
@@ -4665,9 +4985,9 @@ try {
         const runtimePaneId = openTuiRuntimePaneId(
           target.paneId,
           panes().map((pane) => pane.id),
-          mirror?.paneDescriptors() ?? [],
+          semanticView?.paneDescriptors() ?? [],
         );
-        if (runtimePaneId && mirror) mirror.focus(runtimePaneId);
+        if (runtimePaneId) submitSemanticPaneFocus(runtimePaneId);
       } else if (target.zone === "dock-tabs") {
         setWorkbenchFocusZone("dock-tabs");
       } else if (target.zone === "dock-body") {
@@ -4711,11 +5031,12 @@ try {
         setStatusNote(`pasted ${text.length} chars`);
       },
       pasteTerminal: (text) => {
-        const pane = mirror?.focusedPane();
-        if (!pane || !mirror) return;
-        mirror.sendTextTo(pane, "\x1b[200~");
-        mirror.sendTextTo(pane, text);
-        mirror.sendTextTo(pane, "\x1b[201~");
+        const pane = semanticView?.focusedPane();
+        if (!pane || !semanticView) return;
+        if (!sendSemanticTerminalText(pane, `\x1b[200~${text}\x1b[201~`)) {
+          setStatusNote("terminal runtime is reconnecting");
+          return;
+        }
         setStatusNote(`pasted ${text.length} chars`);
       },
       ctrlC: {
@@ -4731,12 +5052,13 @@ try {
           commitMirrorCopy(current.paneId, current.anchor, current.head);
         },
         forwardTerminalCtrlC: () => {
-          const pane = mirror?.focusedPane();
-          if (!pane || !mirror) return;
+          const pane = semanticView?.focusedPane();
+          if (!pane || !semanticView) return;
           clearSelection();
           snapLive(pane);
           tapInputSent(pane);
-          mirror.sendKey("C-c");
+          if (!sendSemanticTerminalKey(pane, "C-c"))
+            setStatusNote("terminal runtime is reconnecting");
         },
       },
       runLifecycle: (command) => lifecycleExecutor.run(command),
@@ -4760,7 +5082,7 @@ try {
       target: { sessionName?: string; runtimePaneId?: string | null } = {},
       options: { announce?: boolean } = {},
     ) => {
-      const activeMirror = mirror;
+      const activeMirror = semanticView;
       if (!activeMirror) {
         if (options.announce !== false) setStatusNote("no active tmux workspace");
         return { status: "error", message: "no active tmux workspace" } as const;
@@ -4778,10 +5100,9 @@ try {
           paneDescriptors: activeMirror.paneDescriptors(),
           viewportSize: terminalCanvasProjection().tmuxSize,
         },
-        (command) =>
-          action.kind === "new-window"
-            ? activeMirror.commandList(command, terminalCanvasProjection().tmuxSize ? 3 : 2)
-            : activeMirror.command(command),
+        async () => {
+          throw new Error("Raw tmux fallback is disabled; reconnect the canonical daemon");
+        },
       );
       if (action.kind === "new-window" && result.status !== "error") {
         // Daemon creation is intentionally detached for idempotent authority.
@@ -4791,57 +5112,15 @@ try {
         const nextWindows = await activeMirror.windows();
         setWindowTabs(nextWindows);
         const created = nextWindows.find((window) => !windowsBefore?.has(window.index));
-        if (created && !created.active) activeMirror.switchWindow(created.index);
+        if (created && !created.active) activateSemanticWindow(created.index);
       }
       if (options.announce !== false) setStatusNote(result.message);
       return result;
     };
-    /**
-     * A drag has two phases. Motion is an ephemeral, latest-wins preview sent
-     * straight over the already-open tmux control channel; release is one
-     * semantic daemon mutation. The preview gives cell-rate feedback without an
-     * HTTP/verification round-trip per cell, while the commit still produces the
-     * same durable operation/receipt observed by GUI and TUI clients.
-     */
-    let pendingPaneResizePreview: { sep: Separator; cells: number } | null = null;
-    let paneResizePreviewPump: Promise<void> | null = null;
-    const drainPaneResizePreview = (): Promise<void> => {
-      if (paneResizePreviewPump) return paneResizePreviewPump;
-      paneResizePreviewPump = (async () => {
-        while (pendingPaneResizePreview) {
-          const preview = pendingPaneResizePreview;
-          pendingPaneResizePreview = null;
-          try {
-            await mirror?.command(resizePreviewCommand(preview.sep, preview.cells));
-          } catch (error) {
-            setStatusNote(
-              `resize preview failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-        }
-      })().finally(() => {
-        paneResizePreviewPump = null;
-        if (pendingPaneResizePreview) void drainPaneResizePreview();
-      });
-      return paneResizePreviewPump;
-    };
-    const queuePaneResizePreview = (sep: Separator, cells: number) => {
-      pendingPaneResizePreview = { sep, cells };
-      void drainPaneResizePreview();
-    };
-    const commitPaneResize = async (sep: Separator, cells: number) => {
-      // Wait until the final preview has reached tmux so the authority observes
-      // the exact released layout rather than racing an older in-flight cell.
-      while (pendingPaneResizePreview || paneResizePreviewPump) {
-        await drainPaneResizePreview();
-      }
-      const result = await executeSharedMultiplexerAction(
-        { kind: "resize-pane", axis: sep.axis === "x" ? "cols" : "rows", cells },
-        { runtimePaneId: sep.aId },
-        { announce: false },
-      );
-      setStatusNote(result.status === "error" ? result.message : `pane resized to ${cells} cells`);
-    };
+    /** Motion is renderer-local: the one-cell guide follows at frame rate while
+     * terminal bodies remain stable. Release emits exactly one semantic resize,
+     * and the next daemon layout is the only settled geometry authority. */
+    const commitPaneResize = () => resizeTransaction.release();
     const runPaletteAction = async (a: PaletteAction) => {
       // Usage history (M24.4): every dispatched action bumps its stable key —
       // count + lastUsed feed the "recent" group and the ranking tie-break.
@@ -4899,7 +5178,7 @@ try {
         case "jump-pane":
           selectPanel("terminals");
           if (a.session !== contextSession()) openWorkspace(a.session, dirForSession(a.session));
-          else mirror?.focus(a.paneId);
+          else submitSemanticPaneFocus(a.paneId);
           break;
         case "jump-agent":
           jumpToAgent(a);
@@ -4981,50 +5260,39 @@ try {
           break;
         }
         case "break-pane": {
-          const pid = mirror?.focusedPane();
-          // Explicit destination session — see the pane menu's break note.
-          if (pid) void mirror?.command(`break-pane -s ${pid} -t ${curTarget()}:`).catch(() => {});
-          setStatusNote("broke pane to window");
+          setStatusNote("break pane is unavailable until its semantic daemon verb lands");
           break;
         }
         case "rotate-window": {
-          const pid = mirror?.focusedPane();
-          if (pid) void mirror?.command(`rotate-window -t ${pid}`).catch(() => {});
-          setStatusNote("rotated panes");
+          setStatusNote("rotate panes is unavailable until its semantic daemon verb lands");
           break;
         }
         case "select-layout": {
-          const pid = mirror?.focusedPane();
-          if (pid) void mirror?.command(`select-layout -t ${pid} ${a.layout}`).catch(() => {});
-          setStatusNote(`layout: ${a.layout}`);
+          setStatusNote("layout presets are unavailable until their semantic daemon verb lands");
           break;
         }
         case "select-text": {
           // The pane menu verb's palette twin (M22.9) — same gate: the focused
           // pane must be app-mouse (otherwise drags already select directly).
-          const pid = mirror?.focusedPane();
+          const pid = semanticView?.focusedPane();
           const p = panes().find((x) => x.id === pid);
           if (pid && p?.appMouse) enterSelectMode(pid);
           break;
         }
         case "sync-toggle": {
-          const pid = mirror?.focusedPane();
-          if (pid) {
-            const next = syncOn() ? "off" : "on";
-            void mirror
-              ?.command(`set-window-option -t ${pid} synchronize-panes ${next}`)
-              .then(() => setTimeout(refreshWindows, 60))
-              .catch(() => {});
-            setStatusNote(`synchronize-panes ${next}`);
-          }
+          setStatusNote("synchronized input is unavailable until its semantic daemon verb lands");
           break;
         }
         case "resize-window": {
-          // Reclaim the window at our canvas size (M22.8). The mirror flips to the
-          // manual policy — the only mechanism that holds against a bigger real
-          // client (measured) — and reverts it on detach.
-          void mirror?.resizeToFit().catch(() => {});
-          setStatusNote("resized window to fit");
+          const lane = sessionRuntimeLane();
+          const size = terminalCanvasProjection().tmuxSize;
+          if (lane?.ownsGeometry && size) {
+            void lane.fitViewport(size.cols, size.rows).then(
+              () => setStatusNote("resized window to fit"),
+              (error: unknown) =>
+                setStatusNote(error instanceof Error ? error.message : "viewport fit rejected"),
+            );
+          }
           break;
         }
         case "settings":
@@ -5463,19 +5731,19 @@ try {
       if (values.edit) openEditor(values.edit);
       if (mode() === "editor" && fileNodes().length === 0) loadFileList(workspaceDir());
       if (mode() === "diff") refreshStatus();
-      // The mirror follows workspace identity, not which native surface owns
+      // The semanticView follows workspace identity, not which native surface owns
       // keyboard focus. Dock restore must not leave the terminal canvas blank.
       if (curTarget()) attach(curTarget());
       const flushMirrorFrame = () => {
         let continueAutoScroll = false;
-        // Edge auto-scroll (M25.6): while a mirror drag parks the pointer at
+        // Edge auto-scroll (M25.6): while a semanticView drag parks the pointer at
         // the pane's top/bottom content row, extend ~1 row per state tick —
         // one row per renderer frame. The clamps stop it at the
         // scrollback top (up) / the live bottom (down); release or escape
         // clears the gesture (clearSelection / the release branch in `route`).
-        if (mirror && dragAutoScroll && selecting?.surface === "mirror") {
+        if (semanticView && dragAutoScroll && selecting?.surface === "mirror") {
           const paneId = selecting.paneId;
-          const depth = mirror.scrollbackDepth(paneId);
+          const depth = semanticView.scrollbackDepth(paneId);
           const cur = Math.min(scrollOffsets.get(paneId) ?? 0, depth);
           const next = dragAutoScroll === "up" ? Math.min(cur + 1, depth) : Math.max(cur - 1, 0);
           if (next !== cur) {
@@ -5485,13 +5753,13 @@ try {
             continueAutoScroll = true;
           }
         }
-        if (!dirty || !mirror) return;
+        if (!dirty || !semanticView) return;
         dirty = false;
         const t0 = performance.now();
         // FB path: fetch geometry + cursor/offset + per-pane version only (no
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
-        const raw = mirror.panes(scrollOffsets, !FB_PANES, terminalPalette());
+        const raw = semanticView.panes(scrollOffsets, !FB_PANES, terminalPalette());
         if (FB_PANES) setPaneRuntime(livePaneRuntime(raw));
         // Size truth (M22.8, event-driven M23.5): the effective window size is
         // the layout ROOT's WxH pushed by %layout-change (the pane bounding
@@ -5512,7 +5780,7 @@ try {
           if (continueAutoScroll) markDirty();
           return;
         }
-        const effective = mirror.windowSize() ?? effectiveWindowSize(raw);
+        const effective = semanticView.windowSize() ?? effectiveWindowSize(raw);
         const mm = effective
           ? detectSizeMismatchWithRepin(pinned, effective, repinInFlight, performance.now())
           : null;
@@ -5627,7 +5895,7 @@ try {
       cleanupRegistry.set("terminal-and-editor", () => {
         void mirrorSupervisor?.stop();
         mirrorSupervisor = null;
-        mirror = null;
+        semanticView = null;
         editBuffer?.destroy();
       });
     });
@@ -5658,7 +5926,7 @@ try {
     };
     /** `/` — open the search input on the focused pane (Terminal mode only). */
     const openSearch = () => {
-      if (!mirror) return;
+      if (!semanticView) return;
       setSearch({ query: "", editing: true });
     };
     /** esc — leave search entirely: drop every pane's matches (highlights gone),
@@ -5674,15 +5942,15 @@ try {
      *  a "no matches" count so the user can retype. */
     const executeSearch = () => {
       const s = search();
-      if (!s || !mirror) return;
+      if (!s || !semanticView) return;
       const query = s.query;
       setSearch({ query, editing: false });
       if (query.length === 0) return;
-      const pid = mirror.focusedPane();
+      const pid = semanticView.focusedPane();
       if (!pid) return;
       // Store matches bottom-up (nearest the live viewport first) so the landed
       // match reads "1/N" and n walks upward — see visitOrder.
-      const matches = visitOrder(findMatches(mirror.bufferLines(pid), query));
+      const matches = visitOrder(semanticView.findTextMatches(pid, query));
       const next = new Map(paneSearches());
       next.set(pid, { query, matches, current: 0 });
       setPaneSearches(next);
@@ -5691,7 +5959,7 @@ try {
     };
     /** n / N — cycle the focused pane's current match and re-scroll to it. */
     const jumpMatch = (dir: 1 | -1) => {
-      const pid = mirror?.focusedPane();
+      const pid = semanticView?.focusedPane();
       if (!pid) return;
       const ps = paneSearches().get(pid);
       if (!ps || ps.matches.length === 0) return;
@@ -5702,7 +5970,7 @@ try {
     };
     /** The "3/17 matches" tally for the focused pane's search (input-line status). */
     const searchStatus = (): string => {
-      const pid = mirror?.focusedPane();
+      const pid = semanticView?.focusedPane();
       const ps = pid ? paneSearches().get(pid) : undefined;
       if (!ps || search()?.editing) return "";
       if (ps.matches.length === 0) return "no matches";
@@ -5749,37 +6017,14 @@ try {
         focusedPanel: focusedWorkbenchPanel(),
         filesEditorFocused: filesFocus() === "editor",
         filesEditorWritable: Boolean(editBuffer && !editorReadOnly()),
-        terminalAvailable: Boolean(mirror),
+        terminalAvailable: Boolean(semanticView),
       });
     };
-    /** Load the tmux paste buffers into the picker (name + sanitized sample). Runs
-     *  over the control client when a session is mirrored, else a plain execFile —
-     *  buffers are global tmux state, so either reaches them. */
+    /** Paste-buffer reads need a typed daemon query; keep the dormant flow
+     * capability-honest until that contract exists. */
     const loadBuffers = () => {
-      const generation = paletteBufferLoadGate.begin();
-      setPaletteBuffers([]); // loading / empty placeholder
-      const fmt = `#{buffer_name}\t#{buffer_sample}`;
-      const done = (lines: string[]) => {
-        paletteBufferLoadGate.commit(generation, () => {
-          setPaletteBuffers(parseBufferList(lines));
-          setPaletteSel(0);
-          setPaletteTop(0);
-        });
-      };
-      const failed = () => {
-        paletteBufferLoadGate.commit(generation, () => setPaletteBuffers([]));
-      };
-      if (mirror) {
-        void mirror
-          .command(`list-buffers -F ${tmuxQuote(fmt)}`)
-          .then(done)
-          .catch(failed);
-        return;
-      }
-      execFile("tmux", ["list-buffers", "-F", fmt], (err, stdout) => {
-        if (err) return failed();
-        done(stdout.split("\n").filter((l) => l.length > 0));
-      });
+      setPaletteBuffers([]);
+      setStatusNote("tmux paste buffers are unavailable until their semantic query lands");
     };
     /** Fetch one buffer's content and paste it. The control client reads replies as
      *  latin1 (byte-per-char) so multibyte glyphs must be re-encoded latin1→utf8
@@ -5788,18 +6033,7 @@ try {
       executePaletteCommand(false, { kind: "palette", surface: "paste-buffer" });
       setPaletteSel(0);
       setPaletteTop(0);
-      if (mirror) {
-        void mirror
-          .command(`show-buffer -b ${tmuxQuote(name)}`)
-          .then((lines) =>
-            pasteIntoFocused(Buffer.from(lines.join("\n"), "latin1").toString("utf8")),
-          )
-          .catch(() => {});
-        return;
-      }
-      execFile("tmux", ["show-buffer", "-b", name], (err, stdout) => {
-        if (!err) pasteIntoFocused(stdout);
-      });
+      setStatusNote(`tmux paste buffer ${name} is unavailable in the semantic runtime`);
     };
 
     // ── clipboard io (M19.4) ──────────────────────────────────────────────────
@@ -5845,15 +6079,15 @@ try {
 
     /** The focused-window pane's snapshot rows as plain strings (runs joined),
      *  reflecting exactly what's on screen incl. the current scrollback offset —
-     *  the source of truth for a mirror copy (not capture-pane). */
+     *  the source of truth for a semanticView copy (not capture-pane). */
     const paneRowTexts = (paneId: string): string[] => {
       const p = panes().find((x) => x.id === paneId);
       if (!p) return [];
       // FB path omits the styled rows (the blit reads cells directly), so read the
-      // visible row text on demand from the mirror — same trim/collapse as the run
+      // visible row text on demand from the semanticView — same trim/collapse as the run
       // join, so extractSelection copies identically.
       if (p.snapshot.rows.length === 0) {
-        return mirror?.visibleRowTexts(paneId, p.snapshot.scrollOffset) ?? [];
+        return semanticView?.visibleRowTexts(paneId, p.snapshot.scrollOffset) ?? [];
       }
       return p.snapshot.rows.map((runs) => runs.map((r) => r.text).join(""));
     };
@@ -5864,7 +6098,7 @@ try {
       // runaway span never materializes unbounded (copyText still refuses over
       // MAX_CLIP_BYTES, with the honest over-limit byte count).
       const { start, end } = orderCells(anchor, head);
-      const text = mirror?.extractText(paneId, start, end, MAX_CLIP_BYTES) ?? "";
+      const text = semanticView?.extractText(paneId, start, end, MAX_CLIP_BYTES) ?? "";
       if (text.length > 0) {
         copyText(text);
         // A completed copy ends the pane's select mode (M22.9) — forwarding
@@ -5889,7 +6123,7 @@ try {
         top: editorTop(),
         lines: editorLines(),
       });
-    /** The inclusive selected column interval on a mirror snapshot row (or editor
+    /** The inclusive selected column interval on a semanticView snapshot row (or editor
      *  buffer line), or null — used by both renders to inverse-tint the span. */
     const editorSelRange = (
       bufRow: number,
@@ -5900,7 +6134,7 @@ try {
       const { start, end } = orderCells(s.anchor, s.head);
       return rowSelectionRange(bufRow, lineLen, start, end);
     };
-    /** A mirror pane's rows with its search matches accent-tinted (all matches dim,
+    /** A semanticView pane's rows with its search matches accent-tinted (all matches dim,
      *  the current one bright) and then the active selection inverse-tinted on top.
      *  Both are pure run-splits over the snapshot; either may be absent. Matches are
      *  keyed by ABSOLUTE buffer line, mapped to the visible row via the pane's
@@ -5910,7 +6144,7 @@ try {
       const ps = paneSearches().get(pane.id);
       if (ps && ps.matches.length > 0 && ps.query.length > 0) {
         const baseY = pane.scrollbackDepth - pane.snapshot.scrollOffset;
-        const len = ps.query.length;
+        const len = ps.matches[0]?.columns ?? ps.query.length;
         rows = rows.map((runs, r) => {
           const line = baseY + r;
           let out = runs;
@@ -5961,7 +6195,7 @@ try {
       return {
         matches: ps.matches,
         current: ps.current,
-        len: ps.query.length,
+        len: ps.matches[0]?.columns ?? ps.query.length,
         baseY: paneScrollbackDepth(pane) - pane.snapshot.scrollOffset,
       };
     };
@@ -5971,11 +6205,11 @@ try {
       row: Math.max(0, Math.min(pane.height - 1, gy - HEADER_ROWS - pane.top)),
     });
     /** The view's current absolute top for a pane (M25.6): live scrollback
-     *  depth − the clamped LOCAL offset, both read from the mirror/offset map
+     *  depth − the clamped LOCAL offset, both read from the semanticView/offset map
      *  at EVENT time — the LivePane snapshot lags one 8ms tick, and a wheel
      *  that just moved the offset must map the very next pointer cell right. */
     const paneBaseY = (paneId: string): number => {
-      const depth = mirror?.scrollbackDepth(paneId) ?? 0;
+      const depth = semanticView?.scrollbackDepth(paneId) ?? 0;
       return depth - Math.max(0, Math.min(scrollOffsets.get(paneId) ?? 0, depth));
     };
     /** A pointer position as an ABSOLUTE buffer cell of `pane` (M25.6). */
@@ -5990,7 +6224,7 @@ try {
     // visible rows, and the current first-visible line. The RENDER draws the track
     // (`scrollbarCells`) and the ROUTER hit-tests / drags it (`scrollbarHitAt`,
     // `dragTop`, `pageTop`) from this ONE shape — the surface-bar discipline turned
-    // vertical. `applyScrollTop` writes a new top back to the owning signal (mirror
+    // vertical. `applyScrollTop` writes a new top back to the owning signal (semanticView
     // scroll is an offset-from-live, so it converts top → offset).
     interface ScrollGeom {
       col: number; // global x of the track column
@@ -6051,7 +6285,7 @@ try {
       return out;
     };
     /** Write a new first-visible line to the surface owning `surface`. Editor/diff
-     *  clamp to their content; the mirror converts top → offset-from-live and lets
+     *  clamp to their content; the semanticView converts top → offset-from-live and lets
      *  the 8ms pane tick re-render (same path as the wheel). */
     const applyScrollTop = (surface: ScrollSurface, top: number) => {
       if (surface.surface === "editor") {
@@ -6089,14 +6323,23 @@ try {
       return g;
     };
     const forwardPress = (pane: LivePane, gx: number, gy: number, release: boolean) => {
+      // Mouse coordinates are meaningful only for the exact viewport the
+      // daemon has acknowledged for this connection generation. Drop (rather
+      // than replay) stale clicks/wheel events across reconnects and resizes.
+      if (!semanticViewportAcknowledged()) return;
       const { col, row } = paneCell(pane, gx, gy);
-      mirror?.sendTextTo(pane.id, sgrMouse(0, col, row, release)); // fire-and-forget
+      const encoded = sgrMouse(0, col, row, release);
+      if (!sendSemanticTerminalText(pane.id, encoded))
+        setStatusNote("terminal runtime is reconnecting");
     };
     const wheel = (pane: LivePane, direction: "up" | "down", col: number, row: number) => {
       // Select mode reclaims the wheel for the LOCAL scrollback (M22.9) so
       // older output can be scrolled into view and selected.
       if (!wheelScrollsLocal(pane.appMouse, selectModePane() === pane.id)) {
-        mirror?.sendTextTo(pane.id, sgrMouse(direction === "up" ? 64 : 65, col, row, false));
+        if (!semanticViewportAcknowledged()) return;
+        const encoded = sgrMouse(direction === "up" ? 64 : 65, col, row, false);
+        if (!sendSemanticTerminalText(pane.id, encoded))
+          setStatusNote("terminal runtime is reconnecting");
         return;
       }
       const cur = scrollOffsets.get(pane.id) ?? 0;
@@ -6192,7 +6435,7 @@ try {
           diffPath: join(diffDir(), row.entry.path),
         };
       }
-      // mirror: gy=0 is the WINDOW STRIP; gy=1 is per-pane native chrome —
+      // semanticView: gy=0 is the WINDOW STRIP; gy=1 is per-pane native chrome —
       // a right-click there opens the window menu. The window under a label span is
       // the target; an empty-area / button right-click (span miss) falls back to the
       // ACTIVE window. This dual targeting means the menu still opens even if the
@@ -6434,25 +6677,6 @@ try {
           closeMenu();
           return;
         }
-        // Synchronize-panes is a WINDOW option tmux won't notify us about, so we
-        // flip it explicitly and re-query the strip. Keep the menu OPEN so the
-        // ✓/✗ checkbox visibly flips (every other pane verb closes on fire).
-        if (id === "sync-toggle") {
-          const next = syncOn() ? "off" : "on";
-          void mirror
-            ?.command(`set-window-option -t ${pid} synchronize-panes ${next}`)
-            .then(() => setTimeout(refreshWindows, 60))
-            .catch(() => {});
-          setStatusNote(`synchronize-panes ${next}`);
-          return;
-        }
-        if (id.startsWith("layout:")) {
-          const name = id.slice("layout:".length);
-          void mirror?.command(`select-layout -t ${pid} ${name}`).catch(() => {});
-          setStatusNote(`layout: ${name}`);
-          closeMenu();
-          return;
-        }
         const sharedAction: TuiMultiplexerAction | null =
           id === "split-h"
             ? { kind: "split-pane-right" }
@@ -6470,16 +6694,6 @@ try {
           void executeSharedMultiplexerAction(sharedAction, { runtimePaneId: pid });
           return;
         }
-        const cmd =
-          id === "break"
-            ? // Pin the destination to THIS session — break-pane's default
-              // `-t` resolves to the globally-active client's session, which
-              // could fling the pane into an unrelated session.
-              `break-pane -s ${pid} -t ${curTarget()}:`
-            : id === "rotate"
-              ? `rotate-window -t ${pid}`
-              : "";
-        if (cmd) void mirror?.command(cmd).catch(() => {});
         closeMenu();
         return;
       }
@@ -6891,21 +7105,22 @@ try {
       }
       if (evt.ctrl && evt.name === "t") {
         const tabs = windowTabs();
-        if (tabs.length > 1 && mirror) {
+        if (tabs.length > 1 && semanticView) {
           const cur = tabs.findIndex((w) => w.active);
-          mirror.switchWindow(tabs[(cur + 1) % tabs.length]!.index);
+          activateSemanticWindow(tabs[(cur + 1) % tabs.length]!.index);
         }
         return;
       }
       if (evt.ctrl && evt.name === "o") {
         const ps = panes();
-        if (ps.length > 1 && mirror) {
-          const cur = ps.findIndex((p) => p.id === mirror!.focusedPane());
-          mirror.focus(ps[(cur + 1) % ps.length]!.id);
+        if (ps.length > 1 && semanticView) {
+          const cur = ps.findIndex((p) => p.id === semanticView!.focusedPane());
+          const nextPaneId = ps[(cur + 1) % ps.length]!.id;
+          submitSemanticPaneFocus(nextPaneId);
         }
         return;
       }
-      if (!mirror) return;
+      if (!semanticView) return;
       // Escape ends select mode (M22.9) — forwarding resumes; the key is
       // consumed here rather than sent to the pane's app.
       if (evt.name === "escape" && selectModePane() !== null) {
@@ -6923,39 +7138,43 @@ try {
         evt.name === "/" &&
         !evt.ctrl &&
         !evt.meta &&
-        (scrollOffsets.get(mirror.focusedPane()) ?? 0) > 0
+        (scrollOffsets.get(semanticView.focusedPane()) ?? 0) > 0
       ) {
         openSearch();
         return;
       }
-      // ^c copies an active mirror selection; with no selection it passes through
+      // ^c copies an active semanticView selection; with no selection it passes through
       // to the pane (interrupt) exactly as before.
       if (evt.ctrl && evt.name === "c") {
         const s = selection();
         applicationRootController.handleCtrlC({
           layer: "terminal",
-          mirrorAvailable: Boolean(mirror),
+          mirrorAvailable: Boolean(semanticView),
           hasTerminalSelection: Boolean(s && s.surface === "mirror"),
         });
         return;
       }
       // Any key that reaches the pane retires a stale selection highlight.
       clearSelection();
-      snapLive(mirror.focusedPane());
-      tapInputSent(mirror.focusedPane()); // t0: keystroke dispatched to the pane
+      snapLive(semanticView.focusedPane());
+      tapInputSent(semanticView.focusedPane()); // t0: keystroke dispatched to the pane
       // The input fast path (M21.5): sendKey/sendText are fire-and-forget —
       // no reply Promise, literals coalesced (ordering preserved downstream).
       if (evt.ctrl && evt.name.length === 1) {
-        mirror.sendKey(`C-${evt.name}`);
+        if (!sendSemanticTerminalKey(semanticView.focusedPane(), `C-${evt.name}`))
+          setStatusNote("terminal runtime is reconnecting");
         return;
       }
       const named = KEYMAP[evt.name];
       if (named) {
-        mirror.sendKey(named);
+        if (!sendSemanticTerminalKey(semanticView.focusedPane(), named))
+          setStatusNote("terminal runtime is reconnecting");
         return;
       }
       if (evt.name.length === 1 && !evt.meta) {
-        mirror.sendText(evt.shift ? evt.name.toUpperCase() : evt.name);
+        const text = evt.shift ? evt.name.toUpperCase() : evt.name;
+        if (!sendSemanticTerminalText(semanticView.focusedPane(), text))
+          setStatusNote("terminal runtime is reconnecting");
       }
     });
 
@@ -6998,7 +7217,7 @@ try {
         return;
       }
       const window = tabs[i];
-      if (window) mirror?.switchWindow(window.index);
+      if (window) activateSemanticWindow(window.index);
     };
 
     // ── HEADER-ROW AFFORDANCE BUTTONS (M19.5) ────────────────────────────────
@@ -7350,7 +7569,7 @@ try {
         }
         return;
       }
-      // mirror mode: the per-window strip lives on gy=0. Pane actions occupy the
+      // semanticView mode: the per-window strip lives on gy=0. Pane actions occupy the
       // segmented native row immediately above each framebuffer on gy=1.
       if (gy === 0) {
         const i = spanHit(windowSpans(), x);
@@ -7475,13 +7694,33 @@ try {
             };
             dispatchTerminalPaneChromePointerIntent(paneChromeIntent, {
               hover: setHoveredTerminalPaneAction,
-              focus: (paneId) => mirror?.focus(paneId),
+              focus: (paneId) => {
+                submitSemanticPaneFocus(paneId);
+              },
               action: (paneId, _actionId, actionIndex, semanticIntent) => {
                 setPressedTerminalPaneAction({ paneId, actionIndex });
                 if (semanticIntent.commandId === "workspace.pane.menu.open") {
                   openPaneActions(paneId);
                 } else if (semanticIntent.commandId === "workspace.windowMode.maximize.toggle") {
-                  void mirror?.command(`resize-pane -Z -t ${paneId}`).catch(() => {});
+                  const replica = semanticReplicaForRuntime(paneId);
+                  if (!replica) {
+                    setStatusNote("terminal runtime is reconnecting");
+                  } else if (!replica.lane.ownsInput) {
+                    setStatusNote("view only · another client owns terminal input");
+                  } else {
+                    void replica.lane
+                      .submit({
+                        verb: "workspace.pane.zoom.toggle",
+                        workspaceName: replica.lane.workspaceName,
+                        semanticPaneId: replica.semanticPaneId,
+                        desired: "toggle",
+                      })
+                      .catch((error: unknown) =>
+                        setStatusNote(
+                          error instanceof Error ? error.message : "pane zoom rejected",
+                        ),
+                      );
+                  }
                 }
               },
               menu: openPaneActions,
@@ -7758,7 +7997,7 @@ try {
         setSelection({
           surface: "mirror",
           paneId: pane.id,
-          anchor: trimAdjustCell(selAnchor, (mirror?.lineTrim(paneId) ?? 0) - selTrimBase),
+          anchor: trimAdjustCell(selAnchor, (semanticView?.lineTrim(paneId) ?? 0) - selTrimBase),
           head: paneAbsCell(pane, x, gy),
         });
       } else {
@@ -7810,21 +8049,18 @@ try {
           const size = resizedSize(dragging.sep, pointer - dragging.originPointer);
           if (size !== dragging.lastSize) {
             dragging.lastSize = size;
-            setActivePaneResize({
-              sep: dragging.sep,
-              delta: size - dragging.sep.aSize,
-            });
-            queuePaneResizePreview(dragging.sep, size);
+            resizeTransaction.move(size);
           }
         }
         if (isEnd) {
           if (dragging.kind === "border" && dragging.lastSize !== dragging.sep.aSize) {
-            void commitPaneResize(dragging.sep, dragging.lastSize);
+            commitPaneResize();
+          } else if (dragging.kind === "border") {
+            resizeTransaction.cancelDrag();
           }
           dragging = null;
-          setActivePaneResize(null);
           setHoveredPaneSeparator(null);
-          setNote("");
+          if (resizeTransactionState().phase !== "pending") setNote("");
         }
         return true;
       }
@@ -8144,7 +8380,7 @@ try {
       // A left-button "down" may START a resize drag (M19.3) — checked BEFORE the
       // region routing below so it wins over sidebar-open / pane-selection. The
       // sidebar/main boundary (last sidebar col or first main col) starts a sidebar
-      // drag; a pane SEPARATOR (a gutter cell between two panes, mirror only)
+      // drag; a pane SEPARATOR (a gutter cell between two panes, semanticView only)
       // starts a border drag. Neither fights selection: selection begins only from
       // an in-pane down, never a boundary/gutter cell.
       if (type === "down" && e.button !== 2) {
@@ -8158,9 +8394,26 @@ try {
             )
           : null;
         if (sep) {
+          if (resizeTransaction.state().phase !== "idle") {
+            setStatusNote("finish the current pane resize first");
+            return;
+          }
+          const lane = sessionRuntimeLane();
+          const semanticPaneId = semanticPaneIdForRuntime(sep.aId);
+          if (!lane?.ownsGeometry || !semanticPaneId) {
+            setStatusNote("view only · another client owns pane geometry");
+            return;
+          }
           setHoverIf(null);
           setHoveredPaneSeparator(null);
           setActivePaneResize({ sep, delta: 0 });
+          const beganResize = resizeTransaction.begin({
+            workspaceName: lane.workspaceName,
+            semanticPaneId,
+            axis: sep.axis === "x" ? "cols" : "rows",
+            canonicalCells: sep.aSize,
+          });
+          if (!beganResize) return;
           dragging = {
             kind: "border",
             sep,
@@ -8254,7 +8507,7 @@ try {
         const dir = e.scroll?.direction;
         if (dir === "up" || dir === "down") {
           const paneId = selecting.paneId;
-          const depth = mirror?.scrollbackDepth(paneId) ?? 0;
+          const depth = semanticView?.scrollbackDepth(paneId) ?? 0;
           const cur = Math.min(scrollOffsets.get(paneId) ?? 0, depth);
           const next =
             dir === "up" ? Math.min(cur + SCROLL_STEP, depth) : Math.max(cur - SCROLL_STEP, 0);
@@ -8270,7 +8523,7 @@ try {
         resolveHover(e.x, y);
         return;
       }
-      // Release ends a live selection: the mirror copies what was dragged; the
+      // Release ends a live selection: the semanticView copies what was dragged; the
       // editor keeps its selection for ^c. Discrete word/line selections leave
       // `selecting` null, so their trailing release passes straight through.
       if (type === "up" || type === "drag-end" || type === "drop") {
@@ -8467,7 +8720,7 @@ try {
       );
       if (!pane) return;
       if (type === "down") {
-        mirror?.focus(pane.id);
+        if (submitSemanticPaneFocus(pane.id) !== "submitted") return;
         // Where the press goes (M22.9 + M24.2): plain panes and select mode run
         // the selection machine below; app-mouse panes follow the pane's drag
         // default (agents select, others forward; shift inverts) — a select
@@ -8491,7 +8744,7 @@ try {
             gy,
             cell: paneCell(pane, x, gy),
             absCell: paneAbsCell(pane, x, gy),
-            trimBase: mirror?.lineTrim(pane.id) ?? 0,
+            trimBase: semanticView?.lineTrim(pane.id) ?? 0,
           };
           return;
         }
@@ -8514,7 +8767,7 @@ try {
           commitMirrorCopy(pane.id, anchor, head);
         } else {
           selAnchor = paneAbsCell(pane, x, gy);
-          selTrimBase = mirror?.lineTrim(pane.id) ?? 0;
+          selTrimBase = semanticView?.lineTrim(pane.id) ?? 0;
           selecting = { surface: "mirror", paneId: pane.id };
           setSelection(null);
         }
@@ -8550,17 +8803,34 @@ try {
       </Show>
     );
     const richWidgetOverlay = (paneId: string) => (
-      <Show when={richWidgetFor(paneId)}>
-        {(surface) => (
-          <TuiRichWidgetSurface
-            surface={surface()}
-            theme={semanticTheme()}
-            syntaxStyle={markdownSyntaxStyle()}
-            width={panesById().get(paneId)?.width ?? 1}
-            height={panesById().get(paneId)?.height ?? 1}
-          />
-        )}
-      </Show>
+      <For each={richPlacementsFor(paneId)}>
+        {(placement) => {
+          const rect = placement.hostRect!;
+          return (
+            <Show when={richWidgetFor(placement)}>
+              {(surface) => (
+                <box
+                  id={placement.renderableId}
+                  position="absolute"
+                  left={rect.left}
+                  top={rect.top}
+                  width={rect.width}
+                  height={rect.height}
+                  overflow="hidden"
+                >
+                  <TuiRichWidgetSurface
+                    surface={surface()}
+                    theme={semanticTheme()}
+                    syntaxStyle={markdownSyntaxStyle()}
+                    width={rect.width}
+                    height={rect.height}
+                  />
+                </box>
+              )}
+            </Show>
+          );
+        }}
+      </For>
     );
     const interaction = createMemo(() => {
       dialogRev();
@@ -8793,8 +9063,9 @@ try {
                           <For each={paneIds()}>
                             {(id) => {
                               const pane = () => panesById().get(id);
+                              const semanticReplica = () => semanticReplicaForRuntime(id);
                               return (
-                                <Show when={pane()}>
+                                <Show when={pane() && semanticReplica()}>
                                   <box
                                     position="absolute"
                                     left={pane()!.left}
@@ -8807,8 +9078,8 @@ try {
                                     <pane_surface
                                       width={pane()!.width}
                                       height={pane()!.height}
-                                      mirror={mirror!}
-                                      paneId={id}
+                                      mirror={semanticReplica()!.lane.source}
+                                      paneId={semanticReplica()?.semanticPaneId ?? id}
                                       defaultFg={terminalPalette().foreground}
                                       defaultBg={terminalPalette().background}
                                       terminalPalette={terminalPalette()}
@@ -8816,7 +9087,13 @@ try {
                                       searchCur={terminalPalette().searchCurrent}
                                       scrollOffset={pane()!.snapshot.scrollOffset}
                                       paneFocused={paneIsFocused(id)}
-                                      contentVersion={paneRuntimeFor(id)?.version ?? 0}
+                                      contentVersion={
+                                        semanticPaneVersions().get(
+                                          semanticReplica()?.semanticPaneId ?? "",
+                                        ) ??
+                                        paneRuntimeFor(id)?.version ??
+                                        0
+                                      }
                                       selRange={mirrorSelForPane(id)}
                                       search={mirrorSearchForPane(pane()!)}
                                     />

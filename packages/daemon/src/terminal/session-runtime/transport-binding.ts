@@ -1,7 +1,11 @@
 import { z } from "zod";
 import {
   TerminalAttachmentSemanticPaneIdSchemaZ,
+  SessionRuntimeSemanticIntentSchemaZ,
   type SessionRuntimeControllerLease,
+  type SessionRuntimeSemanticIntent,
+  type TerminalDeliveryOffer,
+  type TerminalDeliveryServerMessage,
 } from "@tmux-ide/contracts";
 import type {
   SessionRuntimeConsumer,
@@ -29,6 +33,7 @@ export interface SessionRuntimeTransportBindingRequest {
   /** Exact daemon-resolved grant. */
   readonly allowedSourcePaneIds: readonly string[];
   readonly interactive: boolean;
+  readonly ownsGeometry?: boolean;
 }
 
 interface SharedClient {
@@ -37,6 +42,8 @@ interface SharedClient {
   interactiveRefs: number;
   lease: SessionRuntimeControllerLease | null;
   readonly grantRefs: Map<string, number>;
+  /** Live geometry-capable transports in admission order; newest wins. */
+  readonly geometryTransportLeaseIds: string[];
 }
 
 function assertLiveScope(
@@ -66,6 +73,9 @@ export class SessionRuntimeTransportBinding {
   readonly #allowedSourcePaneIds: ReadonlySet<string>;
   readonly #contributedSourcePaneIds: ReadonlySet<string>;
   readonly #interactive: boolean;
+  readonly #deliverySubscriberId: string;
+  readonly #transportLeaseId: string;
+  readonly #intentHandles = new Map<string, SessionRuntimeExecutionHandle>();
   #baseHandle: SessionRuntimeExecutionHandle | null;
   #closed = false;
 
@@ -75,12 +85,20 @@ export class SessionRuntimeTransportBinding {
     allowedSourcePaneIds: readonly string[],
     contributedSourcePaneIds: readonly string[],
     interactive: boolean,
+    transportLeaseId: string,
+    ownsGeometry: boolean,
   ) {
     this.#binder = binder;
     this.#shared = shared;
     this.#allowedSourcePaneIds = new Set(allowedSourcePaneIds);
     this.#contributedSourcePaneIds = new Set(contributedSourcePaneIds);
     this.#interactive = interactive;
+    // Host identity is the stable controller principal. Delivery identity is a
+    // transport lifecycle: overlapping reconnects need independent ACK,
+    // visibility and close namespaces even when they share controller power.
+    this.#deliverySubscriberId = `${shared.consumer.clientId}:${transportLeaseId}`;
+    this.#transportLeaseId = transportLeaseId;
+    if (interactive && ownsGeometry) shared.geometryTransportLeaseIds.push(transportLeaseId);
     if (interactive && shared.lease === null) shared.lease = shared.consumer.acquireController();
     const lease = shared.lease;
     this.#baseHandle =
@@ -89,7 +107,16 @@ export class SessionRuntimeTransportBinding {
             shared.consumer,
             lease,
             allowedSourcePaneIds,
-            (semanticPaneId) => assertLiveScope(shared, lease, semanticPaneId),
+            (semanticPaneId) => {
+              this.#assertIntentScopeOpen();
+              assertLiveScope(shared, lease, semanticPaneId);
+              if (semanticPaneId !== undefined && !this.#allowedSourcePaneIds.has(semanticPaneId)) {
+                throw new SessionRuntimeControllerLeaseError(
+                  "invalid-source-pane-binding",
+                  "The pane is outside this transport binding's live grant.",
+                );
+              }
+            },
           )
         : null;
   }
@@ -109,6 +136,90 @@ export class SessionRuntimeTransportBinding {
     if (!this.#interactive || !this.#baseHandle)
       throw new Error("Passive transport has no input authority");
     this.#binder.registry.assertExecutionHandle(this.#baseHandle, semanticPaneId);
+  }
+
+  openTerminalDelivery(
+    semanticPaneId: string,
+    offer: TerminalDeliveryOffer,
+    onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+  ) {
+    this.#assertOpen();
+    if (!this.#allowedSourcePaneIds.has(semanticPaneId)) {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-source-pane-binding",
+        "The pane is not in the transport's live grant.",
+      );
+    }
+    return this.#shared.consumer.openTerminalDelivery(
+      this.#deliverySubscriberId,
+      semanticPaneId,
+      offer,
+      onMessage,
+    );
+  }
+
+  submitIntent(operationId: string, intentInput: SessionRuntimeSemanticIntent) {
+    this.#assertOpen();
+    const intent = SessionRuntimeSemanticIntentSchemaZ.parse(intentInput);
+    const paneId = "semanticPaneId" in intent ? intent.semanticPaneId : undefined;
+    this.assertController(paneId);
+    if (!this.#shared.lease) {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "The transport no longer owns controller authority.",
+      );
+    }
+    const scopeKey = paneId ?? "session";
+    let handle = this.#intentHandles.get(scopeKey);
+    if (!handle) {
+      const lease = this.#shared.lease;
+      handle = this.#binder.registry.createExecutionHandle(
+        this.#shared.consumer,
+        lease,
+        [...this.#allowedSourcePaneIds],
+        () => {
+          this.#assertIntentScopeOpen();
+          assertLiveScope(this.#shared, lease, paneId);
+          if (paneId !== undefined && !this.#allowedSourcePaneIds.has(paneId)) {
+            throw new SessionRuntimeControllerLeaseError(
+              "invalid-source-pane-binding",
+              "The pane is outside this transport binding's live grant.",
+            );
+          }
+        },
+      );
+      this.#intentHandles.set(scopeKey, handle);
+    }
+    return this.#binder.registry.submitAuthenticatedIntent(handle, operationId, intent);
+  }
+
+  sendInput(semanticPaneId: string, kind: "text" | "key", data: string): void {
+    this.assertController(semanticPaneId);
+    const lease = this.#shared.lease;
+    if (!lease) {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "The transport no longer owns controller authority.",
+      );
+    }
+    this.#shared.consumer.sendInput(lease, semanticPaneId, kind, data);
+  }
+
+  fitViewport(cols: number, rows: number): void {
+    this.assertController();
+    if (this.#shared.geometryTransportLeaseIds.at(-1) !== this.#transportLeaseId) {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-client-capability",
+        "The transport does not own the live geometry lease.",
+      );
+    }
+    const lease = this.#shared.lease;
+    if (!lease)
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "Geometry authority retired.",
+      );
+    this.#shared.consumer.fitViewport(lease, cols, rows);
   }
 
   executionHandleForSource(semanticPaneId: string): SessionRuntimeExecutionHandle {
@@ -134,6 +245,8 @@ export class SessionRuntimeTransportBinding {
     this.#shared.lease = null;
     target.#shared.lease = handedOff;
     this.#baseHandle = null;
+    this.#intentHandles.clear();
+    target.#intentHandles.clear();
     target.#baseHandle = target.#binder.registry.createExecutionHandle(
       target.#shared.consumer,
       handedOff,
@@ -145,6 +258,9 @@ export class SessionRuntimeTransportBinding {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    const geometryIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
+    if (geometryIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(geometryIndex, 1);
+    this.#intentHandles.clear();
     await this.#binder.release(this.#shared, this.#contributedSourcePaneIds, this.#interactive);
   }
 
@@ -160,6 +276,14 @@ export class SessionRuntimeTransportBinding {
   #assertOpen(): void {
     if (this.#closed) throw new Error("SessionRuntime transport binding is closed");
   }
+
+  #assertIntentScopeOpen(): void {
+    if (!this.#closed) return;
+    throw new SessionRuntimeControllerLeaseError(
+      "invalid-source-pane-binding",
+      "The transport binding closed before the queued operation reached its effect.",
+    );
+  }
 }
 
 export class SessionRuntimeTransportBinder {
@@ -170,6 +294,7 @@ export class SessionRuntimeTransportBinder {
     | "createExecutionHandle"
     | "bindExecutionSource"
     | "assertExecutionHandle"
+    | "submitAuthenticatedIntent"
   >;
   readonly #clients: Map<string, SharedClient>;
 
@@ -200,6 +325,7 @@ export class SessionRuntimeTransportBinder {
         interactiveRefs: 0,
         lease: null,
         grantRefs: new Map(),
+        geometryTransportLeaseIds: [],
       };
       this.#clients.set(key, shared);
     }
@@ -215,6 +341,8 @@ export class SessionRuntimeTransportBinder {
         allowedSourcePaneIds,
         contributedSourcePaneIds,
         request.interactive,
+        request.transportLeaseId,
+        request.ownsGeometry === true,
       );
     } catch (error) {
       void this.release(shared, new Set(contributedSourcePaneIds), request.interactive);
