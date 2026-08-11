@@ -5,12 +5,6 @@ import {
   type PaneStreamLeaseRequest,
   type PaneStreamViewerMode,
 } from "@tmux-ide/contracts";
-import type { SemanticPaneCatalog } from "../attachments/semantic-pane-catalog.ts";
-import {
-  TerminalInputAuthority,
-  TerminalInputAuthorityConflictError,
-  type TerminalInputOwner,
-} from "../input-authority.ts";
 
 /**
  * PaneStreamLeaseManager — in-memory authority for pane-stream leases (m43
@@ -54,6 +48,7 @@ export interface PaneStreamIssueContext {
   readonly projectIdentity: string;
   /** Daemon-resolved tmux session backing the workspace. Never renderer input. */
   readonly sessionName: string;
+  readonly hostClientId?: string;
 }
 
 export type PaneStreamLeaseStatus = "awaiting-redemption" | "active";
@@ -61,6 +56,8 @@ export type PaneStreamLeaseStatus = "awaiting-redemption" | "active";
 export interface PaneStreamLeaseDescriptor {
   readonly leaseId: string;
   readonly requestId: string;
+  /** Daemon-internal trusted host identity; never copied to renderer descriptors. */
+  readonly hostClientId: string | null;
   readonly workspaceName: string;
   /** Daemon-internal: consumed by the endpoint, never sent to a renderer. */
   readonly sessionName: string;
@@ -106,16 +103,13 @@ export interface PaneStreamLeaseManagerOptions {
   readonly ticketTtlMs?: number;
   /** Bounds the daemon's own serialized work after delivery. */
   readonly redemptionProcessingTtlMs?: number;
-  /** Both options are supplied together in production. Omitting both retains
-   * the isolated per-pane authority used by narrow unit-test compositions. */
-  readonly inputAuthority?: TerminalInputAuthority;
-  readonly semanticPaneCatalog?: Pick<SemanticPaneCatalog, "resolveMany">;
 }
 
 interface LeaseState {
   leaseId: string;
   requestId: string;
   projectIdentity: string;
+  hostClientId: string | null;
   request: PaneStreamLeaseRequest;
   sessionName: string;
   status: PaneStreamLeaseStatus;
@@ -123,8 +117,6 @@ interface LeaseState {
   expiresAt: number;
   ticketDigest: Buffer | null;
   ticketExpiresAt: number | null;
-  /** Null for read-only and isolated legacy compositions. */
-  interactiveWindowIds: readonly string[] | null;
 }
 
 function positiveDuration(value: number | undefined, fallback: number, label: string): number {
@@ -143,10 +135,6 @@ function digestsMatch(left: Buffer, right: Buffer): boolean {
   return left.byteLength === right.byteLength && timingSafeEqual(left, right);
 }
 
-function paneGrantKey(workspaceName: string, semanticPaneId: string): string {
-  return `${workspaceName}\u0000${semanticPaneId}`;
-}
-
 function validateBinding(binding: PaneStreamLeaseBinding): PaneStreamLeaseBinding {
   return {
     daemonInstanceId: BindingIdSchemaZ.parse(binding.daemonInstanceId),
@@ -162,13 +150,9 @@ export class PaneStreamLeaseManager {
   readonly #createId: () => string;
   readonly #ticketTtlMs: number;
   readonly #redemptionProcessingTtlMs: number;
-  readonly #inputAuthority: TerminalInputAuthority | null;
-  readonly #semanticPaneCatalog: Pick<SemanticPaneCatalog, "resolveMany"> | null;
   readonly #leases = new Map<string, LeaseState>();
   readonly #requests = new Map<string, string>();
   readonly #pendingRequests = new Set<string>();
-  /** Isolated fallback for tests/embedders that omit shared runtime resolution. */
-  readonly #interactivePaneOwners = new Map<string, string>();
 
   constructor(options: PaneStreamLeaseManagerOptions) {
     this.#instanceId = BindingIdSchemaZ.parse(options.daemonInstanceId);
@@ -181,13 +165,6 @@ export class PaneStreamLeaseManager {
       60_000,
       "redemptionProcessingTtlMs",
     );
-    if ((options.inputAuthority === undefined) !== (options.semanticPaneCatalog === undefined)) {
-      throw new TypeError(
-        "inputAuthority and semanticPaneCatalog must be provided together for pane streaming.",
-      );
-    }
-    this.#inputAuthority = options.inputAuthority ?? null;
-    this.#semanticPaneCatalog = options.semanticPaneCatalog ?? null;
   }
 
   async issue(
@@ -197,6 +174,7 @@ export class PaneStreamLeaseManager {
     const parsedRequest = PaneStreamLeaseRequestSchemaZ.parse(request);
     const requestId = RequestIdSchemaZ.parse(context.requestId);
     const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);
+    const hostClientId = context.hostClientId ? BindingIdSchemaZ.parse(context.hostClientId) : null;
     const sessionName = SessionNameSchemaZ.parse(context.sessionName);
     this.#expire(this.#now());
     if (this.#requests.has(requestId) || this.#pendingRequests.has(requestId)) {
@@ -205,17 +183,6 @@ export class PaneStreamLeaseManager {
     this.#pendingRequests.add(requestId);
 
     try {
-      if (parsedRequest.viewerMode === "interactive" && this.#inputAuthority === null) {
-        for (const pane of parsedRequest.panes) {
-          if (this.#interactivePaneOwners.has(paneGrantKey(parsedRequest.workspaceName, pane))) {
-            throw new PaneStreamLeaseError(
-              "interactive-viewer-conflict",
-              `The pane ${pane} already has an interactive input owner.`,
-            );
-          }
-        }
-      }
-
       const leaseId = this.#freshId();
       const issuedAt = this.#now();
       const ticketBytes = this.#randomBytes(32);
@@ -226,33 +193,11 @@ export class PaneStreamLeaseManager {
         );
       }
       const redemptionTicket = `ps1_${Buffer.from(ticketBytes).toString("base64url")}`;
-      let interactiveWindowIds: readonly string[] | null = null;
-      if (parsedRequest.viewerMode === "interactive" && this.#inputAuthority !== null) {
-        try {
-          const resolutions = await this.#semanticPaneCatalog!.resolveMany(
-            parsedRequest.panes.map((semanticPaneId) => ({
-              workspaceName: parsedRequest.workspaceName,
-              semanticPaneId,
-            })),
-          );
-          interactiveWindowIds = [
-            ...new Set(resolutions.map((resolution) => resolution.source.windowId)),
-          ];
-          this.#inputAuthority.claim(inputOwner(leaseId), interactiveWindowIds);
-        } catch (error) {
-          if (error instanceof TerminalInputAuthorityConflictError) {
-            throw new PaneStreamLeaseError(
-              "interactive-viewer-conflict",
-              "The resolved runtime window already has an interactive input owner.",
-            );
-          }
-          throw error;
-        }
-      }
       const state: LeaseState = {
         leaseId,
         requestId,
         projectIdentity,
+        hostClientId,
         request: parsedRequest,
         sessionName,
         status: "awaiting-redemption",
@@ -260,15 +205,9 @@ export class PaneStreamLeaseManager {
         expiresAt: issuedAt + this.#ticketTtlMs,
         ticketDigest: hashTicket(redemptionTicket),
         ticketExpiresAt: issuedAt + this.#ticketTtlMs,
-        interactiveWindowIds,
       };
       this.#leases.set(leaseId, state);
       this.#requests.set(requestId, leaseId);
-      if (parsedRequest.viewerMode === "interactive" && this.#inputAuthority === null) {
-        for (const pane of parsedRequest.panes) {
-          this.#interactivePaneOwners.set(paneGrantKey(parsedRequest.workspaceName, pane), leaseId);
-        }
-      }
       const issued = { descriptor: this.#descriptor(state) } as IssuedPaneStreamLease;
       Object.defineProperty(issued, "redemptionTicket", {
         value: redemptionTicket,
@@ -405,16 +344,6 @@ export class PaneStreamLeaseManager {
     if (this.#leases.get(state.leaseId) !== state) return;
     this.#leases.delete(state.leaseId);
     this.#requests.delete(state.requestId);
-    if (state.interactiveWindowIds !== null) {
-      this.#inputAuthority!.release(inputOwner(state.leaseId));
-    } else if (state.request.viewerMode === "interactive") {
-      for (const pane of state.request.panes) {
-        const key = paneGrantKey(state.request.workspaceName, pane);
-        if (this.#interactivePaneOwners.get(key) === state.leaseId) {
-          this.#interactivePaneOwners.delete(key);
-        }
-      }
-    }
     state.ticketDigest?.fill(0);
     state.ticketDigest = null;
     state.ticketExpiresAt = null;
@@ -424,6 +353,7 @@ export class PaneStreamLeaseManager {
     return {
       leaseId: state.leaseId,
       requestId: state.requestId,
+      hostClientId: state.hostClientId,
       workspaceName: state.request.workspaceName,
       sessionName: state.sessionName,
       panes: [...state.request.panes],
@@ -433,8 +363,4 @@ export class PaneStreamLeaseManager {
       expiresAt: state.expiresAt,
     };
   }
-}
-
-function inputOwner(leaseId: string): TerminalInputOwner {
-  return { transport: "pane-stream", leaseId };
 }

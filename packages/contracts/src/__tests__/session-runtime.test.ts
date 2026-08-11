@@ -75,4 +75,26 @@ describe("session runtime architecture contract", () => {
       ).toBe(phase);
     },
   );
+
+  it("publishes authenticated source identity only on the final observed receipt", () => {
+    const base = {
+      type: "interaction.receipt" as const,
+      operationId: "2a50f1d4-6f57-4f02-8b10-b94bf24967ec",
+      sequence: 1,
+      origin: "sdk" as const,
+      workspaceName: "project",
+      semanticPaneId: "pane.tests",
+      sourceSemanticPaneId: "pane.editor",
+      operationKind: "workspace.pane.send" as const,
+      summary: { characterCount: 4, byteCount: 4, submitted: true },
+      at: "2026-08-11T10:00:00.000Z",
+      resourceRevision: null,
+    };
+    expect(InteractionReceiptSchemaZ.safeParse({ ...base, phase: "observed" }).success).toBe(true);
+    expect(InteractionReceiptSchemaZ.safeParse({ ...base, phase: "accepted" }).success).toBe(false);
+    expect(
+      InteractionReceiptSchemaZ.safeParse({ ...base, origin: "external", phase: "observed" })
+        .success,
+    ).toBe(false);
+  });
 });

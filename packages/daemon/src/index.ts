@@ -291,13 +291,6 @@ export {
   type SessionRuntimeMultiplexerBackendOptions,
 } from "./terminal/session-runtime/multiplexer-backend.ts";
 export {
-  TerminalInputAuthority,
-  TerminalInputAuthorityConflictError,
-  type TerminalInputAuthoritySnapshot,
-  type TerminalInputOwner,
-  type TerminalInputTransport,
-} from "./terminal/input-authority.ts";
-export {
   attachPaneStreamWebSocket,
   type PaneStreamWebSocketBoundary,
 } from "./server/pane-stream-upgrade.ts";

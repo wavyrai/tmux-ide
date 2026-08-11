@@ -18,6 +18,7 @@ import {
   type TerminalAttachmentViewerMode,
   type TerminalAttachmentViewport,
 } from "@tmux-ide/contracts";
+import { browserWebSocketHandshakeUrl } from "../runtime/browser-websocket-session.ts";
 import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 
 import type {
@@ -1484,7 +1485,10 @@ export function createNativeTerminalWebSocketTransport(
 
       let socket: NativeTerminalWebSocket;
       try {
-        socket = createWebSocket(descriptor.webSocketUrl, descriptor.webSocketProtocol);
+        socket = createWebSocket(
+          browserWebSocketHandshakeUrl(descriptor.webSocketUrl),
+          descriptor.webSocketProtocol,
+        );
       } catch {
         return {
           status: "error",

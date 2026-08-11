@@ -79,7 +79,11 @@ import {
   type RuntimeConnectionSupervisor,
 } from "@tmux-ide/daemon-client/connection-supervisor";
 
-import type { DevWebHostConfig } from "./dev-web-host-config.ts";
+import { developmentWebSocketUrl, type DevWebHostConfig } from "./dev-web-host-config.ts";
+import {
+  browserWebSocketHandshakeUrl,
+  installBrowserWebSocketUrlRewriter,
+} from "./browser-websocket-session.ts";
 import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -274,6 +278,52 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   let socketSupervisor: RuntimeConnectionSupervisor<true> | null = null;
   let stopSocketStateSubscription: (() => void) | null = null;
   let disposed = false;
+  // Legacy direct mode already exposes the owner bearer to this page. Its
+  // weaker trust boundary still gets a stable document identity so issue and
+  // action routes never fall back to anonymous SDK authority.
+  const directHostClientId =
+    config.transport === "direct" ? `dev-web-direct:${crypto.randomUUID()}` : null;
+  let resolvedDevHostSession: string | null = null;
+  const uninstallWebSocketSession = installBrowserWebSocketUrlRewriter((rawUrl) => {
+    if (config.transport !== "same-origin-gateway") return rawUrl;
+    const parsed = new URL(rawUrl);
+    const privileged =
+      parsed.origin === config.daemonWebSocketOrigin &&
+      (parsed.pathname.startsWith("/ws/") ||
+        parsed.pathname === "/v1/terminal/attachments/redeem" ||
+        parsed.pathname === "/v1/terminal/pane-streams/redeem");
+    if (!privileged) return rawUrl;
+    if (!resolvedDevHostSession) throw new DevHostFailure(REQUEST_FAILED);
+    return developmentWebSocketUrl(rawUrl, resolvedDevHostSession);
+  });
+  let devHostSession: Promise<string | null> | null = null;
+  const loadDevHostSession = (force = false): Promise<string | null> => {
+    if (config.transport !== "same-origin-gateway") return Promise.resolve(null);
+    if (force) devHostSession = null;
+    if (devHostSession) return devHostSession;
+    const pending = (async () => {
+      const response = await fetch("/__tmux_ide_host_session", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "omit",
+      });
+      if (!response.ok) throw new DevHostFailure(REQUEST_FAILED);
+      const token = z
+        .object({ token: z.uuid() })
+        .strict()
+        .parse(await response.json()).token;
+      resolvedDevHostSession = token;
+      return token;
+    })();
+    devHostSession = pending;
+    // A failed bootstrap is not a permanent poison pill for this document.
+    // Clear only the promise that failed so a newer forced rebootstrap cannot
+    // be erased by an older rejection racing it.
+    void pending.catch(() => {
+      if (devHostSession === pending) devHostSession = null;
+    });
+    return pending;
+  };
 
   const url = (pathname: string): string => `${config.daemonOrigin}${pathname}`;
 
@@ -288,20 +338,59 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(url(pathname), {
-        method: init.method,
-        headers: {
-          ...extraHeaders,
-          accept: "application/json",
-          ...(config.ownerToken ? { Authorization: `Bearer ${config.ownerToken}` } : {}),
-          ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
-        },
+      let hostSession = await loadDevHostSession();
+      const gatewayLogicalGet = config.transport === "same-origin-gateway" && init.method === "GET";
+      const wireMethod = gatewayLogicalGet ? "POST" : init.method;
+      const wireHeaders = {
+        ...extraHeaders,
+        ...(gatewayLogicalGet ? { "X-Tmux-Ide-Dev-Original-Method": "GET" } : {}),
+        ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession } : {}),
+        ...(directHostClientId ? { "X-Tmux-Ide-Host-Client-Id": directHostClientId } : {}),
+        accept: "application/json",
+        ...(config.ownerToken ? { Authorization: `Bearer ${config.ownerToken}` } : {}),
+        ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+      };
+      let response = await fetch(url(pathname), {
+        method: wireMethod,
+        headers: wireHeaders,
         ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
         cache: "no-store",
         credentials: "omit",
         redirect: "error",
         signal: controller.signal,
       });
+      const staleGatewaySession =
+        !response.ok &&
+        config.transport === "same-origin-gateway" &&
+        response.status === 401 &&
+        z
+          .object({ code: z.literal("dev_host_session_invalid") })
+          .passthrough()
+          .safeParse(
+            await response
+              .clone()
+              .json()
+              .catch(() => null),
+          ).success;
+      if (staleGatewaySession) {
+        hostSession = await loadDevHostSession(true);
+        response = await fetch(url(pathname), {
+          method: wireMethod,
+          headers: {
+            ...extraHeaders,
+            ...(gatewayLogicalGet ? { "X-Tmux-Ide-Dev-Original-Method": "GET" } : {}),
+            ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession } : {}),
+            ...(directHostClientId ? { "X-Tmux-Ide-Host-Client-Id": directHostClientId } : {}),
+            accept: "application/json",
+            ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+          },
+          ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+          cache: "no-store",
+          credentials: "omit",
+          redirect: "error",
+          signal: controller.signal,
+        });
+      }
       if (!response.ok) {
         console.warn(
           `[tmux-ide] development daemon request failed: ${init.method} ${pathname} -> ${response.status}`,
@@ -510,9 +599,14 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     supervisor.start();
   }
 
-  function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
+  async function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
+    await loadDevHostSession();
     return new Promise((resolve, reject) => {
-      const next = new WebSocket(`${config.daemonWebSocketOrigin}${EVENTS_PATH}`);
+      const next = new WebSocket(
+        browserWebSocketHandshakeUrl(
+          browserWebSocketUrl(config, `${config.daemonWebSocketOrigin}${EVENTS_PATH}`),
+        ),
+      );
       let connected = false;
       let resourceEventsSupported = false;
       let closedResolve!: (reason: unknown) => void;
@@ -636,7 +730,14 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         signal.removeEventListener("abort", dispose);
         const reason = new Error(event.reason || `daemon event socket closed (${event.code})`);
         if (connected) closedResolve(reason);
-        else reject(reason);
+        else {
+          if (config.transport === "same-origin-gateway" && !signal.aborted) {
+            // A gateway handshake cannot expose its HTTP 401 to browser JS.
+            // Replace the document capability before the supervisor retries.
+            void loadDevHostSession(true).catch(() => undefined);
+          }
+          reject(reason);
+        }
       });
       next.addEventListener("error", () => next.close());
     });
@@ -1043,6 +1144,8 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      uninstallWebSocketSession();
+      resolvedDevHostSession = null;
       listeners.clear();
       releaseSocket();
       for (const controller of controllers) controller.abort();

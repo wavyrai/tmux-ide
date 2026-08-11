@@ -92,10 +92,16 @@ export function attachPaneStreamWebSocket(
       rejectUpgrade(socket, 426);
       return;
     }
+    const hostClientHeaders = rawHeaderValues(request, "x-tmux-ide-host-client-id");
+    if (hostClientHeaders.length > 1) {
+      rejectUpgrade(socket, 403);
+      return;
+    }
     const decision = coordinator.reserveUpgrade({
       path: rawPath,
       protocols: protocols(protocolHeaders[0]),
       origin: originHeaders[0],
+      ...(hostClientHeaders[0] ? { hostClientId: hostClientHeaders[0] } : {}),
     });
     if (!decision.accepted) {
       rejectUpgrade(socket, decision.httpStatus);

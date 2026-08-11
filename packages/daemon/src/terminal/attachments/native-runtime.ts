@@ -10,6 +10,8 @@ import { z } from "zod";
 
 import type { WorkspaceRegistry } from "../../lib/workspace-registry.ts";
 import type { PtyAdapter } from "../PtyAdapter.ts";
+import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
+import { SessionRuntimeTransportBinder } from "../session-runtime/transport-binding.ts";
 import {
   TerminalAttachmentAdmissionCoordinator,
   type TerminalAttachmentAdmissionCoordinatorOptions,
@@ -28,7 +30,6 @@ import {
   type AttachmentLeaseManagerOptions,
   type AttachmentLeaseDescriptor,
 } from "./lease-manager.ts";
-import { TerminalInputAuthority } from "../input-authority.ts";
 import {
   PtyTmuxAttachmentLauncher,
   type DaemonTmuxSocketSelector,
@@ -751,7 +752,7 @@ export class NativeTerminalAttachmentGeometryResolver {
 
 type LeaseRuntimeOptions = Omit<
   AttachmentLeaseManagerOptions,
-  "daemonInstanceId" | "catalog" | "viewExecutor" | "inputAuthority"
+  "daemonInstanceId" | "catalog" | "viewExecutor"
 >;
 type LauncherRuntimeOptions = Omit<
   PtyTmuxAttachmentLauncherOptions,
@@ -777,13 +778,13 @@ export interface NativeTerminalAttachmentRuntimeOptions {
   readonly daemonInstanceId: string;
   readonly webSocketUrl: string;
   readonly registry: WorkspaceRegistry;
+  /** Canonical daemon-generation client/control authority. */
+  readonly sessionRuntimeRegistry?: SessionRuntimeRegistry;
   readonly tmuxAuthority: NativeTerminalAttachmentTmuxAuthority;
   readonly ptyAdapter?: PtyAdapter;
   readonly commandExecutor?: NativeTerminalAttachmentCommandExecutor;
   /** Narrow deterministic seam; production omits it and uses registry-backed discovery. */
   readonly semanticPaneCatalog?: SemanticPaneCatalog;
-  /** Shared with pane streaming so both transports arbitrate one live window. */
-  readonly inputAuthority?: TerminalInputAuthority;
   readonly lease?: LeaseRuntimeOptions;
   readonly launcher?: LauncherRuntimeOptions;
   readonly admission?: AdmissionRuntimeOptions;
@@ -808,7 +809,6 @@ export interface NativeTerminalAttachmentRuntimeOptions {
 export class NativeTerminalAttachmentRuntime {
   readonly admission: TerminalAttachmentAdmissionCoordinator;
   readonly semanticPaneCatalog: SemanticPaneCatalog;
-  readonly inputAuthority: TerminalInputAuthority;
   readonly #launcher: PtyTmuxAttachmentLauncher;
   readonly #startupBarrier: Promise<void>;
   readonly #serializer: TmuxAttachmentOperationSerializer;
@@ -853,7 +853,6 @@ export class NativeTerminalAttachmentRuntime {
           );
         },
       });
-    const inputAuthority = options.inputAuthority ?? new TerminalInputAuthority();
     const launcher = new PtyTmuxAttachmentLauncher({
       ...options.launcher,
       socketSelector: authority.socketSelector,
@@ -880,7 +879,6 @@ export class NativeTerminalAttachmentRuntime {
       daemonInstanceId: options.daemonInstanceId,
       catalog,
       viewExecutor,
-      inputAuthority,
     });
     const geometry = new NativeTerminalAttachmentGeometryResolver({
       catalog,
@@ -918,10 +916,28 @@ export class NativeTerminalAttachmentRuntime {
       launcher,
       startupBarrier: this.#startupBarrier,
       resolveGeometry: (descriptor, client) => geometry.resolve(descriptor, client),
+      ...(options.sessionRuntimeRegistry
+        ? {
+            bindSessionRuntime: (descriptor: AttachmentLeaseDescriptor) => {
+              const workspace = options.registry.get(descriptor.target.workspaceName);
+              if (!workspace) throw new Error("Terminal attachment workspace is unavailable");
+              if (!descriptor.hostClientId) {
+                throw new Error("Interactive terminal attachment lacks trusted host identity");
+              }
+              return new SessionRuntimeTransportBinder(options.sessionRuntimeRegistry!).bind({
+                transport: "terminal-attachment",
+                transportLeaseId: descriptor.leaseId,
+                session: workspace.sessionName,
+                hostClientId: descriptor.hostClientId,
+                allowedSourcePaneIds: [descriptor.target.semanticPaneId],
+                interactive: descriptor.viewerMode === "interactive",
+              });
+            },
+          }
+        : {}),
     });
     this.#launcher = launcher;
     this.semanticPaneCatalog = catalog;
-    this.inputAuthority = inputAuthority;
     this.#serializer = serializer;
     this.#registry = options.registry;
     this.#discoverTerminalInventory = discoverTerminalInventory;

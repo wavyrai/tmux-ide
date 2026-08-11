@@ -253,38 +253,38 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 }
 
 describe("AttachmentLeaseManager", () => {
-  it("serializes interactive ownership while explicit read-only viewers coexist", async () => {
+  it("issues transport credentials without pre-claiming SessionRuntime controller ownership", async () => {
     const { manager } = rig();
     const first = await manager.issue(request("interactive"), context(1));
-    await errorCode(
-      manager.issue(request("interactive"), context(2)),
-      "interactive-viewer-conflict",
-    );
+    const second = await manager.issue(request("interactive"), context(2));
 
     const readOne = await manager.issue(request("read-only"), context(3));
     const readTwo = await manager.issue(request("read-only"), context(4));
     expect(readOne.descriptor.viewerMode).toBe("read-only");
     expect(readTwo.descriptor.viewerMode).toBe("read-only");
-    expect(manager.snapshot().leases).toHaveLength(3);
+    expect(second.descriptor.viewerMode).toBe("interactive");
+    expect(manager.snapshot().leases).toHaveLength(4);
 
     await manager.release(first.descriptor.leaseId, binding(first.descriptor.requestId));
     await expect(manager.issue(request("interactive"), context(5))).resolves.toBeDefined();
   });
 
-  it("makes contention atomic even when interactive issues race", async () => {
+  it("issues concurrent credentials atomically with distinct tickets and leases", async () => {
     const { manager } = rig();
     const results = await Promise.allSettled([
       manager.issue(request(), context(1)),
       manager.issue(request(), context(2)),
     ]);
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    const failure = results.find((result) => result.status === "rejected");
-    expect((failure as PromiseRejectedResult).reason).toMatchObject({
-      code: "interactive-viewer-conflict",
-    });
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    const issued = results.map(
+      (result) =>
+        (result as PromiseFulfilledResult<Awaited<ReturnType<typeof manager.issue>>>).value,
+    );
+    expect(new Set(issued.map((entry) => entry.descriptor.leaseId)).size).toBe(2);
+    expect(new Set(issued.map((entry) => entry.redemptionTicket)).size).toBe(2);
   });
 
-  it("serializes interactive ownership by global pane identity across linked sessions", async () => {
+  it("does not infer controller identity from linked-session runtime ids", async () => {
     const betaTarget = { workspaceName: "workspace.beta", semanticPaneId: "pane.other" };
     let rows = [row()];
     let id = 1;
@@ -305,13 +305,12 @@ describe("AttachmentLeaseManager", () => {
         sessionId: "$9",
       }),
     ];
-    await errorCode(
+    await expect(
       manager.issue(request("interactive", betaTarget), context(2)),
-      "interactive-viewer-conflict",
-    );
+    ).resolves.toBeDefined();
   });
 
-  it("checks runtime ownership before moving a rebound interactive lease", async () => {
+  it("rebinds an issued credential without manufacturing controller ownership", async () => {
     const betaTarget = { workspaceName: "workspace.beta", semanticPaneId: "pane.other" };
     let rows = [row()];
     let id = 1;
@@ -338,35 +337,35 @@ describe("AttachmentLeaseManager", () => {
     await manager.redeem(beta.redemptionTicket, binding(beta.descriptor.requestId));
     rows = [row({ sessionId: "$9", windowId: "@4", runtimePaneId: "%4" })];
 
-    await errorCode(
-      manager.redeem(alpha.redemptionTicket, binding(alpha.descriptor.requestId)),
-      "interactive-viewer-conflict",
+    const rebound = await manager.redeem(
+      alpha.redemptionTicket,
+      binding(alpha.descriptor.requestId),
     );
-    expect(manager.snapshot().leases).toEqual([
-      expect.objectContaining({ leaseId: beta.descriptor.leaseId, status: "active" }),
-    ]);
+    expect(rebound.descriptor.bindingGeneration).toBe(1);
+    expect(manager.snapshot().leases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ leaseId: beta.descriptor.leaseId, status: "active" }),
+        expect.objectContaining({ leaseId: alpha.descriptor.leaseId, status: "active" }),
+      ]),
+    );
     rows = [row()];
     await expect(manager.issue(request(), context(3))).resolves.toBeDefined();
   });
 
-  it("conflicts interactive ownership across different panes of one linked window", async () => {
+  it("keeps linked-window credentials separate from controller admission", async () => {
     const rows = [
       stampedRow(),
       stampedRow({ semanticPaneId: siblingTarget.semanticPaneId, runtimePaneId: "%4" }),
     ];
     const { manager } = rig({ discover: () => rows });
     const worker = await manager.issue(request("interactive"), context(1));
-    // A different pane (%4) of the same runtime window (@2): window-granular
-    // ownership rejects it even though the two panes never share a pane id.
-    await errorCode(
-      manager.issue(request("interactive", siblingTarget), context(2)),
-      "interactive-viewer-conflict",
-    );
+    const sibling = await manager.issue(request("interactive", siblingTarget), context(2));
+    expect(sibling.descriptor.target).toEqual(siblingTarget);
     // Read-only viewers never contend for input, even on a sibling pane.
     await expect(
       manager.issue(request("read-only", siblingTarget), context(3)),
     ).resolves.toBeDefined();
-    // Releasing the interactive owner frees the whole window for the sibling.
+    // Ticket lifecycle remains independent for each transport credential.
     await manager.release(worker.descriptor.leaseId, binding(worker.descriptor.requestId));
     await expect(
       manager.issue(request("interactive", siblingTarget), context(4)),
@@ -386,7 +385,7 @@ describe("AttachmentLeaseManager", () => {
     expect(manager.snapshot().leases).toHaveLength(2);
   });
 
-  it("keeps window ownership through in-window pane churn while bindingGeneration tracks the rebind", async () => {
+  it("tracks in-window pane churn without retaining legacy window ownership", async () => {
     let rows = [
       stampedRow(),
       stampedRow({ semanticPaneId: siblingTarget.semanticPaneId, runtimePaneId: "%4" }),
@@ -418,10 +417,9 @@ describe("AttachmentLeaseManager", () => {
     );
     expect(renewed.descriptor.bindingGeneration).toBe(1);
     expect(renewed.descriptor.viewGeneration).toBe(0);
-    await errorCode(
+    await expect(
       manager.issue(request("interactive", siblingTarget), context(2)),
-      "interactive-viewer-conflict",
-    );
+    ).resolves.toBeDefined();
   });
 
   it("reconciles an orphaned attachment view whose source window holds multiple panes", async () => {

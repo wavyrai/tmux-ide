@@ -2,13 +2,244 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DAEMON_WIRE_PROTOCOL_VERSION, type CanonicalDaemonInfo } from "@tmux-ide/contracts";
 
-import { __setCliActionBridgeDepsForTests, tryDispatchAction } from "./cli-action-bridge.ts";
+import {
+  __setCliActionBridgeDepsForTests,
+  CliActionInvocationError,
+  tryDispatchAction,
+} from "./cli-action-bridge.ts";
 import { createApp } from "../command-center/server.ts";
 
 const OPERATION = "10000000-0000-4000-8000-000000000001";
 const INSTANCE = "20000000-0000-4000-8000-000000000002";
 
 describe("CLI owner action bridge", () => {
+  it("keeps a queued local action alive beyond the old two-second deadline", async () => {
+    vi.useFakeTimers();
+    const canonical: CanonicalDaemonInfo = {
+      pid: process.pid,
+      port: 6060,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: "2.8.0",
+      instanceId: INSTANCE,
+      startedAt: "2026-07-22T00:00:00.000Z",
+      bindHostname: "127.0.0.1",
+      authToken: "owner-only-token",
+    };
+    let settle: ((response: Response) => void) | null = null;
+    let requestSignal: AbortSignal | null = null;
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      requestSignal = init?.signal ?? null;
+      return new Promise<Response>((resolve, reject) => {
+        settle = resolve;
+        requestSignal?.addEventListener("abort", () => reject(new Error("request aborted")), {
+          once: true,
+        });
+      });
+    });
+    const restore = __setCliActionBridgeDepsForTests({
+      fetch: fetch as typeof globalThis.fetch,
+      readCanonicalDaemonInfo: () => canonical,
+      isCanonicalDaemonAlive: async () => true,
+    });
+    try {
+      const dispatched = tryDispatchAction(
+        "workspace.pane.send",
+        {
+          workspaceName: "workspace.alpha",
+          semanticPaneId: "pane.target",
+          text: "hello",
+          submit: true,
+          origin: "cli",
+        },
+        { operationId: OPERATION, autostart: false },
+      );
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(requestSignal?.aborted).toBe(false);
+      settle?.(
+        Response.json({
+          ok: true,
+          result: {
+            verb: "workspace.pane.send",
+            outcome: "applied",
+            operationId: OPERATION,
+            daemonInstanceId: INSTANCE,
+            workspaceName: "workspace.alpha",
+            sourceSemanticPaneId: null,
+            semanticPaneId: "pane.target",
+            origin: "cli",
+            characterCount: 5,
+            byteCount: 5,
+            submitted: true,
+          },
+        }),
+      );
+      await expect(dispatched).resolves.toMatchObject({ operationId: OPERATION });
+    } finally {
+      restore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("shares one overall deadline across same-operation retries", async () => {
+    vi.useFakeTimers();
+    const canonical: CanonicalDaemonInfo = {
+      pid: process.pid,
+      port: 6060,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: "2.8.0",
+      instanceId: INSTANCE,
+      startedAt: "2026-07-22T00:00:00.000Z",
+      bindHostname: "127.0.0.1",
+      authToken: "owner-only-token",
+    };
+    const signals: AbortSignal[] = [];
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("missing action deadline");
+      signals.push(signal);
+      if (signals.length === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          setTimeout(() => reject(new Error("connection lost after commit")), 6_000);
+        });
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("operation deadline")), {
+          once: true,
+        });
+      });
+    });
+    const restore = __setCliActionBridgeDepsForTests({
+      fetch: fetch as typeof globalThis.fetch,
+      readCanonicalDaemonInfo: () => canonical,
+      isCanonicalDaemonAlive: async () => true,
+    });
+    try {
+      const dispatched = tryDispatchAction(
+        "workspace.pane.send",
+        {
+          workspaceName: "workspace.alpha",
+          semanticPaneId: "pane.target",
+          text: "hello",
+          submit: true,
+          origin: "cli",
+        },
+        { operationId: OPERATION, autostart: false },
+      );
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(6_000);
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      expect(signals[1]).toBe(signals[0]);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await expect(dispatched).resolves.toBeNull();
+    } finally {
+      restore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a daemon rejection typed instead of treating it as transport loss", async () => {
+    const canonical: CanonicalDaemonInfo = {
+      pid: process.pid,
+      port: 6060,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: "2.8.0",
+      instanceId: INSTANCE,
+      startedAt: "2026-07-22T00:00:00.000Z",
+      bindHostname: "127.0.0.1",
+      authToken: "owner-only-token",
+    };
+    const restore = __setCliActionBridgeDepsForTests({
+      fetch: (async () =>
+        Response.json({
+          ok: false,
+          error: { code: "pane_not_found", message: "Pane is gone" },
+        })) as typeof globalThis.fetch,
+      readCanonicalDaemonInfo: () => canonical,
+      isCanonicalDaemonAlive: async () => true,
+    });
+    try {
+      const rejected = tryDispatchAction(
+        "workspace.pane.send",
+        {
+          workspaceName: "workspace.alpha",
+          semanticPaneId: "pane.target",
+          text: "hello",
+          submit: true,
+          origin: "cli",
+        },
+        { operationId: OPERATION, autostart: false },
+      );
+      await expect(rejected).rejects.toMatchObject({
+        name: CliActionInvocationError.name,
+        code: "pane_not_found",
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("carries a pane credential only in the dedicated request header", async () => {
+    const canonical: CanonicalDaemonInfo = {
+      pid: process.pid,
+      port: 6060,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: "2.8.0",
+      instanceId: INSTANCE,
+      startedAt: "2026-07-22T00:00:00.000Z",
+      bindHostname: "127.0.0.1",
+      authToken: "owner-only-token",
+    };
+    let captured: RequestInit | undefined;
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      captured = init;
+      return Response.json({
+        ok: true,
+        result: {
+          verb: "workspace.pane.send",
+          outcome: "applied",
+          operationId: OPERATION,
+          daemonInstanceId: INSTANCE,
+          workspaceName: "workspace.alpha",
+          sourceSemanticPaneId: "pane.source",
+          semanticPaneId: "pane.target",
+          origin: "cli",
+          characterCount: 5,
+          byteCount: 5,
+          submitted: true,
+        },
+      });
+    });
+    const restore = __setCliActionBridgeDepsForTests({
+      fetch: fetch as typeof globalThis.fetch,
+      readCanonicalDaemonInfo: () => canonical,
+      isCanonicalDaemonAlive: async () => true,
+    });
+    try {
+      await tryDispatchAction(
+        "workspace.pane.send",
+        {
+          workspaceName: "workspace.alpha",
+          sourceSemanticPaneId: "pane.source",
+          semanticPaneId: "pane.target",
+          text: "hello",
+          submit: true,
+          origin: "cli",
+        },
+        {
+          operationId: OPERATION,
+          autostart: false,
+          sourcePaneCredential: "opaque-pane-credential",
+        },
+      );
+    } finally {
+      restore();
+    }
+    const headers = new Headers(captured?.headers);
+    expect(headers.get("x-tmux-ide-pane-source-credential")).toBe("opaque-pane-credential");
+    expect(JSON.parse(String(captured?.body))).not.toHaveProperty("sourcePaneCredential");
+  });
+
   it("does not autostart a daemon when an interactive caller requests canonical-only dispatch", async () => {
     const startEmbeddedDaemon = vi.fn();
     const restore = __setCliActionBridgeDepsForTests({

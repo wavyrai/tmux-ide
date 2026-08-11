@@ -11,7 +11,7 @@
  * Everything else in 0x00-0x1f fails the gate with file:line locations.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const TEXT_EXTENSIONS = [
   "*.ts",
@@ -43,6 +43,9 @@ const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
 
 const failures = [];
 for (const file of files) {
+  // A valid dirty-tree check can include a tracked file that this change
+  // deletes. Its absent worktree content cannot contain a control byte.
+  if (!existsSync(file)) continue;
   const content = readFileSync(file, "latin1");
   if (!CONTROL.test(content)) continue;
   const lines = content.split("\n");

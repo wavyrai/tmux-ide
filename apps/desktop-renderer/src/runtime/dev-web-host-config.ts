@@ -93,6 +93,52 @@ export function webSocketOriginFor(httpOrigin: string): string {
     : `ws:${httpOrigin.slice("http:".length)}`;
 }
 
+export const DEV_HOST_SESSION_QUERY_PARAMETER = "__tmux_ide_dev_host_session";
+const DEV_HOST_SESSION_TOKEN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+/** Add the document capability only to the browser-facing development URL. */
+export function developmentWebSocketUrl(webSocketUrl: string, token: string): string {
+  if (!DEV_HOST_SESSION_TOKEN.test(token)) throw new TypeError("Invalid development host session");
+  const parsed = new URL(webSocketUrl);
+  if (parsed.search || parsed.hash) throw new TypeError("Development socket URL must be canonical");
+  parsed.searchParams.set(DEV_HOST_SESSION_QUERY_PARAMETER, token);
+  return parsed.toString();
+}
+
+/** Validate and remove the browser-only capability before proxying to daemon. */
+export function consumeDevelopmentWebSocketSession(
+  requestUrl: string | undefined,
+): { readonly token: string; readonly forwardPath: string } | null {
+  if (!requestUrl) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(requestUrl, "http://dev-gateway.invalid");
+  } catch {
+    return null;
+  }
+  const tokens = parsed.searchParams.getAll(DEV_HOST_SESSION_QUERY_PARAMETER);
+  if (tokens.length !== 1 || !DEV_HOST_SESSION_TOKEN.test(tokens[0]!)) return null;
+  parsed.searchParams.delete(DEV_HOST_SESSION_QUERY_PARAMETER);
+  // These privileged sockets do not have daemon-owned query parameters. Refuse
+  // extras rather than accidentally forwarding browser authority downstream.
+  if ([...parsed.searchParams].length > 0 || parsed.hash) return null;
+  return { token: tokens[0]!, forwardPath: parsed.pathname };
+}
+
+/**
+ * The development gateway is browser-facing authority, not a general-purpose
+ * loopback proxy. Require the browser's exact page origin on every privileged
+ * HTTP and WebSocket handshake; a missing Origin is not equivalent to same
+ * origin.
+ */
+export function isExactDevelopmentPageOrigin(
+  origin: string | undefined,
+  pageOrigin: string,
+): boolean {
+  return origin === pageOrigin;
+}
+
 function optedIn(flag: string | undefined, query: string | undefined): boolean {
   return flag === "1" || query === "1";
 }

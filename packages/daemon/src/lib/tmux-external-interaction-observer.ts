@@ -230,7 +230,7 @@ export class TmuxExternalInteractionObserver {
       "set-hook",
       "-ag",
       "after-send-keys",
-      hook("workspace.pane.send", INTERNAL_SEND_OPERATION_OPTION, false),
+      hook("workspace.pane.send", INTERNAL_SEND_OPERATION_OPTION, true),
     ]);
     this.#io.runTmux([
       "set-hook",

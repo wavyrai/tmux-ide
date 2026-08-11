@@ -10,6 +10,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import type { Socket } from "node:net";
+import { performance } from "node:perf_hooks";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   DAEMON_WIRE_PROTOCOL_VERSION,
@@ -61,6 +62,7 @@ import {
 } from "../terminal/pane-stream/runtime.ts";
 import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
 import { createSessionRuntimeMultiplexerBackend } from "../terminal/session-runtime/multiplexer-backend.ts";
+import { PaneSourceCredentialAuthority } from "./pane-source-credentials.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import { readOrMintEnvironmentId } from "./environment-identity.ts";
 import {
@@ -84,9 +86,11 @@ const DEFAULT_HOSTNAME = "127.0.0.1";
 const DEFAULT_GRACEFUL_MS = 2000;
 const MONITOR_INTERVAL_MS = 1000;
 const EMBEDDED_SESSION_NAME = "__embedded__";
-const TAKEOVER_REQUEST_TIMEOUT_MS = 1_000;
-const TAKEOVER_RELEASE_TIMEOUT_MS = 10_000;
+const TAKEOVER_TIMEOUT_MS = 10_000;
 const TAKEOVER_POLL_MS = 50;
+const TAKEOVER_DEADLINE_TEST_OVERRIDE = Symbol.for(
+  "tmux-ide.daemon-embed.takeover-deadline-ms.test-only",
+);
 
 type PackageVersionLoader = () => unknown;
 
@@ -472,10 +476,56 @@ function generateLocalBypassToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-function timeoutSignal(ms: number): AbortSignal {
+interface TakeoverDeadline {
+  readonly signal: AbortSignal;
+  readonly expiresAt: number;
+  remainingMs(): number;
+  dispose(): void;
+}
+
+function createTakeoverDeadline(timeoutMs: number): TakeoverDeadline {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new TypeError("Takeover deadline must be a positive finite duration.");
+  }
   const controller = new AbortController();
-  setTimeout(() => controller.abort(), ms).unref?.();
-  return controller.signal;
+  const expiresAt = performance.now() + timeoutMs;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  return {
+    signal: controller.signal,
+    expiresAt,
+    remainingMs: () => Math.max(0, expiresAt - performance.now()),
+    dispose: () => clearTimeout(timer),
+  };
+}
+
+function takeoverTimeoutMs(): number {
+  const override = (globalThis as Record<PropertyKey, unknown>)[TAKEOVER_DEADLINE_TEST_OVERRIDE];
+  return typeof override === "number" ? override : TAKEOVER_TIMEOUT_MS;
+}
+
+function throwTakeoverTimeout(message: string): never {
+  throw new DaemonStartupError(message, "canonical_takeover_timeout");
+}
+
+function assertTakeoverDeadline(deadline: TakeoverDeadline, message: string): void {
+  if (deadline.signal.aborted || deadline.remainingMs() <= 0) throwTakeoverTimeout(message);
+}
+
+async function waitForTakeoverPoll(deadline: TakeoverDeadline): Promise<void> {
+  assertTakeoverDeadline(deadline, "Canonical daemon did not quiesce before the takeover deadline");
+  const waitMs = Math.min(TAKEOVER_POLL_MS, deadline.remainingMs());
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, waitMs);
+    const onAbort = () => finish();
+    function finish(): void {
+      clearTimeout(timer);
+      deadline.signal.removeEventListener("abort", onAbort);
+      resolve();
+    }
+    deadline.signal.addEventListener("abort", onAbort, { once: true });
+  });
+  assertTakeoverDeadline(deadline, "Canonical daemon did not quiesce before the takeover deadline");
 }
 
 function sameCanonicalInstance(left: CanonicalDaemonInfo, right: CanonicalDaemonInfo): boolean {
@@ -489,8 +539,15 @@ function sameCanonicalInstance(left: CanonicalDaemonInfo, right: CanonicalDaemon
   );
 }
 
-async function requestValidatedDaemonShutdown(info: CanonicalDaemonInfo): Promise<void> {
-  const identity = await probeCanonicalDaemonIdentity(info);
+async function requestValidatedDaemonShutdown(
+  info: CanonicalDaemonInfo,
+  deadline: TakeoverDeadline,
+): Promise<void> {
+  const identity = await probeCanonicalDaemonIdentity(info, deadline.signal);
+  assertTakeoverDeadline(
+    deadline,
+    "Canonical daemon did not answer the takeover request before the takeover deadline",
+  );
   if (
     !identity ||
     identity.pid !== info.pid ||
@@ -504,7 +561,11 @@ async function requestValidatedDaemonShutdown(info: CanonicalDaemonInfo): Promis
       "canonical_takeover_identity_mismatch",
     );
   }
-  const health = await probeCanonicalDaemonHealth(info);
+  const health = await probeCanonicalDaemonHealth(info, deadline.signal);
+  assertTakeoverDeadline(
+    deadline,
+    "Canonical daemon did not answer the takeover request before the takeover deadline",
+  );
   if (
     !health ||
     health.protocolVersion !== info.protocolVersion ||
@@ -534,7 +595,7 @@ async function requestValidatedDaemonShutdown(info: CanonicalDaemonInfo): Promis
         method: "POST",
         headers,
         body: JSON.stringify({ reason: "takeover", expectedInstanceId: info.instanceId }),
-        signal: timeoutSignal(TAKEOVER_REQUEST_TIMEOUT_MS),
+        signal: deadline.signal,
       },
     );
   } catch (error) {
@@ -557,6 +618,10 @@ async function requestValidatedDaemonShutdown(info: CanonicalDaemonInfo): Promis
     result?: { stopping?: unknown };
     error?: { code?: unknown };
   } | null;
+  assertTakeoverDeadline(
+    deadline,
+    "Canonical daemon did not answer the takeover request before the takeover deadline",
+  );
   if (envelope?.error?.code === "daemon_instance_mismatch") {
     throw new DaemonStartupError(
       "Canonical daemon generation changed before shutdown",
@@ -573,9 +638,9 @@ async function requestValidatedDaemonShutdown(info: CanonicalDaemonInfo): Promis
 
 async function waitForTakeoverQuiescence(
   info: CanonicalDaemonInfo,
-  deadline: number,
+  deadline: TakeoverDeadline,
 ): Promise<void> {
-  while (Date.now() < deadline) {
+  while (!deadline.signal.aborted) {
     const current = inspectCanonicalDaemonInfo();
     if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
       throw new DaemonStartupError(
@@ -586,23 +651,24 @@ async function waitForTakeoverQuiescence(
     const recordOwnerGone =
       current.status === "missing" || (await isCanonicalDaemonRecordOwnerProvenDead(current));
     const [identity, health] = await Promise.all([
-      probeCanonicalDaemonIdentity(info),
-      probeCanonicalDaemonHealth(info),
+      probeCanonicalDaemonIdentity(info, deadline.signal),
+      probeCanonicalDaemonHealth(info, deadline.signal),
     ]);
+    assertTakeoverDeadline(
+      deadline,
+      "Canonical daemon retained its generation after accepting takeover",
+    );
     if (recordOwnerGone && identity === null && health === null) return;
-    await delay(TAKEOVER_POLL_MS);
+    await waitForTakeoverPoll(deadline);
   }
-  throw new DaemonStartupError(
-    "Canonical daemon retained its generation after accepting takeover",
-    "canonical_takeover_timeout",
-  );
+  throwTakeoverTimeout("Canonical daemon retained its generation after accepting takeover");
 }
 
 async function acquireCanonicalDaemonClaimAfterTakeover(
   info: CanonicalDaemonInfo,
+  deadline: TakeoverDeadline,
 ): Promise<CanonicalDaemonClaim> {
-  const deadline = Date.now() + TAKEOVER_RELEASE_TIMEOUT_MS;
-  while (Date.now() < deadline) {
+  while (!deadline.signal.aborted) {
     const current = inspectCanonicalDaemonInfo();
     if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
       throw new DaemonStartupError(
@@ -626,11 +692,10 @@ async function acquireCanonicalDaemonClaimAfterTakeover(
         "canonical_record_invalid",
       );
     }
-    await delay(TAKEOVER_POLL_MS);
+    await waitForTakeoverPoll(deadline);
   }
-  throw new DaemonStartupError(
+  throwTakeoverTimeout(
     "Canonical daemon did not release its startup claim after accepting takeover",
-    "canonical_takeover_timeout",
   );
 }
 
@@ -856,17 +921,23 @@ export async function startEmbeddedDaemon(
     ? (opts.authToken ?? null)
     : (persistedRemoteAccess?.token ?? null);
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
-  let takeoverTarget: CanonicalDaemonInfo | null = null;
+  let claim: CanonicalDaemonClaim;
   if (opts.takeoverIfRunning) {
     const state = inspectCanonicalDaemonInfo();
     if (state.status === "valid" && (await isCanonicalDaemonAlive(state.info))) {
-      await requestValidatedDaemonShutdown(state.info);
-      takeoverTarget = state.info;
+      const takeoverDeadline = createTakeoverDeadline(takeoverTimeoutMs());
+      try {
+        await requestValidatedDaemonShutdown(state.info, takeoverDeadline);
+        claim = await acquireCanonicalDaemonClaimAfterTakeover(state.info, takeoverDeadline);
+      } finally {
+        takeoverDeadline.dispose();
+      }
+    } else {
+      claim = acquireCanonicalDaemonClaim();
     }
+  } else {
+    claim = acquireCanonicalDaemonClaim();
   }
-  const claim = takeoverTarget
-    ? await acquireCanonicalDaemonClaimAfterTakeover(takeoverTarget)
-    : acquireCanonicalDaemonClaim();
   try {
     const existingCanonical = inspectCanonicalDaemonInfo();
     if (existingCanonical.status === "invalid") {
@@ -916,6 +987,9 @@ export async function startEmbeddedDaemon(
     // The registry is the source of truth for /api/project/:name lookups.
     const workspaceRegistry = getDefaultWorkspaceRegistry();
     await workspaceRegistry.load();
+    const paneSourceCredentials = new PaneSourceCredentialAuthority({
+      run: (args) => tmuxSilent(...args),
+    });
     const legacySession = process.env.TMUX_IDE_SESSION;
     if (legacySession && !workspaceRegistry.has(legacySession)) {
       try {
@@ -946,6 +1020,13 @@ export async function startEmbeddedDaemon(
         });
       } catch {
         // Already added or persistence failed; non-fatal.
+      }
+    }
+    for (const workspace of workspaceRegistry.list()) {
+      try {
+        paneSourceCredentials.rotateSession(workspace.sessionName);
+      } catch {
+        // A concurrently disappearing external session simply has no grants.
       }
     }
     // Resolve the executable/socket authority once per daemon generation so
@@ -983,13 +1064,14 @@ export async function startEmbeddedDaemon(
       tmuxAuthority,
       onObserved: ({ workspaceName, semanticPaneId, operationKind, operationId }) => {
         if (operationId) {
-          sessionRuntimeRegistry?.observeTmuxInteraction({
-            operationId,
-            workspaceName,
-            semanticPaneId,
-            operationKind,
-          });
-          return;
+          const consumed =
+            sessionRuntimeRegistry?.observeTmuxInteraction({
+              operationId,
+              workspaceName,
+              semanticPaneId,
+              operationKind,
+            }) ?? false;
+          if (consumed) return;
         }
         try {
           broadcastInteractionReceipt(
@@ -1013,36 +1095,24 @@ export async function startEmbeddedDaemon(
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
-      terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
-        daemonInstanceId: instanceId,
-        webSocketUrl: terminalAttachmentWebSocketUrl(bindHostname, port),
-        registry: workspaceRegistry,
-        tmuxAuthority: {
-          executablePath: tmuxAuthority.executablePath,
-          socketSelector: tmuxAuthority.socketSelector,
-          trustedCwd: dir,
-        },
-        // Ground-truth agent status: authority-first with a screen-scrape
-        // fallback. Option/capture IO rides the runtime's own pinned runner.
-        agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
-      });
-      // Orphan reconciliation is a hard startup barrier: neither the HTTP
-      // mutation nor direct WebSocket redemption is exposed before it passes.
-      await terminalAttachmentRuntime.whenReady();
       const selector = tmuxAuthority.socketSelector;
       const executeRuntimeIntent = async (
         operationId: string,
         intent: SessionRuntimeSemanticIntent,
+        authorizeBeforeEffect?: () => void,
       ) => {
         if (intent.verb === "workspace.pane.read") {
           await workspaceMultiplexer.readPane(operationId, intent);
           return;
         }
-        return await workspaceMultiplexer.mutate({
-          operationId,
-          expectedDaemonInstanceId: instanceId,
-          intent,
-        });
+        return await workspaceMultiplexer.mutate(
+          {
+            operationId,
+            expectedDaemonInstanceId: instanceId,
+            intent,
+          },
+          authorizeBeforeEffect,
+        );
       };
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
@@ -1061,17 +1131,35 @@ export async function startEmbeddedDaemon(
             : {}),
         },
       });
+      terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
+        daemonInstanceId: instanceId,
+        webSocketUrl: terminalAttachmentWebSocketUrl(bindHostname, port),
+        registry: workspaceRegistry,
+        sessionRuntimeRegistry,
+        tmuxAuthority: {
+          executablePath: tmuxAuthority.executablePath,
+          socketSelector: tmuxAuthority.socketSelector,
+          trustedCwd: dir,
+        },
+        // Ground-truth agent status: authority-first with a screen-scrape
+        // fallback. Option/capture IO rides the runtime's own pinned runner.
+        agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
+      });
+      // Orphan reconciliation is a hard startup barrier: neither the HTTP
+      // mutation nor direct WebSocket redemption is exposed before it passes.
+      await terminalAttachmentRuntime.whenReady();
       paneStreamRuntime = createPaneStreamRuntime({
         daemonInstanceId: instanceId,
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
         sessionRuntimeRegistry,
-        inputAuthority: terminalAttachmentRuntime.inputAuthority,
         semanticPaneCatalog: terminalAttachmentRuntime.semanticPaneCatalog,
       });
       const orderedMultiplexerBackend = createSessionRuntimeMultiplexerBackend({
         registry: sessionRuntimeRegistry,
         resolveSession: (workspaceName) =>
           workspaceRegistry.get(workspaceName)?.sessionName ?? null,
+        resolvePaneSourceCredential: (credential, resolvedSession, claimedSource) =>
+          paneSourceCredentials.resolve(credential, resolvedSession, claimedSource),
       });
       startedServer = await startHttpServer({
         sessionName,
@@ -1248,6 +1336,15 @@ export async function startEmbeddedDaemon(
         // Transient spawn failure — skip this tick rather than self-destruct.
         return;
       }
+      // Credential issuance is daemon lifecycle work, not UI-client work. New
+      // panes must become attributable even while every GUI/TUI is detached.
+      for (const workspace of workspaceRegistry.list()) {
+        try {
+          paneSourceCredentials.reconcileSession(workspace.sessionName);
+        } catch {
+          // External sessions may disappear between registry and tmux reads.
+        }
+      }
       if (!hasClients()) return;
 
       const panes = listPanes(sessionName);
@@ -1309,6 +1406,7 @@ export async function startEmbeddedDaemon(
             stopped = true;
             await capture(() => setActivationBackend(null));
             clearInterval(monitorInterval);
+            paneSourceCredentials.dispose();
 
             // Retire direct-ticket admission, live PTYs, and the direct upgrade
             // listener before touching the legacy WS or HTTP surfaces.

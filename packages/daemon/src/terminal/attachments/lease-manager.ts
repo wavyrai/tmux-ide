@@ -16,11 +16,6 @@ import {
   type GroupedTmuxAttachmentPlan,
 } from "./grouped-tmux.ts";
 import { SemanticPaneCatalog, type SemanticPaneResolution } from "./semantic-pane-catalog.ts";
-import {
-  TerminalInputAuthority,
-  TerminalInputAuthorityConflictError,
-  type TerminalInputOwner,
-} from "../input-authority.ts";
 
 const BindingIdSchemaZ = z
   .string()
@@ -43,6 +38,7 @@ export interface AttachmentLeaseBinding {
 export interface AttachmentIssueContext {
   readonly requestId: string;
   readonly projectIdentity: string;
+  readonly hostClientId?: string;
 }
 
 export interface EnumeratedMarkedAttachmentView {
@@ -131,6 +127,8 @@ export type AttachmentLeaseStatus = "awaiting-redemption" | "active" | "disconne
 export interface AttachmentLeaseDescriptor {
   readonly leaseId: string;
   readonly requestId: string;
+  /** Daemon-internal trusted host identity; never copied to renderer descriptors. */
+  readonly hostClientId: string | null;
   readonly target: TerminalAttachmentSemanticTarget;
   readonly viewerMode: TerminalAttachmentViewerMode;
   /** Echoed so a caller can audit the ownership the daemon actually granted. */
@@ -230,9 +228,6 @@ export interface AttachmentLeaseManagerOptions {
   readonly daemonInstanceId: string;
   readonly catalog: SemanticPaneCatalog;
   readonly viewExecutor: AttachmentViewExecutor;
-  /** Shared daemon-generation input authority. Production passes the same
-   * instance to pane streaming; isolated tests may omit it. */
-  readonly inputAuthority?: TerminalInputAuthority;
   readonly now?: () => number;
   readonly randomBytes?: (size: number) => Uint8Array;
   readonly createId?: () => string;
@@ -253,6 +248,7 @@ interface LeaseState {
   leaseId: string;
   requestId: string;
   projectIdentity: string;
+  hostClientId: string | null;
   request: TerminalAttachRequest;
   status: AttachmentLeaseStatus;
   issuedAt: number;
@@ -261,8 +257,6 @@ interface LeaseState {
   ticketDigest: Buffer | null;
   ticketExpiresAt: number | null;
   resolution: SemanticPaneResolution;
-  /** Runtime window (`@window_id`) whose interactive input this lease reserves. */
-  interactiveWindowKey: string | null;
   viewGeneration: number;
   plan: GroupedTmuxAttachmentPlan;
 }
@@ -320,26 +314,8 @@ function sameLinkedWindow(left: SemanticPaneResolution, right: SemanticPaneResol
   return left.source.windowId === right.source.windowId;
 }
 
-function windowOwnerKey(resolution: SemanticPaneResolution): string {
-  // Interactive input ownership is exclusive per runtime WINDOW, not per pane
-  // (m41 attach-3). Attachment links the whole window, so two interactive
-  // attachments that target different panes of one window must conflict, while
-  // attachments on different windows of a session must not. `@window_id` is
-  // server-global and stays stable when a window is linked into another session
-  // (like `%pane_id`), so a session alias never rotates ownership. This keys on
-  // the same identity as `sameLinkedWindow`, unifying ownership and the view
-  // generation on one window id. `windowStamp` is deliberately not used: it is
-  // null for a legacy single-pane window and only proves durability, whereas
-  // `windowId` is always present and uniquely names one live window this run.
-  return resolution.source.windowId;
-}
-
 function exactViewSessionTarget(plan: GroupedTmuxAttachmentPlan): `=${string}` {
   return `=${plan.identity.viewSessionName}`;
-}
-
-function inputOwner(leaseId: string): TerminalInputOwner {
-  return { transport: "terminal-attachment", leaseId };
 }
 
 /**
@@ -351,7 +327,6 @@ export class AttachmentLeaseManager {
   readonly #instanceId: string;
   readonly #catalog: SemanticPaneCatalog;
   readonly #viewExecutor: AttachmentViewExecutor;
-  readonly #inputAuthority: TerminalInputAuthority;
   readonly #now: () => number;
   readonly #randomBytes: (size: number) => Uint8Array;
   readonly #createId: () => string;
@@ -369,7 +344,6 @@ export class AttachmentLeaseManager {
     this.#instanceId = BindingIdSchemaZ.parse(options.daemonInstanceId);
     this.#catalog = options.catalog;
     this.#viewExecutor = options.viewExecutor;
-    this.#inputAuthority = options.inputAuthority ?? new TerminalInputAuthority();
     this.#now = options.now ?? Date.now;
     this.#randomBytes = options.randomBytes ?? randomBytes;
     this.#createId = options.createId ?? randomUUID;
@@ -404,6 +378,9 @@ export class AttachmentLeaseManager {
       const parsedRequest = TerminalAttachRequestSchemaZ.parse(request);
       const requestId = RequestIdSchemaZ.parse(context.requestId);
       const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);
+      const hostClientId = context.hostClientId
+        ? BindingIdSchemaZ.parse(context.hostClientId)
+        : null;
       await this.#expireAndCleanup(this.#now());
       if (this.#requests.has(requestId)) {
         throw new AttachmentLeaseError("duplicate-request", "The request already owns a lease.");
@@ -411,8 +388,6 @@ export class AttachmentLeaseManager {
 
       const resolution = await this.#catalog.resolve(parsedRequest.target);
       await this.#expireAndCleanup(this.#now());
-      const windowKey = windowOwnerKey(resolution);
-
       const leaseId = this.#freshId();
       const issuedAt = this.#now();
       const ticketBytes = this.#randomBytes(32);
@@ -424,23 +399,11 @@ export class AttachmentLeaseManager {
       }
       const redemptionTicket = `ta1_${Buffer.from(ticketBytes).toString("base64url")}`;
       const plan = this.#buildPlan(leaseId, 0, parsedRequest, resolution);
-      if (parsedRequest.viewerMode === "interactive") {
-        try {
-          this.#inputAuthority.claim(inputOwner(leaseId), [windowKey]);
-        } catch (error) {
-          if (error instanceof TerminalInputAuthorityConflictError) {
-            throw new AttachmentLeaseError(
-              "interactive-viewer-conflict",
-              "The resolved runtime window already has an interactive input owner.",
-            );
-          }
-          throw error;
-        }
-      }
       const state: LeaseState = {
         leaseId,
         requestId,
         projectIdentity,
+        hostClientId,
         request: parsedRequest,
         status: "awaiting-redemption",
         issuedAt,
@@ -449,7 +412,6 @@ export class AttachmentLeaseManager {
         ticketDigest: hashTicket(redemptionTicket),
         ticketExpiresAt: issuedAt + this.#ticketTtlMs,
         resolution,
-        interactiveWindowKey: parsedRequest.viewerMode === "interactive" ? windowKey : null,
         viewGeneration: 0,
         plan,
       };
@@ -909,26 +871,6 @@ export class AttachmentLeaseManager {
   }
 
   async #applyResolution(state: LeaseState, resolution: SemanticPaneResolution): Promise<void> {
-    const oldWindowKey = state.interactiveWindowKey;
-    const newWindowKey = windowOwnerKey(resolution);
-    // Ownership only moves when the lease's runtime window changes. Pane churn
-    // inside one window keeps the same window key, so it rebinds the plan and
-    // bumps `bindingGeneration` (below) without touching window ownership. This
-    // key equality tracks `sameLinkedWindow`, so the migration and the view
-    // rotation always fire together on a genuine window relink.
-    if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
-      try {
-        // Keep the old claim while reserving the new window. No other
-        // transport can take either side during the asynchronous view cleanup.
-        this.#inputAuthority.claim(inputOwner(state.leaseId), [newWindowKey]);
-      } catch (error) {
-        if (!(error instanceof TerminalInputAuthorityConflictError)) throw error;
-        throw new AttachmentLeaseError(
-          "interactive-viewer-conflict",
-          "The rebound runtime window already has an interactive input owner.",
-        );
-      }
-    }
     const linkedWindowChanged = !sameLinkedWindow(state.resolution, resolution);
     const nextViewGeneration = linkedWindowChanged
       ? state.viewGeneration + 1
@@ -948,9 +890,6 @@ export class AttachmentLeaseManager {
     if (linkedWindowChanged) {
       const cleanup = await this.#cleanupPlan(state);
       if (cleanup.status !== "cleaned" && cleanup.status !== "absent") {
-        if (oldWindowKey !== null) {
-          this.#inputAuthority.replace(inputOwner(state.leaseId), [oldWindowKey]);
-        }
         throw new AttachmentLeaseError(
           "view-cleanup-failed",
           "The prior marked attachment view could not be safely cleaned.",
@@ -961,10 +900,6 @@ export class AttachmentLeaseManager {
     state.resolution = resolution;
     state.viewGeneration = nextViewGeneration;
     state.plan = nextPlan;
-    if (oldWindowKey !== null && oldWindowKey !== newWindowKey) {
-      this.#inputAuthority.replace(inputOwner(state.leaseId), [newWindowKey]);
-      state.interactiveWindowKey = newWindowKey;
-    }
     if (changed) this.#audit("rebound", state, this.#now());
   }
 
@@ -1008,10 +943,6 @@ export class AttachmentLeaseManager {
     if (this.#leases.get(state.leaseId) !== state) return;
     this.#leases.delete(state.leaseId);
     this.#requests.delete(state.requestId);
-    if (state.interactiveWindowKey !== null) {
-      this.#inputAuthority.release(inputOwner(state.leaseId));
-    }
-    state.interactiveWindowKey = null;
     state.ticketDigest?.fill(0);
     state.ticketDigest = null;
     state.ticketExpiresAt = null;
@@ -1071,6 +1002,7 @@ export class AttachmentLeaseManager {
     return {
       leaseId: state.leaseId,
       requestId: state.requestId,
+      hostClientId: state.hostClientId,
       target: { ...state.request.target },
       viewerMode: state.request.viewerMode,
       geometryOwnership: state.request.geometryOwnership,

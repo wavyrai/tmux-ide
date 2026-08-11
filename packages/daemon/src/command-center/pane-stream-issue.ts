@@ -28,6 +28,7 @@ export interface PaneStreamIssueBackend {
       readonly projectIdentity: string;
       readonly sessionName: string;
       readonly rendererOrigin: string;
+      readonly hostClientId: string;
     },
   ): Promise<PaneStreamDescriptor>;
 }
@@ -190,7 +191,8 @@ export function mountPaneStreamIssueRoute(app: Hono, options: PaneStreamIssueRou
     const origin = canonicalRendererOrigin(exactHeader(request, "Origin"));
     const requestId = exactHeader(request, "X-Tmux-Ide-Request-Id");
     const expectedInstanceId = exactHeader(request, "X-Tmux-Ide-Expected-Daemon-Instance-Id");
-    if (!origin || !requestId || !expectedInstanceId) return invalid();
+    const hostClientId = exactHeader(request, "X-Tmux-Ide-Host-Client-Id");
+    if (!origin || !requestId || !expectedInstanceId || !hostClientId) return invalid();
 
     let raw: unknown;
     try {
@@ -229,6 +231,7 @@ export function mountPaneStreamIssueRoute(app: Hono, options: PaneStreamIssueRou
         projectIdentity: workspace.name,
         sessionName: workspace.sessionName,
         rendererOrigin: origin,
+        hostClientId,
       });
       return response({
         status: "issued",

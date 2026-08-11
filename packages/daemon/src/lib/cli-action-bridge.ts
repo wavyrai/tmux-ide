@@ -20,6 +20,7 @@ import {
   type EmbeddedDaemonHandle,
   type EmbeddedDaemonOptions,
 } from "./daemon-embed.ts";
+import { PANE_SOURCE_CREDENTIAL_HEADER } from "./pane-source-credentials.ts";
 
 interface ActionFailure {
   code: ActionErrorCode;
@@ -51,6 +52,12 @@ const RETRY_SAFE_OWNER_ACTIONS: ReadonlySet<ActionName> = new Set([
   "workspace.pane.swap",
   "workspace.pane.resize",
 ]);
+
+// Local actions can briefly queue behind tmux and daemon lifecycle work during
+// startup or a busy workspace. Keep the request budget comfortably above that
+// queue without changing the fast path; the stable operation id still makes a
+// lost response safe to retry exactly once.
+const ACTION_OPERATION_TIMEOUT_MS = 10_000;
 
 interface CliActionBridgeDeps {
   fetch: typeof fetch;
@@ -191,7 +198,12 @@ async function stopTransientDaemon(daemon: {
 export async function tryDispatchAction<Name extends ActionName>(
   name: Name,
   input: ActionInput<Name>,
-  options: { cwd?: string; operationId?: string; autostart?: boolean } = {},
+  options: {
+    cwd?: string;
+    operationId?: string;
+    autostart?: boolean;
+    sourcePaneCredential?: string;
+  } = {},
 ): Promise<ActionResult<Name> | null> {
   const dir = options.cwd ?? deps.cwd();
   const previousDeps = deps;
@@ -209,6 +221,9 @@ export async function tryDispatchAction<Name extends ActionName>(
     await stopTransientDaemon(daemon);
     return null;
   }
+  // One deadline covers both attempts. A retry never receives a fresh time
+  // budget and always retains the exact same operation id.
+  const operationSignal = timeoutSignal(ACTION_OPERATION_TIMEOUT_MS);
   const request = (): Promise<Response> =>
     deps.fetch(`${daemon.baseUrl}/api/v2/action/${encodeURIComponent(name)}`, {
       method: "POST",
@@ -216,9 +231,12 @@ export async function tryDispatchAction<Name extends ActionName>(
         "Content-Type": "application/json",
         ...(daemon.ownerToken ? { Authorization: `Bearer ${daemon.ownerToken}` } : {}),
         ...(operationId ? { "X-Tmux-Ide-Operation-Id": operationId } : {}),
+        ...(options.sourcePaneCredential
+          ? { [PANE_SOURCE_CREDENTIAL_HEADER]: options.sourcePaneCredential }
+          : {}),
       },
       body: JSON.stringify(parsedInput),
-      signal: timeoutSignal(2000),
+      signal: operationSignal,
     });
   try {
     const maximumAttempts = operationId ? 2 : 1;
@@ -230,6 +248,7 @@ export async function tryDispatchAction<Name extends ActionName>(
       } catch {
         // A timeout or truncated body may occur after the daemon committed.
         // The next attempt retains the exact same host operation id.
+        if (operationSignal.aborted) break;
         continue;
       }
 

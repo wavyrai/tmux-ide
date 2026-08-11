@@ -199,6 +199,9 @@ function harness(
     budgets?: ConstructorParameters<typeof PaneStreamAdmissionCoordinator>[0]["flowBudgets"];
     ticketTtlMs?: number;
     now?: () => number;
+    bindSessionRuntime?: ConstructorParameters<
+      typeof PaneStreamAdmissionCoordinator
+    >[0]["bindSessionRuntime"];
   } = {},
 ) {
   const mirror = new FakeMirror(options.panes ?? ["pane.editor", "pane.shell"]);
@@ -214,6 +217,15 @@ function harness(
     webSocketUrl: WS_URL,
     leaseManager,
     mirror,
+    bindSessionRuntime:
+      options.bindSessionRuntime ??
+      (() => ({
+        generation: INSTANCE,
+        session: SESSION,
+        clientId: "test:interactive",
+        assertController: () => undefined,
+        close: async () => undefined,
+      })),
     flowBudgets: options.budgets,
     now,
     schedule: scheduler.schedule,
@@ -227,6 +239,7 @@ async function connect(
     panes?: string[];
     viewerMode?: "interactive" | "read-only";
     deliveryAcks?: boolean;
+    hostClientId?: string;
   } = {},
 ): Promise<{ socket: FakeSocket; requestId: string }> {
   const requestId = freshRequestId();
@@ -242,6 +255,7 @@ async function connect(
       projectIdentity: "workspace.alpha",
       sessionName: SESSION,
       rendererOrigin: ORIGIN,
+      hostClientId: options.hostClientId ?? `test-host:${requestId}`,
     },
   );
   const decision = h.coordinator.reserveUpgrade({
@@ -261,7 +275,10 @@ async function connect(
     ...(options.deliveryAcks ? { deliveryAcks: true } : {}),
   });
   await vi.waitFor(() => {
-    expect(socket.framesOfType("ready")).toHaveLength(1);
+    expect({ ready: socket.framesOfType("ready").length, closed: socket.closed }).toEqual({
+      ready: 1,
+      closed: null,
+    });
   });
   return { socket, requestId };
 }
@@ -271,6 +288,24 @@ async function settled(): Promise<void> {
 }
 
 describe("PaneStreamAdmissionCoordinator", () => {
+  it("binds redeemed transport identity to SessionRuntime and closes it with the socket", async () => {
+    const close = vi.fn(async () => undefined);
+    const bindSessionRuntime = vi.fn((descriptor: { sessionName: string; leaseId: string }) => ({
+      generation: "11111111-1111-4111-8111-111111111111",
+      session: descriptor.sessionName,
+      clientId: `pane-stream:${descriptor.leaseId}`,
+      assertController: () => undefined,
+      close,
+    }));
+    const h = harness({ bindSessionRuntime });
+    const { socket } = await connect(h);
+    expect(bindSessionRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionName: SESSION, status: "active" }),
+    );
+    socket.close();
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  });
+
   it("redeems a ticket and streams atomic seed batches plus live output for two panes", async () => {
     const h = harness();
     const { socket } = await connect(h);
@@ -401,29 +436,73 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(h.leaseManager.snapshot().leases).toHaveLength(0);
   });
 
-  it("enforces the per-pane interactive grant at issue", async () => {
-    const h = harness();
-    await connect(h, { viewerMode: "interactive", panes: ["pane.editor"] });
-    await expect(
-      h.coordinator.issue(
-        {
-          protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
-          workspaceName: "workspace.alpha",
-          panes: ["pane.editor", "pane.shell"],
-          viewerMode: "interactive",
-        },
-        {
-          requestId: freshRequestId(),
-          projectIdentity: "workspace.alpha",
-          sessionName: SESSION,
-          rendererOrigin: ORIGIN,
-        },
-      ),
-    ).rejects.toMatchObject({ code: "interactive-viewer-conflict" });
-    // Read-only over the same pane still streams.
+  it("enforces interactive controller ownership at trusted redemption", async () => {
+    let controllerHost: string | null = null;
+    const h = harness({
+      bindSessionRuntime: (descriptor) => {
+        if (!descriptor.hostClientId) throw new Error("trusted host identity required");
+        if (descriptor.viewerMode === "interactive") {
+          if (controllerHost && controllerHost !== descriptor.hostClientId) {
+            throw Object.assign(new Error("controller conflict"), {
+              code: "controller-conflict",
+            });
+          }
+          controllerHost = descriptor.hostClientId;
+        }
+        return {
+          generation: INSTANCE,
+          session: descriptor.sessionName,
+          clientId: descriptor.hostClientId,
+          assertController: () => undefined,
+          close: async () => undefined,
+        };
+      },
+    });
+    const first = await connect(h, {
+      viewerMode: "interactive",
+      panes: ["pane.editor"],
+      hostClientId: "test-host:first",
+    });
+    const requestId = freshRequestId();
+    const descriptor = await h.coordinator.issue(
+      {
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        workspaceName: "workspace.alpha",
+        panes: ["pane.editor", "pane.shell"],
+        viewerMode: "interactive",
+      },
+      {
+        requestId,
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+        hostClientId: "test-host:second",
+      },
+    );
+    const decision = h.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error(decision.code);
+    const second = new FakeSocket();
+    decision.admission.bind(second);
+    second.message({
+      type: "redeem",
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      ticket: descriptor.redemptionTicket,
+      requestId,
+      daemonInstanceId: INSTANCE,
+    });
+    await vi.waitFor(() => {
+      expect(second.framesOfType("ready")).toHaveLength(0);
+      expect(second.closed).toEqual({ code: 1008, reason: "redemption-rejected" });
+    });
+    // Passive viewers remain independent of controller ownership.
     await expect(
       connect(h, { viewerMode: "read-only", panes: ["pane.editor"] }),
     ).resolves.toBeTruthy();
+    first.socket.close();
   });
 
   it("honors the delivery TTL for a redeem queued behind slow admission work", async () => {
@@ -689,6 +768,42 @@ describe("PaneStreamAdmissionCoordinator", () => {
         origin: ORIGIN,
       }).accepted,
     ).toBe(true);
+  });
+
+  it("binds upgrade admission to the issuing browser-document host", async () => {
+    const h = harness();
+    await h.coordinator.issue(
+      {
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        workspaceName: "workspace.alpha",
+        panes: ["pane.editor"],
+        viewerMode: "read-only",
+      },
+      {
+        requestId: freshRequestId(),
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+        hostClientId: "web:document-a",
+      },
+    );
+    expect(
+      h.coordinator.reserveUpgrade({
+        path: PANE_STREAM_REDEEM_PATH,
+        protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+        origin: ORIGIN,
+        hostClientId: "web:document-b",
+      }),
+    ).toMatchObject({ accepted: false, code: "origin-rejected" });
+    expect(
+      h.coordinator.reserveUpgrade({
+        path: PANE_STREAM_REDEEM_PATH,
+        protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+        origin: ORIGIN,
+        hostClientId: "web:document-a",
+      }).accepted,
+    ).toBe(true);
+    await h.coordinator.shutdown();
   });
 
   it("shuts down cleanly, retiring pendings and closing live connections", async () => {

@@ -16,6 +16,7 @@ const TOKEN_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const TOKEN_C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const OP_A = "00000000-0000-4000-8000-000000000001";
 const OP_B = "00000000-0000-4000-8000-000000000002";
+const OP_C = "00000000-0000-4000-8000-000000000003";
 
 function resize(workspaceName = "alpha") {
   return {
@@ -93,6 +94,258 @@ function finishSeed(sim: SimulatedChannel): void {
 }
 
 describe("SessionRuntimeRegistry", () => {
+  it("attributes a headless pane-credential send without borrowing a GUI controller", async () => {
+    const base = rig();
+    const executed: Array<{ sourceSemanticPaneId?: string }> = [];
+    const receipts: Array<{ phase: string; sourceSemanticPaneId: string | null }> = [];
+    let sequence = 0;
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: base.mirror,
+      semanticMutations: {
+        resolveSession: () => "alpha-session",
+        execute: async (_operationId, intent) => {
+          if (intent.verb === "workspace.pane.send") executed.push(intent);
+        },
+        publishReceipt: (receipt) => {
+          receipts.push(receipt);
+          return { type: "interaction.receipt", sequence: (sequence += 1), ...receipt };
+        },
+      },
+    });
+    const completion = registry.submitPaneCredentialIntent(
+      "alpha-session",
+      OP_A,
+      { ...send(), sourceSemanticPaneId: "pane.editor" },
+      "pane.editor",
+    );
+    await vi.waitFor(() => expect(executed).toHaveLength(1));
+    expect(registry.activeControllerLeaseCount()).toBe(0);
+    registry.observeTmuxInteraction({
+      operationId: OP_A,
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      operationKind: "workspace.pane.send",
+    });
+    await completion;
+    expect(receipts).toMatchObject([
+      { phase: "accepted", sourceSemanticPaneId: null },
+      { phase: "observed", sourceSemanticPaneId: "pane.editor" },
+    ]);
+    await expect(
+      registry.submitPaneCredentialIntent("alpha-session", OP_B, resize(), "pane.editor"),
+    ).rejects.toThrow("authorize pane sends only");
+    await registry.dispose();
+  });
+
+  it("rejects an authenticated host queued behind prior work after its controller closes", async () => {
+    const base = rig();
+    const executed: string[] = [];
+    const receipts: Array<{ operationId: string; phase: string }> = [];
+    let sequence = 0;
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: base.mirror,
+      createControllerToken: () => TOKEN_A,
+      semanticMutations: {
+        resolveSession: () => "alpha-session",
+        execute: async (operationId) => void executed.push(operationId),
+        publishReceipt: (receipt) => {
+          receipts.push(receipt);
+          return { type: "interaction.receipt", sequence: (sequence += 1), ...receipt };
+        },
+      },
+    });
+    const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");
+    const subscribing = editor.subscribe("pane.alpha", () => {});
+    await vi.waitFor(() => expect(base.sims).toHaveLength(1));
+    finishSeed(base.sims[0]!);
+    const subscription = await subscribing;
+    let releaseSubscriptionClose!: () => void;
+    const subscriptionCloseGate = new Promise<void>((resolve) => {
+      releaseSubscriptionClose = resolve;
+    });
+    Object.assign(subscription, {
+      close: async () => {
+        await subscriptionCloseGate;
+      },
+    });
+    const lease = editor.acquireController();
+    const baseHandle = registry.createExecutionHandle(editor, lease, ["pane.editor"]);
+    const source = registry.bindExecutionSource(baseHandle, "pane.editor");
+    const first = registry.submitAuthenticatedIntent(source, OP_A, send());
+    const stale = registry.submitAuthenticatedIntent(source, OP_B, send());
+    await vi.waitFor(() => expect(executed).toEqual([OP_A]));
+    const closing = editor.close();
+    expect(registry.activeControllerLeaseCount()).toBe(0);
+    registry.observeTmuxInteraction({
+      operationId: OP_A,
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      operationKind: "workspace.pane.send",
+    });
+    await first;
+    await expect(stale).rejects.toMatchObject({ outcome: "rejected" });
+    expect(executed).toEqual([OP_A]);
+    expect(receipts).toContainEqual(
+      expect.objectContaining({ operationId: OP_B, phase: "rejected" }),
+    );
+    releaseSubscriptionClose();
+    await closing;
+    await registry.dispose();
+  });
+
+  it("rejects a queued pane credential when reconciliation revokes it before effect", async () => {
+    const base = rig();
+    const executed: string[] = [];
+    let sequence = 0;
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: base.mirror,
+      semanticMutations: {
+        resolveSession: () => "alpha-session",
+        execute: async (operationId) => void executed.push(operationId),
+        publishReceipt: (receipt) => ({
+          type: "interaction.receipt",
+          sequence: (sequence += 1),
+          ...receipt,
+        }),
+      },
+    });
+    let credentialLive = true;
+    const authorize = () => {
+      if (!credentialLive) throw new Error("credential was rotated");
+    };
+    const first = registry.submitPaneCredentialIntent(
+      "alpha-session",
+      OP_A,
+      send(),
+      "pane.editor",
+      authorize,
+    );
+    const stale = registry.submitPaneCredentialIntent(
+      "alpha-session",
+      OP_B,
+      send(),
+      "pane.editor",
+      authorize,
+    );
+    await vi.waitFor(() => expect(executed).toEqual([OP_A]));
+    credentialLive = false;
+    registry.observeTmuxInteraction({
+      operationId: OP_A,
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      operationKind: "workspace.pane.send",
+    });
+    await first;
+    await expect(stale).rejects.toMatchObject({ outcome: "rejected" });
+    expect(executed).toEqual([OP_A]);
+    await registry.dispose();
+  });
+
+  it("attributes an observed send only from a live authenticated source binding", async () => {
+    const base = rig();
+    const executed: Array<{ sourceSemanticPaneId?: string }> = [];
+    const receipts: Array<{ phase: string; sourceSemanticPaneId: string | null }> = [];
+    let sequence = 0;
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: base.mirror,
+      createControllerToken: () => TOKEN_A,
+      semanticMutations: {
+        resolveSession: () => "alpha-session",
+        execute: async (_operationId, intent) => {
+          if (intent.verb === "workspace.pane.send") executed.push(intent);
+        },
+        publishReceipt: (receipt) => {
+          receipts.push(receipt);
+          return { type: "interaction.receipt", sequence: (sequence += 1), ...receipt };
+        },
+      },
+    });
+    const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");
+    const lease = editor.acquireController();
+    const handle = registry.createExecutionHandle(editor, lease, ["pane.editor"]);
+    const source = registry.bindExecutionSource(handle, "pane.editor");
+    const completion = registry.submitAuthenticatedIntent(source, OP_A, {
+      ...send(),
+      sourceSemanticPaneId: "pane.editor",
+    });
+    await vi.waitFor(() => expect(executed).toHaveLength(1));
+    registry.observeTmuxInteraction({
+      operationId: OP_A,
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      operationKind: "workspace.pane.send",
+    });
+    await completion;
+
+    expect(executed[0]!.sourceSemanticPaneId).toBe("pane.editor");
+    expect(receipts).toMatchObject([
+      { phase: "accepted", sourceSemanticPaneId: null },
+      { phase: "observed", sourceSemanticPaneId: "pane.editor" },
+    ]);
+    await registry.dispose();
+  });
+
+  it("strips naked source claims and rejects cross-client or stale source capabilities", async () => {
+    const base = rig();
+    const executed: Array<{ sourceSemanticPaneId?: string }> = [];
+    let sequence = 0;
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: base.mirror,
+      createControllerToken: () => TOKEN_A,
+      semanticMutations: {
+        resolveSession: () => "alpha-session",
+        execute: async (_operationId, intent) => {
+          if (intent.verb === "workspace.pane.send") executed.push(intent);
+        },
+        publishReceipt: (receipt) => ({
+          type: "interaction.receipt",
+          sequence: (sequence += 1),
+          ...receipt,
+        }),
+      },
+    });
+    const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");
+    const viewer = registry.connect("alpha-session", "pane-stream", "client:viewer");
+    const lease = editor.acquireController();
+    expect(() => registry.createExecutionHandle(viewer, lease, ["pane.editor"])).toThrowError(
+      expect.objectContaining({ code: "stale-controller-lease" }),
+    );
+    const handle = registry.createExecutionHandle(editor, lease, ["pane.editor"]);
+    const source = registry.bindExecutionSource(handle, "pane.editor");
+    await expect(
+      Promise.resolve().then(() => registry.bindExecutionSource(handle, "pane.tests")),
+    ).rejects.toMatchObject({ code: "invalid-source-pane-binding" });
+    expect(executed).toEqual([]);
+
+    const naked = editor.submitIntent(lease, OP_C, {
+      ...send(),
+      sourceSemanticPaneId: "pane.editor",
+    });
+    await vi.waitFor(() => expect(executed).toHaveLength(1));
+    registry.observeTmuxInteraction({
+      operationId: OP_C,
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      operationKind: "workspace.pane.send",
+    });
+    await naked;
+    expect(executed[0]).not.toHaveProperty("sourceSemanticPaneId");
+
+    const replacement = new SessionRuntimeRegistry({
+      generation: GENERATION_B,
+      mirror: base.mirror,
+    });
+    await expect(replacement.submitAuthenticatedIntent(source, OP_A, send())).rejects.toMatchObject(
+      { code: "invalid-client-capability" },
+    );
+    await Promise.all([registry.dispose(), replacement.dispose()]);
+  });
+
   it("shares one long-lived control authority across three independent consumer handles", async () => {
     const { registry, sims } = rig();
     const tui = registry.connect(FIXTURE.session, "opentui", "client:tui");

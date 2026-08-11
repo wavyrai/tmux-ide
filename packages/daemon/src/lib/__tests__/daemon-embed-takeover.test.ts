@@ -24,6 +24,9 @@ import { WorkspaceRegistry, _setDefaultWorkspaceRegistryForTests } from "../work
 
 const INSTANCE_A = "9bcf33b0-c837-4a94-b5e8-c0977f54464f";
 const INSTANCE_B = "76088827-c1f1-4451-bc2e-0a3ae7747434";
+const TAKEOVER_DEADLINE_TEST_OVERRIDE = Symbol.for(
+  "tmux-ide.daemon-embed.takeover-deadline-ms.test-only",
+);
 
 let stateDir: string;
 let previousEnv: Record<string, string | undefined>;
@@ -34,6 +37,18 @@ const servers = new Set<{ server: Server; sockets: Set<Socket> }>();
 function trackHandle(handle: EmbeddedDaemonHandle): EmbeddedDaemonHandle {
   handles.add(handle);
   return handle;
+}
+
+function overrideTakeoverDeadline(timeoutMs: number): () => void {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, TAKEOVER_DEADLINE_TEST_OVERRIDE);
+  Object.defineProperty(globalThis, TAKEOVER_DEADLINE_TEST_OVERRIDE, {
+    configurable: true,
+    value: timeoutMs,
+  });
+  return () => {
+    if (previous) Object.defineProperty(globalThis, TAKEOVER_DEADLINE_TEST_OVERRIDE, previous);
+    else delete (globalThis as Record<PropertyKey, unknown>)[TAKEOVER_DEADLINE_TEST_OVERRIDE];
+  };
 }
 
 function claimCanonicalSlot(): CanonicalDaemonClaim {
@@ -63,6 +78,8 @@ function daemonInfo(
 async function fakeOwner(options: {
   action: "accept-stuck" | "refuse" | "timeout";
   identityInstanceId?: string;
+  identityDelayMs?: number;
+  actionBodyDelayMs?: number;
   authToken?: string | null;
 }): Promise<{
   info: CanonicalDaemonInfo;
@@ -74,6 +91,9 @@ async function fakeOwner(options: {
   const server = createServer(async (req, res) => {
     res.setHeader("Content-Type", "application/json");
     if (req.url === "/identity") {
+      if (options.identityDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.identityDelayMs));
+      }
       res.end(
         JSON.stringify({
           ok: true,
@@ -105,6 +125,11 @@ async function fakeOwner(options: {
         body: JSON.parse(raw),
       });
       if (options.action === "timeout") return;
+      if (options.actionBodyDelayMs) {
+        res.writeHead(options.action === "accept-stuck" ? 200 : 409);
+        res.flushHeaders();
+        await new Promise((resolve) => setTimeout(resolve, options.actionBodyDelayMs));
+      }
       if (options.action === "accept-stuck") {
         res.end(JSON.stringify({ ok: true, result: { stopping: true } }));
         return;
@@ -133,6 +158,7 @@ async function fakeOwner(options: {
 }
 
 beforeEach(() => {
+  delete (globalThis as Record<PropertyKey, unknown>)[TAKEOVER_DEADLINE_TEST_OVERRIDE];
   stateDir = mkdtempSync(join(tmpdir(), "tmux-ide-takeover-"));
   previousEnv = {
     TMUX_IDE_DAEMON_INFO_DIR: process.env.TMUX_IDE_DAEMON_INFO_DIR,
@@ -151,6 +177,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  delete (globalThis as Record<PropertyKey, unknown>)[TAKEOVER_DEADLINE_TEST_OVERRIDE];
   for (const handle of [...handles].reverse()) await handle.stop().catch(() => undefined);
   handles.clear();
   setDaemonShutdownBackend(null);
@@ -243,12 +270,53 @@ describe.sequential("embedded daemon cooperative takeover", () => {
     expect(existsSync(getCanonicalDaemonClaimPath())).toBe(true);
   });
 
+  it("gives identity validation the shared takeover deadline rather than a shorter probe timeout", async () => {
+    const { info, actionRequests } = await fakeOwner({
+      action: "refuse",
+      identityDelayMs: 900,
+    });
+
+    const restoreDeadline = overrideTakeoverDeadline(2_500);
+    try {
+      await expect(
+        startEmbeddedDaemon({ takeoverIfRunning: true, silent: true }),
+      ).rejects.toMatchObject({ reason: "canonical_takeover_refused" });
+    } finally {
+      restoreDeadline();
+    }
+    expect(actionRequests).toHaveLength(1);
+    expect(readCanonicalDaemonInfo()?.instanceId).toBe(info.instanceId);
+  });
+
   it("times out without acquiring or clearing an unresponsive owner's claim", async () => {
     const { info } = await fakeOwner({ action: "timeout" });
 
-    await expect(
-      startEmbeddedDaemon({ takeoverIfRunning: true, silent: true }),
-    ).rejects.toMatchObject({ reason: "canonical_takeover_timeout" });
+    const restoreDeadline = overrideTakeoverDeadline(250);
+    try {
+      await expect(
+        startEmbeddedDaemon({ takeoverIfRunning: true, silent: true }),
+      ).rejects.toMatchObject({ reason: "canonical_takeover_timeout" });
+    } finally {
+      restoreDeadline();
+    }
+    expect(readCanonicalDaemonInfo()?.instanceId).toBe(info.instanceId);
+    expect(existsSync(getCanonicalDaemonClaimPath())).toBe(true);
+  });
+
+  it("classifies a delayed shutdown response body as a shared-deadline timeout", async () => {
+    const { info, actionRequests } = await fakeOwner({
+      action: "accept-stuck",
+      actionBodyDelayMs: 500,
+    });
+    const restoreDeadline = overrideTakeoverDeadline(250);
+    try {
+      await expect(
+        startEmbeddedDaemon({ takeoverIfRunning: true, silent: true }),
+      ).rejects.toMatchObject({ reason: "canonical_takeover_timeout" });
+    } finally {
+      restoreDeadline();
+    }
+    expect(actionRequests).toHaveLength(1);
     expect(readCanonicalDaemonInfo()?.instanceId).toBe(info.instanceId);
     expect(existsSync(getCanonicalDaemonClaimPath())).toBe(true);
   });

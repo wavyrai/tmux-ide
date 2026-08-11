@@ -62,6 +62,7 @@ function headers(overrides: Record<string, string> = {}): Headers {
     Origin: ORIGIN,
     "X-Tmux-Ide-Request-Id": REQUEST_ID,
     "X-Tmux-Ide-Expected-Daemon-Instance-Id": IDENTITY.instanceId,
+    "X-Tmux-Ide-Host-Client-Id": "electron:test-renderer",
     ...overrides,
   });
 }

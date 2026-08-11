@@ -202,7 +202,8 @@ export function mountTerminalAttachmentIssueRoute(
     const origin = canonicalRendererOrigin(exactHeader(request, "Origin"));
     const requestId = exactHeader(request, "X-Tmux-Ide-Request-Id");
     const expectedInstanceId = exactHeader(request, "X-Tmux-Ide-Expected-Daemon-Instance-Id");
-    if (!origin || !requestId || !expectedInstanceId) return invalid();
+    const hostClientId = exactHeader(request, "X-Tmux-Ide-Host-Client-Id");
+    if (!origin || !requestId || !expectedInstanceId || !hostClientId) return invalid();
 
     let raw: unknown;
     try {
@@ -240,6 +241,7 @@ export function mountTerminalAttachmentIssueRoute(
         requestId: parsed.data.requestId,
         projectIdentity: workspace.name,
         rendererOrigin: origin,
+        hostClientId,
       });
       return response({
         status: "issued",

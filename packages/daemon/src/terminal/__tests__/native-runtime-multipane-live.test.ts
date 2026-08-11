@@ -210,6 +210,15 @@ describe.skipIf(!hasTmux)("m41 attach-2 multi-pane live acceptance", () => {
       daemonInstanceId,
       webSocketUrl: "ws://127.0.0.1:6070/v1/terminal/attachments/redeem",
       registry,
+      admission: {
+        bindSessionRuntime: () => ({
+          generation: daemonInstanceId,
+          session: sessionName,
+          clientId: `test-host:multipane:${requestId}`,
+          assertController: () => undefined,
+          close: async () => undefined,
+        }),
+      },
       tmuxAuthority: {
         executablePath,
         socketSelector: { kind: "name", name: socketName },
@@ -225,7 +234,12 @@ describe.skipIf(!hasTmux)("m41 attach-2 multi-pane live acceptance", () => {
         geometryOwnership,
         viewport: { cols: 100, rows: 30 },
       },
-      { requestId, projectIdentity: "project-accept", rendererOrigin: "tmux-ide://app" },
+      {
+        requestId,
+        projectIdentity: "project-accept",
+        rendererOrigin: "tmux-ide://app",
+        hostClientId: `test-host:multipane:${requestId}`,
+      },
     );
     const upgrade = runtime.admission.reserveUpgrade({
       path: TERMINAL_ATTACHMENT_REDEEM_PATH,

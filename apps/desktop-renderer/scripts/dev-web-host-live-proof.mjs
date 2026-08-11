@@ -462,8 +462,13 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
         return { ok: false, reason: `issue: ${JSON.stringify(issued.error)}`, paneId };
       }
       const descriptor = issued.descriptor;
+      const { browserWebSocketHandshakeUrl } =
+        await import("/src/runtime/browser-websocket-session.ts");
       return await new Promise((done) => {
-        const socket = new WebSocket(descriptor.webSocketUrl, descriptor.subprotocol);
+        const socket = new WebSocket(
+          browserWebSocketHandshakeUrl(descriptor.webSocketUrl),
+          descriptor.subprotocol,
+        );
         const frames = [];
         const finish = (value) => {
           try {
@@ -503,7 +508,7 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
           }
           if (frame.type === "seed-batch") {
             clearTimeout(timer);
-            finish({ ok: true, frames, paneId, subprotocol: socket.protocol });
+            finish({ ok: true, frames, paneId, subprotocol: socket.protocol, descriptor });
           }
         });
         socket.addEventListener("error", () => {
@@ -520,6 +525,111 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
     `rung c: pane-stream connected and seeded ${stream.paneId} over subprotocol ` +
       `${stream.subprotocol}; frames: ${stream.frames.join(",")}`,
   );
+  const foreignDescriptor = await page.evaluate(
+    async ({ workspaceName }) => {
+      const host = globalThis.window.tmuxIdeHost;
+      const shell = await host.daemon.fetchApplicationShell({ workspaceName });
+      if (shell.status !== "ok") return null;
+      const pane = shell.envelope.resource?.terminalInventory?.resources?.find(
+        (entry) => entry.attachability?.status === "available",
+      );
+      if (!pane) return null;
+      const paneId = pane.attachability.semanticPaneId ?? pane.id;
+      const issued = await host.daemon.issuePaneStream({
+        protocolVersion: 1,
+        workspaceName,
+        panes: [paneId],
+        viewerMode: "read-only",
+      });
+      return issued.status === "issued" ? issued.descriptor : null;
+    },
+    { workspaceName },
+  );
+  if (!foreignDescriptor) throw new Error("rung c2 failed: first document could not issue ticket");
+
+  // A second same-origin document receives a different host session. Its
+  // socket may reach the proxy, but it cannot redeem the first document's
+  // host-bound ticket. This also models a reload/new document generation.
+  const secondPage = await browser.newPage({ viewport: { width: 900, height: 600 } });
+  await secondPage.goto(`${pageUrl}?devHost=1`, { waitUntil: "domcontentloaded" });
+  await pollUntil({
+    probe: async () =>
+      (await secondPage.getAttribute(".app", "data-shell-source")) === "runtime" ? true : null,
+    detail: "the second document generation to boot",
+    timeoutMs: FLEET_TIMEOUT_MS,
+  });
+  const crossDocument = await secondPage.evaluate(
+    async ({ workspaceName, foreignDescriptor, timeoutMs }) => {
+      const host = globalThis.window.tmuxIdeHost;
+      const shell = await host.daemon.fetchApplicationShell({ workspaceName });
+      if (shell.status !== "ok") return { ok: false, reason: "second shell unavailable" };
+      const pane = shell.envelope.resource?.terminalInventory?.resources?.find(
+        (entry) => entry.attachability?.status === "available",
+      );
+      if (!pane) return { ok: false, reason: "second document found no pane" };
+      const paneId = pane.attachability.semanticPaneId ?? pane.id;
+      const own = await host.daemon.issuePaneStream({
+        protocolVersion: 1,
+        workspaceName,
+        panes: [paneId],
+        viewerMode: "read-only",
+      });
+      if (own.status !== "issued") return { ok: false, reason: "second issue refused" };
+      const { browserWebSocketHandshakeUrl } =
+        await import("/src/runtime/browser-websocket-session.ts");
+      return await new Promise((done) => {
+        const socket = new WebSocket(
+          browserWebSocketHandshakeUrl(own.descriptor.webSocketUrl),
+          own.descriptor.subprotocol,
+        );
+        const timer = setTimeout(
+          () => done({ ok: false, reason: "cross-document redemption timed out" }),
+          timeoutMs,
+        );
+        const finish = (value) => {
+          clearTimeout(timer);
+          try {
+            socket.close();
+          } catch {
+            /* already closed */
+          }
+          done(value);
+        };
+        socket.addEventListener("open", () => {
+          socket.send(
+            JSON.stringify({
+              type: "redeem",
+              protocolVersion: 1,
+              ticket: foreignDescriptor.redemptionTicket,
+              requestId: foreignDescriptor.requestId,
+              daemonInstanceId: foreignDescriptor.daemonInstanceId,
+            }),
+          );
+        });
+        socket.addEventListener("message", (event) => {
+          if (typeof event.data !== "string") return;
+          const frame = JSON.parse(event.data);
+          if (frame.type === "ready" || frame.type === "seed-batch") {
+            finish({ ok: false, reason: `foreign ticket reached ${frame.type}` });
+          } else if (frame.type === "error") {
+            finish({ ok: true, refusal: frame.code });
+          }
+        });
+        socket.addEventListener("close", () => finish({ ok: true, refusal: "closed" }));
+        socket.addEventListener("error", () => finish({ ok: true, refusal: "handshake" }));
+      });
+    },
+    {
+      workspaceName,
+      foreignDescriptor,
+      timeoutMs: STREAM_TIMEOUT_MS,
+    },
+  );
+  await secondPage.close();
+  if (!crossDocument.ok) {
+    throw new Error(`rung c2 failed: ${crossDocument.reason}`);
+  }
+  log(`rung c2: second document denied the first document's ticket (${crossDocument.refusal})`);
 
   // (d) The interactive terminal attachment — the tile's own path, which the
   //     app starts by itself on load through `issueTerminalAttachment`.

@@ -91,6 +91,32 @@ try {
   run("npx", ["tmux-ide", "--version"], { cwd: projectDir, stdio: "inherit" });
 
   const installedCli = join(projectDir, "node_modules", ".bin", "tmux-ide");
+  const installedBundle = readFileSync(
+    join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
+    "utf8",
+  );
+  for (const removed of [
+    "TerminalInputAuthority",
+    "terminal/input-authority",
+    "SessionRuntimeClientCapability",
+    "SessionRuntimeSourcePaneBinding",
+  ]) {
+    if (installedBundle.includes(removed)) {
+      throw new Error(`Installed CLI still contains removed authority architecture: ${removed}`);
+    }
+  }
+  for (const required of [
+    "PaneSourceCredentialAuthority",
+    "X-Tmux-Ide-Pane-Source-Credential",
+    "X-Tmux-Ide-Host-Client-Id",
+    "submitPaneCredentialIntent",
+  ]) {
+    if (!installedBundle.includes(required)) {
+      throw new Error(
+        `Installed CLI is missing authenticated provenance architecture: ${required}`,
+      );
+    }
+  }
   const contenders = Array.from({ length: 12 }, () => spawnInstalledCli(installedCli));
 
   const daemonInfo = join(homeDir, ".tmux-ide", "daemon.json");

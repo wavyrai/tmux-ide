@@ -308,15 +308,18 @@ export class WorkspaceMultiplexerAuthority {
   }
 
   /** Serialized per tmux session: read-decide-mutate never interleaves locally. */
-  mutate(raw: WorkspaceMultiplexerMutationRequest): Promise<WorkspaceMultiplexerMutationResult> {
+  mutate(
+    raw: WorkspaceMultiplexerMutationRequest,
+    authorizeBeforeEffect?: () => void,
+  ): Promise<WorkspaceMultiplexerMutationResult> {
     return Promise.resolve().then(() => {
       const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
       const session = this.#registry.get(request.intent.workspaceName)?.sessionName;
       const queue = session ?? `missing:${request.intent.workspaceName}`;
       const previous = this.#tails.get(queue) ?? Promise.resolve();
       const run = previous.then(
-        () => this.#mutate(request),
-        () => this.#mutate(request),
+        () => this.#mutate(request, authorizeBeforeEffect),
+        () => this.#mutate(request, authorizeBeforeEffect),
       );
       const tail = run.then(
         () => undefined,
@@ -395,6 +398,7 @@ export class WorkspaceMultiplexerAuthority {
 
   async #mutate(
     raw: WorkspaceMultiplexerMutationRequest,
+    authorizeBeforeEffect?: () => void,
   ): Promise<WorkspaceMultiplexerMutationResult> {
     if (this.#disposed) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
@@ -443,6 +447,9 @@ export class WorkspaceMultiplexerAuthority {
     }
 
     try {
+      // This authority has its own per-session queue. Recheck only after that
+      // wait, immediately before the synchronous read/decide/tmux effect lane.
+      authorizeBeforeEffect?.();
       const result = await this.#perform(request, workspace);
       const parsed = WorkspaceMultiplexerMutationResultSchemaZ.parse(result);
       this.#operations.set(request.operationId, {
@@ -931,6 +938,13 @@ export class WorkspaceMultiplexerAuthority {
     const sourcePane = intent.sourceSemanticPaneId
       ? resolvePaneRow(before, intent.sourceSemanticPaneId)
       : null;
+    // A submitted message is one literal PTY write (text + carriage return),
+    // hence one after-send-keys hook. The marker, effect, and cleanup are one
+    // tmux command list so unrelated send-keys cannot interleave inside the
+    // daemon-authored attribution window. The synchronous pinned after-hook
+    // records and unsets the marker before tmux advances this command queue;
+    // unsetting here would run before the after-hook can observe it.
+    const input = intent.submit ? `${intent.text}\r` : intent.text;
     this.#io.runTmux([
       "set-option",
       "-p",
@@ -938,18 +952,14 @@ export class WorkspaceMultiplexerAuthority {
       pane.paneId,
       INTERNAL_SEND_OPERATION_OPTION,
       internalInteractionOperationMarker(this.#daemonInstanceId, envelope.operationId),
+      ";",
+      "send-keys",
+      "-t",
+      pane.paneId,
+      "-l",
+      "--",
+      input,
     ]);
-    try {
-      this.#io.runTmux(["send-keys", "-t", pane.paneId, "-l", "--", intent.text]);
-      if (intent.submit) this.#io.runTmux(["send-keys", "-t", pane.paneId, "Enter"]);
-    } finally {
-      try {
-        this.#io.runTmux(["set-option", "-pu", "-t", pane.paneId, INTERNAL_SEND_OPERATION_OPTION]);
-      } catch {
-        // The pane may have exited while input was delivered. Read-back below
-        // still decides whether the overall mutation can be verified.
-      }
-    }
 
     const observed = resolvePaneRow(this.#panes(sessionName), intent.semanticPaneId);
     if (observed.paneId !== pane.paneId) {

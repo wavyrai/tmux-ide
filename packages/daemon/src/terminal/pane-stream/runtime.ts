@@ -1,6 +1,6 @@
 import type { SemanticPaneCatalog } from "../attachments/semantic-pane-catalog.ts";
-import type { TerminalInputAuthority } from "../input-authority.ts";
 import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
+import { SessionRuntimeTransportBinder } from "../session-runtime/transport-binding.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import {
   PaneStreamAdmissionCoordinator,
@@ -13,7 +13,6 @@ export interface PaneStreamRuntimeOptions {
   /** Canonical daemon-generation session/control owner. */
   readonly sessionRuntimeRegistry: SessionRuntimeRegistry;
   /** Shared production authority and trusted semantic resolver. */
-  readonly inputAuthority?: TerminalInputAuthority;
   readonly semanticPaneCatalog?: SemanticPaneCatalog;
   readonly admission?: Omit<
     PaneStreamAdmissionCoordinatorOptions,
@@ -33,19 +32,27 @@ export class PaneStreamRuntime {
   constructor(options: PaneStreamRuntimeOptions) {
     const leaseManager = new PaneStreamLeaseManager({
       daemonInstanceId: options.daemonInstanceId,
-      ...(options.inputAuthority && options.semanticPaneCatalog
-        ? {
-            inputAuthority: options.inputAuthority,
-            semanticPaneCatalog: options.semanticPaneCatalog,
-          }
-        : {}),
     });
+    const transportBinder = new SessionRuntimeTransportBinder(options.sessionRuntimeRegistry);
     this.coordinator = new PaneStreamAdmissionCoordinator({
       ...options.admission,
       daemonInstanceId: options.daemonInstanceId,
       webSocketUrl: options.webSocketUrl,
       leaseManager,
       mirror: options.sessionRuntimeRegistry,
+      bindSessionRuntime: (descriptor) => {
+        if (!descriptor.hostClientId) {
+          throw new Error("Pane stream lacks trusted host identity");
+        }
+        return transportBinder.bind({
+          transport: "pane-stream",
+          transportLeaseId: descriptor.leaseId,
+          session: descriptor.sessionName,
+          hostClientId: descriptor.hostClientId,
+          allowedSourcePaneIds: descriptor.panes,
+          interactive: descriptor.viewerMode === "interactive",
+        });
+      },
     });
   }
 

@@ -14,6 +14,7 @@ import {
   type WorkspaceMultiplexerErrorCode,
 } from "./workspace-multiplexer-verbs.ts";
 import { WorkspaceRegistry } from "./workspace-registry.ts";
+import { INTERNAL_SEND_OPERATION_OPTION } from "./tmux-external-interaction-observer.ts";
 
 // ---------------------------------------------------------------------------
 // A tmux model just complete enough to answer the queries these verbs make.
@@ -189,7 +190,26 @@ class FakeTmux {
       }
       case "set-option": {
         if (args[1] !== "-p") throw new Error("unsupported set-option");
-        this.#pane(args[3]!).options.set(args[4]!, args[5]!);
+        const pane = this.#pane(args[3]!);
+        pane.options.set(args[4]!, args[5]!);
+        if (args.length > 6) {
+          if (args[7] === "capture-pane") return "";
+          if (
+            args[6] !== ";" ||
+            args[7] !== "send-keys" ||
+            args[8] !== "-t" ||
+            args[9] !== pane.id ||
+            args[10] !== "-l" ||
+            args[11] !== "--" ||
+            typeof args[12] !== "string" ||
+            args.length !== 13
+          ) {
+            throw new Error(`unsupported atomic send: ${args.join(" ")}`);
+          }
+          // Model the synchronous pinned after-hook: it records the marker and
+          // removes it before tmux advances this command queue.
+          pane.options.delete(args[4]!);
+        }
         return "";
       }
       case "split-window": {
@@ -429,6 +449,28 @@ describe("the multiplexer authority", () => {
     );
   });
 
+  it("rechecks queued structural authority after the multiplexer queue and before tmux effect", async () => {
+    let controllerLive = true;
+    const first = authority.mutate(
+      request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" }),
+      () => queueMicrotask(() => (controllerLive = false)),
+    );
+    const stale = authority.mutate(
+      request({
+        verb: "workspace.pane.resize",
+        semanticPaneId: "pane.one",
+        axis: "cols",
+        cells: 80,
+      }),
+      () => {
+        if (!controllerLive) throw new Error("controller handed off while queued");
+      },
+    );
+    await first;
+    await expect(stale).rejects.toMatchObject({ code: "mutation_failed" });
+    expect(tmux.calls.filter((args) => args[0] === "resize-pane")).toHaveLength(0);
+  });
+
   describe("split", () => {
     it("splits right and stamps the new pane like a created one", async () => {
       const result = await authority.mutate(
@@ -531,21 +573,38 @@ describe("the multiplexer authority", () => {
   });
 
   describe("send", () => {
-    it("delivers literal text and submit separately, then returns only safe metadata", async () => {
+    it("delivers submitted text as one atomic marked effect, then returns only safe metadata", async () => {
       const text = "hello; $(never-run) \ud83d\udc4b";
+      const operationId = randomUUID();
       const result = await authority.mutate(
-        request({
-          verb: "workspace.pane.send",
-          sourceSemanticPaneId: "pane.two",
-          semanticPaneId: "pane.one",
-          text,
-          submit: true,
-          origin: "sdk",
-        }),
+        request(
+          {
+            verb: "workspace.pane.send",
+            sourceSemanticPaneId: "pane.two",
+            semanticPaneId: "pane.one",
+            text,
+            submit: true,
+            origin: "sdk",
+          },
+          operationId,
+        ),
       );
 
-      expect(tmux.calls).toContainEqual(["send-keys", "-t", "%0", "-l", "--", text]);
-      expect(tmux.calls).toContainEqual(["send-keys", "-t", "%0", "Enter"]);
+      expect(tmux.calls).toContainEqual([
+        "set-option",
+        "-p",
+        "-t",
+        "%0",
+        INTERNAL_SEND_OPERATION_OPTION,
+        `${DAEMON_ID}:${operationId}`,
+        ";",
+        "send-keys",
+        "-t",
+        "%0",
+        "-l",
+        "--",
+        `${text}\r`,
+      ]);
       expect(result).toMatchObject({
         verb: "workspace.pane.send",
         outcome: "applied",
@@ -560,7 +619,7 @@ describe("the multiplexer authority", () => {
     });
 
     it("refuses an unverified source identity before sending any input", async () => {
-      const sendsBefore = tmux.calls.filter((args) => args[0] === "send-keys").length;
+      const sendsBefore = tmux.calls.filter((args) => args.includes("send-keys")).length;
       await expectRefusal(
         authority.mutate(
           request({
@@ -574,7 +633,7 @@ describe("the multiplexer authority", () => {
         ),
         "pane_not_found",
       );
-      expect(tmux.calls.filter((args) => args[0] === "send-keys")).toHaveLength(sendsBefore);
+      expect(tmux.calls.filter((args) => args.includes("send-keys"))).toHaveLength(sendsBefore);
     });
 
     it("replays one operation id without delivering terminal input twice", async () => {
@@ -590,13 +649,13 @@ describe("the multiplexer authority", () => {
         operationId,
       );
       const first = await authority.mutate(mutation);
-      const sendsAfterFirst = tmux.calls.filter((args) => args[0] === "send-keys").length;
+      const sendsAfterFirst = tmux.calls.filter((args) => args.includes("send-keys")).length;
       const second = await authority.mutate(mutation);
 
       expect(first.outcome).toBe("applied");
       expect(second).toEqual({ ...first, outcome: "replayed" });
-      expect(tmux.calls.filter((args) => args[0] === "send-keys")).toHaveLength(sendsAfterFirst);
-      expect(tmux.calls.filter((args) => args[0] === "send-keys")).toHaveLength(1);
+      expect(tmux.calls.filter((args) => args.includes("send-keys"))).toHaveLength(sendsAfterFirst);
+      expect(tmux.calls.filter((args) => args.includes("send-keys"))).toHaveLength(1);
     });
   });
 

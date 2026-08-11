@@ -58,6 +58,7 @@ export interface DaemonResourceAuthority {
   mutateAppWindow(request: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
   invokeVerb(
     request: WorkspaceMultiplexerMutationRequest,
+    hostClientId?: string,
   ): Promise<WorkspaceMultiplexerMutationResult>;
   openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
   promoteWorkspace(
@@ -69,10 +70,12 @@ export interface DaemonResourceAuthority {
   issueTerminalAttachment(
     request: TerminalAttachmentIssueMutationRequest,
     rendererOrigin: string,
+    hostClientId?: string,
   ): Promise<TerminalAttachmentIssueResult>;
   issuePaneStream(
     request: PaneStreamIssueMutationRequest,
     rendererOrigin: string,
+    hostClientId?: string,
   ): Promise<PaneStreamIssueResult>;
   listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
   fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult>;
@@ -342,11 +345,12 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
   async invokeVerb(
     request: WorkspaceMultiplexerMutationRequest,
+    hostClientId?: string,
   ): Promise<WorkspaceMultiplexerMutationResult> {
     const broker = this.#broker;
     if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.invokeVerb(request);
+    const result = await broker.invokeVerb(request, hostClientId);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
@@ -407,6 +411,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   async issueTerminalAttachment(
     request: TerminalAttachmentIssueMutationRequest,
     rendererOrigin: string,
+    hostClientId?: string,
   ): Promise<TerminalAttachmentIssueResult> {
     const broker = this.#broker;
     if (!broker || this.#disposed) {
@@ -416,7 +421,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       };
     }
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.issueTerminalAttachment(request, rendererOrigin);
+    const result = await broker.issueTerminalAttachment(request, rendererOrigin, hostClientId);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
@@ -435,13 +440,14 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   async issuePaneStream(
     request: PaneStreamIssueMutationRequest,
     rendererOrigin: string,
+    hostClientId?: string,
   ): Promise<PaneStreamIssueResult> {
     const broker = this.#broker;
     if (!broker || this.#disposed) {
       return { status: "error", error: paneStreamIssueError("daemon-unavailable") };
     }
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.issuePaneStream(request, rendererOrigin);
+    const result = await broker.issuePaneStream(request, rendererOrigin, hostClientId);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
