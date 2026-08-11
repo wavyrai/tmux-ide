@@ -156,8 +156,22 @@ describe.skipIf(!hasTmux).sequential("agent turn-completed receipt live integrat
         socket.once("error", reject);
       });
       // The hello confirms the connection is live and the watcher baselined
-      // the pane as working before we flip it.
+      // the transport. Explicit fleet demand starts and synchronously primes
+      // the single daemon watcher; its acknowledgement is the install barrier.
       await waitForFrame((frame) => frame.type === "hello", 10_000);
+      socket.send(
+        JSON.stringify({
+          type: "subscribe",
+          sessions: [],
+          legacyEvents: true,
+          interests: [{ resource: "fleet-catalog", workspaceName: null }],
+          interestRevision: 1,
+        }),
+      );
+      await waitForFrame(
+        (frame) => frame.type === "resource.interests-ack" && frame.interestRevision === 1,
+        10_000,
+      );
 
       const flippedAt = Date.now();
       run([

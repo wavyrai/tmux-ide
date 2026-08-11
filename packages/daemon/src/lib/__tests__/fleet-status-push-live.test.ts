@@ -14,12 +14,11 @@ const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 /**
  * End-to-end proof of the fleet status-push path (m40/fleet-status-push).
  *
- * A real `/ws/events` client connected like the fleet-catalog store does — with
- * NO per-session subscription (the app subscribes with an empty workspace set,
- * which sends no `subscribe` frame) — must still receive an `agent-status.changed`
- * frame when an `@agent_state` stamp transitions on a pane of an adopted-but-
- * NEVER-opened session. That frame is what the electron broker folds into a
- * renderer `fleet.changed`, which the fleet store re-fetches on. This test
+ * A real `/ws/events` client connected like the push-only fleet-catalog store
+ * does — with explicit global fleet demand and no per-session subscription —
+ * must receive one revisioned `fleet-catalog` invalidation when an
+ * `@agent_state` stamp transitions on a pane of an adopted-but-NEVER-opened
+ * session. This test
  * exercises the real daemon AgentStatusWatcher polling a real tmux server (not
  * the hermetic manual-tick unit), so it closes the gap between the unit coverage
  * and a live daemon: the signal does not die at the daemon boundary.
@@ -78,7 +77,7 @@ describe.skipIf(!hasTmux).sequential("fleet status push live integration", () =>
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("pushes agent-status.changed to an unsubscribed client when an unopened session flips", async () => {
+  it("invalidates an explicitly observed fleet when an unopened session flips", async () => {
     handle = await startEmbeddedDaemon({
       authToken: "remote-token-is-not-owner",
       localBypassToken: ownerToken,
@@ -151,15 +150,27 @@ describe.skipIf(!hasTmux).sequential("fleet status push live integration", () =>
       });
 
     try {
-      // Connect like the fleet store: open the socket, send NO subscribe frame
-      // (an empty workspace set subscribes to zero sessions). The `hello` frame
-      // confirms the connection is live and the watcher has baselined "working".
+      // Connect like the push-only fleet store. Hello authenticates the daemon;
+      // the acknowledged interest is the watcher-install/baseline barrier.
       await new Promise<void>((resolve, reject) => {
         socket.once("open", () => resolve());
         socket.once("error", reject);
       });
       const hello = await waitForFrame((frame) => frame.type === "hello", 10_000);
       expect(hello.type).toBe("hello");
+      socket.send(
+        JSON.stringify({
+          type: "subscribe",
+          sessions: [],
+          legacyEvents: false,
+          interests: [{ resource: "fleet-catalog", workspaceName: null }],
+          interestRevision: 1,
+        }),
+      );
+      await waitForFrame(
+        (frame) => frame.type === "resource.interests-ack" && frame.interestRevision === 1,
+        10_000,
+      );
 
       // Flip the ground-truth stamp on the unopened, unsubscribed session.
       run([
@@ -175,10 +186,16 @@ describe.skipIf(!hasTmux).sequential("fleet status push live integration", () =>
       // manual refetch and no per-session subscription.
       const frame = await waitForFrame(
         (candidate) =>
-          candidate.type === "agent-status.changed" && candidate.sessionName === adoptedSession,
+          candidate.type === "resource.changed" &&
+          candidate.workspaceName === null &&
+          candidate.resource === "fleet-catalog",
         20_000,
       );
-      expect(frame).toEqual({ type: "agent-status.changed", sessionName: adoptedSession });
+      expect(frame).toMatchObject({
+        type: "resource.changed",
+        workspaceName: null,
+        resource: "fleet-catalog",
+      });
     } finally {
       socket.close();
     }
