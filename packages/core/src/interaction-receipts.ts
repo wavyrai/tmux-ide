@@ -73,7 +73,7 @@ export function paneInteractionPresence(
   const kind = interaction.operationKind === "workspace.pane.read" ? "read" : "send";
   const endpoint = interaction.direction === "outgoing" ? "source" : "target";
   const role: PaneInteractionPresenceRole = `${kind}-${endpoint}`;
-  const failed = interaction.phase === "failed";
+  const failed = ["failed", "rejected", "timed-out"].includes(interaction.phase);
   let badge: string;
   if (failed) badge = "FAILED";
   else if (kind === "read") badge = endpoint === "source" ? "READING" : "READ";
@@ -120,6 +120,8 @@ export function interactionReceiptLabel(receipt: InteractionReceipt): string {
   const action = interactionSummaryLabel(receipt.operationKind, receipt.summary);
   if (receipt.phase === "accepted") return `${receipt.origin} accepted · ${action}`;
   if (receipt.phase === "failed") return `${receipt.origin} failed · ${action}`;
+  if (receipt.phase === "rejected") return `${receipt.origin} rejected · ${action}`;
+  if (receipt.phase === "timed-out") return `${receipt.origin} timed out · ${action}`;
   if (receipt.phase === "observed") return `${receipt.origin} observed · ${action}`;
   return `${receipt.origin} applied · ${action}`;
 }
