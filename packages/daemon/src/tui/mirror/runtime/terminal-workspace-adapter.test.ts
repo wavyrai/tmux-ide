@@ -37,6 +37,7 @@ describe("OpenTUI terminal workspace adapter", () => {
   it("retains view and framebuffer identities while replacing the fast lane", async () => {
     const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: vi.fn() });
     const adapter = new OpenTuiTerminalWorkspaceAdapter({ target: "alpha", lifecycle });
+    lifecycle.registerCloser("terminal-workspace", () => adapter.dispose());
     const view = adapter.view;
     const source = adapter.renderSource;
     const first = lane("alpha");
@@ -63,6 +64,7 @@ describe("OpenTUI terminal workspace adapter", () => {
   it("retires a runtime that resolves after shutdown without adopting it", async () => {
     const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: vi.fn() });
     const adapter = new OpenTuiTerminalWorkspaceAdapter({ target: "alpha", lifecycle });
+    lifecycle.registerCloser("terminal-workspace", () => adapter.dispose());
     const pending = deferred<OpenTuiSessionRuntimeLane | null>();
     const late = lane("late");
 
@@ -78,6 +80,7 @@ describe("OpenTUI terminal workspace adapter", () => {
   it("coalesces duplicate same-key connects without invalidating the pending owner", async () => {
     const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: vi.fn() });
     const adapter = new OpenTuiTerminalWorkspaceAdapter({ target: "alpha", lifecycle });
+    lifecycle.registerCloser("terminal-workspace", () => adapter.dispose());
     const pending = deferred<OpenTuiSessionRuntimeLane | null>();
     const connected = lane("alpha");
     const duplicateFactory = vi.fn(async () => lane("duplicate"));
@@ -96,6 +99,7 @@ describe("OpenTUI terminal workspace adapter", () => {
   it("allows the same key to retry after an unavailable runtime", async () => {
     const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: vi.fn() });
     const adapter = new OpenTuiTerminalWorkspaceAdapter({ target: "alpha", lifecycle });
+    lifecycle.registerCloser("terminal-workspace", () => adapter.dispose());
     const connected = lane("alpha");
 
     adapter.connect("generation-a", async () => null);

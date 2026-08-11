@@ -107,8 +107,12 @@ describe("OpenTUI demand-driven tool resources", () => {
     expect(controller.getMetrics()).toMatchObject({
       toolFetches: 0,
       subprocessLaunches: 0,
+      idleWakeups: 0,
+      renderPasses: 0,
       activeInterests: 0,
     });
+    controller.noteRenderPass();
+    expect(controller.getMetrics().renderPasses).toBe(1);
     controller.dispose();
   });
 
@@ -128,6 +132,20 @@ describe("OpenTUI demand-driven tool resources", () => {
     expect(new Set(log.slice(1))).toEqual(
       new Set(["fetch:fleet", "fetch:sessions", "fetch:projects", "fetch:files"]),
     );
+    controller.dispose();
+  });
+
+  it("can bootstrap global catalogs without opening a workspace dock observer", async () => {
+    const log: string[] = [];
+    const { adapter } = fakeAdapter(log);
+    const controller = createTuiToolResourceController(adapter);
+    controller.setTarget(TARGET);
+    controller.setOpenDock("files");
+    controller.markCatalogReady();
+    await settle();
+
+    expect(new Set(log)).toEqual(new Set(["fetch:fleet", "fetch:sessions", "fetch:projects"]));
+    expect(log).not.toContain("fetch:files");
     controller.dispose();
   });
 
@@ -314,6 +332,80 @@ describe("OpenTUI semantic event adapter", () => {
     );
     expect(invalidate).toHaveBeenCalledExactlyOnceWith(["files"]);
     if (connected.status === "connected") connected.close();
+  });
+
+  it("serializes and coalesces rapid interest replacements", async () => {
+    const socket = new FakeSocket();
+    const adapter = createTuiToolResourceAdapter({ createSocket: () => socket });
+    const controller = new AbortController();
+    const connecting = adapter.connect(
+      TARGET,
+      new Set(["workspace-files"]),
+      { invalidate: vi.fn() },
+      controller.signal,
+    );
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "hello",
+        daemon: {
+          protocolVersion: 1,
+          productVersion: "test",
+          instanceId: DAEMON.instanceId,
+          startedAt: DAEMON.startedAt,
+        },
+        sessions: [],
+        eventSequence: 0,
+      }),
+    );
+    await settle();
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "resource.interests-ack",
+        interestRevision: 1,
+        sequence: 0,
+        unavailableInterests: [],
+      }),
+    );
+    const connected = await connecting;
+    if (connected.status !== "connected") throw new Error("expected connected adapter");
+
+    const superseded = Promise.resolve(connected.updateInterests?.(new Set(["workspace-changes"])));
+    const latest = Promise.resolve(connected.updateInterests?.(new Set(["workspace-missions"])));
+    await expect(superseded).rejects.toThrow("superseded");
+    await settle();
+
+    const unsubscribe = JSON.parse(socket.sent[1] ?? "null") as { interestRevision: number };
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "resource.interests-ack",
+        interestRevision: unsubscribe.interestRevision,
+        sequence: 0,
+        unavailableInterests: [],
+      }),
+    );
+    await settle();
+    const subscribe = JSON.parse(socket.sent[2] ?? "null") as {
+      interestRevision: number;
+      interests: Array<{ resource: string }>;
+    };
+    expect(subscribe.interests).toEqual([
+      { resource: "workspace-missions", workspaceName: "workspace.one" },
+    ]);
+    expect(socket.sent.join("\n")).not.toContain("workspace-changes");
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "resource.interests-ack",
+        interestRevision: subscribe.interestRevision,
+        sequence: 0,
+        unavailableInterests: [],
+      }),
+    );
+    await latest;
+    connected.close();
   });
 
   it("reconnects one socket, resumes its cursor, and stops retrying after close", async () => {

@@ -85,7 +85,6 @@ export class OpenTuiTerminalWorkspaceAdapter {
     this.view = new SemanticSessionView(options);
     this.renderSource = this.#retainedSource;
     this.view.setSource(this.#emptySource);
-    this.#lifecycle.registerCleanup("terminal-workspace-slot", () => this.dispose());
   }
 
   get lane(): OpenTuiSessionRuntimeLane | null {

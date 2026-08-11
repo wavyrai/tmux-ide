@@ -42,10 +42,12 @@ describe("TUI input readiness", () => {
     const source = readFileSync(new URL("./mirror/app.tsx", import.meta.url), "utf8");
     const keyboard = source.indexOf("useKeyboard((evt) =>");
     const paste = source.indexOf("usePaste((e) =>", keyboard);
-    const ready = source.indexOf('onMount(() => publishTuiInputReady("app"))', paste);
+    const inputBarrier = source.indexOf("resolveInputReady()", paste);
+    const ready = source.indexOf('publishTuiInputReady("app")', inputBarrier);
 
     expect(keyboard).toBeGreaterThan(-1);
     expect(paste).toBeGreaterThan(keyboard);
-    expect(ready).toBeGreaterThan(paste);
+    expect(inputBarrier).toBeGreaterThan(paste);
+    expect(ready).toBeGreaterThan(inputBarrier);
   });
 });

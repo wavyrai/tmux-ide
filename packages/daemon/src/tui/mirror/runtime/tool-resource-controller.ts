@@ -61,6 +61,8 @@ export interface TuiToolResourceMetrics {
   readonly statePublications: number;
   readonly dirtyUpdates: number;
   readonly subprocessLaunches: 0;
+  readonly idleWakeups: 0;
+  readonly renderPasses: number;
   readonly activeInterests: number;
 }
 
@@ -287,9 +289,11 @@ export function createTuiToolResourceAdapter(
       >();
       const offlineInterestWaiters = new Set<{
         readonly signature: string;
+        readonly socket: ToolEventSocket | null;
         readonly resolve: () => void;
         readonly reject: (error: Error) => void;
       }>();
+      let mutationTail = Promise.resolve();
 
       const interestSignature = (values: ReadonlySet<string>): string =>
         [...values].sort().join("\u0000");
@@ -300,6 +304,20 @@ export function createTuiToolResourceAdapter(
       const rejectOfflineInterestWaiters = (reason: string): void => {
         for (const pending of offlineInterestWaiters) pending.reject(new Error(reason));
         offlineInterestWaiters.clear();
+      };
+      const retireSupersededInterestWaiters = (signature: string): void => {
+        for (const pending of [...offlineInterestWaiters]) {
+          if (pending.signature === signature) continue;
+          offlineInterestWaiters.delete(pending);
+          pending.reject(new Error("Daemon resource interests were superseded."));
+        }
+      };
+      const rejectSocketInterestWaiters = (socket: ToolEventSocket, reason: string): void => {
+        for (const pending of [...offlineInterestWaiters]) {
+          if (pending.socket !== socket) continue;
+          offlineInterestWaiters.delete(pending);
+          pending.reject(new Error(reason));
+        }
       };
       const settleOfflineInterestWaiters = (): void => {
         const signature = interestSignature(installed);
@@ -352,6 +370,24 @@ export function createTuiToolResourceAdapter(
         settleOfflineInterestWaiters();
       };
 
+      const installDesired = (socket: ToolEventSocket): Promise<void> => {
+        const signature = interestSignature(desired);
+        retireSupersededInterestWaiters(signature);
+        const settled = new Promise<void>((resolve, reject) => {
+          offlineInterestWaiters.add({ signature, socket, resolve, reject });
+        });
+        // One ordered mutation lane per adapter generation. Every queued pass
+        // reads the latest desired set, so rapid dock switches collapse without
+        // allowing subscribe/unsubscribe pairs to interleave.
+        mutationTail = mutationTail
+          .catch(() => undefined)
+          .then(() => sendDelta(socket))
+          .catch((error: unknown) => {
+            if (socket === verifiedSocket) rejectOfflineInterestWaiters(String(error));
+          });
+        return settled;
+      };
+
       // This supervisor is the sole transport retry owner. `connect()` stays
       // pending through pre-live failures, so PushResourceSession never starts
       // a second subscription retry ladder around WebSocket generations.
@@ -389,6 +425,7 @@ export function createTuiToolResourceAdapter(
             if (ended) return;
             ended = true;
             rejectPendingAcks(reason);
+            rejectSocketInterestWaiters(socket, reason);
             cleanupTransport();
             if (!live) rejectOpen(new Error(reason));
             settleClosed();
@@ -426,7 +463,7 @@ export function createTuiToolResourceAdapter(
                 everVerified = true;
                 verified = true;
                 verifiedSocket = socket;
-                void sendDelta(socket).then(
+                void installDesired(socket).then(
                   () => {
                     live = true;
                     settleOpen();
@@ -542,10 +579,11 @@ export function createTuiToolResourceAdapter(
         status: "connected",
         updateInterests(next) {
           desired = new Set(next);
-          if (verifiedSocket) return sendDelta(verifiedSocket);
           const signature = interestSignature(desired);
+          retireSupersededInterestWaiters(signature);
+          if (verifiedSocket) return installDesired(verifiedSocket);
           return new Promise<void>((resolve, reject) => {
-            offlineInterestWaiters.add({ signature, resolve, reject });
+            offlineInterestWaiters.add({ signature, socket: null, resolve, reject });
           });
         },
         close() {
@@ -579,6 +617,7 @@ export interface TuiToolResourceController {
     TuiToolResource,
     TuiToolResourceFailure
   >;
+  markCatalogReady(): void;
   markTerminalReady(): void;
   setTarget(target: TuiToolResourceTarget | null): void;
   setOpenDock(resource: TuiDockResourceKey | null): void;
@@ -593,6 +632,7 @@ export interface TuiToolResourceController {
     ) => void,
   ): () => void;
   getMetrics(): TuiToolResourceMetrics;
+  noteRenderPass(): void;
   dispose(): void;
 }
 
@@ -602,6 +642,7 @@ export function createTuiToolResourceController(
   options: PushResourceSessionOptions = {},
 ): TuiToolResourceController {
   const session = createPushResourceSession(adapter, null, options);
+  let catalogReady = false;
   let terminalReady = false;
   let openDock: TuiDockResourceKey | null = null;
   let releaseFleet: (() => void) | null = null;
@@ -611,20 +652,28 @@ export function createTuiToolResourceController(
   let publications = 0;
   let dirtyUpdates = 0;
   let previousState = session.getState();
+  let renderPasses = 0;
 
   const reconcile = (): void => {
-    if (!terminalReady) return;
-    releaseFleet ??= session.activate("fleet");
-    releaseSessions ??= session.activate("sessions");
-    releaseProjects ??= session.activate("projects");
+    if (catalogReady) {
+      releaseFleet ??= session.activate("fleet");
+      releaseSessions ??= session.activate("sessions");
+      releaseProjects ??= session.activate("projects");
+    }
     releaseDock?.();
-    releaseDock = openDock ? session.activate(openDock) : null;
+    releaseDock = terminalReady && openDock ? session.activate(openDock) : null;
   };
 
   return {
     session,
+    markCatalogReady() {
+      if (catalogReady) return;
+      catalogReady = true;
+      reconcile();
+    },
     markTerminalReady() {
       if (terminalReady) return;
+      catalogReady = true;
       terminalReady = true;
       reconcile();
     },
@@ -639,7 +688,12 @@ export function createTuiToolResourceController(
     subscribe(listener) {
       return session.subscribe((state) => {
         publications += 1;
-        if (state.slots !== previousState.slots) dirtyUpdates += 1;
+        if (
+          state.generation !== previousState.generation ||
+          state.slots.size !== previousState.slots.size ||
+          [...state.slots].some(([key, slot]) => previousState.slots.get(key) !== slot)
+        )
+          dirtyUpdates += 1;
         previousState = state;
         listener(state);
       });
@@ -652,8 +706,13 @@ export function createTuiToolResourceController(
         statePublications: publications,
         dirtyUpdates,
         subprocessLaunches: 0,
+        idleWakeups: 0,
+        renderPasses,
         activeInterests: metrics.activeInterests,
       };
+    },
+    noteRenderPass() {
+      renderPasses += 1;
     },
     dispose() {
       releaseDock?.();

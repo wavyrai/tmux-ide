@@ -34,6 +34,25 @@ describe("production OpenTUI data path", () => {
     expect(source).toContain("new OpenTuiLocalViewController");
     expect(source).toContain('applicationLifecycle.registerCloser("tool-resources"');
     expect(source).toContain('applicationLifecycle.registerCloser("local-view"');
+    expect(source).toContain('applicationLifecycle.registerCloser("terminal-workspace"');
+    expect(source).toContain("adapter.renderSource");
+    expect(source).toContain("replica.adapter.sendText");
+    expect(source).toContain("terminalWorkspaceAdapter?.fitViewport");
+  });
+
+  it("fences tool projections by generation and applies same-millisecond resources by identity", () => {
+    expect(source).toContain("state.generation !== appliedToolGeneration");
+    expect(source).toContain("appliedToolSnapshots.clear()");
+    expect(source).toContain("setFileNodes([])");
+    expect(source).toContain("setDiffEntries([])");
+    expect(source).toContain("slot.resource.kind) !== slot.resource");
+    expect(source).not.toContain("slot.resource.kind) !== slot.updatedAt");
+  });
+
+  it("admits targeted tool demand only after semantic viewport fit", () => {
+    expect(source).toContain("runtimeLaneFitKey = fitKey");
+    expect(source).toContain("toolResources.markTerminalReady()");
+    expect(source).toContain("toolResources.markCatalogReady()");
   });
 
   it("releases tools only when the dock collapses", () => {

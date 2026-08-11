@@ -1153,6 +1153,7 @@ const mountTuiRoot = () => {
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const toolResources = createTuiToolResourceController(createTuiToolResourceAdapter());
     applicationLifecycle.registerCloser("tool-resources", () => toolResources.dispose());
+    let reconcileFleetResources = (): void => undefined;
     const fleet = (): Array<{ name: string; status: AgentStatus }> =>
       projectsData()
         .flatMap((project) =>
@@ -1200,6 +1201,10 @@ const mountTuiRoot = () => {
         : pane.scrollbackDepth;
     let semanticView: SemanticSessionView | null = null;
     let terminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
+    applicationLifecycle.registerCloser("terminal-workspace", () => {
+      terminalWorkspaceAdapter?.dispose();
+      terminalWorkspaceAdapter = null;
+    });
     const [sessionRuntimeLane, setSessionRuntimeLane] =
       createSignal<OpenTuiSessionRuntimeLane | null>(null);
     const [semanticPaneVersions, setSemanticPaneVersions] = createSignal<
@@ -1222,14 +1227,15 @@ const mountTuiRoot = () => {
       semanticPaneId;
     const semanticReplicaForRuntime = (runtimePaneId: string) => {
       const lane = sessionRuntimeLane();
-      if (!lane) return null;
+      const adapter = terminalWorkspaceAdapter;
+      if (!lane || !adapter) return null;
       // SemanticSessionView panes are already keyed by durable ids; sidebar
       // actions may still arrive with raw runtime ids. Resolve both without
       // synthesizing a second `pane.*` identity around an already-semantic id.
       const semanticPaneId = lane.source.replica(runtimePaneId)
         ? runtimePaneId
         : semanticPaneIdForRuntime(runtimePaneId);
-      return { lane, semanticPaneId };
+      return { adapter, lane, semanticPaneId };
     };
     const retireSessionRuntimeLane = () => {
       sessionRuntimeLaneRequest += 1;
@@ -1312,7 +1318,10 @@ const mountTuiRoot = () => {
           });
         const lane =
           terminalWorkspaceAdapter?.view === candidate
-            ? await terminalWorkspaceAdapter.connect(key, connectRuntime)
+            ? await terminalWorkspaceAdapter.connect(
+                `${key}\0generation:${request}`,
+                connectRuntime,
+              )
             : await connectRuntime();
         if (request !== sessionRuntimeLaneRequest) {
           lane?.close();
@@ -1321,6 +1330,7 @@ const mountTuiRoot = () => {
         if (!lane) return;
         candidate.setSource(lane.source);
         setSessionRuntimeLane(lane);
+        if (!lane.ownsGeometry) toolResources.markTerminalReady();
         if (
           pendingSemanticFocus?.session === sessionName &&
           submitSemanticPaneFocus(pendingSemanticFocus.paneId) === "submitted"
@@ -1405,6 +1415,34 @@ const mountTuiRoot = () => {
             semanticView.setInventory(inventory);
             void reconcileSessionRuntimeLane(sessionName, semanticView);
           }
+          latestAuthoritativeAgents = (state.data?.workspace.sidebar.agents ?? []).flatMap(
+            (agent) => {
+              if (!agent.paneId) return [];
+              const stateByActivity: Record<typeof agent.activity, AgentStatus> = {
+                running: "working",
+                waiting: "blocked",
+                failed: "blocked",
+                complete: "done",
+                idle: "idle",
+                disconnected: "unknown",
+              };
+              return [
+                {
+                  // The authenticated application-shell identity is accepted by
+                  // the semantic focus/input lane and never derived from the
+                  // fleet catalog's display-only labels.
+                  paneId: agent.paneId,
+                  windowIndex: 0,
+                  session: authority.workspaceName,
+                  kind: agent.harness,
+                  state: stateByActivity[agent.activity],
+                  since: null,
+                  displayName: agent.name,
+                },
+              ];
+            },
+          );
+          reconcileFleetResources();
         };
         applyDaemonShellState(authority.session.getState());
         disposeDaemonApplicationShellSubscription =
@@ -1420,8 +1458,8 @@ const mountTuiRoot = () => {
       retireDaemonApplicationShell();
       retireSessionRuntimeLane();
     });
-    // The bundled CLI — the async fleet poll and `detect --write` both shell out
-    // to it (resolved once; `node <cliPath> …`). The CLI forwards its own
+    // The bundled CLI — only the explicit `detect --write` setup action shells
+    // out to it (resolved once; `node <cliPath> …`). The CLI forwards its own
     // node-runnable path as TMUX_IDE_CLI; prefer it, because in the COMPILED TUI
     // binary `import.meta.url` is a virtual bunfs path so the relative fallback
     // resolves to a bogus cli.js — the subprocesses would silently fail and the
@@ -2412,10 +2450,13 @@ const mountTuiRoot = () => {
       },
       submit: ({ operationId, intent }) => {
         const lane = sessionRuntimeLane();
-        if (!lane?.ownsGeometry || lane.workspaceName !== intent.workspaceName) {
+        const adapter = terminalWorkspaceAdapter;
+        if (!lane?.ownsGeometry || lane.workspaceName !== intent.workspaceName || !adapter) {
           throw new Error("No semantic geometry authority is available");
         }
-        void lane.submit(intent, operationId).then(
+        const submission = adapter.submit(intent, operationId);
+        if (!submission) throw new Error("No semantic geometry authority is available");
+        void submission.then(
           (result) => {
             if (result?.verb !== "workspace.pane.resize") {
               resizeTransaction.reject({
@@ -3254,6 +3295,8 @@ const mountTuiRoot = () => {
       semanticView = null;
       void previousSupervisor?.stop();
       retireSessionRuntimeLane();
+      terminalWorkspaceAdapter?.dispose();
+      terminalWorkspaceAdapter = null;
       scrollOffsets.clear();
       richWidgetCache.clear();
       setFocusedPaneId(null);
@@ -3263,6 +3306,22 @@ const mountTuiRoot = () => {
       // A fresh semanticView pins at the current canvas size — no re-pin in flight.
       lastPin = pin;
       repinInFlight = null;
+      const workspaceAdapter = new OpenTuiTerminalWorkspaceAdapter({
+        target: name,
+        lifecycle: applicationLifecycle,
+        onDirty: markDirty,
+        onFocusChanged: (paneId) => setFocusedPaneId(paneId),
+        onStatus: () => {
+          if (!tuiGeometryReadyMarked) {
+            tuiGeometryReadyMarked = true;
+            tuiPerfMark("tmux-geometry-ready");
+          }
+          markDirty();
+          void workspaceAdapter.view.windows().then(setWindowTabs);
+          void reconcileSessionRuntimeLane(name, workspaceAdapter.view);
+        },
+      });
+      terminalWorkspaceAdapter = workspaceAdapter;
       const supervisor = createRuntimeConnectionSupervisor<SemanticSessionView>({
         connect: async ({ signal }): Promise<RuntimeConnection<SemanticSessionView>> => {
           const reconnectPin = terminalCanvasProjection().tmuxSize ?? lastPin ?? pin;
@@ -3271,30 +3330,12 @@ const mountTuiRoot = () => {
           const closed = new Promise<unknown>((resolve) => {
             close = resolve;
           });
-          const workspaceAdapter = new OpenTuiTerminalWorkspaceAdapter({
-            target: name,
-            lifecycle: applicationLifecycle,
-            onDirty: markDirty,
-            onFocusChanged: (paneId) => setFocusedPaneId(paneId),
-            onStatus: () => {
-              if (!tuiGeometryReadyMarked) {
-                tuiGeometryReadyMarked = true;
-                tuiPerfMark("tmux-geometry-ready");
-              }
-              markDirty();
-              void workspaceAdapter.view.windows().then(setWindowTabs);
-              void reconcileSessionRuntimeLane(name, workspaceAdapter.view);
-            },
-          });
           const candidate = workspaceAdapter.view;
-          terminalWorkspaceAdapter = workspaceAdapter;
           let retired = false;
           const dispose = () => {
             if (retired) return;
             retired = true;
             signal.removeEventListener("abort", dispose);
-            workspaceAdapter.dispose();
-            if (terminalWorkspaceAdapter === workspaceAdapter) terminalWorkspaceAdapter = null;
           };
           signal.addEventListener("abort", dispose, { once: true });
           try {
@@ -3352,9 +3393,14 @@ const mountTuiRoot = () => {
       if (lastPin) repinInFlight = { prev: lastPin, at: performance.now() };
       lastPin = next;
       if (runtimeLane?.ownsGeometry && fitKey) {
-        void runtimeLane.fitViewport(next.cols, next.rows).then(
+        const fit = terminalWorkspaceAdapter?.fitViewport(next.cols, next.rows);
+        if (!fit) return;
+        void fit.then(
           () => {
-            if (sessionRuntimeLane() === runtimeLane) runtimeLaneFitKey = fitKey;
+            if (sessionRuntimeLane() === runtimeLane) {
+              runtimeLaneFitKey = fitKey;
+              toolResources.markTerminalReady();
+            }
           },
           (error: unknown) => {
             if (sessionRuntimeLane() === runtimeLane) {
@@ -4781,8 +4827,7 @@ const mountTuiRoot = () => {
         setStatusNote("view only · another client owns terminal input");
         return true;
       }
-      replica.lane.sendText(replica.semanticPaneId, text);
-      return true;
+      return replica.adapter.sendText(replica.semanticPaneId, text);
     };
     const sendSemanticTerminalKey = (runtimePaneId: string, key: string): boolean => {
       const replica = semanticReplicaForRuntime(runtimePaneId);
@@ -4795,8 +4840,7 @@ const mountTuiRoot = () => {
         setStatusNote("view only · another client owns terminal input");
         return true;
       }
-      replica.lane.sendKey(replica.semanticPaneId, key);
-      return true;
+      return replica.adapter.sendKey(replica.semanticPaneId, key);
     };
     const semanticViewportAcknowledged = (): boolean => {
       const lane = sessionRuntimeLane();
@@ -4822,12 +4866,12 @@ const mountTuiRoot = () => {
       // Optimistic local chrome is renderer state only; the daemon remains the
       // sole tmux mutation authority and the following layout reconciles it.
       setFocusedPaneId(runtimePaneId);
-      void replica.lane
+      void replica.adapter
         .submit({
           verb: "workspace.pane.select",
           workspaceName: replica.lane.workspaceName,
           semanticPaneId: replica.semanticPaneId,
-        })
+        })!
         .catch((error: unknown) => {
           setFocusedPaneId(semanticView?.focusedPane() || null);
           setStatusNote(error instanceof Error ? error.message : "pane focus rejected");
@@ -5158,7 +5202,7 @@ const mountTuiRoot = () => {
           const lane = sessionRuntimeLane();
           const size = terminalCanvasProjection().tmuxSize;
           if (lane?.ownsGeometry && size) {
-            void lane.fitViewport(size.cols, size.rows).then(
+            void terminalWorkspaceAdapter?.fitViewport(size.cols, size.rows)?.then(
               () => setStatusNote("resized window to fit"),
               (error: unknown) =>
                 setStatusNote(error instanceof Error ? error.message : "viewport fit rejected"),
@@ -5589,12 +5633,14 @@ const mountTuiRoot = () => {
     let latestFleetCatalog: FleetCatalogResourceV1 | null = null;
     let latestSessionCatalog: Extract<TuiToolResource, { kind: "sessions" }>["value"] | null = null;
     let latestProjectCatalog: Extract<TuiToolResource, { kind: "projects" }>["value"] | null = null;
-    const reconcileFleetResources = () => {
+    let latestAuthoritativeAgents: AgentRowInput[] = [];
+    reconcileFleetResources = () => {
       if (!latestFleetCatalog || !latestSessionCatalog || !latestProjectCatalog) return;
       const projects = projectTuiFleetResources({
         fleet: latestFleetCatalog,
         sessions: latestSessionCatalog,
         projects: latestProjectCatalog,
+        authoritativeAgents: latestAuthoritativeAgents,
       });
       setProjectsData(projects);
       noteAttention(projects);
@@ -5812,15 +5858,34 @@ const mountTuiRoot = () => {
     };
 
     onMount(() => {
-      const appliedToolSnapshots = new Map<TuiToolResource["kind"], number>();
+      // Resource identity, rather than a wall-clock timestamp, is the honest
+      // de-duplication key. Two daemon updates may complete within one
+      // millisecond and must both reach the projection.
+      const appliedToolSnapshots = new Map<TuiToolResource["kind"], TuiToolResource>();
+      let appliedToolGeneration = -1;
       const disposeTools = toolResources.subscribe((state) => {
+        if (state.generation !== appliedToolGeneration) {
+          appliedToolGeneration = state.generation;
+          appliedToolSnapshots.clear();
+          latestFleetCatalog = null;
+          latestSessionCatalog = null;
+          latestProjectCatalog = null;
+          latestAuthoritativeAgents = [];
+          setProjectsData([]);
+          setFileNodes([]);
+          setFileStatusEntries([]);
+          setDiffEntries([]);
+          setDiffText("");
+          setMissionWorkspaceSnapshot(null);
+          setMissionWorkspaceLoad(invalidatedMissionWorkspaceLoadState());
+        }
         for (const slot of state.slots.values()) {
           if (
             slot.status === "loaded" &&
             !slot.refreshing &&
-            appliedToolSnapshots.get(slot.resource.kind) !== slot.updatedAt
+            appliedToolSnapshots.get(slot.resource.kind) !== slot.resource
           ) {
-            appliedToolSnapshots.set(slot.resource.kind, slot.updatedAt);
+            appliedToolSnapshots.set(slot.resource.kind, slot.resource);
             applyToolResource(slot.resource);
           }
         }
@@ -5863,6 +5928,7 @@ const mountTuiRoot = () => {
         }
         if (!dirty || !semanticView) return;
         dirty = false;
+        toolResources.noteRenderPass();
         const t0 = performance.now();
         // FB path: fetch geometry + cursor/offset + per-pane version only (no
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
@@ -7238,7 +7304,16 @@ const mountTuiRoot = () => {
     // this barrier after both root hooks so an automation/host that observes it
     // can send lifecycle input without racing a merely-painted first frame.
     onMount(() => {
-      publishToolReadiness = () => toolResources.markTerminalReady();
+      // A targeted launch admits tool demand only after the semantic lane has
+      // fitted real terminal geometry. Configless Home has no terminal target;
+      // its fleet catalog is the bootstrap mechanism used to choose one.
+      publishToolReadiness = () => {
+        if (!bareHome) return;
+        const daemon = readCanonicalDaemonInfo();
+        if (!daemon) return;
+        toolResources.setTarget({ daemon, workspaceName: "__catalog__" });
+        toolResources.markCatalogReady();
+      };
       resolveInputReady();
     });
 
@@ -7753,13 +7828,13 @@ const mountTuiRoot = () => {
                   } else if (!replica.lane.ownsInput) {
                     setStatusNote("view only · another client owns terminal input");
                   } else {
-                    void replica.lane
+                    void replica.adapter
                       .submit({
                         verb: "workspace.pane.zoom.toggle",
                         workspaceName: replica.lane.workspaceName,
                         semanticPaneId: replica.semanticPaneId,
                         desired: "toggle",
-                      })
+                      })!
                       .catch((error: unknown) =>
                         setStatusNote(
                           error instanceof Error ? error.message : "pane zoom rejected",
@@ -9123,7 +9198,7 @@ const mountTuiRoot = () => {
                                     <pane_surface
                                       width={pane()!.width}
                                       height={pane()!.height}
-                                      mirror={semanticReplica()!.lane.source}
+                                      mirror={semanticReplica()!.adapter.renderSource}
                                       paneId={semanticReplica()?.semanticPaneId ?? id}
                                       defaultFg={terminalPalette().foreground}
                                       defaultBg={terminalPalette().background}

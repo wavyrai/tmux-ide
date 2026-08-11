@@ -72,4 +72,56 @@ describe("TUI fleet resource projection", () => {
       { name: "saved", running: false, registered: true, sessions: [] },
     ]);
   });
+
+  it("attaches only authenticated application-shell agents to real session targets", () => {
+    const sessions: DaemonSessionsResponse = {
+      sessions: [{ name: "real-session", dir: "/work/alpha" }],
+    };
+    const fleet = {
+      version: 1,
+      daemon: {
+        protocolVersion: 1,
+        productVersion: "test",
+        instanceId: "11111111-1111-4111-8111-111111111111",
+        startedAt: "2026-08-12T00:00:00.000Z",
+      },
+      sessions: [
+        {
+          sessionId: "session.abcdefghijklmnop",
+          label: "real-session",
+          projectLabel: "alpha",
+          appCreated: false,
+          paneCount: 1,
+          agents: [
+            {
+              agentId: "agent.abcdefghijklmnop",
+              name: "display-only-agent",
+              harness: "claude-code",
+              activity: "running",
+              attention: false,
+              statusSource: "authority",
+            },
+          ],
+        },
+      ],
+    } satisfies FleetCatalogResourceV1;
+    const authoritative = {
+      paneId: "%7",
+      windowIndex: 0,
+      session: "real-session",
+      kind: "claude-code",
+      state: "working" as const,
+      since: null,
+      displayName: "Editor",
+    };
+
+    const result = projectTuiFleetResources({
+      sessions,
+      projects: { projects: [] },
+      fleet,
+      authoritativeAgents: [authoritative],
+    });
+    expect(result[0]?.sessions[0]?.agents).toEqual([authoritative]);
+    expect(JSON.stringify(result)).not.toContain("display-only-agent");
+  });
 });

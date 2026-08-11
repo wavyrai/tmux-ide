@@ -53,10 +53,18 @@ export function projectTuiFleetResources(input: {
   readonly sessions: DaemonSessionsResponse;
   readonly projects: DaemonProjectsResponse;
   readonly fleet: FleetCatalogResourceV1;
+  /** Actionable rows from the open workspace's authenticated application shell. */
+  readonly authoritativeAgents?: readonly AgentRowInput[];
 }): TuiFleetProject[] {
   const fleetByLabel = new Map(input.fleet.sessions.map((session) => [session.label, session]));
   const registeredByDir = new Map(input.projects.projects.map((project) => [project.dir, project]));
   const result = new Map<string, TuiFleetProject>();
+  const agentsBySession = new Map<string, AgentRowInput[]>();
+  for (const agent of input.authoritativeAgents ?? []) {
+    const agents = agentsBySession.get(agent.session) ?? [];
+    agents.push(agent);
+    agentsBySession.set(agent.session, agents);
+  }
 
   for (const session of input.sessions.sessions) {
     const registered = registeredByDir.get(session.dir);
@@ -71,6 +79,7 @@ export function projectTuiFleetResources(input: {
       panes: decoration?.paneCount ?? 0,
       attached: false,
       windows: [],
+      agents: agentsBySession.get(session.name) ?? [],
     };
     if (previous) {
       result.set(projectKey, {
