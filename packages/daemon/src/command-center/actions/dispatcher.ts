@@ -107,6 +107,11 @@ function resourceChangesForAction(
         revision: mutation.data.documentRevision,
         causeOperationId: mutation.data.operationId,
       },
+      {
+        workspaceName: mutation.data.workspaceName,
+        resource: "workspace-missions",
+        causeOperationId: mutation.data.operationId,
+      },
     ];
   }
   if (actionName === "workspace.pane.create") {
@@ -116,6 +121,11 @@ function resourceChangesForAction(
       {
         workspaceName: mutation.data.resource.workspaceName,
         resource: "application-shell",
+        causeOperationId: mutation.data.operationId,
+      },
+      {
+        workspaceName: mutation.data.resource.workspaceName,
+        resource: "workspace-missions",
         causeOperationId: mutation.data.operationId,
       },
       {
@@ -135,6 +145,7 @@ function resourceChangesForAction(
     return [
       { ...base, resource: "workspace-catalog" },
       { ...base, resource: "application-shell" },
+      { ...base, resource: "workspace-missions" },
       { ...base, workspaceName: null, resource: "fleet-catalog" },
     ];
   }
@@ -148,6 +159,7 @@ function resourceChangesForAction(
     return [
       { ...base, resource: "workspace-catalog" },
       { ...base, resource: "application-shell" },
+      { ...base, resource: "workspace-missions" },
       { ...base, workspaceName: null, resource: "fleet-catalog" },
     ];
   }
@@ -159,6 +171,11 @@ function resourceChangesForAction(
       {
         workspaceName: mutation.data.workspaceName,
         resource: "application-shell",
+        causeOperationId: mutation.data.operationId,
+      },
+      {
+        workspaceName: mutation.data.workspaceName,
+        resource: "workspace-missions",
         causeOperationId: mutation.data.operationId,
       },
     ];

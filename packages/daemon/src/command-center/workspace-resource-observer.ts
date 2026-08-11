@@ -3,24 +3,26 @@ import { isAbsolute, resolve } from "node:path";
 
 import type { DaemonEventResourceKind } from "@tmux-ide/contracts";
 
-import { watchDirectory } from "../widgets/lib/watcher.ts";
+import { openProjectRuntimeRepository } from "../lib/project-runtime-repository.ts";
 import type { WorkspaceRegistry } from "../lib/workspace-registry.ts";
+import { watchDirectory } from "../widgets/lib/watcher.ts";
 
 export type ObservableWorkspaceResource =
   | "workspace-files"
   | "workspace-changes"
   | "workspace-missions";
 
-export interface WorkspaceWatchCallbacks {
-  readonly onWorkspaceChanged: () => void;
-  readonly onGitChanged: () => void;
+export type StopWorkspaceWatch = () => void | Promise<void>;
+export type StartPathWatch = (path: string, onChanged: () => void) => Promise<StopWorkspaceWatch>;
+
+export interface WorkspaceObservationReady {
+  readonly status: "installed" | "unavailable";
 }
 
-export type StopWorkspaceWatch = () => void | Promise<void>;
-export type StartWorkspaceWatch = (
-  projectDir: string,
-  callbacks: WorkspaceWatchCallbacks,
-) => Promise<StopWorkspaceWatch>;
+export interface WorkspaceObservationHandle {
+  readonly release: () => void;
+  readonly ready: Promise<WorkspaceObservationReady>;
+}
 
 export interface WorkspaceResourceObserverOptions {
   readonly registry: Pick<WorkspaceRegistry, "get" | "on">;
@@ -28,22 +30,39 @@ export interface WorkspaceResourceObserverOptions {
     readonly workspaceName: string;
     readonly resource: ObservableWorkspaceResource;
   }) => void;
-  readonly startWatch?: StartWorkspaceWatch;
+  readonly startProjectWatch?: StartPathWatch;
+  readonly startGitWatch?: StartPathWatch;
+  readonly startMissionWatch?: StartPathWatch;
+  readonly resolveMissionRoot?: (projectDir: string) => Promise<string>;
+  readonly resolveGitRoot?: (projectDir: string) => string | null;
   readonly debounceMs?: number;
   readonly setTimeout?: typeof globalThis.setTimeout;
   readonly clearTimeout?: typeof globalThis.clearTimeout;
 }
 
+type Channel = "project" | "git" | "missions";
+
+interface WatchSlot {
+  epoch: number;
+  source: string | null;
+  path: string | null;
+  start: Promise<WorkspaceObservationReady> | null;
+  stop: StopWorkspaceWatch | null;
+  status: WorkspaceObservationReady["status"] | null;
+}
+
 interface WorkspaceEntry {
   readonly workspaceName: string;
   readonly refs: Map<ObservableWorkspaceResource, number>;
-  epoch: number;
-  projectDir: string | null;
-  startPromise: Promise<void> | null;
-  stop: StopWorkspaceWatch | null;
+  readonly slots: Record<Channel, WatchSlot>;
   timer: ReturnType<typeof setTimeout> | null;
-  workspaceDirty: boolean;
+  projectDirty: boolean;
   gitDirty: boolean;
+  missionsDirty: boolean;
+}
+
+function slot(): WatchSlot {
+  return { epoch: 0, source: null, path: null, start: null, stop: null, status: null };
 }
 
 function resolveGitDirectory(projectDir: string): string | null {
@@ -55,65 +74,53 @@ function resolveGitDirectory(projectDir: string): string | null {
       timeout: 2_000,
       env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
     }).trim();
-    if (value.length === 0) return null;
+    if (!value) return null;
     return isAbsolute(value) ? value : resolve(projectDir, value);
   } catch {
     return null;
   }
 }
 
-/**
- * Production watcher: one recursive project subscription plus one recursive
- * git-metadata subscription. Git discovery happens once when demand starts;
- * filesystem bursts never spawn git and are coalesced by the observer below.
- */
-export const startWorkspaceResourceWatch: StartWorkspaceWatch = async (projectDir, callbacks) => {
-  const stops: StopWorkspaceWatch[] = [];
-  stops.push(
-    await watchDirectory(projectDir, callbacks.onWorkspaceChanged, {
-      debounceMs: 40,
-      ignore: ["node_modules", ".git", "dist", "build", ".next", ".turbo", "coverage"],
-    }),
-  );
+export const startProjectResourceWatch: StartPathWatch = async (projectDir, onChanged) =>
+  watchDirectory(projectDir, onChanged, {
+    debounceMs: 40,
+    ignore: ["node_modules", ".git", "dist", "build", ".next", ".turbo", "coverage"],
+  });
 
-  const gitDir = resolveGitDirectory(projectDir);
-  if (gitDir) {
-    stops.push(
-      await watchDirectory(gitDir, callbacks.onGitChanged, {
-        debounceMs: 40,
-        // Object and log churn cannot affect the Files/Changes projections.
-        // HEAD, index, refs, packed-refs and worktree metadata remain visible.
-        ignore: ["objects", "logs"],
-      }),
-    );
-  }
+export const startGitResourceWatch: StartPathWatch = async (gitDir, onChanged) =>
+  watchDirectory(gitDir, onChanged, {
+    debounceMs: 40,
+    ignore: ["objects", "logs"],
+  });
 
-  return async () => {
-    await Promise.allSettled(stops.map(async (stop) => stop()));
-  };
-};
+export const startMissionResourceWatch: StartPathWatch = async (runtimeRoot, onChanged) =>
+  watchDirectory(runtimeRoot, onChanged, { debounceMs: 40 });
 
-function refCount(entry: WorkspaceEntry): number {
+function refCount(entry: WorkspaceEntry, resource?: ObservableWorkspaceResource): number {
+  if (resource) return entry.refs.get(resource) ?? 0;
   let total = 0;
   for (const count of entry.refs.values()) total += count;
   return total;
 }
 
 /**
- * Daemon-owned, demand-driven filesystem authority. N clients and both Files
- * + Changes projections share one physical watcher per workspace. A watcher
- * that resolves after its last subscriber left is retired immediately, which
- * closes the common async-start leak.
+ * Demand-owned watcher topology. Files and Changes share the project watcher;
+ * only Changes owns git metadata, and Missions watches the daemon runtime root
+ * rather than source. Every acquisition has an honest installation barrier.
  */
 export class WorkspaceResourceObserver {
   readonly #registry: WorkspaceResourceObserverOptions["registry"];
   readonly #emit: WorkspaceResourceObserverOptions["emit"];
-  readonly #startWatch: StartWorkspaceWatch;
+  readonly #startProjectWatch: StartPathWatch;
+  readonly #startGitWatch: StartPathWatch;
+  readonly #startMissionWatch: StartPathWatch;
+  readonly #resolveMissionRoot: (projectDir: string) => Promise<string>;
+  readonly #resolveGitRoot: (projectDir: string) => string | null;
   readonly #debounceMs: number;
   readonly #setTimeout: typeof globalThis.setTimeout;
   readonly #clearTimeout: typeof globalThis.clearTimeout;
   readonly #entries = new Map<string, WorkspaceEntry>();
-  readonly #pendingStarts = new Set<Promise<void>>();
+  readonly #pendingStarts = new Set<Promise<unknown>>();
   readonly #pendingStops = new Set<Promise<unknown>>();
   readonly #unsubscribeAdded: () => void;
   readonly #unsubscribeRemoved: () => void;
@@ -122,7 +129,13 @@ export class WorkspaceResourceObserver {
   constructor(options: WorkspaceResourceObserverOptions) {
     this.#registry = options.registry;
     this.#emit = options.emit;
-    this.#startWatch = options.startWatch ?? startWorkspaceResourceWatch;
+    this.#startProjectWatch = options.startProjectWatch ?? startProjectResourceWatch;
+    this.#startGitWatch = options.startGitWatch ?? startGitResourceWatch;
+    this.#startMissionWatch = options.startMissionWatch ?? startMissionResourceWatch;
+    this.#resolveMissionRoot =
+      options.resolveMissionRoot ??
+      (async (projectDir) => (await openProjectRuntimeRepository(projectDir)).runtimeRoot);
+    this.#resolveGitRoot = options.resolveGitRoot ?? resolveGitDirectory;
     this.#debounceMs = options.debounceMs ?? 75;
     this.#setTimeout = options.setTimeout ?? globalThis.setTimeout;
     this.#clearTimeout = options.clearTimeout ?? globalThis.clearTimeout;
@@ -130,56 +143,70 @@ export class WorkspaceResourceObserver {
       this.#reconcile(workspace.name);
     });
     this.#unsubscribeRemoved = this.#registry.on("workspace.removed", (name) => {
-      this.#retirePhysicalWatch(name);
+      const entry = this.#entries.get(name);
+      if (entry) this.#retireAll(entry);
     });
   }
 
-  acquire(workspaceName: string, resource: ObservableWorkspaceResource): () => void {
-    if (this.#disposed) return () => undefined;
+  acquire(
+    workspaceName: string,
+    resource: ObservableWorkspaceResource,
+  ): WorkspaceObservationHandle {
+    if (this.#disposed) {
+      return {
+        release: () => undefined,
+        ready: Promise.resolve({ status: "unavailable" }),
+      };
+    }
     let entry = this.#entries.get(workspaceName);
     if (!entry) {
       entry = {
         workspaceName,
         refs: new Map(),
-        epoch: 0,
-        projectDir: null,
-        startPromise: null,
-        stop: null,
+        slots: { project: slot(), git: slot(), missions: slot() },
         timer: null,
-        workspaceDirty: false,
+        projectDirty: false,
         gitDirty: false,
+        missionsDirty: false,
       };
       this.#entries.set(workspaceName, entry);
     }
-    entry.refs.set(resource, (entry.refs.get(resource) ?? 0) + 1);
-    this.#reconcile(workspaceName);
-
+    entry.refs.set(resource, refCount(entry, resource) + 1);
+    const ready = this.#reconcile(workspaceName, resource);
     let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const current = this.#entries.get(workspaceName);
-      if (!current) return;
-      const next = (current.refs.get(resource) ?? 0) - 1;
-      if (next > 0) current.refs.set(resource, next);
-      else current.refs.delete(resource);
-      if (refCount(current) === 0) {
-        this.#entries.delete(workspaceName);
-        this.#retireEntry(current);
-      }
+    return {
+      ready,
+      release: () => {
+        if (released) return;
+        released = true;
+        const current = this.#entries.get(workspaceName);
+        if (!current) return;
+        const next = refCount(current, resource) - 1;
+        if (next > 0) current.refs.set(resource, next);
+        else current.refs.delete(resource);
+        this.#reconcile(workspaceName);
+        if (refCount(current) === 0) {
+          this.#entries.delete(workspaceName);
+          this.#retireEntry(current);
+        }
+      },
     };
   }
 
-  /** Test/diagnostic snapshot without leaking private paths. */
   state(): ReadonlyArray<{
     readonly workspaceName: string;
     readonly references: number;
-    readonly watching: boolean;
+    readonly projectWatching: boolean;
+    readonly gitWatching: boolean;
+    readonly missionsWatching: boolean;
   }> {
+    const active = (watch: WatchSlot) => watch.stop !== null || watch.start !== null;
     return [...this.#entries.values()].map((entry) => ({
       workspaceName: entry.workspaceName,
       references: refCount(entry),
-      watching: entry.stop !== null || entry.startPromise !== null,
+      projectWatching: active(entry.slots.project),
+      gitWatching: active(entry.slots.git),
+      missionsWatching: active(entry.slots.missions),
     }));
   }
 
@@ -190,115 +217,200 @@ export class WorkspaceResourceObserver {
     this.#unsubscribeRemoved();
     for (const entry of this.#entries.values()) this.#retireEntry(entry);
     this.#entries.clear();
-    // A native watcher can finish opening after disposal began. Its generation
-    // fence closes it immediately; await that close before daemon shutdown is
-    // allowed to complete.
-    while (this.#pendingStarts.size > 0 || this.#pendingStops.size > 0) {
+    while (this.#pendingStarts.size || this.#pendingStops.size) {
       await Promise.allSettled([...this.#pendingStarts, ...this.#pendingStops]);
     }
   }
 
-  #reconcile(workspaceName: string): void {
+  async #reconcile(
+    workspaceName: string,
+    waitingFor?: ObservableWorkspaceResource,
+  ): Promise<WorkspaceObservationReady> {
     const entry = this.#entries.get(workspaceName);
-    if (!entry || refCount(entry) === 0 || this.#disposed) return;
+    if (!entry || this.#disposed) return { status: "unavailable" };
     const workspace = this.#registry.get(workspaceName);
     if (!workspace) {
-      this.#retireWatch(entry);
-      entry.projectDir = null;
-      return;
+      this.#retireAll(entry);
+      return { status: "unavailable" };
     }
-    if (
-      entry.projectDir === workspace.projectDir &&
-      (entry.stop !== null || entry.startPromise !== null)
-    ) {
-      return;
+
+    const needProject =
+      refCount(entry, "workspace-files") > 0 || refCount(entry, "workspace-changes") > 0;
+    const needGit = refCount(entry, "workspace-changes") > 0;
+    const needMissions = refCount(entry, "workspace-missions") > 0;
+
+    const waits: Promise<WorkspaceObservationReady>[] = [];
+    if (needProject) {
+      waits.push(this.#ensureSlot(entry, "project", workspace.projectDir, this.#startProjectWatch));
+    } else this.#retireSlot(entry.slots.project);
+
+    if (needGit) {
+      const gitDir = this.#resolveGitRoot(workspace.projectDir);
+      if (gitDir) waits.push(this.#ensureSlot(entry, "git", gitDir, this.#startGitWatch));
+      else {
+        this.#retireSlot(entry.slots.git);
+        entry.slots.git.status = "installed";
+      }
+    } else this.#retireSlot(entry.slots.git);
+
+    if (needMissions) {
+      const missionReady = this.#ensureMissionSlot(entry, workspace.projectDir);
+      waits.push(missionReady);
+    } else this.#retireSlot(entry.slots.missions);
+
+    if (!waitingFor) return { status: "installed" };
+    const relevant =
+      waitingFor === "workspace-missions"
+        ? [entry.slots.missions]
+        : waitingFor === "workspace-changes"
+          ? [entry.slots.project, entry.slots.git]
+          : [entry.slots.project];
+    await Promise.all(waits);
+    return {
+      status: relevant.every((watch) => watch.status === "installed") ? "installed" : "unavailable",
+    };
+  }
+
+  #ensureMissionSlot(
+    entry: WorkspaceEntry,
+    projectDir: string,
+  ): Promise<WorkspaceObservationReady> {
+    const current = entry.slots.missions;
+    if (current.source === projectDir && (current.start || current.stop)) {
+      return current.start ?? Promise.resolve({ status: current.status ?? "installed" });
     }
-    this.#retireWatch(entry);
-    const epoch = ++entry.epoch;
-    entry.projectDir = workspace.projectDir;
-    const start = Promise.resolve().then(() =>
-      this.#startWatch(workspace.projectDir, {
-        onWorkspaceChanged: () => this.#markDirty(entry!, "workspace"),
-        onGitChanged: () => this.#markDirty(entry!, "git"),
-      }),
-    );
-    let trackedStart!: Promise<void>;
-    trackedStart = start
+    if (current.start || current.stop) this.#retireSlot(current);
+    const epoch = ++current.epoch;
+    current.source = projectDir;
+    current.path = null;
+    const pending = this.#resolveMissionRoot(projectDir)
+      .then((runtimeRoot) => {
+        if (current.epoch !== epoch || this.#disposed) throw new Error("retired");
+        current.path = runtimeRoot;
+        return this.#openSlot(entry, "missions", runtimeRoot, this.#startMissionWatch, epoch);
+      })
+      .then((result) => result)
+      .catch(() => {
+        if (current.epoch === epoch) current.status = "unavailable";
+        return { status: "unavailable" } as const;
+      })
+      .finally(() => {
+        if (current.epoch === epoch) current.start = null;
+        this.#pendingStarts.delete(pending);
+      });
+    current.start = pending;
+    this.#pendingStarts.add(pending);
+    return pending;
+  }
+
+  #ensureSlot(
+    entry: WorkspaceEntry,
+    channel: Channel,
+    path: string,
+    startWatch: StartPathWatch,
+  ): Promise<WorkspaceObservationReady> {
+    const current = entry.slots[channel];
+    if (current.path === path) {
+      if (current.start) return current.start;
+      if (current.stop) return Promise.resolve({ status: "installed" });
+      // An unavailable acquisition retries only after demand has fully drained.
+      if (current.status === "unavailable") return Promise.resolve({ status: "unavailable" });
+    }
+    this.#retireSlot(current);
+    const epoch = ++current.epoch;
+    current.path = path;
+    current.source = path;
+    return this.#openSlot(entry, channel, path, startWatch, epoch);
+  }
+
+  #openSlot(
+    entry: WorkspaceEntry,
+    channel: Channel,
+    path: string,
+    startWatch: StartPathWatch,
+    epoch: number,
+  ): Promise<WorkspaceObservationReady> {
+    const current = entry.slots[channel];
+    let pending!: Promise<WorkspaceObservationReady>;
+    pending = Promise.resolve()
+      .then(() => startWatch(path, () => this.#markDirty(entry, channel)))
       .then(async (stop) => {
         if (
           this.#disposed ||
-          entry!.epoch !== epoch ||
-          this.#entries.get(workspaceName) !== entry ||
-          refCount(entry!) === 0
+          current.epoch !== epoch ||
+          this.#entries.get(entry.workspaceName) !== entry
         ) {
           await stop();
-          return;
+          return { status: "unavailable" } as const;
         }
-        entry!.stop = stop;
+        current.stop = stop;
+        current.status = "installed";
+        return { status: "installed" } as const;
       })
       .catch(() => {
-        // A missing/unreadable directory is an unavailable resource, not a
-        // daemon failure. A later registry event or new interest retries it.
+        if (current.epoch === epoch) current.status = "unavailable";
+        return { status: "unavailable" } as const;
       })
       .finally(() => {
-        if (entry!.epoch === epoch) entry!.startPromise = null;
-        this.#pendingStarts.delete(trackedStart);
+        if (current.epoch === epoch) current.start = null;
+        this.#pendingStarts.delete(pending);
       });
-    entry.startPromise = trackedStart;
-    this.#pendingStarts.add(trackedStart);
+    current.start = pending;
+    current.status = null;
+    this.#pendingStarts.add(pending);
+    return pending;
   }
 
-  #markDirty(entry: WorkspaceEntry, kind: "workspace" | "git"): void {
+  #markDirty(entry: WorkspaceEntry, channel: Channel): void {
     if (this.#disposed || this.#entries.get(entry.workspaceName) !== entry) return;
-    if (kind === "workspace") entry.workspaceDirty = true;
-    else entry.gitDirty = true;
+    if (channel === "project") entry.projectDirty = true;
+    else if (channel === "git") entry.gitDirty = true;
+    else entry.missionsDirty = true;
     if (entry.timer) return;
     entry.timer = this.#setTimeout(() => {
       entry.timer = null;
-      const filesInterested = (entry.refs.get("workspace-files") ?? 0) > 0;
-      const changesInterested = (entry.refs.get("workspace-changes") ?? 0) > 0;
-      const workspaceDirty = entry.workspaceDirty;
+      const projectDirty = entry.projectDirty;
       const gitDirty = entry.gitDirty;
-      entry.workspaceDirty = false;
-      entry.gitDirty = false;
-      if (workspaceDirty && filesInterested) {
+      const missionsDirty = entry.missionsDirty;
+      entry.projectDirty = entry.gitDirty = entry.missionsDirty = false;
+      if (projectDirty && refCount(entry, "workspace-files")) {
         this.#emit({ workspaceName: entry.workspaceName, resource: "workspace-files" });
       }
-      if ((workspaceDirty || gitDirty) && changesInterested) {
+      if ((projectDirty || gitDirty) && refCount(entry, "workspace-changes")) {
         this.#emit({ workspaceName: entry.workspaceName, resource: "workspace-changes" });
       }
-      if (workspaceDirty && (entry.refs.get("workspace-missions") ?? 0) > 0) {
+      if (missionsDirty && refCount(entry, "workspace-missions")) {
         this.#emit({ workspaceName: entry.workspaceName, resource: "workspace-missions" });
       }
     }, this.#debounceMs);
     entry.timer.unref?.();
   }
 
-  #retirePhysicalWatch(workspaceName: string): void {
-    const entry = this.#entries.get(workspaceName);
-    if (!entry) return;
-    this.#retireWatch(entry);
-    entry.projectDir = null;
-  }
-
   #retireEntry(entry: WorkspaceEntry): void {
-    if (entry.timer) {
-      this.#clearTimeout(entry.timer);
-      entry.timer = null;
-    }
-    entry.workspaceDirty = false;
-    entry.gitDirty = false;
-    this.#retireWatch(entry);
+    if (entry.timer) this.#clearTimeout(entry.timer);
+    entry.timer = null;
+    entry.projectDirty = entry.gitDirty = entry.missionsDirty = false;
+    this.#retireAll(entry);
   }
 
-  #retireWatch(entry: WorkspaceEntry): void {
-    entry.epoch += 1;
-    const stop = entry.stop;
-    entry.stop = null;
-    entry.startPromise = null;
+  #retireAll(entry: WorkspaceEntry): void {
+    this.#retireSlot(entry.slots.project);
+    this.#retireSlot(entry.slots.git);
+    this.#retireSlot(entry.slots.missions);
+  }
+
+  #retireSlot(current: WatchSlot): void {
+    current.epoch += 1;
+    const stop = current.stop;
+    current.stop = null;
+    current.start = null;
+    current.path = null;
+    current.source = null;
+    current.status = null;
     if (!stop) return;
-    const pending = Promise.resolve()
-      .then(async () => stop())
+    let pending!: Promise<unknown>;
+    pending = Promise.resolve()
+      .then(() => stop())
       .catch(() => undefined)
       .finally(() => this.#pendingStops.delete(pending));
     this.#pendingStops.add(pending);

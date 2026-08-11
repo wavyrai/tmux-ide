@@ -331,6 +331,14 @@ describe("command-backed action dispatcher compatibility", () => {
       },
       "20000000-0000-4000-8000-000000000002",
     );
+    expect(resourceBroadcast).toHaveBeenCalledWith(
+      {
+        workspaceName: "workspace.alpha",
+        resource: "workspace-missions",
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      "20000000-0000-4000-8000-000000000002",
+    );
   });
 
   it("rejects renderer-authored runtime fields before pane creation", async () => {

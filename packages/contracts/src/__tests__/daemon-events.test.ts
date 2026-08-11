@@ -110,6 +110,8 @@ describe("daemon event contracts", () => {
         type: "subscribe",
         sessions: ["tmux-ide"],
         afterSequence: 41,
+        legacyEvents: false,
+        interestRevision: 7,
         interests: [
           { resource: "application-shell", workspaceName: "tmux-ide" },
           { resource: "fleet-catalog", workspaceName: null },
@@ -119,6 +121,8 @@ describe("daemon event contracts", () => {
       type: "subscribe",
       sessions: ["tmux-ide"],
       afterSequence: 41,
+      legacyEvents: false,
+      interestRevision: 7,
       interests: [
         { resource: "application-shell", workspaceName: "tmux-ide" },
         { resource: "fleet-catalog", workspaceName: null },
@@ -126,6 +130,14 @@ describe("daemon event contracts", () => {
     });
     expect(
       DaemonEventClientFrameSchemaZ.safeParse({ type: "unsubscribe", sessions: [] }).success,
+    ).toBe(true);
+    expect(
+      DaemonEventClientFrameSchemaZ.safeParse({
+        type: "unsubscribe",
+        sessions: [],
+        legacyEvents: true,
+        interestRevision: 8,
+      }).success,
     ).toBe(true);
     expect(DaemonEventClientFrameSchemaZ.safeParse({ type: "ping" }).success).toBe(true);
 
@@ -182,6 +194,16 @@ describe("daemon event contracts", () => {
     expect(
       DaemonEventServerFrameSchemaZ.parse({ type: "resource.observed", sequence: 43 }),
     ).toEqual({ type: "resource.observed", sequence: 43 });
+    const ack = {
+      type: "resource.interests-ack",
+      interestRevision: 9,
+      sequence: 43,
+      unavailableInterests: [{ resource: "workspace-missions", workspaceName: "tmux-ide" }],
+    } as const;
+    expect(DaemonEventServerFrameSchemaZ.parse(ack)).toEqual(ack);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ ...ack, interestRevision: 0 }).success).toBe(
+      false,
+    );
     expect(
       DaemonEventServerFrameSchemaZ.safeParse({ ...changed, causeOperationId: null }).success,
     ).toBe(true);

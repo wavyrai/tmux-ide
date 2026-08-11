@@ -51,6 +51,10 @@ export const DaemonEventSubscribeFrameSchemaZ = z
      * enables interest-filtered delivery and daemon-owned observer lifetimes.
      */
     interests: DaemonEventResourceInterestsSchemaZ.optional(),
+    /** Independently selects broad legacy frame delivery. Omission preserves legacy behaviour. */
+    legacyEvents: z.boolean().optional(),
+    /** Client-owned ordering token for an observer-installation barrier. */
+    interestRevision: z.number().int().positive().optional(),
     /**
      * Last resource-event sequence the client applied for this daemon
      * generation. Omitted by legacy clients. The daemon either replays every
@@ -66,6 +70,8 @@ export const DaemonEventUnsubscribeFrameSchemaZ = z
     type: z.literal("unsubscribe"),
     sessions: SessionNamesSchemaZ,
     interests: DaemonEventResourceInterestsSchemaZ.optional(),
+    legacyEvents: z.boolean().optional(),
+    interestRevision: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -196,6 +202,23 @@ export const DaemonEventResourceObservedFrameSchemaZ = z
   .strict();
 export type DaemonEventResourceObservedFrame = z.infer<
   typeof DaemonEventResourceObservedFrameSchemaZ
+>;
+
+/**
+ * Confirms that a serialized interest mutation has settled. Any interest in
+ * `unavailableInterests` did not install a physical observer; clients must
+ * remain degraded and may retry instead of trusting a stale snapshot.
+ */
+export const DaemonEventResourceInterestsAckFrameSchemaZ = z
+  .object({
+    type: z.literal("resource.interests-ack"),
+    interestRevision: z.number().int().positive(),
+    sequence: z.number().int().nonnegative(),
+    unavailableInterests: DaemonEventResourceInterestsSchemaZ,
+  })
+  .strict();
+export type DaemonEventResourceInterestsAckFrame = z.infer<
+  typeof DaemonEventResourceInterestsAckFrameSchemaZ
 >;
 
 /** The requested replay cursor fell outside the bounded generation journal. */
@@ -335,6 +358,7 @@ export const DaemonEventServerFrameSchemaZ = z.discriminatedUnion("type", [
   DaemonEventTerminalsChangedFrameSchemaZ,
   DaemonEventResourceChangedFrameSchemaZ,
   DaemonEventResourceObservedFrameSchemaZ,
+  DaemonEventResourceInterestsAckFrameSchemaZ,
   InteractionReceiptSchemaZ,
   DaemonEventSnapshotRequiredFrameSchemaZ,
   DaemonEventAgentStatusChangedFrameSchemaZ,

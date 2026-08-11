@@ -199,6 +199,7 @@ export function broadcastInteractionReceipt(
 let sessionsPollTimer: ReturnType<typeof setInterval> | null = null;
 let lastSessionsHash = "";
 let projectRegistryListener: (() => void) | null = null;
+let workspaceRegistryListenerReleases: readonly (() => void)[] = [];
 let agentStatusWatcher: AgentStatusWatcher | null = null;
 let fleetPollTimer: ReturnType<typeof setInterval> | null = null;
 let lastFleetHash = "";
@@ -285,12 +286,19 @@ function ensureProjectRegistryListener(): void {
   };
   projectRegistryListener = listener;
   projectRegistryEmitter.on("change", listener);
+  const workspaceRegistry = getDefaultWorkspaceRegistry();
+  workspaceRegistryListenerReleases = [
+    workspaceRegistry.on("workspace.added", listener),
+    workspaceRegistry.on("workspace.removed", listener),
+  ];
 }
 
 function maybeStopProjectRegistryListener(): void {
   if (projectRegistryObserverRefs > 0 || !projectRegistryListener) return;
   projectRegistryEmitter.off("change", projectRegistryListener);
   projectRegistryListener = null;
+  for (const release of workspaceRegistryListenerReleases) release();
+  workspaceRegistryListenerReleases = [];
 }
 
 /**
@@ -443,13 +451,26 @@ function acquireGlobalObserver(kind: "sessions" | "projects" | "agents" | "fleet
   };
 }
 
+interface ResourceObservationHandle {
+  readonly release: () => void;
+  readonly ready: Promise<{ readonly status: "installed" | "unavailable" }>;
+}
+let resourceObservationOverride:
+  | ((interest: DaemonEventResourceInterest) => ResourceObservationHandle)
+  | null = null;
+
 function acquireResourceObservation(
   interest: DaemonEventResourceInterest,
   daemonInstanceId: string,
-): () => void {
+): ResourceObservationHandle {
+  if (resourceObservationOverride) return resourceObservationOverride(interest);
+  const synchronous = (release: () => void): ResourceObservationHandle => ({
+    release,
+    ready: Promise.resolve({ status: "installed" }),
+  });
   if (interest.resource === "workspace-catalog") {
     const releases = [acquireGlobalObserver("sessions"), acquireGlobalObserver("projects")];
-    return () => releases.forEach((release) => release());
+    return synchronous(() => releases.forEach((release) => release()));
   }
   if (interest.resource === "fleet-catalog") {
     const releases = [
@@ -457,10 +478,10 @@ function acquireResourceObservation(
       acquireGlobalObserver("fleet"),
       acquireGlobalObserver("agents"),
     ];
-    return () => releases.forEach((release) => release());
+    return synchronous(() => releases.forEach((release) => release()));
   }
   if (interest.resource === "application-shell") {
-    return acquireGlobalObserver("agents");
+    return synchronous(acquireGlobalObserver("agents"));
   }
   if (isObservableWorkspaceResource(interest.resource) && interest.workspaceName !== null) {
     return ensureWorkspaceResourceObserver(daemonInstanceId).acquire(
@@ -468,7 +489,7 @@ function acquireResourceObservation(
       interest.resource,
     );
   }
-  return () => undefined;
+  return synchronous(() => undefined);
 }
 
 /** Historical sessions-only clients retain the old broad observation set. */
@@ -557,15 +578,25 @@ export function buildSessionSnapshot(sessionName: string): DaemonSessionSnapshot
 export function handleWsEventsConnection(
   socket: WebSocket | WsLike,
   daemonIdentity: DaemonInstanceIdentity,
+  options: { readonly mode?: "legacy" | "semantic" } = {},
 ): void {
   useResourceEventGeneration(daemonIdentity.instanceId);
   const ws = socket as WsLike;
   const subscriptions = new Set<string>();
-  const interestReleases = new Map<string, () => void>();
-  let explicitInterestKeys: Set<string> | null = null;
+  const interestHandles = new Map<
+    string,
+    {
+      readonly interest: DaemonEventResourceInterest;
+      readonly handle: ResourceObservationHandle;
+      status: "pending" | "installed" | "unavailable";
+    }
+  >();
+  const explicitInterestKeys = new Set<string>();
   let closed = false;
   let replayRequested = false;
   let releaseLegacyObservation: (() => void) | null = null;
+  let legacyDeliveryEnabled = options.mode !== "semantic";
+  let interestMutation: Promise<void> | null = null;
 
   const send = (frame: DaemonEventServerFrame): void => {
     if (closed || ws.readyState !== WS_OPEN) return;
@@ -577,14 +608,17 @@ export function handleWsEventsConnection(
   };
 
   const broadcastSessionsChanged = (): void => {
+    if (!legacyDeliveryEnabled) return;
     send({ type: "sessions.changed" });
   };
 
   const broadcastProjectsChanged = (): void => {
+    if (!legacyDeliveryEnabled) return;
     send({ type: "projects.changed" });
   };
 
   const broadcastInitOutputForClient = (jobId: string, chunk: string, done?: boolean): void => {
+    if (!legacyDeliveryEnabled) return;
     const frame: DaemonEventServerFrame =
       done === undefined
         ? { type: "init.output", jobId, chunk }
@@ -593,44 +627,52 @@ export function handleWsEventsConnection(
   };
 
   const broadcastInitErrorForClient = (jobId: string, message: string): void => {
+    if (!legacyDeliveryEnabled) return;
     send({ type: "init.error", jobId, message });
   };
 
   const broadcastActionCompleteForClient = (name: string, result: unknown): void => {
+    if (!legacyDeliveryEnabled) return;
     send({ type: "action.complete", name, result });
   };
 
   const broadcastConfigChangedForClient = (sessionName: string): void => {
+    if (!legacyDeliveryEnabled) return;
     send({ type: "config.changed", sessionName });
   };
 
   const broadcastTerminalsChangedForClient = (sessionName: string): void => {
+    if (!legacyDeliveryEnabled) return;
     send({ type: "terminals.changed", sessionName });
   };
 
   const broadcastAgentStatusChangedForClient = (sessionName: string): void => {
+    if (!legacyDeliveryEnabled) return;
     send({ type: "agent-status.changed", sessionName });
   };
 
   const broadcastAgentTurnCompletedForClient = (
     frame: DaemonEventAgentTurnCompletedFrame,
   ): void => {
+    if (!legacyDeliveryEnabled) return;
     send(frame);
   };
 
   const broadcastWorkspacePromotionCompletedForClient = (
     frame: DaemonEventWorkspacePromotionCompletedFrame,
   ): void => {
+    if (!legacyDeliveryEnabled) return;
     send(frame);
   };
 
   const broadcastFleetChangedForClient = (): void => {
+    if (!legacyDeliveryEnabled) return;
     send({ type: "fleet.changed" });
   };
 
   const broadcastResourceChangedForClient = (frame: DaemonEventResourceChangedFrame): void => {
     if (
-      explicitInterestKeys === null ||
+      legacyDeliveryEnabled ||
       explicitInterestKeys.has(resourceRevisionKey(frame.workspaceName, frame.resource))
     ) {
       send(frame);
@@ -640,16 +682,25 @@ export function handleWsEventsConnection(
   };
 
   const broadcastInteractionReceiptForClient = (frame: InteractionReceipt): void => {
-    send(frame);
+    if (
+      legacyDeliveryEnabled ||
+      explicitInterestKeys.has(resourceRevisionKey(frame.workspaceName, "application-shell"))
+    ) {
+      send(frame);
+    } else {
+      send({ type: "resource.observed", sequence: frame.sequence });
+    }
   };
 
   // Per-connection subscription to the current workspace-registry singleton.
   const workspaceRegistry = getDefaultWorkspaceRegistry();
   const unsubWorkspaceAdded = workspaceRegistry.on("workspace.added", (workspace) =>
-    send({ type: "workspace.added", workspace: workspace as Workspace }),
+    legacyDeliveryEnabled
+      ? send({ type: "workspace.added", workspace: workspace as Workspace })
+      : undefined,
   );
   const unsubWorkspaceRemoved = workspaceRegistry.on("workspace.removed", (name) =>
-    send({ type: "workspace.removed", name: name as string }),
+    legacyDeliveryEnabled ? send({ type: "workspace.removed", name: name as string }) : undefined,
   );
 
   const clientHandle: ClientHandle = {
@@ -680,7 +731,7 @@ export function handleWsEventsConnection(
     if (subscriptions.has(sessionName)) return;
     const session = discoverSessions().find((s) => s.name === sessionName);
     subscriptions.add(sessionName);
-    if (session && sendInitialSnapshot) {
+    if (session && sendInitialSnapshot && legacyDeliveryEnabled) {
       const data = buildSessionSnapshot(sessionName);
       if (data) {
         send({ type: "snapshot", sessionName, data });
@@ -692,20 +743,35 @@ export function handleWsEventsConnection(
     subscriptions.delete(sessionName);
   };
 
-  const subscribeInterest = (interest: DaemonEventResourceInterest): void => {
+  const subscribeInterest = (interest: DaemonEventResourceInterest): ResourceObservationHandle => {
     const key = resourceInterestKey(interest);
-    if (interestReleases.has(key)) return;
-    explicitInterestKeys?.add(key);
-    interestReleases.set(key, acquireResourceObservation(interest, daemonIdentity.instanceId));
+    const existing = interestHandles.get(key);
+    if (existing && existing.status !== "unavailable") return existing.handle;
+    if (existing) {
+      existing.handle.release();
+      interestHandles.delete(key);
+    }
+    explicitInterestKeys.add(key);
+    const handle = acquireResourceObservation(interest, daemonIdentity.instanceId);
+    const record: {
+      readonly interest: DaemonEventResourceInterest;
+      readonly handle: ResourceObservationHandle;
+      status: "pending" | "installed" | "unavailable";
+    } = { interest, handle, status: "pending" };
+    interestHandles.set(key, record);
+    void handle.ready.then(({ status }) => {
+      if (interestHandles.get(key) === record) record.status = status;
+    });
+    return handle;
   };
 
   const unsubscribeInterest = (interest: DaemonEventResourceInterest): void => {
     const key = resourceInterestKey(interest);
-    const release = interestReleases.get(key);
-    if (!release) return;
-    interestReleases.delete(key);
-    explicitInterestKeys?.delete(key);
-    release();
+    const existing = interestHandles.get(key);
+    if (!existing) return;
+    interestHandles.delete(key);
+    explicitInterestKeys.delete(key);
+    existing.handle.release();
   };
 
   const cleanup = (): void => {
@@ -716,15 +782,67 @@ export function handleWsEventsConnection(
     subscriptions.clear();
     releaseLegacyObservation?.();
     releaseLegacyObservation = null;
-    for (const release of interestReleases.values()) release();
-    interestReleases.clear();
-    explicitInterestKeys?.clear();
+    for (const { handle } of interestHandles.values()) handle.release();
+    interestHandles.clear();
+    explicitInterestKeys.clear();
     unsubWorkspaceAdded();
     unsubWorkspaceRemoved();
     maybeStopSessionsPoller();
     maybeStopProjectRegistryListener();
     maybeStopAgentStatusWatcher();
     maybeStopFleetPoller();
+  };
+
+  const applyLegacyPreference = (legacyEvents: boolean | undefined): void => {
+    const requested =
+      options.mode === "semantic" ? false : legacyEvents === undefined ? true : legacyEvents;
+    legacyDeliveryEnabled = requested;
+    if (requested && releaseLegacyObservation === null) {
+      releaseLegacyObservation = acquireLegacyObservation();
+    } else if (!requested) {
+      releaseLegacyObservation?.();
+      releaseLegacyObservation = null;
+    }
+  };
+
+  const replayAfter = (afterSequence: number | undefined): void => {
+    if (afterSequence === undefined || replayRequested) return;
+    replayRequested = true;
+    const currentSequence = resourceEventSequence;
+    const oldestAvailableSequence = resourceEventJournal[0]?.sequence ?? null;
+    if (afterSequence > currentSequence) {
+      send({
+        type: "snapshot-required",
+        afterSequence,
+        oldestAvailableSequence,
+        currentSequence,
+        reason: "cursor-ahead",
+      });
+    } else if (oldestAvailableSequence !== null && afterSequence < oldestAvailableSequence - 1) {
+      send({
+        type: "snapshot-required",
+        afterSequence,
+        oldestAvailableSequence,
+        currentSequence,
+        reason: "journal-gap",
+      });
+    } else {
+      for (const frame of resourceEventJournal) {
+        if (frame.sequence <= afterSequence) continue;
+        if (frame.type === "resource.changed") broadcastResourceChangedForClient(frame);
+        else broadcastInteractionReceiptForClient(frame);
+      }
+    }
+  };
+
+  const enqueueInterestMutation = (mutation: () => Promise<void>): void => {
+    let queued!: Promise<void>;
+    queued = (interestMutation ? interestMutation.then(mutation) : mutation())
+      .catch(() => undefined)
+      .finally(() => {
+        if (interestMutation === queued) interestMutation = null;
+      });
+    interestMutation = queued;
   };
 
   ws.on("message", (data) => {
@@ -752,53 +870,59 @@ export function handleWsEventsConnection(
     const parsed: DaemonEventClientFrame = result.data;
 
     if (parsed.type === "subscribe") {
-      if (parsed.interests !== undefined) {
-        if (explicitInterestKeys === null) {
-          explicitInterestKeys = new Set();
-          releaseLegacyObservation?.();
-          releaseLegacyObservation = null;
-        }
-        for (const interest of parsed.interests) subscribeInterest(interest);
-      } else if (explicitInterestKeys === null && releaseLegacyObservation === null) {
-        releaseLegacyObservation = acquireLegacyObservation();
+      if (parsed.interestRevision === undefined) {
+        applyLegacyPreference(parsed.legacyEvents);
+        for (const interest of parsed.interests ?? []) subscribeInterest(interest);
+        replayAfter(parsed.afterSequence);
+        for (const name of parsed.sessions) subscribe(name, parsed.afterSequence === undefined);
+        return;
       }
-      if (parsed.afterSequence !== undefined && !replayRequested) {
-        replayRequested = true;
-        const currentSequence = resourceEventSequence;
-        const oldestAvailableSequence = resourceEventJournal[0]?.sequence ?? null;
-        if (parsed.afterSequence > currentSequence) {
+      enqueueInterestMutation(async () => {
+        if (closed) return;
+        applyLegacyPreference(parsed.legacyEvents);
+        const acquired = (parsed.interests ?? []).map((interest) => ({
+          interest,
+          ready: subscribeInterest(interest).ready,
+        }));
+        const settled = await Promise.all(
+          acquired.map(async ({ interest, ready }) => ({ interest, result: await ready })),
+        );
+        replayAfter(parsed.afterSequence);
+        for (const name of parsed.sessions) subscribe(name, parsed.afterSequence === undefined);
+        if (parsed.interestRevision !== undefined) {
           send({
-            type: "snapshot-required",
-            afterSequence: parsed.afterSequence,
-            oldestAvailableSequence,
-            currentSequence,
-            reason: "cursor-ahead",
+            type: "resource.interests-ack",
+            interestRevision: parsed.interestRevision,
+            sequence: resourceEventSequence,
+            unavailableInterests: settled
+              .filter(({ result }) => result.status === "unavailable")
+              .map(({ interest }) => interest),
           });
-        } else if (
-          oldestAvailableSequence !== null &&
-          parsed.afterSequence < oldestAvailableSequence - 1
-        ) {
-          send({
-            type: "snapshot-required",
-            afterSequence: parsed.afterSequence,
-            oldestAvailableSequence,
-            currentSequence,
-            reason: "journal-gap",
-          });
-        } else {
-          for (const frame of resourceEventJournal) {
-            if (frame.sequence <= parsed.afterSequence) continue;
-            if (frame.type === "resource.changed") broadcastResourceChangedForClient(frame);
-            else send(frame);
-          }
         }
-      }
-      for (const name of parsed.sessions) subscribe(name, parsed.afterSequence === undefined);
+      });
       return;
     }
     if (parsed.type === "unsubscribe") {
-      for (const name of parsed.sessions) unsubscribe(name);
-      for (const interest of parsed.interests ?? []) unsubscribeInterest(interest);
+      if (parsed.interestRevision === undefined) {
+        if (parsed.legacyEvents !== undefined) applyLegacyPreference(parsed.legacyEvents);
+        for (const name of parsed.sessions) unsubscribe(name);
+        for (const interest of parsed.interests ?? []) unsubscribeInterest(interest);
+        return;
+      }
+      enqueueInterestMutation(async () => {
+        if (closed) return;
+        if (parsed.legacyEvents !== undefined) applyLegacyPreference(parsed.legacyEvents);
+        for (const name of parsed.sessions) unsubscribe(name);
+        for (const interest of parsed.interests ?? []) unsubscribeInterest(interest);
+        if (parsed.interestRevision !== undefined) {
+          send({
+            type: "resource.interests-ack",
+            interestRevision: parsed.interestRevision,
+            sequence: resourceEventSequence,
+            unavailableInterests: [],
+          });
+        }
+      });
       return;
     }
     if (parsed.type === "ping") {
@@ -813,11 +937,11 @@ export function handleWsEventsConnection(
   // Send the initial hello — caller knows which sessions exist without
   // a separate REST round-trip.
   try {
-    const sessions = discoverSessions();
+    const sessions = options.mode === "semantic" ? [] : discoverSessions();
     send({
       type: "hello",
       daemon: daemonIdentity,
-      sessions: buildOverviews(sessions),
+      sessions: options.mode === "semantic" ? [] : buildOverviews(sessions),
       eventSequence: resourceEventSequence,
     });
   } catch {
@@ -846,6 +970,8 @@ export function _detachProjectRegistryListenerForTests(): void {
   if (!projectRegistryListener) return;
   projectRegistryEmitter.off("change", projectRegistryListener);
   projectRegistryListener = null;
+  for (const release of workspaceRegistryListenerReleases) release();
+  workspaceRegistryListenerReleases = [];
 }
 
 /**
@@ -881,6 +1007,13 @@ export function _resetResourceEventJournalForTests(): void {
   resourceEventSequence = 0;
   resourceEventJournal = [];
   resourceRevisions.clear();
+}
+
+/** Test-only deterministic observer installation barrier. */
+export function _setResourceObservationOverrideForTests(
+  override: ((interest: DaemonEventResourceInterest) => ResourceObservationHandle) | null,
+): void {
+  resourceObservationOverride = override;
 }
 
 /**

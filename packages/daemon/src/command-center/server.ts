@@ -1741,7 +1741,10 @@ export function attachWsEvents(
     const pathname = url.split("?")[0];
     if (pathname !== "/ws/events") return;
     wss.handleUpgrade(req, socket, head, (ws) => {
-      handleWsEventsConnection(ws, daemonIdentity);
+      const requestUrl = new URL(req.url ?? "/ws/events", "http://daemon.local");
+      handleWsEventsConnection(ws, daemonIdentity, {
+        mode: requestUrl.searchParams.get("mode") === "semantic" ? "semantic" : "legacy",
+      });
     });
   };
 

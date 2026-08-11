@@ -420,7 +420,10 @@ function attachWebSockets(
     if (pathname === "/ws/events") {
       eventsWss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
-        handleWsEventsConnection(ws, opts.daemonIdentity);
+        const requestUrl = new URL(req.url ?? "/ws/events", "http://daemon.local");
+        handleWsEventsConnection(ws, opts.daemonIdentity, {
+          mode: requestUrl.searchParams.get("mode") === "semantic" ? "semantic" : "legacy",
+        });
       });
       return;
     }
