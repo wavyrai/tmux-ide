@@ -206,6 +206,10 @@ export interface TerminalAttachmentAdmissionCoordinatorOptions {
     descriptor: AttachmentLeaseDescriptor,
     client: TerminalAttachmentGeometryClientProof,
   ) => Promise<TerminalAttachmentGeometry>;
+  /** Trusted redemption boundary into the generation's SessionRuntime owner. */
+  readonly bindSessionRuntime?: (
+    descriptor: AttachmentLeaseDescriptor,
+  ) => SessionRuntimeRedeemedTransportBinding;
   readonly maxPendingTickets?: number;
   readonly maxPreAuthSockets?: number;
   readonly maxLiveConnections?: number;
@@ -223,6 +227,14 @@ export interface TerminalAttachmentAdmissionCoordinatorOptions {
   readonly maxLiveControlFrames?: number;
   readonly now?: () => number;
   readonly schedule?: (callback: () => void, delayMs: number) => () => void;
+}
+
+export interface SessionRuntimeRedeemedTransportBinding {
+  readonly generation: string;
+  readonly session: string;
+  readonly clientId: string;
+  assertController(semanticPaneId?: string): void;
+  close(): Promise<void>;
 }
 
 interface PendingTicket {
@@ -322,6 +334,9 @@ export class TerminalAttachmentAdmissionCoordinator {
   readonly #launcher: DirectTerminalAttachmentLauncher;
   readonly #startupBarrier: Promise<void>;
   readonly #resolveGeometry: TerminalAttachmentAdmissionCoordinatorOptions["resolveGeometry"];
+  readonly #bindSessionRuntime:
+    | TerminalAttachmentAdmissionCoordinatorOptions["bindSessionRuntime"]
+    | undefined;
   readonly #maxPending: number;
   readonly #maxPreAuth: number;
   readonly #maxLive: number;
@@ -370,6 +385,7 @@ export class TerminalAttachmentAdmissionCoordinator {
       this.#startupBarrier = Promise.resolve();
     }
     this.#resolveGeometry = options.resolveGeometry;
+    this.#bindSessionRuntime = options.bindSessionRuntime;
     this.#maxPending = boundedInteger(options.maxPendingTickets, 32, 1_024);
     this.#maxPreAuth = boundedInteger(options.maxPreAuthSockets, 16, 1_024);
     this.#maxLive = boundedInteger(options.maxLiveConnections, 16, 1_024);
@@ -439,7 +455,11 @@ export class TerminalAttachmentAdmissionCoordinator {
       this.#pendingReservations += 1;
       let issued: IssuedAttachmentLease;
       try {
-        issued = await this.#leaseManager.issue(parsedRequest, { requestId, projectIdentity });
+        issued = await this.#leaseManager.issue(parsedRequest, {
+          requestId,
+          projectIdentity,
+          ...(context.hostClientId ? { hostClientId: context.hostClientId } : {}),
+        });
       } finally {
         this.#pendingReservations -= 1;
       }
@@ -531,6 +551,7 @@ export class TerminalAttachmentAdmissionCoordinator {
     readonly path: string;
     readonly protocols: readonly string[];
     readonly origin: string | null | undefined;
+    readonly hostClientId?: string | undefined;
   }): TerminalAttachmentUpgradeDecision {
     if (this.#shuttingDown) {
       return { accepted: false, code: "daemon-shutting-down", httpStatus: 503 };
@@ -553,7 +574,19 @@ export class TerminalAttachmentAdmissionCoordinator {
     } catch {
       return { accepted: false, code: "invalid-origin", httpStatus: 403 };
     }
-    if (![...this.#pending.values()].some((pending) => pending.origin === origin)) {
+    const hostClientId = input.hostClientId
+      ? BindingIdSchemaZ.safeParse(input.hostClientId).data
+      : undefined;
+    if (input.hostClientId && !hostClientId) {
+      return { accepted: false, code: "origin-rejected", httpStatus: 403 };
+    }
+    if (
+      ![...this.#pending.values()].some(
+        (pending) =>
+          pending.origin === origin &&
+          (!hostClientId || pending.descriptor.hostClientId === hostClientId),
+      )
+    ) {
       return { accepted: false, code: "origin-rejected", httpStatus: 403 };
     }
     if (this.#preAuth.size >= this.#maxPreAuth) {
@@ -561,6 +594,7 @@ export class TerminalAttachmentAdmissionCoordinator {
     }
     const admission = new PreAuthAdmission({
       origin,
+      hostClientId: hostClientId ?? null,
       timeoutMs: this.#redemptionTimeoutMs,
       processingTimeoutMs: this.#redemptionProcessingTimeoutMs,
       schedule: this.#schedule,
@@ -636,6 +670,8 @@ export class TerminalAttachmentAdmissionCoordinator {
       if (
         !pending ||
         pending.origin !== admission.origin ||
+        (admission.hostClientId !== null &&
+          pending.descriptor.hostClientId !== admission.hostClientId) ||
         pending.requestId !== frame.requestId
       ) {
         throw new TerminalAttachmentAdmissionError(
@@ -725,22 +761,31 @@ export class TerminalAttachmentAdmissionCoordinator {
             "Terminal attachment redemption was rejected.",
           );
         }
-        const live = new TerminalAttachmentLiveConnection({
-          onRetire: (connection) => this.#trackRetiringRelease(connection),
-          socket,
-          client,
-          leaseManager: this.#leaseManager,
-          leaseId: pending.leaseId,
-          binding,
-          descriptor: activeDescriptor,
-          geometry,
-          resolveGeometry: this.#resolveGeometry,
-          maxBufferedOutputBytes: this.#maxBufferedOutputBytes,
-          maxOutputFrameBytes: this.#maxOutputFrameBytes,
-          maxLiveControlFrames: this.#maxLiveControlFrames,
-          now: this.#now,
-          schedule: this.#schedule,
-        });
+        const sessionRuntimeBinding = this.#bindSessionRuntime?.(activeDescriptor) ?? null;
+        let live: TerminalAttachmentLiveConnection;
+        try {
+          live = new TerminalAttachmentLiveConnection({
+            onRetire: (connection) => this.#trackRetiringRelease(connection),
+            socket,
+            client,
+            leaseManager: this.#leaseManager,
+            leaseId: pending.leaseId,
+            binding,
+            descriptor: activeDescriptor,
+            sessionRuntimeBinding,
+            geometry,
+            resolveGeometry: this.#resolveGeometry,
+            maxBufferedOutputBytes: this.#maxBufferedOutputBytes,
+            maxOutputFrameBytes: this.#maxOutputFrameBytes,
+            maxLiveControlFrames: this.#maxLiveControlFrames,
+            now: this.#now,
+            schedule: this.#schedule,
+          });
+        } catch (error) {
+          await sessionRuntimeBinding?.close();
+          client.dispose();
+          throw error;
+        }
         liveReservationHeld = false;
         this.#liveReservations -= 1;
         this.#live.add(live);
@@ -832,6 +877,7 @@ export class TerminalAttachmentAdmissionCoordinator {
 
 interface PreAuthAdmissionOptions {
   readonly origin: string;
+  readonly hostClientId: string | null;
   readonly timeoutMs: number;
   readonly processingTimeoutMs: number;
   readonly schedule: (callback: () => void, delayMs: number) => () => void;
@@ -845,6 +891,7 @@ interface PreAuthAdmissionOptions {
 
 class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
   readonly origin: string;
+  readonly hostClientId: string | null;
   readonly #onRelease: PreAuthAdmissionOptions["onRelease"];
   readonly #onRedeem: PreAuthAdmissionOptions["onRedeem"];
   readonly #schedule: PreAuthAdmissionOptions["schedule"];
@@ -857,6 +904,7 @@ class PreAuthAdmission implements TerminalAttachmentPreAuthAdmission {
 
   constructor(options: PreAuthAdmissionOptions) {
     this.origin = options.origin;
+    this.hostClientId = options.hostClientId;
     this.#onRelease = options.onRelease;
     this.#onRedeem = options.onRedeem;
     this.#schedule = options.schedule;
@@ -1004,6 +1052,7 @@ interface LiveConnectionOptions {
   readonly leaseId: string;
   readonly binding: AttachmentLeaseBinding;
   readonly descriptor: AttachmentLeaseDescriptor;
+  readonly sessionRuntimeBinding: SessionRuntimeRedeemedTransportBinding | null;
   readonly geometry: TerminalAttachmentGeometry;
   readonly resolveGeometry: (
     descriptor: AttachmentLeaseDescriptor,
@@ -1053,6 +1102,7 @@ class TerminalAttachmentLiveConnection {
   readonly #leaseManager: DirectTerminalAttachmentLeaseManager;
   readonly #leaseId: string;
   readonly #binding: AttachmentLeaseBinding;
+  readonly #sessionRuntimeBinding: SessionRuntimeRedeemedTransportBinding | null;
   #descriptor: AttachmentLeaseDescriptor;
   readonly #initialGeometry: TerminalAttachmentGeometry;
   readonly #resolveGeometry: LiveConnectionOptions["resolveGeometry"];
@@ -1085,7 +1135,11 @@ class TerminalAttachmentLiveConnection {
     this.#leaseManager = options.leaseManager;
     this.#leaseId = options.leaseId;
     this.#binding = options.binding;
+    this.#sessionRuntimeBinding = options.sessionRuntimeBinding;
     this.#descriptor = structuredClone(options.descriptor);
+    if (this.#descriptor.viewerMode === "interactive" && !this.#sessionRuntimeBinding) {
+      throw new Error("Interactive terminal attachment requires SessionRuntime authority");
+    }
     this.#initialGeometry = structuredClone(options.geometry);
     this.#resolveGeometry = options.resolveGeometry;
     this.#maxBufferedOutputBytes = options.maxBufferedOutputBytes;
@@ -1151,9 +1205,10 @@ class TerminalAttachmentLiveConnection {
     } catch {
       // Lease retirement below remains authoritative.
     }
-    this.#releasePromise = this.#leaseManager
-      .release(this.#leaseId, this.#binding)
-      .catch(() => undefined);
+    this.#releasePromise = Promise.allSettled([
+      this.#leaseManager.release(this.#leaseId, this.#binding),
+      this.#sessionRuntimeBinding?.close() ?? Promise.resolve(),
+    ]);
     this.#onRetire(this);
     safeClose(this.#socket, code, reason);
   }
@@ -1219,6 +1274,7 @@ class TerminalAttachmentLiveConnection {
       return;
     }
     try {
+      this.#sessionRuntimeBinding!.assertController(this.#descriptor.target.semanticPaneId);
       const receipt = input.write(decoded.payload);
       const acceptedBytes = this.#acceptedInputBytes + decoded.payload.byteLength;
       const acceptedFrames = this.#acceptedInputFrames + 1;
@@ -1322,6 +1378,9 @@ class TerminalAttachmentLiveConnection {
         const viewport = this.#pendingResize;
         this.#pendingResize = null;
         try {
+          if (this.#descriptor.viewerMode === "interactive") {
+            this.#sessionRuntimeBinding!.assertController(this.#descriptor.target.semanticPaneId);
+          }
           this.#client.resize(viewport.cols, viewport.rows);
           const geometry = await this.#resolveGeometry(this.#descriptor, this.#client);
           if (this.#closed) return;

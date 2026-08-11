@@ -118,6 +118,8 @@ export interface PaneStreamIssueContext {
   readonly sessionName: string;
   /** Canonical trusted renderer Origin supplied by the host, never the renderer body. */
   readonly rendererOrigin: string;
+  /** Stable identity injected by the trusted host boundary, never renderer JSON. */
+  readonly hostClientId?: string;
 }
 
 export interface PaneStreamDescriptor {
@@ -156,6 +158,10 @@ export interface PaneStreamAdmissionCoordinatorOptions {
   readonly webSocketUrl: string;
   readonly leaseManager: PaneStreamLeaseAuthority;
   readonly mirror: PaneStreamMirror;
+  /** Trusted redemption boundary into the generation's SessionRuntime owner. */
+  readonly bindSessionRuntime?: (
+    descriptor: PaneStreamLeaseDescriptor,
+  ) => SessionRuntimePaneStreamTransportBinding;
   readonly maxPendingTickets?: number;
   readonly maxPreAuthSockets?: number;
   readonly maxLiveConnections?: number;
@@ -169,6 +175,14 @@ export interface PaneStreamAdmissionCoordinatorOptions {
   readonly maxInputBytesPerConnection?: number;
   readonly now?: () => number;
   readonly schedule?: (callback: () => void, delayMs: number) => () => void;
+}
+
+export interface SessionRuntimePaneStreamTransportBinding {
+  readonly generation: string;
+  readonly session: string;
+  readonly clientId: string;
+  assertController(semanticPaneId?: string): void;
+  close(): Promise<void>;
 }
 
 interface PendingTicket {
@@ -231,6 +245,9 @@ export class PaneStreamAdmissionCoordinator {
   readonly #webSocketUrl: string;
   readonly #leaseManager: PaneStreamLeaseAuthority;
   readonly #mirror: PaneStreamMirror;
+  readonly #bindSessionRuntime:
+    | PaneStreamAdmissionCoordinatorOptions["bindSessionRuntime"]
+    | undefined;
   readonly #maxPending: number;
   readonly #maxPreAuth: number;
   readonly #maxLive: number;
@@ -257,6 +274,7 @@ export class PaneStreamAdmissionCoordinator {
     this.#webSocketUrl = PaneStreamLoopbackWebSocketUrlSchemaZ.parse(options.webSocketUrl);
     this.#leaseManager = options.leaseManager;
     this.#mirror = options.mirror;
+    this.#bindSessionRuntime = options.bindSessionRuntime;
     this.#maxPending = boundedInteger(options.maxPendingTickets, 32, 1_024);
     this.#maxPreAuth = boundedInteger(options.maxPreAuthSockets, 16, 1_024);
     this.#maxLive = boundedInteger(options.maxLiveConnections, 16, 1_024);
@@ -329,6 +347,7 @@ export class PaneStreamAdmissionCoordinator {
         requestId,
         projectIdentity,
         sessionName: context.sessionName,
+        ...(context.hostClientId ? { hostClientId: context.hostClientId } : {}),
       });
       const descriptor = issued.descriptor;
       const ticket = issued.redemptionTicket;
@@ -391,6 +410,7 @@ export class PaneStreamAdmissionCoordinator {
     readonly path: string;
     readonly protocols: readonly string[];
     readonly origin: string | null | undefined;
+    readonly hostClientId?: string | undefined;
   }): PaneStreamUpgradeDecision {
     if (this.#shuttingDown) {
       return { accepted: false, code: "daemon-shutting-down", httpStatus: 503 };
@@ -405,7 +425,19 @@ export class PaneStreamAdmissionCoordinator {
     if (origin === null) {
       return { accepted: false, code: "invalid-origin", httpStatus: 403 };
     }
-    if (![...this.#pending.values()].some((pending) => pending.origin === origin)) {
+    const hostClientId = input.hostClientId
+      ? BindingIdSchemaZ.safeParse(input.hostClientId).data
+      : undefined;
+    if (input.hostClientId && !hostClientId) {
+      return { accepted: false, code: "origin-rejected", httpStatus: 403 };
+    }
+    if (
+      ![...this.#pending.values()].some(
+        (pending) =>
+          pending.origin === origin &&
+          (!hostClientId || pending.descriptor.hostClientId === hostClientId),
+      )
+    ) {
       return { accepted: false, code: "origin-rejected", httpStatus: 403 };
     }
     if (this.#preAuth.size >= this.#maxPreAuth) {
@@ -413,6 +445,7 @@ export class PaneStreamAdmissionCoordinator {
     }
     const admission = new PreAuthAdmission({
       origin,
+      hostClientId: hostClientId ?? null,
       timeoutMs: this.#redemptionTimeoutMs,
       schedule: this.#schedule,
       onRelease: (released) => this.#preAuth.delete(released),
@@ -476,6 +509,8 @@ export class PaneStreamAdmissionCoordinator {
       if (
         !pending ||
         pending.origin !== admission.origin ||
+        (admission.hostClientId !== null &&
+          pending.descriptor.hostClientId !== admission.hostClientId) ||
         pending.requestId !== frame.requestId
       ) {
         throw new PaneStreamAdmissionError(
@@ -526,22 +561,30 @@ export class PaneStreamAdmissionCoordinator {
           );
         }
         this.#clientCounter += 1;
-        const live = new PaneStreamLiveConnection({
-          clientId: `psc-${this.#clientCounter}`,
-          socket,
-          descriptor: structuredClone(descriptor),
-          binding,
-          deliveryAcks: frame.deliveryAcks === true,
-          mirror: this.#mirror,
-          leaseManager: this.#leaseManager,
-          ledger: this.#ledger,
-          drainTickMs: this.#drainTickMs,
-          maxSocketBufferedBytes: this.#maxSocketBufferedBytes,
-          maxInputFrames: this.#maxInputFrames,
-          maxInputBytes: this.#maxInputBytes,
-          schedule: this.#schedule,
-          onRetire: (connection) => this.#trackRetiringRelease(connection),
-        });
+        const sessionRuntimeBinding = this.#bindSessionRuntime?.(descriptor) ?? null;
+        let live: PaneStreamLiveConnection;
+        try {
+          live = new PaneStreamLiveConnection({
+            clientId: `psc-${this.#clientCounter}`,
+            socket,
+            descriptor: structuredClone(descriptor),
+            sessionRuntimeBinding,
+            binding,
+            deliveryAcks: frame.deliveryAcks === true,
+            mirror: this.#mirror,
+            leaseManager: this.#leaseManager,
+            ledger: this.#ledger,
+            drainTickMs: this.#drainTickMs,
+            maxSocketBufferedBytes: this.#maxSocketBufferedBytes,
+            maxInputFrames: this.#maxInputFrames,
+            maxInputBytes: this.#maxInputBytes,
+            schedule: this.#schedule,
+            onRetire: (connection) => this.#trackRetiringRelease(connection),
+          });
+        } catch (error) {
+          await sessionRuntimeBinding?.close();
+          throw error;
+        }
         this.#live.add(live);
         admission.promote();
         live.start();
@@ -602,6 +645,7 @@ export class PaneStreamAdmissionCoordinator {
 
 interface PreAuthAdmissionOptions {
   readonly origin: string;
+  readonly hostClientId: string | null;
   readonly timeoutMs: number;
   readonly schedule: (callback: () => void, delayMs: number) => () => void;
   readonly onRelease: (admission: PreAuthAdmission) => void;
@@ -614,6 +658,7 @@ interface PreAuthAdmissionOptions {
 
 class PreAuthAdmission implements PaneStreamPreAuthAdmission {
   readonly origin: string;
+  readonly hostClientId: string | null;
   readonly #onRelease: PreAuthAdmissionOptions["onRelease"];
   readonly #onRedeem: PreAuthAdmissionOptions["onRedeem"];
   readonly #cancelDeadline: () => void;
@@ -624,6 +669,7 @@ class PreAuthAdmission implements PaneStreamPreAuthAdmission {
 
   constructor(options: PreAuthAdmissionOptions) {
     this.origin = options.origin;
+    this.hostClientId = options.hostClientId;
     this.#onRelease = options.onRelease;
     this.#onRedeem = options.onRedeem;
     this.#cancelDeadline = options.schedule(
@@ -730,6 +776,7 @@ interface LiveConnectionOptions {
   readonly clientId: string;
   readonly socket: DirectTerminalSocket;
   readonly descriptor: PaneStreamLeaseDescriptor;
+  readonly sessionRuntimeBinding: SessionRuntimePaneStreamTransportBinding | null;
   readonly binding: PaneStreamLeaseBinding;
   readonly deliveryAcks: boolean;
   readonly mirror: PaneStreamMirror;
@@ -772,6 +819,7 @@ export class PaneStreamLiveConnection {
   readonly #socket: DirectTerminalSocket;
   readonly #descriptor: PaneStreamLeaseDescriptor;
   readonly #binding: PaneStreamLeaseBinding;
+  readonly #sessionRuntimeBinding: SessionRuntimePaneStreamTransportBinding | null;
   readonly #deliveryAcks: boolean;
   readonly #mirror: PaneStreamMirror;
   readonly #leaseManager: PaneStreamLeaseAuthority;
@@ -797,6 +845,10 @@ export class PaneStreamLiveConnection {
     this.#socket = options.socket;
     this.#descriptor = options.descriptor;
     this.#binding = options.binding;
+    this.#sessionRuntimeBinding = options.sessionRuntimeBinding;
+    if (this.#descriptor.viewerMode === "interactive" && !this.#sessionRuntimeBinding) {
+      throw new Error("Interactive pane stream requires SessionRuntime authority");
+    }
     this.#deliveryAcks = options.deliveryAcks;
     this.#mirror = options.mirror;
     this.#leaseManager = options.leaseManager;
@@ -871,6 +923,7 @@ export class PaneStreamLiveConnection {
     this.#releasePromise = Promise.allSettled([
       ...closures,
       this.#leaseManager.release(this.#descriptor.leaseId, this.#binding).catch(() => undefined),
+      this.#sessionRuntimeBinding?.close() ?? Promise.resolve(),
     ]);
     this.#onRetire(this);
     safeCloseSocket(this.#socket, code, reason);
@@ -1261,6 +1314,7 @@ export class PaneStreamLiveConnection {
     this.#acceptedInputBytes += frameBytes;
     channel.nextInputSeq += 1;
     try {
+      this.#sessionRuntimeBinding!.assertController(pane);
       if (kind === "text") channel.sub.sendText(data);
       else channel.sub.sendKey(data);
       sendControl(this.#socket, { type: "input-ack", pane, seq });

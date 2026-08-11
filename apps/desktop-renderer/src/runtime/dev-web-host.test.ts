@@ -10,6 +10,7 @@ import {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const CATALOG: readonly DevWorkspaceCatalogEntry[] = [
@@ -226,32 +227,34 @@ describe("development web host route keying", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
-        const url = new URL(String(input));
+        const url = new URL(String(input), gatewayConfig.daemonOrigin);
         requests.push({
           url: url.toString(),
           headers: (init?.headers ?? {}) as Record<string, string>,
         });
         const body =
-          url.pathname === "/api/v2/capabilities"
-            ? {
-                status: "ok",
-                daemon: IDENTITY,
-                capabilities: { appWindowMutation: { available: true } },
-              }
-            : {
-                status: "issued",
-                descriptor: {
-                  protocolVersion: 1,
-                  webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
-                  subprotocol: "tmux-ide-terminal.v1",
-                  redemptionTicket: `ta1_${"A".repeat(43)}`,
-                  daemonInstanceId: IDENTITY.instanceId,
-                  requestId,
-                  expiresAt: Date.now() + 60_000,
-                  effectiveViewerMode: "interactive",
-                  effectiveGeometryOwnership: "owner",
-                },
-              };
+          url.pathname === "/__tmux_ide_host_session"
+            ? { token: "33333333-3333-4333-8333-333333333333" }
+            : url.pathname === "/api/v2/capabilities"
+              ? {
+                  status: "ok",
+                  daemon: IDENTITY,
+                  capabilities: { appWindowMutation: { available: true } },
+                }
+              : {
+                  status: "issued",
+                  descriptor: {
+                    protocolVersion: 1,
+                    webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
+                    subprotocol: "tmux-ide-terminal.v1",
+                    redemptionTicket: `ta1_${"A".repeat(43)}`,
+                    daemonInstanceId: IDENTITY.instanceId,
+                    requestId,
+                    expiresAt: Date.now() + 60_000,
+                    effectiveViewerMode: "interactive",
+                    effectiveGeometryOwnership: "owner",
+                  },
+                };
         return {
           ok: true,
           status: 200,
@@ -277,6 +280,249 @@ describe("development web host route keying", () => {
     }
     expect(requests.every(({ url }) => url.startsWith(gatewayConfig.daemonOrigin))).toBe(true);
     expect(requests.every(({ headers }) => !("Authorization" in headers))).toBe(true);
+    host.dispose();
+  });
+
+  it("uses one stable per-document host identity in legacy direct mode", async () => {
+    const hostIds: Array<string | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const headers = init?.headers as Record<string, string>;
+        hostIds.push(headers["X-Tmux-Ide-Host-Client-Id"]);
+        if (url.pathname === "/api/v2/capabilities") {
+          return new Response(
+            JSON.stringify({
+              status: "ok",
+              daemon: IDENTITY,
+              capabilities: { appWindowMutation: { available: true } },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ unreadable: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+    const first = createDevWebHostCapabilities(CONFIG);
+    const second = createDevWebHostCapabilities(CONFIG);
+    await first.daemon.capabilities();
+    await first.daemon.startupReadiness();
+    await second.daemon.capabilities();
+    expect(hostIds[0]).toMatch(/^dev-web-direct:/u);
+    expect(hostIds[1]).toBe(hostIds[0]);
+    expect(hostIds[2]).not.toBe(hostIds[0]);
+    first.dispose();
+    second.dispose();
+  });
+});
+
+describe("development gateway host sessions", () => {
+  const CONFIG = {
+    daemonOrigin: "http://127.0.0.1:5173",
+    daemonWebSocketOrigin: "ws://127.0.0.1:5173",
+    ownerToken: null,
+    transport: "same-origin-gateway" as const,
+  };
+
+  const jsonResponse = (status: number, body: unknown): Response =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  const capabilities = {
+    status: "ok",
+    daemon: IDENTITY,
+    capabilities: { appWindowMutation: { available: true } },
+  };
+
+  it("keeps a host session in one document generation and never revives sessionStorage", async () => {
+    const readRetainedSession = vi.fn(() => "99999999-9999-4999-8999-999999999999");
+    vi.stubGlobal("window", {
+      sessionStorage: {
+        getItem: readRetainedSession,
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+      },
+    });
+    const bootstrapTokens = [
+      "11111111-1111-4111-8111-111111111112",
+      "11111111-1111-4111-8111-111111111113",
+    ];
+    const apiSessions: Array<string | undefined> = [];
+    let bootstrapCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          return jsonResponse(200, { token: bootstrapTokens[bootstrapCount++] });
+        }
+        const headers = init?.headers as Record<string, string>;
+        apiSessions.push(headers["X-Tmux-Ide-Dev-Host-Session"]);
+        return jsonResponse(200, capabilities);
+      }),
+    );
+
+    const first = createDevWebHostCapabilities(CONFIG);
+    const second = createDevWebHostCapabilities(CONFIG);
+    await first.daemon.capabilities();
+    await first.daemon.capabilities();
+    await second.daemon.capabilities();
+
+    expect(bootstrapCount).toBe(2);
+    expect(apiSessions).toEqual([bootstrapTokens[0], bootstrapTokens[0], bootstrapTokens[1]]);
+    expect(apiSessions).not.toContain("99999999-9999-4999-8999-999999999999");
+    expect(readRetainedSession).not.toHaveBeenCalled();
+    first.dispose();
+    second.dispose();
+  });
+
+  it("clears a rejected bootstrap promise so the same document can retry", async () => {
+    let bootstrapCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          bootstrapCount += 1;
+          return bootstrapCount === 1
+            ? jsonResponse(503, { unavailable: true })
+            : jsonResponse(200, { token: "22222222-2222-4222-8222-222222222222" });
+        }
+        return jsonResponse(200, capabilities);
+      }),
+    );
+
+    const host = createDevWebHostCapabilities(CONFIG);
+    await expect(host.daemon.capabilities()).resolves.toMatchObject({ status: "error" });
+    await expect(host.daemon.capabilities()).resolves.toMatchObject({ status: "ok" });
+    expect(bootstrapCount).toBe(2);
+    host.dispose();
+  });
+
+  it("tunnels gateway reads through an origin-bearing POST for exact-origin enforcement", async () => {
+    const apiRequests: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          return jsonResponse(200, { token: "77777777-7777-4777-8777-777777777777" });
+        }
+        apiRequests.push(init ?? {});
+        return jsonResponse(200, { unreadable: true });
+      }),
+    );
+
+    const host = createDevWebHostCapabilities(CONFIG);
+    await host.daemon.startupReadiness();
+
+    expect(apiRequests).toHaveLength(1);
+    expect(apiRequests[0]?.method).toBe("POST");
+    expect(
+      (apiRequests[0]?.headers as Record<string, string>)["X-Tmux-Ide-Dev-Original-Method"],
+    ).toBe("GET");
+    host.dispose();
+  });
+
+  it("rebootstraps once on the exact stale-session code and preserves the operation id", async () => {
+    const operationId = "33333333-3333-4333-8333-333333333333";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(operationId);
+    let bootstrapCount = 0;
+    const actionRequests: Array<{
+      operationId: string | undefined;
+      body: string | undefined;
+    }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          bootstrapCount += 1;
+          return jsonResponse(200, {
+            token:
+              bootstrapCount === 1
+                ? "44444444-4444-4444-8444-444444444444"
+                : "55555555-5555-4555-8555-555555555555",
+          });
+        }
+        const headers = init?.headers as Record<string, string>;
+        actionRequests.push({
+          operationId: headers["X-Tmux-Ide-Operation-Id"],
+          body: init?.body as string | undefined,
+        });
+        if (actionRequests.length === 1) {
+          return jsonResponse(401, { code: "dev_host_session_invalid" });
+        }
+        return jsonResponse(200, {
+          ok: true,
+          result: {
+            verb: "workspace.pane.select",
+            operationId,
+            daemonInstanceId: IDENTITY.instanceId,
+            outcome: "applied",
+            workspaceName: "alpha",
+            semanticPaneId: "pane.alpha",
+          },
+        });
+      }),
+    );
+
+    const host = createDevWebHostCapabilities(CONFIG);
+    await expect(
+      host.daemon.invokeVerb({
+        verbId: "pane.select",
+        intent: {
+          verb: "workspace.pane.select",
+          workspaceName: "alpha",
+          semanticPaneId: "pane.alpha",
+        },
+      }),
+    ).resolves.toMatchObject({ status: "ok" });
+    expect(bootstrapCount).toBe(2);
+    expect(actionRequests).toHaveLength(2);
+    expect(actionRequests[0]?.operationId).toBe(operationId);
+    expect(actionRequests[1]?.operationId).toBe(operationId);
+    expect(actionRequests[1]?.body).toBe(actionRequests[0]?.body);
+    host.dispose();
+  });
+
+  it("does not retry or mint a new host session for a business 409", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let bootstrapCount = 0;
+    let actionCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          bootstrapCount += 1;
+          return jsonResponse(200, { token: "66666666-6666-4666-8666-666666666666" });
+        }
+        actionCount += 1;
+        return jsonResponse(409, { code: "controller_busy" });
+      }),
+    );
+
+    const host = createDevWebHostCapabilities(CONFIG);
+    await expect(
+      host.daemon.invokeVerb({
+        verbId: "pane.select",
+        intent: {
+          verb: "workspace.pane.select",
+          workspaceName: "alpha",
+          semanticPaneId: "pane.alpha",
+        },
+      }),
+    ).resolves.toMatchObject({ status: "error" });
+    expect(bootstrapCount).toBe(1);
+    expect(actionCount).toBe(1);
+    warned.mockRestore();
     host.dispose();
   });
 });

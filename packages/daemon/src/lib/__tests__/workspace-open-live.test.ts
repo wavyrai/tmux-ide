@@ -301,6 +301,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
         "Content-Type": "application/json",
         Origin: "tmux-ide://app",
         "X-Tmux-Ide-Expected-Daemon-Instance-Id": handle.instanceId,
+        "X-Tmux-Ide-Host-Client-Id": "test-host:workspace-open-live",
         "X-Tmux-Ide-Request-Id": requestId,
       },
       body: JSON.stringify({
@@ -331,9 +332,18 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
         15_000,
       );
       socket.on("error", reject);
+      socket.on("close", (code, reason) => {
+        clearTimeout(timeout);
+        reject(new Error(`attachment closed before ready: ${code} ${String(reason)}`));
+      });
       socket.on("message", (data, isBinary) => {
         if (isBinary) return;
         const parsed = JSON.parse(data.toString()) as { type?: string };
+        if (parsed.type === "error") {
+          clearTimeout(timeout);
+          reject(new Error(`attachment error: ${data.toString()}`));
+          return;
+        }
         if (parsed.type !== "ready") return;
         clearTimeout(timeout);
         resolve(parsed);

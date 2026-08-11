@@ -209,6 +209,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     readonly window: BrowserWindow;
     readonly webContentsId: number;
     readonly mainFrame: IpcMainInvokeEvent["senderFrame"];
+    readonly hostClientId: string;
   }
   interface DaemonSubscriptionAuthority {
     readonly generation: number;
@@ -238,6 +239,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       window,
       webContentsId: window.webContents.id,
       mainFrame: event.senderFrame,
+      hostClientId: randomUUID(),
     };
     return rendererAuthority;
   };
@@ -584,7 +586,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       intent: invocation.data.intent,
     });
     try {
-      const result = await deps.daemonResources.invokeVerb(request);
+      const result = await deps.daemonResources.invokeVerb(request, authority.hostClientId);
       try {
         assertRendererAuthority(event, authority.generation);
       } catch {
@@ -664,7 +666,11 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     });
     try {
       const result = TerminalAttachmentIssueResultSchemaZ.parse(
-        await deps.daemonResources.issueTerminalAttachment(request, rendererOrigin),
+        await deps.daemonResources.issueTerminalAttachment(
+          request,
+          rendererOrigin,
+          authority.hostClientId,
+        ),
       );
       try {
         assertRendererAuthority(event, authority.generation);
@@ -745,7 +751,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     });
     try {
       const result = PaneStreamIssueResultSchemaZ.parse(
-        await deps.daemonResources.issuePaneStream(request, rendererOrigin),
+        await deps.daemonResources.issuePaneStream(request, rendererOrigin, authority.hostClientId),
       );
       try {
         assertRendererAuthority(event, authority.generation);

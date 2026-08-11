@@ -39,6 +39,7 @@ export interface SessionRuntimeRegistryOptions {
   readonly executeAuthorized?: (
     operationId: string,
     intent: SessionRuntimeSemanticIntent,
+    authorizeBeforeEffect?: () => void,
   ) => Promise<SessionRuntimeIntentResult>;
   /** Deterministic seam for lease tests. Production uses cryptographic UUIDs. */
   readonly createControllerToken?: () => string;
@@ -54,6 +55,8 @@ export type SessionRuntimeControllerLeaseErrorCode =
   | "controller-conflict"
   | "controller-target-unavailable"
   | "stale-controller-lease"
+  | "invalid-client-capability"
+  | "invalid-source-pane-binding"
   | "intent-session-mismatch";
 
 export class SessionRuntimeControllerLeaseError extends Error {
@@ -94,6 +97,23 @@ export interface SessionRuntimeConsumer {
 }
 
 /**
+ * Trusted, in-process execution proof. Transport redemption or another daemon
+ * host boundary retains it; HTTP request bodies can never construct authority
+ * merely by matching this shape because every opaque token is checked against
+ * the live registry generation and consumer.
+ */
+export type SessionRuntimeExecutionHandle = object;
+
+interface ExecutionHandleState {
+  readonly runtime: SessionRuntime;
+  readonly consumer: SessionRuntimeConsumerImpl;
+  readonly lease: SessionRuntimeControllerLease;
+  readonly allowedSourcePaneIds: ReadonlySet<string>;
+  readonly sourceSemanticPaneId: string | null;
+  readonly authorizeLiveScope: ((semanticPaneId?: string) => void) | null;
+}
+
+/**
  * One daemon-generation lifecycle owner for every discovered tmux session.
  *
  * A session runtime retains the canonical MirrorService channel independently
@@ -110,11 +130,13 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     | ((
         operationId: string,
         intent: SessionRuntimeSemanticIntent,
+        authorizeBeforeEffect?: () => void,
       ) => Promise<SessionRuntimeIntentResult>)
     | null;
   readonly #resolveSession: ((workspaceName: string) => string | null) | null;
   readonly #createControllerToken: () => string;
   readonly #sessions = new Map<string, SessionRuntime>();
+  readonly #executionHandles = new WeakMap<object, ExecutionHandleState>();
   readonly #stopExitObserver: () => void;
   #disposed = false;
   #disposePromise: Promise<void> | null = null;
@@ -137,6 +159,146 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return this.#runtime(session).connect(surface, SessionRuntimeClientIdSchemaZ.parse(clientId));
   }
 
+  createExecutionHandle(
+    consumer: SessionRuntimeConsumer,
+    lease: SessionRuntimeControllerLease,
+    allowedSourcePaneIds: readonly string[],
+    authorizeLiveScope?: (semanticPaneId?: string) => void,
+  ): SessionRuntimeExecutionHandle {
+    const runtime = this.#sessions.get(consumer.session);
+    if (!runtime || !runtime.ownsConsumer(consumer)) {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-client-capability",
+        "The execution handle consumer is not owned by this daemon generation.",
+      );
+    }
+    runtime.assertController(lease, consumer.clientId);
+    const handle = Object.freeze(Object.create(null)) as object;
+    this.#executionHandles.set(handle, {
+      runtime,
+      consumer: consumer as SessionRuntimeConsumerImpl,
+      lease,
+      allowedSourcePaneIds: new Set(allowedSourcePaneIds),
+      sourceSemanticPaneId: null,
+      authorizeLiveScope: authorizeLiveScope ?? null,
+    });
+    return handle;
+  }
+
+  bindExecutionSource(
+    handle: SessionRuntimeExecutionHandle,
+    semanticPaneId: string,
+  ): SessionRuntimeExecutionHandle {
+    const state = this.#assertExecutionHandle(handle, semanticPaneId);
+    const bound = Object.freeze(Object.create(null)) as object;
+    this.#executionHandles.set(bound, { ...state, sourceSemanticPaneId: semanticPaneId });
+    return bound;
+  }
+
+  assertExecutionHandle(handle: SessionRuntimeExecutionHandle, semanticPaneId?: string): void {
+    this.#assertExecutionHandle(handle, semanticPaneId);
+  }
+
+  /** Execute one send as a separately authenticated local tmux-pane principal. */
+  submitPaneCredentialIntent(
+    session: string,
+    operationId: string,
+    rawIntent: SessionRuntimeSemanticIntent,
+    semanticPaneId: string,
+    authorizeBeforeEffect?: () => void,
+  ): Promise<SessionRuntimeIntentResult> {
+    const intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+    if (intent.verb !== "workspace.pane.send") {
+      return Promise.reject(new Error("Pane credentials authorize pane sends only"));
+    }
+    if ((this.#resolveSession?.(intent.workspaceName) ?? null) !== session) {
+      return Promise.reject(
+        new SessionRuntimeControllerLeaseError(
+          "intent-session-mismatch",
+          "The pane credential intent does not belong to its authenticated session.",
+        ),
+      );
+    }
+    if (!this.#semanticMutations) {
+      return Promise.reject(new Error("Session semantic mutations are unavailable"));
+    }
+    return this.#semanticMutations.submit(
+      operationId,
+      { ...intent, sourceSemanticPaneId: semanticPaneId },
+      semanticPaneId,
+      authorizeBeforeEffect,
+    );
+  }
+
+  submitAuthenticatedIntent(
+    handle: SessionRuntimeExecutionHandle,
+    operationId: string,
+    intent: SessionRuntimeSemanticIntent,
+  ): Promise<SessionRuntimeIntentResult> {
+    let state: ExecutionHandleState;
+    try {
+      state = this.#assertExecutionHandle(handle);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    let authenticatedSourceSemanticPaneId: string | null = null;
+    let normalizedIntent = SessionRuntimeSemanticIntentSchemaZ.parse(intent);
+    if (normalizedIntent.verb === "workspace.pane.send") {
+      if (state.sourceSemanticPaneId !== null) {
+        if (
+          normalizedIntent.sourceSemanticPaneId !== undefined &&
+          normalizedIntent.sourceSemanticPaneId !== state.sourceSemanticPaneId
+        ) {
+          return Promise.reject(
+            new SessionRuntimeControllerLeaseError(
+              "invalid-source-pane-binding",
+              "The claimed source pane does not match the authenticated transport binding.",
+            ),
+          );
+        }
+        authenticatedSourceSemanticPaneId = state.sourceSemanticPaneId;
+        normalizedIntent = {
+          ...normalizedIntent,
+          sourceSemanticPaneId: state.sourceSemanticPaneId,
+        };
+      } else {
+        const sourceLess = { ...normalizedIntent };
+        delete sourceLess.sourceSemanticPaneId;
+        normalizedIntent = sourceLess;
+      }
+    }
+    return this.#submitAuthorizedIntent(
+      state.runtime,
+      state.lease,
+      operationId,
+      normalizedIntent,
+      authenticatedSourceSemanticPaneId,
+      () => this.#assertExecutionHandle(handle, state.sourceSemanticPaneId ?? undefined),
+    );
+  }
+
+  #assertExecutionHandle(
+    handle: SessionRuntimeExecutionHandle,
+    semanticPaneId?: string,
+  ): ExecutionHandleState {
+    const state = this.#executionHandles.get(handle);
+    if (!state) {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-client-capability",
+        "The opaque execution handle is invalid for this daemon generation.",
+      );
+    }
+    state.runtime.assertController(state.lease, state.consumer.clientId);
+    if (semanticPaneId !== undefined && !state.allowedSourcePaneIds.has(semanticPaneId)) {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-source-pane-binding",
+        "The source pane is outside this transport's exact daemon grant.",
+      );
+    }
+    state.authorizeLiveScope?.(semanticPaneId);
+    return state;
+  }
+
   async describeSession(session: string): Promise<MirrorSessionDescription> {
     return await this.#runtime(session).describe();
   }
@@ -152,10 +314,12 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     lease: SessionRuntimeControllerLease,
     operationId: string,
     rawIntent: SessionRuntimeSemanticIntent,
+    authenticatedSourceSemanticPaneId: string | null = null,
+    authorizeBeforeEffect?: () => void,
   ): Promise<SessionRuntimeIntentResult> {
     if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
     runtime.assertController(lease);
-    const intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+    let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
     const resolvedSession = this.#resolveSession?.(intent.workspaceName) ?? null;
     if (resolvedSession !== runtime.session) {
       return Promise.reject(
@@ -165,20 +329,33 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
         ),
       );
     }
+    if (intent.verb === "workspace.pane.send") {
+      if (authenticatedSourceSemanticPaneId === null) {
+        // The owner bearer and a request-body pane id are not source proof.
+        const sourceLess = { ...intent };
+        delete sourceLess.sourceSemanticPaneId;
+        intent = sourceLess;
+      }
+    }
     if (intent.verb !== "workspace.pane.send" && intent.verb !== "workspace.pane.read") {
       if (!this.#executeAuthorized) {
         return Promise.reject(new Error("Authorized session mutations are unavailable"));
       }
-      return this.#executeAuthorized(operationId, intent);
+      return this.#executeAuthorized(operationId, intent, authorizeBeforeEffect);
     }
     if (!this.#semanticMutations) {
       return Promise.reject(new Error("Session semantic mutations are unavailable"));
     }
-    return this.#semanticMutations.submit(operationId, intent);
+    return this.#semanticMutations.submit(
+      operationId,
+      intent,
+      authenticatedSourceSemanticPaneId,
+      authorizeBeforeEffect,
+    );
   }
 
-  observeTmuxInteraction(observation: SessionRuntimeTmuxObservation): void {
-    this.#semanticMutations?.observe(observation);
+  observeTmuxInteraction(observation: SessionRuntimeTmuxObservation): boolean {
+    return this.#semanticMutations?.observe(observation) ?? false;
   }
 
   onReceipt(listener: (receipt: InteractionReceipt) => void): () => void {
@@ -294,6 +471,10 @@ class SessionRuntime {
     };
   }
 
+  ownsConsumer(candidate: SessionRuntimeConsumer): boolean {
+    return this.#consumers.has(candidate as SessionRuntimeConsumerImpl);
+  }
+
   hasController(): boolean {
     return this.#controllerClientId !== null;
   }
@@ -381,10 +562,10 @@ class SessionRuntime {
   ): Promise<SessionRuntimeIntentResult> {
     try {
       this.assertController(lease, callerClientId);
+      return this.#submitAuthorized(this, lease, operationId, intent);
     } catch (error) {
       return Promise.reject(error);
     }
-    return this.#submitAuthorized(this, lease, operationId, intent);
   }
 
   async whenReady(): Promise<void> {
@@ -611,8 +792,10 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     this.#closed = true;
     const subscriptions = [...this.#subscriptions];
     this.#subscriptions.clear();
-    await Promise.allSettled(subscriptions.map((subscription) => subscription.close()));
+    // Authority retirement is synchronous. A slow/frozen mirror subscription
+    // must never keep controller leases or previously issued handles alive.
     this.#runtime.release(this);
+    await Promise.allSettled(subscriptions.map((subscription) => subscription.close()));
   }
 
   #assertOpen(): void {

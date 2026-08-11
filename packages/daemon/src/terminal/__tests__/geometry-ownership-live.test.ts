@@ -185,6 +185,15 @@ describe.skipIf(!hasTmux)("m50.2 geometry ownership, live", () => {
       daemonInstanceId,
       webSocketUrl: "ws://127.0.0.1:6070/v1/terminal/attachments/redeem",
       registry,
+      admission: {
+        bindSessionRuntime: () => ({
+          generation: daemonInstanceId,
+          session: SESSION,
+          clientId: `test-host:geometry:${requestId}`,
+          assertController: () => undefined,
+          close: async () => undefined,
+        }),
+      },
       tmuxAuthority: {
         executablePath,
         socketSelector: { kind: "name", name: socketName },
@@ -200,7 +209,12 @@ describe.skipIf(!hasTmux)("m50.2 geometry ownership, live", () => {
         geometryOwnership: "owner",
         viewport,
       },
-      { requestId, projectIdentity: "project-owner", rendererOrigin: "tmux-ide://app" },
+      {
+        requestId,
+        projectIdentity: "project-owner",
+        rendererOrigin: "tmux-ide://app",
+        hostClientId: `test-host:geometry:${requestId}`,
+      },
     );
     const upgrade = runtime.admission.reserveUpgrade({
       path: TERMINAL_ATTACHMENT_REDEEM_PATH,

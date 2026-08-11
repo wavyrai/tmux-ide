@@ -147,6 +147,18 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
       webSocketUrl: wsUrl,
       leaseManager,
       mirror,
+      bindSessionRuntime: (descriptor) => {
+        if (!descriptor.hostClientId) throw new Error("test host identity is required");
+        return {
+          generation: INSTANCE,
+          session: descriptor.sessionName,
+          clientId: descriptor.hostClientId,
+          assertController: (pane?: string) => {
+            if (pane && !descriptor.panes.includes(pane)) throw new Error("pane outside grant");
+          },
+          close: async () => undefined,
+        };
+      },
       // Small budgets so the stall trips fast under the flood.
       flowBudgets: {
         "ws-send-buffer": { maxOutstanding: 256 << 10, resumeAt: 64 << 10 },
@@ -170,6 +182,7 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
             projectIdentity: "workspace.zz",
             sessionName: session,
             rendererOrigin: ORIGIN,
+            hostClientId: `test-host:pane-stream:${requestId}`,
           },
         )
         .then((descriptor) => ({ descriptor, requestId }));

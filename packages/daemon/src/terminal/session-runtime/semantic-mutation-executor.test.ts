@@ -53,6 +53,61 @@ function rig(
 }
 
 describe("SessionSemanticMutationExecutor", () => {
+  it("revalidates queued authority immediately before effect and rejects stale work", async () => {
+    const started: string[] = [];
+    const { executor, receipts } = rig({
+      execute: async (operationId) => {
+        started.push(operationId);
+      },
+    });
+    let authorized = true;
+    const first = executor.submit(OP_A, send());
+    const queued = executor.submit(OP_B, send("alpha", "pane.beta"), "pane.source", () => {
+      if (!authorized) throw new Error("principal became stale");
+    });
+    await vi.waitFor(() => expect(started).toEqual([OP_A]));
+    authorized = false;
+    executor.observe({
+      operationId: OP_A,
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      operationKind: "workspace.pane.send",
+    });
+    await first;
+    await expect(queued).rejects.toMatchObject({ outcome: "rejected" });
+    expect(started).toEqual([OP_A]);
+    expect(receipts.map(({ operationId, phase }) => [operationId, phase])).toEqual([
+      [OP_A, "accepted"],
+      [OP_B, "accepted"],
+      [OP_A, "observed"],
+      [OP_B, "rejected"],
+    ]);
+    await executor.dispose();
+  });
+
+  it("keeps authorization callbacks outside idempotency fingerprints and replay replacement", async () => {
+    const firstGuard = vi.fn();
+    const replayGuard = vi.fn(() => {
+      throw new Error("must not replace original submission guard");
+    });
+    const started: string[] = [];
+    const { executor } = rig({ execute: async (operationId) => void started.push(operationId) });
+    const first = executor.submit(OP_A, send(), "pane.source", firstGuard);
+    const replay = executor.submit(OP_A, send(), "pane.source", replayGuard);
+    expect(replay).toBe(first);
+    await vi.waitFor(() => expect(started).toEqual([OP_A]));
+    executor.observe({
+      operationId: OP_A,
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      operationKind: "workspace.pane.send",
+    });
+    await expect(Promise.all([first, replay])).resolves.toHaveLength(2);
+    expect(firstGuard).toHaveBeenCalledOnce();
+    expect(replayGuard).not.toHaveBeenCalled();
+    await executor.dispose();
+  });
+
   it("keeps one strict FIFO through tmux observation for each session", async () => {
     const started: string[] = [];
     const { executor, receipts } = rig({

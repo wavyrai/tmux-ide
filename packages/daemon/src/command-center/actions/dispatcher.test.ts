@@ -31,6 +31,54 @@ afterEach(() => {
 });
 
 describe("command-backed action dispatcher compatibility", () => {
+  it("forwards trusted host and pane credentials out-of-band to the runtime backend", async () => {
+    const mutate = vi.fn(async (input) => ({
+      verb: "workspace.pane.send" as const,
+      outcome: "applied" as const,
+      operationId: input.operationId,
+      daemonInstanceId: input.expectedDaemonInstanceId,
+      workspaceName: input.intent.workspaceName,
+      sourceSemanticPaneId: "pane.source",
+      semanticPaneId: "pane.target",
+      origin: "cli" as const,
+      characterCount: 5,
+      byteCount: 5,
+      submitted: true,
+    }));
+    const app = new Hono();
+    app.post(
+      "/api/v2/action/:name",
+      createActionDispatcher({
+        broadcast: vi.fn(),
+        broadcastResourceChanged: vi.fn(),
+        daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+        workspaceMultiplexerBackend: { mutate },
+      }),
+    );
+    await app.request("http://localhost/api/v2/action/workspace.pane.send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": "10000000-0000-4000-8000-000000000001",
+        "X-Tmux-Ide-Host-Client-Id": "trusted-host",
+        "X-Tmux-Ide-Pane-Source-Credential": "trusted-pane-credential",
+      },
+      body: JSON.stringify({
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.target",
+        sourceSemanticPaneId: "pane.source",
+        text: "hello",
+        submit: true,
+        origin: "cli",
+      }),
+    });
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: expect.objectContaining({ text: "hello" }) }),
+      "trusted-host",
+      "trusted-pane-credential",
+    );
+  });
+
   it("delegates pane send and its receipt lifecycle to the runtime backend", async () => {
     const mutate = vi.fn(async (input) => ({
       verb: "workspace.pane.send" as const,

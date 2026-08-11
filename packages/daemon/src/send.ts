@@ -213,6 +213,24 @@ export function cliSourceSemanticPaneId(
   }
 }
 
+export function cliPaneSourceCredential(
+  runtimePaneId: string | undefined = process.env.TMUX_PANE,
+  readCredential: (runtimePaneId: string) => string = (paneId) =>
+    execFileSync(
+      "tmux",
+      ["display-message", "-p", "-t", paneId, "#{@tmux_ide_source_credential_v1}"],
+      { encoding: "utf8" },
+    ),
+): string | null {
+  if (!runtimePaneId) return null;
+  try {
+    const credential = readCredential(runtimePaneId).trim();
+    return /^[A-Za-z0-9_-]{43}$/u.test(credential) ? credential : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Use the canonical daemon when it is already authoritative for the session.
  * A lost response is deliberately an error instead of a direct-tmux fallback:
@@ -249,6 +267,7 @@ async function deliverMessageThroughDaemon(opts: {
   const actualText = dispatch?.triggerCmd ?? prepared;
   const operationId = randomUUID();
   const sourceSemanticPaneId = cliSourceSemanticPaneId(opts.session);
+  const sourcePaneCredential = cliPaneSourceCredential();
   const outcome = await tryDispatchAction(
     "workspace.pane.send",
     {
@@ -259,7 +278,12 @@ async function deliverMessageThroughDaemon(opts: {
       submit: !opts.noEnter,
       origin: "cli",
     },
-    { cwd: opts.dir, operationId, autostart: false },
+    {
+      cwd: opts.dir,
+      operationId,
+      autostart: false,
+      ...(sourcePaneCredential ? { sourcePaneCredential } : {}),
+    },
   );
   if (!outcome) {
     throw new IdeError(

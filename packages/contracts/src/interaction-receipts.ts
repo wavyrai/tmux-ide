@@ -86,7 +86,7 @@ export const InteractionReceiptSchemaZ = z
      * Authenticated source identity for an authored pane-to-pane send. This is
      * null for raw tmux traffic and for authored sends that did not originate
      * inside a pane. Daemon authority, never a renderer, decides when a claimed
-     * source may be copied onto an applied receipt.
+     * source is disclosed only after tmux observation authenticates the send.
      */
     sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable().default(null),
     semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
@@ -121,11 +121,18 @@ export const InteractionReceiptSchemaZ = z
         message: "pane reads are presence-only and may not retain captured content",
       });
     }
-    if (receipt.sourceSemanticPaneId !== null && receipt.phase !== "applied") {
+    if (receipt.sourceSemanticPaneId !== null && receipt.phase !== "observed") {
       context.addIssue({
         code: "custom",
         path: ["sourceSemanticPaneId"],
-        message: "source pane identity is published only after authority applies the send",
+        message: "source pane identity is published only after tmux observation",
+      });
+    }
+    if (receipt.sourceSemanticPaneId !== null && receipt.operationKind !== "workspace.pane.send") {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceSemanticPaneId"],
+        message: "source pane identity is valid only for authored pane sends",
       });
     }
   });

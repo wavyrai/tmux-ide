@@ -721,11 +721,12 @@ export function warnOnDaemonVersionSkew(
 /** Probe health separately from ownership so callers can report precise state. */
 export async function probeCanonicalDaemonHealth(
   info: CanonicalDaemonInfo,
+  parentSignal?: AbortSignal,
 ): Promise<DaemonHealth | null> {
   if (!(await isCanonicalDaemonAlive(info))) return null;
   try {
     const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/health"), {
-      signal: timeoutSignal(750),
+      signal: parentSignal ?? timeoutSignal(750),
     });
     if (!res.ok) return null;
     const parsed = DaemonHealthSchema.safeParse(await res.json());
@@ -738,11 +739,12 @@ export async function probeCanonicalDaemonHealth(
 /** Credential-free endpoint binding probe; callers compare instanceId to daemon.json. */
 export async function probeCanonicalDaemonIdentity(
   info: CanonicalDaemonInfo,
+  parentSignal?: AbortSignal,
 ): Promise<DaemonIdentity | null> {
   if (!(await isCanonicalDaemonAlive(info))) return null;
   try {
     const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/identity"), {
-      signal: timeoutSignal(750),
+      signal: parentSignal ?? timeoutSignal(750),
     });
     if (!res.ok) return null;
     const parsed = DaemonIdentitySchema.safeParse(await res.json());

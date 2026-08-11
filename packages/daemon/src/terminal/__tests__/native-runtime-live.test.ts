@@ -87,6 +87,15 @@ describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration",
       daemonInstanceId,
       webSocketUrl: "ws://127.0.0.1:6070/v1/terminal/attachments/redeem",
       registry,
+      admission: {
+        bindSessionRuntime: () => ({
+          generation: daemonInstanceId,
+          session: sessionName,
+          clientId: "test-host:native-runtime-live",
+          assertController: () => undefined,
+          close: async () => undefined,
+        }),
+      },
       tmuxAuthority: {
         executablePath,
         socketSelector: { kind: "name", name: socketName },
@@ -102,7 +111,12 @@ describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration",
         geometryOwnership: "passive",
         viewport: { cols: 100, rows: 30 },
       },
-      { requestId, projectIdentity: "project-live", rendererOrigin: "tmux-ide://app" },
+      {
+        requestId,
+        projectIdentity: "project-live",
+        rendererOrigin: "tmux-ide://app",
+        hostClientId: "test-host:native-runtime-live",
+      },
     );
     const upgrade = runtime.admission.reserveUpgrade({
       path: TERMINAL_ATTACHMENT_REDEEM_PATH,

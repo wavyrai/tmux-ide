@@ -73,17 +73,19 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
   currentLeaseId = LEASE_ID;
   currentRequestId = REQUEST_ID;
   currentViewerMode: "interactive" | "read-only" = "interactive";
+  currentHostClientId: string | null = null;
   active = false;
   consumed = false;
 
   async issue(
     request: TerminalAttachRequest,
-    context: { requestId: string; projectIdentity: string },
+    context: { requestId: string; projectIdentity: string; hostClientId?: string },
   ): Promise<IssuedAttachmentLease> {
     this.calls.push("issue");
     this.currentLeaseId = this.nextLeaseId;
     this.currentRequestId = context.requestId;
     this.currentViewerMode = request.viewerMode;
+    this.currentHostClientId = context.hostClientId ?? null;
     const issued = { descriptor: this.leaseDescriptor() } as IssuedAttachmentLease;
     Object.defineProperty(issued, "redemptionTicket", { value: this.issuedTicket });
     return issued;
@@ -154,6 +156,7 @@ class FakeLeaseManager implements DirectTerminalAttachmentLeaseManager {
       leaseId: this.currentLeaseId,
       requestId: this.currentRequestId,
       viewerMode: this.currentViewerMode,
+      hostClientId: this.currentHostClientId,
     };
   }
 }
@@ -284,6 +287,9 @@ function rig(
     inputLimits?: PtyInputLimits;
     inputSink?: (frame: Buffer) => void;
     inputAvailable?: boolean;
+    bindSessionRuntime?: ConstructorParameters<
+      typeof TerminalAttachmentAdmissionCoordinator
+    >[0]["bindSessionRuntime"];
   } = {},
 ) {
   const manager = new FakeLeaseManager();
@@ -304,16 +310,30 @@ function rig(
     launcher: { claim },
     resolveGeometry,
     now: overrides.now ?? (() => 1_000),
+    bindSessionRuntime:
+      overrides.bindSessionRuntime ??
+      (() => ({
+        generation: INSTANCE_ID,
+        session: "alpha",
+        clientId: "test:interactive",
+        assertController: () => undefined,
+        close: async () => undefined,
+      })),
     ...overrides,
   });
   return { coordinator, manager, client, claim, resolveGeometry };
 }
 
-async function issue(coordinator: TerminalAttachmentAdmissionCoordinator, origin = ORIGIN) {
+async function issue(
+  coordinator: TerminalAttachmentAdmissionCoordinator,
+  origin = ORIGIN,
+  hostClientId?: string,
+) {
   return coordinator.issue(request(), {
     requestId: REQUEST_ID,
     projectIdentity: "project-alpha",
     rendererOrigin: origin,
+    ...(hostClientId ? { hostClientId } : {}),
   });
 }
 
@@ -354,6 +374,25 @@ async function rawUpgradeStatus(port: number, headers: readonly string[]): Promi
 }
 
 describe("TerminalAttachmentAdmissionCoordinator", () => {
+  it("binds redeemed attachment identity to SessionRuntime and closes it with the socket", async () => {
+    const close = vi.fn(async () => undefined);
+    const bindSessionRuntime = vi.fn((descriptor: AttachmentLeaseDescriptor) => ({
+      generation: INSTANCE_ID,
+      session: "alpha",
+      clientId: `terminal-attachment:${descriptor.leaseId}`,
+      assertController: () => undefined,
+      close,
+    }));
+    const { coordinator } = rig({ bindSessionRuntime });
+    const issued = await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption(issued.redemptionTicket));
+    await vi.waitFor(() => expect(bindSessionRuntime).toHaveBeenCalledOnce());
+    socket.close();
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  });
+
   it("issues one renderer descriptor while retaining only bounded redacted state", async () => {
     const { coordinator, manager } = rig();
     const issued = await issue(coordinator);
@@ -462,6 +501,28 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
     ).toEqual({ accepted: false, code: "preauth-capacity-exhausted", httpStatus: 503 });
     first.cancelBeforeBind();
     expect(coordinator.snapshot().preAuthSockets).toBe(0);
+    await coordinator.shutdown();
+  });
+
+  it("binds upgrade admission to the issuing browser-document host", async () => {
+    const { coordinator } = rig();
+    await issue(coordinator, ORIGIN, "web:document-a");
+    expect(
+      coordinator.reserveUpgrade({
+        path: TERMINAL_ATTACHMENT_REDEEM_PATH,
+        protocols: [TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL],
+        origin: ORIGIN,
+        hostClientId: "web:document-b",
+      }),
+    ).toMatchObject({ accepted: false, code: "origin-rejected" });
+    expect(
+      coordinator.reserveUpgrade({
+        path: TERMINAL_ATTACHMENT_REDEEM_PATH,
+        protocols: [TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL],
+        origin: ORIGIN,
+        hostClientId: "web:document-a",
+      }).accepted,
+    ).toBe(true);
     await coordinator.shutdown();
   });
 

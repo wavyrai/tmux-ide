@@ -2,7 +2,12 @@ import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cliSourceSemanticPaneId, writeDispatchFile, LONG_MESSAGE_THRESHOLD } from "./send.ts";
+import {
+  cliPaneSourceCredential,
+  cliSourceSemanticPaneId,
+  writeDispatchFile,
+  LONG_MESSAGE_THRESHOLD,
+} from "./send.ts";
 
 let tmpDir: string;
 
@@ -84,5 +89,22 @@ describe("cliSourceSemanticPaneId", () => {
       cliSourceSemanticPaneId("workspace", undefined, () => "workspace\tpane.editor"),
     ).toBeNull();
     expect(cliSourceSemanticPaneId("workspace", "%7", () => "other\tpane.editor")).toBeNull();
+  });
+});
+
+describe("cliPaneSourceCredential", () => {
+  it("reads only the credential attached to the exact current tmux pane", () => {
+    const token = "a".repeat(43);
+    expect(
+      cliPaneSourceCredential("%7", (paneId) => {
+        expect(paneId).toBe("%7");
+        return `${token}\n`;
+      }),
+    ).toBe(token);
+  });
+
+  it("refuses missing and malformed pane credentials", () => {
+    expect(cliPaneSourceCredential(undefined, () => "a".repeat(43))).toBeNull();
+    expect(cliPaneSourceCredential("%7", () => "forged\ncredential")).toBeNull();
   });
 });

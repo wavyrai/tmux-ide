@@ -88,7 +88,7 @@ describe("interaction receipt reducer", () => {
     const state = reduceInteractionReceipt(initialInteractionFeedState(), {
       ...base,
       sequence: 1,
-      phase: "applied",
+      phase: "observed",
       sourceSemanticPaneId: "pane.editor",
       semanticPaneId: "pane.tests",
     });
@@ -163,7 +163,7 @@ describe("interaction receipt reducer", () => {
     const send = reduceInteractionReceipt(initialInteractionFeedState(), {
       ...base,
       sequence: 1,
-      phase: "applied",
+      phase: "observed",
       sourceSemanticPaneId: "pane.editor",
       semanticPaneId: "pane.tests",
     });

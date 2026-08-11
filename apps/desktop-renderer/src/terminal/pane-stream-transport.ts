@@ -12,6 +12,7 @@ import {
   type PaneStreamLeaseRequest,
   type PaneStreamServerFrame,
 } from "@tmux-ide/contracts";
+import { browserWebSocketHandshakeUrl } from "../runtime/browser-websocket-session.ts";
 import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 
 /**
@@ -896,7 +897,10 @@ export function createPaneStreamTransport(
 
       let socket: PaneStreamWebSocket;
       try {
-        socket = createWebSocket(descriptor.webSocketUrl, PANE_STREAM_TRANSPORT_PROTOCOL);
+        socket = createWebSocket(
+          browserWebSocketHandshakeUrl(descriptor.webSocketUrl),
+          PANE_STREAM_TRANSPORT_PROTOCOL,
+        );
       } catch {
         return {
           status: "error",

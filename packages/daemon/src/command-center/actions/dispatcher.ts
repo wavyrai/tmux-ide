@@ -25,6 +25,7 @@ import {
   type ActionName,
 } from "./contract.ts";
 import { ActionError, wrapInternalError } from "./errors.ts";
+import { PANE_SOURCE_CREDENTIAL_HEADER } from "../../lib/pane-source-credentials.ts";
 import { getLooseActionEntry } from "./registry.ts";
 import {
   broadcastActionComplete,
@@ -282,6 +283,8 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
     const context = {
       operationId,
       daemonInstanceId: deps.daemonInstanceId,
+      hostClientId: c.req.header("X-Tmux-Ide-Host-Client-Id"),
+      sourcePaneCredential: c.req.header(PANE_SOURCE_CREDENTIAL_HEADER),
       workspacePaneCreationBackend: deps.workspacePaneCreationBackend,
       workspaceOpenBackend: deps.workspaceOpenBackend,
       workspacePromotionBackend: deps.workspacePromotionBackend,

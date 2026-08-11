@@ -77,8 +77,16 @@ export interface ActionExecutionContext {
     mutate(input: AppWindowMutationRequest): Promise<AppWindowMutationResult>;
   };
   readonly workspaceMultiplexerBackend?: {
-    mutate(input: WorkspaceMultiplexerMutationRequest): Promise<WorkspaceMultiplexerMutationResult>;
+    mutate(
+      input: WorkspaceMultiplexerMutationRequest,
+      authenticatedHostClientId?: string,
+      sourcePaneCredential?: string,
+    ): Promise<WorkspaceMultiplexerMutationResult>;
   };
+  /** Owner-authenticated host principal injected outside request JSON. */
+  readonly hostClientId?: string;
+  /** Generation-scoped local tmux pane proof, carried only in a header. */
+  readonly sourcePaneCredential?: string;
 }
 
 export type ActionHandler<N extends ActionName> = (

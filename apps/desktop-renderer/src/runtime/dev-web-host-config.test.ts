@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  consumeDevelopmentWebSocketSession,
+  developmentWebSocketUrl,
+  isExactDevelopmentPageOrigin,
   loopbackHttpOriginOrNull,
   resolveDevWebHostConfig,
   webSocketOriginFor,
@@ -48,6 +51,48 @@ describe("loopbackHttpOriginOrNull", () => {
   it("maps an http origin onto its websocket sibling", () => {
     expect(webSocketOriginFor("http://127.0.0.1:8787")).toBe("ws://127.0.0.1:8787");
     expect(webSocketOriginFor("https://127.0.0.1:8787")).toBe("wss://127.0.0.1:8787");
+  });
+});
+
+describe("isExactDevelopmentPageOrigin", () => {
+  it("requires the exact page origin and refuses an absent Origin", () => {
+    const pageOrigin = "http://127.0.0.1:5173";
+    expect(isExactDevelopmentPageOrigin(pageOrigin, pageOrigin)).toBe(true);
+    expect(isExactDevelopmentPageOrigin(undefined, pageOrigin)).toBe(false);
+    expect(isExactDevelopmentPageOrigin("http://localhost:5173", pageOrigin)).toBe(false);
+    expect(isExactDevelopmentPageOrigin("http://127.0.0.1:5174", pageOrigin)).toBe(false);
+  });
+});
+
+describe("development WebSocket document capability", () => {
+  const token = "11111111-1111-4111-8111-111111111111";
+
+  it("attaches and consumes one canonical token without forwarding it", () => {
+    const browserUrl = developmentWebSocketUrl("ws://127.0.0.1:5173/ws/events", token);
+    expect(browserUrl).toBe(`ws://127.0.0.1:5173/ws/events?__tmux_ide_dev_host_session=${token}`);
+    expect(
+      consumeDevelopmentWebSocketSession(new URL(browserUrl).pathname + new URL(browserUrl).search),
+    ).toEqual({
+      token,
+      forwardPath: "/ws/events",
+    });
+  });
+
+  it("refuses missing, stale-shaped, duplicated, and mixed query authority", () => {
+    expect(consumeDevelopmentWebSocketSession("/ws/events")).toBeNull();
+    expect(
+      consumeDevelopmentWebSocketSession("/ws/events?__tmux_ide_dev_host_session=not-a-session"),
+    ).toBeNull();
+    expect(
+      consumeDevelopmentWebSocketSession(
+        `/ws/events?__tmux_ide_dev_host_session=${token}&__tmux_ide_dev_host_session=${token}`,
+      ),
+    ).toBeNull();
+    expect(
+      consumeDevelopmentWebSocketSession(
+        `/ws/events?__tmux_ide_dev_host_session=${token}&leak=daemon`,
+      ),
+    ).toBeNull();
   });
 });
 

@@ -29,14 +29,14 @@ export const SessionRuntimeClientIdSchemaZ = z
   .refine((value) => !/[\0\r\n]/u.test(value));
 export type SessionRuntimeClientId = z.infer<typeof SessionRuntimeClientIdSchemaZ>;
 
-export const SessionRuntimeControllerRoleSchemaZ = z.enum(["controller", "viewer"]);
-export type SessionRuntimeControllerRole = z.infer<typeof SessionRuntimeControllerRoleSchemaZ>;
-
 const SessionRuntimeSessionNameSchemaZ = z
   .string()
   .min(1)
   .max(256)
   .refine((value) => !/[\0\r\n]/u.test(value));
+
+export const SessionRuntimeControllerRoleSchemaZ = z.enum(["controller", "viewer"]);
+export type SessionRuntimeControllerRole = z.infer<typeof SessionRuntimeControllerRoleSchemaZ>;
 
 /** One generation- and revision-pinned capability for both input and geometry. */
 export const SessionRuntimeControllerLeaseSchemaZ = z

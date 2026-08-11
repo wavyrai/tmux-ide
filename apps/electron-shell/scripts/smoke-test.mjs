@@ -54,6 +54,10 @@ const distDir = join(packageRoot, "dist");
 const PANE_STREAM_PROTOCOL_VERSION = 1;
 const PANE_STREAM_ISSUE_PATH = "/api/v1/terminal/pane-streams/issue";
 const RENDERER_ORIGIN = "tmux-ide://app";
+// This direct wire rung stands in for one trusted Electron document. Keep its
+// host identity stable across issue and WebSocket redemption, exactly as the
+// main-process broker does for the real renderer generation.
+const HOST_CLIENT_ID = `electron:desktop-smoke:${process.pid}`;
 
 // NOT `zz-`-prefixed: the daemon's own discovery treats `zz-` and `_` prefixes
 // as internal scratch and hides them from the fleet, so a `zz-` session could
@@ -511,6 +515,7 @@ async function proveReplayRepair(client, fleet) {
 function openPaneStream(descriptor) {
   const socket = new WebSocket(descriptor.webSocketUrl, descriptor.subprotocol, {
     origin: RENDERER_ORIGIN,
+    headers: { "X-Tmux-Ide-Host-Client-Id": HOST_CLIENT_ID },
   });
   const frames = [];
   socket.on("message", (data) => {
@@ -564,6 +569,7 @@ async function proveByteRoundTrip(client, canonical, { workspaceName, paneId }) 
       Origin: RENDERER_ORIGIN,
       "X-Tmux-Ide-Request-Id": requestId,
       "X-Tmux-Ide-Expected-Daemon-Instance-Id": canonical.instanceId,
+      "X-Tmux-Ide-Host-Client-Id": HOST_CLIENT_ID,
     },
   );
   if (issued.body?.status !== "issued") {

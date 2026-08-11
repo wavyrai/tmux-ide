@@ -91,6 +91,8 @@ export class SessionSemanticMutationExecutor {
   submit(
     rawOperationId: string,
     rawIntent: SessionRuntimeSemanticIntent,
+    authenticatedSourceSemanticPaneId: string | null = null,
+    authorizeBeforeEffect?: () => void,
   ): Promise<SessionRuntimeIntentResult> {
     if (this.#disposed) {
       return Promise.reject(
@@ -99,7 +101,7 @@ export class SessionSemanticMutationExecutor {
     }
     const operationId = z.uuid().parse(rawOperationId);
     const intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
-    const fingerprint = JSON.stringify(intent);
+    const fingerprint = JSON.stringify([intent, authenticatedSourceSemanticPaneId]);
     const existing = this.#operations.get(operationId);
     if (existing) {
       if (existing.fingerprint !== fingerprint) {
@@ -144,8 +146,10 @@ export class SessionSemanticMutationExecutor {
 
     const previous = this.#tails.get(session) ?? Promise.resolve();
     const result = previous.then(
-      () => this.#run(operationId, intent),
-      () => this.#run(operationId, intent),
+      () =>
+        this.#run(operationId, intent, authenticatedSourceSemanticPaneId, authorizeBeforeEffect),
+      () =>
+        this.#run(operationId, intent, authenticatedSourceSemanticPaneId, authorizeBeforeEffect),
     );
     const tail = result.then(
       () => undefined,
@@ -159,18 +163,19 @@ export class SessionSemanticMutationExecutor {
     return result;
   }
 
-  observe(observation: SessionRuntimeTmuxObservation): void {
+  observe(observation: SessionRuntimeTmuxObservation): boolean {
     const pending = this.#pending.get(observation.operationId);
-    if (!pending) return;
+    if (!pending) return false;
     const expected = pending.expected;
     if (
       expected.workspaceName !== observation.workspaceName ||
       expected.semanticPaneId !== observation.semanticPaneId ||
       expected.operationKind !== observation.operationKind
     ) {
-      return;
+      return false;
     }
     pending.resolve();
+    return true;
   }
 
   onReceipt(listener: (receipt: InteractionReceipt) => void): () => void {
@@ -229,6 +234,8 @@ export class SessionSemanticMutationExecutor {
   async #run(
     operationId: string,
     intent: ExecutableSessionRuntimeIntent,
+    authenticatedSourceSemanticPaneId: string | null,
+    authorizeBeforeEffect?: () => void,
   ): Promise<SessionRuntimeIntentResult> {
     if (this.#disposed) {
       const error = new SessionRuntimeIntentError(
@@ -258,6 +265,9 @@ export class SessionSemanticMutationExecutor {
 
     let result: SessionRuntimeIntentResult;
     try {
+      // Admission can wait behind prior work. Revalidate the opaque principal
+      // at the last synchronous boundary before tmux receives any effect.
+      authorizeBeforeEffect?.();
       result = await this.#options.execute(operationId, intent);
     } catch (cause) {
       this.#pending.delete(operationId);
@@ -303,7 +313,7 @@ export class SessionSemanticMutationExecutor {
       this.#pending.delete(operationId);
     }
 
-    this.#publish(operationId, intent, "observed");
+    this.#publish(operationId, intent, "observed", authenticatedSourceSemanticPaneId);
     return result;
   }
 
@@ -311,6 +321,7 @@ export class SessionSemanticMutationExecutor {
     operationId: string,
     intent: ExecutableSessionRuntimeIntent,
     phase: "accepted" | "observed" | "rejected" | "timed-out",
+    authenticatedSourceSemanticPaneId: string | null = null,
   ): void {
     const summary =
       intent.verb === "workspace.pane.read"
@@ -325,7 +336,7 @@ export class SessionSemanticMutationExecutor {
         operationId,
         origin: intent.origin,
         workspaceName: intent.workspaceName,
-        sourceSemanticPaneId: null,
+        sourceSemanticPaneId: phase === "observed" ? authenticatedSourceSemanticPaneId : null,
         semanticPaneId: intent.semanticPaneId,
         operationKind: intent.verb,
         phase,

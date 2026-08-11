@@ -19,7 +19,11 @@ import { ActionError } from "../errors.ts";
 import type { ActionExecutionContext } from "../registry.ts";
 
 export interface WorkspaceMultiplexerBackend {
-  mutate(input: WorkspaceMultiplexerMutationRequest): Promise<WorkspaceMultiplexerMutationResult>;
+  mutate(
+    input: WorkspaceMultiplexerMutationRequest,
+    authenticatedHostClientId?: string,
+    sourcePaneCredential?: string,
+  ): Promise<WorkspaceMultiplexerMutationResult>;
 }
 
 async function runVerb(
@@ -42,11 +46,14 @@ async function runVerb(
     });
   }
   try {
-    return await authority.mutate({
+    const request = {
       operationId: context.operationId,
       expectedDaemonInstanceId: context.daemonInstanceId,
       intent: { ...input, verb } as WorkspaceMultiplexerIntent,
-    });
+    };
+    return context.hostClientId || context.sourcePaneCredential
+      ? await authority.mutate(request, context.hostClientId, context.sourcePaneCredential)
+      : await authority.mutate(request);
   } catch (error) {
     if (!(error instanceof WorkspaceMultiplexerError)) throw error;
     throw new ActionError({

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   AppWindowMutationArgumentsSchemaZ,
   AppWindowMutationRequestSchemaZ,
@@ -548,6 +549,8 @@ export class DaemonResourceBroker {
   readonly #eventReconnectMaximumAttempts: number;
   readonly #now: () => number;
   readonly #ownerToken: string | null;
+  /** Stable for this trusted broker generation; IPC callers normally override per renderer generation. */
+  readonly #brokerHostClientId = randomUUID();
   readonly #controllers = new Set<AbortController>();
   readonly #subscriptions = new Map<number, BrokerSubscription>();
 
@@ -869,6 +872,7 @@ export class DaemonResourceBroker {
    */
   async invokeVerb(
     request: WorkspaceMultiplexerMutationRequest,
+    hostClientId = this.#brokerHostClientId,
   ): Promise<WorkspaceMultiplexerMutationResult> {
     if (this.#daemon.status !== "connected" || !this.#ownerToken) {
       throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
@@ -884,6 +888,7 @@ export class DaemonResourceBroker {
     const { verb, ...args } = parsed.intent;
     const raw = await this.#mutationJson(`/api/v2/action/${verb}`, args, {
       "X-Tmux-Ide-Operation-Id": parsed.operationId,
+      "X-Tmux-Ide-Host-Client-Id": hostClientId,
     });
     const envelope = z
       .discriminatedUnion("ok", [
@@ -928,6 +933,7 @@ export class DaemonResourceBroker {
   async issueTerminalAttachment(
     request: TerminalAttachmentIssueMutationRequest,
     rendererOrigin: string,
+    hostClientId = this.#brokerHostClientId,
   ): Promise<TerminalAttachmentIssueResult> {
     if (this.#daemon.status !== "connected" || !this.#ownerToken) {
       return {
@@ -948,6 +954,7 @@ export class DaemonResourceBroker {
           Origin: origin,
           "X-Tmux-Ide-Request-Id": parsed.requestId,
           "X-Tmux-Ide-Expected-Daemon-Instance-Id": parsed.expectedDaemonInstanceId,
+          "X-Tmux-Ide-Host-Client-Id": hostClientId,
         },
         Math.min(this.#maxResponseBytes, MAX_TERMINAL_ATTACHMENT_ISSUE_RESPONSE_BYTES),
       );
@@ -990,6 +997,7 @@ export class DaemonResourceBroker {
   async issuePaneStream(
     request: PaneStreamIssueMutationRequest,
     rendererOrigin: string,
+    hostClientId = this.#brokerHostClientId,
   ): Promise<PaneStreamIssueResult> {
     if (this.#daemon.status !== "connected" || !this.#ownerToken) {
       return { status: "error", error: paneStreamIssueError("daemon-unavailable") };
@@ -1007,6 +1015,7 @@ export class DaemonResourceBroker {
           Origin: origin,
           "X-Tmux-Ide-Request-Id": parsed.requestId,
           "X-Tmux-Ide-Expected-Daemon-Instance-Id": parsed.expectedDaemonInstanceId,
+          "X-Tmux-Ide-Host-Client-Id": hostClientId,
         },
         Math.min(this.#maxResponseBytes, MAX_PANE_STREAM_ISSUE_RESPONSE_BYTES),
       );

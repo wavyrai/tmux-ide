@@ -71,17 +71,14 @@ describe("PaneStreamLeaseManager", () => {
     await expect(lease.redeem(issued.redemptionTicket, binding())).resolves.toBeTruthy();
   });
 
-  it("scopes the interactive grant per pane", async () => {
+  it("issues exact pane credentials without pre-claiming controller ownership", async () => {
     const lease = manager(() => 1_000);
     await lease.issue(request({ panes: ["pane.editor", "pane.shell"] }), context());
-    // Overlap on one pane conflicts.
-    await expect(
-      lease.issue(request({ panes: ["pane.shell", "pane.logs"] }), context(REQUEST_B)),
-    ).rejects.toMatchObject({ code: "interactive-viewer-conflict" });
-    // Disjoint interactive set and read-only overlap both coexist.
-    await expect(
-      lease.issue(request({ panes: ["pane.logs"] }), context(REQUEST_B)),
-    ).resolves.toBeTruthy();
+    const overlap = await lease.issue(
+      request({ panes: ["pane.shell", "pane.logs"] }),
+      context(REQUEST_B),
+    );
+    expect(overlap.descriptor.panes).toEqual(["pane.shell", "pane.logs"]);
     const readOnly = await lease.issue(
       request({ panes: ["pane.editor"], viewerMode: "read-only" }),
       { ...context("2d7e4c3a-4d5e-4f70-8b12-3c4d5e6f7a81"), projectIdentity: "workspace.alpha" },
@@ -102,21 +99,20 @@ describe("PaneStreamLeaseManager", () => {
     });
   });
 
-  it("expires an unredeemed ticket and frees its grant after the processing grace", async () => {
+  it("expires an unredeemed ticket independently of later controller admission", async () => {
     let now = 1_000;
     const lease = manager(() => now, { ticketTtlMs: 1_000, redemptionProcessingTtlMs: 2_000 });
     const issued = await lease.issue(request({ panes: ["pane.editor"] }), context());
     const reissue = () => lease.issue(request({ panes: ["pane.editor"] }), context(REQUEST_B));
-    // Inside the grace window the grant is still held: a delivered-in-time
-    // redemption could still be queued behind serialized work.
+    // The lease manager no longer owns controller admission, so another
+    // transport may obtain credentials while the first ticket is in grace.
     now = 2_500;
-    await expect(reissue()).rejects.toMatchObject({ code: "interactive-viewer-conflict" });
+    await expect(reissue()).resolves.toBeTruthy();
     // Late delivery is rejected at the TTL regardless of the grace...
     await expect(lease.redeem(issued.redemptionTicket, binding(), 2_400)).rejects.toMatchObject({
       code: "ticket-expired",
     });
-    // ...and the failed redemption freed the grant immediately.
-    await expect(reissue()).resolves.toBeTruthy();
+    expect(lease.snapshot().leases).toHaveLength(1);
   });
 
   it("treats the ticket TTL as a delivery bound, not a completion deadline", async () => {
