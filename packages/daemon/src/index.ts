@@ -277,6 +277,11 @@ export {
   type PaneStreamRuntimeOptions,
 } from "./terminal/pane-stream/runtime.ts";
 export {
+  SessionRuntimeRegistry,
+  type SessionRuntimeConsumer,
+  type SessionRuntimeRegistryOptions,
+} from "./terminal/session-runtime/registry.ts";
+export {
   TerminalInputAuthority,
   TerminalInputAuthorityConflictError,
   type TerminalInputAuthoritySnapshot,

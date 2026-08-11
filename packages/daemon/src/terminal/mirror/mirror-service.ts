@@ -62,11 +62,17 @@ export interface MirrorSubscription {
   close(): Promise<void>;
 }
 
+export interface MirrorSessionRetention {
+  readonly session: string;
+  close(): Promise<void>;
+}
+
 interface ChannelEntry {
   channel: SessionChannel;
   started: Promise<void>;
   refs: number;
   releaseAuthority: () => void;
+  retired: boolean;
 }
 
 export class MirrorService {
@@ -74,6 +80,7 @@ export class MirrorService {
   private readonly channels = new Map<string, ChannelEntry>();
   private readonly pendingDisposals = new Set<Promise<void>>();
   private readonly drainingChannels = new Map<string, Promise<void>>();
+  private readonly sessionExitListeners = new Set<(session: string) => void>();
   private readonly owner = Symbol("MirrorService control-mode owner");
   private disposed = false;
 
@@ -123,6 +130,31 @@ export class MirrorService {
     };
   }
 
+  /**
+   * Keep one session channel alive independently of renderer subscriptions.
+   * The daemon SessionRuntime registry owns this retention; clients never do.
+   */
+  async retainSession(session: string): Promise<MirrorSessionRetention> {
+    const entry = await this.acquire(session);
+    let closed = false;
+    return {
+      session,
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        this.release(session, entry);
+        await Promise.allSettled([...this.pendingDisposals]);
+      },
+    };
+  }
+
+  /** SessionRuntime's reconnect seam; runtime addresses never cross it. */
+  onSessionExit(listener: (session: string) => void): () => void {
+    if (this.disposed) throw new Error("MirrorService is disposed");
+    this.sessionExitListeners.add(listener);
+    return () => this.sessionExitListeners.delete(listener);
+  }
+
   /** Fall-behind telemetry for an ACTIVE session channel; null when no
    *  channel is running for the session. */
   ageTelemetry(session: string): { maxAgeMs: number; byPane: Record<string, number> } | null {
@@ -140,10 +172,12 @@ export class MirrorService {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.sessionExitListeners.clear();
     const entries = [...this.channels.values()];
     this.channels.clear();
     await Promise.allSettled(
       entries.map(async (entry) => {
+        entry.retired = true;
         try {
           await entry.channel.dispose();
         } finally {
@@ -191,9 +225,10 @@ export class MirrorService {
             // The channel died underneath its subscribers (tmux exit/detach):
             // drop the entry so the next acquire starts fresh; open handles
             // already received their `closed` events.
-            if (this.channels.get(session)?.channel === channel) {
-              this.channels.delete(session);
-              releaseAuthority();
+            const active = this.channels.get(session);
+            if (active?.channel === channel) {
+              this.retire(session, active);
+              for (const listener of this.sessionExitListeners) listener(session);
             }
           },
         };
@@ -202,7 +237,13 @@ export class MirrorService {
         releaseAuthority();
         throw cause;
       }
-      entry = { channel, started: channel.start(), refs: 0, releaseAuthority };
+      entry = {
+        channel,
+        started: channel.start(),
+        refs: 0,
+        releaseAuthority,
+        retired: false,
+      };
       this.channels.set(session, entry);
     }
     entry.refs += 1;
@@ -212,12 +253,26 @@ export class MirrorService {
       this.release(session, entry);
       throw cause;
     }
+    // A control client can exit after its start promise settles but before this
+    // continuation runs. Never hand that retired entry to a caller as ready:
+    // release its provisional ref, wait for the drain, and acquire the single
+    // successor through the same ownership path.
+    if (entry.retired) {
+      this.release(session, entry);
+      return await this.acquire(session);
+    }
     return entry;
   }
 
   private release(session: string, entry: ChannelEntry): void {
     entry.refs -= 1;
     if (entry.refs > 0) return;
+    this.retire(session, entry);
+  }
+
+  private retire(session: string, entry: ChannelEntry): void {
+    if (entry.retired) return;
+    entry.retired = true;
     if (this.channels.get(session) === entry) this.channels.delete(session);
     const disposal = entry.channel
       .dispose()
