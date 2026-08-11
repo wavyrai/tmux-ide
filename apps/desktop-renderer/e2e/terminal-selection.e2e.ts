@@ -65,7 +65,11 @@ test("xterm pointer selection copies text without mutating tmux", async ({ page,
       { once: true },
     );
   });
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+c" : "Control+c");
+  // Headless Chromium on Linux has no window manager to translate Control-C
+  // into the browser's native copy command. `execCommand("copy")` invokes that
+  // same browser command and emits the real bubbling ClipboardEvent whose
+  // payload the workspace copy authority owns.
+  expect(await page.evaluate(() => document.execCommand("copy"))).toBe(true);
   await expect
     .poll(
       () =>
