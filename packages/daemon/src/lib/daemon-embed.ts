@@ -28,6 +28,7 @@ import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
 import {
   broadcastInteractionReceipt,
   handleWsEventsConnection,
+  shutdownWsEventObservation,
 } from "../command-center/ws-events.ts";
 import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
@@ -1442,6 +1443,7 @@ export async function startEmbeddedDaemon(
             }
             await capture(() => Promise.race([closePromise, delay(100)]));
             await capture(() => closeWsServers());
+            await capture(() => shutdownWsEventObservation());
             await capture(() => setRemoteAccessRestartBackend(null));
             await capture(() => setDaemonShutdownBackend(null));
 

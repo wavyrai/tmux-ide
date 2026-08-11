@@ -31,6 +31,7 @@ import {
   type DaemonEventAgentTurnCompletedFrame,
   type DaemonEventClientFrame,
   type DaemonEventResourceChangedFrame,
+  type DaemonEventResourceInterest,
   type DaemonEventResourceKind,
   type DaemonEventServerFrame,
   type DaemonEventWorkspacePromotionCompletedFrame,
@@ -41,6 +42,10 @@ import {
   type DaemonSessionSnapshot,
   type Workspace,
 } from "@tmux-ide/contracts";
+import {
+  WorkspaceResourceObserver,
+  isObservableWorkspaceResource,
+} from "./workspace-resource-observer.ts";
 
 const WS_OPEN = 1;
 const KEEPALIVE_INTERVAL_MS = 25_000;
@@ -85,6 +90,8 @@ const resourceRevisions = new Map<string, number>();
 
 function useResourceEventGeneration(instanceId: string): void {
   if (resourceEventGeneration === instanceId) return;
+  void workspaceResourceObserver?.dispose();
+  workspaceResourceObserver = null;
   resourceEventGeneration = instanceId;
   resourceEventSequence = 0;
   resourceEventJournal = [];
@@ -96,6 +103,10 @@ function resourceRevisionKey(
   resource: DaemonEventResourceKind,
 ): string {
   return `${workspaceName === null ? "global" : `workspace\0${workspaceName}`}\0${resource}`;
+}
+
+function resourceInterestKey(interest: DaemonEventResourceInterest): string {
+  return resourceRevisionKey(interest.workspaceName, interest.resource);
 }
 
 export interface ResourceChangedBroadcast {
@@ -191,6 +202,30 @@ let projectRegistryListener: (() => void) | null = null;
 let agentStatusWatcher: AgentStatusWatcher | null = null;
 let fleetPollTimer: ReturnType<typeof setInterval> | null = null;
 let lastFleetHash = "";
+let sessionsObserverRefs = 0;
+let projectRegistryObserverRefs = 0;
+let agentStatusObserverRefs = 0;
+let fleetObserverRefs = 0;
+let workspaceResourceObserver: WorkspaceResourceObserver | null = null;
+
+function workspaceNameForSession(sessionName: string): string | null {
+  return (
+    getDefaultWorkspaceRegistry()
+      .list()
+      .find((workspace) => workspace.sessionName === sessionName)?.name ?? null
+  );
+}
+
+function ensureWorkspaceResourceObserver(daemonInstanceId: string): WorkspaceResourceObserver {
+  if (workspaceResourceObserver) return workspaceResourceObserver;
+  workspaceResourceObserver = new WorkspaceResourceObserver({
+    registry: getDefaultWorkspaceRegistry(),
+    emit: ({ workspaceName, resource }) => {
+      broadcastResourceChanged({ workspaceName, resource }, daemonInstanceId);
+    },
+  });
+  return workspaceResourceObserver;
+}
 
 function snapshotSessionsHash(): string {
   try {
@@ -212,12 +247,22 @@ function ensureSessionsPoller(): void {
     if (hash === lastSessionsHash) return;
     lastSessionsHash = hash;
     for (const client of allClients) client.broadcastSessionsChanged();
+    if (resourceEventGeneration) {
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "workspace-catalog" },
+        resourceEventGeneration,
+      );
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "fleet-catalog" },
+        resourceEventGeneration,
+      );
+    }
   }, SESSIONS_POLL_MS);
   sessionsPollTimer.unref?.();
 }
 
 function maybeStopSessionsPoller(): void {
-  if (allClients.size > 0 || !sessionsPollTimer) return;
+  if (sessionsObserverRefs > 0 || !sessionsPollTimer) return;
   clearInterval(sessionsPollTimer);
   sessionsPollTimer = null;
 }
@@ -231,13 +276,19 @@ function ensureProjectRegistryListener(): void {
   if (projectRegistryListener) return;
   const listener = (): void => {
     for (const client of allClients) client.broadcastProjectsChanged();
+    if (resourceEventGeneration) {
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "workspace-catalog" },
+        resourceEventGeneration,
+      );
+    }
   };
   projectRegistryListener = listener;
   projectRegistryEmitter.on("change", listener);
 }
 
 function maybeStopProjectRegistryListener(): void {
-  if (allClients.size > 0 || !projectRegistryListener) return;
+  if (projectRegistryObserverRefs > 0 || !projectRegistryListener) return;
   projectRegistryEmitter.off("change", projectRegistryListener);
   projectRegistryListener = null;
 }
@@ -279,6 +330,23 @@ function ensureAgentStatusWatcher(): void {
     read: () => readAgentStatesBySession(),
     emit: (sessionName) => {
       for (const client of allClients) client.broadcastAgentStatusChanged(sessionName);
+      if (resourceEventGeneration) {
+        broadcastResourceChanged(
+          { workspaceName: null, resource: "fleet-catalog" },
+          resourceEventGeneration,
+        );
+        const workspaceName = workspaceNameForSession(sessionName);
+        if (workspaceName) {
+          broadcastResourceChanged(
+            { workspaceName, resource: "application-shell" },
+            resourceEventGeneration,
+          );
+          broadcastResourceChanged(
+            { workspaceName, resource: "workspace-missions" },
+            resourceEventGeneration,
+          );
+        }
+      }
     },
     emitTurnCompleted: (completion) => {
       const frame = agentTurnCompletedFrame(completion);
@@ -289,7 +357,7 @@ function ensureAgentStatusWatcher(): void {
 }
 
 function maybeStopAgentStatusWatcher(): void {
-  if (allClients.size > 0 || !agentStatusWatcher) return;
+  if (agentStatusObserverRefs > 0 || !agentStatusWatcher) return;
   agentStatusWatcher.stop();
   agentStatusWatcher = null;
 }
@@ -313,6 +381,12 @@ function pollFleetComposition(): void {
   if (hash === lastFleetHash) return;
   lastFleetHash = hash;
   for (const client of allClients) client.broadcastFleetChanged();
+  if (resourceEventGeneration) {
+    broadcastResourceChanged(
+      { workspaceName: null, resource: "fleet-catalog" },
+      resourceEventGeneration,
+    );
+  }
 }
 
 /**
@@ -330,9 +404,82 @@ function ensureFleetPoller(): void {
 }
 
 function maybeStopFleetPoller(): void {
-  if (allClients.size > 0 || !fleetPollTimer) return;
+  if (fleetObserverRefs > 0 || !fleetPollTimer) return;
   clearInterval(fleetPollTimer);
   fleetPollTimer = null;
+}
+
+function acquireGlobalObserver(kind: "sessions" | "projects" | "agents" | "fleet"): () => void {
+  if (kind === "sessions") {
+    sessionsObserverRefs += 1;
+    ensureSessionsPoller();
+  } else if (kind === "projects") {
+    projectRegistryObserverRefs += 1;
+    ensureProjectRegistryListener();
+  } else if (kind === "agents") {
+    agentStatusObserverRefs += 1;
+    ensureAgentStatusWatcher();
+  } else {
+    fleetObserverRefs += 1;
+    ensureFleetPoller();
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (kind === "sessions") {
+      sessionsObserverRefs = Math.max(0, sessionsObserverRefs - 1);
+      maybeStopSessionsPoller();
+    } else if (kind === "projects") {
+      projectRegistryObserverRefs = Math.max(0, projectRegistryObserverRefs - 1);
+      maybeStopProjectRegistryListener();
+    } else if (kind === "agents") {
+      agentStatusObserverRefs = Math.max(0, agentStatusObserverRefs - 1);
+      maybeStopAgentStatusWatcher();
+    } else {
+      fleetObserverRefs = Math.max(0, fleetObserverRefs - 1);
+      maybeStopFleetPoller();
+    }
+  };
+}
+
+function acquireResourceObservation(
+  interest: DaemonEventResourceInterest,
+  daemonInstanceId: string,
+): () => void {
+  if (interest.resource === "workspace-catalog") {
+    const releases = [acquireGlobalObserver("sessions"), acquireGlobalObserver("projects")];
+    return () => releases.forEach((release) => release());
+  }
+  if (interest.resource === "fleet-catalog") {
+    const releases = [
+      acquireGlobalObserver("sessions"),
+      acquireGlobalObserver("fleet"),
+      acquireGlobalObserver("agents"),
+    ];
+    return () => releases.forEach((release) => release());
+  }
+  if (interest.resource === "application-shell") {
+    return acquireGlobalObserver("agents");
+  }
+  if (isObservableWorkspaceResource(interest.resource) && interest.workspaceName !== null) {
+    return ensureWorkspaceResourceObserver(daemonInstanceId).acquire(
+      interest.workspaceName,
+      interest.resource,
+    );
+  }
+  return () => undefined;
+}
+
+/** Historical sessions-only clients retain the old broad observation set. */
+function acquireLegacyObservation(): () => void {
+  const releases = [
+    acquireGlobalObserver("sessions"),
+    acquireGlobalObserver("projects"),
+    acquireGlobalObserver("agents"),
+    acquireGlobalObserver("fleet"),
+  ];
+  return () => releases.forEach((release) => release());
 }
 
 /**
@@ -414,8 +561,11 @@ export function handleWsEventsConnection(
   useResourceEventGeneration(daemonIdentity.instanceId);
   const ws = socket as WsLike;
   const subscriptions = new Set<string>();
+  const interestReleases = new Map<string, () => void>();
+  let explicitInterestKeys: Set<string> | null = null;
   let closed = false;
   let replayRequested = false;
+  let releaseLegacyObservation: (() => void) | null = null;
 
   const send = (frame: DaemonEventServerFrame): void => {
     if (closed || ws.readyState !== WS_OPEN) return;
@@ -479,7 +629,14 @@ export function handleWsEventsConnection(
   };
 
   const broadcastResourceChangedForClient = (frame: DaemonEventResourceChangedFrame): void => {
-    send(frame);
+    if (
+      explicitInterestKeys === null ||
+      explicitInterestKeys.has(resourceRevisionKey(frame.workspaceName, frame.resource))
+    ) {
+      send(frame);
+      return;
+    }
+    send({ type: "resource.observed", sequence: frame.sequence });
   };
 
   const broadcastInteractionReceiptForClient = (frame: InteractionReceipt): void => {
@@ -511,10 +668,6 @@ export function handleWsEventsConnection(
     broadcastInteractionReceipt: broadcastInteractionReceiptForClient,
   };
   allClients.add(clientHandle);
-  ensureSessionsPoller();
-  ensureProjectRegistryListener();
-  ensureAgentStatusWatcher();
-  ensureFleetPoller();
 
   // Server-initiated keepalive — mirrors the SSE behavior so middle-boxes
   // don't reap the connection.
@@ -539,12 +692,33 @@ export function handleWsEventsConnection(
     subscriptions.delete(sessionName);
   };
 
+  const subscribeInterest = (interest: DaemonEventResourceInterest): void => {
+    const key = resourceInterestKey(interest);
+    if (interestReleases.has(key)) return;
+    explicitInterestKeys?.add(key);
+    interestReleases.set(key, acquireResourceObservation(interest, daemonIdentity.instanceId));
+  };
+
+  const unsubscribeInterest = (interest: DaemonEventResourceInterest): void => {
+    const key = resourceInterestKey(interest);
+    const release = interestReleases.get(key);
+    if (!release) return;
+    interestReleases.delete(key);
+    explicitInterestKeys?.delete(key);
+    release();
+  };
+
   const cleanup = (): void => {
     if (closed) return;
     closed = true;
     clearInterval(keepalive);
     allClients.delete(clientHandle);
     subscriptions.clear();
+    releaseLegacyObservation?.();
+    releaseLegacyObservation = null;
+    for (const release of interestReleases.values()) release();
+    interestReleases.clear();
+    explicitInterestKeys?.clear();
     unsubWorkspaceAdded();
     unsubWorkspaceRemoved();
     maybeStopSessionsPoller();
@@ -578,6 +752,16 @@ export function handleWsEventsConnection(
     const parsed: DaemonEventClientFrame = result.data;
 
     if (parsed.type === "subscribe") {
+      if (parsed.interests !== undefined) {
+        if (explicitInterestKeys === null) {
+          explicitInterestKeys = new Set();
+          releaseLegacyObservation?.();
+          releaseLegacyObservation = null;
+        }
+        for (const interest of parsed.interests) subscribeInterest(interest);
+      } else if (explicitInterestKeys === null && releaseLegacyObservation === null) {
+        releaseLegacyObservation = acquireLegacyObservation();
+      }
       if (parsed.afterSequence !== undefined && !replayRequested) {
         replayRequested = true;
         const currentSequence = resourceEventSequence;
@@ -603,7 +787,9 @@ export function handleWsEventsConnection(
           });
         } else {
           for (const frame of resourceEventJournal) {
-            if (frame.sequence > parsed.afterSequence) send(frame);
+            if (frame.sequence <= parsed.afterSequence) continue;
+            if (frame.type === "resource.changed") broadcastResourceChangedForClient(frame);
+            else send(frame);
           }
         }
       }
@@ -612,6 +798,7 @@ export function handleWsEventsConnection(
     }
     if (parsed.type === "unsubscribe") {
       for (const name of parsed.sessions) unsubscribe(name);
+      for (const interest of parsed.interests ?? []) unsubscribeInterest(interest);
       return;
     }
     if (parsed.type === "ping") {
@@ -702,4 +889,40 @@ export function _resetResourceEventJournalForTests(): void {
  */
 export function _pollFleetCompositionForTests(): void {
   pollFleetComposition();
+}
+
+/**
+ * Deterministically retire every demand-driven observer. Embedded daemon
+ * shutdown calls this after closing event sockets so native watcher cleanup is
+ * part of the daemon's completion barrier rather than process-exit luck.
+ */
+export async function shutdownWsEventObservation(): Promise<void> {
+  sessionsObserverRefs = 0;
+  projectRegistryObserverRefs = 0;
+  agentStatusObserverRefs = 0;
+  fleetObserverRefs = 0;
+  _stopSessionsPollerForTests();
+  _detachProjectRegistryListenerForTests();
+  _stopAgentStatusWatcherForTests();
+  _stopFleetPollerForTests();
+  const observer = workspaceResourceObserver;
+  workspaceResourceObserver = null;
+  await observer?.dispose();
+}
+
+/** Test-only demand snapshot; contains no path or socket identity. */
+export function _resourceObserverStateForTests(): {
+  readonly sessions: number;
+  readonly projects: number;
+  readonly agents: number;
+  readonly fleet: number;
+  readonly workspaces: ReturnType<WorkspaceResourceObserver["state"]>;
+} {
+  return {
+    sessions: sessionsObserverRefs,
+    projects: projectRegistryObserverRefs,
+    agents: agentStatusObserverRefs,
+    fleet: fleetObserverRefs,
+    workspaces: workspaceResourceObserver?.state() ?? [],
+  };
 }

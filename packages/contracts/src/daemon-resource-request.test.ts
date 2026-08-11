@@ -30,6 +30,7 @@ const REQUESTS: readonly DaemonResourceRequest[] = [
     request: { workspaceName: WORKSPACE, fileId: FILE_ID },
   },
   { resource: "fetchWorkspaceChanges", request: { workspaceName: WORKSPACE } },
+  { resource: "fetchWorkspaceMissions", request: { workspaceName: WORKSPACE } },
   {
     resource: "fetchWorkspaceChangeDiff",
     request: { workspaceName: WORKSPACE, changeId: CHANGE_ID },
@@ -149,6 +150,7 @@ describe("daemon resource request union", () => {
       "fetchWorkspaceChanges",
       "fetchWorkspaceFilePreview",
       "fetchWorkspaceFiles",
+      "fetchWorkspaceMissions",
     ]);
   });
 

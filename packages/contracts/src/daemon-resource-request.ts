@@ -35,6 +35,8 @@ import {
   DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ,
   DesktopDaemonFetchWorkspaceFilesRequestSchemaZ,
   DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
+  DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceMissionsResultSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonStartupReadinessResultSchemaZ,
@@ -45,6 +47,7 @@ import {
   type DesktopDaemonFetchWorkspaceChangesResult,
   type DesktopDaemonFetchWorkspaceFilePreviewResult,
   type DesktopDaemonFetchWorkspaceFilesResult,
+  type DesktopDaemonFetchWorkspaceMissionsResult,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonRefreshConnectionResult,
   type DesktopDaemonStartupReadinessResult,
@@ -126,6 +129,12 @@ export const DaemonResourceRequestSchemaZ = z.discriminatedUnion("resource", [
     .strict(),
   z
     .object({
+      resource: z.literal("fetchWorkspaceMissions"),
+      request: DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ,
+    })
+    .strict(),
+  z
+    .object({
       resource: z.literal("fetchWorkspaceChangeDiff"),
       request: DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ,
     })
@@ -184,6 +193,7 @@ export interface DaemonResourceResultMap extends Record<DaemonResourceKind, unkn
   fetchWorkspaceFiles: DesktopDaemonFetchWorkspaceFilesResult;
   fetchWorkspaceFilePreview: DesktopDaemonFetchWorkspaceFilePreviewResult;
   fetchWorkspaceChanges: DesktopDaemonFetchWorkspaceChangesResult;
+  fetchWorkspaceMissions: DesktopDaemonFetchWorkspaceMissionsResult;
   fetchWorkspaceChangeDiff: DesktopDaemonFetchWorkspaceChangeDiffResult;
   promoteWorkspace: WorkspacePromoteHostResult;
   createWorkspacePane: WorkspacePaneCreateHostResult;
@@ -213,6 +223,7 @@ export const DAEMON_RESOURCE_RESULT_SCHEMAS: {
   fetchWorkspaceFiles: DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
   fetchWorkspaceFilePreview: DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ,
   fetchWorkspaceChanges: DesktopDaemonFetchWorkspaceChangesResultSchemaZ,
+  fetchWorkspaceMissions: DesktopDaemonFetchWorkspaceMissionsResultSchemaZ,
   fetchWorkspaceChangeDiff: DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ,
   promoteWorkspace: WorkspacePromoteHostResultSchemaZ,
   createWorkspacePane: WorkspacePaneCreateHostResultSchemaZ,
@@ -265,6 +276,7 @@ export const DAEMON_WORKSPACE_ROUTE_KEYS = {
   fetchWorkspaceFiles: "workspaceName",
   fetchWorkspaceFilePreview: "workspaceName",
   fetchWorkspaceChanges: "workspaceName",
+  fetchWorkspaceMissions: "workspaceName",
   fetchWorkspaceChangeDiff: "workspaceName",
 } as const;
 

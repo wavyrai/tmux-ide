@@ -110,8 +110,20 @@ describe("daemon event contracts", () => {
         type: "subscribe",
         sessions: ["tmux-ide"],
         afterSequence: 41,
+        interests: [
+          { resource: "application-shell", workspaceName: "tmux-ide" },
+          { resource: "fleet-catalog", workspaceName: null },
+        ],
       }),
-    ).toEqual({ type: "subscribe", sessions: ["tmux-ide"], afterSequence: 41 });
+    ).toEqual({
+      type: "subscribe",
+      sessions: ["tmux-ide"],
+      afterSequence: 41,
+      interests: [
+        { resource: "application-shell", workspaceName: "tmux-ide" },
+        { resource: "fleet-catalog", workspaceName: null },
+      ],
+    });
     expect(
       DaemonEventClientFrameSchemaZ.safeParse({ type: "unsubscribe", sessions: [] }).success,
     ).toBe(true);
@@ -135,6 +147,20 @@ describe("daemon event contracts", () => {
     expect(DaemonEventClientFrameSchemaZ.safeParse({ type: "ping", sessions: [] }).success).toBe(
       false,
     );
+    expect(
+      DaemonEventClientFrameSchemaZ.safeParse({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "workspace-files", workspaceName: null }],
+      }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventClientFrameSchemaZ.safeParse({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "fleet-catalog", workspaceName: "tmux-ide" }],
+      }).success,
+    ).toBe(false);
   });
 
   it("strictly parses replayable resource invalidations and gap recovery", () => {
@@ -153,6 +179,9 @@ describe("daemon event contracts", () => {
     expect(
       DaemonEventServerFrameSchemaZ.safeParse({ ...changed, resource: "everything" }).success,
     ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.parse({ type: "resource.observed", sequence: 43 }),
+    ).toEqual({ type: "resource.observed", sequence: 43 });
     expect(
       DaemonEventServerFrameSchemaZ.safeParse({ ...changed, causeOperationId: null }).success,
     ).toBe(true);

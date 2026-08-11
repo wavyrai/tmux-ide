@@ -4,6 +4,7 @@ import { DaemonEventServerFrameSchemaZ, type DaemonEventServerFrame } from "@tmu
 import {
   _detachProjectRegistryListenerForTests,
   _resetResourceEventJournalForTests,
+  _resourceObserverStateForTests,
   _stopSessionsPollerForTests,
   broadcastInteractionReceipt,
   broadcastResourceChanged,
@@ -71,6 +72,42 @@ describe("/ws/events client frame protocol", () => {
 
     expect(frames(socket)[0]).toMatchObject({ type: "hello", daemon: daemonIdentity });
     socket.disconnect();
+  });
+
+  it("does no observation work before demand and never starts legacy observers for explicit demand", () => {
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    expect(_resourceObserverStateForTests()).toMatchObject({
+      sessions: 0,
+      projects: 0,
+      agents: 0,
+      fleet: 0,
+    });
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+      }),
+    );
+    expect(_resourceObserverStateForTests()).toMatchObject({
+      sessions: 0,
+      projects: 0,
+      agents: 0,
+      fleet: 0,
+    });
+    socket.disconnect();
+
+    const legacy = new ProtocolWebSocket();
+    handleWsEventsConnection(legacy, daemonIdentity);
+    legacy.receive(JSON.stringify({ type: "subscribe", sessions: [] }));
+    expect(_resourceObserverStateForTests()).toMatchObject({
+      sessions: 1,
+      projects: 1,
+      agents: 1,
+      fleet: 1,
+    });
+    legacy.disconnect();
   });
 
   it("reports malformed JSON deterministically and keeps the socket usable", () => {
@@ -164,6 +201,85 @@ describe("/ws/events client frame protocol", () => {
       expect.objectContaining({ type: "resource.changed", sequence: 3, revision: 9 }),
     ]);
     socket.disconnect();
+  });
+
+  it("delivers scoped invalidations only to explicit interests while preserving cursors", () => {
+    const shell = new ProtocolWebSocket();
+    const files = new ProtocolWebSocket();
+    handleWsEventsConnection(shell, daemonIdentity);
+    handleWsEventsConnection(files, daemonIdentity);
+    shell.sent.length = 0;
+    files.sent.length = 0;
+    shell.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        afterSequence: 0,
+        interests: [{ resource: "application-shell", workspaceName: "alpha" }],
+      }),
+    );
+    files.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        afterSequence: 0,
+        interests: [{ resource: "workspace-files", workspaceName: "beta" }],
+      }),
+    );
+    shell.sent.length = 0;
+    files.sent.length = 0;
+
+    broadcastResourceChanged(
+      { workspaceName: "alpha", resource: "application-shell" },
+      daemonIdentity.instanceId,
+    );
+    broadcastResourceChanged(
+      { workspaceName: "beta", resource: "workspace-files" },
+      daemonIdentity.instanceId,
+    );
+
+    expect(frames(shell)).toEqual([
+      expect.objectContaining({ type: "resource.changed", sequence: 1 }),
+      { type: "resource.observed", sequence: 2 },
+    ]);
+    expect(frames(files)).toEqual([
+      { type: "resource.observed", sequence: 1 },
+      expect.objectContaining({ type: "resource.changed", sequence: 2 }),
+    ]);
+    shell.disconnect();
+    files.disconnect();
+  });
+
+  it("refcounts shared observation demand and releases it after the last client", () => {
+    const one = new ProtocolWebSocket();
+    const two = new ProtocolWebSocket();
+    handleWsEventsConnection(one, daemonIdentity);
+    handleWsEventsConnection(two, daemonIdentity);
+    one.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "workspace-files", workspaceName: "late-workspace" }],
+      }),
+    );
+    two.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "workspace-files", workspaceName: "late-workspace" }],
+      }),
+    );
+    expect(_resourceObserverStateForTests()).toMatchObject({
+      sessions: 0,
+      projects: 0,
+      agents: 0,
+      fleet: 0,
+      workspaces: [{ workspaceName: "late-workspace", references: 2 }],
+    });
+    one.disconnect();
+    expect(_resourceObserverStateForTests().workspaces[0]?.references).toBe(1);
+    two.disconnect();
+    expect(_resourceObserverStateForTests().workspaces).toEqual([]);
   });
 
   it("orders privacy-safe interaction receipts with resources for every client and replay", () => {
