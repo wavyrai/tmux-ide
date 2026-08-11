@@ -92,20 +92,38 @@ export class OpenTuiTerminalWorkspaceAdapter {
     return this.#lane;
   }
 
-  connect(key: string, create: OpenTuiTerminalRuntimeFactory): void {
-    if (this.#disposed || !this.#lifecycle.accepting) return;
-    if (this.#slot.key === key) return;
+  connect(
+    key: string,
+    create: OpenTuiTerminalRuntimeFactory,
+  ): Promise<OpenTuiSessionRuntimeLane | null> {
+    if (this.#disposed || !this.#lifecycle.accepting) return Promise.resolve(null);
+    if (this.#slot.key === key) return Promise.resolve(this.#lane);
     const generation = ++this.#generation;
+    let resolveConnection!: (lane: OpenTuiSessionRuntimeLane | null) => void;
+    const connection = new Promise<OpenTuiSessionRuntimeLane | null>((resolve) => {
+      resolveConnection = resolve;
+    });
     this.#slot.ensure(key, async () => {
-      const lane = await create();
-      if (!lane) throw new Error(`Terminal runtime ${key} is unavailable`);
+      let lane: OpenTuiSessionRuntimeLane | null;
+      try {
+        lane = await create();
+      } catch (error) {
+        resolveConnection(null);
+        throw error;
+      }
+      if (!lane) {
+        resolveConnection(null);
+        throw new Error(`Terminal runtime ${key} is unavailable`);
+      }
       if (this.#disposed || !this.#lifecycle.accepting || generation !== this.#generation) {
         lane.close();
+        resolveConnection(null);
         return () => {};
       }
       this.#lane = lane;
       this.#retainedSource.setSource(lane.source);
       this.view.setSource(lane.source);
+      resolveConnection(lane);
       return () => {
         if (this.#lane === lane) {
           this.#lane = null;
@@ -115,6 +133,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
         lane.close();
       };
     });
+    return connection;
   }
 
   sendText(paneId: string, text: string): boolean {

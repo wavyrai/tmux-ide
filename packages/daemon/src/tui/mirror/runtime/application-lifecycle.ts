@@ -99,7 +99,7 @@ export class TuiApplicationLifecycle {
    */
   trackPending(name: string, work: TuiPendingWork): () => void {
     if (!this.#accepting) {
-      this.#cancelLate(name, work);
+      this.#retireLatePending(name, work);
       return () => {};
     }
     const previous = this.#pending.get(name);
@@ -197,13 +197,19 @@ export class TuiApplicationLifecycle {
     if (this.#pending.get(name) === work) this.#pending.delete(name);
   }
 
-  #cancelLate(_name: string, work: TuiPendingWork): void {
+  #retireLatePending(name: string, work: TuiPendingWork): void {
     try {
       work.cancel();
     } catch {
-      // No live lifecycle report owns a superseded/late task.
+      // Cancellation is synchronous admission control. The settling boundary
+      // still joins the active shutdown drain even when cancellation throws.
     }
-    void work.settled.catch(() => {});
+    const entry: AwaitedEntry = {
+      name,
+      phase: "settle",
+      promise: Promise.resolve(work.settled).then(() => undefined),
+    };
+    this.#retiringClosers.add(entry);
   }
 
   #retirePending(name: string, work: TuiPendingWork): void {

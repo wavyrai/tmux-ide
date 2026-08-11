@@ -183,10 +183,10 @@
  * region resolves a {region,index} on motion ("over"/"move", cleared on "out")
  * and tints the hovered row/segment with HOVER_BG.
  *
- * Fleet data arrives via an async `tmux-ide team --json` subprocess: the
- * in-process data layer is a synchronous exec chain that blocks the event
- * loop and eats input. Seeds are capped at 300 history lines for the same
- * reason (deeper seeds froze input for ~15s per attach).
+ * Fleet and native tool data arrive through one demand-driven daemon resource
+ * session. The OpenTUI process owns no catalog poll or observation subprocess;
+ * seeds remain capped at 300 history lines so initial terminal attach stays
+ * responsive.
  *
  * Run (repo-root bunfig preload):
  *   bun packages/daemon/src/tui/semanticView/app.tsx              # home panel
@@ -251,7 +251,14 @@ import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-termina
 import { execFile, spawn } from "node:child_process";
 import type { AgentStatus } from "../detect/classify.ts";
 import { Sidebar } from "./sidebar.tsx";
-import { type CommandSource, type SemanticFocusTarget } from "@tmux-ide/contracts";
+import {
+  type CommandSource,
+  type FleetCatalogResourceV1,
+  type SemanticFocusTarget,
+  type WorkspaceChangesCatalogEnvelopeV1,
+  type WorkspaceFilesCatalogEnvelopeV1,
+  type WorkspaceMissionsEnvelopeV1,
+} from "@tmux-ide/contracts";
 import {
   ACCENT,
   DEFAULT_BG,
@@ -451,7 +458,6 @@ import {
   workbenchDockTabForShortcut,
 } from "./workspace/workbench-controller.ts";
 import {
-  MissionWorkspaceLoader,
   clipTerminal,
   defaultMissionWorkspaceModel,
   invalidatedMissionWorkspaceLoadState,
@@ -459,7 +465,6 @@ import {
   missionSelectionFromWorkspaceState,
   missionTmuxPanePreflightMatches,
   missionTmuxPreflightCommands,
-  readMissionWorkspace,
   reconcileMissionWorkspaceModel,
   resolveMissionDeepLink,
   workspaceStateWithMissionModel,
@@ -506,11 +511,13 @@ import {
   handleMissionSurfacePointerDown,
   handleMissionSurfaceScroll,
 } from "./missions-surface-controller.ts";
+import { TuiCleanupRegistry, resolveInputLayer } from "./input-lifecycle.ts";
 import {
-  TuiCleanupRegistry,
-  createTuiLifecycleExecutor,
-  resolveInputLayer,
-} from "./input-lifecycle.ts";
+  TuiApplicationLifecycle,
+  createApplicationLifecycleInputExecutor,
+} from "./runtime/application-lifecycle.ts";
+import { startTuiApplication } from "./runtime/application-bootstrap.ts";
+import { OpenTuiLocalViewController } from "./runtime/local-view-controller.ts";
 import { tuiEscapeFocusTarget, tuiInteractionPresentation } from "./interaction-flow.ts";
 import {
   createRendererCommandExecutor,
@@ -600,7 +607,6 @@ import {
 import { adoptMarkArgv, updaterProbeArgv, updaterSpawnArgv } from "../chrome/front-door.ts";
 import { APP_HOST_SESSION } from "./hosted.ts";
 import { publishTuiInputReady } from "../readiness.ts";
-import { AsyncDisposableSlot } from "../async-disposable-slot.ts";
 import {
   ATTENTION_FLASH_MS,
   attentionNoteLine,
@@ -648,7 +654,6 @@ import {
   type RawEntry,
 } from "./file-tree.ts";
 import ignore, { type Ignore } from "ignore";
-import { watchDirectory } from "../../widgets/lib/watcher.ts";
 import { spans, spanHit, spansFromRight, type Span } from "./spans.ts";
 import {
   AGAIN_ID,
@@ -721,26 +726,28 @@ import {
   type PaneDragDefault,
   type Selection,
 } from "./selection.ts";
+import { readCanonicalDaemonInfo } from "../../lib/canonical-daemon.ts";
+import {
+  createTuiToolResourceAdapter,
+  createTuiToolResourceController,
+  type TuiDockResourceKey,
+  type TuiToolResource,
+} from "./runtime/tool-resource-controller.ts";
+import { projectTuiFleetResources } from "./runtime/tool-resource-projection.ts";
+import { OpenTuiTerminalWorkspaceAdapter } from "./runtime/terminal-workspace-adapter.ts";
 
-const { values } = parseArgs({
-  options: {
-    target: { type: "string" },
-    edit: { type: "string" },
-    diff: { type: "string" },
-  },
-});
-const target = values.target ?? "";
+type TuiAppArgs = { target?: string; edit?: string; diff?: string };
+let values!: TuiAppArgs;
+let target!: string;
 // Bare launch (no `--target`, or the explicit `home` pseudo-target) opens the
 // HOME panel instead of a session semanticView; a real target boots straight to the
 // semanticView exactly as before. `--diff <dir>` boots straight into the diff panel
 // (for testing / direct entry).
-const startDiff = values.diff !== undefined;
-const bareHome = target === "" || target === "home";
+let startDiff!: boolean;
+let bareHome!: boolean;
 
-/** The `tmux-ide team --json` fleet shape this app reads (projects → sessions →
- *  windows). Declared locally so the app never imports the data-layer modules
- *  (listTeamProjects/listTeamSessions run a synchronous exec chain that blocks
- *  the render loop — the async subprocess is the whole point). */
+/** UI projection assembled from action-authoritative daemon sessions/projects
+ * plus display-only FleetCatalog decoration. */
 interface FleetSession {
   name: string;
   status: AgentStatus;
@@ -762,6 +769,20 @@ interface FleetProject {
   status: AgentStatus;
   sessions: FleetSession[];
 }
+
+const changeStatusLetter = (
+  status: WorkspaceChangesCatalogEnvelopeV1["resource"] extends infer _ ? string : never,
+): string =>
+  ({
+    modified: "M",
+    added: "A",
+    deleted: "D",
+    renamed: "R",
+    copied: "C",
+    "type-changed": "T",
+    conflicted: "U",
+    untracked: "?",
+  })[status] ?? "M";
 const zzlog = (m: string) => {
   if (!process.env.TMUX_IDE_ZZ_LOG) return;
   try {
@@ -924,9 +945,9 @@ const PALETTE_ROWS = 10;
 // the protocol ignore the request (legacy encoding, no behavior change);
 // `app.kittyKeys: false` opts out entirely. The ⌘K hint only shows while the
 // request is actually made.
-const STARTUP_CONFIG = loadAppConfig();
-const KITTY_KEYS = STARTUP_CONFIG.app.kittyKeys;
-const TABBAR_PALETTE_LABEL = KITTY_KEYS ? "F5 ⌘K palette " : "F5 ⌘ palette ";
+let STARTUP_CONFIG!: ReturnType<typeof loadAppConfig>;
+let KITTY_KEYS!: boolean;
+let TABBAR_PALETTE_LABEL!: string;
 // The palette rows' right-aligned keycaps (M24.4) — the settings keybind
 // viewer's enumeration, minus `quit` when HOSTED (^q detaches there; the
 // palette's Quit is the real exit, so the keycap would lie).
@@ -983,49 +1004,76 @@ const packedToRgba = (packed: number | null, fallback: RGBA): RGBA => {
 // process-exit fallback covers any future direct process.exit path and uses a
 // synchronous fd write because queued stdout is not reliable during `exit`.
 let hostAutowrap: HostAutowrapGuard | null = null;
-const appRenderer = await createCliRenderer({
-  // Ctrl-C belongs to the focused terminal/editor. The app's explicit global
-  // exit is Ctrl-Q; OpenTUI otherwise destroys the renderer before Ctrl-C can
-  // reliably pass through to the mirrored pane.
-  exitOnCtrlC: false,
-  // OpenCode's proven cadence: a 30fps continuous target keeps native renderer
-  // work bounded, while maxFps 60 still services explicit input/output renders
-  // at one frame per 16.7ms. Our FrameCoalescer remains request-driven at 60Hz.
-  targetFps: 30,
-  maxFps: 60,
-  // Focus belongs to tmux-ide's one semantic focus owner. Native auto-focus can
-  // otherwise race the optimistic pane-focus projection on pointer down.
-  autoFocus: false,
-  // `{}` requests kitty's default disambiguation + alternate-key flags.
-  useKittyKeyboard: KITTY_KEYS ? {} : null,
-  // OpenTUI's error console is an in-app overlay; keep it development-only.
-  consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
-  openConsoleOnError: !!process.env.TMUX_IDE_MIRROR_DEBUG,
-  onDestroy: () => hostAutowrap?.restore(),
+const cleanupRegistry = new TuiCleanupRegistry();
+let appRenderer!: Awaited<ReturnType<typeof createCliRenderer>>;
+let applicationLifecycle!: TuiApplicationLifecycle;
+let resolveInputReady!: () => void;
+const inputReady = new Promise<void>((resolve) => {
+  resolveInputReady = resolve;
 });
-tuiPerfMark("renderer-created");
-if (TUI_PERF_LOG) {
-  const firstFrame = async () => {
-    tuiPerfMark("first-frame");
-    appRenderer.removeFrameCallback(firstFrame);
-  };
-  appRenderer.setFrameCallback(firstFrame);
-}
-// Start terminal color discovery before mounting, but never put it on the
-// first-frame critical path. The semantic theme store follows the renderer's
-// resolved mode and repaints when discovery settles; delaying mount here made
-// every system-themed launch pay a guaranteed 200ms blank-screen tax.
-if (STARTUP_CONFIG.theme.mode === "system") {
-  void appRenderer.getPalette({ size: 16 }).catch(() => undefined);
-}
-hostAutowrap = installHostAutowrapGuard((sequence) => writeSync(process.stdout.fd, sequence), {
-  onExit: (listener) => process.once("exit", listener),
-  offExit: (listener) => process.removeListener("exit", listener),
-});
+let publishToolReadiness = (): void => undefined;
 
-try {
-  await render(() => {
-    const cleanupRegistry = new TuiCleanupRegistry();
+const parseTuiAppArgs = (argv: readonly string[]): TuiAppArgs => {
+  values = parseArgs({
+    args: [...argv],
+    options: {
+      target: { type: "string" },
+      edit: { type: "string" },
+      diff: { type: "string" },
+    },
+  }).values;
+  target = values.target ?? "";
+  startDiff = values.diff !== undefined;
+  bareHome = target === "" || target === "home";
+  return values;
+};
+
+const loadTuiAppConfig = () => {
+  STARTUP_CONFIG = loadAppConfig();
+  KITTY_KEYS = STARTUP_CONFIG.app.kittyKeys;
+  TABBAR_PALETTE_LABEL = KITTY_KEYS ? "F5 ⌘K palette " : "F5 ⌘ palette ";
+  return STARTUP_CONFIG;
+};
+
+const createTuiRenderer = async () => {
+  appRenderer = await createCliRenderer({
+    exitOnCtrlC: false,
+    targetFps: 30,
+    maxFps: 60,
+    autoFocus: false,
+    useKittyKeyboard: KITTY_KEYS ? {} : null,
+    consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
+    openConsoleOnError: !!process.env.TMUX_IDE_MIRROR_DEBUG,
+    onDestroy: () => hostAutowrap?.restore(),
+  });
+  tuiPerfMark("renderer-created");
+  if (TUI_PERF_LOG) {
+    const firstFrame = async () => {
+      tuiPerfMark("first-frame");
+      appRenderer.removeFrameCallback(firstFrame);
+    };
+    appRenderer.setFrameCallback(firstFrame);
+  }
+  if (STARTUP_CONFIG.theme.mode === "system") {
+    void appRenderer.getPalette({ size: 16 }).catch(() => undefined);
+  }
+  hostAutowrap = installHostAutowrapGuard((sequence) => writeSync(process.stdout.fd, sequence), {
+    onExit: (listener) => process.once("exit", listener),
+    offExit: (listener) => process.removeListener("exit", listener),
+  });
+  return appRenderer;
+};
+
+const createTuiLifecycle = (renderer: Awaited<ReturnType<typeof createCliRenderer>>) => {
+  applicationLifecycle = new TuiApplicationLifecycle({
+    cleanupRegistry,
+    destroyRenderer: () => renderer.destroy(),
+  });
+  return applicationLifecycle;
+};
+
+const mountTuiRoot = () => {
+  const root = render(() => {
     // Register <pane_surface> before any is created (M21.3). An explicit call —
     // a bare side-effect import of the module gets DCE'd by the transpiler.
     if (FB_PANES) registerPaneSurface();
@@ -1103,6 +1151,8 @@ try {
     const [contextSession, setContextSession] = createSignal<string>(initialContextSession);
     const [contextDir, setContextDir] = createSignal<string>("");
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
+    const toolResources = createTuiToolResourceController(createTuiToolResourceAdapter());
+    applicationLifecycle.registerCloser("tool-resources", () => toolResources.dispose());
     const fleet = (): Array<{ name: string; status: AgentStatus }> =>
       projectsData()
         .flatMap((project) =>
@@ -1149,6 +1199,7 @@ try {
         ? (paneRuntimeFor(pane.id)?.scrollbackDepth ?? pane.scrollbackDepth)
         : pane.scrollbackDepth;
     let semanticView: SemanticSessionView | null = null;
+    let terminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
     const [sessionRuntimeLane, setSessionRuntimeLane] =
       createSignal<OpenTuiSessionRuntimeLane | null>(null);
     const [semanticPaneVersions, setSemanticPaneVersions] = createSignal<
@@ -1210,55 +1261,64 @@ try {
       runtimeLaneFitKey = null;
       setSemanticPaneVersions(new Map());
       try {
-        const lane = await connectOpenTuiSessionRuntime({
-          sessionName,
-          semanticPaneIds,
-          onPaneChange: (paneId, change) => {
-            if (request !== sessionRuntimeLaneRequest) return;
-            setSemanticPaneVersions((current) => {
-              const next = new Map(current);
-              next.set(paneId, change.version);
-              return next;
-            });
-            markDirty();
-          },
-          onLayout: (frame) => {
-            if (request !== sessionRuntimeLaneRequest || semanticView !== candidate) return;
-            const windowKey =
-              frame.semanticWindowId ?? `unverified:${frame.windowName ?? "window"}`;
-            if (!semanticWindowOrder.includes(windowKey)) semanticWindowOrder.push(windowKey);
-            const activePane =
-              frame.panes.find((pane) => pane.active)?.pane ?? frame.panes[0]?.pane;
-            if (activePane) semanticWindowActivePane.set(windowKey, activePane);
-            for (const pane of frame.panes) {
-              if (pane.pane)
-                semanticPaneCanonicalSize.set(pane.pane, { cols: pane.width, rows: pane.height });
-            }
-            candidate.acceptLayout(frame);
-            observePendingResizeLayout();
-            void candidate.windows().then(setWindowTabs);
-            markDirty();
-          },
-          onFault: () => {
-            if (request !== sessionRuntimeLaneRequest) return;
-            sessionRuntimeLaneKey = null;
-            sessionRuntimeLane()?.close();
-            setSessionRuntimeLane(null);
-            runtimeLaneFitKey = null;
-            setSemanticPaneVersions(new Map());
-            markDirty();
-            const retry = setTimeout(() => {
-              if (request === sessionRuntimeLaneRequest && semanticView === candidate) {
-                void reconcileSessionRuntimeLane(sessionName, candidate);
+        const connectRuntime = () =>
+          connectOpenTuiSessionRuntime({
+            sessionName,
+            semanticPaneIds,
+            onPaneChange: (paneId, change) => {
+              if (request !== sessionRuntimeLaneRequest) return;
+              setSemanticPaneVersions((current) => {
+                const next = new Map(current);
+                next.set(paneId, change.version);
+                return next;
+              });
+              markDirty();
+            },
+            onLayout: (frame) => {
+              if (request !== sessionRuntimeLaneRequest || semanticView !== candidate) return;
+              const windowKey =
+                frame.semanticWindowId ?? `unverified:${frame.windowName ?? "window"}`;
+              if (!semanticWindowOrder.includes(windowKey)) semanticWindowOrder.push(windowKey);
+              const activePane =
+                frame.panes.find((pane) => pane.active)?.pane ?? frame.panes[0]?.pane;
+              if (activePane) semanticWindowActivePane.set(windowKey, activePane);
+              for (const pane of frame.panes) {
+                if (pane.pane)
+                  semanticPaneCanonicalSize.set(pane.pane, {
+                    cols: pane.width,
+                    rows: pane.height,
+                  });
               }
-            }, 1_000);
-            retry.unref?.();
-          },
-        });
+              candidate.acceptLayout(frame);
+              observePendingResizeLayout();
+              void candidate.windows().then(setWindowTabs);
+              markDirty();
+            },
+            onFault: () => {
+              if (request !== sessionRuntimeLaneRequest) return;
+              sessionRuntimeLaneKey = null;
+              sessionRuntimeLane()?.close();
+              setSessionRuntimeLane(null);
+              runtimeLaneFitKey = null;
+              setSemanticPaneVersions(new Map());
+              markDirty();
+              const retry = setTimeout(() => {
+                if (request === sessionRuntimeLaneRequest && semanticView === candidate) {
+                  void reconcileSessionRuntimeLane(sessionName, candidate);
+                }
+              }, 1_000);
+              retry.unref?.();
+            },
+          });
+        const lane =
+          terminalWorkspaceAdapter?.view === candidate
+            ? await terminalWorkspaceAdapter.connect(key, connectRuntime)
+            : await connectRuntime();
         if (request !== sessionRuntimeLaneRequest) {
           lane?.close();
           return;
         }
+        if (!lane) return;
         candidate.setSource(lane.source);
         setSessionRuntimeLane(lane);
         if (
@@ -1313,6 +1373,7 @@ try {
       disposeDaemonApplicationShellSubscription = null;
       daemonApplicationShellAuthority?.session.dispose();
       daemonApplicationShellAuthority = null;
+      toolResources.setTarget(null);
       setDaemonApplicationShellState(null);
       setInteractionFeed(initialInteractionFeedState());
       clearInteractionPresence();
@@ -1333,6 +1394,10 @@ try {
         }
         if (!authority) return;
         daemonApplicationShellAuthority = authority;
+        const daemon = readCanonicalDaemonInfo();
+        if (daemon?.instanceId === authority.target.daemon.instanceId) {
+          toolResources.setTarget({ daemon, workspaceName: authority.workspaceName });
+        }
         const applyDaemonShellState = (state: ApplicationShellSessionState) => {
           setDaemonApplicationShellState(state);
           const inventory = state.data?.terminalInventory;
@@ -1443,11 +1508,8 @@ try {
     const hydratedWorkspaceSurfaceIds = new Set<keyof WorkspaceSurfaceStates>();
     let touchedWorkspaceDock = false;
     let touchedWorkspaceActiveView = false;
-    const missionWorkspaceLoader = new MissionWorkspaceLoader();
     let currentWorkspaceUiIdentity: string | null = null;
-    let currentMissionsLoadIdentity: string | null = null;
     let workspaceUiSaveTimer: ReturnType<typeof setTimeout> | null = null;
-    let missionsRefreshTimer: ReturnType<typeof setInterval> | null = null;
     let flushWorkspaceUiState = () => {};
     let snapshotActiveWorkspaceView = () => {};
     let hydrateActiveWorkspaceView = (_options: { firstProjectLoad?: boolean } = {}) => {};
@@ -1496,6 +1558,15 @@ try {
     const [hoveredDockTab, setHoveredDockTab] = createSignal<WorkbenchDockTabId | null>(null);
     const [activitySelectedId, setActivitySelectedId] = createSignal<string | null>(null);
     const [activityScrollOffset, setActivityScrollOffset] = createSignal(0);
+    createEffect(() => {
+      if (dockMode() === "collapsed") {
+        toolResources.setOpenDock(null);
+        return;
+      }
+      const dock = activeDockTab();
+      const resource: TuiDockResourceKey = dock === "activity" ? "missions" : dock;
+      toolResources.setOpenDock(resource);
+    });
     const semanticApplicationShellInput = createMemo<OpenTuiApplicationShellInput>(
       () => ({
         projectName: basename(contextDir() || invokeCwd) || "tmux-ide",
@@ -1711,9 +1782,9 @@ try {
     };
     const runActivationEffects = (effects: readonly string[]) => {
       for (const effect of effects) {
-        if (effect === "load-files") loadFileList(workspaceDir());
+        if (effect === "load-files") toolResources.session.refresh("files");
         else if (effect === "catch-up-files") catchUpFilesIfStale();
-        else if (effect === "enter-diff") prepareDiff(workspaceDir());
+        else if (effect === "enter-diff") toolResources.session.refresh("changes");
       }
     };
     const activationState = () => ({
@@ -1766,60 +1837,11 @@ try {
         return next;
       });
     };
-    const loadMissionsWorkspace = (reason: "activation" | "refresh" | "cadence" | "project") => {
+    const loadMissionsWorkspace = (reason: "activation" | "refresh" | "project") => {
       if (activeDockTab() !== "missions" && activeDockTab() !== "activity" && mode() !== "missions")
         return;
-      const repository = workspaceUiController.snapshot().repository;
-      if (!repository) {
-        setMissionWorkspaceLoad({ status: "loading", generation: 0, projectKey: null });
-        return;
-      }
-      const priorSnapshot =
-        reason === "refresh" || reason === "cadence" ? missionWorkspaceSnapshot() : null;
-      const start = missionWorkspaceLoader.begin(repository.metadata.identityKey, priorSnapshot);
-      setMissionWorkspaceLoad(start);
-      const projectKey = repository.metadata.identityKey;
-      const persistedSelection = missionSelectionFromWorkspaceState(
-        workspaceUiState(),
-        missionViewId(),
-      );
-      const selectedForDetail =
-        missionWorkspaceModel().mode === "detail"
-          ? (missionWorkspaceModel().selectedMissionId ?? persistedSelection.selectedMissionId)
-          : null;
-      currentMissionsLoadIdentity = projectKey;
-      void Promise.resolve()
-        .then(() => readMissionWorkspace(repository, selectedForDetail))
-        .then((snapshot) => {
-          const accepted = missionWorkspaceLoader.accept(start.generation, projectKey, snapshot);
-          if (!accepted) return;
-          setMissionWorkspaceSnapshot(snapshot);
-          updateMissionModel((current) =>
-            reconcileMissionWorkspaceModel(
-              missionModelFromWorkspaceState(workspaceUiState(), missionHostedView(), current),
-              snapshot,
-              {
-                persistedMissionId: persistedSelection.selectedMissionId,
-                persistedTaskId: persistedSelection.selectedTaskId,
-                ...missionLayoutSize(),
-              },
-            ),
-          );
-          setMissionWorkspaceLoad(accepted);
-          if (reason === "refresh") setStatusNote("missions refreshed");
-        })
-        .catch((error) => {
-          const rejected = missionWorkspaceLoader.reject(start.generation, projectKey, error);
-          if (!rejected) return;
-          if (start.status === "refreshing") {
-            setMissionWorkspaceSnapshot(start.snapshot);
-            setMissionWorkspaceLoad({ ...rejected, snapshot: start.snapshot });
-          } else {
-            setMissionWorkspaceSnapshot(null);
-            setMissionWorkspaceLoad(rejected);
-          }
-          if (reason === "refresh" && rejected.status === "error") setStatusNote(rejected.message);
-        });
+      toolResources.session.refresh("missions");
+      if (reason === "refresh") setStatusNote("refreshing missions…");
     };
     const ensureMissionsLoaded = () => {
       if (activeDockTab() !== "missions" && activeDockTab() !== "activity" && mode() !== "missions")
@@ -1857,11 +1879,6 @@ try {
       if (dockAlias) return activateDockTab(dockAlias);
       clearSelection();
       snapshotActiveWorkspaceView();
-      const previousPanel = activePanel();
-      if (previousPanel === "missions" && plan.view.panel !== "missions") {
-        missionWorkspaceLoader.cancel();
-        currentMissionsLoadIdentity = null;
-      }
       runActivationEffects(plan.effects);
       const panel: "home" | "terminals" =
         plan.view.panel === "home" && !plan.view.layout ? "home" : "terminals";
@@ -1903,6 +1920,72 @@ try {
       touchedWorkspaceDock = true;
       return true;
     };
+    // Renderer-local navigation is owned independently from canonical daemon
+    // snapshots. The bridge keeps the mature signal surface compatible while
+    // the controller reconciles only identities that disappeared upstream.
+    const localView = new OpenTuiLocalViewController({
+      workspaceId: contextSession() || null,
+      focusedPaneId: activeTerminalPaneId(),
+      surface: canvasPanel(),
+      focusZone: workbenchFocusZone(),
+      dockMode: dockMode(),
+      paletteOpen: paletteOpen(),
+    });
+    let applyingLocalView = false;
+    const disposeLocalViewSubscription = localView.subscribe((next) => {
+      applyingLocalView = true;
+      try {
+        if (next.workspaceId && next.workspaceId !== contextSession()) {
+          openWorkspace(next.workspaceId, dirForSession(next.workspaceId));
+        }
+        if (next.focusedPaneId && next.focusedPaneId !== activeTerminalPaneId()) {
+          semanticView?.focus(next.focusedPaneId);
+          setFocusedPaneId(next.focusedPaneId);
+        }
+        if (next.surface === "home" || next.surface === "terminals") {
+          if (canvasPanel() !== next.surface || workbenchFocusZone() !== "canvas")
+            activateCanvasPanelContent(next.surface);
+        } else {
+          const dock = next.surface === "changes" ? "changes" : next.surface;
+          if (activeDockTab() !== dock) activateDockTabContent(dock);
+        }
+        if (next.focusZone !== "sidebar" && next.focusZone !== workbenchFocusZone())
+          setWorkbenchFocusZone(next.focusZone);
+        if (next.dockMode !== dockMode()) setDockMode(next.dockMode);
+        if (next.paletteOpen !== paletteOpen()) setPaletteOpen(next.paletteOpen);
+      } finally {
+        applyingLocalView = false;
+      }
+    });
+    applicationLifecycle.registerCloser("local-view", () => {
+      disposeLocalViewSubscription();
+      localView.dispose();
+    });
+    createEffect(() => {
+      const surface =
+        workbenchFocusZone() === "canvas"
+          ? canvasPanel()
+          : (activeDockTab() as "files" | "changes" | "missions" | "activity");
+      const patch = {
+        workspaceId: contextSession() || null,
+        focusedPaneId: activeTerminalPaneId(),
+        surface,
+        focusZone: workbenchFocusZone(),
+        dockMode: dockMode(),
+        paletteOpen: paletteOpen(),
+      } as const;
+      if (!applyingLocalView) localView.update(patch);
+    });
+    createEffect(() => {
+      const activeWorkspaceId = contextSession() || null;
+      if (!activeWorkspaceId) return;
+      localView.reconcile({
+        workspaceIds: fleet().map((session) => session.name),
+        paneIds: panes().map((pane) => pane.id),
+        activeWorkspaceId,
+        activePaneId: activeTerminalPaneId(),
+      });
+    });
     const selectPanel = (panel: HostedPanelKind) => {
       if (panel === "home" || panel === "terminals") return activateCanvasPanel(panel);
       const dockTab = dockTabForPanel(panel);
@@ -1930,8 +2013,6 @@ try {
       touchedWorkspaceActiveView = false;
       hydratedWorkspaceSurfaceIds.clear();
       const uiGeneration = workspaceUiController.beginLoad();
-      missionWorkspaceLoader.cancel();
-      currentMissionsLoadIdentity = null;
       setMissionWorkspaceSnapshot(null);
       setMissionWorkspaceLoad(invalidatedMissionWorkspaceLoadState());
       void resolveProjectConfigContext(dir)
@@ -2048,31 +2129,6 @@ try {
         });
     };
     trackPanelHostDirectory(() => contextDir() || invokeCwd, loadPanelHostForDir);
-    createEffect(() => {
-      workspaceUiState();
-      const repository = workspaceUiController.snapshot().repository;
-      if (
-        (activeDockTab() === "missions" ||
-          activeDockTab() === "activity" ||
-          mode() === "missions") &&
-        repository &&
-        repository.metadata.identityKey !== currentMissionsLoadIdentity
-      ) {
-        loadMissionsWorkspace("project");
-      }
-    });
-    missionsRefreshTimer = setInterval(() => {
-      if (
-        activeDockTab() === "missions" ||
-        activeDockTab() === "activity" ||
-        mode() === "missions"
-      ) {
-        loadMissionsWorkspace("cadence");
-      }
-    }, 10_000);
-    cleanupRegistry.set("missions-refresh-timer", () => {
-      if (missionsRefreshTimer) clearInterval(missionsRefreshTimer);
-    });
 
     // ── SELECT MODE on app-mouse panes (M22.9) ───────────────────────────────
     // Presses on a pane whose app enabled mouse reporting are FORWARDED, so a
@@ -2339,7 +2395,11 @@ try {
       delta: number;
     } | null>(null);
     const [resizeTransactionState, setResizeTransactionState] =
-      createSignal<ResizeTransactionState>({ phase: "idle", canonicalCells: null, outcome: null });
+      createSignal<ResizeTransactionState>({
+        phase: "idle",
+        canonicalCells: null,
+        outcome: null,
+      });
     let acceptedResize: ResizeTransactionObservation | null = null;
     const resizeTransaction = new ResizeTransactionController({
       timeoutMs: 10_000,
@@ -2497,10 +2557,6 @@ try {
     // `menuSubSel` is the selection within that column. One level only.
     const [menuSub, setMenuSub] = createSignal<number | null>(null);
     const [menuSubSel, setMenuSubSel] = createSignal(0);
-    // Assigned in onMount so a menu action (kill/rename session) can force an
-    // early fleet re-poll instead of waiting out the 3s interval.
-    let fleetRefresh: (() => void) | null = null;
-
     const activityRows = createMemo<ActivityRowDto[]>(() => {
       const agentRows: ActivityRowDto[] = fleetAgents().map((agent, index) => ({
         kind: "agent",
@@ -2809,7 +2865,11 @@ try {
         const cur = editorCursor();
         const out: { num: number; text: string; cursorCol: number | null }[] = [];
         for (let i = top; i < Math.min(lines.length, top + rows); i++) {
-          out.push({ num: i + 1, text: lines[i] ?? "", cursorCol: i === cur.row ? cur.col : null });
+          out.push({
+            num: i + 1,
+            text: lines[i] ?? "",
+            cursorCol: i === cur.row ? cur.col : null,
+          });
         }
         return out;
       },
@@ -2947,7 +3007,6 @@ try {
     // non-null every printable key narrows live, escape/return clear + exit.
     const [diffFilter, setDiffFilter] = createSignal<string | null>(null);
     let diffLoadToken = 0;
-    let diffStatusToken = 0;
     // A diff file to re-select once `git status` repopulates the list: the
     // persisted path on restore, or a verb's follow target — path + preferred
     // group, so a just-staged file is re-selected in its NEW section.
@@ -3014,7 +3073,6 @@ try {
         (err, stdout) => cb(err ? "" : stdout),
       );
     };
-    const runGitP = (args: string[]) => new Promise<string>((resolve) => runGit(args, resolve));
 
     /** Load the diff for one entry, by its GROUP: staged rows diff `--cached`,
      *  unstaged rows the worktree, and an untracked file's contents render as
@@ -3075,73 +3133,6 @@ try {
       }
     };
 
-    /** Re-run `git status --porcelain` + both `--numstat`s (and untracked line
-     *  counts via async reads), merge counts into the grouped entries, reconcile
-     *  the selection, and reload the selected file's diff (so an external edit
-     *  is reflected). Fully async; one race token guards the whole merge. */
-    const refreshStatus = () => {
-      const token = ++diffStatusToken;
-      const dir = diffDir();
-      void (async () => {
-        const [statusOut, unstagedOut, stagedOut] = await Promise.all([
-          runGitP(["status", "--porcelain"]),
-          runGitP(["diff", "--numstat"]),
-          runGitP(["diff", "--numstat", "--cached"]),
-        ]);
-        if (token !== diffStatusToken) return;
-        let entries = parseStatusGroups(statusOut);
-        // Untracked ± = the file's line count (binaries skipped; the reads are
-        // capped so a giant fresh tree can't fan out thousands of opens).
-        const untrackedCounts = new Map<string, number>();
-        await Promise.all(
-          entries
-            .filter((e) => e.group === "untracked")
-            .slice(0, 200)
-            .map(async (e) => {
-              try {
-                const bytes = await readFile(join(dir, e.path));
-                if (!isBinary(bytes))
-                  untrackedCounts.set(e.path, untrackedLineCount(bytes.toString("utf8")));
-              } catch {
-                /* unreadable: counts stay null */
-              }
-            }),
-        );
-        if (token !== diffStatusToken) return;
-        entries = applyCounts(
-          entries,
-          parseNumstat(stagedOut),
-          parseNumstat(unstagedOut),
-          untrackedCounts,
-        );
-        setDiffEntries(entries);
-        const files = diffVisibleFiles();
-        if (files.length === 0) {
-          setDiffText("");
-          setDiffSel(0);
-          if (entries.length === 0) setDiffMsg("working tree clean");
-          return;
-        }
-        // Re-select a followed file: a verb's target in its NEW group (a staged
-        // file moves to Staged), or the persisted path on restore.
-        if (pendingDiffFile) {
-          const path = pendingDiffFile;
-          const group = pendingDiffGroup;
-          pendingDiffFile = null;
-          pendingDiffGroup = null;
-          const exact = group ? files.findIndex((f) => f.path === path && f.group === group) : -1;
-          const found = exact !== -1 ? exact : files.findIndex((f) => f.path === path);
-          if (found !== -1) {
-            selectDiffFile(found);
-            return;
-          }
-        }
-        const idx = clampSel(diffSel(), files.length);
-        setDiffSel(idx);
-        loadDiff(files[idx]!);
-      })();
-    };
-
     // ── Stage/unstage verbs (M24.5) ─────────────────────────────────────────
     // Reversible operations, so no confirms — each verb notes what it did,
     // follows the file into its new group, and refreshes (git is the truth).
@@ -3154,7 +3145,7 @@ try {
         pendingDiffFile = e.path;
         pendingDiffGroup = "staged";
         setStatusNote(`staged ${e.path}`);
-        refreshStatus();
+        toolResources.session.refresh("changes");
       });
     };
     const unstageEntry = (e: DiffEntry) => {
@@ -3166,7 +3157,7 @@ try {
         pendingDiffFile = e.path;
         pendingDiffGroup = "unstaged";
         setStatusNote(`unstaged ${e.path}`);
-        refreshStatus();
+        toolResources.session.refresh("changes");
       });
     };
     const toggleStageEntry = (e: DiffEntry) =>
@@ -3179,7 +3170,7 @@ try {
           pendingDiffGroup = "staged";
         }
         setStatusNote("staged all changes");
-        refreshStatus();
+        toolResources.session.refresh("changes");
       });
     };
     const unstageAll = () => {
@@ -3190,7 +3181,7 @@ try {
           pendingDiffGroup = cur.group === "staged" ? "unstaged" : cur.group;
         }
         setStatusNote("unstaged all");
-        refreshStatus();
+        toolResources.session.refresh("changes");
       });
     };
 
@@ -3223,7 +3214,7 @@ try {
       setDiffText("");
       setDiffMsg("");
       setDiffFilter(null);
-      refreshStatus();
+      toolResources.session.refresh("changes");
     };
     const enterDiff = (dir: string) => {
       prepareDiff(dir);
@@ -3231,7 +3222,7 @@ try {
     };
 
     const runChangesAction = (id: ChangesActionId, fileIndex = diffSel()) => {
-      if (id === "refresh") refreshStatus();
+      if (id === "refresh") toolResources.session.refresh("changes");
       else if (id === "stage-all") stageAll();
       else if (id === "unstage-all") unstageAll();
       else {
@@ -3280,8 +3271,9 @@ try {
           const closed = new Promise<unknown>((resolve) => {
             close = resolve;
           });
-          const candidate = new SemanticSessionView({
+          const workspaceAdapter = new OpenTuiTerminalWorkspaceAdapter({
             target: name,
+            lifecycle: applicationLifecycle,
             onDirty: markDirty,
             onFocusChanged: (paneId) => setFocusedPaneId(paneId),
             onStatus: () => {
@@ -3290,16 +3282,19 @@ try {
                 tuiPerfMark("tmux-geometry-ready");
               }
               markDirty();
-              void candidate.windows().then(setWindowTabs);
-              void reconcileSessionRuntimeLane(name, candidate);
+              void workspaceAdapter.view.windows().then(setWindowTabs);
+              void reconcileSessionRuntimeLane(name, workspaceAdapter.view);
             },
           });
+          const candidate = workspaceAdapter.view;
+          terminalWorkspaceAdapter = workspaceAdapter;
           let retired = false;
           const dispose = () => {
             if (retired) return;
             retired = true;
             signal.removeEventListener("abort", dispose);
-            candidate.dispose();
+            workspaceAdapter.dispose();
+            if (terminalWorkspaceAdapter === workspaceAdapter) terminalWorkspaceAdapter = null;
           };
           signal.addEventListener("abort", dispose, { once: true });
           try {
@@ -3525,97 +3520,13 @@ try {
       });
     };
 
-    /** Re-run `git status --porcelain` for the workspace (async; also resolves
-     *  the repo toplevel the porcelain paths are relative to). */
-    const runGitFiles = (args: string[], cb: (out: string) => void) => {
-      execFile(
-        "git",
-        ["-C", workspaceDir(), "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", ...args],
-        { timeout: 10_000, maxBuffer: 16_000_000 },
-        (err, stdout) => cb(err ? "" : stdout),
-      );
-    };
-    const refreshFileStatus = () => {
-      runGitFiles(["rev-parse", "--show-toplevel"], (top) => {
-        const t = top.trim();
-        setFilesGitTop(t || null);
-        if (!t) {
-          setFileStatusEntries([]);
-          return;
-        }
-        runGitFiles(["status", "--porcelain"], (out) =>
-          setFileStatusEntries(parseStatusPorcelain(out)),
-        );
-      });
-    };
-
-    /** (Re)load the top-level listing for `dir` (async), reset the filter and
-     *  selection, refresh the git decoration, and (re)arm the watcher. */
-    const loadFileList = (dir: string) => {
-      void loadIgnoreRules(workspaceDir()).then(() =>
-        listDir(dir)
-          .then((ents) => {
-            setFileNodes(buildNodes(dir, ents, 0));
-            setFileSel(0);
-            setFileTop(0);
-            setFilesQuery(null);
-            const pending = pendingFilesSelectionPath;
-            pendingFilesSelectionPath = null;
-            if (pending) void revealPath(pending);
-          })
-          .catch(() => setFileNodes([])),
-      );
-      refreshFileStatus();
-      ensureFilesWatch(workspaceDir());
-    };
-
-    /** Expansion-preserving refresh: re-read the root + every expanded dir with
-     *  the CURRENT toggles, rebuild the flat tree (pure), keep the selection on
-     *  the same path where it survived. Used by the watcher push, the H/I
-     *  toggles, `r`, and the file-mutation menu verbs. */
-    let treeRefreshBusy = false;
-    const refreshTree = () => {
-      if (treeRefreshBusy) return;
-      treeRefreshBusy = true;
-      const root = workspaceDir();
-      const keepPath = visibleFiles()[fileSel()]?.node.path ?? null;
-      const expanded = new Set(
-        fileNodes()
-          .filter((n) => n.isDir && n.expanded)
-          .map((n) => n.path),
-      );
-      // Fresh rules first (the .gitignore itself may have changed), then every
-      // still-relevant dir in parallel; failed reads (vanished dirs) drop out.
-      void loadIgnoreRules(root)
-        .then(() =>
-          Promise.all(
-            [root, ...expanded].map(async (d) => [d, await listDir(d).catch(() => null)] as const),
-          ),
-        )
-        .then((pairs) => {
-          if (root !== workspaceDir()) return; // workspace moved on mid-flight
-          const listing = new Map<string, RawEntry[]>();
-          for (const [d, ents] of pairs) if (ents) listing.set(d, ents);
-          setFileNodes(rebuildTree(root, listing, expanded));
-          const rows = visibleFiles();
-          const idx = keepPath ? rows.findIndex((r) => r.node.path === keepPath) : -1;
-          const sel = idx !== -1 ? idx : clampSel(fileSel(), Math.max(1, rows.length));
-          setFileSel(sel);
-          setFileTop((t) => scrollToCursor(sel, t, editorRows(), rows.length));
-        })
-        .finally(() => {
-          treeRefreshBusy = false;
-        });
-      refreshFileStatus();
-    };
-
     const toggleHiddenFiles = () => {
       setShowHiddenFiles((v) => !v);
-      refreshTree();
+      toolResources.session.refresh("files");
     };
     const toggleIgnoredFiles = () => {
       setShowIgnoredFiles((v) => !v);
-      refreshTree();
+      toolResources.session.refresh("files");
     };
 
     const moveFileSel = (delta: number) => {
@@ -3823,7 +3734,7 @@ try {
             return;
           }
         }
-        if (mode() === "diff") refreshStatus();
+        if (mode() === "diff") toolResources.session.refresh("changes");
       } else if (entry.panel === "missions") {
         hydratedWorkspaceSurfaceIds.add("missions");
         setMissionWorkspaceModel((current) =>
@@ -3975,41 +3886,12 @@ try {
       return missionDashboardHitTest(missionsDashboard(), x - sidebarW(), gy);
     };
 
-    // ── WATCHER PUSH REFRESH (M24.6) ─────────────────────────────────────────
-    // widgets/lib/watcher.ts (@parcel/watcher; fs.watch fallback in the compiled
-    // binary) — measured working under bun in this process (import + events).
-    // Events refresh the visible tree expansion-preservingly; while the Files
-    // tab is backgrounded they only mark it stale (refreshed on tab return).
-    // The watcher ignores .git, so index-only changes (external staging) ride
-    // the 3s status poll armed in onMount instead.
-    const filesWatch = new AsyncDisposableSlot<string>();
-    let filesStale = false;
-    const onFilesWatchEvent = () => {
-      if (mode() === "editor") {
-        refreshTree();
-      } else {
-        filesStale = true;
-      }
-    };
-    const ensureFilesWatch = (root: string) => {
-      filesWatch.ensure(root, () =>
-        watchDirectory(root, onFilesWatchEvent, { ignore: [...ALWAYS_IGNORE] }),
-      );
-    };
-    cleanupRegistry.set("files-watch", () => filesWatch.dispose());
-    /** A tab switch back onto a stale Files surface catches up in one shot. */
+    // The daemon owns filesystem/git observation. Returning to Files asks the
+    // generation-pinned resource session for a fresh snapshot; no local watcher
+    // or maintenance poll exists in the renderer.
     const catchUpFilesIfStale = () => {
-      if (!filesStale) return;
-      filesStale = false;
-      refreshTree();
+      toolResources.session.refresh("files");
     };
-    // Status letters must also follow index-only changes (external staging),
-    // which the directory watcher never sees — a light poll while the Files
-    // tab is active, mirroring the diff panel's 3s discipline.
-    const filesStatusPoll = setInterval(() => {
-      if (mode() === "editor" && fileNodes().length > 0) refreshFileStatus();
-    }, 3000);
-    cleanupRegistry.set("files-status-poll", () => clearInterval(filesStatusPoll));
 
     /** The project dir the fleet payload records for `session` (null if unknown). */
     const dirForSession = (name: string): string | null => {
@@ -4025,7 +3907,7 @@ try {
       const wd = dir ?? invokeCwd;
       setContextDir(wd);
       setDiffDir(wd);
-      loadFileList(wd);
+      toolResources.session.refresh("files");
       switchTarget(session);
     };
 
@@ -4067,7 +3949,7 @@ try {
           watchCreatedSession(name);
           setStatusNote(`launched ${name}`);
         }
-        fleetRefresh?.();
+        toolResources.session.refresh("fleet");
         openWorkspace(name, dir);
       });
     };
@@ -4112,7 +3994,7 @@ try {
       await interruptAgent(a.paneId);
       await clearAgentAuthority(a.paneId);
       setStatusNote(`stopped ${a.kind}`);
-      setTimeout(() => fleetRefresh?.(), 500);
+      toolResources.session.refresh("fleet");
     };
 
     /** The pane's `pane_start_command` (its ROOT: "" = default shell) +
@@ -4153,7 +4035,7 @@ try {
       const live = await paneStartAndPath(a.paneId);
       if (!live) {
         setStatusNote("that pane is gone — refreshing");
-        setTimeout(() => fleetRefresh?.(), 300);
+        toolResources.session.refresh("fleet");
         return;
       }
       // The @agent_launch stamp (our own spawn's exact argv — flags included)
@@ -4180,16 +4062,14 @@ try {
         await tmuxRun(respawnArgs(a.paneId, command, live.path || null));
       }
       setStatusNote(`restarted ${a.kind}`);
-      setTimeout(() => fleetRefresh?.(), 1500);
+      toolResources.session.refresh("fleet");
     };
 
     /** The destructive twin of stop: kill the agent's pane. Confirmation is the
      *  caller's job (the menu's armed "confirm: y" state). The pane's options
      *  die with it, so no authority cleanup is needed. */
     const closeAgentPane = (a: Pick<AgentRowInput, "paneId" | "kind">) => {
-      execFile("tmux", ["kill-pane", "-t", a.paneId], () =>
-        setTimeout(() => fleetRefresh?.(), 300),
-      );
+      execFile("tmux", ["kill-pane", "-t", a.paneId], () => toolResources.session.refresh("fleet"));
       setStatusNote(`closed ${a.kind}'s pane`);
     };
 
@@ -4273,12 +4153,12 @@ try {
       if (sharedCreation.status === "daemon") {
         setStatusNote(sharedCreation.message);
         watchCreatedSession(ctx.session!);
-        setTimeout(() => fleetRefresh?.(), 300);
+        toolResources.session.refresh("fleet");
         return;
       }
       if (sharedCreation.status === "error") {
         setStatusNote(sharedCreation.message);
-        setTimeout(() => fleetRefresh?.(), 300);
+        toolResources.session.refresh("fleet");
         return;
       }
 
@@ -4302,7 +4182,7 @@ try {
             watchCreatedSession(name);
             decorate(stdout);
           }
-          setTimeout(() => fleetRefresh?.(), 300);
+          toolResources.session.refresh("fleet");
         });
         return;
       }
@@ -4317,7 +4197,7 @@ try {
           // can target a pre-existing, never-adopted session too.
           watchCreatedSession(target.session);
         }
-        setTimeout(() => fleetRefresh?.(), 300);
+        toolResources.session.refresh("fleet");
       });
     };
     const newAgentFlow = async (ctx: NewAgentContext) => {
@@ -4332,7 +4212,12 @@ try {
         last && compatiblePlacement(last.placement, shape) ? last.placement : fallback;
       const res = await DialogSelect.show({
         title: "New agent",
-        items: newAgentItems({ manifests, last, againPlacement, customRecents: customCommands() }),
+        items: newAgentItems({
+          manifests,
+          last,
+          againPlacement,
+          customRecents: customCommands(),
+        }),
         actions: placementActions(shape),
         footerHint: `enter: ${placementLabel(fallback)}`,
       });
@@ -4555,7 +4440,7 @@ try {
       try {
         await registerProject({ dir });
         setStatusNote(`remembered ${basename(dir) || dir}`);
-        fleetRefresh?.();
+        toolResources.session.refresh("fleet");
       } catch (e) {
         if (e instanceof ProjectAlreadyRegisteredError) setStatusNote("already in your projects");
         else setStatusNote("couldn't remember that project");
@@ -4836,11 +4721,10 @@ try {
       loadRepoFiles(); // refresh the "Go to file:" source (async, M24.6)
       setPaletteOpen(true);
     };
-    const lifecycleExecutor = createTuiLifecycleExecutor({
+    const lifecycleExecutor = createApplicationLifecycleInputExecutor(applicationLifecycle, {
       // Renderer destruction disposes the Solid root first, so the shared
       // onCleanup path owns mirrors/buffers and the host-mode guard restores
       // DECAWM after OpenTUI's native terminal teardown.
-      destroyRenderer: () => appRenderer.destroy(),
       // HOSTED (M23.2): put the cockpit away and keep running. A client that
       // came here via switch-client bounces BACK to its last session; a plain
       // terminal attach has no last session, so switch-client -l fails and the
@@ -5201,7 +5085,7 @@ try {
           saveEditor();
           break;
         case "refresh-diff":
-          if (mode() === "diff") refreshStatus();
+          if (mode() === "diff") toolResources.session.refresh("changes");
           else enterDiff(workspaceDir());
           break;
         case "new-window":
@@ -5702,7 +5586,246 @@ try {
       }, 400);
     });
 
+    let latestFleetCatalog: FleetCatalogResourceV1 | null = null;
+    let latestSessionCatalog: Extract<TuiToolResource, { kind: "sessions" }>["value"] | null = null;
+    let latestProjectCatalog: Extract<TuiToolResource, { kind: "projects" }>["value"] | null = null;
+    const reconcileFleetResources = () => {
+      if (!latestFleetCatalog || !latestSessionCatalog || !latestProjectCatalog) return;
+      const projects = projectTuiFleetResources({
+        fleet: latestFleetCatalog,
+        sessions: latestSessionCatalog,
+        projects: latestProjectCatalog,
+      });
+      setProjectsData(projects);
+      noteAttention(projects);
+      if (startupWorkspaceReconciled) return;
+      const liveSessions = projects.flatMap((project) =>
+        project.sessions.map((session) => session.name),
+      );
+      if (liveSessions.length === 0) return;
+      startupWorkspaceReconciled = true;
+      const selection = reconcileWorkspaceSelection({
+        liveWorkspaceIds: liveSessions,
+        persistedWorkspaceId: persisted.contextSession,
+        fallback: "first-live",
+      });
+      const restoredSession = selection.workspaceId;
+      if (!restoredSession) return;
+      const restoredDir = dirForSession(restoredSession) ?? invokeCwd;
+      setContextSession(restoredSession);
+      setContextDir(restoredDir);
+      setDiffDir(restoredDir);
+      setCurTarget(restoredSession);
+      attach(restoredSession);
+      if (persisted.lastTab === "terminal") selectPanel("terminals");
+      if (selection.rejectedSource === "persisted") {
+        setStatusNote(`restored live workspace ${restoredSession}`);
+      }
+    };
+    const applyFleetCatalog = (catalog: FleetCatalogResourceV1) => {
+      latestFleetCatalog = catalog;
+      reconcileFleetResources();
+    };
+
+    const applyFilesCatalog = (envelope: WorkspaceFilesCatalogEnvelopeV1) => {
+      const resource = envelope.resource;
+      if (resource.status !== "ready") {
+        setFileNodes([]);
+        setEditorMsg(resource.message);
+        return;
+      }
+      const root = workspaceDir();
+      setFileNodes(
+        resource.entries
+          .filter(
+            (entry) =>
+              (showHiddenFiles() || !entry.hidden) && (showIgnoredFiles() || !entry.ignored),
+          )
+          .map((entry) => ({
+            name: entry.name,
+            path: join(root, entry.relativePath),
+            isDir: entry.kind === "directory",
+            depth: 0,
+            expanded: false,
+            ignored: entry.ignored,
+          })),
+      );
+      setFilesGitTop(root);
+      setFileStatusEntries(
+        resource.entries.flatMap((entry) =>
+          entry.gitStatus
+            ? [
+                {
+                  status: changeStatusLetter(entry.gitStatus),
+                  path: entry.relativePath,
+                  staged: false,
+                },
+              ]
+            : [],
+        ),
+      );
+      setFileSel((current) => clampSel(current, Math.max(1, resource.entries.length)));
+    };
+
+    const applyChangesCatalog = (envelope: WorkspaceChangesCatalogEnvelopeV1) => {
+      const resource = envelope.resource;
+      if (resource.status !== "ready") {
+        setDiffEntries([]);
+        setDiffMsg(resource.message);
+        return;
+      }
+      const entries: DiffEntry[] = resource.entries.map((entry) => ({
+        group: entry.group,
+        status: changeStatusLetter(entry.status),
+        path: entry.relativePath,
+        additions: entry.additions,
+        deletions: entry.deletions,
+      }));
+      setDiffEntries(entries);
+      if (entries.length === 0) {
+        setDiffText("");
+        setDiffMsg("working tree clean");
+      } else {
+        setDiffMsg("");
+        let next = clampSel(diffSel(), entries.length);
+        if (pendingDiffFile) {
+          const exact = pendingDiffGroup
+            ? entries.findIndex(
+                (entry) => entry.path === pendingDiffFile && entry.group === pendingDiffGroup,
+              )
+            : -1;
+          const fallback = entries.findIndex((entry) => entry.path === pendingDiffFile);
+          if (exact >= 0 || fallback >= 0) next = exact >= 0 ? exact : fallback;
+          pendingDiffFile = null;
+          pendingDiffGroup = null;
+        }
+        setDiffSel(next);
+        loadDiff(entries[next]!);
+      }
+    };
+
+    const applyMissionsCatalog = (envelope: WorkspaceMissionsEnvelopeV1) => {
+      const resource = envelope.resource.missionWorkspace;
+      if (resource.status === "degraded") {
+        setMissionWorkspaceSnapshot(null);
+        setMissionWorkspaceLoad({
+          status: "error",
+          generation: 0,
+          projectKey: envelope.resource.workspaceName,
+          message: resource.reason,
+        });
+        return;
+      }
+      const emptyColumns = { planned: [], running: [], blocked: [], review: [], done: [] };
+      const cards = resource.missions.map((mission) => ({
+        version: 1 as const,
+        id: mission.id,
+        title: mission.title,
+        summary: mission.summary,
+        status: mission.status,
+        column: mission.column,
+        labels: [],
+        createdAt: mission.startedAt ?? mission.updatedAt,
+        updatedAt: mission.updatedAt,
+        ...(mission.startedAt ? { startedAt: mission.startedAt } : {}),
+        ...(mission.finishedAt ? { finishedAt: mission.finishedAt } : {}),
+        durationMs: mission.durationMs,
+        progress: mission.progress,
+        blockedBy: [],
+        latestAttempt: null,
+        proofSummary: {
+          proofIds: [],
+          hasProof: mission.proof.hasProof,
+          noProofReasons: mission.proof.noProofReasons,
+          notesCount: mission.proof.notesCount,
+          tests: mission.proof.tests,
+          commits: [],
+          diff: {
+            summaries: [],
+            urls: [],
+            filesChanged: mission.proof.filesChanged,
+            insertions: mission.proof.insertions,
+            deletions: mission.proof.deletions,
+          },
+          prs: [],
+          artifacts: [],
+        },
+        refs: { missionId: mission.id, taskIds: [], attemptIds: [], proofIds: [] },
+      }));
+      const columns = { ...emptyColumns } as Record<(typeof cards)[number]["column"], typeof cards>;
+      for (const card of cards) columns[card.column].push(card);
+      const snapshot: MissionWorkspaceSnapshot = {
+        board: {
+          version: 1,
+          columns,
+          counts: {
+            planned: columns.planned.length,
+            running: columns.running.length,
+            blocked: columns.blocked.length,
+            review: columns.review.length,
+            done: columns.done.length,
+            total: cards.length,
+          },
+        },
+        history: [],
+        detail: null,
+        project: {
+          identityKey: envelope.resource.workspaceName,
+          projectRoot: workspaceDir(),
+        },
+        loadedAt: new Date().toISOString(),
+      };
+      setMissionWorkspaceSnapshot(snapshot);
+      setMissionWorkspaceLoad({
+        status: cards.length === 0 ? "empty" : "ready",
+        generation: 0,
+        snapshot,
+      });
+      const persistedSelection = missionSelectionFromWorkspaceState(
+        workspaceUiState(),
+        missionViewId(),
+      );
+      updateMissionModel((current) =>
+        reconcileMissionWorkspaceModel(
+          missionModelFromWorkspaceState(workspaceUiState(), missionHostedView(), current),
+          snapshot,
+          {
+            persistedMissionId: persistedSelection.selectedMissionId,
+            persistedTaskId: persistedSelection.selectedTaskId,
+            ...missionLayoutSize(),
+          },
+        ),
+      );
+    };
+
+    const applyToolResource = (resource: TuiToolResource): void => {
+      if (resource.kind === "fleet") applyFleetCatalog(resource.value);
+      else if (resource.kind === "sessions") {
+        latestSessionCatalog = resource.value;
+        reconcileFleetResources();
+      } else if (resource.kind === "projects") {
+        latestProjectCatalog = resource.value;
+        reconcileFleetResources();
+      } else if (resource.kind === "files") applyFilesCatalog(resource.value);
+      else if (resource.kind === "changes") applyChangesCatalog(resource.value);
+      else applyMissionsCatalog(resource.value);
+    };
+
     onMount(() => {
+      const appliedToolSnapshots = new Map<TuiToolResource["kind"], number>();
+      const disposeTools = toolResources.subscribe((state) => {
+        for (const slot of state.slots.values()) {
+          if (
+            slot.status === "loaded" &&
+            !slot.refreshing &&
+            appliedToolSnapshots.get(slot.resource.kind) !== slot.updatedAt
+          ) {
+            appliedToolSnapshots.set(slot.resource.kind, slot.updatedAt);
+            applyToolResource(slot.resource);
+          }
+        }
+      });
+      applicationLifecycle.registerCloser("tool-resource-subscription", disposeTools);
       tuiPerfMark("solid-mounted");
       // Copy relies on the surrounding tmux capturing our OSC52: turn on
       // set-clipboard (so the sequence lands in tmux's paste buffer AND is
@@ -5716,8 +5839,6 @@ try {
       // openFile restores the buffer WITHOUT stealing the restored tab (post-render
       // so the native EditBuffer FFI is loaded).
       if (values.edit) openEditor(values.edit);
-      if (mode() === "editor" && fileNodes().length === 0) loadFileList(workspaceDir());
-      if (mode() === "diff") refreshStatus();
       // The semanticView follows workspace identity, not which native surface owns
       // keyboard focus. Dock restore must not leave the terminal canvas blank.
       if (curTarget()) attach(curTarget());
@@ -5801,86 +5922,15 @@ try {
       // budget. This replaces the unconditional 125 Hz wake-up loop.
       paneFrameCoalescer = new FrameCoalescer(flushMirrorFrame);
       if (dirty) paneFrameCoalescer.request();
-      // Fleet via an ASYNC subprocess — the in-process data layer is a chain of
-      // synchronous execs that blocks the event loop for seconds and swallows
-      // input (mouse events die during the storm). The child does the work.
-      let fleetInFlight = false;
-      const refreshFleet = () => {
-        pruneDragOverrides();
-        // The M25.1 handshakes piggyback on the poll cadence: publish what the
-        // app is showing, and consume any banner-click jump request.
-        refreshFocusRecord();
-        consumeJumpRequest();
-        if (fleetInFlight) return;
-        fleetInFlight = true;
-        execFile("node", [cliPath, "team", "--json"], { timeout: 10_000 }, (err, stdout) => {
-          fleetInFlight = false;
-          if (err) return;
-          try {
-            const data = JSON.parse(stdout) as { projects?: FleetProject[] };
-            const projects = data.projects ?? [];
-            setProjectsData(projects);
-            noteAttention(projects);
-            if (!startupWorkspaceReconciled) {
-              const liveSessions = projects.flatMap((project) =>
-                project.sessions.map((session) => session.name),
-              );
-              if (liveSessions.length > 0) {
-                startupWorkspaceReconciled = true;
-                const selection = reconcileWorkspaceSelection({
-                  liveWorkspaceIds: liveSessions,
-                  persistedWorkspaceId: persisted.contextSession,
-                  fallback: "first-live",
-                });
-                const restoredSession = selection.workspaceId;
-                if (!restoredSession) return;
-                const restoredDir = dirForSession(restoredSession) ?? invokeCwd;
-                setContextSession(restoredSession);
-                setContextDir(restoredDir);
-                setDiffDir(restoredDir);
-                setCurTarget(restoredSession);
-                attach(restoredSession);
-                if (persisted.lastTab === "terminal") selectPanel("terminals");
-                if (selection.rejectedSource === "persisted") {
-                  setStatusNote(`restored live workspace ${restoredSession}`);
-                }
-              }
-            }
-            // Reconcile a RESTORED context session to its project dir once the
-            // fleet lands (persistence carries the name, not the dir). One-shot:
-            // only while contextDir is still unresolved.
-            if (contextSession() && !contextDir()) {
-              const dir = dirForSession(contextSession());
-              if (dir) {
-                setContextDir(dir);
-                setDiffDir(dir);
-                loadFileList(dir);
-                if (mode() === "diff") refreshStatus();
-              }
-            }
-          } catch {
-            // keep the previous fleet on parse trouble
-          }
-        });
-      };
-      fleetRefresh = refreshFleet;
-      refreshFleet();
-      const fleetTimer = setInterval(refreshFleet, 3000);
-      // While the diff panel is up, re-poll git so external edits surface.
-      const diffTimer = setInterval(() => {
-        if (mode() === "diff") refreshStatus();
-      }, 3000);
-      cleanupRegistry.set("state-and-fleet-timers", () => {
+      cleanupRegistry.set("state-and-presentation-timers", () => {
         paneFrameCoalescer?.dispose();
         paneFrameCoalescer = null;
-        clearInterval(fleetTimer);
-        clearInterval(diffTimer);
         if (saveTimer) clearTimeout(saveTimer);
         if (workspaceUiSaveTimer) clearTimeout(workspaceUiSaveTimer);
         if (noteTimer) clearTimeout(noteTimer);
       });
-      cleanupRegistry.set("terminal-and-editor", () => {
-        void mirrorSupervisor?.stop();
+      applicationLifecycle.registerCloser("terminal-and-editor", async () => {
+        await mirrorSupervisor?.stop();
         mirrorSupervisor = null;
         semanticView = null;
         editBuffer?.destroy();
@@ -6563,14 +6613,14 @@ try {
           void executeSharedMultiplexerAction(
             { kind: "kill-session" },
             { sessionName: name, runtimePaneId: null },
-          ).then(() => setTimeout(() => fleetRefresh?.(), 200));
+          ).then(() => toolResources.session.refresh("fleet"));
           return;
         }
         if (id === "rename" && val) {
           void executeSharedMultiplexerAction(
             { kind: "rename-session", name: val },
             { sessionName: name, runtimePaneId: null },
-          ).then(() => setTimeout(() => fleetRefresh?.(), 200));
+          ).then(() => toolResources.session.refresh("fleet"));
         }
         closeMenu();
         return;
@@ -6587,7 +6637,7 @@ try {
           void writeFile(p, "", { flag: "wx" })
             .then(() => {
               setStatusNote(`created ${val}`);
-              refreshTree(); // expansion-preserving (M24.6)
+              toolResources.session.refresh("files");
             })
             .catch((e) => setStatusNote(`create failed: ${(e as Error).message}`));
         } else if (id === "rename" && val && m.filePath) {
@@ -6595,14 +6645,14 @@ try {
           void rename(m.filePath, p)
             .then(() => {
               setStatusNote(`renamed → ${val}`);
-              refreshTree();
+              toolResources.session.refresh("files");
             })
             .catch((e) => setStatusNote(`rename failed: ${(e as Error).message}`));
         } else if (id === "delete" && m.filePath) {
           void rm(m.filePath, { recursive: true, force: false })
             .then(() => {
               setStatusNote(`deleted ${basename(m.filePath!)}`);
-              refreshTree();
+              toolResources.session.refresh("files");
             })
             .catch((e) => setStatusNote(`delete failed: ${(e as Error).message}`));
         }
@@ -6981,7 +7031,7 @@ try {
           else if (evt.name === "[") hopChanged(-1);
           else if (evt.shift && evt.name === "h") toggleHiddenFiles();
           else if (evt.shift && evt.name === "i") toggleIgnoredFiles();
-          else if (evt.name === "r") refreshTree();
+          else if (evt.name === "r") toolResources.session.refresh("files");
           else if (evt.name === "j" || evt.name === "down") moveFileSel(1);
           else if (evt.name === "k" || evt.name === "up") moveFileSel(-1);
           else if (evt.name === "return") activateFile(fileSel());
@@ -7029,7 +7079,7 @@ try {
         } else if (evt.name === "]") jumpHunk(1);
         else if (evt.name === "[") jumpHunk(-1);
         else if (evt.name === "/" && !evt.ctrl && !evt.meta) setDiffFilter("");
-        else if (evt.name === "r") refreshStatus();
+        else if (evt.name === "r") toolResources.session.refresh("changes");
         return;
       }
       if (layer.kind === "home-prompt" || layer.kind === "home") {
@@ -7187,7 +7237,10 @@ try {
     // OpenTUI's Solid hooks install their input owners from onMount. Register
     // this barrier after both root hooks so an automation/host that observes it
     // can send lifecycle input without racing a merely-painted first frame.
-    onMount(() => publishTuiInputReady("app"));
+    onMount(() => {
+      publishToolReadiness = () => toolResources.markTerminalReady();
+      resolveInputReady();
+    });
 
     /** The per-window strip's x-spans — one segment per tmux window, laid out from
      *  the main column's first cell (SIDEBAR_W + paddingLeft 1) with a 1-cell gap,
@@ -7283,7 +7336,7 @@ try {
         setFileTop(0);
       } else if (id === "toggle-hidden") toggleHiddenFiles();
       else if (id === "toggle-ignored") toggleIgnoredFiles();
-      else if (id === "refresh") refreshTree();
+      else if (id === "refresh") toolResources.session.refresh("files");
     };
 
     /** The strip as THREE static texts (pre/active/post) whose STRINGS update.
@@ -9628,7 +9681,22 @@ try {
       </box>
     );
   }, appRenderer);
-} catch (error) {
-  appRenderer.destroy();
-  throw error;
-}
+  // Native render lifetime ends only after lifecycle retirement. Observe a
+  // spontaneous root failure without registering the root promise as a
+  // closer (that would deadlock renderer-last shutdown).
+  void root.catch(() => applicationLifecycle.shutdown("bootstrap-error"));
+  return { root, ready: inputReady };
+};
+
+await startTuiApplication({
+  argv: process.argv.slice(2),
+  parseArgs: parseTuiAppArgs,
+  loadConfig: loadTuiAppConfig,
+  createRenderer: createTuiRenderer,
+  createLifecycle: createTuiLifecycle,
+  mountRoot: mountTuiRoot,
+  publishReady() {
+    publishTuiInputReady("app");
+    publishToolReadiness();
+  },
+});

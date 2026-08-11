@@ -192,6 +192,28 @@ describe("OpenTUI application lifecycle", () => {
     expect(calls).toEqual(["cancel-open", "close-late-watcher", "renderer"]);
   });
 
+  it("waits for pending work registered reentrantly during shutdown", async () => {
+    const order: string[] = [];
+    const late = deferred<void>();
+    const lifecycle = new TuiApplicationLifecycle({
+      destroyRenderer: () => order.push("renderer"),
+      shutdownTimeoutMs: 1_000,
+    });
+    lifecycle.registerCleanup("reentrant", () => {
+      lifecycle.trackPending("late-pending", {
+        cancel: () => order.push("late-cancel"),
+        settled: late.promise.then(() => order.push("late-settled")),
+      });
+    });
+
+    const shutdown = lifecycle.shutdown("host");
+    await Promise.resolve();
+    expect(order).toEqual(["late-cancel"]);
+    late.resolve();
+    await expect(shutdown).resolves.toMatchObject({ timedOut: [] });
+    expect(order).toEqual(["late-cancel", "late-settled", "renderer"]);
+  });
+
   it("routes the existing input lifecycle into async shutdown without process exit", async () => {
     const destroy = vi.fn();
     const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: destroy });
