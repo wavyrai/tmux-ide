@@ -17,9 +17,10 @@ test("xterm pointer selection copies text without mutating tmux", async ({ page,
   await expect(page.locator('.terminal-surface[data-phase="connected"]')).toHaveCount(1, {
     timeout: 60_000,
   });
-  await expect(page.locator(".terminal-surface__viewport .xterm-rows")).toContainText("sh-3.2$", {
-    timeout: 30_000,
-  });
+  // Do not key readiness to the host shell's prompt: macOS' /bin/sh renders
+  // `sh-3.2$`, while the Linux CI image renders `$`. A redeemed interactive
+  // attachment and its mounted helper textarea are the portable input-ready
+  // contract; the unique marker below proves the real shell consumed it.
   await page.locator(".terminal-surface__viewport").click({ position: { x: 24, y: 48 } });
   await input.focus();
   const marker = `TMUX_IDE_COPY_${Date.now()}`;
