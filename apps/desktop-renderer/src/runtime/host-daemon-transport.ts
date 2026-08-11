@@ -109,6 +109,7 @@ function eventToHandler(
     // not this per-workspace application-shell transport.
     return;
   }
+  if (event.type !== "connection.changed") return;
   if (event.state === "live") {
     handlers.onVerifiedOpen();
     return;
@@ -176,9 +177,17 @@ export function createHostDaemonTransport(
       let closed = false;
       let unsubscribe: (() => void) | null = null;
       void host.daemon
-        .subscribe({ workspaceNames: [safeTarget.workspaceName] }, (event) => {
-          if (!closed) eventToHandler(event, safeTarget.workspaceName, handlers);
-        })
+        .subscribe(
+          {
+            workspaceNames: [],
+            resourceInterests: [
+              { resource: "application-shell", workspaceName: safeTarget.workspaceName },
+            ],
+          },
+          (event) => {
+            if (!closed) eventToHandler(event, safeTarget.workspaceName, handlers);
+          },
+        )
         .then((result) => {
           if (result.status === "error") {
             if (!closed) handlers.onError(result.error.reason);

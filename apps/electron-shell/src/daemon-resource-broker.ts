@@ -24,6 +24,7 @@ import {
   DesktopDaemonFetchWorkspaceChangesRequestSchemaZ,
   DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ,
   DesktopDaemonFetchWorkspaceFilesRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ,
   DesktopDaemonHostStateSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopWorkspaceNameSchemaZ,
@@ -31,6 +32,7 @@ import {
   WorkspaceChangesCatalogEnvelopeV1SchemaZ,
   WorkspaceFilePreviewEnvelopeV1SchemaZ,
   WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+  WorkspaceMissionsEnvelopeV1SchemaZ,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
   TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS,
   TerminalAttachmentIssueDescriptorSchemaZ,
@@ -74,6 +76,7 @@ import {
   type DesktopDaemonFetchWorkspaceChangesResult,
   type DesktopDaemonFetchWorkspaceFilePreviewResult,
   type DesktopDaemonFetchWorkspaceFilesResult,
+  type DesktopDaemonFetchWorkspaceMissionsResult,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
   type WorkspacePaneCreateMutationRequest,
@@ -84,6 +87,8 @@ import {
   type WorkspacePromoteMutationResult,
   type DesktopDaemonFetchFleetCatalogResult,
   type DesktopDaemonTransportState,
+  type DesktopDaemonEventSubscriptionRequest,
+  type DaemonEventResourceInterest,
   type AppWindowMutationRequest,
   type AppWindowMutationResult,
   type DaemonChildOutputTail,
@@ -130,6 +135,10 @@ const DEFAULT_EVENT_RECONNECT_MAXIMUM_DELAY_MS = 4_000;
 const DEFAULT_EVENT_RECONNECT_MAXIMUM_ATTEMPTS = 4;
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
+
+function resourceInterestKey(interest: DaemonEventResourceInterest): string {
+  return `${interest.resource}\u0000${interest.workspaceName ?? "global"}`;
+}
 
 function boundedInteger(
   value: number | undefined,
@@ -185,7 +194,13 @@ interface WorkspaceCatalogEntry {
 
 interface BrokerSubscription {
   readonly workspaceNames: ReadonlySet<string>;
+  /** Null preserves compatibility for internal legacy callers; renderers send an explicit set. */
+  readonly resourceInterests: ReadonlyMap<string, DaemonEventResourceInterest> | null;
   readonly listener: (event: DesktopDaemonEvent) => void;
+  readyRevision: number | null;
+  readySettled: boolean;
+  readonly resolveReady: ((result: BrokerSubscriptionResult) => void) | null;
+  readySuccess: BrokerSubscriptionResult | null;
 }
 
 class BrokerFailure extends Error {
@@ -561,6 +576,12 @@ export class DaemonResourceBroker {
   #capabilityCatalog: DesktopDaemonCapabilitiesResult | null = null;
   #socket: BrokerEventSocket | null = null;
   #sentSessions = new Set<string>();
+  #sentInterests = new Map<string, DaemonEventResourceInterest>();
+  #sentInterestMode: "unsent" | "legacy" | "explicit" = "unsent";
+  #socketSemantic = false;
+  #nextInterestRevision = 0;
+  #lastSentInterestRevision = 0;
+  #lastAckedInterestRevision = 0;
   #socketPeerVerified = false;
   #socketOpened = false;
   #eventCursorSent = false;
@@ -1167,6 +1188,21 @@ export class DaemonResourceBroker {
     );
   }
 
+  async fetchWorkspaceMissions(
+    request: unknown,
+  ): Promise<DesktopDaemonFetchWorkspaceMissionsResult> {
+    const parsed = DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ.safeParse(request);
+    if (!parsed.success) {
+      return { status: "error", error: daemonCapabilityError("invalid-request") };
+    }
+    return this.#fetchWorkspaceResource(
+      "fetchWorkspaceMissions",
+      parsed.data.workspaceName,
+      (name) => `/api/project/${name}/missions`,
+      WorkspaceMissionsEnvelopeV1SchemaZ,
+    );
+  }
+
   async fetchWorkspaceChangeDiff(
     request: unknown,
   ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult> {
@@ -1273,12 +1309,14 @@ export class DaemonResourceBroker {
   }
 
   async subscribe(
-    workspaceNames: readonly string[],
+    request: DesktopDaemonEventSubscriptionRequest | readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
   ): Promise<BrokerSubscriptionResult> {
     if (this.#daemon.status !== "connected") return this.#disconnectedResult();
     if (this.#disposed) return { status: "error", error: daemonCapabilityError("disposed") };
-    const parsed = DesktopDaemonEventSubscriptionRequestSchemaZ.safeParse({ workspaceNames });
+    const parsed = DesktopDaemonEventSubscriptionRequestSchemaZ.safeParse(
+      Array.isArray(request) ? { workspaceNames: request } : request,
+    );
     if (!parsed.success) {
       return { status: "error", error: daemonCapabilityError("invalid-request") };
     }
@@ -1288,10 +1326,37 @@ export class DaemonResourceBroker {
       if (parsed.data.workspaceNames.some((name) => !known.has(name))) {
         return { status: "error", error: daemonCapabilityError("workspace-not-found") };
       }
+      if (
+        parsed.data.resourceInterests?.some(
+          (interest) => interest.workspaceName !== null && !known.has(interest.workspaceName),
+        )
+      ) {
+        return { status: "error", error: daemonCapabilityError("workspace-not-found") };
+      }
       const id = ++this.#nextSubscription;
+      let resolveReady: ((result: BrokerSubscriptionResult) => void) | null = null;
+      const ready =
+        parsed.data.resourceInterests === undefined
+          ? null
+          : new Promise<BrokerSubscriptionResult>((resolve) => {
+              resolveReady = resolve;
+            });
       this.#subscriptions.set(id, {
         workspaceNames: new Set(parsed.data.workspaceNames),
+        resourceInterests:
+          parsed.data.resourceInterests === undefined
+            ? null
+            : new Map(
+                parsed.data.resourceInterests.map((interest) => [
+                  resourceInterestKey(interest),
+                  interest,
+                ]),
+              ),
         listener,
+        readyRevision: null,
+        readySettled: parsed.data.resourceInterests === undefined,
+        resolveReady,
+        readySuccess: null,
       });
       const transportBefore = this.#supervisor.state();
       this.#synchronizeSocket();
@@ -1313,7 +1378,7 @@ export class DaemonResourceBroker {
         });
       }
       let active = true;
-      return {
+      const subscribed: BrokerSubscriptionResult = {
         status: "subscribed",
         unsubscribe: () => {
           if (!active) return;
@@ -1322,6 +1387,25 @@ export class DaemonResourceBroker {
           this.#synchronizeSocket();
         },
       };
+      const installedSubscription = this.#subscriptions.get(id);
+      if (installedSubscription) installedSubscription.readySuccess = subscribed;
+      if (ready === null) return subscribed;
+      const subscription = this.#subscriptions.get(id);
+      if (
+        subscription &&
+        this.#socketPeerVerified &&
+        this.#lastSentInterestRevision > 0 &&
+        this.#lastAckedInterestRevision >= this.#lastSentInterestRevision
+      ) {
+        subscription.readySettled = true;
+        subscription.resolveReady?.(subscribed);
+      }
+      const settled = await ready;
+      if (settled.status === "error") {
+        this.#subscriptions.delete(id);
+        this.#synchronizeSocket();
+      }
+      return settled;
     } catch (error) {
       return { status: "error", error: this.#boundedError(error) };
     }
@@ -1332,6 +1416,12 @@ export class DaemonResourceBroker {
     this.#rendererGeneration += 1;
     for (const controller of this.#controllers) controller.abort();
     this.#controllers.clear();
+    for (const subscription of this.#subscriptions.values()) {
+      if (!subscription.readySettled) {
+        subscription.readySettled = true;
+        subscription.resolveReady?.({ status: "error", error: daemonCapabilityError("disposed") });
+      }
+    }
     this.#subscriptions.clear();
     this.#closePhysicalSocket(1000, "renderer released");
     this.#supervisor.release();
@@ -1575,6 +1665,31 @@ export class DaemonResourceBroker {
     return required;
   }
 
+  #requiredInterests(): Map<string, DaemonEventResourceInterest> {
+    const required = new Map<string, DaemonEventResourceInterest>();
+    for (const subscription of this.#subscriptions.values()) {
+      if (subscription.resourceInterests === null) continue;
+      for (const [key, interest] of subscription.resourceInterests) required.set(key, interest);
+    }
+    return required;
+  }
+
+  #requiresSemanticEvents(): boolean {
+    return [...this.#subscriptions.values()].some(
+      ({ resourceInterests }) => resourceInterests !== null,
+    );
+  }
+
+  #requiresLegacyEvents(): boolean {
+    return [...this.#subscriptions.values()].some(
+      ({ resourceInterests }) => resourceInterests === null,
+    );
+  }
+
+  #desiredSemanticMode(): boolean {
+    return this.#requiresSemanticEvents() && !this.#requiresLegacyEvents();
+  }
+
   #synchronizeSocket(): void {
     if (this.#subscriptions.size === 0) {
       this.#closePhysicalSocket(1000, "renderer released");
@@ -1588,7 +1703,13 @@ export class DaemonResourceBroker {
       return;
     }
     if (this.#socket.readyState === WS_OPEN && this.#socketPeerVerified) {
-      this.#sendSubscriptionDelta(this.#requiredSessions());
+      if (this.#socketSemantic !== this.#desiredSemanticMode()) {
+        this.#closePhysicalSocket(1000, "event delivery mode changed");
+        this.#supervisor.release();
+        this.#supervisor.ensure();
+        return;
+      }
+      this.#sendSubscriptionDelta(this.#requiredSessions(), this.#requiredInterests());
     }
   }
 
@@ -1599,12 +1720,18 @@ export class DaemonResourceBroker {
     }
     const url = new URL("/ws/events", this.#daemon.descriptor.apiBaseUrl);
     url.protocol = "ws:";
+    this.#socketSemantic = this.#desiredSemanticMode();
+    if (this.#socketSemantic) url.searchParams.set("mode", "semantic");
     const socket = this.#createWebSocket(url.toString());
     this.#socket = socket;
     this.#socketPeerVerified = false;
     this.#socketOpened = false;
     this.#eventCursorSent = false;
     this.#sentSessions.clear();
+    this.#sentInterests.clear();
+    this.#sentInterestMode = "unsent";
+    this.#lastSentInterestRevision = 0;
+    this.#lastAckedInterestRevision = 0;
     socket.addEventListener("open", () => {
       if (this.#socket !== socket) return;
       this.#socketOpened = true;
@@ -1621,6 +1748,17 @@ export class DaemonResourceBroker {
       this.#emit({ type: "connection.changed", state: "live", error: null });
     } else if (state.phase === "degraded") {
       this.#emit({ type: "connection.changed", state: "degraded", error: state.error });
+    } else if (state.phase === "stopped") {
+      for (const [id, subscription] of [...this.#subscriptions]) {
+        if (subscription.readySettled) continue;
+        subscription.readySettled = true;
+        subscription.resolveReady?.({
+          status: "error",
+          error: daemonCapabilityError("event-unavailable"),
+        });
+        this.#subscriptions.delete(id);
+      }
+      this.#synchronizeSocket();
     }
   }
 
@@ -1669,7 +1807,7 @@ export class DaemonResourceBroker {
           ? (this.#eventReplica.sequence ?? 0)
           : 0;
       this.#establishEventCursor(parsed.data.daemon.instanceId, resumeSequence);
-      this.#sendSubscriptionDelta(this.#requiredSessions());
+      this.#sendSubscriptionDelta(this.#requiredSessions(), this.#requiredInterests());
       this.#supervisor.verified();
       return;
     }
@@ -1682,6 +1820,46 @@ export class DaemonResourceBroker {
 
   #projectServerFrame(frame: DaemonEventServerFrame): void {
     if (this.#daemon.status !== "connected") return;
+    if (frame.type === "resource.interests-ack") {
+      const instanceId = this.#daemon.descriptor.instanceId;
+      const transition = advanceResourceReplica(this.#eventReplica, {
+        type: "observed",
+        daemonInstanceId: instanceId,
+        sequence: frame.sequence,
+      });
+      this.#eventReplica = transition.state;
+      if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+        this.#invalidateEveryResource();
+        this.#establishEventCursor(instanceId, frame.sequence);
+      }
+      this.#lastAckedInterestRevision = Math.max(
+        this.#lastAckedInterestRevision,
+        frame.interestRevision,
+      );
+      const unavailable = new Set(frame.unavailableInterests.map(resourceInterestKey));
+      for (const subscription of this.#subscriptions.values()) {
+        if (
+          subscription.readySettled ||
+          subscription.readyRevision === null ||
+          subscription.readyRevision > frame.interestRevision
+        ) {
+          continue;
+        }
+        subscription.readySettled = true;
+        const failed =
+          subscription.resourceInterests !== null &&
+          [...subscription.resourceInterests.keys()].some((key) => unavailable.has(key));
+        subscription.resolveReady?.(
+          failed
+            ? { status: "error", error: daemonCapabilityError("event-unavailable") }
+            : (subscription.readySuccess ?? {
+                status: "error",
+                error: daemonCapabilityError("event-unavailable"),
+              }),
+        );
+      }
+      return;
+    }
     if (frame.type === "snapshot-required") {
       const instanceId = this.#daemon.descriptor.instanceId;
       this.#eventReplica = advanceResourceReplica(this.#eventReplica, {
@@ -1693,6 +1871,20 @@ export class DaemonResourceBroker {
       this.#establishEventCursor(instanceId, frame.currentSequence);
       return;
     }
+    if (frame.type === "resource.observed") {
+      const instanceId = this.#daemon.descriptor.instanceId;
+      const transition = advanceResourceReplica(this.#eventReplica, {
+        type: "observed",
+        daemonInstanceId: instanceId,
+        sequence: frame.sequence,
+      });
+      this.#eventReplica = transition.state;
+      if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+        this.#invalidateEveryResource();
+        this.#establishEventCursor(instanceId, frame.sequence);
+      }
+      return;
+    }
     if (frame.type === "resource.changed") {
       const instanceId = this.#daemon.descriptor.instanceId;
       const previousSequence = this.#eventReplica.sequence;
@@ -1700,7 +1892,7 @@ export class DaemonResourceBroker {
         type: "changed",
         daemonInstanceId: instanceId,
         sequence: frame.sequence,
-        revision: frame.sequence,
+        revision: frame.revision,
         ...(frame.causeOperationId ? { causeOperationId: frame.causeOperationId } : {}),
       });
       this.#eventReplica = transition.state;
@@ -1734,6 +1926,28 @@ export class DaemonResourceBroker {
         }
       } else if (frame.resource === "fleet-catalog") {
         this.#emit({ type: "fleet.changed" });
+      } else if (
+        frame.resource === "workspace-files" ||
+        frame.resource === "workspace-changes" ||
+        frame.resource === "workspace-missions"
+      ) {
+        const type = `${frame.resource}.changed` as const;
+        const workspaces =
+          frame.workspaceName === null
+            ? [...this.#workspaceCatalog.keys()]
+            : this.#workspaceCatalog.has(frame.workspaceName)
+              ? [frame.workspaceName]
+              : [];
+        for (const workspaceName of workspaces) {
+          this.#emit({
+            type,
+            workspaceName,
+            daemonInstanceId: instanceId,
+            sequence: frame.sequence,
+            revision: frame.revision,
+            causeOperationId: frame.causeOperationId,
+          });
+        }
       } else {
         this.#emit({ type: "workspaces.changed" });
       }
@@ -1856,6 +2070,8 @@ export class DaemonResourceBroker {
   }
 
   #invalidateEveryResource(): void {
+    if (this.#daemon.status !== "connected") return;
+    const instanceId = this.#daemon.descriptor.instanceId;
     this.#emit({ type: "workspaces.changed" });
     this.#emit({ type: "fleet.changed" });
     for (const workspace of this.#workspaceCatalog.values()) {
@@ -1863,6 +2079,20 @@ export class DaemonResourceBroker {
         type: "application-shell.changed",
         workspaceName: workspace.workspaceName,
       });
+      for (const resource of [
+        "workspace-files",
+        "workspace-changes",
+        "workspace-missions",
+      ] as const) {
+        this.#emit({
+          type: `${resource}.changed`,
+          workspaceName: workspace.workspaceName,
+          daemonInstanceId: instanceId,
+          sequence: this.#eventReplica.sequence ?? 0,
+          revision: this.#eventReplica.revision ?? 0,
+          causeOperationId: null,
+        });
+      }
     }
   }
 
@@ -1883,11 +2113,37 @@ export class DaemonResourceBroker {
   #emit(raw: DesktopDaemonEvent): void {
     const event = DesktopDaemonEventSchemaZ.parse(raw);
     for (const subscription of this.#subscriptions.values()) {
-      if (
-        (event.type === "application-shell.changed" || event.type === "interaction.receipt") &&
-        !subscription.workspaceNames.has(event.workspaceName)
-      ) {
-        continue;
+      const workspaceName =
+        event.type === "application-shell.changed" ||
+        event.type === "workspace-files.changed" ||
+        event.type === "workspace-changes.changed" ||
+        event.type === "workspace-missions.changed" ||
+        event.type === "interaction.receipt"
+          ? event.workspaceName
+          : null;
+      if (subscription.resourceInterests === null) {
+        if (workspaceName !== null && !subscription.workspaceNames.has(workspaceName)) continue;
+      } else {
+        const requiredInterest: DaemonEventResourceInterest | null =
+          event.type === "workspaces.changed"
+            ? { resource: "workspace-catalog", workspaceName: null }
+            : event.type === "fleet.changed"
+              ? { resource: "fleet-catalog", workspaceName: null }
+              : event.type === "application-shell.changed" || event.type === "interaction.receipt"
+                ? { resource: "application-shell", workspaceName: event.workspaceName }
+                : event.type === "workspace-files.changed"
+                  ? { resource: "workspace-files", workspaceName: event.workspaceName }
+                  : event.type === "workspace-changes.changed"
+                    ? { resource: "workspace-changes", workspaceName: event.workspaceName }
+                    : event.type === "workspace-missions.changed"
+                      ? { resource: "workspace-missions", workspaceName: event.workspaceName }
+                      : null;
+        if (
+          requiredInterest !== null &&
+          !subscription.resourceInterests.has(resourceInterestKey(requiredInterest))
+        ) {
+          continue;
+        }
       }
       this.#deliver(subscription, event);
     }
@@ -1902,23 +2158,65 @@ export class DaemonResourceBroker {
     }
   }
 
-  #sendSubscriptionDelta(required: Set<string>): void {
+  #sendSubscriptionDelta(
+    required: Set<string>,
+    requiredInterests: ReadonlyMap<string, DaemonEventResourceInterest>,
+  ): void {
     if (!this.#socket || this.#socket.readyState !== WS_OPEN || !this.#socketPeerVerified) return;
     const removed = [...this.#sentSessions].filter((name) => !required.has(name));
     const added = [...required].filter((name) => !this.#sentSessions.has(name));
-    if (removed.length > 0) {
+    const removedInterests = [...this.#sentInterests]
+      .filter(([key]) => !requiredInterests.has(key))
+      .map(([, interest]) => interest);
+    const addedInterests = [...requiredInterests]
+      .filter(([key]) => !this.#sentInterests.has(key))
+      .map(([, interest]) => interest);
+    if (!this.#socketSemantic && !this.#requiresSemanticEvents()) {
+      if (removed.length > 0) {
+        this.#socket.send(JSON.stringify({ type: "unsubscribe", sessions: removed }));
+      }
+      if (added.length > 0 || !this.#eventCursorSent) {
+        this.#socket.send(
+          JSON.stringify({
+            type: "subscribe",
+            sessions: added,
+            ...(!this.#eventCursorSent ? { afterSequence: this.#eventReplica.sequence ?? 0 } : {}),
+          }),
+        );
+        this.#eventCursorSent = true;
+      }
+      this.#sentSessions = required;
+      return;
+    }
+    const legacyEvents = this.#requiresLegacyEvents();
+    const legacyChanged =
+      this.#sentInterestMode === "unsent" ||
+      (legacyEvents ? this.#sentInterestMode !== "legacy" : this.#sentInterestMode !== "explicit");
+    let emittedRevision = 0;
+    if (removed.length > 0 || removedInterests.length > 0) {
+      emittedRevision = ++this.#nextInterestRevision;
       this.#socket.send(
         JSON.stringify(
-          DaemonEventClientFrameSchemaZ.parse({ type: "unsubscribe", sessions: removed }),
+          DaemonEventClientFrameSchemaZ.parse({
+            type: "unsubscribe",
+            sessions: removed,
+            interests: removedInterests,
+            legacyEvents,
+            interestRevision: emittedRevision,
+          }),
         ),
       );
     }
-    if (added.length > 0 || !this.#eventCursorSent) {
+    if (added.length > 0 || addedInterests.length > 0 || !this.#eventCursorSent || legacyChanged) {
+      emittedRevision = ++this.#nextInterestRevision;
       this.#socket.send(
         JSON.stringify(
           DaemonEventClientFrameSchemaZ.parse({
             type: "subscribe",
             sessions: added,
+            interests: addedInterests,
+            legacyEvents,
+            interestRevision: emittedRevision,
             ...(!this.#eventCursorSent ? { afterSequence: this.#eventReplica.sequence ?? 0 } : {}),
           }),
         ),
@@ -1926,6 +2224,18 @@ export class DaemonResourceBroker {
       this.#eventCursorSent = true;
     }
     this.#sentSessions = required;
+    this.#sentInterests = new Map(requiredInterests);
+    this.#sentInterestMode = legacyEvents ? "legacy" : "explicit";
+    if (emittedRevision > 0) this.#lastSentInterestRevision = emittedRevision;
+    for (const subscription of this.#subscriptions.values()) {
+      if (subscription.resolveReady === null || subscription.readySuccess === null) continue;
+      if (subscription.readyRevision === null) {
+        subscription.readyRevision = this.#lastSentInterestRevision;
+      }
+      if (this.#lastAckedInterestRevision >= subscription.readyRevision) {
+        subscription.resolveReady(subscription.readySuccess);
+      }
+    }
   }
 
   #socketClosed(socket: BrokerEventSocket): void {
@@ -1968,6 +2278,8 @@ export class DaemonResourceBroker {
     this.#socketPeerVerified = false;
     this.#socketOpened = false;
     this.#sentSessions.clear();
+    this.#sentInterests.clear();
+    this.#sentInterestMode = "unsent";
     this.#eventCursorSent = false;
     this.#resourceEventsSupported = false;
   }

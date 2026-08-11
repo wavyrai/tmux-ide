@@ -395,6 +395,7 @@ export function createDesktopWorkspaceCatalogStore(
   const adapter = createDaemonCatalogAdapter<WorkspaceList, DesktopWorkspaceCatalogState>({
     host: options.host,
     invalidatesOn: ["workspaces.changed"],
+    resourceInterest: { resource: "workspace-catalog", workspaceName: null },
     wording: WORDING,
     fetch: async (daemon) => {
       const raw = await options.host.daemon.listWorkspaces();

@@ -81,7 +81,7 @@ describe("desktop process boundaries", () => {
     // Seventeen after the content-addressed widget asset read joined the same
     // closed request union. `invokeVerb` still carries all seven multiplexer
     // verbs, so this remains one reviewed capability per semantic resource.
-    expect(DAEMON_RESOURCE_KINDS.length).toBe(17);
+    expect(DAEMON_RESOURCE_KINDS.length).toBe(18);
     expect(new Set(DAEMON_RESOURCE_KINDS).size).toBe(DAEMON_RESOURCE_KINDS.length);
   });
 

@@ -27,7 +27,6 @@ import {
   ApplicationShellResourceV3SchemaZ,
   AppWindowMutationResultSchemaZ,
   WorkspaceMultiplexerMutationResultSchemaZ,
-  DaemonEventClientFrameSchemaZ,
   DaemonEventServerFrameSchemaZ,
   DESKTOP_HOST_API_VERSION,
   DesktopDaemonCapabilitiesResultSchemaZ,
@@ -52,6 +51,7 @@ import {
   createDaemonResourceMethods,
   daemonWorkspaceRouteName,
   type DaemonEventServerFrame,
+  type DaemonEventResourceInterest,
   type DaemonInstanceIdentity,
   type DaemonResourceRequest,
   type DaemonWorkspaceResourceKind,
@@ -235,7 +235,37 @@ export function projectDaemonServerFrame(
             : [];
       }
       if (frame.resource === "fleet-catalog") return [{ type: "fleet.changed" }];
+      if (
+        frame.resource === "workspace-files" ||
+        frame.resource === "workspace-changes" ||
+        frame.resource === "workspace-missions"
+      ) {
+        if (!daemonInstanceId) return [{ type: "workspaces.changed" }];
+        const changed = (workspaceName: string): DesktopDaemonEvent => {
+          const metadata = {
+            workspaceName,
+            daemonInstanceId,
+            sequence: frame.sequence,
+            revision: frame.revision,
+            causeOperationId: frame.causeOperationId,
+          };
+          if (frame.resource === "workspace-files") {
+            return { type: "workspace-files.changed", ...metadata };
+          }
+          if (frame.resource === "workspace-changes") {
+            return { type: "workspace-changes.changed", ...metadata };
+          }
+          return { type: "workspace-missions.changed", ...metadata };
+        };
+        return frame.workspaceName === null
+          ? catalog.map((entry) => changed(entry.workspaceName))
+          : catalog.some((entry) => entry.workspaceName === frame.workspaceName)
+            ? [changed(frame.workspaceName)]
+            : [];
+      }
       return [{ type: "workspaces.changed" }];
+    case "resource.observed":
+      return [];
     case "interaction.receipt":
       return catalog.some((entry) => entry.workspaceName === frame.workspaceName) ? [frame] : [];
     case "snapshot-required":
@@ -267,13 +297,33 @@ interface DevWebHost extends HostCapabilities {
 
 export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHost {
   const controllers = new Set<AbortController>();
-  const listeners = new Set<(event: DesktopDaemonEvent) => void>();
+  const subscriptions = new Map<
+    number,
+    {
+      readonly request: DesktopDaemonEventSubscriptionRequest;
+      readonly listener: (event: DesktopDaemonEvent) => void;
+      readyRevision: number | null;
+      readySettled: boolean;
+      readySuccess: DesktopDaemonHostSubscriptionResult | null;
+      readonly resolveReady: ((result: DesktopDaemonHostSubscriptionResult) => void) | null;
+    }
+  >();
+  let nextSubscriptionId = 0;
   let identity: DaemonInstanceIdentity | null = null;
   // The session-name → workspace-name map the event projection needs. Refreshed
   // by every catalog read; an empty cache simply projects fewer shell events
   // until the first read lands.
   let catalogCache: readonly DevWorkspaceCatalogEntry[] = [];
   let socketVerified = false;
+  let eventSocket: WebSocket | null = null;
+  let sentSessions = new Set<string>();
+  let sentInterests = new Map<string, DaemonEventResourceInterest>();
+  let sentInterestMode: "unsent" | "legacy" | "explicit" = "unsent";
+  let eventCursorSent = false;
+  let eventSocketSemantic = false;
+  let nextInterestRevision = 0;
+  let lastSentInterestRevision = 0;
+  let lastAckedInterestRevision = 0;
   let eventReplica: ResourceReplicaState<null> = initialResourceReplica();
   let socketSupervisor: RuntimeConnectionSupervisor<true> | null = null;
   let stopSocketStateSubscription: (() => void) | null = null;
@@ -473,6 +523,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       workspaceName,
       sessionName,
     }));
+    sendEventSubscriptionDelta();
     return catalogCache;
   }
 
@@ -538,8 +589,69 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     );
   }
 
+  const interestKey = (interest: DaemonEventResourceInterest): string =>
+    `${interest.resource}\0${interest.workspaceName ?? "global"}`;
+
+  function requiredEventSessions(): Set<string> {
+    const workspaces = new Set(
+      [...subscriptions.values()].flatMap(({ request }) => request.workspaceNames),
+    );
+    return new Set(
+      catalogCache
+        .filter(({ workspaceName }) => workspaces.has(workspaceName))
+        .map(({ sessionName }) => sessionName),
+    );
+  }
+
+  function requiredEventInterests(): Map<string, DaemonEventResourceInterest> {
+    const required = new Map<string, DaemonEventResourceInterest>();
+    for (const { request } of subscriptions.values()) {
+      if (request.resourceInterests === undefined) continue;
+      for (const interest of request.resourceInterests)
+        required.set(interestKey(interest), interest);
+    }
+    return required;
+  }
+
+  const requiresSemanticEvents = (): boolean =>
+    [...subscriptions.values()].some(({ request }) => request.resourceInterests !== undefined);
+  const requiresLegacyEvents = (): boolean =>
+    [...subscriptions.values()].some(({ request }) => request.resourceInterests === undefined);
+  const desiredSemanticMode = (): boolean => requiresSemanticEvents() && !requiresLegacyEvents();
+
+  function eventInterest(event: DesktopDaemonEvent): DaemonEventResourceInterest | null {
+    if (event.type === "workspaces.changed")
+      return { resource: "workspace-catalog", workspaceName: null };
+    if (event.type === "fleet.changed") return { resource: "fleet-catalog", workspaceName: null };
+    if (event.type === "application-shell.changed" || event.type === "interaction.receipt") {
+      return { resource: "application-shell", workspaceName: event.workspaceName };
+    }
+    if (event.type === "workspace-files.changed")
+      return { resource: "workspace-files", workspaceName: event.workspaceName };
+    if (event.type === "workspace-changes.changed")
+      return { resource: "workspace-changes", workspaceName: event.workspaceName };
+    if (event.type === "workspace-missions.changed")
+      return { resource: "workspace-missions", workspaceName: event.workspaceName };
+    return null;
+  }
+
   function emit(event: DesktopDaemonEvent): void {
-    for (const listener of [...listeners]) {
+    for (const { request, listener } of [...subscriptions.values()]) {
+      const interest = eventInterest(event);
+      if (request.resourceInterests === undefined) {
+        if (
+          interest?.workspaceName !== null &&
+          interest?.workspaceName !== undefined &&
+          !request.workspaceNames.includes(interest.workspaceName)
+        )
+          continue;
+      } else if (
+        interest !== null &&
+        !request.resourceInterests.some(
+          (candidate) => interestKey(candidate) === interestKey(interest),
+        )
+      )
+        continue;
       try {
         listener(event);
       } catch {
@@ -568,8 +680,92 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * authenticates the peer by daemon generation in its `hello` frame, and the
    * daemon publishes only non-secret invalidations over it.
    */
+  function sendEventSubscriptionDelta(): void {
+    if (!eventSocket || !socketVerified) return;
+    const requiredSessions = requiredEventSessions();
+    const requiredInterests = requiredEventInterests();
+    if (eventSocketSemantic !== desiredSemanticMode()) {
+      releaseSocket();
+      ensureSocket();
+      return;
+    }
+    const removedSessions = [...sentSessions].filter((name) => !requiredSessions.has(name));
+    const addedSessions = [...requiredSessions].filter((name) => !sentSessions.has(name));
+    const removedInterests = [...sentInterests]
+      .filter(([key]) => !requiredInterests.has(key))
+      .map(([, interest]) => interest);
+    const addedInterests = [...requiredInterests]
+      .filter(([key]) => !sentInterests.has(key))
+      .map(([, interest]) => interest);
+    if (!eventSocketSemantic && !requiresSemanticEvents()) {
+      if (removedSessions.length > 0) {
+        eventSocket.send(JSON.stringify({ type: "unsubscribe", sessions: removedSessions }));
+      }
+      if (addedSessions.length > 0 || !eventCursorSent) {
+        eventSocket.send(
+          JSON.stringify({
+            type: "subscribe",
+            sessions: addedSessions,
+            ...(!eventCursorSent ? { afterSequence: eventReplica.sequence ?? 0 } : {}),
+          }),
+        );
+        eventCursorSent = true;
+      }
+      sentSessions = requiredSessions;
+      return;
+    }
+    const legacyEvents = requiresLegacyEvents();
+    const legacyChanged =
+      sentInterestMode === "unsent" ||
+      (legacyEvents ? sentInterestMode !== "legacy" : sentInterestMode !== "explicit");
+    let emittedRevision = 0;
+    if (removedSessions.length > 0 || removedInterests.length > 0) {
+      emittedRevision = ++nextInterestRevision;
+      eventSocket.send(
+        JSON.stringify({
+          type: "unsubscribe",
+          sessions: removedSessions,
+          interests: removedInterests,
+          legacyEvents,
+          interestRevision: emittedRevision,
+        }),
+      );
+    }
+    if (
+      addedSessions.length > 0 ||
+      addedInterests.length > 0 ||
+      !eventCursorSent ||
+      legacyChanged
+    ) {
+      emittedRevision = ++nextInterestRevision;
+      eventSocket.send(
+        JSON.stringify({
+          type: "subscribe",
+          sessions: addedSessions,
+          interests: addedInterests,
+          legacyEvents,
+          interestRevision: emittedRevision,
+          ...(!eventCursorSent ? { afterSequence: eventReplica.sequence ?? 0 } : {}),
+        }),
+      );
+      eventCursorSent = true;
+    }
+    sentSessions = requiredSessions;
+    sentInterests = new Map(requiredInterests);
+    sentInterestMode = legacyEvents ? "legacy" : "explicit";
+    if (emittedRevision > 0) lastSentInterestRevision = emittedRevision;
+    for (const subscription of subscriptions.values()) {
+      if (subscription.readySettled || subscription.resolveReady === null) continue;
+      subscription.readyRevision ??= lastSentInterestRevision;
+      if (lastAckedInterestRevision >= subscription.readyRevision && subscription.readySuccess) {
+        subscription.readySettled = true;
+        subscription.resolveReady(subscription.readySuccess);
+      }
+    }
+  }
+
   function ensureSocket(): void {
-    if (disposed || socketSupervisor || listeners.size === 0) return;
+    if (disposed || socketSupervisor || subscriptions.size === 0) return;
     const supervisor = createRuntimeConnectionSupervisor<true>({
       connect: ({ signal }) => connectEventSocket(signal),
     });
@@ -602,9 +798,11 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   async function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
     await loadDevHostSession();
     return new Promise((resolve, reject) => {
+      eventSocketSemantic = desiredSemanticMode();
+      const eventsPath = eventSocketSemantic ? `${EVENTS_PATH}?mode=semantic` : EVENTS_PATH;
       const next = new WebSocket(
         browserWebSocketHandshakeUrl(
-          browserWebSocketUrl(config, `${config.daemonWebSocketOrigin}${EVENTS_PATH}`),
+          browserWebSocketUrl(config, `${config.daemonWebSocketOrigin}${eventsPath}`),
         ),
       );
       let connected = false;
@@ -636,20 +834,71 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
               : 0;
           establishEventCursor(frame.data.daemon.instanceId, resumeSequence);
           resourceEventsSupported = frame.data.eventSequence !== undefined;
-          next.send(
-            JSON.stringify(
-              DaemonEventClientFrameSchemaZ.parse({
-                type: "subscribe",
-                sessions: catalogCache.map(({ sessionName }) => sessionName),
-                afterSequence: resumeSequence,
-              }),
-            ),
-          );
+          eventSocket = next;
+          socketVerified = true;
+          sentSessions = new Set();
+          sentInterests = new Map();
+          sentInterestMode = "unsent";
+          eventCursorSent = false;
+          lastSentInterestRevision = 0;
+          lastAckedInterestRevision = 0;
+          sendEventSubscriptionDelta();
           connected = true;
           resolve({ value: true, closed, dispose });
           return;
         }
         if (frame.data.type === "hello") return;
+        if (frame.data.type === "resource.interests-ack") {
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "observed",
+            daemonInstanceId: requireIdentity().instanceId,
+            sequence: frame.data.sequence,
+          });
+          eventReplica = transition.state;
+          if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+            for (const mapped of projectDaemonServerFrame(
+              {
+                type: "snapshot-required",
+                afterSequence: Math.max(0, frame.data.sequence - 1),
+                oldestAvailableSequence: null,
+                currentSequence: frame.data.sequence,
+                reason: "journal-gap",
+              },
+              catalogCache,
+            ))
+              emit(mapped);
+            establishEventCursor(requireIdentity().instanceId, frame.data.sequence);
+          }
+          lastAckedInterestRevision = Math.max(
+            lastAckedInterestRevision,
+            frame.data.interestRevision,
+          );
+          const unavailable = new Set(frame.data.unavailableInterests.map(interestKey));
+          for (const subscription of subscriptions.values()) {
+            if (
+              subscription.readySettled ||
+              subscription.readyRevision === null ||
+              subscription.readyRevision > frame.data.interestRevision
+            )
+              continue;
+            subscription.readySettled = true;
+            const failed = (subscription.request.resourceInterests ?? []).some((interest) =>
+              unavailable.has(interestKey(interest)),
+            );
+            subscription.resolveReady?.(
+              failed
+                ? {
+                    status: "error",
+                    error: capabilityError(
+                      "event-unavailable",
+                      "The daemon resource observer is unavailable.",
+                    ),
+                  }
+                : (subscription.readySuccess ?? { status: "error", error: DISPOSED }),
+            );
+          }
+          return;
+        }
         if (frame.data.type === "snapshot-required") {
           eventReplica = advanceResourceReplica(eventReplica, {
             type: "gap",
@@ -666,7 +915,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
             type: "changed",
             daemonInstanceId: requireIdentity().instanceId,
             sequence: frame.data.sequence,
-            revision: frame.data.sequence,
+            revision: frame.data.revision,
             ...(frame.data.causeOperationId
               ? { causeOperationId: frame.data.causeOperationId }
               : {}),
@@ -688,6 +937,29 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
             return;
           }
           if (frame.data.sequence <= (previousSequence ?? -1)) return;
+        }
+        if (frame.data.type === "resource.observed") {
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "observed",
+            daemonInstanceId: requireIdentity().instanceId,
+            sequence: frame.data.sequence,
+          });
+          eventReplica = transition.state;
+          if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+            for (const mapped of projectDaemonServerFrame(
+              {
+                type: "snapshot-required",
+                afterSequence: Math.max(0, frame.data.sequence - 1),
+                oldestAvailableSequence: null,
+                currentSequence: frame.data.sequence,
+                reason: "journal-gap",
+              },
+              catalogCache,
+            ))
+              emit(mapped);
+            establishEventCursor(requireIdentity().instanceId, frame.data.sequence);
+          }
+          return;
         }
         if (frame.data.type === "interaction.receipt") {
           const transition = advanceResourceReplica(eventReplica, {
@@ -727,6 +999,13 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           emit(mapped);
       });
       next.addEventListener("close", (event) => {
+        if (eventSocket === next) {
+          eventSocket = null;
+          sentSessions.clear();
+          sentInterests.clear();
+          sentInterestMode = "unsent";
+          eventCursorSent = false;
+        }
         signal.removeEventListener("abort", dispose);
         const reason = new Error(event.reason || `daemon event socket closed (${event.code})`);
         if (connected) closedResolve(reason);
@@ -747,6 +1026,13 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     const current = socketSupervisor;
     socketSupervisor = null;
     socketVerified = false;
+    eventSocket = null;
+    sentSessions.clear();
+    sentInterests.clear();
+    sentInterestMode = "unsent";
+    eventCursorSent = false;
+    lastSentInterestRevision = 0;
+    lastAckedInterestRevision = 0;
     stopSocketStateSubscription?.();
     stopSocketStateSubscription = null;
     void current?.stop();
@@ -1118,8 +1404,24 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         } catch (error) {
           return { status: "error", error: failureOf(error) };
         }
-        listeners.add(listener);
+        const subscriptionId = ++nextSubscriptionId;
+        let resolveReady: ((result: DesktopDaemonHostSubscriptionResult) => void) | null = null;
+        const ready =
+          subscriptionRequest.resourceInterests === undefined
+            ? null
+            : new Promise<DesktopDaemonHostSubscriptionResult>((resolve) => {
+                resolveReady = resolve;
+              });
+        subscriptions.set(subscriptionId, {
+          request: subscriptionRequest,
+          listener,
+          readyRevision: null,
+          readySettled: ready === null,
+          readySuccess: null,
+          resolveReady,
+        });
         ensureSocket();
+        sendEventSubscriptionDelta();
         // A subscriber joining an ALREADY-verified socket would otherwise never
         // hear that the connection is live — `connection.changed` fires once,
         // at handshake — and its surface would sit in the "event socket is not
@@ -1127,18 +1429,53 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         // listener only, after the caller holds its unsubscribe handle.
         if (socketVerified) {
           queueMicrotask(() => {
-            if (listeners.has(listener)) {
+            if (subscriptions.has(subscriptionId)) {
               listener({ type: "connection.changed", state: "live", error: null });
             }
           });
         }
-        return {
+        const subscribed: DesktopDaemonHostSubscriptionResult = {
           status: "subscribed",
           unsubscribe: () => {
-            listeners.delete(listener);
-            if (listeners.size === 0) releaseSocket();
+            subscriptions.delete(subscriptionId);
+            if (subscriptions.size === 0) releaseSocket();
+            else sendEventSubscriptionDelta();
           },
         };
+        const subscription = subscriptions.get(subscriptionId);
+        if (subscription) subscription.readySuccess = subscribed;
+        if (ready === null) return subscribed;
+        if (
+          subscription &&
+          socketVerified &&
+          lastSentInterestRevision > 0 &&
+          lastAckedInterestRevision >= lastSentInterestRevision
+        ) {
+          subscription.readySettled = true;
+          subscription.resolveReady?.(subscribed);
+        }
+        let timeout: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+          const pending = subscriptions.get(subscriptionId);
+          if (!pending || pending.readySettled) return;
+          pending.readySettled = true;
+          pending.resolveReady?.({
+            status: "error",
+            error: capabilityError(
+              "event-unavailable",
+              "The daemon resource observer did not become ready in time.",
+            ),
+          });
+        }, REQUEST_TIMEOUT_MS);
+        const settled = await ready.finally(() => {
+          if (timeout !== null) clearTimeout(timeout);
+          timeout = null;
+        });
+        if (settled.status === "error") {
+          subscriptions.delete(subscriptionId);
+          if (subscriptions.size === 0) releaseSocket();
+          else sendEventSubscriptionDelta();
+        }
+        return settled;
       },
     },
     dispose: () => {
@@ -1146,7 +1483,13 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       disposed = true;
       uninstallWebSocketSession();
       resolvedDevHostSession = null;
-      listeners.clear();
+      for (const subscription of subscriptions.values()) {
+        if (!subscription.readySettled) {
+          subscription.readySettled = true;
+          subscription.resolveReady?.({ status: "error", error: DISPOSED });
+        }
+      }
+      subscriptions.clear();
       releaseSocket();
       for (const controller of controllers) controller.abort();
       controllers.clear();

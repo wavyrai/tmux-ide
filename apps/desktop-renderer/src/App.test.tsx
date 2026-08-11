@@ -9,6 +9,7 @@ import {
   type ApplicationShellProjectionInputV1,
   type DaemonInstanceIdentity,
   type DesktopDaemonEvent,
+  type DesktopDaemonEventSubscriptionRequest,
   type DesktopDaemonFetchApplicationShellResult,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonRefreshConnectionResult,
@@ -259,9 +260,19 @@ function createHostHarness() {
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "not used by App tests" },
       })),
-      subscribe: vi.fn(async (request, listener) => {
+      fetchWorkspaceMissions: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by App tests" },
+      })),
+      subscribe: vi.fn(async (request: DesktopDaemonEventSubscriptionRequest, listener) => {
+        const interestedWorkspaces =
+          request.workspaceNames.length > 0
+            ? request.workspaceNames
+            : (request.resourceInterests ?? []).flatMap((interest) =>
+                interest.workspaceName === null ? [] : [interest.workspaceName],
+              );
         const subscription: HostSubscription = {
-          workspaceNames: [...request.workspaceNames],
+          workspaceNames: [...new Set(interestedWorkspaces)],
           listener,
           unsubscribe: vi.fn(),
         };
@@ -942,13 +953,12 @@ describe("desktop App live composition", () => {
     await vi.waitFor(() =>
       expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledTimes(1),
     );
-    // Three workspace-scoped subscriptions per open workspace: the shell
-    // resource, and the Files and Changes catalogs, which now take their
-    // invalidations from the wire instead of waiting for a manual refresh.
+    // Only the shell is demanded at bootstrap. Files/Changes/Missions acquire
+    // their own semantic interests when their tool surfaces become active.
     await vi.waitFor(() =>
       expect(
         harness.subscriptions.filter(({ workspaceNames }) => workspaceNames[0] === "alpha"),
-      ).toHaveLength(3),
+      ).toHaveLength(1),
     );
     // The shell resource's, which is opened first.
     const retired = harness.subscriptions.find(

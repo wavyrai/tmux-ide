@@ -13,6 +13,7 @@ import {
   createTargetPinnedStore,
   sameDaemonGeneration,
   type TargetPinnedFetchResult,
+  type TargetPinnedStoreMetrics,
   type TargetPinnedView,
   type WorkspaceResourceClock,
   type WorkspaceResourceSnapshot,
@@ -61,6 +62,7 @@ export type WorkspaceChangesCatalogState = {
 
 export interface WorkspaceChangesCatalogStore {
   getState(): WorkspaceChangesCatalogState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: WorkspaceChangesCatalogState) => void): () => void;
   setTarget(target: unknown): void;
   setActive(active: boolean): void;
@@ -163,6 +165,7 @@ export function createWorkspaceChangesCatalogStore(
   );
   return {
     getState: () => store.getState(),
+    getMetrics: () => store.getMetrics(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
     setActive: (active) => store.setActive(active),
@@ -223,6 +226,7 @@ export type WorkspaceChangeDiffState = {
 
 export interface WorkspaceChangeDiffStore {
   getState(): WorkspaceChangeDiffState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: WorkspaceChangeDiffState) => void): () => void;
   setTarget(target: unknown): void;
   setActive(active: boolean): void;
@@ -386,6 +390,7 @@ export function createWorkspaceChangeDiffStore(
   );
   return {
     getState: () => store.getState(),
+    getMetrics: () => store.getMetrics(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
     setActive: (active) => store.setActive(active),

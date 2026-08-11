@@ -212,6 +212,7 @@ export function createDesktopFleetCatalogStore(
   const adapter = createDaemonCatalogAdapter<FleetCatalogResourceV1, DesktopFleetCatalogState>({
     host: options.host,
     invalidatesOn: ["fleet.changed", "workspaces.changed"],
+    resourceInterest: { resource: "fleet-catalog", workspaceName: null },
     wording: WORDING,
     fetch: async (daemon) => {
       const raw = await options.host.daemon.fetchFleetCatalog();

@@ -241,6 +241,70 @@ describe("push resource session", () => {
     });
   });
 
+  it("falls back to a demand read when event subscription throws or rejects", async () => {
+    for (const connect of [
+      () => {
+        throw new Error("sync refusal");
+      },
+      () => Promise.reject(new Error("async refusal")),
+    ]) {
+      let fetches = 0;
+      const session = createPushResourceSession(
+        adapter({
+          connect,
+          fetch: async () => ok(`fallback-${++fetches}`),
+        }),
+        { generation: "one" },
+      );
+      session.activate("files");
+      await turn();
+      expect(fetches).toBe(1);
+      expect(session.getState().slots.get("files")).toMatchObject({
+        status: "loaded",
+        resource: "fallback-1",
+      });
+      session.dispose();
+    }
+  });
+
+  it("reports degraded event authority, retries once, and resynchronizes after installation", async () => {
+    const clock = new FakeClock();
+    let connects = 0;
+    let fetches = 0;
+    let events: PushResourceEventHandlers<Key> | null = null;
+    const session = createPushResourceSession(
+      adapter({
+        connect: (_target, _keys, handlers) => {
+          events = handlers;
+          connects += 1;
+          return connects === 1
+            ? { status: "unavailable" as const }
+            : { status: "connected" as const, close: () => undefined };
+        },
+        fetch: async () => ok(`snapshot-${++fetches}`),
+      }),
+      { generation: "one" },
+      { clock, retry: { initialDelayMs: 10, maximumDelayMs: 10, maximumAttempts: 2 } },
+    );
+    session.activate("files");
+    await turn();
+    expect(session.getState().eventPhase).toBe("degraded");
+    expect(fetches).toBe(1);
+    expect(clock.timers.size).toBe(1);
+
+    clock.advanceBy(10);
+    await turn();
+    expect(session.getState().eventPhase).toBe("live");
+    expect(fetches).toBe(2);
+    expect(clock.timers.size).toBe(0);
+
+    events!.invalidate(["files"]);
+    await turn();
+    expect(fetches).toBe(3);
+    clock.advanceBy(10 * 60 * 1_000);
+    expect(clock.timers.size).toBe(0);
+  });
+
   it("does not let a stale-generation invalidation microtask erase the new generation", async () => {
     const microtasks = new Microtasks();
     const handlers: PushResourceEventHandlers<Key>[] = [];
@@ -296,5 +360,30 @@ describe("push resource session", () => {
     expect(session.getState().disposed).toBe(true);
     expect(session.getState().slots.size).toBe(0);
     expect(session.getMetrics()).toMatchObject({ fetchesAborted: 1, lateResultsIgnored: 1 });
+  });
+
+  it("aborts a pending event connection on last release and closes a late result", async () => {
+    let connectSignal: AbortSignal | null = null;
+    let finishConnect: ((result: { status: "connected"; close: () => void }) => void) | null = null;
+    let closes = 0;
+    const session = createPushResourceSession(
+      adapter({
+        connect: (_target, _keys, _handlers, signal) => {
+          connectSignal = signal;
+          return new Promise((resolve) => {
+            finishConnect = resolve;
+          });
+        },
+      }),
+      { generation: "one" },
+    );
+    const release = session.activate("files");
+    expect(connectSignal!.aborted).toBe(false);
+    release();
+    expect(connectSignal!.aborted).toBe(true);
+    finishConnect!({ status: "connected", close: () => closes++ });
+    await turn();
+    expect(closes).toBe(1);
+    expect(session.getMetrics()).toMatchObject({ activeInterests: 0, subscriptionsOpened: 0 });
   });
 });

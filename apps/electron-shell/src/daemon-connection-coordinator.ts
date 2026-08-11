@@ -17,6 +17,9 @@ import {
   type DesktopDaemonFetchWorkspaceFilePreviewResult,
   type DesktopDaemonFetchWorkspaceFilesRequest,
   type DesktopDaemonFetchWorkspaceFilesResult,
+  type DesktopDaemonFetchWorkspaceMissionsRequest,
+  type DesktopDaemonFetchWorkspaceMissionsResult,
+  type DesktopDaemonEventSubscriptionRequest,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonFetchFleetCatalogResult,
@@ -96,8 +99,11 @@ export interface DaemonResourceAuthority {
   fetchWorkspaceChangeDiff(
     request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
   ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult>;
+  fetchWorkspaceMissions(
+    request: DesktopDaemonFetchWorkspaceMissionsRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceMissionsResult>;
   subscribe(
-    workspaceNames: readonly string[],
+    request: DesktopDaemonEventSubscriptionRequest | readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
   ): Promise<BrokerSubscriptionResult>;
   /**
@@ -634,8 +640,30 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     return result;
   }
 
+  async fetchWorkspaceMissions(
+    request: DesktopDaemonFetchWorkspaceMissionsRequest,
+  ): Promise<DesktopDaemonFetchWorkspaceMissionsResult> {
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceMissions(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
   async subscribe(
-    workspaceNames: readonly string[],
+    request: DesktopDaemonEventSubscriptionRequest | readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
   ): Promise<BrokerSubscriptionResult> {
     const broker = this.#broker;
@@ -643,7 +671,7 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     const rendererGeneration = this.#rendererGeneration;
     const id = ++this.#nextSubscription;
     const earlyEvents: DesktopDaemonEvent[] = [];
-    const result = await broker.subscribe(workspaceNames, (event) => {
+    const result = await broker.subscribe(request, (event) => {
       const subscription = this.#subscriptions.get(id);
       if (
         broker !== this.#broker ||

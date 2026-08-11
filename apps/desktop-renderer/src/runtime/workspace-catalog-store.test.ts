@@ -160,7 +160,13 @@ describe("desktop live workspace catalog and selection store", () => {
       workspaceName: example.workspaceName,
       reason: example.reason,
     });
-    expect(fake.subscribe).toHaveBeenCalledWith({ workspaceNames: [] }, expect.any(Function));
+    expect(fake.subscribe).toHaveBeenCalledWith(
+      {
+        workspaceNames: [],
+        resourceInterests: [{ resource: "workspace-catalog", workspaceName: null }],
+      },
+      expect.any(Function),
+    );
     store.dispose();
   });
 

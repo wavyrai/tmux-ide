@@ -936,6 +936,10 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         return readResource(event, authority.generation, () =>
           deps.daemonResources.fetchWorkspaceChangeDiff(daemonRequest.request),
         );
+      case "fetchWorkspaceMissions":
+        return readResource(event, authority.generation, () =>
+          deps.daemonResources.fetchWorkspaceMissions(daemonRequest.request),
+        );
       case "promoteWorkspace":
         return promoteWorkspace(event, authority, { data: daemonRequest.request });
       case "createWorkspacePane":
@@ -962,17 +966,14 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     const subscriptionId = DesktopDaemonSubscriptionIdSchemaZ.parse(
       `desktop-subscription-${++nextDaemonSubscription}`,
     );
-    const result = await deps.daemonResources.subscribe(
-      request.data.workspaceNames,
-      (daemonEvent) => {
-        const window = currentAuthorityWindow(authority.generation);
-        if (!window) return;
-        window.webContents.send(
-          HOST_IPC.daemonEvent,
-          DesktopDaemonEventWireEnvelopeSchemaZ.parse({ subscriptionId, event: daemonEvent }),
-        );
-      },
-    );
+    const result = await deps.daemonResources.subscribe(request.data, (daemonEvent) => {
+      const window = currentAuthorityWindow(authority.generation);
+      if (!window) return;
+      window.webContents.send(
+        HOST_IPC.daemonEvent,
+        DesktopDaemonEventWireEnvelopeSchemaZ.parse({ subscriptionId, event: daemonEvent }),
+      );
+    });
     if (result.status === "error") {
       assertRendererAuthority(event, authority.generation);
       return result;

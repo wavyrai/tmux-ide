@@ -53,7 +53,7 @@ describe("workspace missions push store", () => {
     await vi.waitFor(() => expect(fetchWorkspaceMissions).toHaveBeenCalledOnce());
     expect(subscribe).toHaveBeenCalledWith(
       {
-        workspaceNames: ["product workspace"],
+        workspaceNames: [],
         resourceInterests: [{ resource: "workspace-missions", workspaceName: "product workspace" }],
       },
       expect.any(Function),
@@ -62,9 +62,19 @@ describe("workspace missions push store", () => {
       status: "loaded",
       resource: { workspaceName: "product workspace", missionWorkspace: RESOURCE },
     });
+    expect(store.getMetrics()).toMatchObject({
+      activeInterests: 1,
+      fetchesStarted: 1,
+      fetchesSettled: 1,
+      subscriptionsOpened: 1,
+    });
 
     store.setActive(false);
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(store.getState().status).toBe("inactive");
+    expect(store.getMetrics()).toMatchObject({
+      activeInterests: 0,
+      subscriptionsClosed: 1,
+    });
   });
 });

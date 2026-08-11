@@ -99,6 +99,35 @@ describe("projectDaemonServerFrame", () => {
     ).toEqual([{ type: "application-shell.changed", workspaceName: "beta" }]);
   });
 
+  it("projects typed workspace resources only with a verified daemon identity", () => {
+    const changed = frame({
+      type: "resource.changed",
+      sequence: 13,
+      workspaceName: "alpha",
+      resource: "workspace-files",
+      revision: 7,
+      causeOperationId: null,
+    });
+    expect(projectDaemonServerFrame(changed, CATALOG, IDENTITY.instanceId)).toEqual([
+      {
+        type: "workspace-files.changed",
+        workspaceName: "alpha",
+        daemonInstanceId: IDENTITY.instanceId,
+        sequence: 13,
+        revision: 7,
+        causeOperationId: null,
+      },
+    ]);
+    expect(projectDaemonServerFrame(changed, CATALOG)).toEqual([{ type: "workspaces.changed" }]);
+    expect(
+      projectDaemonServerFrame(
+        frame({ type: "resource.observed", sequence: 14, revision: 7 }),
+        CATALOG,
+        IDENTITY.instanceId,
+      ),
+    ).toEqual([]);
+  });
+
   it("falls back to a full refresh when the replay journal reports a gap", () => {
     expect(
       projectDaemonServerFrame(

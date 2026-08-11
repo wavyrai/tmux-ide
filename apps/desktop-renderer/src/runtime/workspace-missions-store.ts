@@ -9,6 +9,7 @@ import {
 import {
   createTargetPinnedStore,
   sameDaemonGeneration,
+  type TargetPinnedStoreMetrics,
   type WorkspaceResourceClock,
   type WorkspaceResourceSnapshot,
   type WorkspaceResourceTarget,
@@ -38,6 +39,7 @@ export type WorkspaceMissionsState = {
 
 export interface WorkspaceMissionsStore {
   getState(): WorkspaceMissionsState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: WorkspaceMissionsState) => void): () => void;
   setTarget(target: unknown): void;
   setActive(active: boolean): void;
@@ -139,6 +141,7 @@ export function createWorkspaceMissionsStore(options: {
   );
   return {
     getState: () => store.getState(),
+    getMetrics: () => store.getMetrics(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (target) => store.setTarget(target),
     setActive: (active) => store.setActive(active),

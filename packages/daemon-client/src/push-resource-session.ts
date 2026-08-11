@@ -40,6 +40,7 @@ export interface PushResourceSessionState<TTarget, TKey extends string, TResourc
   readonly target: TTarget | null;
   readonly slots: ReadonlyMap<TKey, PushResourceSlot<TResource, TFailure>>;
   readonly targetFailure: TFailure | null;
+  readonly eventPhase: "idle" | "connecting" | "live" | "degraded";
   readonly disposed: boolean;
 }
 
@@ -93,6 +94,7 @@ export interface PushResourceSessionAdapter<TTarget, TKey extends string, TResou
     /** Distinct daemon resource interests, not necessarily one per local slot. */
     interests: ReadonlySet<string>,
     handlers: PushResourceEventHandlers<TKey>,
+    signal: AbortSignal,
   ): PushResourceConnectResult | PromiseLike<PushResourceConnectResult>;
   /** Translate an unexpected request rejection without leaking host errors. */
   rejectionFailure(): TFailure;
@@ -175,8 +177,13 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
   let subscriptionEpoch = 0;
   let pendingSubscriptionEpoch: number | null = null;
   let closeSubscription: (() => void) | null = null;
+  let subscriptionController: AbortController | null = null;
   let installedInterestRevision = -1;
   let interestRevision = 0;
+  let eventPhase: PushResourceSessionState<TTarget, TKey, TResource, TFailure>["eventPhase"] =
+    "idle";
+  let subscriptionRetryAttempt = 0;
+  let subscriptionRetryTimer: unknown | null = null;
   let state: PushResourceSessionState<TTarget, TKey, TResource, TFailure>;
   const metric = {
     fetchesStarted: 0,
@@ -194,6 +201,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     target,
     slots: new Map(slots),
     targetFailure,
+    eventPhase,
     disposed,
   });
 
@@ -251,8 +259,25 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     pendingSubscriptionEpoch = null;
     const close = closeSubscription;
     closeSubscription = null;
+    const controller = subscriptionController;
+    subscriptionController = null;
+    try {
+      controller?.abort();
+    } catch {
+      // Epoch fencing still retires a host that ignores abort.
+    }
     updateSubscriptionInterests = null;
     installedInterestRevision = -1;
+    if (subscriptionRetryTimer !== null) {
+      try {
+        clock.clearTimeout(subscriptionRetryTimer);
+      } catch {
+        // Retirement is still fenced by generation and interest revision.
+      }
+      subscriptionRetryTimer = null;
+    }
+    subscriptionRetryAttempt = 0;
+    eventPhase = "idle";
     if (!close) return;
     metric.subscriptionsClosed += 1;
     try {
@@ -406,7 +431,11 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     const connectTarget = target;
     const connectKeys = eventInterests();
     const epoch = ++subscriptionEpoch;
+    const controller = new AbortController();
+    subscriptionController = controller;
     pendingSubscriptionEpoch = epoch;
+    eventPhase = "connecting";
+    publish();
     const settle = (result: PushResourceConnectResult): void => {
       if (pendingSubscriptionEpoch === epoch) pendingSubscriptionEpoch = null;
       if (
@@ -415,6 +444,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
         expectedInterestRevision !== interestRevision ||
         interests.size === 0
       ) {
+        if (subscriptionController === controller) subscriptionController = null;
         if (result.status === "connected") {
           try {
             result.close();
@@ -428,20 +458,42 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
         closeSubscription = result.close;
         updateSubscriptionInterests = result.updateInterests ?? null;
         metric.subscriptionsOpened += 1;
+        subscriptionRetryAttempt = 0;
+        subscriptionRetryTimer = null;
+        eventPhase = "live";
+      } else if (subscriptionController === controller) {
+        subscriptionController = null;
+        eventPhase = "degraded";
       }
-      installedInterestRevision = expectedInterestRevision;
+      if (result.status === "connected") installedInterestRevision = expectedInterestRevision;
       // The read starts only after the logical subscription is installed. A
       // mutation in the connect window is therefore replayed or followed by
       // this read, rather than falling between snapshot and subscription.
       synchronizeAfterInterestInstall(expectedGeneration, expectedInterestRevision);
+      publish();
+      if (result.status === "unavailable" && subscriptionRetryAttempt < retry.maximumAttempts) {
+        const attempt = subscriptionRetryAttempt++;
+        subscriptionRetryTimer = clock.setTimeout(
+          () => {
+            subscriptionRetryTimer = null;
+            connectEvents(expectedGeneration, expectedInterestRevision);
+          },
+          boundedRetryDelay(attempt, retry, random),
+        );
+      }
     };
     let operation: PushResourceConnectResult | PromiseLike<PushResourceConnectResult>;
     try {
-      operation = adapter.connect(connectTarget, connectKeys, {
-        invalidate: (keys) => invalidate(keys, expectedGeneration),
-      });
+      operation = adapter.connect(
+        connectTarget,
+        connectKeys,
+        {
+          invalidate: (keys) => invalidate(keys, expectedGeneration),
+        },
+        controller.signal,
+      );
     } catch {
-      pendingSubscriptionEpoch = null;
+      settle({ status: "unavailable" });
       return;
     }
     if (typeof (operation as PromiseLike<unknown>)?.then !== "function") {
@@ -451,7 +503,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     void Promise.resolve(operation)
       .then(settle)
       .catch(() => {
-        if (pendingSubscriptionEpoch === epoch) pendingSubscriptionEpoch = null;
+        settle({ status: "unavailable" });
       });
   };
 
@@ -461,6 +513,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     const revision = interestRevision;
     if (interests.size === 0) {
       closeEvents();
+      publish();
       return;
     }
     if (closeSubscription !== null && updateSubscriptionInterests !== null) {
@@ -566,7 +619,9 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
         if (before === interestSignature(eventInterests())) {
           // A sibling key can share the subscription that is already installed
           // or pending. The install settlement reads every active key.
-          if (installedInterestRevision >= 0) request(key, generation);
+          if (installedInterestRevision >= 0 || eventPhase === "degraded") {
+            request(key, generation);
+          }
         } else {
           reconcileInterests(generation);
         }

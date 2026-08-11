@@ -14,6 +14,7 @@ import {
   createTargetPinnedStore,
   sameDaemonGeneration,
   type TargetPinnedFetchResult,
+  type TargetPinnedStoreMetrics,
   type WorkspaceResourceClock,
   type WorkspaceResourceSlot,
   type WorkspaceResourceSnapshot,
@@ -53,6 +54,7 @@ export interface WorkspaceFilesCatalogState {
 
 export interface WorkspaceFilesCatalogStore {
   getState(): WorkspaceFilesCatalogState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: WorkspaceFilesCatalogState) => void): () => void;
   setTarget(target: unknown): void;
   setActive(active: boolean): void;
@@ -176,6 +178,7 @@ export function createWorkspaceFilesCatalogStore(
   );
   return {
     getState: () => store.getState(),
+    getMetrics: () => store.getMetrics(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
     setActive: (active) => store.setActive(active),
@@ -245,6 +248,7 @@ export type WorkspaceFilePreviewState = {
 
 export interface WorkspaceFilePreviewStore {
   getState(): WorkspaceFilePreviewState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: WorkspaceFilePreviewState) => void): () => void;
   setTarget(target: unknown): void;
   setActive(active: boolean): void;
@@ -348,6 +352,7 @@ export function createWorkspaceFilePreviewStore(
   );
   return {
     getState: () => store.getState(),
+    getMetrics: () => store.getMetrics(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
     setActive: (active) => store.setActive(active),

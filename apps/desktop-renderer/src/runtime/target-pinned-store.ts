@@ -9,6 +9,7 @@ import {
 } from "@tmux-ide/contracts";
 import {
   createPushResourceSession,
+  type PushResourceSessionMetrics,
   type PushResourceSessionState,
 } from "@tmux-ide/daemon-client/push-resource-session";
 import {
@@ -30,6 +31,7 @@ import { daemonGenerationKey } from "./connection-state.ts";
 
 export type WorkspaceResourceTarget = DesktopApplicationShellTarget;
 export type WorkspaceResourceClock = GenerationBoundClock;
+export type TargetPinnedStoreMetrics = PushResourceSessionMetrics;
 export const defaultWorkspaceResourceClock: WorkspaceResourceClock = defaultGenerationBoundClock;
 
 export interface WorkspaceResourceSnapshot<TResource> {
@@ -121,6 +123,7 @@ export interface TargetPinnedStoreOptions {
 
 export interface TargetPinnedStore<TState> {
   getState(): TState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: TState) => void): () => void;
   setTarget(target: unknown): void;
   setActive(active: boolean): void;
@@ -191,13 +194,15 @@ export function createTargetPinnedStore<TResource, TState>(
             };
       },
       connect(target, _keys, handlers) {
-        if (invalidatesOn.size === 0) return { status: "unavailable" };
+        if (invalidatesOn.size === 0) {
+          return { status: "connected", close: () => undefined };
+        }
         const subscribe = adapter.host.daemon.subscribe;
         if (typeof subscribe !== "function") return { status: "unavailable" };
         try {
           return subscribe(
             {
-              workspaceNames: [target.workspaceName],
+              workspaceNames: adapter.resourceInterest ? [] : [target.workspaceName],
               ...(adapter.resourceInterest
                 ? {
                     resourceInterests: [
@@ -263,6 +268,7 @@ export function createTargetPinnedStore<TResource, TState>(
 
   return {
     getState: () => state,
+    getMetrics: () => session.getMetrics(),
     subscribe(listener) {
       if (disposed) {
         notify(listener, state);
