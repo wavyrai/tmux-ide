@@ -5,7 +5,7 @@ import type { DaemonEventResourceKind } from "@tmux-ide/contracts";
 
 import { openProjectRuntimeRepository } from "../lib/project-runtime-repository.ts";
 import type { WorkspaceRegistry } from "../lib/workspace-registry.ts";
-import { watchDirectory } from "../widgets/lib/watcher.ts";
+import { watchDirectory } from "../lib/directory-watcher.ts";
 
 export type ObservableWorkspaceResource =
   | "workspace-files"
