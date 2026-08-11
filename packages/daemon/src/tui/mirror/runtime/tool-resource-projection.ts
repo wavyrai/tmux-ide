@@ -7,6 +7,7 @@ import { basename } from "node:path";
 
 import type { AgentStatus } from "../../detect/classify.ts";
 import type { AgentRowInput } from "../agent-rows.ts";
+import type { SessionPaneDescriptor } from "../../../terminal/protocol/session-descriptor-discovery.ts";
 
 export interface TuiFleetSession {
   readonly name: string;
@@ -42,6 +43,58 @@ function rollup(statuses: readonly AgentStatus[]): AgentStatus {
   if (statuses.includes("done")) return "done";
   if (statuses.includes("unknown")) return "unknown";
   return "idle";
+}
+
+export interface ApplicationShellAgentRowSource {
+  readonly paneId: string | null;
+  readonly name: string;
+  readonly harness: string;
+  readonly activity: "running" | "waiting" | "failed" | "complete" | "idle" | "disconnected";
+}
+
+/**
+ * Join the wire-safe application-shell identity to the daemon-proven local
+ * tmux descriptor before exposing a lifecycle target. Semantic/fallback ids
+ * are display identities only; kill/restart/close actions require the raw
+ * `%pane` id and therefore fail closed when the join is absent or ambiguous.
+ */
+export function projectAuthoritativeAgentRows(input: {
+  readonly workspaceName: string;
+  readonly agents: readonly ApplicationShellAgentRowSource[];
+  readonly paneDescriptors: readonly SessionPaneDescriptor[];
+}): AgentRowInput[] {
+  const descriptorsBySemantic = new Map<string, SessionPaneDescriptor[]>();
+  for (const descriptor of input.paneDescriptors) {
+    if (!descriptor.semanticPaneId || !/^%[0-9]+$/u.test(descriptor.runtimePaneId)) continue;
+    const matches = descriptorsBySemantic.get(descriptor.semanticPaneId) ?? [];
+    matches.push(descriptor);
+    descriptorsBySemantic.set(descriptor.semanticPaneId, matches);
+  }
+  const stateByActivity: Record<ApplicationShellAgentRowSource["activity"], AgentStatus> = {
+    running: "working",
+    waiting: "blocked",
+    failed: "blocked",
+    complete: "done",
+    idle: "idle",
+    disconnected: "unknown",
+  };
+  return input.agents.flatMap((agent) => {
+    if (!agent.paneId) return [];
+    const matches = descriptorsBySemantic.get(agent.paneId) ?? [];
+    if (matches.length !== 1) return [];
+    const descriptor = matches[0]!;
+    return [
+      {
+        paneId: descriptor.runtimePaneId,
+        windowIndex: descriptor.windowIndex ?? 0,
+        session: input.workspaceName,
+        kind: agent.harness,
+        state: stateByActivity[agent.activity],
+        since: null,
+        displayName: agent.name,
+      },
+    ];
+  });
 }
 
 /**

@@ -5,9 +5,59 @@ import type {
 } from "@tmux-ide/contracts";
 import { describe, expect, it } from "vitest";
 
-import { projectTuiFleetResources } from "./tool-resource-projection.ts";
+import {
+  projectAuthoritativeAgentRows,
+  projectTuiFleetResources,
+} from "./tool-resource-projection.ts";
 
 describe("TUI fleet resource projection", () => {
+  it("joins semantic agent identities only to unique local raw tmux pane targets", () => {
+    const descriptor = (runtimePaneId: string, semanticPaneId: string | null) => ({
+      runtimePaneId,
+      semanticPaneId,
+      role: null,
+      type: null,
+      currentCommand: null,
+      cwd: null,
+      title: null,
+      windowIndex: 3,
+      windowName: null,
+      windowId: null,
+    });
+    const agents = [
+      {
+        paneId: "pane.editor",
+        name: "Editor",
+        harness: "claude-code",
+        activity: "running" as const,
+      },
+      { paneId: "pane.opaque", name: "Opaque", harness: "codex", activity: "idle" as const },
+      {
+        paneId: "pane.ambiguous",
+        name: "Duplicate",
+        harness: "codex",
+        activity: "waiting" as const,
+      },
+      { paneId: null, name: "Missing", harness: "codex", activity: "idle" as const },
+    ];
+
+    const rows = projectAuthoritativeAgentRows({
+      workspaceName: "real-session",
+      agents,
+      paneDescriptors: [
+        descriptor("%7", "pane.editor"),
+        descriptor("terminal.discovered.opaque", "pane.opaque"),
+        descriptor("%8", "pane.ambiguous"),
+        descriptor("%9", "pane.ambiguous"),
+      ],
+    });
+
+    expect(rows).toEqual([
+      expect.objectContaining({ paneId: "%7", windowIndex: 3, displayName: "Editor" }),
+    ]);
+    expect(JSON.stringify(rows)).not.toMatch(/pane\.|terminal\.discovered/u);
+  });
+
   it("never promotes an opaque fleet label into an action target", () => {
     const sessions: DaemonSessionsResponse = {
       sessions: [{ name: "real-session", dir: "/work/alpha" }],

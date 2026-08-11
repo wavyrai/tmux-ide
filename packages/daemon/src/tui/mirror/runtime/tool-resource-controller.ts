@@ -60,8 +60,8 @@ export interface TuiToolResourceMetrics {
   readonly invalidations: number;
   readonly statePublications: number;
   readonly dirtyUpdates: number;
-  readonly subprocessLaunches: 0;
-  readonly idleWakeups: 0;
+  readonly subprocessLaunches: number;
+  readonly idleWakeups: number;
   readonly renderPasses: number;
   readonly activeInterests: number;
 }
@@ -633,6 +633,8 @@ export interface TuiToolResourceController {
   ): () => void;
   getMetrics(): TuiToolResourceMetrics;
   noteRenderPass(): void;
+  noteWakeup(): void;
+  noteSubprocessLaunch(): void;
   dispose(): void;
 }
 
@@ -653,6 +655,8 @@ export function createTuiToolResourceController(
   let dirtyUpdates = 0;
   let previousState = session.getState();
   let renderPasses = 0;
+  let idleWakeups = 0;
+  let subprocessLaunches = 0;
 
   const reconcile = (): void => {
     if (catalogReady) {
@@ -705,14 +709,20 @@ export function createTuiToolResourceController(
         invalidations: metrics.invalidationsObserved,
         statePublications: publications,
         dirtyUpdates,
-        subprocessLaunches: 0,
-        idleWakeups: 0,
+        subprocessLaunches,
+        idleWakeups,
         renderPasses,
         activeInterests: metrics.activeInterests,
       };
     },
     noteRenderPass() {
       renderPasses += 1;
+    },
+    noteWakeup() {
+      idleWakeups += 1;
+    },
+    noteSubprocessLaunch() {
+      subprocessLaunches += 1;
     },
     dispose() {
       releaseDock?.();

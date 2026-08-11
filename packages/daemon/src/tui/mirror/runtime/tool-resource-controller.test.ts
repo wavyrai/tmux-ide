@@ -13,6 +13,7 @@ import {
   type TuiToolResourceKey,
   type TuiToolResourceTarget,
 } from "./tool-resource-controller.ts";
+import { TerminalToolReadinessGate } from "./terminal-tool-readiness.ts";
 
 const DAEMON = {
   pid: 42,
@@ -113,6 +114,9 @@ describe("OpenTUI demand-driven tool resources", () => {
     });
     controller.noteRenderPass();
     expect(controller.getMetrics().renderPasses).toBe(1);
+    controller.noteWakeup();
+    controller.noteSubprocessLaunch();
+    expect(controller.getMetrics()).toMatchObject({ idleWakeups: 1, subprocessLaunches: 1 });
     controller.dispose();
   });
 
@@ -130,6 +134,26 @@ describe("OpenTUI demand-driven tool resources", () => {
 
     expect(log[0]).toBe("terminal-ready");
     expect(new Set(log.slice(1))).toEqual(
+      new Set(["fetch:fleet", "fetch:sessions", "fetch:projects", "fetch:files"]),
+    );
+    controller.dispose();
+  });
+
+  it("keeps the resource adapter idle through geometry and admits after the next frame", async () => {
+    const log: string[] = [];
+    const { adapter } = fakeAdapter(log);
+    const controller = createTuiToolResourceController(adapter);
+    const readiness = new TerminalToolReadinessGate(() => controller.markTerminalReady());
+    controller.setTarget(TARGET);
+    controller.setOpenDock("files");
+
+    readiness.observeGeometry();
+    await settle();
+    expect(log).toEqual([]);
+
+    readiness.observeTerminalRender();
+    await settle();
+    expect(new Set(log)).toEqual(
       new Set(["fetch:fleet", "fetch:sessions", "fetch:projects", "fetch:files"]),
     );
     controller.dispose();

@@ -248,7 +248,7 @@ import { resolveTuiWidgetSurface, type TuiWidgetSurface } from "./widget-surface
 import { TuiRichWidgetSurface } from "./widget-surface.tsx";
 import { tapInputSent, tapInputTick } from "./perf-tap.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-terminal.ts";
-import { execFile, spawn } from "node:child_process";
+import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process";
 import type { AgentStatus } from "../detect/classify.ts";
 import { Sidebar } from "./sidebar.tsx";
 import {
@@ -733,7 +733,12 @@ import {
   type TuiDockResourceKey,
   type TuiToolResource,
 } from "./runtime/tool-resource-controller.ts";
-import { projectTuiFleetResources } from "./runtime/tool-resource-projection.ts";
+import {
+  projectAuthoritativeAgentRows,
+  projectTuiFleetResources,
+  type ApplicationShellAgentRowSource,
+} from "./runtime/tool-resource-projection.ts";
+import { TerminalToolReadinessGate } from "./runtime/terminal-tool-readiness.ts";
 import { OpenTuiTerminalWorkspaceAdapter } from "./runtime/terminal-workspace-adapter.ts";
 
 type TuiAppArgs = { target?: string; edit?: string; diff?: string };
@@ -792,12 +797,12 @@ const zzlog = (m: string) => {
 
 const TUI_PERF_LOG = process.env.TMUX_IDE_TUI_PERF_LOG;
 const TUI_LAUNCH_EPOCH_MS = Number(process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ?? Date.now());
-const tuiPerfMark = (phase: string) => {
+const tuiPerfMark = (phase: string, details?: Readonly<Record<string, unknown>>) => {
   if (!TUI_PERF_LOG) return;
   try {
     appendFileSync(
       TUI_PERF_LOG,
-      `${JSON.stringify({ phase, elapsedMs: Date.now() - TUI_LAUNCH_EPOCH_MS, at: new Date().toISOString() })}\n`,
+      `${JSON.stringify({ phase, elapsedMs: Date.now() - TUI_LAUNCH_EPOCH_MS, at: new Date().toISOString(), ...details })}\n`,
     );
   } catch {
     // Profiling is opt-in diagnostics and must never affect the TUI lifecycle.
@@ -1152,8 +1157,24 @@ const mountTuiRoot = () => {
     const [contextDir, setContextDir] = createSignal<string>("");
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const toolResources = createTuiToolResourceController(createTuiToolResourceAdapter());
-    applicationLifecycle.registerCloser("tool-resources", () => toolResources.dispose());
+    applicationLifecycle.registerCloser("tool-resources", () => {
+      tuiPerfMark("application-shell-metrics", { ...toolResources.getMetrics() });
+      toolResources.dispose();
+    });
+    const execFile = ((...args: unknown[]) => {
+      toolResources.noteSubprocessLaunch();
+      return (nodeExecFile as unknown as (...values: unknown[]) => unknown)(...args);
+    }) as typeof nodeExecFile;
+    const spawn = ((...args: unknown[]) => {
+      toolResources.noteSubprocessLaunch();
+      return (nodeSpawn as unknown as (...values: unknown[]) => unknown)(...args);
+    }) as typeof nodeSpawn;
+    let terminalToolReadiness!: TerminalToolReadinessGate;
     let reconcileFleetResources = (): void => undefined;
+    let latestAuthoritativeAgents: AgentRowInput[] = [];
+    let latestApplicationShellAgents: readonly ApplicationShellAgentRowSource[] = [];
+    let latestApplicationShellWorkspaceName = "";
+    let reconcileAuthoritativeAgents = (): void => undefined;
     const fleet = (): Array<{ name: string; status: AgentStatus }> =>
       projectsData()
         .flatMap((project) =>
@@ -1200,6 +1221,14 @@ const mountTuiRoot = () => {
         ? (paneRuntimeFor(pane.id)?.scrollbackDepth ?? pane.scrollbackDepth)
         : pane.scrollbackDepth;
     let semanticView: SemanticSessionView | null = null;
+    reconcileAuthoritativeAgents = () => {
+      latestAuthoritativeAgents = projectAuthoritativeAgentRows({
+        workspaceName: latestApplicationShellWorkspaceName,
+        agents: latestApplicationShellAgents,
+        paneDescriptors: semanticView?.paneDescriptors() ?? [],
+      });
+      reconcileFleetResources();
+    };
     let terminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
     applicationLifecycle.registerCloser("terminal-workspace", () => {
       terminalWorkspaceAdapter?.dispose();
@@ -1296,6 +1325,8 @@ const mountTuiRoot = () => {
                   });
               }
               candidate.acceptLayout(frame);
+              terminalToolReadiness.observeGeometry();
+              reconcileAuthoritativeAgents();
               observePendingResizeLayout();
               void candidate.windows().then(setWindowTabs);
               markDirty();
@@ -1330,7 +1361,8 @@ const mountTuiRoot = () => {
         if (!lane) return;
         candidate.setSource(lane.source);
         setSessionRuntimeLane(lane);
-        if (!lane.ownsGeometry) toolResources.markTerminalReady();
+        reconcileAuthoritativeAgents();
+        if (!lane.ownsGeometry) terminalToolReadiness.observeGeometry();
         if (
           pendingSemanticFocus?.session === sessionName &&
           submitSemanticPaneFocus(pendingSemanticFocus.paneId) === "submitted"
@@ -1385,6 +1417,9 @@ const mountTuiRoot = () => {
       daemonApplicationShellAuthority = null;
       toolResources.setTarget(null);
       setDaemonApplicationShellState(null);
+      latestApplicationShellAgents = [];
+      latestApplicationShellWorkspaceName = "";
+      reconcileAuthoritativeAgents();
       setInteractionFeed(initialInteractionFeedState());
       clearInteractionPresence();
     };
@@ -1413,36 +1448,12 @@ const mountTuiRoot = () => {
           const inventory = state.data?.terminalInventory;
           if (inventory && semanticView) {
             semanticView.setInventory(inventory);
+            reconcileAuthoritativeAgents();
             void reconcileSessionRuntimeLane(sessionName, semanticView);
           }
-          latestAuthoritativeAgents = (state.data?.workspace.sidebar.agents ?? []).flatMap(
-            (agent) => {
-              if (!agent.paneId) return [];
-              const stateByActivity: Record<typeof agent.activity, AgentStatus> = {
-                running: "working",
-                waiting: "blocked",
-                failed: "blocked",
-                complete: "done",
-                idle: "idle",
-                disconnected: "unknown",
-              };
-              return [
-                {
-                  // The authenticated application-shell identity is accepted by
-                  // the semantic focus/input lane and never derived from the
-                  // fleet catalog's display-only labels.
-                  paneId: agent.paneId,
-                  windowIndex: 0,
-                  session: authority.workspaceName,
-                  kind: agent.harness,
-                  state: stateByActivity[agent.activity],
-                  since: null,
-                  displayName: agent.name,
-                },
-              ];
-            },
-          );
-          reconcileFleetResources();
+          latestApplicationShellWorkspaceName = authority.workspaceName;
+          latestApplicationShellAgents = state.data?.workspace.sidebar.agents ?? [];
+          reconcileAuthoritativeAgents();
         };
         applyDaemonShellState(authority.session.getState());
         disposeDaemonApplicationShellSubscription =
@@ -1813,6 +1824,12 @@ const mountTuiRoot = () => {
       if (noteTimer) clearTimeout(noteTimer);
       noteTimer = setTimeout(() => setNote(""), 3000);
     };
+    terminalToolReadiness = new TerminalToolReadinessGate(
+      () => toolResources.markTerminalReady(),
+      (state) => {
+        if (state.phase === "degraded") setStatusNote(`terminal fit degraded: ${state.reason}`);
+      },
+    );
     const clearSelection = () => {
       selecting = null;
       dragAutoScroll = null;
@@ -3353,7 +3370,10 @@ const mountTuiRoot = () => {
         if (state.phase === "live" && state.value) {
           semanticView = state.value;
           const inventory = daemonApplicationShellState()?.data?.terminalInventory;
-          if (inventory) semanticView.setInventory(inventory);
+          if (inventory) {
+            semanticView.setInventory(inventory);
+            reconcileAuthoritativeAgents();
+          }
           setStatus("live");
           void state.value.windows().then(setWindowTabs);
           void reconcileSessionRuntimeLane(name, state.value);
@@ -3399,13 +3419,15 @@ const mountTuiRoot = () => {
           () => {
             if (sessionRuntimeLane() === runtimeLane) {
               runtimeLaneFitKey = fitKey;
-              toolResources.markTerminalReady();
+              terminalToolReadiness.observeFitSuccess();
             }
           },
           (error: unknown) => {
             if (sessionRuntimeLane() === runtimeLane) {
               runtimeLaneFitKey = null;
-              setStatusNote(error instanceof Error ? error.message : "viewport fit rejected");
+              terminalToolReadiness.observeFitFailure(
+                error instanceof Error ? error.message : "viewport fit rejected",
+              );
             }
           },
         );
@@ -5633,7 +5655,6 @@ const mountTuiRoot = () => {
     let latestFleetCatalog: FleetCatalogResourceV1 | null = null;
     let latestSessionCatalog: Extract<TuiToolResource, { kind: "sessions" }>["value"] | null = null;
     let latestProjectCatalog: Extract<TuiToolResource, { kind: "projects" }>["value"] | null = null;
-    let latestAuthoritativeAgents: AgentRowInput[] = [];
     reconcileFleetResources = () => {
       if (!latestFleetCatalog || !latestSessionCatalog || !latestProjectCatalog) return;
       const projects = projectTuiFleetResources({
@@ -5871,6 +5892,8 @@ const mountTuiRoot = () => {
           latestSessionCatalog = null;
           latestProjectCatalog = null;
           latestAuthoritativeAgents = [];
+          latestApplicationShellAgents = [];
+          latestApplicationShellWorkspaceName = "";
           setProjectsData([]);
           setFileNodes([]);
           setFileStatusEntries([]);
@@ -5934,6 +5957,7 @@ const mountTuiRoot = () => {
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
         const raw = semanticView.panes(scrollOffsets, !FB_PANES, terminalPalette());
+        terminalToolReadiness.observeTerminalRender();
         if (FB_PANES) setPaneRuntime(livePaneRuntime(raw));
         // Size truth (M22.8, event-driven M23.5): the effective window size is
         // the layout ROOT's WxH pushed by %layout-change (the pane bounding
@@ -5986,7 +6010,9 @@ const mountTuiRoot = () => {
       // Event-driven state publication: the first event after idle is flushed
       // immediately and sustained output is capped to the renderer's 60 Hz
       // budget. This replaces the unconditional 125 Hz wake-up loop.
-      paneFrameCoalescer = new FrameCoalescer(flushMirrorFrame);
+      paneFrameCoalescer = new FrameCoalescer(flushMirrorFrame, 1000 / 60, undefined, () =>
+        toolResources.noteWakeup(),
+      );
       if (dirty) paneFrameCoalescer.request();
       cleanupRegistry.set("state-and-presentation-timers", () => {
         paneFrameCoalescer?.dispose();

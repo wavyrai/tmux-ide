@@ -331,7 +331,7 @@ describe("OpenTUI canonical application-shell controller", () => {
     expect(app).not.toContain("rendererInvocationForDock(");
     expect(app).toContain("submitSemanticPaneFocus(runtimePaneId)");
     expect(app).toContain('verb: "workspace.pane.select"');
-    expect(app).toContain("mirror={semanticReplica()!.lane.source}");
+    expect(app).toContain("mirror={semanticReplica()!.adapter.renderSource}");
     expect(app).not.toContain("semanticView={semanticReplica()?.lane.source");
     expect(app).toContain("semanticViewportAcknowledged()");
     expect(app).not.toMatch(
