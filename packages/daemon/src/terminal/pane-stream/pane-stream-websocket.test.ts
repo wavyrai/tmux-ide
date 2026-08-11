@@ -11,7 +11,7 @@ import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import { PaneStreamAdmissionCoordinator, type PaneStreamMirror } from "./pane-stream-websocket.ts";
 
-const INSTANCE = "daemon-instance-1";
+const INSTANCE = "00000000-0000-4000-8000-000000000099";
 const ORIGIN = "tmux-ide://app";
 const WS_URL = `ws://127.0.0.1:6070${PANE_STREAM_REDEEM_PATH}`;
 const SESSION = "alpha";
@@ -161,6 +161,11 @@ class FakeMirror implements PaneStreamMirror {
     return sub;
   }
 
+  async subscribeLayout(_session: string, onLayout: (event: never) => void) {
+    this.layoutHandlers.push(onLayout);
+    return { session: SESSION, close: async () => undefined };
+  }
+
   subFor(pane: string, index = 0): FakeSub {
     const matches = this.subs.filter((sub) => sub.semanticPaneId === pane);
     const sub = matches[index];
@@ -199,6 +204,9 @@ function harness(
     budgets?: ConstructorParameters<typeof PaneStreamAdmissionCoordinator>[0]["flowBudgets"];
     ticketTtlMs?: number;
     now?: () => number;
+    maxInputFramesPerWindow?: number;
+    maxInputBytesPerWindow?: number;
+    inputRateWindowMs?: number;
     bindSessionRuntime?: ConstructorParameters<
       typeof PaneStreamAdmissionCoordinator
     >[0]["bindSessionRuntime"];
@@ -212,6 +220,13 @@ function harness(
     ticketTtlMs: options.ticketTtlMs ?? 15_000,
   });
   const scheduler = testScheduler();
+  const deliveryListeners = new Map<string, (message: never) => void>();
+  const deliveryAcks = vi.fn();
+  const deliveryNacks = vi.fn();
+  const deliveryVisibility = vi.fn();
+  const submitIntent = vi.fn(async () => undefined);
+  const sendInput = vi.fn();
+  const fitViewport = vi.fn();
   const coordinator = new PaneStreamAdmissionCoordinator({
     daemonInstanceId: INSTANCE,
     webSocketUrl: WS_URL,
@@ -224,13 +239,50 @@ function harness(
         session: SESSION,
         clientId: "test:interactive",
         assertController: () => undefined,
+        openTerminalDelivery: async (pane, _offer, onMessage) => {
+          deliveryListeners.set(pane, onMessage as (message: never) => void);
+          return {
+            negotiation: {
+              accepted: true as const,
+              negotiated: {
+                protocolVersion: 1 as const,
+                encoding: "semantic-v1" as const,
+                richPlacements: false,
+                generation: INSTANCE,
+                deliveryNonce: "00000000-0000-4000-8000-000000000098",
+              },
+            },
+            ack: deliveryAcks,
+            nack: deliveryNacks,
+            setVisibility: deliveryVisibility,
+            close: async () => undefined,
+          };
+        },
+        submitIntent,
+        sendInput,
+        fitViewport,
         close: async () => undefined,
       })),
     flowBudgets: options.budgets,
+    maxInputFramesPerWindow: options.maxInputFramesPerWindow,
+    maxInputBytesPerWindow: options.maxInputBytesPerWindow,
+    inputRateWindowMs: options.inputRateWindowMs,
     now,
     schedule: scheduler.schedule,
   });
-  return { mirror, leaseManager, coordinator, scheduler };
+  return {
+    mirror,
+    leaseManager,
+    coordinator,
+    scheduler,
+    deliveryListeners,
+    deliveryAcks,
+    deliveryNacks,
+    deliveryVisibility,
+    submitIntent,
+    sendInput,
+    fitViewport,
+  };
 }
 
 async function connect(
@@ -240,6 +292,7 @@ async function connect(
     viewerMode?: "interactive" | "read-only";
     deliveryAcks?: boolean;
     hostClientId?: string;
+    semanticDelivery?: boolean;
   } = {},
 ): Promise<{ socket: FakeSocket; requestId: string }> {
   const requestId = freshRequestId();
@@ -249,6 +302,15 @@ async function connect(
       workspaceName: "workspace.alpha",
       panes: options.panes ?? ["pane.editor", "pane.shell"],
       viewerMode: options.viewerMode ?? "read-only",
+      ...(options.semanticDelivery
+        ? {
+            terminalDelivery: {
+              protocolVersions: [1],
+              encodings: ["semantic-v1"] as const,
+              richPlacements: false,
+            },
+          }
+        : {}),
     },
     {
       requestId,
@@ -295,6 +357,10 @@ describe("PaneStreamAdmissionCoordinator", () => {
       session: descriptor.sessionName,
       clientId: `pane-stream:${descriptor.leaseId}`,
       assertController: () => undefined,
+      openTerminalDelivery: async () => {
+        throw new Error("not used");
+      },
+      submitIntent: async () => undefined,
       close,
     }));
     const h = harness({ bindSessionRuntime });
@@ -454,6 +520,10 @@ describe("PaneStreamAdmissionCoordinator", () => {
           session: descriptor.sessionName,
           clientId: descriptor.hostClientId,
           assertController: () => undefined,
+          openTerminalDelivery: async () => {
+            throw new Error("not used");
+          },
+          submitIntent: async () => undefined,
           close: async () => undefined,
         };
       },
@@ -652,6 +722,148 @@ describe("PaneStreamAdmissionCoordinator", () => {
     readOnly.socket.message({ type: "input", kind: "text", pane: "pane.shell", seq: 1, data: "x" });
     expect(readOnly.socket.framesOfType("error")[0]!.code).toBe("input-rejected");
     expect(readOnly.socket.closed).not.toBeNull();
+  });
+
+  it("keeps healthy long-lived input live across rate windows while bounding a flood", async () => {
+    let now = 1_000;
+    const healthy = harness({
+      now: () => now,
+      maxInputFramesPerWindow: 2,
+      maxInputBytesPerWindow: 1_024,
+      inputRateWindowMs: 100,
+    });
+    const healthyConnection = await connect(healthy, {
+      viewerMode: "interactive",
+      panes: ["pane.editor"],
+    });
+
+    for (let seq = 1; seq <= 6; seq += 1) {
+      healthyConnection.socket.message({
+        type: "input",
+        kind: "text",
+        pane: "pane.editor",
+        seq,
+        data: "x",
+      });
+      if (seq % 2 === 0) now += 100;
+    }
+    expect(healthyConnection.socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([
+      1, 2, 3, 4, 5, 6,
+    ]);
+    expect(healthyConnection.socket.closed).toBeNull();
+
+    const flooded = harness({
+      now: () => now,
+      maxInputFramesPerWindow: 2,
+      maxInputBytesPerWindow: 1_024,
+      inputRateWindowMs: 100,
+    });
+    const floodedConnection = await connect(flooded, {
+      viewerMode: "interactive",
+      panes: ["pane.editor"],
+    });
+    for (let seq = 1; seq <= 3; seq += 1) {
+      floodedConnection.socket.message({
+        type: "input",
+        kind: "text",
+        pane: "pane.editor",
+        seq,
+        data: "x",
+      });
+    }
+    expect(floodedConnection.socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([
+      1, 2,
+    ]);
+    expect(floodedConnection.socket.framesOfType("error")[0]!.code).toBe("input-rejected");
+    expect(floodedConnection.socket.closed).not.toBeNull();
+  });
+
+  it("uses one session socket and one runtime binding for semantic delivery, layout and intents", async () => {
+    const h = harness();
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+
+    // No raw pane subscription remains. Layout is session-scoped and both
+    // terminal bodies are sourced by the shared SessionRuntime delivery hub.
+    expect(h.mirror.subs).toHaveLength(0);
+    expect(h.mirror.layoutHandlers).toHaveLength(1);
+    expect(h.deliveryListeners.size).toBe(2);
+    h.deliveryListeners.get("pane.editor")?.({
+      type: "terminal.delivery.fault",
+      reason: "source-closed",
+      message: "closed",
+      deliveryNonce: "00000000-0000-4000-8000-000000000098",
+    } as never);
+    expect(socket.framesOfType("terminal-delivery-fault")).toHaveLength(1);
+
+    const operationId = "00000000-0000-4000-8000-000000000097";
+    socket.message({
+      type: "semantic-intent",
+      operationId,
+      intent: {
+        verb: "workspace.pane.send",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.editor",
+        text: "x",
+        submit: false,
+        origin: "tui",
+      },
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("semantic-intent-ack")).toHaveLength(1));
+    expect(socket.framesOfType("semantic-intent-ack")[0]).toMatchObject({
+      operationId,
+      outcome: { status: "applied" },
+    });
+    expect(h.submitIntent).toHaveBeenCalledWith(
+      operationId,
+      expect.objectContaining({ verb: "workspace.pane.send", semanticPaneId: "pane.editor" }),
+    );
+
+    const rejectedOperationId = "00000000-0000-4000-8000-000000000096";
+    h.submitIntent.mockRejectedValueOnce(
+      Object.assign(new Error("another client owns the controller"), {
+        code: "controller-conflict",
+      }),
+    );
+    socket.message({
+      type: "semantic-intent",
+      operationId: rejectedOperationId,
+      intent: {
+        verb: "workspace.pane.select",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.editor",
+      },
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("semantic-intent-ack")).toHaveLength(2));
+    expect(socket.framesOfType("semantic-intent-ack")[1]).toEqual({
+      type: "semantic-intent-ack",
+      operationId: rejectedOperationId,
+      outcome: {
+        status: "rejected",
+        code: "controller-conflict",
+        message: "another client owns the controller",
+      },
+    });
+    expect(socket.closed).toBeNull();
+
+    // Terminal typing stays on the controller-authorized fast path. Named keys
+    // are not flattened into bytes, preserving tmux application-mode behavior,
+    // and their sequence cannot overtake the preceding literal.
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "x" });
+    socket.message({ type: "input", kind: "key", pane: "pane.editor", seq: 2, data: "Enter" });
+    expect(h.sendInput.mock.calls).toEqual([
+      ["pane.editor", "text", "x"],
+      ["pane.editor", "key", "Enter"],
+    ]);
+    expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1, 2]);
+    socket.message({ type: "viewport", seq: 1, cols: 132, rows: 44 });
+    expect(h.fitViewport).toHaveBeenCalledWith(132, 44);
+    expect(socket.framesOfType("viewport-ack")).toEqual([
+      { type: "viewport-ack", seq: 1, cols: 132, rows: 44 },
+    ]);
   });
 
   it("meters renderer backlog for acking clients and thaws on consumed frames", async () => {

@@ -33,7 +33,6 @@ describe("staticPaletteActions", () => {
       "Attach session: beta",
       "Save file",
       "Refresh diff",
-      "Paste buffer…",
       // the settings category (M22.4) — every setting is a palette command
       "Settings…",
       "Settings: Accent color",
@@ -107,11 +106,11 @@ describe("staticPaletteActions", () => {
     ).toBe(true);
   });
 
-  it("offers the paste-buffer action on every surface (no terminal gate)", () => {
-    expect(staticPaletteActions([]).some((a) => a.kind === "paste-buffer")).toBe(true);
+  it("does not expose paste buffers before their semantic daemon query exists", () => {
+    expect(staticPaletteActions([]).some((a) => a.kind === "paste-buffer")).toBe(false);
     expect(
       staticPaletteActions([], { terminal: true }).some((a) => a.kind === "paste-buffer"),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("uses configured view actions with stable view IDs when hosted views are present", () => {
@@ -221,7 +220,7 @@ describe("filterPaletteActions", () => {
   it("returns every static action for an empty query, no open-file entry", () => {
     const actions = filterPaletteActions("", ["alpha"]);
     expect(actions.some((a) => a.kind === "open-file")).toBe(false);
-    expect(actions).toHaveLength(22);
+    expect(actions).toHaveLength(21);
   });
 
   it("fuzzy-ranks matches and appends an open-file action for a plain word", () => {
@@ -251,31 +250,18 @@ describe("filterPaletteActions", () => {
     expect(on).toEqual(expect.arrayContaining(["new-window", "kill-window", "zoom-pane"]));
   });
 
-  it("offers the M20.2 pane-op + layout verbs only in terminal context", () => {
+  it("offers only pane operations backed by semantic daemon verbs", () => {
     const off = staticPaletteActions(["a"]).map((x) => x.kind);
     expect(off).not.toContain("select-layout");
     expect(off).not.toContain("sync-toggle");
     const on = staticPaletteActions(["a"], { terminal: true });
     expect(on.map((x) => x.kind)).toEqual(
-      expect.arrayContaining([
-        "swap-pane",
-        "split-pane-right",
-        "split-pane-down",
-        "kill-pane",
-        "break-pane",
-        "rotate-window",
-        "sync-toggle",
-      ]),
+      expect.arrayContaining(["swap-pane", "split-pane-right", "split-pane-down", "kill-pane"]),
     );
-    // One select-layout action per preset, carrying the layout name.
-    const layouts = on.filter((x) => x.kind === "select-layout");
-    expect(layouts.map((x) => (x.kind === "select-layout" ? x.layout : ""))).toEqual([
-      "even-horizontal",
-      "even-vertical",
-      "main-horizontal",
-      "main-vertical",
-      "tiled",
-    ]);
+    expect(on.some((x) => x.kind === "break-pane")).toBe(false);
+    expect(on.some((x) => x.kind === "rotate-window")).toBe(false);
+    expect(on.some((x) => x.kind === "sync-toggle")).toBe(false);
+    expect(on.some((x) => x.kind === "select-layout")).toBe(false);
   });
 
   it("maps every shared TUI tmux action to the renderer-neutral verb table", () => {

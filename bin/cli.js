@@ -7210,9 +7210,337 @@ var init_terminals = __esm({
   }
 });
 
-// packages/contracts/src/pane-stream.ts
+// packages/contracts/src/terminal-replica.ts
 import { z as z43 } from "zod";
-var PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_TEXT_CHARS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamKeyNameSchemaZ, InputTextSchemaZ, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var TerminalReplicaColorSchemaZ, TerminalReplicaCellAttributesSchemaZ, TerminalReplicaCellSchemaZ, TerminalReplicaRowSchemaZ, TerminalReplicaCursorSchemaZ, TerminalReplicaModesSchemaZ, TerminalReplicaPlacementSchemaZ, TerminalReplicaSnapshotSchemaZ, TerminalReplicaPatchPayloadSchemaZ, TerminalReplicaTombstonePayloadSchemaZ, TERMINAL_REPLICA_ATTRIBUTE;
+var init_terminal_replica = __esm({
+  "packages/contracts/src/terminal-replica.ts"() {
+    "use strict";
+    TerminalReplicaColorSchemaZ = z43.discriminatedUnion("kind", [
+      z43.object({ kind: z43.literal("default") }).strict(),
+      z43.object({ kind: z43.literal("indexed"), index: z43.number().int().min(0).max(255) }).strict(),
+      z43.object({ kind: z43.literal("rgb"), value: z43.number().int().min(0).max(16777215) }).strict()
+    ]);
+    TerminalReplicaCellAttributesSchemaZ = z43.number().int().min(0).max(255);
+    TerminalReplicaCellSchemaZ = z43.object({
+      grapheme: z43.string(),
+      width: z43.union([z43.literal(0), z43.literal(1), z43.literal(2)]),
+      foreground: TerminalReplicaColorSchemaZ,
+      background: TerminalReplicaColorSchemaZ,
+      attributes: TerminalReplicaCellAttributesSchemaZ
+    }).strict();
+    TerminalReplicaRowSchemaZ = z43.object({ cells: z43.array(TerminalReplicaCellSchemaZ), wrapped: z43.boolean() }).strict();
+    TerminalReplicaCursorSchemaZ = z43.object({
+      x: z43.number().int().nonnegative(),
+      y: z43.number().int().nonnegative(),
+      hidden: z43.boolean(),
+      style: z43.enum(["block", "underline", "bar"]),
+      blink: z43.boolean()
+    }).strict();
+    TerminalReplicaModesSchemaZ = z43.object({
+      alternateScreen: z43.boolean(),
+      applicationCursor: z43.boolean(),
+      applicationKeypad: z43.boolean(),
+      bracketedPaste: z43.boolean(),
+      insert: z43.boolean(),
+      origin: z43.boolean(),
+      wraparound: z43.boolean(),
+      mouseTracking: z43.boolean(),
+      synchronizedOutput: z43.boolean()
+    }).strict();
+    TerminalReplicaPlacementSchemaZ = z43.object({
+      id: z43.string().min(1),
+      kind: z43.string().min(1),
+      row: z43.number().int().nonnegative(),
+      column: z43.number().int().nonnegative(),
+      columns: z43.number().int().positive(),
+      rows: z43.number().int().positive(),
+      contentDigest: z43.string().min(1)
+    }).strict();
+    TerminalReplicaSnapshotSchemaZ = z43.object({
+      cols: z43.number().int().positive(),
+      rows: z43.number().int().positive(),
+      grid: z43.array(TerminalReplicaRowSchemaZ),
+      history: z43.array(TerminalReplicaRowSchemaZ),
+      cursor: TerminalReplicaCursorSchemaZ,
+      modes: TerminalReplicaModesSchemaZ,
+      placements: z43.array(TerminalReplicaPlacementSchemaZ),
+      bootstrap: z43.object({
+        kind: z43.enum(["painted-capture", "authoritative-stream"]),
+        hiddenState: z43.enum(["unknown", "observed-from-start"])
+      }).strict()
+    }).strict();
+    TerminalReplicaPatchPayloadSchemaZ = z43.object({
+      dimensions: z43.object({ cols: z43.number().int().positive(), rows: z43.number().int().positive() }).strict().optional(),
+      rows: z43.array(
+        z43.object({ index: z43.number().int().nonnegative(), row: TerminalReplicaRowSchemaZ }).strict()
+      ),
+      history: z43.array(TerminalReplicaRowSchemaZ).optional(),
+      historyDelta: z43.object({
+        trim: z43.number().int().nonnegative(),
+        append: z43.array(TerminalReplicaRowSchemaZ)
+      }).strict().optional(),
+      cursor: TerminalReplicaCursorSchemaZ.optional(),
+      modes: TerminalReplicaModesSchemaZ.optional(),
+      placements: z43.array(TerminalReplicaPlacementSchemaZ).optional(),
+      bootstrap: TerminalReplicaSnapshotSchemaZ.shape.bootstrap.optional()
+    }).strict();
+    TerminalReplicaTombstonePayloadSchemaZ = z43.object({ reason: z43.enum(["pane-closed", "session-restarted", "runtime-disposed"]) }).strict();
+    TERMINAL_REPLICA_ATTRIBUTE = Object.freeze({
+      bold: 1,
+      dim: 2,
+      italic: 4,
+      underline: 8,
+      blink: 16,
+      inverse: 32,
+      hidden: 64,
+      strikethrough: 128
+    });
+  }
+});
+
+// packages/contracts/src/session-runtime.ts
+import { z as z44 } from "zod";
+var SessionRuntimeGenerationSchemaZ, SessionRuntimeClientIdSchemaZ, SessionRuntimeSessionNameSchemaZ, SessionRuntimeControllerRoleSchemaZ, SessionRuntimeControllerLeaseSchemaZ, SessionRuntimeControllerSnapshotSchemaZ, TerminalReplicaRevisionSchemaZ, TerminalReplicaFrameMetadataSchemaZ, CanonicalTerminalReplicaSeedSchemaZ, CanonicalTerminalReplicaPatchSchemaZ, CanonicalTerminalReplicaTombstoneSchemaZ, CanonicalTerminalReplicaUpdateSchemaZ, SessionRuntimePaneReadIntentSchemaZ, SessionRuntimeSemanticIntentSchemaZ;
+var init_session_runtime = __esm({
+  "packages/contracts/src/session-runtime.ts"() {
+    "use strict";
+    init_daemon_wire();
+    init_interaction_receipts();
+    init_semantic_identity();
+    init_workspace_multiplexer();
+    init_workspace_state();
+    init_terminal_replica();
+    SessionRuntimeGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
+    SessionRuntimeClientIdSchemaZ = z44.string().min(1).max(4096).refine((value) => !/[\0\r\n]/u.test(value));
+    SessionRuntimeSessionNameSchemaZ = z44.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    SessionRuntimeControllerRoleSchemaZ = z44.enum(["controller", "viewer"]);
+    SessionRuntimeControllerLeaseSchemaZ = z44.object({
+      generation: SessionRuntimeGenerationSchemaZ,
+      session: SessionRuntimeSessionNameSchemaZ,
+      clientId: SessionRuntimeClientIdSchemaZ,
+      token: z44.uuid(),
+      revision: z44.number().int().positive()
+    }).strict();
+    SessionRuntimeControllerSnapshotSchemaZ = z44.object({
+      generation: SessionRuntimeGenerationSchemaZ,
+      session: SessionRuntimeSessionNameSchemaZ,
+      controllerClientId: SessionRuntimeClientIdSchemaZ.nullable(),
+      revision: z44.number().int().nonnegative()
+    }).strict();
+    TerminalReplicaRevisionSchemaZ = z44.number().int().nonnegative();
+    TerminalReplicaFrameMetadataSchemaZ = z44.object({
+      workspaceName: WorkspaceIdSchemaZ,
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      generation: SessionRuntimeGenerationSchemaZ,
+      incarnation: z44.string().min(1).max(256),
+      cols: z44.number().int().positive(),
+      rows: z44.number().int().positive(),
+      stateHash: z44.string().regex(/^[0-9a-f]{16}$/u),
+      hashAlgorithm: z44.literal("fnv1a64-v1")
+    }).strict();
+    CanonicalTerminalReplicaSeedSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
+      type: z44.literal("terminal.seed"),
+      revision: TerminalReplicaRevisionSchemaZ,
+      snapshot: TerminalReplicaSnapshotSchemaZ
+    }).strict();
+    CanonicalTerminalReplicaPatchSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
+      type: z44.literal("terminal.patch"),
+      baseRevision: TerminalReplicaRevisionSchemaZ,
+      revision: TerminalReplicaRevisionSchemaZ,
+      patch: TerminalReplicaPatchPayloadSchemaZ
+    }).strict();
+    CanonicalTerminalReplicaTombstoneSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
+      type: z44.literal("terminal.tombstone"),
+      baseRevision: TerminalReplicaRevisionSchemaZ,
+      revision: TerminalReplicaRevisionSchemaZ,
+      tombstone: TerminalReplicaTombstonePayloadSchemaZ
+    }).strict();
+    CanonicalTerminalReplicaUpdateSchemaZ = z44.discriminatedUnion("type", [
+      CanonicalTerminalReplicaSeedSchemaZ,
+      CanonicalTerminalReplicaPatchSchemaZ,
+      CanonicalTerminalReplicaTombstoneSchemaZ
+    ]);
+    SessionRuntimePaneReadIntentSchemaZ = z44.object({
+      verb: z44.literal("workspace.pane.read"),
+      workspaceName: WorkspaceIdSchemaZ,
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      origin: AuthoredInteractionOriginSchemaZ
+    }).strict();
+    SessionRuntimeSemanticIntentSchemaZ = z44.union([
+      WorkspaceMultiplexerIntentSchemaZ,
+      SessionRuntimePaneReadIntentSchemaZ
+    ]);
+  }
+});
+
+// packages/contracts/src/terminal-delivery.ts
+import { z as z45 } from "zod";
+var TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryChunkSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
+var init_terminal_delivery = __esm({
+  "packages/contracts/src/terminal-delivery.ts"() {
+    "use strict";
+    init_semantic_identity();
+    init_session_runtime();
+    init_workspace_state();
+    init_terminal_replica();
+    TERMINAL_DELIVERY_PROTOCOL_VERSION = 1;
+    TERMINAL_DELIVERY_CHUNK_BYTES = 256 * 1024;
+    TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = 512 * 1024;
+    TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = 16 * 1024 * 1024;
+    TerminalDeliveryEncodingSchemaZ = z45.enum([
+      "semantic-v1",
+      "ansi-diff-v1",
+      "ansi-raw-v1"
+    ]);
+    TerminalDeliveryOfferSchemaZ = z45.object({
+      protocolVersions: z45.array(z45.number().int().positive()).min(1).max(8),
+      encodings: z45.array(TerminalDeliveryEncodingSchemaZ).min(1).max(3),
+      richPlacements: z45.boolean()
+    }).strict().superRefine((value, context) => {
+      if (new Set(value.protocolVersions).size !== value.protocolVersions.length)
+        context.addIssue({ code: "custom", message: "protocolVersions must be unique" });
+      if (new Set(value.encodings).size !== value.encodings.length)
+        context.addIssue({ code: "custom", message: "encodings must be unique" });
+    });
+    TerminalDeliveryNegotiatedSchemaZ = z45.object({
+      protocolVersion: z45.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
+      encoding: TerminalDeliveryEncodingSchemaZ,
+      richPlacements: z45.boolean(),
+      generation: SessionRuntimeGenerationSchemaZ,
+      deliveryNonce: z45.uuid()
+    }).strict().superRefine((value, context) => {
+      if (value.richPlacements && value.encoding !== "semantic-v1")
+        context.addIssue({ code: "custom", message: "rich placements require semantic delivery" });
+    });
+    TerminalDeliveryNegotiationResultSchemaZ = z45.discriminatedUnion("accepted", [
+      z45.object({ accepted: z45.literal(true), negotiated: TerminalDeliveryNegotiatedSchemaZ }).strict(),
+      z45.object({
+        accepted: z45.literal(false),
+        reason: z45.enum([
+          "protocol-version-mismatch",
+          "encoding-mismatch",
+          "unsupported-capability-combination"
+        ])
+      }).strict()
+    ]);
+    DeliveryAddressSchemaZ = z45.object({
+      workspaceName: WorkspaceIdSchemaZ,
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      generation: SessionRuntimeGenerationSchemaZ,
+      incarnation: z45.string().min(1).max(256),
+      deliveryNonce: z45.uuid()
+    });
+    TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
+      type: z45.literal("terminal.delivery"),
+      transactionId: z45.uuid(),
+      protocolVersion: z45.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
+      encoding: TerminalDeliveryEncodingSchemaZ,
+      frame: z45.enum(["seed", "patch", "tombstone"]),
+      baseRevision: z45.number().int().min(-1).nullable(),
+      canonicalRevision: z45.number().int().nonnegative(),
+      canonicalStateHash: z45.string().regex(/^[0-9a-f]{16}$/u),
+      representationHash: z45.string().regex(/^[0-9a-f]{16}$/u),
+      representationBytes: z45.number().int().nonnegative().max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
+      chunkCount: z45.number().int().positive().max(256),
+      canonicalEquivalent: z45.boolean(),
+      history: z45.enum(["complete", "truncated", "not-applicable"]),
+      richPlacements: z45.boolean()
+    }).strict().superRefine((value, context) => {
+      const expectedChunks = Math.max(
+        1,
+        Math.ceil(value.representationBytes / TERMINAL_DELIVERY_CHUNK_BYTES)
+      );
+      if (value.chunkCount !== expectedChunks)
+        context.addIssue({
+          code: "custom",
+          message: "chunkCount does not match representationBytes"
+        });
+      if (value.frame === "seed" && value.baseRevision !== null)
+        context.addIssue({ code: "custom", message: "seed baseRevision must be null" });
+      if (value.frame !== "seed" && (value.baseRevision === null || value.canonicalRevision <= value.baseRevision))
+        context.addIssue({
+          code: "custom",
+          message: "patch/tombstone requires an earlier baseRevision"
+        });
+      if (value.encoding === "semantic-v1" && (!value.canonicalEquivalent || value.frame !== "tombstone" && value.history !== "complete"))
+        context.addIssue({
+          code: "custom",
+          message: "semantic delivery must be complete canonical truth"
+        });
+      if (value.encoding === "semantic-v1" && value.frame === "tombstone" && value.history !== "not-applicable")
+        context.addIssue({ code: "custom", message: "semantic tombstones have no history" });
+      if (value.encoding !== "semantic-v1" && value.canonicalEquivalent)
+        context.addIssue({
+          code: "custom",
+          message: "ANSI representation cannot claim canonical equivalence"
+        });
+      if (value.encoding !== "semantic-v1" && value.richPlacements)
+        context.addIssue({ code: "custom", message: "ANSI cannot carry rich placements" });
+    });
+    TerminalDeliveryChunkSchemaZ = z45.object({
+      type: z45.literal("terminal.delivery.chunk"),
+      transactionId: z45.uuid(),
+      index: z45.number().int().nonnegative().max(255),
+      bytes: z45.instanceof(Uint8Array).refine((value) => value.byteLength <= TERMINAL_DELIVERY_CHUNK_BYTES)
+    }).strict();
+    TerminalDeliveryFaultSchemaZ = z45.object({
+      type: z45.literal("terminal.delivery.fault"),
+      reason: z45.enum(["state-too-large", "source-closed", "protocol-violation"]),
+      message: z45.string().min(1).max(1024),
+      deliveryNonce: z45.uuid()
+    }).strict();
+    TerminalDeliveryAckSchemaZ = DeliveryAddressSchemaZ.extend({
+      type: z45.literal("terminal.delivery.ack"),
+      transactionId: z45.uuid(),
+      canonicalRevision: z45.number().int().nonnegative(),
+      canonicalStateHash: z45.string().regex(/^[0-9a-f]{16}$/u),
+      representationHash: z45.string().regex(/^[0-9a-f]{16}$/u)
+    }).strict();
+    TerminalDeliveryNackSchemaZ = DeliveryAddressSchemaZ.extend({
+      type: z45.literal("terminal.delivery.nack"),
+      transactionId: z45.uuid().nullable(),
+      reason: z45.enum([
+        "gap",
+        "hash-mismatch",
+        "decode-failed",
+        "state-too-large",
+        "stale-generation",
+        "protocol-violation"
+      ]),
+      appliedRevision: z45.number().int().min(-1)
+    }).strict();
+    TerminalDeliveryVisibilitySchemaZ = z45.enum([
+      "visible",
+      "background",
+      "hidden",
+      "frozen"
+    ]);
+    TerminalSemanticDeliveryPayloadSchemaZ = z45.discriminatedUnion("frame", [
+      z45.object({
+        frame: z45.literal("seed"),
+        revision: z45.number().int().nonnegative(),
+        snapshot: TerminalReplicaSnapshotSchemaZ
+      }).strict(),
+      z45.object({
+        frame: z45.literal("patch"),
+        baseRevision: z45.number().int().nonnegative(),
+        revision: z45.number().int().nonnegative(),
+        patch: TerminalReplicaPatchPayloadSchemaZ
+      }).strict().refine((value) => value.revision > value.baseRevision, "patch revision must advance"),
+      z45.object({
+        frame: z45.literal("tombstone"),
+        baseRevision: z45.number().int().nonnegative(),
+        revision: z45.number().int().nonnegative(),
+        tombstone: TerminalReplicaTombstonePayloadSchemaZ
+      }).strict().refine((value) => value.revision > value.baseRevision, "tombstone revision must advance")
+    ]);
+  }
+});
+
+// packages/contracts/src/pane-stream.ts
+import { z as z46 } from "zod";
+var PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_TEXT_CHARS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamKeyNameSchemaZ, InputTextSchemaZ, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -7221,6 +7549,9 @@ var init_pane_stream = __esm({
     init_semantic_identity();
     init_terminal_attachments();
     init_workspace_state();
+    init_terminal_delivery();
+    init_session_runtime();
+    init_workspace_multiplexer();
     PANE_STREAM_PROTOCOL_VERSION = 1;
     PANE_STREAM_ISSUE_PATH = "/api/v1/terminal/pane-streams/issue";
     PANE_STREAM_REDEEM_PATH = "/v1/terminal/pane-streams/redeem";
@@ -7237,158 +7568,240 @@ var init_pane_stream = __esm({
     PANE_STREAM_MAX_INPUT_SEQUENCE = 4294967295;
     PaneStreamSemanticPaneIdSchemaZ = TerminalAttachmentSemanticPaneIdSchemaZ;
     PaneStreamViewerModeSchemaZ = TerminalAttachmentViewerModeSchemaZ;
-    PaneSetSchemaZ = z43.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane");
-    PaneStreamLeaseRequestSchemaZ = z43.object({
-      protocolVersion: z43.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneSetSchemaZ = z46.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane");
+    PaneStreamLeaseRequestSchemaZ = z46.object({
+      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
       workspaceName: WorkspaceIdSchemaZ,
       panes: PaneSetSchemaZ,
-      viewerMode: PaneStreamViewerModeSchemaZ
+      viewerMode: PaneStreamViewerModeSchemaZ,
+      /** Explicit semantic-v2 content/authority mode. Omission retains raw v1. */
+      terminalDelivery: TerminalDeliveryOfferSchemaZ.optional()
     }).strict();
-    PaneStreamRedemptionTicketSchemaZ = z43.string().regex(/^ps1_[A-Za-z0-9_-]{43}$/u);
-    PaneStreamLoopbackWebSocketUrlSchemaZ = z43.url().max(2048).refine((value) => {
+    PaneStreamRedemptionTicketSchemaZ = z46.string().regex(/^ps1_[A-Za-z0-9_-]{43}$/u);
+    PaneStreamLoopbackWebSocketUrlSchemaZ = z46.url().max(2048).refine((value) => {
       const url = new URL(value);
       return url.protocol === "ws:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.port.length > 0 && url.username.length === 0 && url.password.length === 0 && url.pathname === PANE_STREAM_REDEEM_PATH && url.search.length === 0 && url.hash.length === 0 && url.toString() === value;
     }, "pane-stream URL must be the canonical uncredentialed loopback redemption endpoint");
-    PaneStreamIssueDescriptorSchemaZ = z43.object({
-      protocolVersion: z43.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamIssueDescriptorSchemaZ = z46.object({
+      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
       webSocketUrl: PaneStreamLoopbackWebSocketUrlSchemaZ,
-      subprotocol: z43.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
+      subprotocol: z46.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
       redemptionTicket: PaneStreamRedemptionTicketSchemaZ,
       daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
-      requestId: z43.uuid(),
-      expiresAt: z43.number().int().positive(),
+      requestId: z46.uuid(),
+      expiresAt: z46.number().int().positive(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ
     }).strict();
     PaneStreamIssueErrorSchemaZ = TerminalIssueErrorCompatSchemaZ;
-    PaneStreamIssueResultSchemaZ = z43.discriminatedUnion("status", [
-      z43.object({ status: z43.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
-      z43.object({ status: z43.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
+    PaneStreamIssueResultSchemaZ = z46.discriminatedUnion("status", [
+      z46.object({ status: z46.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
+      z46.object({ status: z46.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
     ]);
-    PaneStreamIssueMutationRequestSchemaZ = z43.object({
-      requestId: z43.uuid(),
+    PaneStreamIssueMutationRequestSchemaZ = z46.object({
+      requestId: z46.uuid(),
       expectedDaemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
       stream: PaneStreamLeaseRequestSchemaZ
     }).strict();
-    BoundedIdentitySchemaZ = z43.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    PaneStreamRedeemFrameSchemaZ = z43.object({
-      type: z43.literal("redeem"),
-      protocolVersion: z43.literal(PANE_STREAM_PROTOCOL_VERSION),
+    BoundedIdentitySchemaZ = z46.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    PaneStreamRedeemFrameSchemaZ = z46.object({
+      type: z46.literal("redeem"),
+      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
       ticket: PaneStreamRedemptionTicketSchemaZ,
-      requestId: z43.uuid(),
+      requestId: z46.uuid(),
       daemonInstanceId: BoundedIdentitySchemaZ,
       /**
        * The client commits to sending `consumed` frames, activating the
        * renderer-backlog flow owner from the first delivered frame. Card 3's
        * renderer sets this; simple transcript clients omit it.
        */
-      deliveryAcks: z43.boolean().optional()
+      deliveryAcks: z46.boolean().optional()
     }).strict();
-    PaneStreamKeyNameSchemaZ = z43.string().regex(
+    PaneStreamKeyNameSchemaZ = z46.string().regex(
       /^(?:C-|M-|S-){0,3}(?:F1[0-2]|F[1-9]|Enter|Escape|Space|Tab|BTab|BSpace|Home|End|NPage|PPage|PgUp|PgDn|DC|IC|Up|Down|Left|Right|[A-Za-z0-9])$/u
     );
-    InputTextSchemaZ = z43.string().min(1).max(PANE_STREAM_MAX_INPUT_TEXT_CHARS).refine((value) => !value.includes("\0"), "input text must not contain NUL");
-    PaneStreamInputFrameSchemaZ = z43.discriminatedUnion("kind", [
-      z43.object({
-        type: z43.literal("input"),
-        kind: z43.literal("text"),
+    InputTextSchemaZ = z46.string().min(1).max(PANE_STREAM_MAX_INPUT_TEXT_CHARS).refine((value) => !value.includes("\0"), "input text must not contain NUL");
+    PaneStreamInputFrameSchemaZ = z46.discriminatedUnion("kind", [
+      z46.object({
+        type: z46.literal("input"),
+        kind: z46.literal("text"),
         pane: PaneStreamSemanticPaneIdSchemaZ,
-        seq: z43.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+        seq: z46.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
         data: InputTextSchemaZ
       }).strict(),
-      z43.object({
-        type: z43.literal("input"),
-        kind: z43.literal("key"),
+      z46.object({
+        type: z46.literal("input"),
+        kind: z46.literal("key"),
         pane: PaneStreamSemanticPaneIdSchemaZ,
-        seq: z43.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+        seq: z46.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
         data: PaneStreamKeyNameSchemaZ
       }).strict()
     ]);
-    PaneStreamConsumedFrameSchemaZ = z43.object({
-      type: z43.literal("consumed"),
+    PaneStreamConsumedFrameSchemaZ = z46.object({
+      type: z46.literal("consumed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z43.number().int().positive()
+      seq: z46.number().int().positive()
     }).strict();
-    PaneStreamClientFrameSchemaZ = z43.union([
+    PaneStreamTerminalDeliveryAckFrameSchemaZ = z46.object({ type: z46.literal("terminal-delivery-ack"), ack: TerminalDeliveryAckSchemaZ }).strict();
+    PaneStreamTerminalDeliveryNackFrameSchemaZ = z46.object({ type: z46.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ }).strict();
+    PaneStreamTerminalDeliveryVisibilityFrameSchemaZ = z46.object({
+      type: z46.literal("terminal-delivery-visibility"),
+      workspaceName: TerminalDeliveryAckSchemaZ.shape.workspaceName,
+      pane: PaneStreamSemanticPaneIdSchemaZ,
+      generation: TerminalDeliveryAckSchemaZ.shape.generation,
+      incarnation: TerminalDeliveryAckSchemaZ.shape.incarnation,
+      deliveryNonce: TerminalDeliveryAckSchemaZ.shape.deliveryNonce,
+      visibility: TerminalDeliveryVisibilitySchemaZ
+    }).strict();
+    PaneStreamSemanticIntentFrameSchemaZ = z46.object({
+      type: z46.literal("semantic-intent"),
+      operationId: z46.uuid(),
+      intent: SessionRuntimeSemanticIntentSchemaZ
+    }).strict();
+    PaneStreamViewportFrameSchemaZ = z46.object({
+      type: z46.literal("viewport"),
+      seq: z46.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      cols: z46.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      rows: z46.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS)
+    }).strict();
+    PaneStreamClientFrameSchemaZ = z46.union([
       PaneStreamInputFrameSchemaZ,
-      PaneStreamConsumedFrameSchemaZ
+      PaneStreamConsumedFrameSchemaZ,
+      PaneStreamTerminalDeliveryAckFrameSchemaZ,
+      PaneStreamTerminalDeliveryNackFrameSchemaZ,
+      PaneStreamTerminalDeliveryVisibilityFrameSchemaZ,
+      PaneStreamSemanticIntentFrameSchemaZ,
+      PaneStreamViewportFrameSchemaZ
     ]);
-    Base64SchemaZ = (maxChars) => z43.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
-    ServerSeqSchemaZ = z43.number().int().positive();
-    GridCellSchemaZ = z43.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS);
-    CellCoordinateSchemaZ = z43.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS);
-    PaneStreamReadyFrameSchemaZ = z43.object({
-      type: z43.literal("ready"),
-      protocolVersion: z43.literal(PANE_STREAM_PROTOCOL_VERSION),
+    Base64SchemaZ = (maxChars) => z46.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
+    ServerSeqSchemaZ = z46.number().int().positive();
+    GridCellSchemaZ = z46.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS);
+    CellCoordinateSchemaZ = z46.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS);
+    PaneStreamReadyFrameSchemaZ = z46.object({
+      type: z46.literal("ready"),
+      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
       daemonInstanceId: BoundedIdentitySchemaZ,
-      requestId: z43.uuid(),
+      requestId: z46.uuid(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ
     }).strict();
-    PaneStreamSeedBatchFrameSchemaZ = z43.object({
-      type: z43.literal("seed-batch"),
+    PaneStreamSeedBatchFrameSchemaZ = z46.object({
+      type: z46.literal("seed-batch"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      reset: z43.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
+      reset: z46.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
       seed: Base64SchemaZ(PANE_STREAM_MAX_SEED_BASE64_CHARS),
-      held: z43.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
-      cursor: z43.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
+      held: z46.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
+      cursor: z46.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
     }).strict();
-    PaneStreamOutputFrameSchemaZ = z43.object({
-      type: z43.literal("output"),
+    PaneStreamOutputFrameSchemaZ = z46.object({
+      type: z46.literal("output"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       data: Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)
     }).strict();
-    PaneStreamCursorFrameSchemaZ = z43.object({
-      type: z43.literal("cursor"),
+    PaneStreamCursorFrameSchemaZ = z46.object({
+      type: z46.literal("cursor"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       x: CellCoordinateSchemaZ,
       y: CellCoordinateSchemaZ
     }).strict();
-    BoundedDisplayNameSchemaZ = z43.string().max(256).refine((value) => !/[\0\r\n]/u.test(value));
-    PaneStreamLayoutFrameSchemaZ = z43.object({
-      type: z43.literal("layout"),
+    BoundedDisplayNameSchemaZ = z46.string().max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    PaneStreamLayoutFrameSchemaZ = z46.object({
+      type: z46.literal("layout"),
       /** Durable `@tmux_ide_window_id` stamp; null while the join is unverified. */
       semanticWindowId: WorkspaceIdSchemaZ.nullable(),
       windowName: BoundedDisplayNameSchemaZ.nullable(),
-      currentWindow: z43.boolean(),
+      currentWindow: z46.boolean(),
       cols: GridCellSchemaZ,
       rows: GridCellSchemaZ,
-      zoomed: z43.boolean(),
+      zoomed: z46.boolean(),
       /** Backward-compatible while older daemons are still in the reconnect window. */
-      paneBorderStatus: z43.enum(["top", "bottom", "off"]).default("off"),
-      panes: z43.array(
-        z43.object({
+      paneBorderStatus: z46.enum(["top", "bottom", "off"]).default("off"),
+      panes: z46.array(
+        z46.object({
           /** Null while the pane's semantic identity join is unverified. */
           pane: PaneStreamSemanticPaneIdSchemaZ.nullable(),
           left: CellCoordinateSchemaZ,
           top: CellCoordinateSchemaZ,
           width: GridCellSchemaZ,
           height: GridCellSchemaZ,
-          active: z43.boolean()
+          active: z46.boolean()
         }).strict()
       ).max(PANE_STREAM_MAX_LAYOUT_PANES)
     }).strict();
-    PaneStreamFlowFrameSchemaZ = z43.object({
-      type: z43.literal("flow"),
+    PaneStreamFlowFrameSchemaZ = z46.object({
+      type: z46.literal("flow"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      state: z43.enum(["paused", "resumed"]),
-      reason: z43.enum(["backpressure", "requested"])
+      state: z46.enum(["paused", "resumed"]),
+      reason: z46.enum(["backpressure", "requested"])
     }).strict();
-    PaneStreamClosedFrameSchemaZ = z43.object({
-      type: z43.literal("closed"),
+    PaneStreamClosedFrameSchemaZ = z46.object({
+      type: z46.literal("closed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ
     }).strict();
-    PaneStreamInputAckFrameSchemaZ = z43.object({
-      type: z43.literal("input-ack"),
+    PaneStreamInputAckFrameSchemaZ = z46.object({
+      type: z46.literal("input-ack"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z43.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
+      seq: z46.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
     }).strict();
-    PaneStreamErrorFrameCodeSchemaZ = z43.enum([
+    PaneStreamTerminalDeliveryReadyFrameSchemaZ = z46.object({
+      type: z46.literal("terminal-delivery-ready"),
+      pane: PaneStreamSemanticPaneIdSchemaZ,
+      negotiation: TerminalDeliveryNegotiationResultSchemaZ
+    }).strict();
+    PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ = z46.object({
+      type: z46.literal("terminal-delivery-envelope"),
+      pane: PaneStreamSemanticPaneIdSchemaZ,
+      envelope: TerminalDeliveryEnvelopeSchemaZ
+    }).strict();
+    PaneStreamTerminalDeliveryChunkFrameSchemaZ = z46.object({
+      type: z46.literal("terminal-delivery-chunk"),
+      pane: PaneStreamSemanticPaneIdSchemaZ,
+      transactionId: z46.uuid(),
+      index: z46.number().int().nonnegative().max(255),
+      data: Base64SchemaZ(Math.ceil(TERMINAL_DELIVERY_CHUNK_BYTES / 3) * 4)
+    }).strict();
+    PaneStreamTerminalDeliveryFaultFrameSchemaZ = z46.object({
+      type: z46.literal("terminal-delivery-fault"),
+      pane: PaneStreamSemanticPaneIdSchemaZ,
+      fault: TerminalDeliveryFaultSchemaZ
+    }).strict();
+    PaneStreamSemanticIntentAckFrameSchemaZ = z46.object({
+      type: z46.literal("semantic-intent-ack"),
+      operationId: z46.uuid(),
+      outcome: z46.discriminatedUnion("status", [
+        z46.object({
+          status: z46.literal("applied"),
+          result: WorkspaceMultiplexerMutationResultSchemaZ.nullable()
+        }).strict(),
+        z46.object({
+          status: z46.literal("rejected"),
+          code: z46.enum([
+            "controller-conflict",
+            "controller-target-unavailable",
+            "stale-controller-lease",
+            "invalid-client-capability",
+            "invalid-source-pane-binding",
+            "intent-session-mismatch",
+            "intent-rejected",
+            "intent-timed-out",
+            "stream-unavailable"
+          ]),
+          message: z46.string().min(1).max(512)
+        }).strict()
+      ])
+    }).strict();
+    PaneStreamViewportAckFrameSchemaZ = z46.object({
+      type: z46.literal("viewport-ack"),
+      seq: z46.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      cols: z46.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      rows: z46.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS)
+    }).strict();
+    PaneStreamErrorFrameCodeSchemaZ = z46.enum([
       "redemption-rejected",
       "ticket-expired",
       "live-capacity-exhausted",
@@ -7396,13 +7809,13 @@ var init_pane_stream = __esm({
       "input-rejected",
       "protocol-error"
     ]);
-    PaneStreamErrorFrameSchemaZ = z43.object({
-      type: z43.literal("error"),
-      protocolVersion: z43.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamErrorFrameSchemaZ = z46.object({
+      type: z46.literal("error"),
+      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
       code: PaneStreamErrorFrameCodeSchemaZ,
-      retryable: z43.boolean()
+      retryable: z46.boolean()
     }).strict();
-    PaneStreamServerFrameSchemaZ = z43.discriminatedUnion("type", [
+    PaneStreamServerFrameSchemaZ = z46.discriminatedUnion("type", [
       PaneStreamReadyFrameSchemaZ,
       PaneStreamSeedBatchFrameSchemaZ,
       PaneStreamOutputFrameSchemaZ,
@@ -7411,90 +7824,96 @@ var init_pane_stream = __esm({
       PaneStreamFlowFrameSchemaZ,
       PaneStreamClosedFrameSchemaZ,
       PaneStreamInputAckFrameSchemaZ,
+      PaneStreamTerminalDeliveryReadyFrameSchemaZ,
+      PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ,
+      PaneStreamTerminalDeliveryChunkFrameSchemaZ,
+      PaneStreamTerminalDeliveryFaultFrameSchemaZ,
+      PaneStreamSemanticIntentAckFrameSchemaZ,
+      PaneStreamViewportAckFrameSchemaZ,
       PaneStreamErrorFrameSchemaZ
     ]);
   }
 });
 
 // packages/contracts/src/control.ts
-import { z as z44 } from "zod";
+import { z as z47 } from "zod";
 var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
 var init_control = __esm({
   "packages/contracts/src/control.ts"() {
     "use strict";
     CONTROL_PROTOCOL_VERSION = 1;
-    controlIdSchema = z44.union([z44.string(), z44.number()]);
-    agentStatusSchema = z44.enum(["blocked", "working", "done", "idle", "unknown"]);
-    controlRequestSchema = z44.object({
-      v: z44.literal(CONTROL_PROTOCOL_VERSION),
+    controlIdSchema = z47.union([z47.string(), z47.number()]);
+    agentStatusSchema = z47.enum(["blocked", "working", "done", "idle", "unknown"]);
+    controlRequestSchema = z47.object({
+      v: z47.literal(CONTROL_PROTOCOL_VERSION),
       id: controlIdSchema,
-      verb: z44.string().min(1),
-      params: z44.record(z44.string(), z44.unknown()).optional()
+      verb: z47.string().min(1),
+      params: z47.record(z47.string(), z47.unknown()).optional()
     });
-    controlErrorSchema = z44.object({
-      code: z44.string(),
-      message: z44.string()
+    controlErrorSchema = z47.object({
+      code: z47.string(),
+      message: z47.string()
     });
-    controlResponseSchema = z44.discriminatedUnion("ok", [
-      z44.object({
-        v: z44.literal(CONTROL_PROTOCOL_VERSION),
+    controlResponseSchema = z47.discriminatedUnion("ok", [
+      z47.object({
+        v: z47.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z44.literal(true),
-        data: z44.unknown()
+        ok: z47.literal(true),
+        data: z47.unknown()
       }),
-      z44.object({
-        v: z44.literal(CONTROL_PROTOCOL_VERSION),
+      z47.object({
+        v: z47.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z44.literal(false),
+        ok: z47.literal(false),
         error: controlErrorSchema
       })
     ]);
-    controlEventSchema = z44.object({
-      v: z44.literal(CONTROL_PROTOCOL_VERSION),
-      event: z44.string().min(1),
-      data: z44.unknown()
+    controlEventSchema = z47.object({
+      v: z47.literal(CONTROL_PROTOCOL_VERSION),
+      event: z47.string().min(1),
+      data: z47.unknown()
     });
-    agentStatusEventSchema = z44.object({
-      ts: z44.string(),
-      session: z44.string(),
+    agentStatusEventSchema = z47.object({
+      ts: z47.string(),
+      session: z47.string(),
       from: agentStatusSchema.nullable(),
       to: agentStatusSchema
     });
-    agentsParamsSchema = z44.object({
-      session: z44.string().optional()
+    agentsParamsSchema = z47.object({
+      session: z47.string().optional()
     });
-    sendParamsSchema = z44.object({
-      session: z44.string().min(1),
-      target: z44.string().min(1),
-      message: z44.string().min(1),
-      noEnter: z44.boolean().optional(),
-      dir: z44.string().optional()
+    sendParamsSchema = z47.object({
+      session: z47.string().min(1),
+      target: z47.string().min(1),
+      message: z47.string().min(1),
+      noEnter: z47.boolean().optional(),
+      dir: z47.string().optional()
     });
     CONTROL_WAIT_MAX_TIMEOUT_MS = 6e5;
-    waitTimeoutSchema = z44.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
-    waitParamsSchema = z44.discriminatedUnion("kind", [
-      z44.object({
-        kind: z44.literal("agent-status"),
-        session: z44.string().min(1),
+    waitTimeoutSchema = z47.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
+    waitParamsSchema = z47.discriminatedUnion("kind", [
+      z47.object({
+        kind: z47.literal("agent-status"),
+        session: z47.string().min(1),
         status: agentStatusSchema,
         timeoutMs: waitTimeoutSchema
       }),
-      z44.object({
-        kind: z44.literal("output"),
-        target: z44.string().min(1),
-        match: z44.string().min(1),
+      z47.object({
+        kind: z47.literal("output"),
+        target: z47.string().min(1),
+        match: z47.string().min(1),
         timeoutMs: waitTimeoutSchema
       })
     ]);
-    spawnPlacementSchema = z44.enum(["window", "split-h", "split-v"]);
-    spawnParamsSchema = z44.object({
-      kind: z44.string().min(1).optional(),
-      command: z44.string().min(1).optional(),
-      session: z44.string().min(1).optional(),
-      sessionName: z44.string().min(1).optional(),
-      dir: z44.string().optional(),
+    spawnPlacementSchema = z47.enum(["window", "split-h", "split-v"]);
+    spawnParamsSchema = z47.object({
+      kind: z47.string().min(1).optional(),
+      command: z47.string().min(1).optional(),
+      session: z47.string().min(1).optional(),
+      sessionName: z47.string().min(1).optional(),
+      dir: z47.string().optional(),
       placement: spawnPlacementSchema.optional(),
-      paneId: z44.string().optional()
+      paneId: z47.string().optional()
     }).refine((p) => Boolean(p.kind) !== Boolean(p.command), {
       message: "exactly one of `kind` or `command` is required"
     }).refine((p) => Boolean(p.session) || Boolean(p.sessionName), {
@@ -7502,25 +7921,25 @@ var init_control = __esm({
     }).refine((p) => !(p.placement && p.placement !== "window") || Boolean(p.paneId), {
       message: "split placements need `paneId`"
     });
-    restartAgentParamsSchema = z44.object({
-      paneId: z44.string().min(1),
-      kind: z44.string().min(1).optional(),
-      command: z44.string().min(1).optional()
+    restartAgentParamsSchema = z47.object({
+      paneId: z47.string().min(1),
+      kind: z47.string().min(1).optional(),
+      command: z47.string().min(1).optional()
     }).refine((p) => Boolean(p.kind) || Boolean(p.command), {
       message: "`kind` or `command` is required"
     });
-    stopAgentParamsSchema = z44.object({
-      paneId: z44.string().min(1)
+    stopAgentParamsSchema = z47.object({
+      paneId: z47.string().min(1)
     });
-    explainParamsSchema = z44.object({
-      target: z44.string().min(1)
+    explainParamsSchema = z47.object({
+      target: z47.string().min(1)
     });
-    subscribeParamsSchema = z44.object({}).loose();
+    subscribeParamsSchema = z47.object({}).loose();
   }
 });
 
 // packages/contracts/src/multiplexer-verbs.ts
-import { z as z45 } from "zod";
+import { z as z48 } from "zod";
 function deepFreeze4(value) {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -7536,20 +7955,20 @@ var init_multiplexer_verbs = __esm({
     init_app_window_mutation();
     init_workspace_multiplexer();
     MULTIPLEXER_VERB_TABLE_VERSION = 1;
-    MultiplexerVerbIdSchemaZ = z45.string().min(3).max(64).regex(/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/u, "verb id must be a dot-namespaced identifier");
-    MultiplexerVerbScopeSchemaZ = z45.enum(["session", "window", "pane"]);
-    ActionNameSchemaZ = z45.enum(
+    MultiplexerVerbIdSchemaZ = z48.string().min(3).max(64).regex(/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/u, "verb id must be a dot-namespaced identifier");
+    MultiplexerVerbScopeSchemaZ = z48.enum(["session", "window", "pane"]);
+    ActionNameSchemaZ = z48.enum(
       Object.keys(ActionContractsZ)
     );
-    AppWindowCommandTypeSchemaZ = z45.enum(
+    AppWindowCommandTypeSchemaZ = z48.enum(
       AppWindowMutationCommandSchemaZ.options.map((option) => option.shape.type.value)
     );
-    MultiplexerVerbExecutionSchemaZ = z45.discriminatedUnion("kind", [
-      z45.object({ kind: z45.literal("daemon-action"), action: ActionNameSchemaZ }).strict(),
-      z45.object({ kind: z45.literal("app-window"), command: AppWindowCommandTypeSchemaZ }).strict(),
-      z45.object({ kind: z45.literal("renderer") }).strict()
+    MultiplexerVerbExecutionSchemaZ = z48.discriminatedUnion("kind", [
+      z48.object({ kind: z48.literal("daemon-action"), action: ActionNameSchemaZ }).strict(),
+      z48.object({ kind: z48.literal("app-window"), command: AppWindowCommandTypeSchemaZ }).strict(),
+      z48.object({ kind: z48.literal("renderer") }).strict()
     ]);
-    MultiplexerVerbAvailabilityInputSchemaZ = z45.enum([
+    MultiplexerVerbAvailabilityInputSchemaZ = z48.enum([
       "workspaceConnected",
       "sessionWindowCount",
       "windowPaneCount",
@@ -7557,21 +7976,21 @@ var init_multiplexer_verbs = __esm({
       "targetIsActivePane",
       "targetIsDockedStackMember"
     ]);
-    MultiplexerVerbEntrySchemaZ = z45.object({
-      version: z45.literal(MULTIPLEXER_VERB_TABLE_VERSION),
+    MultiplexerVerbEntrySchemaZ = z48.object({
+      version: z48.literal(MULTIPLEXER_VERB_TABLE_VERSION),
       id: MultiplexerVerbIdSchemaZ,
-      label: z45.string().min(1).max(80),
-      description: z45.string().min(1).max(240),
+      label: z48.string().min(1).max(80),
+      description: z48.string().min(1).max(240),
       scope: MultiplexerVerbScopeSchemaZ,
       execution: MultiplexerVerbExecutionSchemaZ,
-      availabilityInputs: z45.array(MultiplexerVerbAvailabilityInputSchemaZ).readonly(),
+      availabilityInputs: z48.array(MultiplexerVerbAvailabilityInputSchemaZ).readonly(),
       /** Destructive verbs must be confirmed before dispatch; no surface may skip it. */
-      destructive: z45.boolean(),
+      destructive: z48.boolean(),
       /**
        * The user's real tmux binding, when the keybinding bridge can read it.
        * Null everywhere today — see the module comment on why a guess is worse.
        */
-      tmuxKeyHint: z45.string().min(1).max(40).nullable()
+      tmuxKeyHint: z48.string().min(1).max(40).nullable()
     }).strict();
     ENTRIES = [
       {
@@ -7754,7 +8173,7 @@ var init_multiplexer_verbs = __esm({
       MULTIPLEXER_VERB_TABLE.map((entry) => entry.id)
     );
     AVAILABLE = Object.freeze({ available: true });
-    MultiplexerVerbInvocationSchemaZ = z45.object({
+    MultiplexerVerbInvocationSchemaZ = z48.object({
       verbId: MultiplexerVerbIdSchemaZ,
       intent: WorkspaceMultiplexerIntentSchemaZ
     }).strict().superRefine((value, context) => {
@@ -7778,13 +8197,13 @@ var init_multiplexer_verbs = __esm({
 });
 
 // packages/contracts/src/widget-asset.ts
-import { z as z46 } from "zod";
+import { z as z49 } from "zod";
 var WidgetAssetIdSchemaZ, WIDGET_ASSET_MEDIA_TYPES, WidgetAssetMediaTypeSchemaZ, WidgetAssetRequestSchemaZ, WidgetAssetSchemaZ, WidgetAssetResultSchemaZ;
 var init_widget_asset = __esm({
   "packages/contracts/src/widget-asset.ts"() {
     "use strict";
     init_desktop_host();
-    WidgetAssetIdSchemaZ = z46.string().regex(/^[0-9a-f]{64}$/u);
+    WidgetAssetIdSchemaZ = z49.string().regex(/^[0-9a-f]{64}$/u);
     WIDGET_ASSET_MEDIA_TYPES = [
       "text/markdown",
       "image/png",
@@ -7793,24 +8212,24 @@ var init_widget_asset = __esm({
       "image/webp",
       "image/avif"
     ];
-    WidgetAssetMediaTypeSchemaZ = z46.enum(WIDGET_ASSET_MEDIA_TYPES);
-    WidgetAssetRequestSchemaZ = z46.object({ assetId: WidgetAssetIdSchemaZ }).strict();
-    WidgetAssetSchemaZ = z46.object({
+    WidgetAssetMediaTypeSchemaZ = z49.enum(WIDGET_ASSET_MEDIA_TYPES);
+    WidgetAssetRequestSchemaZ = z49.object({ assetId: WidgetAssetIdSchemaZ }).strict();
+    WidgetAssetSchemaZ = z49.object({
       assetId: WidgetAssetIdSchemaZ,
       media: WidgetAssetMediaTypeSchemaZ,
-      name: z46.string().min(1).max(200),
+      name: z49.string().min(1).max(200),
       /** Standard base64. The renderer builds a data URL only after validation. */
-      data: z46.string().min(1).max(24 * 1024 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/u)
+      data: z49.string().min(1).max(24 * 1024 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/u)
     }).strict();
-    WidgetAssetResultSchemaZ = z46.discriminatedUnion("status", [
-      z46.object({ status: z46.literal("ok"), asset: WidgetAssetSchemaZ }).strict(),
-      z46.object({ status: z46.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    WidgetAssetResultSchemaZ = z49.discriminatedUnion("status", [
+      z49.object({ status: z49.literal("ok"), asset: WidgetAssetSchemaZ }).strict(),
+      z49.object({ status: z49.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
   }
 });
 
 // packages/contracts/src/daemon-resource-request.ts
-import { z as z47 } from "zod";
+import { z as z50 } from "zod";
 var DaemonResourceRequestSchemaZ, DAEMON_RESOURCE_RESULT_SCHEMAS, DAEMON_RESOURCE_KINDS, DAEMON_RESOURCE_KIND_SET;
 var init_daemon_resource_request = __esm({
   "packages/contracts/src/daemon-resource-request.ts"() {
@@ -7824,48 +8243,48 @@ var init_daemon_resource_request = __esm({
     init_workspace_multiplexer();
     init_pane_stream();
     init_widget_asset();
-    DaemonResourceRequestSchemaZ = z47.discriminatedUnion("resource", [
-      z47.object({ resource: z47.literal("capabilities") }).strict(),
-      z47.object({ resource: z47.literal("refreshConnection") }).strict(),
-      z47.object({ resource: z47.literal("listWorkspaces") }).strict(),
-      z47.object({ resource: z47.literal("fetchFleetCatalog") }).strict(),
-      z47.object({ resource: z47.literal("startupReadiness") }).strict(),
-      z47.object({
-        resource: z47.literal("fetchApplicationShell"),
+    DaemonResourceRequestSchemaZ = z50.discriminatedUnion("resource", [
+      z50.object({ resource: z50.literal("capabilities") }).strict(),
+      z50.object({ resource: z50.literal("refreshConnection") }).strict(),
+      z50.object({ resource: z50.literal("listWorkspaces") }).strict(),
+      z50.object({ resource: z50.literal("fetchFleetCatalog") }).strict(),
+      z50.object({ resource: z50.literal("startupReadiness") }).strict(),
+      z50.object({
+        resource: z50.literal("fetchApplicationShell"),
         request: DesktopDaemonFetchApplicationShellRequestSchemaZ
       }).strict(),
-      z47.object({
-        resource: z47.literal("fetchWorkspaceFiles"),
+      z50.object({
+        resource: z50.literal("fetchWorkspaceFiles"),
         request: DesktopDaemonFetchWorkspaceFilesRequestSchemaZ
       }).strict(),
-      z47.object({
-        resource: z47.literal("fetchWorkspaceFilePreview"),
+      z50.object({
+        resource: z50.literal("fetchWorkspaceFilePreview"),
         request: DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ
       }).strict(),
-      z47.object({
-        resource: z47.literal("fetchWorkspaceChanges"),
+      z50.object({
+        resource: z50.literal("fetchWorkspaceChanges"),
         request: DesktopDaemonFetchWorkspaceChangesRequestSchemaZ
       }).strict(),
-      z47.object({
-        resource: z47.literal("fetchWorkspaceChangeDiff"),
+      z50.object({
+        resource: z50.literal("fetchWorkspaceChangeDiff"),
         request: DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ
       }).strict(),
-      z47.object({ resource: z47.literal("promoteWorkspace"), request: WorkspacePromoteArgumentsSchemaZ }).strict(),
-      z47.object({
-        resource: z47.literal("createWorkspacePane"),
+      z50.object({ resource: z50.literal("promoteWorkspace"), request: WorkspacePromoteArgumentsSchemaZ }).strict(),
+      z50.object({
+        resource: z50.literal("createWorkspacePane"),
         request: WorkspacePaneCreateInvocationSchemaZ
       }).strict(),
-      z47.object({ resource: z47.literal("mutateAppWindow"), request: AppWindowMutationArgumentsSchemaZ }).strict(),
+      z50.object({ resource: z50.literal("mutateAppWindow"), request: AppWindowMutationArgumentsSchemaZ }).strict(),
       // One resource for every tmux verb rather than one per route: see
       // MultiplexerVerbInvocation for why the invocation carries both the verb the
       // user clicked and the intent the daemon executes.
-      z47.object({ resource: z47.literal("invokeVerb"), request: MultiplexerVerbInvocationSchemaZ }).strict(),
-      z47.object({
-        resource: z47.literal("issueTerminalAttachment"),
+      z50.object({ resource: z50.literal("invokeVerb"), request: MultiplexerVerbInvocationSchemaZ }).strict(),
+      z50.object({
+        resource: z50.literal("issueTerminalAttachment"),
         request: TerminalAttachRequestSchemaZ
       }).strict(),
-      z47.object({ resource: z47.literal("issuePaneStream"), request: PaneStreamLeaseRequestSchemaZ }).strict(),
-      z47.object({ resource: z47.literal("fetchWidgetAsset"), request: WidgetAssetRequestSchemaZ }).strict()
+      z50.object({ resource: z50.literal("issuePaneStream"), request: PaneStreamLeaseRequestSchemaZ }).strict(),
+      z50.object({ resource: z50.literal("fetchWidgetAsset"), request: WidgetAssetRequestSchemaZ }).strict()
     ]);
     DAEMON_RESOURCE_RESULT_SCHEMAS = {
       capabilities: DesktopDaemonCapabilitiesResultSchemaZ,
@@ -7890,334 +8309,6 @@ var init_daemon_resource_request = __esm({
       DAEMON_RESOURCE_RESULT_SCHEMAS
     );
     DAEMON_RESOURCE_KIND_SET = new Set(DAEMON_RESOURCE_KINDS);
-  }
-});
-
-// packages/contracts/src/terminal-replica.ts
-import { z as z48 } from "zod";
-var TerminalReplicaColorSchemaZ, TerminalReplicaCellAttributesSchemaZ, TerminalReplicaCellSchemaZ, TerminalReplicaRowSchemaZ, TerminalReplicaCursorSchemaZ, TerminalReplicaModesSchemaZ, TerminalReplicaPlacementSchemaZ, TerminalReplicaSnapshotSchemaZ, TerminalReplicaPatchPayloadSchemaZ, TerminalReplicaTombstonePayloadSchemaZ, TERMINAL_REPLICA_ATTRIBUTE;
-var init_terminal_replica = __esm({
-  "packages/contracts/src/terminal-replica.ts"() {
-    "use strict";
-    TerminalReplicaColorSchemaZ = z48.discriminatedUnion("kind", [
-      z48.object({ kind: z48.literal("default") }).strict(),
-      z48.object({ kind: z48.literal("indexed"), index: z48.number().int().min(0).max(255) }).strict(),
-      z48.object({ kind: z48.literal("rgb"), value: z48.number().int().min(0).max(16777215) }).strict()
-    ]);
-    TerminalReplicaCellAttributesSchemaZ = z48.number().int().min(0).max(255);
-    TerminalReplicaCellSchemaZ = z48.object({
-      grapheme: z48.string(),
-      width: z48.union([z48.literal(0), z48.literal(1), z48.literal(2)]),
-      foreground: TerminalReplicaColorSchemaZ,
-      background: TerminalReplicaColorSchemaZ,
-      attributes: TerminalReplicaCellAttributesSchemaZ
-    }).strict();
-    TerminalReplicaRowSchemaZ = z48.object({ cells: z48.array(TerminalReplicaCellSchemaZ), wrapped: z48.boolean() }).strict();
-    TerminalReplicaCursorSchemaZ = z48.object({
-      x: z48.number().int().nonnegative(),
-      y: z48.number().int().nonnegative(),
-      hidden: z48.boolean(),
-      style: z48.enum(["block", "underline", "bar"]),
-      blink: z48.boolean()
-    }).strict();
-    TerminalReplicaModesSchemaZ = z48.object({
-      alternateScreen: z48.boolean(),
-      applicationCursor: z48.boolean(),
-      applicationKeypad: z48.boolean(),
-      bracketedPaste: z48.boolean(),
-      insert: z48.boolean(),
-      origin: z48.boolean(),
-      wraparound: z48.boolean(),
-      mouseTracking: z48.boolean(),
-      synchronizedOutput: z48.boolean()
-    }).strict();
-    TerminalReplicaPlacementSchemaZ = z48.object({
-      id: z48.string().min(1),
-      kind: z48.string().min(1),
-      row: z48.number().int().nonnegative(),
-      column: z48.number().int().nonnegative(),
-      columns: z48.number().int().positive(),
-      rows: z48.number().int().positive(),
-      contentDigest: z48.string().min(1)
-    }).strict();
-    TerminalReplicaSnapshotSchemaZ = z48.object({
-      cols: z48.number().int().positive(),
-      rows: z48.number().int().positive(),
-      grid: z48.array(TerminalReplicaRowSchemaZ),
-      history: z48.array(TerminalReplicaRowSchemaZ),
-      cursor: TerminalReplicaCursorSchemaZ,
-      modes: TerminalReplicaModesSchemaZ,
-      placements: z48.array(TerminalReplicaPlacementSchemaZ),
-      bootstrap: z48.object({
-        kind: z48.enum(["painted-capture", "authoritative-stream"]),
-        hiddenState: z48.enum(["unknown", "observed-from-start"])
-      }).strict()
-    }).strict();
-    TerminalReplicaPatchPayloadSchemaZ = z48.object({
-      dimensions: z48.object({ cols: z48.number().int().positive(), rows: z48.number().int().positive() }).strict().optional(),
-      rows: z48.array(
-        z48.object({ index: z48.number().int().nonnegative(), row: TerminalReplicaRowSchemaZ }).strict()
-      ),
-      history: z48.array(TerminalReplicaRowSchemaZ).optional(),
-      historyDelta: z48.object({
-        trim: z48.number().int().nonnegative(),
-        append: z48.array(TerminalReplicaRowSchemaZ)
-      }).strict().optional(),
-      cursor: TerminalReplicaCursorSchemaZ.optional(),
-      modes: TerminalReplicaModesSchemaZ.optional(),
-      placements: z48.array(TerminalReplicaPlacementSchemaZ).optional(),
-      bootstrap: TerminalReplicaSnapshotSchemaZ.shape.bootstrap.optional()
-    }).strict();
-    TerminalReplicaTombstonePayloadSchemaZ = z48.object({ reason: z48.enum(["pane-closed", "session-restarted", "runtime-disposed"]) }).strict();
-    TERMINAL_REPLICA_ATTRIBUTE = Object.freeze({
-      bold: 1,
-      dim: 2,
-      italic: 4,
-      underline: 8,
-      blink: 16,
-      inverse: 32,
-      hidden: 64,
-      strikethrough: 128
-    });
-  }
-});
-
-// packages/contracts/src/session-runtime.ts
-import { z as z49 } from "zod";
-var SessionRuntimeGenerationSchemaZ, SessionRuntimeClientIdSchemaZ, SessionRuntimeSessionNameSchemaZ, SessionRuntimeControllerRoleSchemaZ, SessionRuntimeControllerLeaseSchemaZ, SessionRuntimeControllerSnapshotSchemaZ, TerminalReplicaRevisionSchemaZ, TerminalReplicaFrameMetadataSchemaZ, CanonicalTerminalReplicaSeedSchemaZ, CanonicalTerminalReplicaPatchSchemaZ, CanonicalTerminalReplicaTombstoneSchemaZ, CanonicalTerminalReplicaUpdateSchemaZ, SessionRuntimePaneReadIntentSchemaZ, SessionRuntimeSemanticIntentSchemaZ;
-var init_session_runtime = __esm({
-  "packages/contracts/src/session-runtime.ts"() {
-    "use strict";
-    init_daemon_wire();
-    init_interaction_receipts();
-    init_semantic_identity();
-    init_workspace_multiplexer();
-    init_workspace_state();
-    init_terminal_replica();
-    SessionRuntimeGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
-    SessionRuntimeClientIdSchemaZ = z49.string().min(1).max(4096).refine((value) => !/[\0\r\n]/u.test(value));
-    SessionRuntimeSessionNameSchemaZ = z49.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
-    SessionRuntimeControllerRoleSchemaZ = z49.enum(["controller", "viewer"]);
-    SessionRuntimeControllerLeaseSchemaZ = z49.object({
-      generation: SessionRuntimeGenerationSchemaZ,
-      session: SessionRuntimeSessionNameSchemaZ,
-      clientId: SessionRuntimeClientIdSchemaZ,
-      token: z49.uuid(),
-      revision: z49.number().int().positive()
-    }).strict();
-    SessionRuntimeControllerSnapshotSchemaZ = z49.object({
-      generation: SessionRuntimeGenerationSchemaZ,
-      session: SessionRuntimeSessionNameSchemaZ,
-      controllerClientId: SessionRuntimeClientIdSchemaZ.nullable(),
-      revision: z49.number().int().nonnegative()
-    }).strict();
-    TerminalReplicaRevisionSchemaZ = z49.number().int().nonnegative();
-    TerminalReplicaFrameMetadataSchemaZ = z49.object({
-      workspaceName: WorkspaceIdSchemaZ,
-      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
-      generation: SessionRuntimeGenerationSchemaZ,
-      incarnation: z49.string().min(1).max(256),
-      cols: z49.number().int().positive(),
-      rows: z49.number().int().positive(),
-      stateHash: z49.string().regex(/^[0-9a-f]{16}$/u),
-      hashAlgorithm: z49.literal("fnv1a64-v1")
-    }).strict();
-    CanonicalTerminalReplicaSeedSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
-      type: z49.literal("terminal.seed"),
-      revision: TerminalReplicaRevisionSchemaZ,
-      snapshot: TerminalReplicaSnapshotSchemaZ
-    }).strict();
-    CanonicalTerminalReplicaPatchSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
-      type: z49.literal("terminal.patch"),
-      baseRevision: TerminalReplicaRevisionSchemaZ,
-      revision: TerminalReplicaRevisionSchemaZ,
-      patch: TerminalReplicaPatchPayloadSchemaZ
-    }).strict();
-    CanonicalTerminalReplicaTombstoneSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
-      type: z49.literal("terminal.tombstone"),
-      baseRevision: TerminalReplicaRevisionSchemaZ,
-      revision: TerminalReplicaRevisionSchemaZ,
-      tombstone: TerminalReplicaTombstonePayloadSchemaZ
-    }).strict();
-    CanonicalTerminalReplicaUpdateSchemaZ = z49.discriminatedUnion("type", [
-      CanonicalTerminalReplicaSeedSchemaZ,
-      CanonicalTerminalReplicaPatchSchemaZ,
-      CanonicalTerminalReplicaTombstoneSchemaZ
-    ]);
-    SessionRuntimePaneReadIntentSchemaZ = z49.object({
-      verb: z49.literal("workspace.pane.read"),
-      workspaceName: WorkspaceIdSchemaZ,
-      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
-      origin: AuthoredInteractionOriginSchemaZ
-    }).strict();
-    SessionRuntimeSemanticIntentSchemaZ = z49.union([
-      WorkspaceMultiplexerIntentSchemaZ,
-      SessionRuntimePaneReadIntentSchemaZ
-    ]);
-  }
-});
-
-// packages/contracts/src/terminal-delivery.ts
-import { z as z50 } from "zod";
-var TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryChunkSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
-var init_terminal_delivery = __esm({
-  "packages/contracts/src/terminal-delivery.ts"() {
-    "use strict";
-    init_semantic_identity();
-    init_session_runtime();
-    init_workspace_state();
-    init_terminal_replica();
-    TERMINAL_DELIVERY_PROTOCOL_VERSION = 1;
-    TERMINAL_DELIVERY_CHUNK_BYTES = 256 * 1024;
-    TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = 512 * 1024;
-    TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = 16 * 1024 * 1024;
-    TerminalDeliveryEncodingSchemaZ = z50.enum([
-      "semantic-v1",
-      "ansi-diff-v1",
-      "ansi-raw-v1"
-    ]);
-    TerminalDeliveryOfferSchemaZ = z50.object({
-      protocolVersions: z50.array(z50.number().int().positive()).min(1).max(8),
-      encodings: z50.array(TerminalDeliveryEncodingSchemaZ).min(1).max(3),
-      richPlacements: z50.boolean()
-    }).strict().superRefine((value, context) => {
-      if (new Set(value.protocolVersions).size !== value.protocolVersions.length)
-        context.addIssue({ code: "custom", message: "protocolVersions must be unique" });
-      if (new Set(value.encodings).size !== value.encodings.length)
-        context.addIssue({ code: "custom", message: "encodings must be unique" });
-    });
-    TerminalDeliveryNegotiatedSchemaZ = z50.object({
-      protocolVersion: z50.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
-      encoding: TerminalDeliveryEncodingSchemaZ,
-      richPlacements: z50.boolean(),
-      generation: SessionRuntimeGenerationSchemaZ,
-      deliveryNonce: z50.uuid()
-    }).strict().superRefine((value, context) => {
-      if (value.richPlacements && value.encoding !== "semantic-v1")
-        context.addIssue({ code: "custom", message: "rich placements require semantic delivery" });
-    });
-    TerminalDeliveryNegotiationResultSchemaZ = z50.discriminatedUnion("accepted", [
-      z50.object({ accepted: z50.literal(true), negotiated: TerminalDeliveryNegotiatedSchemaZ }).strict(),
-      z50.object({
-        accepted: z50.literal(false),
-        reason: z50.enum([
-          "protocol-version-mismatch",
-          "encoding-mismatch",
-          "unsupported-capability-combination"
-        ])
-      }).strict()
-    ]);
-    DeliveryAddressSchemaZ = z50.object({
-      workspaceName: WorkspaceIdSchemaZ,
-      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
-      generation: SessionRuntimeGenerationSchemaZ,
-      incarnation: z50.string().min(1).max(256),
-      deliveryNonce: z50.uuid()
-    });
-    TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
-      type: z50.literal("terminal.delivery"),
-      transactionId: z50.uuid(),
-      protocolVersion: z50.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
-      encoding: TerminalDeliveryEncodingSchemaZ,
-      frame: z50.enum(["seed", "patch", "tombstone"]),
-      baseRevision: z50.number().int().min(-1).nullable(),
-      canonicalRevision: z50.number().int().nonnegative(),
-      canonicalStateHash: z50.string().regex(/^[0-9a-f]{16}$/u),
-      representationHash: z50.string().regex(/^[0-9a-f]{16}$/u),
-      representationBytes: z50.number().int().nonnegative().max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
-      chunkCount: z50.number().int().positive().max(256),
-      canonicalEquivalent: z50.boolean(),
-      history: z50.enum(["complete", "truncated", "not-applicable"]),
-      richPlacements: z50.boolean()
-    }).strict().superRefine((value, context) => {
-      const expectedChunks = Math.max(
-        1,
-        Math.ceil(value.representationBytes / TERMINAL_DELIVERY_CHUNK_BYTES)
-      );
-      if (value.chunkCount !== expectedChunks)
-        context.addIssue({
-          code: "custom",
-          message: "chunkCount does not match representationBytes"
-        });
-      if (value.frame === "seed" && value.baseRevision !== null)
-        context.addIssue({ code: "custom", message: "seed baseRevision must be null" });
-      if (value.frame !== "seed" && (value.baseRevision === null || value.canonicalRevision <= value.baseRevision))
-        context.addIssue({
-          code: "custom",
-          message: "patch/tombstone requires an earlier baseRevision"
-        });
-      if (value.encoding === "semantic-v1" && (!value.canonicalEquivalent || value.frame !== "tombstone" && value.history !== "complete"))
-        context.addIssue({
-          code: "custom",
-          message: "semantic delivery must be complete canonical truth"
-        });
-      if (value.encoding === "semantic-v1" && value.frame === "tombstone" && value.history !== "not-applicable")
-        context.addIssue({ code: "custom", message: "semantic tombstones have no history" });
-      if (value.encoding !== "semantic-v1" && value.canonicalEquivalent)
-        context.addIssue({
-          code: "custom",
-          message: "ANSI representation cannot claim canonical equivalence"
-        });
-      if (value.encoding !== "semantic-v1" && value.richPlacements)
-        context.addIssue({ code: "custom", message: "ANSI cannot carry rich placements" });
-    });
-    TerminalDeliveryChunkSchemaZ = z50.object({
-      type: z50.literal("terminal.delivery.chunk"),
-      transactionId: z50.uuid(),
-      index: z50.number().int().nonnegative().max(255),
-      bytes: z50.instanceof(Uint8Array).refine((value) => value.byteLength <= TERMINAL_DELIVERY_CHUNK_BYTES)
-    }).strict();
-    TerminalDeliveryFaultSchemaZ = z50.object({
-      type: z50.literal("terminal.delivery.fault"),
-      reason: z50.enum(["state-too-large", "source-closed", "protocol-violation"]),
-      message: z50.string().min(1).max(1024),
-      deliveryNonce: z50.uuid()
-    }).strict();
-    TerminalDeliveryAckSchemaZ = DeliveryAddressSchemaZ.extend({
-      type: z50.literal("terminal.delivery.ack"),
-      transactionId: z50.uuid(),
-      canonicalRevision: z50.number().int().nonnegative(),
-      canonicalStateHash: z50.string().regex(/^[0-9a-f]{16}$/u),
-      representationHash: z50.string().regex(/^[0-9a-f]{16}$/u)
-    }).strict();
-    TerminalDeliveryNackSchemaZ = DeliveryAddressSchemaZ.extend({
-      type: z50.literal("terminal.delivery.nack"),
-      transactionId: z50.uuid().nullable(),
-      reason: z50.enum([
-        "gap",
-        "hash-mismatch",
-        "decode-failed",
-        "state-too-large",
-        "stale-generation",
-        "protocol-violation"
-      ]),
-      appliedRevision: z50.number().int().min(-1)
-    }).strict();
-    TerminalDeliveryVisibilitySchemaZ = z50.enum([
-      "visible",
-      "background",
-      "hidden",
-      "frozen"
-    ]);
-    TerminalSemanticDeliveryPayloadSchemaZ = z50.discriminatedUnion("frame", [
-      z50.object({
-        frame: z50.literal("seed"),
-        revision: z50.number().int().nonnegative(),
-        snapshot: TerminalReplicaSnapshotSchemaZ
-      }).strict(),
-      z50.object({
-        frame: z50.literal("patch"),
-        baseRevision: z50.number().int().nonnegative(),
-        revision: z50.number().int().nonnegative(),
-        patch: TerminalReplicaPatchPayloadSchemaZ
-      }).strict().refine((value) => value.revision > value.baseRevision, "patch revision must advance"),
-      z50.object({
-        frame: z50.literal("tombstone"),
-        baseRevision: z50.number().int().nonnegative(),
-        revision: z50.number().int().nonnegative(),
-        tombstone: TerminalReplicaTombstonePayloadSchemaZ
-      }).strict().refine((value) => value.revision > value.baseRevision, "tombstone revision must advance")
-    ]);
   }
 });
 
@@ -29092,6 +29183,7 @@ var init_session_channel = __esm({
       windowsByRuntime = /* @__PURE__ */ new Map();
       layoutByWindow = /* @__PURE__ */ new Map();
       activePaneByWindow = /* @__PURE__ */ new Map();
+      layoutSubscribers = /* @__PURE__ */ new Set();
       truthActive = /* @__PURE__ */ new Map();
       truthWindow = /* @__PURE__ */ new Map();
       currentWindow = "";
@@ -29200,6 +29292,45 @@ var init_session_channel = __esm({
           close: () => this.closeSub(sub)
         };
       }
+      /** Session geometry without a dummy pane feed or terminal-content seed. */
+      subscribeLayout(onLayout) {
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        this.layoutSubscribers.add(onLayout);
+        for (const windowRuntimeId of this.layoutByWindow.keys()) {
+          const event = this.layoutEventFor(windowRuntimeId);
+          if (event) onLayout(event);
+        }
+        let closed = false;
+        return {
+          close: () => {
+            if (closed) return;
+            closed = true;
+            this.layoutSubscribers.delete(onLayout);
+          }
+        };
+      }
+      /** Controller-authorized input fast path. It deliberately reuses the one
+       * session InputCoalescer, so literal/key ordering and tmux application-mode
+       * named-key semantics are identical for GUI, TUI and direct subscribers. */
+      sendText(semanticPaneId3, text) {
+        const pane = this.panesBySemantic.get(semanticPaneId3);
+        if (!pane)
+          throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
+        this.input.literal(pane.runtimeId, text);
+      }
+      sendKey(semanticPaneId3, key) {
+        const pane = this.panesBySemantic.get(semanticPaneId3);
+        if (!pane)
+          throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
+        this.input.key(pane.runtimeId, key);
+      }
+      fitViewport(cols, rows) {
+        if (!Number.isSafeInteger(cols) || !Number.isSafeInteger(rows) || cols < 2 || rows < 2) {
+          throw new RangeError("viewport must contain positive bounded terminal cells");
+        }
+        this.input.flush();
+        this.io.send(`refresh-client -C ${cols}x${rows}`);
+      }
       subscriberCount() {
         let count = 0;
         for (const pane of this.panesByRuntime.values()) count += pane.subs.size;
@@ -29239,6 +29370,7 @@ var init_session_channel = __esm({
           }
           pane.subs.clear();
         }
+        this.layoutSubscribers.clear();
         await this.io.dispose();
       }
       // ── Byte routing ─────────────────────────────────────────────────────────
@@ -29420,6 +29552,7 @@ var init_session_channel = __esm({
       emitLayout(windowRuntimeId) {
         const event = this.layoutEventFor(windowRuntimeId);
         if (!event) return;
+        for (const subscriber of this.layoutSubscribers) subscriber(event);
         for (const pane of this.panesByRuntime.values()) {
           for (const sub of pane.subs) {
             if (!sub.closed && sub.onLayout) sub.onLayout(event);
@@ -29819,6 +29952,44 @@ var init_mirror_service = __esm({
             await Promise.allSettled([...this.pendingDisposals]);
           }
         };
+      }
+      /** Retain one session channel for layout only; no pane feed or seed is created. */
+      async subscribeLayout(session, onLayout) {
+        const entry = await this.acquire(session);
+        let handle;
+        try {
+          handle = entry.channel.subscribeLayout(onLayout);
+        } catch (cause) {
+          this.release(session, entry);
+          throw cause;
+        }
+        let closed = false;
+        return {
+          session,
+          close: async () => {
+            if (closed) return;
+            closed = true;
+            handle.close();
+            this.release(session, entry);
+            await Promise.allSettled([...this.pendingDisposals]);
+          }
+        };
+      }
+      /** Synchronous hot input on an already-retained SessionRuntime channel. */
+      sendText(session, semanticPaneId3, text) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+        entry.channel.sendText(semanticPaneId3, text);
+      }
+      sendKey(session, semanticPaneId3, key) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+        entry.channel.sendKey(semanticPaneId3, key);
+      }
+      fitViewport(session, cols, rows) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+        entry.channel.fitViewport(cols, rows);
       }
       /**
        * Keep one session channel alive independently of renderer subscriptions.
@@ -39087,7 +39258,7 @@ function joinBytes(chunks) {
   }
   return joined;
 }
-var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, BACKGROUND_CADENCE_MS, SessionRuntimeTerminalDeliveryHub;
+var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, SessionRuntimeTerminalDeliveryHub;
 var init_terminal_delivery_hub = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts"() {
     "use strict";
@@ -39099,6 +39270,7 @@ var init_terminal_delivery_hub = __esm({
     MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
     MAX_CLIENTS = 64;
     MAX_PANES = 32;
+    MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
     BACKGROUND_CADENCE_MS = 100;
     SessionRuntimeTerminalDeliveryHub = class {
       constructor(generation, workspaceName, ownerForPane) {
@@ -39109,6 +39281,8 @@ var init_terminal_delivery_hub = __esm({
       #ownerForPane;
       #panes = /* @__PURE__ */ new Map();
       #clients = /* @__PURE__ */ new Map();
+      /** Synchronous reservations held while an async pane source is starting. */
+      #pendingClients = /* @__PURE__ */ new Map();
       #cache = /* @__PURE__ */ new Map();
       #cacheBytes = 0;
       #coalesced = 0;
@@ -39119,48 +39293,61 @@ var init_terminal_delivery_hub = __esm({
       #closed = false;
       async open(clientId, semanticPaneId3, offerInput, accept) {
         if (this.#closed) throw new Error("Terminal delivery hub is closed");
-        if (this.#clients.size >= MAX_CLIENTS)
-          throw new Error("Terminal delivery client limit reached");
         const offer = TerminalDeliveryOfferSchemaZ.parse(offerInput);
         const negotiation = negotiateTerminalDelivery(offer, this.generation, randomUUID5());
         if (!negotiation.accepted) return rejectedConnection(negotiation);
         const key = cacheKey([clientId, semanticPaneId3]);
-        if (this.#clients.has(key))
+        if (this.#clients.has(key) || this.#pendingClients.has(key))
           throw new TypeError("Terminal delivery already open for client/pane");
-        const pane = await this.#ensurePane(semanticPaneId3);
-        const client = {
-          key,
-          paneId: semanticPaneId3,
-          negotiated: negotiation.negotiated,
-          accept,
-          visibility: "visible",
-          baselineRevision: -1,
-          baselineHash: null,
-          reseedRequired: false,
-          inFlight: null,
-          latestRevision: pane.latest?.update.revision ?? null,
-          scheduled: false,
-          closed: false,
-          outgoing: [],
-          sending: false,
-          retireAfterDrain: false,
-          lastAck: null,
-          backgroundTimer: null
-        };
-        this.#clients.set(key, client);
-        this.#schedule(client);
-        return {
-          negotiation,
-          ack: (ack) => this.#ack(client, ack),
-          nack: (nack) => this.#nack(client, nack),
-          setVisibility: (visibilityInput) => {
-            if (client.closed) return;
-            client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
-            if (client.visibility === "visible" || client.visibility === "background")
-              this.#schedule(client);
-          },
-          close: async () => this.#closeClient(client)
-        };
+        const uniqueClients = /* @__PURE__ */ new Set([
+          ...[...this.#clients.values()].map((client) => client.clientId),
+          ...this.#pendingClients.values()
+        ]);
+        if (!uniqueClients.has(clientId) && uniqueClients.size >= MAX_CLIENTS)
+          throw new Error("Terminal delivery client limit reached");
+        if (this.#clients.size + this.#pendingClients.size >= MAX_CONNECTIONS)
+          throw new Error("Terminal delivery connection limit reached");
+        this.#pendingClients.set(key, clientId);
+        try {
+          const pane = await this.#ensurePane(semanticPaneId3);
+          if (this.#closed) throw new Error("Terminal delivery hub is closed");
+          const client = {
+            key,
+            clientId,
+            paneId: semanticPaneId3,
+            negotiated: negotiation.negotiated,
+            accept,
+            visibility: "visible",
+            baselineRevision: -1,
+            baselineHash: null,
+            reseedRequired: false,
+            inFlight: null,
+            latestRevision: pane.latest?.update.revision ?? null,
+            scheduled: false,
+            closed: false,
+            outgoing: [],
+            sending: false,
+            retireAfterDrain: false,
+            lastAck: null,
+            backgroundTimer: null
+          };
+          this.#clients.set(key, client);
+          this.#schedule(client);
+          return {
+            negotiation,
+            ack: (ack) => this.#ack(client, ack),
+            nack: (nack) => this.#nack(client, nack),
+            setVisibility: (visibilityInput) => {
+              if (client.closed) return;
+              client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
+              if (client.visibility === "visible" || client.visibility === "background")
+                this.#schedule(client);
+            },
+            close: async () => this.#closeClient(client)
+          };
+        } finally {
+          this.#pendingClients.delete(key);
+        }
       }
       metrics() {
         const now = performance.now();
@@ -39169,7 +39356,8 @@ var init_terminal_delivery_hub = __esm({
           0
         );
         return Object.freeze({
-          clients: this.#clients.size,
+          clients: new Set([...this.#clients.values()].map((client) => client.clientId)).size,
+          connections: this.#clients.size,
           inFlight: [...this.#clients.values()].filter((client) => client.inFlight).length,
           latestPointers: [...this.#clients.values()].filter((client) => client.latestRevision !== null).length,
           coalesced: this.#coalesced,
@@ -39244,7 +39432,11 @@ var init_terminal_delivery_hub = __esm({
         pane.start = owner.subscribeSource(
           (update) => this.#observeCanonical(semanticPaneId3, update),
           (record) => this.#observeRaw(semanticPaneId3, record)
-        ).then((source) => {
+        ).then(async (source) => {
+          if (this.#closed || this.#panes.get(semanticPaneId3) !== pane) {
+            await source.close();
+            throw new Error("Terminal delivery source retired during startup");
+          }
           pane.source = source;
         }).catch((error) => {
           if (this.#panes.get(semanticPaneId3) === pane) this.#panes.delete(semanticPaneId3);
@@ -39841,7 +40033,15 @@ var init_registry2 = __esm({
           session,
           this.#mirror,
           this.#createControllerToken,
-          (owner, lease, operationId, intent, origin) => this.#submitAuthorizedIntent(owner, lease, operationId, intent, null, void 0, origin)
+          (owner, lease, operationId, intent, origin, authorizeBeforeEffect) => this.#submitAuthorizedIntent(
+            owner,
+            lease,
+            operationId,
+            intent,
+            null,
+            authorizeBeforeEffect,
+            origin
+          )
         );
         this.#sessions.set(session, runtime);
         return runtime;
@@ -39974,11 +40174,21 @@ var init_registry2 = __esm({
             lease,
             operationId,
             intent,
-            authoredOriginForSurface(surface)
+            authoredOriginForSurface(surface),
+            () => this.assertController(lease, callerClientId)
           );
         } catch (error) {
           return Promise.reject(error);
         }
+      }
+      sendInput(clientId, lease, semanticPaneId3, kind, data) {
+        this.assertController(lease, clientId);
+        if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId3, data);
+        else this.#mirror.sendKey(this.session, semanticPaneId3, data);
+      }
+      fitViewport(clientId, lease, cols, rows) {
+        this.assertController(lease, clientId);
+        this.#mirror.fitViewport(this.session, cols, rows);
       }
       async whenReady() {
         if (this.#disposed) throw new Error(`SessionRuntime ${this.session} is disposed`);
@@ -40021,11 +40231,16 @@ var init_registry2 = __esm({
           throw error;
         }
       }
-      async openTerminalDelivery(clientId, semanticPaneId3, offer, onMessage) {
+      async openTerminalDelivery(clientId, deliverySubscriberId, semanticPaneId3, offer, onMessage) {
         await this.whenReady();
         await this.#restartBarrier;
         this.#assertConnected(clientId);
-        return await this.#terminalDeliveryHub.open(clientId, semanticPaneId3, offer, onMessage);
+        return await this.#terminalDeliveryHub.open(
+          deliverySubscriberId,
+          semanticPaneId3,
+          offer,
+          onMessage
+        );
       }
       #terminalReplicaOwner(semanticPaneId3) {
         let owner = this.#terminalReplicas.get(semanticPaneId3);
@@ -40202,6 +40417,14 @@ var init_registry2 = __esm({
         this.#assertOpen();
         return this.#runtime.submitIntent(this.clientId, lease, operationId, intent);
       }
+      sendInput(lease, semanticPaneId3, kind, data) {
+        this.#assertOpen();
+        this.#runtime.sendInput(this.clientId, lease, semanticPaneId3, kind, data);
+      }
+      fitViewport(lease, cols, rows) {
+        this.#assertOpen();
+        this.#runtime.fitViewport(this.clientId, lease, cols, rows);
+      }
       async describe() {
         this.#assertOpen();
         return await this.#runtime.describe();
@@ -40246,10 +40469,11 @@ var init_registry2 = __esm({
         this.#replicaSubscriptions.add(subscription);
         return subscription;
       }
-      async openTerminalDelivery(semanticPaneId3, offer, onMessage) {
+      async openTerminalDelivery(deliverySubscriberId, semanticPaneId3, offer, onMessage) {
         this.#assertOpen();
         const upstream = await this.#runtime.openTerminalDelivery(
           this.clientId,
+          deliverySubscriberId,
           semanticPaneId3,
           offer,
           onMessage
@@ -40327,21 +40551,36 @@ var init_transport_binding = __esm({
       #allowedSourcePaneIds;
       #contributedSourcePaneIds;
       #interactive;
+      #deliverySubscriberId;
+      #transportLeaseId;
+      #intentHandles = /* @__PURE__ */ new Map();
       #baseHandle;
       #closed = false;
-      constructor(binder, shared, allowedSourcePaneIds, contributedSourcePaneIds, interactive) {
+      constructor(binder, shared, allowedSourcePaneIds, contributedSourcePaneIds, interactive, transportLeaseId, ownsGeometry) {
         this.#binder = binder;
         this.#shared = shared;
         this.#allowedSourcePaneIds = new Set(allowedSourcePaneIds);
         this.#contributedSourcePaneIds = new Set(contributedSourcePaneIds);
         this.#interactive = interactive;
+        this.#deliverySubscriberId = `${shared.consumer.clientId}:${transportLeaseId}`;
+        this.#transportLeaseId = transportLeaseId;
+        if (interactive && ownsGeometry) shared.geometryTransportLeaseIds.push(transportLeaseId);
         if (interactive && shared.lease === null) shared.lease = shared.consumer.acquireController();
         const lease = shared.lease;
         this.#baseHandle = interactive && lease ? binder.registry.createExecutionHandle(
           shared.consumer,
           lease,
           allowedSourcePaneIds,
-          (semanticPaneId3) => assertLiveScope(shared, lease, semanticPaneId3)
+          (semanticPaneId3) => {
+            this.#assertIntentScopeOpen();
+            assertLiveScope(shared, lease, semanticPaneId3);
+            if (semanticPaneId3 !== void 0 && !this.#allowedSourcePaneIds.has(semanticPaneId3)) {
+              throw new SessionRuntimeControllerLeaseError(
+                "invalid-source-pane-binding",
+                "The pane is outside this transport binding's live grant."
+              );
+            }
+          }
         ) : null;
       }
       get generation() {
@@ -40358,6 +40597,82 @@ var init_transport_binding = __esm({
         if (!this.#interactive || !this.#baseHandle)
           throw new Error("Passive transport has no input authority");
         this.#binder.registry.assertExecutionHandle(this.#baseHandle, semanticPaneId3);
+      }
+      openTerminalDelivery(semanticPaneId3, offer, onMessage) {
+        this.#assertOpen();
+        if (!this.#allowedSourcePaneIds.has(semanticPaneId3)) {
+          throw new SessionRuntimeControllerLeaseError(
+            "invalid-source-pane-binding",
+            "The pane is not in the transport's live grant."
+          );
+        }
+        return this.#shared.consumer.openTerminalDelivery(
+          this.#deliverySubscriberId,
+          semanticPaneId3,
+          offer,
+          onMessage
+        );
+      }
+      submitIntent(operationId, intentInput) {
+        this.#assertOpen();
+        const intent = SessionRuntimeSemanticIntentSchemaZ.parse(intentInput);
+        const paneId = "semanticPaneId" in intent ? intent.semanticPaneId : void 0;
+        this.assertController(paneId);
+        if (!this.#shared.lease) {
+          throw new SessionRuntimeControllerLeaseError(
+            "stale-controller-lease",
+            "The transport no longer owns controller authority."
+          );
+        }
+        const scopeKey = paneId ?? "session";
+        let handle = this.#intentHandles.get(scopeKey);
+        if (!handle) {
+          const lease = this.#shared.lease;
+          handle = this.#binder.registry.createExecutionHandle(
+            this.#shared.consumer,
+            lease,
+            [...this.#allowedSourcePaneIds],
+            () => {
+              this.#assertIntentScopeOpen();
+              assertLiveScope(this.#shared, lease, paneId);
+              if (paneId !== void 0 && !this.#allowedSourcePaneIds.has(paneId)) {
+                throw new SessionRuntimeControllerLeaseError(
+                  "invalid-source-pane-binding",
+                  "The pane is outside this transport binding's live grant."
+                );
+              }
+            }
+          );
+          this.#intentHandles.set(scopeKey, handle);
+        }
+        return this.#binder.registry.submitAuthenticatedIntent(handle, operationId, intent);
+      }
+      sendInput(semanticPaneId3, kind, data) {
+        this.assertController(semanticPaneId3);
+        const lease = this.#shared.lease;
+        if (!lease) {
+          throw new SessionRuntimeControllerLeaseError(
+            "stale-controller-lease",
+            "The transport no longer owns controller authority."
+          );
+        }
+        this.#shared.consumer.sendInput(lease, semanticPaneId3, kind, data);
+      }
+      fitViewport(cols, rows) {
+        this.assertController();
+        if (this.#shared.geometryTransportLeaseIds.at(-1) !== this.#transportLeaseId) {
+          throw new SessionRuntimeControllerLeaseError(
+            "invalid-client-capability",
+            "The transport does not own the live geometry lease."
+          );
+        }
+        const lease = this.#shared.lease;
+        if (!lease)
+          throw new SessionRuntimeControllerLeaseError(
+            "stale-controller-lease",
+            "Geometry authority retired."
+          );
+        this.#shared.consumer.fitViewport(lease, cols, rows);
       }
       executionHandleForSource(semanticPaneId3) {
         this.assertController(semanticPaneId3);
@@ -40377,6 +40692,8 @@ var init_transport_binding = __esm({
         this.#shared.lease = null;
         target.#shared.lease = handedOff;
         this.#baseHandle = null;
+        this.#intentHandles.clear();
+        target.#intentHandles.clear();
         target.#baseHandle = target.#binder.registry.createExecutionHandle(
           target.#shared.consumer,
           handedOff,
@@ -40387,6 +40704,9 @@ var init_transport_binding = __esm({
       async close() {
         if (this.#closed) return;
         this.#closed = true;
+        const geometryIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
+        if (geometryIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(geometryIndex, 1);
+        this.#intentHandles.clear();
         await this.#binder.release(this.#shared, this.#contributedSourcePaneIds, this.#interactive);
       }
       toJSON() {
@@ -40399,6 +40719,13 @@ var init_transport_binding = __esm({
       }
       #assertOpen() {
         if (this.#closed) throw new Error("SessionRuntime transport binding is closed");
+      }
+      #assertIntentScopeOpen() {
+        if (!this.#closed) return;
+        throw new SessionRuntimeControllerLeaseError(
+          "invalid-source-pane-binding",
+          "The transport binding closed before the queued operation reached its effect."
+        );
       }
     };
     SessionRuntimeTransportBinder = class {
@@ -40427,7 +40754,8 @@ var init_transport_binding = __esm({
             refs: 0,
             interactiveRefs: 0,
             lease: null,
-            grantRefs: /* @__PURE__ */ new Map()
+            grantRefs: /* @__PURE__ */ new Map(),
+            geometryTransportLeaseIds: []
           };
           this.#clients.set(key, shared);
         }
@@ -40442,7 +40770,9 @@ var init_transport_binding = __esm({
             shared,
             allowedSourcePaneIds,
             contributedSourcePaneIds,
-            request.interactive
+            request.interactive,
+            request.transportLeaseId,
+            request.ownsGeometry === true
           );
         } catch (error) {
           void this.release(shared, new Set(contributedSourcePaneIds), request.interactive);
@@ -44942,6 +45272,7 @@ var init_lease_manager2 = __esm({
           sessionName: state.sessionName,
           panes: [...state.request.panes],
           viewerMode: state.request.viewerMode,
+          terminalDelivery: state.request.terminalDelivery ?? null,
           status: state.status,
           issuedAt: state.issuedAt,
           expiresAt: state.expiresAt
@@ -45153,6 +45484,7 @@ var init_pane_stream_websocket = __esm({
       #maxSocketBufferedBytes;
       #maxInputFrames;
       #maxInputBytes;
+      #inputRateWindowMs;
       #now;
       #schedule;
       #ledger;
@@ -45186,8 +45518,9 @@ var init_pane_stream_websocket = __esm({
           32 << 20,
           256 << 20
         );
-        this.#maxInputFrames = boundedInteger2(options.maxInputFramesPerConnection, 16384, 1 << 20);
-        this.#maxInputBytes = boundedInteger2(options.maxInputBytesPerConnection, 4 << 20, 64 << 20);
+        this.#maxInputFrames = boundedInteger2(options.maxInputFramesPerWindow, 16384, 1 << 20);
+        this.#maxInputBytes = boundedInteger2(options.maxInputBytesPerWindow, 4 << 20, 64 << 20);
+        this.#inputRateWindowMs = boundedInteger2(options.inputRateWindowMs, 1e3, 6e4);
         this.#now = options.now ?? Date.now;
         this.#schedule = options.schedule ?? defaultSchedule3;
       }
@@ -45390,6 +45723,12 @@ var init_pane_stream_websocket = __esm({
           try {
             const redeemed = await this.#leaseManager.redeem(frame.ticket, binding, receivedAt);
             const descriptor2 = redeemed.descriptor;
+            if (descriptor2.terminalDelivery && frame.deliveryAcks === true) {
+              throw new PaneStreamAdmissionError(
+                "stream-unavailable",
+                "Semantic terminal delivery owns its ACK lifecycle; legacy renderer ACKs are invalid."
+              );
+            }
             if (descriptor2.leaseId !== pending.leaseId || descriptor2.requestId !== pending.requestId || descriptor2.status !== "active" || descriptor2.viewerMode !== pending.descriptor.viewerMode || descriptor2.panes.length !== pending.descriptor.panes.length) {
               throw new PaneStreamAdmissionError(
                 "stream-unavailable",
@@ -45420,6 +45759,8 @@ var init_pane_stream_websocket = __esm({
                 maxSocketBufferedBytes: this.#maxSocketBufferedBytes,
                 maxInputFrames: this.#maxInputFrames,
                 maxInputBytes: this.#maxInputBytes,
+                inputRateWindowMs: this.#inputRateWindowMs,
+                now: this.#now,
                 schedule: this.#schedule,
                 onRetire: (connection) => this.#trackRetiringRelease(connection)
               });
@@ -45594,15 +45935,21 @@ var init_pane_stream_websocket = __esm({
       #maxSocketBufferedBytes;
       #maxInputFrames;
       #maxInputBytes;
+      #inputRateWindowMs;
+      #now;
       #schedule;
       #onRetire;
       #panes = /* @__PURE__ */ new Map();
       #sendQueue = [];
+      #semanticDrainWaiters = /* @__PURE__ */ new Map();
+      #layoutSubscription = null;
       #sentBytesTotal = 0;
       #drainedBytesTotal = 0;
       #cancelDrainTick = null;
-      #acceptedInputFrames = 0;
-      #acceptedInputBytes = 0;
+      #inputWindowStartedAt;
+      #inputWindowFrames = 0;
+      #inputWindowBytes = 0;
+      #nextViewportSeq = 1;
       #closed = false;
       #releasePromise = null;
       constructor(options) {
@@ -45622,12 +45969,17 @@ var init_pane_stream_websocket = __esm({
         this.#maxSocketBufferedBytes = options.maxSocketBufferedBytes;
         this.#maxInputFrames = options.maxInputFrames;
         this.#maxInputBytes = options.maxInputBytes;
+        this.#inputRateWindowMs = options.inputRateWindowMs;
+        this.#now = options.now;
+        this.#inputWindowStartedAt = this.#now();
         this.#schedule = options.schedule;
         this.#onRetire = options.onRetire;
         for (const pane of options.descriptor.panes) {
           this.#panes.set(pane, {
             semanticPaneId: pane,
             sub: null,
+            delivery: null,
+            deliveryAddress: null,
             serverSeq: 0,
             sentPaneFrames: 0,
             consumedSeq: 0,
@@ -45671,15 +46023,24 @@ var init_pane_stream_websocket = __esm({
         this.#cancelDrainTick = null;
         this.#ledger.forceReturnClient(this.#clientId);
         this.#sendQueue.length = 0;
+        for (const waiters of this.#semanticDrainWaiters.values())
+          for (const resolve31 of waiters) resolve31();
+        this.#semanticDrainWaiters.clear();
         this.#socket.off("message", this.#onMessage);
         this.#socket.off("close", this.#onSocketClose);
         this.#socket.off("error", this.#onSocketClose);
         const closures = [];
+        const layoutSubscription = this.#layoutSubscription;
+        this.#layoutSubscription = null;
+        if (layoutSubscription) closures.push(layoutSubscription.close().catch(() => void 0));
         for (const channel of this.#panes.values()) {
           const sub = channel.sub;
           channel.sub = null;
+          const delivery = channel.delivery;
+          channel.delivery = null;
           channel.closed = true;
           if (sub) closures.push(sub.close().catch(() => void 0));
+          if (delivery) closures.push(delivery.close().catch(() => void 0));
         }
         this.#releasePromise = Promise.allSettled([
           ...closures,
@@ -45706,7 +46067,27 @@ var init_pane_stream_websocket = __esm({
         }
         if (this.#closed) return;
         const known = new Set(described.panes.map((pane) => pane.semanticPaneId));
-        let layoutAttached = false;
+        if (this.#descriptor.terminalDelivery) {
+          await this.#subscribeSemantic(known);
+          return;
+        }
+        if (this.#mirror.subscribeLayout) {
+          try {
+            const layoutSubscription = await this.#mirror.subscribeLayout(
+              this.#descriptor.sessionName,
+              (event) => this.#onLayout(event)
+            );
+            if (this.#closed) {
+              await layoutSubscription.close().catch(() => void 0);
+              return;
+            }
+            this.#layoutSubscription = layoutSubscription;
+          } catch {
+            this.close(1011, "stream-unavailable");
+            return;
+          }
+        }
+        let layoutAttached = this.#layoutSubscription !== null;
         for (const channel of this.#panes.values()) {
           if (this.#closed) return;
           if (!known.has(channel.semanticPaneId)) {
@@ -45732,6 +46113,120 @@ var init_pane_stream_websocket = __esm({
           }
         }
         this.#closeIfAllPanesGone();
+      }
+      async #subscribeSemantic(known) {
+        const binding = this.#sessionRuntimeBinding;
+        const offer = this.#descriptor.terminalDelivery;
+        if (!binding || !offer) {
+          this.close(1011, "stream-unavailable");
+          return;
+        }
+        if (this.#mirror.subscribeLayout) {
+          try {
+            const layoutSubscription = await this.#mirror.subscribeLayout(
+              this.#descriptor.sessionName,
+              (event) => this.#onLayout(event)
+            );
+            if (this.#closed) {
+              await layoutSubscription.close().catch(() => void 0);
+              return;
+            }
+            this.#layoutSubscription = layoutSubscription;
+          } catch {
+            this.close(1011, "stream-unavailable");
+            return;
+          }
+        }
+        let layoutAttached = this.#layoutSubscription !== null;
+        for (const channel of this.#panes.values()) {
+          if (this.#closed) return;
+          if (!known.has(channel.semanticPaneId)) {
+            this.#emitClosed(channel);
+            continue;
+          }
+          try {
+            if (!layoutAttached) {
+              const layoutSub = await this.#mirror.subscribe({
+                session: this.#descriptor.sessionName,
+                semanticPaneId: channel.semanticPaneId,
+                onEvent: () => void 0,
+                onLayout: (event) => this.#onLayout(event)
+              });
+              if (this.#closed || channel.closed) {
+                await layoutSub.close().catch(() => void 0);
+                return;
+              }
+              channel.sub = layoutSub;
+              layoutAttached = true;
+            }
+            const pending = [];
+            let ready = false;
+            const delivery = await binding.openTerminalDelivery(
+              channel.semanticPaneId,
+              offer,
+              (message) => {
+                if (!ready) pending.push(message);
+                else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+              }
+            );
+            if (this.#closed || channel.closed) {
+              await delivery.close();
+              continue;
+            }
+            channel.delivery = delivery;
+            if (!delivery.negotiation.accepted) {
+              await delivery.close();
+              this.close(1008, "stream-unavailable");
+              return;
+            }
+            channel.deliveryAddress = {
+              workspaceName: this.#descriptor.workspaceName,
+              generation: delivery.negotiation.negotiated.generation,
+              incarnation: null,
+              deliveryNonce: delivery.negotiation.negotiated.deliveryNonce
+            };
+            this.#sendFrame(null, {
+              type: "terminal-delivery-ready",
+              pane: channel.semanticPaneId,
+              negotiation: delivery.negotiation
+            });
+            ready = true;
+            for (const message of pending)
+              await this.#sendTerminalDelivery(channel.semanticPaneId, message);
+          } catch {
+            this.close(1011, "stream-unavailable");
+            return;
+          }
+        }
+        this.#closeIfAllPanesGone();
+      }
+      async #sendTerminalDelivery(pane, message) {
+        if (message.type === "terminal.delivery") {
+          const channel = this.#panes.get(pane);
+          if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
+          this.#sendFrame(pane, { type: "terminal-delivery-envelope", pane, envelope: message });
+        } else if (message.type === "terminal.delivery.chunk") {
+          this.#sendFrame(pane, {
+            type: "terminal-delivery-chunk",
+            pane,
+            transactionId: message.transactionId,
+            index: message.index,
+            data: Buffer.from(message.bytes).toString("base64")
+          });
+        } else {
+          this.#sendFrame(pane, { type: "terminal-delivery-fault", pane, fault: message });
+        }
+        await this.#awaitSemanticCredit(pane);
+      }
+      #awaitSemanticCredit(pane) {
+        const aggregateHigh = (this.#socket.bufferedAmount ?? 0) > this.#maxSocketBufferedBytes >> 2;
+        if (!aggregateHigh && !this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
+        return new Promise((resolve31) => {
+          const waiters = this.#semanticDrainWaiters.get(pane) ?? [];
+          waiters.push(resolve31);
+          this.#semanticDrainWaiters.set(pane, waiters);
+          this.#ensureDrainTick();
+        });
       }
       // ── Mirror events → frames ────────────────────────────────────────────────
       #onPaneEvent(channel, event) {
@@ -45957,6 +46452,11 @@ var init_pane_stream_websocket = __esm({
         for (const [pane, channel] of this.#panes) {
           if (channel.frozenByWire) this.#evaluateResume(pane);
           else this.#evaluateStall(pane);
+          const waiters = this.#semanticDrainWaiters.get(pane);
+          if (waiters && this.#ledger.shouldResume(this.#clientId, pane) && buffered <= this.#maxSocketBufferedBytes >> 3) {
+            this.#semanticDrainWaiters.delete(pane);
+            for (const resolve31 of waiters) resolve31();
+          }
         }
       }
       // ── Client frames ─────────────────────────────────────────────────────────
@@ -45978,8 +46478,98 @@ var init_pane_stream_websocket = __esm({
           this.#acceptConsumed(frame.pane, frame.seq);
           return;
         }
+        if (frame.type === "terminal-delivery-ack") {
+          const channel = this.#deliveryChannel(frame.ack);
+          if (!channel) return;
+          channel.delivery.ack(frame.ack);
+          return;
+        }
+        if (frame.type === "terminal-delivery-nack") {
+          const channel = this.#deliveryChannel(frame.nack);
+          if (!channel) return;
+          channel.delivery.nack(frame.nack);
+          return;
+        }
+        if (frame.type === "terminal-delivery-visibility") {
+          const channel = this.#deliveryChannel({
+            workspaceName: frame.workspaceName,
+            semanticPaneId: frame.pane,
+            generation: frame.generation,
+            incarnation: frame.incarnation,
+            deliveryNonce: frame.deliveryNonce
+          });
+          if (!channel) return;
+          channel.delivery.setVisibility(frame.visibility);
+          return;
+        }
+        if (frame.type === "semantic-intent") {
+          this.#acceptSemanticIntent(frame.operationId, frame.intent);
+          return;
+        }
+        if (frame.type === "viewport") {
+          if (!this.#descriptor.terminalDelivery || this.#descriptor.viewerMode !== "interactive" || frame.seq !== this.#nextViewportSeq) {
+            this.#failProtocol("input-rejected");
+            return;
+          }
+          this.#nextViewportSeq += 1;
+          try {
+            this.#sessionRuntimeBinding.fitViewport(frame.cols, frame.rows);
+            this.#sendFrame(null, {
+              type: "viewport-ack",
+              seq: frame.seq,
+              cols: frame.cols,
+              rows: frame.rows
+            });
+          } catch {
+            this.#failProtocol("input-rejected");
+          }
+          return;
+        }
         this.#acceptInput(frame.pane, frame.seq, frame.kind, frame.data, byteLength);
       };
+      #deliveryChannel(address) {
+        const channel = this.#panes.get(address.semanticPaneId);
+        const expected = channel?.deliveryAddress;
+        if (!channel?.delivery || !expected || expected.workspaceName !== address.workspaceName || expected.generation !== address.generation || expected.deliveryNonce !== address.deliveryNonce || expected.incarnation === null || expected.incarnation !== address.incarnation) {
+          this.#failProtocol("protocol-error");
+          return null;
+        }
+        return channel;
+      }
+      #acceptSemanticIntent(operationId, intent) {
+        if (!this.#descriptor.terminalDelivery || this.#descriptor.viewerMode !== "interactive") {
+          this.#failProtocol("input-rejected");
+          return;
+        }
+        void this.#sessionRuntimeBinding.submitIntent(operationId, intent).then((result) => {
+          this.#sendFrame(null, {
+            type: "semantic-intent-ack",
+            operationId,
+            outcome: { status: "applied", result: result ?? null }
+          });
+        }).catch((error) => {
+          const rawCode = error && typeof error === "object" && "code" in error ? String(error.code) : error && typeof error === "object" && "outcome" in error ? `intent-${String(error.outcome)}` : "stream-unavailable";
+          const code = [
+            "controller-conflict",
+            "controller-target-unavailable",
+            "stale-controller-lease",
+            "invalid-client-capability",
+            "invalid-source-pane-binding",
+            "intent-session-mismatch",
+            "intent-rejected",
+            "intent-timed-out"
+          ].includes(rawCode) ? rawCode : "stream-unavailable";
+          this.#sendFrame(null, {
+            type: "semantic-intent-ack",
+            operationId,
+            outcome: {
+              status: "rejected",
+              code,
+              message: error instanceof Error ? error.message.slice(0, 512) : "Semantic intent failed"
+            }
+          });
+        });
+      }
       #acceptConsumed(pane, seq) {
         const channel = this.#panes.get(pane);
         if (!this.#deliveryAcks || !channel || seq <= channel.consumedSeq || seq > channel.sentPaneFrames) {
@@ -45997,20 +46587,28 @@ var init_pane_stream_websocket = __esm({
           return;
         }
         const channel = this.#panes.get(pane);
-        if (!channel || channel.closed || !channel.sub || seq !== channel.nextInputSeq) {
+        const semanticDelivery = this.#descriptor.terminalDelivery !== null;
+        if (!channel || channel.closed || (semanticDelivery ? !channel.delivery : !channel.sub) || seq !== channel.nextInputSeq) {
           this.#failProtocol("input-rejected");
           return;
         }
-        if (this.#acceptedInputFrames + 1 > this.#maxInputFrames || this.#acceptedInputBytes + frameBytes > this.#maxInputBytes) {
+        const now = this.#now();
+        if (now < this.#inputWindowStartedAt || now - this.#inputWindowStartedAt >= this.#inputRateWindowMs) {
+          this.#inputWindowStartedAt = now;
+          this.#inputWindowFrames = 0;
+          this.#inputWindowBytes = 0;
+        }
+        if (this.#inputWindowFrames + 1 > this.#maxInputFrames || this.#inputWindowBytes + frameBytes > this.#maxInputBytes) {
           this.#failProtocol("input-rejected");
           return;
         }
-        this.#acceptedInputFrames += 1;
-        this.#acceptedInputBytes += frameBytes;
+        this.#inputWindowFrames += 1;
+        this.#inputWindowBytes += frameBytes;
         channel.nextInputSeq += 1;
         try {
           this.#sessionRuntimeBinding.assertController(pane);
-          if (kind === "text") channel.sub.sendText(data);
+          if (semanticDelivery) this.#sessionRuntimeBinding.sendInput(pane, kind, data);
+          else if (kind === "text") channel.sub.sendText(data);
           else channel.sub.sendKey(data);
           sendControl2(this.#socket, { type: "input-ack", pane, seq });
         } catch {
@@ -46182,7 +46780,8 @@ var init_runtime = __esm({
               session: descriptor2.sessionName,
               hostClientId: descriptor2.hostClientId,
               allowedSourcePaneIds: descriptor2.panes,
-              interactive: descriptor2.viewerMode === "interactive"
+              interactive: descriptor2.viewerMode === "interactive",
+              ownsGeometry: descriptor2.viewerMode === "interactive" && descriptor2.terminalDelivery !== null
             });
           }
         });
@@ -55094,8 +55693,10 @@ var require_package = __commonJS({
         "scripts",
         "skill",
         "templates",
-        "packages/daemon/dist",
-        "!packages/daemon/dist/tui",
+        "packages/daemon/dist/**/*.js",
+        "packages/daemon/dist/**/*.jsx",
+        "packages/daemon/dist/**/*.d.ts",
+        "packages/daemon/dist/native/**",
         "packages/daemon/src",
         "bunfig.toml",
         "packages/core/src",
@@ -55136,7 +55737,7 @@ var require_package = __commonJS({
         check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
-        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
+        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
         "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
         "test:tui-perf": "bun scripts/perf-mirror.mjs",

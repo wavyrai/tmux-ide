@@ -38,10 +38,13 @@ const MAX_REPRESENTATION_CACHE_ENTRIES = 32;
 const MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
 const MAX_CLIENTS = 64;
 const MAX_PANES = 32;
+const MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
 const BACKGROUND_CADENCE_MS = 100;
 
 export interface TerminalDeliveryMetrics {
+  /** Unique delivery subscribers, independent of their pane count. */
   readonly clients: number;
+  readonly connections: number;
   readonly inFlight: number;
   readonly latestPointers: number;
   readonly coalesced: number;
@@ -92,6 +95,7 @@ export interface TerminalDeliverySourceOwner {
 
 interface ClientState {
   readonly key: string;
+  readonly clientId: string;
   readonly paneId: string;
   readonly negotiated: Extract<TerminalDeliveryNegotiationResult, { accepted: true }>["negotiated"];
   readonly accept: (message: TerminalDeliveryServerMessage) => void | Promise<void>;
@@ -128,6 +132,8 @@ export class SessionRuntimeTerminalDeliveryHub {
   readonly #ownerForPane: (semanticPaneId: string) => TerminalDeliverySourceOwner;
   readonly #panes = new Map<string, PaneState>();
   readonly #clients = new Map<string, ClientState>();
+  /** Synchronous reservations held while an async pane source is starting. */
+  readonly #pendingClients = new Map<string, string>();
   readonly #cache = new Map<string, CachedRepresentation>();
   #cacheBytes = 0;
   #coalesced = 0;
@@ -152,48 +158,65 @@ export class SessionRuntimeTerminalDeliveryHub {
     accept: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
   ): Promise<TerminalDeliveryConnection> {
     if (this.#closed) throw new Error("Terminal delivery hub is closed");
-    if (this.#clients.size >= MAX_CLIENTS)
-      throw new Error("Terminal delivery client limit reached");
     const offer = TerminalDeliveryOfferSchemaZ.parse(offerInput);
     const negotiation = negotiateTerminalDelivery(offer, this.generation, randomUUID());
     if (!negotiation.accepted) return rejectedConnection(negotiation);
     const key = cacheKey([clientId, semanticPaneId]);
-    if (this.#clients.has(key))
+    if (this.#clients.has(key) || this.#pendingClients.has(key))
       throw new TypeError("Terminal delivery already open for client/pane");
-    const pane = await this.#ensurePane(semanticPaneId);
-    const client: ClientState = {
-      key,
-      paneId: semanticPaneId,
-      negotiated: negotiation.negotiated,
-      accept,
-      visibility: "visible",
-      baselineRevision: -1,
-      baselineHash: null,
-      reseedRequired: false,
-      inFlight: null,
-      latestRevision: pane.latest?.update.revision ?? null,
-      scheduled: false,
-      closed: false,
-      outgoing: [],
-      sending: false,
-      retireAfterDrain: false,
-      lastAck: null,
-      backgroundTimer: null,
-    };
-    this.#clients.set(key, client);
-    this.#schedule(client);
-    return {
-      negotiation,
-      ack: (ack) => this.#ack(client, ack),
-      nack: (nack) => this.#nack(client, nack),
-      setVisibility: (visibilityInput) => {
-        if (client.closed) return;
-        client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
-        if (client.visibility === "visible" || client.visibility === "background")
-          this.#schedule(client);
-      },
-      close: async () => this.#closeClient(client),
-    };
+    const uniqueClients = new Set([
+      ...[...this.#clients.values()].map((client) => client.clientId),
+      ...this.#pendingClients.values(),
+    ]);
+    if (!uniqueClients.has(clientId) && uniqueClients.size >= MAX_CLIENTS)
+      throw new Error("Terminal delivery client limit reached");
+    if (this.#clients.size + this.#pendingClients.size >= MAX_CONNECTIONS)
+      throw new Error("Terminal delivery connection limit reached");
+
+    // Reserve before the first await. Without this reservation, a burst of
+    // concurrent opens can all pass the capacity precheck while ensurePane is
+    // awaiting the source and oversubscribe the hub together afterwards.
+    this.#pendingClients.set(key, clientId);
+    try {
+      const pane = await this.#ensurePane(semanticPaneId);
+      if (this.#closed) throw new Error("Terminal delivery hub is closed");
+      const client: ClientState = {
+        key,
+        clientId,
+        paneId: semanticPaneId,
+        negotiated: negotiation.negotiated,
+        accept,
+        visibility: "visible",
+        baselineRevision: -1,
+        baselineHash: null,
+        reseedRequired: false,
+        inFlight: null,
+        latestRevision: pane.latest?.update.revision ?? null,
+        scheduled: false,
+        closed: false,
+        outgoing: [],
+        sending: false,
+        retireAfterDrain: false,
+        lastAck: null,
+        backgroundTimer: null,
+      };
+      this.#clients.set(key, client);
+      this.#schedule(client);
+      return {
+        negotiation,
+        ack: (ack) => this.#ack(client, ack),
+        nack: (nack) => this.#nack(client, nack),
+        setVisibility: (visibilityInput) => {
+          if (client.closed) return;
+          client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
+          if (client.visibility === "visible" || client.visibility === "background")
+            this.#schedule(client);
+        },
+        close: async () => this.#closeClient(client),
+      };
+    } finally {
+      this.#pendingClients.delete(key);
+    }
   }
 
   metrics(): TerminalDeliveryMetrics {
@@ -203,7 +226,8 @@ export class SessionRuntimeTerminalDeliveryHub {
       0,
     );
     return Object.freeze({
-      clients: this.#clients.size,
+      clients: new Set([...this.#clients.values()].map((client) => client.clientId)).size,
+      connections: this.#clients.size,
       inFlight: [...this.#clients.values()].filter((client) => client.inFlight).length,
       latestPointers: [...this.#clients.values()].filter((client) => client.latestRevision !== null)
         .length,
@@ -284,7 +308,11 @@ export class SessionRuntimeTerminalDeliveryHub {
         (update) => this.#observeCanonical(semanticPaneId, update),
         (record) => this.#observeRaw(semanticPaneId, record),
       )
-      .then((source) => {
+      .then(async (source) => {
+        if (this.#closed || this.#panes.get(semanticPaneId) !== pane) {
+          await source.close();
+          throw new Error("Terminal delivery source retired during startup");
+        }
         pane!.source = source;
       })
       .catch((error) => {

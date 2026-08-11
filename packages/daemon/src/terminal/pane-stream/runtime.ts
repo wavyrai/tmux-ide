@@ -51,6 +51,8 @@ export class PaneStreamRuntime {
           hostClientId: descriptor.hostClientId,
           allowedSourcePaneIds: descriptor.panes,
           interactive: descriptor.viewerMode === "interactive",
+          ownsGeometry:
+            descriptor.viewerMode === "interactive" && descriptor.terminalDelivery !== null,
         });
       },
     });

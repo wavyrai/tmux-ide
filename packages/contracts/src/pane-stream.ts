@@ -9,6 +9,18 @@ import {
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
 import { TerminalAttachmentViewerModeSchemaZ } from "./terminal-attachments.ts";
 import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
+import {
+  TerminalDeliveryAckSchemaZ,
+  TerminalDeliveryEnvelopeSchemaZ,
+  TerminalDeliveryFaultSchemaZ,
+  TerminalDeliveryNackSchemaZ,
+  TerminalDeliveryNegotiationResultSchemaZ,
+  TerminalDeliveryOfferSchemaZ,
+  TerminalDeliveryVisibilitySchemaZ,
+  TERMINAL_DELIVERY_CHUNK_BYTES,
+} from "./terminal-delivery.ts";
+import { SessionRuntimeSemanticIntentSchemaZ } from "./session-runtime.ts";
+import { WorkspaceMultiplexerMutationResultSchemaZ } from "./workspace-multiplexer.ts";
 
 /**
  * Pane-stream wire contract (m43 card 2): the lease family and frame grammar
@@ -70,6 +82,8 @@ export const PaneStreamLeaseRequestSchemaZ = z
     workspaceName: WorkspaceIdSchemaZ,
     panes: PaneSetSchemaZ,
     viewerMode: PaneStreamViewerModeSchemaZ,
+    /** Explicit semantic-v2 content/authority mode. Omission retains raw v1. */
+    terminalDelivery: TerminalDeliveryOfferSchemaZ.optional(),
   })
   .strict();
 export type PaneStreamLeaseRequest = z.infer<typeof PaneStreamLeaseRequestSchemaZ>;
@@ -220,9 +234,47 @@ export const PaneStreamConsumedFrameSchemaZ = z
   .strict();
 export type PaneStreamConsumedFrame = z.infer<typeof PaneStreamConsumedFrameSchemaZ>;
 
+export const PaneStreamTerminalDeliveryAckFrameSchemaZ = z
+  .object({ type: z.literal("terminal-delivery-ack"), ack: TerminalDeliveryAckSchemaZ })
+  .strict();
+export const PaneStreamTerminalDeliveryNackFrameSchemaZ = z
+  .object({ type: z.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ })
+  .strict();
+export const PaneStreamTerminalDeliveryVisibilityFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-delivery-visibility"),
+    workspaceName: TerminalDeliveryAckSchemaZ.shape.workspaceName,
+    pane: PaneStreamSemanticPaneIdSchemaZ,
+    generation: TerminalDeliveryAckSchemaZ.shape.generation,
+    incarnation: TerminalDeliveryAckSchemaZ.shape.incarnation,
+    deliveryNonce: TerminalDeliveryAckSchemaZ.shape.deliveryNonce,
+    visibility: TerminalDeliveryVisibilitySchemaZ,
+  })
+  .strict();
+export const PaneStreamSemanticIntentFrameSchemaZ = z
+  .object({
+    type: z.literal("semantic-intent"),
+    operationId: z.uuid(),
+    intent: SessionRuntimeSemanticIntentSchemaZ,
+  })
+  .strict();
+export const PaneStreamViewportFrameSchemaZ = z
+  .object({
+    type: z.literal("viewport"),
+    seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+    cols: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+    rows: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+  })
+  .strict();
+
 export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamInputFrameSchemaZ,
   PaneStreamConsumedFrameSchemaZ,
+  PaneStreamTerminalDeliveryAckFrameSchemaZ,
+  PaneStreamTerminalDeliveryNackFrameSchemaZ,
+  PaneStreamTerminalDeliveryVisibilityFrameSchemaZ,
+  PaneStreamSemanticIntentFrameSchemaZ,
+  PaneStreamViewportFrameSchemaZ,
 ]);
 export type PaneStreamClientFrame = z.infer<typeof PaneStreamClientFrameSchemaZ>;
 
@@ -351,6 +403,77 @@ export const PaneStreamInputAckFrameSchemaZ = z
   })
   .strict();
 
+export const PaneStreamTerminalDeliveryReadyFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-delivery-ready"),
+    pane: PaneStreamSemanticPaneIdSchemaZ,
+    negotiation: TerminalDeliveryNegotiationResultSchemaZ,
+  })
+  .strict();
+export const PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-delivery-envelope"),
+    pane: PaneStreamSemanticPaneIdSchemaZ,
+    envelope: TerminalDeliveryEnvelopeSchemaZ,
+  })
+  .strict();
+export const PaneStreamTerminalDeliveryChunkFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-delivery-chunk"),
+    pane: PaneStreamSemanticPaneIdSchemaZ,
+    transactionId: z.uuid(),
+    index: z.number().int().nonnegative().max(255),
+    data: Base64SchemaZ(Math.ceil(TERMINAL_DELIVERY_CHUNK_BYTES / 3) * 4),
+  })
+  .strict();
+export const PaneStreamTerminalDeliveryFaultFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-delivery-fault"),
+    pane: PaneStreamSemanticPaneIdSchemaZ,
+    fault: TerminalDeliveryFaultSchemaZ,
+  })
+  .strict();
+export const PaneStreamSemanticIntentAckFrameSchemaZ = z
+  .object({
+    type: z.literal("semantic-intent-ack"),
+    operationId: z.uuid(),
+    outcome: z.discriminatedUnion("status", [
+      z
+        .object({
+          status: z.literal("applied"),
+          result: WorkspaceMultiplexerMutationResultSchemaZ.nullable(),
+        })
+        .strict(),
+      z
+        .object({
+          status: z.literal("rejected"),
+          code: z.enum([
+            "controller-conflict",
+            "controller-target-unavailable",
+            "stale-controller-lease",
+            "invalid-client-capability",
+            "invalid-source-pane-binding",
+            "intent-session-mismatch",
+            "intent-rejected",
+            "intent-timed-out",
+            "stream-unavailable",
+          ]),
+          message: z.string().min(1).max(512),
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
+
+export const PaneStreamViewportAckFrameSchemaZ = z
+  .object({
+    type: z.literal("viewport-ack"),
+    seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+    cols: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+    rows: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+  })
+  .strict();
+
 export const PaneStreamErrorFrameCodeSchemaZ = z.enum([
   "redemption-rejected",
   "ticket-expired",
@@ -379,6 +502,12 @@ export const PaneStreamServerFrameSchemaZ = z.discriminatedUnion("type", [
   PaneStreamFlowFrameSchemaZ,
   PaneStreamClosedFrameSchemaZ,
   PaneStreamInputAckFrameSchemaZ,
+  PaneStreamTerminalDeliveryReadyFrameSchemaZ,
+  PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ,
+  PaneStreamTerminalDeliveryChunkFrameSchemaZ,
+  PaneStreamTerminalDeliveryFaultFrameSchemaZ,
+  PaneStreamSemanticIntentAckFrameSchemaZ,
+  PaneStreamViewportAckFrameSchemaZ,
   PaneStreamErrorFrameSchemaZ,
 ]);
 export type PaneStreamServerFrame = z.infer<typeof PaneStreamServerFrameSchemaZ>;

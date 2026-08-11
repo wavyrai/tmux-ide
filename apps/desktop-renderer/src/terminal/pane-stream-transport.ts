@@ -617,6 +617,22 @@ class PaneStreamSession {
       return;
     }
 
+    // This renderer still requests the raw-v1 delivery profile. Keep its
+    // parser closed over that profile instead of relying on every future
+    // server-frame variant to happen to carry the legacy pane/sequence pair.
+    // Semantic delivery/control acknowledgements on this socket therefore
+    // fail closed until this client explicitly negotiates and consumes them.
+    if (
+      frame.type !== "seed-batch" &&
+      frame.type !== "output" &&
+      frame.type !== "cursor" &&
+      frame.type !== "flow" &&
+      frame.type !== "closed"
+    ) {
+      this.#protocolFailure();
+      return;
+    }
+
     const channel = this.#panes.get(frame.pane);
     if (!channel || channel.closed || frame.seq !== channel.receivedSeq + 1) {
       this.#protocolFailure();

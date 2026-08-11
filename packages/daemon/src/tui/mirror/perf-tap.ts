@@ -1,6 +1,6 @@
 /**
  * Input-latency perf tap for the mirror pipeline — the third scenario tap
- * alongside control-client's feed-parse tap (/tmp/zz-feed.log) and app.tsx's
+ * alongside the terminal feed parser tap (/tmp/zz-feed.log) and app.tsx's
  * snapshot/tick tap (/tmp/zz-perf.log).
  *
  * It measures the three hops a keystroke takes through the mirror:
@@ -81,7 +81,7 @@ export function tapInputSent(paneId: string): void {
   singleton.sent(paneId, performance.now());
 }
 
-/** t1 hook — call from SessionMirror's onOutput. No-op unless TMUX_IDE_ZZ_PERF. */
+/** t1 hook — call from the retained mirror output path. No-op unless TMUX_IDE_ZZ_PERF. */
 export function tapInputOutput(paneId: string): void {
   if (!process.env.TMUX_IDE_ZZ_PERF) return;
   singleton.output(paneId, performance.now());

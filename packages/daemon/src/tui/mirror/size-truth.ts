@@ -15,7 +15,7 @@
  * same session (one per terminal — the non-hosted double-open), the later
  * control client's boot pin wins `window-size latest`, and the other app can
  * NEVER re-win it by interaction — the keys/mouse it forwards travel as
- * control-client `send-keys` commands, which do not update tmux's
+ * terminal input commands, which do not update tmux's
  * latest-client
  * bookkeeping (measured: local keystroke and wheel left the window at the
  * other app's pin). The hint + the palette's "Resize to fit" verb are the

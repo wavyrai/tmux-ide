@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import type { PaneInteractionProjection } from "@tmux-ide/core";
+import { projectPaneChromeState } from "../pane-frame-state.ts";
 import { projectAgentTerminalCanvas } from "./agent-terminal-canvas.ts";
 import {
   dispatchTerminalPaneChromePointerIntent,
@@ -26,6 +28,25 @@ function pane(overrides: Partial<TerminalPaneChromePane>): TerminalPaneChromePan
     height: 38,
     active: true,
     zoomed: false,
+    ...overrides,
+  };
+}
+
+function interaction(
+  overrides: Partial<PaneInteractionProjection> = {},
+): PaneInteractionProjection {
+  return {
+    paneId: "pane.tests",
+    direction: "incoming",
+    sourcePaneId: "pane.editor",
+    destinationPaneId: "pane.tests",
+    operationKind: "workspace.pane.send",
+    operationId: "00000000-0000-4000-8000-000000000001",
+    phase: "accepted",
+    origin: "tui",
+    label: "tui accepted · send 1 character",
+    sequence: 1,
+    at: "2026-08-11T18:00:00.000Z",
     ...overrides,
   };
 }
@@ -142,6 +163,103 @@ describe("terminal pane chrome projection", () => {
 
     expect(layout.communication.length).toBeGreaterThan(0);
     expect(layout.communication.every((segment) => segment.orientation === "vertical")).toBe(true);
+  });
+
+  it("renders focus, controller input, reading, sending and attention as separate chrome facts", () => {
+    const panes = [
+      pane({ id: "%focus", width: 23, active: false }),
+      pane({ id: "%input", left: 24, width: 23, active: false }),
+      pane({ id: "%read", left: 48, width: 23, active: false }),
+      pane({ id: "%send", left: 72, width: 23, active: false }),
+      pane({ id: "%attention", left: 96, width: 24, active: false }),
+    ];
+    const metadata = new Map([
+      [
+        "%focus",
+        { chromeState: projectPaneChromeState({ keyboardFocused: true, inputOwned: false }) },
+      ],
+      [
+        "%input",
+        { chromeState: projectPaneChromeState({ keyboardFocused: false, inputOwned: true }) },
+      ],
+      [
+        "%read",
+        {
+          chromeState: projectPaneChromeState({
+            keyboardFocused: false,
+            inputOwned: false,
+            interaction: interaction({ operationKind: "workspace.pane.read", phase: "observed" }),
+          }),
+        },
+      ],
+      [
+        "%send",
+        {
+          chromeState: projectPaneChromeState({
+            keyboardFocused: false,
+            inputOwned: false,
+            interaction: interaction(),
+          }),
+        },
+      ],
+      [
+        "%attention",
+        {
+          chromeState: projectPaneChromeState({
+            keyboardFocused: false,
+            inputOwned: false,
+            attention: "warning",
+          }),
+        },
+      ],
+    ]);
+
+    const layout = projectTerminalPaneChrome({ canvas, panes, metadataByPane: metadata });
+    const frames = new Map(
+      layout.native.map((projection) => [projection.paneId, projection.frame!]),
+    );
+    expect(frames.get("%focus")).toMatchObject({
+      marker: "●",
+      focused: true,
+      terminalFocused: false,
+      attention: false,
+    });
+    expect(frames.get("%input")).toMatchObject({
+      marker: "▣",
+      focused: false,
+      terminalFocused: true,
+      attention: false,
+    });
+    expect(frames.get("%read")).toMatchObject({
+      marker: "○",
+      focused: false,
+      terminalFocused: false,
+      attention: false,
+    });
+    expect(frames.get("%read")!.chips).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "status", label: "READ" })]),
+    );
+    expect(frames.get("%send")!.chips).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "status", label: "INPUT" })]),
+    );
+    expect(frames.get("%attention")).toMatchObject({
+      marker: "!",
+      focused: false,
+      terminalFocused: false,
+      attention: true,
+    });
+    expect(
+      layout.native.find((projection) => projection.paneId === "%read")?.communication,
+    ).toMatchObject({ role: "read-target" });
+    expect(
+      layout.native.find((projection) => projection.paneId === "%send")?.communication,
+    ).toMatchObject({ role: "send-target" });
+    expect(canvas.tmuxSize).toEqual({ cols: 120, rows: 38 });
+    expect(
+      [...layout.native, ...layout.framebuffer].every(
+        (projection) => !terminalPaneChromeOverlapsBodies({ canvas, panes }, projection),
+      ),
+    ).toBe(true);
   });
 
   it("compacts nested lower-pane chrome around a neighboring full-height body", () => {
@@ -426,7 +544,8 @@ describe("terminal pane chrome projection", () => {
     expect(appSource).toContain(
       'semanticIntent.commandId === "workspace.windowMode.maximize.toggle"',
     );
-    expect(appSource).toContain("mirror?.command(`resize-pane -Z -t ${paneId}`)");
+    expect(appSource).not.toContain("resize-pane -Z");
+    expect(appSource).toContain('verb: "workspace.pane.zoom.toggle"');
   });
 
   it("lets non-action lower-header cells fall through to separator resize", () => {

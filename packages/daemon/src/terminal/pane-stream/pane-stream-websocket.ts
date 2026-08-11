@@ -14,13 +14,25 @@ import {
   type PaneStreamLeaseRequest,
   type PaneStreamRedeemFrame,
   type PaneStreamViewerMode,
+  type SessionRuntimeSemanticIntent,
+  type TerminalDeliveryAck,
+  type TerminalDeliveryNack,
+  type TerminalDeliveryOffer,
+  type TerminalDeliveryNegotiationResult,
+  type TerminalDeliveryServerMessage,
+  type TerminalDeliveryVisibility,
+  type WorkspaceMultiplexerMutationResult,
 } from "@tmux-ide/contracts";
 import type {
   MirrorLayoutEvent,
   MirrorPaneEvent,
   MirrorSessionDescription,
 } from "../mirror/events.ts";
-import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
+import type {
+  MirrorLayoutSubscription,
+  MirrorSubscribeRequest,
+  MirrorSubscription,
+} from "../mirror/mirror-service.ts";
 import {
   canonicalOriginOrNull,
   digestSecret,
@@ -74,6 +86,10 @@ const BindingIdSchemaZ = z
 export interface PaneStreamMirror {
   describeSession(session: string): Promise<MirrorSessionDescription>;
   subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription>;
+  subscribeLayout?(
+    session: string,
+    onLayout: (event: MirrorLayoutEvent) => void,
+  ): Promise<MirrorLayoutSubscription>;
 }
 
 export interface PaneStreamLeaseAuthority {
@@ -171,8 +187,10 @@ export interface PaneStreamAdmissionCoordinatorOptions {
   readonly drainTickMs?: number;
   /** Hard whole-socket ceiling; the ledger should stall panes far earlier. */
   readonly maxSocketBufferedBytes?: number;
-  readonly maxInputFramesPerConnection?: number;
-  readonly maxInputBytesPerConnection?: number;
+  /** Input flood budget for one rolling admission window, never a lifetime quota. */
+  readonly maxInputFramesPerWindow?: number;
+  readonly maxInputBytesPerWindow?: number;
+  readonly inputRateWindowMs?: number;
   readonly now?: () => number;
   readonly schedule?: (callback: () => void, delayMs: number) => () => void;
 }
@@ -182,6 +200,25 @@ export interface SessionRuntimePaneStreamTransportBinding {
   readonly session: string;
   readonly clientId: string;
   assertController(semanticPaneId?: string): void;
+  openTerminalDelivery(
+    semanticPaneId: string,
+    offer: TerminalDeliveryOffer,
+    onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+  ): Promise<SessionRuntimeTerminalDeliveryConnection>;
+  submitIntent(
+    operationId: string,
+    intent: SessionRuntimeSemanticIntent,
+  ): Promise<WorkspaceMultiplexerMutationResult | void>;
+  sendInput(semanticPaneId: string, kind: "text" | "key", data: string): void;
+  fitViewport(cols: number, rows: number): void;
+  close(): Promise<void>;
+}
+
+export interface SessionRuntimeTerminalDeliveryConnection {
+  readonly negotiation: TerminalDeliveryNegotiationResult;
+  ack(ack: TerminalDeliveryAck): void;
+  nack(nack: TerminalDeliveryNack): void;
+  setVisibility(visibility: TerminalDeliveryVisibility): void;
   close(): Promise<void>;
 }
 
@@ -257,6 +294,7 @@ export class PaneStreamAdmissionCoordinator {
   readonly #maxSocketBufferedBytes: number;
   readonly #maxInputFrames: number;
   readonly #maxInputBytes: number;
+  readonly #inputRateWindowMs: number;
   readonly #now: () => number;
   readonly #schedule: (callback: () => void, delayMs: number) => () => void;
   readonly #ledger: PaneStreamWireLedger;
@@ -291,8 +329,9 @@ export class PaneStreamAdmissionCoordinator {
       32 << 20,
       256 << 20,
     );
-    this.#maxInputFrames = boundedInteger(options.maxInputFramesPerConnection, 16_384, 1 << 20);
-    this.#maxInputBytes = boundedInteger(options.maxInputBytesPerConnection, 4 << 20, 64 << 20);
+    this.#maxInputFrames = boundedInteger(options.maxInputFramesPerWindow, 16_384, 1 << 20);
+    this.#maxInputBytes = boundedInteger(options.maxInputBytesPerWindow, 4 << 20, 64 << 20);
+    this.#inputRateWindowMs = boundedInteger(options.inputRateWindowMs, 1_000, 60_000);
     this.#now = options.now ?? Date.now;
     this.#schedule = options.schedule ?? defaultSchedule;
   }
@@ -542,6 +581,12 @@ export class PaneStreamAdmissionCoordinator {
       try {
         const redeemed = await this.#leaseManager.redeem(frame.ticket, binding, receivedAt);
         const descriptor = redeemed.descriptor;
+        if (descriptor.terminalDelivery && frame.deliveryAcks === true) {
+          throw new PaneStreamAdmissionError(
+            "stream-unavailable",
+            "Semantic terminal delivery owns its ACK lifecycle; legacy renderer ACKs are invalid.",
+          );
+        }
         if (
           descriptor.leaseId !== pending.leaseId ||
           descriptor.requestId !== pending.requestId ||
@@ -578,6 +623,8 @@ export class PaneStreamAdmissionCoordinator {
             maxSocketBufferedBytes: this.#maxSocketBufferedBytes,
             maxInputFrames: this.#maxInputFrames,
             maxInputBytes: this.#maxInputBytes,
+            inputRateWindowMs: this.#inputRateWindowMs,
+            now: this.#now,
             schedule: this.#schedule,
             onRetire: (connection) => this.#trackRetiringRelease(connection),
           });
@@ -786,6 +833,8 @@ interface LiveConnectionOptions {
   readonly maxSocketBufferedBytes: number;
   readonly maxInputFrames: number;
   readonly maxInputBytes: number;
+  readonly inputRateWindowMs: number;
+  readonly now: () => number;
   readonly schedule: (callback: () => void, delayMs: number) => () => void;
   readonly onRetire: (connection: PaneStreamLiveConnection) => void;
 }
@@ -800,6 +849,13 @@ interface SeedBatch {
 interface PaneChannel {
   readonly semanticPaneId: string;
   sub: MirrorSubscription | null;
+  delivery: SessionRuntimeTerminalDeliveryConnection | null;
+  deliveryAddress: {
+    workspaceName: string;
+    generation: string;
+    incarnation: string | null;
+    deliveryNonce: string;
+  } | null;
   serverSeq: number;
   sentPaneFrames: number;
   consumedSeq: number;
@@ -828,15 +884,21 @@ export class PaneStreamLiveConnection {
   readonly #maxSocketBufferedBytes: number;
   readonly #maxInputFrames: number;
   readonly #maxInputBytes: number;
+  readonly #inputRateWindowMs: number;
+  readonly #now: () => number;
   readonly #schedule: (callback: () => void, delayMs: number) => () => void;
   readonly #onRetire: (connection: PaneStreamLiveConnection) => void;
   readonly #panes = new Map<string, PaneChannel>();
   readonly #sendQueue: QueuedSend[] = [];
+  readonly #semanticDrainWaiters = new Map<string, Array<() => void>>();
+  #layoutSubscription: MirrorLayoutSubscription | null = null;
   #sentBytesTotal = 0;
   #drainedBytesTotal = 0;
   #cancelDrainTick: (() => void) | null = null;
-  #acceptedInputFrames = 0;
-  #acceptedInputBytes = 0;
+  #inputWindowStartedAt: number;
+  #inputWindowFrames = 0;
+  #inputWindowBytes = 0;
+  #nextViewportSeq = 1;
   #closed = false;
   #releasePromise: Promise<unknown> | null = null;
 
@@ -857,12 +919,17 @@ export class PaneStreamLiveConnection {
     this.#maxSocketBufferedBytes = options.maxSocketBufferedBytes;
     this.#maxInputFrames = options.maxInputFrames;
     this.#maxInputBytes = options.maxInputBytes;
+    this.#inputRateWindowMs = options.inputRateWindowMs;
+    this.#now = options.now;
+    this.#inputWindowStartedAt = this.#now();
     this.#schedule = options.schedule;
     this.#onRetire = options.onRetire;
     for (const pane of options.descriptor.panes) {
       this.#panes.set(pane, {
         semanticPaneId: pane,
         sub: null,
+        delivery: null,
+        deliveryAddress: null,
         serverSeq: 0,
         sentPaneFrames: 0,
         consumedSeq: 0,
@@ -910,15 +977,24 @@ export class PaneStreamLiveConnection {
     // Departure force-returns every ticket within this same tick.
     this.#ledger.forceReturnClient(this.#clientId);
     this.#sendQueue.length = 0;
+    for (const waiters of this.#semanticDrainWaiters.values())
+      for (const resolve of waiters) resolve();
+    this.#semanticDrainWaiters.clear();
     this.#socket.off("message", this.#onMessage);
     this.#socket.off("close", this.#onSocketClose);
     this.#socket.off("error", this.#onSocketClose);
     const closures: Promise<unknown>[] = [];
+    const layoutSubscription = this.#layoutSubscription;
+    this.#layoutSubscription = null;
+    if (layoutSubscription) closures.push(layoutSubscription.close().catch(() => undefined));
     for (const channel of this.#panes.values()) {
       const sub = channel.sub;
       channel.sub = null;
+      const delivery = channel.delivery;
+      channel.delivery = null;
       channel.closed = true;
       if (sub) closures.push(sub.close().catch(() => undefined));
+      if (delivery) closures.push(delivery.close().catch(() => undefined));
     }
     this.#releasePromise = Promise.allSettled([
       ...closures,
@@ -951,7 +1027,27 @@ export class PaneStreamLiveConnection {
     }
     if (this.#closed) return;
     const known = new Set(described.panes.map((pane) => pane.semanticPaneId));
-    let layoutAttached = false;
+    if (this.#descriptor.terminalDelivery) {
+      await this.#subscribeSemantic(known);
+      return;
+    }
+    if (this.#mirror.subscribeLayout) {
+      try {
+        const layoutSubscription = await this.#mirror.subscribeLayout(
+          this.#descriptor.sessionName,
+          (event) => this.#onLayout(event),
+        );
+        if (this.#closed) {
+          await layoutSubscription.close().catch(() => undefined);
+          return;
+        }
+        this.#layoutSubscription = layoutSubscription;
+      } catch {
+        this.close(1011, "stream-unavailable");
+        return;
+      }
+    }
+    let layoutAttached = this.#layoutSubscription !== null;
     for (const channel of this.#panes.values()) {
       if (this.#closed) return;
       if (!known.has(channel.semanticPaneId)) {
@@ -977,6 +1073,125 @@ export class PaneStreamLiveConnection {
       }
     }
     this.#closeIfAllPanesGone();
+  }
+
+  async #subscribeSemantic(known: ReadonlySet<string>): Promise<void> {
+    const binding = this.#sessionRuntimeBinding;
+    const offer = this.#descriptor.terminalDelivery;
+    if (!binding || !offer) {
+      this.close(1011, "stream-unavailable");
+      return;
+    }
+    if (this.#mirror.subscribeLayout) {
+      try {
+        const layoutSubscription = await this.#mirror.subscribeLayout(
+          this.#descriptor.sessionName,
+          (event) => this.#onLayout(event),
+        );
+        if (this.#closed) {
+          await layoutSubscription.close().catch(() => undefined);
+          return;
+        }
+        this.#layoutSubscription = layoutSubscription;
+      } catch {
+        this.close(1011, "stream-unavailable");
+        return;
+      }
+    }
+    let layoutAttached = this.#layoutSubscription !== null;
+    for (const channel of this.#panes.values()) {
+      if (this.#closed) return;
+      if (!known.has(channel.semanticPaneId)) {
+        this.#emitClosed(channel);
+        continue;
+      }
+      try {
+        // Layout remains one session-scoped observation on this same socket;
+        // terminal content itself comes exclusively from TerminalDeliveryHub.
+        if (!layoutAttached) {
+          const layoutSub = await this.#mirror.subscribe({
+            session: this.#descriptor.sessionName,
+            semanticPaneId: channel.semanticPaneId,
+            onEvent: () => undefined,
+            onLayout: (event) => this.#onLayout(event),
+          });
+          if (this.#closed || channel.closed) {
+            await layoutSub.close().catch(() => undefined);
+            return;
+          }
+          channel.sub = layoutSub;
+          layoutAttached = true;
+        }
+        const pending: TerminalDeliveryServerMessage[] = [];
+        let ready = false;
+        const delivery = await binding.openTerminalDelivery(
+          channel.semanticPaneId,
+          offer,
+          (message) => {
+            if (!ready) pending.push(message);
+            else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+          },
+        );
+        if (this.#closed || channel.closed) {
+          await delivery.close();
+          continue;
+        }
+        channel.delivery = delivery;
+        if (!delivery.negotiation.accepted) {
+          await delivery.close();
+          this.close(1008, "stream-unavailable");
+          return;
+        }
+        channel.deliveryAddress = {
+          workspaceName: this.#descriptor.workspaceName,
+          generation: delivery.negotiation.negotiated.generation,
+          incarnation: null,
+          deliveryNonce: delivery.negotiation.negotiated.deliveryNonce,
+        };
+        this.#sendFrame(null, {
+          type: "terminal-delivery-ready",
+          pane: channel.semanticPaneId,
+          negotiation: delivery.negotiation,
+        });
+        ready = true;
+        for (const message of pending)
+          await this.#sendTerminalDelivery(channel.semanticPaneId, message);
+      } catch {
+        this.close(1011, "stream-unavailable");
+        return;
+      }
+    }
+    this.#closeIfAllPanesGone();
+  }
+
+  async #sendTerminalDelivery(pane: string, message: TerminalDeliveryServerMessage): Promise<void> {
+    if (message.type === "terminal.delivery") {
+      const channel = this.#panes.get(pane);
+      if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
+      this.#sendFrame(pane, { type: "terminal-delivery-envelope", pane, envelope: message });
+    } else if (message.type === "terminal.delivery.chunk") {
+      this.#sendFrame(pane, {
+        type: "terminal-delivery-chunk",
+        pane,
+        transactionId: message.transactionId,
+        index: message.index,
+        data: Buffer.from(message.bytes).toString("base64"),
+      });
+    } else {
+      this.#sendFrame(pane, { type: "terminal-delivery-fault", pane, fault: message });
+    }
+    await this.#awaitSemanticCredit(pane);
+  }
+
+  #awaitSemanticCredit(pane: string): Promise<void> {
+    const aggregateHigh = (this.#socket.bufferedAmount ?? 0) > this.#maxSocketBufferedBytes >> 2;
+    if (!aggregateHigh && !this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiters = this.#semanticDrainWaiters.get(pane) ?? [];
+      waiters.push(resolve);
+      this.#semanticDrainWaiters.set(pane, waiters);
+      this.#ensureDrainTick();
+    });
   }
 
   // ── Mirror events → frames ────────────────────────────────────────────────
@@ -1241,6 +1456,15 @@ export class PaneStreamLiveConnection {
     for (const [pane, channel] of this.#panes) {
       if (channel.frozenByWire) this.#evaluateResume(pane);
       else this.#evaluateStall(pane);
+      const waiters = this.#semanticDrainWaiters.get(pane);
+      if (
+        waiters &&
+        this.#ledger.shouldResume(this.#clientId, pane) &&
+        buffered <= this.#maxSocketBufferedBytes >> 3
+      ) {
+        this.#semanticDrainWaiters.delete(pane);
+        for (const resolve of waiters) resolve();
+      }
     }
   }
 
@@ -1267,8 +1491,128 @@ export class PaneStreamLiveConnection {
       this.#acceptConsumed(frame.pane, frame.seq);
       return;
     }
+    if (frame.type === "terminal-delivery-ack") {
+      const channel = this.#deliveryChannel(frame.ack);
+      if (!channel) return;
+      channel.delivery!.ack(frame.ack);
+      return;
+    }
+    if (frame.type === "terminal-delivery-nack") {
+      const channel = this.#deliveryChannel(frame.nack);
+      if (!channel) return;
+      channel.delivery!.nack(frame.nack);
+      return;
+    }
+    if (frame.type === "terminal-delivery-visibility") {
+      const channel = this.#deliveryChannel({
+        workspaceName: frame.workspaceName,
+        semanticPaneId: frame.pane,
+        generation: frame.generation,
+        incarnation: frame.incarnation,
+        deliveryNonce: frame.deliveryNonce,
+      });
+      if (!channel) return;
+      channel.delivery!.setVisibility(frame.visibility);
+      return;
+    }
+    if (frame.type === "semantic-intent") {
+      this.#acceptSemanticIntent(frame.operationId, frame.intent);
+      return;
+    }
+    if (frame.type === "viewport") {
+      if (
+        !this.#descriptor.terminalDelivery ||
+        this.#descriptor.viewerMode !== "interactive" ||
+        frame.seq !== this.#nextViewportSeq
+      ) {
+        this.#failProtocol("input-rejected");
+        return;
+      }
+      this.#nextViewportSeq += 1;
+      try {
+        this.#sessionRuntimeBinding!.fitViewport(frame.cols, frame.rows);
+        this.#sendFrame(null, {
+          type: "viewport-ack",
+          seq: frame.seq,
+          cols: frame.cols,
+          rows: frame.rows,
+        });
+      } catch {
+        this.#failProtocol("input-rejected");
+      }
+      return;
+    }
     this.#acceptInput(frame.pane, frame.seq, frame.kind, frame.data, byteLength);
   };
+
+  #deliveryChannel(address: {
+    workspaceName: string;
+    semanticPaneId: string;
+    generation: string;
+    incarnation: string;
+    deliveryNonce: string;
+  }): PaneChannel | null {
+    const channel = this.#panes.get(address.semanticPaneId);
+    const expected = channel?.deliveryAddress;
+    if (
+      !channel?.delivery ||
+      !expected ||
+      expected.workspaceName !== address.workspaceName ||
+      expected.generation !== address.generation ||
+      expected.deliveryNonce !== address.deliveryNonce ||
+      expected.incarnation === null ||
+      expected.incarnation !== address.incarnation
+    ) {
+      this.#failProtocol("protocol-error");
+      return null;
+    }
+    return channel;
+  }
+
+  #acceptSemanticIntent(operationId: string, intent: SessionRuntimeSemanticIntent): void {
+    if (!this.#descriptor.terminalDelivery || this.#descriptor.viewerMode !== "interactive") {
+      this.#failProtocol("input-rejected");
+      return;
+    }
+    void this.#sessionRuntimeBinding!.submitIntent(operationId, intent)
+      .then((result) => {
+        this.#sendFrame(null, {
+          type: "semantic-intent-ack",
+          operationId,
+          outcome: { status: "applied", result: result ?? null },
+        });
+      })
+      .catch((error: unknown) => {
+        const rawCode =
+          error && typeof error === "object" && "code" in error
+            ? String(error.code)
+            : error && typeof error === "object" && "outcome" in error
+              ? `intent-${String(error.outcome)}`
+              : "stream-unavailable";
+        const code = [
+          "controller-conflict",
+          "controller-target-unavailable",
+          "stale-controller-lease",
+          "invalid-client-capability",
+          "invalid-source-pane-binding",
+          "intent-session-mismatch",
+          "intent-rejected",
+          "intent-timed-out",
+        ].includes(rawCode)
+          ? rawCode
+          : "stream-unavailable";
+        this.#sendFrame(null, {
+          type: "semantic-intent-ack",
+          operationId,
+          outcome: {
+            status: "rejected",
+            code,
+            message:
+              error instanceof Error ? error.message.slice(0, 512) : "Semantic intent failed",
+          },
+        });
+      });
+  }
 
   #acceptConsumed(pane: string, seq: number): void {
     const channel = this.#panes.get(pane);
@@ -1299,24 +1643,40 @@ export class PaneStreamLiveConnection {
       return;
     }
     const channel = this.#panes.get(pane);
-    if (!channel || channel.closed || !channel.sub || seq !== channel.nextInputSeq) {
-      this.#failProtocol("input-rejected");
-      return;
-    }
+    const semanticDelivery = this.#descriptor.terminalDelivery !== null;
     if (
-      this.#acceptedInputFrames + 1 > this.#maxInputFrames ||
-      this.#acceptedInputBytes + frameBytes > this.#maxInputBytes
+      !channel ||
+      channel.closed ||
+      (semanticDelivery ? !channel.delivery : !channel.sub) ||
+      seq !== channel.nextInputSeq
     ) {
       this.#failProtocol("input-rejected");
       return;
     }
-    this.#acceptedInputFrames += 1;
-    this.#acceptedInputBytes += frameBytes;
+    const now = this.#now();
+    if (
+      now < this.#inputWindowStartedAt ||
+      now - this.#inputWindowStartedAt >= this.#inputRateWindowMs
+    ) {
+      this.#inputWindowStartedAt = now;
+      this.#inputWindowFrames = 0;
+      this.#inputWindowBytes = 0;
+    }
+    if (
+      this.#inputWindowFrames + 1 > this.#maxInputFrames ||
+      this.#inputWindowBytes + frameBytes > this.#maxInputBytes
+    ) {
+      this.#failProtocol("input-rejected");
+      return;
+    }
+    this.#inputWindowFrames += 1;
+    this.#inputWindowBytes += frameBytes;
     channel.nextInputSeq += 1;
     try {
       this.#sessionRuntimeBinding!.assertController(pane);
-      if (kind === "text") channel.sub.sendText(data);
-      else channel.sub.sendKey(data);
+      if (semanticDelivery) this.#sessionRuntimeBinding!.sendInput(pane, kind, data);
+      else if (kind === "text") channel.sub!.sendText(data);
+      else channel.sub!.sendKey(data);
       sendControl(this.#socket, { type: "input-ack", pane, seq });
     } catch {
       this.close(1011, "stream-unavailable");

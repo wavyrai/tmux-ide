@@ -79,7 +79,7 @@ interface ParsedSessionPaneDescriptorReply {
 
 /**
  * PURE — parse one qa-escaped, tab-delimited descriptor record per pane.
- * ControlModeClient deliberately exposes stdout as latin1 so each JS code
+ * The tmux control feed deliberately exposes stdout as latin1 so each JS code
  * unit preserves one wire byte. Recover UTF-8 before interpreting tmux's
  * ASCII qa escapes; doing it afterwards would leave non-ASCII metadata as
  * mojibake while decoding the whole string with the default replacement mode

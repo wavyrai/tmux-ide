@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   CanonicalTerminalReplicaUpdate,
   TerminalDeliveryAck,
@@ -129,6 +129,106 @@ async function settle(): Promise<void> {
 }
 
 describe("SessionRuntimeTerminalDeliveryHub", () => {
+  it("closes a source that resolves after reset and allows a clean retry", async () => {
+    let resolveLate!: (source: {
+      generation: string;
+      semanticPaneId: string;
+      close: () => Promise<void>;
+    }) => void;
+    const lateClose = vi.fn(async () => undefined);
+    const lateOwner: TerminalDeliverySourceOwner = {
+      subscribeSource: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveLate = resolve;
+          }),
+      ),
+    };
+    const retryOwner = new FakeOwner();
+    const owners: TerminalDeliverySourceOwner[] = [lateOwner, retryOwner];
+    const hub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      "workspace",
+      () => owners.shift()!,
+    );
+    const offer = {
+      protocolVersions: [1],
+      encodings: ["semantic-v1"],
+      richPlacements: false,
+    } as const;
+    const opening = hub.open("client", "pane-a", offer, () => undefined);
+    await Promise.resolve();
+    await hub.resetForSessionRestart();
+    resolveLate({ generation, semanticPaneId: "pane-a", close: lateClose });
+
+    await expect(opening).rejects.toThrow("retired during startup");
+    expect(lateClose).toHaveBeenCalledOnce();
+    const retry = await hub.open("client", "pane-a", offer, () => undefined);
+    expect(retryOwner.subscriptions).toBe(1);
+    await retry.close();
+    await hub.close();
+  });
+
+  it("closes a source that resolves after hub shutdown", async () => {
+    let resolveLate!: (source: {
+      generation: string;
+      semanticPaneId: string;
+      close: () => Promise<void>;
+    }) => void;
+    const lateClose = vi.fn(async () => undefined);
+    const owner: TerminalDeliverySourceOwner = {
+      subscribeSource: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveLate = resolve;
+          }),
+      ),
+    };
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const opening = hub.open(
+      "client",
+      "pane-a",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      () => undefined,
+    );
+    await Promise.resolve();
+    await hub.close();
+    resolveLate({ generation, semanticPaneId: "pane-a", close: lateClose });
+
+    await expect(opening).rejects.toThrow("retired during startup");
+    expect(lateClose).toHaveBeenCalledOnce();
+  });
+
+  it("reserves concurrent opens before awaiting pane startup so capacity cannot oversubscribe", async () => {
+    let release!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const owner = new FakeOwner();
+    owner.subscribeSource = async (...args) => {
+      await startGate;
+      return FakeOwner.prototype.subscribeSource.apply(owner, args);
+    };
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const offer = {
+      protocolVersions: [1],
+      encodings: ["semantic-v1"],
+      richPlacements: false,
+    } as const;
+    const admitted = Array.from({ length: 64 }, (_, index) =>
+      hub.open(`client-${index}`, "pane-a", offer, () => undefined),
+    );
+
+    await expect(hub.open("client-64", "pane-a", offer, () => undefined)).rejects.toThrow(
+      "Terminal delivery client limit reached",
+    );
+    release();
+    const connections = await Promise.all(admitted);
+    expect(hub.metrics()).toMatchObject({ clients: 64, connections: 64 });
+    await Promise.all(connections.map((connection) => connection.close()));
+    await hub.close();
+  });
+
   it("rejects incompatible protocol offers before allocating pane state", async () => {
     const owner = new FakeOwner();
     const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);

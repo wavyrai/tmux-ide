@@ -4,6 +4,7 @@ import {
   PaneStreamLeaseRequestSchemaZ,
   type PaneStreamLeaseRequest,
   type PaneStreamViewerMode,
+  type TerminalDeliveryOffer,
 } from "@tmux-ide/contracts";
 
 /**
@@ -63,6 +64,7 @@ export interface PaneStreamLeaseDescriptor {
   readonly sessionName: string;
   readonly panes: readonly string[];
   readonly viewerMode: PaneStreamViewerMode;
+  readonly terminalDelivery: TerminalDeliveryOffer | null;
   readonly status: PaneStreamLeaseStatus;
   readonly issuedAt: number;
   readonly expiresAt: number;
@@ -358,6 +360,7 @@ export class PaneStreamLeaseManager {
       sessionName: state.sessionName,
       panes: [...state.request.panes],
       viewerMode: state.request.viewerMode,
+      terminalDelivery: state.request.terminalDelivery ?? null,
       status: state.status,
       issuedAt: state.issuedAt,
       expiresAt: state.expiresAt,

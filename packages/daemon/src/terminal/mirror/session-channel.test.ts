@@ -449,9 +449,14 @@ describe("input path", () => {
     const before = rig.sim.written.length;
     handle.sendText("hi");
     handle.sendText("!");
+    rig.channel.fitViewport(120, 40);
     handle.sendKey("Enter");
     const sent = rig.sim.written.slice(before);
-    expect(sent).toEqual(["send-keys -t %1 -H 68 69 21", "send-keys -t %1 Enter"]);
+    expect(sent).toEqual([
+      "send-keys -t %1 -H 68 69 21",
+      "refresh-client -C 120x40",
+      "send-keys -t %1 Enter",
+    ]);
     await rig.channel.dispose();
   });
 });

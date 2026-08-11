@@ -8,6 +8,12 @@ import {
 } from "@tmux-ide/contracts";
 import type { PaneFrameActionIntent } from "../../../ui/pane-frame/presenter.tsx";
 import type { PaneInteractionPresenceRole } from "@tmux-ide/core";
+import {
+  projectPaneChromeState,
+  resolvePaneChromeVisualState,
+  type PaneChromeInteractionState,
+  type PaneChromeState,
+} from "../pane-frame-state.ts";
 import { terminalDisplayWidth } from "../panel-host.ts";
 import { iconButtonWidth, type RecipeTone, type Rect } from "../recipes.ts";
 import type { AgentTerminalCanvasProjection } from "./agent-terminal-canvas.ts";
@@ -30,7 +36,7 @@ export interface TerminalPaneChromePane {
   height: number;
   active: boolean;
   zoomed: boolean;
-  /** Optional future SessionMirror descriptor fields. */
+  /** Optional future semantic terminal descriptor fields. */
   title?: string | null;
   currentCommand?: string | null;
 }
@@ -44,6 +50,11 @@ export interface TerminalPaneChromeMetadata {
   agentActivity?: AgentActivity;
   domainStatus?: CanonicalDomainStatus;
   attentionKind?: PaneAttention;
+  /**
+   * Orthogonal control/receipt state. When present this is authoritative;
+   * legacy status/communication fields remain a compatibility seam.
+   */
+  chromeState?: PaneChromeState;
   communication?: TerminalPaneCommunication | null;
 }
 
@@ -190,6 +201,8 @@ export function projectTerminalPaneChrome(
   const framebufferRect = input.canvas.framebuffer;
 
   for (const pane of panes) {
+    const metadata = input.metadataByPane?.get(pane.id);
+    const communication = terminalPaneCommunication(pane, metadata);
     let placement: TerminalPaneChromePlacement;
     let layer: TerminalPaneChromeProjection["layer"];
     let layerRect: Rect;
@@ -252,7 +265,7 @@ export function projectTerminalPaneChrome(
         ? null
         : paneHeaderFrame(
             pane,
-            input.metadataByPane?.get(pane.id),
+            metadata,
             layerRect.width,
             input.hoveredAction,
             input.pressedAction,
@@ -265,7 +278,7 @@ export function projectTerminalPaneChrome(
       layer,
       frame,
       diagnostic,
-      communication: input.metadataByPane?.get(pane.id)?.communication ?? null,
+      communication,
     };
     if (diagnostic) diagnostics.push(diagnostic);
     if (layer === "native") native.push(projection);
@@ -320,7 +333,7 @@ function projectCommunicationSegments(
     byRect.set(key, { paneId: pane.id, role: communication.role, rect, orientation });
   };
   for (const pane of panes) {
-    const communication = metadataByPane?.get(pane.id)?.communication;
+    const communication = terminalPaneCommunication(pane, metadataByPane?.get(pane.id));
     if (!communication) continue;
     // A pane's horizontal separator is also where its title/status chrome is
     // projected. Observation must never erase that explicit READ badge or look
@@ -541,8 +554,15 @@ function paneHeaderFrame(
   hovered: TerminalPaneChromeHoverTarget | null | undefined,
   pressed: TerminalPaneChromeActionTarget | null | undefined,
 ): PaneFrameProjection {
+  const chromeState = terminalPaneChromeState(pane, metadata);
+  const chromeVisual = resolvePaneChromeVisualState(chromeState);
+  const interaction = chromeVisual.communication;
   const title = terminalPaneChromeTitle(pane, metadata);
-  const actionsVisible = pane.active || hovered?.paneId === pane.id || pressed?.paneId === pane.id;
+  const actionsVisible =
+    chromeState.keyboardFocus === "focused" ||
+    chromeState.inputOwnership === "controller" ||
+    hovered?.paneId === pane.id ||
+    pressed?.paneId === pane.id;
   const actions = [
     {
       id: "zoom",
@@ -573,12 +593,12 @@ function paneHeaderFrame(
     title,
     kind: "terminals" as const,
     subtitle: metadata?.subtitle ?? pane.id,
-    focused: pane.active,
-    terminalFocused: pane.active,
-    attention: metadata?.attention === true,
-    status: metadata?.status,
-    statusTone: metadata?.statusTone,
-    visualState: terminalPaneVisualState(pane, metadata),
+    focused: chromeState.keyboardFocus === "focused",
+    terminalFocused: chromeState.inputOwnership === "controller",
+    attention: chromeState.attention !== "none",
+    status: interaction?.badge ?? metadata?.status,
+    statusTone: interaction ? interactionRecipeTone(interaction) : metadata?.statusTone,
+    visualState: terminalPaneVisualState(pane, metadata, chromeState),
     hoveredActionIndex: hovered?.paneId === pane.id ? hovered.actionIndex : null,
     pressedActionIndex: pressed?.paneId === pane.id ? pressed.actionIndex : null,
     actions,
@@ -679,20 +699,19 @@ function terminalPaneAgentActivity(
 function terminalPaneVisualState(
   pane: TerminalPaneChromePane,
   metadata: TerminalPaneChromeMetadata | undefined,
+  chromeState = terminalPaneChromeState(pane, metadata),
 ): PaneVisualStateV1 {
   const domainStatus = terminalPaneDomainStatus(metadata);
   return {
     structure: pane.zoomed ? "maximized" : "docked",
     applicationFocus: {
-      pane: pane.active,
-      terminalInput: pane.active,
+      pane: chromeState.keyboardFocus === "focused",
+      terminalInput: chromeState.inputOwnership === "controller",
       windowActive: true,
     },
     agentActivity: terminalPaneAgentActivity(metadata, domainStatus),
     domainStatus,
-    attention:
-      metadata?.attentionKind ??
-      (metadata?.attention ? (domainStatus === "blocked" ? "warning" : "requested") : "none"),
+    attention: chromeState.attention,
     layoutInteraction: {
       editable: true,
       selected: false,
@@ -708,6 +727,40 @@ function terminalPaneVisualState(
       loading: false,
     },
   };
+}
+
+function terminalPaneChromeState(
+  pane: TerminalPaneChromePane,
+  metadata: TerminalPaneChromeMetadata | undefined,
+): PaneChromeState {
+  if (metadata?.chromeState) return metadata.chromeState;
+  const domainStatus = terminalPaneDomainStatus(metadata);
+  return projectPaneChromeState({
+    keyboardFocused: pane.active,
+    inputOwned: pane.active,
+    attention:
+      metadata?.attentionKind ??
+      (metadata?.attention ? (domainStatus === "blocked" ? "warning" : "requested") : "none"),
+  });
+}
+
+function terminalPaneCommunication(
+  pane: TerminalPaneChromePane,
+  metadata: TerminalPaneChromeMetadata | undefined,
+): TerminalPaneCommunication | null {
+  return (
+    resolvePaneChromeVisualState(terminalPaneChromeState(pane, metadata)).communication ??
+    metadata?.communication ??
+    null
+  );
+}
+
+function interactionRecipeTone(
+  interaction: PaneChromeInteractionState,
+): Exclude<RecipeTone, "neutral" | "accent"> {
+  if (interaction.tone === "danger") return "blocked";
+  if (interaction.tone === "success") return "done";
+  return "working";
 }
 
 export function terminalPaneChromeTitle(

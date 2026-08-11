@@ -75,4 +75,33 @@ describe("OpenTUI rich widget projection", () => {
     expect(surface).toMatchObject({ kind: "fallback", label: "Image" });
     expect(surface?.text).toContain("Animated images render in the web GUI");
   });
+
+  it("shows an honest fallback for canonical placement metadata without content", () => {
+    expect(
+      resolveTuiWidgetSurface(
+        {
+          id: "markdown",
+          args: {
+            semanticPlacement: {
+              id: "markdown",
+              kind: "widget",
+              row: 2,
+              column: 0,
+              columns: 80,
+              rows: 1,
+              contentDigest: "abcd1234",
+            },
+          },
+          lineIndex: 2,
+        },
+        () => null,
+      ),
+    ).toMatchObject({ kind: "fallback", label: "Markdown" });
+  });
+
+  it("leaves ordinary terminal content outside the widget surface", () => {
+    expect(
+      resolveTuiWidgetSurface({ id: "shell-output", args: null, lineIndex: 0 }, () => null),
+    ).toBeNull();
+  });
 });

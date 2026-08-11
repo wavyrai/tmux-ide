@@ -20,3 +20,4 @@ export * from "./application-shell-session.ts";
 export * from "./direct-application-shell-transport.ts";
 export * from "./owner-action-client.ts";
 export * from "./workspace-pane-client.ts";
+export * from "./pane-stream-client.ts";

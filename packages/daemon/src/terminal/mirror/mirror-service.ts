@@ -62,6 +62,11 @@ export interface MirrorSubscription {
   close(): Promise<void>;
 }
 
+export interface MirrorLayoutSubscription {
+  readonly session: string;
+  close(): Promise<void>;
+}
+
 export interface MirrorSessionRetention {
   readonly session: string;
   close(): Promise<void>;
@@ -128,6 +133,51 @@ export class MirrorService {
         await Promise.allSettled([...this.pendingDisposals]);
       },
     };
+  }
+
+  /** Retain one session channel for layout only; no pane feed or seed is created. */
+  async subscribeLayout(
+    session: string,
+    onLayout: (event: MirrorLayoutEvent) => void,
+  ): Promise<MirrorLayoutSubscription> {
+    const entry = await this.acquire(session);
+    let handle;
+    try {
+      handle = entry.channel.subscribeLayout(onLayout);
+    } catch (cause) {
+      this.release(session, entry);
+      throw cause;
+    }
+    let closed = false;
+    return {
+      session,
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        handle.close();
+        this.release(session, entry);
+        await Promise.allSettled([...this.pendingDisposals]);
+      },
+    };
+  }
+
+  /** Synchronous hot input on an already-retained SessionRuntime channel. */
+  sendText(session: string, semanticPaneId: string, text: string): void {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    entry.channel.sendText(semanticPaneId, text);
+  }
+
+  sendKey(session: string, semanticPaneId: string, key: string): void {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    entry.channel.sendKey(semanticPaneId, key);
+  }
+
+  fitViewport(session: string, cols: number, rows: number): void {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    entry.channel.fitViewport(cols, rows);
   }
 
   /**

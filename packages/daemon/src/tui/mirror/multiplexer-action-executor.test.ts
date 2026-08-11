@@ -84,9 +84,7 @@ describe("TUI multiplexer action executor", () => {
       }),
     ).resolves.toEqual({ status: "local", message: "new window" });
 
-    expect(runLocal).toHaveBeenCalledWith(
-      "split-window -t 'renamed-session' ; break-pane ; resize-window -x 120 -y 40",
-    );
+    expect(runLocal).toHaveBeenCalledWith("split-window -t 'renamed-session' ; break-pane");
   });
 
   it("uses raw control-mode tmux only when no canonical daemon exists", async () => {
