@@ -599,6 +599,7 @@ import {
 } from "../chrome/notify.ts";
 import { adoptMarkArgv, updaterProbeArgv, updaterSpawnArgv } from "../chrome/front-door.ts";
 import { APP_HOST_SESSION } from "./hosted.ts";
+import { publishTuiInputReady } from "../readiness.ts";
 import {
   ATTENTION_FLASH_MS,
   attentionNoteLine,
@@ -7196,6 +7197,11 @@ try {
       }
       pasteIntoFocused(text);
     });
+
+    // OpenTUI's Solid hooks install their input owners from onMount. Register
+    // this barrier after both root hooks so an automation/host that observes it
+    // can send lifecycle input without racing a merely-painted first frame.
+    onMount(() => publishTuiInputReady("app"));
 
     /** The per-window strip's x-spans — one segment per tmux window, laid out from
      *  the main column's first cell (SIDEBAR_W + paddingLeft 1) with a 1-cell gap,

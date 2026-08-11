@@ -149,6 +149,7 @@ async function runInstalledTuiGate(installedCli) {
   const targetSession = "ordinary-isolated";
   const hostSession = "installed-tui-gate";
   const statusPath = join(tmpRoot, "installed-tui.status");
+  const readyPath = join(tmpRoot, "installed-tui.ready.json");
   const stderrPath = join(tmpRoot, "installed-tui.stderr");
   const launcherPath = join(tmpRoot, "launch-installed-tui.sh");
   const runtimeEnv = tmuxEnv(dirname(installedCli));
@@ -184,6 +185,7 @@ async function runInstalledTuiGate(installedCli) {
     launcherPath,
     [
       "#!/bin/sh",
+      `export TMUX_IDE_TUI_READY_FILE=${shQuote(readyPath)}`,
       `${shQuote(installedCli)} app ${shQuote(targetSession)} 2>${shQuote(stderrPath)}`,
       "status=$?",
       `printf '%s\\n' "$status" > ${shQuote(statusPath)}`,
@@ -231,13 +233,21 @@ async function runInstalledTuiGate(installedCli) {
         if (existsSync(statusPath)) return true;
         const frame = tmuxResult(["capture-pane", "-p", "-t", `=${hostSession}:0.0`]);
         if (frame.status === 0) captured = frame.stdout;
-        return captured.includes("tmux-ide");
+        return existsSync(readyPath) && captured.includes("tmux-ide");
       },
       20_000,
-      "the installed TUI's first frame",
+      "the installed TUI's input-ready barrier",
     );
 
     if (!existsSync(statusPath)) {
+      const readiness = JSON.parse(readFileSync(readyPath, "utf8"));
+      if (
+        readiness.version !== 1 ||
+        readiness.phase !== "input-ready" ||
+        readiness.surface !== "app"
+      ) {
+        throw new Error(`Installed TUI published invalid readiness: ${JSON.stringify(readiness)}`);
+      }
       const quit = tmuxResult(["send-keys", "-t", `=${hostSession}:0.0`, "C-q"]);
       if (quit.status !== 0) throw new Error(`Could not ask installed TUI to exit: ${quit.stderr}`);
     }
