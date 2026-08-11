@@ -19,6 +19,7 @@ import {
   TERMINAL_ATTACHMENT_REDEEM_PATH,
   TerminalAttachmentLoopbackWebSocketUrlSchemaZ,
   type DaemonInstanceIdentity,
+  type SessionRuntimeSemanticIntent,
 } from "@tmux-ide/contracts";
 import { computeAgentStates, computePortPanes } from "./session-monitor.ts";
 import { DaemonShutdownError, DaemonStartupError } from "./errors.ts";
@@ -59,6 +60,7 @@ import {
   type PaneStreamRuntime,
 } from "../terminal/pane-stream/runtime.ts";
 import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
+import { createSessionRuntimeMultiplexerBackend } from "../terminal/session-runtime/multiplexer-backend.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import { readOrMintEnvironmentId } from "./environment-identity.ts";
 import {
@@ -1028,24 +1030,29 @@ export async function startEmbeddedDaemon(
       // mutation nor direct WebSocket redemption is exposed before it passes.
       await terminalAttachmentRuntime.whenReady();
       const selector = tmuxAuthority.socketSelector;
+      const executeRuntimeIntent = async (
+        operationId: string,
+        intent: SessionRuntimeSemanticIntent,
+      ) => {
+        if (intent.verb === "workspace.pane.read") {
+          await workspaceMultiplexer.readPane(operationId, intent);
+          return;
+        }
+        return await workspaceMultiplexer.mutate({
+          operationId,
+          expectedDaemonInstanceId: instanceId,
+          intent,
+        });
+      };
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
         semanticMutations: {
           resolveSession: (workspaceName) =>
             workspaceRegistry.get(workspaceName)?.sessionName ?? null,
-          execute: async (operationId, intent) => {
-            if (intent.verb === "workspace.pane.read") {
-              await workspaceMultiplexer.readPane(operationId, intent);
-              return;
-            }
-            return await workspaceMultiplexer.mutate({
-              operationId,
-              expectedDaemonInstanceId: instanceId,
-              intent,
-            });
-          },
+          execute: executeRuntimeIntent,
           publishReceipt: (receipt) => broadcastInteractionReceipt(receipt, instanceId),
         },
+        executeAuthorized: executeRuntimeIntent,
         mirror: {
           executable: tmuxAuthority.executablePath,
           ...(selector.kind === "path" ? { socketPath: selector.path } : {}),
@@ -1061,19 +1068,11 @@ export async function startEmbeddedDaemon(
         inputAuthority: terminalAttachmentRuntime.inputAuthority,
         semanticPaneCatalog: terminalAttachmentRuntime.semanticPaneCatalog,
       });
-      const orderedMultiplexerBackend: WorkspaceMultiplexerBackend = {
-        mutate: async (request) => {
-          if (request.intent.verb !== "workspace.pane.send") {
-            return await workspaceMultiplexer.mutate(request);
-          }
-          const result = await sessionRuntimeRegistry!.submitIntent(
-            request.operationId,
-            request.intent,
-          );
-          if (!result) throw new Error("Pane send completed without a mutation result");
-          return result;
-        },
-      };
+      const orderedMultiplexerBackend = createSessionRuntimeMultiplexerBackend({
+        registry: sessionRuntimeRegistry,
+        resolveSession: (workspaceName) =>
+          workspaceRegistry.get(workspaceName)?.sessionName ?? null,
+      });
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,

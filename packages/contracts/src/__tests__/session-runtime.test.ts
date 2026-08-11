@@ -1,9 +1,38 @@
 import { describe, expect, it } from "vitest";
 
-import { SessionRuntimeSemanticIntentSchemaZ } from "../session-runtime.ts";
+import {
+  SessionRuntimeControllerLeaseSchemaZ,
+  SessionRuntimeControllerSnapshotSchemaZ,
+  SessionRuntimeSemanticIntentSchemaZ,
+} from "../session-runtime.ts";
 import { InteractionReceiptSchemaZ } from "../interaction-receipts.ts";
 
 describe("session runtime architecture contract", () => {
+  it("pins controller capabilities to one client, session, revision, and daemon generation", () => {
+    const lease = {
+      generation: "11111111-1111-4111-8111-111111111111",
+      session: "alpha",
+      clientId: "web:stable-client",
+      token: "22222222-2222-4222-8222-222222222222",
+      revision: 1,
+    };
+    expect(SessionRuntimeControllerLeaseSchemaZ.parse(lease)).toEqual(lease);
+    expect(SessionRuntimeControllerLeaseSchemaZ.safeParse({ ...lease, revision: 0 }).success).toBe(
+      false,
+    );
+    expect(
+      SessionRuntimeControllerLeaseSchemaZ.safeParse({ ...lease, clientId: "%7\n" }).success,
+    ).toBe(false);
+    expect(
+      SessionRuntimeControllerSnapshotSchemaZ.parse({
+        generation: lease.generation,
+        session: lease.session,
+        controllerClientId: null,
+        revision: 0,
+      }),
+    ).toMatchObject({ controllerClientId: null, revision: 0 });
+  });
+
   it("accepts semantic intents and refuses raw tmux addresses", () => {
     const intent = {
       verb: "workspace.pane.read",

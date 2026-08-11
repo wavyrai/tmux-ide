@@ -1,9 +1,17 @@
 import {
+  SessionRuntimeClientIdSchemaZ,
+  SessionRuntimeControllerLeaseSchemaZ,
   SessionRuntimeGenerationSchemaZ,
+  SessionRuntimeSemanticIntentSchemaZ,
   type InteractionReceipt,
+  type SessionRuntimeControllerLease,
+  type SessionRuntimeControllerRole,
+  type SessionRuntimeControllerSnapshot,
   type SessionRuntimeGeneration,
   type SessionRuntimeSemanticIntent,
 } from "@tmux-ide/contracts";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import type {
   MirrorLayoutEvent,
   MirrorPaneEvent,
@@ -27,12 +35,55 @@ export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
   readonly mirror?: MirrorServiceOptions;
   readonly semanticMutations?: SessionSemanticMutationExecutorOptions;
+  /** Executes controller-authorized verbs that do not yet need tmux observation. */
+  readonly executeAuthorized?: (
+    operationId: string,
+    intent: SessionRuntimeSemanticIntent,
+  ) => Promise<SessionRuntimeIntentResult>;
+  /** Deterministic seam for lease tests. Production uses cryptographic UUIDs. */
+  readonly createControllerToken?: () => string;
+}
+
+export type {
+  SessionRuntimeControllerLease,
+  SessionRuntimeControllerRole,
+  SessionRuntimeControllerSnapshot,
+} from "@tmux-ide/contracts";
+
+export type SessionRuntimeControllerLeaseErrorCode =
+  | "controller-conflict"
+  | "controller-target-unavailable"
+  | "stale-controller-lease"
+  | "intent-session-mismatch";
+
+export class SessionRuntimeControllerLeaseError extends Error {
+  constructor(
+    readonly code: SessionRuntimeControllerLeaseErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SessionRuntimeControllerLeaseError";
+  }
 }
 
 export interface SessionRuntimeConsumer {
   readonly generation: SessionRuntimeGeneration;
   readonly session: string;
   readonly surface: string;
+  readonly clientId: string;
+  controllerRole(): SessionRuntimeControllerRole;
+  controllerSnapshot(): SessionRuntimeControllerSnapshot;
+  acquireController(): SessionRuntimeControllerLease;
+  handoffController(
+    lease: SessionRuntimeControllerLease,
+    targetClientId: string,
+  ): SessionRuntimeControllerLease;
+  releaseController(lease: SessionRuntimeControllerLease): void;
+  submitIntent(
+    lease: SessionRuntimeControllerLease,
+    operationId: string,
+    intent: SessionRuntimeSemanticIntent,
+  ): Promise<SessionRuntimeIntentResult>;
   describe(): Promise<MirrorSessionDescription>;
   subscribe(
     semanticPaneId: string,
@@ -55,6 +106,14 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly generation: SessionRuntimeGeneration;
   readonly #mirror: MirrorService;
   readonly #semanticMutations: SessionSemanticMutationExecutor | null;
+  readonly #executeAuthorized:
+    | ((
+        operationId: string,
+        intent: SessionRuntimeSemanticIntent,
+      ) => Promise<SessionRuntimeIntentResult>)
+    | null;
+  readonly #resolveSession: ((workspaceName: string) => string | null) | null;
+  readonly #createControllerToken: () => string;
   readonly #sessions = new Map<string, SessionRuntime>();
   readonly #stopExitObserver: () => void;
   #disposed = false;
@@ -66,13 +125,16 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#semanticMutations = options.semanticMutations
       ? new SessionSemanticMutationExecutor(options.semanticMutations)
       : null;
+    this.#executeAuthorized = options.executeAuthorized ?? null;
+    this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
+    this.#createControllerToken = options.createControllerToken ?? randomUUID;
     this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
       this.#sessions.get(session)?.noteControlExit();
     });
   }
 
-  connect(session: string, surface: string): SessionRuntimeConsumer {
-    return this.#runtime(session).connect(surface);
+  connect(session: string, surface: string, clientId: string): SessionRuntimeConsumer {
+    return this.#runtime(session).connect(surface, SessionRuntimeClientIdSchemaZ.parse(clientId));
   }
 
   async describeSession(session: string): Promise<MirrorSessionDescription> {
@@ -85,11 +147,30 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return await this.#mirror.subscribe(request);
   }
 
-  submitIntent(
+  #submitAuthorizedIntent(
+    runtime: SessionRuntime,
+    lease: SessionRuntimeControllerLease,
     operationId: string,
-    intent: SessionRuntimeSemanticIntent,
+    rawIntent: SessionRuntimeSemanticIntent,
   ): Promise<SessionRuntimeIntentResult> {
     if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
+    runtime.assertController(lease);
+    const intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+    const resolvedSession = this.#resolveSession?.(intent.workspaceName) ?? null;
+    if (resolvedSession !== runtime.session) {
+      return Promise.reject(
+        new SessionRuntimeControllerLeaseError(
+          "intent-session-mismatch",
+          "The semantic intent does not belong to the controller lease session.",
+        ),
+      );
+    }
+    if (intent.verb !== "workspace.pane.send" && intent.verb !== "workspace.pane.read") {
+      if (!this.#executeAuthorized) {
+        return Promise.reject(new Error("Authorized session mutations are unavailable"));
+      }
+      return this.#executeAuthorized(operationId, intent);
+    }
     if (!this.#semanticMutations) {
       return Promise.reject(new Error("Session semantic mutations are unavailable"));
     }
@@ -112,6 +193,14 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return this.#mirror.activeChannelCount();
   }
 
+  activeControllerLeaseCount(): number {
+    let count = 0;
+    for (const runtime of this.#sessions.values()) {
+      if (runtime.hasController()) count += 1;
+    }
+    return count;
+  }
+
   dispose(): Promise<void> {
     if (!this.#disposePromise) {
       this.#disposed = true;
@@ -130,7 +219,14 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     if (this.#disposed) throw new Error("SessionRuntimeRegistry is disposed");
     const existing = this.#sessions.get(session);
     if (existing) return existing;
-    const runtime = new SessionRuntime(this.generation, session, this.#mirror);
+    const runtime: SessionRuntime = new SessionRuntime(
+      this.generation,
+      session,
+      this.#mirror,
+      this.#createControllerToken,
+      (owner, lease, operationId, intent): Promise<SessionRuntimeIntentResult> =>
+        this.#submitAuthorizedIntent(owner, lease, operationId, intent),
+    );
     this.#sessions.set(session, runtime);
     return runtime;
   }
@@ -139,24 +235,156 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
 class SessionRuntime {
   readonly #mirror: MirrorService;
   readonly #consumers = new Set<SessionRuntimeConsumerImpl>();
+  readonly #consumersByClientId = new Map<string, SessionRuntimeConsumerImpl>();
+  readonly #createControllerToken: () => string;
+  readonly #submitAuthorized: (
+    runtime: SessionRuntime,
+    lease: SessionRuntimeControllerLease,
+    operationId: string,
+    intent: SessionRuntimeSemanticIntent,
+  ) => Promise<SessionRuntimeIntentResult>;
   #retention: Awaited<ReturnType<MirrorService["retainSession"]>> | null = null;
   #startPromise: Promise<void> | null = null;
   #restartBarrier: Promise<void> = Promise.resolve();
+  #controllerClientId: string | null = null;
+  #controllerToken: string | null = null;
+  #controllerRevision = 0;
+  readonly #completedHandoffs = new Map<string, SessionRuntimeControllerLease>();
+  readonly #releasedLeases = new Set<string>();
   #disposed = false;
 
   constructor(
     readonly generation: SessionRuntimeGeneration,
     readonly session: string,
     mirror: MirrorService,
+    createControllerToken: () => string,
+    submitAuthorized: (
+      runtime: SessionRuntime,
+      lease: SessionRuntimeControllerLease,
+      operationId: string,
+      intent: SessionRuntimeSemanticIntent,
+    ) => Promise<SessionRuntimeIntentResult>,
   ) {
     this.#mirror = mirror;
+    this.#createControllerToken = createControllerToken;
+    this.#submitAuthorized = submitAuthorized;
   }
 
-  connect(surface: string): SessionRuntimeConsumer {
+  connect(surface: string, clientId: string): SessionRuntimeConsumer {
     if (this.#disposed) throw new Error(`SessionRuntime ${this.session} is disposed`);
-    const consumer = new SessionRuntimeConsumerImpl(this, surface);
+    if (this.#consumersByClientId.has(clientId)) {
+      throw new TypeError(`SessionRuntime client ${clientId} is already connected`);
+    }
+    const consumer = new SessionRuntimeConsumerImpl(this, surface, clientId);
     this.#consumers.add(consumer);
+    this.#consumersByClientId.set(clientId, consumer);
     return consumer;
+  }
+
+  controllerRole(clientId: string): SessionRuntimeControllerRole {
+    return this.#controllerClientId === clientId ? "controller" : "viewer";
+  }
+
+  controllerSnapshot(): SessionRuntimeControllerSnapshot {
+    return {
+      generation: this.generation,
+      session: this.session,
+      controllerClientId: this.#controllerClientId,
+      revision: this.#controllerRevision,
+    };
+  }
+
+  hasController(): boolean {
+    return this.#controllerClientId !== null;
+  }
+
+  acquireController(clientId: string): SessionRuntimeControllerLease {
+    this.#assertConnected(clientId);
+    if (this.#controllerClientId === clientId) return this.#currentLease();
+    if (this.#controllerClientId !== null) {
+      throw new SessionRuntimeControllerLeaseError(
+        "controller-conflict",
+        `Session ${this.session} already has a controller.`,
+      );
+    }
+    return this.#assignController(clientId);
+  }
+
+  handoffController(
+    callerClientId: string,
+    lease: SessionRuntimeControllerLease,
+    targetClientId: string,
+  ): SessionRuntimeControllerLease {
+    const candidate = this.#validatedLease(lease);
+    const parsedTarget = SessionRuntimeClientIdSchemaZ.parse(targetClientId);
+    const replayKey = this.#handoffKey(candidate, parsedTarget);
+    const replay = this.#completedHandoffs.get(replayKey);
+    if (replay && candidate.clientId === callerClientId) {
+      if (this.#consumersByClientId.has(parsedTarget) && this.#isCurrentControllerLease(replay)) {
+        return replay;
+      }
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "The replayed handoff no longer names the current connected controller.",
+      );
+    }
+    this.assertController(candidate, callerClientId);
+    if (!this.#consumersByClientId.has(parsedTarget)) {
+      throw new SessionRuntimeControllerLeaseError(
+        "controller-target-unavailable",
+        "The handoff target is not connected to this session runtime.",
+      );
+    }
+    if (parsedTarget === this.#controllerClientId) return this.#currentLease();
+    const handedOff = this.#assignController(parsedTarget);
+    this.#completedHandoffs.set(replayKey, handedOff);
+    if (this.#completedHandoffs.size > 32) {
+      this.#completedHandoffs.delete(this.#completedHandoffs.keys().next().value!);
+    }
+    return handedOff;
+  }
+
+  releaseController(callerClientId: string, lease: SessionRuntimeControllerLease): void {
+    const candidate = this.#validatedLease(lease);
+    const releaseKey = this.#leaseKey(candidate);
+    if (this.#releasedLeases.has(releaseKey) && candidate.clientId === callerClientId) return;
+    this.assertController(candidate, callerClientId);
+    this.#releasedLeases.add(releaseKey);
+    if (this.#releasedLeases.size > 32) {
+      this.#releasedLeases.delete(this.#releasedLeases.values().next().value!);
+    }
+    this.#clearController();
+  }
+
+  assertController(lease: SessionRuntimeControllerLease, callerClientId?: string): void {
+    const parsedLease = this.#validatedLease(lease);
+    if (
+      parsedLease.generation !== this.generation ||
+      parsedLease.session !== this.session ||
+      (callerClientId !== undefined && parsedLease.clientId !== callerClientId) ||
+      parsedLease.clientId !== this.#controllerClientId ||
+      parsedLease.token !== this.#controllerToken ||
+      parsedLease.revision !== this.#controllerRevision
+    ) {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "The controller lease is stale or belongs to another session generation.",
+      );
+    }
+  }
+
+  submitIntent(
+    callerClientId: string,
+    lease: SessionRuntimeControllerLease,
+    operationId: string,
+    intent: SessionRuntimeSemanticIntent,
+  ): Promise<SessionRuntimeIntentResult> {
+    try {
+      this.assertController(lease, callerClientId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.#submitAuthorized(this, lease, operationId, intent);
   }
 
   async whenReady(): Promise<void> {
@@ -195,6 +423,10 @@ class SessionRuntime {
 
   release(consumer: SessionRuntimeConsumerImpl): void {
     this.#consumers.delete(consumer);
+    if (this.#consumersByClientId.get(consumer.clientId) === consumer) {
+      this.#consumersByClientId.delete(consumer.clientId);
+    }
+    if (this.#controllerClientId === consumer.clientId) this.#clearController();
   }
 
   noteControlExit(): void {
@@ -211,9 +443,80 @@ class SessionRuntime {
     this.#disposed = true;
     const consumers = [...this.#consumers];
     await Promise.allSettled(consumers.map((consumer) => consumer.close()));
+    this.#clearController();
+    this.#completedHandoffs.clear();
+    this.#releasedLeases.clear();
     await this.#restartBarrier;
     await this.#retention?.close();
     this.#retention = null;
+  }
+
+  #assertConnected(clientId: string): void {
+    if (!this.#consumersByClientId.has(clientId)) {
+      throw new SessionRuntimeControllerLeaseError(
+        "controller-target-unavailable",
+        "The controller client is not connected to this session runtime.",
+      );
+    }
+  }
+
+  #assignController(clientId: string): SessionRuntimeControllerLease {
+    this.#controllerRevision += 1;
+    this.#controllerClientId = clientId;
+    this.#controllerToken = z.uuid().parse(this.#createControllerToken());
+    return this.#currentLease();
+  }
+
+  #clearController(): void {
+    if (this.#controllerClientId === null && this.#controllerToken === null) return;
+    this.#controllerRevision += 1;
+    this.#controllerClientId = null;
+    this.#controllerToken = null;
+  }
+
+  #currentLease(): SessionRuntimeControllerLease {
+    if (this.#controllerClientId === null || this.#controllerToken === null) {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "The session has no active controller.",
+      );
+    }
+    return {
+      generation: this.generation,
+      session: this.session,
+      clientId: this.#controllerClientId,
+      token: this.#controllerToken,
+      revision: this.#controllerRevision,
+    };
+  }
+
+  #handoffKey(lease: SessionRuntimeControllerLease, targetClientId: string): string {
+    return `${this.#leaseKey(lease)}\0${targetClientId}`;
+  }
+
+  #leaseKey(lease: SessionRuntimeControllerLease): string {
+    return `${lease.generation}\0${lease.session}\0${lease.clientId}\0${lease.token}\0${lease.revision}`;
+  }
+
+  #isCurrentControllerLease(lease: SessionRuntimeControllerLease): boolean {
+    return (
+      lease.generation === this.generation &&
+      lease.session === this.session &&
+      lease.clientId === this.#controllerClientId &&
+      lease.token === this.#controllerToken &&
+      lease.revision === this.#controllerRevision
+    );
+  }
+
+  #validatedLease(lease: SessionRuntimeControllerLease): SessionRuntimeControllerLease {
+    const parsed = SessionRuntimeControllerLeaseSchemaZ.safeParse(lease);
+    if (!parsed.success) {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "The controller lease is malformed or belongs to another session generation.",
+      );
+    }
+    return parsed.data;
   }
 }
 
@@ -221,16 +524,56 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   readonly #runtime: SessionRuntime;
   readonly generation: SessionRuntimeGeneration;
   readonly session: string;
+  readonly clientId: string;
   readonly #subscriptions = new Set<MirrorSubscription>();
   #closed = false;
 
   constructor(
     runtime: SessionRuntime,
     readonly surface: string,
+    clientId: string,
   ) {
     this.#runtime = runtime;
     this.generation = runtime.generation;
     this.session = runtime.session;
+    this.clientId = clientId;
+  }
+
+  controllerRole(): SessionRuntimeControllerRole {
+    this.#assertOpen();
+    return this.#runtime.controllerRole(this.clientId);
+  }
+
+  controllerSnapshot(): SessionRuntimeControllerSnapshot {
+    this.#assertOpen();
+    return this.#runtime.controllerSnapshot();
+  }
+
+  acquireController(): SessionRuntimeControllerLease {
+    this.#assertOpen();
+    return this.#runtime.acquireController(this.clientId);
+  }
+
+  handoffController(
+    lease: SessionRuntimeControllerLease,
+    targetClientId: string,
+  ): SessionRuntimeControllerLease {
+    this.#assertOpen();
+    return this.#runtime.handoffController(this.clientId, lease, targetClientId);
+  }
+
+  releaseController(lease: SessionRuntimeControllerLease): void {
+    this.#assertOpen();
+    this.#runtime.releaseController(this.clientId, lease);
+  }
+
+  submitIntent(
+    lease: SessionRuntimeControllerLease,
+    operationId: string,
+    intent: SessionRuntimeSemanticIntent,
+  ): Promise<SessionRuntimeIntentResult> {
+    this.#assertOpen();
+    return this.#runtime.submitIntent(this.clientId, lease, operationId, intent);
   }
 
   async describe(): Promise<MirrorSessionDescription> {

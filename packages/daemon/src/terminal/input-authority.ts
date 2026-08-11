@@ -52,10 +52,17 @@ function validatedWindows(runtimeWindowIds: readonly string[]): readonly string[
 }
 
 /**
- * Daemon-generation-scoped authority for terminal input. Both the grouped PTY
+ * Transport-level safety guard for terminal input. Both the grouped PTY
  * attachment and pane-stream transports claim through this one object, so two
  * semantic panes in the same live tmux window can never acquire independent
  * interactive grants. Passive/read-only viewers never enter this authority.
+ *
+ * SessionRuntime is the product-level controller authority. This window guard
+ * is subordinate to it: it protects the existing attachment protocols while
+ * those protocols still lack a stable authenticated client identity, and must
+ * never authorize a semantic/geometry mutation on its own. The m56.1d identity
+ * cutover deletes this parallel owner map once both transports bind their
+ * connection to a SessionRuntime controller lease.
  *
  * The object is intentionally in-memory. Constructing the next daemon
  * generation creates a fresh authority, invalidating every prior grant along
