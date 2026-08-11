@@ -222,6 +222,7 @@ import {
   initialInteractionFeedState,
   interactionPresenceIsFresh,
   interactionReceiptLabel,
+  interactionReceiptTargetLabel,
   paneInteractionPresence,
   paneInteractionRelationshipLabel,
   projectApplicationShellSession,
@@ -2082,7 +2083,8 @@ try {
                 : "done"
             : (agent?.state ?? appStatusTone),
           attention:
-            visibleInteraction?.phase === "failed" ||
+            visibleInteraction?.phase === "rejected" ||
+            visibleInteraction?.phase === "timed-out" ||
             agent?.state === "blocked" ||
             (!agent && appStatusTone === "blocked"),
           communication:
@@ -2296,23 +2298,16 @@ try {
         id: `interaction:${receipt.operationId}`,
         sequence: receipt.sequence,
         timestampText: receipt.at.slice(11, 16),
-        source: paneInteractionRelationshipLabel(
-          {
-            origin: receipt.origin,
-            sourcePaneId: receipt.sourceSemanticPaneId,
-            destinationPaneId: receipt.semanticPaneId,
-          },
-          interactionPaneLabel,
-        ),
+        source: interactionReceiptTargetLabel(receipt, interactionPaneLabel),
         message: interactionReceiptLabel(receipt),
         detail: `${receipt.workspaceName} · ${receipt.origin}`,
         status:
-          receipt.phase === "failed"
+          receipt.phase === "rejected" || receipt.phase === "timed-out"
             ? ("blocked" as const)
             : receipt.phase === "accepted"
               ? ("working" as const)
               : ("done" as const),
-        attention: receipt.phase === "failed",
+        attention: receipt.phase === "rejected" || receipt.phase === "timed-out",
       }));
       return [...agentRows, ...missionRows, ...interactionRows];
     });

@@ -51,7 +51,11 @@ import type {
   PaneFrameGripIntent,
   PaneFrameModel,
 } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
-import { paneInteractionRelationshipLabel, type InteractionFeedState } from "@tmux-ide/core";
+import {
+  interactionReceiptTargetLabel,
+  interactionSummaryLabel,
+  type InteractionFeedState,
+} from "@tmux-ide/core";
 import type {
   WorkbenchDockHostActionId,
   WorkbenchDockHostMode,
@@ -1521,20 +1525,18 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                             <i aria-hidden="true" />
                             <span>
                               <strong>
-                                {paneInteractionRelationshipLabel(
-                                  {
-                                    origin: receipt.origin,
-                                    sourcePaneId: receipt.sourceSemanticPaneId,
-                                    destinationPaneId: receipt.semanticPaneId,
-                                  },
+                                {interactionReceiptTargetLabel(
+                                  receipt,
                                   (paneId) => paneTitles().get(paneId) ?? paneId,
                                 )}
                               </strong>
                               <small>
                                 {receipt.origin} · {receipt.phase} ·{" "}
-                                {"observedOnly" in receipt.summary
-                                  ? "input observed"
-                                  : `${receipt.summary.characterCount} characters${receipt.summary.submitted ? " + Enter" : ""}`}
+                                {interactionSummaryLabel(
+                                  receipt.operationKind,
+                                  receipt.summary,
+                                  receipt.phase,
+                                )}
                               </small>
                             </span>
                             <code>#{receipt.sequence}</code>

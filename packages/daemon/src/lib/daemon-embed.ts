@@ -1079,10 +1079,14 @@ export async function startEmbeddedDaemon(
               operationId: randomUUID(),
               origin: "external",
               workspaceName,
-              semanticPaneId,
+              target: { kind: "pane", semanticPaneId },
               operationKind,
               phase: "observed",
-              summary: { observedOnly: true },
+              summary:
+                operationKind === "workspace.pane.read"
+                  ? { operationKind, observedOnly: true }
+                  : { operationKind, observedOnly: true },
+              proof: { operationKind, observed: true, semanticPaneId },
             },
             instanceId,
           );

@@ -65,10 +65,18 @@ describe("session runtime architecture contract", () => {
           phase,
           origin: "tui",
           workspaceName: "project",
-          semanticPaneId: "pane.editor",
+          target: { kind: "pane", semanticPaneId: "pane.editor" },
           sourceSemanticPaneId: null,
           operationKind: "workspace.pane.read",
-          summary: { observedOnly: true },
+          summary: { operationKind: "workspace.pane.read", observedOnly: true },
+          proof:
+            phase === "observed"
+              ? {
+                  operationKind: "workspace.pane.read",
+                  observed: true,
+                  semanticPaneId: "pane.editor",
+                }
+              : null,
           at: "2026-08-11T10:00:00.000Z",
           resourceRevision: null,
         }).phase,
@@ -83,18 +91,335 @@ describe("session runtime architecture contract", () => {
       sequence: 1,
       origin: "sdk" as const,
       workspaceName: "project",
-      semanticPaneId: "pane.tests",
+      target: { kind: "pane" as const, semanticPaneId: "pane.tests" },
       sourceSemanticPaneId: "pane.editor",
       operationKind: "workspace.pane.send" as const,
-      summary: { characterCount: 4, byteCount: 4, submitted: true },
+      summary: {
+        operationKind: "workspace.pane.send" as const,
+        characterCount: 4,
+        byteCount: 4,
+        submitted: true,
+      },
+      proof: {
+        operationKind: "workspace.pane.send" as const,
+        observed: true as const,
+        semanticPaneId: "pane.tests",
+      },
       at: "2026-08-11T10:00:00.000Z",
       resourceRevision: null,
     };
     expect(InteractionReceiptSchemaZ.safeParse({ ...base, phase: "observed" }).success).toBe(true);
-    expect(InteractionReceiptSchemaZ.safeParse({ ...base, phase: "accepted" }).success).toBe(false);
+    expect(
+      InteractionReceiptSchemaZ.safeParse({ ...base, phase: "accepted", proof: null }).success,
+    ).toBe(false);
     expect(
       InteractionReceiptSchemaZ.safeParse({ ...base, origin: "external", phase: "observed" })
         .success,
     ).toBe(false);
+  });
+
+  it("contracts every structural verb with a semantic target and privacy-safe proof", () => {
+    const receipt = InteractionReceiptSchemaZ.parse({
+      type: "interaction.receipt",
+      operationId: "3a50f1d4-6f57-4f02-8b10-b94bf24967ec",
+      sequence: 2,
+      phase: "observed",
+      origin: "gui",
+      workspaceName: "project",
+      sourceSemanticPaneId: null,
+      target: { kind: "pane", semanticPaneId: "pane.editor" },
+      operationKind: "workspace.pane.resize",
+      summary: { operationKind: "workspace.pane.resize", axis: "cols", cells: 120 },
+      proof: {
+        operationKind: "workspace.pane.resize",
+        outcome: "applied",
+        semanticPaneId: "pane.editor",
+        axis: "cols",
+        cells: 118,
+      },
+      at: "2026-08-11T10:00:00.000Z",
+      resourceRevision: 4,
+    });
+    expect(receipt.proof).toMatchObject({ cells: 118 });
+    expect(JSON.stringify(receipt)).not.toMatch(/text|name|path|runtime/u);
+    expect(
+      InteractionReceiptSchemaZ.safeParse({
+        ...receipt,
+        target: { kind: "session" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    [
+      "workspace.window.split",
+      { kind: "pane", semanticPaneId: "pane.editor" },
+      { operationKind: "workspace.window.split", direction: "right" },
+      {
+        operationKind: "workspace.window.split",
+        outcome: "applied",
+        direction: "right",
+        semanticPaneId: "pane.created",
+      },
+    ],
+    [
+      "workspace.window.kill",
+      { kind: "window", target: { by: "pane", semanticPaneId: "pane.editor" } },
+      { operationKind: "workspace.window.kill" },
+      { operationKind: "workspace.window.kill", outcome: "applied", remainingWindowCount: 2 },
+    ],
+    [
+      "workspace.pane.kill",
+      { kind: "pane", semanticPaneId: "pane.editor" },
+      { operationKind: "workspace.pane.kill" },
+      {
+        operationKind: "workspace.pane.kill",
+        outcome: "applied",
+        semanticPaneId: "pane.editor",
+        windowClosed: false,
+        remainingWindowCount: 2,
+      },
+    ],
+    [
+      "workspace.session.kill",
+      { kind: "session" },
+      { operationKind: "workspace.session.kill" },
+      { operationKind: "workspace.session.kill", outcome: "applied" },
+    ],
+    [
+      "workspace.rename",
+      { kind: "window", target: { by: "window", semanticWindowId: "window.editor" } },
+      { operationKind: "workspace.rename", scope: "window" },
+      { operationKind: "workspace.rename", outcome: "applied", scope: "window" },
+    ],
+    [
+      "workspace.pane.zoom.toggle",
+      { kind: "pane", semanticPaneId: "pane.editor" },
+      { operationKind: "workspace.pane.zoom.toggle", desired: "zoomed" },
+      {
+        operationKind: "workspace.pane.zoom.toggle",
+        outcome: "applied",
+        semanticPaneId: "pane.editor",
+        zoomed: true,
+      },
+    ],
+    [
+      "workspace.pane.select",
+      { kind: "pane", semanticPaneId: "pane.editor" },
+      { operationKind: "workspace.pane.select" },
+      {
+        operationKind: "workspace.pane.select",
+        outcome: "unchanged",
+        semanticPaneId: "pane.editor",
+      },
+    ],
+    [
+      "workspace.pane.send",
+      { kind: "pane", semanticPaneId: "pane.editor" },
+      {
+        operationKind: "workspace.pane.send",
+        characterCount: 4,
+        byteCount: 4,
+        submitted: true,
+      },
+      {
+        operationKind: "workspace.pane.send",
+        observed: true,
+        semanticPaneId: "pane.editor",
+      },
+    ],
+    [
+      "workspace.pane.swap",
+      { kind: "pane", semanticPaneId: "pane.editor" },
+      { operationKind: "workspace.pane.swap", targetSemanticPaneId: "pane.tests" },
+      {
+        operationKind: "workspace.pane.swap",
+        outcome: "applied",
+        sourceSemanticPaneId: "pane.editor",
+        targetSemanticPaneId: "pane.tests",
+      },
+    ],
+    [
+      "workspace.pane.resize",
+      { kind: "pane", semanticPaneId: "pane.editor" },
+      { operationKind: "workspace.pane.resize", axis: "cols", cells: 120 },
+      {
+        operationKind: "workspace.pane.resize",
+        outcome: "applied",
+        semanticPaneId: "pane.editor",
+        axis: "cols",
+        cells: 118,
+      },
+    ],
+    [
+      "workspace.pane.read",
+      { kind: "pane", semanticPaneId: "pane.editor" },
+      { operationKind: "workspace.pane.read", observedOnly: true },
+      {
+        operationKind: "workspace.pane.read",
+        observed: true,
+        semanticPaneId: "pane.editor",
+      },
+    ],
+  ] as const)("accepts %s target, summary, and proof", (operationKind, target, summary, proof) => {
+    expect(
+      InteractionReceiptSchemaZ.safeParse({
+        type: "interaction.receipt",
+        operationId: "4a50f1d4-6f57-4f02-8b10-b94bf24967ec",
+        sequence: 3,
+        phase: "observed",
+        origin: "gui",
+        workspaceName: "project",
+        sourceSemanticPaneId: null,
+        target,
+        operationKind,
+        summary,
+        proof,
+        at: "2026-08-11T10:00:00.000Z",
+        resourceRevision: 4,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects cross-verb semantic proof mismatches while allowing clamped resize cells", () => {
+    const resize = {
+      type: "interaction.receipt" as const,
+      operationId: "5a50f1d4-6f57-4f02-8b10-b94bf24967ec",
+      sequence: 4,
+      phase: "observed" as const,
+      origin: "gui" as const,
+      workspaceName: "project",
+      sourceSemanticPaneId: null,
+      target: { kind: "pane" as const, semanticPaneId: "pane.editor" },
+      operationKind: "workspace.pane.resize" as const,
+      summary: {
+        operationKind: "workspace.pane.resize" as const,
+        axis: "cols" as const,
+        cells: 120,
+      },
+      proof: {
+        operationKind: "workspace.pane.resize" as const,
+        outcome: "applied" as const,
+        semanticPaneId: "pane.editor",
+        axis: "cols" as const,
+        cells: 80,
+      },
+      at: "2026-08-11T10:00:00.000Z",
+      resourceRevision: 4,
+    };
+    expect(InteractionReceiptSchemaZ.safeParse(resize).success).toBe(true);
+    expect(
+      InteractionReceiptSchemaZ.safeParse({
+        ...resize,
+        proof: { ...resize.proof, semanticPaneId: "pane.other" },
+      }).success,
+    ).toBe(false);
+    expect(
+      InteractionReceiptSchemaZ.safeParse({
+        ...resize,
+        proof: { ...resize.proof, axis: "rows" },
+      }).success,
+    ).toBe(false);
+
+    const split = {
+      ...resize,
+      operationKind: "workspace.window.split" as const,
+      summary: { operationKind: "workspace.window.split" as const, direction: "right" as const },
+      proof: {
+        operationKind: "workspace.window.split" as const,
+        outcome: "applied" as const,
+        direction: "down" as const,
+        semanticPaneId: "pane.created",
+      },
+    };
+    expect(InteractionReceiptSchemaZ.safeParse(split).success).toBe(false);
+
+    const rename = {
+      ...resize,
+      target: {
+        kind: "window" as const,
+        target: { by: "pane" as const, semanticPaneId: "pane.editor" },
+      },
+      operationKind: "workspace.rename" as const,
+      summary: { operationKind: "workspace.rename" as const, scope: "window" as const },
+      proof: {
+        operationKind: "workspace.rename" as const,
+        outcome: "applied" as const,
+        scope: "session" as const,
+      },
+    };
+    expect(InteractionReceiptSchemaZ.safeParse(rename).success).toBe(false);
+
+    const swap = {
+      ...resize,
+      operationKind: "workspace.pane.swap" as const,
+      summary: {
+        operationKind: "workspace.pane.swap" as const,
+        targetSemanticPaneId: "pane.tests",
+      },
+      proof: {
+        operationKind: "workspace.pane.swap" as const,
+        outcome: "applied" as const,
+        sourceSemanticPaneId: "pane.editor",
+        targetSemanticPaneId: "pane.other",
+      },
+    };
+    expect(InteractionReceiptSchemaZ.safeParse(swap).success).toBe(false);
+
+    const zoom = {
+      ...resize,
+      operationKind: "workspace.pane.zoom.toggle" as const,
+      summary: {
+        operationKind: "workspace.pane.zoom.toggle" as const,
+        desired: "zoomed" as const,
+      },
+      proof: {
+        operationKind: "workspace.pane.zoom.toggle" as const,
+        outcome: "applied" as const,
+        semanticPaneId: "pane.editor",
+        zoomed: false,
+      },
+    };
+    expect(InteractionReceiptSchemaZ.safeParse(zoom).success).toBe(false);
+    expect(
+      InteractionReceiptSchemaZ.safeParse({
+        ...zoom,
+        summary: { ...zoom.summary, desired: "toggle" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("requires presence-only summaries for external pane observations", () => {
+    const external = {
+      type: "interaction.receipt" as const,
+      operationId: "6a50f1d4-6f57-4f02-8b10-b94bf24967ec",
+      sequence: 5,
+      phase: "observed" as const,
+      origin: "external" as const,
+      workspaceName: "project",
+      sourceSemanticPaneId: null,
+      target: { kind: "pane" as const, semanticPaneId: "pane.editor" },
+      operationKind: "workspace.pane.send" as const,
+      summary: {
+        operationKind: "workspace.pane.send" as const,
+        characterCount: 4,
+        byteCount: 4,
+        submitted: true,
+      },
+      proof: {
+        operationKind: "workspace.pane.send" as const,
+        observed: true as const,
+        semanticPaneId: "pane.editor",
+      },
+      at: "2026-08-11T10:00:00.000Z",
+      resourceRevision: null,
+    };
+    expect(InteractionReceiptSchemaZ.safeParse(external).success).toBe(false);
+    expect(
+      InteractionReceiptSchemaZ.safeParse({
+        ...external,
+        summary: { operationKind: "workspace.pane.send", observedOnly: true },
+      }).success,
+    ).toBe(true);
   });
 });
