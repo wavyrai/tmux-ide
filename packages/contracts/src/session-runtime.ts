@@ -58,6 +58,7 @@ export const SessionRuntimePaneReadIntentSchemaZ = z
     origin: AuthoredInteractionOriginSchemaZ,
   })
   .strict();
+export type SessionRuntimePaneReadIntent = z.infer<typeof SessionRuntimePaneReadIntentSchemaZ>;
 
 /** The only intents a client may submit: semantic identity, never tmux addresses. */
 export const SessionRuntimeSemanticIntentSchemaZ = z.union([

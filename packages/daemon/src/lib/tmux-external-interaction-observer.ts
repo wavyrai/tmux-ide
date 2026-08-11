@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 
 import { WorkspacePaneCreationReferenceSchemaZ } from "@tmux-ide/contracts";
+import { z } from "zod";
 
 import type { WorkspacePaneTmuxAuthority } from "./workspace-pane-creation.ts";
 import { createPinnedWorkspaceTmuxRunner } from "./workspace-pane-creation.ts";
@@ -30,6 +31,8 @@ export interface ExternalTmuxInteraction {
   readonly workspaceName: string;
   readonly semanticPaneId: string;
   readonly operationKind: "workspace.pane.send" | "workspace.pane.read";
+  /** Present only for this daemon generation's product-authored operation. */
+  readonly operationId: string | null;
 }
 
 export interface ExternalTmuxInteractionObserverIo {
@@ -80,7 +83,10 @@ function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void
   });
 }
 
-export function internalSendOperationMarker(daemonInstanceId: string, operationId: string): string {
+export function internalInteractionOperationMarker(
+  daemonInstanceId: string,
+  operationId: string,
+): string {
   return `${daemonInstanceId}:${operationId}`;
 }
 
@@ -290,7 +296,11 @@ export class TmuxExternalInteractionObserver {
     ) {
       return;
     }
-    if (record.operationMarker?.startsWith(`${this.#daemonInstanceId}:`)) return;
+    const ownPrefix = `${this.#daemonInstanceId}:`;
+    const authoredOperationId = record.operationMarker?.startsWith(ownPrefix)
+      ? record.operationMarker.slice(ownPrefix.length)
+      : null;
+    const operationId = z.uuid().safeParse(authoredOperationId);
     let identity: string;
     try {
       identity = this.#io.runTmux([
@@ -314,6 +324,7 @@ export class TmuxExternalInteractionObserver {
       workspaceName: workspace.name,
       semanticPaneId,
       operationKind: record.operationKind,
+      operationId: operationId.success ? operationId.data : null,
     });
   }
 

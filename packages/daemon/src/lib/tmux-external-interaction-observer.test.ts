@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceRegistry } from "./workspace-registry.ts";
 import {
   TmuxExternalInteractionObserver,
-  internalSendOperationMarker,
+  internalInteractionOperationMarker,
   parseTmuxInputHookRecords,
   type ExternalTmuxInteractionObserverIo,
 } from "./tmux-external-interaction-observer.ts";
@@ -35,6 +35,7 @@ function harness(raw: string): {
     workspaceName: string;
     semanticPaneId: string;
     operationKind: typeof SEND | typeof READ;
+    operationId: string | null;
   }[];
 } {
   const calls: (readonly string[])[] = [];
@@ -42,6 +43,7 @@ function harness(raw: string): {
     workspaceName: string;
     semanticPaneId: string;
     operationKind: typeof SEND | typeof READ;
+    operationId: string | null;
   }[] = [];
   let buffer = raw;
   const io: ExternalTmuxInteractionObserverIo = {
@@ -165,8 +167,8 @@ describe("tmux external interaction observer", () => {
     expect(calls.filter((args) => args[0] === "set-hook" && args[1] === "-ag")).toHaveLength(4);
   });
 
-  it("projects external sends but suppresses sends marked by this daemon generation", () => {
-    const own = internalSendOperationMarker(DAEMON, OPERATION);
+  it("projects external observations and correlates sends marked by this daemon generation", () => {
+    const own = internalInteractionOperationMarker(DAEMON, OPERATION);
     const { observer, observed } = harness(
       `%9${FIELD}${FIELD}${SEND}${EVENT}%9${FIELD}${own}${FIELD}${SEND}${EVENT}%9${FIELD}another-daemon:${OPERATION}${FIELD}${READ}${EVENT}`,
     );
@@ -177,11 +179,19 @@ describe("tmux external interaction observer", () => {
         workspaceName: "workspace.project",
         semanticPaneId: "pane.editor",
         operationKind: SEND,
+        operationId: null,
+      },
+      {
+        workspaceName: "workspace.project",
+        semanticPaneId: "pane.editor",
+        operationKind: SEND,
+        operationId: OPERATION,
       },
       {
         workspaceName: "workspace.project",
         semanticPaneId: "pane.editor",
         operationKind: READ,
+        operationId: null,
       },
     ]);
   });
@@ -196,6 +206,7 @@ describe("tmux external interaction observer", () => {
         workspaceName: "workspace.project",
         semanticPaneId: "pane.editor",
         operationKind: READ,
+        operationId: null,
       },
     ]);
   });

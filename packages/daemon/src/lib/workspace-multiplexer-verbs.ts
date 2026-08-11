@@ -4,7 +4,7 @@
  *
  * This is the tmux authority the m48 audit found missing. It follows the
  * `workspace.pane.create` discipline deliberately and in full — one serialized
- * queue, operation-id idempotency with a request fingerprint, a pinned tmux
+ * queue per tmux session, operation-id idempotency with a request fingerprint, a pinned tmux
  * executable and socket resolved once per daemon generation, semantic-id
  * resolution that never trusts a renderer-supplied tmux target, and a read-back
  * verification after every mutation. Where creation proves a pane exists, these
@@ -26,6 +26,7 @@ import {
   type WorkspaceMultiplexerMutationRequest,
   type WorkspaceMultiplexerMutationResult,
   type WorkspaceMultiplexerWindowTarget,
+  type SessionRuntimePaneReadIntent,
   type Workspace,
 } from "@tmux-ide/contracts";
 import { TmuxError } from "@tmux-ide/tmux-bridge";
@@ -37,8 +38,11 @@ import {
   type WorkspacePaneTmuxAuthority,
 } from "./workspace-pane-creation.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
-import { internalSendOperationMarker } from "./tmux-external-interaction-observer.ts";
-import { INTERNAL_SEND_OPERATION_OPTION } from "./tmux-interaction-options.ts";
+import { internalInteractionOperationMarker } from "./tmux-external-interaction-observer.ts";
+import {
+  INTERNAL_READ_OPERATION_OPTION,
+  INTERNAL_SEND_OPERATION_OPTION,
+} from "./tmux-interaction-options.ts";
 
 const MAX_OPERATIONS = 128;
 
@@ -281,7 +285,7 @@ export class WorkspaceMultiplexerAuthority {
   readonly #registry: WorkspaceRegistry;
   readonly #io: WorkspaceMultiplexerIo;
   readonly #operations = new Map<string, OperationRecord>();
-  #tail: Promise<void> = Promise.resolve();
+  readonly #tails = new Map<string, Promise<void>>();
   #disposed = false;
 
   constructor(options: {
@@ -303,22 +307,88 @@ export class WorkspaceMultiplexerAuthority {
     };
   }
 
-  /** Serialized: two verbs must never interleave their read-decide-mutate. */
+  /** Serialized per tmux session: read-decide-mutate never interleaves locally. */
   mutate(raw: WorkspaceMultiplexerMutationRequest): Promise<WorkspaceMultiplexerMutationResult> {
-    const run = this.#tail.then(
-      () => this.#mutate(raw),
-      () => this.#mutate(raw),
-    );
-    this.#tail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+    return Promise.resolve().then(() => {
+      const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
+      const session = this.#registry.get(request.intent.workspaceName)?.sessionName;
+      const queue = session ?? `missing:${request.intent.workspaceName}`;
+      const previous = this.#tails.get(queue) ?? Promise.resolve();
+      const run = previous.then(
+        () => this.#mutate(request),
+        () => this.#mutate(request),
+      );
+      const tail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      this.#tails.set(queue, tail);
+      void tail.finally(() => {
+        if (this.#tails.get(queue) === tail) this.#tails.delete(queue);
+      });
+      return run;
+    });
+  }
+
+  /**
+   * Capture a semantically addressed pane for an authored read. The tmux
+   * after-capture hook is the completion authority; this method only performs
+   * the command-list and verifies that its semantic target survived it.
+   * SessionRuntimeRegistry serializes this lane with authored sends.
+   */
+  async readPane(operationId: string, intent: SessionRuntimePaneReadIntent): Promise<void> {
+    if (this.#disposed) {
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "authority_disposed",
+      });
+    }
+    const workspace = this.#registry.get(intent.workspaceName);
+    if (!workspace) {
+      throw new WorkspaceMultiplexerError("workspace_not_found", {
+        operationId,
+        workspaceName: intent.workspaceName,
+      });
+    }
+    const pane = resolvePaneRow(this.#panes(workspace.sessionName), intent.semanticPaneId);
+    try {
+      this.#io.runTmux([
+        "set-option",
+        "-p",
+        "-t",
+        pane.paneId,
+        INTERNAL_READ_OPERATION_OPTION,
+        internalInteractionOperationMarker(this.#daemonInstanceId, operationId),
+        ";",
+        "capture-pane",
+        "-p",
+        "-e",
+        "-J",
+        "-S",
+        "-2000",
+        "-t",
+        pane.paneId,
+      ]);
+    } catch (error) {
+      try {
+        this.#io.runTmux(["set-option", "-pu", "-t", pane.paneId, INTERNAL_READ_OPERATION_OPTION]);
+      } catch {
+        // The pane may have disappeared with the failed capture.
+      }
+      throw error;
+    }
+    const observed = resolvePaneRow(this.#panes(workspace.sessionName), intent.semanticPaneId);
+    if (observed.paneId !== pane.paneId) {
+      throw new WorkspaceMultiplexerError("mutation_unverified", {
+        operationId,
+        reason: "pane_identity_changed_during_read",
+      });
+    }
   }
 
   dispose(): Promise<void> {
     this.#disposed = true;
-    return this.#tail.then(() => {
+    return Promise.allSettled(this.#tails.values()).then(() => {
+      this.#tails.clear();
       this.#operations.clear();
     });
   }
@@ -867,7 +937,7 @@ export class WorkspaceMultiplexerAuthority {
       "-t",
       pane.paneId,
       INTERNAL_SEND_OPERATION_OPTION,
-      internalSendOperationMarker(this.#daemonInstanceId, envelope.operationId),
+      internalInteractionOperationMarker(this.#daemonInstanceId, envelope.operationId),
     ]);
     try {
       this.#io.runTmux(["send-keys", "-t", pane.paneId, "-l", "--", intent.text]);

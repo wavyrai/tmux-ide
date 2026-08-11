@@ -28,11 +28,9 @@ import { ActionError, wrapInternalError } from "./errors.ts";
 import { getLooseActionEntry } from "./registry.ts";
 import {
   broadcastActionComplete,
-  broadcastInteractionReceipt,
   broadcastResourceChanged,
   broadcastWorkspacePromotionCompleted,
   type ResourceChangedBroadcast,
-  type InteractionReceiptBroadcast,
 } from "../ws-events.ts";
 import {
   AppWindowMutationResultSchemaZ,
@@ -40,8 +38,6 @@ import {
   WorkspaceOpenMutationResultSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
-  WorkspacePaneSendArgumentsSchemaZ,
-  WorkspacePaneSendResultSchemaZ,
 } from "@tmux-ide/contracts";
 import { daemonActionCommandRegistry } from "./command-definitions.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
@@ -57,11 +53,6 @@ export interface DispatcherDeps {
   broadcastPromotionCompleted?: (workspaceName: string, outcome: "promoted" | "replayed") => void;
   /** Override the scoped replayable invalidation broadcaster (tests). */
   broadcastResourceChanged?: (change: ResourceChangedBroadcast, daemonInstanceId: string) => void;
-  /** Override the replayable interaction receipt broadcaster (tests). */
-  broadcastInteractionReceipt?: (
-    receipt: InteractionReceiptBroadcast,
-    daemonInstanceId: string,
-  ) => void;
   /** Trusted daemon generation; never accepted from an HTTP request body. */
   daemonInstanceId?: string;
   /** Instance-owned privileged mutation authority; never module-global. */
@@ -213,7 +204,6 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
   const broadcastPromotionCompleted =
     deps.broadcastPromotionCompleted ?? broadcastWorkspacePromotionCompleted;
   const broadcastResource = deps.broadcastResourceChanged ?? broadcastResourceChanged;
-  const broadcastInteraction = deps.broadcastInteractionReceipt ?? broadcastInteractionReceipt;
 
   return async function dispatcher(c: Context): Promise<Response> {
     const name = c.req.param("name");
@@ -298,53 +288,12 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       appWindowMutationBackend: deps.appWindowMutationBackend,
       workspaceMultiplexerBackend: deps.workspaceMultiplexerBackend,
     };
-    const paneSend =
-      actionName === "workspace.pane.send"
-        ? WorkspacePaneSendArgumentsSchemaZ.safeParse(commandResolution.command.input)
-        : null;
-    const paneSendReceipt = (phase: "accepted" | "applied" | "failed", result?: unknown): void => {
-      if (!paneSend?.success || !operationId || !deps.daemonInstanceId) return;
-      const parsedResult = WorkspacePaneSendResultSchemaZ.safeParse(result);
-      const text = paneSend.data.text;
-      try {
-        broadcastInteraction(
-          {
-            operationId,
-            origin: paneSend.data.origin,
-            workspaceName: paneSend.data.workspaceName,
-            // A request-body source is only a claim. Publish it after the
-            // multiplexer authority returned the live-tmux-verified identity.
-            sourceSemanticPaneId:
-              phase === "applied" && parsedResult.success
-                ? parsedResult.data.sourceSemanticPaneId
-                : null,
-            semanticPaneId: paneSend.data.semanticPaneId,
-            phase,
-            summary: {
-              characterCount: parsedResult.success
-                ? parsedResult.data.characterCount
-                : Array.from(text).length,
-              byteCount: parsedResult.success
-                ? parsedResult.data.byteCount
-                : Buffer.byteLength(text, "utf8"),
-              submitted: paneSend.data.submit,
-            },
-          },
-          deps.daemonInstanceId,
-        );
-      } catch (error) {
-        console.error("[actions] interaction receipt broadcast failed:", error);
-      }
-    };
-    paneSendReceipt("accepted");
-
     let result: unknown;
     try {
       result = entry.handlerWithContext
         ? await entry.handlerWithContext(commandResolution.command.input, context)
         : await entry.handler(commandResolution.command.input);
     } catch (err) {
-      paneSendReceipt("failed");
       const wrapped = wrapInternalError(err);
       return c.json(errorEnvelope(wrapped) satisfies ActionErrorEnvelope, 200);
     }
@@ -353,11 +302,8 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       result,
     );
     if (!outputParsed.success) {
-      paneSendReceipt("failed");
       return c.json(outputZodErrorEnvelope(outputParsed.error) satisfies ActionErrorEnvelope, 200);
     }
-
-    paneSendReceipt("applied", outputParsed.data);
 
     const unchangedAppWindowMutation =
       actionName === "workspace.app-window.mutate" &&
