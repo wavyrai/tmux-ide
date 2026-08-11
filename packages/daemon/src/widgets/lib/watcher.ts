@@ -47,6 +47,7 @@ function fsWatchDirectory(
   onChange: (events: WatchEvent[]) => void,
   ignore: string[],
   debounceMs: number,
+  requireInstalled: boolean,
 ): () => Promise<void> {
   const ignoreSet = new Set(ignore);
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -59,8 +60,11 @@ function fsWatchDirectory(
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => onChange([{ type: "update", path: join(dir, rel) }]), debounceMs);
     });
-  } catch {
-    // Directory may be unreadable/vanished — degrade to a no-op watcher.
+  } catch (error) {
+    // Legacy widgets tolerate a missing watcher and remain manually
+    // refreshable. Daemon resource observers request an honest installation
+    // verdict so their acknowledgement cannot claim a no-op watcher is live.
+    if (requireInstalled) throw error;
   }
   return async () => {
     if (timeout) clearTimeout(timeout);
@@ -71,13 +75,15 @@ function fsWatchDirectory(
 export async function watchDirectory(
   dir: string,
   onChange: (events: WatchEvent[]) => void,
-  options?: { debounceMs?: number; ignore?: string[] },
+  options?: { debounceMs?: number; ignore?: string[]; requireInstalled?: boolean },
 ): Promise<() => Promise<void>> {
   const debounceMs = options?.debounceMs ?? 300;
   const ignore = options?.ignore ?? ["node_modules", ".git", "dist", "build", ".next"];
 
   const native = await loadParcel();
-  if (!native) return fsWatchDirectory(dir, onChange, ignore, debounceMs);
+  if (!native) {
+    return fsWatchDirectory(dir, onChange, ignore, debounceMs, options?.requireInstalled ?? false);
+  }
 
   let timeout: ReturnType<typeof setTimeout> | null = null;
   const subscription = await native.subscribe(

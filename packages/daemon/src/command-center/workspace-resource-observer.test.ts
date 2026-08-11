@@ -222,6 +222,33 @@ describe("WorkspaceResourceObserver", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  it("recovers an unavailable shared slot while another client still holds demand", async () => {
+    const registry = new FakeRegistry();
+    registry.add("app");
+    const stop = vi.fn();
+    const start = vi
+      .fn<StartPathWatch>()
+      .mockRejectedValueOnce(new Error("temporarily unavailable"))
+      .mockResolvedValueOnce(stop);
+    const observer = new WorkspaceResourceObserver({
+      registry,
+      emit: vi.fn(),
+      startProjectWatch: start,
+    });
+
+    const first = observer.acquire("app", "workspace-files");
+    await expect(first.ready).resolves.toEqual({ status: "unavailable" });
+    const second = observer.acquire("app", "workspace-files");
+    await expect(second.ready).resolves.toEqual({ status: "installed" });
+    expect(start).toHaveBeenCalledTimes(2);
+
+    first.release();
+    expect(stop).not.toHaveBeenCalled();
+    second.release();
+    await observer.dispose();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it("orders release behind a pending start and drains its late stop on dispose", async () => {
     const registry = new FakeRegistry();
     registry.add("app");

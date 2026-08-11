@@ -85,16 +85,18 @@ export const startProjectResourceWatch: StartPathWatch = async (projectDir, onCh
   watchDirectory(projectDir, onChanged, {
     debounceMs: 40,
     ignore: ["node_modules", ".git", "dist", "build", ".next", ".turbo", "coverage"],
+    requireInstalled: true,
   });
 
 export const startGitResourceWatch: StartPathWatch = async (gitDir, onChanged) =>
   watchDirectory(gitDir, onChanged, {
     debounceMs: 40,
     ignore: ["objects", "logs"],
+    requireInstalled: true,
   });
 
 export const startMissionResourceWatch: StartPathWatch = async (runtimeRoot, onChanged) =>
-  watchDirectory(runtimeRoot, onChanged, { debounceMs: 40 });
+  watchDirectory(runtimeRoot, onChanged, { debounceMs: 40, requireInstalled: true });
 
 function refCount(entry: WorkspaceEntry, resource?: ObservableWorkspaceResource): number {
   if (resource) return entry.refs.get(resource) ?? 0;
@@ -313,8 +315,9 @@ export class WorkspaceResourceObserver {
     if (current.path === path) {
       if (current.start) return current.start;
       if (current.stop) return Promise.resolve({ status: "installed" });
-      // An unavailable acquisition retries only after demand has fully drained.
-      if (current.status === "unavailable") return Promise.resolve({ status: "unavailable" });
+      // A later reconciliation retries one serialized physical start even if
+      // another client still holds the failed slot. Returning the cached
+      // unavailable verdict here made N-client recovery impossible.
     }
     this.#retireSlot(current);
     const epoch = ++current.epoch;

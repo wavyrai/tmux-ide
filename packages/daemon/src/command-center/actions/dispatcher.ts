@@ -143,7 +143,7 @@ function resourceChangesForAction(
       causeOperationId: mutation.data.operationId,
     } as const;
     return [
-      { ...base, resource: "workspace-catalog" },
+      { ...base, workspaceName: null, resource: "workspace-catalog" },
       { ...base, resource: "application-shell" },
       { ...base, resource: "workspace-missions" },
       { ...base, workspaceName: null, resource: "fleet-catalog" },
@@ -157,7 +157,7 @@ function resourceChangesForAction(
       causeOperationId: mutation.data.operationId,
     } as const;
     return [
-      { ...base, resource: "workspace-catalog" },
+      { ...base, workspaceName: null, resource: "workspace-catalog" },
       { ...base, resource: "application-shell" },
       { ...base, resource: "workspace-missions" },
       { ...base, workspaceName: null, resource: "fleet-catalog" },
@@ -193,7 +193,7 @@ function resourceChangesForAction(
     }
     if (mutation.data.verb === "workspace.session.kill") {
       changes.push({
-        workspaceName: mutation.data.workspaceName,
+        workspaceName: null,
         resource: "workspace-catalog",
         causeOperationId: mutation.data.operationId,
       });
