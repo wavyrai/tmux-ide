@@ -1,7 +1,6 @@
-import { MirrorService } from "../mirror/mirror-service.ts";
-import type { DaemonTmuxSocketSelector } from "../attachments/pty-tmux-attachment-launcher.ts";
 import type { SemanticPaneCatalog } from "../attachments/semantic-pane-catalog.ts";
 import type { TerminalInputAuthority } from "../input-authority.ts";
+import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import {
   PaneStreamAdmissionCoordinator,
@@ -11,9 +10,8 @@ import {
 export interface PaneStreamRuntimeOptions {
   readonly daemonInstanceId: string;
   readonly webSocketUrl: string;
-  /** The daemon's pinned tmux authority; omit both for the default server. */
-  readonly tmuxExecutablePath?: string;
-  readonly tmuxSocketSelector?: DaemonTmuxSocketSelector;
+  /** Canonical daemon-generation session/control owner. */
+  readonly sessionRuntimeRegistry: SessionRuntimeRegistry;
   /** Shared production authority and trusted semantic resolver. */
   readonly inputAuthority?: TerminalInputAuthority;
   readonly semanticPaneCatalog?: SemanticPaneCatalog;
@@ -24,25 +22,15 @@ export interface PaneStreamRuntimeOptions {
 }
 
 /**
- * One daemon-generation owner for the pane-stream surface: the shared
- * MirrorService (one control client per session, refcounted), the lease
- * authority, and the WebSocket admission coordinator. The coordinator is the
- * issue backend the broker mutation route consumes.
+ * One daemon-generation owner for the pane-stream transport: lease authority
+ * and WebSocket admission. Session/control lifecycle belongs exclusively to
+ * the injected SessionRuntimeRegistry.
  */
 export class PaneStreamRuntime {
   readonly coordinator: PaneStreamAdmissionCoordinator;
-  readonly mirror: MirrorService;
   #disposePromise: Promise<void> | null = null;
 
   constructor(options: PaneStreamRuntimeOptions) {
-    const selector = options.tmuxSocketSelector;
-    this.mirror = new MirrorService({
-      executable: options.tmuxExecutablePath,
-      ...(selector?.kind === "path" ? { socketPath: selector.path } : {}),
-      ...(selector?.kind === "name" && selector.name !== "default"
-        ? { socketName: selector.name }
-        : {}),
-    });
     const leaseManager = new PaneStreamLeaseManager({
       daemonInstanceId: options.daemonInstanceId,
       ...(options.inputAuthority && options.semanticPaneCatalog
@@ -57,7 +45,7 @@ export class PaneStreamRuntime {
       daemonInstanceId: options.daemonInstanceId,
       webSocketUrl: options.webSocketUrl,
       leaseManager,
-      mirror: this.mirror,
+      mirror: options.sessionRuntimeRegistry,
     });
   }
 
@@ -65,7 +53,6 @@ export class PaneStreamRuntime {
     if (!this.#disposePromise) {
       this.#disposePromise = (async () => {
         await this.coordinator.shutdown();
-        await this.mirror.dispose();
       })();
     }
     return this.#disposePromise;

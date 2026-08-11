@@ -57,6 +57,7 @@ import {
   createPaneStreamRuntime,
   type PaneStreamRuntime,
 } from "../terminal/pane-stream/runtime.ts";
+import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import { readOrMintEnvironmentId } from "./environment-identity.ts";
 import {
@@ -996,6 +997,7 @@ export async function startEmbeddedDaemon(
       },
     });
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
+    let sessionRuntimeRegistry: SessionRuntimeRegistry | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
@@ -1015,11 +1017,21 @@ export async function startEmbeddedDaemon(
       // Orphan reconciliation is a hard startup barrier: neither the HTTP
       // mutation nor direct WebSocket redemption is exposed before it passes.
       await terminalAttachmentRuntime.whenReady();
+      const selector = tmuxAuthority.socketSelector;
+      sessionRuntimeRegistry = new SessionRuntimeRegistry({
+        generation: instanceId,
+        mirror: {
+          executable: tmuxAuthority.executablePath,
+          ...(selector.kind === "path" ? { socketPath: selector.path } : {}),
+          ...(selector.kind === "name" && selector.name !== "default"
+            ? { socketName: selector.name }
+            : {}),
+        },
+      });
       paneStreamRuntime = createPaneStreamRuntime({
         daemonInstanceId: instanceId,
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
-        tmuxExecutablePath: tmuxAuthority.executablePath,
-        tmuxSocketSelector: tmuxAuthority.socketSelector,
+        sessionRuntimeRegistry,
         inputAuthority: terminalAttachmentRuntime.inputAuthority,
         semanticPaneCatalog: terminalAttachmentRuntime.semanticPaneCatalog,
       });
@@ -1053,6 +1065,10 @@ export async function startEmbeddedDaemon(
         workspaceMultiplexer.dispose(),
         externalInteractionObserver.dispose(),
       ]);
+      // The pane-stream coordinator may still hold runtime consumers while it
+      // drains. Preserve the normal shutdown order on startup rollback too:
+      // transports first, then the one session/control authority.
+      await Promise.allSettled([sessionRuntimeRegistry?.dispose() ?? Promise.resolve()]);
       throw error;
     }
     const {
@@ -1065,11 +1081,16 @@ export async function startEmbeddedDaemon(
     } = startedServer;
     externalInteractionObserver.start();
     const retirePaneStreamTransport = async (): Promise<readonly unknown[]> => {
-      const results = await Promise.allSettled([
+      const transportResults = await Promise.allSettled([
         Promise.resolve().then(() => paneStreamRuntime!.dispose()),
         Promise.resolve().then(() => paneStreamBoundary.close()),
       ]);
-      return results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+      const runtimeResults = await Promise.allSettled([
+        Promise.resolve().then(() => sessionRuntimeRegistry!.dispose()),
+      ]);
+      return [...transportResults, ...runtimeResults].flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
     };
     const abortStartedServer = async (): Promise<void> => {
       const terminalFailures = [

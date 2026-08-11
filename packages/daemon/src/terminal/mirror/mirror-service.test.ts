@@ -41,6 +41,46 @@ async function subscribed(service: MirrorService, session: string, pane: string)
 }
 
 describe("MirrorService refcounting", () => {
+  it("never returns a channel that exited between start settlement and acquire continuation", async () => {
+    const sims: SimulatedChannel[] = [];
+    let creation = 0;
+    const service = new MirrorService({
+      createIo: (_session, handlers) => {
+        creation += 1;
+        const sim = new SimulatedChannel(handlers, (cmd) => {
+          const auto = fixtureAutoReply(fixtureState())(cmd);
+          if (auto) return auto;
+          if (cmd.startsWith("capture-pane")) return ["seed"];
+          if (cmd.startsWith("display-message")) return ["0 0 100 50"];
+          return [];
+        });
+        sims.push(sim);
+        const exitDuringStart = creation === 1;
+        return {
+          start: async () => {
+            await sim.start();
+            if (exitDuringStart) handlers.onExit("exited during start handoff");
+          },
+          request: (command) => sim.request(command),
+          commandInline: (command, onReply) => sim.commandInline(command, onReply),
+          commandListInline: (command, replyCount, resultIndex, onReply) =>
+            sim.commandListInline(command, replyCount, resultIndex, onReply),
+          send: (command) => sim.send(command),
+          dispose: () => sim.dispose(),
+        };
+      },
+      generatePaneId: () => "pane.mirror.gen1",
+    });
+
+    const retention = await service.retainSession(FIXTURE.session);
+
+    expect(sims).toHaveLength(2);
+    expect(sims[0]!.disposed).toBe(true);
+    expect(sims[1]!.disposed).toBe(false);
+    expect(service.activeChannelCount()).toBe(1);
+    await retention.close();
+  });
+
   it("rejects a second control-mode owner for the same server session", async () => {
     const first = rig();
     const second = rig();

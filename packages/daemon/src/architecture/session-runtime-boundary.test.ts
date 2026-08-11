@@ -17,6 +17,11 @@ const M56_4_DELETION_TARGET = [
   "packages/daemon/src/tui/mirror/session-mirror.ts",
 ] as const;
 
+const MIRROR_SERVICE_CONSTRUCTION = /\bnew\s+MirrorService\s*\(/u;
+const SESSION_RUNTIME_CONTROL_OWNER = [
+  "packages/daemon/src/terminal/session-runtime/registry.ts",
+] as const;
+
 const CONTROL_OWNERSHIP_IMPORT =
   /(?:from\s+|import\s*\(\s*)["'][^"']*(?:session-mirror|control-client|terminal\/mirror\/(?:mirror-service|control-channel|session-channel)|terminal\/pane-stream\/runtime)\.ts["']/u;
 const M56_4_DEPENDENCY_DELETION_TARGET = [
@@ -66,7 +71,21 @@ async function matches(pattern: RegExp): Promise<string[]> {
   return findings.sort();
 }
 
+async function matchesUnder(root: string, pattern: RegExp): Promise<string[]> {
+  const findings: string[] = [];
+  for (const file of await sourceFiles(join(REPO, root))) {
+    if (pattern.test(await readFile(file, "utf8"))) findings.push(relative(REPO, file));
+  }
+  return findings.sort();
+}
+
 describe("one SessionRuntime import DAG", () => {
+  it("allows exactly one production MirrorService construction owner", async () => {
+    expect(await matchesUnder("packages/daemon/src", MIRROR_SERVICE_CONSTRUCTION)).toEqual(
+      [...SESSION_RUNTIME_CONTROL_OWNER].sort(),
+    );
+  });
+
   it("freezes the two actual direct control owners for deletion in m56.4", async () => {
     expect(await matches(DIRECT_CONTROL_CONSTRUCTION)).toEqual([...M56_4_DELETION_TARGET].sort());
   });
