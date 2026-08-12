@@ -66,6 +66,13 @@ export class ScriptedChannelDriver {
   async settleUntil(predicate: () => boolean, label: string): Promise<void> {
     for (let turn = 0; turn < this.#maxTurns; turn += 1) {
       this.pump();
+      // The real replica intentionally defers its first xterm write with a
+      // zero-delay timer. Yielding only through the check phase (`setImmediate`)
+      // can starve that timer for every bounded turn on Linux CI, making a
+      // settled simulator look stuck with no pending control replies. Advance
+      // both timer and check phases so this driver models a complete event-loop
+      // turn rather than relying on platform-specific queue ordering.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       await new Promise<void>((resolve) => setImmediate(resolve));
       if (predicate()) return;
     }
