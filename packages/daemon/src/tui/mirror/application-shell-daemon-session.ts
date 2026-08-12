@@ -1,8 +1,9 @@
-import type {
-  CanonicalDaemonInfo,
-  DesktopApplicationShellTarget,
-  DesktopDaemonHostDescriptor,
-  InteractionReceipt,
+import {
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  type CanonicalDaemonInfo,
+  type DesktopApplicationShellTarget,
+  type DesktopDaemonHostDescriptor,
+  type InteractionReceipt,
 } from "@tmux-ide/contracts";
 import {
   createApplicationShellSession,
@@ -36,6 +37,7 @@ interface OpenTuiApplicationShellAuthorityDependencies {
     readonly workspaceName: string;
     readonly sessionName: string;
     readonly ownerToken?: string;
+    readonly applicationShellResourceVersion: typeof APPLICATION_SHELL_RESOURCE_V2_VERSION;
   }) => ApplicationShellTransport;
   readonly createSession: typeof createApplicationShellSession;
   readonly onInteractionReceipt?: (receipt: InteractionReceipt) => void;
@@ -45,10 +47,17 @@ const DEFAULT_DEPENDENCIES: OpenTuiApplicationShellAuthorityDependencies = {
   readCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   fetchCanonicalWorkspaceCatalog,
-  createTransport: ({ descriptor, workspaceName, sessionName, ownerToken }) =>
+  createTransport: ({
+    descriptor,
+    workspaceName,
+    sessionName,
+    ownerToken,
+    applicationShellResourceVersion,
+  }) =>
     createDirectLoopbackDaemonTransport({
       descriptor,
       ownerToken,
+      applicationShellResourceVersion,
       resolveSessionName: (candidate) => {
         if (candidate !== workspaceName) {
           throw new Error("application-shell transport received another workspace");
@@ -100,6 +109,10 @@ export async function connectOpenTuiApplicationShellAuthority(
     workspaceName,
     sessionName,
     ...(daemon.authToken ? { ownerToken: daemon.authToken } : {}),
+    // OpenTUI lays out terminals from the semantic runtime lane and never
+    // consumes V3 appWindows. V2 still requires the same authenticated,
+    // attachability-bearing terminal inventory used to admit that lane.
+    applicationShellResourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
   });
   return {
     workspaceName,
