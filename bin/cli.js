@@ -17990,6 +17990,10 @@ function classifySessionInspectionError(error) {
   }
   return "no";
 }
+function isConfirmedMissingTmuxTarget(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:can't find|no such|unknown) (?:pane|session|window|target)/iu.test(message);
+}
 async function mapBounded(values2, concurrency, operation) {
   let cursor = 0;
   const workers = Array.from({ length: Math.min(concurrency, values2.length) }, async () => {
@@ -19769,9 +19773,11 @@ var init_daemon_fleet_facts_observer = __esm({
       #setTimer;
       #clearTimer;
       #refs = /* @__PURE__ */ new Map();
+      #demandEpochs = /* @__PURE__ */ new Map();
       #baselined = /* @__PURE__ */ new Set();
       #waiters = /* @__PURE__ */ new Set();
-      #sessionFacts = null;
+      #sessionNames = null;
+      #adoptedNames = null;
       #agentFacts = null;
       #timer = null;
       #running = null;
@@ -19793,7 +19799,10 @@ var init_daemon_fleet_facts_observer = __esm({
         for (const demand of unique) {
           const previous = this.#refs.get(demand) ?? 0;
           this.#refs.set(demand, previous + 1);
-          if (previous === 0) this.#demandVersion += 1;
+          if (previous === 0) {
+            this.#bumpDemandEpoch(demand);
+            this.#demandVersion += 1;
+          }
         }
         let resolveReady;
         const ready = new Promise((resolve32) => {
@@ -19813,17 +19822,14 @@ var init_daemon_fleet_facts_observer = __esm({
             waiter.resolve();
             for (const demand of unique) {
               const next = Math.max(0, (this.#refs.get(demand) ?? 0) - 1);
-              if (next === 0) this.#refs.delete(demand);
-              else this.#refs.set(demand, next);
-            }
-            if (!this.#refs.has("agents")) {
-              this.#baselined.delete("agents");
-              this.#agentFacts = null;
-            }
-            if (!this.#refs.has("sessions") && !this.#refs.has("adopted")) {
-              this.#baselined.delete("sessions");
-              this.#baselined.delete("adopted");
-              this.#sessionFacts = null;
+              if (next === 0) {
+                this.#refs.delete(demand);
+                this.#bumpDemandEpoch(demand);
+                this.#baselined.delete(demand);
+                if (demand === "sessions") this.#sessionNames = null;
+                else if (demand === "adopted") this.#adoptedNames = null;
+                else this.#agentFacts = null;
+              } else this.#refs.set(demand, next);
             }
             if (this.#refs.size === 0) this.stop();
           }
@@ -19842,20 +19848,23 @@ var init_daemon_fleet_facts_observer = __esm({
         if (this.#refs.size === 0) return Promise.resolve();
         const generation = this.#generation;
         const demandVersion = this.#demandVersion;
-        const wantsSessions = (this.#refs.has("sessions") || this.#refs.has("adopted")) && (!onlyUnbaselined || !this.#baselined.has("sessions") || !this.#baselined.has("adopted"));
+        const wantsSessions = this.#refs.has("sessions") && (!onlyUnbaselined || !this.#baselined.has("sessions")) || this.#refs.has("adopted") && (!onlyUnbaselined || !this.#baselined.has("adopted"));
         const wantsAgents = this.#refs.has("agents") && (!onlyUnbaselined || !this.#baselined.has("agents"));
-        this.#running = this.#cycle(generation, wantsSessions, wantsAgents).finally(() => {
-          this.#running = null;
-          if (generation !== this.#generation || this.#refs.size === 0) return;
-          if (demandVersion !== this.#demandVersion && this.#hasUnbaselinedDemand()) {
-            void this.#runOnce(true);
-            return;
+        const demandEpochs = new Map(this.#demandEpochs);
+        this.#running = this.#cycle(generation, demandEpochs, wantsSessions, wantsAgents).finally(
+          () => {
+            this.#running = null;
+            if (generation !== this.#generation || this.#refs.size === 0) return;
+            if (demandVersion !== this.#demandVersion && this.#hasUnbaselinedDemand()) {
+              void this.#runOnce(true);
+              return;
+            }
+            this.#timer = this.#setTimer(() => {
+              this.#timer = null;
+              void this.runOnce();
+            }, this.#intervalMs);
           }
-          this.#timer = this.#setTimer(() => {
-            this.#timer = null;
-            void this.runOnce();
-          }, this.#intervalMs);
-        });
+        );
         return this.#running;
       }
       #queueStart() {
@@ -19874,7 +19883,8 @@ var init_daemon_fleet_facts_observer = __esm({
         this.#startQueued = false;
         this.#refs.clear();
         this.#baselined.clear();
-        this.#sessionFacts = null;
+        this.#sessionNames = null;
+        this.#adoptedNames = null;
         this.#agentFacts = null;
         for (const waiter of this.#waiters) waiter.resolve();
         this.#waiters.clear();
@@ -19886,31 +19896,38 @@ var init_daemon_fleet_facts_observer = __esm({
           agents: this.#refs.get("agents") ?? 0
         };
       }
-      async #cycle(generation, wantsSessions, wantsAgents) {
+      async #cycle(generation, demandEpochs, wantsSessions, wantsAgents) {
         const [sessions, agents] = await Promise.all([
           wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
           wantsAgents ? this.#options.readAgents() : Promise.resolve(null)
         ]);
         if (generation !== this.#generation) return;
         if (wantsSessions && sessions) {
-          this.#baselined.add("sessions");
-          this.#baselined.add("adopted");
-          this.#acceptSessions(sessions);
+          const acceptSessions = this.#sameDemandEpoch("sessions", demandEpochs);
+          const acceptAdopted = this.#sameDemandEpoch("adopted", demandEpochs);
+          if (acceptSessions) this.#baselined.add("sessions");
+          if (acceptAdopted) this.#baselined.add("adopted");
+          this.#acceptSessions(sessions, acceptSessions, acceptAdopted);
         }
-        if (wantsAgents && agents) {
+        if (wantsAgents && agents && this.#sameDemandEpoch("agents", demandEpochs)) {
           this.#baselined.add("agents");
           this.#acceptAgents(agents);
         }
         this.#settleWaiters();
       }
-      #acceptSessions(next) {
-        const previous = this.#sessionFacts;
-        this.#sessionFacts = next;
-        if (!previous) return;
-        if (JSON.stringify(previous.sessions) !== JSON.stringify(next.sessions))
-          this.#options.onSessionsChanged();
-        if (JSON.stringify(previous.adopted) !== JSON.stringify(next.adopted))
-          this.#options.onAdoptedChanged();
+      #acceptSessions(next, acceptSessions, acceptAdopted) {
+        if (acceptSessions) {
+          const previous = this.#sessionNames;
+          this.#sessionNames = next.sessions;
+          if (previous && JSON.stringify(previous) !== JSON.stringify(next.sessions))
+            this.#options.onSessionsChanged();
+        }
+        if (acceptAdopted) {
+          const previous = this.#adoptedNames;
+          this.#adoptedNames = next.adopted;
+          if (previous && JSON.stringify(previous) !== JSON.stringify(next.adopted))
+            this.#options.onAdoptedChanged();
+        }
       }
       #acceptAgents(next) {
         const previous = this.#agentFacts;
@@ -19933,6 +19950,12 @@ var init_daemon_fleet_facts_observer = __esm({
           if (!this.#baselined.has(demand)) return true;
         }
         return false;
+      }
+      #bumpDemandEpoch(demand) {
+        this.#demandEpochs.set(demand, (this.#demandEpochs.get(demand) ?? 0) + 1);
+      }
+      #sameDemandEpoch(demand, captured) {
+        return this.#refs.has(demand) && (captured.get(demand) ?? 0) === (this.#demandEpochs.get(demand) ?? 0);
       }
     };
     SESSION_COMPOSITION_TMUX_ARGS = [
@@ -28437,9 +28460,6 @@ import { z as z65 } from "zod";
 function socketArguments(authority) {
   return authority.socketSelector.kind === "path" ? ["-S", authority.socketSelector.path] : ["-L", authority.socketSelector.name];
 }
-function shellArgument(value) {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
 function defaultWaiter(authority) {
   const prefix = socketArguments(authority);
   return (channel, signal) => new Promise((resolve32, reject) => {
@@ -28521,7 +28541,6 @@ var init_tmux_external_interaction_observer = __esm({
       #onObserved;
       #bufferName;
       #signalChannel;
-      #tmuxCommandPrefix;
       #abort = new AbortController();
       #active = false;
       #installed = false;
@@ -28534,10 +28553,6 @@ var init_tmux_external_interaction_observer = __esm({
         this.#onObserved = options.onObserved;
         this.#bufferName = `${HOOK_MARKER}-${options.daemonInstanceId}`;
         this.#signalChannel = `${this.#bufferName}-ready`;
-        this.#tmuxCommandPrefix = [
-          options.tmuxAuthority.executablePath,
-          ...socketArguments(options.tmuxAuthority)
-        ];
         this.#io = {
           runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxRunner(options.tmuxAuthority),
           waitForSignal: options.io?.waitForSignal ?? defaultWaiter(options.tmuxAuthority),
@@ -28568,20 +28583,9 @@ var init_tmux_external_interaction_observer = __esm({
         this.#deleteOwnedBuffers();
         const hook = (operationKind, markerOption, consumeMarker) => {
           const data = `#{pane_id}${FIELD_SEPARATOR}#{q:${markerOption}}${FIELD_SEPARATOR}${operationKind}${EVENT_SEPARATOR}`;
-          const command2 = [
-            ...this.#tmuxCommandPrefix,
-            "set-buffer",
-            "-a",
-            "-b",
-            this.#bufferName,
-            data,
-            ...consumeMarker ? [";", "set-option", "-pu", "-t", "#{pane_id}", markerOption] : [],
-            ";",
-            "wait-for",
-            "-S",
-            this.#signalChannel
-          ].map(shellArgument).join(" ");
-          return `run-shell "${command2}"`;
+          const publish = `run-shell -b -C "set-buffer -a -b '${this.#bufferName}' '${data}' ; wait-for -S '${this.#signalChannel}'"`;
+          const consume = consumeMarker ? ` ; set-option -pu '${markerOption}'` : "";
+          return `${publish}${consume}`;
         };
         this.#io.runTmux([
           "set-hook",
@@ -41607,6 +41611,26 @@ var init_registry2 = __esm({
       connect(session, surface, clientId) {
         return this.#runtime(session).connect(surface, SessionRuntimeClientIdSchemaZ.parse(clientId));
       }
+      /**
+       * Start the daemon-owned tmux control channel before a renderer asks for a
+       * pane-stream ticket. This uses the exact same SessionRuntime subsequently
+       * consumed by admission, so prewarming cannot weaken pane enumeration or
+       * create a second control authority.
+       */
+      async prewarmSession(session) {
+        const runtime = this.#runtime(session);
+        await runtime.whenReady();
+        if (this.#sessions.get(session) !== runtime) {
+          throw new Error(`SessionRuntime ${session} was retired while prewarming`);
+        }
+      }
+      /** Retire one no-longer-registered session without disturbing siblings. */
+      async retireSession(session) {
+        const runtime = this.#sessions.get(session);
+        if (!runtime) return;
+        this.#sessions.delete(session);
+        await runtime.dispose();
+      }
       createExecutionHandle(consumer, lease, allowedSourcePaneIds, authorizeLiveScope) {
         const runtime = this.#sessions.get(consumer.session);
         if (!runtime || !runtime.ownsConsumer(consumer)) {
@@ -42033,7 +42057,12 @@ var init_registry2 = __esm({
           this.#startPromise = (async () => {
             await this.#restartBarrier;
             if (this.#disposed) throw new Error(`SessionRuntime ${this.session} is disposed`);
-            this.#retention = await this.#mirror.retainSession(this.session);
+            const retention = await this.#mirror.retainSession(this.session);
+            if (this.#disposed) {
+              await retention.close();
+              throw new Error(`SessionRuntime ${this.session} is disposed`);
+            }
+            this.#retention = retention;
           })().catch((error) => {
             this.#startPromise = null;
             throw error;
@@ -42170,6 +42199,7 @@ var init_registry2 = __esm({
         );
         this.#terminalReplicas.clear();
         await this.#terminalDeliveryHub.close();
+        await this.#startPromise?.catch(() => void 0);
         await this.#restartBarrier;
         await this.#retention?.close();
         this.#retention = null;
@@ -46421,6 +46451,10 @@ var init_native_runtime = __esm({
       #registry;
       #discoverTerminalInventory;
       #agentStatusProbe;
+      #prewarmSessionRuntime;
+      #observeWorkspaceSession;
+      #stopWorkspaceAddedObserver;
+      #stopWorkspaceRemovedObserver;
       #lifecycle = "initializing";
       #disposePromise = null;
       constructor(options) {
@@ -46536,6 +46570,37 @@ var init_native_runtime = __esm({
             return result.status === "ok" ? result.stdout : null;
           }
         }) : null);
+        if (options.sessionRuntimeRegistry) {
+          const sessionRuntimeRegistry = options.sessionRuntimeRegistry;
+          const sessionsByWorkspace = new Map(
+            options.registry.list().map((workspace) => [workspace.name, workspace.sessionName])
+          );
+          this.#prewarmSessionRuntime = (sessionName) => {
+            void sessionRuntimeRegistry.prewarmSession(sessionName).catch(() => void 0);
+          };
+          this.#observeWorkspaceSession = (workspaceName, sessionName) => {
+            const previousSessionName = sessionsByWorkspace.get(workspaceName);
+            sessionsByWorkspace.set(workspaceName, sessionName);
+            if (previousSessionName && previousSessionName !== sessionName && ![...sessionsByWorkspace.values()].some((candidate) => candidate === previousSessionName)) {
+              void sessionRuntimeRegistry.retireSession(previousSessionName).catch(() => void 0);
+            }
+          };
+          this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
+            this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
+          });
+          this.#stopWorkspaceRemovedObserver = options.registry.on("workspace.removed", (name) => {
+            const sessionName = sessionsByWorkspace.get(name);
+            sessionsByWorkspace.delete(name);
+            if (sessionName && ![...sessionsByWorkspace.values()].some((candidate) => candidate === sessionName)) {
+              void sessionRuntimeRegistry.retireSession(sessionName).catch(() => void 0);
+            }
+          });
+        } else {
+          this.#prewarmSessionRuntime = null;
+          this.#observeWorkspaceSession = null;
+          this.#stopWorkspaceAddedObserver = null;
+          this.#stopWorkspaceRemovedObserver = null;
+        }
       }
       /**
        * Exact registry-session inventory for ApplicationShell V2. The runtime and
@@ -46549,12 +46614,45 @@ var init_native_runtime = __esm({
           throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
         }
         const workspace = memberships[0];
+        this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
         const inventory = await this.#discoverTerminalInventory();
         const panes = inventory.panes.filter(
           (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName
         );
         if (panes.length === 0) return null;
         const active2 = panes.find((pane) => pane.active) ?? panes[0];
+        const sessionCatalog = analyzeTrustedSemanticPaneCatalog(
+          panes.map(
+            ({
+              sessionName: _sessionName,
+              index: _index,
+              title: _title,
+              currentCommand: _currentCommand,
+              active: _active,
+              role: _role,
+              name: _name,
+              type: _type,
+              missionStamp: _missionStamp,
+              dir: _dir,
+              ...row
+            }) => row
+          )
+        );
+        const windowStamps = /* @__PURE__ */ new Map();
+        let windowIdentityReady = true;
+        for (const pane of sessionCatalog.rows) {
+          const stamp = pane.windowStamp ?? null;
+          const previous = windowStamps.get(pane.windowId);
+          if (stamp === null || previous !== void 0 && previous !== stamp) {
+            windowIdentityReady = false;
+            break;
+          }
+          windowStamps.set(pane.windowId, stamp);
+        }
+        if (new Set(windowStamps.values()).size !== windowStamps.size) windowIdentityReady = false;
+        if (!sessionCatalog.invalidRuntimeProof && !sessionCatalog.missingSemanticStamp && !sessionCatalog.duplicateSemanticStamp && !sessionCatalog.duplicateRuntimePaneBinding && windowIdentityReady) {
+          this.#prewarmSessionRuntime?.(workspace.sessionName);
+        }
         const catalogIssue = inventory.catalog.invalidRuntimeProof ? "invalid-runtime-proof" : inventory.catalog.missingSemanticStamp ? "missing-semantic-stamp" : inventory.catalog.duplicateSemanticStamp ? "duplicate-semantic-stamp" : inventory.catalog.duplicateRuntimePaneBinding ? "duplicate-runtime-pane-binding" : null;
         let agentFacts = /* @__PURE__ */ new Map();
         if (this.#agentStatusProbe) {
@@ -46630,6 +46728,8 @@ var init_native_runtime = __esm({
       }
       async #finishDispose() {
         try {
+          this.#stopWorkspaceAddedObserver?.();
+          this.#stopWorkspaceRemovedObserver?.();
           const admissionBarrier = this.admission.shutdown();
           this.#launcher.disposeAll();
           await Promise.all([admissionBarrier, this.#startupBarrier.catch(() => void 0)]);
@@ -56827,7 +56927,8 @@ async function startEmbeddedDaemon(opts) {
         reconcileCredentials: async (workspaceSession, signal) => {
           try {
             await paneSourceCredentials.reconcileSessionAsync(workspaceSession, signal);
-          } catch {
+          } catch (error) {
+            if (!isConfirmedMissingTmuxTarget(error)) throw error;
           }
         },
         hasClients: async (signal) => {
@@ -56862,17 +56963,25 @@ async function startEmbeddedDaemon(opts) {
           }
         },
         setPaneOption: async (paneId, option, value, signal) => {
-          await execTmuxAsync(["set-option", "-pqt", paneId, option, value], signal).catch(
-            () => void 0
-          );
+          try {
+            await execTmuxAsync(["set-option", "-pt", paneId, option, value], signal);
+          } catch (error) {
+            if (!isConfirmedMissingTmuxTarget(error)) throw error;
+          }
         },
         setPaneTitle: async (paneId, title, signal) => {
-          await execTmuxAsync(["select-pane", "-t", paneId, "-T", title], signal).catch(
-            () => void 0
-          );
+          try {
+            await execTmuxAsync(["select-pane", "-t", paneId, "-T", title], signal);
+          } catch (error) {
+            if (!isConfirmedMissingTmuxTarget(error)) throw error;
+          }
         },
         refreshClients: async (signal) => {
-          await execTmuxAsync(["refresh-client", "-S"], signal).catch(() => void 0);
+          try {
+            await execTmuxAsync(["refresh-client", "-S"], signal);
+          } catch (error) {
+            if (!isConfirmedMissingTmuxTarget(error)) throw error;
+          }
         },
         onSessionGone: () => stopSelf?.()
       }
