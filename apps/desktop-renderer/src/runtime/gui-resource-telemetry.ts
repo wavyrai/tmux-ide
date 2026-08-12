@@ -7,13 +7,16 @@ export interface GuiResourceTelemetrySnapshot {
   readonly idleWakeups: number;
   readonly storeInvalidations: number;
   readonly storePublications: number;
+  /** Number of times the live application composition was mounted. */
+  readonly compositionMounts: number;
+  /** Coalesced browser render opportunities requested by live projection changes. */
   readonly renderPasses: number;
   readonly activeSubscriptions: number;
   readonly fetchesStarted: number;
   readonly fetchesSettled: number;
   readonly fetchesAborted: number;
   /** GUI resource stores use IPC/HTTP only and structurally launch no subprocesses. */
-  readonly subprocessLaunches: 0;
+  readonly rendererSubprocessLaunches: 0;
 }
 
 export interface GuiResourceTelemetrySource {
@@ -22,6 +25,7 @@ export interface GuiResourceTelemetrySource {
 
 export interface GuiResourceTelemetry {
   snapshot(): GuiResourceTelemetrySnapshot;
+  recordCompositionMount(): void;
   recordRenderPass(): void;
   exposeDebugAccessor(search?: string): () => void;
 }
@@ -29,6 +33,7 @@ export interface GuiResourceTelemetry {
 export function createGuiResourceTelemetry(
   sources: readonly GuiResourceTelemetrySource[],
 ): GuiResourceTelemetry {
+  let compositionMounts = 0;
   let renderPasses = 0;
   const snapshot = (): GuiResourceTelemetrySnapshot => {
     const metrics = sources.map((source) => source.getMetrics());
@@ -36,6 +41,7 @@ export function createGuiResourceTelemetry(
       idleWakeups: metrics.reduce((total, value) => total + value.idleWakeups, 0),
       storeInvalidations: metrics.reduce((total, value) => total + value.invalidationsObserved, 0),
       storePublications: metrics.reduce((total, value) => total + value.publications, 0),
+      compositionMounts,
       renderPasses,
       activeSubscriptions: metrics.reduce(
         (total, value) =>
@@ -45,12 +51,15 @@ export function createGuiResourceTelemetry(
       fetchesStarted: metrics.reduce((total, value) => total + value.fetchesStarted, 0),
       fetchesSettled: metrics.reduce((total, value) => total + value.fetchesSettled, 0),
       fetchesAborted: metrics.reduce((total, value) => total + value.fetchesAborted, 0),
-      subprocessLaunches: 0,
+      rendererSubprocessLaunches: 0,
     };
   };
   const accessor = () => snapshot();
   return {
     snapshot,
+    recordCompositionMount: () => {
+      compositionMounts += 1;
+    },
     recordRenderPass: () => {
       renderPasses += 1;
     },

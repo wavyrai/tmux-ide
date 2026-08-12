@@ -14,6 +14,7 @@ import {
   DesktopWindowStateSchemaZ,
   WorkspaceOpenHostResultSchemaZ,
   createDaemonResourceMethods,
+  isCancellableDaemonResourceKind,
   type DaemonResourceRequest,
   type DesktopDaemonEvent,
   type DesktopDaemonEventSubscriptionRequest,
@@ -75,20 +76,21 @@ async function requestDaemonResource(
   signal?: AbortSignal,
 ): Promise<unknown> {
   const parsed = DaemonResourceRequestSchemaZ.parse(request);
-  if (signal?.aborted)
+  const cancellable = isCancellableDaemonResourceKind(parsed.resource);
+  if (cancellable && signal?.aborted)
     throw Object.assign(new Error("Daemon resource read was cancelled."), { name: "AbortError" });
   const requestId = DesktopDaemonRequestIdSchemaZ.parse(crypto.randomUUID());
   const cancel = () => {
     void ipcRenderer.invoke(HOST_IPC.daemonCancelRequest, requestId).catch(() => undefined);
   };
-  signal?.addEventListener("abort", cancel, { once: true });
+  if (cancellable) signal?.addEventListener("abort", cancel, { once: true });
   let result: unknown;
   try {
     result = await ipcRenderer.invoke(HOST_IPC.daemonRequest, parsed, requestId);
   } finally {
-    signal?.removeEventListener("abort", cancel);
+    if (cancellable) signal?.removeEventListener("abort", cancel);
   }
-  if (signal?.aborted)
+  if (cancellable && signal?.aborted)
     throw Object.assign(new Error("Daemon resource read was cancelled."), { name: "AbortError" });
   return DAEMON_RESOURCE_RESULT_SCHEMAS[parsed.resource].parse(result);
 }
@@ -169,7 +171,6 @@ const capabilities: HostCapabilities = Object.freeze({
         signal?.removeEventListener("abort", cancel);
       }
       if (result.status === "error") {
-        earlyDaemonEvents.clear();
         return result;
       }
       if (signal?.aborted) {

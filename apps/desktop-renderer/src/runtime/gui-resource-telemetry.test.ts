@@ -27,17 +27,19 @@ describe("GUI resource telemetry", () => {
   it("keeps structurally idle and subprocess counters flat while reporting real store work", () => {
     let value = metrics();
     const telemetry = createGuiResourceTelemetry([{ getMetrics: () => value }]);
+    telemetry.recordCompositionMount();
     telemetry.recordRenderPass();
     expect(telemetry.snapshot()).toEqual({
       idleWakeups: 0,
       storeInvalidations: 0,
       storePublications: 0,
+      compositionMounts: 1,
       renderPasses: 1,
       activeSubscriptions: 0,
       fetchesStarted: 0,
       fetchesSettled: 0,
       fetchesAborted: 0,
-      subprocessLaunches: 0,
+      rendererSubprocessLaunches: 0,
     });
 
     value = metrics({
@@ -57,7 +59,7 @@ describe("GUI resource telemetry", () => {
       fetchesStarted: 3,
       fetchesSettled: 2,
       fetchesAborted: 1,
-      subprocessLaunches: 0,
+      rendererSubprocessLaunches: 0,
     });
   });
 

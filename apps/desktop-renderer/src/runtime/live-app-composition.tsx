@@ -704,13 +704,32 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     active: false,
   });
   const resourceTelemetry = createGuiResourceTelemetry([
+    store,
     filesCatalog,
     filePreview,
     changesCatalog,
     changeDiff,
     missions,
   ]);
-  resourceTelemetry.recordRenderPass();
+  resourceTelemetry.recordCompositionMount();
+  let pendingRenderFrame: number | null = null;
+  createEffect(() => {
+    // The primary projection is the GUI's render authority. Coalesce any
+    // synchronous publication burst into one browser render opportunity; no
+    // timer or animation frame exists while the projection is idle.
+    store.state();
+    if (pendingRenderFrame !== null || typeof requestAnimationFrame !== "function") return;
+    pendingRenderFrame = requestAnimationFrame(() => {
+      pendingRenderFrame = null;
+      resourceTelemetry.recordRenderPass();
+    });
+  });
+  onCleanup(() => {
+    if (pendingRenderFrame !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(pendingRenderFrame);
+    }
+    pendingRenderFrame = null;
+  });
   onCleanup(resourceTelemetry.exposeDebugAccessor());
   const activateDockResource = (demand: {
     readonly tool: string;

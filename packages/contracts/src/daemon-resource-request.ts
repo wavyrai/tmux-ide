@@ -256,6 +256,36 @@ export function isDaemonResourceKind(value: unknown): value is DaemonResourceKin
 }
 
 /**
+ * Resources whose work is observational and can therefore be retired without
+ * creating an ambiguous "cancelled" result after a side effect committed.
+ */
+export const CANCELLABLE_DAEMON_RESOURCE_KINDS = [
+  "capabilities",
+  "listWorkspaces",
+  "fetchFleetCatalog",
+  "startupReadiness",
+  "fetchApplicationShell",
+  "fetchWorkspaceFiles",
+  "fetchWorkspaceFilePreview",
+  "fetchWorkspaceChanges",
+  "fetchWorkspaceMissions",
+  "fetchWorkspaceChangeDiff",
+  "fetchWidgetAsset",
+] as const satisfies readonly DaemonResourceKind[];
+
+export type CancellableDaemonResourceKind = (typeof CANCELLABLE_DAEMON_RESOURCE_KINDS)[number];
+
+const CANCELLABLE_DAEMON_RESOURCE_KIND_SET: ReadonlySet<string> = new Set(
+  CANCELLABLE_DAEMON_RESOURCE_KINDS,
+);
+
+export function isCancellableDaemonResourceKind(
+  value: DaemonResourceKind,
+): value is CancellableDaemonResourceKind {
+  return CANCELLABLE_DAEMON_RESOURCE_KIND_SET.has(value);
+}
+
+/**
  * Which catalog field the daemon's route for a workspace resource is keyed on.
  *
  * This is the session-versus-workspace hazard, declared once. The daemon is not
@@ -308,8 +338,12 @@ export function daemonWorkspaceRouteName(
  */
 export type DaemonResourceMethods = {
   readonly [K in DaemonResourceKind]: DaemonResourceRequestFor<K> extends { request: infer R }
-    ? (request: R, signal?: AbortSignal) => Promise<DaemonResourceResult<K>>
-    : (signal?: AbortSignal) => Promise<DaemonResourceResult<K>>;
+    ? K extends CancellableDaemonResourceKind
+      ? (request: R, signal?: AbortSignal) => Promise<DaemonResourceResult<K>>
+      : (request: R) => Promise<DaemonResourceResult<K>>
+    : K extends CancellableDaemonResourceKind
+      ? (signal?: AbortSignal) => Promise<DaemonResourceResult<K>>
+      : () => Promise<DaemonResourceResult<K>>;
 };
 
 /** One dispatcher over the union: what a host implements once instead of fifteen times. */
@@ -339,9 +373,17 @@ export function createDaemonResourceMethods(
   for (const resource of DAEMON_RESOURCE_KINDS) {
     methods[resource] = (request?: unknown, signal?: AbortSignal) => {
       if (REQUESTLESS_DAEMON_RESOURCES.has(resource)) {
-        return dispatch({ resource } as DaemonResourceRequest, request as AbortSignal | undefined);
+        return dispatch(
+          { resource } as DaemonResourceRequest,
+          isCancellableDaemonResourceKind(resource)
+            ? (request as AbortSignal | undefined)
+            : undefined,
+        );
       }
-      return dispatch({ resource, request } as DaemonResourceRequest, signal);
+      return dispatch(
+        { resource, request } as DaemonResourceRequest,
+        isCancellableDaemonResourceKind(resource) ? signal : undefined,
+      );
     };
   }
   return methods as unknown as DaemonResourceMethods;

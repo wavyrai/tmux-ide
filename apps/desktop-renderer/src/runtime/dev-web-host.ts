@@ -350,33 +350,92 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     if (!resolvedDevHostSession) throw new DevHostFailure(REQUEST_FAILED);
     return developmentWebSocketUrl(rawUrl, resolvedDevHostSession);
   });
-  let devHostSession: Promise<string | null> | null = null;
-  const loadDevHostSession = (force = false): Promise<string | null> => {
+  type DevHostSessionBootstrap = {
+    readonly controller: AbortController;
+    promise: Promise<string | null>;
+    waiters: number;
+    settled: boolean;
+  };
+  let devHostSession: DevHostSessionBootstrap | null = null;
+  const loadDevHostSession = (
+    force = false,
+    signal?: AbortSignal,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  ): Promise<string | null> => {
     if (config.transport !== "same-origin-gateway") return Promise.resolve(null);
-    if (force) devHostSession = null;
-    if (devHostSession) return devHostSession;
-    const pending = (async () => {
-      const response = await fetch("/__tmux_ide_host_session", {
-        method: "POST",
-        cache: "no-store",
-        credentials: "omit",
+    if (signal?.aborted) return Promise.reject(new DevHostFailure(DISPOSED));
+    if (force) {
+      devHostSession?.controller.abort();
+      devHostSession = null;
+      resolvedDevHostSession = null;
+    }
+    let bootstrap = devHostSession;
+    if (!bootstrap) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const record: DevHostSessionBootstrap = {
+        controller,
+        promise: Promise.resolve(null),
+        waiters: 0,
+        settled: false,
+      };
+      const pending = (async () => {
+        try {
+          const response = await fetch("/__tmux_ide_host_session", {
+            method: "POST",
+            cache: "no-store",
+            credentials: "omit",
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new DevHostFailure(REQUEST_FAILED);
+          const token = z
+            .object({ token: z.uuid() })
+            .strict()
+            .parse(await response.json()).token;
+          if (controller.signal.aborted) throw new DevHostFailure(DISPOSED);
+          resolvedDevHostSession = token;
+          return token;
+        } finally {
+          record.settled = true;
+          clearTimeout(timer);
+        }
+      })();
+      record.promise = pending;
+      bootstrap = record;
+      devHostSession = record;
+      // A failed bootstrap is not a permanent poison pill for this document.
+      void pending.catch(() => {
+        if (devHostSession === record) devHostSession = null;
       });
-      if (!response.ok) throw new DevHostFailure(REQUEST_FAILED);
-      const token = z
-        .object({ token: z.uuid() })
-        .strict()
-        .parse(await response.json()).token;
-      resolvedDevHostSession = token;
-      return token;
-    })();
-    devHostSession = pending;
-    // A failed bootstrap is not a permanent poison pill for this document.
-    // Clear only the promise that failed so a newer forced rebootstrap cannot
-    // be erased by an older rejection racing it.
-    void pending.catch(() => {
-      if (devHostSession === pending) devHostSession = null;
+    }
+    const current = bootstrap;
+    current.waiters += 1;
+    return new Promise<string | null>((resolve, reject) => {
+      let active = true;
+      const finish = (): boolean => {
+        if (!active) return false;
+        active = false;
+        signal?.removeEventListener("abort", cancel);
+        current.waiters = Math.max(0, current.waiters - 1);
+        return true;
+      };
+      const cancel = (): void => {
+        if (!finish()) return;
+        if (!current.settled && current.waiters === 0 && devHostSession === current) {
+          current.controller.abort();
+        }
+        reject(new DevHostFailure(DISPOSED));
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      void current.promise.then(
+        (value) => {
+          if (finish()) resolve(value);
+        },
+        (error) => {
+          if (finish()) reject(error);
+        },
+      );
     });
-    return pending;
   };
 
   const url = (pathname: string): string => `${config.daemonOrigin}${pathname}`;
@@ -396,7 +455,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      let hostSession = await loadDevHostSession();
+      let hostSession = await loadDevHostSession(false, controller.signal, timeoutMs);
       const gatewayLogicalGet = config.transport === "same-origin-gateway" && init.method === "GET";
       const wireMethod = gatewayLogicalGet ? "POST" : init.method;
       const wireHeaders = {
@@ -431,7 +490,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
               .catch(() => null),
           ).success;
       if (staleGatewaySession) {
-        hostSession = await loadDevHostSession(true);
+        hostSession = await loadDevHostSession(true, controller.signal, timeoutMs);
         response = await fetch(url(pathname), {
           method: wireMethod,
           headers: {
@@ -830,7 +889,8 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   }
 
   async function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
-    await loadDevHostSession();
+    await loadDevHostSession(false, signal);
+    if (signal.aborted || disposed) throw new DevHostFailure(DISPOSED);
     return new Promise((resolve, reject) => {
       const attemptEpoch = ++eventSocketEpoch;
       eventSocketSemantic = desiredSemanticMode();
@@ -1509,10 +1569,11 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           return { status: "error", error: INVALID_REQUEST };
         }
         try {
-          await loadIdentity();
+          await loadIdentity(signal);
         } catch (error) {
           return { status: "error", error: failureOf(error) };
         }
+        if (disposed || signal?.aborted) return { status: "error", error: DISPOSED };
         const subscriptionId = ++nextSubscriptionId;
         let resolveReady: ((result: DesktopDaemonHostSubscriptionResult) => void) | null = null;
         const ready =
@@ -1613,6 +1674,8 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       disposed = true;
       uninstallWebSocketSession();
       resolvedDevHostSession = null;
+      devHostSession?.controller.abort();
+      devHostSession = null;
       for (const subscription of subscriptions.values()) {
         if (!subscription.readySettled) {
           subscription.readySettled = true;

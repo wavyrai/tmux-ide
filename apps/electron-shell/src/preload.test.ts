@@ -220,40 +220,63 @@ describe("desktop preload daemon bridge", () => {
     electron.invoke.mockReset();
   });
 
-  it("clears unclaimed early events across repeated failed subscribe churn", async () => {
+  it("does not report a committed mutation as cancelled", async () => {
+    const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
+    let settleMutation!: (value: unknown) => void;
+    electron.invoke.mockImplementation(async (channel: string) => {
+      expect(channel).toBe(HOST_IPC.daemonRequest);
+      return new Promise((resolve) => {
+        settleMutation = resolve;
+      });
+    });
+    const controller = new AbortController();
+    const refreshWithInjectedSignal = capabilities.daemon.refreshConnection as unknown as (
+      signal: AbortSignal,
+    ) => ReturnType<HostCapabilities["daemon"]["refreshConnection"]>;
+    const pending = refreshWithInjectedSignal(controller.signal);
+    controller.abort();
+    settleMutation({
+      outcome: "unchanged",
+      daemon: { status: "unavailable", code: "record-missing", reason: "down" },
+    });
+    await expect(pending).resolves.toMatchObject({ outcome: "unchanged" });
+    expect(
+      electron.invoke.mock.calls.some(([channel]) => channel === HOST_IPC.daemonCancelRequest),
+    ).toBe(false);
+    electron.invoke.mockReset();
+  });
+
+  it("keeps a successful handoff buffer when a concurrent subscribe fails", async () => {
     const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
     const earlyEvent: DesktopDaemonEvent = { type: "workspaces.changed" };
-    for (let index = 1; index <= 65; index += 1) {
-      electron.invoke.mockImplementationOnce(async () => {
-        electron.listeners.get(HOST_IPC.daemonEvent)?.(
-          {},
-          {
-            subscriptionId: `desktop-subscription-${index}`,
-            event: earlyEvent,
-          },
-        );
-        return { status: "error", error: { code: "event-unavailable", reason: "failed" } };
+    const settlements: Array<(value: unknown) => void> = [];
+    electron.invoke.mockImplementation(async (channel: string) => {
+      expect(channel).toBe(HOST_IPC.daemonSubscribe);
+      return new Promise((resolve) => {
+        settlements.push(resolve);
       });
-      await expect(
-        capabilities.daemon.subscribe({ workspaceNames: ["product"] }, vi.fn()),
-      ).resolves.toMatchObject({
-        status: "error",
-      });
-    }
-    const received: DesktopDaemonEvent[] = [];
-    electron.invoke.mockImplementationOnce(async () => {
-      electron.listeners.get(HOST_IPC.daemonEvent)?.(
-        {},
-        {
-          subscriptionId: "desktop-subscription-66",
-          event: earlyEvent,
-        },
-      );
-      return { status: "subscribed", subscriptionId: "desktop-subscription-66" };
     });
-    await capabilities.daemon.subscribe({ workspaceNames: ["product"] }, (event) =>
+    const received: DesktopDaemonEvent[] = [];
+    const failed = capabilities.daemon.subscribe({ workspaceNames: ["failed"] }, vi.fn());
+    const successful = capabilities.daemon.subscribe({ workspaceNames: ["product"] }, (event) =>
       received.push(event),
     );
+    await vi.waitFor(() => expect(settlements).toHaveLength(2));
+    electron.listeners.get(HOST_IPC.daemonEvent)?.(
+      {},
+      { subscriptionId: "desktop-subscription-99", event: earlyEvent },
+    );
+    settlements[0]?.({
+      status: "error",
+      error: { code: "event-unavailable", reason: "failed" },
+    });
+    await expect(failed).resolves.toMatchObject({ status: "error" });
+    settlements[1]?.({
+      status: "subscribed",
+      subscriptionId: "desktop-subscription-99",
+    });
+    await expect(successful).resolves.toMatchObject({ status: "subscribed" });
     expect(received).toEqual([earlyEvent]);
+    electron.invoke.mockReset();
   });
 });

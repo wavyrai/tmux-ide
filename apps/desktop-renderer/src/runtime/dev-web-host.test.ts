@@ -409,6 +409,48 @@ describe("development gateway host sessions", () => {
     capabilities: { appWindowMutation: { available: true } },
   };
 
+  it("retires an event subscribe aborted during host-session bootstrap", async () => {
+    let bootstrapSignal: AbortSignal | undefined;
+    const sockets: unknown[] = [];
+    vi.stubGlobal(
+      "WebSocket",
+      class {
+        constructor() {
+          sockets.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        expect(pathname).toBe("/__tmux_ide_host_session");
+        bootstrapSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          bootstrapSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const controller = new AbortController();
+    const pending = host.daemon.subscribe(
+      { workspaceNames: ["alpha"] },
+      vi.fn(),
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(bootstrapSignal).toBeDefined());
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({
+      status: "error",
+      error: { code: "disposed" },
+    });
+    expect(bootstrapSignal?.aborted).toBe(true);
+    expect(sockets).toHaveLength(0);
+    host.dispose();
+  });
+
   it("keeps a host session in one document generation and never revives sessionStorage", async () => {
     const readRetainedSession = vi.fn(() => "99999999-9999-4999-8999-999999999999");
     vi.stubGlobal("window", {
