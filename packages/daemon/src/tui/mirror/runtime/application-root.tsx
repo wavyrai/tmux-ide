@@ -5,7 +5,7 @@
  * canvas at exact tmux geometry with full color/attribute fidelity, local
  * scrollback (wheel; ↑n/depth badge; any key snaps live), real SGR mouse
  * forwarding into panes whose app enabled mouse mode, request-driven up to 60fps
- * (8ms coalesced state publication + 30fps renderer target / 60fps burst ceiling)
+ * (8ms coalesced state publication + 60fps renderer target / ceiling)
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
  * untouched) — except HOSTED (M23.2): launched by `tmux-ide app --detachable`
  * inside the internal `_tmux-ide-app` session (TMUX_IDE_HOSTED=1), ^q puts the
@@ -195,6 +195,7 @@
 import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, openSync, writeSync, closeSync } from "node:fs";
+import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -534,7 +535,6 @@ import {
   type SpawnWhere,
 } from "../agent-lifecycle.ts";
 import { executeTuiAgentProvisioning } from "../agent-provisioning-executor.ts";
-import { getManifests } from "../../detect/manifest-loader.ts";
 import { agentsByPane } from "../agent-chip.ts";
 import { scrollThumb, trackZone, pageTop, dragTop } from "../scrollbar-model.ts";
 import {
@@ -896,8 +896,7 @@ const loadTuiAppConfig = () => {
 const createTuiRenderer = async () => {
   appRenderer = await createCliRenderer({
     exitOnCtrlC: false,
-    targetFps: 30,
-    maxFps: 60,
+    ...TUI_RENDERER_CADENCE,
     autoFocus: false,
     useKittyKeyboard: KITTY_KEYS ? {} : null,
     consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
@@ -3958,6 +3957,15 @@ const mountTuiRoot = () => {
     // The kind list / launch commands / exact argv are pure in
     // agent-lifecycle.ts; only the dialog flows and the io live here.
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const loadAgentManifests = async () => {
+      try {
+        const { getManifests } = await import("../../detect/manifest-loader.ts");
+        return getManifests();
+      } catch {
+        setStatusNote("agent definitions could not be loaded");
+        return null;
+      }
+    };
     /** One awaited tmux call; errors are swallowed (a dead pane target is a
      *  normal race — the fleet poll shows the truth moments later). */
     const tmuxRun = (args: string[]) =>
@@ -4029,7 +4037,8 @@ const mountTuiRoot = () => {
      *  instead (same pane id, cwd pinned explicitly). Both paths clear the
      *  authority stamps. */
     const restartAgentFlow = async (a: Pick<AgentRowInput, "paneId" | "kind">) => {
-      const manifests = getManifests();
+      const manifests = await loadAgentManifests();
+      if (!manifests) return;
       const live = await paneStartAndPath(a.paneId);
       if (!live) {
         setStatusNote("that pane is gone — refreshing");
@@ -4200,7 +4209,8 @@ const mountTuiRoot = () => {
     };
     const newAgentFlow = async (ctx: NewAgentContext) => {
       setHoverIf(null); // the overlay owns the pointer, like the palette
-      const manifests = getManifests();
+      const manifests = await loadAgentManifests();
+      if (!manifests) return;
       const shape = spawnShape(ctx);
       const fallback = defaultSpawnPlacement(shape);
       const { last } = spawnMemoryFor(ctx);
