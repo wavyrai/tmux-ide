@@ -31,7 +31,9 @@ const OPENTUI_ORIGIN = "tmux-ide://opentui";
 const OPENTUI_HOST_CLIENT_ID = `opentui:${process.pid}`;
 
 export interface OpenTuiSessionRuntimeLane {
+  readonly daemonInstanceId: string;
   readonly workspaceName: string;
+  readonly generation: string | null;
   readonly connectionIdentity: string;
   readonly viewerMode: "interactive" | "read-only";
   readonly ownsInput: boolean;
@@ -73,6 +75,7 @@ export async function connectOpenTuiSessionRuntime(
 
   const source = new SemanticTerminalRenderSource();
   const pending = new Map<string, Parameters<SemanticPaneReplica["accept"]>[0][]>();
+  let runtimeGeneration: string | null = null;
   const outbound: Array<TerminalDeliveryAck | TerminalDeliveryNack> = [];
   let runtimeClient: Awaited<ReturnType<typeof openPaneStreamRuntimeClient>> | null = null;
   const sendControl = (message: TerminalDeliveryAck | TerminalDeliveryNack): void => {
@@ -115,6 +118,7 @@ export async function connectOpenTuiSessionRuntime(
           );
           return;
         }
+        runtimeGeneration ??= negotiation.negotiated.generation;
         const replica = new SemanticPaneReplica({
           negotiated: negotiation.negotiated,
           workspaceName,
@@ -171,7 +175,9 @@ export async function connectOpenTuiSessionRuntime(
   };
 
   return {
+    daemonInstanceId: activeClient.daemonInstanceId,
     workspaceName,
+    generation: runtimeGeneration,
     connectionIdentity: `${activeClient.daemonInstanceId}:${activeClient.requestId}`,
     viewerMode,
     ownsInput: viewerMode === "interactive",

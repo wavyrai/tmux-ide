@@ -6,10 +6,15 @@
 export interface TuiPerformanceEventSink {
   readonly frame: (intervalMs: number) => void;
   readonly terminalPaint: (dirtyRows: number, durationMs: number) => void;
-  readonly terminalParse: (durationMs: number) => void;
-  readonly queueDepth: (current: number, capacity: number | null) => void;
-  readonly revisionLag: (lag: number) => void;
-  readonly reseed: () => void;
+  readonly terminalDelivery: (event: TuiTerminalDeliveryPerformanceEvent) => void;
+}
+
+export interface TuiTerminalDeliveryPerformanceEvent {
+  readonly parseMs: number;
+  readonly queuePeak: number;
+  readonly queueCapacity: number | null;
+  readonly revisionLagPeak: number;
+  readonly reseed: boolean;
 }
 
 let activeSink: TuiPerformanceEventSink | null = null;

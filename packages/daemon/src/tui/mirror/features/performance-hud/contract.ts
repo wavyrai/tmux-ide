@@ -6,6 +6,7 @@ export interface PerformanceHudHost {
   readonly authority: () => LocalPerformanceAuthorityV1;
   readonly installEventSink: (sink: TuiPerformanceEventSink) => () => void;
   readonly observeFrames: (listener: (intervalMs: number) => void) => () => void;
+  readonly scheduleIdle: (listener: () => void, delayMs: number) => () => void;
 }
 
 export interface PerformanceHudSession {

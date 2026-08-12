@@ -19,8 +19,8 @@ describe("performance HUD optional feature wiring", () => {
     );
     expect(hudBlock).not.toContain("requestLive");
     expect(hudBlock).not.toContain("setInterval");
-    expect(hudBlock).not.toContain("setTimeout");
     expect(hudBlock).not.toContain("requestAnimationFrame");
+    expect(hudBlock).toContain("scheduleIdle: (listener, delayMs)");
   });
 
   it("removes the legacy synchronous performance log path", () => {

@@ -388,7 +388,13 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
 
     this.updateHardwareCursor(cur, w, h);
 
-    performanceSink?.terminalPaint(this._dirtyRows.length, performance.now() - paintStartedAt);
+    if (performanceSink) {
+      try {
+        performanceSink.terminalPaint(this._dirtyRows.length, performance.now() - paintStartedAt);
+      } catch {
+        // Diagnostics are observational and can never break terminal paint.
+      }
+    }
   }
 
   /**

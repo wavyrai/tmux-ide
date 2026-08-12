@@ -73,10 +73,7 @@ describe("SemanticPaneReplica", () => {
     const sink = {
       frame: vi.fn(),
       terminalPaint: vi.fn(),
-      terminalParse: vi.fn(),
-      queueDepth: vi.fn(),
-      revisionLag: vi.fn(),
-      reseed: vi.fn(),
+      terminalDelivery: vi.fn(),
     };
     const remove = installTuiPerformanceEventSink(sink);
     const replica = new SemanticPaneReplica({
@@ -90,14 +87,14 @@ describe("SemanticPaneReplica", () => {
     replica.accept(delivery.envelope);
     for (const chunk of delivery.chunks) replica.accept(chunk);
 
-    expect(sink.queueDepth.mock.calls).toEqual([
-      [1, 1],
-      [0, 1],
-    ]);
-    expect(sink.revisionLag.mock.calls).toEqual([[1], [0]]);
-    expect(sink.terminalParse).toHaveBeenCalledOnce();
-    expect(sink.terminalParse.mock.calls[0]![0]).toBeGreaterThanOrEqual(0);
-    expect(sink.reseed).not.toHaveBeenCalled();
+    expect(sink.terminalDelivery).toHaveBeenCalledOnce();
+    expect(sink.terminalDelivery.mock.calls[0]![0]).toMatchObject({
+      queuePeak: 1,
+      queueCapacity: 1,
+      revisionLagPeak: 1,
+      reseed: false,
+    });
+    expect(sink.terminalDelivery.mock.calls[0]![0].parseMs).toBeGreaterThanOrEqual(0);
 
     remove();
     const second = new SemanticPaneReplica({
@@ -110,7 +107,33 @@ describe("SemanticPaneReplica", () => {
     const silent = seedMessages(blankTerminalReplicaSnapshot(2, 1), "301");
     second.accept(silent.envelope);
     for (const chunk of silent.chunks) second.accept(chunk);
-    expect(sink.terminalParse).toHaveBeenCalledOnce();
+    expect(sink.terminalDelivery).toHaveBeenCalledOnce();
+  });
+
+  it("isolates a diagnostic observer failure from terminal protocol truth", () => {
+    const remove = installTuiPerformanceEventSink({
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalDelivery: () => {
+        throw new Error("diagnostic failure");
+      },
+    });
+    const ack = vi.fn();
+    const nack = vi.fn();
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack,
+      nack,
+    });
+    const delivery = seedMessages(blankTerminalReplicaSnapshot(2, 1), "302");
+    replica.accept(delivery.envelope);
+    for (const chunk of delivery.chunks) replica.accept(chunk);
+    expect(ack).toHaveBeenCalledOnce();
+    expect(nack).not.toHaveBeenCalled();
+    expect(replica.snapshot).not.toBeNull();
+    remove();
   });
 
   it("ACKs only after retained state applies and emits one compound change", () => {

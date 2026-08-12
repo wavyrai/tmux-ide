@@ -292,7 +292,7 @@ export class SemanticPaneReplica {
     let committed: ReturnType<typeof commitTerminalDelivery>;
     let payload: ReturnType<typeof decodeSemanticTerminalUpdate>;
     let envelope: TerminalDeliveryEnvelope;
-    let performanceSink: ReturnType<typeof currentTuiPerformanceEventSink> = null;
+    const performanceSink = currentTuiPerformanceEventSink();
     let parseStartedAt = 0;
     const previous = this.#snapshot;
     try {
@@ -302,33 +302,31 @@ export class SemanticPaneReplica {
       const admittedEnvelope = this.#delivery.inFlight;
       if (!admittedEnvelope || this.#delivery.nextChunk !== admittedEnvelope.chunkCount) return;
       envelope = admittedEnvelope;
-      performanceSink = currentTuiPerformanceEventSink();
-      if (performanceSink) {
-        parseStartedAt = performance.now();
-        performanceSink.queueDepth(1, 1);
-        performanceSink.revisionLag(
-          Math.max(0, envelope.canonicalRevision - this.#delivery.appliedRevision),
-        );
-      }
+      if (performanceSink) parseStartedAt = performance.now();
       const staged = completeTerminalDelivery(this.#delivery, assembler);
       payload = decodeSemanticTerminalUpdate(staged.bytes);
       committed = commitTerminalDelivery(this.#delivery, staged);
     } catch {
-      performanceSink?.queueDepth(0, 1);
       this.#fail("decode-failed", message.transactionId);
       return;
     }
     this.#delivery = committed.state;
     this.#assembler = null;
     this.#applySnapshot(previous, committed.state.canonicalSnapshot, envelope, payload);
+    const reseed = envelope.frame === "seed" && this.#hasAcceptedSeed;
+    if (envelope.frame === "seed") this.#hasAcceptedSeed = true;
     if (performanceSink) {
-      if (envelope.frame === "seed") {
-        if (this.#hasAcceptedSeed) performanceSink.reseed();
-        this.#hasAcceptedSeed = true;
+      try {
+        performanceSink.terminalDelivery({
+          parseMs: performance.now() - parseStartedAt,
+          queuePeak: 1,
+          queueCapacity: 1,
+          revisionLagPeak: Math.max(0, envelope.canonicalRevision - (envelope.baseRevision ?? -1)),
+          reseed,
+        });
+      } catch {
+        // Diagnostics are observational and can never alter protocol truth.
       }
-      performanceSink.revisionLag(0);
-      performanceSink.queueDepth(0, 1);
-      performanceSink.terminalParse(performance.now() - parseStartedAt);
     }
     // ACK strictly follows imperative presentation-state application. A failed
     // callback/transport is a connection fault, never evidence that decode or

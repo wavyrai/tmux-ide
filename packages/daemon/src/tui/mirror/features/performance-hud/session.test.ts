@@ -1,13 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { LocalPerformanceAuthorityV1 } from "@tmux-ide/contracts";
 import type { TuiPerformanceEventSink } from "../../performance-events.ts";
 import { createPerformanceHudSession } from "./session.ts";
 
-const authority = {
+const authorityA: LocalPerformanceAuthorityV1 = {
   daemonInstanceId: "00000000-0000-4000-8000-000000000001",
   workspaceName: "workspace",
   generation: "00000000-0000-4000-8000-000000000001",
-  incarnation: "pane-a:1",
+  incarnation: null,
+};
+const delivery = {
+  parseMs: 1,
+  queuePeak: 1,
+  queueCapacity: 1,
+  revisionLagPeak: 1,
+  reseed: false,
 } as const;
 
 describe("OpenTUI performance HUD session", () => {
@@ -20,6 +28,7 @@ describe("OpenTUI performance HUD session", () => {
     const removeFrames = vi.fn(() => {
       frame = null;
     });
+    const removeIdle = vi.fn();
     const installEventSink = vi.fn((value: TuiPerformanceEventSink) => {
       eventSink = value;
       return removeEvents;
@@ -29,9 +38,10 @@ describe("OpenTUI performance HUD session", () => {
       return removeFrames;
     });
     const session = createPerformanceHudSession({
-      authority: () => authority,
+      authority: () => authorityA,
       installEventSink,
       observeFrames,
+      scheduleIdle: () => removeIdle,
     });
 
     expect(session.snapshot()).toBeNull();
@@ -41,29 +51,96 @@ describe("OpenTUI performance HUD session", () => {
     expect(session.open()).toBe(true);
     expect(installEventSink).toHaveBeenCalledTimes(1);
     expect(observeFrames).toHaveBeenCalledTimes(1);
+    frame!(16); // HUD's initial publication frame establishes the baseline.
     frame!(20);
     eventSink!.terminalPaint(3, 2);
     // Paint/frame samples do not publish a Solid update from inside a frame.
     expect(session.snapshot()).toMatchObject({ activeFps: null, paintMs: { count: 0 } });
-    eventSink!.terminalParse(1);
+    eventSink!.terminalDelivery(delivery);
     expect(session.snapshot()).toMatchObject({
       activeFps: 50,
       dirtyRows: { latest: 3 },
       parseMs: { latest: 1 },
       paintMs: { latest: 2 },
+      queueDepth: { current: 0, peak: 1 },
+      revisionLag: { current: 0, peak: 1 },
     });
     session.hide();
     session.hide();
     expect(session.snapshot()).toBeNull();
     expect(removeEvents).toHaveBeenCalledTimes(1);
     expect(removeFrames).toHaveBeenCalledTimes(1);
+    expect(removeIdle).toHaveBeenCalledTimes(1);
+    session.dispose();
+  });
+
+  it("filters invalid intervals, ignores the first frame, and retires active FPS at idle", () => {
+    let sink!: TuiPerformanceEventSink;
+    let frame!: (intervalMs: number) => void;
+    let idle!: () => void;
+    const scheduleIdle = vi.fn((callback: () => void) => {
+      idle = callback;
+      return vi.fn();
+    });
+    const session = createPerformanceHudSession({
+      authority: () => authorityA,
+      installEventSink: (next) => {
+        sink = next;
+        return () => undefined;
+      },
+      observeFrames: (next) => {
+        frame = next;
+        return () => undefined;
+      },
+      scheduleIdle,
+    });
+    session.show();
+    frame(16); // initial HUD frame establishes the baseline
+    frame(0);
+    frame(Number.NaN);
+    expect(scheduleIdle).not.toHaveBeenCalled();
+    frame(25);
+    expect(scheduleIdle).toHaveBeenCalledTimes(1);
+    sink.terminalDelivery(delivery);
+    expect(session.snapshot()?.activeFps).toBe(40);
+    idle();
+    expect(session.snapshot()?.activeFps).toBeNull();
+    session.dispose();
+  });
+
+  it("recreates its bounded aggregator when runtime authority rolls over", () => {
+    let authority: LocalPerformanceAuthorityV1 = authorityA;
+    let sink!: TuiPerformanceEventSink;
+    const session = createPerformanceHudSession({
+      authority: () => authority,
+      installEventSink: (next) => {
+        sink = next;
+        return () => undefined;
+      },
+      observeFrames: () => () => undefined,
+      scheduleIdle: () => () => undefined,
+    });
+    session.show();
+    sink.terminalDelivery(delivery);
+    expect(session.snapshot()).toMatchObject({ authority: authorityA, parseMs: { count: 1 } });
+    authority = {
+      ...authorityA,
+      daemonInstanceId: "00000000-0000-4000-8000-000000000002",
+      generation: "00000000-0000-4000-8000-000000000002",
+    };
+    sink.terminalDelivery({ ...delivery, parseMs: 4 });
+    expect(session.snapshot()).toMatchObject({
+      authority,
+      parseMs: { count: 1, latest: 4 },
+      reseeds: 0,
+    });
     session.dispose();
   });
 
   it("publishes no post-dispose events and cannot be reopened", () => {
     let sink: TuiPerformanceEventSink | null = null;
     const session = createPerformanceHudSession({
-      authority: () => authority,
+      authority: () => authorityA,
       installEventSink: (next) => {
         sink = next;
         return () => {
@@ -71,11 +148,12 @@ describe("OpenTUI performance HUD session", () => {
         };
       },
       observeFrames: () => () => undefined,
+      scheduleIdle: () => () => undefined,
     });
     session.show();
     const retired = sink!;
     session.dispose();
-    retired.terminalParse(5);
+    retired.terminalDelivery(delivery);
     session.show();
     expect(session.disposed()).toBe(true);
     expect(session.open()).toBe(false);

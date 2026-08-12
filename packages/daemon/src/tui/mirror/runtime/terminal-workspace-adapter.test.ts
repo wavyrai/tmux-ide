@@ -14,7 +14,9 @@ function deferred<T>() {
 
 function lane(name: string): OpenTuiSessionRuntimeLane {
   return {
+    daemonInstanceId: "00000000-0000-4000-8000-000000000001",
     workspaceName: name,
+    generation: "00000000-0000-4000-8000-000000000001",
     connectionIdentity: name,
     viewerMode: "interactive",
     ownsInput: true,

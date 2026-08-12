@@ -1,32 +1,4 @@
-/** Legacy resize flight recorder plus pure benchmark reporting helpers. */
-import { appendFileSync } from "node:fs";
-
-// ── resize tap (M23.5) ──────────────────────────────────────────────────────
-// The event-driven geometry pipeline's flight recorder: one timestamped line
-// per hop — %layout-change received (`notify`), geometry applied into the
-// mirrors (`geometry-applied`), a canvas re-pin (`repin`), a per-pane term
-// resize (`pane-resize`), and per-%output mirror dims (`output`) — so a resize
-// battery can assert "geometry applied <5ms after the notify" and "no %output
-// parsed into stale dims" straight from the log. Own env gate
-// (TMUX_IDE_ZZ_RESIZE_TAP): the per-output line is intentionally isolated from
-// the demand-loaded in-app performance HUD.
-
-const RESIZE_LOG = "/tmp/zz-resize-tap.log";
-
-/** Append one `<t> <event> <detail>` line. No-op unless TMUX_IDE_ZZ_RESIZE_TAP. */
-export function tapResize(event: string, detail = ""): void {
-  if (!process.env.TMUX_IDE_ZZ_RESIZE_TAP) return;
-  try {
-    appendFileSync(
-      RESIZE_LOG,
-      `${performance.now().toFixed(2)} ${event}${detail ? ` ${detail}` : ""}\n`,
-    );
-  } catch {
-    /* perf tap only */
-  }
-}
-
-// ── pure reporting helpers (used by scripts/perf-mirror.mjs) ────────────────
+/** Pure reporting helpers retained for benchmark result processing. */
 
 /** A percentile of an ASCENDING-sorted array, linearly interpolated. Empty → 0. */
 export function percentile(sortedAsc: number[], p: number): number {

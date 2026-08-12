@@ -9,10 +9,7 @@ import {
 const sink = (): TuiPerformanceEventSink => ({
   frame: vi.fn(),
   terminalPaint: vi.fn(),
-  terminalParse: vi.fn(),
-  queueDepth: vi.fn(),
-  revisionLag: vi.fn(),
-  reseed: vi.fn(),
+  terminalDelivery: vi.fn(),
 });
 
 describe("OpenTUI performance event bridge", () => {

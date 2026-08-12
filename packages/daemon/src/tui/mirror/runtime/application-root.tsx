@@ -4615,10 +4615,10 @@ const mountTuiRoot = () => {
           const daemon = readCanonicalDaemonInfo();
           const lane = sessionRuntimeLane();
           return {
-            daemonInstanceId: daemon?.instanceId ?? null,
+            daemonInstanceId: lane?.daemonInstanceId ?? daemon?.instanceId ?? null,
             workspaceName: lane?.workspaceName ?? (contextSession() || null),
-            generation: null,
-            incarnation: lane?.connectionIdentity ?? null,
+            generation: lane?.generation ?? null,
+            incarnation: null,
           };
         },
         installEventSink: installTuiPerformanceEventSink,
@@ -4631,6 +4631,10 @@ const mountTuiRoot = () => {
           };
           appRenderer.on("frame", onFrame);
           return () => appRenderer.off("frame", onFrame);
+        },
+        scheduleIdle: (listener, delayMs) => {
+          const timer = setTimeout(listener, delayMs);
+          return () => clearTimeout(timer);
         },
       });
       setPerformanceHudFeature(() => feature);
