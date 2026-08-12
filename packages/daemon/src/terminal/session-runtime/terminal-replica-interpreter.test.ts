@@ -49,6 +49,13 @@ describe("TerminalReplicaInterpreter", () => {
       interpreter.enqueue({ type: "write", data: new TextEncoder().encode("B"), trace }),
     ]);
     expect(observed).toEqual([null, trace]);
+
+    observed.length = 0;
+    await Promise.all([
+      interpreter.enqueue({ type: "write", data: new TextEncoder().encode("C"), trace }),
+      interpreter.enqueue({ type: "write", data: new TextEncoder().encode("D") }),
+    ]);
+    expect(observed).toEqual([trace, null]);
   });
 
   it("publishes one atomic painted-capture seed and orders resize after partial CSI", async () => {
