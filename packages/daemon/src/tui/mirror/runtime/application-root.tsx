@@ -481,6 +481,8 @@ import type {
 import type { SettingsFeatureSession } from "../features/settings/contract.ts";
 import type { SettingsCommandId } from "../features/settings/catalog.ts";
 import { ModalAdmissionCoordinator } from "./modal-admission-coordinator.ts";
+import { OrderedAsyncIntentQueue, RetryableAsyncRequest } from "./deferred-intent-queue.ts";
+import { cancelModalPointerCapture } from "./modal-pointer-capture.ts";
 import { loadAppConfig, loadRawAppConfig, updateAppConfig } from "../../../lib/app-config.ts";
 import {
   APP_FOCUS_OPTION,
@@ -1055,12 +1057,26 @@ const mountTuiRoot = () => {
       modalAdmission.snapshot(),
     );
     const disposeModalAdmissionSubscription = modalAdmission.subscribe(setModalAdmissionSnapshot);
+    type ModalAdmissionToken = NonNullable<ReturnType<typeof modalAdmission.reserve>>;
+    // Reserving a modal is also the synchronous pointer-capture boundary. The
+    // concrete cancellation hook is installed once the gesture state below is
+    // assembled; keeping the boundary here makes it impossible for a loader to
+    // yield before the underlying surface has stopped receiving input.
+    let cancelPointerCaptureForModal = (): void => undefined;
+    const reserveModal = (kind: "dialogs" | "settings") => {
+      const token = modalAdmission.reserve(kind);
+      if (token) cancelPointerCaptureForModal();
+      return token;
+    };
     let retryModalIntent: (() => void) | null = null;
-    let dialogsFeatureRequest: Promise<ApplicationOptionalFeatures["dialogs"] | undefined> | null =
-      null;
-    let settingsFeatureRequest: Promise<
+    const dialogsFeatureRequest = new RetryableAsyncRequest<
+      ApplicationOptionalFeatures["dialogs"] | undefined
+    >();
+    const settingsFeatureRequest = new RetryableAsyncRequest<
       ApplicationOptionalFeatures["settings"] | undefined
-    > | null = null;
+    >();
+    let dialogAdmissionToken: ModalAdmissionToken | null = null;
+    const dialogIntentQueue = new OrderedAsyncIntentQueue();
 
     const ensureDialogsSession = async (
       token: ReturnType<typeof modalAdmission.reserve>,
@@ -1070,8 +1086,9 @@ const mountTuiRoot = () => {
       if (existing) return existing;
       let feature = dialogsFeature();
       if (!feature) {
-        dialogsFeatureRequest ??= optionalFeatures.request("dialogs");
-        feature = await dialogsFeatureRequest;
+        // RetryableAsyncRequest never retains a rejected Promise, so a dialogs
+        // failure cannot poison this path or the settings flow that depends on it.
+        feature = await dialogsFeatureRequest.get(() => optionalFeatures.request("dialogs"));
         if (!feature || !modalAdmission.isCurrent(token)) return undefined;
         setDialogsFeature(() => feature);
       }
@@ -1104,26 +1121,47 @@ const mountTuiRoot = () => {
           return fallback;
         }
       }
-      const retry = () => void runDialogIntent(fallback, invoke);
-      const token = modalAdmission.reserve("dialogs");
+      const currentToken = dialogAdmissionToken;
+      const token =
+        currentToken && modalAdmission.isCurrent(currentToken)
+          ? currentToken
+          : reserveModal("dialogs");
       if (!token) return fallback;
-      retryModalIntent = retry;
-      modalAdmission.markLoading(token);
-      try {
-        const session = await ensureDialogsSession(token);
-        if (!session || !modalAdmission.isCurrent(token)) return fallback;
-        modalAdmission.markReady(token);
-        const result = await invoke(session);
-        if (modalAdmission.isCurrent(token)) {
-          retryModalIntent = null;
-          modalAdmission.release(token);
+      dialogAdmissionToken = token;
+      const retry = () => void runDialogIntent(fallback, invoke);
+      retryModalIntent ??= retry;
+
+      // Calls made during the physical feature load are serialized in call
+      // order. This preserves every caller and dialog result instead of letting
+      // a later reserve supersede the first token. Once ready, nested calls made
+      // by the active dialog still join the live stack through the fast path.
+      const run = async (): Promise<Result> => {
+        try {
+          if (!modalAdmission.isCurrent(token)) return fallback;
+          // One failed physical load rejects the complete pre-readiness batch.
+          // Retry is a fresh explicit intent with a fresh admission generation.
+          if (modalAdmission.snapshot().phase === "error") return fallback;
+          modalAdmission.markLoading(token);
+          const session = await ensureDialogsSession(token);
+          if (!session || !modalAdmission.isCurrent(token)) return fallback;
+          modalAdmission.markReady(token);
+          return await invoke(session);
+        } catch (error) {
+          if (modalAdmission.isCurrent(token)) modalAdmission.markError(token, error);
+          return fallback;
+        } finally {
+          if (
+            dialogIntentQueue.pendingCount === 1 &&
+            modalAdmission.isCurrent(token) &&
+            modalAdmission.snapshot().phase !== "error"
+          ) {
+            retryModalIntent = null;
+            modalAdmission.release(token);
+            dialogAdmissionToken = null;
+          }
         }
-        return result;
-      } catch (error) {
-        dialogsFeatureRequest = null;
-        if (modalAdmission.isCurrent(token)) modalAdmission.markError(token, error);
-        return fallback;
-      }
+      };
+      return dialogIntentQueue.enqueue(run);
     };
 
     // Compatibility-shaped local ports keep every existing non-settings caller
@@ -1408,8 +1446,8 @@ const mountTuiRoot = () => {
       filesFeatureRequest = null;
       changesFeatureRequest = null;
       missionsActivityRequest = null;
-      dialogsFeatureRequest = null;
-      settingsFeatureRequest = null;
+      dialogsFeatureRequest.clear();
+      settingsFeatureRequest.clear();
       filesSession()?.dispose();
       changesSession()?.dispose();
       missionsActivitySession()?.dispose();
@@ -2945,6 +2983,31 @@ const mountTuiRoot = () => {
     // debt-tracked: paid exactly ONCE, to the pane that got the down (wherever
     // the pointer is at release), and never for gestures we consumed locally.
     let forwardedDown: string | null = null;
+    cancelPointerCaptureForModal = () =>
+      cancelModalPointerCapture({
+        dragKind: dragging?.kind ?? null,
+        cancelBorderResize: () => resizeTransaction.cancelDrag(),
+        clearDragging: () => {
+          dragging = null;
+        },
+        clearSelecting: () => {
+          selecting = null;
+        },
+        clearDragAutoScroll: () => {
+          dragAutoScroll = null;
+        },
+        clearPendingPress: () => {
+          pendingPress = null;
+        },
+        clearForwardedDown: () => {
+          forwardedDown = null;
+        },
+        clearVisuals: () => {
+          setHoveredPaneSeparator(null);
+          setActivePaneResize(null);
+          setNote("");
+        },
+      });
 
     // ── RIGHT-CLICK CONTEXT MENU (M19.2) ─────────────────────────────────────
     // A small overlay opened at the pointer on a right-button press (SGR button
@@ -5045,7 +5108,7 @@ const mountTuiRoot = () => {
     // ── SETTINGS AS COMMANDS (M22.4) ─────────────────────────────────────────
     const runSettingsCommand = async (id: SettingsCommandId): Promise<void> => {
       const retry = () => void runSettingsCommand(id);
-      const token = modalAdmission.reserve("settings");
+      const token = reserveModal("settings");
       if (!token) return;
       retryModalIntent = retry;
       setHoverIf(null);
@@ -5055,8 +5118,7 @@ const mountTuiRoot = () => {
         if (!dialogs || !modalAdmission.isCurrent(token)) return;
         let feature = settingsFeature();
         if (!feature) {
-          settingsFeatureRequest ??= optionalFeatures.request("settings");
-          feature = await settingsFeatureRequest;
+          feature = await settingsFeatureRequest.get(() => optionalFeatures.request("settings"));
           if (!feature || !modalAdmission.isCurrent(token)) return;
           setSettingsFeature(() => feature);
         }
@@ -5090,7 +5152,6 @@ const mountTuiRoot = () => {
         retryModalIntent = null;
         modalAdmission.release(token);
       } catch (error) {
-        settingsFeatureRequest = null;
         if (modalAdmission.isCurrent(token)) modalAdmission.markError(token, error);
       }
     };
@@ -7416,11 +7477,6 @@ const mountTuiRoot = () => {
       // late-mounted menu overlay, whose only ancestor handler is root, is handled
       // exactly once there). Idempotent on the real MouseEvent; a no-op in tests.
       e.stopPropagation?.();
-      // A gesture that already owns the pointer must see every event before
-      // dialogs, menus, palettes, or the status strip can consume its release.
-      // New seam presses retain their normal lower priority below.
-      if (dragging?.kind === "sidebar" && routeSidebarResizePointer(e, true)) return;
-      if (routeCapturedDragPointer(e)) return;
       // While a DIALOG is open it OWNS pointer routing (M22.4) — topmost, so
       // checked before the menu and the palette, with the SAME pure geometry the
       // render places the box with (dialogGeomNow / dialogRowAt / dialogContains
@@ -7448,6 +7504,11 @@ const mountTuiRoot = () => {
         }
         return;
       }
+      // Modal reservation synchronously cancels capture. Captured gesture
+      // routing therefore runs only after the modal gate and cannot mutate an
+      // underlying resize/scroll/selection while a lazy surface owns input.
+      if (dragging?.kind === "sidebar" && routeSidebarResizePointer(e, true)) return;
+      if (routeCapturedDragPointer(e)) return;
       // While the context menu is open it OWNS pointer routing: a down on an item
       // runs it (a submenu row wins over the parent), a down elsewhere inside a box
       // is a no-op (stays open), a down OUTSIDE both closes it. Motion CASCADES the

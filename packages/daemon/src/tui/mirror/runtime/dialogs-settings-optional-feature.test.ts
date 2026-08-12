@@ -21,11 +21,24 @@ describe("production dialogs and settings cutover", () => {
   });
 
   it("reserves modal admission before every optional dialog/settings request", () => {
-    expect(source).toContain('const token = modalAdmission.reserve("dialogs")');
-    expect(source).toContain('const token = modalAdmission.reserve("settings")');
+    expect(source).toContain('reserveModal("dialogs")');
+    expect(source).toContain('reserveModal("settings")');
+    expect(source).toContain("if (token) cancelPointerCaptureForModal()");
     expect(source).toContain("if (!token || !modalAdmission.isCurrent(token)) return undefined");
     expect(source).toContain("dialogOpen: modalAdmissionSnapshot().reserved");
     expect(source).toContain("if (modalAdmissionSnapshot().reserved) return;");
+  });
+
+  it("gates pointer routing before every captured drag path", () => {
+    const routeStart = source.indexOf("const route = (e: RouteEvent) =>");
+    const modalGate = source.indexOf("if (modalAdmissionSnapshot().reserved)", routeStart);
+    const sidebarCapture = source.indexOf("routeSidebarResizePointer(e, true)", routeStart);
+    const paneCapture = source.indexOf("routeCapturedDragPointer(e)", routeStart);
+    expect(modalGate).toBeGreaterThan(routeStart);
+    expect(modalGate).toBeLessThan(sidebarCapture);
+    expect(modalGate).toBeLessThan(paneCapture);
+    expect(source).toContain("cancelModalPointerCapture({");
+    expect(source).toContain("cancelBorderResize: () => resizeTransaction.cancelDrag()");
   });
 
   it("keeps deferred feature modules outside the root first-frame closure", async () => {

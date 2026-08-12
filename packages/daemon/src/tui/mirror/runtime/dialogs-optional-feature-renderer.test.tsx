@@ -11,6 +11,8 @@ import {
   stableFrame,
 } from "../testing/renderer-harness.test.ts";
 import { OptionalFeatureRegistry } from "./optional-feature-registry.ts";
+import { projectAgentTerminalCanvas } from "../workspace/agent-terminal-canvas.ts";
+import { AgentTerminalCanvas } from "../workspace/agent-terminal-canvas-view.tsx";
 
 type DialogFeature = typeof import("../features/dialogs/feature.tsx");
 type TestFeatures = { readonly dialogs: DialogFeature };
@@ -25,6 +27,8 @@ describe("deferred Dialog OpenTUI boundary", () => {
     const registry = new OptionalFeatureRegistry<TestFeatures>({ dialogs: loader });
 
     function Harness() {
+      const theme = createSemanticThemeSnapshot({ mode: "dark" });
+      const projection = projectAgentTerminalCanvas({ width: 48, height: 10, chromeRows: 2 });
       const [feature, setFeature] = createSignal<DialogFeature>();
       const [session, setSession] = createSignal<DialogFeatureSession>();
       void registry.request("dialogs").then((loaded) => {
@@ -42,12 +46,17 @@ describe("deferred Dialog OpenTUI boundary", () => {
       });
       return (
         <box id="dialog-shell" width={48} height={10} flexDirection="column">
-          <text id="dialog-terminal">terminal frame</text>
+          <AgentTerminalCanvas
+            theme={theme}
+            projection={projection}
+            chrome={<text>workspace · terminal</text>}
+            framebuffer={<text id="dialog-terminal">real tmux framebuffer identity</text>}
+          />
           <Show when={feature() && session()?.open()}>
             <Dynamic
               component={feature()!.DialogFeatureSurface}
               session={session()!}
-              theme={createSemanticThemeSnapshot({ mode: "dark" })}
+              theme={theme}
             />
           </Show>
         </box>
