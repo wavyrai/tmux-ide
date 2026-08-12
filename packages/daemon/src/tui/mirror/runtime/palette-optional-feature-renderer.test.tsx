@@ -3,6 +3,7 @@ import { Dynamic } from "@opentui/solid";
 import { describe, expect, it } from "bun:test";
 import { Show, createSignal, onCleanup } from "solid-js";
 
+import type { PaletteFeatureSession } from "../features/palette/contract.ts";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import {
   destroyTestRenderer,
@@ -11,42 +12,44 @@ import {
 } from "../testing/renderer-harness.test.ts";
 import { AgentTerminalCanvas } from "../workspace/agent-terminal-canvas-view.tsx";
 import { projectAgentTerminalCanvas } from "../workspace/agent-terminal-canvas.ts";
-import type { PaletteFeatureSession } from "../features/palette/contract.ts";
+import { createApplicationOptionalFeatureRegistry } from "./application-optional-features.ts";
+import { ModalAdmissionCoordinator } from "./modal-admission-coordinator.ts";
 
 type PaletteFeature = typeof import("../features/palette/feature.ts");
 
-describe("deferred Palette assembled OpenTUI boundary", () => {
-  it("retains terminal identity through loading/error/retry/open/close/settings transfer", async () => {
+describe("deferred Palette production OpenTUI boundary", () => {
+  it("assembles loader, admission, session, host adapter, and resident canvas", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const canvas = projectAgentTerminalCanvas({ width: 60, height: 16, chromeRows: 2 });
-    let fail = true;
+    const registry = createApplicationOptionalFeatureRegistry();
+    const admission = new ModalAdmissionCoordinator<"palette" | "settings">();
+    registry.admit();
+    const events: string[] = [];
+    let usageCount = 0;
     let open!: () => Promise<void>;
-    let close!: () => void;
-    let transferSettings!: () => void;
+    let ownedSession!: PaletteFeatureSession;
 
     function Harness() {
-      const [phase, setPhase] = createSignal<"closed" | "loading" | "error" | "ready" | "settings">(
-        "closed",
-      );
+      const [phase, setPhase] = createSignal<"closed" | "loading" | "ready" | "settings">("closed");
       const [feature, setFeature] = createSignal<PaletteFeature>();
       const [session, setSession] = createSignal<PaletteFeatureSession>();
+      const [currentSession, setCurrentSession] = createSignal("alpha");
       open = async () => {
+        const token = admission.reserve("palette");
+        if (!token) return;
+        events.push("palette:reserved");
+        admission.markLoading(token);
         setPhase("loading");
-        await Promise.resolve();
-        if (fail) {
-          fail = false;
-          setPhase("error");
-          return;
-        }
-        const loaded = await import("../features/palette/feature.ts");
+        const loaded = await registry.request("palette");
+        if (!loaded || !admission.isCurrent(token)) return;
         const owned = loaded.createPaletteFeatureSession({
           width: () => 60,
           height: () => 16,
           identity: () => ({
-            workspaceName: "alpha",
+            workspaceName: currentSession(),
             directory: "/repo",
             projectRoot: "/repo",
-            daemonIdentity: "daemon",
+            daemonIdentity: "daemon:4000",
             generation: 1,
           }),
           facts: () => ({
@@ -54,8 +57,8 @@ describe("deferred Palette assembled OpenTUI boundary", () => {
             surface: "terminal",
             currentSurface: "terminals",
             currentViewId: "terminals",
-            currentSession: "alpha",
-            sessions: ["alpha"],
+            currentSession: currentSession(),
+            sessions: ["alpha", "beta"],
             agents: [],
             panes: [],
             sizeMismatch: false,
@@ -74,18 +77,26 @@ describe("deferred Palette assembled OpenTUI boundary", () => {
           }),
           loadRepoFiles: async () => [],
           loadBuffers: async () => [],
-          dispatch: () => undefined,
+          dispatch: (intent) => {
+            if (intent.kind === "close") {
+              events.push("palette:released");
+              admission.release(token);
+              setPhase("closed");
+            } else if (intent.kind === "settings") {
+              usageCount += 1;
+              events.push(`settings:${admission.snapshot().phase}`);
+              setPhase("settings");
+            }
+          },
         });
         owned.openPalette();
+        ownedSession = owned;
         setFeature(() => loaded);
         setSession(() => owned);
         setPhase("ready");
+        admission.markReady(token);
+        setCurrentSession("beta");
       };
-      close = () => {
-        session()?.close();
-        setPhase("closed");
-      };
-      transferSettings = () => setPhase("settings");
       onCleanup(() => session()?.dispose());
       return (
         <box id="palette-shell" width={60} height={16}>
@@ -115,14 +126,27 @@ describe("deferred Palette assembled OpenTUI boundary", () => {
     const terminal = setup.renderer.root.findDescendantById("palette-terminal");
     await open();
     await setup.renderOnce();
-    await open();
-    await setup.renderOnce();
     expect(stableFrame(setup.captureCharFrame())).toContain("Navigator");
-    close();
-    transferSettings();
+    expect(
+      ownedSession
+        .entries()
+        .find((entry) => entry.action.kind === "attach" && entry.action.session === "beta")
+        ?.descriptor.current,
+    ).toBe(true);
+    const settings = ownedSession
+      .entries()
+      .find((entry) => entry.action.kind === "settings" && entry.action.id === "settings-keys")!;
+    while (ownedSession.snapshot().selectedCommandId !== settings.id) {
+      ownedSession.handleKey({ name: "down", ctrl: false, meta: false, shift: false });
+    }
+    ownedSession.handleKey({ name: "return", ctrl: false, meta: false, shift: false });
     await setup.renderOnce();
+    expect(events).toEqual(["palette:reserved", "palette:released", "settings:idle"]);
+    expect(usageCount).toBe(1);
     expect(setup.renderer.root.findDescendantById("palette-shell")).toBe(shell);
     expect(setup.renderer.root.findDescendantById("palette-terminal")).toBe(terminal);
+    registry.dispose();
+    admission.dispose();
     destroyTestRenderer(setup);
   });
 });

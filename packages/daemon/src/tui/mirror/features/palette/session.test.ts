@@ -283,13 +283,45 @@ describe("PaletteFeatureSession", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(session.snapshot().repo).toMatchObject({ phase: "error", message: "git unavailable" });
-    session.retryRepoFiles();
+    expect(session.snapshot().projection).toMatchObject({
+      phase: "error",
+      retryCommandId: "palette:retry-repo",
+    });
+    const retry = session
+      .snapshot()
+      .projection.rows.find((row) => row.kind === "state" && row.state === "retry");
+    expect(retry).toBeDefined();
+    session.handlePointer({ kind: "down", x: retry!.rect.x, y: retry!.rect.y });
     await Promise.resolve();
     await Promise.resolve();
     expect(session.snapshot().repo).toEqual({ phase: "ready", value: ["fixed.ts"] });
     session.close();
     session.openPalette();
     expect(attempt).toBe(2);
+    session.dispose();
+  });
+
+  it("restarts an interrupted repo load when returning from the buffer picker", async () => {
+    const first = deferred<readonly string[]>();
+    const second = deferred<readonly string[]>();
+    let calls = 0;
+    const fx = fixture({
+      loadRepoFiles: (_identity, signal) => {
+        fx.repoLoads.push({ identity: identity("alpha"), signal });
+        return calls++ === 0 ? first.promise : second.promise;
+      },
+    });
+    const session = createPaletteFeatureSession(fx.host);
+    session.openPalette();
+    session.openBufferPicker();
+    expect(fx.repoLoads[0]!.signal.aborted).toBe(true);
+    expect(session.snapshot().repo.phase).toBe("idle");
+    session.handleKey(key("escape"));
+    expect(fx.repoLoads).toHaveLength(2);
+    second.resolve(["after-buffer.ts"]);
+    await second.promise;
+    await Promise.resolve();
+    expect(session.snapshot().repo).toEqual({ phase: "ready", value: ["after-buffer.ts"] });
     session.dispose();
   });
 
@@ -329,6 +361,25 @@ describe("PaletteFeatureSession", () => {
     session.handleKey(key("escape"));
     expect(session.snapshot().level).toBe("actions");
     expect(fx.bufferLoads.at(-1)!.signal.aborted).toBe(true);
+    session.dispose();
+  });
+
+  it("keeps keyboard-selected buffers inside the visible ten-row page", async () => {
+    const many = Array.from({ length: 15 }, (_, index) => ({
+      name: `buffer${index}`,
+      preview: `value ${index}`,
+    }));
+    const fx = fixture({ loadBuffers: async () => many });
+    const session = createPaletteFeatureSession(fx.host);
+    session.openPalette();
+    await Promise.resolve();
+    session.openBufferPicker();
+    await Promise.resolve();
+    await Promise.resolve();
+    for (let index = 0; index < 12; index += 1) session.handleKey(key("down"));
+    expect(session.snapshot()).toMatchObject({ selectedBufferIndex: 12, scrollTop: 3 });
+    for (let index = 0; index < 5; index += 1) session.handleKey(key("up"));
+    expect(session.snapshot()).toMatchObject({ selectedBufferIndex: 7, scrollTop: 3 });
     session.dispose();
   });
 

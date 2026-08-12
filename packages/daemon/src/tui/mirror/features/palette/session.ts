@@ -97,8 +97,9 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
         fallbackGroup: query().trim() ? "Results" : "Commands",
       });
     });
-    const projection = createMemo(() =>
-      projectCommandPalette({
+    const projection = createMemo(() => {
+      const repoState = repo();
+      return projectCommandPalette({
         width: host.width(),
         height: host.height(),
         query: query(),
@@ -107,8 +108,11 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
         scrollTop: scrollTop(),
         title: level() === "buffers" ? "Paste buffer" : "Navigator",
         queryPlaceholder: "Search · @workspaces @agents @panes @commands",
-      }),
-    );
+        phase: repoState.phase === "error" ? "error" : "ready",
+        errorMessage: repoState.phase === "error" ? repoState.message : null,
+        retryCommandId: "palette:retry-repo",
+      });
+    });
 
     const abortAsync = () => {
       asyncGeneration += 1;
@@ -159,6 +163,9 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
       if (isDisposed() || !isOpen()) return;
       repoAbort?.abort();
       repoAbort = null;
+      if (repo().phase === "loading") {
+        setRepo((current) => ({ phase: "idle", value: current.value }));
+      }
       bufferAbort?.abort();
       const controller = new AbortController();
       bufferAbort = controller;
@@ -198,6 +205,7 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
       setSelectedBufferIndex(0);
       setSelectedCommandId(restore.selectedCommandId);
       setScrollTop(restore.scrollTop);
+      if (repo().phase !== "ready") loadRepo();
     };
     const bufferGeom = (): PaletteGeom => {
       const width = Math.min(64, Math.max(12, host.width() - 4));
@@ -241,9 +249,20 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
       }
       if (name === "up" || name === "down") {
         const delta = name === "up" ? -1 : 1;
-        setSelectedBufferIndex((index) =>
-          Math.max(0, Math.min(Math.max(0, state.value.length - 1), index + delta)),
+        const nextIndex = Math.max(
+          0,
+          Math.min(Math.max(0, state.value.length - 1), selectedBufferIndex() + delta),
         );
+        setSelectedBufferIndex(nextIndex);
+        setScrollTop((top) => {
+          const visibleTop =
+            nextIndex < top
+              ? nextIndex
+              : nextIndex >= top + BUFFER_PAGE_ROWS
+                ? nextIndex - BUFFER_PAGE_ROWS + 1
+                : top;
+          return clampPaletteTop(visibleTop, state.value.length, BUFFER_PAGE_ROWS);
+        });
         return true;
       }
       if (name === "return") {

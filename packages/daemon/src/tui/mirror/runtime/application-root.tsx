@@ -1161,6 +1161,7 @@ const mountTuiRoot = () => {
         runDialogIntent(false, (session) => session.confirm(request)),
     };
     let toolResourceGeneration = -1;
+    const [paletteResourceGeneration, setPaletteResourceGeneration] = createSignal(-1);
     const pendingFilesCatalog = new GenerationBoundSlot<WorkspaceFilesCatalogEnvelopeV1>();
     const pendingChangesCatalog = new GenerationBoundSlot<WorkspaceChangesCatalogEnvelopeV1>();
     const pendingMissionsCatalog = new GenerationBoundSlot<{
@@ -4424,7 +4425,7 @@ const mountTuiRoot = () => {
         directory,
         projectRoot: repository?.metadata.projectRoot ?? directory,
         daemonIdentity: daemon ? `${daemon.pid ?? ""}:${daemon.port}` : "unavailable",
-        generation: toolResourceGeneration,
+        generation: paletteResourceGeneration(),
       };
     };
     const closePalette = (reason: "escape" | "outside" | "action" = "escape") => {
@@ -5233,6 +5234,7 @@ const mountTuiRoot = () => {
       const disposeTools = toolResources.subscribe((state) => {
         if (state.generation !== toolResourceGeneration) {
           toolResourceGeneration = state.generation;
+          setPaletteResourceGeneration(state.generation);
           pendingFilesCatalog.advance(state.generation);
           pendingChangesCatalog.advance(state.generation);
           pendingMissionsCatalog.advance(state.generation);

@@ -58,6 +58,15 @@ describe("production palette optional feature cutover", () => {
     expect(source).toContain("paletteSession()?.switchWorkspace(identity)");
   });
 
+  it("reacts the exact palette identity to daemon resource generation changes", () => {
+    expect(source).toContain(
+      "const [paletteResourceGeneration, setPaletteResourceGeneration] = createSignal(-1)",
+    );
+    expect(source).toContain("generation: paletteResourceGeneration()");
+    expect(source).toContain("setPaletteResourceGeneration(state.generation)");
+    expect(source).toContain("paletteSession()?.switchWorkspace(identity)");
+  });
+
   it("releases palette admission before semantic settings transfer and records usage once", () => {
     const execute = source.slice(
       source.indexOf("executePaletteHostIntent ="),
