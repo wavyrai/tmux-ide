@@ -54,6 +54,8 @@ export function TuiRichWidgetSurface(props: TuiRichWidgetSurfaceProps): JSX.Elem
             height={Math.max(1, props.height - 3)}
             content={props.surface.text}
             syntaxStyle={props.syntaxStyle!}
+            fg={props.theme.roles.text.primary}
+            bg={props.theme.roles.surfaces.terminal}
             conceal={true}
             concealCode={false}
             // Keep blocks independent. Besides making long documents cheaper to
@@ -66,9 +68,8 @@ export function TuiRichWidgetSurface(props: TuiRichWidgetSurfaceProps): JSX.Elem
               wrapMode: "word",
               borders: false,
             }}
-            // This surface is swapped atomically rather than appended chunk by
-            // chunk. Keeping OpenTUI's incremental path enabled avoids holding
-            // the first frame behind its optional async syntax worker.
+            // Keep blocks independent and allow their async syntax work to
+            // publish without rebuilding the whole document.
             streaming={true}
           />
         </Show>

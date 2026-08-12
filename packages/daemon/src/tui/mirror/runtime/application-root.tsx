@@ -1049,6 +1049,11 @@ const mountTuiRoot = () => {
             onChange: () => {
               setRichPreviewRevision((revision) => revision + 1);
               publishRichPreviewChange();
+              // Asset resolution is independent of tmux pane output. The
+              // renderer is event-driven, so a resolved Markdown document must
+              // explicitly schedule its own frame instead of waiting for the
+              // next terminal byte or pointer event to happen to repaint it.
+              appRenderer.requestRender();
             },
             afterNativeFrame: (callback) => {
               appRenderer.once("frame", () => {

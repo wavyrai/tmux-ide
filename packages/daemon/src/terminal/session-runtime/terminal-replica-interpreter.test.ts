@@ -236,7 +236,10 @@ describe("TerminalReplicaInterpreter", () => {
     expect(interpreter.currentSnapshot().placements[0]).toMatchObject({
       id: "markdown",
       kind: "widget",
+      row: 0,
       column: 0,
+      rows: 8,
+      columns: 80,
     });
     await interpreter.enqueue({
       type: "write",

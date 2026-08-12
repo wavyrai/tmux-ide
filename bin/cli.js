@@ -40246,17 +40246,21 @@ function terminalModes(terminal) {
     synchronizedOutput: dec.synchronizedOutput === true
   };
 }
-function projectPlacements(rows, viewportRows, cols, historyRows) {
+function projectPlacements(rows, viewportRows, cols) {
   const marker = detectWidgetMarkerFromReplicaRows(rows);
   if (!marker) return [];
   return [
     {
       id: marker.id,
       kind: "widget",
-      row: Math.max(0, Math.min(viewportRows - 1, marker.lineIndex - historyRows)),
+      // A pane widget replaces the terminal viewport while its authenticated
+      // marker remains present. The marker's physical row is transport detail,
+      // not widget geometry: projecting only that row gives the host enough
+      // room for chrome but clips every content row below it.
+      row: 0,
       column: 0,
       columns: Math.max(1, cols),
-      rows: 1,
+      rows: Math.max(1, viewportRows),
       contentDigest: hashTerminalWidgetContent(marker.id, marker.args)
     }
   ];
@@ -40635,7 +40639,7 @@ var init_terminal_replica_interpreter = __esm({
         const scanPlacements = this.#widgetGate || this.#snapshot.placements.length > 0;
         const placementRows = scanPlacements ? [...history, ...grid] : [];
         if (scanPlacements) this.#stats.placementRowsRead += placementRows.length;
-        const placements = scanPlacements ? projectPlacements(placementRows, grid.length, this.#terminal.cols, history.length) : [];
+        const placements = scanPlacements ? projectPlacements(placementRows, grid.length, this.#terminal.cols) : [];
         if (scanPlacements && placements.length === 0) this.#widgetGate = false;
         return assembleTerminalReplicaSnapshot({
           cols: this.#terminal.cols,
