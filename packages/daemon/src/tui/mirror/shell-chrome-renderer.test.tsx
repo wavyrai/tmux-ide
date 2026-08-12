@@ -23,7 +23,7 @@ import {
   type ResolvedThemeMode,
   type ThemeModeSource,
 } from "./theme.ts";
-import { Surface, SelectableRow, InputShell } from "./recipes.tsx";
+import { Surface, SelectableRow, InputShell } from "./recipe-components.tsx";
 import { colorToThemeBytes } from "./theme.ts";
 import {
   expectFrameBounds,

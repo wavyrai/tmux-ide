@@ -7,7 +7,7 @@
  */
 import ignore, { type Ignore } from "ignore";
 
-export { FilesSurface, type FilesSurfaceProps } from "../../files-surface.tsx";
+export { FilesSurface, type FilesSurfaceProps } from "../../files-surface-view.tsx";
 export {
   filesHitTest,
   filesListWidth,

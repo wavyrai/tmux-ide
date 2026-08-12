@@ -8,7 +8,7 @@ palette or own global input.
 
 - `recipes.ts` is pure state, geometry, text, scrollbar, gallery, and hit-test
   logic. It is safe to unit-test without OpenTUI rendering.
-- `recipes.tsx` is presentational Solid/OpenTUI composition over ordinary
+- `recipe-components.tsx` is presentational Solid/OpenTUI composition over ordinary
   `<box>`, `<text>`, and recipe props.
 - `recipes-gallery.tsx` is a deterministic renderer harness for dark/light
   snapshots and interaction coverage.

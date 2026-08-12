@@ -5,7 +5,7 @@ import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it } from "bun:test";
 import { RGBA } from "@opentui/core";
 import { buildDiffRows, classifyDiff, type DiffEntry } from "./diff-model.ts";
-import { ChangesSurface } from "./changes-surface.tsx";
+import { ChangesSurface } from "./changes-surface-view.tsx";
 import { changesHitTest, projectChangesSurface } from "./changes-surface.ts";
 import { TerminalPaneChrome } from "./terminal-surface.tsx";
 import { projectTerminalPaneChrome, terminalChromeHitTest } from "./terminal-surface.ts";

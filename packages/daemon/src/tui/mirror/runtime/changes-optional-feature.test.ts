@@ -9,7 +9,7 @@ describe("deferred Changes feature boundary", () => {
   it("keeps the production root free of eager Changes implementation imports", () => {
     const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
     for (const specifier of [
-      "../changes-surface.tsx",
+      "../changes-surface-view.tsx",
       "../changes-surface.ts",
       "../diff-model.ts",
       "../features/changes/controller.ts",

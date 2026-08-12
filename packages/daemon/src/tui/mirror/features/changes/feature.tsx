@@ -5,7 +5,7 @@
  * projection/model helpers, and OpenTUI renderer enter both source and compiled
  * Bun processes only after terminal readiness and explicit Changes demand.
  */
-export { ChangesSurface, type ChangesSurfaceProps } from "../../changes-surface.tsx";
+export { ChangesSurface, type ChangesSurfaceProps } from "../../changes-surface-view.tsx";
 export { createChangesFeatureController } from "./controller.ts";
 export type {
   ChangesContextTarget,

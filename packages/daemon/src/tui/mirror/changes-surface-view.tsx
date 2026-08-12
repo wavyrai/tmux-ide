@@ -2,7 +2,13 @@
 import { For, Show } from "solid-js";
 import type { RGBA } from "@opentui/core";
 import type { SemanticThemeSnapshot } from "./theme.ts";
-import { ActionChip, EmptyState, InputShell, SectionHeader, SelectableRow } from "./recipes.tsx";
+import {
+  ActionChip,
+  EmptyState,
+  InputShell,
+  SectionHeader,
+  SelectableRow,
+} from "./recipe-components.tsx";
 import { recipePalette } from "./recipes.ts";
 import type { ChangesProjectedFileRow, ChangesSurfaceProjection } from "./changes-surface.ts";
 import { changesHitTest } from "./changes-surface.ts";

@@ -8,7 +8,7 @@ import {
 } from "@tmux-ide/contracts";
 import { createSignal } from "solid-js";
 import { describe, expect, it } from "bun:test";
-import { SelectableRow } from "../recipes.tsx";
+import { SelectableRow } from "../recipe-components.tsx";
 import { recipePalette } from "../recipes.ts";
 import { colorToThemeBytes, createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";

@@ -22,7 +22,7 @@ import {
   SegmentedControl,
   SelectableRow,
   Surface,
-} from "./recipes.tsx";
+} from "./recipe-components.tsx";
 import { clipTerminal } from "./terminal-text.ts";
 
 export interface RecipesGalleryProps {

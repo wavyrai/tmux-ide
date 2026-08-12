@@ -23,7 +23,7 @@ describe("production palette optional feature cutover", () => {
       "src/tui/mirror/palette.ts",
       "src/tui/mirror/palette-surface-adapter.ts",
       "src/tui/mirror/workspace/command-palette-surface.ts",
-      "src/tui/mirror/workspace/command-palette-surface.tsx",
+      "src/tui/mirror/workspace/command-palette-surface-view.tsx",
     ]) {
       expect(graph.files).not.toContain(deferred);
     }

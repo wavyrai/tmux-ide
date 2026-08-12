@@ -7,7 +7,7 @@ describe("deferred Files feature boundary", () => {
   it("keeps the production root free of eager Files implementation imports", () => {
     const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
     for (const specifier of [
-      "../files-surface.tsx",
+      "../files-surface-view.tsx",
       "../files-surface.ts",
       "../editor-buffer.ts",
       "../editor-open-policy.ts",

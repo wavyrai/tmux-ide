@@ -6,7 +6,7 @@ describe("deferred Missions and Activity feature boundary", () => {
     const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
     for (const specifier of [
       "../missions-surface.tsx",
-      "../activity-surface.tsx",
+      "../activity-surface-view.tsx",
       "../missions-dashboard.ts",
       "../missions-surface-controller.ts",
       "../missions-workspace.ts",

@@ -10,7 +10,7 @@ import {
   type CommandPaletteDescriptor,
   type CommandPalettePhase,
 } from "./command-palette-surface.ts";
-import { CommandPaletteSurface } from "./command-palette-surface.tsx";
+import { CommandPaletteSurface } from "./command-palette-surface-view.tsx";
 
 function colorKey(color: Parameters<typeof colorToThemeBytes>[0]): string {
   return colorToThemeBytes(color).join(",");

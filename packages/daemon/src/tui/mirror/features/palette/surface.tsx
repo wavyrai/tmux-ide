@@ -3,7 +3,7 @@ import { For, Show } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../../theme.ts";
 import { palettePos } from "../../palette.ts";
-import { CommandPaletteSurface } from "../../workspace/command-palette-surface.tsx";
+import { CommandPaletteSurface } from "../../workspace/command-palette-surface-view.tsx";
 import type { PaletteFeatureSession } from "./contract.ts";
 
 export interface PaletteFeatureSurfaceProps {

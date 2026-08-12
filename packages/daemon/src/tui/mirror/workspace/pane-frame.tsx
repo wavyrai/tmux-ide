@@ -13,7 +13,7 @@ import {
   type PaneFrameStatusLeafProps,
   type PaneFrameTitleLeafProps,
 } from "../../../ui/pane-frame/presenter.tsx";
-import { ActionChip, Badge, IconButton, StatusChip } from "../recipes.tsx";
+import { ActionChip, Badge, IconButton, StatusChip } from "../recipe-components.tsx";
 import { recipePalette } from "../recipes.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import type { PaneFrameChip, PaneFrameProjection } from "./pane-frame.ts";
