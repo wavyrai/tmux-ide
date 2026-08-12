@@ -545,6 +545,7 @@ describe("host IPC trust boundary", () => {
     publishDaemonEvent?.({ type: "workspaces.changed" });
     expect(webContents.send).toHaveBeenCalledWith(HOST_IPC.daemonEvent, {
       subscriptionId: "desktop-subscription-2",
+      subscriptionRequestId: expect.any(String),
       event: { type: "workspaces.changed" },
     });
 

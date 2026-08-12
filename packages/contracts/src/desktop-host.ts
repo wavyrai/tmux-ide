@@ -539,6 +539,7 @@ export const DesktopDaemonSubscribeWireResultSchemaZ = z.discriminatedUnion("sta
 export const DesktopDaemonEventWireEnvelopeSchemaZ = z
   .object({
     subscriptionId: DesktopDaemonSubscriptionIdSchemaZ,
+    subscriptionRequestId: DesktopDaemonSubscriptionRequestIdSchemaZ,
     event: DesktopDaemonEventSchemaZ,
   })
   .strict();

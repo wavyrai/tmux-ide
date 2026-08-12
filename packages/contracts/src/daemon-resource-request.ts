@@ -373,17 +373,17 @@ export function createDaemonResourceMethods(
   for (const resource of DAEMON_RESOURCE_KINDS) {
     methods[resource] = (request?: unknown, signal?: AbortSignal) => {
       if (REQUESTLESS_DAEMON_RESOURCES.has(resource)) {
-        return dispatch(
-          { resource } as DaemonResourceRequest,
-          isCancellableDaemonResourceKind(resource)
-            ? (request as AbortSignal | undefined)
-            : undefined,
-        );
+        const requestSignal = isCancellableDaemonResourceKind(resource)
+          ? (request as AbortSignal | undefined)
+          : undefined;
+        return requestSignal === undefined
+          ? dispatch({ resource } as DaemonResourceRequest)
+          : dispatch({ resource } as DaemonResourceRequest, requestSignal);
       }
-      return dispatch(
-        { resource, request } as DaemonResourceRequest,
-        isCancellableDaemonResourceKind(resource) ? signal : undefined,
-      );
+      const requestSignal = isCancellableDaemonResourceKind(resource) ? signal : undefined;
+      return requestSignal === undefined
+        ? dispatch({ resource, request } as DaemonResourceRequest)
+        : dispatch({ resource, request } as DaemonResourceRequest, requestSignal);
     };
   }
   return methods as unknown as DaemonResourceMethods;

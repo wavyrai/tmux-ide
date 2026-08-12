@@ -1039,7 +1039,11 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
           if (!window) return;
           window.webContents.send(
             HOST_IPC.daemonEvent,
-            DesktopDaemonEventWireEnvelopeSchemaZ.parse({ subscriptionId, event: daemonEvent }),
+            DesktopDaemonEventWireEnvelopeSchemaZ.parse({
+              subscriptionId,
+              subscriptionRequestId: requestId.data,
+              event: daemonEvent,
+            }),
           );
         },
         controller.signal,

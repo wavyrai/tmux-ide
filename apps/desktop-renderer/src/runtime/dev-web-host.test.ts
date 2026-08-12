@@ -603,6 +603,104 @@ describe("development gateway host sessions", () => {
     host.dispose();
   });
 
+  it("joins one newer refresh when concurrent callers reject the same stale generation", async () => {
+    const tokens = ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"];
+    let bootstrapCount = 0;
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const apiSessions: Array<string | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          const index = bootstrapCount++;
+          if (index === 1) await refreshGate;
+          return jsonResponse(200, { token: tokens[index] });
+        }
+        const session = (init?.headers as Record<string, string>)["X-Tmux-Ide-Dev-Host-Session"];
+        apiSessions.push(session);
+        return session === tokens[0]
+          ? jsonResponse(401, { code: "dev_host_session_invalid" })
+          : jsonResponse(200, capabilities);
+      }),
+    );
+
+    const host = createDevWebHostCapabilities(CONFIG);
+    const first = host.daemon.capabilities();
+    const second = host.daemon.capabilities();
+    await vi.waitFor(() => expect(bootstrapCount).toBe(2));
+    releaseRefresh();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ status: "ok" }),
+      expect.objectContaining({ status: "ok" }),
+    ]);
+    expect(bootstrapCount).toBe(2);
+    expect(apiSessions.filter((session) => session === tokens[1])).toHaveLength(2);
+    host.dispose();
+  });
+
+  it("keeps the physical bootstrap alive for a longer-lived waiter", async () => {
+    vi.useFakeTimers();
+    let bootstrapSignal: AbortSignal | undefined;
+    let releaseBootstrap!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          bootstrapSignal = init?.signal ?? undefined;
+          return new Promise<Response>((resolve) => {
+            releaseBootstrap = resolve;
+          });
+        }
+        return jsonResponse(200, capabilities);
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const shorter = host.daemon.capabilities();
+    await vi.advanceTimersByTimeAsync(1_000);
+    const longer = host.daemon.capabilities();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(bootstrapSignal?.aborted).toBe(false);
+    releaseBootstrap(jsonResponse(200, { token: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }));
+    await expect(shorter).resolves.toMatchObject({ status: "error" });
+    await expect(longer).resolves.toMatchObject({ status: "ok" });
+    host.dispose();
+    vi.useRealTimers();
+  });
+
+  it("propagates startup-readiness cancellation as disposed", async () => {
+    let readinessSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          return jsonResponse(200, { token: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" });
+        }
+        readinessSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          readinessSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const controller = new AbortController();
+    const pending = host.daemon.startupReadiness(controller.signal);
+    await vi.waitFor(() => expect(readinessSignal).toBeDefined());
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({
+      status: "error",
+      error: { code: "disposed" },
+    });
+    host.dispose();
+  });
+
   it("does not retry or mint a new host session for a business 409", async () => {
     const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let bootstrapCount = 0;

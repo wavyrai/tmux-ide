@@ -138,6 +138,35 @@ describe("generation-bound store engine", () => {
     expect(seen.at(-1)?.phase.kind).toBe("live");
   });
 
+  it("counts only installed subscriptions as active", async () => {
+    const failed = harness({}, { connectFails: true });
+    const failedStore = createGenerationBoundStore(failed.adapter, "alpha", {
+      clock: new FakeClock(),
+      retry: { maximumAttempts: 0 },
+    });
+    await vi.waitFor(() => expect(failed.connect).toHaveBeenCalledOnce());
+    expect(failedStore.getMetrics()).toMatchObject({
+      subscriptionsOpened: 0,
+      subscriptionsClosed: 0,
+    });
+
+    const connected = harness();
+    const connectedStore = createGenerationBoundStore(connected.adapter, "alpha", {
+      clock: new FakeClock(),
+    });
+    await vi.waitFor(() => expect(connected.connect).toHaveBeenCalledOnce());
+    expect(connectedStore.getMetrics()).toMatchObject({
+      subscriptionsOpened: 1,
+      subscriptionsClosed: 0,
+    });
+    connectedStore.dispose();
+    expect(connectedStore.getMetrics()).toMatchObject({
+      subscriptionsOpened: 1,
+      subscriptionsClosed: 1,
+    });
+    failedStore.dispose();
+  });
+
   it("drops a read that resolves against a superseded generation", async () => {
     let release: ((value: { status: "ok"; resource: string }) => void) | null = null;
     const fake = harness({

@@ -721,7 +721,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     if (pendingRenderFrame !== null || typeof requestAnimationFrame !== "function") return;
     pendingRenderFrame = requestAnimationFrame(() => {
       pendingRenderFrame = null;
-      resourceTelemetry.recordRenderPass();
+      resourceTelemetry.recordCentralShellFrameOpportunity();
     });
   });
   onCleanup(() => {

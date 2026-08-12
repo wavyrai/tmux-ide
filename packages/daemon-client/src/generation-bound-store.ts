@@ -425,7 +425,7 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
   };
 
   const retireSubscription = (forgetPending = false): void => {
-    const hadSubscription = pendingSubscriptionId !== null || closeSubscription !== null;
+    const hadSubscription = closeSubscription !== null;
     subscriptionId += 1;
     if (forgetPending) pendingSubscriptionId = null;
     eventLive = false;
@@ -622,7 +622,6 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
     const connectTarget = target;
     const activeSubscriptionId = ++subscriptionId;
     pendingSubscriptionId = activeSubscriptionId;
-    metrics.subscriptionsOpened += 1;
     const live = (): void => {
       if (
         activeSubscriptionId !== subscriptionId ||
@@ -737,9 +736,9 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
       }
       if (result.status === "connected") {
         closeSubscription = result.close;
+        metrics.subscriptionsOpened += 1;
         return;
       }
-      metrics.subscriptionsClosed += 1;
       handleEventFailure(result.failure, expectedGeneration, expectedKey);
     };
 

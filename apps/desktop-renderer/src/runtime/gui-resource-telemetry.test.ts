@@ -28,13 +28,13 @@ describe("GUI resource telemetry", () => {
     let value = metrics();
     const telemetry = createGuiResourceTelemetry([{ getMetrics: () => value }]);
     telemetry.recordCompositionMount();
-    telemetry.recordRenderPass();
+    telemetry.recordCentralShellFrameOpportunity();
     expect(telemetry.snapshot()).toEqual({
       idleWakeups: 0,
       storeInvalidations: 0,
       storePublications: 0,
       compositionMounts: 1,
-      renderPasses: 1,
+      centralShellFrameOpportunities: 1,
       activeSubscriptions: 0,
       fetchesStarted: 0,
       fetchesSettled: 0,

@@ -337,7 +337,8 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   // action routes never fall back to anonymous SDK authority.
   const directHostClientId =
     config.transport === "direct" ? `dev-web-direct:${crypto.randomUUID()}` : null;
-  let resolvedDevHostSession: string | null = null;
+  type DevHostSessionLease = { readonly generation: number; readonly token: string };
+  let resolvedDevHostSession: DevHostSessionLease | null = null;
   const uninstallWebSocketSession = installBrowserWebSocketUrlRewriter((rawUrl) => {
     if (config.transport !== "same-origin-gateway") return rawUrl;
     const parsed = new URL(rawUrl);
@@ -348,37 +349,49 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         parsed.pathname === "/v1/terminal/pane-streams/redeem");
     if (!privileged) return rawUrl;
     if (!resolvedDevHostSession) throw new DevHostFailure(REQUEST_FAILED);
-    return developmentWebSocketUrl(rawUrl, resolvedDevHostSession);
+    return developmentWebSocketUrl(rawUrl, resolvedDevHostSession.token);
   });
   type DevHostSessionBootstrap = {
+    readonly generation: number;
     readonly controller: AbortController;
-    promise: Promise<string | null>;
+    promise: Promise<DevHostSessionLease> | null;
     waiters: number;
     settled: boolean;
   };
+  let nextDevHostSessionGeneration = 0;
   let devHostSession: DevHostSessionBootstrap | null = null;
   const loadDevHostSession = (
-    force = false,
+    staleGeneration: number | null = null,
     signal?: AbortSignal,
     timeoutMs = REQUEST_TIMEOUT_MS,
-  ): Promise<string | null> => {
+  ): Promise<DevHostSessionLease | null> => {
     if (config.transport !== "same-origin-gateway") return Promise.resolve(null);
     if (signal?.aborted) return Promise.reject(new DevHostFailure(DISPOSED));
-    if (force) {
-      devHostSession?.controller.abort();
-      devHostSession = null;
-      resolvedDevHostSession = null;
-    }
     let bootstrap = devHostSession;
+    // A stale caller replaces only the generation it actually used. If a
+    // concurrent HTTP or WebSocket caller has already begun a newer refresh,
+    // join that refresh instead of aborting it or minting another capability.
+    if (staleGeneration !== null && bootstrap && bootstrap.generation <= staleGeneration) {
+      bootstrap = null;
+    }
     if (!bootstrap) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const generation = ++nextDevHostSessionGeneration;
       const record: DevHostSessionBootstrap = {
+        generation,
         controller,
-        promise: Promise.resolve(null),
+        promise: null,
         waiters: 0,
         settled: false,
       };
+      if (
+        staleGeneration !== null &&
+        resolvedDevHostSession !== null &&
+        resolvedDevHostSession.generation <= staleGeneration
+      ) {
+        resolvedDevHostSession = null;
+      }
+      devHostSession = record;
       const pending = (async () => {
         try {
           const response = await fetch("/__tmux_ide_host_session", {
@@ -393,41 +406,53 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
             .strict()
             .parse(await response.json()).token;
           if (controller.signal.aborted) throw new DevHostFailure(DISPOSED);
-          resolvedDevHostSession = token;
-          return token;
+          const lease = { generation, token };
+          if (devHostSession !== record || disposed) throw new DevHostFailure(DISPOSED);
+          resolvedDevHostSession = lease;
+          return lease;
         } finally {
           record.settled = true;
-          clearTimeout(timer);
         }
       })();
       record.promise = pending;
       bootstrap = record;
-      devHostSession = record;
       // A failed bootstrap is not a permanent poison pill for this document.
       void pending.catch(() => {
         if (devHostSession === record) devHostSession = null;
       });
     }
     const current = bootstrap;
+    const currentPromise = current.promise;
+    if (currentPromise === null) return Promise.reject(new DevHostFailure(REQUEST_FAILED));
     current.waiters += 1;
-    return new Promise<string | null>((resolve, reject) => {
+    return new Promise<DevHostSessionLease | null>((resolve, reject) => {
       let active = true;
+      const timer = setTimeout(() => timeout(), timeoutMs);
       const finish = (): boolean => {
         if (!active) return false;
         active = false;
+        clearTimeout(timer);
         signal?.removeEventListener("abort", cancel);
         current.waiters = Math.max(0, current.waiters - 1);
         return true;
       };
-      const cancel = (): void => {
-        if (!finish()) return;
+      const abortPhysicalIfLast = (): void => {
         if (!current.settled && current.waiters === 0 && devHostSession === current) {
           current.controller.abort();
         }
+      };
+      const cancel = (): void => {
+        if (!finish()) return;
+        abortPhysicalIfLast();
         reject(new DevHostFailure(DISPOSED));
       };
+      const timeout = (): void => {
+        if (!finish()) return;
+        abortPhysicalIfLast();
+        reject(new DevHostFailure(REQUEST_FAILED));
+      };
       signal?.addEventListener("abort", cancel, { once: true });
-      void current.promise.then(
+      void currentPromise.then(
         (value) => {
           if (finish()) resolve(value);
         },
@@ -455,13 +480,13 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      let hostSession = await loadDevHostSession(false, controller.signal, timeoutMs);
+      let hostSession = await loadDevHostSession(null, controller.signal, timeoutMs);
       const gatewayLogicalGet = config.transport === "same-origin-gateway" && init.method === "GET";
       const wireMethod = gatewayLogicalGet ? "POST" : init.method;
       const wireHeaders = {
         ...extraHeaders,
         ...(gatewayLogicalGet ? { "X-Tmux-Ide-Dev-Original-Method": "GET" } : {}),
-        ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession } : {}),
+        ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession.token } : {}),
         ...(directHostClientId ? { "X-Tmux-Ide-Host-Client-Id": directHostClientId } : {}),
         accept: "application/json",
         ...(config.ownerToken ? { Authorization: `Bearer ${config.ownerToken}` } : {}),
@@ -490,13 +515,17 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
               .catch(() => null),
           ).success;
       if (staleGatewaySession) {
-        hostSession = await loadDevHostSession(true, controller.signal, timeoutMs);
+        hostSession = await loadDevHostSession(
+          hostSession?.generation ?? null,
+          controller.signal,
+          timeoutMs,
+        );
         response = await fetch(url(pathname), {
           method: wireMethod,
           headers: {
             ...extraHeaders,
             ...(gatewayLogicalGet ? { "X-Tmux-Ide-Dev-Original-Method": "GET" } : {}),
-            ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession } : {}),
+            ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession.token } : {}),
             ...(directHostClientId ? { "X-Tmux-Ide-Host-Client-Id": directHostClientId } : {}),
             accept: "application/json",
             ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -536,13 +565,22 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * timeout, every failure answers null, and a null simply leaves the renderer
    * with what it could observe for itself.
    */
-  async function readStartupReadinessLadder(): Promise<StartupReadinessLadder | null> {
+  async function readStartupReadinessLadder(
+    signal?: AbortSignal,
+  ): Promise<StartupReadinessLadder | null> {
     try {
       const parsed = StartupReadinessResourceSchemaZ.safeParse(
-        await request("/api/resources/startup-readiness", { method: "GET" }),
+        await request(
+          "/api/resources/startup-readiness",
+          { method: "GET" },
+          {},
+          REQUEST_TIMEOUT_MS,
+          signal,
+        ),
       );
       return parsed.success ? parsed.data.ladder : null;
-    } catch {
+    } catch (error) {
+      if (failureOf(error).code === "disposed") throw error;
       return null;
     }
   }
@@ -889,7 +927,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   }
 
   async function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
-    await loadDevHostSession(false, signal);
+    const eventHostSession = await loadDevHostSession(null, signal);
     if (signal.aborted || disposed) throw new DevHostFailure(DISPOSED);
     return new Promise((resolve, reject) => {
       const attemptEpoch = ++eventSocketEpoch;
@@ -1145,7 +1183,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           if (config.transport === "same-origin-gateway" && !signal.aborted) {
             // A gateway handshake cannot expose its HTTP 401 to browser JS.
             // Replace the document capability before the supervisor retries.
-            void loadDevHostSession(true).catch(() => undefined);
+            void loadDevHostSession(eventHostSession?.generation ?? null).catch(() => undefined);
           }
           reject(reason);
         }
@@ -1230,13 +1268,17 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         }
       }
       case "startupReadiness": {
-        const ladder = await readStartupReadinessLadder();
-        return ladder === null
-          ? {
-              status: "error",
-              error: capabilityError("daemon-unavailable", "No readiness ladder was readable."),
-            }
-          : { status: "ok", ladder };
+        try {
+          const ladder = await readStartupReadinessLadder(signal);
+          return ladder === null
+            ? {
+                status: "error",
+                error: capabilityError("daemon-unavailable", "No readiness ladder was readable."),
+              }
+            : { status: "ok", ladder };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
       }
       case "listWorkspaces":
         try {

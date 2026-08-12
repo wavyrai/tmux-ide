@@ -9,8 +9,8 @@ export interface GuiResourceTelemetrySnapshot {
   readonly storePublications: number;
   /** Number of times the live application composition was mounted. */
   readonly compositionMounts: number;
-  /** Coalesced browser render opportunities requested by live projection changes. */
-  readonly renderPasses: number;
+  /** Coalesced frame opportunities requested by central-shell projection changes. */
+  readonly centralShellFrameOpportunities: number;
   readonly activeSubscriptions: number;
   readonly fetchesStarted: number;
   readonly fetchesSettled: number;
@@ -26,7 +26,7 @@ export interface GuiResourceTelemetrySource {
 export interface GuiResourceTelemetry {
   snapshot(): GuiResourceTelemetrySnapshot;
   recordCompositionMount(): void;
-  recordRenderPass(): void;
+  recordCentralShellFrameOpportunity(): void;
   exposeDebugAccessor(search?: string): () => void;
 }
 
@@ -34,7 +34,7 @@ export function createGuiResourceTelemetry(
   sources: readonly GuiResourceTelemetrySource[],
 ): GuiResourceTelemetry {
   let compositionMounts = 0;
-  let renderPasses = 0;
+  let centralShellFrameOpportunities = 0;
   const snapshot = (): GuiResourceTelemetrySnapshot => {
     const metrics = sources.map((source) => source.getMetrics());
     return {
@@ -42,7 +42,7 @@ export function createGuiResourceTelemetry(
       storeInvalidations: metrics.reduce((total, value) => total + value.invalidationsObserved, 0),
       storePublications: metrics.reduce((total, value) => total + value.publications, 0),
       compositionMounts,
-      renderPasses,
+      centralShellFrameOpportunities,
       activeSubscriptions: metrics.reduce(
         (total, value) =>
           total + Math.max(0, value.subscriptionsOpened - value.subscriptionsClosed),
@@ -60,8 +60,8 @@ export function createGuiResourceTelemetry(
     recordCompositionMount: () => {
       compositionMounts += 1;
     },
-    recordRenderPass: () => {
-      renderPasses += 1;
+    recordCentralShellFrameOpportunity: () => {
+      centralShellFrameOpportunities += 1;
     },
     exposeDebugAccessor(search = globalThis.location?.search ?? "") {
       if (new URLSearchParams(search).get(GUI_RESOURCE_TELEMETRY_QUERY) !== "1") {
