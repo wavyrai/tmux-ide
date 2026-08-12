@@ -76,7 +76,8 @@ try {
     ].join("\n"),
   );
   await registerReferenceProject();
-  await launchReferenceWorkspace();
+  const readiness = await launchReferenceWorkspace();
+  qualifyBunPaneStream(readiness);
   const startup = await measureStartup();
   const inputTrace = options.inputTrace ?? (await collectInputTrace());
   measurements = {
@@ -227,6 +228,26 @@ async function unregisterReferenceProject() {
       headers: { authorization: `Bearer ${daemon.authToken}` },
     },
   );
+}
+
+function qualifyBunPaneStream(readiness) {
+  const semanticPaneId = readiness.terminalResources[0]?.attachability?.semanticPaneId;
+  if (!semanticPaneId) throw new Error("Reference readiness omitted its semantic pane identity");
+  const result = spawnSync("bun", ["scripts/performance-reference-pane-stream.ts"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: "pipe",
+    env: {
+      ...process.env,
+      TMUX_IDE_REFERENCE_WORKSPACE: target,
+      TMUX_IDE_REFERENCE_PANE: semanticPaneId,
+    },
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `Bun pane-stream live preflight failed: ${(result.stderr || result.stdout).trim()}`,
+    );
+  }
 }
 
 function readDaemonInfo() {

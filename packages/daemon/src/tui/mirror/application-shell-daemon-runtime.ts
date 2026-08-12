@@ -30,6 +30,52 @@ import {
 const OPENTUI_ORIGIN = "tmux-ide://opentui";
 const OPENTUI_HOST_CLIENT_ID = `opentui:${process.pid}`;
 
+type PaneStreamSocketConstructor = new (...args: unknown[]) => PaneStreamClientSocket;
+
+export interface OpenTuiPaneStreamSocketDependencies {
+  readonly bunRuntime?: boolean;
+  readonly bunWebSocket?: PaneStreamSocketConstructor;
+  readonly nodeWebSocket?: PaneStreamSocketConstructor;
+}
+
+/**
+ * Construct the pane-stream socket with the runtime's real client contract.
+ *
+ * Bun implements `ws` through its native WebSocket compatibility layer and
+ * does not consume Node ws's third `ClientOptions` argument. Passing the Node
+ * shape silently drops Origin/host identity, so the daemon correctly rejects
+ * the upgrade before redemption. Bun's native `{ protocols, headers }` shape
+ * preserves both admission headers; Node keeps the ordinary ws constructor.
+ */
+export function createOpenTuiPaneStreamSocket(
+  descriptor: { readonly webSocketUrl: string; readonly subprotocol: string },
+  headers: Readonly<Record<string, string>>,
+  dependencies: OpenTuiPaneStreamSocketDependencies = {},
+): PaneStreamClientSocket {
+  const bunRuntime = dependencies.bunRuntime ?? typeof process.versions.bun === "string";
+  if (bunRuntime) {
+    const BunWebSocket = dependencies.bunWebSocket ?? globalThis.WebSocket;
+    if (typeof BunWebSocket !== "function") {
+      throw new Error("Bun pane-stream runtime requires the native global WebSocket client");
+    }
+    const Socket = BunWebSocket as unknown as PaneStreamSocketConstructor;
+    return new Socket(descriptor.webSocketUrl, {
+      protocols: [descriptor.subprotocol],
+      headers: {
+        Origin: headers.Origin!,
+        "X-Tmux-Ide-Host-Client-Id": headers["X-Tmux-Ide-Host-Client-Id"]!,
+      },
+    });
+  }
+  const NodeWebSocket =
+    dependencies.nodeWebSocket ?? (WebSocket as unknown as PaneStreamSocketConstructor);
+  return new NodeWebSocket(descriptor.webSocketUrl, descriptor.subprotocol, {
+    origin: headers.Origin,
+    headers: { "X-Tmux-Ide-Host-Client-Id": headers["X-Tmux-Ide-Host-Client-Id"]! },
+    perMessageDeflate: false,
+  });
+}
+
 export interface OpenTuiSessionRuntimeLane {
   readonly daemonInstanceId: string;
   readonly workspaceName: string;
@@ -105,12 +151,7 @@ export async function connectOpenTuiSessionRuntime(
           richPlacements: true,
         },
       },
-      createSocket: (descriptor, headers) =>
-        new WebSocket(descriptor.webSocketUrl, descriptor.subprotocol, {
-          origin: headers.Origin,
-          headers: { "X-Tmux-Ide-Host-Client-Id": headers["X-Tmux-Ide-Host-Client-Id"]! },
-          perMessageDeflate: false,
-        }) as unknown as PaneStreamClientSocket,
+      createSocket: createOpenTuiPaneStreamSocket,
       onNegotiated: (paneId, negotiation) => {
         if (!negotiation.accepted) {
           options.onFault?.(
