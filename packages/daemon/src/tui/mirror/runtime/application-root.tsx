@@ -197,9 +197,8 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, openSync, writeSync, closeSync } from "node:fs";
 import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { publishSemanticPaneChange } from "./semantic-pane-publication.ts";
-import { readdir, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { homedir } from "node:os";
 import { Dynamic, render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, createCliRenderer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
@@ -282,22 +281,6 @@ import {
   type PaletteUsageEntry,
   type Tab,
 } from "../app-state.ts";
-import {
-  expandUserPath,
-  filterDirs,
-  isPickerRoot,
-  pathKindHint,
-  pickerBreadcrumb,
-  pickerDirName,
-  pickerParent,
-  pickerRows,
-  PICKER_HIDDEN_ID,
-  PICKER_OPEN_ID,
-  PICKER_TYPE_ID,
-  PICKER_UP_ID,
-  type PathKind,
-} from "../folder-picker.ts";
-import { registerProject, ProjectAlreadyRegisteredError } from "../../../lib/project-registry.ts";
 import {
   separatorAtCanvas,
   resizedSize,
@@ -407,12 +390,7 @@ import {
   workbenchDockTabForShortcut,
 } from "../workspace/workbench-controller.ts";
 import { clipTerminal } from "../terminal-text.ts";
-import { HomeSurface, homeActionAtProjection } from "../home-surface.tsx";
-import {
-  homeItemIndexAtProjection,
-  projectHomeSurface,
-  type HomeActionId,
-} from "../home-surface.ts";
+import type { HomeActionId } from "../home-surface.ts";
 import type {
   MissionDeepLinkIntent,
   MissionsActivityFeatureSession,
@@ -533,7 +511,6 @@ import {
   type SpawnPlacement,
   type SpawnWhere,
 } from "../agent-lifecycle.ts";
-import { executeTuiAgentProvisioning } from "../agent-provisioning-executor.ts";
 import { agentsByPane } from "../agent-chip.ts";
 import { scrollThumb, trackZone, pageTop, dragTop } from "../scrollbar-model.ts";
 import {
@@ -985,6 +962,37 @@ const mountTuiRoot = () => {
     });
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const optionalFeatures = createApplicationOptionalFeatureRegistry();
+    const [homeFeature, setHomeFeature] = createSignal<ApplicationOptionalFeatures["home"]>();
+    const [homeFeatureLoadState, setHomeFeatureLoadState] = createSignal<
+      "idle" | "loading" | "ready" | "failed"
+    >("idle");
+    let homeFeatureRequest: Promise<ApplicationOptionalFeatures["home"] | undefined> | null = null;
+    const ensureHomeFeature = (): Promise<ApplicationOptionalFeatures["home"] | undefined> => {
+      const loaded = homeFeature();
+      if (loaded) return Promise.resolve(loaded);
+      if (homeFeatureRequest) return homeFeatureRequest;
+      setHomeFeatureLoadState("loading");
+      const request = optionalFeatures.request("home");
+      homeFeatureRequest = request;
+      void request.then(
+        (feature) => {
+          if (homeFeatureRequest !== request) return;
+          homeFeatureRequest = null;
+          if (!feature) {
+            setHomeFeatureLoadState("failed");
+            return;
+          }
+          setHomeFeature(() => feature);
+          setHomeFeatureLoadState("ready");
+        },
+        () => {
+          if (homeFeatureRequest !== request) return;
+          homeFeatureRequest = null;
+          setHomeFeatureLoadState("failed");
+        },
+      );
+      return request;
+    };
     const [filesFeature, setFilesFeature] = createSignal<ApplicationOptionalFeatures["files"]>();
     const [filesSession, setFilesSession] = createSignal<FilesFeatureSession>();
     const [changesFeature, setChangesFeature] =
@@ -1455,6 +1463,7 @@ const mountTuiRoot = () => {
       return request;
     };
     applicationLifecycle.registerCloser("optional-features", () => {
+      homeFeatureRequest = null;
       filesFeatureRequest = null;
       changesFeatureRequest = null;
       missionsActivityRequest = null;
@@ -1471,6 +1480,7 @@ const mountTuiRoot = () => {
       modalAdmission.dispose();
       disposeModalAdmissionSubscription();
       setFilesSession(undefined);
+      setHomeFeature(undefined);
       setChangesSession(undefined);
       setMissionsActivitySession(undefined);
       setPaletteSession(undefined);
@@ -2183,6 +2193,9 @@ const mountTuiRoot = () => {
     };
     const tab = (): Tab => legacyTabFromPanelKind(activePanel());
     const mode = (): "home" | "mirror" | "editor" | "diff" | "missions" => panelMode(activePanel());
+    createEffect(() => {
+      if (mode() === "home") void ensureHomeFeature();
+    });
     const surfaceSpans = createMemo(() => applicationShellProjection().tabs.map((tab) => tab.span));
     const [curTarget, setCurTarget] = createSignal(initialContextSession);
     // Size truth (M22.8): the actual tmux window size when a co-attached terminal
@@ -3230,14 +3243,22 @@ const mountTuiRoot = () => {
     const homeItems = createMemo<HomeItem[]>(() => buildHomeItems(projectsData(), recentFolders()));
     /** Whether (gy, x) hits the welcome action row (only while first-run). */
     const welcomeActionHit = (gy: number, x: number): boolean => {
-      return (
-        homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0)?.source === "welcome"
+      const feature = homeFeature();
+      const projection = homeSurfaceProjection();
+      return Boolean(
+        feature &&
+        projection &&
+        feature.homeActionAtProjection(projection, x, gy, sidebarW(), 0)?.source === "welcome",
       );
     };
     /** The home item index under content-row gy (accounting for the welcome
      *  offset), or -1 when gy is above the first row / on the welcome block. */
     const homeItemIndexAt = (gy: number): number => {
-      return homeItemIndexAtProjection(homeSurfaceProjection(), sidebarW(), gy, sidebarW(), 0);
+      const feature = homeFeature();
+      const projection = homeSurfaceProjection();
+      return feature && projection
+        ? feature.homeItemIndexAtProjection(projection, sidebarW(), gy, sidebarW(), 0)
+        : -1;
     };
     const rollup = (): FleetRollup => {
       const r: FleetRollup = {
@@ -3282,8 +3303,10 @@ const mountTuiRoot = () => {
     const [pathPrompt, setPathPrompt] = createSignal<string | null>(null);
     // A session-name input line on HOME (`n` / the [n new session] chip).
     const [sessionPrompt, setSessionPrompt] = createSignal<string | null>(null);
-    const homeSurfaceProjection = createMemo(() =>
-      projectHomeSurface({
+    const homeSurfaceProjection = createMemo(() => {
+      const feature = homeFeature();
+      if (!feature) return undefined;
+      return feature.projectHomeSurface({
         width: workbenchProjection().canvasBody.width,
         height: workbenchProjection().canvasBody.height,
         projects: projectsData(),
@@ -3309,8 +3332,8 @@ const mountTuiRoot = () => {
         welcomeLine: WELCOME_LINE,
         welcomeActionLabel: WELCOME_ACTION_LABEL,
         welcomeTip,
-      }),
-    );
+      });
+    });
     const scrollOffsets = new Map<string, number>();
     let dirty = false;
     let paneFrameCoalescer: FrameCoalescer | null = null;
@@ -4157,7 +4180,18 @@ const mountTuiRoot = () => {
       // semantic, daemon-owned mutation used by the GUI. A live daemon failure
       // fails closed in the executor, so we cannot duplicate an ambiguously
       // completed creation by falling through to raw tmux.
-      const sharedCreation = await executeTuiAgentProvisioning({
+      let home: ApplicationOptionalFeatures["home"] | undefined;
+      try {
+        home = homeFeature() ?? (await ensureHomeFeature());
+      } catch {
+        setStatusNote("agent creation unavailable: Home actions failed to load");
+        return;
+      }
+      if (!home) {
+        setStatusNote("agent creation unavailable: Home actions failed to load");
+        return;
+      }
+      const sharedCreation = await home.executeTuiAgentProvisioning({
         sessionName: ctx.session ?? null,
         kind,
         command,
@@ -4374,101 +4408,6 @@ const mountTuiRoot = () => {
       createSession(sessionNameFor(basename(dir) || dir), dir);
     };
 
-    /** ASYNC — the subdirectory names of `dir` (dirs only; unreadable → []). */
-    const listSubdirs = async (dir: string): Promise<string[]> => {
-      try {
-        const entries = await readdir(dir, { withFileTypes: true });
-        return entries.filter((e) => e.isDirectory()).map((e) => e.name);
-      } catch {
-        return [];
-      }
-    };
-
-    /** ASYNC — classify a path: a directory, a file, or missing/unreadable. */
-    const pathKind = async (path: string): Promise<PathKind> => {
-      try {
-        return (await stat(path)).isDirectory() ? "dir" : "file";
-      } catch {
-        return "missing";
-      }
-    };
-
-    /** ASYNC — whether `dir` already has a project config (skip the layout offer). */
-    const hasProjectConfig = async (dir: string): Promise<boolean> => {
-      const { resolveProjectConfigContext } = await import("../../../lib/config-context.ts");
-      return (await resolveProjectConfigContext(dir)).configKind !== "none";
-    };
-
-    /** The "type a path…" escape hatch: a prompt that async-validates the typed
-     *  path is a real folder (sync validate can't touch fs), re-asking with a
-     *  plain-language error until it is a dir or the user backs out. Returns the
-     *  resolved dir, or null to fall back to browsing. */
-    const runTypedPath = async (base: string): Promise<string | null> => {
-      let initial = "";
-      let footerHint = "type a folder path — ~ and relative paths are ok";
-      for (;;) {
-        const typed = await DialogPrompt.show({
-          title: "Open a folder by path",
-          placeholder: "~/code/my-project",
-          initial,
-          footerHint,
-          validate: (v) => (v.trim().length > 0 ? null : "Type a path, or press esc to go back"),
-        });
-        if (typed === null) return null;
-        const resolved = expandUserPath(typed, homedir(), base);
-        const kind = await pathKind(resolved);
-        if (kind === "dir") return resolved;
-        initial = typed;
-        footerHint = pathKindHint(kind);
-      }
-    };
-
-    /** The browse loop: descend/ascend directories, toggle hidden folders with
-     *  ^h, "open this folder" commits, "type a path…" hands off to the prompt.
-     *  Returns the chosen dir, or null on cancel (esc at the browser). */
-    const runFolderPicker = async (start: string): Promise<string | null> => {
-      let dir = start;
-      let showHidden = false;
-      for (;;) {
-        const subdirs = filterDirs(await listSubdirs(dir), showHidden);
-        const choice = await DialogSelect.show({
-          title: pickerBreadcrumb(dir, homedir()),
-          items: pickerRows(dir, subdirs, showHidden),
-        });
-        if (!choice) return null;
-        const id = choice.item.id;
-        if (id === PICKER_OPEN_ID) return dir;
-        if (id === PICKER_HIDDEN_ID) {
-          showHidden = !showHidden;
-          continue;
-        }
-        if (id === PICKER_UP_ID) {
-          if (!isPickerRoot(dir)) dir = pickerParent(dir);
-          continue;
-        }
-        if (id === PICKER_TYPE_ID) {
-          const typed = await runTypedPath(dir);
-          if (typed !== null) return typed;
-          continue; // backed out of the prompt → keep browsing
-        }
-        const name = pickerDirName(id);
-        if (name) dir = join(dir, name);
-      }
-    };
-
-    /** Offer to remember a just-opened folder as a project (registry add —
-     *  honoring TMUX_IDE_REGISTRY_DIR). Already-registered is a friendly no-op. */
-    const rememberProject = async (dir: string) => {
-      try {
-        await registerProject({ dir });
-        setStatusNote(`remembered ${basename(dir) || dir}`);
-        toolResources.session.refresh("fleet");
-      } catch (e) {
-        if (e instanceof ProjectAlreadyRegisteredError) setStatusNote("already in your projects");
-        else setStatusNote("couldn't remember that project");
-      }
-    };
-
     /** Write a starter workspace config for `dir` via `tmux-ide detect --write` (async
      *  subprocess — the CLI resolves the layout from the project's stack). */
     const runDetectWrite = (dir: string) => {
@@ -4479,31 +4418,6 @@ const mountTuiRoot = () => {
       });
     };
 
-    /** The full picked-folder flow: open it, then the two skippable offers. */
-    const openFolderPicked = async (dir: string) => {
-      openFolderAt(dir);
-      const remember = await DialogConfirm.show({
-        title: "Remember this project?",
-        body:
-          "Add it to your projects so it's one click to reopen next time. " +
-          "This opens your project in a terminal workspace either way.",
-        yesLabel: "Remember it",
-        noLabel: "Not now",
-      });
-      if (remember) await rememberProject(dir);
-      if (!(await hasProjectConfig(dir))) {
-        const setup = await DialogConfirm.show({
-          title: "Set up a layout?",
-          body:
-            "Detect this project and write a starter layout so it opens with the " +
-            "right panes next time. You can change it later.",
-          yesLabel: "Set it up",
-          noLabel: "Skip",
-        });
-        if (setup) runDetectWrite(dir);
-      }
-    };
-
     /** Entry point for every "open folder" affordance (home key `f`, the footer
      *  chip, the palette command, the welcome action): browse, then open. */
     const openFolderFlow = async () => {
@@ -4511,8 +4425,27 @@ const mountTuiRoot = () => {
       // `||` (not `??`): contextDir is "" when unset, and a selected header/none
       // gives null — either falls through to the working directory.
       const start = selectedHomeDir() || contextDir() || invokeCwd;
-      const dir = await runFolderPicker(start);
-      if (dir) await openFolderPicked(dir);
+      try {
+        const feature = homeFeature() ?? (await ensureHomeFeature());
+        if (!feature) {
+          setStatusNote("Home actions unavailable · switch views to retry");
+          return;
+        }
+        await feature.runOpenFolderFlow({
+          start,
+          dialogs: {
+            select: DialogSelect.show,
+            prompt: DialogPrompt.show,
+            confirm: DialogConfirm.show,
+          },
+          openFolder: openFolderAt,
+          setStatusNote,
+          refreshFleet: () => toolResources.session.refresh("fleet"),
+          writeDetectedLayout: runDetectWrite,
+        });
+      } catch {
+        setStatusNote("Home actions unavailable · switch views to retry");
+      }
     };
 
     /** A home row's PRIMARY verb: open a session as the workspace, or launch a
@@ -7016,7 +6949,12 @@ const mountTuiRoot = () => {
       }
       const m = mode();
       if (m === "home") {
-        const action = homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0);
+        const feature = homeFeature();
+        const projection = homeSurfaceProjection();
+        const action =
+          feature && projection
+            ? feature.homeActionAtProjection(projection, x, gy, sidebarW(), 0)
+            : null;
         if (action?.source === "footer") {
           setHoverIf(
             action.actionIndex !== undefined
@@ -7972,7 +7910,12 @@ const mountTuiRoot = () => {
       // (gy=0) + rule (gy=1), so a click at row gy hits home item `gy - 2`.
       if (mode() === "home") {
         if (type !== "down") return;
-        const action = homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0);
+        const feature = homeFeature();
+        const projection = homeSurfaceProjection();
+        const action =
+          feature && projection
+            ? feature.homeActionAtProjection(projection, x, gy, sidebarW(), 0)
+            : null;
         if (action?.source === "footer" || action?.source === "welcome") {
           runHomeAction(action.id, action.itemIndex);
           return;
@@ -8562,11 +8505,38 @@ const mountTuiRoot = () => {
                   />
                 }
               >
-                <HomeSurface
-                  theme={semanticTheme()}
-                  projection={homeSurfaceProjection()}
-                  rollup={rollup()}
-                />
+                <Show
+                  when={homeFeature()}
+                  fallback={
+                    <box
+                      width="100%"
+                      height="100%"
+                      flexDirection="column"
+                      justifyContent="center"
+                      alignItems="center"
+                      backgroundColor={semanticTheme().roles.surfaces.panel}
+                    >
+                      <text fg={semanticTheme().roles.text.secondary}>
+                        {homeFeatureLoadState() === "failed"
+                          ? "Home unavailable · switch views to retry"
+                          : "Loading Home…"}
+                      </text>
+                    </box>
+                  }
+                >
+                  {(feature) => (
+                    <Show when={homeSurfaceProjection()}>
+                      {(projection) => (
+                        <Dynamic
+                          component={feature().HomeSurface}
+                          theme={semanticTheme()}
+                          projection={projection()}
+                          rollup={rollup()}
+                        />
+                      )}
+                    </Show>
+                  )}
+                </Show>
               </Show>
             }
             dockBody={

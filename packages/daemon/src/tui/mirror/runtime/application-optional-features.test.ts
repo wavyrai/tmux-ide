@@ -10,6 +10,7 @@ describe("application optional feature loaders", () => {
       "utf8",
     );
     for (const specifier of [
+      "../features/home/feature.tsx",
       "../features/files/feature.tsx",
       "../features/changes/feature.tsx",
       "../features/missions-activity/feature.tsx",
@@ -92,6 +93,7 @@ describe("application optional feature loaders", () => {
   });
 
   it.each([
+    ["home", "runOpenFolderFlow"],
     ["dialogs", "createDialogFeatureSession"],
     ["settings", "createSettingsFeatureSession"],
     ["palette", "createPaletteFeatureSession"],
