@@ -12,15 +12,14 @@
  */
 
 import type { RawData, WebSocket } from "ws";
+import { discoverSessions, buildOverviews, buildProjectDetail } from "./discovery.ts";
+import type { AgentTurnCompletion } from "./agent-status-watch.ts";
 import {
-  discoverSessions,
-  buildOverviews,
-  buildProjectDetail,
-  listTmuxSessions,
-  readAdoptedSessionNames,
-  readAgentStatesBySession,
-} from "./discovery.ts";
-import { AgentStatusWatcher, type AgentTurnCompletion } from "./agent-status-watch.ts";
+  DaemonFleetFactsObserver,
+  readAgentStateFacts,
+  readSessionCompositionFacts,
+  type DaemonFleetFactsObserverOptions,
+} from "./daemon-fleet-facts-observer.ts";
 import { agentIdForPaneStamp } from "./resources/application-shell.ts";
 import { projectRegistryEmitter } from "../lib/project-registry.ts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
@@ -50,7 +49,6 @@ import {
 
 const WS_OPEN = 1;
 const KEEPALIVE_INTERVAL_MS = 25_000;
-const SESSIONS_POLL_MS = 2_000;
 
 interface WsLike {
   readyState: number;
@@ -197,13 +195,13 @@ export function broadcastInteractionReceipt(
   return frame;
 }
 
-let sessionsPollTimer: ReturnType<typeof setInterval> | null = null;
-let lastSessionsHash = "";
 let projectRegistryListener: (() => void) | null = null;
 let workspaceRegistryListenerReleases: readonly (() => void)[] = [];
-let agentStatusWatcher: AgentStatusWatcher | null = null;
-let fleetPollTimer: ReturnType<typeof setInterval> | null = null;
-let lastFleetHash = "";
+let fleetFactsObserver: DaemonFleetFactsObserver | null = null;
+let fleetFactsReaderOverride: Pick<
+  DaemonFleetFactsObserverOptions,
+  "readSessions" | "readAgents"
+> | null = null;
 let sessionsObserverRefs = 0;
 let projectRegistryObserverRefs = 0;
 let agentStatusObserverRefs = 0;
@@ -229,23 +227,7 @@ function ensureWorkspaceResourceObserver(daemonInstanceId: string): WorkspaceRes
   return workspaceResourceObserver;
 }
 
-function snapshotSessionsHash(): string {
-  try {
-    // Composition invalidation needs identity only. Expanding every name into
-    // cwd, pane, and semantic-id discovery here used to launch several
-    // synchronous tmux subprocesses per session on the daemon's terminal-data
-    // event loop every two seconds. Consumers still fetch the full resource
-    // after an actual name-set transition; the watcher itself stays names-only.
-    return JSON.stringify(listTmuxSessions().sort());
-  } catch {
-    return "";
-  }
-}
-
-function pollSessionsComposition(): void {
-  const hash = snapshotSessionsHash();
-  if (hash === lastSessionsHash) return;
-  lastSessionsHash = hash;
+function broadcastSessionCompositionChanged(): void {
   for (const client of allClients) client.broadcastSessionsChanged();
   if (resourceEventGeneration) {
     broadcastResourceChanged(
@@ -257,19 +239,6 @@ function pollSessionsComposition(): void {
       resourceEventGeneration,
     );
   }
-}
-
-function ensureSessionsPoller(): void {
-  if (sessionsPollTimer) return;
-  lastSessionsHash = snapshotSessionsHash();
-  sessionsPollTimer = setInterval(pollSessionsComposition, SESSIONS_POLL_MS);
-  sessionsPollTimer.unref?.();
-}
-
-function maybeStopSessionsPoller(): void {
-  if (sessionsObserverRefs > 0 || !sessionsPollTimer) return;
-  clearInterval(sessionsPollTimer);
-  sessionsPollTimer = null;
 }
 
 /**
@@ -336,62 +305,30 @@ function agentTurnCompletedFrame(
  * while at least one client is connected, so there is no background cost
  * otherwise.
  */
-function ensureAgentStatusWatcher(): void {
-  if (agentStatusWatcher) return;
-  agentStatusWatcher = new AgentStatusWatcher({
-    read: () => readAgentStatesBySession(),
-    emit: (sessionName) => {
-      for (const client of allClients) client.broadcastAgentStatusChanged(sessionName);
-      if (resourceEventGeneration) {
+function broadcastAgentSessionsChanged(sessions: readonly string[]): void {
+  for (const sessionName of sessions) {
+    for (const client of allClients) client.broadcastAgentStatusChanged(sessionName);
+    if (resourceEventGeneration) {
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "fleet-catalog" },
+        resourceEventGeneration,
+      );
+      const workspaceName = workspaceNameForSession(sessionName);
+      if (workspaceName) {
         broadcastResourceChanged(
-          { workspaceName: null, resource: "fleet-catalog" },
+          { workspaceName, resource: "application-shell" },
           resourceEventGeneration,
         );
-        const workspaceName = workspaceNameForSession(sessionName);
-        if (workspaceName) {
-          broadcastResourceChanged(
-            { workspaceName, resource: "application-shell" },
-            resourceEventGeneration,
-          );
-          broadcastResourceChanged(
-            { workspaceName, resource: "workspace-missions" },
-            resourceEventGeneration,
-          );
-        }
+        broadcastResourceChanged(
+          { workspaceName, resource: "workspace-missions" },
+          resourceEventGeneration,
+        );
       }
-    },
-    emitTurnCompleted: (completion) => {
-      const frame = agentTurnCompletedFrame(completion);
-      for (const client of allClients) client.broadcastAgentTurnCompleted(frame);
-    },
-  });
-  agentStatusWatcher.start();
+    }
+  }
 }
 
-function maybeStopAgentStatusWatcher(): void {
-  if (agentStatusObserverRefs > 0 || !agentStatusWatcher) return;
-  agentStatusWatcher.stop();
-  agentStatusWatcher = null;
-}
-
-/**
- * Hash the visible adopted-session set. A `null` read (transient tmux failure)
- * holds the current baseline so a hiccup never looks like the whole fleet
- * vanishing. This tracks fleet COMPOSITION only (which sessions are adopted),
- * which is what a `fleet.changed` frame signals — agent-status transitions are
- * carried separately by the agent-status watcher.
- */
-function snapshotFleetHash(): string {
-  const names = readAdoptedSessionNames();
-  if (names === null) return lastFleetHash;
-  return JSON.stringify([...names].sort());
-}
-
-/** One fleet-composition poll cycle. Exposed for deterministic tests. */
-function pollFleetComposition(): void {
-  const hash = snapshotFleetHash();
-  if (hash === lastFleetHash) return;
-  lastFleetHash = hash;
+function broadcastAdoptedCompositionChanged(): void {
   for (const client of allClients) client.broadcastFleetChanged();
   if (resourceEventGeneration) {
     broadcastResourceChanged(
@@ -401,63 +338,70 @@ function pollFleetComposition(): void {
   }
 }
 
-/**
- * Start (lazily) the fleet-composition poller on the first connected client. It
- * polls the adopted-session set — the ONLY signal that covers an adopted-only
- * session (one absent from the workspace registry) appearing or disappearing —
- * and fans a fleet-wide `fleet.changed` frame on each change. Runs only while a
- * client is connected.
- */
-function ensureFleetPoller(): void {
-  if (fleetPollTimer) return;
-  lastFleetHash = snapshotFleetHash();
-  fleetPollTimer = setInterval(pollFleetComposition, SESSIONS_POLL_MS);
-  fleetPollTimer.unref?.();
-}
-
-function maybeStopFleetPoller(): void {
-  if (fleetObserverRefs > 0 || !fleetPollTimer) return;
-  clearInterval(fleetPollTimer);
-  fleetPollTimer = null;
-}
-
-function acquireGlobalObserver(kind: "sessions" | "projects" | "agents" | "fleet"): () => void {
-  if (kind === "sessions") {
-    sessionsObserverRefs += 1;
-    ensureSessionsPoller();
-  } else if (kind === "projects") {
-    projectRegistryObserverRefs += 1;
-    ensureProjectRegistryListener();
-  } else if (kind === "agents") {
-    agentStatusObserverRefs += 1;
-    ensureAgentStatusWatcher();
-  } else {
-    fleetObserverRefs += 1;
-    ensureFleetPoller();
-  }
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    if (kind === "sessions") {
-      sessionsObserverRefs = Math.max(0, sessionsObserverRefs - 1);
-      maybeStopSessionsPoller();
-    } else if (kind === "projects") {
-      projectRegistryObserverRefs = Math.max(0, projectRegistryObserverRefs - 1);
-      maybeStopProjectRegistryListener();
-    } else if (kind === "agents") {
-      agentStatusObserverRefs = Math.max(0, agentStatusObserverRefs - 1);
-      maybeStopAgentStatusWatcher();
-    } else {
-      fleetObserverRefs = Math.max(0, fleetObserverRefs - 1);
-      maybeStopFleetPoller();
-    }
+function ensureFleetFactsObserver(): DaemonFleetFactsObserver {
+  const readers = fleetFactsReaderOverride ?? {
+    readSessions: readSessionCompositionFacts,
+    readAgents: readAgentStateFacts,
   };
+  fleetFactsObserver ??= new DaemonFleetFactsObserver({
+    ...readers,
+    onSessionsChanged: broadcastSessionCompositionChanged,
+    onAdoptedChanged: broadcastAdoptedCompositionChanged,
+    onAgentSessionsChanged: broadcastAgentSessionsChanged,
+    onAgentTurnCompleted: (completion) => {
+      const frame = agentTurnCompletedFrame(completion);
+      for (const client of allClients) client.broadcastAgentTurnCompleted(frame);
+    },
+  });
+  return fleetFactsObserver;
 }
 
 interface ResourceObservationHandle {
   readonly release: () => void;
   readonly ready: Promise<{ readonly status: "installed" | "unavailable" }>;
+}
+
+function acquireGlobalObserver(
+  kind: "sessions" | "projects" | "agents" | "fleet",
+): ResourceObservationHandle {
+  let releaseAuthority: () => void;
+  let ready = Promise.resolve({ status: "installed" as const });
+  if (kind === "sessions") {
+    sessionsObserverRefs += 1;
+    const handle = ensureFleetFactsObserver().acquire(["sessions"]);
+    releaseAuthority = handle.release;
+    ready = handle.ready.then(() => ({ status: "installed" as const }));
+  } else if (kind === "projects") {
+    projectRegistryObserverRefs += 1;
+    ensureProjectRegistryListener();
+    releaseAuthority = () => undefined;
+  } else if (kind === "agents") {
+    agentStatusObserverRefs += 1;
+    const handle = ensureFleetFactsObserver().acquire(["agents"]);
+    releaseAuthority = handle.release;
+    ready = handle.ready.then(() => ({ status: "installed" as const }));
+  } else {
+    fleetObserverRefs += 1;
+    const handle = ensureFleetFactsObserver().acquire(["adopted"]);
+    releaseAuthority = handle.release;
+    ready = handle.ready.then(() => ({ status: "installed" as const }));
+  }
+  let released = false;
+  return {
+    ready,
+    release: () => {
+      if (released) return;
+      released = true;
+      releaseAuthority();
+      if (kind === "sessions") sessionsObserverRefs = Math.max(0, sessionsObserverRefs - 1);
+      else if (kind === "projects") {
+        projectRegistryObserverRefs = Math.max(0, projectRegistryObserverRefs - 1);
+        maybeStopProjectRegistryListener();
+      } else if (kind === "agents")
+        agentStatusObserverRefs = Math.max(0, agentStatusObserverRefs - 1);
+      else fleetObserverRefs = Math.max(0, fleetObserverRefs - 1);
+    },
+  };
 }
 let resourceObservationOverride:
   | ((interest: DaemonEventResourceInterest) => ResourceObservationHandle)
@@ -472,20 +416,22 @@ function acquireResourceObservation(
     release,
     ready: Promise.resolve({ status: "installed" }),
   });
+  const combine = (handles: readonly ResourceObservationHandle[]): ResourceObservationHandle => ({
+    ready: Promise.all(handles.map(({ ready }) => ready)).then(() => ({ status: "installed" })),
+    release: () => handles.forEach(({ release }) => release()),
+  });
   if (interest.resource === "workspace-catalog") {
-    const releases = [acquireGlobalObserver("sessions"), acquireGlobalObserver("projects")];
-    return synchronous(() => releases.forEach((release) => release()));
+    return combine([acquireGlobalObserver("sessions"), acquireGlobalObserver("projects")]);
   }
   if (interest.resource === "fleet-catalog") {
-    const releases = [
+    return combine([
       acquireGlobalObserver("sessions"),
       acquireGlobalObserver("fleet"),
       acquireGlobalObserver("agents"),
-    ];
-    return synchronous(() => releases.forEach((release) => release()));
+    ]);
   }
   if (interest.resource === "application-shell") {
-    return synchronous(acquireGlobalObserver("agents"));
+    return acquireGlobalObserver("agents");
   }
   if (isObservableWorkspaceResource(interest.resource) && interest.workspaceName !== null) {
     return ensureWorkspaceResourceObserver(daemonInstanceId).acquire(
@@ -498,13 +444,13 @@ function acquireResourceObservation(
 
 /** Historical sessions-only clients retain the old broad observation set. */
 function acquireLegacyObservation(): () => void {
-  const releases = [
+  const handles = [
     acquireGlobalObserver("sessions"),
     acquireGlobalObserver("projects"),
     acquireGlobalObserver("agents"),
     acquireGlobalObserver("fleet"),
   ];
-  return () => releases.forEach((release) => release());
+  return () => handles.forEach(({ release }) => release());
 }
 
 /**
@@ -791,10 +737,7 @@ export function handleWsEventsConnection(
     explicitInterestKeys.clear();
     unsubWorkspaceAdded();
     unsubWorkspaceRemoved();
-    maybeStopSessionsPoller();
     maybeStopProjectRegistryListener();
-    maybeStopAgentStatusWatcher();
-    maybeStopFleetPoller();
   };
 
   const applyLegacyPreference = (legacyEvents: boolean | undefined): void => {
@@ -962,20 +905,6 @@ export function handleWsEventsConnection(
 }
 
 /**
- * Test-only hook to shut down the global sessions poller.
- */
-export function _stopSessionsPollerForTests(): void {
-  if (!sessionsPollTimer) return;
-  clearInterval(sessionsPollTimer);
-  sessionsPollTimer = null;
-}
-
-/** Test-only hook to drive one sessions-composition poll deterministically. */
-export function _pollSessionsCompositionForTests(): void {
-  pollSessionsComposition();
-}
-
-/**
  * Test-only hook to detach the registry listener.
  */
 export function _detachProjectRegistryListenerForTests(): void {
@@ -986,31 +915,23 @@ export function _detachProjectRegistryListenerForTests(): void {
   workspaceRegistryListenerReleases = [];
 }
 
-/**
- * Test-only hook to shut down the global agent-status watcher.
- */
-export function _stopAgentStatusWatcherForTests(): void {
-  if (!agentStatusWatcher) return;
-  agentStatusWatcher.stop();
-  agentStatusWatcher = null;
+/** Test-only hook to retire and reset the unified fleet facts observer. */
+export function _stopFleetFactsObserverForTests(): void {
+  fleetFactsObserver?.stop();
+  fleetFactsObserver = null;
 }
 
-/**
- * Test-only hook to drive one agent-status poll cycle deterministically,
- * bypassing the real interval.
- */
-export function _tickAgentStatusWatcherForTests(): void {
-  agentStatusWatcher?.tick();
+/** Test-only reader seam; production always uses async tmux subprocesses. */
+export function _setFleetFactsReadersForTests(
+  readers: Pick<DaemonFleetFactsObserverOptions, "readSessions" | "readAgents"> | null,
+): void {
+  _stopFleetFactsObserverForTests();
+  fleetFactsReaderOverride = readers;
 }
 
-/**
- * Test-only hook to shut down the global fleet-composition poller.
- */
-export function _stopFleetPollerForTests(): void {
-  if (!fleetPollTimer) return;
-  clearInterval(fleetPollTimer);
-  fleetPollTimer = null;
-  lastFleetHash = "";
+/** Test-only hook to drive one unified observation cycle deterministically. */
+export async function _pollFleetFactsObserverForTests(): Promise<void> {
+  await fleetFactsObserver?.runOnce();
 }
 
 /** Test-only reset for the generation-scoped replay journal. */
@@ -1029,14 +950,6 @@ export function _setResourceObservationOverrideForTests(
 }
 
 /**
- * Test-only hook to drive one fleet-composition poll cycle deterministically,
- * bypassing the real interval.
- */
-export function _pollFleetCompositionForTests(): void {
-  pollFleetComposition();
-}
-
-/**
  * Deterministically retire every demand-driven observer. Embedded daemon
  * shutdown calls this after closing event sockets so native watcher cleanup is
  * part of the daemon's completion barrier rather than process-exit luck.
@@ -1046,10 +959,8 @@ export async function shutdownWsEventObservation(): Promise<void> {
   projectRegistryObserverRefs = 0;
   agentStatusObserverRefs = 0;
   fleetObserverRefs = 0;
-  _stopSessionsPollerForTests();
   _detachProjectRegistryListenerForTests();
-  _stopAgentStatusWatcherForTests();
-  _stopFleetPollerForTests();
+  _stopFleetFactsObserverForTests();
   const observer = workspaceResourceObserver;
   workspaceResourceObserver = null;
   await observer?.dispose();
