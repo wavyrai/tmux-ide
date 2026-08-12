@@ -375,13 +375,18 @@ async function collectInputTrace() {
     traceEnvironment,
   );
   try {
-    // `--target` already starts on Terminals. Wait for the actual pane canvas,
-    // then focus its body explicitly; sending F2 here can be routed through to
-    // the target as soon as the terminal input owner is live.
+    // `--target` starts on Terminals, but the first live pane can claim input
+    // while the shell is still settling. Re-assert the workspace mode only
+    // after the semantic Echo pane is visibly ready, then focus its body.
     const canvasFrame = await waitForCapturedFrame(
       (frame) =>
         frame.includes(target) && frame.includes("TERMINAL INPUT") && frame.includes("Echo"),
       10_000,
+    );
+    run("node", ["scripts/tui-testdrive.mjs", "key", "F2"]);
+    await waitForCapturedFrame(
+      (frame) => frame.includes(target) && frame.includes("TERMINAL INPUT") && frame.includes("Echo"),
+      2_000,
     );
     run("node", ["scripts/tui-testdrive.mjs", "mouse", "click", "40", "10"]);
     await delay(50);
