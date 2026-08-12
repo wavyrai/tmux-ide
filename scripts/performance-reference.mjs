@@ -206,20 +206,52 @@ async function collectInputTrace() {
     traceEnvironment,
   );
   try {
-    run("node", ["scripts/tui-testdrive.mjs", "key", "F2"]);
-    await delay(500);
+    // `--target` already starts on Terminals. Wait for the actual pane canvas,
+    // then focus its body explicitly; sending F2 here can be routed through to
+    // the target as soon as the terminal input owner is live.
+    const canvasFrame = await waitForCapturedFrame(
+      (frame) => frame.includes(target) && frame.includes("TERMINAL INPUT"),
+      5_000,
+    );
+    run("node", ["scripts/tui-testdrive.mjs", "mouse", "click", "40", "10"]);
+    await delay(50);
     for (let ordinal = 0; ordinal < options.inputSamples; ordinal += 1) {
       const prior = countCompletedLocalTraces(tracePath);
       run("node", ["scripts/tui-testdrive.mjs", "text", ordinal % 2 === 0 ? "x" : "y"]);
       const deadline = Date.now() + 2_000;
       while (Date.now() < deadline && countCompletedLocalTraces(tracePath) <= prior) await delay(5);
       if (countCompletedLocalTraces(tracePath) <= prior)
-        throw new Error(`Timed out waiting for input-to-paint sample ${ordinal + 1}`);
+        throw new Error(
+          `Timed out waiting for input-to-paint sample ${ordinal + 1}\n\n` +
+            `--- initial canvas ---\n${canvasFrame}\n\n` +
+            `--- current frame ---\n${captureTestdrive()}\n\n` +
+            `--- stderr ---\n${readFileSync(resolve(root, ".tasks/tui-testdrive/stderr.log"), "utf8")}`,
+        );
     }
   } finally {
     run("node", ["scripts/tui-testdrive.mjs", "stop"]);
   }
   return tracePath;
+}
+
+async function waitForCapturedFrame(predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let frame = "";
+  while (Date.now() < deadline) {
+    frame = captureTestdrive();
+    if (predicate(frame)) return frame;
+    await delay(25);
+  }
+  throw new Error(`Timed out waiting for reference canvas\n\n${frame}`);
+}
+
+function captureTestdrive() {
+  const result = spawnSync("node", ["scripts/tui-testdrive.mjs", "capture"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  return result.status === 0 ? result.stdout : `(capture unavailable: ${result.stderr.trim()})`;
 }
 
 function countCompletedLocalTraces(path) {
