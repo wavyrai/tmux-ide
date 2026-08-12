@@ -167,20 +167,16 @@ describe("GuiPerformanceTelemetry", () => {
     expect(telemetry.snapshot()?.paintMs.latest).toBe(11);
   });
 
-  it("keeps channel ownership bounded across refresh and renderer retirement", () => {
-    const counts: number[] = [];
-    const telemetry = new GuiPerformanceTelemetry({
-      scheduleFrame: () => () => undefined,
-      onChannelCountChanged: (count) => counts.push(count),
-    });
+  it("retires stale renderer ownership instead of reviving its token", () => {
+    const telemetry = new GuiPerformanceTelemetry({ scheduleFrame: () => () => undefined });
     const initial = telemetry.createRenderChannel();
-    expect(counts.at(-1)).toBe(1);
     telemetry.enable();
     const refreshed = telemetry.refreshRenderChannel(initial)!;
     expect(refreshed).not.toBe(initial);
-    expect(counts.slice(-2)).toEqual([0, 1]);
+    expect(telemetry.refreshRenderChannel(initial)).toBeNull();
     telemetry.retireRenderChannel(refreshed);
-    expect(counts.at(-1)).toBe(0);
+    expect(telemetry.refreshRenderChannel(refreshed)).toBeNull();
+    expect(telemetry.beginPaint(refreshed)).toBeNull();
   });
 
   it("publishes one snapshot for a delivery burst and isolates listener failures", () => {

@@ -8,7 +8,6 @@ export interface GuiPerformanceTelemetryOptions {
   readonly scheduleFrame?: (callback: (atMs: number) => void) => () => void;
   readonly scheduleIdle?: (callback: () => void, delayMs: number) => () => void;
   readonly activeIdleMs?: number;
-  readonly onChannelCountChanged?: (count: number) => void;
 }
 
 export interface GuiPerformancePaintTransaction {
@@ -75,7 +74,6 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
   readonly #scheduleFrame: (callback: (atMs: number) => void) => () => void;
   readonly #scheduleIdle: (callback: () => void, delayMs: number) => () => void;
   readonly #activeIdleMs: number;
-  readonly #onChannelCountChanged: ((count: number) => void) | undefined;
   readonly #listeners = new Set<(snapshot: LocalPerformanceSnapshotV1 | null) => void>();
   #authority: LocalPerformanceAuthorityV1;
   #aggregator: LocalPerformanceAggregator;
@@ -110,7 +108,6 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
         return () => clearTimeout(timer);
       });
     this.#activeIdleMs = options.activeIdleMs ?? 1_000;
-    this.#onChannelCountChanged = options.onChannelCountChanged;
     if (!Number.isFinite(this.#activeIdleMs) || this.#activeIdleMs <= 0) {
       throw new TypeError("active idle duration must be finite and positive");
     }
@@ -161,7 +158,6 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
       renderSequence: 0,
       lastObservedRenderAt: null,
     });
-    this.#onChannelCountChanged?.(this.#channels.size);
     return channel;
   }
 
@@ -170,7 +166,6 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
     if (!state || state.retired) return null;
     if (state.epoch === this.#epoch) return channel;
     this.#channels.delete(channel);
-    this.#onChannelCountChanged?.(this.#channels.size);
     return this.createRenderChannel();
   }
 
@@ -179,7 +174,6 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
     if (!state) return;
     this.#renderedChannels.delete(channel);
     this.#channels.delete(channel);
-    this.#onChannelCountChanged?.(this.#channels.size);
   }
 
   beginParse(): (() => void) | null {
