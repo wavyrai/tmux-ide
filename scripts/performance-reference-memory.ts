@@ -1,7 +1,4 @@
-import type {
-  TerminalDeliveryAck,
-  TerminalDeliveryEnvelope,
-} from "@tmux-ide/contracts";
+import type { TerminalDeliveryAck, TerminalDeliveryEnvelope } from "@tmux-ide/contracts";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { ControlModeOwnershipRegistry } from "../packages/daemon/src/terminal/mirror/control-mode-ownership.ts";

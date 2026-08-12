@@ -398,13 +398,7 @@ async function collectInputTrace() {
       // Keep the measured host free of a second Node startup/teardown per
       // keystroke. The trace clock begins inside OpenTUI, but that short-lived
       // wrapper still competes with the render process after injecting input.
-      tmux([
-        "send-keys",
-        "-t",
-        "=_tmux-ide-testdrive:0.0",
-        "-l",
-        ordinal % 2 === 0 ? "x" : "y",
-      ]);
+      tmux(["send-keys", "-t", "=_tmux-ide-testdrive:0.0", "-l", ordinal % 2 === 0 ? "x" : "y"]);
       const deadline = Date.now() + 2_000;
       while (Date.now() < deadline && countCompletedLocalTraces(tracePath) <= prior) await delay(5);
       if (countCompletedLocalTraces(tracePath) <= prior)
