@@ -26,4 +26,24 @@ describe("application optional feature loaders", () => {
     expect(registry.getMetrics()).toMatchObject({ requests: 0, loadsStarted: 0, publications: 0 });
     registry.dispose();
   });
+
+  it("evaluates and publishes the real Files module exactly once after admission", async () => {
+    const registry = createApplicationOptionalFeatureRegistry();
+    const first = registry.request("files");
+    const second = registry.request("files");
+    expect(first).toBe(second);
+    expect(registry.getMetrics()).toMatchObject({ loadsStarted: 0, retainedIntents: 1 });
+
+    registry.admit();
+    const [left, right] = await Promise.all([first, second]);
+    expect(left).toBe(right);
+    expect(left?.createFilesFeatureSession).toBeTypeOf("function");
+    expect(registry.getMetrics()).toMatchObject({
+      loadsStarted: 1,
+      loadsSucceeded: 1,
+      publications: 1,
+      joinedRequests: 1,
+    });
+    registry.dispose();
+  });
 });

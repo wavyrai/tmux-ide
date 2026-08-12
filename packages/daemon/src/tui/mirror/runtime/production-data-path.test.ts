@@ -88,7 +88,7 @@ describe("production OpenTUI data path", () => {
   it("fences tool projections by generation and applies same-millisecond resources by identity", () => {
     expect(source).toContain("state.generation !== appliedToolGeneration");
     expect(source).toContain("appliedToolSnapshots.clear()");
-    expect(source).toContain("setFileNodes([])");
+    expect(source).toContain("filesSession()?.resetCatalog()");
     expect(source).toContain("setDiffEntries([])");
     expect(source).toContain("slot.resource.kind) !== slot.resource");
     expect(source).not.toContain("slot.resource.kind) !== slot.updatedAt");

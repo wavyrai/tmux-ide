@@ -46,3 +46,8 @@ export {
 
 export type FilesIgnore = Ignore;
 export const createFilesIgnore = (): Ignore => ignore();
+export {
+  createFilesFeatureSession,
+  FilesFeatureSession,
+  type FilesFeatureHost,
+} from "./session.ts";

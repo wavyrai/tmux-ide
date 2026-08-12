@@ -19,6 +19,25 @@ describe("deferred Files feature boundary", () => {
     expect(source).toContain('activeDockTab() === "files"');
     expect(source).toContain("component={feature().FilesSurface}");
     expect(source).toContain('"Loading Files…"');
+    expect(source).not.toContain("RGBA, EditBuffer");
+    expect(source).not.toContain("createSignal<FileNode");
+    expect(source).not.toContain("setFileNodes(");
+    expect(source).not.toContain("setFileStatusEntries(");
+    expect(source).not.toContain("writeFile(");
+    expect(source).not.toContain("void rename(m.filePath");
+    expect(source).not.toContain("void rm(m.filePath");
+    expect(source).toContain("feature.createFilesFeatureSession({");
+    expect(source).toContain("filesSession()?.dispose()");
+  });
+
+  it("keeps Files state, IO, projection, and native buffer lifecycle together", () => {
+    const source = readFileSync(new URL("../features/files/session.ts", import.meta.url), "utf8");
+    expect(source).toContain('import { EditBuffer } from "@opentui/core"');
+    expect(source).toContain('from "node:fs/promises"');
+    expect(source).toContain("createMemo<FilesSurfaceProjection>");
+    expect(source).toContain("createRoot((dispose)");
+    expect(source).toContain("this.#buffer?.destroy()");
+    expect(source).toContain("this.#disposeReactiveOwner()");
   });
 
   it("keeps the non-git palette fallback on the ignore-aware Files directory port", () => {

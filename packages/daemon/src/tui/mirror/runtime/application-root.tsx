@@ -194,20 +194,12 @@
  */
 import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
-import {
-  appendFileSync,
-  readFileSync,
-  writeFileSync,
-  renameSync,
-  openSync,
-  writeSync,
-  closeSync,
-} from "node:fs";
-import { readdir, readFile, writeFile, rename, rm, stat } from "node:fs/promises";
+import { appendFileSync, readFileSync, openSync, writeSync, closeSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { Dynamic, render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
-import { RGBA, EditBuffer, SyntaxStyle, createCliRenderer, decodePasteBytes } from "@opentui/core";
+import { RGBA, SyntaxStyle, createCliRenderer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import {
   createRuntimeConnectionSupervisor,
@@ -278,12 +270,10 @@ import {
 import { isBinary } from "./file-content-primitives.ts";
 import type {
   EditorOpenOrigin,
-  FileNode,
   FilesActionId,
-  FilesIgnore,
   FilesSurfaceProjection,
-  RawEntry,
   ReadOnlyReason,
+  FilesFeatureSession,
 } from "../features/files/feature.tsx";
 import {
   classifyDiff,
@@ -1161,6 +1151,9 @@ const mountTuiRoot = () => {
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const optionalFeatures = createApplicationOptionalFeatureRegistry();
     const [filesFeature, setFilesFeature] = createSignal<ApplicationOptionalFeatures["files"]>();
+    const [filesSession, setFilesSession] = createSignal<FilesFeatureSession>();
+    let pendingFilesCatalog: WorkspaceFilesCatalogEnvelopeV1 | null = null;
+    let pendingFilesSelectionPath: string | null = null;
     const [filesFeatureLoadState, setFilesFeatureLoadState] = createSignal<
       "idle" | "loading" | "ready" | "failed"
     >("idle");
@@ -1182,6 +1175,28 @@ const mountTuiRoot = () => {
             return;
           }
           setFilesFeature(() => feature);
+          const session = feature.createFilesFeatureSession({
+            workspaceDir: () => contextDir() || invokeCwd,
+            width: () => dockSurfaceWidth(),
+            height: () => dockSurfaceHeight(),
+            hover,
+            activePanel,
+            mode,
+            activateFiles: () => setTab("files"),
+            leaveFiles: (previous) => setTab(previous === "mirror" ? "terminal" : "home"),
+            refresh: () => toolResources.session.refresh("files"),
+            note: setStatusNote,
+            initialShowHidden: persisted.filesShowHidden,
+            initialShowIgnored: persisted.filesShowIgnored,
+            quitHint: QUIT_HINT,
+          });
+          setFilesSession(() => session);
+          session.pendingSelectionPath = pendingFilesSelectionPath;
+          pendingFilesSelectionPath = null;
+          if (pendingFilesCatalog) {
+            session.applyCatalog(pendingFilesCatalog);
+            pendingFilesCatalog = null;
+          }
           setFilesFeatureLoadState("ready");
           filesFeatureRequest = null;
         },
@@ -1195,6 +1210,8 @@ const mountTuiRoot = () => {
     };
     applicationLifecycle.registerCloser("optional-features", () => {
       filesFeatureRequest = null;
+      filesSession()?.dispose();
+      setFilesSession(undefined);
       optionalFeatures.dispose();
       tuiPerfMark("optional-feature-metrics", { ...optionalFeatures.getMetrics() });
     });
@@ -3026,52 +3043,18 @@ const mountTuiRoot = () => {
       markDirty();
     });
 
-    // ── EDITOR (M18.2) ──────────────────────────────────────────────────────
-    // The native EditBuffer holds text + cursor; Solid can't see its mutations,
-    // so `editorRev` is bumped after every edit to re-derive `editorLines`.
-    let editBuffer: EditBuffer | null = null;
-    let prevMode: "home" | "mirror" = "home";
-    const [editorPath, setEditorPath] = createSignal<string | null>(null);
-    const [editorRev, setEditorRev] = createSignal(0);
-    const [editorTop, setEditorTop] = createSignal(0);
-    const [editorModified, setEditorModified] = createSignal(false);
-    const [editorReadOnly, setEditorReadOnly] = createSignal<ReadOnlyReason>(null);
-    const [editorMsg, setEditorMsg] = createSignal("");
-
-    // Visible text rows = full height minus tab bar (1) + header (1) + rule/banner
-    // (1) + footer (1).
-    const editorRows = () => Math.max(1, dockSurfaceHeight() - 3);
-    const editorLines = createMemo<string[]>(() => {
-      editorRev();
-      if (!editBuffer) return [""];
-      return editBuffer.getText().split("\n");
-    });
-    const editorCursor = createMemo<{ row: number; col: number }>(() => {
-      editorRev();
-      if (!editBuffer) return { row: 0, col: 0 };
-      const c = editBuffer.getCursorPosition();
-      return { row: c.row, col: c.col };
-    });
-    // The exact rows on screen, each tagged with its 1-based number and (for the
-    // cursor line) the column where the inverse cursor cell is drawn.
-    const editorVisible = createMemo<{ num: number; text: string; cursorCol: number | null }[]>(
-      () => {
-        const lines = editorLines();
-        const rows = editorRows();
-        const top = clampTop(editorTop(), lines.length, rows);
-        const cur = editorCursor();
-        const out: { num: number; text: string; cursorCol: number | null }[] = [];
-        for (let i = top; i < Math.min(lines.length, top + rows); i++) {
-          out.push({
-            num: i + 1,
-            text: lines[i] ?? "",
-            cursorCol: i === cur.row ? cur.col : null,
-          });
-        }
-        return out;
-      },
-    );
-
+    // Files owns its editor/tree/IO authority inside the deferred feature
+    // session. These stable adapters keep global routing and persistence thin.
+    const editorPath = () => filesSession()?.editorPath() ?? null;
+    const editorRev = () => filesSession()?.editorRevision() ?? 0;
+    const editorTop = () => filesSession()?.editorTop() ?? 0;
+    const editorModified = () => filesSession()?.editorModified() ?? false;
+    const editorReadOnly = (): ReadOnlyReason => filesSession()?.editorReadOnly() ?? null;
+    const editorLines = () => filesSession()?.editorLines() ?? [""];
+    const editorRows = () => filesSession()?.editorRows() ?? Math.max(1, dockSurfaceHeight() - 3);
+    const editorCursor = () => filesSession()?.editorCursor() ?? { row: 0, col: 0 };
+    const setEditorTop = (value: number | ((current: number) => number)) =>
+      filesSession()?.setEditorTop(value);
     const openEditor = (
       rawPath: string,
       line?: number,
@@ -3091,118 +3074,12 @@ const mountTuiRoot = () => {
         );
         return;
       }
-      const path = rawPath.startsWith("~/")
-        ? `${process.env.HOME ?? ""}${rawPath.slice(1)}`
-        : rawPath;
-      let bytes: Uint8Array;
-      try {
-        bytes = readFileSync(path);
-      } catch (e) {
-        setEditorMsg(`cannot open: ${(e as Error).message}`);
-        return;
-      }
-      const reason = feature.classifyFile(bytes.length, isBinary(bytes));
-      const text =
-        reason === "binary"
-          ? feature.sanitizeForDisplay(bytes)
-          : Buffer.from(bytes).toString("utf8");
-      editBuffer?.destroy();
-      editBuffer = EditBuffer.create("wcwidth");
-      editBuffer.setText(text);
-      editBuffer.setCursor(0, 0);
-      // Jump target (M24.5: ^e from a diff hunk): clamp into the buffer, put
-      // the cursor there, and scroll it into view.
-      let top = 0;
-      if (line !== undefined) {
-        const lineCount = text.split("\n").length;
-        const target = Math.max(0, Math.min(line, lineCount - 1));
-        editBuffer.setCursor(target, 0);
-        top = scrollToCursor(target, 0, editorRows(), lineCount);
-      }
-      if (mode() !== "editor") prevMode = mode() === "mirror" ? "mirror" : "home";
-      setEditorPath(path);
-      setEditorReadOnly(reason);
-      setEditorModified(false);
-      setEditorTop(top);
-      setEditorMsg("");
-      setEditorRev((r) => r + 1);
-      setFilesFocus("editor");
-      if (feature.shouldActivateFilesAfterEditorOpen(activePanel(), origin)) setTab("files");
+      filesSession()?.openEditor(rawPath, line, origin);
     };
-
-    const toggleEditor = () => {
-      if (!editBuffer) return; // nothing opened yet
-      if (mode() === "editor") setTab(prevMode === "mirror" ? "terminal" : "home");
-      else {
-        prevMode = mode() === "mirror" ? "mirror" : "home";
-        setTab("files");
-      }
-    };
-
-    const saveEditor = () => {
-      const path = editorPath();
-      if (!editBuffer || !path || editorReadOnly()) return;
-      try {
-        const tmp = `${path}.zz-tmp-${process.pid}`;
-        writeFileSync(tmp, editBuffer.getText());
-        renameSync(tmp, path);
-        setEditorModified(false);
-        setEditorMsg("saved");
-      } catch (e) {
-        setEditorMsg(`save failed: ${(e as Error).message}`);
-      }
-    };
-
-    const editorSyncScroll = () => {
-      const c = editBuffer!.getCursorPosition();
-      setEditorTop((t) => scrollToCursor(c.row, t, editorRows(), editorLines().length));
-    };
-
-    /** Feed one key to the editor buffer. Ctrl combos (^s/^e/^g/^q/^z/^y) are
-     *  handled by the caller; this owns navigation + insertion. */
-    const editorKey = (evt: { name: string; ctrl: boolean; meta: boolean; shift: boolean }) => {
-      const eb = editBuffer;
-      if (!eb) return;
-      const ro = editorReadOnly() !== null;
-      const rows = editorRows();
-      const name = evt.name;
-      if (name === "up") eb.moveCursorUp();
-      else if (name === "down") eb.moveCursorDown();
-      else if (name === "left") eb.moveCursorLeft();
-      else if (name === "right") eb.moveCursorRight();
-      else if (name === "home") {
-        const c = eb.getCursorPosition();
-        eb.setCursor(c.row, 0);
-      } else if (name === "end") {
-        eb.setCursorByOffset(eb.getEOL().offset);
-      } else if (name === "pageup") {
-        for (let i = 0; i < rows; i++) eb.moveCursorUp();
-      } else if (name === "pagedown") {
-        for (let i = 0; i < rows; i++) eb.moveCursorDown();
-      } else if (!ro && name === "return") {
-        eb.newLine();
-        setEditorModified(true);
-      } else if (!ro && name === "backspace") {
-        eb.deleteCharBackward();
-        setEditorModified(true);
-      } else if (!ro && name === "delete") {
-        eb.deleteChar();
-        setEditorModified(true);
-      } else if (!ro && name === "space" && !evt.ctrl && !evt.meta) {
-        // OpenTUI names the key "space", not " " — without this branch the
-        // editor could not insert spaces at all (found by the M24.6 battery;
-        // same trap the dialog stack hit in M24.1).
-        eb.insertText(" ");
-        setEditorModified(true);
-      } else if (!ro && name.length === 1 && !evt.ctrl && !evt.meta) {
-        eb.insertText(evt.shift ? name.toUpperCase() : name);
-        setEditorModified(true);
-      } else {
-        return; // unhandled key: no re-render, no scroll churn
-      }
-      editorSyncScroll();
-      setEditorRev((r) => r + 1);
-    };
+    const toggleEditor = () => filesSession()?.toggleEditor();
+    const saveEditor = () => filesSession()?.save();
+    const editorKey = (event: { name: string; ctrl: boolean; meta: boolean; shift: boolean }) =>
+      filesSession()?.key(event);
 
     // ── DIFF (M18.3; grouped + stage-aware M24.5) ───────────────────────────
     // The working-tree diff of `diffDir`, rendered natively as a GROUPED list
@@ -3632,237 +3509,33 @@ const mountTuiRoot = () => {
       refreshFocusRecord();
     };
 
-    // ── FILES TAB (M18.4, uplifted M24.6) ────────────────────────────────────
-    // An expandable file list (left) beside the M18.2 editor (right), rooted at
-    // the workspace dir. `fs.readdir` and every git call are ALWAYS async (the
-    // render-loop landmine); ordering, ignore/hidden filtering, git-status
-    // decoration, the changed-file walk, the `/` filter view and the expansion-
-    // preserving rebuild are all pure in file-tree.ts. Ignore rules come from
-    // the workspace's .gitignore via the `ignore` package (matching is pure;
-    // only the file read is io). SELECTION indexes the VISIBLE (filtered) rows;
-    // expansion math maps back to the underlying flat list via FilteredRow.index.
-    const [fileNodes, setFileNodes] = createSignal<FileNode[]>([]);
-    const [fileSel, setFileSel] = createSignal(0);
-    const [fileTop, setFileTop] = createSignal(0);
-    // The H / I visibility toggles — persisted in app-state (default: hidden).
-    const [showHiddenFiles, setShowHiddenFiles] = createSignal(persisted.filesShowHidden);
-    const [showIgnoredFiles, setShowIgnoredFiles] = createSignal(persisted.filesShowIgnored);
-    // Git decoration: porcelain entries for the workspace repo + its toplevel
-    // (status paths are REPO-relative — the workspace dir may sit deeper).
-    const [fileStatusEntries, setFileStatusEntries] = createSignal<StatusEntry[]>([]);
-    const [filesGitTop, setFilesGitTop] = createSignal<string | null>(null);
-    // The `/` filter: null = off, "" = filter mode just opened. The selection
-    // to restore when the filter is escaped lives beside it (not reactive).
-    const [filesQuery, setFilesQuery] = createSignal<string | null>(null);
-    let filesPreFilterPath: string | null = null;
-    let pendingFilesSelectionPath: string | null = null;
-    // Which half of the Files tab has the keyboard: the file LIST (j/k/enter) or
-    // the EDITOR (typing). Opening a file hands focus to the editor; esc hands it
-    // back to the list.
-    const [filesFocus, setFilesFocus] = createSignal<"list" | "editor">("list");
-    const filesListW = () => filesFeature()?.filesListWidth(dockSurfaceWidth()) ?? 0;
-    /** The workspace directory driving both the file list and the diff panel. */
+    // Deferred FilesFeatureSession is the sole Files state/IO/projection owner.
+    // Root keeps only stable adapters needed by global routing and persistence.
     const workspaceDir = () => contextDir() || invokeCwd;
-    const fileStatusMap = createMemo(
-      () => filesFeature()?.statusMapFromEntries(fileStatusEntries()) ?? new Map<string, string>(),
-    );
-    const changedWalk = createMemo(
-      () =>
-        filesFeature()?.changedFileWalk(fileStatusEntries(), {
-          showHidden: showHiddenFiles(),
-        }) ?? [],
-    );
-    /** The rows the list actually shows: the flat tree through the `/` filter. */
-    const visibleFiles = createMemo(
-      () => filesFeature()?.filterView(fileNodes(), filesQuery()) ?? [],
-    );
-    const fileListVisible = createMemo(() => {
-      const rows = visibleFiles();
-      const view = editorRows();
-      const top = clampTop(fileTop(), rows.length, view);
-      return rows.slice(top, top + view).map((row, i) => ({ node: row.node, index: top + i }));
-    });
-    /** The status letter for a node (repo-relative lookup incl. propagated
-     *  ancestor letters), or null outside a repo / for a clean path. */
-    const fileStatusFor = (n: FileNode): string | null => {
-      const top = filesGitTop();
-      if (!top) return null;
-      const rel = filesFeature()?.relPath(top, n.path) ?? "";
-      return rel ? (fileStatusMap().get(rel) ?? null) : null;
-    };
-    const filesSurfaceProjection = createMemo<FilesSurfaceProjection | null>(() => {
-      const feature = filesFeature();
-      if (!feature) return null;
-      return feature.projectFilesSurface({
-        width: dockSurfaceWidth(),
-        height: dockSurfaceHeight(),
-        workspaceDir: workspaceDir(),
-        editorPath: editorPath(),
-        editorModified: editorModified(),
-        editorCursor: editorCursor(),
-        editorLineCount: editorLines().length,
-        editorMessage: editorMsg(),
-        readOnly: editorReadOnly(),
-        filterQuery: filesQuery(),
-        focus: filesFocus(),
-        showHidden: showHiddenFiles(),
-        showIgnored: showIgnoredFiles(),
-        visibleRows: fileListVisible(),
-        totalRows: visibleFiles().length,
-        fileSelection: fileSel(),
-        fileTop: fileTop(),
-        editorVisible: editorVisible(),
-        editorTop: editorTop(),
-        editorTotalLines: editorLines().length,
-        hovered:
-          hover()?.region === "files" || hover()?.region === "button"
-            ? (hover() as { region: "files" | "button"; index: number })
-            : null,
-        statusFor: fileStatusFor,
-        readOnlyBanner: feature.readOnlyBanner(editorReadOnly()),
-        footerBase: `j/k · enter open · [/] change · / filter · H dot:${
-          showHiddenFiles() ? "on" : "off"
-        } · I ign:${showIgnoredFiles() ? "on" : "off"} · ^s save · esc list · ^g home · ${QUIT_HINT}`,
-      });
-    });
-
-    // The gitignore matcher for the CURRENT workspace root (reloaded when the
-    // root changes or the tree refreshes — cheap: one small file read).
-    let filesIg: FilesIgnore | null = null;
-    let filesIgDir = "";
-    const loadIgnoreRules = async (root: string): Promise<void> => {
-      const feature = filesFeature();
-      if (!feature) return;
-      const ig = feature.createFilesIgnore();
-      try {
-        ig.add(await readFile(join(root, ".gitignore"), "utf8"));
-      } catch {
-        // no .gitignore — everything passes
-      }
-      filesIg = ig;
-      filesIgDir = root;
-    };
-    /** Async list of `dir`, annotated with the gitignore verdict and filtered
-     *  through the current H/I toggles (pure filterEntries). */
-    const listDir = async (dir: string): Promise<RawEntry[]> => {
-      const root = workspaceDir();
-      if (filesIgDir !== root) await loadIgnoreRules(root);
-      const ents = await readdir(dir, { withFileTypes: true });
-      const feature = filesFeature();
-      if (!feature || !filesIg) return [];
-      const raw: RawEntry[] = ents.map((e) => {
-        const isDir = e.isDirectory();
-        const rel = feature.relPath(root, join(dir, e.name));
-        let ignored = false;
-        if (rel) {
-          try {
-            ignored = filesIg.ignores(isDir ? `${rel}/` : rel);
-          } catch {
-            // malformed path for the matcher — treat as not ignored
-          }
-        }
-        return { name: e.name, isDir, ignored };
-      });
-      return feature.filterEntries(raw, {
-        showHidden: showHiddenFiles(),
-        showIgnored: showIgnoredFiles(),
-      });
-    };
-
-    const toggleHiddenFiles = () => {
-      setShowHiddenFiles((v) => !v);
-      toolResources.session.refresh("files");
-    };
-    const toggleIgnoredFiles = () => {
-      setShowIgnoredFiles((v) => !v);
-      toolResources.session.refresh("files");
-    };
-
-    const moveFileSel = (delta: number) => {
-      const rows = visibleFiles();
-      if (rows.length === 0) return;
-      const idx = clampSel(fileSel() + delta, rows.length);
-      setFileSel(idx);
-      setFileTop((t) => scrollToCursor(idx, t, editorRows(), rows.length));
-    };
-    /** Enter on a VISIBLE row: open a file in the editor, or toggle a directory
-     *  (async readdir → splice children in, or prune the subtree). Expansion
-     *  applies at the row's UNDERLYING index, re-resolved by path at apply time
-     *  (a watcher refresh may have reshaped the list under a slow readdir). */
-    const activateFile = (visIndex: number) => {
-      const row = visibleFiles()[visIndex];
-      if (!row) return;
-      setFileSel(visIndex);
-      const node = row.node;
-      if (!node.isDir) {
-        openEditor(node.path);
-        return;
-      }
-      if (node.expanded) {
-        setFileNodes((list) => {
-          const feature = filesFeature();
-          return feature
-            ? feature.removeSubtreeAt(list, feature.indexOfPath(list, node.path))
-            : list;
-        });
-        return;
-      }
-      void listDir(node.path)
-        .then((ents) => {
-          const feature = filesFeature();
-          if (!feature) return;
-          const children = feature.buildNodes(node.path, ents, node.depth + 1);
-          setFileNodes((list) =>
-            feature.insertChildrenAt(list, feature.indexOfPath(list, node.path), children),
-          );
-        })
-        .catch(() => {});
-    };
-
-    /** Reveal `absPath` in the tree: expand each collapsed ancestor in turn
-     *  (async readdirs), then select the row. Bails silently when a segment is
-     *  filtered out of view (the changed walk pre-filters what it offers). */
-    const revealPath = async (absPath: string): Promise<void> => {
-      const root = workspaceDir();
-      const feature = filesFeature();
-      if (!feature) return;
-      const rel = feature.relPath(root, absPath);
-      if (!rel) return;
-      for (const anc of feature.ancestorDirs(rel)) {
-        const ancAbs = join(root, anc);
-        const idx = feature.indexOfPath(fileNodes(), ancAbs);
-        const node = fileNodes()[idx];
-        if (!node || !node.isDir) return;
-        if (!node.expanded) {
-          const ents = await listDir(ancAbs).catch(() => null);
-          if (!ents) return;
-          const children = feature.buildNodes(ancAbs, ents, node.depth + 1);
-          setFileNodes((list) =>
-            feature.insertChildrenAt(list, feature.indexOfPath(list, ancAbs), children),
-          );
-        }
-      }
-      const idx = feature.indexOfPath(fileNodes(), absPath);
-      if (idx === -1) return;
-      setFileSel(idx);
-      setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
-    };
-
-    /** `[` / `]` — hop the selection to the prev/next CHANGED file (tree display
-     *  order, wrapping), auto-expanding collapsed ancestors. Clears the `/`
-     *  filter first: the hop is defined on the whole tree. */
-    const hopChanged = (dir: 1 | -1) => {
-      const top = filesGitTop();
-      const walk = changedWalk();
-      if (!top || walk.length === 0) return;
-      if (filesQuery() !== null) setFilesQuery(null);
-      const cur = visibleFiles()[fileSel()]?.node ?? null;
-      const feature = filesFeature();
-      if (!feature) return;
-      const curRel = cur ? feature.relPath(top, cur.path) || null : null;
-      const next = feature.nextChangedPath(walk, curRel, dir);
-      if (next) void revealPath(join(top, next));
-    };
+    const fileNodes = () => filesSession()?.fileNodes() ?? [];
+    const fileSel = () => filesSession()?.fileSelection() ?? 0;
+    const fileTop = () => filesSession()?.fileTop() ?? 0;
+    const visibleFiles = () => filesSession()?.visibleFiles() ?? [];
+    const filesQuery = () => filesSession()?.query() ?? null;
+    const filesFocus = () => filesSession()?.focus() ?? "list";
+    const showHiddenFiles = () => filesSession()?.showHidden() ?? persisted.filesShowHidden;
+    const showIgnoredFiles = () => filesSession()?.showIgnored() ?? persisted.filesShowIgnored;
+    const setFileSel = (value: number | ((current: number) => number)) =>
+      filesSession()?.setFileSelection(value);
+    const setFileTop = (value: number | ((current: number) => number)) =>
+      filesSession()?.setFileTop(value);
+    const setFilesQuery = (value: string | null) => filesSession()?.setQuery(value);
+    const setFilesFocus = (value: "list" | "editor") => filesSession()?.setFocus(value);
+    const filesListW = () => filesSession()?.listWidth() ?? 0;
+    const filesSurfaceProjection = (): FilesSurfaceProjection | null =>
+      filesSession()?.projection() ?? null;
+    const listDir = (dir: string) => filesSession()?.listDir(dir) ?? Promise.resolve([]);
+    const moveFileSel = (delta: number) => filesSession()?.moveSelection(delta);
+    const activateFile = (index: number) => filesSession()?.activate(index);
+    const revealPath = (path: string) => filesSession()?.reveal(path) ?? Promise.resolve();
+    const hopChanged = (direction: 1 | -1) => filesSession()?.hopChanged(direction);
+    const toggleHiddenFiles = () => filesSession()?.toggleHidden();
+    const toggleIgnoredFiles = () => filesSession()?.toggleIgnored();
 
     const workspaceUiProjectRoot = (): string =>
       workspaceUiController.snapshot().repository?.metadata.projectRoot ?? workspaceDir();
@@ -3980,9 +3653,11 @@ const mountTuiRoot = () => {
       if (entry.panel === "files") {
         hydratedWorkspaceSurfaceIds.add("files");
         const selectedPath = absoluteProjectPath(root, entry.selectedPath);
-        pendingFilesSelectionPath = selectedPath;
+        const session = filesSession();
+        if (session) session.pendingSelectionPath = selectedPath;
+        else pendingFilesSelectionPath = selectedPath;
         if (fileNodes().length > 0 && selectedPath) {
-          pendingFilesSelectionPath = null;
+          if (session) session.pendingSelectionPath = null;
           void revealPath(selectedPath);
         }
         const openPath = absoluteProjectPath(root, entry.openPath);
@@ -4914,7 +4589,7 @@ const mountTuiRoot = () => {
         currentSession: contextSession(),
         syncOn: syncOn(),
         saveState: {
-          hasBuffer: Boolean(editBuffer),
+          hasBuffer: filesSession()?.hasBuffer ?? false,
           hasPath: Boolean(editorPath()),
           readOnlyReason: editorReadOnly(),
         },
@@ -5005,7 +4680,8 @@ const mountTuiRoot = () => {
         // command name remains wire-compatible with the earlier composite host.
         compositeFocusAvailable: true,
         editorAvailable:
-          Boolean(editBuffer) || (mode() === "diff" && Boolean(diffVisibleFiles()[diffSel()])),
+          (filesSession()?.hasBuffer ?? false) ||
+          (mode() === "diff" && Boolean(diffVisibleFiles()[diffSel()])),
       }),
       effects: {
         openPalette,
@@ -5159,11 +4835,7 @@ const mountTuiRoot = () => {
       applyEffect: executeApplicationShellEffect,
       capturePaletteFocusReturn: setPaletteFocusReturnTarget,
       pasteFilesEditor: (text) => {
-        if (!editBuffer) return;
-        editBuffer.insertText(text);
-        setEditorModified(true);
-        editorSyncScroll();
-        setEditorRev((revision) => revision + 1);
+        if (!filesSession()?.insertText(text)) return;
         setStatusNote(`pasted ${text.length} chars`);
       },
       pasteTerminal: (text) => {
@@ -5894,43 +5566,9 @@ const mountTuiRoot = () => {
     };
 
     const applyFilesCatalog = (envelope: WorkspaceFilesCatalogEnvelopeV1) => {
-      const resource = envelope.resource;
-      if (resource.status !== "ready") {
-        setFileNodes([]);
-        setEditorMsg(resource.message);
-        return;
-      }
-      const root = workspaceDir();
-      setFileNodes(
-        resource.entries
-          .filter(
-            (entry) =>
-              (showHiddenFiles() || !entry.hidden) && (showIgnoredFiles() || !entry.ignored),
-          )
-          .map((entry) => ({
-            name: entry.name,
-            path: join(root, entry.relativePath),
-            isDir: entry.kind === "directory",
-            depth: 0,
-            expanded: false,
-            ignored: entry.ignored,
-          })),
-      );
-      setFilesGitTop(root);
-      setFileStatusEntries(
-        resource.entries.flatMap((entry) =>
-          entry.gitStatus
-            ? [
-                {
-                  status: changeStatusLetter(entry.gitStatus),
-                  path: entry.relativePath,
-                  staged: false,
-                },
-              ]
-            : [],
-        ),
-      );
-      setFileSel((current) => clampSel(current, Math.max(1, resource.entries.length)));
+      const session = filesSession();
+      if (session) session.applyCatalog(envelope);
+      else pendingFilesCatalog = envelope;
     };
 
     const applyChangesCatalog = (envelope: WorkspaceChangesCatalogEnvelopeV1) => {
@@ -6094,8 +5732,7 @@ const mountTuiRoot = () => {
           latestApplicationShellAgents = [];
           latestApplicationShellWorkspaceName = "";
           setProjectsData([]);
-          setFileNodes([]);
-          setFileStatusEntries([]);
+          filesSession()?.resetCatalog();
           setDiffEntries([]);
           setDiffText("");
           setMissionWorkspaceSnapshot(null);
@@ -6223,7 +5860,6 @@ const mountTuiRoot = () => {
         await mirrorSupervisor?.stop();
         mirrorSupervisor = null;
         semanticView = null;
-        editBuffer?.destroy();
       });
     });
 
@@ -6343,7 +5979,7 @@ const mountTuiRoot = () => {
         focusZone: workbenchProjection().focusZone,
         focusedPanel: focusedWorkbenchPanel(),
         filesEditorFocused: filesFocus() === "editor",
-        filesEditorWritable: Boolean(editBuffer && !editorReadOnly()),
+        filesEditorWritable: filesSession()?.editorWritable() ?? false,
         terminalAvailable: Boolean(semanticView),
       });
     };
@@ -6923,27 +6559,16 @@ const mountTuiRoot = () => {
           return;
         }
         if (id === "newfile" && val) {
-          const p = join(m.fileParent ?? workspaceDir(), val);
-          void writeFile(p, "", { flag: "wx" })
-            .then(() => {
-              setStatusNote(`created ${val}`);
-              toolResources.session.refresh("files");
-            })
+          void filesSession()
+            ?.create(m.fileParent ?? workspaceDir(), val)
             .catch((e) => setStatusNote(`create failed: ${(e as Error).message}`));
         } else if (id === "rename" && val && m.filePath) {
-          const p = join(dirname(m.filePath), val);
-          void rename(m.filePath, p)
-            .then(() => {
-              setStatusNote(`renamed → ${val}`);
-              toolResources.session.refresh("files");
-            })
+          void filesSession()
+            ?.rename(m.filePath, val)
             .catch((e) => setStatusNote(`rename failed: ${(e as Error).message}`));
         } else if (id === "delete" && m.filePath) {
-          void rm(m.filePath, { recursive: true, force: false })
-            .then(() => {
-              setStatusNote(`deleted ${basename(m.filePath!)}`);
-              toolResources.session.refresh("files");
-            })
+          void filesSession()
+            ?.delete(m.filePath)
             .catch((e) => setStatusNote(`delete failed: ${(e as Error).message}`));
         }
         closeMenu();
@@ -7258,15 +6883,11 @@ const mountTuiRoot = () => {
           return;
         }
         if (evt.ctrl && evt.name === "z") {
-          editBuffer?.undo();
-          editorSyncScroll();
-          setEditorRev((r) => r + 1);
+          filesSession()?.undo();
           return;
         }
         if (evt.ctrl && evt.name === "y") {
-          editBuffer?.redo();
-          editorSyncScroll();
-          setEditorRev((r) => r + 1);
+          filesSession()?.redo();
           return;
         }
         // File LIST focus: j/k navigate, enter opens a file (→ editor focus) or
@@ -7281,24 +6902,9 @@ const mountTuiRoot = () => {
             // the FILTERED rows; enter activates the row (exiting the filter);
             // escape restores the full list and the pre-filter selection.
             if (evt.name === "escape") {
-              setFilesQuery(null);
-              const back = filesPreFilterPath
-                ? (filesFeature()?.indexOfPath(fileNodes(), filesPreFilterPath) ?? -1)
-                : -1;
-              const idx = back !== -1 ? back : 0;
-              setFileSel(idx);
-              setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
+              filesSession()?.cancelFilter();
             } else if (evt.name === "return") {
-              const row = visibleFiles()[fileSel()];
-              setFilesQuery(null);
-              if (row) {
-                const idx = filesFeature()?.indexOfPath(fileNodes(), row.node.path) ?? -1;
-                if (idx !== -1) {
-                  setFileSel(idx);
-                  setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
-                  activateFile(idx);
-                }
-              }
+              filesSession()?.confirmFilter();
             } else if (evt.name === "backspace") {
               setFilesQuery(q.slice(0, -1));
               setFileSel(0);
@@ -7315,10 +6921,7 @@ const mountTuiRoot = () => {
             return;
           }
           if (evt.name === "/") {
-            filesPreFilterPath = visibleFiles()[fileSel()]?.node.path ?? null;
-            setFilesQuery("");
-            setFileSel(0);
-            setFileTop(0);
+            filesSession()?.beginFilter();
           } else if (evt.name === "]") hopChanged(1);
           else if (evt.name === "[") hopChanged(-1);
           else if (evt.shift && evt.name === "h") toggleHiddenFiles();
@@ -7627,18 +7230,7 @@ const mountTuiRoot = () => {
     };
 
     const runFilesAction = (id: FilesActionId) => {
-      if (id === "save") saveEditor();
-      else if (id === "reload") {
-        const p = editorPath();
-        if (p) openEditor(p);
-      } else if (id === "filter") {
-        filesPreFilterPath = visibleFiles()[fileSel()]?.node.path ?? null;
-        setFilesQuery("");
-        setFileSel(0);
-        setFileTop(0);
-      } else if (id === "toggle-hidden") toggleHiddenFiles();
-      else if (id === "toggle-ignored") toggleIgnoredFiles();
-      else if (id === "refresh") toolResources.session.refresh("files");
+      filesSession()?.action(id);
     };
 
     /** The strip as THREE static texts (pre/active/post) whose STRINGS update.
@@ -7771,7 +7363,7 @@ const mountTuiRoot = () => {
         const localY = workbenchHit.localY;
         if (activeDockTab() === "files") {
           const projection = filesSurfaceProjection();
-          const hit = projection ? filesFeature()?.filesHitTest(projection, localX, localY) : null;
+          const hit = projection ? filesSession()?.hitTest(localX, localY) : null;
           if (hit?.area === "header" && hit.actionIndex !== undefined)
             setHoverIf({ region: "button", index: hit.actionIndex });
           else if (hit?.area === "list" && hit.rowIndex !== undefined)
@@ -7831,9 +7423,7 @@ const mountTuiRoot = () => {
       if (m === "editor") {
         if (gy === 0) {
           const projection = filesSurfaceProjection();
-          const hit = projection
-            ? filesFeature()?.filesHitTest(projection, x - sidebarW(), gy)
-            : null;
+          const hit = projection ? filesSession()?.hitTest(x - sidebarW(), gy) : null;
           setHoverIf(
             hit?.area === "header" && hit.actionIndex !== undefined
               ? { region: "button", index: hit.actionIndex }
@@ -8162,9 +7752,7 @@ const mountTuiRoot = () => {
       const { localX, localY } = hit;
       if (activeDockTab() === "files") {
         const projection = filesSurfaceProjection();
-        const surfaceHit = projection
-          ? filesFeature()?.filesHitTest(projection, localX, localY)
-          : null;
+        const surfaceHit = projection ? filesSession()?.hitTest(localX, localY) : null;
         if (e.type === "scroll") {
           const direction = e.scroll?.direction;
           if (direction === "up" || direction === "down") {
@@ -8177,15 +7765,14 @@ const mountTuiRoot = () => {
           }
           return true;
         }
-        if (e.type === "drag" && selecting?.surface === "editor" && editBuffer) {
+        if (e.type === "drag" && selecting?.surface === "editor" && filesSession()?.hasBuffer) {
           const cell = editorCellAtDock(localX, localY);
           setSelection({
             surface: "editor",
             anchor: selAnchor,
             head: { row: cell.line, col: cell.col },
           });
-          editBuffer.setCursor(cell.line, cell.col);
-          setEditorRev((revision) => revision + 1);
+          filesSession()?.setCursor(cell.line, cell.col);
           return true;
         }
         if (e.type === "up" || e.type === "drag-end" || e.type === "drop") {
@@ -8204,7 +7791,7 @@ const mountTuiRoot = () => {
           activateFile(surfaceHit.rowIndex);
           return true;
         }
-        if (surfaceHit?.area !== "editor" || !editBuffer) return true;
+        if (surfaceHit?.area !== "editor" || !filesSession()?.hasBuffer) return true;
         const { line, col } = editorCellAtDock(localX, localY);
         setFilesFocus("editor");
         const now = Date.now();
@@ -8218,15 +7805,14 @@ const mountTuiRoot = () => {
             anchor: { row: line, col: range.from },
             head: { row: line, col: range.to },
           });
-          editBuffer.setCursor(line, range.to);
+          filesSession()?.setCursor(line, range.to);
           selecting = null;
         } else {
-          editBuffer.setCursor(line, col);
+          filesSession()?.setCursor(line, col);
           selAnchor = { row: line, col };
           selecting = { surface: "editor" };
           setSelection(null);
         }
-        setEditorRev((revision) => revision + 1);
         return true;
       }
 
@@ -8357,8 +7943,7 @@ const mountTuiRoot = () => {
       } else {
         const { line, col } = editorCellAt(x, gy);
         setSelection({ surface: "editor", anchor: selAnchor, head: { row: line, col } });
-        editBuffer?.setCursor(line, col);
-        setEditorRev((r) => r + 1);
+        filesSession()?.setCursor(line, col);
       }
     };
 
@@ -8988,9 +8573,7 @@ const mountTuiRoot = () => {
         // The header row (gy=0) carries the projected Files actions.
         if (gy === 0) {
           const projection = filesSurfaceProjection();
-          const hit = projection
-            ? filesFeature()?.filesHitTest(projection, x - sidebarW(), gy)
-            : null;
+          const hit = projection ? filesSession()?.hitTest(x - sidebarW(), gy) : null;
           if (hit?.area === "header" && hit.actionId) runFilesAction(hit.actionId);
           return;
         }
@@ -9006,7 +8589,7 @@ const mountTuiRoot = () => {
           }
           return;
         }
-        if (!editBuffer) return;
+        if (!filesSession()?.hasBuffer) return;
         const { line, col } = editorCellAt(x, gy);
         setFilesFocus("editor");
         const now = Date.now();
@@ -9021,15 +8604,14 @@ const mountTuiRoot = () => {
             anchor: { row: line, col: r.from },
             head: { row: line, col: r.to },
           });
-          editBuffer.setCursor(line, r.to);
+          filesSession()?.setCursor(line, r.to);
           selecting = null;
         } else {
-          editBuffer.setCursor(line, col);
+          filesSession()?.setCursor(line, col);
           selAnchor = { row: line, col };
           selecting = { surface: "editor" };
           setSelection(null);
         }
-        setEditorRev((r) => r + 1);
         return;
       }
       // DIFF mode: header (gy=0) + rule (gy=1), body from gy=2, footer verbs on
