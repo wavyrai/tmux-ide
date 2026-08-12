@@ -17851,6 +17851,30 @@ var init_contract = __esm({
 
 // packages/daemon/src/lib/session-monitor.ts
 import { execFileSync as execFileSync9 } from "node:child_process";
+function parseListeningPids(raw) {
+  const pids = /* @__PURE__ */ new Set();
+  let currentPid = null;
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("p")) {
+      currentPid = line.slice(1);
+    } else if (line.startsWith("n") && currentPid) {
+      const match = line.match(/:(\d+)$/);
+      if (match) {
+        const port = parseInt(match[1], 10);
+        if (port >= 1024 && port <= 2e4) pids.add(currentPid);
+      }
+    }
+  }
+  return pids;
+}
+function parseProcessTree(raw) {
+  const tree = /* @__PURE__ */ new Map();
+  for (const line of raw.trim().split("\n")) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length === 2) tree.set(parts[0], parts[1]);
+  }
+  return tree;
+}
 function getListeningPids() {
   try {
     const raw = execFileSync9("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-FpPn"], {
@@ -17858,20 +17882,7 @@ function getListeningPids() {
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
     });
-    const pids = /* @__PURE__ */ new Set();
-    let currentPid = null;
-    for (const line of raw.split("\n")) {
-      if (line.startsWith("p")) {
-        currentPid = line.slice(1);
-      } else if (line.startsWith("n") && currentPid) {
-        const match = line.match(/:(\d+)$/);
-        if (match) {
-          const port = parseInt(match[1], 10);
-          if (port >= 1024 && port <= 2e4) pids.add(currentPid);
-        }
-      }
-    }
-    return pids;
+    return parseListeningPids(raw);
   } catch {
     return /* @__PURE__ */ new Set();
   }
@@ -17883,12 +17894,7 @@ function getProcessTree() {
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
     });
-    const tree = /* @__PURE__ */ new Map();
-    for (const line of raw.trim().split("\n")) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length === 2) tree.set(parts[0], parts[1]);
-    }
-    return tree;
+    return parseProcessTree(raw);
   } catch {
     return /* @__PURE__ */ new Map();
   }
@@ -17933,6 +17939,190 @@ var init_session_monitor = __esm({
   "packages/daemon/src/lib/session-monitor.ts"() {
     "use strict";
     SPINNERS = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠂⠒⠢⠆⠐⠠⠄◐◓◑◒|/\\-] /;
+  }
+});
+
+// packages/daemon/src/lib/daemon-session-monitor.ts
+import { execFile as execFile2 } from "node:child_process";
+function parseDaemonMonitorPanes(raw) {
+  if (!raw) return [];
+  return raw.split("\n").map((line) => {
+    const [id, pid, cmd, title, role, type, name] = line.split("	");
+    return {
+      id,
+      pid,
+      cmd,
+      title,
+      role: role || void 0,
+      type: type || void 0,
+      name: name || void 0
+    };
+  });
+}
+function execTmuxAsync(args, signal) {
+  return execMonitorCommandAsync("tmux", args, signal);
+}
+function execMonitorCommandAsync(executable, args, signal) {
+  return new Promise((resolve32, reject) => {
+    execFile2(
+      executable,
+      [...args],
+      { encoding: "utf8", maxBuffer: 1024 * 1024, signal },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve32(stdout.trim());
+      }
+    );
+  });
+}
+async function readPortProcessFactsAsync(signal) {
+  const [listeners, processes] = await Promise.all([
+    execMonitorCommandAsync("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-FpPn"], signal),
+    execMonitorCommandAsync("ps", ["-axo", "pid=,ppid="], signal)
+  ]);
+  return { listeners: parseListeningPids(listeners), tree: parseProcessTree(processes) };
+}
+function classifySessionInspectionError(error) {
+  const candidate = error;
+  const message = candidate.message ?? "";
+  if (candidate.code === "EBADF" || candidate.code === "EAGAIN" || candidate.code === "EMFILE" || candidate.code === "ENFILE" || message.includes("EBADF") || message.includes("EAGAIN")) {
+    return "unknown";
+  }
+  return "no";
+}
+async function mapBounded(values2, concurrency, operation) {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, values2.length) }, async () => {
+    while (cursor < values2.length) {
+      const index = cursor;
+      cursor += 1;
+      await operation(values2[index]);
+    }
+  });
+  await Promise.all(workers);
+}
+var DaemonSessionMonitor;
+var init_daemon_session_monitor = __esm({
+  "packages/daemon/src/lib/daemon-session-monitor.ts"() {
+    "use strict";
+    init_session_monitor();
+    DaemonSessionMonitor = class {
+      #options;
+      #intervalMs;
+      #operationConcurrency;
+      #setTimer;
+      #clearTimer;
+      #timer = null;
+      #running = null;
+      #abortController = null;
+      #stopped = false;
+      #lastState = "";
+      constructor(options) {
+        this.#options = options;
+        this.#intervalMs = options.intervalMs ?? 1e3;
+        this.#operationConcurrency = Math.max(1, options.operationConcurrency ?? 4);
+        this.#setTimer = options.setTimer ?? ((callback, delayMs) => {
+          const timer = setTimeout(callback, delayMs);
+          timer.unref?.();
+          return timer;
+        });
+        this.#clearTimer = options.clearTimer ?? clearTimeout;
+      }
+      start() {
+        if (this.#stopped || this.#timer || this.#running) return;
+        this.#schedule();
+      }
+      runOnce() {
+        if (this.#stopped) return Promise.resolve();
+        if (this.#timer) {
+          this.#clearTimer(this.#timer);
+          this.#timer = null;
+        }
+        if (this.#running) return this.#running;
+        const controller = new AbortController();
+        this.#abortController = controller;
+        this.#running = this.#cycle(controller.signal).catch((error) => {
+          if (!controller.signal.aborted) {
+            void error;
+          }
+        }).finally(() => {
+          this.#abortController = null;
+          this.#running = null;
+          if (!this.#stopped) this.#schedule();
+        });
+        return this.#running;
+      }
+      async stop() {
+        if (this.#stopped) {
+          await this.#running;
+          return;
+        }
+        this.#stopped = true;
+        if (this.#timer) this.#clearTimer(this.#timer);
+        this.#timer = null;
+        this.#abortController?.abort();
+        await this.#running;
+      }
+      #schedule() {
+        this.#timer = this.#setTimer(() => {
+          this.#timer = null;
+          void this.runOnce();
+        }, this.#intervalMs);
+      }
+      async #cycle(signal) {
+        const backend2 = this.#options.backend;
+        const session = await backend2.inspectSession(this.#options.sessionName, signal);
+        if (signal.aborted) return;
+        if (session === "no") {
+          backend2.onSessionGone();
+          return;
+        }
+        if (session === "unknown") return;
+        await mapBounded(
+          backend2.listCredentialSessions(),
+          this.#operationConcurrency,
+          (workspaceSession) => backend2.reconcileCredentials(workspaceSession, signal)
+        );
+        if (signal.aborted) return;
+        const clients = await backend2.hasClients(signal);
+        if (clients !== true || signal.aborted) return;
+        const panes = await backend2.listPanes(this.#options.sessionName, signal);
+        if (!panes || panes.length === 0 || signal.aborted) return;
+        const portFacts = await backend2.readPortProcessFacts(signal);
+        if (!portFacts || signal.aborted) return;
+        const mutablePanes = [...panes];
+        const portPanes = computePortPanes(mutablePanes, portFacts);
+        const agentStates = computeAgentStates(mutablePanes);
+        const stateKey = panes.map((pane) => {
+          const portState = portPanes.has(pane.id) ? "1" : "0";
+          const agent = agentStates.get(pane.id) ?? "-";
+          const titleDrift = pane.name && pane.title !== pane.name ? "d" : "ok";
+          return `${pane.id}:${portState}:${agent}:${titleDrift}`;
+        }).join("|");
+        if (stateKey === this.#lastState) return;
+        const mutations = [];
+        for (const pane of panes) {
+          const agent = agentStates.get(pane.id);
+          mutations.push(
+            (activeSignal) => backend2.setPaneOption(
+              pane.id,
+              "@has_port",
+              portPanes.has(pane.id) ? "1" : "0",
+              activeSignal
+            ),
+            (activeSignal) => backend2.setPaneOption(pane.id, "@agent_busy", agent === "busy" ? "1" : "0", activeSignal),
+            (activeSignal) => backend2.setPaneOption(pane.id, "@agent_idle", agent === "idle" ? "1" : "0", activeSignal)
+          );
+          if (pane.name && pane.title !== pane.name) {
+            mutations.push((activeSignal) => backend2.setPaneTitle(pane.id, pane.name, activeSignal));
+          }
+        }
+        await mapBounded(mutations, this.#operationConcurrency, (mutation) => mutation(signal));
+        if (signal.aborted) return;
+        await backend2.refreshClients(signal);
+        if (!signal.aborted) this.#lastState = stateKey;
+      }
+    };
   }
 });
 
@@ -19517,7 +19707,7 @@ var init_agent_status_watch = __esm({
 });
 
 // packages/daemon/src/command-center/daemon-fleet-facts-observer.ts
-import { execFile as execFile2 } from "node:child_process";
+import { execFile as execFile3 } from "node:child_process";
 function parseSessionCompositionFacts(raw) {
   const sessions = [];
   const adopted = [];
@@ -19546,7 +19736,7 @@ function parseAgentStateFacts(raw) {
 }
 function execTmux(args) {
   return new Promise((resolve32) => {
-    execFile2(
+    execFile3(
       "tmux",
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024 },
@@ -22619,7 +22809,7 @@ var init_project_readiness = __esm({
 });
 
 // packages/daemon/src/lib/project-readiness-probe.ts
-import { execFile as execFile3 } from "node:child_process";
+import { execFile as execFile4 } from "node:child_process";
 import { accessSync as accessSync2, constants as constants3, existsSync as existsSync28, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
 import { delimiter, isAbsolute as isAbsolute6, basename as basename10, resolve as resolve23, sep as sep4 } from "node:path";
 function errorCode(error) {
@@ -22959,7 +23149,7 @@ var init_project_readiness_probe = __esm({
         }
       },
       runCommand: (executable, argv, options) => new Promise((resolveResult) => {
-        execFile3(
+        execFile4(
           executable,
           [...argv],
           {
@@ -28242,7 +28432,7 @@ var init_tmux_interaction_options = __esm({
 });
 
 // packages/daemon/src/lib/tmux-external-interaction-observer.ts
-import { execFile as execFile4 } from "node:child_process";
+import { execFile as execFile5 } from "node:child_process";
 import { z as z65 } from "zod";
 function socketArguments(authority) {
   return authority.socketSelector.kind === "path" ? ["-S", authority.socketSelector.path] : ["-L", authority.socketSelector.name];
@@ -28253,7 +28443,7 @@ function shellArgument(value) {
 function defaultWaiter(authority) {
   const prefix = socketArguments(authority);
   return (channel, signal) => new Promise((resolve32, reject) => {
-    execFile4(
+    execFile5(
       authority.executablePath,
       [...prefix, "wait-for", channel],
       { signal, encoding: "utf8", windowsHide: true },
@@ -48619,6 +48809,7 @@ var init_pane_source_credentials = __esm({
       #tmux;
       #grants = /* @__PURE__ */ new Map();
       #tokensByPane = /* @__PURE__ */ new Map();
+      #sessionRevisions = /* @__PURE__ */ new Map();
       constructor(tmux7) {
         this.#tmux = tmux7;
       }
@@ -48632,6 +48823,7 @@ var init_pane_source_credentials = __esm({
         this.reconcileSession(session);
       }
       reconcileSession(session) {
+        this.#sessionRevisions.set(session, (this.#sessionRevisions.get(session) ?? 0) + 1);
         const rows = this.#tmux.run([
           "list-panes",
           "-s",
@@ -48668,6 +48860,65 @@ var init_pane_source_credentials = __esm({
           this.#grants.delete(token);
         }
       }
+      /**
+       * Reconcile credentials without blocking the daemon event loop. A synchronous
+       * request-time reconciliation may race an awaited tmux child; the revision
+       * check retries from live tmux state so the installed option and grant table
+       * cannot settle on different tokens.
+       */
+      async reconcileSessionAsync(session, signal) {
+        const runAsync = this.#tmux.runAsync;
+        if (!runAsync) {
+          this.reconcileSession(session);
+          return;
+        }
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const revision = this.#sessionRevisions.get(session) ?? 0;
+          const rows = await runAsync(
+            [
+              "list-panes",
+              "-s",
+              "-t",
+              `=${session}`,
+              "-F",
+              `#{pane_id}	#{@tmux_ide_pane_id}	#{${PANE_SOURCE_CREDENTIAL_OPTION}}`
+            ],
+            signal
+          );
+          if ((this.#sessionRevisions.get(session) ?? 0) !== revision) continue;
+          const live = /* @__PURE__ */ new Set();
+          let raced = false;
+          for (const row of rows.split("\n")) {
+            const [runtimePaneId, semanticPaneId3, installedToken = ""] = row.split("	");
+            if (!runtimePaneId || !semanticPaneId3) continue;
+            const paneKey = `${session}\0${runtimePaneId}`;
+            live.add(paneKey);
+            const existingToken = this.#tokensByPane.get(paneKey);
+            const existing = existingToken ? this.#grants.get(existingToken) : void 0;
+            if (existing?.semanticPaneId === semanticPaneId3 && installedToken === existingToken)
+              continue;
+            const token = randomBytes5(32).toString("base64url");
+            await runAsync(
+              ["set-option", "-p", "-t", runtimePaneId, PANE_SOURCE_CREDENTIAL_OPTION, token],
+              signal
+            );
+            if ((this.#sessionRevisions.get(session) ?? 0) !== revision) {
+              raced = true;
+              break;
+            }
+            if (existingToken) this.#grants.delete(existingToken);
+            this.#tokensByPane.set(paneKey, token);
+            this.#grants.set(token, { session, runtimePaneId, semanticPaneId: semanticPaneId3 });
+          }
+          if (raced) continue;
+          for (const [paneKey, token] of this.#tokensByPane) {
+            if (!paneKey.startsWith(`${session}\0`) || live.has(paneKey)) continue;
+            this.#tokensByPane.delete(paneKey);
+            this.#grants.delete(token);
+          }
+          return;
+        }
+      }
       resolve(credential, session, claimedSemanticPaneId) {
         try {
           this.reconcileSession(session);
@@ -48685,6 +48936,7 @@ var init_pane_source_credentials = __esm({
       dispose() {
         this.#grants.clear();
         this.#tokensByPane.clear();
+        this.#sessionRevisions.clear();
       }
     };
   }
@@ -54387,7 +54639,7 @@ __export(server_exports, {
   createApp: () => createApp,
   getSseMetrics: () => getSseMetrics
 });
-import { execFile as execFile5 } from "node:child_process";
+import { execFile as execFile6 } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync as existsSync34, readdirSync as readdirSync7 } from "node:fs";
 import { join as join37, dirname as dirname29, basename as basename14 } from "node:path";
@@ -55177,7 +55429,7 @@ function createApp(options = {}) {
       return c.json({ error: "Failed to write workspace config", detail: message }, 500);
     }
   });
-  const execFileAsync = promisify(execFile5);
+  const execFileAsync = promisify(execFile6);
   app.post("/api/project/:name/restart", async (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
@@ -55766,45 +56018,6 @@ async function pickFreePort(hostname3) {
     });
   });
 }
-function sessionExists(sessionName) {
-  try {
-    tmux5("has-session", "-t", sessionName);
-    return "yes";
-  } catch (err) {
-    const msg = err.message ?? "";
-    const code = err.code;
-    if (code === "EBADF" || code === "EAGAIN" || code === "EMFILE" || code === "ENFILE" || msg.includes("EBADF") || msg.includes("EAGAIN")) {
-      console.error("[daemon] sessionExists transient spawn error:", msg);
-      return "unknown";
-    }
-    return "no";
-  }
-}
-function hasClients() {
-  return tmuxSilent2("list-clients").length > 0;
-}
-function listPanes2(sessionName) {
-  const raw = tmuxSilent2(
-    "list-panes",
-    "-t",
-    sessionName,
-    "-F",
-    "#{pane_id}	#{pane_pid}	#{pane_current_command}	#{pane_title}	#{@ide_role}	#{@ide_type}	#{@ide_name}"
-  );
-  if (!raw) return [];
-  return raw.split("\n").map((line) => {
-    const [id, pid, cmd, title, role, type, name] = line.split("	");
-    return {
-      id,
-      pid,
-      cmd,
-      title,
-      role: role || void 0,
-      type: type || void 0,
-      name: name || void 0
-    };
-  });
-}
 function bearerToken2(authHeader) {
   const value = Array.isArray(authHeader) ? authHeader[0] : authHeader;
   if (!value?.startsWith("Bearer ")) return null;
@@ -56310,7 +56523,8 @@ async function startEmbeddedDaemon(opts) {
     const workspaceRegistry = getDefaultWorkspaceRegistry();
     await workspaceRegistry.load();
     const paneSourceCredentials = new PaneSourceCredentialAuthority({
-      run: (args) => tmuxSilent2(...args)
+      run: (args) => tmuxSilent2(...args),
+      runAsync: (args, signal) => execTmuxAsync(args, signal)
     });
     const legacySession = process.env.TMUX_IDE_SESSION;
     if (legacySession && !workspaceRegistry.has(legacySession)) {
@@ -56569,7 +56783,6 @@ async function startEmbeddedDaemon(opts) {
       await abortStartedServer();
       throw error;
     }
-    let lastState = "";
     let stopped = false;
     let stopping = null;
     let stopSelf = null;
@@ -56598,48 +56811,73 @@ async function startEmbeddedDaemon(opts) {
         stop2.stop();
       }
     });
-    const tick = () => {
-      if (sessionless) return;
-      const session = sessionExists(sessionName);
-      if (session === "no") {
-        stopSelf?.();
-        return;
+    const sessionMonitor = sessionless ? null : new DaemonSessionMonitor({
+      sessionName,
+      backend: {
+        inspectSession: async (candidate, signal) => {
+          try {
+            await execTmuxAsync(["has-session", "-t", candidate], signal);
+            return "yes";
+          } catch (error) {
+            if (signal.aborted) return "unknown";
+            return classifySessionInspectionError(error);
+          }
+        },
+        listCredentialSessions: () => workspaceRegistry.list().map((workspace) => workspace.sessionName),
+        reconcileCredentials: async (workspaceSession, signal) => {
+          try {
+            await paneSourceCredentials.reconcileSessionAsync(workspaceSession, signal);
+          } catch {
+          }
+        },
+        hasClients: async (signal) => {
+          try {
+            return (await execTmuxAsync(["list-clients"], signal)).length > 0;
+          } catch {
+            return null;
+          }
+        },
+        listPanes: async (candidate, signal) => {
+          try {
+            const raw = await execTmuxAsync(
+              [
+                "list-panes",
+                "-t",
+                candidate,
+                "-F",
+                "#{pane_id}	#{pane_pid}	#{pane_current_command}	#{pane_title}	#{@ide_role}	#{@ide_type}	#{@ide_name}"
+              ],
+              signal
+            );
+            return parseDaemonMonitorPanes(raw);
+          } catch {
+            return null;
+          }
+        },
+        readPortProcessFacts: async (signal) => {
+          try {
+            return await readPortProcessFactsAsync(signal);
+          } catch {
+            return null;
+          }
+        },
+        setPaneOption: async (paneId, option, value, signal) => {
+          await execTmuxAsync(["set-option", "-pqt", paneId, option, value], signal).catch(
+            () => void 0
+          );
+        },
+        setPaneTitle: async (paneId, title, signal) => {
+          await execTmuxAsync(["select-pane", "-t", paneId, "-T", title], signal).catch(
+            () => void 0
+          );
+        },
+        refreshClients: async (signal) => {
+          await execTmuxAsync(["refresh-client", "-S"], signal).catch(() => void 0);
+        },
+        onSessionGone: () => stopSelf?.()
       }
-      if (session === "unknown") {
-        return;
-      }
-      for (const workspace of workspaceRegistry.list()) {
-        try {
-          paneSourceCredentials.reconcileSession(workspace.sessionName);
-        } catch {
-        }
-      }
-      if (!hasClients()) return;
-      const panes = listPanes2(sessionName);
-      if (panes.length === 0) return;
-      const portPanes = computePortPanes(panes);
-      const agentStates = computeAgentStates(panes);
-      const stateKey = panes.map((pane) => {
-        const portState = portPanes.has(pane.id) ? "1" : "0";
-        const agent = agentStates.get(pane.id) ?? "-";
-        const titleDrift = pane.name && pane.title !== pane.name ? "d" : "ok";
-        return `${pane.id}:${portState}:${agent}:${titleDrift}`;
-      }).join("|");
-      if (stateKey === lastState) return;
-      for (const pane of panes) {
-        const hasPort = portPanes.has(pane.id) ? "1" : "0";
-        const agent = agentStates.get(pane.id);
-        tmuxSilent2("set-option", "-pqt", pane.id, "@has_port", hasPort);
-        tmuxSilent2("set-option", "-pqt", pane.id, "@agent_busy", agent === "busy" ? "1" : "0");
-        tmuxSilent2("set-option", "-pqt", pane.id, "@agent_idle", agent === "idle" ? "1" : "0");
-        if (pane.name && pane.title !== pane.name) {
-          tmuxSilent2("select-pane", "-t", pane.id, "-T", pane.name);
-        }
-      }
-      tmuxSilent2("refresh-client", "-S");
-      lastState = stateKey;
-    };
-    const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
+    });
+    sessionMonitor?.start();
     const apiBaseUrl = canonicalDaemonUrl("http", bindHostname, port);
     const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
     const handle = {
@@ -56664,7 +56902,7 @@ async function startEmbeddedDaemon(opts) {
           try {
             stopped = true;
             await capture(() => setActivationBackend(null));
-            clearInterval(monitorInterval);
+            await capture(() => sessionMonitor?.stop());
             paneSourceCredentials.dispose();
             failures.push(
               ...await retireTerminalAttachmentTransport(
@@ -56759,19 +56997,19 @@ async function startEmbeddedDaemon(opts) {
       return { port };
     });
     stopSelf = () => void handle.stop();
-    tick();
+    void sessionMonitor?.runOnce();
     return handle;
   } catch (error) {
     releaseCanonicalDaemonClaim(claim);
     throw error;
   }
 }
-var requireFromHere, DEFAULT_HOSTNAME, DEFAULT_GRACEFUL_MS, MONITOR_INTERVAL_MS, EMBEDDED_SESSION_NAME, TAKEOVER_TIMEOUT_MS, TAKEOVER_POLL_MS, TAKEOVER_DEADLINE_TEST_OVERRIDE;
+var requireFromHere, DEFAULT_HOSTNAME, DEFAULT_GRACEFUL_MS, EMBEDDED_SESSION_NAME, TAKEOVER_TIMEOUT_MS, TAKEOVER_POLL_MS, TAKEOVER_DEADLINE_TEST_OVERRIDE;
 var init_daemon_embed = __esm({
   "packages/daemon/src/lib/daemon-embed.ts"() {
     "use strict";
     init_src();
-    init_session_monitor();
+    init_daemon_session_monitor();
     init_errors2();
     init_ws_route();
     init_ws_events();
@@ -56799,7 +57037,6 @@ var init_daemon_embed = __esm({
     requireFromHere = createRequire2(import.meta.url);
     DEFAULT_HOSTNAME = "127.0.0.1";
     DEFAULT_GRACEFUL_MS = 2e3;
-    MONITOR_INTERVAL_MS = 1e3;
     EMBEDDED_SESSION_NAME = "__embedded__";
     TAKEOVER_TIMEOUT_MS = 1e4;
     TAKEOVER_POLL_MS = 50;
@@ -58137,10 +58374,10 @@ var init_agent_lifecycle = __esm({
 });
 
 // packages/daemon/src/control/lifecycle.ts
-import { execFile as execFile6 } from "node:child_process";
+import { execFile as execFile7 } from "node:child_process";
 function tmuxRun(args) {
   return new Promise((resolve32, reject) => {
-    execFile6("tmux", args, (err, stdout) => err ? reject(err) : resolve32(stdout.trimEnd()));
+    execFile7("tmux", args, (err, stdout) => err ? reject(err) : resolve32(stdout.trimEnd()));
   });
 }
 async function tmuxTry(args) {
