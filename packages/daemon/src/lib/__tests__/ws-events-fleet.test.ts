@@ -4,6 +4,7 @@ import { DaemonEventServerFrameSchemaZ, type DaemonEventServerFrame } from "@tmu
 import {
   _detachProjectRegistryListenerForTests,
   _pollFleetCompositionForTests,
+  _pollSessionsCompositionForTests,
   _stopAgentStatusWatcherForTests,
   _stopFleetPollerForTests,
   _stopSessionsPollerForTests,
@@ -66,6 +67,42 @@ afterEach(() => {
 });
 
 describe("/ws/events fleet composition invalidation", () => {
+  it("keeps the sessions-composition watcher on the names-only tmux query", () => {
+    let sessionRows = "alpha";
+    const calls: string[][] = [];
+    restoreTmuxRunner = _setTmuxRunner((args) => {
+      calls.push([...args]);
+      if (args[0] === "list-sessions" && args.includes("#{session_name}")) return sessionRows;
+      throw new Error(`unexpected expanded discovery: ${args.join(" ")}`);
+    });
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interestRevision: 1,
+        interests: [{ resource: "workspace-catalog", workspaceName: null }],
+      }),
+    );
+    calls.length = 0;
+    sessionRows = "alpha\nbeta";
+
+    _pollSessionsCompositionForTests();
+
+    expect(calls).toEqual([["list-sessions", "-F", "#{session_name}"]]);
+    expect(
+      calls.some(
+        (args) =>
+          args[0] === "display-message" || args[0] === "list-panes" || args[0] === "show-options",
+      ),
+    ).toBe(false);
+
+    socket.disconnect();
+  });
+
   it("emits fleet.changed when an adopted session appears", () => {
     let sessionRows = "alpha\t1";
     restoreTmuxRunner = pinAdoptedSessions(() => sessionRows);

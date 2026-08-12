@@ -16,6 +16,7 @@ import {
   discoverSessions,
   buildOverviews,
   buildProjectDetail,
+  listTmuxSessions,
   readAdoptedSessionNames,
   readAgentStatesBySession,
 } from "./discovery.ts";
@@ -230,35 +231,38 @@ function ensureWorkspaceResourceObserver(daemonInstanceId: string): WorkspaceRes
 
 function snapshotSessionsHash(): string {
   try {
-    return JSON.stringify(
-      discoverSessions()
-        .map((s) => s.name)
-        .sort(),
-    );
+    // Composition invalidation needs identity only. Expanding every name into
+    // cwd, pane, and semantic-id discovery here used to launch several
+    // synchronous tmux subprocesses per session on the daemon's terminal-data
+    // event loop every two seconds. Consumers still fetch the full resource
+    // after an actual name-set transition; the watcher itself stays names-only.
+    return JSON.stringify(listTmuxSessions().sort());
   } catch {
     return "";
+  }
+}
+
+function pollSessionsComposition(): void {
+  const hash = snapshotSessionsHash();
+  if (hash === lastSessionsHash) return;
+  lastSessionsHash = hash;
+  for (const client of allClients) client.broadcastSessionsChanged();
+  if (resourceEventGeneration) {
+    broadcastResourceChanged(
+      { workspaceName: null, resource: "workspace-catalog" },
+      resourceEventGeneration,
+    );
+    broadcastResourceChanged(
+      { workspaceName: null, resource: "fleet-catalog" },
+      resourceEventGeneration,
+    );
   }
 }
 
 function ensureSessionsPoller(): void {
   if (sessionsPollTimer) return;
   lastSessionsHash = snapshotSessionsHash();
-  sessionsPollTimer = setInterval(() => {
-    const hash = snapshotSessionsHash();
-    if (hash === lastSessionsHash) return;
-    lastSessionsHash = hash;
-    for (const client of allClients) client.broadcastSessionsChanged();
-    if (resourceEventGeneration) {
-      broadcastResourceChanged(
-        { workspaceName: null, resource: "workspace-catalog" },
-        resourceEventGeneration,
-      );
-      broadcastResourceChanged(
-        { workspaceName: null, resource: "fleet-catalog" },
-        resourceEventGeneration,
-      );
-    }
-  }, SESSIONS_POLL_MS);
+  sessionsPollTimer = setInterval(pollSessionsComposition, SESSIONS_POLL_MS);
   sessionsPollTimer.unref?.();
 }
 
@@ -964,6 +968,11 @@ export function _stopSessionsPollerForTests(): void {
   if (!sessionsPollTimer) return;
   clearInterval(sessionsPollTimer);
   sessionsPollTimer = null;
+}
+
+/** Test-only hook to drive one sessions-composition poll deterministically. */
+export function _pollSessionsCompositionForTests(): void {
+  pollSessionsComposition();
 }
 
 /**
