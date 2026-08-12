@@ -5,12 +5,13 @@ import { fileURLToPath } from "node:url";
 /**
  * Vitest config for the daemon package. Collection is a glob over every
  * `src/**` test file, minus the files that import `bun:test` — those are
- * listed explicitly in `exclude` below and run under `bun test` instead.
+ * excluded below and run under `bun test` instead.
  *
  * The include list used to be enumerated by hand, which silently dropped any
- * test whose path nobody remembered to add (it dropped five). Adding a Vitest
- * test now needs no config change; adding a `bun:test` file does, and it fails
- * loudly at collection rather than disappearing.
+ * test whose path nobody remembered to add (it dropped five). OpenTUI renderer
+ * tests have a naming-based ownership boundary so adding one cannot make
+ * Vitest collect an incompatible Bun suite. Other Bun tests remain explicit
+ * because their names do not identify a distinct runner contract.
  */
 export default defineConfig({
   plugins: [solid()],
@@ -35,6 +36,9 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
+      // OpenTUI renderer suites require Bun plus the Solid/OpenTUI preloads.
+      // The root `test:tui-renderer` gate owns every file with this suffix.
+      "src/tui/**/*-renderer.test.tsx",
       "src/command-center/actions/handlers/app-set-remote-access.test.ts",
       "src/command-center/actions/handlers/config-actions.test.ts",
       "src/command-center/actions/handlers/daemon-shutdown.test.ts",
@@ -85,25 +89,9 @@ export default defineConfig({
       "src/server/pty-bridge.test.ts",
       "src/server/ws-route.test.ts",
       "src/stop.test.ts",
-      "src/tui/mirror/activity-surface-renderer.test.tsx",
-      "src/tui/mirror/changes-terminal-surface-renderer.test.tsx",
-      "src/tui/mirror/home-files-surface-renderer.test.tsx",
       "src/tui/mirror/features/rich-preview/feature.test.ts",
-      "src/tui/mirror/missions-surface-renderer.test.tsx",
-      "src/tui/mirror/pane-surface-renderer.test.tsx",
-      "src/tui/mirror/recipes-gallery-renderer.test.tsx",
-      "src/tui/mirror/shell-chrome-renderer.test.tsx",
-      "src/tui/mirror/sidebar-renderer.test.tsx",
-      "src/tui/mirror/widget-surface-renderer.test.tsx",
       "src/tui/mirror/testing/renderer-harness.test.ts",
-      "src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx",
-      "src/tui/mirror/workspace/application-shell-renderer.test.tsx",
-      "src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx",
-      "src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
-      "src/tui/mirror/workspace/pane-frame-renderer.test.tsx",
       "src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx",
-      "src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx",
-      "src/tui/mirror/workspace/workbench-shell-renderer.test.tsx",
       "src/ui/web/utils/color.test.ts",
       "src/validate.test.ts",
       "src/widgets/explorer/tree-model.test.ts",
