@@ -19324,36 +19324,6 @@ function listTmuxSessions() {
   if (!raw) return [];
   return raw.split("\n").filter(Boolean);
 }
-function readAgentStatesBySession() {
-  let raw;
-  try {
-    raw = _tmuxRunner([
-      "list-panes",
-      "-a",
-      "-F",
-      "#{session_name}	#{pane_id}	#{@tmux_ide_pane_id}	#{@agent_state}"
-    ]);
-  } catch {
-    return null;
-  }
-  const bySession = /* @__PURE__ */ new Map();
-  if (!raw) return bySession;
-  for (const line of raw.split("\n")) {
-    const match = AGENT_STATE_LINE.exec(line);
-    if (!match) continue;
-    const sessionName = match[1];
-    const paneId = match[2];
-    const paneStamp = match[3];
-    const state = match[4];
-    let panes = bySession.get(sessionName);
-    if (!panes) {
-      panes = /* @__PURE__ */ new Map();
-      bySession.set(sessionName, panes);
-    }
-    panes.set(paneId, { state, paneStamp: paneStamp.length > 0 ? paneStamp : null });
-  }
-  return bySession;
-}
 function getSessionCwd2(session) {
   return tmuxSilent(["display-message", "-t", session, "-p", "#{pane_current_path}"]);
 }
@@ -19464,7 +19434,7 @@ function buildProjectDetail(info) {
     panes: info.panes.map(({ semanticPaneId: _semanticPaneId, ...pane }) => pane)
   };
 }
-var _tmuxRunner, AGENT_STATE_LINE, FLEET_FIELD_SEPARATOR, FLEET_LINE_SENTINEL, FLEET_PANE_FORMAT;
+var _tmuxRunner, FLEET_FIELD_SEPARATOR, FLEET_LINE_SENTINEL, FLEET_PANE_FORMAT;
 var init_discovery = __esm({
   "packages/daemon/src/command-center/discovery.ts"() {
     "use strict";
@@ -19476,7 +19446,6 @@ var init_discovery = __esm({
       maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
-    AGENT_STATE_LINE = /^([^\t]+)\t(%[0-9]+)\t([^\t]*)\t(.*)$/u;
     FLEET_FIELD_SEPARATOR = "|tmux-ide-fleet-field-v1|";
     FLEET_LINE_SENTINEL = "tmux-ide-fleet-v1";
     FLEET_PANE_FORMAT = [
@@ -19541,65 +19510,246 @@ function diffTurnCompletions(previous, next) {
   }
   return completions;
 }
-var AGENT_STATUS_POLL_MS, AgentStatusWatcher;
 var init_agent_status_watch = __esm({
   "packages/daemon/src/command-center/agent-status-watch.ts"() {
     "use strict";
-    AGENT_STATUS_POLL_MS = 2e3;
-    AgentStatusWatcher = class {
-      #read;
-      #emit;
-      #emitTurnCompleted;
+  }
+});
+
+// packages/daemon/src/command-center/daemon-fleet-facts-observer.ts
+import { execFile as execFile2 } from "node:child_process";
+function parseSessionCompositionFacts(raw) {
+  const sessions = [];
+  const adopted = [];
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const [name = "", adoptedFlag = ""] = line.split("	");
+    if (!name) continue;
+    sessions.push(name);
+    if (adoptedFlag === "1" && isVisibleFleetSession(name)) adopted.push(name);
+  }
+  return { sessions: sessions.sort(), adopted: adopted.sort() };
+}
+function parseAgentStateFacts(raw) {
+  const result = /* @__PURE__ */ new Map();
+  for (const line of raw.split("\n")) {
+    const fields = line.split("	");
+    if (fields.length !== 4 || !fields[0] || !/^%[0-9]+$/u.test(fields[1] ?? "")) continue;
+    let panes = result.get(fields[0]);
+    if (!panes) {
+      panes = /* @__PURE__ */ new Map();
+      result.set(fields[0], panes);
+    }
+    panes.set(fields[1], { paneStamp: fields[2] || null, state: fields[3] ?? "" });
+  }
+  return result;
+}
+function execTmux(args) {
+  return new Promise((resolve32) => {
+    execFile2(
+      "tmux",
+      [...args],
+      { encoding: "utf8", maxBuffer: 1024 * 1024 },
+      (error, stdout) => resolve32(error ? null : stdout.trim())
+    );
+  });
+}
+async function readSessionCompositionFacts() {
+  const raw = await execTmux(SESSION_COMPOSITION_TMUX_ARGS);
+  return raw === null ? null : parseSessionCompositionFacts(raw);
+}
+async function readAgentStateFacts() {
+  const raw = await execTmux([
+    "list-panes",
+    "-a",
+    "-F",
+    "#{session_name}	#{pane_id}	#{@tmux_ide_pane_id}	#{@agent_state}"
+  ]);
+  return raw === null ? null : parseAgentStateFacts(raw);
+}
+var DaemonFleetFactsObserver, SESSION_COMPOSITION_TMUX_ARGS;
+var init_daemon_fleet_facts_observer = __esm({
+  "packages/daemon/src/command-center/daemon-fleet-facts-observer.ts"() {
+    "use strict";
+    init_agent_status_watch();
+    init_discovery();
+    DaemonFleetFactsObserver = class {
+      #options;
+      #intervalMs;
       #setTimer;
       #clearTimer;
-      #intervalMs;
+      #refs = /* @__PURE__ */ new Map();
+      #baselined = /* @__PURE__ */ new Set();
+      #waiters = /* @__PURE__ */ new Set();
+      #sessionFacts = null;
+      #agentFacts = null;
       #timer = null;
-      #previous = null;
-      constructor(deps2) {
-        this.#read = deps2.read;
-        this.#emit = deps2.emit;
-        this.#emitTurnCompleted = deps2.emitTurnCompleted ?? null;
-        this.#setTimer = deps2.setTimer ?? ((fn, ms) => {
-          const handle = setInterval(fn, ms);
-          handle.unref?.();
-          return handle;
+      #running = null;
+      #startQueued = false;
+      #generation = 0;
+      #demandVersion = 0;
+      constructor(options) {
+        this.#options = options;
+        this.#intervalMs = options.intervalMs ?? 2e3;
+        this.#setTimer = options.setTimer ?? ((callback, delayMs) => {
+          const timer = setTimeout(callback, delayMs);
+          timer.unref?.();
+          return timer;
         });
-        this.#clearTimer = deps2.clearTimer ?? ((handle) => clearInterval(handle));
-        this.#intervalMs = deps2.intervalMs ?? AGENT_STATUS_POLL_MS;
+        this.#clearTimer = options.clearTimer ?? clearTimeout;
       }
-      get running() {
-        return this.#timer !== null;
+      acquire(demands) {
+        const unique = new Set(demands);
+        for (const demand of unique) {
+          const previous = this.#refs.get(demand) ?? 0;
+          this.#refs.set(demand, previous + 1);
+          if (previous === 0) this.#demandVersion += 1;
+        }
+        let resolveReady;
+        const ready = new Promise((resolve32) => {
+          resolveReady = resolve32;
+        });
+        const waiter = { demands: unique, resolve: resolveReady };
+        this.#waiters.add(waiter);
+        this.#settleWaiters();
+        this.#queueStart();
+        let released = false;
+        return {
+          ready,
+          release: () => {
+            if (released) return;
+            released = true;
+            this.#waiters.delete(waiter);
+            waiter.resolve();
+            for (const demand of unique) {
+              const next = Math.max(0, (this.#refs.get(demand) ?? 0) - 1);
+              if (next === 0) this.#refs.delete(demand);
+              else this.#refs.set(demand, next);
+            }
+            if (!this.#refs.has("agents")) {
+              this.#baselined.delete("agents");
+              this.#agentFacts = null;
+            }
+            if (!this.#refs.has("sessions") && !this.#refs.has("adopted")) {
+              this.#baselined.delete("sessions");
+              this.#baselined.delete("adopted");
+              this.#sessionFacts = null;
+            }
+            if (this.#refs.size === 0) this.stop();
+          }
+        };
       }
-      start() {
-        if (this.#timer !== null) return;
-        this.tick();
-        this.#timer = this.#setTimer(() => this.tick(), this.#intervalMs);
+      runOnce() {
+        return this.#runOnce(false);
+      }
+      #runOnce(onlyUnbaselined) {
+        this.#startQueued = false;
+        if (this.#running) return this.#running;
+        if (this.#timer) {
+          this.#clearTimer(this.#timer);
+          this.#timer = null;
+        }
+        if (this.#refs.size === 0) return Promise.resolve();
+        const generation = this.#generation;
+        const demandVersion = this.#demandVersion;
+        const wantsSessions = (this.#refs.has("sessions") || this.#refs.has("adopted")) && (!onlyUnbaselined || !this.#baselined.has("sessions") || !this.#baselined.has("adopted"));
+        const wantsAgents = this.#refs.has("agents") && (!onlyUnbaselined || !this.#baselined.has("agents"));
+        this.#running = this.#cycle(generation, wantsSessions, wantsAgents).finally(() => {
+          this.#running = null;
+          if (generation !== this.#generation || this.#refs.size === 0) return;
+          if (demandVersion !== this.#demandVersion && this.#hasUnbaselinedDemand()) {
+            void this.#runOnce(true);
+            return;
+          }
+          this.#timer = this.#setTimer(() => {
+            this.#timer = null;
+            void this.runOnce();
+          }, this.#intervalMs);
+        });
+        return this.#running;
+      }
+      #queueStart() {
+        if (this.#running || this.#startQueued) return;
+        this.#startQueued = true;
+        queueMicrotask(() => {
+          if (!this.#startQueued) return;
+          this.#startQueued = false;
+          void this.runOnce();
+        });
       }
       stop() {
-        if (this.#timer === null) return;
-        this.#clearTimer(this.#timer);
+        this.#generation += 1;
+        if (this.#timer) this.#clearTimer(this.#timer);
         this.#timer = null;
-        this.#previous = null;
+        this.#startQueued = false;
+        this.#refs.clear();
+        this.#baselined.clear();
+        this.#sessionFacts = null;
+        this.#agentFacts = null;
+        for (const waiter of this.#waiters) waiter.resolve();
+        this.#waiters.clear();
       }
-      /** One poll cycle. Exposed for deterministic unit tests. */
-      tick() {
-        const next = this.#read();
-        if (next === null) return;
-        if (this.#previous === null) {
-          this.#previous = next;
-          return;
+      demandSnapshot() {
+        return {
+          sessions: this.#refs.get("sessions") ?? 0,
+          adopted: this.#refs.get("adopted") ?? 0,
+          agents: this.#refs.get("agents") ?? 0
+        };
+      }
+      async #cycle(generation, wantsSessions, wantsAgents) {
+        const [sessions, agents] = await Promise.all([
+          wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
+          wantsAgents ? this.#options.readAgents() : Promise.resolve(null)
+        ]);
+        if (generation !== this.#generation) return;
+        if (wantsSessions && sessions) {
+          this.#baselined.add("sessions");
+          this.#baselined.add("adopted");
+          this.#acceptSessions(sessions);
         }
-        for (const sessionName of diffChangedSessions(this.#previous, next)) {
-          this.#emit(sessionName);
+        if (wantsAgents && agents) {
+          this.#baselined.add("agents");
+          this.#acceptAgents(agents);
         }
-        if (this.#emitTurnCompleted) {
-          for (const completion of diffTurnCompletions(this.#previous, next)) {
-            this.#emitTurnCompleted(completion);
-          }
+        this.#settleWaiters();
+      }
+      #acceptSessions(next) {
+        const previous = this.#sessionFacts;
+        this.#sessionFacts = next;
+        if (!previous) return;
+        if (JSON.stringify(previous.sessions) !== JSON.stringify(next.sessions))
+          this.#options.onSessionsChanged();
+        if (JSON.stringify(previous.adopted) !== JSON.stringify(next.adopted))
+          this.#options.onAdoptedChanged();
+      }
+      #acceptAgents(next) {
+        const previous = this.#agentFacts;
+        this.#agentFacts = next;
+        if (!previous) return;
+        const changed = diffChangedSessions(previous, next);
+        if (changed.length > 0) this.#options.onAgentSessionsChanged(changed);
+        for (const completion of diffTurnCompletions(previous, next))
+          this.#options.onAgentTurnCompleted(completion);
+      }
+      #settleWaiters() {
+        for (const waiter of this.#waiters) {
+          if (![...waiter.demands].every((demand) => this.#baselined.has(demand))) continue;
+          this.#waiters.delete(waiter);
+          waiter.resolve();
         }
-        this.#previous = next;
+      }
+      #hasUnbaselinedDemand() {
+        for (const demand of this.#refs.keys()) {
+          if (!this.#baselined.has(demand)) return true;
+        }
+        return false;
       }
     };
+    SESSION_COMPOSITION_TMUX_ARGS = [
+      "list-sessions",
+      "-F",
+      "#{session_name}	#{@tmux_ide_adopted}"
+    ];
   }
 });
 
@@ -20193,6 +20343,38 @@ var init_application_shell2 = __esm({
   }
 });
 
+// packages/daemon/src/lib/project-runtime-errors.ts
+var ProjectRuntimeRepositoryError, RevisionConflictError;
+var init_project_runtime_errors = __esm({
+  "packages/daemon/src/lib/project-runtime-errors.ts"() {
+    "use strict";
+    ProjectRuntimeRepositoryError = class extends Error {
+      code;
+      constructor(code, message) {
+        super(message);
+        this.name = new.target.name;
+        this.code = code;
+      }
+    };
+    RevisionConflictError = class extends ProjectRuntimeRepositoryError {
+      path;
+      expectedRevision;
+      actualRevision;
+      constructor(path2, expectedRevision, actualRevision) {
+        super(
+          "REVISION_CONFLICT",
+          `Revision conflict for "${path2}": expected ${String(expectedRevision)}, actual ${String(
+            actualRevision
+          )}`
+        );
+        this.path = path2;
+        this.expectedRevision = expectedRevision;
+        this.actualRevision = actualRevision;
+      }
+    };
+  }
+});
+
 // packages/daemon/src/lib/project-runtime-repository.ts
 import { createHash as createHash7, randomUUID as randomUUID2 } from "node:crypto";
 import {
@@ -20423,25 +20605,19 @@ function isCanonicalTimestamp(value) {
     return false;
   }
 }
-var DOCUMENT_ENVELOPE_VERSION, EVENT_ENVELOPE_VERSION, SAFE_ID_PATTERN, PROJECT_RUNTIME_WRITER_LOCK_FILENAME, PROJECT_RUNTIME_PROCESS_INSTANCE_ID, ProjectRuntimeRepositoryError, InvalidRuntimePathError, InvalidEventStreamError, MissingRuntimeDocumentError, CorruptRuntimeDocumentError, UnsupportedRuntimeDocumentVersionError, InvalidJsonValueError, RevisionConflictError, ProjectRuntimeWriterLockTimeoutError, EventSequenceConflictError, CorruptEventLogError, ProjectRuntimeIoError, defaultIo2, tempCounter, ProjectRuntimeRepository;
+var DOCUMENT_ENVELOPE_VERSION, EVENT_ENVELOPE_VERSION, SAFE_ID_PATTERN, PROJECT_RUNTIME_WRITER_LOCK_FILENAME, PROJECT_RUNTIME_PROCESS_INSTANCE_ID, InvalidRuntimePathError, InvalidEventStreamError, MissingRuntimeDocumentError, CorruptRuntimeDocumentError, UnsupportedRuntimeDocumentVersionError, InvalidJsonValueError, ProjectRuntimeWriterLockTimeoutError, EventSequenceConflictError, CorruptEventLogError, ProjectRuntimeIoError, defaultIo2, tempCounter, ProjectRuntimeRepository;
 var init_project_runtime_repository = __esm({
   "packages/daemon/src/lib/project-runtime-repository.ts"() {
     "use strict";
     init_project_resolver();
+    init_project_runtime_errors();
     init_state_home();
+    init_project_runtime_errors();
     DOCUMENT_ENVELOPE_VERSION = 1;
     EVENT_ENVELOPE_VERSION = 1;
     SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
     PROJECT_RUNTIME_WRITER_LOCK_FILENAME = "workspace/.state.lock";
     PROJECT_RUNTIME_PROCESS_INSTANCE_ID = randomUUID2();
-    ProjectRuntimeRepositoryError = class extends Error {
-      code;
-      constructor(code, message) {
-        super(message);
-        this.name = new.target.name;
-        this.code = code;
-      }
-    };
     InvalidRuntimePathError = class extends ProjectRuntimeRepositoryError {
       path;
       constructor(path2, reason) {
@@ -20492,22 +20668,6 @@ var init_project_runtime_repository = __esm({
         super("INVALID_JSON_VALUE", `Invalid JSON value at ${valuePath}: ${reason}`);
         this.valuePath = valuePath;
         this.reason = reason;
-      }
-    };
-    RevisionConflictError = class extends ProjectRuntimeRepositoryError {
-      path;
-      expectedRevision;
-      actualRevision;
-      constructor(path2, expectedRevision, actualRevision) {
-        super(
-          "REVISION_CONFLICT",
-          `Revision conflict for "${path2}": expected ${String(expectedRevision)}, actual ${String(
-            actualRevision
-          )}`
-        );
-        this.path = path2;
-        this.expectedRevision = expectedRevision;
-        this.actualRevision = actualRevision;
       }
     };
     ProjectRuntimeWriterLockTimeoutError = class extends ProjectRuntimeRepositoryError {
@@ -21657,17 +21817,7 @@ function ensureWorkspaceResourceObserver(daemonInstanceId2) {
   });
   return workspaceResourceObserver;
 }
-function snapshotSessionsHash() {
-  try {
-    return JSON.stringify(listTmuxSessions().sort());
-  } catch {
-    return "";
-  }
-}
-function pollSessionsComposition() {
-  const hash = snapshotSessionsHash();
-  if (hash === lastSessionsHash) return;
-  lastSessionsHash = hash;
+function broadcastSessionCompositionChanged() {
   for (const client of allClients) client.broadcastSessionsChanged();
   if (resourceEventGeneration) {
     broadcastResourceChanged(
@@ -21679,17 +21829,6 @@ function pollSessionsComposition() {
       resourceEventGeneration
     );
   }
-}
-function ensureSessionsPoller() {
-  if (sessionsPollTimer) return;
-  lastSessionsHash = snapshotSessionsHash();
-  sessionsPollTimer = setInterval(pollSessionsComposition, SESSIONS_POLL_MS);
-  sessionsPollTimer.unref?.();
-}
-function maybeStopSessionsPoller() {
-  if (sessionsObserverRefs > 0 || !sessionsPollTimer) return;
-  clearInterval(sessionsPollTimer);
-  sessionsPollTimer = null;
 }
 function ensureProjectRegistryListener() {
   if (projectRegistryListener) return;
@@ -21728,51 +21867,29 @@ function agentTurnCompletedFrame(completion) {
     at: (/* @__PURE__ */ new Date()).toISOString()
   };
 }
-function ensureAgentStatusWatcher() {
-  if (agentStatusWatcher) return;
-  agentStatusWatcher = new AgentStatusWatcher({
-    read: () => readAgentStatesBySession(),
-    emit: (sessionName) => {
-      for (const client of allClients) client.broadcastAgentStatusChanged(sessionName);
-      if (resourceEventGeneration) {
+function broadcastAgentSessionsChanged(sessions) {
+  for (const sessionName of sessions) {
+    for (const client of allClients) client.broadcastAgentStatusChanged(sessionName);
+    if (resourceEventGeneration) {
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "fleet-catalog" },
+        resourceEventGeneration
+      );
+      const workspaceName = workspaceNameForSession(sessionName);
+      if (workspaceName) {
         broadcastResourceChanged(
-          { workspaceName: null, resource: "fleet-catalog" },
+          { workspaceName, resource: "application-shell" },
           resourceEventGeneration
         );
-        const workspaceName = workspaceNameForSession(sessionName);
-        if (workspaceName) {
-          broadcastResourceChanged(
-            { workspaceName, resource: "application-shell" },
-            resourceEventGeneration
-          );
-          broadcastResourceChanged(
-            { workspaceName, resource: "workspace-missions" },
-            resourceEventGeneration
-          );
-        }
+        broadcastResourceChanged(
+          { workspaceName, resource: "workspace-missions" },
+          resourceEventGeneration
+        );
       }
-    },
-    emitTurnCompleted: (completion) => {
-      const frame = agentTurnCompletedFrame(completion);
-      for (const client of allClients) client.broadcastAgentTurnCompleted(frame);
     }
-  });
-  agentStatusWatcher.start();
+  }
 }
-function maybeStopAgentStatusWatcher() {
-  if (agentStatusObserverRefs > 0 || !agentStatusWatcher) return;
-  agentStatusWatcher.stop();
-  agentStatusWatcher = null;
-}
-function snapshotFleetHash() {
-  const names = readAdoptedSessionNames();
-  if (names === null) return lastFleetHash;
-  return JSON.stringify([...names].sort());
-}
-function pollFleetComposition() {
-  const hash = snapshotFleetHash();
-  if (hash === lastFleetHash) return;
-  lastFleetHash = hash;
+function broadcastAdoptedCompositionChanged() {
   for (const client of allClients) client.broadcastFleetChanged();
   if (resourceEventGeneration) {
     broadcastResourceChanged(
@@ -21781,47 +21898,60 @@ function pollFleetComposition() {
     );
   }
 }
-function ensureFleetPoller() {
-  if (fleetPollTimer) return;
-  lastFleetHash = snapshotFleetHash();
-  fleetPollTimer = setInterval(pollFleetComposition, SESSIONS_POLL_MS);
-  fleetPollTimer.unref?.();
-}
-function maybeStopFleetPoller() {
-  if (fleetObserverRefs > 0 || !fleetPollTimer) return;
-  clearInterval(fleetPollTimer);
-  fleetPollTimer = null;
+function ensureFleetFactsObserver() {
+  const readers = fleetFactsReaderOverride ?? {
+    readSessions: readSessionCompositionFacts,
+    readAgents: readAgentStateFacts
+  };
+  fleetFactsObserver ??= new DaemonFleetFactsObserver({
+    ...readers,
+    onSessionsChanged: broadcastSessionCompositionChanged,
+    onAdoptedChanged: broadcastAdoptedCompositionChanged,
+    onAgentSessionsChanged: broadcastAgentSessionsChanged,
+    onAgentTurnCompleted: (completion) => {
+      const frame = agentTurnCompletedFrame(completion);
+      for (const client of allClients) client.broadcastAgentTurnCompleted(frame);
+    }
+  });
+  return fleetFactsObserver;
 }
 function acquireGlobalObserver(kind) {
+  let releaseAuthority;
+  let ready = Promise.resolve({ status: "installed" });
   if (kind === "sessions") {
     sessionsObserverRefs += 1;
-    ensureSessionsPoller();
+    const handle = ensureFleetFactsObserver().acquire(["sessions"]);
+    releaseAuthority = handle.release;
+    ready = handle.ready.then(() => ({ status: "installed" }));
   } else if (kind === "projects") {
     projectRegistryObserverRefs += 1;
     ensureProjectRegistryListener();
+    releaseAuthority = () => void 0;
   } else if (kind === "agents") {
     agentStatusObserverRefs += 1;
-    ensureAgentStatusWatcher();
+    const handle = ensureFleetFactsObserver().acquire(["agents"]);
+    releaseAuthority = handle.release;
+    ready = handle.ready.then(() => ({ status: "installed" }));
   } else {
     fleetObserverRefs += 1;
-    ensureFleetPoller();
+    const handle = ensureFleetFactsObserver().acquire(["adopted"]);
+    releaseAuthority = handle.release;
+    ready = handle.ready.then(() => ({ status: "installed" }));
   }
   let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    if (kind === "sessions") {
-      sessionsObserverRefs = Math.max(0, sessionsObserverRefs - 1);
-      maybeStopSessionsPoller();
-    } else if (kind === "projects") {
-      projectRegistryObserverRefs = Math.max(0, projectRegistryObserverRefs - 1);
-      maybeStopProjectRegistryListener();
-    } else if (kind === "agents") {
-      agentStatusObserverRefs = Math.max(0, agentStatusObserverRefs - 1);
-      maybeStopAgentStatusWatcher();
-    } else {
-      fleetObserverRefs = Math.max(0, fleetObserverRefs - 1);
-      maybeStopFleetPoller();
+  return {
+    ready,
+    release: () => {
+      if (released) return;
+      released = true;
+      releaseAuthority();
+      if (kind === "sessions") sessionsObserverRefs = Math.max(0, sessionsObserverRefs - 1);
+      else if (kind === "projects") {
+        projectRegistryObserverRefs = Math.max(0, projectRegistryObserverRefs - 1);
+        maybeStopProjectRegistryListener();
+      } else if (kind === "agents")
+        agentStatusObserverRefs = Math.max(0, agentStatusObserverRefs - 1);
+      else fleetObserverRefs = Math.max(0, fleetObserverRefs - 1);
     }
   };
 }
@@ -21831,20 +21961,22 @@ function acquireResourceObservation(interest, daemonInstanceId2) {
     release,
     ready: Promise.resolve({ status: "installed" })
   });
+  const combine = (handles) => ({
+    ready: Promise.all(handles.map(({ ready }) => ready)).then(() => ({ status: "installed" })),
+    release: () => handles.forEach(({ release }) => release())
+  });
   if (interest.resource === "workspace-catalog") {
-    const releases = [acquireGlobalObserver("sessions"), acquireGlobalObserver("projects")];
-    return synchronous(() => releases.forEach((release) => release()));
+    return combine([acquireGlobalObserver("sessions"), acquireGlobalObserver("projects")]);
   }
   if (interest.resource === "fleet-catalog") {
-    const releases = [
+    return combine([
       acquireGlobalObserver("sessions"),
       acquireGlobalObserver("fleet"),
       acquireGlobalObserver("agents")
-    ];
-    return synchronous(() => releases.forEach((release) => release()));
+    ]);
   }
   if (interest.resource === "application-shell") {
-    return synchronous(acquireGlobalObserver("agents"));
+    return acquireGlobalObserver("agents");
   }
   if (isObservableWorkspaceResource(interest.resource) && interest.workspaceName !== null) {
     return ensureWorkspaceResourceObserver(daemonInstanceId2).acquire(
@@ -21855,13 +21987,13 @@ function acquireResourceObservation(interest, daemonInstanceId2) {
   return synchronous(() => void 0);
 }
 function acquireLegacyObservation() {
-  const releases = [
+  const handles = [
     acquireGlobalObserver("sessions"),
     acquireGlobalObserver("projects"),
     acquireGlobalObserver("agents"),
     acquireGlobalObserver("fleet")
   ];
-  return () => releases.forEach((release) => release());
+  return () => handles.forEach(({ release }) => release());
 }
 function broadcastInitOutput(jobId, chunk, done) {
   for (const client of allClients) client.broadcastInitOutput(jobId, chunk, done);
@@ -22057,10 +22189,7 @@ function handleWsEventsConnection(socket, daemonIdentity, options = {}) {
     explicitInterestKeys.clear();
     unsubWorkspaceAdded();
     unsubWorkspaceRemoved();
-    maybeStopSessionsPoller();
     maybeStopProjectRegistryListener();
-    maybeStopAgentStatusWatcher();
-    maybeStopFleetPoller();
   };
   const applyLegacyPreference = (legacyEvents) => {
     const requested = options.mode === "semantic" ? false : legacyEvents === void 0 ? true : legacyEvents;
@@ -22209,11 +22338,6 @@ function handleWsEventsConnection(socket, daemonIdentity, options = {}) {
     });
   }
 }
-function _stopSessionsPollerForTests() {
-  if (!sessionsPollTimer) return;
-  clearInterval(sessionsPollTimer);
-  sessionsPollTimer = null;
-}
 function _detachProjectRegistryListenerForTests() {
   if (!projectRegistryListener) return;
   projectRegistryEmitter.off("change", projectRegistryListener);
@@ -22221,36 +22345,27 @@ function _detachProjectRegistryListenerForTests() {
   for (const release of workspaceRegistryListenerReleases) release();
   workspaceRegistryListenerReleases = [];
 }
-function _stopAgentStatusWatcherForTests() {
-  if (!agentStatusWatcher) return;
-  agentStatusWatcher.stop();
-  agentStatusWatcher = null;
-}
-function _stopFleetPollerForTests() {
-  if (!fleetPollTimer) return;
-  clearInterval(fleetPollTimer);
-  fleetPollTimer = null;
-  lastFleetHash = "";
+function _stopFleetFactsObserverForTests() {
+  fleetFactsObserver?.stop();
+  fleetFactsObserver = null;
 }
 async function shutdownWsEventObservation() {
   sessionsObserverRefs = 0;
   projectRegistryObserverRefs = 0;
   agentStatusObserverRefs = 0;
   fleetObserverRefs = 0;
-  _stopSessionsPollerForTests();
   _detachProjectRegistryListenerForTests();
-  _stopAgentStatusWatcherForTests();
-  _stopFleetPollerForTests();
+  _stopFleetFactsObserverForTests();
   const observer = workspaceResourceObserver;
   workspaceResourceObserver = null;
   await observer?.dispose();
 }
-var WS_OPEN2, KEEPALIVE_INTERVAL_MS, SESSIONS_POLL_MS, allClients, RESOURCE_EVENT_JOURNAL_LIMIT, resourceEventGeneration, resourceEventSequence, resourceEventJournal, resourceRevisions, sessionsPollTimer, lastSessionsHash, projectRegistryListener, workspaceRegistryListenerReleases, agentStatusWatcher, fleetPollTimer, lastFleetHash, sessionsObserverRefs, projectRegistryObserverRefs, agentStatusObserverRefs, fleetObserverRefs, workspaceResourceObserver, resourceObservationOverride;
+var WS_OPEN2, KEEPALIVE_INTERVAL_MS, allClients, RESOURCE_EVENT_JOURNAL_LIMIT, resourceEventGeneration, resourceEventSequence, resourceEventJournal, resourceRevisions, projectRegistryListener, workspaceRegistryListenerReleases, fleetFactsObserver, fleetFactsReaderOverride, sessionsObserverRefs, projectRegistryObserverRefs, agentStatusObserverRefs, fleetObserverRefs, workspaceResourceObserver, resourceObservationOverride;
 var init_ws_events = __esm({
   "packages/daemon/src/command-center/ws-events.ts"() {
     "use strict";
     init_discovery();
-    init_agent_status_watch();
+    init_daemon_fleet_facts_observer();
     init_application_shell2();
     init_project_registry();
     init_workspace_registry();
@@ -22258,20 +22373,16 @@ var init_ws_events = __esm({
     init_workspace_resource_observer();
     WS_OPEN2 = 1;
     KEEPALIVE_INTERVAL_MS = 25e3;
-    SESSIONS_POLL_MS = 2e3;
     allClients = /* @__PURE__ */ new Set();
     RESOURCE_EVENT_JOURNAL_LIMIT = 256;
     resourceEventGeneration = null;
     resourceEventSequence = 0;
     resourceEventJournal = [];
     resourceRevisions = /* @__PURE__ */ new Map();
-    sessionsPollTimer = null;
-    lastSessionsHash = "";
     projectRegistryListener = null;
     workspaceRegistryListenerReleases = [];
-    agentStatusWatcher = null;
-    fleetPollTimer = null;
-    lastFleetHash = "";
+    fleetFactsObserver = null;
+    fleetFactsReaderOverride = null;
     sessionsObserverRefs = 0;
     projectRegistryObserverRefs = 0;
     agentStatusObserverRefs = 0;
@@ -22508,7 +22619,7 @@ var init_project_readiness = __esm({
 });
 
 // packages/daemon/src/lib/project-readiness-probe.ts
-import { execFile as execFile2 } from "node:child_process";
+import { execFile as execFile3 } from "node:child_process";
 import { accessSync as accessSync2, constants as constants3, existsSync as existsSync28, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
 import { delimiter, isAbsolute as isAbsolute6, basename as basename10, resolve as resolve23, sep as sep4 } from "node:path";
 function errorCode(error) {
@@ -22848,7 +22959,7 @@ var init_project_readiness_probe = __esm({
         }
       },
       runCommand: (executable, argv, options) => new Promise((resolveResult) => {
-        execFile2(
+        execFile3(
           executable,
           [...argv],
           {
@@ -28131,7 +28242,7 @@ var init_tmux_interaction_options = __esm({
 });
 
 // packages/daemon/src/lib/tmux-external-interaction-observer.ts
-import { execFile as execFile3 } from "node:child_process";
+import { execFile as execFile4 } from "node:child_process";
 import { z as z65 } from "zod";
 function socketArguments(authority) {
   return authority.socketSelector.kind === "path" ? ["-S", authority.socketSelector.path] : ["-L", authority.socketSelector.name];
@@ -28142,7 +28253,7 @@ function shellArgument(value) {
 function defaultWaiter(authority) {
   const prefix = socketArguments(authority);
   return (channel, signal) => new Promise((resolve32, reject) => {
-    execFile3(
+    execFile4(
       authority.executablePath,
       [...prefix, "wait-for", channel],
       { signal, encoding: "utf8", windowsHide: true },
@@ -54276,7 +54387,7 @@ __export(server_exports, {
   createApp: () => createApp,
   getSseMetrics: () => getSseMetrics
 });
-import { execFile as execFile4 } from "node:child_process";
+import { execFile as execFile5 } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync as existsSync34, readdirSync as readdirSync7 } from "node:fs";
 import { join as join37, dirname as dirname29, basename as basename14 } from "node:path";
@@ -55066,7 +55177,7 @@ function createApp(options = {}) {
       return c.json({ error: "Failed to write workspace config", detail: message }, 500);
     }
   });
-  const execFileAsync = promisify(execFile4);
+  const execFileAsync = promisify(execFile5);
   app.post("/api/project/:name/restart", async (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
@@ -58026,10 +58137,10 @@ var init_agent_lifecycle = __esm({
 });
 
 // packages/daemon/src/control/lifecycle.ts
-import { execFile as execFile5 } from "node:child_process";
+import { execFile as execFile6 } from "node:child_process";
 function tmuxRun(args) {
   return new Promise((resolve32, reject) => {
-    execFile5("tmux", args, (err, stdout) => err ? reject(err) : resolve32(stdout.trimEnd()));
+    execFile6("tmux", args, (err, stdout) => err ? reject(err) : resolve32(stdout.trimEnd()));
   });
 }
 async function tmuxTry(args) {
