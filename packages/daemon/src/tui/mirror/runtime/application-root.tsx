@@ -1658,12 +1658,18 @@ const mountTuiRoot = () => {
       sessionName: string,
       candidate: SemanticSessionView,
     ): Promise<void> => {
-      const semanticPaneIds = candidate
-        .paneDescriptors()
+      const paneDescriptors = candidate.paneDescriptors();
+      const semanticPaneIds = paneDescriptors
         .map((descriptor) => descriptor.semanticPaneId)
         .filter((paneId): paneId is string => paneId !== null)
         .sort();
+      tuiPerfMark("runtime-lane-reconcile", {
+        sessionName,
+        descriptorCount: paneDescriptors.length,
+        semanticPaneCount: semanticPaneIds.length,
+      });
       if (semanticPaneIds.length === 0) {
+        tuiPerfMark("runtime-lane-empty", { sessionName });
         if (sessionRuntimeLaneKey !== null || sessionRuntimeLane()) retireSessionRuntimeLane();
         else candidate.retireRuntimeAuthority();
         return;
@@ -1682,6 +1688,11 @@ const mountTuiRoot = () => {
       runtimeLaneFitKey = null;
       setSemanticPaneVersions(new Map());
       try {
+        tuiPerfMark("runtime-lane-connecting", {
+          sessionName,
+          request,
+          semanticPaneIds,
+        });
         const connectRuntime = () =>
           connectOpenTuiSessionRuntime({
             sessionName,
@@ -1697,6 +1708,14 @@ const mountTuiRoot = () => {
             },
             onLayout: (frame) => {
               if (request !== sessionRuntimeLaneRequest || semanticView !== candidate) return;
+              tuiPerfMark("runtime-lane-layout", {
+                sessionName,
+                request,
+                paneCount: frame.panes.length,
+                currentWindow: frame.currentWindow,
+                windowName: frame.windowName ?? null,
+                semanticWindowId: frame.semanticWindowId ?? null,
+              });
               const windowKey =
                 frame.semanticWindowId ?? `unverified:${frame.windowName ?? "window"}`;
               if (!semanticWindowOrder.includes(windowKey)) semanticWindowOrder.push(windowKey);
@@ -1717,8 +1736,13 @@ const mountTuiRoot = () => {
               void candidate.windows().then(setWindowTabs);
               markDirty();
             },
-            onFault: () => {
+            onFault: (error) => {
               if (request !== sessionRuntimeLaneRequest) return;
+              tuiPerfMark("runtime-lane-fault", {
+                sessionName,
+                request,
+                error: error.message,
+              });
               localDescriptorRequest += 1;
               localDescriptorSignature = null;
               localDescriptorAuthorityGeneration = null;
@@ -1746,9 +1770,21 @@ const mountTuiRoot = () => {
             : await connectRuntime();
         if (request !== sessionRuntimeLaneRequest) {
           lane?.close();
+          tuiPerfMark("runtime-lane-superseded", { sessionName, request });
           return;
         }
-        if (!lane) return;
+        if (!lane) {
+          tuiPerfMark("runtime-lane-unavailable", { sessionName, request });
+          return;
+        }
+        tuiPerfMark("runtime-lane-connected", {
+          sessionName,
+          request,
+          viewerMode: lane.viewerMode,
+          ownsInput: lane.ownsInput,
+          ownsGeometry: lane.ownsGeometry,
+          generation: lane.generation,
+        });
         localDescriptorAuthorityGeneration = authorityGeneration;
         candidate.setRuntimeAuthorityGeneration(authorityGeneration);
         refreshLocalRuntimeDescriptors(sessionName, candidate, authorityGeneration);
@@ -1762,7 +1798,12 @@ const mountTuiRoot = () => {
         ) {
           pendingSemanticFocus = null;
         }
-      } catch {
+      } catch (error) {
+        tuiPerfMark("runtime-lane-connect-failed", {
+          sessionName,
+          request,
+          error: error instanceof Error ? error.message : String(error),
+        });
         if (request === sessionRuntimeLaneRequest) {
           localDescriptorRequest += 1;
           localDescriptorSignature = null;
@@ -1849,8 +1890,21 @@ const mountTuiRoot = () => {
         const applyDaemonShellState = (state: ApplicationShellSessionState) => {
           setDaemonApplicationShellState(state);
           const inventory = state.data?.terminalInventory;
+          tuiPerfMark("application-shell-state", {
+            sessionName,
+            phase: state.phase,
+            inventoryCount: inventory?.resources.length ?? 0,
+            attachableCount:
+              inventory?.resources.filter(
+                ({ attachability }) => attachability.status === "available",
+              ).length ?? 0,
+          });
           if (inventory && semanticView) {
             semanticView.setInventory(inventory);
+            tuiPerfMark("application-shell-inventory-applied", {
+              sessionName,
+              descriptorCount: semanticView.paneDescriptors().length,
+            });
             if (localDescriptorAuthorityGeneration) {
               refreshLocalRuntimeDescriptors(
                 sessionName,
@@ -3443,8 +3497,17 @@ const mountTuiRoot = () => {
         if (state.phase === "live" && state.value) {
           semanticView = state.value;
           const inventory = daemonApplicationShellState()?.data?.terminalInventory;
+          tuiPerfMark("semantic-view-live", {
+            sessionName: name,
+            hasInventory: inventory !== undefined,
+            inventoryCount: inventory?.resources.length ?? 0,
+          });
           if (inventory) {
             semanticView.setInventory(inventory);
+            tuiPerfMark("semantic-view-inventory-applied", {
+              sessionName: name,
+              descriptorCount: semanticView.paneDescriptors().length,
+            });
             if (localDescriptorAuthorityGeneration) {
               refreshLocalRuntimeDescriptors(
                 name,
