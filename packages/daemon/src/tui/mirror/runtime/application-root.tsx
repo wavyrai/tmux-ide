@@ -690,6 +690,7 @@ import {
 import { TerminalToolReadinessGate } from "./terminal-tool-readiness.ts";
 import { OpenTuiTerminalWorkspaceAdapter } from "./terminal-workspace-adapter.ts";
 import { LatestIntentFence } from "./latest-intent-fence.ts";
+import { changesIdentityKey, resolveDeferredChangesIdentity } from "./changes-deferred-identity.ts";
 import { GenerationBoundSlot } from "./generation-bound-slot.ts";
 import {
   createApplicationOptionalFeatureRegistry,
@@ -1179,18 +1180,14 @@ const mountTuiRoot = () => {
     const startupChangesIdentity = values.diff
       ? { workspaceName: initialContextSession || target, directory: values.diff }
       : null;
-    const changesIdentity = () => {
-      const workspaceName = contextSession() || target;
-      return startupChangesIdentity &&
-        workspaceName === startupChangesIdentity.workspaceName &&
-        !contextDir()
-        ? startupChangesIdentity
-        : { workspaceName, directory: contextDir() || invokeCwd };
-    };
-    const changesIdentityScope = () => {
-      const identity = changesIdentity();
-      return `${identity.workspaceName}\u0000${identity.directory}`;
-    };
+    const changesIdentity = () =>
+      resolveDeferredChangesIdentity({
+        workspaceName: contextSession() || target,
+        directory: contextDir(),
+        fallbackDirectory: invokeCwd,
+        startup: startupChangesIdentity,
+      });
+    const changesIdentityScope = () => changesIdentityKey(changesIdentity());
     const changesHover = (): ChangesHoverTarget | null => {
       const current = hover();
       if (!current) return null;
@@ -3156,7 +3153,7 @@ const mountTuiRoot = () => {
     };
     const prepareDiff = (directory: string) => {
       const identity = { workspaceName: contextSession() || target, directory };
-      const scope = `${identity.workspaceName}\u0000${identity.directory}`;
+      const scope = changesIdentityKey(identity);
       const intent = changesPrepareIntent.issue(scope);
       const session = changesSession();
       if (session) session.prepare(identity);

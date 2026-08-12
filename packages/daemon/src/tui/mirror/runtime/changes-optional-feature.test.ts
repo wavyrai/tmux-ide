@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { createApplicationOptionalFeatureRegistry } from "./application-optional-features.ts";
+import { changesIdentityKey, resolveDeferredChangesIdentity } from "./changes-deferred-identity.ts";
+import { LatestIntentFence } from "./latest-intent-fence.ts";
 
 describe("deferred Changes feature boundary", () => {
   it("keeps the production root free of eager Changes implementation imports", () => {
@@ -62,14 +64,44 @@ describe("deferred Changes feature boundary", () => {
   it("binds the startup diff directory to its original workspace identity", () => {
     const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
     expect(source).toContain("const startupChangesIdentity = values.diff");
-    expect(source).toContain("workspaceName === startupChangesIdentity.workspaceName");
-    expect(source).toContain("!contextDir()");
+    expect(source).toContain("resolveDeferredChangesIdentity({");
+    expect(source).toContain("startup: startupChangesIdentity");
     const workspaceActivation = source.slice(
       source.indexOf("const openWorkspace ="),
       source.indexOf("const jumpToAgent ="),
     );
     expect(workspaceActivation).toContain("setContextDir(wd)");
     expect(workspaceActivation).toContain("changesHydrationIntent.retire()");
+  });
+
+  it("deterministically rejects A hydration after a same-directory switch to B", () => {
+    const fence = new LatestIntentFence<string>();
+    const alpha = { workspaceName: "alpha", directory: "/repo" };
+    const beta = { workspaceName: "beta", directory: "/repo" };
+    const intent = fence.issue(changesIdentityKey(alpha));
+
+    expect(fence.isCurrent(intent, changesIdentityKey(alpha))).toBe(true);
+    expect(fence.isCurrent(intent, changesIdentityKey(beta))).toBe(false);
+  });
+
+  it("drops startup --diff after a pre-readiness workspace switch", () => {
+    const startup = { workspaceName: "alpha", directory: "/alpha-explicit" };
+    expect(
+      resolveDeferredChangesIdentity({
+        workspaceName: "alpha",
+        directory: "",
+        fallbackDirectory: "/cwd",
+        startup,
+      }),
+    ).toEqual(startup);
+    expect(
+      resolveDeferredChangesIdentity({
+        workspaceName: "beta",
+        directory: "/repo",
+        fallbackDirectory: "/cwd",
+        startup,
+      }),
+    ).toEqual({ workspaceName: "beta", directory: "/repo" });
   });
 
   it("retains Changes demand without starting its literal loader before admission", () => {
