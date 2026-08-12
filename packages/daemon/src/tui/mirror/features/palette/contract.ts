@@ -32,8 +32,8 @@ export type PaletteAsyncState<Value> =
   | { readonly phase: "error"; readonly value: Value; readonly message: string };
 
 export type PaletteHostIntent =
-  | { readonly kind: "action"; readonly action: PaletteAction }
-  | { readonly kind: "settings"; readonly command: SettingsCommandId }
+  | { readonly kind: "action"; readonly action: PaletteAction; readonly usageKey: string }
+  | { readonly kind: "settings"; readonly command: SettingsCommandId; readonly usageKey: string }
   | { readonly kind: "paste-buffer"; readonly bufferName: string }
   | { readonly kind: "close"; readonly reason: "escape" | "outside" | "action" };
 

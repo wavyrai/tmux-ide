@@ -6,7 +6,7 @@ export interface ApplicationOptionalFeatures {
   readonly missionsActivity: typeof import("../features/missions-activity/feature.tsx");
   readonly dialogs: typeof import("../features/dialogs/feature.tsx");
   readonly settings: typeof import("../features/settings/feature.ts");
-  readonly palette: typeof import("../workspace/command-palette-surface.tsx");
+  readonly palette: typeof import("../features/palette/feature.ts");
   readonly richPreview: typeof import("../widget-surface.tsx");
 }
 
@@ -18,7 +18,7 @@ export function createApplicationOptionalFeatureRegistry(): OptionalFeatureRegis
     missionsActivity: () => import("../features/missions-activity/feature.tsx"),
     dialogs: () => import("../features/dialogs/feature.tsx"),
     settings: () => import("../features/settings/feature.ts"),
-    palette: () => import("../workspace/command-palette-surface.tsx"),
+    palette: () => import("../features/palette/feature.ts"),
     richPreview: () => import("../widget-surface.tsx"),
   });
 }

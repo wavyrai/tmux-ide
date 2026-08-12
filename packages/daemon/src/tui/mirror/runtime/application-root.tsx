@@ -321,32 +321,16 @@ import {
   type RepinState,
   type Size,
 } from "../size-truth.ts";
-import {
-  paletteRows,
-  paletteActionKey,
-  parseBufferList,
-  palettePos,
-  paletteRowAt,
-  paletteContains,
-  clampPaletteTop,
-  type PaletteAction,
-  type PaletteGeom,
-  type TmuxBuffer,
-} from "../palette.ts";
+import type {
+  PaletteFeatureSession,
+  PaletteHostIntent,
+  PaletteWorkspaceIdentity,
+} from "../features/palette/contract.ts";
+type PaletteAction = Extract<PaletteHostIntent, { kind: "action" }>["action"];
 import {
   executeTuiMultiplexerAction,
   type TuiMultiplexerAction,
 } from "../multiplexer-action-executor.ts";
-import {
-  adaptPaletteRowsToCommands,
-  appendPalettePaste,
-  dispatchPaletteCommand,
-  ensurePaletteSelectionVisible,
-  firstEnabledPaletteCommandId,
-  PaletteBufferLoadGate,
-  restorePaletteActionLevelFromBuffers,
-  stepEnabledPaletteCommandId,
-} from "../palette-surface-adapter.ts";
 import {
   PanelHostLoadGeneration,
   findHostedViewById,
@@ -407,11 +391,6 @@ import {
   projectAgentTerminalCanvas,
 } from "../workspace/agent-terminal-canvas.ts";
 import { AgentTerminalCanvas } from "../workspace/agent-terminal-canvas-view.tsx";
-import {
-  commandPaletteHitTest,
-  projectCommandPalette,
-} from "../workspace/command-palette-surface.ts";
-import { CommandPaletteSurface } from "../workspace/command-palette-surface.tsx";
 import {
   dispatchTerminalPaneChromePointerIntent,
   projectTerminalPaneChrome,
@@ -1051,8 +1030,11 @@ const mountTuiRoot = () => {
     const [settingsFeature, setSettingsFeature] =
       createSignal<ApplicationOptionalFeatures["settings"]>();
     const [settingsSession, setSettingsSession] = createSignal<SettingsFeatureSession>();
+    const [paletteFeature, setPaletteFeature] =
+      createSignal<ApplicationOptionalFeatures["palette"]>();
+    const [paletteSession, setPaletteSession] = createSignal<PaletteFeatureSession>();
     const [previewAccent, setPreviewAccent] = createSignal<RGBA | null>(null);
-    const modalAdmission = new ModalAdmissionCoordinator<"dialogs" | "settings">();
+    const modalAdmission = new ModalAdmissionCoordinator<"dialogs" | "settings" | "palette">();
     const [modalAdmissionSnapshot, setModalAdmissionSnapshot] = createSignal(
       modalAdmission.snapshot(),
     );
@@ -1063,7 +1045,7 @@ const mountTuiRoot = () => {
     // assembled; keeping the boundary here makes it impossible for a loader to
     // yield before the underlying surface has stopped receiving input.
     let cancelPointerCaptureForModal = (): void => undefined;
-    const reserveModal = (kind: "dialogs" | "settings") => {
+    const reserveModal = (kind: "dialogs" | "settings" | "palette") => {
       const token = modalAdmission.reserve(kind);
       if (token) cancelPointerCaptureForModal();
       return token;
@@ -1446,11 +1428,13 @@ const mountTuiRoot = () => {
       filesFeatureRequest = null;
       changesFeatureRequest = null;
       missionsActivityRequest = null;
+      paletteFeatureRequest = null;
       dialogsFeatureRequest.clear();
       settingsFeatureRequest.clear();
       filesSession()?.dispose();
       changesSession()?.dispose();
       missionsActivitySession()?.dispose();
+      paletteSession()?.dispose();
       settingsSession()?.dispose();
       dialogsSession()?.dispose();
       modalAdmission.dispose();
@@ -1458,6 +1442,7 @@ const mountTuiRoot = () => {
       setFilesSession(undefined);
       setChangesSession(undefined);
       setMissionsActivitySession(undefined);
+      setPaletteSession(undefined);
       setSettingsSession(undefined);
       setDialogsSession(undefined);
       optionalFeatures.dispose();
@@ -2802,12 +2787,6 @@ const mountTuiRoot = () => {
      *  terminal chrome, and native workbench dock. Search overlays the last row. */
     const canvasCols = () => terminalCanvasProjection().framebuffer.width;
     const canvasRows = () => terminalCanvasProjection().framebuffer.height;
-
-    // ── PASTE-BUFFER PICKER (M20.3) ──────────────────────────────────────────
-    // The palette's second level: "Paste buffer…" swaps the action list for this
-    // list of tmux paste buffers (null = normal palette, [] = loading/empty). Enter
-    // shows the chosen buffer and routes its content through the normal paste path.
-    const [paletteBuffers, setPaletteBuffers] = createSignal<TmuxBuffer[] | null>(null);
 
     // ── DRAG-RESIZE GESTURE (M19.3) ──────────────────────────────────────────
     // A separate gesture machine from text selection: a "down" on the sidebar/main
@@ -4426,194 +4405,165 @@ const mountTuiRoot = () => {
       createSession(raw, selectedHomeDir());
     };
 
-    // ── COMMAND PALETTE (native surface; root-owned input) ──────────────────
-    // F5 / ^p / host-aware ⌘K opens the native CommandPaletteSurface. The
-    // existing ranked PaletteAction catalog remains canonical; the pure adapter
-    // adds semantic icons/details/availability and stable selection ids. The
-    // component owns no handlers: this root routes keyboard, paste, projected
-    // mouse hits, lifecycle, and execution through the existing action executor.
-    const [paletteQuery, setPaletteQuery] = createSignal("");
-    const paletteBufferLoadGate = new PaletteBufferLoadGate();
-    onCleanup(() => paletteBufferLoadGate.invalidate());
-    // "Go to file:" source (M24.6): the workspace's ignore-respecting file list,
-    // repo-relative, capped, refreshed on each palette open (async — the rows
-    // appear as soon as the list lands). `git ls-files -co --exclude-standard`
-    // where the workspace is a repo; a capped, filtered async walk elsewhere.
-    const REPO_FILES_CAP = 2000;
-    const REPO_WALK_DEPTH = 8;
-    const [repoFiles, setRepoFiles] = createSignal<string[]>([]);
-    const walkRepoFiles = async (root: string): Promise<string[]> => {
-      const feature = filesFeature() ?? (await ensureFilesFeature().catch(() => undefined));
-      if (!feature) return [];
-      const out: string[] = [];
-      let queue: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
-      while (queue.length > 0 && out.length < REPO_FILES_CAP) {
-        const next: typeof queue = [];
-        for (const { dir, depth } of queue) {
-          const ents = await listDir(dir).catch(() => []);
-          for (const e of ents) {
-            if (out.length >= REPO_FILES_CAP) break;
-            const abs = join(dir, e.name);
-            if (e.isDir) {
-              if (depth + 1 < REPO_WALK_DEPTH) next.push({ dir: abs, depth: depth + 1 });
-            } else {
-              const rel = feature.relPath(root, abs);
-              if (rel) out.push(rel);
-            }
-          }
-        }
-        queue = next;
-      }
-      return out;
-    };
-    const loadRepoFiles = () => {
-      const root = workspaceDir();
-      runGitFiles(["ls-files", "-co", "--exclude-standard"], (out) => {
-        if (root !== workspaceDir()) return;
-        if (out) {
-          setRepoFiles(out.split("\n").filter(Boolean).slice(0, REPO_FILES_CAP));
-          return;
-        }
-        void walkRepoFiles(root)
-          .then((files) => {
-            if (root === workspaceDir()) setRepoFiles(files);
-          })
-          .catch(() => setRepoFiles([]));
-      });
-    };
-    // Buffer selection remains a compact numeric second-level concern. The
-    // command list uses stable semantic ids so re-ranking/query edits never
-    // accidentally execute a different row at the same screen coordinate.
-    const [paletteSel, setPaletteSel] = createSignal(0);
-    const [paletteSelectedCommandId, setPaletteSelectedCommandId] = createSignal<string | null>(
-      null,
-    );
-    // The wheel-scrolled window top of the result list (0 unless scrolled — the
-    // keyboard never moves it, so keyboard-only sessions render exactly as
-    // before). Reset wherever the list identity changes (query edits, level
-    // swaps, reopen).
-    const [paletteTop, setPaletteTop] = createSignal(0);
-    // ROWS, not bare actions (M24.4): an empty query opens grouped — "recent"
-    // (persisted usage), "suggested" (surface verbs; BLOCKED agents' jumps
-    // first), then "commands" — a typed query is one flat ranked list. Headers
-    // are real, non-selectable rows; the selection helpers below skip them.
-    const paletteRowList = createMemo(() =>
-      paletteRows(
-        paletteQuery(),
-        fleet().map((s) => s.name),
-        {
-          terminal: mode() === "mirror",
-          surface: tab(),
-          agents: fleetAgents(),
-          panes: panes().map((pane) => {
-            const descriptor = semanticView
-              ?.paneDescriptors()
-              .find(({ runtimePaneId }) => runtimePaneId === pane.id);
-            return {
-              paneId: pane.id,
-              session: contextSession(),
-              active: paneIsFocused(pane.id),
-              title: descriptor?.title ?? descriptor?.role ?? descriptor?.currentCommand ?? pane.id,
-            };
-          }),
-          sizeMismatch: windowMismatch() !== null,
-          appMousePane: panes().find((p) => paneIsFocused(p.id))?.appMouse === true,
-          // Pins "New agent: <name> (again)" FIRST when this context has spawn
-          // memory (M24.1) — F5 → Enter repeats the last spawn.
-          againName: currentAgainName(),
-          usage: paletteUsage(),
-          keycaps: PALETTE_ROW_KEYCAPS,
-          views: hostedViews(),
-          // "Go to file:" rows (M24.6) — appended after everything.
-          repoFiles: repoFiles(),
-        },
-      ),
-    );
-    const paletteEntries = createMemo(() => {
-      // EditBuffer is an imperative native object, so subscribe to its explicit
-      // revision before deriving availability for Save.
-      editorRev();
-      return adaptPaletteRowsToCommands(paletteRowList(), {
-        currentSurface: workbenchFocusZone() === "canvas" ? canvasPanel() : activeDockTab(),
-        currentTab: tab(),
-        currentViewId: activeViewId(),
-        currentSession: contextSession(),
-        syncOn: syncOn(),
-        saveState: {
-          hasBuffer: filesSession()?.hasBuffer ?? false,
-          hasPath: Boolean(editorPath()),
-          readOnlyReason: editorReadOnly(),
-        },
-        multiplexerFacts: {
-          workspaceConnected: mode() === "mirror" && semanticView !== null,
-          sessionWindowCount: windowTabs().length,
-          windowPaneCount: panes().length,
-          windowZoomed: panes().some((pane) => pane.zoomed),
-          targetIsActivePane: true,
-          targetIsDockedStackMember: false,
-        },
-        fallbackGroup: paletteQuery().trim() ? "Results" : "Commands",
-      });
-    });
-    const paletteProjection = createMemo(() =>
-      projectCommandPalette({
-        width: dims().width,
-        height: dims().height,
-        query: paletteQuery(),
-        commands: paletteEntries().map((entry) => entry.descriptor),
-        selectedCommandId: paletteSelectedCommandId(),
-        scrollTop: paletteTop(),
-        title: "Navigator",
-        queryPlaceholder: "Search · @workspaces @agents @panes @commands",
-      }),
-    );
-    /** The legacy centered geometry is now exclusively the paste-buffer level. */
-    const paletteGeom = (): PaletteGeom => {
-      const { left, top } = palettePos(dims().width, dims().height, paletteW());
-      const count = paletteBuffers()?.length ?? 0;
+    // ── COMMAND PALETTE (deferred feature; shell-owned admission) ─────────────
+    let executePaletteHostIntent = (_intent: PaletteHostIntent): void => undefined;
+    let paletteAdmissionToken: ReturnType<typeof reserveModal> = null;
+    let paletteFeatureRequest: Promise<ApplicationOptionalFeatures["palette"] | undefined> | null =
+      null;
+    const [paletteLoadState, setPaletteLoadState] = createSignal<
+      "idle" | "loading" | "ready" | "error"
+    >("idle");
+    const [paletteLoadError, setPaletteLoadError] = createSignal("");
+    const paletteWorkspaceIdentity = (): PaletteWorkspaceIdentity => {
+      const directory = workspaceDir();
+      const workspaceName = contextSession() || target;
+      const repository = workspaceUiController?.snapshot().repository;
+      const daemon = readCanonicalDaemonInfo();
       return {
-        left,
-        top,
-        width: paletteW(),
-        visibleRows: Math.min(PALETTE_ROWS, Math.max(0, count - paletteTop())),
+        workspaceName,
+        directory,
+        projectRoot: repository?.metadata.projectRoot ?? directory,
+        daemonIdentity: daemon ? `${daemon.pid ?? ""}:${daemon.port}` : "unavailable",
+        generation: toolResourceGeneration,
       };
     };
-    const resetPaletteSelection = () => {
-      setPaletteTop(0);
-      setPaletteSelectedCommandId(firstEnabledPaletteCommandId(paletteEntries()));
-    };
-    const setPaletteQueryAndReset = (next: string) => {
-      setPaletteQuery(next);
-      resetPaletteSelection();
-    };
-    const selectPaletteCommand = (commandId: string | null) => {
-      setPaletteSelectedCommandId(commandId);
-      setPaletteTop(
-        ensurePaletteSelectionVisible(paletteProjection(), paletteEntries(), commandId),
-      );
-    };
-    const closePalette = () => {
-      paletteBufferLoadGate.invalidate();
-      setPaletteBuffers(null);
+    const closePalette = (reason: "escape" | "outside" | "action" = "escape") => {
+      paletteSession()?.close(reason);
       setPaletteOpen(false);
+      if (paletteAdmissionToken && modalAdmission.isCurrent(paletteAdmissionToken)) {
+        modalAdmission.release(paletteAdmissionToken);
+      }
+      paletteAdmissionToken = null;
     };
-    const returnFromPaletteBuffers = () => {
-      paletteBufferLoadGate.invalidate();
-      const restore = restorePaletteActionLevelFromBuffers(paletteProjection(), paletteEntries());
-      setPaletteBuffers(null);
-      setPaletteSel(0);
-      setPaletteSelectedCommandId(restore.selectedCommandId);
-      setPaletteTop(restore.scrollTop);
+    const ensurePaletteFeature = async (): Promise<PaletteFeatureSession | undefined> => {
+      const existing = paletteSession();
+      if (existing) {
+        const token = paletteAdmissionToken;
+        if (token && modalAdmission.isCurrent(token)) {
+          modalAdmission.markReady(token);
+          setPaletteLoadState("ready");
+        }
+        return existing;
+      }
+      const token = paletteAdmissionToken;
+      if (!token || !modalAdmission.isCurrent(token)) return undefined;
+      setPaletteLoadState("loading");
+      modalAdmission.markLoading(token);
+      const request = paletteFeatureRequest ?? optionalFeatures.request("palette");
+      paletteFeatureRequest = request;
+      try {
+        const feature = await request;
+        if (!feature || !modalAdmission.isCurrent(token)) return undefined;
+        setPaletteFeature(() => feature);
+        const session = feature.createPaletteFeatureSession({
+          width: () => dims().width,
+          height: () => dims().height,
+          identity: paletteWorkspaceIdentity,
+          facts: () => {
+            editorRev();
+            return {
+              terminal: mode() === "mirror",
+              surface: tab(),
+              currentSurface: workbenchFocusZone() === "canvas" ? canvasPanel() : activeDockTab(),
+              currentViewId: activeViewId(),
+              currentSession: contextSession(),
+              sessions: fleet().map((item) => item.name),
+              agents: fleetAgents(),
+              panes: panes().map((pane) => {
+                const descriptor = semanticView
+                  ?.paneDescriptors()
+                  .find(({ runtimePaneId }) => runtimePaneId === pane.id);
+                return {
+                  paneId: pane.id,
+                  session: contextSession(),
+                  active: paneIsFocused(pane.id),
+                  title:
+                    descriptor?.title ?? descriptor?.role ?? descriptor?.currentCommand ?? pane.id,
+                };
+              }),
+              sizeMismatch: windowMismatch() !== null,
+              appMousePane: panes().find((pane) => paneIsFocused(pane.id))?.appMouse === true,
+              againName: currentAgainName(),
+              usage: paletteUsage(),
+              keycaps: PALETTE_ROW_KEYCAPS,
+              views: hostedViews(),
+              syncOn: syncOn(),
+              saveState: {
+                hasBuffer: filesSession()?.hasBuffer ?? false,
+                hasPath: Boolean(editorPath()),
+                readOnlyReason: editorReadOnly(),
+              },
+              multiplexerFacts: {
+                workspaceConnected: mode() === "mirror" && semanticView !== null,
+                sessionWindowCount: windowTabs().length,
+                windowPaneCount: panes().length,
+                windowZoomed: panes().some((pane) => pane.zoomed),
+                targetIsActivePane: true,
+                targetIsDockedStackMember: false,
+              },
+            };
+          },
+          loadRepoFiles: async (identity, signal) => {
+            const feature = filesFeature() ?? (await ensureFilesFeature().catch(() => undefined));
+            if (!feature || signal.aborted) return [];
+            const out: string[] = [];
+            const queue: string[] = [identity.directory];
+            while (queue.length > 0 && out.length < 2000 && !signal.aborted) {
+              const directory = queue.shift()!;
+              for (const entry of await listDir(directory).catch(() => [])) {
+                const absolute = join(directory, entry.name);
+                if (entry.isDir) queue.push(absolute);
+                else {
+                  const relative = feature.relPath(identity.directory, absolute);
+                  if (relative) out.push(relative);
+                }
+              }
+            }
+            return out;
+          },
+          loadBuffers: async (_identity, signal) => {
+            if (signal.aborted) return [];
+            throw new Error("tmux paste buffers are unavailable until their semantic query lands");
+          },
+          dispatch: (intent) => executePaletteHostIntent(intent),
+        });
+        if (!modalAdmission.isCurrent(token)) {
+          session.dispose();
+          return undefined;
+        }
+        setPaletteSession(() => session);
+        setPaletteLoadState("ready");
+        setPaletteLoadError("");
+        modalAdmission.markReady(token);
+        return session;
+      } catch (error) {
+        if (paletteFeatureRequest === request) paletteFeatureRequest = null;
+        const message =
+          error instanceof Error ? error.message : "The command palette is unavailable.";
+        setPaletteLoadState("error");
+        setPaletteLoadError(message);
+        if (modalAdmission.isCurrent(token)) modalAdmission.markError(token, error);
+        return undefined;
+      }
     };
     const openPalette = () => {
-      paletteBufferLoadGate.invalidate();
-      setPaletteQuery("");
-      setPaletteBuffers(null); // always open on the action list, never mid-picker
-      resetPaletteSelection();
-      setHoverIf(null); // the overlay owns the pointer; drop any underlying tint
-      loadRepoFiles(); // refresh the "Go to file:" source (async, M24.6)
+      if (paletteOpen()) return;
+      const token = reserveModal("palette");
+      if (!token) return;
+      paletteAdmissionToken = token;
+      setHoverIf(null);
       setPaletteOpen(true);
+      void ensurePaletteFeature().then((session) => session?.openPalette());
     };
+    const retryPalette = () => {
+      closePalette("escape");
+      paletteFeatureRequest = null;
+      openPalette();
+    };
+    createEffect(() => {
+      const identity = paletteWorkspaceIdentity();
+      paletteSession()?.switchWorkspace(identity);
+    });
     const lifecycleExecutor = createApplicationLifecycleInputExecutor(applicationLifecycle, {
       // Renderer destruction disposes the Solid root first, so the shared
       // onCleanup path owns mirrors/buffers and the host-mode guard restores
@@ -4885,20 +4835,6 @@ const mountTuiRoot = () => {
      * and the next daemon layout is the only settled geometry authority. */
     const commitPaneResize = () => resizeTransaction.release();
     const runPaletteAction = async (a: PaletteAction) => {
-      // Usage history (M24.4): every dispatched action bumps its stable key —
-      // count + lastUsed feed the "recent" group and the ranking tie-break.
-      setPaletteUsage((u) =>
-        recordPaletteUse(u, paletteActionKey(a), Math.floor(Date.now() / 1e3)),
-      );
-      // "Paste buffer…" descends into the second-level picker instead of
-      // dispatching — keep the palette open and load the buffer list.
-      if (a.kind === "paste-buffer") {
-        setPaletteSel(0);
-        setPaletteTop(0);
-        loadBuffers();
-        return;
-      }
-      executePaletteCommand(false, { kind: "palette", surface: "command-palette" });
       switch (a.kind) {
         case "search-scrollback":
           // The live-prompt entry to scrollback search — `/` only works while
@@ -5068,6 +5004,28 @@ const mountTuiRoot = () => {
           break;
       }
     };
+    executePaletteHostIntent = (intent) => {
+      if (intent.kind === "close") {
+        closePalette(intent.reason);
+        return;
+      }
+      if (intent.kind === "paste-buffer") {
+        setStatusNote(
+          `tmux paste buffer ${intent.bufferName} is unavailable in the semantic runtime`,
+        );
+        return;
+      }
+      setPaletteUsage((usage) =>
+        recordPaletteUse(usage, intent.usageKey, Math.floor(Date.now() / 1e3)),
+      );
+      if (intent.kind === "settings") {
+        // Palette close/admission release was dispatched synchronously before
+        // this semantic transfer. Settings can now reserve its own modal.
+        void runSettingsCommand(intent.command);
+        return;
+      }
+      void runPaletteAction(intent.action);
+    };
     /** Feed one key to the palette overlay. Returns true when the key was consumed
      *  (so the global handler stops). */
     const paletteKey = (evt: {
@@ -5076,40 +5034,12 @@ const mountTuiRoot = () => {
       meta: boolean;
       shift: boolean;
     }): void => {
-      // Second level: the paste-buffer picker. esc backs out to the action list;
-      // up/down move; enter pastes the chosen buffer. No typing filter here (the
-      // list is short and buffer names aren't fuzzy-worthy).
-      const bufs = paletteBuffers();
-      if (bufs !== null) {
-        if (evt.name === "escape") {
-          returnFromPaletteBuffers();
-        } else if (evt.name === "return") {
-          const b = bufs[Math.min(paletteSel(), bufs.length - 1)];
-          if (b) pasteBuffer(b.name);
-        } else if (evt.name === "up") {
-          setPaletteSel((s) => Math.max(0, s - 1));
-        } else if (evt.name === "down") {
-          setPaletteSel((s) => Math.min(Math.max(0, bufs.length - 1), s + 1));
-        }
+      if (paletteLoadState() === "error") {
+        if (evt.name === "r") retryPalette();
+        else if (evt.name === "escape") closePalette("escape");
         return;
       }
-      if (evt.name === "escape") {
-        executePaletteCommand(false, { kind: "keyboard", surface: "command-palette" });
-      } else if (evt.name === "return") {
-        dispatchPaletteCommand(paletteEntries(), paletteSelectedCommandId(), runPaletteAction);
-      } else if (evt.name === "up") {
-        selectPaletteCommand(
-          stepEnabledPaletteCommandId(paletteEntries(), paletteSelectedCommandId(), -1),
-        );
-      } else if (evt.name === "down") {
-        selectPaletteCommand(
-          stepEnabledPaletteCommandId(paletteEntries(), paletteSelectedCommandId(), 1),
-        );
-      } else if (evt.name === "backspace") {
-        setPaletteQueryAndReset(paletteQuery().slice(0, -1));
-      } else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
-        setPaletteQueryAndReset(paletteQuery() + (evt.shift ? evt.name.toUpperCase() : evt.name));
-      }
+      paletteSession()?.handleKey(evt);
     };
 
     // ── SETTINGS AS COMMANDS (M22.4) ─────────────────────────────────────────
@@ -5563,22 +5493,6 @@ const mountTuiRoot = () => {
         terminalAvailable: Boolean(semanticView),
       });
     };
-    /** Paste-buffer reads need a typed daemon query; keep the dormant flow
-     * capability-honest until that contract exists. */
-    const loadBuffers = () => {
-      setPaletteBuffers([]);
-      setStatusNote("tmux paste buffers are unavailable until their semantic query lands");
-    };
-    /** Fetch one buffer's content and paste it. The control client reads replies as
-     *  latin1 (byte-per-char) so multibyte glyphs must be re-encoded latin1→utf8
-     *  (the same fix the pane seed uses) before hitting the paste path. */
-    const pasteBuffer = (name: string) => {
-      executePaletteCommand(false, { kind: "palette", surface: "paste-buffer" });
-      setPaletteSel(0);
-      setPaletteTop(0);
-      setStatusNote(`tmux paste buffer ${name} is unavailable in the semantic runtime`);
-    };
-
     // ── clipboard io (M19.4) ──────────────────────────────────────────────────
     // Copy rides OSC52 written to the app's OWN stdout: with `set-clipboard on`
     // (enabled best-effort at mount) the surrounding tmux captures it into its
@@ -6317,7 +6231,8 @@ const mountTuiRoot = () => {
     useKeyboard((evt) => {
       const layer = resolveInputLayer(
         {
-          dialogOpen: modalAdmissionSnapshot().reserved,
+          dialogOpen:
+            modalAdmissionSnapshot().reserved && modalAdmissionSnapshot().kind !== "palette",
           menuOpen: Boolean(menu()),
           paletteOpen: paletteOpen(),
           searchOpen: Boolean(search()),
@@ -6671,14 +6586,12 @@ const mountTuiRoot = () => {
     // keystrokes); the input coalescer chunks it under tmux's per-command cap.
     usePaste((e) => {
       const text = decodePasteBytes(e.bytes);
-      if (modalAdmissionSnapshot().reserved) return;
+      if (modalAdmissionSnapshot().reserved && modalAdmissionSnapshot().kind !== "palette") return;
       if (paletteOpen()) {
         // The root remains the only paste listener. An action-level paste edits
         // the query; the buffer picker consumes it. Neither can leak bytes into
         // a terminal hidden underneath the modal surface.
-        if (paletteBuffers() === null) {
-          setPaletteQueryAndReset(appendPalettePaste(paletteQuery(), text));
-        }
+        paletteSession()?.handlePaste(text);
         return;
       }
       pasteIntoFocused(text);
@@ -7493,7 +7406,7 @@ const mountTuiRoot = () => {
       // activates it (select rows arm-then-confirm when destructive; confirm
       // rows choose), a press inside-but-not-a-row is a no-op, and a press
       // OUTSIDE pops ONE stack level — exactly what Escape does.
-      if (modalAdmissionSnapshot().reserved) {
+      if (modalAdmissionSnapshot().reserved && modalAdmissionSnapshot().kind !== "palette") {
         const session = dialogsSession();
         if (session?.open()) {
           if (type === "down" && e.button === 2) return;
@@ -7565,75 +7478,18 @@ const mountTuiRoot = () => {
       // the native surface projection; the retained paste-buffer second level
       // uses its smaller legacy geometry. Both stay handler-free and modal.
       if (paletteOpen()) {
-        const bufs = paletteBuffers();
-        if (bufs === null) {
-          const projection = paletteProjection();
-          if (type === "scroll") {
-            const dir = e.scroll?.direction;
-            if (dir === "up" || dir === "down") {
-              const step = dir === "up" ? -1 : 1;
-              setPaletteTop((top) =>
-                Math.max(0, Math.min(top + step, Math.max(0, projection.contentRowCount - 1))),
-              );
-            }
-            return;
-          }
-          const hit = commandPaletteHitTest(projection, x, y);
-          if (type === "move" || type === "over" || type === "drag") {
-            if (hit?.kind === "command" && !hit.disabled) {
-              setPaletteSelectedCommandId(hit.commandId);
-            }
-            return;
-          }
-          if (type !== "down") return;
-          if (hit?.kind === "command") {
-            if (e.button === 2 || hit.disabled) return;
-            setPaletteSelectedCommandId(hit.commandId);
-            dispatchPaletteCommand(paletteEntries(), hit.commandId, runPaletteAction);
-            return;
-          }
-          if (hit?.kind === "retry") {
-            if (e.button !== 2) openPalette();
-            return;
-          }
-          if (hit === null) {
-            executePaletteCommand(false, { kind: "mouse", surface: "command-palette" });
-          }
-          return;
-        }
-
-        const g = paletteGeom();
-        if (type === "scroll") {
-          const dir = e.scroll?.direction;
-          if (dir === "up" || dir === "down") {
-            const step = dir === "up" ? -1 : 1;
-            setPaletteTop((t) => clampPaletteTop(t + step, bufs.length, PALETTE_ROWS));
-          }
-          return;
-        }
-        if (type === "move" || type === "over" || type === "drag") {
-          const ri = paletteRowAt(g, x, y);
-          // A header row is not selectable (M24.4) — motion over it keeps the
-          // selection where it was, like the box chrome.
-          if (ri >= 0) {
-            const abs = paletteTop() + ri;
-            setPaletteSel(abs);
-          }
-          return;
-        }
-        if (type !== "down") return;
-        const ri = paletteRowAt(g, x, y);
-        if (ri >= 0) {
-          if (e.button === 2) return; // right press on a row: no-op, stay open
-          const abs = paletteTop() + ri;
-          setPaletteSel(abs);
-          const b = bufs[abs];
-          if (b) pasteBuffer(b.name);
-          return;
-        }
-        if (!paletteContains(g, x, y)) {
-          executePaletteCommand(false, { kind: "mouse", surface: "paste-buffer" });
-        }
+        paletteSession()?.handlePointer({
+          kind:
+            type === "over" || type === "drag"
+              ? "move"
+              : type === "drag-end" || type === "drop"
+                ? "up"
+                : type,
+          x,
+          y,
+          button: e.button,
+          scrollDirection: e.scroll?.direction,
+        });
         return;
       }
       const applicationChromeHit = applicationShellHitTest(applicationShellProjection(), e.x, e.y);
@@ -8199,7 +8055,8 @@ const mountTuiRoot = () => {
     const interaction = createMemo(() => {
       dialogRev();
       return tuiInteractionPresentation({
-        dialogOpen: modalAdmissionSnapshot().reserved,
+        dialogOpen:
+          modalAdmissionSnapshot().reserved && modalAdmissionSnapshot().kind !== "palette",
         menuOpen: Boolean(menu()),
         paletteOpen: paletteOpen(),
         searchOpen: Boolean(search()),
@@ -8722,59 +8579,43 @@ const mountTuiRoot = () => {
           The original tmux paste-buffer picker remains the second level. */}
         <Show when={paletteOpen()}>
           <Show
-            when={paletteBuffers() !== null}
+            when={paletteFeature() && paletteSession()}
             fallback={
-              <CommandPaletteSurface theme={semanticTheme()} projection={paletteProjection()} />
+              <box
+                position="absolute"
+                left={Math.max(0, Math.floor((dims().width - paletteW()) / 2))}
+                top={Math.max(1, Math.floor(dims().height / 6))}
+                width={paletteW()}
+                flexDirection="column"
+                backgroundColor={semanticTheme().roles.surfaces.command}
+                border
+                borderColor={
+                  paletteLoadState() === "error"
+                    ? semanticTheme().roles.statusTone.danger
+                    : semanticTheme().roles.borders.focused
+                }
+                paddingLeft={1}
+                paddingRight={1}
+              >
+                <text fg={semanticTheme().roles.text.link} attributes={1}>
+                  {paletteLoadState() === "error"
+                    ? "Unable to open Navigator"
+                    : "Opening Navigator…"}
+                </text>
+                <text fg={semanticTheme().roles.text.secondary}>
+                  {paletteLoadState() === "error" ? paletteLoadError() : "Loading command catalog"}
+                </text>
+                <text fg={semanticTheme().roles.text.muted}>
+                  {paletteLoadState() === "error" ? "r retry · esc cancel" : "esc cancel"}
+                </text>
+              </box>
             }
           >
-            <box
-              position="absolute"
-              left={palettePos(dims().width, dims().height, paletteW()).left}
-              top={palettePos(dims().width, dims().height, paletteW()).top}
-              width={paletteW()}
-              flexDirection="column"
-              backgroundColor={semanticTheme().roles.surfaces.command}
-              border
-              borderColor={semanticTheme().roles.borders.focused}
-              paddingLeft={1}
-              paddingRight={1}
-            >
-              <box flexDirection="row">
-                <text fg={semanticTheme().roles.text.link} attributes={1}>
-                  {"⎘ Paste buffer"}
-                </text>
-                <box flexGrow={1} />
-                <text fg={semanticTheme().roles.text.muted}>{"esc back"}</text>
-              </box>
-              <text fg={semanticTheme().roles.borders.subtle}>{"─".repeat(paletteW() - 4)}</text>
-              <For each={paletteBuffers()!.slice(paletteTop(), paletteTop() + PALETTE_ROWS)}>
-                {(b, i) => (
-                  <box
-                    height={1}
-                    flexDirection="row"
-                    backgroundColor={
-                      paletteTop() + i() === paletteSel()
-                        ? semanticTheme().roles.selection.selection
-                        : semanticTheme().roles.surfaces.command
-                    }
-                  >
-                    <text
-                      fg={
-                        paletteTop() + i() === paletteSel()
-                          ? semanticTheme().roles.selection.selectionText
-                          : semanticTheme().roles.text.secondary
-                      }
-                    >
-                      {`${paletteTop() + i() === paletteSel() ? "› " : "  "}${b.name}  `}
-                    </text>
-                    <text fg={semanticTheme().roles.text.muted}>{b.preview}</text>
-                  </box>
-                )}
-              </For>
-              <Show when={paletteBuffers()!.length === 0}>
-                <text fg={semanticTheme().roles.text.muted}>{"  no buffers"}</text>
-              </Show>
-            </box>
+            <Dynamic
+              component={paletteFeature()!.PaletteFeatureSurface}
+              session={paletteSession()!}
+              theme={semanticTheme()}
+            />
           </Show>
         </Show>
         {/* RIGHT-CLICK CONTEXT MENU overlay (M19.2) — opened at the pointer,
@@ -8906,6 +8747,7 @@ const mountTuiRoot = () => {
         <Show
           when={
             modalAdmissionSnapshot().reserved &&
+            modalAdmissionSnapshot().kind !== "palette" &&
             !dialogsSession()?.open() &&
             modalAdmissionSnapshot().phase !== "ready"
           }

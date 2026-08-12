@@ -15,7 +15,7 @@ describe("application optional feature loaders", () => {
       "../features/missions-activity/feature.tsx",
       "../features/dialogs/feature.tsx",
       "../features/settings/feature.ts",
-      "../workspace/command-palette-surface.tsx",
+      "../features/palette/feature.ts",
       "../widget-surface.tsx",
     ]) {
       expect(source).toContain(`() => import("${specifier}")`);
@@ -93,6 +93,7 @@ describe("application optional feature loaders", () => {
   it.each([
     ["dialogs", "createDialogFeatureSession"],
     ["settings", "createSettingsFeatureSession"],
+    ["palette", "createPaletteFeatureSession"],
   ] as const)(
     "retains and publishes the real %s feature after admission",
     async (key, exportName) => {

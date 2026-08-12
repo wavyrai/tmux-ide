@@ -1,4 +1,5 @@
 export { createPaletteFeatureSession } from "./session.ts";
+export { PaletteFeatureSurface, type PaletteFeatureSurfaceProps } from "./surface.tsx";
 export type {
   PaletteAsyncState,
   PaletteDynamicFacts,

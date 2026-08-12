@@ -6,6 +6,7 @@ import {
   palettePos,
   paletteRowAt,
   paletteRows,
+  paletteActionKey,
   type PaletteAction,
   type PaletteGeom,
   type TmuxBuffer,
@@ -222,8 +223,8 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
       close("action");
       void host.dispatch(
         action.kind === "settings"
-          ? { kind: "settings", command: action.id }
-          : { kind: "action", action },
+          ? { kind: "settings", command: action.id, usageKey: paletteActionKey(action) }
+          : { kind: "action", action, usageKey: paletteActionKey(action) },
       );
     };
     const activateSelected = () => dispatchPaletteCommand(entries(), selectedCommandId(), execute);

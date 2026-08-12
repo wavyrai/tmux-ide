@@ -180,7 +180,11 @@ describe("PaletteFeatureSession", () => {
       .find((entry) => entry.action.kind === "settings" && entry.action.id === "settings-keys")!;
     while (session.snapshot().selectedCommandId !== settings.id) session.handleKey(key("down"));
     session.handleKey(key("return"));
-    expect(fx.intents).toContainEqual({ kind: "settings", command: "settings-keys" });
+    expect(fx.intents).toContainEqual({
+      kind: "settings",
+      command: "settings-keys",
+      usageKey: "settings:settings-keys",
+    });
     expect(session.open()).toBe(false);
     expect(fx.intents[0]).toEqual({ kind: "close", reason: "action" });
     session.dispose();
@@ -370,7 +374,29 @@ describe("PaletteFeatureSession", () => {
     expect(fx.intents.at(-1)).toEqual({
       kind: "action",
       action: actionEntry.action as PaletteAction,
+      usageKey: "new-agent",
     });
+    session.dispose();
+  });
+
+  it("reports one usage identity per accepted action and never for disabled activation", async () => {
+    const fx = fixture({
+      disabledReason: (action) => (action.kind === "save" ? "disabled" : null),
+    });
+    const session = createPaletteFeatureSession(fx.host);
+    session.openPalette();
+    await Promise.resolve();
+    const disabled = session.entries().find((entry) => entry.action.kind === "save")!;
+    expect(disabled.descriptor.disabledReason).toBe("disabled");
+    const before = fx.intents.length;
+    expect(session.snapshot().selectedCommandId).not.toBe(disabled.id);
+    expect(fx.intents).toHaveLength(before);
+    const enabled = session.entries().find((entry) => entry.action.kind === "new-agent")!;
+    while (session.snapshot().selectedCommandId !== enabled.id) session.handleKey(key("down"));
+    session.handleKey(key("return"));
+    const actions = fx.intents.filter((intent) => intent.kind === "action");
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ usageKey: "new-agent" });
     session.dispose();
   });
 });
