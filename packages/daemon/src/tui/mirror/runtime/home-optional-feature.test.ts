@@ -21,7 +21,7 @@ describe("terminal-first Home optional feature", () => {
     for (const deferred of [
       "src/tui/mirror/features/home/feature.tsx",
       "src/tui/mirror/home-surface.tsx",
-      "src/tui/mirror/home-surface.ts",
+      "src/tui/mirror/home-surface-model.ts",
       "src/tui/mirror/folder-picker.ts",
       "src/tui/mirror/agent-provisioning-executor.ts",
       "src/lib/project-registry.ts",

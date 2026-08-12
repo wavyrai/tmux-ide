@@ -390,7 +390,7 @@ import {
   workbenchDockTabForShortcut,
 } from "../workspace/workbench-controller.ts";
 import { clipTerminal } from "../terminal-text.ts";
-import type { HomeActionId } from "../home-surface.ts";
+import type { HomeActionId } from "../home-surface-model.ts";
 import type {
   MissionDeepLinkIntent,
   MissionsActivityFeatureSession,

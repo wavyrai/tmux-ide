@@ -32,7 +32,7 @@ export {
   homeActionAtProjection,
   homeItemIndexAtProjection,
   projectHomeSurface,
-} from "../../home-surface.ts";
+} from "../../home-surface-model.ts";
 export { executeTuiAgentProvisioning } from "../../agent-provisioning-executor.ts";
 
 interface HomeDialogPort {

@@ -8,7 +8,7 @@ import {
   homeActionAtProjection,
   type HomeActionId,
   type HomeSurfaceProjection,
-} from "./home-surface.ts";
+} from "./home-surface-model.ts";
 import { actionChipWidth, recipePalette } from "./recipes.ts";
 import { clipTerminal } from "./terminal-text.ts";
 
