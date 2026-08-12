@@ -15,6 +15,12 @@ import type { AppConfig, AppConfigPatch, AppKeys } from "../../lib/app-config.ts
 import type { ThemeModeSetting } from "./theme.ts";
 import { parseHHMM, type NotificationPrefs } from "../chrome/notify-prefs.ts";
 import type { DialogSelectItem } from "./dialog-model.ts";
+import { APPLICATION_KEYBINDING_ROWS } from "./application-keybindings.ts";
+
+// Compatibility export for the current application root. The palette cutover
+// imports this from application-keybindings.ts directly, after which this
+// re-export can be removed without touching settings behavior.
+export { PALETTE_KEYCAPS } from "./application-keybindings.ts";
 
 // ── Command registry (what the palette offers) ───────────────────────────────
 
@@ -337,36 +343,10 @@ export function prefixTwinFor(altKey: string): string | null {
   return letter;
 }
 
-/** THE app-key enumeration — the ONE place the unified app's fixed keys are
- *  listed (M24.4). The keybind viewer's app rows AND the palette's right-aligned
- *  row shortcuts both read this; `paletteAction` is the stable palette action
- *  key ({@link ./palette.ts}'s paletteActionKey) a keycap attaches to. */
-const APP_KEY_ROWS: ReadonlyArray<{ label: string; keycap: string; paletteAction?: string }> = [
-  { label: "Command palette", keycap: "F5 · ^p" },
-  { label: "Home", keycap: "F1", paletteAction: "surface:home" },
-  { label: "Terminals", keycap: "F2", paletteAction: "surface:terminals" },
-  { label: "Files", keycap: "F3", paletteAction: "surface:files" },
-  { label: "Changes", keycap: "F4", paletteAction: "surface:changes" },
-  { label: "Missions", keycap: "F6", paletteAction: "surface:missions" },
-  { label: "Activity", keycap: "F9", paletteAction: "surface:activity" },
-  { label: "Cycle workspace focus", keycap: "F8 · ^tab" },
-  { label: "Save file", keycap: "^s", paletteAction: "save" },
-  { label: "Back to Home", keycap: "^g" },
-  { label: "Toggle editor", keycap: "^e" },
-  { label: "Quit / detach", keycap: "^q", paletteAction: "quit" },
-];
-
-/** PURE — palette action key → keycap, derived from {@link APP_KEY_ROWS}. The
- *  palette right-aligns these on rows that have one; app.tsx drops `quit` in
- *  HOSTED mode, where ^q detaches instead. */
-export const PALETTE_KEYCAPS: Readonly<Record<string, string>> = Object.fromEntries(
-  APP_KEY_ROWS.filter((r) => r.paletteAction).map((r) => [r.paletteAction!, r.keycap]),
-);
-
 /** PURE — the read-only shortcut rows: the chrome actions from the LIVE config
  *  (prefix-first, the Alt fast path second — the prefix form is the one that
  *  survives every keyboard protocol) and then the app's fixed keys
- *  ({@link APP_KEY_ROWS}). `superK` appends the kitty-protocol ⌘K fast path to
+ *  ({@link APPLICATION_KEYBINDING_ROWS}). `superK` appends the kitty-protocol ⌘K fast path to
  *  the palette row — shown only when the renderer actually enables it. */
 export function keybindingItems(keys: AppKeys, superK = false): DialogSelectItem[] {
   const chrome: Array<{ label: string; altKey: string }> = [
@@ -387,7 +367,7 @@ export function keybindingItems(keys: AppKeys, superK = false): DialogSelectItem
       detail: twin ? `prefix ${twin} · ${altKey}` : altKey,
     };
   });
-  for (const { label, keycap } of APP_KEY_ROWS) {
+  for (const { label, keycap } of APPLICATION_KEYBINDING_ROWS) {
     const detail = superK && label === "Command palette" ? `${keycap} · ⌘K` : keycap;
     rows.push({ id: `app:${label}`, label, detail });
   }
