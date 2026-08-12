@@ -21659,32 +21659,31 @@ function ensureWorkspaceResourceObserver(daemonInstanceId2) {
 }
 function snapshotSessionsHash() {
   try {
-    return JSON.stringify(
-      discoverSessions().map((s) => s.name).sort()
-    );
+    return JSON.stringify(listTmuxSessions().sort());
   } catch {
     return "";
+  }
+}
+function pollSessionsComposition() {
+  const hash = snapshotSessionsHash();
+  if (hash === lastSessionsHash) return;
+  lastSessionsHash = hash;
+  for (const client of allClients) client.broadcastSessionsChanged();
+  if (resourceEventGeneration) {
+    broadcastResourceChanged(
+      { workspaceName: null, resource: "workspace-catalog" },
+      resourceEventGeneration
+    );
+    broadcastResourceChanged(
+      { workspaceName: null, resource: "fleet-catalog" },
+      resourceEventGeneration
+    );
   }
 }
 function ensureSessionsPoller() {
   if (sessionsPollTimer) return;
   lastSessionsHash = snapshotSessionsHash();
-  sessionsPollTimer = setInterval(() => {
-    const hash = snapshotSessionsHash();
-    if (hash === lastSessionsHash) return;
-    lastSessionsHash = hash;
-    for (const client of allClients) client.broadcastSessionsChanged();
-    if (resourceEventGeneration) {
-      broadcastResourceChanged(
-        { workspaceName: null, resource: "workspace-catalog" },
-        resourceEventGeneration
-      );
-      broadcastResourceChanged(
-        { workspaceName: null, resource: "fleet-catalog" },
-        resourceEventGeneration
-      );
-    }
-  }, SESSIONS_POLL_MS);
+  sessionsPollTimer = setInterval(pollSessionsComposition, SESSIONS_POLL_MS);
   sessionsPollTimer.unref?.();
 }
 function maybeStopSessionsPoller() {
