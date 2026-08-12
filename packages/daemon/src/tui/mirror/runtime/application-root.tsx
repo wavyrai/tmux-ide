@@ -199,7 +199,7 @@ import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { Dynamic, render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
-import { RGBA, SyntaxStyle, createCliRenderer, decodePasteBytes } from "@opentui/core";
+import { RGBA, createCliRenderer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import {
   createRuntimeConnectionSupervisor,
@@ -224,7 +224,6 @@ import {
   type InteractionFeedState,
 } from "../../../../../core/src/index.ts";
 import { SemanticSessionView, type LivePane } from "../semantic-session-view.ts";
-import type { RichPlacementProjection } from "../rich-placement-projection.ts";
 import { FrameCoalescer } from "../frame-coalescer.ts";
 import {
   activeLivePaneId,
@@ -235,9 +234,6 @@ import {
   withLivePaneFocus,
 } from "../pane-frame-state.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "../pane-surface.tsx";
-import { readWidgetAsset } from "../../../lib/widget-asset-store.ts";
-import { resolveTuiWidgetSurface, type TuiWidgetSurface } from "../widget-surface-model.ts";
-import { TuiRichWidgetSurface } from "../widget-surface.tsx";
 import { tapInputSent, tapInputTick } from "../perf-tap.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "../host-terminal.ts";
 import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process";
@@ -594,12 +590,17 @@ import { OpenTuiTerminalWorkspaceAdapter } from "./terminal-workspace-adapter.ts
 import { LatestIntentFence } from "./latest-intent-fence.ts";
 import { changesIdentityKey, resolveDeferredChangesIdentity } from "./changes-deferred-identity.ts";
 import { GenerationBoundSlot } from "./generation-bound-slot.ts";
+import { collectRichPreviewCanonicalDemand } from "./rich-preview-demand.ts";
+import { RichPreviewOverlay } from "./rich-preview-overlay.tsx";
 import {
   createApplicationOptionalFeatureRegistry,
   type ApplicationOptionalFeatures,
 } from "./application-optional-features.ts";
 
 type TuiAppArgs = { target?: string; edit?: string; diff?: string };
+type RichPreviewFeatureSession = ReturnType<
+  ApplicationOptionalFeatures["richPreview"]["createRichPreviewFeatureSession"]
+>;
 let values!: TuiAppArgs;
 let target!: string;
 // Bare launch (no `--target`, or the explicit `home` pseudo-target) opens the
@@ -934,40 +935,6 @@ const mountTuiRoot = () => {
     });
     const [semanticTheme, setSemanticTheme] = createSignal(semanticThemeStore.getSnapshot());
     const terminalPalette = createMemo(() => createTerminalPaletteProjection(semanticTheme()));
-    const createMarkdownSyntaxStyle = () => {
-      const theme = semanticTheme();
-      return SyntaxStyle.fromStyles({
-        default: { fg: theme.roles.text.primary },
-        "markup.heading": { fg: theme.colors.accent, bold: true },
-        "markup.strong": { fg: theme.roles.text.primary, bold: true },
-        "markup.italic": { fg: theme.roles.text.secondary, italic: true },
-        "markup.raw": {
-          fg: theme.roles.text.primary,
-          bg: theme.roles.surfaces.headerActive,
-        },
-        "markup.raw.block": {
-          fg: theme.roles.text.primary,
-          bg: theme.roles.surfaces.headerActive,
-        },
-        "markup.link": { fg: theme.colors.accent, underline: true },
-        "markup.link.label": { fg: theme.colors.accent, underline: true },
-        "markup.link.url": { fg: theme.roles.text.secondary, underline: true },
-        "markup.quote": { fg: theme.roles.text.secondary, italic: true },
-        "markup.list": { fg: theme.colors.accent },
-      });
-    };
-    let ownedMarkdownSyntaxStyle = createMarkdownSyntaxStyle();
-    const [markdownSyntaxStyle, setMarkdownSyntaxStyle] = createSignal(ownedMarkdownSyntaxStyle);
-    createEffect(() => {
-      // Rebuild only when the semantic theme changes. The terminal grid and
-      // rich Markdown then share one palette authority.
-      semanticTheme();
-      const next = createMarkdownSyntaxStyle();
-      const previous = ownedMarkdownSyntaxStyle;
-      ownedMarkdownSyntaxStyle = next;
-      setMarkdownSyntaxStyle(next);
-      previous.destroy();
-    });
     // Keep the native clear/background color synchronized with the semantic
     // canvas. This removes transparent/default-color flashes during resize and
     // makes every painted and unpainted cell obey the same theme authority.
@@ -977,7 +944,6 @@ const mountTuiRoot = () => {
     );
     const disposeRendererThemeMode = semanticThemeStore.followRendererThemeMode(appRenderer);
     onCleanup(() => {
-      ownedMarkdownSyntaxStyle.destroy();
       disposeRendererThemeMode();
       disposeSemanticThemeStore();
     });
@@ -1033,6 +999,55 @@ const mountTuiRoot = () => {
     const [paletteFeature, setPaletteFeature] =
       createSignal<ApplicationOptionalFeatures["palette"]>();
     const [paletteSession, setPaletteSession] = createSignal<PaletteFeatureSession>();
+    const [richPreviewFeature, setRichPreviewFeature] =
+      createSignal<ApplicationOptionalFeatures["richPreview"]>();
+    const [richPreviewSession, setRichPreviewSession] = createSignal<RichPreviewFeatureSession>();
+    const [richPreviewRevision, setRichPreviewRevision] = createSignal(0);
+    const [terminalFeaturesAdmitted, setTerminalFeaturesAdmitted] = createSignal(false);
+    let richPreviewFeatureRequest: Promise<
+      ApplicationOptionalFeatures["richPreview"] | undefined
+    > | null = null;
+    let latestRichPreviewRequests: Parameters<RichPreviewFeatureSession["sync"]>[0] = [];
+    let publishRichPreviewChange = (): void => undefined;
+    const ensureRichPreviewFeature = (): Promise<
+      ApplicationOptionalFeatures["richPreview"] | undefined
+    > => {
+      const loaded = richPreviewFeature();
+      if (loaded) return Promise.resolve(loaded);
+      if (richPreviewFeatureRequest) return richPreviewFeatureRequest;
+      const request = optionalFeatures.request("richPreview");
+      richPreviewFeatureRequest = request;
+      void request.then(
+        (feature) => {
+          if (richPreviewFeatureRequest !== request) return;
+          richPreviewFeatureRequest = null;
+          if (!feature) return;
+          const loadAsset = feature.createRichPreviewAssetLoader();
+          const session = feature.createRichPreviewFeatureSession({
+            theme: semanticTheme,
+            loadAsset,
+            onChange: () => {
+              setRichPreviewRevision((revision) => revision + 1);
+              publishRichPreviewChange();
+            },
+            afterNativeFrame: (callback) => {
+              appRenderer.once("frame", () => {
+                appRenderer.dropLive();
+                callback();
+              });
+              appRenderer.requestLive();
+            },
+          });
+          setRichPreviewFeature(() => feature);
+          setRichPreviewSession(() => session);
+          session.sync(latestRichPreviewRequests);
+        },
+        () => {
+          if (richPreviewFeatureRequest === request) richPreviewFeatureRequest = null;
+        },
+      );
+      return request;
+    };
     const [previewAccent, setPreviewAccent] = createSignal<RGBA | null>(null);
     const modalAdmission = new ModalAdmissionCoordinator<"dialogs" | "settings" | "palette">();
     const [modalAdmissionSnapshot, setModalAdmissionSnapshot] = createSignal(
@@ -1430,12 +1445,14 @@ const mountTuiRoot = () => {
       changesFeatureRequest = null;
       missionsActivityRequest = null;
       paletteFeatureRequest = null;
+      richPreviewFeatureRequest = null;
       dialogsFeatureRequest.clear();
       settingsFeatureRequest.clear();
       filesSession()?.dispose();
       changesSession()?.dispose();
       missionsActivitySession()?.dispose();
       paletteSession()?.dispose();
+      richPreviewSession()?.dispose();
       settingsSession()?.dispose();
       dialogsSession()?.dispose();
       modalAdmission.dispose();
@@ -1444,6 +1461,8 @@ const mountTuiRoot = () => {
       setChangesSession(undefined);
       setMissionsActivitySession(undefined);
       setPaletteSession(undefined);
+      setRichPreviewSession(undefined);
+      setRichPreviewFeature(undefined);
       setSettingsSession(undefined);
       setDialogsSession(undefined);
       optionalFeatures.dispose();
@@ -2111,26 +2130,7 @@ const mountTuiRoot = () => {
       equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]),
     });
     const panesById = createMemo(() => new Map(panes().map((p) => [p.id, p])));
-    const richWidgetCache = new Map<
-      string,
-      {
-        marker: RichPlacementProjection["marker"];
-        surface: TuiWidgetSurface;
-      }
-    >();
-    const richWidgetFor = (placement: RichPlacementProjection): TuiWidgetSurface | null => {
-      const cached = richWidgetCache.get(placement.renderableId);
-      const marker = placement.marker;
-      if (cached?.marker === marker) return cached.surface;
-      const surface = resolveTuiWidgetSurface(marker, readWidgetAsset);
-      if (!surface) {
-        richWidgetCache.delete(placement.renderableId);
-        return null;
-      }
-      richWidgetCache.set(placement.renderableId, { marker, surface });
-      return surface;
-    };
-    const richPlacementsFor = (paneId: string): readonly RichPlacementProjection[] => {
+    const richPlacementsFor = (paneId: string) => {
       paneRuntimeFor(paneId)?.version;
       const pane = panesById().get(paneId);
       if (!pane || pane.snapshot.scrollOffset > 0) return [];
@@ -2145,6 +2145,11 @@ const mountTuiRoot = () => {
           .filter((placement) => placement.visible && placement.hostRect !== null) ?? []
       );
     };
+    const richPlacementIdsFor = (paneId: string) =>
+      richPlacementsFor(paneId).map((placement) => placement.renderableId);
+    const richPlacementFor = (paneId: string, renderableId: string) =>
+      richPlacementsFor(paneId).find((placement) => placement.renderableId === renderableId) ??
+      null;
     const [windowTabs, setWindowTabs] = createSignal<WindowTab[]>([]);
     // The fleet payload's per-pane entries join directly to tmux's live %pane_id.
     // Drag policy and pane chrome consume this same authority-derived map.
@@ -2199,6 +2204,7 @@ const mountTuiRoot = () => {
     terminalToolReadiness = new TerminalToolReadinessGate(
       () => {
         toolResources.markTerminalReady();
+        setTerminalFeaturesAdmitted(true);
         optionalFeatures.admit();
       },
       (state) => {
@@ -3221,6 +3227,44 @@ const mountTuiRoot = () => {
       dirty = true;
       paneFrameCoalescer?.request();
     };
+    publishRichPreviewChange = markDirty;
+    createEffect(() => {
+      const admitted = terminalFeaturesAdmitted();
+      const terminalsVisible = canvasPanel() === "terminals";
+      const theme = semanticTheme();
+      const sources = collectRichPreviewCanonicalDemand({
+        admitted,
+        terminalsVisible,
+        paneIds: paneIds(),
+        placementsFor: richPlacementsFor,
+        canonicalFor: (paneId) => semanticView?.canonicalSnapshot(paneId) ?? null,
+      });
+      const feature = richPreviewFeature();
+      const session = richPreviewSession();
+      if (!admitted || sources.length === 0) {
+        latestRichPreviewRequests = [];
+        session?.sync([]);
+        return;
+      }
+      if (!feature || !session) {
+        void ensureRichPreviewFeature();
+        return;
+      }
+      latestRichPreviewRequests = sources.flatMap(({ canonical, placements }) =>
+        feature.richPreviewRequestsFromCanonical(canonical, placements),
+      );
+      session.syncTheme();
+      session.sync(latestRichPreviewRequests);
+      // Keep the theme dependency explicit even when a feature has no Markdown
+      // publication yet; the deferred owner will allocate only on real demand.
+      void theme;
+    });
+    const richPreviewPublicationFor = (renderableId: string) => {
+      richPreviewRevision();
+      return richPreviewSession()
+        ?.publications()
+        .find((publication) => publication.authority.renderableId === renderableId);
+    };
     // The framebuffer surfaces react directly to this identity change; the
     // fallback StyledRun path needs one fresh snapshot as well. Source xterm
     // buffers stay untouched in both cases.
@@ -3328,7 +3372,8 @@ const mountTuiRoot = () => {
       terminalWorkspaceAdapter?.dispose();
       terminalWorkspaceAdapter = null;
       scrollOffsets.clear();
-      richWidgetCache.clear();
+      latestRichPreviewRequests = [];
+      richPreviewSession()?.sync([]);
       setFocusedPaneId(null);
       setPanes([]);
       setStatus(`attaching ${name}…`);
@@ -6616,6 +6661,7 @@ const mountTuiRoot = () => {
           scopeKey: "__catalog__",
         });
         toolResources.markCatalogReady();
+        setTerminalFeaturesAdmitted(true);
         optionalFeatures.admit();
       };
       resolveInputReady();
@@ -8025,34 +8071,14 @@ const mountTuiRoot = () => {
       </Show>
     );
     const richWidgetOverlay = (paneId: string) => (
-      <For each={richPlacementsFor(paneId)}>
-        {(placement) => {
-          const rect = placement.hostRect!;
-          return (
-            <Show when={richWidgetFor(placement)}>
-              {(surface) => (
-                <box
-                  id={placement.renderableId}
-                  position="absolute"
-                  left={rect.left}
-                  top={rect.top}
-                  width={rect.width}
-                  height={rect.height}
-                  overflow="hidden"
-                >
-                  <TuiRichWidgetSurface
-                    surface={surface()}
-                    theme={semanticTheme()}
-                    syntaxStyle={markdownSyntaxStyle()}
-                    width={rect.width}
-                    height={rect.height}
-                  />
-                </box>
-              )}
-            </Show>
-          );
-        }}
-      </For>
+      <RichPreviewOverlay
+        placementIds={richPlacementIdsFor(paneId)}
+        placementFor={(renderableId) => richPlacementFor(paneId, renderableId)}
+        publicationFor={richPreviewPublicationFor}
+        surfaceComponent={richPreviewFeature()?.TuiRichWidgetSurface}
+        theme={semanticTheme()}
+        syntaxStyle={richPreviewSession()?.syntaxStyle() ?? null}
+      />
     );
     const interaction = createMemo(() => {
       dialogRev();

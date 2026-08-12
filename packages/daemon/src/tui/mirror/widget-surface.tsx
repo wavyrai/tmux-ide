@@ -8,7 +8,7 @@ import type { TuiWidgetSurface } from "./widget-surface-model.ts";
 export interface TuiRichWidgetSurfaceProps {
   readonly surface: TuiWidgetSurface;
   readonly theme: SemanticThemeSnapshot;
-  readonly syntaxStyle: SyntaxStyle;
+  readonly syntaxStyle: SyntaxStyle | null;
   readonly width: number;
   readonly height: number;
 }
@@ -42,7 +42,7 @@ export function TuiRichWidgetSurface(props: TuiRichWidgetSurfaceProps): JSX.Elem
         overflow="hidden"
       >
         <Show
-          when={props.surface.kind === "markdown"}
+          when={props.surface.kind === "markdown" && props.syntaxStyle !== null}
           fallback={
             <text fg={props.theme.roles.text.secondary} wrapMode="word">
               {props.surface.text}
@@ -53,7 +53,7 @@ export function TuiRichWidgetSurface(props: TuiRichWidgetSurfaceProps): JSX.Elem
             width={Math.max(1, props.width - 2)}
             height={Math.max(1, props.height - 3)}
             content={props.surface.text}
-            syntaxStyle={props.syntaxStyle}
+            syntaxStyle={props.syntaxStyle!}
             conceal={true}
             concealCode={false}
             // Keep blocks independent. Besides making long documents cheaper to

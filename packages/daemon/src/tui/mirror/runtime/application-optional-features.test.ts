@@ -16,7 +16,7 @@ describe("application optional feature loaders", () => {
       "../features/dialogs/feature.tsx",
       "../features/settings/feature.ts",
       "../features/palette/feature.ts",
-      "../widget-surface.tsx",
+      "../features/rich-preview/feature.tsx",
     ]) {
       expect(source).toContain(`() => import("${specifier}")`);
     }
@@ -94,6 +94,7 @@ describe("application optional feature loaders", () => {
     ["dialogs", "createDialogFeatureSession"],
     ["settings", "createSettingsFeatureSession"],
     ["palette", "createPaletteFeatureSession"],
+    ["richPreview", "createRichPreviewFeatureSession"],
   ] as const)(
     "retains and publishes the real %s feature after admission",
     async (key, exportName) => {

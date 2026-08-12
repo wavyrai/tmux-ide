@@ -20,9 +20,9 @@ import {
 } from "@tmux-ide/contracts";
 
 import { stateHome } from "./state-home.ts";
+import { WIDGET_ASSET_MAX_BYTES, WIDGET_ASSET_RETENTION_MS } from "./widget-asset-policy.ts";
 
-export const WIDGET_ASSET_MAX_BYTES = 16 * 1024 * 1024;
-export const WIDGET_ASSET_RETENTION_MS = 24 * 60 * 60 * 1_000;
+export { WIDGET_ASSET_MAX_BYTES, WIDGET_ASSET_RETENTION_MS } from "./widget-asset-policy.ts";
 const MAX_ASSET_FILES = 256;
 const ASSET_DIRECTORY = "widget-assets";
 

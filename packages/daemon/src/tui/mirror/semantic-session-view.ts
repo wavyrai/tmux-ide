@@ -4,6 +4,7 @@ import type { SessionPaneDescriptor } from "../../terminal/protocol/session-desc
 import type { MirrorSnapshot } from "./pane-mirror.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
 import type {
+  SemanticPaneCanonicalSnapshot,
   SemanticTerminalRenderSource,
   TerminalCellSearchMatch,
   TerminalCellTextRow,
@@ -283,6 +284,11 @@ export class SemanticSessionView {
     const placements = projectSnapshotRichPlacements(paneId, snapshot, viewport);
     this.#richPlacementCache.set(paneId, { key, placements });
     return placements;
+  }
+
+  /** Retained canonical input for the deferred rich-preview feature. */
+  canonicalSnapshot(paneId: string): SemanticPaneCanonicalSnapshot | null {
+    return this.#source?.canonicalSnapshot(paneId) ?? null;
   }
 
   windowSize(): { cols: number; rows: number } | null {

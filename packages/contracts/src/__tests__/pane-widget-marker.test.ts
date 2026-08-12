@@ -9,6 +9,7 @@ import {
   createWidgetMarkerByteWatcher,
   decodeWidgetMarkerLine,
   detectWidgetMarker,
+  detectWidgetMarkerFromReplicaRows,
   encodeWidgetMarkerLine,
   widgetLogicalLines,
   widgetMarkerAnnouncement,
@@ -221,6 +222,21 @@ describe("detectWidgetMarker", () => {
     expect(detectWidgetMarker([row(marker)])).not.toBe(null);
     // What a Ctrl-C trap leaves behind: a cleared grid and a fresh prompt.
     expect(detectWidgetMarker([row("$ ")])).toBe(null);
+  });
+});
+
+describe("detectWidgetMarkerFromReplicaRows", () => {
+  it("reads retained canonical cells directly, including wrapped multi-cell graphemes", () => {
+    const marker = encodeWidgetMarkerLine("markdown", { text: "canonical" });
+    const rows = wrappedRows(marker, 24).map((source) => ({
+      wrapped: source.wrapped,
+      cells: source.cells.map((grapheme) => ({ grapheme })),
+    }));
+    expect(detectWidgetMarkerFromReplicaRows(rows)).toEqual({
+      id: "markdown",
+      args: { text: "canonical" },
+      lineIndex: 0,
+    });
   });
 });
 

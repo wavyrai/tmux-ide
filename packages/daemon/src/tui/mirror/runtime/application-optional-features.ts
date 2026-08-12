@@ -7,7 +7,7 @@ export interface ApplicationOptionalFeatures {
   readonly dialogs: typeof import("../features/dialogs/feature.tsx");
   readonly settings: typeof import("../features/settings/feature.ts");
   readonly palette: typeof import("../features/palette/feature.ts");
-  readonly richPreview: typeof import("../widget-surface.tsx");
+  readonly richPreview: typeof import("../features/rich-preview/feature.tsx");
 }
 
 /** Literal imports keep every optional module discoverable by Bun's compiler. */
@@ -19,6 +19,6 @@ export function createApplicationOptionalFeatureRegistry(): OptionalFeatureRegis
     dialogs: () => import("../features/dialogs/feature.tsx"),
     settings: () => import("../features/settings/feature.ts"),
     palette: () => import("../features/palette/feature.ts"),
-    richPreview: () => import("../widget-surface.tsx"),
+    richPreview: () => import("../features/rich-preview/feature.tsx"),
   });
 }

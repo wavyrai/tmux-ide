@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/headless";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import {
-  detectWidgetMarker,
+  detectWidgetMarkerFromReplicaRows,
   type CanonicalTerminalReplicaPatch,
   type CanonicalTerminalReplicaSeed,
   type CanonicalTerminalReplicaTombstone,
@@ -20,6 +20,7 @@ import {
   freezeTerminalReplicaRow,
   hashTerminalReplicaSnapshot,
   hashTerminalReplicaTombstone,
+  hashTerminalWidgetContent,
   terminalReplicaRowsEqual,
 } from "@tmux-ide/core";
 
@@ -726,9 +727,7 @@ function projectPlacements(
   cols: number,
   historyRows: number,
 ): TerminalReplicaSnapshot["placements"] {
-  const marker = detectWidgetMarker(
-    rows.map((row) => ({ cells: row.cells.map((cell) => cell.grapheme), wrapped: row.wrapped })),
-  );
+  const marker = detectWidgetMarkerFromReplicaRows(rows);
   if (!marker) return [];
   return [
     {
@@ -738,7 +737,7 @@ function projectPlacements(
       column: 0,
       columns: Math.max(1, cols),
       rows: 1,
-      contentDigest: hashTerminalReplicaTombstone(`${marker.id}:${JSON.stringify(marker.args)}`),
+      contentDigest: hashTerminalWidgetContent(marker.id, marker.args),
     },
   ];
 }

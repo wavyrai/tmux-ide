@@ -84,6 +84,15 @@ export interface SemanticPaneReplicaOptions {
   readonly onControlFailure?: (error: Error) => void;
 }
 
+/** Retained canonical truth exposed to optional rich-preview presentation. */
+export interface SemanticPaneCanonicalSnapshot {
+  readonly workspaceId: string;
+  readonly workspaceGeneration: string;
+  readonly paneId: string;
+  readonly paneGeneration: string;
+  readonly snapshot: TerminalReplicaSnapshot;
+}
+
 /**
  * Retained renderer adapter for one semantic terminal replica.
  *
@@ -132,6 +141,17 @@ export class SemanticPaneReplica {
 
   get snapshot(): TerminalReplicaSnapshot | null {
     return this.#snapshot;
+  }
+
+  canonicalSnapshot(): SemanticPaneCanonicalSnapshot | null {
+    if (!this.#snapshot) return null;
+    return Object.freeze({
+      workspaceId: this.#delivery.workspaceName,
+      workspaceGeneration: this.#delivery.negotiated.generation,
+      paneId: this.semanticPaneId,
+      paneGeneration: this.#renderKey,
+      snapshot: this.#snapshot,
+    });
   }
 
   get dirtyRows(): readonly number[] {
@@ -392,6 +412,10 @@ export class SemanticTerminalRenderSource implements TerminalPaneRenderSource {
 
   replica(semanticPaneId: string): SemanticPaneReplica | undefined {
     return this.#panes.get(semanticPaneId);
+  }
+
+  canonicalSnapshot(semanticPaneId: string): SemanticPaneCanonicalSnapshot | null {
+    return this.#panes.get(semanticPaneId)?.canonicalSnapshot() ?? null;
   }
 
   scrollbackDepth(paneId: string): number {

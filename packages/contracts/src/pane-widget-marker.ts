@@ -239,6 +239,36 @@ export function detectWidgetMarker(rows: readonly WidgetCellRow[]): WidgetMarker
 }
 
 /**
+ * Recover a marker directly from canonical terminal-replica rows.
+ *
+ * The structural input deliberately accepts the retained replica rows without
+ * projecting or copying their cell grids. Only the logical line strings needed
+ * by the marker grammar are allocated. This keeps rich-preview discovery off
+ * the terminal paint path and preserves canonical snapshot identity.
+ */
+export function detectWidgetMarkerFromReplicaRows(
+  rows: Iterable<{
+    readonly cells: readonly { readonly grapheme: string }[];
+    readonly wrapped: boolean;
+  }>,
+): WidgetMarker | null {
+  const lines: string[] = [];
+  for (const row of rows) {
+    let end = row.cells.length;
+    while (end > 0 && isBlankCell(row.cells[end - 1]?.grapheme)) end -= 1;
+    let text = "";
+    for (let index = 0; index < end; index += 1) text += row.cells[index]?.grapheme ?? "";
+    if (row.wrapped && lines.length > 0) lines[lines.length - 1] += text;
+    else lines.push(text);
+  }
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const decoded = decodeWidgetMarkerLine(lines[index]!);
+    if (decoded) return { id: decoded.id, args: decoded.args, lineIndex: index };
+  }
+  return null;
+}
+
+/**
  * A cheap gate on the raw byte stream, so the expensive cell-row scan only runs
  * when a marker could plausibly have arrived.
  *
