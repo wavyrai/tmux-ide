@@ -1,5 +1,5 @@
 /* @jsxImportSource @opentui/solid */
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { createSignal } from "solid-js";
 
 import type { PaletteFeatureSession } from "../features/palette/contract.ts";
@@ -16,6 +16,7 @@ import {
   type ApplicationOptionalFeatures,
 } from "./application-optional-features.ts";
 import { ModalAdmissionCoordinator } from "./modal-admission-coordinator.ts";
+import { OptionalFeatureRegistry } from "./optional-feature-registry.ts";
 import {
   createPaletteProductionController,
   type PaletteProductionLoadState,
@@ -23,6 +24,132 @@ import {
 import { PaletteProductionOverlay } from "./palette-production-overlay.tsx";
 
 describe("production Palette controller OpenTUI assembly", () => {
+  it("renders deferred load, generic failure, controller retry, ready, and close", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const canvas = projectAgentTerminalCanvas({ width: 60, height: 16, chromeRows: 2 });
+    const loaded = await import("../features/palette/feature.ts");
+    const loader = mock(async () => {
+      if (loader.mock.calls.length === 1) throw new Error("palette bundle unavailable");
+      return loaded;
+    });
+    const registry = new OptionalFeatureRegistry<ApplicationOptionalFeatures>({ palette: loader });
+    const admission = new ModalAdmissionCoordinator<"dialogs" | "settings" | "palette">();
+    registry.admit();
+    const [open, setOpen] = createSignal(false);
+    const [loadState, setLoadState] = createSignal<PaletteProductionLoadState>("idle");
+    const [loadError, setLoadError] = createSignal("");
+    const [feature, setFeature] = createSignal<ApplicationOptionalFeatures["palette"]>();
+    const [session, setSession] = createSignal<PaletteFeatureSession>();
+    const controller = createPaletteProductionController({
+      registry,
+      admission,
+      reserveAdmission: () => admission.reserve("palette"),
+      sources: {
+        width: () => 60,
+        height: () => 16,
+        identity: () => ({
+          workspaceName: "alpha",
+          directory: "/repo",
+          projectRoot: "/repo",
+          daemonIdentity: "daemon:4000",
+          generation: 1,
+        }),
+        facts: () => ({
+          terminal: true,
+          surface: "terminal",
+          currentSurface: "terminals",
+          currentViewId: "terminals",
+          currentSession: "alpha",
+          sessions: ["alpha"],
+          agents: [],
+          panes: [],
+          sizeMismatch: false,
+          appMousePane: false,
+          againName: null,
+          usage: {},
+          keycaps: {},
+          views: [],
+          syncOn: false,
+          saveState: { hasBuffer: false, hasPath: false, readOnlyReason: null },
+          multiplexerFacts: {
+            workspaceConnected: true,
+            sessionWindowCount: 1,
+            windowPaneCount: 1,
+          },
+        }),
+        loadRepoFiles: async () => [],
+        loadBuffers: async () => [],
+      },
+      publish: {
+        open: setOpen,
+        loadState: setLoadState,
+        loadError: setLoadError,
+        feature: (value) => setFeature(() => value),
+        session: (value) => setSession(() => value),
+        clearHover: () => undefined,
+      },
+      execute: {
+        recordUsage: () => undefined,
+        action: () => undefined,
+        settings: () => undefined,
+        pasteBuffer: () => undefined,
+      },
+    });
+    const setup = await renderForTest(
+      () => (
+        <box id="load-shell" width={60} height={16}>
+          <AgentTerminalCanvas
+            theme={theme}
+            projection={canvas}
+            chrome={<text>workspace alpha</text>}
+            framebuffer={<text id="load-terminal">tmux framebuffer</text>}
+          />
+          <PaletteProductionOverlay
+            open={open()}
+            width={60}
+            height={16}
+            overlayWidth={52}
+            loadState={loadState()}
+            loadError={loadError()}
+            feature={feature()}
+            session={session()}
+            theme={theme}
+          />
+        </box>
+      ),
+      { width: 60, height: 16 },
+    );
+    await setup.renderOnce();
+    const shell = setup.renderer.root.findDescendantById("load-shell");
+    const terminal = setup.renderer.root.findDescendantById("load-terminal");
+    controller.open();
+    await setup.renderOnce();
+    expect(stableFrame(setup.captureCharFrame())).toContain("Loading command catalog");
+    for (let attempt = 0; attempt < 20 && loadState() !== "error"; attempt += 1) {
+      await Promise.resolve();
+    }
+    await setup.renderOnce();
+    expect(stableFrame(setup.captureCharFrame())).toContain("palette bundle unavailable");
+    expect(admission.snapshot()).toMatchObject({ phase: "error", kind: "palette", reserved: true });
+    controller.retry();
+    for (let attempt = 0; attempt < 20 && !controller.currentSession(); attempt += 1) {
+      await Promise.resolve();
+    }
+    await setup.renderOnce();
+    expect(stableFrame(setup.captureCharFrame())).toContain("Navigator");
+    expect(loader).toHaveBeenCalledTimes(2);
+    controller.close("escape");
+    await setup.renderOnce();
+    expect(open()).toBe(false);
+    expect(admission.snapshot().reserved).toBe(false);
+    expect(setup.renderer.root.findDescendantById("load-shell")).toBe(shell);
+    expect(setup.renderer.root.findDescendantById("load-terminal")).toBe(terminal);
+    controller.dispose();
+    registry.dispose();
+    admission.dispose();
+    destroyTestRenderer(setup);
+  });
+
   it("drives the real root seam without replacing the resident terminal canvas", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const canvas = projectAgentTerminalCanvas({ width: 60, height: 16, chromeRows: 2 });
