@@ -105,20 +105,27 @@ describe("OpenTUI performance HUD session", () => {
     expect(session.snapshot()?.activeFps).toBe(40);
     idle();
     expect(session.snapshot()?.activeFps).toBeNull();
+    frame(16); // retirement-induced render is diagnostic, not renewed activity
+    expect(scheduleIdle).toHaveBeenCalledTimes(1);
     session.dispose();
   });
 
   it("recreates its bounded aggregator when runtime authority rolls over", () => {
     let authority: LocalPerformanceAuthorityV1 = authorityA;
     let sink!: TuiPerformanceEventSink;
+    let frame!: (intervalMs: number) => void;
+    const scheduleIdle = vi.fn(() => () => undefined);
     const session = createPerformanceHudSession({
       authority: () => authority,
       installEventSink: (next) => {
         sink = next;
         return () => undefined;
       },
-      observeFrames: () => () => undefined,
-      scheduleIdle: () => () => undefined,
+      observeFrames: (next) => {
+        frame = next;
+        return () => undefined;
+      },
+      scheduleIdle,
     });
     session.show();
     sink.terminalDelivery(delivery);
@@ -128,6 +135,10 @@ describe("OpenTUI performance HUD session", () => {
       daemonInstanceId: "00000000-0000-4000-8000-000000000002",
       generation: "00000000-0000-4000-8000-000000000002",
     };
+    frame(20); // first frame in the replacement authority is baseline-only
+    expect(scheduleIdle).not.toHaveBeenCalled();
+    frame(20);
+    expect(scheduleIdle).toHaveBeenCalledOnce();
     sink.terminalDelivery({ ...delivery, parseMs: 4 });
     expect(session.snapshot()).toMatchObject({
       authority,

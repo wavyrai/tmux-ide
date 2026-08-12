@@ -36,6 +36,7 @@ export function createPerformanceHudSession(host: PerformanceHudHost): Performan
     let removeFrameObserver: (() => void) | null = null;
     let removeIdleDeadline: (() => void) | null = null;
     let seenFrame = false;
+    let suppressRetirementFrame = false;
     let fpsIdle = true;
 
     const ensureAggregator = (): LocalPerformanceAggregator | null => {
@@ -50,6 +51,7 @@ export function createPerformanceHudSession(host: PerformanceHudHost): Performan
       aggregator.enable();
       aggregatorAuthorityKey = key;
       seenFrame = false;
+      suppressRetirementFrame = false;
       fpsIdle = true;
       return aggregator;
     };
@@ -61,19 +63,25 @@ export function createPerformanceHudSession(host: PerformanceHudHost): Performan
     };
     const sink: TuiPerformanceEventSink = Object.freeze({
       frame: (intervalMs: number) => {
+        const active = ensureAggregator();
+        if (!active) return;
+        if (suppressRetirementFrame) {
+          suppressRetirementFrame = false;
+          seenFrame = true;
+          return;
+        }
         if (!seenFrame) {
           seenFrame = true;
           return;
         }
         if (!Number.isFinite(intervalMs) || intervalMs <= 0) return;
-        const active = ensureAggregator();
-        if (!active) return;
         active.recordFrame(intervalMs);
         fpsIdle = false;
         removeIdleDeadline?.();
         removeIdleDeadline = host.scheduleIdle(() => {
           removeIdleDeadline = null;
           fpsIdle = true;
+          suppressRetirementFrame = true;
           publish();
         }, FPS_IDLE_MS);
       },
@@ -106,6 +114,7 @@ export function createPerformanceHudSession(host: PerformanceHudHost): Performan
       aggregator = null;
       aggregatorAuthorityKey = null;
       seenFrame = false;
+      suppressRetirementFrame = false;
       fpsIdle = true;
     };
     const show = (): void => {
