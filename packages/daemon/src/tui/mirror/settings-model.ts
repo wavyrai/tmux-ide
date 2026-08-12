@@ -17,39 +17,16 @@ import { parseHHMM, type NotificationPrefs } from "../chrome/notify-prefs.ts";
 import type { DialogSelectItem } from "./dialog-model.ts";
 import { APPLICATION_KEYBINDING_ROWS } from "./application-keybindings.ts";
 
+// Compatibility exports for the current application root. Palette/settings
+// cutover imports the dependency-free catalog directly.
+export { SETTINGS_PALETTE_COMMANDS, type SettingsCommandId } from "./features/settings/catalog.ts";
+
 // Compatibility export for the current application root. The palette cutover
 // imports this from application-keybindings.ts directly, after which this
 // re-export can be removed without touching settings behavior.
 export { PALETTE_KEYCAPS } from "./application-keybindings.ts";
 
 // ── Command registry (what the palette offers) ───────────────────────────────
-
-export type SettingsCommandId =
-  | "settings"
-  | "settings-theme"
-  | "settings-notifications"
-  | "settings-quiet-hours"
-  | "settings-updates"
-  | "settings-restore"
-  | "settings-keys"
-  | "settings-reset";
-
-/** The palette entries, one per settings command (+ the umbrella first). The
- *  "Settings" category prefix is how the palette's flat fuzzy list reads as a
- *  category — typing "set" narrows to all of them. */
-export const SETTINGS_PALETTE_COMMANDS: ReadonlyArray<{
-  id: SettingsCommandId;
-  label: string;
-}> = [
-  { id: "settings", label: "Settings…" },
-  { id: "settings-theme", label: "Settings: Accent color" },
-  { id: "settings-notifications", label: "Settings: Notifications" },
-  { id: "settings-quiet-hours", label: "Settings: Quiet hours" },
-  { id: "settings-updates", label: "Settings: Updates & background refresh" },
-  { id: "settings-restore", label: "Settings: Crash restore" },
-  { id: "settings-keys", label: "Settings: Keyboard shortcuts (view)" },
-  { id: "settings-reset", label: "Settings: Reset to defaults" },
-];
 
 // ── Where changes land (footer copy) ─────────────────────────────────────────
 

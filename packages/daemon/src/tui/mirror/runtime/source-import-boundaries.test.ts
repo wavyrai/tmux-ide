@@ -93,4 +93,17 @@ describe("source import boundary classifier", () => {
     expect(graph.files).toContain("src/tui/mirror/dialog-stack-core.ts");
     expect(graph.files).not.toContain("src/tui/mirror/dialog-stack.ts");
   });
+
+  it("keeps deferred settings behind ports and outside singleton and IO façades", async () => {
+    const graph = await loadLocalSourceBoundaryGraph(
+      process.cwd(),
+      ["src/tui/mirror/features/settings/feature.ts"],
+      new Set(["static-runtime"]),
+    );
+    expect(graph.files).toContain("src/tui/mirror/features/settings/session.ts");
+    expect(graph.files).toContain("src/tui/mirror/application-keybindings.ts");
+    expect(graph.files).not.toContain("src/tui/mirror/dialog-stack.ts");
+    expect(graph.files).not.toContain("src/tui/chrome/notify.ts");
+    expect(graph.files).not.toContain("src/lib/app-config.ts");
+  });
 });
