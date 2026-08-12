@@ -70,6 +70,8 @@ export type SemanticPaneReplicaChange =
       readonly rows: readonly number[];
       readonly cursorChanged: boolean;
       readonly renderKeyChanged: boolean;
+      readonly scrollbackChanged: boolean;
+      readonly runtimeFactsChanged: boolean;
       readonly renderKey: string;
       readonly version: number;
     }
@@ -389,6 +391,9 @@ export class SemanticPaneReplica {
       rows: dirty,
       cursorChanged: previous?.cursor !== next.cursor,
       renderKeyChanged: previousKey !== this.#renderKey,
+      scrollbackChanged: previous?.history.length !== next.history.length,
+      runtimeFactsChanged:
+        previous === null || previous.modes.mouseTracking !== next.modes.mouseTracking,
       renderKey: this.#renderKey,
       version: this.#version,
     });

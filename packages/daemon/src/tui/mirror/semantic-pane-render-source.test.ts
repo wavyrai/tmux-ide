@@ -116,6 +116,75 @@ function arrays(width: number, height: number): CellArrays {
 }
 
 describe("SemanticPaneReplica", () => {
+  it("keeps independent GUI/TUI consumers converged on one canonical revision and hash", () => {
+    const changes = [vi.fn(), vi.fn()];
+    const replicas = changes.map(
+      (onChange) =>
+        new SemanticPaneReplica({
+          negotiated: negotiated(),
+          workspaceName: "workspace.alpha",
+          semanticPaneId: pane,
+          ack: vi.fn(),
+          nack: vi.fn(),
+          onChange,
+        }),
+    );
+    const initial = blankTerminalReplicaSnapshot(4, 2);
+    const seed = seedMessages(initial, "401");
+    for (const replica of replicas) {
+      replica.accept(seed.envelope);
+      for (const chunk of seed.chunks) replica.accept(chunk);
+    }
+    const patch = patchMessages(initial, 1, "402");
+    for (const replica of replicas) {
+      replica.accept(patch.envelope);
+      for (const chunk of patch.chunks) replica.accept(chunk);
+    }
+
+    const snapshots = replicas.map((replica) => replica.canonicalSnapshot());
+    expect(snapshots.map((snapshot) => snapshot?.snapshot)).toEqual([patch.next, patch.next]);
+    expect(
+      snapshots.map((snapshot) =>
+        snapshot ? hashTerminalReplicaSnapshot(snapshot.snapshot) : null,
+      ),
+    ).toEqual([patch.envelope.canonicalStateHash, patch.envelope.canonicalStateHash]);
+    expect(replicas.map((replica) => replica.version)).toEqual([2, 2]);
+    expect(changes.map((change) => change.mock.calls.length)).toEqual([2, 2]);
+  });
+
+  it("classifies a same-incarnation cursor packet as content-only publication", () => {
+    const onChange = vi.fn();
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+      onChange,
+    });
+    const initial = blankTerminalReplicaSnapshot(4, 2);
+    const seed = seedMessages(initial, "403");
+    replica.accept(seed.envelope);
+    for (const chunk of seed.chunks) replica.accept(chunk);
+    onChange.mockClear();
+
+    const patch = patchMessages(initial, 1, "404");
+    replica.accept(patch.envelope);
+    for (const chunk of patch.chunks) replica.accept(chunk);
+
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "applied",
+        cursorChanged: true,
+        renderKeyChanged: false,
+        scrollbackChanged: false,
+        runtimeFactsChanged: false,
+        version: 2,
+      }),
+    );
+  });
+
   it("makes trace authority available to a synchronous paint subscriber", () => {
     const traceId = "00000000-0000-4000-8000-000000000097";
     let paintedTrace: ReturnType<SemanticPaneReplica["takePaintTrace"]> = null;

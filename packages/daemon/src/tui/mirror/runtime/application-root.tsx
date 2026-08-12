@@ -4,8 +4,8 @@
  * Sidebar (live fleet, click to switch session) · window tab strip · pane
  * canvas at exact tmux geometry with full color/attribute fidelity, local
  * scrollback (wheel; ↑n/depth badge; any key snaps live), real SGR mouse
- * forwarding into panes whose app enabled mouse mode, request-driven up to 60fps
- * (8ms coalesced state publication + 60fps renderer target / ceiling)
+ * forwarding into panes whose app enabled mouse mode, request-driven up to 120fps
+ * (60fps structural publication + 60fps renderer target / 120fps invalidation ceiling)
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
  * untouched) — except HOSTED (M23.2): launched by `tmux-ide app --detachable`
  * inside the internal `_tmux-ide-app` session (TMUX_IDE_HOSTED=1), ^q puts the
@@ -196,6 +196,7 @@ import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, openSync, writeSync, closeSync } from "node:fs";
 import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
+import { publishSemanticPaneChange } from "./semantic-pane-publication.ts";
 import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -1696,12 +1697,16 @@ const mountTuiRoot = () => {
             semanticPaneIds,
             onPaneChange: (paneId, change) => {
               if (request !== sessionRuntimeLaneRequest) return;
-              setSemanticPaneVersions((current) => {
-                const next = new Map(current);
-                next.set(paneId, change.version);
-                return next;
+              publishSemanticPaneChange(change, {
+                publishContentVersion: (version) => {
+                  setSemanticPaneVersions((current) => {
+                    const next = new Map(current);
+                    next.set(paneId, version);
+                    return next;
+                  });
+                },
+                publishStructure: markDirty,
               });
-              markDirty();
             },
             onLayout: (frame) => {
               if (request !== sessionRuntimeLaneRequest || semanticView !== candidate) return;
