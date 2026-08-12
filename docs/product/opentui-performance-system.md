@@ -170,8 +170,10 @@ focus is not a terminal-content mutation and must never force a full framebuffer
 
 The performance qualification gate (`pnpm test:performance-qualification`) drives the
 canonical SessionRuntime, real terminal parser/delivery paths, and demand-driven
-OpenTUI/web telemetry adapters. It covers flood output, alternate-screen redraw,
-slow and hidden clients, NACK reseeding, socket churn, and authority rollover.
+OpenTUI/web telemetry adapters. Its JSON artifact maps every claimed scenario to the
+exact suites and files that ran. Flood output, alternate-screen redraw, resize and
+drag floods, slow and hidden clients, NACK reseeding, socket churn, authority rollover,
+interaction attribution, and terminal colors have deterministic portable coverage.
 
 | Metric                                | p95 budget |
 | ------------------------------------- | ---------: |
@@ -184,10 +186,19 @@ Additional invariants:
 - one parsed output burst produces one publication request, not enqueue plus parse;
 - communication chrome never remounts or repaints a terminal body;
 - input, resize, and focus commands never wait for fleet/discovery subprocesses;
-- portable CI publishes deterministic convergence, queue, mutation, and stage-coverage
-  evidence; wall-clock latency is evaluated only on the pinned reference host;
+- portable CI publishes deterministic convergence, queue, mutation, and renderer-adapter
+  evidence, with uncovered scenarios called out explicitly;
+- portable CI does not claim production stage timings, cold/warm startup latency, process
+  memory slope, or wall-clock input-to-paint latency;
 - all live performance runs use isolated test-drive sessions and leave user sessions
   untouched.
+
+The checked-in 16.67 ms value is a **reference budget**, not an observed result. A
+reference result remains `null` until a separate run records its host, commit,
+measurement timestamp, sample count, and observed p95. Input and paint endpoints in
+that run must share one client monotonic clock. Per-process input → tmux → parse →
+reduce → transport → paint spans likewise remain `not-measured` in the portable report
+until production-path collection exists; suite wall time is never substituted.
 
 ## Next measured frontier
 

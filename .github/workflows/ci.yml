@@ -216,14 +216,16 @@ jobs:
 
       - name: Publish qualification summary
         if: always()
-        run: cat artifacts/performance-qualification.json >> "$GITHUB_STEP_SUMMARY"
+        run: cat artifacts/performance-qualification-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload qualification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: performance-qualification
-          path: artifacts/performance-qualification.json
+          path: |
+            artifacts/performance-qualification.json
+            artifacts/performance-qualification-summary.md
           if-no-files-found: error
           retention-days: 30
 

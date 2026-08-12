@@ -1,18 +1,17 @@
 {
-  "version": 1,
-  "referenceHost": "Apple silicon macOS reference runner",
-  "referenceLatency": {
-    "localInputToPaintP95Ms": 16.67,
+  "version": 2,
+  "referenceLatencyBudget": {
+    "metric": "local-input-to-consumed-paint-p95",
+    "p95Ms": 16.67,
     "comparison": "less-than-or-equal",
     "clockRule": "input and paint endpoints must share one client monotonic clock"
   },
-  "portableInvariants": {
-    "clientCounts": [2, 4, 8],
-    "oneControlConnectionPerSession": true,
-    "convergenceIdentity": ["generation", "incarnation", "revision", "stateHash"],
-    "boundedClientQueues": true,
-    "slowClientIsolation": true,
-    "terminalMutationOutcomes": ["observed", "rejected", "timed-out"],
-    "idlePollingOrGridWalks": 0
+  "referenceResult": null,
+  "referenceResultShape": {
+    "host": "non-empty reference host description",
+    "commit": "full measured git commit",
+    "measuredAt": "ISO-8601 timestamp",
+    "samples": "positive integer",
+    "observedP95Ms": "finite non-negative number"
   }
 }
