@@ -23,7 +23,7 @@ import {
   SelectableRow,
   Surface,
 } from "./recipes.tsx";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 
 export interface RecipesGalleryProps {
   width: number;

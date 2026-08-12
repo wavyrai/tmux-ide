@@ -9,7 +9,7 @@ import {
   type FilesProjectedRow,
   type FilesSurfaceProjection,
 } from "./files-surface.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 
 export interface FilesSurfaceTheme {
   gutterBg: RGBA;

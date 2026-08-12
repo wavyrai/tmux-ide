@@ -1,4 +1,4 @@
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
 import { actionChipSpansFromRight, type Rect } from "./recipes.ts";
 

@@ -12,7 +12,6 @@ import {
   MISSION_BOARD_COLUMNS,
   MISSION_COLUMN_GAP,
   MISSION_MIN_COLUMN_WIDTH,
-  clipTerminal,
   missionWorkspaceHitTest,
   missionWorkspaceLayout,
   type MissionWorkspaceHit,
@@ -22,6 +21,7 @@ import {
   type MissionWorkspaceSnapshot,
 } from "./missions-workspace.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
+import { clipTerminal } from "./terminal-text.ts";
 
 export const MISSION_DASHBOARD_INSPECTOR_GAP = 1;
 export const MISSION_DASHBOARD_COMPACT_INSPECTOR_WIDTH = 24;

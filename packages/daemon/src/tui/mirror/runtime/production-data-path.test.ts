@@ -23,12 +23,14 @@ describe("production OpenTUI data path", () => {
       { text: 'team", "--json' },
       {
         text: "readMissionWorkspace",
-        compatibilityDefinitions: ["packages/daemon/src/tui/mirror/missions-workspace.ts"],
+        compatibilityDefinitions: [
+          "packages/daemon/src/tui/mirror/legacy/missions-workspace-loader.ts",
+        ],
       },
       {
         text: "MissionRepository",
         compatibilityDefinitions: [
-          "packages/daemon/src/tui/mirror/missions-workspace.ts",
+          "packages/daemon/src/tui/mirror/legacy/missions-workspace-loader.ts",
           "packages/daemon/src/lib/mission-repository.ts",
         ],
       },

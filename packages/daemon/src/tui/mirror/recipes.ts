@@ -13,7 +13,7 @@ import {
   type ResolvedThemeMode,
   type SemanticThemeSnapshot,
 } from "./theme.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
 
 export type RecipeTone = "neutral" | "accent" | "blocked" | "working" | "done" | "idle" | "unknown";

@@ -13,7 +13,7 @@ import {
   type RecipeTone,
 } from "./recipes.ts";
 import type { SemanticThemeSnapshot } from "./theme.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
 
 const openTuiBorderStyle = (style: SemanticThemeSnapshot["borders"]["style"]) =>

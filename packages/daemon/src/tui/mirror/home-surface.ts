@@ -1,7 +1,7 @@
 import type { AgentStatus } from "../detect/classify.ts";
 import type { FleetRollup } from "../team/home.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 import { centerPad, isFirstRun, type HomeFleetProject, type HomeItem } from "./home-model.ts";
 import { actionChipSpansFromRight, actionChipWidth, type Rect } from "./recipes.ts";
 

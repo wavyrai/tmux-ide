@@ -3,7 +3,6 @@ import { For, Show } from "solid-js";
 import type { MissionDashboardProjection } from "./missions-dashboard.ts";
 import type { SemanticThemeSnapshot } from "./theme.ts";
 import {
-  clipTerminal,
   missionWorkspaceLayout,
   type MissionDeepLinkKind,
   type MissionDeepLinkResolution,
@@ -12,6 +11,7 @@ import {
   type MissionWorkspaceModel,
   type MissionWorkspaceSnapshot,
 } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 
 export type MissionSurfaceHoverRegion =
   | "missionmode"

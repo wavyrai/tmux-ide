@@ -1,7 +1,7 @@
 import type { RGBA } from "@opentui/core";
 import { clampTop, gutterWidth, type ReadOnlyReason } from "./editor-buffer.ts";
 import { type FileNode, type FilteredRow } from "./file-tree.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
 import { actionChipSpansFromRight, type Rect } from "./recipes.ts";
 

@@ -10,7 +10,7 @@ import {
   type HomeSurfaceProjection,
 } from "./home-surface.ts";
 import { actionChipWidth, recipePalette } from "./recipes.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 
 export interface HomeSurfaceProps {
   theme: SemanticThemeSnapshot;
