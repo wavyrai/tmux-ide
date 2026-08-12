@@ -40,6 +40,48 @@ describe("SemanticSessionView local runtime identity", () => {
     ]);
   });
 
+  it("keeps a window actionable while its layout identity converges", async () => {
+    const view = new SemanticSessionView({ target: "alpha" });
+    view.setInventory({
+      activeResourceId: "terminal.editor",
+      resources: [
+        {
+          id: "terminal.editor",
+          title: "Editor",
+          kind: "terminal",
+          active: true,
+          attachability: { status: "available", semanticPaneId: "pane.editor" },
+          windowResourceId: "terminal-window.006869769f156e2088f2",
+        },
+        {
+          id: "terminal.tests",
+          title: "Tests",
+          kind: "terminal",
+          active: false,
+          attachability: { status: "available", semanticPaneId: "pane.tests" },
+          windowResourceId: "terminal-window.fe0a211aa297f1b5834f",
+        },
+      ],
+    });
+    view.acceptLayout({
+      type: "layout",
+      semanticWindowId: "window.tests",
+      windowName: "Tests",
+      currentWindow: false,
+      cols: 80,
+      rows: 24,
+      zoomed: false,
+      panes: [{ pane: null, left: 0, top: 0, width: 80, height: 24, active: true }],
+    });
+
+    expect(await view.windows()).toEqual([
+      expect.objectContaining({
+        semanticWindowId: "window.tests",
+        activePaneId: "pane.tests",
+      }),
+    ]);
+  });
+
   it("joins wire-safe inventory identity to process-local raw tmux descriptors", () => {
     const view = new SemanticSessionView({ target: "alpha" });
     view.setInventory({

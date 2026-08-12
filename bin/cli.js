@@ -7491,8 +7491,8 @@ async function createScriptTerminalId(args) {
   }
   const key = `${args.projectId}::${scope}::${args.kind}::${args.script}`;
   const data = new TextEncoder().encode(key);
-  const digest4 = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest4)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  const digest3 = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest3)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
 var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema;
 var init_terminals = __esm({
@@ -8884,13 +8884,13 @@ function decodeWidgetMarkerLine(line) {
   if (!trimmed.startsWith(WIDGET_MARKER_SENTINEL)) return null;
   const fields = trimmed.split(" ").filter((field) => field.length > 0);
   if (fields.length !== 4) return null;
-  const [sentinel, id, payload, digest4] = fields;
+  const [sentinel, id, payload, digest3] = fields;
   if (sentinel !== WIDGET_MARKER_SENTINEL) return null;
   if (!WIDGET_ID_PATTERN.test(id)) return null;
-  if (!DIGEST_PATTERN.test(digest4)) return null;
+  if (!DIGEST_PATTERN.test(digest3)) return null;
   if (payload.length > WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS) return null;
   if (payload !== EMPTY_PAYLOAD && !BASE64URL_PATTERN.test(payload)) return null;
-  if (widgetMarkerDigest(id, payload) !== digest4) return null;
+  if (widgetMarkerDigest(id, payload) !== digest3) return null;
   if (payload === EMPTY_PAYLOAD) return { id, args: null };
   const json2 = decodeBase64Url(payload);
   if (json2 === null) return null;
@@ -9500,8 +9500,8 @@ function markedProjectRoot(inputDir, io) {
 }
 function projectIdentityKey(source, anchor) {
   const prefix = source === "git-common-dir" ? "git" : "path";
-  const digest4 = createHash("sha256").update(source).update("\0").update(anchor).digest("hex");
-  return `${prefix}-${digest4}`;
+  const digest3 = createHash("sha256").update(source).update("\0").update(anchor).digest("hex");
+  return `${prefix}-${digest3}`;
 }
 async function resolveProject(dir, options = {}) {
   const io = { ...defaultProjectResolverIo, ...options.io };
@@ -11317,8 +11317,8 @@ var init_shell = __esm({
 import { resolve as resolve5 } from "node:path";
 import { createHash as createHash2 } from "node:crypto";
 function semanticWindowIdForSession(session) {
-  const digest4 = createHash2("sha256").update("tmux-ide.launch.window.v1\0", "utf8").update(session, "utf8").digest("hex").slice(0, 20);
-  return `window.launch.${digest4}`;
+  const digest3 = createHash2("sha256").update("tmux-ide.launch.window.v1\0", "utf8").update(session, "utf8").digest("hex").slice(0, 20);
+  return `window.launch.${digest3}`;
 }
 function semanticPaneIdForPane(pane) {
   if (pane.id) return pane.id;
@@ -11333,9 +11333,9 @@ function semanticPaneIdForPane(pane) {
       ([left], [right]) => left < right ? -1 : left > right ? 1 : 0
     )
   });
-  const digest4 = createHash2("sha256").update(metadata).digest("hex").slice(0, 16);
+  const digest3 = createHash2("sha256").update(metadata).digest("hex").slice(0, 16);
   const label2 = paneIdentityLabel(pane);
-  return `pane-${label2}-${digest4}`;
+  return `pane-${label2}-${digest3}`;
 }
 function paneIdentityOptions(action) {
   return [
@@ -20110,11 +20110,25 @@ var init_daemon_fleet_facts_observer = __esm({
   }
 });
 
-// packages/daemon/src/command-center/resources/fleet-catalog.ts
+// packages/daemon/src/lib/semantic-resource-id.ts
 import { createHash as createHash5 } from "node:crypto";
+function semanticResourceDigest(value) {
+  return createHash5("sha256").update(value).digest("hex").slice(0, 20);
+}
+function semanticResourceId(namespace, value) {
+  return `${namespace}.${semanticResourceDigest(value)}`;
+}
+var init_semantic_resource_id = __esm({
+  "packages/daemon/src/lib/semantic-resource-id.ts"() {
+    "use strict";
+  }
+});
+
+// packages/daemon/src/command-center/resources/fleet-catalog.ts
+import { createHash as createHash6 } from "node:crypto";
 import { basename as basename8 } from "node:path";
 function digest(value) {
-  return createHash5("sha256").update(value).digest("hex").slice(0, 20);
+  return createHash6("sha256").update(value).digest("hex").slice(0, 20);
 }
 function fleetSessionIdForName(sessionName) {
   return `session.${digest(sessionName)}`;
@@ -20202,17 +20216,10 @@ var init_fleet_catalog2 = __esm({
 });
 
 // packages/daemon/src/command-center/resources/application-shell.ts
-import { createHash as createHash6 } from "node:crypto";
 import { hostname } from "node:os";
 import { basename as basename9 } from "node:path";
-function digest2(value) {
-  return createHash6("sha256").update(value).digest("hex").slice(0, 20);
-}
-function semanticId(namespace, value) {
-  return `${namespace}.${digest2(value)}`;
-}
 function agentIdForPaneStamp(stamp) {
-  return semanticId("agent", stamp);
+  return semanticResourceId("agent", stamp);
 }
 function isHostNameTitle(title, hostName) {
   if (!title) return false;
@@ -20229,7 +20236,7 @@ function label(value, fallback) {
   return normalized || fallback;
 }
 function fallbackPaneId(session, pane) {
-  return semanticId(
+  return semanticResourceId(
     "terminal.discovered",
     JSON.stringify({
       session: session.name,
@@ -20258,7 +20265,7 @@ function proveWindow(windowId, panes, stampToWindowIds) {
     if ((stampToWindowIds.get(stamp)?.size ?? 0) > 1) {
       return { ok: false, reason: "duplicate-window-stamp" };
     }
-    return { ok: true, windowResourceId: semanticId("terminal-window", stamp) };
+    return { ok: true, windowResourceId: semanticResourceId("terminal-window", stamp) };
   }
   return { ok: true, windowResourceId: null };
 }
@@ -20331,7 +20338,7 @@ function paneIdentities(session) {
   });
 }
 function legacyFallbackPaneId(pane) {
-  return semanticId(
+  return semanticResourceId(
     "pane.discovered",
     JSON.stringify({
       index: pane.index,
@@ -20447,7 +20454,7 @@ function dockTools(projectId) {
           ...common("missions"),
           data: {
             kind: "missions",
-            missionId: `mission.unavailable.${digest2(projectId)}`,
+            missionId: `mission.unavailable.${semanticResourceDigest(projectId)}`,
             title: "Missions unavailable",
             status: "disconnected",
             goalCount: 0,
@@ -20473,8 +20480,8 @@ function deepFreeze5(value) {
 function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
   const sessionName = label(session.name, "tmux session");
   const rootLabel = label(basename9(session.dir), sessionName);
-  const projectId = semanticId("project", session.dir);
-  const sessionId = semanticId("session", session.name);
+  const projectId = semanticResourceId("project", session.dir);
+  const sessionId = semanticResourceId("session", session.name);
   const focusedIndex = session.panes.findIndex((pane) => pane.active);
   const focusedPaneId = focusedIndex < 0 ? null : paneIds[focusedIndex] ?? null;
   const agents = session.panes.flatMap((pane, index) => {
@@ -20483,7 +20490,7 @@ function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
     const presentation = resolveAgentPresentation(pane, nowSec);
     return [
       {
-        id: semanticId("agent", paneId),
+        id: semanticResourceId("agent", paneId),
         // A fresh authority stamp's sanitized display name outranks the raw pane
         // title; both pass through label()'s control-strip/clamp before the wire.
         name: label(presentation.displayName ?? pane.name ?? pane.title, `Agent ${index + 1}`),
@@ -20509,7 +20516,7 @@ function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
       }
     },
     workspace: {
-      id: semanticId("workspace", session.dir),
+      id: semanticResourceId("workspace", session.dir),
       name: `${sessionName} workspace`.slice(0, 160),
       activeMode: "terminals",
       session: {
@@ -20693,6 +20700,7 @@ var init_application_shell2 = __esm({
   "packages/daemon/src/command-center/resources/application-shell.ts"() {
     "use strict";
     init_src();
+    init_semantic_resource_id();
     init_classify();
     init_agent_resolution();
     init_fleet_catalog2();
@@ -25074,13 +25082,13 @@ var init_workspace_pane_creation2 = __esm({
           `#{pane_id}	#{${SEMANTIC_PANE_OPTION}}`
         ]);
         const matches = output.split("\n").filter(Boolean).flatMap((line) => {
-          const [paneId, semanticId2, extra] = line.split("	");
+          const [paneId, semanticId, extra] = line.split("	");
           if (extra !== void 0 || !/^%[0-9]+$/u.test(paneId ?? "")) {
             throw new WorkspacePaneCreationError("workspace_unavailable", {
               reason: "pane_listing_shape"
             });
           }
-          return semanticId2 === semanticPaneId3 ? [paneId] : [];
+          return semanticId === semanticPaneId3 ? [paneId] : [];
         });
         if (matches.length === 0) {
           throw new WorkspacePaneCreationError("pane_not_found", { semanticPaneId: semanticPaneId3 });
@@ -26394,7 +26402,7 @@ function resource2(workspaceName) {
 function requestFingerprint2(request) {
   return JSON.stringify(request);
 }
-function digest3(value) {
+function digest2(value) {
   return createHash9("sha256").update(value).digest("hex").slice(0, 20);
 }
 var MAX_OPERATIONS2, MAX_REPLAYABLE_FAILURES3, MAX_TMUX_OUTPUT_BYTES2, ADOPTED_OPTION2, SESSION_PROMOTED_MARKER_OPTION, SESSION_WORKSPACE_OPTION2, SESSION_OPERATION_OPTION2, SEMANTIC_PANE_OPTION3, SEMANTIC_WINDOW_OPTION2, FIELD, SENTINEL, SESSION_FORMAT2, PANE_SCAN_FORMAT, PANE_VERIFY_FORMAT, ERROR_MESSAGES3, WorkspacePromotionError, VALID_SEMANTIC_PANE_ID, RESERVED_DISCOVERED_PREFIX, DEFAULT_IO3, WorkspacePromotionAuthority;
@@ -26707,7 +26715,7 @@ var init_workspace_promotion2 = __esm({
         try {
           for (const pane of scanned) {
             if (!hasValidPaneStamp(pane.semanticPaneId)) {
-              const paneStamp = `pane.promoted.${digest3(`${session.sessionName}\0${pane.paneId}`)}`;
+              const paneStamp = `pane.promoted.${digest2(`${session.sessionName}\0${pane.paneId}`)}`;
               this.#io.runTmux([
                 "set-option",
                 "-p",
@@ -26724,7 +26732,7 @@ var init_workspace_promotion2 = __esm({
             if (!reconciledWindows.has(pane.windowId)) {
               reconciledWindows.add(pane.windowId);
               if (pane.semanticWindowId.length === 0) {
-                const windowStamp = `window.promoted.${digest3(`${session.sessionName}\0${pane.windowId}`)}`;
+                const windowStamp = `window.promoted.${digest2(`${session.sessionName}\0${pane.windowId}`)}`;
                 this.#io.runTmux([
                   "set-option",
                   "-w",
@@ -31288,9 +31296,9 @@ var init_session_channel = __esm({
           if (row.active) this.currentWindow = row.runtimeId;
           const parsed = parseLayout(row.visible);
           if (parsed) this.layoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed });
-          let semanticId2 = null;
+          let semanticId = null;
           if (row.stamp && stampCounts.get(row.stamp) === 1) {
-            semanticId2 = row.stamp;
+            semanticId = row.stamp;
           } else {
             let candidate = null;
             for (let attempt = 0; attempt < 32 && !candidate; attempt += 1) {
@@ -31307,7 +31315,7 @@ var init_session_channel = __esm({
                 () => true,
                 () => false
               );
-              if (ok2) semanticId2 = candidate;
+              if (ok2) semanticId = candidate;
               else {
                 this.pushDiagnostic({
                   code: "WINDOW_STAMP_BACK_FAILED",
@@ -31319,7 +31327,7 @@ var init_session_channel = __esm({
           }
           next.set(row.runtimeId, {
             runtimeId: row.runtimeId,
-            semanticId: semanticId2,
+            semanticId,
             name: row.name,
             paneBorderStatus: row.paneBorderStatus
           });
@@ -58018,8 +58026,8 @@ var require_package = __commonJS({
       dependencies: {
         "@hono/node-server": "^2.1.0",
         "@hono/zod-validator": "^0.7.6",
-        "@opentui/core": "^0.4.3",
-        "@opentui/solid": "^0.4.3",
+        "@opentui/core": "^0.5.1",
+        "@opentui/solid": "^0.5.1",
         "@parcel/watcher": "^2.5.6",
         "@types/ws": "^8.18.1",
         hono: "^4.12.34",

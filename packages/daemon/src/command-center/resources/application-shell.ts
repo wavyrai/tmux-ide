@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { hostname } from "node:os";
 import { basename } from "node:path";
 import {
@@ -23,6 +22,11 @@ import {
   type TerminalResourceAttachability,
   type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
+
+import {
+  semanticResourceDigest,
+  semanticResourceId as semanticId,
+} from "../../lib/semantic-resource-id.ts";
 import { parseAuthority, type InstantState } from "../../tui/detect/classify.ts";
 import { agentDisplayMetadata, resolveAgentStatus } from "../../tui/detect/agent-resolution.ts";
 import { fleetSessionIdForName } from "./fleet-catalog.ts";
@@ -124,14 +128,6 @@ export interface LegacyApplicationShellSessionFacts {
   readonly name: string;
   readonly dir: string;
   readonly panes: readonly LegacyApplicationShellPaneFacts[];
-}
-
-function digest(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 20);
-}
-
-function semanticId(namespace: string, value: string): string {
-  return `${namespace}.${digest(value)}`;
 }
 
 /**
@@ -530,7 +526,7 @@ function dockTools(projectId: string): ApplicationShellProjectionInputV1["dock"]
           ...common("missions"),
           data: {
             kind: "missions",
-            missionId: `mission.unavailable.${digest(projectId)}`,
+            missionId: `mission.unavailable.${semanticResourceDigest(projectId)}`,
             title: "Missions unavailable",
             status: "disconnected",
             goalCount: 0,

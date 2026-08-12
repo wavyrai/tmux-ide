@@ -21,7 +21,6 @@
  */
 
 import parserWorkerPath from "tmux-ide:opentui-parser-worker" with { type: "file" };
-import treeSitterWasmPath from "tmux-ide:opentui-tree-sitter-wasm" with { type: "file" };
 import { existsSync } from "node:fs";
 
 const TREE_SITTER_SMOKE_SURFACE = "__tree-sitter-smoke";
@@ -44,14 +43,12 @@ function isSurface(value: string | undefined): value is Surface {
 }
 
 async function main(): Promise<void> {
-  // OpenTUI normally finds parser.worker.js beside its JS module. A standalone
-  // Bun executable has no such directory: import.meta.url points into /$bunfs.
-  // build-tui embeds a fully bundled worker and its web-tree-sitter wasm as
-  // explicit assets; publish the worker path before any OpenTUI surface imports
-  // create the singleton TreeSitterClient. The wasm binding is intentionally
-  // retained and checked here so Bun cannot tree-shake the worker's sibling.
-  if (!existsSync(parserWorkerPath) || !existsSync(treeSitterWasmPath)) {
-    throw new Error("tmux-ide-tui: embedded Tree-sitter runtime is incomplete");
+  // Bun cannot discover the worker import hidden behind OpenTUI's runtime
+  // resolver when compiling a standalone executable. build-tui embeds the
+  // official 0.5 parser worker as a file asset; OpenTUI continues to own the
+  // WASM, language parser, query, and native-library asset graph.
+  if (!existsSync(parserWorkerPath)) {
+    throw new Error("tmux-ide-tui: embedded OpenTUI parser worker is unavailable");
   }
   process.env.OTUI_TREE_SITTER_WORKER_PATH ??= parserWorkerPath;
 
