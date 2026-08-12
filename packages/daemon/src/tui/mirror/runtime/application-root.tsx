@@ -297,8 +297,6 @@ import {
   type PathKind,
 } from "../folder-picker.ts";
 import { registerProject, ProjectAlreadyRegisteredError } from "../../../lib/project-registry.ts";
-import { resolveProjectConfigContext } from "../../../lib/config-context.ts";
-import { createProjectRuntimeRepository } from "../../../lib/project-runtime-repository.ts";
 import {
   separatorAtCanvas,
   resizedSize,
@@ -2507,7 +2505,7 @@ const mountTuiRoot = () => {
     let panelHostResolved = false;
     const loadPanelHostForDir = (dir: string) => {
       const generation = panelGeneration.next();
-      let loadStage = "resolve project config";
+      let loadStage = "load project state modules";
       // Finish the old project's pending debounce against its still-live
       // repository before `beginLoad` invalidates that controller generation.
       flushWorkspaceUiState();
@@ -2522,13 +2520,23 @@ const mountTuiRoot = () => {
       hydratedWorkspaceSurfaceIds.clear();
       const uiGeneration = workspaceUiController.beginLoad();
       missionsActivitySession()?.reset(toolResourceGeneration);
-      void resolveProjectConfigContext(dir)
-        .then((context) => {
+      void Promise.all([
+        import("../../../lib/config-context.ts"),
+        import("../../../lib/project-runtime-repository.ts"),
+      ])
+        .then(async ([configContext, projectRuntimeRepository]) => {
+          loadStage = "resolve project config";
+          const context = await configContext.resolveProjectConfigContext(dir);
+          return { context, projectRuntimeRepository };
+        })
+        .then(({ context, projectRuntimeRepository }) => {
           if (!panelGeneration.isCurrent(generation)) return;
           const resolved = context.resolved;
           if (!resolved) return;
           loadStage = "open workspace state";
-          const repository = createProjectRuntimeRepository(resolved.resolution);
+          const repository = projectRuntimeRepository.createProjectRuntimeRepository(
+            resolved.resolution,
+          );
           const loadedUi = loadWorkspaceUiState(repository);
           if (!workspaceUiController.completeLoad(uiGeneration, repository, loadedUi)) return;
           loadStage = "publish workspace state";

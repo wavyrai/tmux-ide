@@ -1,10 +1,10 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import {
-  RevisionConflictError,
-  type JsonValue,
-  type ProjectRuntimeDocument,
-  type ProjectRuntimeRepository,
+import { RevisionConflictError } from "../../lib/project-runtime-errors.ts";
+import type {
+  JsonValue,
+  ProjectRuntimeDocument,
+  ProjectRuntimeRepository,
 } from "../../lib/project-runtime-repository.ts";
 import type { HostedPanelKind, HostedPanelView } from "./panel-host.ts";
 import { findFirstHostedViewForPanel, findHostedViewById } from "./panel-host.ts";
