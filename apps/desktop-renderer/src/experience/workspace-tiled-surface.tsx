@@ -85,6 +85,14 @@ import {
   type WorkspacePaneResize,
   type WorkspacePointerSample,
 } from "./workspace-pane-manipulation.ts";
+import {
+  commitWebTiledFocus,
+  createWebTiledOptimisticState,
+  deriveWebTiledProjection,
+  enqueueWebTiledIntent,
+  settleWebTiledIntent,
+  supersedeWebTiledManipulation,
+} from "./workspace-tiled-optimistic.ts";
 
 type PaneManipulationPhase =
   | "idle"
@@ -379,6 +387,29 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     event.clipboardData.setData("text/plain", selection);
     event.preventDefault();
   };
+  let projectionRevision = 0;
+  let focusTimeout: ReturnType<typeof setTimeout> | null = null;
+  const [optimisticState, setOptimisticState] = createSignal(
+    createWebTiledOptimisticState(props.workspaceName, props.viewPane ?? null),
+  );
+  const optimisticProjection = createMemo(() => deriveWebTiledProjection(optimisticState()));
+  createEffect(() => {
+    const generation = props.workspaceName;
+    const focusPane = props.viewPane ?? null;
+    if (focusTimeout !== null) clearTimeout(focusTimeout);
+    focusTimeout = null;
+    setOptimisticState((state) =>
+      commitWebTiledFocus(state, {
+        generation,
+        revision: ++projectionRevision,
+        focusPane,
+        nowMs: performance.now(),
+      }),
+    );
+  });
+  onCleanup(() => {
+    if (focusTimeout !== null) clearTimeout(focusTimeout);
+  });
   /**
    * The windows tmux still has.
    *
@@ -398,7 +429,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     const fromFrames = windowTabs(frames());
     if (fromFrames.length > 0) {
       const selectedFrame = frames().find((frame) =>
-        frame.panes.some((pane) => pane.pane === props.viewPane),
+        frame.panes.some((pane) => pane.pane === optimisticProjection().focusPane),
       );
       if (!selectedFrame) return fromFrames;
       const selectedKey = windowTabKey(selectedFrame);
@@ -410,14 +441,16 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     return (props.fallbackWindows ?? []).map((window) => ({
       semanticWindowId: null,
       label: window.label,
-      active: props.viewPane ? window.panes.includes(props.viewPane) : window.active,
+      active: optimisticProjection().focusPane
+        ? window.panes.includes(optimisticProjection().focusPane!)
+        : window.active,
       paneCount: window.panes.length,
       zoomed: false,
       addressPane: window.panes[0] ?? null,
     }));
   });
   const currentFrame = createMemo<LayoutFrame | null>(() => {
-    const selected = props.viewPane;
+    const selected = optimisticProjection().focusPane;
     return (
       (selected
         ? frames().find((frame) => frame.panes.some((pane) => pane.pane === selected))
@@ -640,7 +673,6 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     readonly manipulation: WorkspacePaneManipulation | null;
     readonly localPreview: WorkspacePanePreview | null;
     readonly committingState: WorkspacePaneResize | WorkspacePaneDrag | null;
-    readonly committingPreview: WorkspacePanePreview | null;
     readonly phase: PaneManipulationPhase;
     readonly state: PaneTransactionState;
   }
@@ -648,14 +680,12 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     manipulation: null,
     localPreview: null,
     committingState: null,
-    committingPreview: null,
     phase: "idle",
     state: "idle",
   });
   const manipulation = () => paneTransaction().manipulation;
   const localPreview = () => paneTransaction().localPreview;
   const committingState = () => paneTransaction().committingState;
-  const committingPreview = () => paneTransaction().committingPreview;
   const phase = () => paneTransaction().phase;
   const transactionState = () => paneTransaction().state;
   const setManipulation = (value: WorkspacePaneManipulation | null): void => {
@@ -666,9 +696,6 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
   };
   const setCommittingState = (value: WorkspacePaneResize | WorkspacePaneDrag | null): void => {
     setPaneTransaction((current) => ({ ...current, committingState: value }));
-  };
-  const setCommittingPreview = (value: WorkspacePanePreview | null): void => {
-    setPaneTransaction((current) => ({ ...current, committingPreview: value }));
   };
   const setPhase = (value: PaneManipulationPhase): void => {
     setPaneTransaction((current) => ({ ...current, phase: value }));
@@ -691,6 +718,62 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     readonly y: number;
   } | null = null;
   let transactionId = 0;
+  let optimisticOperationSequence = 0;
+  let activeManipulationOperationId: string | null = null;
+
+  const selectViewPane = (pane: string, source: "keyboard" | "mouse"): void => {
+    if (optimisticProjection().focusPane === pane) return;
+    const operationId = `web-focus-${++optimisticOperationSequence}`;
+    const nowMs = performance.now();
+    setOptimisticState((state) =>
+      enqueueWebTiledIntent(
+        state,
+        operationId,
+        { kind: "focus", pane },
+        nowMs,
+        MANIPULATION_CONFIRM_TIMEOUT_MS,
+      ),
+    );
+    if (focusTimeout !== null) clearTimeout(focusTimeout);
+    focusTimeout = setTimeout(() => {
+      focusTimeout = null;
+      setOptimisticState((state) => settleWebTiledIntent(state, operationId, "timed-out"));
+    }, MANIPULATION_CONFIRM_TIMEOUT_MS);
+    props.onSelectViewPane?.(pane, source);
+  };
+
+  const beginOptimisticManipulation = (preview: WorkspacePanePreview): void => {
+    const operationId = `web-manipulation-${++optimisticOperationSequence}`;
+    activeManipulationOperationId = operationId;
+    const nowMs = performance.now();
+    setOptimisticState((state) =>
+      enqueueWebTiledIntent(
+        state,
+        operationId,
+        { kind: "manipulation", preview },
+        nowMs,
+        MANIPULATION_CONFIRM_TIMEOUT_MS,
+      ),
+    );
+  };
+  const adoptAuthoritativeManipulation = (
+    operationId: string,
+    preview: WorkspacePanePreview,
+  ): void => {
+    if (!activeManipulationOperationId) return;
+    const previous = activeManipulationOperationId;
+    activeManipulationOperationId = operationId;
+    setOptimisticState((state) =>
+      supersedeWebTiledManipulation(
+        state,
+        previous,
+        operationId,
+        preview,
+        performance.now(),
+        MANIPULATION_CONFIRM_TIMEOUT_MS,
+      ),
+    );
+  };
   let pendingPointerSample: WorkspacePointerSample | null = null;
   let previewAnimationFrame: number | null = null;
 
@@ -762,6 +845,13 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     clearResizeWireTimer();
     clearCommitTimeout();
     const frame = currentFrame();
+    if (activeManipulationOperationId) {
+      const operationId = activeManipulationOperationId;
+      activeManipulationOperationId = null;
+      setOptimisticState((state) =>
+        settleWebTiledIntent(state, operationId, rolledBack ? "rejected" : "observed"),
+      );
+    }
     // One reactive publication: consumers can never observe authoritative new
     // geometry with the old preview transform still attached.
     setPaneTransaction({
@@ -770,7 +860,6 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         : null,
       localPreview: null,
       committingState: null,
-      committingPreview: null,
       phase: rolledBack ? "rollback" : "idle",
       state: rolledBack ? "rejected" : "settled",
     });
@@ -838,13 +927,17 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
             result.result?.verb === "workspace.pane.resize" &&
             phase() === "resize-committing"
           ) {
+            const mutation = result.result;
             const pending = committingState();
             if (pending?.kind !== "resize") return;
-            const actual = result.result.cells;
+            const actual = mutation.cells;
             const adjusted: WorkspacePaneResize = { ...pending, previewCells: actual };
             batch(() => {
               setCommittingState(adjusted);
-              setCommittingPreview(previewWorkspacePaneManipulation(adjusted));
+              const preview = previewWorkspacePaneManipulation(adjusted);
+              if (activeManipulationOperationId) {
+                adoptAuthoritativeManipulation(mutation.operationId, preview);
+              }
             });
           }
         },
@@ -885,7 +978,6 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       manipulation: started,
       localPreview: previewWorkspacePaneManipulation(started),
       committingState: null,
-      committingPreview: null,
       phase: "resize-preview",
       state: "previewing",
     });
@@ -908,7 +1000,6 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       manipulation: started,
       localPreview: previewWorkspacePaneManipulation(started),
       committingState: null,
-      committingPreview: null,
       phase: "dragging",
       state: "previewing",
     });
@@ -1007,7 +1098,6 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         manipulation: finished.state,
         localPreview: null,
         committingState: state,
-        committingPreview: preview,
         phase: "resize-committing",
         state: "committing",
       });
@@ -1016,6 +1106,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       // release or race a second settlement.
       (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
       dispatchResize(finished.wire);
+      beginOptimisticManipulation(preview);
       beginCommitTimeout();
       return;
     }
@@ -1026,12 +1117,12 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         manipulation: finished.state,
         localPreview: null,
         committingState: releasedDrag,
-        committingPreview: commitWorkspacePaneDragPreview(releasedDrag),
         phase: "swap-committing",
         state: "committing",
       });
       (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
       dispatchResize(finished.wire);
+      beginOptimisticManipulation(commitWorkspacePaneDragPreview(releasedDrag));
       beginCommitTimeout();
       Promise.resolve(
         props.verbs.invoke("pane.swap", finished.completion.sourcePane, {
@@ -1040,6 +1131,12 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       ).then(
         (result) => {
           if (mutationFailed(result)) settle(true, issuedFor);
+          else if (result?.status === "ok" && result.result?.verb === "workspace.pane.swap") {
+            adoptAuthoritativeManipulation(
+              result.result.operationId,
+              commitWorkspacePaneDragPreview(releasedDrag),
+            );
+          }
         },
         () => settle(true, issuedFor),
       );
@@ -1074,7 +1171,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     const frame = currentFrame();
     if (!frame) return;
     const pending = committingState();
-    const preview = committingPreview();
+    const preview = optimisticProjection().manipulationPreview;
     if (pending?.kind === "resize" && preview?.kind === "resize") {
       const pane = frame.panes.find((candidate) => candidate.pane === preview.pane);
       const confirmed = preview.axis === "cols" ? pane?.width : pane?.height;
@@ -1103,7 +1200,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     }
   });
 
-  const displayPreview = createMemo(() => committingPreview() ?? localPreview());
+  const displayPreview = createMemo(
+    () => optimisticProjection().manipulationPreview ?? localPreview(),
+  );
   const resizePreview = createMemo(() => {
     const preview = displayPreview();
     return preview?.kind === "resize" ? preview : null;
@@ -1374,10 +1473,10 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     batch(() => {
       setManipulation(createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }));
       setCommittingState(movedDrag);
-      setCommittingPreview(commitWorkspacePaneDragPreview(movedDrag));
       setPhase("swap-committing");
       setTransactionState("committing");
     });
+    beginOptimisticManipulation(commitWorkspacePaneDragPreview(movedDrag));
     beginCommitTimeout();
     Promise.resolve(
       props.verbs.invoke("pane.swap", sourcePane, {
@@ -1386,6 +1485,12 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     ).then(
       (result) => {
         if (mutationFailed(result)) settle(true, issuedFor);
+        else if (result?.status === "ok" && result.result?.verb === "workspace.pane.swap") {
+          adoptAuthoritativeManipulation(
+            result.result.operationId,
+            commitWorkspacePaneDragPreview(movedDrag),
+          );
+        }
       },
       () => settle(true, issuedFor),
     );
@@ -1422,10 +1527,10 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       setLastConfirmedCells(border.cells);
       setManipulation(createWorkspacePaneIdle(frame, { reducedMotion: props.reducedMotion }));
       setCommittingState(movedResize);
-      setCommittingPreview(movedResizePreview);
       setPhase("resize-committing");
       setTransactionState("committing");
     });
+    beginOptimisticManipulation(movedResizePreview);
     beginCommitTimeout();
     Promise.resolve(
       props.verbs.invoke("pane.resize", border.pane, {
@@ -1442,15 +1547,19 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
           return;
         }
         if (result && result.status === "ok" && result.result?.verb === "workspace.pane.resize") {
+          const mutation = result.result;
           const pending = committingState();
           if (pending?.kind !== "resize") return;
           const adjusted: WorkspacePaneResize = {
             ...pending,
-            previewCells: result.result.cells,
+            previewCells: mutation.cells,
           };
           batch(() => {
             setCommittingState(adjusted);
-            setCommittingPreview(previewWorkspacePaneManipulation(adjusted));
+            const preview = previewWorkspacePaneManipulation(adjusted);
+            if (activeManipulationOperationId) {
+              adoptAuthoritativeManipulation(mutation.operationId, preview);
+            }
           });
         }
       },
@@ -1487,7 +1596,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               }
               onClick={() => {
                 const pane = tab().addressPane;
-                if (pane && !tab().active) props.onSelectViewPane?.(pane, "mouse");
+                if (pane && !tab().active) selectViewPane(pane, "mouse");
               }}
               onContextMenu={(event) => {
                 const pane = tab().addressPane;
@@ -1589,7 +1698,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           const pane = tileAtPointer(event);
-          if (pane && pane !== props.viewPane) props.onSelectViewPane?.(pane, "mouse");
+          if (pane) selectViewPane(pane, "mouse");
         }}
         onCopy={copyMirrorSelection}
       >
@@ -1669,7 +1778,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   class="pane-tile"
                   data-pane={paneId}
                   data-active={
-                    (props.viewPane ?? tiles().find((entry) => entry.active)?.pane) === paneId
+                    (optimisticProjection().focusPane ??
+                      tiles().find((entry) => entry.active)?.pane) === paneId
                   }
                   data-tmux-active={tile().active}
                   data-drop-target={
@@ -1711,7 +1821,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                     interaction={interaction()}
                     interactionActive={communicationActive()}
                     active={
-                      (props.viewPane ?? tiles().find((entry) => entry.active)?.pane) === paneId
+                      (optimisticProjection().focusPane ??
+                        tiles().find((entry) => entry.active)?.pane) === paneId
                     }
                     composed={Boolean(compositorNode())}
                     /*
@@ -1788,7 +1899,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                           // Never let it bubble into layout drag or tmux focus.
                           event.stopPropagation();
                           selectedMirrorPane = paneId;
-                          props.onSelectViewPane?.(paneId, "mouse");
+                          selectViewPane(paneId, "mouse");
                           props.onFocusPane?.(paneId, "mouse");
                         }}
                         onPointerUp={(event) => {
@@ -1823,7 +1934,8 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
                   </Show>
                   <span class="sr-only">
                     {titleFor(paneId)}
-                    {(props.viewPane ?? tiles().find((entry) => entry.active)?.pane) === paneId
+                    {(optimisticProjection().focusPane ??
+                      tiles().find((entry) => entry.active)?.pane) === paneId
                       ? ", selected in this view"
                       : ""}
                     {tile().active ? ", tmux input owner" : ""}

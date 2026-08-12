@@ -296,6 +296,7 @@ import {
   type ResizeTransactionObservation,
   type ResizeTransactionState,
 } from "../resize-transaction.ts";
+import { FocusProjectionController } from "../focus-projection.ts";
 import {
   effectiveWindowSize,
   detectSizeMismatchWithRepin,
@@ -1546,7 +1547,13 @@ const mountTuiRoot = () => {
     // Focus is a synchronous control-plane signal. It must not wait behind the
     // coalesced geometry/framebuffer publication path before chrome reacts.
     const [focusedPaneId, setFocusedPaneId] = createSignal<string | null>(null);
+    let focusProjection: FocusProjectionController | null = null;
+    let focusProjectionGeneration: string | null = null;
     const activeTerminalPaneId = createMemo(() => activeLivePaneId(panes(), focusedPaneId()));
+    const activeTerminalInputPane = (): string | null => {
+      const paneId = activeTerminalPaneId();
+      return paneId && semanticView?.pane(paneId) ? paneId : null;
+    };
     const focusedPanes = createMemo(() => withLivePaneFocus(panes(), focusedPaneId()));
     const paneIsFocused = (paneId: string): boolean => activeTerminalPaneId() === paneId;
     const [paneRuntime, setPaneRuntime] = createSignal<ReturnType<typeof livePaneRuntime>>(
@@ -1658,6 +1665,10 @@ const mountTuiRoot = () => {
       sessionRuntimeLane()?.close();
       setSessionRuntimeLane(null);
       runtimeLaneFitKey = null;
+      focusProjection?.dispose();
+      focusProjection = null;
+      focusProjectionGeneration = null;
+      resizeTransaction?.retire();
       semanticPaneCanonicalSize.clear();
       setSemanticPaneVersions(new Map());
     };
@@ -2984,7 +2995,16 @@ const mountTuiRoot = () => {
         if (!submission) throw new Error("No semantic geometry authority is available");
         void submission.then(
           (result) => {
-            if (result?.verb !== "workspace.pane.resize") {
+            const pending = resizeTransaction.state();
+            if (
+              pending.phase !== "pending" ||
+              pending.authorityGeneration !== lane.connectionIdentity ||
+              result?.verb !== "workspace.pane.resize" ||
+              result.operationId !== operationId ||
+              result.workspaceName !== intent.workspaceName ||
+              result.semanticPaneId !== intent.semanticPaneId ||
+              result.axis !== intent.axis
+            ) {
               resizeTransaction.reject({
                 operationId,
                 code: "invalid-result",
@@ -2993,6 +3013,7 @@ const mountTuiRoot = () => {
               return;
             }
             acceptedResize = {
+              authorityGeneration: lane.connectionIdentity,
               operationId,
               workspaceName: intent.workspaceName,
               semanticPaneId: intent.semanticPaneId,
@@ -3042,6 +3063,11 @@ const mountTuiRoot = () => {
       const state = resizeTransaction.state();
       const accepted = acceptedResize;
       if (state.phase !== "pending" || !accepted || accepted.operationId !== state.operationId)
+        return;
+      if (
+        accepted.authorityGeneration !== state.authorityGeneration ||
+        accepted.authorityGeneration !== sessionRuntimeLane()?.connectionIdentity
+      )
         return;
       const size = semanticPaneCanonicalSize.get(accepted.semanticPaneId);
       if (!size) return;
@@ -3511,7 +3537,10 @@ const mountTuiRoot = () => {
         target: name,
         lifecycle: applicationLifecycle,
         onDirty: markDirty,
-        onFocusChanged: (paneId) => setFocusedPaneId(paneId),
+        onFocusChanged: (paneId, source) => {
+          if (focusProjection && source === "tmux") focusProjection.observe(paneId);
+          else setFocusedPaneId(paneId);
+        },
         onStatus: () => {
           markDirty();
           void workspaceAdapter.view.windows().then(setWindowTabs);
@@ -4363,7 +4392,7 @@ const mountTuiRoot = () => {
         return {
           session: curTarget(),
           dir: dirForSession(curTarget()) ?? (contextDir() || null),
-          paneId: semanticView?.focusedPane() ?? undefined,
+          paneId: activeTerminalInputPane() ?? undefined,
         };
       }
       if (mode() === "home") return homeAgentContext(selectedHomeItem());
@@ -4787,19 +4816,40 @@ const mountTuiRoot = () => {
         setStatusNote("view only · another client owns terminal input");
         return "passive";
       }
-      // Optimistic local chrome is renderer state only; the daemon remains the
-      // sole tmux mutation authority and the following layout reconciles it.
-      setFocusedPaneId(runtimePaneId);
-      void replica.adapter
-        .submit({
-          verb: "workspace.pane.select",
-          workspaceName: replica.lane.workspaceName,
-          semanticPaneId: replica.semanticPaneId,
-        })!
-        .catch((error: unknown) => {
-          setFocusedPaneId(semanticView?.focusedPane() || null);
-          setStatusNote(error instanceof Error ? error.message : "pane focus rejected");
+      if (focusProjectionGeneration !== replica.lane.connectionIdentity) {
+        focusProjection?.dispose();
+        focusProjectionGeneration = replica.lane.connectionIdentity;
+        focusProjection = new FocusProjectionController({
+          generation: replica.lane.connectionIdentity,
+          initialPaneId: semanticView?.focusedPane() || null,
+          timeoutMs: 10_000,
+          now: () => performance.now(),
+          operationId: randomUUID,
+          schedule: (callback, delayMs) => {
+            const timer = setTimeout(callback, delayMs);
+            timer.unref?.();
+            return () => clearTimeout(timer);
+          },
+          submit: async (paneId, operationId) => {
+            const current = semanticReplicaForRuntime(paneId);
+            if (!current?.lane.ownsInput)
+              throw new Error("No semantic focus authority is available");
+            const result = current.adapter.submit(
+              {
+                verb: "workspace.pane.select",
+                workspaceName: current.lane.workspaceName,
+                semanticPaneId: current.semanticPaneId,
+              },
+              operationId,
+            );
+            if (!result) throw new Error("No semantic focus authority is available");
+            await result;
+          },
+          onFocus: setFocusedPaneId,
+          onRejected: setStatusNote,
         });
+      }
+      focusProjection.select(runtimePaneId);
       return "submitted";
     };
     const activateSemanticWindow = (windowIndex: number): boolean => {
@@ -4876,7 +4926,7 @@ const mountTuiRoot = () => {
         setStatusNote(`pasted ${text.length} chars`);
       },
       pasteTerminal: (text) => {
-        const pane = semanticView?.focusedPane();
+        const pane = activeTerminalInputPane();
         if (!pane || !semanticView) return;
         if (!sendSemanticTerminalText(pane, `\x1b[200~${text}\x1b[201~`)) {
           setStatusNote("terminal runtime is reconnecting");
@@ -4897,7 +4947,7 @@ const mountTuiRoot = () => {
           commitMirrorCopy(current.paneId, current.anchor, current.head);
         },
         forwardTerminalCtrlC: () => {
-          const pane = semanticView?.focusedPane();
+          const pane = activeTerminalInputPane();
           if (!pane || !semanticView) return;
           clearSelection();
           snapLive(pane);
@@ -5104,7 +5154,7 @@ const mountTuiRoot = () => {
         case "select-text": {
           // The pane menu verb's palette twin (M22.9) — same gate: the focused
           // pane must be app-mouse (otherwise drags already select directly).
-          const pid = semanticView?.focusedPane();
+          const pid = activeTerminalInputPane();
           const p = panes().find((x) => x.id === pid);
           if (pid && p?.appMouse) enterSelectMode(pid);
           break;
@@ -5541,7 +5591,7 @@ const mountTuiRoot = () => {
       const query = s.query;
       setSearch({ query, editing: false });
       if (query.length === 0) return;
-      const pid = semanticView.focusedPane();
+      const pid = activeTerminalInputPane();
       if (!pid) return;
       // Store matches bottom-up (nearest the live viewport first) so the landed
       // match reads "1/N" and n walks upward — see visitOrder.
@@ -5554,7 +5604,7 @@ const mountTuiRoot = () => {
     };
     /** n / N — cycle the focused pane's current match and re-scroll to it. */
     const jumpMatch = (dir: 1 | -1) => {
-      const pid = semanticView?.focusedPane();
+      const pid = activeTerminalInputPane();
       if (!pid) return;
       const ps = paneSearches().get(pid);
       if (!ps || ps.matches.length === 0) return;
@@ -5565,7 +5615,7 @@ const mountTuiRoot = () => {
     };
     /** The "3/17 matches" tally for the focused pane's search (input-line status). */
     const searchStatus = (): string => {
-      const pid = semanticView?.focusedPane();
+      const pid = activeTerminalInputPane();
       const ps = pid ? paneSearches().get(pid) : undefined;
       if (!ps || search()?.editing) return "";
       if (ps.matches.length === 0) return "no matches";
@@ -6637,7 +6687,7 @@ const mountTuiRoot = () => {
       if (evt.ctrl && evt.name === "o") {
         const ps = panes();
         if (ps.length > 1 && semanticView) {
-          const cur = ps.findIndex((p) => p.id === semanticView!.focusedPane());
+          const cur = ps.findIndex((p) => p.id === activeTerminalInputPane());
           const nextPaneId = ps[(cur + 1) % ps.length]!.id;
           submitSemanticPaneFocus(nextPaneId);
         }
@@ -6661,7 +6711,7 @@ const mountTuiRoot = () => {
         evt.name === "/" &&
         !evt.ctrl &&
         !evt.meta &&
-        (scrollOffsets.get(semanticView.focusedPane()) ?? 0) > 0
+        (scrollOffsets.get(activeTerminalInputPane() ?? "") ?? 0) > 0
       ) {
         openSearch();
         return;
@@ -6679,23 +6729,25 @@ const mountTuiRoot = () => {
       }
       // Any key that reaches the pane retires a stale selection highlight.
       clearSelection();
-      snapLive(semanticView.focusedPane());
+      const inputPane = activeTerminalInputPane();
+      if (!inputPane) return;
+      snapLive(inputPane);
       // The input fast path (M21.5): sendKey/sendText are fire-and-forget —
       // no reply Promise, literals coalesced (ordering preserved downstream).
       if (evt.ctrl && evt.name.length === 1) {
-        if (!sendSemanticTerminalKey(semanticView.focusedPane(), `C-${evt.name}`))
+        if (!sendSemanticTerminalKey(inputPane, `C-${evt.name}`))
           setStatusNote("terminal runtime is reconnecting");
         return;
       }
       const named = KEYMAP[evt.name];
       if (named) {
-        if (!sendSemanticTerminalKey(semanticView.focusedPane(), named))
+        if (!sendSemanticTerminalKey(inputPane, named))
           setStatusNote("terminal runtime is reconnecting");
         return;
       }
       if (evt.name.length === 1 && !evt.meta) {
         const text = evt.shift ? evt.name.toUpperCase() : evt.name;
-        if (!sendSemanticTerminalText(semanticView.focusedPane(), text))
+        if (!sendSemanticTerminalText(inputPane, text))
           setStatusNote("terminal runtime is reconnecting");
       }
     });
@@ -7736,6 +7788,7 @@ const mountTuiRoot = () => {
           setHoveredPaneSeparator(null);
           setActivePaneResize({ sep, delta: 0 });
           const beganResize = resizeTransaction.begin({
+            authorityGeneration: lane.connectionIdentity,
             workspaceName: lane.workspaceName,
             semanticPaneId,
             axis: sep.axis === "x" ? "cols" : "rows",

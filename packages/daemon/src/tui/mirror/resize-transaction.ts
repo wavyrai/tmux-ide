@@ -1,8 +1,17 @@
 import type { SessionRuntimeSemanticIntent } from "@tmux-ide/contracts";
+import {
+  createOptimisticProjection,
+  deriveOptimisticProjection,
+  enqueueOptimisticOperation,
+  reconcileOptimisticOperation,
+  replaceCommittedProjection,
+  type OptimisticProjectionState,
+} from "@tmux-ide/core";
 
 export type ResizeTransactionAxis = "cols" | "rows";
 
 export interface ResizeTransactionTarget {
+  readonly authorityGeneration: string;
   readonly workspaceName: string;
   readonly semanticPaneId: string;
   readonly axis: ResizeTransactionAxis;
@@ -117,6 +126,9 @@ export class ResizeTransactionController {
     outcome: null,
   });
   #cancelTimeout: (() => void) | null = null;
+  #projection: OptimisticProjectionState<number, number> | null = null;
+  #revision = 0;
+  #disposed = false;
 
   constructor(options: ResizeTransactionControllerOptions) {
     if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
@@ -132,15 +144,25 @@ export class ResizeTransactionController {
   begin(input: ResizeTransactionBegin): boolean {
     // A second pointer-down must not silently retire an already-submitted
     // operation (or replace a gesture whose pointer is still captured).
-    if (this.#state.phase !== "idle") return false;
+    if (this.#disposed || this.#state.phase !== "idle") return false;
     this.#clearTimeout();
+    const authorityGeneration = nonEmpty(input.authorityGeneration, "authorityGeneration");
+    const workspaceName = nonEmpty(input.workspaceName, "workspaceName");
+    const semanticPaneId = nonEmpty(input.semanticPaneId, "semanticPaneId");
+    const canonicalCells = positiveCells(input.canonicalCells, "canonicalCells");
+    this.#projection = createOptimisticProjection<number, number>({
+      generation: authorityGeneration,
+      revision: this.#revision,
+      value: canonicalCells,
+    });
     this.#emit({
       phase: "dragging",
-      workspaceName: nonEmpty(input.workspaceName, "workspaceName"),
-      semanticPaneId: nonEmpty(input.semanticPaneId, "semanticPaneId"),
+      authorityGeneration,
+      workspaceName,
+      semanticPaneId,
       axis: input.axis,
-      canonicalCells: positiveCells(input.canonicalCells, "canonicalCells"),
-      previewCells: input.canonicalCells,
+      canonicalCells,
+      previewCells: canonicalCells,
       startedAt: this.#options.now(),
     });
     return true;
@@ -169,11 +191,22 @@ export class ResizeTransactionController {
     }
 
     const operationId = nonEmpty(this.#options.operationId(), "operationId");
+    const submittedAt = this.#options.now();
+    if (!this.#projection) throw new Error("resize projection is unavailable");
+    this.#projection = enqueueOptimisticOperation(this.#projection, {
+      operationId,
+      intent: dragging.previewCells,
+      acceptedAtMs: submittedAt,
+      deadlineAtMs: submittedAt + this.#options.timeoutMs,
+    });
     const pending: Extract<ResizeTransactionState, { phase: "pending" }> = {
       ...dragging,
       phase: "pending",
       operationId,
-      submittedAt: this.#options.now(),
+      previewCells: deriveOptimisticProjection(this.#projection, {
+        predict: (_committed, cells) => cells,
+      }),
+      submittedAt,
     };
     this.#emit(pending);
     this.#cancelTimeout = this.#options.schedule(
@@ -221,13 +254,41 @@ export class ResizeTransactionController {
   }
 
   dispose(): void {
+    this.#disposed = true;
+    this.retire();
+  }
+
+  /** Retire one runtime lane without permanently disposing the controller. */
+  retire(): void {
     this.#clearTimeout();
+    this.#projection = null;
+    if (this.#state.phase !== "idle" || this.#state.canonicalCells !== null) {
+      this.#emit({ phase: "idle", canonicalCells: null, outcome: null });
+    }
   }
 
   #settle(observation: ResizeTransactionObservation, source: "layout"): boolean {
-    if (this.#state.phase !== "pending" || !sameTarget(this.#state, observation)) return false;
+    if (
+      this.#state.phase !== "pending" ||
+      !sameTarget(this.#state, observation) ||
+      !this.#projection?.pending.some(
+        (operation) => operation.operationId === observation.operationId,
+      )
+    )
+      return false;
     const cells = positiveCells(observation.cells, "observed cells");
     const operationId = this.#state.operationId;
+    if (!this.#projection) return false;
+    this.#revision += 1;
+    this.#projection = replaceCommittedProjection(
+      this.#projection,
+      {
+        generation: this.#projection.committed.generation,
+        revision: this.#revision,
+        value: cells,
+      },
+      { observedOperationIds: [operationId], nowMs: this.#options.now() },
+    );
     this.#clearTimeout();
     this.#emit({
       phase: "idle",
@@ -246,7 +307,19 @@ export class ResizeTransactionController {
     operationId: string,
     reason: Extract<ResizeTransactionOutcome, { kind: "reverted" }>["reason"],
   ): boolean {
-    if (this.#state.phase !== "pending" || this.#state.operationId !== operationId) return false;
+    if (
+      this.#state.phase !== "pending" ||
+      this.#state.operationId !== operationId ||
+      !this.#projection?.pending.some((operation) => operation.operationId === operationId)
+    )
+      return false;
+    if (this.#projection) {
+      this.#projection = reconcileOptimisticOperation(
+        this.#projection,
+        operationId,
+        reason.kind === "timed-out" ? "timed-out" : "rejected",
+      );
+    }
     const canonicalCells = this.#state.canonicalCells;
     this.#clearTimeout();
     this.#emit({
