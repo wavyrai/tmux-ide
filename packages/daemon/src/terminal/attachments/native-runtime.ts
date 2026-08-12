@@ -1024,10 +1024,48 @@ export class NativeTerminalAttachmentRuntime {
     );
     if (panes.length === 0) return null;
     const active = panes.find((pane) => pane.active) ?? panes[0]!;
-    // This inventory is the daemon's authenticated semantic-pane authority.
-    // Begin warming its shared SessionRuntime now, without delaying the shell
-    // response or trusting any pane set supplied by a renderer.
-    this.#prewarmSessionRuntime?.(workspace.sessionName);
+    const sessionCatalog = analyzeTrustedSemanticPaneCatalog(
+      panes.map(
+        ({
+          sessionName: _sessionName,
+          index: _index,
+          title: _title,
+          currentCommand: _currentCommand,
+          active: _active,
+          role: _role,
+          name: _name,
+          type: _type,
+          missionStamp: _missionStamp,
+          dir: _dir,
+          ...row
+        }) => row,
+      ),
+    );
+    const windowStamps = new Map<string, string>();
+    let windowIdentityReady = true;
+    for (const pane of sessionCatalog.rows) {
+      const stamp = pane.windowStamp ?? null;
+      const previous = windowStamps.get(pane.windowId);
+      if (stamp === null || (previous !== undefined && previous !== stamp)) {
+        windowIdentityReady = false;
+        break;
+      }
+      windowStamps.set(pane.windowId, stamp);
+    }
+    if (new Set(windowStamps.values()).size !== windowStamps.size) windowIdentityReady = false;
+    if (
+      !sessionCatalog.invalidRuntimeProof &&
+      !sessionCatalog.missingSemanticStamp &&
+      !sessionCatalog.duplicateSemanticStamp &&
+      !sessionCatalog.duplicateRuntimePaneBinding &&
+      windowIdentityReady
+    ) {
+      // Only a fully stamped daemon-authored inventory may start MirrorService.
+      // Promotion owns first identity assignment; warming earlier would let the
+      // mirror race it and mint `window.mirror.*` instead of promoted identity.
+      // This remains detached so application-shell response latency is unchanged.
+      this.#prewarmSessionRuntime?.(workspace.sessionName);
+    }
     const catalogIssue: NativeTerminalInventoryCatalogIssue | null = inventory.catalog
       .invalidRuntimeProof
       ? "invalid-runtime-proof"
