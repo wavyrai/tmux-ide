@@ -144,6 +144,46 @@ describe("deferred Changes controller", () => {
     test.session.dispose();
   });
 
+  it("reconciles catalog selection and stage-follow against the filtered file order", () => {
+    const test = harness();
+    test.session.applyCatalog(ready(entries.slice(0, 2)));
+    test.git[0]!.callback("+initial\n");
+    test.session.handleKey({ name: "/", ctrl: false, meta: false, shift: false }, "surface");
+    test.session.handleKey({ name: "b", ctrl: false, meta: false, shift: false }, "filter");
+    expect(test.session.selectedPath()).toBe("src/b.ts");
+
+    const filteredRow = test.session
+      .projection()
+      .listRows.find((row) => row.kind === "file" && row.entry.path === "src/b.ts");
+    expect(filteredRow?.kind).toBe("file");
+    if (!filteredRow || filteredRow.kind !== "file" || !filteredRow.action)
+      throw new Error("selected filtered row has no stage action");
+    test.session.handlePointer({
+      type: "down",
+      x: filteredRow.action.start,
+      y: filteredRow.y,
+    });
+    const mutation = test.git.at(-1)!;
+    expect(mutation.args).toEqual(["add", "--", "src/b.ts"]);
+    mutation.callback("");
+    const beforeRefresh = test.git.length;
+
+    test.session.applyCatalog(
+      ready([entries[0]!, { ...entries[1]!, group: "staged", status: "modified" }]),
+    );
+    expect(test.session.selectedPath()).toBe("src/b.ts");
+    expect(test.git).toHaveLength(beforeRefresh + 1);
+    expect(test.git.at(-1)!.args).toEqual(["diff", "--no-color", "--cached", "--", "src/b.ts"]);
+
+    test.session.handleKey({ name: "z", ctrl: false, meta: false, shift: false }, "filter");
+    const beforeNoMatchRefresh = test.git.length;
+    test.session.applyCatalog(ready(entries.slice(0, 2)));
+    expect(test.session.selectedPath()).toBeNull();
+    expect(test.session.projection().diffLines).toEqual([]);
+    expect(test.git).toHaveLength(beforeNoMatchRefresh);
+    test.session.dispose();
+  });
+
   it("drops a mutation completion after the controller is retired", () => {
     const test = harness();
     test.session.applyCatalog(ready(entries.slice(1, 2)));
@@ -188,8 +228,29 @@ describe("deferred Changes controller", () => {
       y: projection.diff.y,
       direction: "down",
       scrollStep: 3,
+      outsideBody: "ignore",
     });
     expect(test.session.scrollState().top).toBeGreaterThan(before);
+
+    const bodyTop = test.session.scrollState().top;
+    test.session.handlePointer({
+      type: "scroll",
+      x: 0,
+      y: 0,
+      direction: "down",
+      scrollStep: 3,
+      outsideBody: "ignore",
+    });
+    expect(test.session.scrollState().top).toBe(bodyTop);
+    test.session.handlePointer({
+      type: "scroll",
+      x: 0,
+      y: 0,
+      direction: "down",
+      scrollStep: 3,
+      outsideBody: "diff",
+    });
+    expect(test.session.scrollState().top).toBeGreaterThan(bodyTop);
     test.session.setScrollTop(999);
     expect(test.session.scrollState().top).toBeLessThan(999);
     test.session.dispose();

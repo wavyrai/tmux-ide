@@ -14,14 +14,22 @@ export type ChangesHoverTarget =
   | { readonly kind: "list-row"; readonly index: number }
   | { readonly kind: "footer-action"; readonly index: number };
 
-export interface ChangesPointerEvent {
-  readonly type: "down" | "scroll";
-  readonly x: number;
-  readonly y: number;
-  readonly button?: number;
-  readonly direction?: "up" | "down";
-  readonly scrollStep?: number;
-}
+export type ChangesPointerEvent =
+  | {
+      readonly type: "down";
+      readonly x: number;
+      readonly y: number;
+      readonly button?: number;
+    }
+  | {
+      readonly type: "scroll";
+      readonly x: number;
+      readonly y: number;
+      readonly direction: "up" | "down";
+      readonly scrollStep?: number;
+      /** Dock chrome ignores wheel input; the legacy full surface scrolls its diff. */
+      readonly outsideBody: "ignore" | "diff";
+    };
 
 export interface ChangesContextTarget {
   readonly title: string;

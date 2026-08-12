@@ -327,27 +327,26 @@ export function createChangesFeatureController(
         deletions: entry.deletions,
       }));
       setEntries(nextEntries);
-      if (nextEntries.length === 0) {
+      const files = visibleFiles();
+      if (files.length === 0) {
         readToken += 1;
         setDiffText("");
-        setMessage("working tree clean");
+        setMessage(nextEntries.length === 0 ? "working tree clean" : "");
         return;
       }
       setMessage("");
-      let next = clampSel(selected(), nextEntries.length);
+      let next = clampSel(selected(), files.length);
       if (pendingPath) {
         const exact = pendingGroup
-          ? nextEntries.findIndex(
-              (entry) => entry.path === pendingPath && entry.group === pendingGroup,
-            )
+          ? files.findIndex((entry) => entry.path === pendingPath && entry.group === pendingGroup)
           : -1;
-        const fallback = nextEntries.findIndex((entry) => entry.path === pendingPath);
+        const fallback = files.findIndex((entry) => entry.path === pendingPath);
         if (exact >= 0 || fallback >= 0) next = exact >= 0 ? exact : fallback;
         pendingPath = null;
         pendingGroup = null;
       }
       setSelected(next);
-      loadDiff(nextEntries[next]!);
+      loadDiff(files[next]!);
     };
 
     const handleKey = (event: ChangesKeyEvent, mode: "filter" | "surface"): boolean => {
@@ -403,12 +402,12 @@ export function createChangesFeatureController(
       if (disposed) return false;
       const hit = changesHitTest(projection(), event.x, event.y);
       if (event.type === "scroll") {
-        if (event.direction !== "up" && event.direction !== "down") return true;
         const step =
           (event.direction === "up" ? -1 : 1) * (event.scrollStep ?? DEFAULT_SCROLL_STEP);
         if (hit?.area === "list")
           setFileTop((top) => clampTop(top + step, rows().length, bodyRows()));
-        else setDiffTop((top) => clampTop(top + step, lines().length, bodyRows()));
+        else if (hit?.area === "diff" || event.outsideBody === "diff")
+          setDiffTop((top) => clampTop(top + step, lines().length, bodyRows()));
         return true;
       }
       if (event.button === 2) return true;
