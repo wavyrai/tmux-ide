@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   TerminalDeliveryAck,
   TerminalDeliveryEnvelope,
@@ -8,6 +8,7 @@ import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.t
 import { ScriptedChannelDriver } from "../mirror/__tests__/scripted-channel.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
 import { createSessionRuntimeObservability } from "./runtime-observability.ts";
+import type { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
 
 const GENERATION = "11111111-1111-4111-8111-111111111111";
 const OFFER = {
@@ -16,8 +17,18 @@ const OFFER = {
   richPlacements: false,
 } as const;
 
-function rig(generation = GENERATION) {
+function rig(
+  generation = GENERATION,
+  options: {
+    readonly observability?: ReturnType<typeof createSessionRuntimeObservability> | null;
+    readonly createTraceCorrelator?: () => RuntimeTraceCorrelator;
+  } = {},
+) {
   const drivers: ScriptedChannelDriver[] = [];
+  const observability =
+    options.observability === undefined
+      ? createSessionRuntimeObservability()
+      : options.observability;
   let sequence = 0;
   const receipts: Array<{
     operationId: string;
@@ -36,7 +47,10 @@ function rig(generation = GENERATION) {
       controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
     },
     createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    observability: createSessionRuntimeObservability(),
+    ...(observability ? { observability } : {}),
+    ...(options.createTraceCorrelator
+      ? { createTraceCorrelator: options.createTraceCorrelator }
+      : {}),
     semanticMutations: {
       resolveSession: () => "zz-sim",
       execute: (operationId, intent) => {
@@ -178,7 +192,14 @@ describe("real SessionRuntime qualification", () => {
     connection.ack(ack(seed));
     const traceId = "00000000-0000-4000-8000-000000000099";
     const lease = client.acquireController();
+    const commandsBeforeInvalid = drivers[0]!.channel.written.length;
+    expect(() =>
+      client.sendInput(lease, "pane.alpha", "text", "must-not-send", "not-a-uuid"),
+    ).toThrow();
+    expect(drivers[0]!.channel.written).toHaveLength(commandsBeforeInvalid);
     client.sendInput(lease, "pane.alpha", "text", "printf TRACE", traceId);
+    // This is deliberately a controlled next-output probe, not general
+    // causality: unrelated external output arriving first consumes it.
     drivers[0]!.output("%1", "TRACE");
     await drivers[0]!.settleUntil(
       () => latest(messages).canonicalRevision > seed.canonicalRevision,
@@ -200,6 +221,49 @@ describe("real SessionRuntime qualification", () => {
     ).toBe(true);
     for (let index = 1; index < spans.length; index += 1)
       expect(spans[index - 1]!.endedAtMicros).toBeLessThanOrEqual(spans[index]!.startedAtMicros);
+    connection.ack(ack(envelope));
+    drivers[0]!.output("%1", "INTENDED-LATER");
+    await drivers[0]!.settleUntil(
+      () => latest(messages).canonicalRevision > envelope.canonicalRevision,
+      "post-probe output",
+    );
+    expect(latest(messages).performanceTraceId).toBeUndefined();
+    await connection.close();
+    await client.close();
+    await registry.dispose();
+  });
+
+  it("does not construct or consult trace correlation while observability is disabled", async () => {
+    const createTraceCorrelator = vi.fn(() => {
+      throw new Error("disabled trace correlator must stay untouched");
+    });
+    const { registry, drivers } = rig(GENERATION, {
+      observability: null,
+      createTraceCorrelator,
+    });
+    const client = registry.connect("zz-sim", "opentui", "client:disabled-trace");
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const opening = client.openTerminalDelivery(
+      "delivery:disabled-trace",
+      "pane.alpha",
+      OFFER,
+      (message) => messages.push(message),
+    );
+    await waitForDriver(drivers);
+    await drivers[0]!.settleUntil(
+      () => messages.some((message) => message.type === "terminal.delivery"),
+      "disabled trace replica",
+    );
+    const connection = await opening;
+    connection.ack(ack(latest(messages)));
+    drivers[0]!.output("%1", "EXTERNAL");
+    await drivers[0]!.settleUntil(
+      () =>
+        (registry.qualificationSnapshot().sessions[0]?.replicas["pane.alpha"]?.revision ?? 0) > 0,
+      "disabled trace output",
+    );
+    expect(createTraceCorrelator).not.toHaveBeenCalled();
+    expect(registry.qualificationSnapshot().observability).toEqual({ spans: [], droppedSpans: 0 });
     await connection.close();
     await client.close();
     await registry.dispose();

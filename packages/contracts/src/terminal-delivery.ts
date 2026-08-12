@@ -79,8 +79,9 @@ export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
   type: z.literal("terminal.delivery"),
   transactionId: z.uuid(),
   /**
-   * Optional diagnostics-only causal id for the daemon output pipeline.
-   * It never grants authority and is absent while tracing is disabled.
+   * Optional diagnostics-only controlled next-output probe id. It never grants
+   * authority, is absent while tracing is disabled, and must not be interpreted
+   * as general causality: unrelated external tmux output may consume the probe.
    */
   performanceTraceId: z.uuid().optional(),
   protocolVersion: z.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),

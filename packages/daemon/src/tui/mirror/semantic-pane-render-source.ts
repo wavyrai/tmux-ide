@@ -167,6 +167,7 @@ export class SemanticPaneReplica {
     if (message.type === "terminal.delivery.fault") {
       this.#assembler = null;
       this.#snapshot = null;
+      this.#pendingPaintTrace = null;
       this.#version += 1;
       this.#notify({ kind: "closed", version: this.#version });
       return;
@@ -319,14 +320,20 @@ export class SemanticPaneReplica {
     }
     this.#delivery = committed.state;
     this.#assembler = null;
+    if (
+      this.#pendingPaintTrace &&
+      (this.#pendingPaintTrace.generation !== envelope.generation ||
+        this.#pendingPaintTrace.incarnation !== envelope.incarnation)
+    )
+      this.#pendingPaintTrace = null;
     this.#applySnapshot(previous, committed.state.canonicalSnapshot, envelope, payload);
-    this.#pendingPaintTrace = envelope.performanceTraceId
-      ? Object.freeze({
-          traceId: envelope.performanceTraceId,
-          generation: envelope.generation,
-          incarnation: envelope.incarnation,
-        })
-      : null;
+    if (committed.state.canonicalSnapshot && envelope.performanceTraceId)
+      this.#pendingPaintTrace = Object.freeze({
+        traceId: envelope.performanceTraceId,
+        generation: envelope.generation,
+        incarnation: envelope.incarnation,
+      });
+    if (!committed.state.canonicalSnapshot) this.#pendingPaintTrace = null;
     const reseed = envelope.frame === "seed" && this.#hasAcceptedSeed;
     if (envelope.frame === "seed") this.#hasAcceptedSeed = true;
     if (performanceSink) {

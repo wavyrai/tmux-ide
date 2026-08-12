@@ -118,6 +118,7 @@ interface PaneState {
   lastRawRevision: number;
   readonly pendingCanonical: PendingCanonicalUpdate[];
   canonicalScheduled: boolean;
+  pendingDeliveryTrace: SessionRuntimeTraceContext | null;
 }
 
 export interface TerminalDeliverySourceOwner {
@@ -386,6 +387,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       lastRawRevision: -1,
       pendingCanonical: [],
       canonicalScheduled: false,
+      pendingDeliveryTrace: null,
     };
     this.#panes.set(semanticPaneId, pane);
     pane.start = owner
@@ -441,7 +443,8 @@ export class SessionRuntimeTerminalDeliveryHub {
     const result = applyTerminalReplicaUpdate(pane.current, update);
     if (result.status !== "applied" && result.status !== "idempotent") return;
     pane.current = result.state;
-    const record = { update, state: result.state, trace };
+    if (trace) pane.pendingDeliveryTrace = trace;
+    const record = { update, state: result.state, trace: pane.pendingDeliveryTrace };
     pane.latest = record;
     pane.revisions.set(update.revision, record);
     while (pane.revisions.size > MAX_CANONICAL_REVISIONS)
@@ -574,6 +577,8 @@ export class SessionRuntimeTerminalDeliveryHub {
         sentAt: this.#scheduler.nowMs(),
       };
       this.#enqueue(client, envelope);
+      if (target.trace?.traceId === pane.pendingDeliveryTrace?.traceId)
+        pane.pendingDeliveryTrace = null;
     } catch (error) {
       this.#fault(
         client,

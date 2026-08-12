@@ -65,6 +65,47 @@ function seedMessages(
   return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes) };
 }
 
+function patchMessages(
+  previous: TerminalReplicaSnapshot,
+  revision: number,
+  txSuffix: string,
+  performanceTraceId?: string,
+) {
+  const next = structuredClone(previous);
+  next.cursor.x = revision % next.cols;
+  const payload = {
+    frame: "patch" as const,
+    baseRevision: revision - 1,
+    revision,
+    patch: { rows: [], cursor: next.cursor },
+  };
+  const bytes = encodeSemanticTerminalUpdate(payload);
+  const transactionId = `00000000-0000-4000-8000-${txSuffix.padStart(12, "0")}`;
+  const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
+    type: "terminal.delivery",
+    workspaceName: "workspace.alpha",
+    semanticPaneId: pane,
+    generation,
+    incarnation: `${generation}:7`,
+    deliveryNonce: nonce,
+    transactionId,
+    ...(performanceTraceId ? { performanceTraceId } : {}),
+    protocolVersion: 1,
+    encoding: "semantic-v1",
+    frame: "patch",
+    baseRevision: revision - 1,
+    canonicalRevision: revision,
+    canonicalStateHash: hashTerminalReplicaSnapshot(next),
+    representationHash: hashTerminalDeliveryRepresentation(bytes),
+    representationBytes: bytes.byteLength,
+    chunkCount: Math.max(1, Math.ceil(bytes.byteLength / (256 * 1024))),
+    canonicalEquivalent: true,
+    history: "complete",
+    richPlacements: false,
+  });
+  return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes), next };
+}
+
 function arrays(width: number, height: number): CellArrays {
   return {
     char: new Uint32Array(width * height),
@@ -143,6 +184,40 @@ describe("SemanticPaneReplica", () => {
         dirtyRows: [],
       }),
     ).toBeNull();
+  });
+
+  it("keeps the latest traced delivery through later untraced state until paint", () => {
+    const traceA = "00000000-0000-4000-8000-000000000094";
+    const traceB = "00000000-0000-4000-8000-000000000095";
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+    });
+    const source = new SemanticTerminalRenderSource();
+    source.set(replica);
+    const initial = blankTerminalReplicaSnapshot(2, 1);
+    const seed = seedMessages(initial, "401");
+    replica.accept(seed.envelope);
+    for (const chunk of seed.chunks) replica.accept(chunk);
+    const first = patchMessages(initial, 1, "402", traceA);
+    replica.accept(first.envelope);
+    for (const chunk of first.chunks) replica.accept(chunk);
+    const latest = patchMessages(first.next, 2, "403", traceB);
+    replica.accept(latest.envelope);
+    for (const chunk of latest.chunks) replica.accept(chunk);
+    const untraced = patchMessages(latest.next, 3, "404");
+    replica.accept(untraced.envelope);
+    for (const chunk of untraced.chunks) replica.accept(chunk);
+
+    expect(
+      source.blitPane(pane, arrays(2, 1), 2, 1, 0, 0xffffff, 0, {
+        full: true,
+        dirtyRows: [],
+      }),
+    ).toMatchObject({ traceId: traceB });
   });
 
   it("isolates a diagnostic observer failure from terminal protocol truth", () => {

@@ -4,7 +4,9 @@ import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
 /**
  * Bounded, one-shot correlation for explicitly traced controller input.
  * One pane owns at most one probe; a newer probe supersedes the older one.
- * External tmux output can never create an entry here.
+ * This is a controlled next-output probe, not general causality. External tmux
+ * output cannot create an entry, but unrelated output arriving first may
+ * consume an armed probe; qualification callers must use an isolated pane.
  */
 export class RuntimeTraceCorrelator {
   readonly #scheduler: SessionRuntimeScheduler;
@@ -37,6 +39,12 @@ export class RuntimeTraceCorrelator {
     this.#pending.delete(semanticPaneId);
     pending?.expiry.cancel();
     return pending?.trace ?? null;
+  }
+
+  clearPane(semanticPaneId: string): void {
+    const pending = this.#pending.get(semanticPaneId);
+    this.#pending.delete(semanticPaneId);
+    pending?.expiry.cancel();
   }
 
   clear(): void {

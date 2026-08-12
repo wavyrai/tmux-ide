@@ -45,4 +45,14 @@ describe("RuntimeTraceCorrelator", () => {
     expect(correlator.size).toBe(0);
     expect(correlator.take("pane.a")).toBeNull();
   });
+
+  it("clears one pane at an incarnation boundary without disturbing siblings", () => {
+    const { correlator, timers } = rig();
+    correlator.arm("pane.a", trace("00000000-0000-4000-8000-000000000004"));
+    correlator.arm("pane.b", trace("00000000-0000-4000-8000-000000000005"));
+    correlator.clearPane("pane.a");
+    expect(timers[0]!.cancelled).toBe(true);
+    expect(correlator.take("pane.a")).toBeNull();
+    expect(correlator.take("pane.b")?.traceId).toBe("00000000-0000-4000-8000-000000000005");
+  });
 });

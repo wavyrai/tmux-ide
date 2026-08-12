@@ -68,6 +68,8 @@ export interface SessionRuntimeRegistryOptions {
   readonly createControllerToken?: () => string;
   readonly scheduler?: SessionRuntimeScheduler;
   readonly observability?: SessionRuntimeObservability;
+  /** Deterministic qualification seam; never invoked while observability is disabled. */
+  readonly createTraceCorrelator?: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
 }
 
 export interface SessionRuntimeQualificationSnapshot {
@@ -196,6 +198,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #createControllerToken: () => string;
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
+  readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #sessions = new Map<string, SessionRuntime>();
   readonly #executionHandles = new WeakMap<object, ExecutionHandleState>();
   readonly #stopExitObserver: () => void;
@@ -206,6 +209,8 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.generation = SessionRuntimeGenerationSchemaZ.parse(options.generation);
     this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
+    this.#createTraceCorrelator =
+      options.createTraceCorrelator ?? ((scheduler) => new RuntimeTraceCorrelator(scheduler));
     this.#mirror = new MirrorService(options.mirror);
     this.#semanticMutations = options.semanticMutations
       ? new SessionSemanticMutationExecutor({
@@ -480,6 +485,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       this.#createControllerToken,
       this.#scheduler,
       this.#observability,
+      this.#createTraceCorrelator,
       (
         owner,
         lease,
@@ -509,7 +515,7 @@ class SessionRuntime {
   readonly #consumersByClientId = new Map<string, SessionRuntimeConsumerImpl>();
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
-  readonly #outputTraces: RuntimeTraceCorrelator;
+  readonly #outputTraces: RuntimeTraceCorrelator | null;
   readonly #terminalDeliveryHub: SessionRuntimeTerminalDeliveryHub;
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
@@ -539,6 +545,7 @@ class SessionRuntime {
     createControllerToken: () => string,
     scheduler: SessionRuntimeScheduler,
     observability: SessionRuntimeObservability,
+    createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator,
     submitAuthorized: (
       runtime: SessionRuntime,
       lease: SessionRuntimeControllerLease,
@@ -550,7 +557,7 @@ class SessionRuntime {
   ) {
     this.#mirror = mirror;
     this.#scheduler = scheduler;
-    this.#outputTraces = new RuntimeTraceCorrelator(scheduler);
+    this.#outputTraces = observability.enabled ? createTraceCorrelator(scheduler) : null;
     this.#observability = observability;
     this.#createControllerToken = createControllerToken;
     this.#submitAuthorized = submitAuthorized;
@@ -719,6 +726,7 @@ class SessionRuntime {
     performanceTraceId?: string,
   ): void {
     this.assertController(lease, clientId);
+    if (performanceTraceId !== undefined) performanceTraceId = z.uuid().parse(performanceTraceId);
     const trace = this.#observability.enabled
       ? this.#observability.beginTrace(
           "terminal-input-to-paint",
@@ -730,12 +738,12 @@ class SessionRuntime {
         )
       : null;
     const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-    if (trace && performanceTraceId) this.#outputTraces.arm(semanticPaneId, trace);
+    if (trace && performanceTraceId) this.#outputTraces?.arm(semanticPaneId, trace);
     try {
       if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId, data);
       else this.#mirror.sendKey(this.session, semanticPaneId, data);
     } catch (error) {
-      if (trace && performanceTraceId) this.#outputTraces.take(semanticPaneId);
+      if (trace && performanceTraceId) this.#outputTraces?.take(semanticPaneId);
       throw error;
     }
     if (this.#observability.enabled)
@@ -834,6 +842,7 @@ class SessionRuntime {
   #terminalReplicaOwner(semanticPaneId: string): SessionRuntimeTerminalReplicaOwner {
     let owner = this.#terminalReplicas.get(semanticPaneId);
     if (!owner) {
+      this.#outputTraces?.clearPane(semanticPaneId);
       const clock = this.#terminalReplicaClocks.get(semanticPaneId) ?? { epoch: 0, revision: -1 };
       const initialRevision = clock.revision + 1;
       let candidate: SessionRuntimeTerminalReplicaOwner;
@@ -852,6 +861,7 @@ class SessionRuntime {
           },
           onClosed: () => {
             if (this.#terminalReplicas.get(semanticPaneId) !== candidate) return;
+            this.#outputTraces?.clearPane(semanticPaneId);
             this.#terminalReplicas.delete(semanticPaneId);
             const current = this.#terminalReplicaClocks.get(semanticPaneId) ?? clock;
             current.epoch += 1;
@@ -859,6 +869,7 @@ class SessionRuntime {
           },
           onFault: () => {
             if (this.#terminalReplicas.get(semanticPaneId) !== candidate) return;
+            this.#outputTraces?.clearPane(semanticPaneId);
             this.#terminalReplicas.delete(semanticPaneId);
             this.#restartBarrier = this.#restartBarrier.then(async () => {
               await candidate.dispose("session-restarted");
@@ -869,16 +880,23 @@ class SessionRuntime {
           },
           scheduler: this.#scheduler,
           observability: this.#observability,
-          takeOutputTrace: () => {
-            const pending = this.#outputTraces.take(semanticPaneId);
-            return pending
-              ? this.#observability.beginTrace(
-                  pending.scenario,
-                  { generation: this.generation, incarnation: `${this.generation}:${clock.epoch}` },
-                  pending.traceId,
-                )
-              : null;
-          },
+          ...(this.#outputTraces
+            ? {
+                takeOutputTrace: () => {
+                  const pending = this.#outputTraces?.take(semanticPaneId) ?? null;
+                  return pending
+                    ? this.#observability.beginTrace(
+                        pending.scenario,
+                        {
+                          generation: this.generation,
+                          incarnation: `${this.generation}:${clock.epoch}`,
+                        },
+                        pending.traceId,
+                      )
+                    : null;
+                },
+              }
+            : {}),
         },
       );
       owner = candidate;
@@ -899,7 +917,7 @@ class SessionRuntime {
     const retention = this.#retention;
     this.#retention = null;
     this.#startPromise = null;
-    this.#outputTraces.clear();
+    this.#outputTraces?.clear();
     const owners = [...this.#terminalReplicas.values()];
     this.#terminalReplicas.clear();
     this.#restartBarrier = this.#restartBarrier.then(async () => {
@@ -918,7 +936,7 @@ class SessionRuntime {
     this.#clearController();
     this.#completedHandoffs.clear();
     this.#releasedLeases.clear();
-    this.#outputTraces.clear();
+    this.#outputTraces?.clear();
     await Promise.allSettled(
       [...this.#terminalReplicas.values()].map((owner) => owner.dispose("runtime-disposed")),
     );
