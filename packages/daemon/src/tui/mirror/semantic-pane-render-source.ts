@@ -32,6 +32,7 @@ import type { BlitOptions, CursorState } from "./pane-mirror.ts";
 import type { TerminalPaintTrace, TerminalPaneRenderSource } from "./pane-surface.tsx";
 import type { TerminalPaletteProjection } from "./theme.ts";
 import { currentTuiPerformanceEventSink } from "./performance-events.ts";
+import { appendReferenceTraceDiagnostic } from "./reference-performance-trace.ts";
 
 const EMPTY_DIRTY_ROWS: readonly number[] = Object.freeze([]);
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -173,6 +174,10 @@ export class SemanticPaneReplica {
       return;
     }
     if (message.type === "terminal.delivery") {
+      if (message.performanceTraceId)
+        appendReferenceTraceDiagnostic("delivery-arrived", message.performanceTraceId, {
+          revision: message.canonicalRevision,
+        });
       this.#acceptEnvelope(message);
       return;
     }
@@ -320,6 +325,10 @@ export class SemanticPaneReplica {
     }
     this.#delivery = committed.state;
     this.#assembler = null;
+    if (envelope.performanceTraceId)
+      appendReferenceTraceDiagnostic("delivery-committed", envelope.performanceTraceId, {
+        revision: envelope.canonicalRevision,
+      });
     if (
       this.#pendingPaintTrace &&
       (this.#pendingPaintTrace.generation !== envelope.generation ||

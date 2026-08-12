@@ -15,6 +15,22 @@ let installed = false;
 const MAX_PENDING_INPUTS = 256;
 const INPUT_EXPIRY_MICROS = 5_000_000;
 
+export function appendReferenceTraceDiagnostic(
+  phase: string,
+  traceId: string,
+  detail: Readonly<Record<string, unknown>> = {},
+): void {
+  if (!TRACE_PATH) return;
+  append({
+    version: 1,
+    type: "performance.trace.diagnostic",
+    phase,
+    traceId,
+    atMicros: Math.floor(performance.now() * 1_000),
+    ...detail,
+  });
+}
+
 /**
  * Installs only for an explicit reference run. The ordinary path returns before
  * constructing a sink, UUID, clock sample, directory, or file descriptor.
