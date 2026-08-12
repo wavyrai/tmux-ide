@@ -238,7 +238,7 @@ measurements; only the local input/paint endpoints form the end-to-end latency.
 The remaining large first-frame cost is compiled-module loading and evaluation, not
 cell painting. Keep optional dock, mission, file, and discovery code behind the lazy
 surface dispatcher, record `module-loaded`, `renderer-created`, `first-frame`,
-`solid-mounted`, and `tmux-geometry-ready`, and only split another startup module when
+`solid-mounted`, and `first-terminal-frame`, and only split another startup module when
 those marks prove it is on the critical path. Do not add a worker between the control
 client and pane framebuffer: the worker boundary is valuable for business/discovery
 work, but harmful to the terminal pixel loop.

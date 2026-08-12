@@ -104,6 +104,8 @@ describe("production OpenTUI data path", () => {
     expect(source).toContain("runtimeLaneFitKey = fitKey");
     expect(source).toContain('appRenderer.on("frame", acknowledgeTerminalFramePublication)');
     expect(source).toContain("terminalToolReadiness.observeTerminalFrameCommitted()");
+    expect(source).toContain('tuiPerfMark("first-terminal-frame")');
+    expect(source).not.toContain('tuiPerfMark("tmux-geometry-ready")');
     expect(source).not.toContain("terminalToolReadiness.observeTerminalRender()");
     expect(source).toContain("toolResources.markCatalogReady()");
   });

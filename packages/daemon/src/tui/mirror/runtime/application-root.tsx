@@ -2281,11 +2281,20 @@ const mountTuiRoot = () => {
       },
     );
     let terminalFramePublicationPending = false;
+    let firstTerminalFrameMarked = false;
     const acknowledgeTerminalFramePublication = () => {
       toolResources.noteNativeRenderPass();
       if (!terminalFramePublicationPending) return;
       terminalFramePublicationPending = false;
       terminalToolReadiness.observeTerminalFrameCommitted();
+      // A target is usable only after semantic layout produced a non-empty
+      // pane projection and OpenTUI acknowledged the native frame containing
+      // it. SemanticSessionView.start() reports status before inventory,
+      // attachment, or layout and therefore cannot prove startup readiness.
+      if (!firstTerminalFrameMarked) {
+        firstTerminalFrameMarked = true;
+        tuiPerfMark("first-terminal-frame");
+      }
     };
     appRenderer.on("frame", acknowledgeTerminalFramePublication);
     onCleanup(() => appRenderer.off("frame", acknowledgeTerminalFramePublication));
@@ -3424,7 +3433,6 @@ const mountTuiRoot = () => {
     let repinInFlight: RepinState | null = null;
     let pendingAttachTarget: string | null = null;
     let mirrorSupervisor: RuntimeConnectionSupervisor<SemanticSessionView> | null = null;
-    let tuiGeometryReadyMarked = false;
     const attach = (name: string) => {
       const pin = terminalCanvasProjection().tmuxSize ?? lastPin;
       if (!pin) {
@@ -3456,10 +3464,6 @@ const mountTuiRoot = () => {
         onDirty: markDirty,
         onFocusChanged: (paneId) => setFocusedPaneId(paneId),
         onStatus: () => {
-          if (!tuiGeometryReadyMarked) {
-            tuiGeometryReadyMarked = true;
-            tuiPerfMark("tmux-geometry-ready");
-          }
           markDirty();
           void workspaceAdapter.view.windows().then(setWindowTabs);
           void reconcileSessionRuntimeLane(name, workspaceAdapter.view);
