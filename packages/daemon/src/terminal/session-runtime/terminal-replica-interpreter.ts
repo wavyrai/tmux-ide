@@ -521,7 +521,7 @@ export class TerminalReplicaInterpreter {
     const placementRows = scanPlacements ? [...history, ...grid] : [];
     if (scanPlacements) this.#stats.placementRowsRead += placementRows.length;
     const placements = scanPlacements
-      ? projectPlacements(placementRows, grid.length, this.#terminal.cols, history.length)
+      ? projectPlacements(placementRows, grid.length, this.#terminal.cols)
       : [];
     if (scanPlacements && placements.length === 0) this.#widgetGate = false;
     return assembleTerminalReplicaSnapshot({
@@ -804,7 +804,6 @@ function projectPlacements(
   rows: readonly TerminalReplicaRow[],
   viewportRows: number,
   cols: number,
-  historyRows: number,
 ): TerminalReplicaSnapshot["placements"] {
   const marker = detectWidgetMarkerFromReplicaRows(rows);
   if (!marker) return [];
@@ -812,10 +811,14 @@ function projectPlacements(
     {
       id: marker.id,
       kind: "widget",
-      row: Math.max(0, Math.min(viewportRows - 1, marker.lineIndex - historyRows)),
+      // A pane widget replaces the terminal viewport while its authenticated
+      // marker remains present. The marker's physical row is transport detail,
+      // not widget geometry: projecting only that row gives the host enough
+      // room for chrome but clips every content row below it.
+      row: 0,
       column: 0,
       columns: Math.max(1, cols),
-      rows: 1,
+      rows: Math.max(1, viewportRows),
       contentDigest: hashTerminalWidgetContent(marker.id, marker.args),
     },
   ];
