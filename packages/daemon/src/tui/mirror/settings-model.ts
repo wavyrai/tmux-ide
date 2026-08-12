@@ -15,18 +15,9 @@ import type { AppConfig, AppConfigPatch, AppKeys } from "../../lib/app-config.ts
 import type { ThemeModeSetting } from "./theme.ts";
 import { parseHHMM, type NotificationPrefs } from "../chrome/notify-prefs.ts";
 import type { DialogSelectItem } from "./dialog-model.ts";
-import { APPLICATION_KEYBINDING_ROWS } from "./application-keybindings.ts";
+import { APPLICATION_KEYBINDING_ROWS, prefixTwinFor } from "./application-keybindings.ts";
 
-// Compatibility exports for the current application root. Palette/settings
-// cutover imports the dependency-free catalog directly.
-export { SETTINGS_PALETTE_COMMANDS, type SettingsCommandId } from "./features/settings/catalog.ts";
-
-// Compatibility export for the current application root. The palette cutover
-// imports this from application-keybindings.ts directly, after which this
-// re-export can be removed without touching settings behavior.
-export { PALETTE_KEYCAPS } from "./application-keybindings.ts";
-
-// ── Command registry (what the palette offers) ───────────────────────────────
+export { prefixTwinFor } from "./application-keybindings.ts";
 
 // ── Where changes land (footer copy) ─────────────────────────────────────────
 
@@ -307,19 +298,6 @@ export function restorePatch(id: string): AppConfigPatch {
 /** Mirrors {@link ../chrome/statusline.ts}'s prefix-twin derivation — the
  *  letters tmux binds by default (never clobbered) and the documented remaps.
  *  A drift test asserts agreement with `prefixKeyBinds` for the defaults. */
-const PREFIX_TAKEN = new Set([..."cdfilmnopqrstwxz"]);
-const PREFIX_REMAP: Record<string, string> = { "M-m": "u", "M-p": "j", "M-,": "v" };
-
-/** PURE — the reliable `prefix <letter>` twin for an Alt key, or null when the
- *  letter is taken by a stock tmux bind and has no documented remap. */
-export function prefixTwinFor(altKey: string): string | null {
-  const remapped = PREFIX_REMAP[altKey];
-  if (remapped) return remapped;
-  const letter = /^M-([a-z])$/.exec(altKey)?.[1];
-  if (!letter || PREFIX_TAKEN.has(letter)) return null;
-  return letter;
-}
-
 /** PURE — the read-only shortcut rows: the chrome actions from the LIVE config
  *  (prefix-first, the Alt fast path second — the prefix form is the one that
  *  survives every keyboard protocol) and then the app's fixed keys

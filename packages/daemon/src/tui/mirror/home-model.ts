@@ -17,7 +17,7 @@
 import { basename } from "node:path";
 import type { AgentStatus } from "../detect/classify.ts";
 import type { AppKeys } from "../../lib/app-config.ts";
-import { prefixTwinFor } from "./settings-model.ts";
+import { prefixTwinFor } from "./application-keybindings.ts";
 
 /** A live tmux session row — click/enter opens it as the workspace. */
 export interface HomeSessionItem {

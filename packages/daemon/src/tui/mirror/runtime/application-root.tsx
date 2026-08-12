@@ -471,64 +471,16 @@ import {
   type WorkspaceUiStateV2,
   type WorkspaceSurfaceStates,
 } from "../workspace-ui-state.ts";
-import {
-  DIALOG_ROWS,
-  dialogPos,
-  dialogHeaderRows,
-  dialogRowAt,
-  dialogContains,
-  dialogInnerW,
-  dialogMarker,
-  dialogRowText,
-  selectFooter,
-  promptFooter,
-  confirmFooter,
-  confirmOptions,
-  wrapText,
-  type DialogGeom,
-  type DialogSelectSpec,
-  type DialogPromptSpec,
-  type DialogConfirmSpec,
-} from "../dialog-model.ts";
-import {
-  dialogStack,
-  dialogKey,
-  DialogSelect,
-  DialogPrompt,
-  DialogConfirm,
-} from "../dialog-stack.ts";
-import {
-  HINT_CHROME_RESTART,
-  HINT_LIVE,
-  HINT_READOPT,
-  delaySecondsPatch,
-  keybindingItems,
-  notificationItems,
-  notificationTogglePatch,
-  presetRgb,
-  quietHoursItems,
-  quietHoursOffPatch,
-  quietHoursPatch,
-  resetSettingsPatch,
-  soundItems,
-  soundPatch,
-  validateDelaySeconds,
-  restoreItems,
-  restorePatch,
-  settingsRootItems,
-  snapshotEveryPatch,
-  themeItems,
-  themePatch,
-  tickMsPatch,
-  updatesCheckPatch,
-  updatesItems,
-  validateQuietTime,
-  validateSnapshotEvery,
-  validateTickMs,
-  PALETTE_KEYCAPS,
-  type NotificationToggleId,
-  type SettingsCommandId,
-} from "../settings-model.ts";
+import { PALETTE_KEYCAPS } from "../application-keybindings.ts";
+import type {
+  DialogConfirmRequest,
+  DialogFeatureSession,
+  DialogPromptRequest,
+  DialogSelectRequest,
+} from "../features/dialogs/contract.ts";
+import type { SettingsFeatureSession } from "../features/settings/contract.ts";
+import type { SettingsCommandId } from "../features/settings/catalog.ts";
+import { ModalAdmissionCoordinator } from "./modal-admission-coordinator.ts";
 import { loadAppConfig, loadRawAppConfig, updateAppConfig } from "../../../lib/app-config.ts";
 import {
   APP_FOCUS_OPTION,
@@ -1053,7 +1005,6 @@ const mountTuiRoot = () => {
     const sidebarHint = () => applicationShellProjection().sidebarHint;
     const paletteW = () => shellLayout().paletteWidth;
     const dialogW = () => shellLayout().dialogWidth;
-    const dialogInnerWidth = () => dialogInnerW(dialogW());
 
     // Persisted state (one-shot read at launch — NOT on the render loop). The tab
     // and context restore below; the open editor file / diff selection restore in
@@ -1092,6 +1043,103 @@ const mountTuiRoot = () => {
       createSignal<ApplicationOptionalFeatures["missionsActivity"]>();
     const [missionsActivitySession, setMissionsActivitySession] =
       createSignal<MissionsActivityFeatureSession>();
+    const [dialogsFeature, setDialogsFeature] =
+      createSignal<ApplicationOptionalFeatures["dialogs"]>();
+    const [dialogsSession, setDialogsSession] = createSignal<DialogFeatureSession>();
+    const [settingsFeature, setSettingsFeature] =
+      createSignal<ApplicationOptionalFeatures["settings"]>();
+    const [settingsSession, setSettingsSession] = createSignal<SettingsFeatureSession>();
+    const [previewAccent, setPreviewAccent] = createSignal<RGBA | null>(null);
+    const modalAdmission = new ModalAdmissionCoordinator<"dialogs" | "settings">();
+    const [modalAdmissionSnapshot, setModalAdmissionSnapshot] = createSignal(
+      modalAdmission.snapshot(),
+    );
+    const disposeModalAdmissionSubscription = modalAdmission.subscribe(setModalAdmissionSnapshot);
+    let retryModalIntent: (() => void) | null = null;
+    let dialogsFeatureRequest: Promise<ApplicationOptionalFeatures["dialogs"] | undefined> | null =
+      null;
+    let settingsFeatureRequest: Promise<
+      ApplicationOptionalFeatures["settings"] | undefined
+    > | null = null;
+
+    const ensureDialogsSession = async (
+      token: ReturnType<typeof modalAdmission.reserve>,
+    ): Promise<DialogFeatureSession | undefined> => {
+      if (!token || !modalAdmission.isCurrent(token)) return undefined;
+      const existing = dialogsSession();
+      if (existing) return existing;
+      let feature = dialogsFeature();
+      if (!feature) {
+        dialogsFeatureRequest ??= optionalFeatures.request("dialogs");
+        feature = await dialogsFeatureRequest;
+        if (!feature || !modalAdmission.isCurrent(token)) return undefined;
+        setDialogsFeature(() => feature);
+      }
+      const session = feature.createDialogFeatureSession({
+        viewport: () => ({
+          width: dims().width,
+          height: dims().height,
+          dialogWidth: dialogW(),
+        }),
+      });
+      if (!modalAdmission.isCurrent(token)) {
+        session.dispose();
+        return undefined;
+      }
+      setDialogsSession(() => session);
+      return session;
+    };
+
+    const runDialogIntent = async <Result,>(
+      fallback: Result,
+      invoke: (session: DialogFeatureSession) => Promise<Result>,
+    ): Promise<Result> => {
+      // Preserve stack semantics: a dialog opened by another active modal flow
+      // joins the same per-app stack and does not steal/release its admission.
+      const joinedSession = dialogsSession();
+      if (modalAdmissionSnapshot().phase === "ready" && joinedSession?.open()) {
+        try {
+          return await invoke(joinedSession);
+        } catch {
+          return fallback;
+        }
+      }
+      const retry = () => void runDialogIntent(fallback, invoke);
+      const token = modalAdmission.reserve("dialogs");
+      if (!token) return fallback;
+      retryModalIntent = retry;
+      modalAdmission.markLoading(token);
+      try {
+        const session = await ensureDialogsSession(token);
+        if (!session || !modalAdmission.isCurrent(token)) return fallback;
+        modalAdmission.markReady(token);
+        const result = await invoke(session);
+        if (modalAdmission.isCurrent(token)) {
+          retryModalIntent = null;
+          modalAdmission.release(token);
+        }
+        return result;
+      } catch (error) {
+        dialogsFeatureRequest = null;
+        if (modalAdmission.isCurrent(token)) modalAdmission.markError(token, error);
+        return fallback;
+      }
+    };
+
+    // Compatibility-shaped local ports keep every existing non-settings caller
+    // intact while removing the process-wide dialog singleton.
+    const DialogSelect = {
+      show: (request: DialogSelectRequest) =>
+        runDialogIntent(null, (session) => session.select(request)),
+    };
+    const DialogPrompt = {
+      show: (request: DialogPromptRequest) =>
+        runDialogIntent(null, (session) => session.prompt(request)),
+    };
+    const DialogConfirm = {
+      show: (request: DialogConfirmRequest) =>
+        runDialogIntent(false, (session) => session.confirm(request)),
+    };
     let toolResourceGeneration = -1;
     const pendingFilesCatalog = new GenerationBoundSlot<WorkspaceFilesCatalogEnvelopeV1>();
     const pendingChangesCatalog = new GenerationBoundSlot<WorkspaceChangesCatalogEnvelopeV1>();
@@ -1360,12 +1408,20 @@ const mountTuiRoot = () => {
       filesFeatureRequest = null;
       changesFeatureRequest = null;
       missionsActivityRequest = null;
+      dialogsFeatureRequest = null;
+      settingsFeatureRequest = null;
       filesSession()?.dispose();
       changesSession()?.dispose();
       missionsActivitySession()?.dispose();
+      settingsSession()?.dispose();
+      dialogsSession()?.dispose();
+      modalAdmission.dispose();
+      disposeModalAdmissionSubscription();
       setFilesSession(undefined);
       setChangesSession(undefined);
       setMissionsActivitySession(undefined);
+      setSettingsSession(undefined);
+      setDialogsSession(undefined);
       optionalFeatures.dispose();
       tuiPerfMark("optional-feature-metrics", { ...optionalFeatures.getMetrics() });
     });
@@ -4933,8 +4989,8 @@ const mountTuiRoot = () => {
           break;
         }
         case "settings":
-          // The settings surface (M22.4): every setting is a command running on
-          // the global dialog stack; flows live below with the stack wiring.
+          // Settings is requested only at execution time and runs through the
+          // application-owned dialog session under modal admission.
           void runSettingsCommand(a.id);
           break;
         case "quit":
@@ -4986,319 +5042,56 @@ const mountTuiRoot = () => {
       }
     };
 
-    // ── DIALOG STACK (M22.4) — the settings surface's primitives ────────────
-    // ONE overlay mount renders whatever is on top of the global dialog stack
-    // (dialog-stack.ts); flows are sequential awaits over the Promise one-shots
-    // (DialogSelect/DialogPrompt/DialogConfirm.show). The stack is not reactive,
-    // so a `dialogRev` signal bumps on every stack notification (the editorRev
-    // idiom) and every derived accessor reads it first. INPUT SUPPRESSION: while
-    // the stack is non-empty the keyboard handler and `route` both hand the
-    // event to the dialog FIRST and return — nothing reaches panes/editor.
-    const [dialogRev, setDialogRev] = createSignal(0);
-    onCleanup(dialogStack.subscribe(() => setDialogRev((r) => r + 1)));
-    const dialogTop = () => {
-      dialogRev();
-      return dialogStack.top();
-    };
-    // Live-preview accent for the picker. The semantic store is the authority
-    // for chrome AND terminal-cell projection, so moving through choices can
-    // preview the complete cockpit without mutating tmux or its PTYs.
-    const [previewAccent, setPreviewAccent] = createSignal<RGBA | null>(null);
-    const dlgAccent = () => previewAccent() ?? semanticTheme().roles.text.link;
-    const dlgSelect = () => {
-      const e = dialogTop();
-      return e && e.spec.kind === "select" ? e : null;
-    };
-    const dlgPrompt = () => {
-      const e = dialogTop();
-      return e && e.spec.kind === "prompt" ? e : null;
-    };
-    const dlgConfirm = () => {
-      const e = dialogTop();
-      return e && e.spec.kind === "confirm" ? e : null;
-    };
-    // Narrowed spec accessors for the render (each used only inside its <Show>).
-    const dlgSelectSpec = () => dlgSelect()!.spec as DialogSelectSpec;
-    const dlgPromptSpec = () => dlgPrompt()!.spec as DialogPromptSpec;
-    const dlgConfirmSpec = () => dlgConfirm()!.spec as DialogConfirmSpec;
-
-    /** The visible window of the top select's filtered rows (render + router). */
-    const dlgVisibleItems = () => {
-      dialogRev();
-      const e = dialogStack.top();
-      if (!e || e.spec.kind !== "select") return [];
-      return dialogStack.filtered().slice(e.state.top, e.state.top + DIALOG_ROWS);
-    };
-    /** The top dialog's box geometry — the SAME math places the render and
-     *  hit-tests the router (the palette's law). */
-    const dialogGeomNow = (): DialogGeom => {
-      const e = dialogStack.top()!;
-      const { left, top } = dialogPos(dims().width, dims().height, dialogW());
-      const visibleRows =
-        e.spec.kind === "select"
-          ? Math.min(DIALOG_ROWS, Math.max(0, dialogStack.filtered().length - e.state.top))
-          : e.spec.kind === "confirm"
-            ? 2
-            : 1;
-      return {
-        left,
-        top,
-        width: dialogW(),
-        headerRows: dialogHeaderRows(e.spec, dialogW()),
-        visibleRows,
-        footerRows: 1,
-      };
-    };
-
     // ── SETTINGS AS COMMANDS (M22.4) ─────────────────────────────────────────
-    // No settings screen: each palette "Settings…" command runs one of these
-    // flows. Reads are FRESH (loadAppConfig / raw prefs — never the process
-    // cache) and writes go through the typed updateAppConfig (atomic, raw-merge,
-    // TMUX_IDE_CONFIG honored). Leaf flows return true when they COMMITTED;
-    // a cancelled leaf returns false so the umbrella loop reopens one level up.
-    const freshCfg = () => loadAppConfig();
-    const freshPrefs = () => parseNotificationPrefs(loadRawAppConfig());
-
-    const runThemePicker = async (): Promise<boolean> => {
-      const cfg = freshCfg();
-      const before = cfg.theme.accent;
-      const items = themeItems(cfg);
-      const rgbOf = (accent: string) => {
-        const rgb = presetRgb(accent);
-        return rgb ? RGBA.fromInts(rgb[0], rgb[1], rgb[2], 255) : null;
-      };
-      setPreviewAccent(rgbOf(before)); // the dialog opens in the saved accent
-      const choice = await DialogSelect.show({
-        title: "Accent color",
-        items,
-        footerHint: "live preview · updates chrome + terminal palette",
-        onMove: (item) => {
-          setPreviewAccent(rgbOf(item.id));
-          semanticThemeStore.configure({ ...cfg.theme, accent: item.id });
-        },
-      });
-      setPreviewAccent(null);
-      if (!choice) {
-        semanticThemeStore.configure(cfg.theme);
-        return false;
-      }
-      if (choice.item.id !== before) {
-        updateAppConfig(themePatch(choice.item.id));
-        semanticThemeStore.configure({ ...cfg.theme, accent: choice.item.id });
-        setStatusNote("accent saved — chrome and terminals updated");
-      }
-      return true;
-    };
-
-    const runQuietHours = async (): Promise<boolean> => {
-      const prefs = freshPrefs();
-      const choice = await DialogSelect.show({
-        title: "Quiet hours",
-        items: quietHoursItems(prefs),
-        footerHint: "silences banners, sounds & bells during the window",
-      });
-      if (!choice) return false;
-      if (choice.item.id === "off") {
-        updateAppConfig(quietHoursOffPatch());
-        setStatusNote(`quiet hours off — ${HINT_LIVE}`);
-        return true;
-      }
-      const start = await DialogPrompt.show({
-        title: "Quiet hours — start time",
-        placeholder: "22:00",
-        initial: prefs.quietHours?.start ?? "",
-        validate: validateQuietTime,
-        footerHint: "24-hour clock, HH:MM",
-      });
-      if (start === null) return false;
-      const end = await DialogPrompt.show({
-        title: "Quiet hours — end time",
-        placeholder: "08:00",
-        initial: prefs.quietHours?.end ?? "",
-        validate: validateQuietTime,
-        footerHint: "24-hour clock, HH:MM",
-      });
-      if (end === null) return false;
-      updateAppConfig(quietHoursPatch(start, end));
-      setStatusNote(`quiet hours ${start.trim()}–${end.trim()} — ${HINT_LIVE}`);
-      return true;
-    };
-
-    const runNotificationToggles = async (): Promise<boolean> => {
-      let sel: number | undefined;
-      for (;;) {
-        const prefs = freshPrefs();
-        const items = notificationItems(prefs);
-        const choice = await DialogSelect.show({
-          title: "Notifications",
-          items,
-          initialSel: sel,
-          footerHint: `enter toggles · ${HINT_LIVE}`,
-        });
-        if (!choice) return false; // esc — done toggling, back one level
-        sel = items.findIndex((i) => i.id === choice.item.id);
-        if (choice.item.id === "quietHours") {
-          await runQuietHours();
-          continue; // back to the list with fresh details either way
-        }
-        if (choice.item.id === "sound") {
-          const picked = await DialogSelect.show({
-            title: "Notification sound",
-            items: soundItems(prefs),
-            footerHint: HINT_LIVE,
-          });
-          if (picked) {
-            updateAppConfig(soundPatch(picked.item.id));
-            setStatusNote(`sound: ${picked.item.label} — ${HINT_LIVE}`);
-          }
-          continue;
-        }
-        if (choice.item.id === "delaySeconds") {
-          const v = await DialogPrompt.show({
-            title: "Alert delay (seconds)",
-            initial: String(prefs.delaySeconds),
-            validate: validateDelaySeconds,
-            footerHint: `waits, then re-checks the agent still needs you · ${HINT_LIVE}`,
-          });
-          if (v !== null) {
-            updateAppConfig(delaySecondsPatch(v));
-            setStatusNote(`alert delay ${v.trim()} s — ${HINT_LIVE}`);
-          }
-          continue;
-        }
-        const id = choice.item.id as NotificationToggleId;
-        updateAppConfig(notificationTogglePatch(id, prefs));
-        setStatusNote(`${choice.item.label}: ${prefs[id] ? "off" : "on"} — ${HINT_LIVE}`);
-      }
-    };
-
-    const runUpdatesSettings = async (): Promise<boolean> => {
-      let sel: number | undefined;
-      for (;;) {
-        const cfg = freshCfg();
-        const items = updatesItems(cfg);
-        const choice = await DialogSelect.show({
-          title: "Updates & background refresh",
-          items,
-          initialSel: sel,
-          footerHint: HINT_CHROME_RESTART,
-        });
-        if (!choice) return false;
-        sel = items.findIndex((i) => i.id === choice.item.id);
-        if (choice.item.id === "check") {
-          updateAppConfig(updatesCheckPatch(cfg));
-          setStatusNote(
-            `update checks ${cfg.updates.check ? "off" : "on"} — ${HINT_CHROME_RESTART}`,
-          );
-          continue;
-        }
-        if (choice.item.id === "tickMs") {
-          const v = await DialogPrompt.show({
-            title: "Background refresh interval (ms)",
-            initial: String(cfg.updater.tickMs),
-            validate: validateTickMs,
-            footerHint: HINT_CHROME_RESTART,
-          });
-          if (v !== null) {
-            updateAppConfig(tickMsPatch(v));
-            setStatusNote(`refresh every ${v.trim()} ms — ${HINT_CHROME_RESTART}`);
-          }
-          continue;
-        }
-        if (choice.item.id === "snapshotEvery") {
-          const v = await DialogPrompt.show({
-            title: "Save a crash snapshot every … refreshes",
-            initial: String(cfg.updater.snapshotEvery),
-            validate: validateSnapshotEvery,
-            footerHint: HINT_CHROME_RESTART,
-          });
-          if (v !== null) {
-            updateAppConfig(snapshotEveryPatch(v));
-            setStatusNote(`snapshot every ${v.trim()} refreshes — ${HINT_CHROME_RESTART}`);
-          }
-          continue;
-        }
-      }
-    };
-
-    const runRestoreSetting = async (): Promise<boolean> => {
-      const choice = await DialogSelect.show({
-        title: "Crash restore",
-        items: restoreItems(freshCfg()),
-        footerHint: "used by tmux-ide restore — takes effect next restore",
-      });
-      if (!choice) return false;
-      updateAppConfig(restorePatch(choice.item.id));
-      setStatusNote(
-        choice.item.id === "on"
-          ? "restore will revive agents — takes effect next restore"
-          : "restore rebuilds sessions only — takes effect next restore",
-      );
-      return true;
-    };
-
-    const runKeybindViewer = async (): Promise<boolean> => {
-      await DialogSelect.show({
-        title: "Keyboard shortcuts",
-        items: keybindingItems(freshCfg().keys, KITTY_KEYS),
-        footerHint: "read-only — edit keys.* in ~/.tmux-ide/config.json",
-      });
-      return false; // viewing commits nothing; the umbrella reopens
-    };
-
-    const runSettingsReset = async (): Promise<boolean> => {
-      const ok = await DialogConfirm.show({
-        title: "Reset settings to defaults?",
-        body:
-          "Theme, notifications, updates and restore go back to their defaults. " +
-          "Your key bindings and anything else in config.json stay as they are.",
-        yesLabel: "Reset settings",
-        noLabel: "Keep my settings",
-        defaultNo: true,
-      });
-      if (!ok) return false;
-      updateAppConfig(resetSettingsPatch());
-      setStatusNote(`settings reset to defaults — ${HINT_READOPT}`);
-      return true;
-    };
-
-    const runSettingsLeaf = (id: SettingsCommandId): Promise<boolean> => {
-      switch (id) {
-        case "settings-theme":
-          return runThemePicker();
-        case "settings-notifications":
-          return runNotificationToggles();
-        case "settings-quiet-hours":
-          return runQuietHours();
-        case "settings-updates":
-          return runUpdatesSettings();
-        case "settings-restore":
-          return runRestoreSetting();
-        case "settings-keys":
-          return runKeybindViewer();
-        case "settings-reset":
-          return runSettingsReset();
-        default:
-          return Promise.resolve(true);
-      }
-    };
-
     const runSettingsCommand = async (id: SettingsCommandId): Promise<void> => {
-      setHoverIf(null); // the overlay owns the pointer, like the palette
-      if (id !== "settings") {
-        await runSettingsLeaf(id);
-        return;
-      }
-      // The umbrella: a categorized select over every command. A cancelled leaf
-      // loops back here — Escape reads as "one level up" all the way out.
-      for (;;) {
-        const choice = await DialogSelect.show({
-          title: "Settings",
-          items: settingsRootItems(freshCfg(), freshPrefs()),
-          footerHint: "type to filter",
-        });
-        if (!choice) return;
-        if (await runSettingsLeaf(choice.item.id as SettingsCommandId)) return;
+      const retry = () => void runSettingsCommand(id);
+      const token = modalAdmission.reserve("settings");
+      if (!token) return;
+      retryModalIntent = retry;
+      setHoverIf(null);
+      modalAdmission.markLoading(token);
+      try {
+        const dialogs = await ensureDialogsSession(token);
+        if (!dialogs || !modalAdmission.isCurrent(token)) return;
+        let feature = settingsFeature();
+        if (!feature) {
+          settingsFeatureRequest ??= optionalFeatures.request("settings");
+          feature = await settingsFeatureRequest;
+          if (!feature || !modalAdmission.isCurrent(token)) return;
+          setSettingsFeature(() => feature);
+        }
+        let session = settingsSession();
+        if (!session) {
+          session = feature.createSettingsFeatureSession({
+            dialogs,
+            readConfig: loadAppConfig,
+            readNotificationPrefs: () => parseNotificationPrefs(loadRawAppConfig()),
+            writeConfig: updateAppConfig,
+            configureTheme: (theme) => semanticThemeStore.configure(theme),
+            setPreviewAccent: (rgb) =>
+              setPreviewAccent(rgb ? RGBA.fromInts(rgb[0], rgb[1], rgb[2], 255) : null),
+            setStatusNote,
+            kittyKeys: KITTY_KEYS,
+            beforeRun: () => setHoverIf(null),
+          });
+          if (!modalAdmission.isCurrent(token)) {
+            session.dispose();
+            return;
+          }
+          setSettingsSession(() => session);
+        }
+        modalAdmission.markReady(token);
+        const result = await session.run(id);
+        if (!modalAdmission.isCurrent(token)) return;
+        if (result.status === "error") {
+          modalAdmission.markError(token, result.error);
+          return;
+        }
+        retryModalIntent = null;
+        modalAdmission.release(token);
+      } catch (error) {
+        settingsFeatureRequest = null;
+        if (modalAdmission.isCurrent(token)) modalAdmission.markError(token, error);
       }
     };
 
@@ -6456,7 +6249,7 @@ const mountTuiRoot = () => {
     useKeyboard((evt) => {
       const layer = resolveInputLayer(
         {
-          dialogOpen: dialogStack.depth() > 0,
+          dialogOpen: modalAdmissionSnapshot().reserved,
           menuOpen: Boolean(menu()),
           paletteOpen: paletteOpen(),
           searchOpen: Boolean(search()),
@@ -6485,7 +6278,17 @@ const mountTuiRoot = () => {
       }
       if (layer.kind === "kitty-super-suppressed") return;
       if (layer.kind === "dialog") {
-        dialogKey(dialogStack, evt);
+        const session = dialogsSession();
+        if (session?.open()) session.handleKey(evt);
+        else if (evt.name === "escape") {
+          retryModalIntent = null;
+          modalAdmission.releaseCurrent();
+        } else if (evt.name === "r" && modalAdmissionSnapshot().phase === "error") {
+          const retry = retryModalIntent;
+          retryModalIntent = null;
+          modalAdmission.releaseCurrent();
+          retry?.();
+        }
         return;
       }
       if (layer.kind === "menu") {
@@ -6800,6 +6603,7 @@ const mountTuiRoot = () => {
     // keystrokes); the input coalescer chunks it under tmux's per-command cap.
     usePaste((e) => {
       const text = decodePasteBytes(e.bytes);
+      if (modalAdmissionSnapshot().reserved) return;
       if (paletteOpen()) {
         // The root remains the only paste listener. An action-level paste edits
         // the query; the buffer picker consumes it. Neither can leak bytes into
@@ -7626,32 +7430,22 @@ const mountTuiRoot = () => {
       // activates it (select rows arm-then-confirm when destructive; confirm
       // rows choose), a press inside-but-not-a-row is a no-op, and a press
       // OUTSIDE pops ONE stack level — exactly what Escape does.
-      if (dialogStack.depth() > 0) {
-        const entry = dialogStack.top()!;
-        const g = dialogGeomNow();
-        if (type === "scroll") {
-          const dir = e.scroll?.direction;
-          if (dir === "up" || dir === "down") dialogStack.scrollBy(dir === "up" ? -1 : 1);
-          return;
+      if (modalAdmissionSnapshot().reserved) {
+        const session = dialogsSession();
+        if (session?.open()) {
+          if (type === "down" && e.button === 2) return;
+          session.handlePointer({
+            kind:
+              type === "over" || type === "drag"
+                ? "move"
+                : type === "drag-end" || type === "drop"
+                  ? "up"
+                  : type,
+            x,
+            y,
+            scrollDirection: e.scroll?.direction,
+          });
         }
-        if (type === "move" || type === "over" || type === "drag") {
-          const ri = dialogRowAt(g, x, y);
-          if (ri >= 0) {
-            if (entry.spec.kind === "select") dialogStack.setSel(entry.state.top + ri);
-            else if (entry.spec.kind === "confirm") dialogStack.setSel(ri);
-          }
-          return;
-        }
-        if (type !== "down") return;
-        const ri = dialogRowAt(g, x, y);
-        if (ri >= 0) {
-          if (e.button === 2) return; // right press on a row: no-op, stay open
-          if (entry.spec.kind === "select") dialogStack.activate(entry.state.top + ri);
-          else if (entry.spec.kind === "confirm") dialogStack.choose(ri);
-          // prompt: the input row — a click is a no-op (typing has focus)
-          return;
-        }
-        if (!dialogContains(g, x, y)) dialogStack.dismiss();
         return;
       }
       // While the context menu is open it OWNS pointer routing: a down on an item
@@ -8337,7 +8131,7 @@ const mountTuiRoot = () => {
     const interaction = createMemo(() => {
       dialogRev();
       return tuiInteractionPresentation({
-        dialogOpen: dialogStack.depth() > 0,
+        dialogOpen: modalAdmissionSnapshot().reserved,
         menuOpen: Boolean(menu()),
         paletteOpen: paletteOpen(),
         searchOpen: Boolean(search()),
@@ -9033,196 +8827,48 @@ const mountTuiRoot = () => {
             </For>
           </box>
         </Show>
-        {/* DIALOG overlay (M22.4) — the ONE mount for the global dialog stack;
-          only the TOP entry renders (a nested push visually replaces until it
-          pops). Rendered LAST so it sits above the palette and the menus. Same
-          late-mount discipline: NO per-node handlers — `route` checks
-          `dialogStack.depth()` FIRST and hit-tests rows with the same pure
-          geometry placing this box (dialogPos/dialogHeaderRows). Layout per
-          kind must match dialog-model's headerRows math EXACTLY: border ·
-          title · [filter input] · rule · [confirm body] · rows · footer ·
-          border. The border/title accents read `dlgAccent()` — the theme
-          picker's live preview surface. */}
-        <Show when={dlgSelect()}>
+        <Show when={dialogsFeature() && dialogsSession()?.open()}>
+          <Dynamic
+            component={dialogsFeature()!.DialogFeatureSurface}
+            session={dialogsSession()!}
+            theme={semanticTheme()}
+            accent={previewAccent()}
+          />
+        </Show>
+        <Show
+          when={
+            modalAdmissionSnapshot().reserved &&
+            !dialogsSession()?.open() &&
+            modalAdmissionSnapshot().phase !== "ready"
+          }
+        >
           <box
             position="absolute"
-            left={dialogPos(dims().width, dims().height, dialogW()).left}
-            top={dialogPos(dims().width, dims().height, dialogW()).top}
+            left={Math.max(0, Math.floor((dims().width - dialogW()) / 2))}
+            top={Math.max(1, Math.floor(dims().height / 6))}
             width={dialogW()}
             flexDirection="column"
             backgroundColor={semanticTheme().roles.surfaces.command}
             border
-            borderColor={previewAccent() ?? semanticTheme().roles.borders.focused}
+            borderColor={
+              modalAdmissionSnapshot().phase === "error"
+                ? semanticTheme().roles.statusTone.danger
+                : semanticTheme().roles.borders.focused
+            }
             paddingLeft={1}
             paddingRight={1}
           >
-            <text fg={dlgAccent()} attributes={1}>
-              {dlgSelectSpec().title.slice(0, dialogInnerWidth()).padEnd(dialogInnerWidth())}
+            <text fg={semanticTheme().roles.text.link} attributes={1}>
+              {modalAdmissionSnapshot().phase === "error" ? "Unable to open" : "Opening…"}
             </text>
-            <Show when={dlgSelectSpec().filterable !== false}>
-              <box flexDirection="row">
-                <text fg={dlgAccent()} attributes={1}>
-                  {"▸ "}
-                </text>
-                <text
-                  fg={semanticTheme().roles.text.primary}
-                >{`${dlgSelect()!.state.query}▏`}</text>
-              </box>
-            </Show>
-            <text fg={semanticTheme().roles.borders.subtle}>{"─".repeat(dialogInnerWidth())}</text>
-            <For each={dlgVisibleItems()}>
-              {(item, i) => {
-                const abs = () => dlgSelect()!.state.top + i();
-                const selected = () => abs() === dlgSelect()!.state.sel;
-                const armed = () => dlgSelect()!.state.armed === abs();
-                // The marker renders as its own run (current ● in accent); a
-                // swatch row adds a colored ● run, so its body is 2 cells
-                // narrower — dialogRowText pads to exactly the remaining width.
-                const body = () =>
-                  dialogRowText(item, {
-                    selected: selected(),
-                    armed: armed(),
-                    innerW: item.swatch ? dialogInnerWidth() - 2 : dialogInnerWidth(),
-                  }).slice(2);
-                const markerFg = () =>
-                  item.current
-                    ? dlgAccent()
-                    : selected()
-                      ? semanticTheme().roles.selection.selectionText
-                      : semanticTheme().roles.text.secondary;
-                const bodyFg = () =>
-                  armed()
-                    ? DIFF_DEL_FG
-                    : selected()
-                      ? semanticTheme().roles.selection.selectionText
-                      : semanticTheme().roles.text.secondary;
-                return (
-                  <box
-                    height={1}
-                    flexDirection="row"
-                    backgroundColor={
-                      selected() || armed()
-                        ? semanticTheme().roles.selection.selection
-                        : semanticTheme().roles.surfaces.command
-                    }
-                  >
-                    <text fg={markerFg()}>{dialogMarker(item, selected())}</text>
-                    <Show when={item.swatch}>
-                      <text
-                        fg={RGBA.fromInts(item.swatch![0], item.swatch![1], item.swatch![2], 255)}
-                      >
-                        {"● "}
-                      </text>
-                    </Show>
-                    <text fg={bodyFg()}>{body()}</text>
-                  </box>
-                );
-              }}
-            </For>
-            <Show when={dlgVisibleItems().length === 0}>
-              <text fg={semanticTheme().roles.text.muted}>{"  no matches"}</text>
-            </Show>
+            <text fg={semanticTheme().roles.text.secondary}>
+              {modalAdmissionSnapshot().phase === "error"
+                ? modalAdmissionSnapshot().message
+                : "Loading this surface"}
+            </text>
             <text fg={semanticTheme().roles.text.muted}>
-              {selectFooter(dlgSelectSpec()).slice(0, dialogInnerWidth())}
+              {modalAdmissionSnapshot().phase === "error" ? "r retry · esc cancel" : "esc cancel"}
             </text>
-          </box>
-        </Show>
-        <Show when={dlgPrompt()}>
-          <box
-            position="absolute"
-            left={dialogPos(dims().width, dims().height, dialogW()).left}
-            top={dialogPos(dims().width, dims().height, dialogW()).top}
-            width={dialogW()}
-            flexDirection="column"
-            backgroundColor={semanticTheme().roles.surfaces.command}
-            border
-            borderColor={semanticTheme().roles.borders.focused}
-            paddingLeft={1}
-            paddingRight={1}
-          >
-            <text fg={semanticTheme().roles.text.link} attributes={1}>
-              {dlgPromptSpec().title.slice(0, dialogInnerWidth()).padEnd(dialogInnerWidth())}
-            </text>
-            <text fg={semanticTheme().roles.borders.subtle}>{"─".repeat(dialogInnerWidth())}</text>
-            <box flexDirection="row">
-              <text fg={semanticTheme().roles.text.link} attributes={1}>
-                {"▸ "}
-              </text>
-              <Show
-                when={dlgPrompt()!.state.input.length === 0 && dlgPromptSpec().placeholder}
-                fallback={
-                  <text
-                    fg={semanticTheme().roles.text.primary}
-                  >{`${dlgPrompt()!.state.input}▏`}</text>
-                }
-              >
-                <text fg={semanticTheme().roles.text.primary}>{"▏"}</text>
-                <text
-                  fg={semanticTheme().roles.text.muted}
-                >{` ${dlgPromptSpec().placeholder}`}</text>
-              </Show>
-            </box>
-            <text
-              fg={
-                promptFooter(dlgPromptSpec(), dlgPrompt()!.state).error
-                  ? semanticTheme().roles.statusTone.danger
-                  : semanticTheme().roles.text.muted
-              }
-            >
-              {promptFooter(dlgPromptSpec(), dlgPrompt()!.state).text.slice(0, dialogInnerWidth())}
-            </text>
-          </box>
-        </Show>
-        <Show when={dlgConfirm()}>
-          <box
-            position="absolute"
-            left={dialogPos(dims().width, dims().height, dialogW()).left}
-            top={dialogPos(dims().width, dims().height, dialogW()).top}
-            width={dialogW()}
-            flexDirection="column"
-            backgroundColor={semanticTheme().roles.surfaces.command}
-            border
-            borderColor={semanticTheme().roles.borders.focused}
-            paddingLeft={1}
-            paddingRight={1}
-          >
-            <text fg={semanticTheme().roles.text.link} attributes={1}>
-              {dlgConfirmSpec().title.slice(0, dialogInnerWidth()).padEnd(dialogInnerWidth())}
-            </text>
-            <text fg={semanticTheme().roles.borders.subtle}>{"─".repeat(dialogInnerWidth())}</text>
-            <For
-              each={
-                dlgConfirmSpec().body ? wrapText(dlgConfirmSpec().body!, dialogInnerWidth()) : []
-              }
-            >
-              {(line) => <text fg={semanticTheme().roles.text.secondary}>{line || " "}</text>}
-            </For>
-            <For each={confirmOptions(dlgConfirmSpec())}>
-              {(label, i) => {
-                const selected = () => dlgConfirm()!.state.sel === i();
-                return (
-                  <box
-                    height={1}
-                    backgroundColor={
-                      selected()
-                        ? semanticTheme().roles.selection.selection
-                        : semanticTheme().roles.surfaces.command
-                    }
-                  >
-                    <text
-                      fg={
-                        selected()
-                          ? semanticTheme().roles.selection.selectionText
-                          : semanticTheme().roles.text.secondary
-                      }
-                    >
-                      {`${selected() ? "› " : "  "}${label}`.slice(0, dialogInnerWidth())}
-                    </text>
-                  </box>
-                );
-              }}
-            </For>
-            <text fg={semanticTheme().roles.text.muted}>{confirmFooter()}</text>
           </box>
         </Show>
       </box>

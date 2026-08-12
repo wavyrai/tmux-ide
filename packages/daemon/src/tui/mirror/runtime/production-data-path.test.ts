@@ -58,6 +58,8 @@ describe("production OpenTUI data path", () => {
         "packages/daemon/src/tui/mirror/runtime/application-optional-features.ts",
         "packages/daemon/src/tui/mirror/features/changes/feature.tsx",
         "packages/daemon/src/tui/mirror/features/missions-activity/feature.tsx",
+        "packages/daemon/src/tui/mirror/features/dialogs/feature.tsx",
+        "packages/daemon/src/tui/mirror/features/settings/feature.ts",
         "packages/daemon/src/tui/mirror/files-surface.tsx",
         "packages/daemon/src/tui/mirror/changes-surface.tsx",
         "packages/daemon/src/tui/mirror/missions-surface.tsx",

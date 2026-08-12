@@ -13,6 +13,8 @@ describe("application optional feature loaders", () => {
       "../features/files/feature.tsx",
       "../features/changes/feature.tsx",
       "../features/missions-activity/feature.tsx",
+      "../features/dialogs/feature.tsx",
+      "../features/settings/feature.ts",
       "../workspace/command-palette-surface.tsx",
       "../widget-surface.tsx",
     ]) {
@@ -87,4 +89,25 @@ describe("application optional feature loaders", () => {
     });
     registry.dispose();
   });
+
+  it.each([
+    ["dialogs", "createDialogFeatureSession"],
+    ["settings", "createSettingsFeatureSession"],
+  ] as const)(
+    "retains and publishes the real %s feature after admission",
+    async (key, exportName) => {
+      const registry = createApplicationOptionalFeatureRegistry();
+      const request = registry.request(key);
+      expect(registry.getMetrics()).toMatchObject({ loadsStarted: 0, retainedIntents: 1 });
+      registry.admit();
+      const feature = await request;
+      expect(feature?.[exportName]).toBeTypeOf("function");
+      expect(registry.getMetrics()).toMatchObject({
+        loadsStarted: 1,
+        loadsSucceeded: 1,
+        publications: 1,
+      });
+      registry.dispose();
+    },
+  );
 });

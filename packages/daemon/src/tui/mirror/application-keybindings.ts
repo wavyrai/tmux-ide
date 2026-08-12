@@ -35,3 +35,19 @@ export const PALETTE_KEYCAPS: Readonly<Record<string, string>> = Object.freeze(
     ),
   ),
 );
+
+const PREFIX_TAKEN = new Set([..."cdfilmnopqrstwxz"]);
+const PREFIX_REMAP: Readonly<Record<string, string>> = Object.freeze({
+  "M-m": "u",
+  "M-p": "j",
+  "M-,": "v",
+});
+
+/** Reliable prefix-table twin for an Alt key, shared without settings runtime. */
+export function prefixTwinFor(altKey: string): string | null {
+  const remapped = PREFIX_REMAP[altKey];
+  if (remapped) return remapped;
+  const letter = /^M-([a-z])$/u.exec(altKey)?.[1];
+  if (!letter || PREFIX_TAKEN.has(letter)) return null;
+  return letter;
+}
