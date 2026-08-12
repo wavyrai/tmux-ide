@@ -567,7 +567,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         }
         let timer: ReturnType<typeof setTimeout> | undefined;
         const finishParse = performanceTelemetry?.beginParse();
-        const paint = performanceTelemetry?.beginPaint();
+        const paint = performanceTelemetry?.beginPaint(
+          activeRenderer.performanceChannel?.() ?? null,
+        );
         let written = false;
         try {
           const outcome = await Promise.race([

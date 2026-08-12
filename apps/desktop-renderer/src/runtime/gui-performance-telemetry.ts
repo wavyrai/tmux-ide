@@ -8,6 +8,7 @@ export interface GuiPerformanceTelemetryOptions {
   readonly scheduleFrame?: (callback: (atMs: number) => void) => () => void;
   readonly scheduleIdle?: (callback: () => void, delayMs: number) => () => void;
   readonly activeIdleMs?: number;
+  readonly onChannelCountChanged?: (count: number) => void;
 }
 
 export interface GuiPerformancePaintTransaction {
@@ -15,12 +16,19 @@ export interface GuiPerformancePaintTransaction {
   cancel(): void;
 }
 
+export interface GuiPerformanceRenderChannel {
+  readonly id: number;
+}
+
 export interface GuiPerformanceTelemetrySink {
   readonly enabled: boolean;
+  createRenderChannel(): GuiPerformanceRenderChannel;
+  refreshRenderChannel(channel: GuiPerformanceRenderChannel): GuiPerformanceRenderChannel | null;
+  retireRenderChannel(channel: GuiPerformanceRenderChannel): void;
   beginParse(): (() => void) | null;
-  beginPaint(): GuiPerformancePaintTransaction | null;
+  beginPaint(channel: GuiPerformanceRenderChannel | null): GuiPerformancePaintTransaction | null;
   commitDelivery(): void;
-  recordRendered(dirtyRows: number): void;
+  recordRendered(channel: GuiPerformanceRenderChannel | null, dirtyRows: number): void;
   recordQueueDepth(current: number, capacity?: number | null): void;
   recordRevisionLag(lag: number): void;
   recordReseed(): void;
@@ -31,8 +39,16 @@ interface PendingPaint {
   readonly aggregator: LocalPerformanceAggregator;
   readonly startedAt: number;
   readonly startRenderSequence: number;
+  readonly channel: GuiPerformanceRenderChannel;
   committed: boolean;
   cancelled: boolean;
+}
+
+interface RenderChannelState {
+  epoch: number;
+  retired: boolean;
+  renderSequence: number;
+  lastObservedRenderAt: number | null;
 }
 
 const MAX_PENDING_PAINTS = 256;
@@ -59,6 +75,7 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
   readonly #scheduleFrame: (callback: (atMs: number) => void) => () => void;
   readonly #scheduleIdle: (callback: () => void, delayMs: number) => () => void;
   readonly #activeIdleMs: number;
+  readonly #onChannelCountChanged: ((count: number) => void) | undefined;
   readonly #listeners = new Set<(snapshot: LocalPerformanceSnapshotV1 | null) => void>();
   #authority: LocalPerformanceAuthorityV1;
   #aggregator: LocalPerformanceAggregator;
@@ -68,13 +85,14 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
   #frameScheduled = false;
   #cancelFrame: (() => void) | null = null;
   #cancelIdle: (() => void) | null = null;
-  #renderSequence = 0;
   #renderDirty = false;
   #dirtyRows = 0;
-  #lastObservedRenderAt: number | null = null;
   #lastBrowserRenderAt: number | null = null;
   #activeFps: number | null = null;
   #pendingPaints: PendingPaint[] = [];
+  #nextChannelId = 1;
+  readonly #channels = new Map<GuiPerformanceRenderChannel, RenderChannelState>();
+  readonly #renderedChannels = new Set<GuiPerformanceRenderChannel>();
 
   constructor(options: GuiPerformanceTelemetryOptions = {}) {
     this.#now = options.now ?? (() => performance.now());
@@ -92,6 +110,7 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
         return () => clearTimeout(timer);
       });
     this.#activeIdleMs = options.activeIdleMs ?? 1_000;
+    this.#onChannelCountChanged = options.onChannelCountChanged;
     if (!Number.isFinite(this.#activeIdleMs) || this.#activeIdleMs <= 0) {
       throw new TypeError("active idle duration must be finite and positive");
     }
@@ -134,6 +153,35 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
     if (wasEnabled) this.#requestPublication();
   }
 
+  createRenderChannel(): GuiPerformanceRenderChannel {
+    const channel = Object.freeze({ id: this.#nextChannelId++ });
+    this.#channels.set(channel, {
+      epoch: this.#epoch,
+      retired: false,
+      renderSequence: 0,
+      lastObservedRenderAt: null,
+    });
+    this.#onChannelCountChanged?.(this.#channels.size);
+    return channel;
+  }
+
+  refreshRenderChannel(channel: GuiPerformanceRenderChannel): GuiPerformanceRenderChannel | null {
+    const state = this.#channels.get(channel);
+    if (!state || state.retired) return null;
+    if (state.epoch === this.#epoch) return channel;
+    this.#channels.delete(channel);
+    this.#onChannelCountChanged?.(this.#channels.size);
+    return this.createRenderChannel();
+  }
+
+  retireRenderChannel(channel: GuiPerformanceRenderChannel): void {
+    const state = this.#channels.get(channel);
+    if (!state) return;
+    this.#renderedChannels.delete(channel);
+    this.#channels.delete(channel);
+    this.#onChannelCountChanged?.(this.#channels.size);
+  }
+
   beginParse(): (() => void) | null {
     if (!this.enabled) return null;
     const epoch = this.#epoch;
@@ -148,13 +196,16 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
     };
   }
 
-  beginPaint(): GuiPerformancePaintTransaction | null {
-    if (!this.enabled) return null;
+  beginPaint(channel: GuiPerformanceRenderChannel | null): GuiPerformancePaintTransaction | null {
+    if (!this.enabled || !channel) return null;
+    const channelState = this.#activeChannel(channel);
+    if (!channelState) return null;
     const pending: PendingPaint = {
       epoch: this.#epoch,
       aggregator: this.#aggregator,
       startedAt: this.#now(),
-      startRenderSequence: this.#renderSequence,
+      startRenderSequence: channelState.renderSequence,
+      channel,
       committed: false,
       cancelled: false,
     };
@@ -180,9 +231,12 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
   }
 
   /** xterm onRender hook: O(1), allocation-free, and global across all panes. */
-  recordRendered(dirtyRows: number): void {
-    if (!this.enabled) return;
-    this.#renderSequence += 1;
+  recordRendered(channel: GuiPerformanceRenderChannel | null, dirtyRows: number): void {
+    if (!this.enabled || !channel) return;
+    const state = this.#activeChannel(channel);
+    if (!state) return;
+    state.renderSequence += 1;
+    this.#renderedChannels.add(channel);
     this.#renderDirty = true;
     this.#dirtyRows = Math.min(Number.MAX_SAFE_INTEGER, this.#dirtyRows + dirtyRows);
     this.#requestPublication();
@@ -249,7 +303,11 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
   #flushFrame(atMs: number): void {
     const hadRender = this.#renderDirty;
     if (hadRender) {
-      this.#lastObservedRenderAt = atMs;
+      for (const channel of this.#renderedChannels) {
+        const state = this.#activeChannel(channel);
+        if (state) state.lastObservedRenderAt = atMs;
+      }
+      this.#renderedChannels.clear();
       this.#aggregator.recordDirtyRows(this.#dirtyRows);
       if (this.#lastBrowserRenderAt !== null && atMs > this.#lastBrowserRenderAt) {
         const interval = atMs - this.#lastBrowserRenderAt;
@@ -262,17 +320,19 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
       this.#armIdleRetirement();
     }
 
-    const renderAt = this.#lastObservedRenderAt;
-    const currentRenderSequence = this.#renderSequence;
     const retained: PendingPaint[] = [];
     for (const pending of this.#pendingPaints) {
       if (pending.cancelled || !this.#accepts(pending.epoch, pending.aggregator)) continue;
+      const channelState = this.#activeChannel(pending.channel);
       if (
         pending.committed &&
-        renderAt !== null &&
-        currentRenderSequence > pending.startRenderSequence
+        channelState &&
+        channelState.lastObservedRenderAt !== null &&
+        channelState.renderSequence > pending.startRenderSequence
       ) {
-        pending.aggregator.recordPaint(Math.max(0, renderAt - pending.startedAt));
+        pending.aggregator.recordPaint(
+          Math.max(0, channelState.lastObservedRenderAt - pending.startedAt),
+        );
       } else {
         retained.push(pending);
       }
@@ -297,6 +357,11 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
     return this.enabled && epoch === this.#epoch && aggregator === this.#aggregator;
   }
 
+  #activeChannel(channel: GuiPerformanceRenderChannel): RenderChannelState | null {
+    const state = this.#channels.get(channel);
+    return state && !state.retired && state.epoch === this.#epoch ? state : null;
+  }
+
   #cancelScheduledWork(): void {
     this.#cancelFrame?.();
     this.#cancelFrame = null;
@@ -306,13 +371,12 @@ export class GuiPerformanceTelemetry implements GuiPerformanceTelemetrySink {
   }
 
   #resetFrameState(): void {
-    this.#renderSequence = 0;
     this.#renderDirty = false;
     this.#dirtyRows = 0;
-    this.#lastObservedRenderAt = null;
     this.#lastBrowserRenderAt = null;
     this.#activeFps = null;
     this.#pendingPaints = [];
+    this.#renderedChannels.clear();
   }
 
   #createAggregator(): LocalPerformanceAggregator {

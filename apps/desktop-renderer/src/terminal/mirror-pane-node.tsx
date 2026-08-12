@@ -152,7 +152,7 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
         if (disposed || renderer !== next) return;
         if (batch.reset) setGrid({ cols: batch.reset.cols, rows: batch.reset.rows });
         const finishParse = performanceTelemetry?.beginParse();
-        const paint = performanceTelemetry?.beginPaint();
+        const paint = performanceTelemetry?.beginPaint(next.performanceChannel?.() ?? null);
         const applied = Promise.resolve(next.applySeedBatch(batch)).then(
           () => {
             finishParse?.();
@@ -183,7 +183,7 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
         // and this write may be the clear that takes it away.
         if (markerWatcher.observe(bytes) || widget() !== null) scheduleWidgetScan();
         const finishParse = performanceTelemetry?.beginParse();
-        const paint = performanceTelemetry?.beginPaint();
+        const paint = performanceTelemetry?.beginPaint(next.performanceChannel?.() ?? null);
         return next.write(bytes).then(
           () => {
             finishParse?.();
