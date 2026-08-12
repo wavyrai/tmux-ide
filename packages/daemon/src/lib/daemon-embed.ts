@@ -835,6 +835,12 @@ async function startHttpServer({
   server.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
+    // `upgrade` hands the raw TCP socket to our route boundaries. A route can
+    // deliberately decline an unrelated path, leaving no protocol-specific
+    // owner to observe a later peer reset. Keep error ownership at this common
+    // accepted-socket boundary so ECONNRESET is connection-local and can never
+    // terminate the canonical daemon during client/session teardown.
+    socket.on("error", () => sockets.delete(socket));
   });
 
   const { closeClients, closeServers: closeWsServers } = attachWebSockets(server, {
