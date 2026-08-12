@@ -311,7 +311,7 @@ async function measureStartup() {
       "renderer-created",
       "first-frame",
       "solid-mounted",
-      "tmux-geometry-ready",
+      "first-terminal-frame",
     ]);
     rawSamples.push({
       ordinal,
@@ -319,7 +319,7 @@ async function measureStartup() {
       phases: Object.fromEntries(marks.map((mark) => [mark.phase, mark.elapsedMs])),
       firstUsableMs: Math.max(
         ...marks
-          .filter(({ phase }) => phase === "first-frame" || phase === "tmux-geometry-ready")
+          .filter(({ phase }) => phase === "first-frame" || phase === "first-terminal-frame")
           .map(({ elapsedMs }) => elapsedMs),
       ),
     });
@@ -345,7 +345,8 @@ async function measureStartup() {
     semantics: {
       processCold: "first fresh process after one production TUI build; OS caches are not purged",
       warmRepeat: "subsequent fresh processes using the same binary and ordinary warm OS caches",
-      firstUsable: "later of the first OpenTUI frame and canonical tmux geometry readiness",
+      firstUsable:
+        "later of the first OpenTUI frame and the first acknowledged native frame containing a non-empty semantic terminal layout",
     },
   };
 }
@@ -385,7 +386,7 @@ async function collectInputTrace() {
         frame.includes(target) && frame.includes("TERMINAL INPUT") && frame.includes("Echo"),
       10_000,
     );
-    run("node", ["scripts/tui-testdrive.mjs", "key", "F2"]);
+    tmux(["send-keys", "-t", "=_tmux-ide-testdrive:0.0", "F2"]);
     await waitForCapturedFrame(
       (frame) =>
         frame.includes(target) && frame.includes("TERMINAL INPUT") && frame.includes("Echo"),
@@ -394,7 +395,16 @@ async function collectInputTrace() {
     await delay(50);
     for (let ordinal = 0; ordinal < options.inputSamples; ordinal += 1) {
       const prior = countCompletedLocalTraces(tracePath);
-      run("node", ["scripts/tui-testdrive.mjs", "text", ordinal % 2 === 0 ? "x" : "y"]);
+      // Keep the measured host free of a second Node startup/teardown per
+      // keystroke. The trace clock begins inside OpenTUI, but that short-lived
+      // wrapper still competes with the render process after injecting input.
+      tmux([
+        "send-keys",
+        "-t",
+        "=_tmux-ide-testdrive:0.0",
+        "-l",
+        ordinal % 2 === 0 ? "x" : "y",
+      ]);
       const deadline = Date.now() + 2_000;
       while (Date.now() < deadline && countCompletedLocalTraces(tracePath) <= prior) await delay(5);
       if (countCompletedLocalTraces(tracePath) <= prior)
