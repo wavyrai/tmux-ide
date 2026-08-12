@@ -1892,7 +1892,7 @@ const mountTuiRoot = () => {
           const inventory = state.data?.terminalInventory;
           tuiPerfMark("application-shell-state", {
             sessionName,
-            phase: state.phase,
+            statePhase: state.phase,
             inventoryCount: inventory?.resources.length ?? 0,
             attachableCount:
               inventory?.resources.filter(

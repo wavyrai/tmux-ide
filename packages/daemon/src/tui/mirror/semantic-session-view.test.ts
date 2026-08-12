@@ -29,7 +29,7 @@ describe("SemanticSessionView local runtime identity", () => {
         type: "agent",
         currentCommand: "claude",
         cwd: "/work/alpha",
-        title: "Editor",
+        title: "raw-zsh-title",
         windowIndex: 2,
         windowName: "main",
         windowId: "@1",
@@ -41,6 +41,7 @@ describe("SemanticSessionView local runtime identity", () => {
         runtimePaneId: "%7",
         semanticPaneId: "pane.editor",
         windowIndex: 2,
+        title: "Editor",
       }),
     ]);
   });
