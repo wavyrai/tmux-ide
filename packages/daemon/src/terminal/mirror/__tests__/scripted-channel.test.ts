@@ -9,7 +9,7 @@ describe("ScriptedChannelDriver", () => {
       onNotify: () => undefined,
       onExit: () => undefined,
     });
-    await driver.ready;
+    await driver.channel.start();
     let capture: readonly string[] | null = null;
     let cursor: readonly string[] | null = null;
     driver.channel.commandListInline("capture-pane", 2, 1, (reply) => {
@@ -31,7 +31,7 @@ describe("ScriptedChannelDriver", () => {
       { onOutput: () => undefined, onNotify: () => undefined, onExit: () => undefined },
       { maxTurns: 3 },
     );
-    await driver.ready;
+    await driver.channel.start();
     await expect(driver.settleUntil(() => false, "impossible predicate")).rejects.toThrow(
       "within 3 turns",
     );

@@ -25,7 +25,7 @@ export class ScriptedChannelDriver {
   readonly #cursorLine: string;
   readonly #maxTurns: number;
   #handledWrites = 0;
-  readonly ready: Promise<void>;
+  readonly deferredCommands = new Set<string>();
 
   constructor(handlers: MirrorChannelHandlers, options: ScriptedChannelDriverOptions = {}) {
     const state = options.state ?? fixtureState();
@@ -37,17 +37,22 @@ export class ScriptedChannelDriver {
       if (command.includes("capture-pane") || command.startsWith("display-message")) return null;
       return basic(command) ?? [];
     });
-    this.ready = this.channel.start();
   }
 
   /** Complete every scripted probe written since the prior turn. */
   pump(): void {
     for (let index = this.#handledWrites; index < this.channel.written.length; index += 1) {
       const command = this.channel.written[index]!;
-      if (command.includes("capture-pane")) this.channel.reply([...this.#seedLines]);
-      else if (command.startsWith("display-message")) this.channel.reply([this.#cursorLine]);
+      if (command.includes("capture-pane") || command.startsWith("display-message")) {
+        this.deferredCommands.add(command);
+      }
     }
     this.#handledWrites = this.channel.written.length;
+    for (const command of [...this.deferredCommands]) {
+      this.deferredCommands.delete(command);
+      if (command.includes("capture-pane")) this.channel.reply([...this.#seedLines]);
+      else this.channel.reply([this.#cursorLine]);
+    }
   }
 
   output(runtimePaneId: string, escapedControlBytes: string): void {
@@ -59,13 +64,14 @@ export class ScriptedChannelDriver {
   }
 
   async settleUntil(predicate: () => boolean, label: string): Promise<void> {
-    await this.ready;
     for (let turn = 0; turn < this.#maxTurns; turn += 1) {
       this.pump();
-      await Promise.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       if (predicate()) return;
     }
-    throw new Error(`Scripted channel did not settle ${label} within ${this.#maxTurns} turns`);
+    throw new Error(
+      `Scripted channel did not settle ${label} within ${this.#maxTurns} turns; pending=${this.channel.core.pendingCount}; writes=${this.channel.written.join(" | ")}`,
+    );
   }
 }
 
