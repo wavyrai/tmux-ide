@@ -20,6 +20,12 @@
  * exactly one surface's top-level `render()` side effect from firing.
  */
 
+import parserWorkerPath from "tmux-ide:opentui-parser-worker" with { type: "file" };
+import treeSitterWasmPath from "tmux-ide:opentui-tree-sitter-wasm" with { type: "file" };
+import { existsSync } from "node:fs";
+
+const TREE_SITTER_SMOKE_SURFACE = "__tree-sitter-smoke";
+
 const SURFACES = [
   "team",
   "app",
@@ -38,10 +44,39 @@ function isSurface(value: string | undefined): value is Surface {
 }
 
 async function main(): Promise<void> {
+  // OpenTUI normally finds parser.worker.js beside its JS module. A standalone
+  // Bun executable has no such directory: import.meta.url points into /$bunfs.
+  // build-tui embeds a fully bundled worker and its web-tree-sitter wasm as
+  // explicit assets; publish the worker path before any OpenTUI surface imports
+  // create the singleton TreeSitterClient. The wasm binding is intentionally
+  // retained and checked here so Bun cannot tree-shake the worker's sibling.
+  if (!existsSync(parserWorkerPath) || !existsSync(treeSitterWasmPath)) {
+    throw new Error("tmux-ide-tui: embedded Tree-sitter runtime is incomplete");
+  }
+  process.env.OTUI_TREE_SITTER_WORKER_PATH ??= parserWorkerPath;
+
   // Carries process entry time across the lazy surface import. The app's
   // opt-in profiler turns this into phase timings without IO on normal runs.
   process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ??= String(Date.now());
   const surface = process.argv[2];
+
+  // Private release/packaging gate. This exercises the same OpenTUI singleton
+  // that Markdown uses, including Worker startup and web-tree-sitter wasm, but
+  // mounts no terminal renderer and leaves no alternate-screen state behind.
+  if (surface === TREE_SITTER_SMOKE_SURFACE) {
+    const { destroyTreeSitterClient, getTreeSitterClient } = await import("@opentui/core");
+    const client = getTreeSitterClient();
+    await client.initialize();
+    const highlighted = await client.highlightOnce("# tmux-ide\n\n**ready**", "markdown");
+    if (highlighted.error || !highlighted.highlights?.length) {
+      throw new Error(
+        `tmux-ide-tui: embedded Markdown parser failed: ${highlighted.error ?? "no highlights"}`,
+      );
+    }
+    await destroyTreeSitterClient();
+    process.stdout.write("tree-sitter-worker-ready\n");
+    return;
+  }
 
   if (!isSurface(surface)) {
     process.stderr.write(

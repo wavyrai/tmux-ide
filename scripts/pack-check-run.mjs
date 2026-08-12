@@ -152,6 +152,21 @@ async function runInstalledTuiGate(installedCli) {
   );
   run("bun", ["scripts/build-tui.mjs", "--outfile", downloadedTui], { stdio: "inherit" });
 
+  const treeSitterSmoke = spawnSync(downloadedTui, ["__tree-sitter-smoke"], {
+    cwd: launchDir,
+    env: { ...process.env, ...tmuxEnv(dirname(installedCli)) },
+    encoding: "utf8",
+  });
+  if (
+    treeSitterSmoke.status !== 0 ||
+    treeSitterSmoke.stdout.trim() !== "tree-sitter-worker-ready"
+  ) {
+    throw new Error(
+      `Installed TUI Tree-sitter worker smoke failed (${treeSitterSmoke.status}):\n` +
+        `${treeSitterSmoke.stdout}${treeSitterSmoke.stderr}`,
+    );
+  }
+
   const socketName = `p${process.pid}`;
   const targetSession = "ordinary-isolated";
   const hostSession = "installed-tui-gate";

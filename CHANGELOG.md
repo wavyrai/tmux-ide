@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 - Replaced the legacy `/tmp`-file performance taps with shared, demand-only OpenTUI and web HUD telemetry plus a deterministic multi-client SessionRuntime qualification gate.
 
+### Fixed
+
+- Standalone TUI binaries now embed OpenTUI's Tree-sitter worker and WebAssembly runtime, so `tmux-ide show` renders Markdown without leaking `/$bunfs/root/parser.worker.ts` errors into terminal panes.
+
 ## 2.7.0
 
 The unified app release: `tmux-ide app` is now a real terminal IDE over your fleet — panes feel native, agents are visible at a glance, and you can start it anywhere.
