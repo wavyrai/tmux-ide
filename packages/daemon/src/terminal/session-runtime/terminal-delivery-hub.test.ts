@@ -266,6 +266,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await settle();
     expect(messages.every((sink) => sink[0]?.type === "terminal.delivery")).toBe(true);
     expect(hub.metrics().inFlight).toBe(8);
+    expect(hub.convergenceSnapshot().clients).toHaveLength(8);
     for (let index = 0; index < connections.length; index += 1)
       connections[index]!.ack(ack(messages[index]![0] as TerminalDeliveryEnvelope));
     expect(hub.metrics().inFlight).toBe(0);
@@ -333,6 +334,21 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
       for (let index = 0; index < count; index += 1)
         connections[index]!.ack(ack(envelopes[index]!));
       expect(hub.metrics().inFlight).toBe(0);
+      const convergence = hub.convergenceSnapshot();
+      expect(convergence.panes).toEqual([
+        expect.objectContaining({
+          semanticPaneId: "pane-a",
+          incarnation: `${generation}:0`,
+          revision: 1,
+          stateHash: envelopes[0]!.canonicalStateHash,
+        }),
+      ]);
+      expect(
+        new Set(
+          convergence.clients.map((client) => `${client.baselineRevision}:${client.baselineHash}`),
+        ).size,
+      ).toBe(1);
+      expect(convergence.clients.every((client) => client.queueDepth === 0)).toBe(true);
       await hub.close();
     },
   );
@@ -373,6 +389,12 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     fast.ack(ack(latest));
     expect(hub.metrics()).toMatchObject({ clients: 2, inFlight: 1, latestPointers: 1 });
     expect(hub.metrics().maxQueueDepth).toBeLessThanOrEqual(2);
+    expect(hub.convergenceSnapshot().clients).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ clientId: "slow", inFlightRevision: 0, latestRevision: 20 }),
+        expect.objectContaining({ clientId: "fast", baselineRevision: 20 }),
+      ]),
+    );
     expect(slowMessages.filter((message) => message.type === "terminal.delivery")).toHaveLength(1);
     releaseSlow();
     await settle();

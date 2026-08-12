@@ -432,6 +432,11 @@ describe("SessionRuntimeRegistry", () => {
     expect(sims).toHaveLength(1);
     expect(registry.sessionCount()).toBe(1);
     expect(registry.activeControlChannelCount()).toBe(1);
+    expect(registry.qualificationSnapshot()).toMatchObject({
+      generation: GENERATION_A,
+      controlChannels: 1,
+      sessions: [{ session: FIXTURE.session, consumers: 3, retained: true }],
+    });
     expect([tui.generation, webOne.generation, webTwo.generation]).toEqual([
       GENERATION_A,
       GENERATION_A,
@@ -444,6 +449,7 @@ describe("SessionRuntimeRegistry", () => {
     // Consumer churn does not churn the session's daemon-owned control lane.
     expect(registry.activeControlChannelCount()).toBe(1);
     expect(sims[0]!.disposed).toBe(false);
+    expect(registry.qualificationSnapshot().sessions[0]?.consumers).toBe(0);
 
     await registry.dispose();
     expect(registry.activeControlChannelCount()).toBe(0);

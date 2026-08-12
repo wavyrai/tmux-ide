@@ -23,6 +23,15 @@ import {
   hashTerminalWidgetContent,
   terminalReplicaRowsEqual,
 } from "@tmux-ide/core";
+import {
+  SYSTEM_SESSION_RUNTIME_SCHEDULER,
+  type SessionRuntimeScheduler,
+  type SessionRuntimeTimer,
+} from "./runtime-scheduler.ts";
+import {
+  DISABLED_SESSION_RUNTIME_OBSERVABILITY,
+  type SessionRuntimeObservability,
+} from "./runtime-observability.ts";
 
 type CloseReason = "pane-closed" | "session-restarted" | "runtime-disposed";
 export type TerminalReplicaInterpreterOperation =
@@ -56,6 +65,8 @@ export interface TerminalReplicaInterpreterOptions {
     readonly chunks: readonly Uint8Array[];
     readonly contiguous: boolean;
   }) => void;
+  readonly scheduler?: SessionRuntimeScheduler;
+  readonly observability?: SessionRuntimeObservability;
 }
 
 export interface TerminalReplicaInterpreterStats {
@@ -77,6 +88,8 @@ export class TerminalReplicaInterpreter {
   readonly #scrollback: number;
   readonly #listeners = new Set<(update: CanonicalTerminalReplicaUpdate) => void>();
   readonly #onRawCommit: TerminalReplicaInterpreterOptions["onRawCommit"];
+  readonly #scheduler: SessionRuntimeScheduler;
+  readonly #observability: SessionRuntimeObservability;
   #terminal: Terminal;
   #tail: Promise<void> = Promise.resolve();
   #revision = 0;
@@ -99,7 +112,7 @@ export class TerminalReplicaInterpreter {
   #pendingRaw: Uint8Array[] = [];
   #pendingRawBytes = 0;
   #rawContinuityLost = false;
-  #syncRecovery: ReturnType<typeof setTimeout> | null = null;
+  #syncRecovery: SessionRuntimeTimer | null = null;
   #bootstrap: TerminalReplicaSnapshot["bootstrap"] = {
     kind: "painted-capture",
     hiddenState: "unknown",
@@ -128,6 +141,8 @@ export class TerminalReplicaInterpreter {
     this.#revision = options.initialRevision ?? 0;
     this.#scrollback = options.scrollback ?? 5000;
     this.#onRawCommit = options.onRawCommit;
+    this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
+    this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#terminal = this.#createTerminal(options.cols, options.rows);
     this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
     this.#seedReady = new Promise((resolve, reject) => {
@@ -151,7 +166,7 @@ export class TerminalReplicaInterpreter {
       });
       if (!this.#writeFlushScheduled) {
         this.#writeFlushScheduled = true;
-        queueMicrotask(() => this.#flushWrites());
+        this.#scheduler.microtask(() => this.#flushWrites());
       }
       return promise;
     }
@@ -275,7 +290,15 @@ export class TerminalReplicaInterpreter {
     this.#admitRaw(data);
     this.#stats.parseBatches += 1;
     this.#observeMarkerBytes(data);
+    const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
     await writeTerminal(this.#terminal, data);
+    if (this.#observability.enabled)
+      this.#observability.recordSpan(
+        "parse",
+        "terminal-replica-write",
+        parseStarted,
+        this.#observability.nowMicros(),
+      );
     // DEC synchronized-output is atomic: no intermediate frame leaks.
     if (terminalModes(this.#terminal).synchronizedOutput) {
       this.#scheduleSyncRecovery();
@@ -293,7 +316,7 @@ export class TerminalReplicaInterpreter {
 
   #scheduleSyncRecovery(): void {
     if (this.#syncRecovery || this.#closed) return;
-    this.#syncRecovery = setTimeout(() => {
+    this.#syncRecovery = this.#scheduler.timer(() => {
       this.#syncRecovery = null;
       const run = this.#tail.then(async () => {
         if (this.#closed || !terminalModes(this.#terminal).synchronizedOutput) return;
@@ -303,16 +326,16 @@ export class TerminalReplicaInterpreter {
       });
       this.#tail = run.catch(() => undefined);
     }, 250);
-    this.#syncRecovery.unref?.();
   }
 
   #clearSyncRecovery(): void {
     if (!this.#syncRecovery) return;
-    clearTimeout(this.#syncRecovery);
+    this.#syncRecovery.cancel();
     this.#syncRecovery = null;
   }
 
   #commit(forceSeed: boolean, dirty?: { start: number; end: number }): void {
+    const reduceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
     const projected = this.#project(forceSeed ? undefined : dirty);
     const previous = this.#snapshot;
     const dirtyRows: CanonicalTerminalReplicaPatch["patch"]["rows"] = [];
@@ -335,7 +358,10 @@ export class TerminalReplicaInterpreter {
     });
     const nextHash = hashTerminalReplicaSnapshot(next);
     const priorHash = hashTerminalReplicaSnapshot(previous);
-    if (!forceSeed && nextHash === priorHash) return;
+    if (!forceSeed && nextHash === priorHash) {
+      this.#recordReduceSpan(reduceStarted);
+      return;
+    }
     if (forceSeed || this.#needsSeed) {
       const revision = this.#needsSeed ? this.#revision : this.#revision + 1;
       this.#revision = revision;
@@ -344,6 +370,7 @@ export class TerminalReplicaInterpreter {
       this.#resolveSeedReady();
       this.#emitRaw(revision, revision);
       this.#emit(this.#seed(revision, next));
+      this.#recordReduceSpan(reduceStarted);
       return;
     }
     const baseRevision = this.#revision;
@@ -373,6 +400,17 @@ export class TerminalReplicaInterpreter {
     this.#snapshot = next;
     this.#emitRaw(baseRevision, revision);
     this.#emit(update);
+    this.#recordReduceSpan(reduceStarted);
+  }
+
+  #recordReduceSpan(startedAtMicros: number): void {
+    if (!this.#observability.enabled) return;
+    this.#observability.recordSpan(
+      "reduce",
+      "terminal-replica-project-commit",
+      startedAtMicros,
+      this.#observability.nowMicros(),
+    );
   }
 
   #emitRaw(baseRevision: number, revision: number): void {

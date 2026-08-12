@@ -1,7 +1,15 @@
 import type { CanonicalTerminalReplicaUpdate, SessionRuntimeGeneration } from "@tmux-ide/contracts";
 import type { MirrorLayoutEvent, MirrorPaneEvent } from "../mirror/events.ts";
 import type { MirrorService, MirrorSubscription } from "../mirror/mirror-service.ts";
-import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
+import {
+  TerminalReplicaInterpreter,
+  type TerminalReplicaInterpreterStats,
+} from "./terminal-replica-interpreter.ts";
+import {
+  SYSTEM_SESSION_RUNTIME_SCHEDULER,
+  type SessionRuntimeScheduler,
+} from "./runtime-scheduler.ts";
+import type { SessionRuntimeObservability } from "./runtime-observability.ts";
 
 export interface TerminalReplicaSubscription {
   readonly generation: SessionRuntimeGeneration;
@@ -17,6 +25,13 @@ export interface TerminalReplicaCommittedRaw {
   readonly contiguous: boolean;
 }
 
+export interface TerminalReplicaQualificationSnapshot {
+  readonly incarnation: string | null;
+  readonly revision: number | null;
+  readonly stateHash: string | null;
+  readonly stats: TerminalReplicaInterpreterStats;
+}
+
 /** One parser/replica owner for one semantic pane inside one SessionRuntime. */
 export class SessionRuntimeTerminalReplicaOwner {
   readonly #interpreter: TerminalReplicaInterpreter;
@@ -24,6 +39,7 @@ export class SessionRuntimeTerminalReplicaOwner {
   readonly #rawListeners = new Set<(record: TerminalReplicaCommittedRaw) => void>();
   readonly #onClosed: (() => void) | undefined;
   readonly #onFault: ((error: unknown) => void) | undefined;
+  readonly #scheduler: SessionRuntimeScheduler;
   readonly #start: Promise<void>;
   #upstream: MirrorSubscription | null = null;
   #disposed = false;
@@ -43,10 +59,13 @@ export class SessionRuntimeTerminalReplicaOwner {
       readonly onRevision?: (revision: number) => void;
       readonly onClosed?: () => void;
       readonly onFault?: (error: unknown) => void;
+      readonly scheduler?: SessionRuntimeScheduler;
+      readonly observability?: SessionRuntimeObservability;
     },
   ) {
     this.#onClosed = options.onClosed;
     this.#onFault = options.onFault;
+    this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
     this.#interpreter = new TerminalReplicaInterpreter({
       generation,
       workspaceName: session,
@@ -55,6 +74,8 @@ export class SessionRuntimeTerminalReplicaOwner {
       initialRevision: options.initialRevision,
       cols: this.#cols,
       rows: this.#rows,
+      scheduler: options.scheduler,
+      observability: options.observability,
       onUpdate: (update) => {
         if (update.type === "terminal.seed") this.#bootstrapped = true;
         options.onRevision?.(update.revision);
@@ -69,7 +90,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       onRawCommit: (record) => {
         // Schedule observers outside the parser stack. Registration happens
         // before the matching canonical callback schedules delivery.
-        queueMicrotask(() => {
+        this.#scheduler.microtask(() => {
           const size = record.chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
           const bytes = new Uint8Array(size);
           let offset = 0;
@@ -103,6 +124,16 @@ export class SessionRuntimeTerminalReplicaOwner {
         if (this.#disposed) return subscription.close();
         this.#upstream = subscription;
       });
+  }
+
+  qualificationSnapshot(): TerminalReplicaQualificationSnapshot {
+    const seed = this.#interpreter.currentSeed();
+    return Object.freeze({
+      incarnation: seed?.incarnation ?? null,
+      revision: seed?.revision ?? null,
+      stateHash: seed?.stateHash ?? null,
+      stats: this.#interpreter.stats(),
+    });
   }
 
   async subscribe(

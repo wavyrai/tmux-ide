@@ -36,15 +36,28 @@ import {
   type SessionRuntimeIntentResult,
   type SessionRuntimeTmuxObservation,
   type SessionSemanticMutationExecutorOptions,
+  type SessionSemanticMutationMetrics,
 } from "./semantic-mutation-executor.ts";
 import {
   SessionRuntimeTerminalReplicaOwner,
+  type TerminalReplicaQualificationSnapshot,
   type TerminalReplicaSubscription,
 } from "./terminal-replica-owner.ts";
 import {
   SessionRuntimeTerminalDeliveryHub,
   type TerminalDeliveryConnection,
+  type TerminalDeliveryConvergenceSnapshot,
+  type TerminalDeliveryMetrics,
 } from "./terminal-delivery-hub.ts";
+import {
+  SYSTEM_SESSION_RUNTIME_SCHEDULER,
+  type SessionRuntimeScheduler,
+} from "./runtime-scheduler.ts";
+import {
+  DISABLED_SESSION_RUNTIME_OBSERVABILITY,
+  type SessionRuntimeObservability,
+  type SessionRuntimeObservabilitySnapshot,
+} from "./runtime-observability.ts";
 
 export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
@@ -52,6 +65,24 @@ export interface SessionRuntimeRegistryOptions {
   readonly semanticMutations?: SessionSemanticMutationExecutorOptions;
   /** Deterministic seam for lease tests. Production uses cryptographic UUIDs. */
   readonly createControllerToken?: () => string;
+  readonly scheduler?: SessionRuntimeScheduler;
+  readonly observability?: SessionRuntimeObservability;
+}
+
+export interface SessionRuntimeQualificationSnapshot {
+  readonly generation: SessionRuntimeGeneration;
+  readonly controlChannels: number;
+  readonly controllerLeases: number;
+  readonly sessions: readonly {
+    readonly session: string;
+    readonly consumers: number;
+    readonly retained: boolean;
+    readonly delivery: TerminalDeliveryMetrics;
+    readonly convergence: TerminalDeliveryConvergenceSnapshot;
+    readonly replicas: Readonly<Record<string, TerminalReplicaQualificationSnapshot>>;
+  }[];
+  readonly mutations: SessionSemanticMutationMetrics | null;
+  readonly observability: SessionRuntimeObservabilitySnapshot;
 }
 
 export type {
@@ -161,6 +192,8 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #semanticMutations: SessionSemanticMutationExecutor | null;
   readonly #resolveSession: ((workspaceName: string) => string | null) | null;
   readonly #createControllerToken: () => string;
+  readonly #scheduler: SessionRuntimeScheduler;
+  readonly #observability: SessionRuntimeObservability;
   readonly #sessions = new Map<string, SessionRuntime>();
   readonly #executionHandles = new WeakMap<object, ExecutionHandleState>();
   readonly #stopExitObserver: () => void;
@@ -169,9 +202,15 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
 
   constructor(options: SessionRuntimeRegistryOptions) {
     this.generation = SessionRuntimeGenerationSchemaZ.parse(options.generation);
+    this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
+    this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#mirror = new MirrorService(options.mirror);
     this.#semanticMutations = options.semanticMutations
-      ? new SessionSemanticMutationExecutor(options.semanticMutations)
+      ? new SessionSemanticMutationExecutor({
+          ...options.semanticMutations,
+          scheduler: options.semanticMutations.scheduler ?? this.#scheduler,
+          observability: options.semanticMutations.observability ?? this.#observability,
+        })
       : null;
     this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
     this.#createControllerToken = options.createControllerToken ?? randomUUID;
@@ -401,6 +440,19 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return count;
   }
 
+  qualificationSnapshot(): SessionRuntimeQualificationSnapshot {
+    return Object.freeze({
+      generation: this.generation,
+      controlChannels: this.activeControlChannelCount(),
+      controllerLeases: this.activeControllerLeaseCount(),
+      sessions: Object.freeze(
+        [...this.#sessions.values()].map((runtime) => runtime.qualificationSnapshot()),
+      ),
+      mutations: this.#semanticMutations?.metrics() ?? null,
+      observability: this.#observability.snapshot(),
+    });
+  }
+
   dispose(): Promise<void> {
     if (!this.#disposePromise) {
       this.#disposed = true;
@@ -424,6 +476,8 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       session,
       this.#mirror,
       this.#createControllerToken,
+      this.#scheduler,
+      this.#observability,
       (
         owner,
         lease,
@@ -454,6 +508,8 @@ class SessionRuntime {
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
   readonly #terminalDeliveryHub: SessionRuntimeTerminalDeliveryHub;
+  readonly #scheduler: SessionRuntimeScheduler;
+  readonly #observability: SessionRuntimeObservability;
   readonly #createControllerToken: () => string;
   readonly #submitAuthorized: (
     runtime: SessionRuntime,
@@ -478,6 +534,8 @@ class SessionRuntime {
     readonly session: string,
     mirror: MirrorService,
     createControllerToken: () => string,
+    scheduler: SessionRuntimeScheduler,
+    observability: SessionRuntimeObservability,
     submitAuthorized: (
       runtime: SessionRuntime,
       lease: SessionRuntimeControllerLease,
@@ -488,12 +546,15 @@ class SessionRuntime {
     ) => Promise<SessionRuntimeIntentResult>,
   ) {
     this.#mirror = mirror;
+    this.#scheduler = scheduler;
+    this.#observability = observability;
     this.#createControllerToken = createControllerToken;
     this.#submitAuthorized = submitAuthorized;
     this.#terminalDeliveryHub = new SessionRuntimeTerminalDeliveryHub(
       generation,
       session,
       (semanticPaneId) => this.#terminalReplicaOwner(semanticPaneId),
+      { scheduler, observability },
     );
   }
 
@@ -527,6 +588,24 @@ class SessionRuntime {
 
   hasController(): boolean {
     return this.#controllerClientId !== null;
+  }
+
+  qualificationSnapshot(): SessionRuntimeQualificationSnapshot["sessions"][number] {
+    return Object.freeze({
+      session: this.session,
+      consumers: this.#consumers.size,
+      retained: this.#retention !== null,
+      delivery: this.#terminalDeliveryHub.metrics(),
+      convergence: this.#terminalDeliveryHub.convergenceSnapshot(),
+      replicas: Object.freeze(
+        Object.fromEntries(
+          [...this.#terminalReplicas.entries()].map(([paneId, owner]) => [
+            paneId,
+            owner.qualificationSnapshot(),
+          ]),
+        ),
+      ),
+    });
   }
 
   acquireController(clientId: string): SessionRuntimeControllerLease {
@@ -635,8 +714,16 @@ class SessionRuntime {
     data: string,
   ): void {
     this.assertController(lease, clientId);
+    const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
     if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId, data);
     else this.#mirror.sendKey(this.session, semanticPaneId, data);
+    if (this.#observability.enabled)
+      this.#observability.recordSpan(
+        "tmux",
+        "raw-input-command",
+        started,
+        this.#observability.nowMicros(),
+      );
   }
 
   fitViewport(
@@ -758,6 +845,8 @@ class SessionRuntime {
               this.#terminalReplicaClocks.set(semanticPaneId, current);
             });
           },
+          scheduler: this.#scheduler,
+          observability: this.#observability,
         },
       );
       owner = candidate;
