@@ -1,7 +1,7 @@
 import {
-  WorkspaceCatalogResourceV1SchemaZ,
+  WorkspaceCatalogResourceV2SchemaZ,
   type CanonicalDaemonInfo,
-  type WorkspaceCatalogResourceV1,
+  type WorkspaceCatalogResourceV2,
 } from "@tmux-ide/contracts";
 
 import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
@@ -14,29 +14,30 @@ import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
  * only routing hints; daemon-owned actions always receive the stable workspace
  * name from this catalog.
  */
-export async function fetchCanonicalWorkspaceCatalog(
+export async function fetchCanonicalWorkspaceRouting(
   daemon: CanonicalDaemonInfo,
   request: typeof fetch = fetch,
-): Promise<WorkspaceCatalogResourceV1> {
+): Promise<WorkspaceCatalogResourceV2> {
   const baseUrl = canonicalDaemonUrl("http", daemon.bindHostname, daemon.port);
-  const response = await request(`${baseUrl}/api/resources/workspace-catalog`, {
+  const response = await request(`${baseUrl}/api/resources/workspace-catalog?version=2`, {
     signal: AbortSignal.timeout(1_000),
   });
   if (!response.ok) throw new Error(`workspace catalog returned HTTP ${response.status}`);
 
-  const catalog = WorkspaceCatalogResourceV1SchemaZ.parse(await response.json());
+  const catalog = WorkspaceCatalogResourceV2SchemaZ.parse(await response.json());
   if (catalog.daemon.instanceId !== daemon.instanceId) {
     throw new Error("daemon generation changed while resolving the workspace");
   }
   return catalog;
 }
 
-export function workspaceNameForSession(
-  catalog: WorkspaceCatalogResourceV1,
+export function workspaceNameForLiveSession(
+  catalog: WorkspaceCatalogResourceV2,
   sessionName: string,
 ): string | null {
   return (
-    catalog.workspaces.find((workspace) => workspace.sessionName === sessionName)?.workspaceName ??
-    null
+    catalog.intents.find(
+      (workspace) => workspace.sessionName === sessionName && workspace.availability === "live",
+    )?.workspaceName ?? null
   );
 }

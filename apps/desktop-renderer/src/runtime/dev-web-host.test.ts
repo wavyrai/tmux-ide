@@ -209,7 +209,16 @@ describe("development web host route keying", () => {
               capabilities: { appWindowMutation: { available: true } },
             }
           : url.pathname === "/api/resources/workspace-catalog"
-            ? { version: 1, daemon: IDENTITY, workspaces: [...CATALOG] }
+            ? {
+                version: 2,
+                daemon: IDENTITY,
+                intents: CATALOG.map((entry) => ({
+                  ...entry,
+                  source: "workspace",
+                  availability: "live",
+                })),
+                liveSessions: CATALOG.map(({ sessionName }) => ({ sessionName, paneCount: 1 })),
+              }
             : { unreadable: true };
       return {
         ok: true,
@@ -262,7 +271,16 @@ describe("development web host route keying", () => {
         }
         if (url.pathname === "/api/resources/workspace-catalog") {
           return new Response(
-            JSON.stringify({ version: 1, daemon: IDENTITY, workspaces: [...CATALOG] }),
+            JSON.stringify({
+              version: 2,
+              daemon: IDENTITY,
+              intents: CATALOG.map((entry) => ({
+                ...entry,
+                source: "workspace",
+                availability: "live",
+              })),
+              liveSessions: CATALOG.map(({ sessionName }) => ({ sessionName, paneCount: 1 })),
+            }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }

@@ -18,8 +18,8 @@ import {
   readCanonicalDaemonInfo,
 } from "../../lib/canonical-daemon.ts";
 import {
-  fetchCanonicalWorkspaceCatalog,
-  workspaceNameForSession,
+  fetchCanonicalWorkspaceRouting,
+  workspaceNameForLiveSession,
 } from "./canonical-workspace-routing.ts";
 import {
   createOpenTuiVerifiedRoutingContext,
@@ -37,7 +37,7 @@ export interface OpenTuiApplicationShellAuthority {
 interface OpenTuiApplicationShellAuthorityDependencies {
   readonly readCanonicalDaemonInfo: () => CanonicalDaemonInfo | null;
   readonly isCanonicalDaemonAlive: (daemon: CanonicalDaemonInfo) => Promise<boolean>;
-  readonly fetchCanonicalWorkspaceCatalog: typeof fetchCanonicalWorkspaceCatalog;
+  readonly fetchCanonicalWorkspaceRouting: typeof fetchCanonicalWorkspaceRouting;
   readonly createTransport: (options: {
     readonly descriptor: DesktopDaemonHostDescriptor;
     readonly workspaceName: string;
@@ -52,7 +52,7 @@ interface OpenTuiApplicationShellAuthorityDependencies {
 const DEFAULT_DEPENDENCIES: OpenTuiApplicationShellAuthorityDependencies = {
   readCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
-  fetchCanonicalWorkspaceCatalog,
+  fetchCanonicalWorkspaceRouting,
   createTransport: ({
     descriptor,
     workspaceName,
@@ -97,8 +97,8 @@ export async function connectOpenTuiApplicationShellAuthority(
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
   const daemon = dependencies.readCanonicalDaemonInfo();
   if (!daemon || !(await dependencies.isCanonicalDaemonAlive(daemon))) return null;
-  const catalog = await dependencies.fetchCanonicalWorkspaceCatalog(daemon);
-  const workspaceName = workspaceNameForSession(catalog, sessionName);
+  const catalog = await dependencies.fetchCanonicalWorkspaceRouting(daemon);
+  const workspaceName = workspaceNameForLiveSession(catalog, sessionName);
   if (!workspaceName) return null;
   const target: DesktopApplicationShellTarget = {
     daemon: {

@@ -18,8 +18,8 @@ import {
 } from "../../lib/canonical-daemon.ts";
 import type { SessionPaneDescriptor } from "../../terminal/protocol/session-descriptor-discovery.ts";
 import {
-  fetchCanonicalWorkspaceCatalog,
-  workspaceNameForSession,
+  fetchCanonicalWorkspaceRouting,
+  workspaceNameForLiveSession,
 } from "./canonical-workspace-routing.ts";
 
 export type TuiMultiplexerAction =
@@ -323,8 +323,8 @@ export async function executeTuiMultiplexerAction(
   }
 
   try {
-    const catalog = await fetchCanonicalWorkspaceCatalog(canonical, deps.fetch);
-    const workspaceName = workspaceNameForSession(catalog, context.sessionName);
+    const catalog = await fetchCanonicalWorkspaceRouting(canonical, deps.fetch);
+    const workspaceName = workspaceNameForLiveSession(catalog, context.sessionName);
     if (!workspaceName) {
       return {
         status: "error",

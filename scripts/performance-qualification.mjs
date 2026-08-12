@@ -25,8 +25,15 @@ const referenceReport = process.env.TMUX_IDE_REFERENCE_REPORT
       source,
     )
   : null;
+const portableEvidence = process.env.TMUX_IDE_PORTABLE_EVIDENCE_REPORT
+  ? JSON.parse(readFileSync(resolve(root, process.env.TMUX_IDE_PORTABLE_EVIDENCE_REPORT), "utf8"))
+  : null;
 if (referenceReport && referenceReport.status !== "passed")
   throw new Error(`Explicit reference qualification is ${referenceReport.status}, not passed`);
+if (portableEvidence && portableEvidence.status !== "passed")
+  throw new Error(
+    `Explicit portable performance evidence is ${portableEvidence.status}, not passed`,
+  );
 
 validateReferenceBudget(baseline.referenceLatencyBudget);
 validateReferenceResult(baseline.referenceResult);
@@ -185,12 +192,18 @@ const scenarioDefinitions = [
   ),
   {
     id: "cold-and-warm-startup",
-    coverage: referenceReport ? "measured-reference-only" : "not-covered",
+    coverage: portableEvidence
+      ? "measured-portable"
+      : referenceReport
+        ? "measured-reference-only"
+        : "not-covered",
     suites: [],
     assertions: [],
-    reason: referenceReport
-      ? `Reference startup measurement is ${referenceReport.measurements.startup.status}; portable CI does not infer it.`
-      : "No deterministic portable test currently measures cold and warm startup through first paint.",
+    reason: portableEvidence
+      ? `Isolated startup measurement is ${portableEvidence.measurements.startup.status}.`
+      : referenceReport
+        ? `Reference startup measurement is ${referenceReport.measurements.startup.status}; portable CI does not infer it.`
+        : "No deterministic portable test currently measures cold and warm startup through first paint.",
   },
   {
     id: "reference-input-to-paint-latency",
@@ -207,14 +220,18 @@ const scenarioDefinitions = [
   {
     id: "process-memory-slope",
     coverage:
-      referenceReport?.measurements.memory.status === "passed"
-        ? "measured-reference-only"
-        : "not-measured",
+      portableEvidence?.measurements.memory.status === "passed"
+        ? "measured-portable"
+        : referenceReport?.measurements.memory.status === "passed"
+          ? "measured-reference-only"
+          : "not-measured",
     suites: [],
     assertions: [],
-    reason: referenceReport
-      ? `Reference memory measurement is ${referenceReport.measurements.memory.status}; portable CI does not infer it.`
-      : "Portable tests prove bounded queues and caches, but do not claim deterministic RSS or heap slope.",
+    reason: portableEvidence
+      ? `Isolated process-memory measurement is ${portableEvidence.measurements.memory.status}.`
+      : referenceReport
+        ? `Reference memory measurement is ${referenceReport.measurements.memory.status}; portable CI does not infer it.`
+        : "Portable tests prove bounded queues and caches, but do not claim deterministic RSS or heap slope.",
   },
 ];
 
@@ -302,11 +319,14 @@ const report = {
             : "failed",
   },
   referenceQualification: referenceReport,
+  portableEvidence,
   limitations: [
     "Suite wall durations are runner diagnostics, not UI latency measurements.",
     referenceReport
       ? "Reference-host measurements remain distinct from portable CI and are never generalized to other hosts."
-      : "Cold/warm startup, production stage timings, and process-memory slope remain explicitly unmeasured.",
+      : portableEvidence
+        ? "Headless startup measures first mounted application frame; visible terminal first-frame and input-to-paint remain reference-only."
+        : "Cold/warm startup, production stage timings, and process-memory slope remain explicitly unmeasured.",
     "Whether this workflow is required by repository branch protection is external to this artifact.",
   ],
 };
@@ -379,6 +399,9 @@ function markdownSummary(value) {
     value.referenceQualification
       ? `Explicit reference artifact: **${value.referenceQualification.status}** (${value.referenceQualification.provenance.cpuModel}).`
       : "Explicit reference artifact: **not provided**.",
+    value.portableEvidence
+      ? `Isolated executable evidence: **${value.portableEvidence.status}** (startup ${value.portableEvidence.measurements.startup.status}; memory ${value.portableEvidence.measurements.memory.status}; input-to-paint ${value.portableEvidence.measurements.inputToPaint.status}).`
+      : "Isolated executable evidence: **not provided**.",
     "",
   ];
   return `${lines.join("\n")}\n`;

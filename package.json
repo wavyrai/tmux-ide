@@ -59,6 +59,7 @@
     "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
     "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
     "test:performance-qualification": "node scripts/performance-qualification.mjs",
+    "measure:performance-portable": "node scripts/performance-portable-evidence.mjs",
     "measure:performance-reference": "node scripts/performance-reference.mjs",
     "test:performance-reference": "node scripts/performance-reference.mjs --require-complete",
     "test:tui-perf": "pnpm test:performance-qualification",

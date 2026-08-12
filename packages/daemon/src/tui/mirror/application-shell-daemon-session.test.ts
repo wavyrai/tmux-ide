@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   type CanonicalDaemonInfo,
-  type WorkspaceCatalogResourceV1,
+  type WorkspaceCatalogResourceV2,
 } from "@tmux-ide/contracts";
 import type {
   ApplicationShellSession,
@@ -26,15 +26,23 @@ const daemon: CanonicalDaemonInfo = {
 };
 
 const catalog = {
-  version: 1,
+  version: 2,
   daemon: {
     protocolVersion: daemon.protocolVersion,
     productVersion: daemon.productVersion,
     instanceId: daemon.instanceId,
     startedAt: daemon.startedAt,
   },
-  workspaces: [{ workspaceName: "workspace.alpha", sessionName: "alpha" }],
-} as WorkspaceCatalogResourceV1;
+  intents: [
+    {
+      workspaceName: "workspace.alpha",
+      sessionName: "alpha",
+      source: "workspace",
+      availability: "live",
+    },
+  ],
+  liveSessions: [{ sessionName: "alpha", paneCount: 1 }],
+} as WorkspaceCatalogResourceV2;
 
 describe("OpenTUI canonical application-shell authority", () => {
   it("derives an uncredentialed descriptor from the canonical daemon", () => {
@@ -56,7 +64,7 @@ describe("OpenTUI canonical application-shell authority", () => {
     const authority = await connectOpenTuiApplicationShellAuthority("alpha", {
       readCanonicalDaemonInfo: () => daemon,
       isCanonicalDaemonAlive: async () => true,
-      fetchCanonicalWorkspaceCatalog: async () => catalog,
+      fetchCanonicalWorkspaceRouting: async () => catalog,
       createTransport,
       createSession,
     });
@@ -91,8 +99,22 @@ describe("OpenTUI canonical application-shell authority", () => {
     const authority = await connectOpenTuiApplicationShellAuthority("missing", {
       readCanonicalDaemonInfo: () => daemon,
       isCanonicalDaemonAlive: async () => true,
-      fetchCanonicalWorkspaceCatalog: async () => catalog,
+      fetchCanonicalWorkspaceRouting: async () => catalog,
     });
+    expect(authority).toBeNull();
+  });
+
+  it("does not route mutations through stopped durable intent", async () => {
+    const authority = await connectOpenTuiApplicationShellAuthority("alpha", {
+      readCanonicalDaemonInfo: () => daemon,
+      isCanonicalDaemonAlive: async () => true,
+      fetchCanonicalWorkspaceRouting: async () => ({
+        ...catalog,
+        intents: catalog.intents.map((intent) => ({ ...intent, availability: "stopped" })),
+        liveSessions: [],
+      }),
+    });
+
     expect(authority).toBeNull();
   });
 });

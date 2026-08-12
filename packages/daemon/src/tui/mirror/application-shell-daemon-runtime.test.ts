@@ -5,7 +5,7 @@ import type {
   PaneStreamClientSocket,
   PaneStreamRuntimeClient,
 } from "@tmux-ide/daemon-client/pane-stream-client";
-import type { CanonicalDaemonInfo, WorkspaceCatalogResourceV1 } from "@tmux-ide/contracts";
+import type { CanonicalDaemonInfo, WorkspaceCatalogResourceV2 } from "@tmux-ide/contracts";
 
 import {
   connectOpenTuiSessionRuntime,
@@ -34,15 +34,23 @@ const daemon: CanonicalDaemonInfo = {
 };
 
 const catalog = {
-  version: 1,
+  version: 2,
   daemon: {
     protocolVersion: daemon.protocolVersion,
     productVersion: daemon.productVersion,
     instanceId: daemon.instanceId,
     startedAt: daemon.startedAt,
   },
-  workspaces: [{ workspaceName: "workspace.alpha", sessionName: "alpha" }],
-} as WorkspaceCatalogResourceV1;
+  intents: [
+    {
+      workspaceName: "workspace.alpha",
+      sessionName: "alpha",
+      source: "workspace",
+      availability: "live",
+    },
+  ],
+  liveSessions: [{ sessionName: "alpha", paneCount: 1 }],
+} as WorkspaceCatalogResourceV2;
 
 function runtimeClient(): PaneStreamRuntimeClient {
   return {
@@ -139,11 +147,11 @@ describe("OpenTUI pane-stream startup routing", () => {
     const routing = createOpenTuiVerifiedRoutingContext(daemon, "workspace.alpha", "alpha", open)!;
     const readCanonicalDaemonInfo = vi.fn(() => daemon);
     const isCanonicalDaemonAlive = vi.fn(async () => true);
-    const fetchCanonicalWorkspaceCatalog = vi.fn(async () => catalog);
+    const fetchCanonicalWorkspaceRouting = vi.fn(async () => catalog);
 
     const lane = await connectOpenTuiSessionRuntime(
       { ...runtimeOptions(), routing },
-      { readCanonicalDaemonInfo, isCanonicalDaemonAlive, fetchCanonicalWorkspaceCatalog },
+      { readCanonicalDaemonInfo, isCanonicalDaemonAlive, fetchCanonicalWorkspaceRouting },
     );
 
     expect(lane).toMatchObject({
@@ -153,7 +161,7 @@ describe("OpenTUI pane-stream startup routing", () => {
     });
     expect(readCanonicalDaemonInfo).not.toHaveBeenCalled();
     expect(isCanonicalDaemonAlive).not.toHaveBeenCalled();
-    expect(fetchCanonicalWorkspaceCatalog).not.toHaveBeenCalled();
+    expect(fetchCanonicalWorkspaceRouting).not.toHaveBeenCalled();
     expect(open).toHaveBeenCalledOnce();
     expect(open.mock.calls[0]![0]).toMatchObject({
       daemonInstanceId: daemon.instanceId,
@@ -167,7 +175,7 @@ describe("OpenTUI pane-stream startup routing", () => {
     const open = vi.fn(async (_options: OpenPaneStreamClientOptions) => client);
     const readCanonicalDaemonInfo = vi.fn(() => daemon);
     const isCanonicalDaemonAlive = vi.fn(async () => true);
-    const fetchCanonicalWorkspaceCatalog = vi.fn(async () => catalog);
+    const fetchCanonicalWorkspaceRouting = vi.fn(async () => catalog);
     const createRoutingContext = vi.fn(
       (candidate: CanonicalDaemonInfo, workspaceName: string, sessionName: string) =>
         createOpenTuiVerifiedRoutingContext(candidate, workspaceName, sessionName, open),
@@ -176,14 +184,14 @@ describe("OpenTUI pane-stream startup routing", () => {
     const lane = await connectOpenTuiSessionRuntime(runtimeOptions(), {
       readCanonicalDaemonInfo,
       isCanonicalDaemonAlive,
-      fetchCanonicalWorkspaceCatalog,
+      fetchCanonicalWorkspaceRouting,
       createRoutingContext,
     });
 
     expect(lane?.workspaceName).toBe("workspace.alpha");
     expect(readCanonicalDaemonInfo).toHaveBeenCalledOnce();
     expect(isCanonicalDaemonAlive).toHaveBeenCalledOnce();
-    expect(fetchCanonicalWorkspaceCatalog).toHaveBeenCalledOnce();
+    expect(fetchCanonicalWorkspaceRouting).toHaveBeenCalledOnce();
     expect(createRoutingContext).toHaveBeenCalledWith(daemon, "workspace.alpha", "alpha");
     expect(open).toHaveBeenCalledOnce();
   });

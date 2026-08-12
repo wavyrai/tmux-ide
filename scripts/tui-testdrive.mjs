@@ -33,6 +33,7 @@ const perfLogPath = join(runtimeDir, "performance.jsonl");
 const metadataPath = join(runtimeDir, "state.json");
 const namespaceSocketName = `tmux-ide-testdrive-${process.getuid?.() ?? process.pid}`;
 const cleanupToken = `testdrive:cleanup:${process.getuid?.() ?? process.pid}`;
+const targetSocketName = process.env.TMUX_IDE_TESTDRIVE_TARGET_SOCKET_NAME?.trim() || null;
 const compiledTui = join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui");
 const sourceTui = join(repoRoot, "packages", "daemon", "src", "tui", "mirror", "app.tsx");
 
@@ -95,7 +96,12 @@ function sessionExists(name) {
 
 function liveSessions() {
   try {
-    return tmux(["list-sessions", "-F", "#{session_name}"])
+    return tmux([
+      ...(targetSocketName ? ["-L", targetSocketName] : []),
+      "list-sessions",
+      "-F",
+      "#{session_name}",
+    ])
       .trim()
       .split("\n")
       .map((name) => name.trim())
@@ -342,7 +348,7 @@ async function start(args) {
           "TMUX_IDE_RUNTIME_MODE=testdrive",
           `TMUX_IDE_REGISTRY_DIR=${shQuote(join(runtimeDir, "registry"))}`,
           `TMUX_IDE_DAEMON_INFO_DIR=${shQuote(stateHome)}`,
-          `TMUX_IDE_TMUX_SOCKET_NAME=${shQuote(namespaceSocketName)}`,
+          `TMUX_IDE_TMUX_SOCKET_NAME=${shQuote(targetSocketName ?? namespaceSocketName)}`,
           `TMUX_IDE_CLEANUP_TOKEN=${shQuote(cleanupToken)}`,
         ]),
     `TMUX_IDE_CLI=${shQuote(join(repoRoot, "bin", "cli.js"))}`,

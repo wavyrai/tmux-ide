@@ -39,7 +39,7 @@ import {
   StartupReadinessResourceSchemaZ,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
   TerminalAttachmentIssueResultSchemaZ,
-  WorkspaceCatalogResourceV1SchemaZ,
+  WorkspaceCatalogResourceV2SchemaZ,
   WorkspaceChangeDiffEnvelopeV1SchemaZ,
   WorkspaceChangesCatalogEnvelopeV1SchemaZ,
   WorkspaceFilePreviewEnvelopeV1SchemaZ,
@@ -718,9 +718,9 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   async function workspaceCatalog(
     signal?: AbortSignal,
   ): Promise<readonly DevWorkspaceCatalogEntry[]> {
-    const parsed = WorkspaceCatalogResourceV1SchemaZ.safeParse(
+    const parsed = WorkspaceCatalogResourceV2SchemaZ.safeParse(
       await request(
-        "/api/resources/workspace-catalog",
+        "/api/resources/workspace-catalog?version=2",
         { method: "GET" },
         {},
         REQUEST_TIMEOUT_MS,
@@ -733,10 +733,9 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         capabilityError("daemon-identity-mismatch", "The daemon generation changed."),
       );
     }
-    catalogCache = parsed.data.workspaces.map(({ workspaceName, sessionName }) => ({
-      workspaceName,
-      sessionName,
-    }));
+    catalogCache = parsed.data.intents
+      .filter(({ availability }) => availability === "live")
+      .map(({ workspaceName, sessionName }) => ({ workspaceName, sessionName }));
     sendEventSubscriptionDelta();
     return catalogCache;
   }

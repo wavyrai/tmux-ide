@@ -149,13 +149,14 @@ async function launchReferenceWorkspace() {
   let lastApplicationShell = null;
   while (Date.now() < deadline) {
     const catalogResponse = await fetch(
-      `http://${daemon.bindHostname}:${daemon.port}/api/resources/workspace-catalog`,
+      `http://${daemon.bindHostname}:${daemon.port}/api/resources/workspace-catalog?version=2`,
       { headers: { authorization: `Bearer ${daemon.authToken}` } },
     );
     const catalog = await responseJson(catalogResponse);
     lastCatalog = { status: catalogResponse.status, body: catalog };
-    const published = catalog?.workspaces?.some(
-      ({ workspaceName, sessionName }) => workspaceName === target && sessionName === target,
+    const published = catalog?.intents?.some(
+      ({ workspaceName, sessionName, availability }) =>
+        workspaceName === target && sessionName === target && availability === "live",
     );
     if (published) {
       const panesResponse = await fetch(
