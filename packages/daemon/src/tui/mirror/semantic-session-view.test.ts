@@ -1,9 +1,45 @@
-import type { ApplicationShellTerminalInventory } from "@tmux-ide/contracts";
+import type { ApplicationShellTerminalInventory, PaneStreamServerFrame } from "@tmux-ide/contracts";
 import { describe, expect, it } from "vitest";
 
 import { SemanticSessionView } from "./semantic-session-view.ts";
 
 describe("SemanticSessionView local runtime identity", () => {
+  it("projects each window with its own activation pane identity", async () => {
+    const view = new SemanticSessionView({ target: "alpha" });
+    const layout = (
+      semanticWindowId: string,
+      windowName: string,
+      pane: string,
+      currentWindow: boolean,
+    ): Extract<PaneStreamServerFrame, { type: "layout" }> => ({
+      type: "layout",
+      semanticWindowId,
+      windowName,
+      currentWindow,
+      cols: 80,
+      rows: 24,
+      zoomed: false,
+      panes: [{ pane, left: 0, top: 0, width: 80, height: 24, active: true }],
+    });
+    view.acceptLayout(layout("window.editor", "Editor", "pane.editor", true));
+    view.acceptLayout(layout("window.tests", "Tests", "pane.tests", false));
+
+    expect(await view.windows()).toEqual([
+      expect.objectContaining({
+        index: 0,
+        semanticWindowId: "window.editor",
+        activePaneId: "pane.editor",
+        active: true,
+      }),
+      expect.objectContaining({
+        index: 1,
+        semanticWindowId: "window.tests",
+        activePaneId: "pane.tests",
+        active: false,
+      }),
+    ]);
+  });
+
   it("joins wire-safe inventory identity to process-local raw tmux descriptors", () => {
     const view = new SemanticSessionView({ target: "alpha" });
     view.setInventory({

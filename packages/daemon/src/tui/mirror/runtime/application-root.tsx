@@ -225,6 +225,10 @@ import {
   type InteractionFeedState,
 } from "../../../../../core/src/index.ts";
 import { SemanticSessionView, type LivePane } from "../semantic-session-view.ts";
+import {
+  TerminalWindowStrip,
+  type TerminalWindowTab as WindowTab,
+} from "../workspace/terminal-window-strip.tsx";
 import { FrameCoalescer } from "../frame-coalescer.ts";
 import {
   activeLivePaneId,
@@ -669,13 +673,6 @@ const MAX_CLIP_BYTES = 1_000_000;
 const CLICK_MS = 400;
 const sgrMouse = (button: number, col: number, row: number, release: boolean): string =>
   `\x1b[<${button};${col + 1};${row + 1}${release ? "m" : "M"}`;
-interface WindowTab {
-  index: number;
-  name: string;
-  active: boolean;
-  /** The window's `synchronize-panes` option — drives the `[SYNC]` chip. */
-  sync: boolean;
-}
 /** The hoverable surfaces — each names a row/segment set the router can resolve
  *  by coordinate math and each render tints with HOVER_BG (chips lift to
  *  semantic button-hover token). M21.9 adds: `tabbtn` (the tab bar's right-aligned context/
@@ -1625,8 +1622,6 @@ const mountTuiRoot = () => {
     let sessionRuntimeLaneRequest = 0;
     let runtimeLaneFitKey: string | null = null;
     let pendingSemanticFocus: { session: string; paneId: string } | null = null;
-    const semanticWindowOrder: string[] = [];
-    const semanticWindowActivePane = new Map<string, string>();
     const semanticPaneCanonicalSize = new Map<string, { cols: number; rows: number }>();
     let observePendingResizeLayout: () => void = () => {};
     const semanticPaneIdForRuntime = (runtimePaneId: string): string =>
@@ -1658,8 +1653,6 @@ const mountTuiRoot = () => {
       sessionRuntimeLane()?.close();
       setSessionRuntimeLane(null);
       runtimeLaneFitKey = null;
-      semanticWindowOrder.length = 0;
-      semanticWindowActivePane.clear();
       semanticPaneCanonicalSize.clear();
       setSemanticPaneVersions(new Map());
     };
@@ -1730,12 +1723,6 @@ const mountTuiRoot = () => {
                 windowName: frame.windowName ?? null,
                 semanticWindowId: frame.semanticWindowId ?? null,
               });
-              const windowKey =
-                frame.semanticWindowId ?? `unverified:${frame.windowName ?? "window"}`;
-              if (!semanticWindowOrder.includes(windowKey)) semanticWindowOrder.push(windowKey);
-              const activePane =
-                frame.panes.find((pane) => pane.active)?.pane ?? frame.panes[0]?.pane;
-              if (activePane) semanticWindowActivePane.set(windowKey, activePane);
               for (const pane of frame.panes) {
                 if (pane.pane)
                   semanticPaneCanonicalSize.set(pane.pane, {
@@ -4811,13 +4798,23 @@ const mountTuiRoot = () => {
       return "submitted";
     };
     const activateSemanticWindow = (windowIndex: number): boolean => {
-      const key = semanticWindowOrder[windowIndex];
-      const semanticPaneId = key ? semanticWindowActivePane.get(key) : undefined;
+      const tab = windowTabs().find((candidate) => candidate.index === windowIndex);
+      const semanticPaneId = tab?.activePaneId ?? undefined;
       if (!semanticPaneId) {
         setStatusNote("window is not yet available in the semantic runtime");
         return false;
       }
-      return submitSemanticPaneFocus(semanticPaneId) === "submitted";
+      const result = submitSemanticPaneFocus(semanticPaneId);
+      if (result !== "submitted") return false;
+      // Selection feedback is renderer-local and immediate. The next layout
+      // frame reconciles this optimistic state with daemon-owned tmux truth.
+      setWindowTabs((current) =>
+        current.map((candidate) => ({
+          ...candidate,
+          active: candidate.index === windowIndex,
+        })),
+      );
+      return true;
     };
     const applyApplicationShellFocus = (target: SemanticFocusTarget) => {
       if (target.kind === "dock-tool") {
@@ -6812,28 +6809,6 @@ const mountTuiRoot = () => {
       filesSession()?.action(id);
     };
 
-    /** The strip as THREE static texts (pre/active/post) whose STRINGS update.
-     *  KNOWN UPSTREAM QUIRK: clicks landing exactly ON this row's label cells
-     *  are swallowed before dispatch regardless of node structure (For-of-texts,
-     *  static texts, handler-less — all tried; the surface bar with an identical
-     *  pattern takes clicks fine). Non-label cells on the row route normally.
-     *  ^t cycles windows; span routing handles whatever clicks arrive. */
-    const windowStripParts = createMemo(() => {
-      const tabs = windowTabs();
-      const activeIdx = tabs.findIndex((w) => w.active);
-      const label = (w: { index: number; name: string }) => ` ${w.index}:${w.name} `;
-      const pre = tabs.slice(0, Math.max(0, activeIdx)).map(label);
-      const post = tabs.slice(activeIdx + 1).map(label);
-      return {
-        // Inter-label gaps live in the strings, not flexbox. Empty text nodes
-        // otherwise still consumed gap cells and made the visible + button
-        // drift away from the shared hit-test spans.
-        pre: pre.length > 0 ? `${pre.join(" ")} ` : "",
-        active: activeIdx >= 0 ? label(tabs[activeIdx]!) : "",
-        post: post.length > 0 ? ` ${post.join(" ")}` : "",
-      };
-    });
-
     // ── M21.9 tab-bar / sidebar / home-row chips ─────────────────────────────
     /** The tab bar's right-aligned clickable chips: the workspace-context chip
      *  (when set — click shows its Terminal) and the palette hint (click opens
@@ -8229,37 +8204,22 @@ const mountTuiRoot = () => {
                     projection={terminalCanvasProjection()}
                     chrome={
                       <>
-                        {/* The per-window strip (gy=0). Rendered as bare styled TEXT runs (no
-                per-window <box> wrapper) so the late-mounted segments bubble
-                clicks to the main-column router instead of swallowing them the
-                way late-mounted boxes do; `route` hit-tests `windowSpans`, whose
-                labels equal these run strings. Active = accent+tint, hover =
-                subtle tint. */}
-                        <box paddingLeft={1} flexDirection="row">
-                          <text fg={semanticTheme().roles.text.secondary}>
-                            {windowStripParts().pre}
-                          </text>
-                          <text
-                            fg={semanticTheme().roles.selection.selectionText}
-                            bg={semanticTheme().roles.selection.selection}
-                          >
-                            {windowStripParts().active}
-                          </text>
-                          <text fg={semanticTheme().roles.text.secondary}>
-                            {windowStripParts().post}
-                          </text>
-                          <text fg={semanticTheme().roles.text.secondary}> </text>
-                          <text
-                            fg={semanticTheme().roles.text.primary}
-                            bg={
-                              isHovered("windowtab", windowTabs().length)
-                                ? semanticTheme().colors.buttonHover
-                                : semanticTheme().roles.surfaces.header
+                        {/* OpenTUI 0.4.3 reliably dispatches late-mounted node
+                handlers. Each tab therefore owns its click directly instead of
+                depending on the old label-cell central-routing workaround. The
+                parent still owns hover, right-click, and gap-cell fallback. */}
+                        <box flexDirection="row">
+                          <TerminalWindowStrip
+                            theme={semanticTheme()}
+                            tabs={windowTabs()}
+                            hoveredIndex={
+                              hover()?.region === "windowtab" ? (hover()?.index ?? null) : null
                             }
-                            attributes={1}
-                          >
-                            {WINDOW_ADD_LABEL}
-                          </text>
+                            onActivate={activateSemanticWindow}
+                            onNewWindow={() => {
+                              void executeSharedMultiplexerAction({ kind: "new-window" });
+                            }}
+                          />
                           {/* Window-level indicators remain on row zero; pane-level
                   zoom/split controls now live in each pane's own chrome row. */}
                           <Show when={isZoomed()}>
