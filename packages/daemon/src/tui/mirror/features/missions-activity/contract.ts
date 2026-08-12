@@ -25,6 +25,10 @@ export interface MissionsActivityIdentity {
   readonly identityKey: string;
 }
 
+export function missionsActivityIdentityScope(identity: MissionsActivityIdentity): string {
+  return `${identity.workspaceName}\u0000${identity.directory}\u0000${identity.identityKey}`;
+}
+
 export interface MissionsActivityInteractionInput {
   readonly operationId: string;
   readonly sequence: number;
@@ -76,7 +80,11 @@ export interface MissionsActivityFeatureSession {
   readonly missionErrorMessage: () => string;
   readonly resolveDeepLink: (kind: MissionDeepLinkKind) => MissionDeepLinkResolution;
   readonly setWorkspaceIdentity: (identity: MissionsActivityIdentity) => void;
-  readonly applyCatalog: (generation: number, envelope: WorkspaceMissionsEnvelopeV1) => void;
+  readonly applyCatalog: (
+    generation: number,
+    identityScope: string,
+    envelope: WorkspaceMissionsEnvelopeV1,
+  ) => void;
   readonly reset: (generation: number) => void;
   readonly hydrateMissions: (state: WorkspaceMissionsViewState) => void;
   readonly hydrateActivity: (state: WorkspaceActivitySurfaceState) => void;

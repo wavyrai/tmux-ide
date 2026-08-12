@@ -26,6 +26,7 @@ import {
   reconcileMissionWorkspaceModel,
   resolveMissionDeepLink,
   type MissionWorkspaceModel,
+  type MissionWorkspaceHit,
   type MissionWorkspaceSnapshot,
 } from "../../missions-workspace.ts";
 import type {
@@ -39,11 +40,39 @@ import type {
   MissionsActivityHoverTarget,
   MissionsActivityIdentity,
 } from "./contract.ts";
+import { missionsActivityIdentityScope } from "./contract.ts";
 
 type MissionActivityResource = Extract<
   WorkspaceMissionsEnvelopeV1["resource"]["missionWorkspace"],
   { status: "ready" | "empty" }
 >["activity"][number];
+
+export function missionHoverTarget(
+  hit: MissionWorkspaceHit,
+  projection: ReturnType<typeof missionDashboardProjection>,
+): MissionsActivityHoverTarget | null {
+  if (hit?.kind === "mode") return { kind: "mission-mode", index: hit.mode === "board" ? 0 : 1 };
+  if (hit?.kind === "card") return { kind: "mission-card", index: hit.hoverKey };
+  if (hit?.kind === "history" || hit?.kind === "detail-row")
+    return { kind: "mission-history", index: hit.hoverKey };
+  if (hit?.kind === "refresh") return { kind: "mission-button", index: 0 };
+  if (hit?.kind === "density") return { kind: "mission-button", index: 1 };
+  if (hit?.kind === "horizontal")
+    return { kind: "mission-button", index: hit.direction < 0 ? 2 : 3 };
+  if (hit?.kind === "collapse") return { kind: "mission-button", index: 4 };
+  if (hit?.kind === "zoom") return { kind: "mission-button", index: 5 };
+  if (hit?.kind === "detail-section") {
+    const index = projection.main.layout.detail.sections.findIndex(
+      (chip) => chip.section === hit.section,
+    );
+    return index < 0 ? null : { kind: "mission-button", index: 10 + index };
+  }
+  if (hit?.kind === "deep-link") {
+    const index = projection.main.layout.detail.links.findIndex((chip) => chip.link === hit.link);
+    return index < 0 ? null : { kind: "mission-button", index: 20 + index };
+  }
+  return null;
+}
 
 const navigationFromModel = (model: MissionWorkspaceModel): WorkspaceMissionsNavigationState => ({
   mode: model.mode,
@@ -194,7 +223,7 @@ export function createMissionsActivityFeatureSession(
       const missionRows: ActivityRowDto[] = missionActivity().map((event) => ({
         kind: "event",
         id: `mission:${event.id}`,
-        sequence: event.sequence,
+        sequence: activityOrderSequence(event.timestamp, event.sequence),
         timestampText: event.timestamp.slice(11, 16),
         source: event.actor.label,
         message: event.label,
@@ -205,7 +234,7 @@ export function createMissionsActivityFeatureSession(
       const interactionRows: ActivityRowDto[] = host.interactions().map((event) => ({
         kind: "event",
         id: `interaction:${event.operationId}`,
-        sequence: event.sequence,
+        sequence: activityOrderSequence(event.at, event.sequence),
         timestampText: event.at.slice(11, 16),
         source: event.source,
         message: event.message,
@@ -256,10 +285,15 @@ export function createMissionsActivityFeatureSession(
       setMissionActivity([]);
       setMissionLoadState(invalidatedMissionWorkspaceLoadState());
     };
-    const applyCatalog = (nextGeneration: number, envelope: WorkspaceMissionsEnvelopeV1) => {
+    const applyCatalog = (
+      nextGeneration: number,
+      identityScope: string,
+      envelope: WorkspaceMissionsEnvelopeV1,
+    ) => {
       if (
         disposed ||
         nextGeneration !== generation() ||
+        identityScope !== missionsActivityIdentityScope(identity()) ||
         envelope.resource.workspaceName !== identity().workspaceName
       )
         return;
@@ -410,14 +444,7 @@ export function createMissionsActivityFeatureSession(
         ),
       missionHoverAt: (x, y): MissionsActivityHoverTarget | null => {
         const hit = missionDashboardHitTest(missionProjection(), x, y);
-        if (hit?.kind === "mode")
-          return { kind: "mission-mode", index: hit.mode === "board" ? 0 : 1 };
-        if (hit?.kind === "card") return { kind: "mission-card", index: hit.hoverKey };
-        if (hit?.kind === "history" || hit?.kind === "detail-row")
-          return { kind: "mission-history", index: hit.hoverKey };
-        if (["refresh", "density", "horizontal", "collapse", "zoom"].includes(hit?.kind ?? ""))
-          return { kind: "mission-button", index: 0 };
-        return null;
+        return missionHoverTarget(hit, missionProjection());
       },
       handleActivityKey,
       handleActivityPointer: (x, y) => {

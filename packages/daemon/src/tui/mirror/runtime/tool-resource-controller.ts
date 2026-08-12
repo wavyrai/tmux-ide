@@ -47,6 +47,8 @@ export type TuiToolResource =
 export interface TuiToolResourceTarget {
   readonly daemon: CanonicalDaemonInfo;
   readonly workspaceName: string;
+  /** Client-owned full workspace identity. It generation-fences same-name project switches. */
+  readonly scopeKey?: string;
 }
 
 export interface TuiToolResourceFailure {
@@ -200,10 +202,11 @@ export function createTuiToolResourceAdapter(
         };
       }
       const target = value as TuiToolResourceTarget;
+      const scopeKey = target.scopeKey?.trim() || target.workspaceName.trim();
       return {
         ok: true,
-        target: { ...target, workspaceName: target.workspaceName.trim() },
-        key: `${target.daemon.instanceId}\u0000${target.workspaceName.trim()}`,
+        target: { ...target, workspaceName: target.workspaceName.trim(), scopeKey },
+        key: `${target.daemon.instanceId}\u0000${target.workspaceName.trim()}\u0000${scopeKey}`,
       };
     },
 

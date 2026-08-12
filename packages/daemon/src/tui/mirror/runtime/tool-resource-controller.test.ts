@@ -83,6 +83,18 @@ async function settle(): Promise<void> {
 }
 
 describe("OpenTUI demand-driven tool resources", () => {
+  it("advances authority when the full project scope changes under the same workspace name", () => {
+    const controller = createTuiToolResourceController(createTuiToolResourceAdapter());
+    controller.setTarget({ ...TARGET, scopeKey: "workspace.one\u0000/repo-a\u0000repo-a-id" });
+    const first = controller.session.getState();
+    controller.setTarget({ ...TARGET, scopeKey: "workspace.one\u0000/repo-b\u0000repo-b-id" });
+    const second = controller.session.getState();
+
+    expect(second.generation).toBeGreaterThan(first.generation);
+    expect(second.target?.scopeKey).toBe("workspace.one\u0000/repo-b\u0000repo-b-id");
+    controller.dispose();
+  });
+
   it("does no fetch, subprocess, or maintenance timer work across ten idle minutes", () => {
     const log: string[] = [];
     const { adapter } = fakeAdapter(log);

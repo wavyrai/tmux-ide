@@ -10,6 +10,7 @@ export type {
   MissionsActivityInteractionInput,
   MissionsActivityKeyEvent,
 } from "./contract.ts";
+export { missionsActivityIdentityScope } from "./contract.ts";
 export type {
   MissionDeepLinkIntent,
   MissionDeepLinkKind,

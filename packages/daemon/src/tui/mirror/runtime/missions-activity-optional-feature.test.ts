@@ -39,5 +39,7 @@ describe("deferred Missions and Activity feature boundary", () => {
     expect(source).toContain("missionsHydrationIntent.isCurrent");
     expect(source).toContain("activityHydrationIntent.isCurrent");
     expect(source).toContain("missionsActivitySession()?.setWorkspaceIdentity(");
+    expect(source).toContain("scopeKey: missionsActivityIdentityScope()");
+    expect(source).toContain('applyToolResource(slot.resource, state.target?.scopeKey ?? "")');
   });
 });

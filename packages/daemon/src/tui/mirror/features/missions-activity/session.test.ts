@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceMissionsEnvelopeV1 } from "@tmux-ide/contracts";
 
 import type { MissionsActivityFeatureHost } from "./contract.ts";
-import { createMissionsActivityFeatureSession } from "./session.ts";
+import { missionsActivityIdentityScope } from "./contract.ts";
+import { createMissionsActivityFeatureSession, missionHoverTarget } from "./session.ts";
 
 function envelope(
   workspaceName: string,
@@ -105,13 +106,23 @@ function harness() {
     },
     7,
   );
-  return { session, persistedMissions, persistedActivity };
+  return {
+    session,
+    identityScope: missionsActivityIdentityScope({
+      workspaceName: "alpha",
+      directory: "/repo",
+      projectRoot: "/repo",
+      identityKey: "alpha-id",
+    }),
+    persistedMissions,
+    persistedActivity,
+  };
 }
 
 describe("deferred Missions and Activity session", () => {
   it("projects one catalog through both surfaces and keeps Activity newest-first", () => {
     const test = harness();
-    test.session.applyCatalog(7, envelope("alpha"));
+    test.session.applyCatalog(7, test.identityScope, envelope("alpha"));
 
     expect(test.session.missionLoadState().status).toBe("ready");
     expect(test.session.missionSnapshot()?.board.counts).toMatchObject({ running: 1, total: 1 });
@@ -119,6 +130,7 @@ describe("deferred Missions and Activity session", () => {
       "interaction:op-1",
       "mission:activity-alpha",
     ]);
+    expect(test.session.activityProjection().totalRows).toBe(2);
 
     expect(
       test.session.handleActivityKey({ name: "down", ctrl: false, meta: false, shift: false }),
@@ -128,13 +140,52 @@ describe("deferred Missions and Activity session", () => {
     test.session.dispose();
   });
 
+  it("preserves every Missions chrome hover index, including detail and deep links", () => {
+    const test = harness();
+    const projection = test.session.missionProjection();
+    expect(missionHoverTarget({ kind: "refresh" }, projection)).toEqual({
+      kind: "mission-button",
+      index: 0,
+    });
+    expect(missionHoverTarget({ kind: "density" }, projection)).toEqual({
+      kind: "mission-button",
+      index: 1,
+    });
+    expect(missionHoverTarget({ kind: "horizontal", direction: -1 }, projection)).toEqual({
+      kind: "mission-button",
+      index: 2,
+    });
+    expect(missionHoverTarget({ kind: "horizontal", direction: 1 }, projection)).toEqual({
+      kind: "mission-button",
+      index: 3,
+    });
+    expect(missionHoverTarget({ kind: "collapse" }, projection)).toEqual({
+      kind: "mission-button",
+      index: 4,
+    });
+    expect(missionHoverTarget({ kind: "zoom" }, projection)).toEqual({
+      kind: "mission-button",
+      index: 5,
+    });
+    expect(missionHoverTarget({ kind: "detail-section", section: "tasks" }, projection)).toEqual({
+      kind: "mission-button",
+      index: 10,
+    });
+    expect(missionHoverTarget({ kind: "deep-link", link: "terminal" }, projection)).toEqual({
+      kind: "mission-button",
+      index: 20,
+    });
+    test.session.dispose();
+  });
+
   it("rejects stale generations and same-directory catalogs for another workspace", () => {
     const test = harness();
-    test.session.applyCatalog(6, envelope("alpha"));
-    test.session.applyCatalog(7, envelope("beta"));
+    test.session.applyCatalog(6, test.identityScope, envelope("alpha"));
+    test.session.applyCatalog(7, test.identityScope, envelope("beta"));
+    test.session.applyCatalog(7, "alpha\u0000/other\u0000other-id", envelope("alpha"));
     expect(test.session.missionLoadState().status).toBe("loading");
 
-    test.session.applyCatalog(7, envelope("alpha"));
+    test.session.applyCatalog(7, test.identityScope, envelope("alpha"));
     expect(test.session.missionLoadState().status).toBe("ready");
     test.session.setWorkspaceIdentity({
       workspaceName: "beta",

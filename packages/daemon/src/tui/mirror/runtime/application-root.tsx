@@ -1095,7 +1095,10 @@ const mountTuiRoot = () => {
     let toolResourceGeneration = -1;
     const pendingFilesCatalog = new GenerationBoundSlot<WorkspaceFilesCatalogEnvelopeV1>();
     const pendingChangesCatalog = new GenerationBoundSlot<WorkspaceChangesCatalogEnvelopeV1>();
-    const pendingMissionsCatalog = new GenerationBoundSlot<WorkspaceMissionsEnvelopeV1>();
+    const pendingMissionsCatalog = new GenerationBoundSlot<{
+      identityScope: string;
+      envelope: WorkspaceMissionsEnvelopeV1;
+    }>();
     let executeMissionDeepLinkIntent = (_intent: MissionDeepLinkIntent): void => undefined;
     let persistMissionsFeatureState = (_state: {
       panel: "missions";
@@ -1251,7 +1254,14 @@ const mountTuiRoot = () => {
     let missionsActivityRequest: Promise<
       ApplicationOptionalFeatures["missionsActivity"] | undefined
     > | null = null;
+    let missionsActivityIdentityOverride: {
+      workspaceName: string;
+      directory: string;
+      projectRoot: string;
+      identityKey: string;
+    } | null = null;
     const missionsActivityIdentity = () => {
+      if (missionsActivityIdentityOverride) return missionsActivityIdentityOverride;
       const directory = contextDir() || invokeCwd;
       const workspaceName = contextSession() || target;
       const repository = workspaceUiController?.snapshot().repository;
@@ -1329,7 +1339,12 @@ const mountTuiRoot = () => {
           );
           setMissionsActivitySession(() => session);
           const retainedCatalog = pendingMissionsCatalog.take(toolResourceGeneration);
-          if (retainedCatalog) session.applyCatalog(toolResourceGeneration, retainedCatalog);
+          if (retainedCatalog)
+            session.applyCatalog(
+              toolResourceGeneration,
+              retainedCatalog.identityScope,
+              retainedCatalog.envelope,
+            );
           setMissionsActivityLoadState("ready");
           missionsActivityRequest = null;
         },
@@ -1711,7 +1726,11 @@ const mountTuiRoot = () => {
         daemonApplicationShellAuthority = authority;
         const daemon = readCanonicalDaemonInfo();
         if (daemon?.instanceId === authority.target.daemon.instanceId) {
-          toolResources.setTarget({ daemon, workspaceName: authority.workspaceName });
+          toolResources.setTarget({
+            daemon,
+            workspaceName: authority.workspaceName,
+            scopeKey: missionsActivityIdentityScope(),
+          });
         }
         const applyDaemonShellState = (state: ApplicationShellSessionState) => {
           setDaemonApplicationShellState(state);
@@ -2368,7 +2387,21 @@ const mountTuiRoot = () => {
           };
           const identityChanged = currentWorkspaceUiIdentity !== repository.metadata.identityKey;
           currentWorkspaceUiIdentity = repository.metadata.identityKey;
+          missionsActivityIdentityOverride = {
+            workspaceName: contextSession() || target,
+            directory: contextDir() || invokeCwd,
+            projectRoot: repository.metadata.projectRoot,
+            identityKey: repository.metadata.identityKey,
+          };
           missionsActivitySession()?.setWorkspaceIdentity(missionsActivityIdentity());
+          const scopedDaemon = readCanonicalDaemonInfo();
+          if (scopedDaemon && contextSession()) {
+            toolResources.setTarget({
+              daemon: scopedDaemon,
+              workspaceName: contextSession(),
+              scopeKey: missionsActivityIdentityScope(),
+            });
+          }
           const firstProjectLoad = !panelHostResolved || identityChanged;
           const initialChoice = firstProjectLoad
             ? chooseInitialWorkspaceView(nextViews, {
@@ -3626,6 +3659,12 @@ const mountTuiRoot = () => {
       setContextSession(session);
       const wd = dir ?? invokeCwd;
       setContextDir(wd);
+      missionsActivityIdentityOverride = {
+        workspaceName: session,
+        directory: wd,
+        projectRoot: wd,
+        identityKey: `${session}\u0000${wd}`,
+      };
       changesSession()?.setWorkspaceIdentity({ workspaceName: session, directory: wd });
       missionsActivitySession()?.setWorkspaceIdentity({
         workspaceName: session,
@@ -5342,6 +5381,12 @@ const mountTuiRoot = () => {
       const restoredDir = dirForSession(restoredSession) ?? invokeCwd;
       setContextSession(restoredSession);
       setContextDir(restoredDir);
+      missionsActivityIdentityOverride = {
+        workspaceName: restoredSession,
+        directory: restoredDir,
+        projectRoot: restoredDir,
+        identityKey: `${restoredSession}\u0000${restoredDir}`,
+      };
       changesSession()?.setWorkspaceIdentity({
         workspaceName: restoredSession,
         directory: restoredDir,
@@ -5370,13 +5415,13 @@ const mountTuiRoot = () => {
       else pendingChangesCatalog.retain(toolResourceGeneration, envelope);
     };
 
-    const applyMissionsCatalog = (envelope: WorkspaceMissionsEnvelopeV1) => {
+    const applyMissionsCatalog = (identityScope: string, envelope: WorkspaceMissionsEnvelopeV1) => {
       const session = missionsActivitySession();
-      if (session) session.applyCatalog(toolResourceGeneration, envelope);
-      else pendingMissionsCatalog.retain(toolResourceGeneration, envelope);
+      if (session) session.applyCatalog(toolResourceGeneration, identityScope, envelope);
+      else pendingMissionsCatalog.retain(toolResourceGeneration, { identityScope, envelope });
     };
 
-    const applyToolResource = (resource: TuiToolResource): void => {
+    const applyToolResource = (resource: TuiToolResource, identityScope: string): void => {
       if (resource.kind === "fleet") applyFleetCatalog(resource.value);
       else if (resource.kind === "sessions") {
         latestSessionCatalog = resource.value;
@@ -5386,7 +5431,7 @@ const mountTuiRoot = () => {
         reconcileFleetResources();
       } else if (resource.kind === "files") applyFilesCatalog(resource.value);
       else if (resource.kind === "changes") applyChangesCatalog(resource.value);
-      else applyMissionsCatalog(resource.value);
+      else applyMissionsCatalog(identityScope, resource.value);
     };
 
     onMount(() => {
@@ -5419,7 +5464,7 @@ const mountTuiRoot = () => {
             appliedToolSnapshots.get(slot.resource.kind) !== slot.resource
           ) {
             appliedToolSnapshots.set(slot.resource.kind, slot.resource);
-            applyToolResource(slot.resource);
+            applyToolResource(slot.resource, state.target?.scopeKey ?? "");
           }
         }
       });
@@ -6778,7 +6823,11 @@ const mountTuiRoot = () => {
         if (!bareHome) return;
         const daemon = readCanonicalDaemonInfo();
         if (!daemon) return;
-        toolResources.setTarget({ daemon, workspaceName: "__catalog__" });
+        toolResources.setTarget({
+          daemon,
+          workspaceName: "__catalog__",
+          scopeKey: "__catalog__",
+        });
         toolResources.markCatalogReady();
         optionalFeatures.admit();
       };
