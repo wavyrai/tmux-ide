@@ -1100,10 +1100,12 @@ const mountTuiRoot = () => {
     const [contextDir, setContextDir] = createSignal<string>("");
     const editorOpenIntent = new LatestIntentFence<string>();
     const changesPrepareIntent = new LatestIntentFence<string>();
+    const changesHydrationIntent = new LatestIntentFence<string>();
     const editorOpenScope = () => `${contextSession()}\u0000${contextDir() || invokeCwd}`;
     onCleanup(() => {
       editorOpenIntent.retire();
       changesPrepareIntent.retire();
+      changesHydrationIntent.retire();
     });
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const optionalFeatures = createApplicationOptionalFeatureRegistry();
@@ -1174,11 +1176,21 @@ const mountTuiRoot = () => {
     >("idle");
     let changesFeatureRequest: Promise<ApplicationOptionalFeatures["changes"] | undefined> | null =
       null;
-    let initialChangesDirectory: string | null = values.diff ?? null;
-    const changesIdentity = () => ({
-      workspaceName: contextSession() || target,
-      directory: initialChangesDirectory ?? (contextDir() || invokeCwd),
-    });
+    const startupChangesIdentity = values.diff
+      ? { workspaceName: initialContextSession || target, directory: values.diff }
+      : null;
+    const changesIdentity = () => {
+      const workspaceName = contextSession() || target;
+      return startupChangesIdentity &&
+        workspaceName === startupChangesIdentity.workspaceName &&
+        !contextDir()
+        ? startupChangesIdentity
+        : { workspaceName, directory: contextDir() || invokeCwd };
+    };
+    const changesIdentityScope = () => {
+      const identity = changesIdentity();
+      return `${identity.workspaceName}\u0000${identity.directory}`;
+    };
     const changesHover = (): ChangesHoverTarget | null => {
       const current = hover();
       if (!current) return null;
@@ -1233,7 +1245,6 @@ const mountTuiRoot = () => {
             },
             changesIdentity(),
           );
-          initialChangesDirectory = null;
           setChangesSession(() => session);
           const retainedCatalog = pendingChangesCatalog.take(toolResourceGeneration);
           if (retainedCatalog) session.applyCatalog(retainedCatalog);
@@ -3150,11 +3161,14 @@ const mountTuiRoot = () => {
       const session = changesSession();
       if (session) session.prepare(identity);
       else {
-        void ensureChangesFeature().then((feature) => {
-          if (feature && changesPrepareIntent.isCurrent(intent, scope)) {
-            changesSession()?.prepare(identity);
-          }
-        });
+        void ensureChangesFeature().then(
+          (feature) => {
+            if (feature && changesPrepareIntent.isCurrent(intent, scope)) {
+              changesSession()?.prepare(identity);
+            }
+          },
+          () => undefined,
+        );
       }
     };
     const enterDiff = (directory: string) => {
@@ -3501,10 +3515,18 @@ const mountTuiRoot = () => {
       } else if (entry.panel === "diff") {
         hydratedWorkspaceSurfaceIds.add("diff");
         if (changesSession()) changesSession()?.restoreSelectedPath(entry.selectedPath);
-        else
-          void ensureChangesFeature().then((feature) => {
-            if (feature) changesSession()?.restoreSelectedPath(entry.selectedPath);
-          });
+        else {
+          const scope = changesIdentityScope();
+          const intent = changesHydrationIntent.issue(scope);
+          void ensureChangesFeature().then(
+            (feature) => {
+              if (feature && changesHydrationIntent.isCurrent(intent, changesIdentityScope())) {
+                changesSession()?.restoreSelectedPath(entry.selectedPath);
+              }
+            },
+            () => undefined,
+          );
+        }
         if (mode() === "diff") toolResources.session.refresh("changes");
       } else if (entry.panel === "missions") {
         hydratedWorkspaceSurfaceIds.add("missions");
@@ -3676,6 +3698,7 @@ const mountTuiRoot = () => {
     const openWorkspace = (session: string, dir: string | null) => {
       editorOpenIntent.retire();
       changesPrepareIntent.retire();
+      changesHydrationIntent.retire();
       setContextSession(session);
       const wd = dir ?? invokeCwd;
       setContextDir(wd);

@@ -48,6 +48,30 @@ describe("deferred Changes feature boundary", () => {
     expect(prepare).toContain("changesSession()?.prepare(identity)");
   });
 
+  it("fences deferred selection hydration by full workspace identity", () => {
+    const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
+    const start = source.indexOf('} else if (entry.panel === "diff")');
+    const end = source.indexOf('} else if (entry.panel === "missions")', start);
+    const hydration = source.slice(start, end);
+    expect(hydration).toContain("changesHydrationIntent.issue(scope)");
+    expect(hydration).toContain("changesHydrationIntent.isCurrent(intent, changesIdentityScope())");
+    expect(hydration).toContain("changesSession()?.restoreSelectedPath(entry.selectedPath)");
+    expect(hydration).toContain("() => undefined");
+  });
+
+  it("binds the startup diff directory to its original workspace identity", () => {
+    const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
+    expect(source).toContain("const startupChangesIdentity = values.diff");
+    expect(source).toContain("workspaceName === startupChangesIdentity.workspaceName");
+    expect(source).toContain("!contextDir()");
+    const workspaceActivation = source.slice(
+      source.indexOf("const openWorkspace ="),
+      source.indexOf("const jumpToAgent ="),
+    );
+    expect(workspaceActivation).toContain("setContextDir(wd)");
+    expect(workspaceActivation).toContain("changesHydrationIntent.retire()");
+  });
+
   it("retains Changes demand without starting its literal loader before admission", () => {
     const registry = createApplicationOptionalFeatureRegistry();
     const first = registry.request("changes");
