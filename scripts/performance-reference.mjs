@@ -24,6 +24,7 @@ const budgets = JSON.parse(
 const options = parseOptions(process.argv.slice(2));
 const reportPath = resolve(root, options.report);
 const lifecyclePath = resolve(root, ".tasks/tui-testdrive/performance.jsonl");
+const testdriveStatePath = resolve(root, ".tasks/tui-testdrive/home/app-state.json");
 const target = `tmux-ide-reference-${process.pid}`;
 const referenceProjectDir = mkdtempSync(join(tmpdir(), `${target}-`));
 const source = gitSourceIdentity(root);
@@ -36,8 +37,11 @@ if (platform() !== budgets.referenceHost.platform || arch() !== budgets.referenc
   throw new Error(
     `Reference measurements require ${budgets.referenceHost.platform}/${budgets.referenceHost.arch}; got ${platform()}/${arch()}`,
   );
+preflightCanonicalDaemon();
 
 if (options.build) run("pnpm", ["build:tui"]);
+process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON = "1";
+rmSync(testdriveStatePath, { force: true });
 const provenance = {
   host: hostname(),
   cpuModel: cpus()[0]?.model ?? "unknown",
@@ -162,6 +166,23 @@ function readDaemonInfo() {
   if (!daemon.authToken || !daemon.port || !daemon.bindHostname)
     throw new Error("Reference qualification requires the canonical daemon");
   return daemon;
+}
+
+function preflightCanonicalDaemon() {
+  const daemon = readDaemonInfo();
+  const packageVersion = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version;
+  const commitTimestamp = Date.parse(
+    commandOutput("git", ["show", "-s", "--format=%cI", source.commit]),
+  );
+  const daemonTimestamp = Date.parse(daemon.startedAt ?? "");
+  if (daemon.productVersion !== packageVersion)
+    throw new Error(
+      `Canonical daemon product ${daemon.productVersion ?? "unknown"} does not match checkout ${packageVersion}`,
+    );
+  if (!Number.isFinite(daemonTimestamp) || daemonTimestamp < commitTimestamp)
+    throw new Error(
+      "Canonical daemon predates the measured commit. Rebuild/restart the daemon from this clean checkout before running reference qualification.",
+    );
 }
 const report = {
   version: REFERENCE_REPORT_VERSION,
@@ -525,5 +546,11 @@ function tmux(args) {
 function commandVersion(command, args) {
   const result = spawnSync(command, args, { cwd: root, encoding: "utf8", stdio: "pipe" });
   if (result.status !== 0) throw new Error(`Unable to read ${command} version`);
+  return result.stdout.trim();
+}
+
+function commandOutput(command, args) {
+  const result = spawnSync(command, args, { cwd: root, encoding: "utf8", stdio: "pipe" });
+  if (result.status !== 0) throw new Error(`Unable to run ${command} ${args.join(" ")}`);
   return result.stdout.trim();
 }

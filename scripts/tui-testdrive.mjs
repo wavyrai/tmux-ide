@@ -10,7 +10,15 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -291,6 +299,11 @@ async function start(args) {
 
   await ensureStopped();
   mkdirSync(stateHome, { recursive: true });
+  if (process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1") {
+    const daemonInfoPath = join(process.env.HOME ?? "", ".tmux-ide", "daemon.json");
+    if (!existsSync(daemonInfoPath)) fail(`Canonical daemon info missing at ${daemonInfoPath}`);
+    copyFileSync(daemonInfoPath, join(stateHome, "daemon.json"));
+  }
   rmSync(logPath, { force: true });
   rmSync(perfLogPath, { force: true });
 
@@ -311,6 +324,9 @@ async function start(args) {
           `TMUX_IDE_PERFORMANCE_TRACE_COMMIT=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_COMMIT ?? "")}`,
           `TMUX_IDE_PERFORMANCE_TRACE_TREE=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_TREE ?? "")}`,
         ]
+      : []),
+    ...(process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
+      ? ["TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON=1"]
       : []),
     ...(process.env.TMUX_IDE_ZZ_LOG
       ? [`TMUX_IDE_ZZ_LOG=${shQuote(process.env.TMUX_IDE_ZZ_LOG)}`]
