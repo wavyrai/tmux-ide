@@ -204,7 +204,7 @@ import {
   closeSync,
 } from "node:fs";
 import { readdir, readFile, writeFile, rename, rm, stat } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { Dynamic, render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, EditBuffer, SyntaxStyle, createCliRenderer, decodePasteBytes } from "@opentui/core";
@@ -735,6 +735,7 @@ import {
 } from "./tool-resource-projection.ts";
 import { TerminalToolReadinessGate } from "./terminal-tool-readiness.ts";
 import { OpenTuiTerminalWorkspaceAdapter } from "./terminal-workspace-adapter.ts";
+import { LatestIntentFence } from "./latest-intent-fence.ts";
 import {
   createApplicationOptionalFeatureRegistry,
   type ApplicationOptionalFeatures,
@@ -3024,6 +3025,8 @@ const mountTuiRoot = () => {
     // The native EditBuffer holds text + cursor; Solid can't see its mutations,
     // so `editorRev` is bumped after every edit to re-derive `editorLines`.
     let editBuffer: EditBuffer | null = null;
+    const editorOpenIntent = new LatestIntentFence();
+    onCleanup(() => editorOpenIntent.retire());
     let prevMode: "home" | "mirror" = "home";
     const [editorPath, setEditorPath] = createSignal<string | null>(null);
     const [editorRev, setEditorRev] = createSignal(0);
@@ -3066,12 +3069,20 @@ const mountTuiRoot = () => {
       },
     );
 
-    const openEditor = (rawPath: string, line?: number, origin: EditorOpenOrigin = "user") => {
+    const openEditor = (
+      rawPath: string,
+      line?: number,
+      origin: EditorOpenOrigin = "user",
+      intent = editorOpenIntent.issue(),
+    ) => {
+      if (!editorOpenIntent.isCurrent(intent)) return;
       const feature = filesFeature();
       if (!feature) {
         void ensureFilesFeature().then(
           (loaded) => {
-            if (loaded) openEditor(rawPath, line, origin);
+            if (loaded && editorOpenIntent.isCurrent(intent)) {
+              openEditor(rawPath, line, origin, intent);
+            }
           },
           () => undefined,
         );
@@ -4802,22 +4813,21 @@ const mountTuiRoot = () => {
     const REPO_WALK_DEPTH = 8;
     const [repoFiles, setRepoFiles] = createSignal<string[]>([]);
     const walkRepoFiles = async (root: string): Promise<string[]> => {
+      const feature = filesFeature() ?? (await ensureFilesFeature().catch(() => undefined));
+      if (!feature) return [];
       const out: string[] = [];
-      const alwaysIgnore = new Set([".git", "node_modules", ".next", "dist", "build"]);
       let queue: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
       while (queue.length > 0 && out.length < REPO_FILES_CAP) {
         const next: typeof queue = [];
         for (const { dir, depth } of queue) {
-          const ents = await readdir(dir, { withFileTypes: true }).catch(() => []);
+          const ents = await listDir(dir).catch(() => []);
           for (const e of ents) {
             if (out.length >= REPO_FILES_CAP) break;
-            if (alwaysIgnore.has(e.name) || (!showHiddenFiles() && e.name.startsWith(".")))
-              continue;
             const abs = join(dir, e.name);
-            if (e.isDirectory()) {
+            if (e.isDir) {
               if (depth + 1 < REPO_WALK_DEPTH) next.push({ dir: abs, depth: depth + 1 });
             } else {
-              const rel = relative(root, abs).split("\\").join("/");
+              const rel = feature.relPath(root, abs);
               if (rel) out.push(rel);
             }
           }
