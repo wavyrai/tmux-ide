@@ -204,9 +204,9 @@ import {
   closeSync,
 } from "node:fs";
 import { readdir, readFile, writeFile, rename, rm, stat } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { homedir } from "node:os";
-import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
+import { Dynamic, render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, EditBuffer, SyntaxStyle, createCliRenderer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import {
@@ -269,21 +269,22 @@ import {
 } from "../theme.ts";
 import { homeFooterHints, type FleetRollup } from "../../team/home.ts";
 import {
-  isBinary,
-  classifyFile,
-  readOnlyBanner,
-  sanitizeForDisplay,
   gutterWidth,
   formatGutter,
   clampTop,
   scrollToCursor,
   clickToCursor,
-  type ReadOnlyReason,
-} from "../editor-buffer.ts";
-import {
-  shouldActivateFilesAfterEditorOpen,
-  type EditorOpenOrigin,
-} from "../editor-open-policy.ts";
+} from "./editor-primitives.ts";
+import { isBinary } from "./file-content-primitives.ts";
+import type {
+  EditorOpenOrigin,
+  FileNode,
+  FilesActionId,
+  FilesIgnore,
+  FilesSurfaceProjection,
+  RawEntry,
+  ReadOnlyReason,
+} from "../features/files/feature.tsx";
 import {
   classifyDiff,
   untrackedDiffText,
@@ -498,8 +499,6 @@ import {
   projectHomeSurface,
   type HomeActionId,
 } from "../home-surface.ts";
-import { FilesSurface } from "../files-surface.tsx";
-import { filesHitTest, filesListWidth, projectFilesSurface } from "../files-surface.ts";
 import { ChangesSurface } from "../changes-surface.tsx";
 import {
   changesBodyRows,
@@ -508,7 +507,6 @@ import {
   projectChangesSurface,
   type ChangesActionId,
 } from "../changes-surface.ts";
-import type { FilesActionId } from "../files-surface.ts";
 import {
   activityOrderSequence,
   activityRowHitTest,
@@ -647,24 +645,6 @@ import {
   type AgentRowInput,
 } from "../agent-rows.ts";
 import { visitOrder, stepMatch, offsetForMatch, type SearchMatch } from "../search-model.ts";
-import {
-  ALWAYS_IGNORE,
-  ancestorDirs,
-  buildNodes,
-  changedFileWalk,
-  filterEntries,
-  filterView,
-  indexOfPath,
-  insertChildrenAt,
-  nextChangedPath,
-  rebuildTree,
-  relPath,
-  removeSubtreeAt,
-  statusMapFromEntries,
-  type FileNode,
-  type RawEntry,
-} from "../file-tree.ts";
-import ignore, { type Ignore } from "ignore";
 import { spans, spanHit, spansFromRight, type Span } from "../spans.ts";
 import {
   AGAIN_ID,
@@ -755,7 +735,10 @@ import {
 } from "./tool-resource-projection.ts";
 import { TerminalToolReadinessGate } from "./terminal-tool-readiness.ts";
 import { OpenTuiTerminalWorkspaceAdapter } from "./terminal-workspace-adapter.ts";
-import { createApplicationOptionalFeatureRegistry } from "./application-optional-features.ts";
+import {
+  createApplicationOptionalFeatureRegistry,
+  type ApplicationOptionalFeatures,
+} from "./application-optional-features.ts";
 
 type TuiAppArgs = { target?: string; edit?: string; diff?: string };
 let values!: TuiAppArgs;
@@ -1173,7 +1156,41 @@ const mountTuiRoot = () => {
     const [contextDir, setContextDir] = createSignal<string>("");
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const optionalFeatures = createApplicationOptionalFeatureRegistry();
+    const [filesFeature, setFilesFeature] = createSignal<ApplicationOptionalFeatures["files"]>();
+    const [filesFeatureLoadState, setFilesFeatureLoadState] = createSignal<
+      "idle" | "loading" | "ready" | "failed"
+    >("idle");
+    let filesFeatureRequest: Promise<ApplicationOptionalFeatures["files"] | undefined> | null =
+      null;
+    const ensureFilesFeature = (): Promise<ApplicationOptionalFeatures["files"] | undefined> => {
+      const loaded = filesFeature();
+      if (loaded) return Promise.resolve(loaded);
+      if (filesFeatureRequest) return filesFeatureRequest;
+      setFilesFeatureLoadState("loading");
+      const request = optionalFeatures.request("files");
+      filesFeatureRequest = request;
+      void request.then(
+        (feature) => {
+          if (filesFeatureRequest !== request) return;
+          if (!feature) {
+            setFilesFeatureLoadState("failed");
+            filesFeatureRequest = null;
+            return;
+          }
+          setFilesFeature(() => feature);
+          setFilesFeatureLoadState("ready");
+          filesFeatureRequest = null;
+        },
+        () => {
+          if (filesFeatureRequest !== request) return;
+          setFilesFeatureLoadState("failed");
+          filesFeatureRequest = null;
+        },
+      );
+      return request;
+    };
     applicationLifecycle.registerCloser("optional-features", () => {
+      filesFeatureRequest = null;
       optionalFeatures.dispose();
       tuiPerfMark("optional-feature-metrics", { ...optionalFeatures.getMetrics() });
     });
@@ -1708,6 +1725,9 @@ const mountTuiRoot = () => {
     const [activitySelectedId, setActivitySelectedId] = createSignal<string | null>(null);
     const [activityScrollOffset, setActivityScrollOffset] = createSignal(0);
     createEffect(() => {
+      if (dockMode() !== "collapsed" && activeDockTab() === "files") void ensureFilesFeature();
+    });
+    createEffect(() => {
       if (dockMode() === "collapsed") {
         toolResources.setOpenDock(null);
         return;
@@ -2061,6 +2081,7 @@ const mountTuiRoot = () => {
       return true;
     };
     const activateDockTabContent = (tabId: WorkbenchDockTabId): boolean => {
+      if (tabId === "files") void ensureFilesFeature();
       if (tabId === "activity") {
         // Activity is dock-only, so it does not travel through `selectView` (the
         // hosted-view activation path that normally snapshots the surface being
@@ -3046,6 +3067,16 @@ const mountTuiRoot = () => {
     );
 
     const openEditor = (rawPath: string, line?: number, origin: EditorOpenOrigin = "user") => {
+      const feature = filesFeature();
+      if (!feature) {
+        void ensureFilesFeature().then(
+          (loaded) => {
+            if (loaded) openEditor(rawPath, line, origin);
+          },
+          () => undefined,
+        );
+        return;
+      }
       const path = rawPath.startsWith("~/")
         ? `${process.env.HOME ?? ""}${rawPath.slice(1)}`
         : rawPath;
@@ -3056,9 +3087,11 @@ const mountTuiRoot = () => {
         setEditorMsg(`cannot open: ${(e as Error).message}`);
         return;
       }
-      const reason = classifyFile(bytes.length, isBinary(bytes));
+      const reason = feature.classifyFile(bytes.length, isBinary(bytes));
       const text =
-        reason === "binary" ? sanitizeForDisplay(bytes) : Buffer.from(bytes).toString("utf8");
+        reason === "binary"
+          ? feature.sanitizeForDisplay(bytes)
+          : Buffer.from(bytes).toString("utf8");
       editBuffer?.destroy();
       editBuffer = EditBuffer.create("wcwidth");
       editBuffer.setText(text);
@@ -3080,7 +3113,7 @@ const mountTuiRoot = () => {
       setEditorMsg("");
       setEditorRev((r) => r + 1);
       setFilesFocus("editor");
-      if (shouldActivateFilesAfterEditorOpen(activePanel(), origin)) setTab("files");
+      if (feature.shouldActivateFilesAfterEditorOpen(activePanel(), origin)) setTab("files");
     };
 
     const toggleEditor = () => {
@@ -3613,15 +3646,22 @@ const mountTuiRoot = () => {
     // the EDITOR (typing). Opening a file hands focus to the editor; esc hands it
     // back to the list.
     const [filesFocus, setFilesFocus] = createSignal<"list" | "editor">("list");
-    const filesListW = () => filesListWidth(dockSurfaceWidth());
+    const filesListW = () => filesFeature()?.filesListWidth(dockSurfaceWidth()) ?? 0;
     /** The workspace directory driving both the file list and the diff panel. */
     const workspaceDir = () => contextDir() || invokeCwd;
-    const fileStatusMap = createMemo(() => statusMapFromEntries(fileStatusEntries()));
-    const changedWalk = createMemo(() =>
-      changedFileWalk(fileStatusEntries(), { showHidden: showHiddenFiles() }),
+    const fileStatusMap = createMemo(
+      () => filesFeature()?.statusMapFromEntries(fileStatusEntries()) ?? new Map<string, string>(),
+    );
+    const changedWalk = createMemo(
+      () =>
+        filesFeature()?.changedFileWalk(fileStatusEntries(), {
+          showHidden: showHiddenFiles(),
+        }) ?? [],
     );
     /** The rows the list actually shows: the flat tree through the `/` filter. */
-    const visibleFiles = createMemo(() => filterView(fileNodes(), filesQuery()));
+    const visibleFiles = createMemo(
+      () => filesFeature()?.filterView(fileNodes(), filesQuery()) ?? [],
+    );
     const fileListVisible = createMemo(() => {
       const rows = visibleFiles();
       const view = editorRows();
@@ -3633,11 +3673,13 @@ const mountTuiRoot = () => {
     const fileStatusFor = (n: FileNode): string | null => {
       const top = filesGitTop();
       if (!top) return null;
-      const rel = relPath(top, n.path);
+      const rel = filesFeature()?.relPath(top, n.path) ?? "";
       return rel ? (fileStatusMap().get(rel) ?? null) : null;
     };
-    const filesSurfaceProjection = createMemo(() =>
-      projectFilesSurface({
+    const filesSurfaceProjection = createMemo<FilesSurfaceProjection | null>(() => {
+      const feature = filesFeature();
+      if (!feature) return null;
+      return feature.projectFilesSurface({
         width: dockSurfaceWidth(),
         height: dockSurfaceHeight(),
         workspaceDir: workspaceDir(),
@@ -3663,19 +3705,21 @@ const mountTuiRoot = () => {
             ? (hover() as { region: "files" | "button"; index: number })
             : null,
         statusFor: fileStatusFor,
-        readOnlyBanner: readOnlyBanner(editorReadOnly()),
+        readOnlyBanner: feature.readOnlyBanner(editorReadOnly()),
         footerBase: `j/k · enter open · [/] change · / filter · H dot:${
           showHiddenFiles() ? "on" : "off"
         } · I ign:${showIgnoredFiles() ? "on" : "off"} · ^s save · esc list · ^g home · ${QUIT_HINT}`,
-      }),
-    );
+      });
+    });
 
     // The gitignore matcher for the CURRENT workspace root (reloaded when the
     // root changes or the tree refreshes — cheap: one small file read).
-    let filesIg: Ignore = ignore();
+    let filesIg: FilesIgnore | null = null;
     let filesIgDir = "";
     const loadIgnoreRules = async (root: string): Promise<void> => {
-      const ig = ignore();
+      const feature = filesFeature();
+      if (!feature) return;
+      const ig = feature.createFilesIgnore();
       try {
         ig.add(await readFile(join(root, ".gitignore"), "utf8"));
       } catch {
@@ -3690,9 +3734,11 @@ const mountTuiRoot = () => {
       const root = workspaceDir();
       if (filesIgDir !== root) await loadIgnoreRules(root);
       const ents = await readdir(dir, { withFileTypes: true });
+      const feature = filesFeature();
+      if (!feature || !filesIg) return [];
       const raw: RawEntry[] = ents.map((e) => {
         const isDir = e.isDirectory();
-        const rel = relPath(root, join(dir, e.name));
+        const rel = feature.relPath(root, join(dir, e.name));
         let ignored = false;
         if (rel) {
           try {
@@ -3703,7 +3749,7 @@ const mountTuiRoot = () => {
         }
         return { name: e.name, isDir, ignored };
       });
-      return filterEntries(raw, {
+      return feature.filterEntries(raw, {
         showHidden: showHiddenFiles(),
         showIgnored: showIgnoredFiles(),
       });
@@ -3739,13 +3785,22 @@ const mountTuiRoot = () => {
         return;
       }
       if (node.expanded) {
-        setFileNodes((list) => removeSubtreeAt(list, indexOfPath(list, node.path)));
+        setFileNodes((list) => {
+          const feature = filesFeature();
+          return feature
+            ? feature.removeSubtreeAt(list, feature.indexOfPath(list, node.path))
+            : list;
+        });
         return;
       }
       void listDir(node.path)
         .then((ents) => {
-          const children = buildNodes(node.path, ents, node.depth + 1);
-          setFileNodes((list) => insertChildrenAt(list, indexOfPath(list, node.path), children));
+          const feature = filesFeature();
+          if (!feature) return;
+          const children = feature.buildNodes(node.path, ents, node.depth + 1);
+          setFileNodes((list) =>
+            feature.insertChildrenAt(list, feature.indexOfPath(list, node.path), children),
+          );
         })
         .catch(() => {});
     };
@@ -3755,21 +3810,25 @@ const mountTuiRoot = () => {
      *  filtered out of view (the changed walk pre-filters what it offers). */
     const revealPath = async (absPath: string): Promise<void> => {
       const root = workspaceDir();
-      const rel = relPath(root, absPath);
+      const feature = filesFeature();
+      if (!feature) return;
+      const rel = feature.relPath(root, absPath);
       if (!rel) return;
-      for (const anc of ancestorDirs(rel)) {
+      for (const anc of feature.ancestorDirs(rel)) {
         const ancAbs = join(root, anc);
-        const idx = indexOfPath(fileNodes(), ancAbs);
+        const idx = feature.indexOfPath(fileNodes(), ancAbs);
         const node = fileNodes()[idx];
         if (!node || !node.isDir) return;
         if (!node.expanded) {
           const ents = await listDir(ancAbs).catch(() => null);
           if (!ents) return;
-          const children = buildNodes(ancAbs, ents, node.depth + 1);
-          setFileNodes((list) => insertChildrenAt(list, indexOfPath(list, ancAbs), children));
+          const children = feature.buildNodes(ancAbs, ents, node.depth + 1);
+          setFileNodes((list) =>
+            feature.insertChildrenAt(list, feature.indexOfPath(list, ancAbs), children),
+          );
         }
       }
-      const idx = indexOfPath(fileNodes(), absPath);
+      const idx = feature.indexOfPath(fileNodes(), absPath);
       if (idx === -1) return;
       setFileSel(idx);
       setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
@@ -3784,8 +3843,10 @@ const mountTuiRoot = () => {
       if (!top || walk.length === 0) return;
       if (filesQuery() !== null) setFilesQuery(null);
       const cur = visibleFiles()[fileSel()]?.node ?? null;
-      const curRel = cur ? relPath(top, cur.path) || null : null;
-      const next = nextChangedPath(walk, curRel, dir);
+      const feature = filesFeature();
+      if (!feature) return;
+      const curRel = cur ? feature.relPath(top, cur.path) || null : null;
+      const next = feature.nextChangedPath(walk, curRel, dir);
       if (next) void revealPath(join(top, next));
     };
 
@@ -4742,18 +4803,21 @@ const mountTuiRoot = () => {
     const [repoFiles, setRepoFiles] = createSignal<string[]>([]);
     const walkRepoFiles = async (root: string): Promise<string[]> => {
       const out: string[] = [];
+      const alwaysIgnore = new Set([".git", "node_modules", ".next", "dist", "build"]);
       let queue: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
       while (queue.length > 0 && out.length < REPO_FILES_CAP) {
         const next: typeof queue = [];
         for (const { dir, depth } of queue) {
-          const ents = await listDir(dir).catch(() => []);
+          const ents = await readdir(dir, { withFileTypes: true }).catch(() => []);
           for (const e of ents) {
             if (out.length >= REPO_FILES_CAP) break;
+            if (alwaysIgnore.has(e.name) || (!showHiddenFiles() && e.name.startsWith(".")))
+              continue;
             const abs = join(dir, e.name);
-            if (e.isDir) {
+            if (e.isDirectory()) {
               if (depth + 1 < REPO_WALK_DEPTH) next.push({ dir: abs, depth: depth + 1 });
             } else {
-              const rel = relPath(root, abs);
+              const rel = relative(root, abs).split("\\").join("/");
               if (rel) out.push(rel);
             }
           }
@@ -7204,7 +7268,9 @@ const mountTuiRoot = () => {
             // escape restores the full list and the pre-filter selection.
             if (evt.name === "escape") {
               setFilesQuery(null);
-              const back = filesPreFilterPath ? indexOfPath(fileNodes(), filesPreFilterPath) : -1;
+              const back = filesPreFilterPath
+                ? (filesFeature()?.indexOfPath(fileNodes(), filesPreFilterPath) ?? -1)
+                : -1;
               const idx = back !== -1 ? back : 0;
               setFileSel(idx);
               setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
@@ -7212,7 +7278,7 @@ const mountTuiRoot = () => {
               const row = visibleFiles()[fileSel()];
               setFilesQuery(null);
               if (row) {
-                const idx = indexOfPath(fileNodes(), row.node.path);
+                const idx = filesFeature()?.indexOfPath(fileNodes(), row.node.path) ?? -1;
                 if (idx !== -1) {
                   setFileSel(idx);
                   setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
@@ -7690,7 +7756,8 @@ const mountTuiRoot = () => {
         const localX = workbenchHit.localX;
         const localY = workbenchHit.localY;
         if (activeDockTab() === "files") {
-          const hit = filesHitTest(filesSurfaceProjection(), localX, localY);
+          const projection = filesSurfaceProjection();
+          const hit = projection ? filesFeature()?.filesHitTest(projection, localX, localY) : null;
           if (hit?.area === "header" && hit.actionIndex !== undefined)
             setHoverIf({ region: "button", index: hit.actionIndex });
           else if (hit?.area === "list" && hit.rowIndex !== undefined)
@@ -7749,7 +7816,10 @@ const mountTuiRoot = () => {
       }
       if (m === "editor") {
         if (gy === 0) {
-          const hit = filesHitTest(filesSurfaceProjection(), x - sidebarW(), gy);
+          const projection = filesSurfaceProjection();
+          const hit = projection
+            ? filesFeature()?.filesHitTest(projection, x - sidebarW(), gy)
+            : null;
           setHoverIf(
             hit?.area === "header" && hit.actionIndex !== undefined
               ? { region: "button", index: hit.actionIndex }
@@ -8077,7 +8147,10 @@ const mountTuiRoot = () => {
       }
       const { localX, localY } = hit;
       if (activeDockTab() === "files") {
-        const surfaceHit = filesHitTest(filesSurfaceProjection(), localX, localY);
+        const projection = filesSurfaceProjection();
+        const surfaceHit = projection
+          ? filesFeature()?.filesHitTest(projection, localX, localY)
+          : null;
         if (e.type === "scroll") {
           const direction = e.scroll?.direction;
           if (direction === "up" || direction === "down") {
@@ -8900,7 +8973,10 @@ const mountTuiRoot = () => {
         if (type !== "down") return;
         // The header row (gy=0) carries the projected Files actions.
         if (gy === 0) {
-          const hit = filesHitTest(filesSurfaceProjection(), x - sidebarW(), gy);
+          const projection = filesSurfaceProjection();
+          const hit = projection
+            ? filesFeature()?.filesHitTest(projection, x - sidebarW(), gy)
+            : null;
           if (hit?.area === "header" && hit.actionId) runFilesAction(hit.actionId);
           return;
         }
@@ -9486,17 +9562,44 @@ const mountTuiRoot = () => {
             dockBody={
               <>
                 <Show when={activeDockTab() === "files"}>
-                  <FilesSurface
-                    theme={semanticTheme()}
-                    projection={filesSurfaceProjection()}
-                    colors={{
-                      gutterBg: GUTTER_BG,
-                      gutterFg: GUTTER_FG,
-                      cursorBg: CURSOR_BG,
-                      modifiedFg: MODIFIED_FG,
-                      statusLetterFg: STATUS_LETTER_FG,
-                    }}
-                  />
+                  <Show
+                    when={filesFeature()}
+                    fallback={
+                      <box
+                        width="100%"
+                        height="100%"
+                        flexDirection="column"
+                        justifyContent="center"
+                        alignItems="center"
+                        backgroundColor={semanticTheme().roles.surfaces.panel}
+                      >
+                        <text fg={semanticTheme().roles.text.secondary}>
+                          {filesFeatureLoadState() === "failed"
+                            ? "Files unavailable · reopen to retry"
+                            : "Loading Files…"}
+                        </text>
+                      </box>
+                    }
+                  >
+                    {(feature) => (
+                      <Show when={filesSurfaceProjection()}>
+                        {(projection) => (
+                          <Dynamic
+                            component={feature().FilesSurface}
+                            theme={semanticTheme()}
+                            projection={projection()}
+                            colors={{
+                              gutterBg: GUTTER_BG,
+                              gutterFg: GUTTER_FG,
+                              cursorBg: CURSOR_BG,
+                              modifiedFg: MODIFIED_FG,
+                              statusLetterFg: STATUS_LETTER_FG,
+                            }}
+                          />
+                        )}
+                      </Show>
+                    )}
+                  </Show>
                 </Show>
                 <Show when={activeDockTab() === "changes"}>
                   <ChangesSurface

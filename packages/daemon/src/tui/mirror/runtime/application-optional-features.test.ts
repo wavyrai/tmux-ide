@@ -10,7 +10,7 @@ describe("application optional feature loaders", () => {
       "utf8",
     );
     for (const specifier of [
-      "../files-surface.tsx",
+      "../features/files/feature.tsx",
       "../changes-surface.tsx",
       "../missions-surface.tsx",
       "../activity-surface.tsx",
