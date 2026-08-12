@@ -7,6 +7,7 @@ import type { WorkspacePaneTmuxAuthority } from "./workspace-pane-creation.ts";
 import { createPinnedWorkspaceTmuxRunner } from "./workspace-pane-creation.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
 import {
+  AuthenticatedInternalReadVerifier,
   consumeInternalReadOperation,
   INTERNAL_READ_OPERATION_OPTION,
   INTERNAL_SEND_OPERATION_OPTION,
@@ -146,10 +147,12 @@ export class TmuxExternalInteractionObserver {
   #loop: Promise<void> | null = null;
   #hookHealthcheck: ReturnType<typeof setInterval> | null = null;
   #drainSequence = 0;
+  readonly #authenticatedInternalReads: AuthenticatedInternalReadVerifier;
 
   constructor(options: {
     daemonInstanceId: string;
     tmuxAuthority: WorkspacePaneTmuxAuthority;
+    internalReadOwnerToken?: string | null;
     registry?: WorkspaceRegistry;
     io?: Partial<ExternalTmuxInteractionObserverIo>;
     /**
@@ -162,6 +165,10 @@ export class TmuxExternalInteractionObserver {
     this.#daemonInstanceId = options.daemonInstanceId;
     this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
     this.#onObserved = options.onObserved;
+    this.#authenticatedInternalReads = new AuthenticatedInternalReadVerifier({
+      daemonInstanceId: options.daemonInstanceId,
+      ownerToken: options.internalReadOwnerToken,
+    });
     this.#bufferName = `${HOOK_MARKER}-${options.daemonInstanceId}`;
     this.#signalChannel = `${this.#bufferName}-ready`;
     this.#io = {
@@ -284,6 +291,11 @@ export class TmuxExternalInteractionObserver {
   #project(record: TmuxInputHookRecord): boolean {
     if (
       consumeInternalReadOperation(
+        record.operationMarker,
+        record.runtimePaneId,
+        record.operationKind,
+      ) ||
+      this.#authenticatedInternalReads.consume(
         record.operationMarker,
         record.runtimePaneId,
         record.operationKind,

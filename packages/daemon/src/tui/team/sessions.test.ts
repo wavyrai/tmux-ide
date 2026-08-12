@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentMetadataFor,
+  agentManifestNeedsSnapshot,
   buildAgentEntry,
   excludeSidebarPanes,
   isListableSession,
@@ -191,6 +192,16 @@ describe("buildAgentEntry", () => {
     })!;
     expect("statusText" in without).toBe(false);
     expect("displayName" in without).toBe(false);
+  });
+});
+
+describe("agentManifestNeedsSnapshot", () => {
+  it("scrapes real agents but never spends a capture-pane round-trip on raw shells", () => {
+    expect(agentManifestNeedsSnapshot(undefined)).toBe(false);
+    expect(agentManifestNeedsSnapshot({ id: "shell", commands: ["zsh"], states: {} })).toBe(false);
+    expect(agentManifestNeedsSnapshot({ id: "claude", commands: ["claude"], states: {} })).toBe(
+      true,
+    );
   });
 });
 

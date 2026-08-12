@@ -12750,6 +12750,653 @@ var init_process_tree = __esm({
   }
 });
 
+// packages/daemon/src/lib/canonical-daemon.ts
+var canonical_daemon_exports = {};
+__export(canonical_daemon_exports, {
+  canonicalDaemonClaimAllowsStartupAttempt: () => canonicalDaemonClaimAllowsStartupAttempt,
+  canonicalDaemonUrl: () => canonicalDaemonUrl,
+  clearCanonicalDaemonInfoIfOwned: () => clearCanonicalDaemonInfoIfOwned,
+  clearCanonicalDaemonInfoIfUnchanged: () => clearCanonicalDaemonInfoIfUnchanged,
+  getCanonicalDaemonClaimPath: () => getCanonicalDaemonClaimPath,
+  getCanonicalDaemonInfoPath: () => getCanonicalDaemonInfoPath,
+  inspectCanonicalDaemonInfo: () => inspectCanonicalDaemonInfo,
+  isCanonicalDaemonAlive: () => isCanonicalDaemonAlive,
+  isCanonicalDaemonRecordOwnerProvenDead: () => isCanonicalDaemonRecordOwnerProvenDead,
+  probeCanonicalDaemonHealth: () => probeCanonicalDaemonHealth,
+  probeCanonicalDaemonIdentity: () => probeCanonicalDaemonIdentity,
+  readCanonicalDaemonInfo: () => readCanonicalDaemonInfo,
+  releaseCanonicalDaemonClaim: () => releaseCanonicalDaemonClaim,
+  tryAcquireCanonicalDaemonClaim: () => tryAcquireCanonicalDaemonClaim,
+  warnOnDaemonVersionSkew: () => warnOnDaemonVersionSkew,
+  writeCanonicalDaemonInfo: () => writeCanonicalDaemonInfo
+});
+import {
+  chmodSync as chmodSync2,
+  closeSync,
+  constants,
+  fchmodSync,
+  fstatSync,
+  linkSync as linkSync2,
+  lstatSync,
+  mkdirSync as mkdirSync4,
+  openSync,
+  readFileSync as readFileSync7,
+  renameSync as renameSync2,
+  rmSync as rmSync2,
+  writeFileSync as writeFileSync4
+} from "node:fs";
+import { randomUUID } from "node:crypto";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname7, join as join7 } from "node:path";
+function nonEmptyEnvironmentValue(name) {
+  const value = process.env[name];
+  return value !== void 0 && value.length > 0 ? value : void 0;
+}
+function getCanonicalDaemonInfoPath() {
+  const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV) ?? join7(homedir4(), ".tmux-ide");
+  return join7(dir, DAEMON_INFO_FILE);
+}
+function getCanonicalDaemonClaimPath() {
+  return join7(dirname7(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
+}
+function observation(stat) {
+  return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
+}
+function sameObservation(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+function canonicalDaemonRootError(detail) {
+  return new Error(`canonical daemon parent ${detail}`);
+}
+function prepareCanonicalDaemonRoot(root) {
+  let descriptor2;
+  try {
+    try {
+      mkdirSync4(root, { recursive: true, mode: 448 });
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    const pathStat = lstatSync(root);
+    if (pathStat.isSymbolicLink()) {
+      throw canonicalDaemonRootError("must not be a symbolic link");
+    }
+    if (!pathStat.isDirectory()) {
+      throw canonicalDaemonRootError("must be a directory");
+    }
+    if (typeof process.getuid === "function" && pathStat.uid !== process.getuid()) {
+      throw canonicalDaemonRootError("must be owned by the current user");
+    }
+    descriptor2 = openSync(
+      root,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0)
+    );
+    const openedStat = fstatSync(descriptor2);
+    if (!openedStat.isDirectory() || !sameFileIdentity(pathStat, openedStat) || typeof process.getuid === "function" && openedStat.uid !== process.getuid()) {
+      throw canonicalDaemonRootError("changed or became unsafe while it was opened");
+    }
+    fchmodSync(descriptor2, 448);
+    const hardenedStat = fstatSync(descriptor2);
+    const currentPathStat = lstatSync(root);
+    if (!hardenedStat.isDirectory() || !sameFileIdentity(openedStat, hardenedStat) || typeof process.getuid === "function" && hardenedStat.uid !== process.getuid() || (hardenedStat.mode & 63) !== 0 || currentPathStat.isSymbolicLink() || !currentPathStat.isDirectory() || !sameFileIdentity(hardenedStat, currentPathStat) || typeof process.getuid === "function" && currentPathStat.uid !== process.getuid() || (currentPathStat.mode & 63) !== 0) {
+      throw canonicalDaemonRootError("changed or became unsafe while it was hardened");
+    }
+  } finally {
+    if (descriptor2 !== void 0) closeSync(descriptor2);
+  }
+}
+function invalidState(reason, detail, ownerPid = null, observed = null) {
+  return { status: "invalid", reason, detail, ownerPid, observation: observed };
+}
+function ownerPidFromRaw(raw) {
+  if (!raw || typeof raw !== "object" || !("pid" in raw)) return null;
+  const pid = raw.pid;
+  return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+function inspectCanonicalDaemonInfoPath(path2) {
+  let descriptor2;
+  try {
+    const pathStat = lstatSync(path2);
+    const pathObservation = observation(pathStat);
+    const parentStat = lstatSync(dirname7(path2));
+    if (parentStat.isSymbolicLink()) {
+      return invalidState(
+        "parent-symlink",
+        "daemon.json parent must not be a symbolic link",
+        null,
+        pathObservation
+      );
+    }
+    if (!parentStat.isDirectory()) {
+      return invalidState(
+        "parent-not-directory",
+        "daemon.json parent must be a directory",
+        null,
+        pathObservation
+      );
+    }
+    if (typeof process.getuid === "function" && parentStat.uid !== process.getuid()) {
+      return invalidState(
+        "parent-wrong-owner",
+        "daemon.json parent is not owned by the current user",
+        null,
+        pathObservation
+      );
+    }
+    if ((parentStat.mode & 63) !== 0) {
+      return invalidState(
+        "parent-unsafe-permissions",
+        "daemon.json parent must be accessible only by its owner",
+        null,
+        pathObservation
+      );
+    }
+    if (pathStat.isSymbolicLink()) {
+      return invalidState(
+        "symlink",
+        "daemon.json must not be a symbolic link",
+        null,
+        pathObservation
+      );
+    }
+    if (!pathStat.isFile()) {
+      return invalidState(
+        "not-regular-file",
+        "daemon.json must be a regular file",
+        null,
+        pathObservation
+      );
+    }
+    if (pathStat.size > MAX_DAEMON_INFO_BYTES) {
+      return invalidState("oversized", "daemon.json exceeds the size limit", null, pathObservation);
+    }
+    if (typeof process.getuid === "function" && pathStat.uid !== process.getuid()) {
+      return invalidState(
+        "wrong-owner",
+        "daemon.json is not owned by the current user",
+        null,
+        pathObservation
+      );
+    }
+    if ((pathStat.mode & 63) !== 0) {
+      return invalidState(
+        "unsafe-permissions",
+        "daemon.json must be readable and writable only by its owner",
+        null,
+        pathObservation
+      );
+    }
+    descriptor2 = openSync(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedStat = fstatSync(descriptor2);
+    const openedObservation = observation(openedStat);
+    const reopenedParentStat = lstatSync(dirname7(path2));
+    if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || !sameFileIdentity(parentStat, reopenedParentStat) || !reopenedParentStat.isDirectory() || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0 || typeof process.getuid === "function" && reopenedParentStat.uid !== process.getuid() || (reopenedParentStat.mode & 63) !== 0) {
+      return invalidState(
+        "changed-while-opening",
+        "daemon.json changed or became unsafe while it was opened",
+        null,
+        openedObservation
+      );
+    }
+    let raw;
+    try {
+      raw = JSON.parse(readFileSync7(descriptor2, "utf-8"));
+    } catch (error) {
+      return invalidState(
+        "malformed-json",
+        error instanceof Error ? error.message : "daemon.json is not valid JSON",
+        null,
+        openedObservation
+      );
+    }
+    const parsed = CanonicalDaemonInfoSchema.safeParse(raw);
+    if (!parsed.success) {
+      return invalidState(
+        "invalid-schema",
+        parsed.error.issues.map((issue) => issue.message).join("; "),
+        ownerPidFromRaw(raw),
+        openedObservation
+      );
+    }
+    return { status: "valid", info: parsed.data, observation: openedObservation };
+  } catch (error) {
+    if (error.code === "ENOENT") return { status: "missing" };
+    return invalidState(
+      "unreadable",
+      error instanceof Error ? error.message : "daemon.json could not be read"
+    );
+  } finally {
+    if (descriptor2 !== void 0) closeSync(descriptor2);
+  }
+}
+function inspectCanonicalDaemonClaimPath(path2) {
+  let descriptor2;
+  try {
+    const claimStat = lstatSync(path2);
+    if (claimStat.isSymbolicLink() || !claimStat.isDirectory()) {
+      return { status: "invalid", detail: "daemon claim must be a real directory" };
+    }
+    if (typeof process.getuid === "function" && claimStat.uid !== process.getuid()) {
+      return { status: "invalid", detail: "daemon claim is owned by another user" };
+    }
+    if ((claimStat.mode & 63) !== 0) {
+      return { status: "invalid", detail: "daemon claim directory is not owner-only" };
+    }
+    const ownerPath = join7(path2, DAEMON_CLAIM_OWNER_FILE);
+    const ownerStat = lstatSync(ownerPath);
+    if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
+      return { status: "invalid", detail: "daemon claim owner must be a real file" };
+    }
+    if (ownerStat.size > MAX_DAEMON_CLAIM_BYTES) {
+      return { status: "invalid", detail: "daemon claim owner exceeds the size limit" };
+    }
+    if (typeof process.getuid === "function" && ownerStat.uid !== process.getuid()) {
+      return { status: "invalid", detail: "daemon claim owner is owned by another user" };
+    }
+    if ((ownerStat.mode & 63) !== 0) {
+      return { status: "invalid", detail: "daemon claim owner is not owner-only" };
+    }
+    descriptor2 = openSync(ownerPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedStat = fstatSync(descriptor2);
+    if (!openedStat.isFile() || openedStat.dev !== ownerStat.dev || openedStat.ino !== ownerStat.ino || openedStat.size !== ownerStat.size) {
+      return { status: "invalid", detail: "daemon claim changed while it was opened" };
+    }
+    const raw = JSON.parse(readFileSync7(descriptor2, "utf-8"));
+    if (typeof raw.claimId !== "string" || !/^[0-9a-f-]{36}$/iu.test(raw.claimId) || typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid <= 0 || typeof raw.acquiredAt !== "string" || !Number.isFinite(Date.parse(raw.acquiredAt))) {
+      return { status: "invalid", detail: "daemon claim owner has invalid metadata" };
+    }
+    return {
+      status: "valid",
+      claim: { claimId: raw.claimId, pid: raw.pid, acquiredAt: raw.acquiredAt }
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") return { status: "missing" };
+    return {
+      status: "invalid",
+      detail: error instanceof Error ? error.message : "daemon claim could not be read"
+    };
+  } finally {
+    if (descriptor2 !== void 0) closeSync(descriptor2);
+  }
+}
+function restoreCapturedFile(capturedPath, canonicalPath) {
+  try {
+    linkSync2(capturedPath, canonicalPath);
+    rmSync2(capturedPath, { force: true });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+}
+function retireCanonicalClaimIfMatches(expected) {
+  const path2 = getCanonicalDaemonClaimPath();
+  const captured = `${path2}.${expected.claimId}.${randomUUID()}.retired`;
+  try {
+    renameSync2(path2, captured);
+  } catch {
+    return false;
+  }
+  const moved = inspectCanonicalDaemonClaimPath(captured);
+  if (moved.status === "valid" && moved.claim.claimId === expected.claimId && moved.claim.pid === expected.pid) {
+    rmSync2(captured, { recursive: true, force: true });
+    return true;
+  }
+  try {
+    renameSync2(captured, path2);
+  } catch {
+  }
+  return false;
+}
+function tryAcquireCanonicalDaemonClaim() {
+  const path2 = getCanonicalDaemonClaimPath();
+  const root = dirname7(path2);
+  try {
+    prepareCanonicalDaemonRoot(root);
+  } catch (error) {
+    return {
+      status: "invalid",
+      detail: error instanceof Error ? error.message : "canonical daemon parent could not be prepared"
+    };
+  }
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const claim = {
+      claimId: randomUUID(),
+      pid: process.pid,
+      acquiredAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const candidate = `${path2}.${claim.claimId}.candidate`;
+    mkdirSync4(candidate, { mode: 448 });
+    writeFileSync4(join7(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
+`, {
+      encoding: "utf-8",
+      mode: 384
+    });
+    try {
+      renameSync2(candidate, path2);
+      activeClaims.add(claim.claimId);
+      return { status: "acquired", claim };
+    } catch (error) {
+      rmSync2(candidate, { recursive: true, force: true });
+      const existing = inspectCanonicalDaemonClaimPath(path2);
+      if (existing.status === "missing") {
+        if (attempt < 2) continue;
+        return { status: "invalid", detail: "daemon claim changed during acquisition" };
+      }
+      if (existing.status === "invalid") return existing;
+      if (pidLiveness(existing.claim.pid) !== "dead") {
+        return { status: "busy", owner: existing.claim };
+      }
+      if (!retireCanonicalClaimIfMatches(existing.claim) && attempt === 2) {
+        return { status: "invalid", detail: "stale daemon claim changed during recovery" };
+      }
+      if (error.code !== "EEXIST" && attempt === 2) throw error;
+    }
+  }
+  return { status: "invalid", detail: "daemon claim could not be acquired" };
+}
+function assertCanonicalDaemonClaimHeld(claim) {
+  if (!activeClaims.has(claim.claimId)) throw new Error("canonical daemon claim is not active");
+  const current = inspectCanonicalDaemonClaimPath(getCanonicalDaemonClaimPath());
+  if (current.status !== "valid" || current.claim.claimId !== claim.claimId || current.claim.pid !== claim.pid) {
+    throw new Error("canonical daemon claim ownership was lost");
+  }
+}
+function releaseCanonicalDaemonClaim(claim) {
+  if (!activeClaims.has(claim.claimId)) return false;
+  try {
+    return retireCanonicalClaimIfMatches(claim);
+  } finally {
+    activeClaims.delete(claim.claimId);
+  }
+}
+function writeCanonicalDaemonInfo(info, claim) {
+  assertCanonicalDaemonClaimHeld(claim);
+  const path2 = getCanonicalDaemonInfoPath();
+  prepareCanonicalDaemonRoot(dirname7(path2));
+  const tmpPath = `${path2}.${claim.claimId}.${randomUUID()}.tmp`;
+  const persisted = {
+    pid: info.pid,
+    port: info.port,
+    protocolVersion: info.protocolVersion,
+    productVersion: info.productVersion,
+    instanceId: info.instanceId,
+    startedAt: info.startedAt,
+    ...info.environmentId !== void 0 ? { environmentId: info.environmentId } : {},
+    bindHostname: info.bindHostname,
+    authToken: info.authToken
+  };
+  writeFileSync4(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 384
+  });
+  chmodSync2(tmpPath, 384);
+  try {
+    linkSync2(tmpPath, path2);
+  } finally {
+    rmSync2(tmpPath, { force: true });
+  }
+}
+function inspectCanonicalDaemonInfo() {
+  return inspectCanonicalDaemonInfoPath(getCanonicalDaemonInfoPath());
+}
+function readCanonicalDaemonInfo() {
+  const state = inspectCanonicalDaemonInfo();
+  return state.status === "valid" ? state.info : null;
+}
+function captureCanonicalDaemonInfo(claim) {
+  assertCanonicalDaemonClaimHeld(claim);
+  const path2 = getCanonicalDaemonInfoPath();
+  const captured = `${path2}.${claim.claimId}.${randomUUID()}.retired`;
+  try {
+    renameSync2(path2, captured);
+    return captured;
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+function clearCanonicalDaemonInfoIfUnchanged(state, claim) {
+  if (state.status === "missing" || !state.observation) return false;
+  const path2 = getCanonicalDaemonInfoPath();
+  const captured = captureCanonicalDaemonInfo(claim);
+  if (!captured) return false;
+  try {
+    const current = observation(lstatSync(captured));
+    if (sameObservation(state.observation, current)) {
+      rmSync2(captured, { recursive: true, force: true });
+      return true;
+    }
+    restoreCapturedFile(captured, path2);
+    return false;
+  } catch (error) {
+    restoreCapturedFile(captured, path2);
+    throw error;
+  }
+}
+function clearCanonicalDaemonInfoIfOwned(instanceId, claim) {
+  const path2 = getCanonicalDaemonInfoPath();
+  const captured = captureCanonicalDaemonInfo(claim);
+  if (!captured) return false;
+  const state = inspectCanonicalDaemonInfoPath(captured);
+  if (state.status === "valid" && state.info.instanceId === instanceId) {
+    rmSync2(captured, { recursive: true, force: true });
+    return true;
+  }
+  restoreCapturedFile(captured, path2);
+  return false;
+}
+function pidLiveness(pid) {
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (error) {
+    const code = error.code;
+    if (code === "ESRCH") return "dead";
+    if (code === "EPERM") return "alive";
+    return "unknown";
+  }
+}
+function canonicalDaemonClaimAllowsStartupAttempt() {
+  const claimPath = getCanonicalDaemonClaimPath();
+  try {
+    const root = lstatSync(dirname7(claimPath));
+    if (root.isSymbolicLink() || !root.isDirectory() || typeof process.getuid === "function" && root.uid !== process.getuid() || (root.mode & 63) !== 0) {
+      return false;
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") return false;
+  }
+  const claim = inspectCanonicalDaemonClaimPath(claimPath);
+  return claim.status === "missing" || claim.status === "valid" && pidLiveness(claim.claim.pid) === "dead";
+}
+async function isCanonicalDaemonAlive(info) {
+  return pidLiveness(info.pid) !== "dead";
+}
+async function isCanonicalDaemonRecordOwnerProvenDead(state) {
+  const pid = state.status === "valid" ? state.info.pid : state.ownerPid;
+  return pid !== null && pidLiveness(pid) === "dead";
+}
+function connectHostname(bindHostname) {
+  if (bindHostname === "0.0.0.0") return "127.0.0.1";
+  if (bindHostname === "::") return "::1";
+  return bindHostname;
+}
+function urlHostname(bindHostname) {
+  const hostname3 = connectHostname(bindHostname).replace(/^\[|\]$/gu, "");
+  if (/[/?#@]/u.test(hostname3)) throw new TypeError("Invalid daemon bind hostname");
+  const escaped = hostname3.replace(/%/gu, "%25");
+  return escaped.includes(":") ? `[${escaped}]` : escaped;
+}
+function canonicalDaemonUrl(protocol, bindHostname, port, path2 = "") {
+  const suffix = path2.length === 0 ? "" : path2.startsWith("/") ? path2 : `/${path2}`;
+  return `${protocol}://${urlHostname(bindHostname)}:${port}${suffix}`;
+}
+function timeoutSignal(ms) {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms).unref?.();
+  return controller.signal;
+}
+function warnOnDaemonVersionSkew(info, expectedProductVersion) {
+  if (info.productVersion === expectedProductVersion) return;
+  console.warn(
+    `[tmux-ide] canonical daemon product-version skew: daemon.json reports "${info.productVersion}" but this client expects "${expectedProductVersion}". Wire compatibility is governed independently by protocolVersion.`
+  );
+}
+async function probeCanonicalDaemonHealth(info, parentSignal) {
+  if (!await isCanonicalDaemonAlive(info)) return null;
+  try {
+    const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/health"), {
+      signal: parentSignal ?? timeoutSignal(750)
+    });
+    if (!res.ok) return null;
+    const parsed = DaemonHealthSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+async function probeCanonicalDaemonIdentity(info, parentSignal) {
+  if (!await isCanonicalDaemonAlive(info)) return null;
+  try {
+    const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/identity"), {
+      signal: parentSignal ?? timeoutSignal(750)
+    });
+    if (!res.ok) return null;
+    const parsed = DaemonIdentitySchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+var DAEMON_INFO_DIR_ENV, REGISTRY_DIR_ENV, DAEMON_INFO_FILE, DAEMON_CLAIM_DIR, DAEMON_CLAIM_OWNER_FILE, MAX_DAEMON_INFO_BYTES, MAX_DAEMON_CLAIM_BYTES, activeClaims;
+var init_canonical_daemon = __esm({
+  "packages/daemon/src/lib/canonical-daemon.ts"() {
+    "use strict";
+    init_src();
+    DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
+    REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
+    DAEMON_INFO_FILE = "daemon.json";
+    DAEMON_CLAIM_DIR = "daemon.claim";
+    DAEMON_CLAIM_OWNER_FILE = "owner.json";
+    MAX_DAEMON_INFO_BYTES = 64 * 1024;
+    MAX_DAEMON_CLAIM_BYTES = 4 * 1024;
+    activeClaims = /* @__PURE__ */ new Set();
+  }
+});
+
+// packages/daemon/src/lib/tmux-interaction-options.ts
+import { createHmac, randomBytes, randomUUID as randomUUID2, timingSafeEqual } from "node:crypto";
+function authenticatedReadPayload(daemonInstanceId2, runtimePaneId, issuedAtMs, nonce) {
+  return `${daemonInstanceId2}\0${runtimePaneId}\0${issuedAtMs}\0${nonce}`;
+}
+function authenticatedReadSignature(ownerToken, payload) {
+  return createHmac("sha256", ownerToken).update(payload).digest();
+}
+function createAuthenticatedInternalReadOperation(runtimePaneId, authority, nowMs = Date.now()) {
+  if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId)) {
+    throw new Error("authenticated internal reads require a runtime pane id");
+  }
+  if (!authority.daemonInstanceId || !authority.ownerToken) {
+    throw new Error("authenticated internal reads require daemon authority");
+  }
+  const issuedAt = Math.floor(nowMs);
+  const nonce = randomBytes(AUTHENTICATED_INTERNAL_READ_NONCE_BYTES).toString("hex");
+  const payload = authenticatedReadPayload(
+    authority.daemonInstanceId,
+    runtimePaneId,
+    issuedAt,
+    nonce
+  );
+  const signature = authenticatedReadSignature(authority.ownerToken, payload).toString("base64url");
+  return `${AUTHENTICATED_INTERNAL_READ_PREFIX}${issuedAt.toString(36)}:${nonce}:${signature}`;
+}
+function registerInternalReadOperation(runtimePaneId) {
+  const now = Date.now();
+  for (const [marker2, registration] of internalReads) {
+    if (registration.expiresAt <= now) internalReads.delete(marker2);
+  }
+  while (internalReads.size >= INTERNAL_READ_CAPACITY) {
+    internalReads.delete(internalReads.keys().next().value);
+  }
+  const marker = `${INTERNAL_READ_PREFIX}${randomUUID2()}`;
+  internalReads.set(marker, { paneId: runtimePaneId, expiresAt: now + INTERNAL_READ_TTL_MS });
+  return marker;
+}
+function consumeInternalReadOperation(marker, runtimePaneId, operationKind) {
+  if (marker === null || !marker.startsWith(INTERNAL_READ_PREFIX)) return false;
+  const registration = internalReads.get(marker);
+  if (!registration) return false;
+  internalReads.delete(marker);
+  return operationKind === "workspace.pane.read" && registration.paneId === runtimePaneId && registration.expiresAt > Date.now();
+}
+var INTERNAL_SEND_OPERATION_OPTION, INTERNAL_READ_OPERATION_OPTION, INTERNAL_READ_PREFIX, INTERNAL_READ_TTL_MS, INTERNAL_READ_CAPACITY, internalReads, AUTHENTICATED_INTERNAL_READ_PREFIX, AUTHENTICATED_INTERNAL_READ_NONCE_BYTES, AUTHENTICATED_INTERNAL_READ_SIGNATURE_BYTES, AUTHENTICATED_INTERNAL_READ_CLOCK_SKEW_MS, AUTHENTICATED_INTERNAL_READ_PATTERN, AuthenticatedInternalReadVerifier;
+var init_tmux_interaction_options = __esm({
+  "packages/daemon/src/lib/tmux-interaction-options.ts"() {
+    "use strict";
+    INTERNAL_SEND_OPERATION_OPTION = "@tmux_ide_send_operation";
+    INTERNAL_READ_OPERATION_OPTION = "@tmux_ide_read_operation";
+    INTERNAL_READ_PREFIX = "tmux-ide-internal-read-v2:";
+    INTERNAL_READ_TTL_MS = 1e4;
+    INTERNAL_READ_CAPACITY = 512;
+    internalReads = /* @__PURE__ */ new Map();
+    AUTHENTICATED_INTERNAL_READ_PREFIX = "tmux-ide-internal-read-v3:";
+    AUTHENTICATED_INTERNAL_READ_NONCE_BYTES = 12;
+    AUTHENTICATED_INTERNAL_READ_SIGNATURE_BYTES = 32;
+    AUTHENTICATED_INTERNAL_READ_CLOCK_SKEW_MS = 1e3;
+    AUTHENTICATED_INTERNAL_READ_PATTERN = new RegExp(
+      `^${AUTHENTICATED_INTERNAL_READ_PREFIX}([0-9a-z]+):([0-9a-f]{${AUTHENTICATED_INTERNAL_READ_NONCE_BYTES * 2}}):([A-Za-z0-9_-]{43})$`,
+      "u"
+    );
+    AuthenticatedInternalReadVerifier = class {
+      #daemonInstanceId;
+      #ownerToken;
+      #consumed = /* @__PURE__ */ new Map();
+      constructor(authority) {
+        this.#daemonInstanceId = authority.daemonInstanceId;
+        this.#ownerToken = authority.ownerToken ?? null;
+      }
+      consume(marker, runtimePaneId, operationKind, nowMs = Date.now()) {
+        if (!this.#ownerToken || operationKind !== "workspace.pane.read" || marker === null)
+          return false;
+        const match = AUTHENTICATED_INTERNAL_READ_PATTERN.exec(marker);
+        if (!match) return false;
+        const issuedAt = Number.parseInt(match[1], 36);
+        const nonce = match[2];
+        if (!Number.isSafeInteger(issuedAt)) return false;
+        const age = nowMs - issuedAt;
+        if (age < -AUTHENTICATED_INTERNAL_READ_CLOCK_SKEW_MS || age > INTERNAL_READ_TTL_MS)
+          return false;
+        for (const [seenNonce, expiresAt] of this.#consumed) {
+          if (expiresAt <= nowMs) this.#consumed.delete(seenNonce);
+        }
+        if (this.#consumed.has(nonce)) return false;
+        const payload = authenticatedReadPayload(
+          this.#daemonInstanceId,
+          runtimePaneId,
+          issuedAt,
+          nonce
+        );
+        const expected = authenticatedReadSignature(this.#ownerToken, payload);
+        let actual;
+        try {
+          actual = Buffer.from(match[3], "base64url");
+        } catch {
+          return false;
+        }
+        if (actual.byteLength !== AUTHENTICATED_INTERNAL_READ_SIGNATURE_BYTES || !timingSafeEqual(actual, expected)) {
+          return false;
+        }
+        while (this.#consumed.size >= INTERNAL_READ_CAPACITY) {
+          this.#consumed.delete(this.#consumed.keys().next().value);
+        }
+        this.#consumed.set(nonce, issuedAt + INTERNAL_READ_TTL_MS);
+        return true;
+      }
+    };
+  }
+});
+
 // packages/daemon/src/tui/detect/snapshot.ts
 function stripAnsi(input) {
   return input.replace(ANSI, "");
@@ -12763,12 +13410,34 @@ function parseSnapshot(raw, opts = {}) {
 }
 function readPaneSnapshot(target, opts = {}) {
   const lines = opts.lines ?? DEFAULT_LINES;
+  const daemon = /^%(?:0|[1-9][0-9]*)$/u.test(target) ? readCanonicalDaemonInfo() : null;
+  const marker = daemon?.authToken !== null && daemon?.authToken !== void 0 ? createAuthenticatedInternalReadOperation(target, {
+    daemonInstanceId: daemon.instanceId,
+    ownerToken: daemon.authToken
+  }) : null;
   try {
-    const raw = runTmux(["capture-pane", "-t", target, "-p", "-J", "-S", `-${lines}`], {
-      encoding: "utf-8"
-    });
+    const captureArgs = ["capture-pane", "-t", target, "-p", "-J", "-S", `-${lines}`];
+    const raw = runTmux(
+      marker ? [
+        "set-option",
+        "-p",
+        "-t",
+        target,
+        INTERNAL_READ_OPERATION_OPTION,
+        marker,
+        ";",
+        ...captureArgs
+      ] : captureArgs,
+      { encoding: "utf-8" }
+    );
     return parseSnapshot(raw, { lines });
   } catch {
+    if (marker) {
+      try {
+        runTmux(["set-option", "-pu", "-t", target, INTERNAL_READ_OPERATION_OPTION]);
+      } catch {
+      }
+    }
     return { bottomNonEmpty: [], text: "", raw: "" };
   }
 }
@@ -12777,6 +13446,8 @@ var init_snapshot = __esm({
   "packages/daemon/src/tui/detect/snapshot.ts"() {
     "use strict";
     init_src2();
+    init_canonical_daemon();
+    init_tmux_interaction_options();
     ANSI = /[\u001b\u009b][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
     DEFAULT_LINES = 20;
   }
@@ -12786,6 +13457,7 @@ var init_snapshot = __esm({
 var sessions_exports = {};
 __export(sessions_exports, {
   SIDEBAR_PANE_OPTION: () => SIDEBAR_PANE_OPTION,
+  agentManifestNeedsSnapshot: () => agentManifestNeedsSnapshot,
   agentMetadataFor: () => agentMetadataFor,
   buildAgentEntry: () => buildAgentEntry,
   excludeSidebarPanes: () => excludeSidebarPanes,
@@ -12832,6 +13504,9 @@ function tmux(args) {
     return "";
   }
 }
+function agentManifestNeedsSnapshot(manifest) {
+  return manifest !== void 0 && manifest.id !== "shell";
+}
 function listTeamSessions(tracker, opts = {}) {
   const raw = tmux([
     "list-sessions",
@@ -12858,7 +13533,11 @@ function listTeamSessions(tracker, opts = {}) {
         authorityRaw: pane.authority,
         nowSec,
         scrape: () => {
-          const instant = manifest ? classifyInstant({ ...readPaneSnapshot(pane.id), title: pane.title }, manifest) : "unknown";
+          const snapshotManifest = agentManifestNeedsSnapshot(manifest) ? manifest : void 0;
+          const instant = snapshotManifest ? classifyInstant(
+            { ...readPaneSnapshot(pane.id), title: pane.title },
+            snapshotManifest
+          ) : manifest?.id === "shell" ? "idle" : "unknown";
           return tracker.update(pane.id, instant, { seen });
         }
       });
@@ -13044,9 +13723,9 @@ __export(app_config_exports, {
   parseAppConfig: () => parseAppConfig,
   updateAppConfig: () => updateAppConfig
 });
-import { existsSync as existsSync7, mkdirSync as mkdirSync4, readFileSync as readFileSync7, renameSync as renameSync2, writeFileSync as writeFileSync4 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname7, join as join7 } from "node:path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync8, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname8, join as join8 } from "node:path";
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -13157,13 +13836,13 @@ function parseAppConfig(input) {
   };
 }
 function appConfigPath() {
-  return process.env.TMUX_IDE_CONFIG ?? join7(homedir4(), ".tmux-ide", "config.json");
+  return process.env.TMUX_IDE_CONFIG ?? join8(homedir5(), ".tmux-ide", "config.json");
 }
 function loadAppConfig() {
   const path2 = appConfigPath();
   if (!existsSync7(path2)) return parseAppConfig(void 0);
   try {
-    return parseAppConfig(JSON.parse(readFileSync7(path2, "utf-8")));
+    return parseAppConfig(JSON.parse(readFileSync8(path2, "utf-8")));
   } catch {
     return parseAppConfig(void 0);
   }
@@ -13179,7 +13858,7 @@ function loadRawAppConfig() {
   const path2 = appConfigPath();
   if (!existsSync7(path2)) return {};
   try {
-    const parsed = JSON.parse(readFileSync7(path2, "utf-8"));
+    const parsed = JSON.parse(readFileSync8(path2, "utf-8"));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
@@ -13206,11 +13885,11 @@ function mergeConfigPatch(raw, patch) {
 function updateAppConfig(patch) {
   const path2 = appConfigPath();
   const merged = mergeConfigPatch(loadRawAppConfig(), patch);
-  mkdirSync4(dirname7(path2), { recursive: true });
+  mkdirSync5(dirname8(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync4(tmp, `${JSON.stringify(merged, null, 2)}
+  writeFileSync5(tmp, `${JSON.stringify(merged, null, 2)}
 `, "utf-8");
-  renameSync2(tmp, path2);
+  renameSync3(tmp, path2);
   cached = null;
   return parseAppConfig(merged);
 }
@@ -13280,8 +13959,8 @@ __export(manifest_pack_exports, {
   updateManifestPack: () => updateManifestPack,
   validateManifestPack: () => validateManifestPack
 });
-import { mkdirSync as mkdirSync5, readFileSync as readFileSync8, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
-import { dirname as dirname8, join as join8 } from "node:path";
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync9, renameSync as renameSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { dirname as dirname9, join as join9 } from "node:path";
 import { fileURLToPath } from "node:url";
 function manifestPackUrl(version = getCurrentVersion()) {
   const v = version.startsWith("v") ? version.slice(1) : version;
@@ -13329,10 +14008,10 @@ function validateManifestPack(value) {
   };
 }
 function packDir() {
-  return join8(overrideDir(), "pack");
+  return join9(overrideDir(), "pack");
 }
 function packPath() {
-  return join8(packDir(), "manifest-pack.json");
+  return join9(packDir(), "manifest-pack.json");
 }
 async function fetchManifestPack(url, timeoutMs = 5e3) {
   if (!isAllowedPackUrl(url)) {
@@ -13342,7 +14021,7 @@ async function fetchManifestPack(url, timeoutMs = 5e3) {
   }
   let body;
   if (url.startsWith("file:")) {
-    body = readFileSync8(fileURLToPath(url), "utf8");
+    body = readFileSync9(fileURLToPath(url), "utf8");
   } else {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -13371,10 +14050,10 @@ async function fetchManifestPack(url, timeoutMs = 5e3) {
   return verdict.pack;
 }
 function installManifestPack(pack, dest = packPath()) {
-  mkdirSync5(dirname8(dest), { recursive: true });
+  mkdirSync6(dirname9(dest), { recursive: true });
   const tmp = `${dest}.${process.pid}.tmp`;
-  writeFileSync5(tmp, JSON.stringify(pack, null, 2));
-  renameSync3(tmp, dest);
+  writeFileSync6(tmp, JSON.stringify(pack, null, 2));
+  renameSync4(tmp, dest);
   return dest;
 }
 async function updateManifestPack(opts = {}) {
@@ -13428,9 +14107,9 @@ __export(update_check_exports, {
   updateCachePath: () => updateCachePath,
   writeUpdateCache: () => writeUpdateCache
 });
-import { existsSync as existsSync8, mkdirSync as mkdirSync6, readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { dirname as dirname9, join as join9 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync7, readFileSync as readFileSync10, writeFileSync as writeFileSync7 } from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { dirname as dirname10, join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function parseSemver(version) {
   const core = version.trim().replace(/^v/i, "").split("+")[0] ?? "";
@@ -13479,14 +14158,14 @@ function deriveStatus(latest, currentVersion) {
   };
 }
 function updateCachePath() {
-  const home = process.env.TMUX_IDE_HOME ?? join9(homedir5(), ".tmux-ide");
-  return join9(home, "update-check.json");
+  const home = process.env.TMUX_IDE_HOME ?? join10(homedir6(), ".tmux-ide");
+  return join10(home, "update-check.json");
 }
 function readUpdateCache() {
   const path2 = updateCachePath();
   if (!existsSync8(path2)) return null;
   try {
-    const parsed = JSON.parse(readFileSync9(path2, "utf-8"));
+    const parsed = JSON.parse(readFileSync10(path2, "utf-8"));
     if (!parsed || typeof parsed !== "object") return null;
     const obj = parsed;
     const lastCheckedAt = typeof obj.lastCheckedAt === "number" ? obj.lastCheckedAt : null;
@@ -13500,8 +14179,8 @@ function readUpdateCache() {
 function writeUpdateCache(cache3) {
   const path2 = updateCachePath();
   try {
-    mkdirSync6(dirname9(path2), { recursive: true });
-    writeFileSync6(path2, JSON.stringify(cache3));
+    mkdirSync7(dirname10(path2), { recursive: true });
+    writeFileSync7(path2, JSON.stringify(cache3));
   } catch {
   }
 }
@@ -13519,16 +14198,16 @@ async function fetchLatestVersion(timeoutMs = 3e3) {
   }
 }
 function getCurrentVersion() {
-  const here = dirname9(fileURLToPath2(import.meta.url));
+  const here = dirname10(fileURLToPath2(import.meta.url));
   const candidates = [
-    join9(here, "../package.json"),
+    join10(here, "../package.json"),
     // bundled bin/cli.js → repo root
-    join9(here, "../../../../package.json")
+    join10(here, "../../../../package.json")
     // dev src/lib → repo root
   ];
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(readFileSync9(candidate, "utf-8"));
+      const parsed = JSON.parse(readFileSync10(candidate, "utf-8"));
       if (typeof parsed.version === "string" && parsed.version.length > 0) return parsed.version;
     } catch {
     }
@@ -13595,9 +14274,9 @@ __export(tui_binary_exports, {
   tuiPlatformTag: () => tuiPlatformTag,
   tuiStateHome: () => tuiStateHome
 });
-import { chmodSync as chmodSync2, existsSync as existsSync9, mkdirSync as mkdirSync7, renameSync as renameSync4, writeFileSync as writeFileSync7 } from "node:fs";
-import { homedir as homedir6 } from "node:os";
-import { dirname as dirname10, join as join10 } from "node:path";
+import { chmodSync as chmodSync3, existsSync as existsSync9, mkdirSync as mkdirSync8, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
+import { homedir as homedir7 } from "node:os";
+import { dirname as dirname11, join as join11 } from "node:path";
 import { gunzipSync } from "node:zlib";
 function tuiPlatformTag(platform = process.platform, arch = process.arch) {
   return SUPPORTED[`${platform}-${arch}`] ?? null;
@@ -13615,10 +14294,10 @@ function releaseAssetUrl(version, tag) {
   return `https://github.com/${RELEASE_REPO}/releases/download/v${normalizeVersion(version)}/${releaseAssetName(tag)}`;
 }
 function downloadedTuiPath(home, tag, version) {
-  return join10(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
+  return join11(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
 }
 function tuiStateHome() {
-  return process.env.TMUX_IDE_HOME ?? join10(homedir6(), ".tmux-ide");
+  return process.env.TMUX_IDE_HOME ?? join11(homedir7(), ".tmux-ide");
 }
 function findDownloadedTui(version = getCurrentVersion()) {
   const tag = tuiPlatformTag();
@@ -13638,7 +14317,7 @@ async function downloadTuiBinary(opts = {}) {
   }
   const url = releaseAssetUrl(version, tag);
   const dest = downloadedTuiPath(tuiStateHome(), tag, version);
-  mkdirSync7(dirname10(dest), { recursive: true });
+  mkdirSync8(dirname11(dest), { recursive: true });
   log(`downloading ${url}`);
   const res = await fetch(url);
   if (!res.ok) {
@@ -13654,9 +14333,9 @@ async function downloadTuiBinary(opts = {}) {
     );
   }
   const tmp = `${dest}.${process.pid}.tmp`;
-  writeFileSync7(tmp, bin, { mode: 493 });
-  chmodSync2(tmp, 493);
-  renameSync4(tmp, dest);
+  writeFileSync8(tmp, bin, { mode: 493 });
+  chmodSync3(tmp, 493);
+  renameSync5(tmp, dest);
   const mb = (bin.byteLength / 1024 / 1024).toFixed(1);
   log(`installed ${dest} (${mb} MB)`);
   return { path: dest, bytes: bin.byteLength };
@@ -13678,9 +14357,9 @@ var init_tui_binary = __esm({
 });
 
 // packages/daemon/src/tui/compiled.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync8 } from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { dirname as dirname11, join as join11, resolve as resolve7 } from "node:path";
+import { existsSync as existsSync10, mkdirSync as mkdirSync9 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { dirname as dirname12, join as join12, resolve as resolve7 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { execFileSync as execFileSync5 } from "node:child_process";
 function resolveTuiLaunch(input) {
@@ -13711,7 +14390,7 @@ function findCompiledTui() {
   const override = process.env.TMUX_IDE_TUI_BIN;
   if (override) return existsSync10(override) ? override : null;
   const anchors = [];
-  if (process.argv[1]) anchors.push(dirname11(process.argv[1]));
+  if (process.argv[1]) anchors.push(dirname12(process.argv[1]));
   anchors.push(__dirname);
   for (const anchor of anchors) {
     for (const rel of BINARY_RELS) {
@@ -13729,12 +14408,12 @@ function isBunAvailable() {
     return false;
   }
 }
-function compiledTuiRuntimeDir(home = homedir7()) {
-  return join11(home, ".tmux-ide", "runtime", "compiled-tui");
+function compiledTuiRuntimeDir(home = homedir8()) {
+  return join12(home, ".tmux-ide", "runtime", "compiled-tui");
 }
-function ensureCompiledTuiRuntimeDir(home = homedir7()) {
+function ensureCompiledTuiRuntimeDir(home = homedir8()) {
   const dir = compiledTuiRuntimeDir(home);
-  mkdirSync8(dir, { recursive: true, mode: 448 });
+  mkdirSync9(dir, { recursive: true, mode: 448 });
   return dir;
 }
 var __dirname, BINARY_RELS;
@@ -13742,7 +14421,7 @@ var init_compiled = __esm({
   "packages/daemon/src/tui/compiled.ts"() {
     "use strict";
     init_tui_binary();
-    __dirname = dirname11(fileURLToPath3(import.meta.url));
+    __dirname = dirname12(fileURLToPath3(import.meta.url));
     BINARY_RELS = [
       "../packages/daemon/dist/tui/tmux-ide-tui",
       "../../dist/tui/tmux-ide-tui",
@@ -13771,7 +14450,7 @@ __export(sidebar_exports, {
   sidebarWidgetScript: () => sidebarWidgetScript
 });
 import { existsSync as existsSync11 } from "node:fs";
-import { dirname as dirname12, resolve as resolve8 } from "node:path";
+import { dirname as dirname13, resolve as resolve8 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 function sidebarWidgetScript() {
   const candidates = [
@@ -13868,7 +14547,7 @@ var init_sidebar = __esm({
     init_shell();
     init_sessions2();
     init_compiled();
-    __dirname2 = dirname12(fileURLToPath4(import.meta.url));
+    __dirname2 = dirname13(fileURLToPath4(import.meta.url));
     SIDEBAR_KEY = "M-b";
     DEFAULT_SIDEBAR_WIDTH = 30;
   }
@@ -13881,7 +14560,7 @@ __export(resolve_exports, {
   resolveWidgetCommand: () => resolveWidgetCommand,
   resolveWidgetSpawn: () => resolveWidgetSpawn
 });
-import { resolve as resolve9, dirname as dirname13 } from "node:path";
+import { resolve as resolve9, dirname as dirname14 } from "node:path";
 import { existsSync as existsSync12 } from "node:fs";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 function widgetEntryPath(entry) {
@@ -13942,7 +14621,7 @@ var init_resolve = __esm({
     "use strict";
     init_shell();
     init_compiled();
-    __dirname3 = dirname13(fileURLToPath5(import.meta.url));
+    __dirname3 = dirname14(fileURLToPath5(import.meta.url));
     WIDGET_ENTRY_POINTS = {
       explorer: "explorer/index.tsx",
       changes: "changes/index.tsx",
@@ -13957,9 +14636,9 @@ var init_resolve = __esm({
 });
 
 // packages/daemon/src/tui/team/keymap.ts
-import { existsSync as existsSync13, readFileSync as readFileSync10 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
-import { join as join12 } from "node:path";
+import { existsSync as existsSync13, readFileSync as readFileSync11 } from "node:fs";
+import { homedir as homedir9 } from "node:os";
+import { join as join13 } from "node:path";
 var ACTION_ORDER, DEFAULT_KEYMAP;
 var init_keymap = __esm({
   "packages/daemon/src/tui/team/keymap.ts"() {
@@ -14388,15 +15067,15 @@ __export(welcome_exports, {
   welcomeMarkerPath: () => welcomeMarkerPath
 });
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync14, mkdirSync as mkdirSync9, writeFileSync as writeFileSync8 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
-import { dirname as dirname14, join as join13 } from "node:path";
+import { existsSync as existsSync14, mkdirSync as mkdirSync10, writeFileSync as writeFileSync9 } from "node:fs";
+import { homedir as homedir10 } from "node:os";
+import { dirname as dirname15, join as join14 } from "node:path";
 function renderKey2(tmuxKey) {
   return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
 }
 function welcomeMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join13(homedir9(), ".tmux-ide");
-  return join13(home, "welcomed");
+  const home = process.env.TMUX_IDE_HOME ?? join14(homedir10(), ".tmux-ide");
+  return join14(home, "welcomed");
 }
 function shouldShowWelcome() {
   return !existsSync14(welcomeMarkerPath()) && getAppConfig().welcome.show;
@@ -14404,8 +15083,8 @@ function shouldShowWelcome() {
 function markWelcomed() {
   const path2 = welcomeMarkerPath();
   try {
-    mkdirSync9(dirname14(path2), { recursive: true });
-    writeFileSync8(path2, (/* @__PURE__ */ new Date()).toISOString());
+    mkdirSync10(dirname15(path2), { recursive: true });
+    writeFileSync9(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
 }
@@ -14459,12 +15138,12 @@ __export(offer_exports, {
   shouldOfferIntegration: () => shouldOfferIntegration
 });
 import { execFileSync as execFileSync6, spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync15, mkdirSync as mkdirSync10, writeFileSync as writeFileSync9 } from "node:fs";
-import { homedir as homedir10 } from "node:os";
-import { dirname as dirname15, join as join14 } from "node:path";
+import { existsSync as existsSync15, mkdirSync as mkdirSync11, writeFileSync as writeFileSync10 } from "node:fs";
+import { homedir as homedir11 } from "node:os";
+import { dirname as dirname16, join as join15 } from "node:path";
 function integrationOfferMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join14(homedir10(), ".tmux-ide");
-  return join14(home, "integration-offered");
+  const home = process.env.TMUX_IDE_HOME ?? join15(homedir11(), ".tmux-ide");
+  return join15(home, "integration-offered");
 }
 function shouldOfferIntegration(input) {
   return input.claudeOnPath && !input.integrationInstalled && !input.markerPresent && input.offerEnabled;
@@ -14472,8 +15151,8 @@ function shouldOfferIntegration(input) {
 function markIntegrationOffered() {
   const path2 = integrationOfferMarkerPath();
   try {
-    mkdirSync10(dirname15(path2), { recursive: true });
-    writeFileSync9(path2, (/* @__PURE__ */ new Date()).toISOString());
+    mkdirSync11(dirname16(path2), { recursive: true });
+    writeFileSync10(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
 }
@@ -14574,9 +15253,9 @@ var init_front_door = __esm({
 // packages/daemon/src/tui/detect/session-id.ts
 import { execFileSync as execFileSync7 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
-import { readdirSync as readdirSync2, readFileSync as readFileSync11, readlinkSync, statSync } from "node:fs";
-import { homedir as homedir11 } from "node:os";
-import { join as join15 } from "node:path";
+import { readdirSync as readdirSync2, readFileSync as readFileSync12, readlinkSync, statSync } from "node:fs";
+import { homedir as homedir12 } from "node:os";
+import { join as join16 } from "node:path";
 function codexIdFromOpenFiles(paths) {
   for (const path2 of paths) {
     const match = CODEX_ROLLOUT_RE.exec(path2);
@@ -14632,7 +15311,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   for (let offset = 0; offset <= MAX_SCAN_DAYS; offset++) {
     const day = new Date(nowMs - offset * 864e5);
     if (day.getTime() < cutoff - 864e5) break;
-    const dir = join15(
+    const dir = join16(
       root,
       String(day.getFullYear()),
       String(day.getMonth() + 1).padStart(2, "0"),
@@ -14641,7 +15320,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
     for (const name of io.listDir(dir)) {
       const parsed = parseCodexRolloutName(name);
       if (parsed && parsed.tsMs >= cutoff && parsed.tsMs <= nowMs + START_SLACK_MS) {
-        candidates.push({ tsMs: parsed.tsMs, path: join15(dir, name), id: parsed.id });
+        candidates.push({ tsMs: parsed.tsMs, path: join16(dir, name), id: parsed.id });
       }
     }
   }
@@ -14665,12 +15344,12 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   return null;
 }
 function cursorIdFromStateDir(chatsRoot, paneCwd, startMs, io) {
-  const hashed = join15(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
+  const hashed = join16(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
   const cutoff = startMs - START_SLACK_MS;
   let best = null;
   for (const name of io.listDir(hashed)) {
     if (!SAFE_SESSION_ID.test(name)) continue;
-    const mtime = io.mtimeMs(join15(hashed, name));
+    const mtime = io.mtimeMs(join16(hashed, name));
     if (mtime === null || mtime < cutoff) continue;
     if (!best || mtime > best.mtime) best = { name, mtime };
   }
@@ -14725,7 +15404,7 @@ function readOpenFiles(pid) {
     const paths = [];
     for (const name of names) {
       try {
-        const target = readlinkSync(join15(fdDir, name));
+        const target = readlinkSync(join16(fdDir, name));
         if (target.startsWith("/")) paths.push(target);
       } catch {
       }
@@ -14763,8 +15442,8 @@ function liveProbeIo() {
     openFiles: readOpenFiles,
     processStartMs: (pid) => processStartMs(pid),
     stateDir: liveStateDirIo,
-    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join15(homedir11(), ".codex", "sessions"),
-    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join15(homedir11(), ".cursor", "chats"),
+    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join16(homedir12(), ".codex", "sessions"),
+    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join16(homedir12(), ".cursor", "chats"),
     now: () => Date.now()
   };
 }
@@ -14809,7 +15488,7 @@ var init_session_id = __esm({
       },
       readFirstLine: (path2) => {
         try {
-          const fd = readFileSync11(path2, { encoding: "utf8", flag: "r" });
+          const fd = readFileSync12(path2, { encoding: "utf8", flag: "r" });
           const newline = fd.indexOf("\n");
           return newline === -1 ? fd : fd.slice(0, newline);
         } catch {
@@ -14893,9 +15572,9 @@ var init_project_probe = __esm({
 
 // packages/daemon/src/lib/project-registry.ts
 import { EventEmitter } from "node:events";
-import { existsSync as existsSync16, mkdirSync as mkdirSync11, readFileSync as readFileSync12, renameSync as renameSync5, writeFileSync as writeFileSync10 } from "node:fs";
-import { homedir as homedir12 } from "node:os";
-import { dirname as dirname16, isAbsolute as isAbsolute3, join as join16, resolve as resolve11 } from "node:path";
+import { existsSync as existsSync16, mkdirSync as mkdirSync12, readFileSync as readFileSync13, renameSync as renameSync6, writeFileSync as writeFileSync11 } from "node:fs";
+import { homedir as homedir13 } from "node:os";
+import { dirname as dirname17, isAbsolute as isAbsolute3, join as join17, resolve as resolve11 } from "node:path";
 import { z as z61 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
@@ -14929,17 +15608,17 @@ function buildRegisteredProject(probe, name, registeredAt) {
   };
 }
 function registryDir() {
-  const override = process.env[REGISTRY_DIR_ENV];
+  const override = process.env[REGISTRY_DIR_ENV2];
   if (override && override.length > 0) return override;
-  return join16(homedir12(), ".tmux-ide");
+  return join17(homedir13(), ".tmux-ide");
 }
 function registryPath() {
-  return join16(registryDir(), "projects.json");
+  return join17(registryDir(), "projects.json");
 }
 function readDisk() {
   const path2 = registryPath();
   if (!existsSync16(path2)) return [];
-  const raw = readFileSync12(path2, "utf-8");
+  const raw = readFileSync13(path2, "utf-8");
   if (raw.trim().length === 0) return [];
   let parsed;
   try {
@@ -14961,12 +15640,12 @@ function readDisk() {
 }
 function writeDisk(projects) {
   const path2 = registryPath();
-  const dir = dirname16(path2);
-  mkdirSync11(dir, { recursive: true });
+  const dir = dirname17(path2);
+  mkdirSync12(dir, { recursive: true });
   const file = { version: 1, projects };
   const tmpPath = `${path2}.tmp`;
-  writeFileSync10(tmpPath, JSON.stringify(file, null, 2) + "\n");
-  renameSync5(tmpPath, path2);
+  writeFileSync11(tmpPath, JSON.stringify(file, null, 2) + "\n");
+  renameSync6(tmpPath, path2);
 }
 function ensureCache() {
   if (cache2 !== null) return cache2;
@@ -15028,13 +15707,13 @@ async function refreshProject(name, options = {}) {
   commit(applyAction(state, { type: "replace", project: refreshed }));
   return refreshed;
 }
-var REGISTRY_DIR_ENV, RegistryFileSchemaZ, ProjectRegistryError, ProjectAlreadyRegisteredError, ProjectNotFoundError, ProjectDirNotFoundError, projectRegistryEmitter, cache2;
+var REGISTRY_DIR_ENV2, RegistryFileSchemaZ, ProjectRegistryError, ProjectAlreadyRegisteredError, ProjectNotFoundError, ProjectDirNotFoundError, projectRegistryEmitter, cache2;
 var init_project_registry = __esm({
   "packages/daemon/src/lib/project-registry.ts"() {
     "use strict";
     init_registry();
     init_project_probe();
-    REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
+    REGISTRY_DIR_ENV2 = "TMUX_IDE_REGISTRY_DIR";
     RegistryFileSchemaZ = z61.object({
       version: z61.literal(1),
       projects: z61.array(RegisteredProjectSchemaZ)
@@ -15192,10 +15871,10 @@ var init_chip = __esm({
 });
 
 // packages/daemon/src/lib/state-home.ts
-import { homedir as homedir13 } from "node:os";
-import { join as join17 } from "node:path";
+import { homedir as homedir14 } from "node:os";
+import { join as join18 } from "node:path";
 function stateHome() {
-  return process.env.TMUX_IDE_HOME ?? join17(homedir13(), ".tmux-ide");
+  return process.env.TMUX_IDE_HOME ?? join18(homedir14(), ".tmux-ide");
 }
 var init_state_home = __esm({
   "packages/daemon/src/lib/state-home.ts"() {
@@ -15213,8 +15892,8 @@ __export(events_exports, {
   formatEventLine: () => formatEventLine,
   shouldRotate: () => shouldRotate
 });
-import { appendFileSync, existsSync as existsSync17, mkdirSync as mkdirSync12, renameSync as renameSync6, statSync as statSync2 } from "node:fs";
-import { join as join18 } from "node:path";
+import { appendFileSync, existsSync as existsSync17, mkdirSync as mkdirSync13, renameSync as renameSync7, statSync as statSync2 } from "node:fs";
+import { join as join19 } from "node:path";
 function diffFleet(prev, next) {
   const state = /* @__PURE__ */ new Map();
   const events = [];
@@ -15241,15 +15920,15 @@ function formatEventLine(ev, paint = (_s, t) => t) {
   return `${isoTime(ev.ts)} ${ev.session} ${from} \u2192 ${paint(ev.to, ev.to)}`;
 }
 function eventsPath() {
-  return join18(stateHome(), "events.jsonl");
+  return join19(stateHome(), "events.jsonl");
 }
 function appendEvents(events, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
   if (events.length === 0) return;
   const path2 = eventsPath();
   try {
-    mkdirSync12(stateHome(), { recursive: true });
+    mkdirSync13(stateHome(), { recursive: true });
     if (existsSync17(path2) && shouldRotate(statSync2(path2).size)) {
-      renameSync6(path2, `${path2}.1`);
+      renameSync7(path2, `${path2}.1`);
     }
     const ts = now();
     const lines = events.map((e) => `${JSON.stringify({ ts, ...e })}
@@ -15352,14 +16031,14 @@ var init_notify_prefs = __esm({
 
 // packages/daemon/src/tui/chrome/notify.ts
 import { execFileSync as execFileSync8, spawn as spawn4 } from "node:child_process";
-import { dirname as dirname17, resolve as resolve12 } from "node:path";
+import { dirname as dirname18, resolve as resolve12 } from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 import {
-  closeSync,
+  closeSync as closeSync2,
   constants as fsConstants,
   existsSync as existsSync18,
-  openSync,
-  readFileSync as readFileSync13,
+  openSync as openSync2,
+  readFileSync as readFileSync14,
   writeSync
 } from "node:fs";
 function statusPhrase(to) {
@@ -15519,13 +16198,13 @@ function decideTtyWrites(n, clients, prefs) {
 function writeClientTty(write) {
   let fd = null;
   try {
-    fd = openSync(write.tty, fsConstants.O_WRONLY | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
+    fd = openSync2(write.tty, fsConstants.O_WRONLY | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
     writeSync(fd, write.data);
   } catch {
   } finally {
     if (fd !== null) {
       try {
-        closeSync(fd);
+        closeSync2(fd);
       } catch {
       }
     }
@@ -15573,7 +16252,7 @@ function resolveNativeMacosNotifierPath(io = {}) {
   const exists = io.exists ?? existsSync18;
   const cliPath = io.cliPath === void 0 ? process.env.TMUX_IDE_CLI : io.cliPath;
   const modulePath = io.modulePath ?? fileURLToPath6(import.meta.url);
-  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname17(resolve12(path2)));
+  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname18(resolve12(path2)));
   const visited = /* @__PURE__ */ new Set();
   for (const anchor of anchors) {
     let directory = anchor;
@@ -15581,7 +16260,7 @@ function resolveNativeMacosNotifierPath(io = {}) {
       visited.add(directory);
       const candidate = resolve12(directory, NATIVE_MACOS_NOTIFIER_RELATIVE_PATH);
       if (exists(resolve12(candidate, NATIVE_MACOS_NOTIFIER_EXECUTABLE))) return candidate;
-      const parent = dirname17(directory);
+      const parent = dirname18(directory);
       if (parent === directory) break;
       directory = parent;
     }
@@ -15711,7 +16390,7 @@ function readRawConfig() {
   const path2 = appConfigPath();
   if (!existsSync18(path2)) return void 0;
   try {
-    return JSON.parse(readFileSync13(path2, "utf-8"));
+    return JSON.parse(readFileSync14(path2, "utf-8"));
   } catch {
     return void 0;
   }
@@ -15753,10 +16432,10 @@ var init_notify = __esm({
 });
 
 // packages/daemon/src/tui/chrome/notify-state.ts
-import { existsSync as existsSync19, mkdirSync as mkdirSync13, readFileSync as readFileSync14, writeFileSync as writeFileSync11 } from "node:fs";
-import { join as join19 } from "node:path";
+import { existsSync as existsSync19, mkdirSync as mkdirSync14, readFileSync as readFileSync15, writeFileSync as writeFileSync12 } from "node:fs";
+import { join as join20 } from "node:path";
 function notifyStatePath() {
-  return join19(stateHome(), "notify-state.json");
+  return join20(stateHome(), "notify-state.json");
 }
 function serializeLastNotified(map, nowMs) {
   const lastNotified = {};
@@ -15785,15 +16464,15 @@ function loadLastNotified(nowMs = Date.now()) {
   const path2 = notifyStatePath();
   if (!existsSync19(path2)) return /* @__PURE__ */ new Map();
   try {
-    return parseLastNotified(readFileSync14(path2, "utf-8"), nowMs);
+    return parseLastNotified(readFileSync15(path2, "utf-8"), nowMs);
   } catch {
     return /* @__PURE__ */ new Map();
   }
 }
 function saveLastNotified(map, nowMs = Date.now()) {
   try {
-    mkdirSync13(stateHome(), { recursive: true });
-    writeFileSync11(notifyStatePath(), serializeLastNotified(map, nowMs));
+    mkdirSync14(stateHome(), { recursive: true });
+    writeFileSync12(notifyStatePath(), serializeLastNotified(map, nowMs));
   } catch {
   }
 }
@@ -15806,9 +16485,9 @@ var init_notify_state = __esm({
 });
 
 // packages/daemon/src/tui/chrome/snapshot.ts
-import { existsSync as existsSync20, mkdirSync as mkdirSync14, readFileSync as readFileSync15, renameSync as renameSync7, writeFileSync as writeFileSync12 } from "node:fs";
-import { homedir as homedir14 } from "node:os";
-import { dirname as dirname18, join as join20 } from "node:path";
+import { existsSync as existsSync20, mkdirSync as mkdirSync15, readFileSync as readFileSync16, renameSync as renameSync8, writeFileSync as writeFileSync13 } from "node:fs";
+import { homedir as homedir15 } from "node:os";
+import { dirname as dirname19, join as join21 } from "node:path";
 import { z as z62 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
@@ -15923,21 +16602,21 @@ function collectFleetSnapshot(io = defaultIo) {
   return buildSnapshot(rawPanes, rawSessions, io.processTable());
 }
 function snapshotPath() {
-  return join20(homedir14(), ".tmux-ide", "snapshot.json");
+  return join21(homedir15(), ".tmux-ide", "snapshot.json");
 }
 function writeSnapshot(snapshot) {
   const path2 = snapshotPath();
   try {
-    mkdirSync14(dirname18(path2), { recursive: true });
+    mkdirSync15(dirname19(path2), { recursive: true });
     const tmp = `${path2}.tmp`;
-    writeFileSync12(tmp, JSON.stringify(snapshot, null, 2) + "\n");
+    writeFileSync13(tmp, JSON.stringify(snapshot, null, 2) + "\n");
     if (existsSync20(path2)) {
       try {
-        renameSync7(path2, `${path2}.1`);
+        renameSync8(path2, `${path2}.1`);
       } catch {
       }
     }
-    renameSync7(tmp, path2);
+    renameSync8(tmp, path2);
   } catch {
   }
 }
@@ -15945,7 +16624,7 @@ function readSnapshot() {
   const path2 = snapshotPath();
   try {
     if (!existsSync20(path2)) return null;
-    const raw = readFileSync15(path2, "utf-8");
+    const raw = readFileSync16(path2, "utf-8");
     if (raw.trim().length === 0) return null;
     const result = FleetSnapshotSchemaZ.safeParse(JSON.parse(raw));
     return result.success ? result.data : null;
@@ -16726,541 +17405,6 @@ var init_statusline = __esm({
       ["unbind-key", "-n", "MouseDown3Status"],
       ["unbind-key", "-n", "MouseDown3Pane"]
     ];
-  }
-});
-
-// packages/daemon/src/lib/canonical-daemon.ts
-var canonical_daemon_exports = {};
-__export(canonical_daemon_exports, {
-  canonicalDaemonClaimAllowsStartupAttempt: () => canonicalDaemonClaimAllowsStartupAttempt,
-  canonicalDaemonUrl: () => canonicalDaemonUrl,
-  clearCanonicalDaemonInfoIfOwned: () => clearCanonicalDaemonInfoIfOwned,
-  clearCanonicalDaemonInfoIfUnchanged: () => clearCanonicalDaemonInfoIfUnchanged,
-  getCanonicalDaemonClaimPath: () => getCanonicalDaemonClaimPath,
-  getCanonicalDaemonInfoPath: () => getCanonicalDaemonInfoPath,
-  inspectCanonicalDaemonInfo: () => inspectCanonicalDaemonInfo,
-  isCanonicalDaemonAlive: () => isCanonicalDaemonAlive,
-  isCanonicalDaemonRecordOwnerProvenDead: () => isCanonicalDaemonRecordOwnerProvenDead,
-  probeCanonicalDaemonHealth: () => probeCanonicalDaemonHealth,
-  probeCanonicalDaemonIdentity: () => probeCanonicalDaemonIdentity,
-  readCanonicalDaemonInfo: () => readCanonicalDaemonInfo,
-  releaseCanonicalDaemonClaim: () => releaseCanonicalDaemonClaim,
-  tryAcquireCanonicalDaemonClaim: () => tryAcquireCanonicalDaemonClaim,
-  warnOnDaemonVersionSkew: () => warnOnDaemonVersionSkew,
-  writeCanonicalDaemonInfo: () => writeCanonicalDaemonInfo
-});
-import {
-  chmodSync as chmodSync3,
-  closeSync as closeSync2,
-  constants,
-  fchmodSync,
-  fstatSync,
-  linkSync as linkSync2,
-  lstatSync,
-  mkdirSync as mkdirSync15,
-  openSync as openSync2,
-  readFileSync as readFileSync16,
-  renameSync as renameSync8,
-  rmSync as rmSync2,
-  writeFileSync as writeFileSync13
-} from "node:fs";
-import { randomUUID } from "node:crypto";
-import { homedir as homedir15 } from "node:os";
-import { dirname as dirname19, join as join21 } from "node:path";
-function nonEmptyEnvironmentValue(name) {
-  const value = process.env[name];
-  return value !== void 0 && value.length > 0 ? value : void 0;
-}
-function getCanonicalDaemonInfoPath() {
-  const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV2) ?? join21(homedir15(), ".tmux-ide");
-  return join21(dir, DAEMON_INFO_FILE);
-}
-function getCanonicalDaemonClaimPath() {
-  return join21(dirname19(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
-}
-function observation(stat) {
-  return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
-}
-function sameObservation(left, right) {
-  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
-}
-function sameFileIdentity(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-function canonicalDaemonRootError(detail) {
-  return new Error(`canonical daemon parent ${detail}`);
-}
-function prepareCanonicalDaemonRoot(root) {
-  let descriptor2;
-  try {
-    try {
-      mkdirSync15(root, { recursive: true, mode: 448 });
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-    }
-    const pathStat = lstatSync(root);
-    if (pathStat.isSymbolicLink()) {
-      throw canonicalDaemonRootError("must not be a symbolic link");
-    }
-    if (!pathStat.isDirectory()) {
-      throw canonicalDaemonRootError("must be a directory");
-    }
-    if (typeof process.getuid === "function" && pathStat.uid !== process.getuid()) {
-      throw canonicalDaemonRootError("must be owned by the current user");
-    }
-    descriptor2 = openSync2(
-      root,
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0)
-    );
-    const openedStat = fstatSync(descriptor2);
-    if (!openedStat.isDirectory() || !sameFileIdentity(pathStat, openedStat) || typeof process.getuid === "function" && openedStat.uid !== process.getuid()) {
-      throw canonicalDaemonRootError("changed or became unsafe while it was opened");
-    }
-    fchmodSync(descriptor2, 448);
-    const hardenedStat = fstatSync(descriptor2);
-    const currentPathStat = lstatSync(root);
-    if (!hardenedStat.isDirectory() || !sameFileIdentity(openedStat, hardenedStat) || typeof process.getuid === "function" && hardenedStat.uid !== process.getuid() || (hardenedStat.mode & 63) !== 0 || currentPathStat.isSymbolicLink() || !currentPathStat.isDirectory() || !sameFileIdentity(hardenedStat, currentPathStat) || typeof process.getuid === "function" && currentPathStat.uid !== process.getuid() || (currentPathStat.mode & 63) !== 0) {
-      throw canonicalDaemonRootError("changed or became unsafe while it was hardened");
-    }
-  } finally {
-    if (descriptor2 !== void 0) closeSync2(descriptor2);
-  }
-}
-function invalidState(reason, detail, ownerPid = null, observed = null) {
-  return { status: "invalid", reason, detail, ownerPid, observation: observed };
-}
-function ownerPidFromRaw(raw) {
-  if (!raw || typeof raw !== "object" || !("pid" in raw)) return null;
-  const pid = raw.pid;
-  return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
-}
-function inspectCanonicalDaemonInfoPath(path2) {
-  let descriptor2;
-  try {
-    const pathStat = lstatSync(path2);
-    const pathObservation = observation(pathStat);
-    const parentStat = lstatSync(dirname19(path2));
-    if (parentStat.isSymbolicLink()) {
-      return invalidState(
-        "parent-symlink",
-        "daemon.json parent must not be a symbolic link",
-        null,
-        pathObservation
-      );
-    }
-    if (!parentStat.isDirectory()) {
-      return invalidState(
-        "parent-not-directory",
-        "daemon.json parent must be a directory",
-        null,
-        pathObservation
-      );
-    }
-    if (typeof process.getuid === "function" && parentStat.uid !== process.getuid()) {
-      return invalidState(
-        "parent-wrong-owner",
-        "daemon.json parent is not owned by the current user",
-        null,
-        pathObservation
-      );
-    }
-    if ((parentStat.mode & 63) !== 0) {
-      return invalidState(
-        "parent-unsafe-permissions",
-        "daemon.json parent must be accessible only by its owner",
-        null,
-        pathObservation
-      );
-    }
-    if (pathStat.isSymbolicLink()) {
-      return invalidState(
-        "symlink",
-        "daemon.json must not be a symbolic link",
-        null,
-        pathObservation
-      );
-    }
-    if (!pathStat.isFile()) {
-      return invalidState(
-        "not-regular-file",
-        "daemon.json must be a regular file",
-        null,
-        pathObservation
-      );
-    }
-    if (pathStat.size > MAX_DAEMON_INFO_BYTES) {
-      return invalidState("oversized", "daemon.json exceeds the size limit", null, pathObservation);
-    }
-    if (typeof process.getuid === "function" && pathStat.uid !== process.getuid()) {
-      return invalidState(
-        "wrong-owner",
-        "daemon.json is not owned by the current user",
-        null,
-        pathObservation
-      );
-    }
-    if ((pathStat.mode & 63) !== 0) {
-      return invalidState(
-        "unsafe-permissions",
-        "daemon.json must be readable and writable only by its owner",
-        null,
-        pathObservation
-      );
-    }
-    descriptor2 = openSync2(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const openedStat = fstatSync(descriptor2);
-    const openedObservation = observation(openedStat);
-    const reopenedParentStat = lstatSync(dirname19(path2));
-    if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || !sameFileIdentity(parentStat, reopenedParentStat) || !reopenedParentStat.isDirectory() || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0 || typeof process.getuid === "function" && reopenedParentStat.uid !== process.getuid() || (reopenedParentStat.mode & 63) !== 0) {
-      return invalidState(
-        "changed-while-opening",
-        "daemon.json changed or became unsafe while it was opened",
-        null,
-        openedObservation
-      );
-    }
-    let raw;
-    try {
-      raw = JSON.parse(readFileSync16(descriptor2, "utf-8"));
-    } catch (error) {
-      return invalidState(
-        "malformed-json",
-        error instanceof Error ? error.message : "daemon.json is not valid JSON",
-        null,
-        openedObservation
-      );
-    }
-    const parsed = CanonicalDaemonInfoSchema.safeParse(raw);
-    if (!parsed.success) {
-      return invalidState(
-        "invalid-schema",
-        parsed.error.issues.map((issue) => issue.message).join("; "),
-        ownerPidFromRaw(raw),
-        openedObservation
-      );
-    }
-    return { status: "valid", info: parsed.data, observation: openedObservation };
-  } catch (error) {
-    if (error.code === "ENOENT") return { status: "missing" };
-    return invalidState(
-      "unreadable",
-      error instanceof Error ? error.message : "daemon.json could not be read"
-    );
-  } finally {
-    if (descriptor2 !== void 0) closeSync2(descriptor2);
-  }
-}
-function inspectCanonicalDaemonClaimPath(path2) {
-  let descriptor2;
-  try {
-    const claimStat = lstatSync(path2);
-    if (claimStat.isSymbolicLink() || !claimStat.isDirectory()) {
-      return { status: "invalid", detail: "daemon claim must be a real directory" };
-    }
-    if (typeof process.getuid === "function" && claimStat.uid !== process.getuid()) {
-      return { status: "invalid", detail: "daemon claim is owned by another user" };
-    }
-    if ((claimStat.mode & 63) !== 0) {
-      return { status: "invalid", detail: "daemon claim directory is not owner-only" };
-    }
-    const ownerPath = join21(path2, DAEMON_CLAIM_OWNER_FILE);
-    const ownerStat = lstatSync(ownerPath);
-    if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
-      return { status: "invalid", detail: "daemon claim owner must be a real file" };
-    }
-    if (ownerStat.size > MAX_DAEMON_CLAIM_BYTES) {
-      return { status: "invalid", detail: "daemon claim owner exceeds the size limit" };
-    }
-    if (typeof process.getuid === "function" && ownerStat.uid !== process.getuid()) {
-      return { status: "invalid", detail: "daemon claim owner is owned by another user" };
-    }
-    if ((ownerStat.mode & 63) !== 0) {
-      return { status: "invalid", detail: "daemon claim owner is not owner-only" };
-    }
-    descriptor2 = openSync2(ownerPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const openedStat = fstatSync(descriptor2);
-    if (!openedStat.isFile() || openedStat.dev !== ownerStat.dev || openedStat.ino !== ownerStat.ino || openedStat.size !== ownerStat.size) {
-      return { status: "invalid", detail: "daemon claim changed while it was opened" };
-    }
-    const raw = JSON.parse(readFileSync16(descriptor2, "utf-8"));
-    if (typeof raw.claimId !== "string" || !/^[0-9a-f-]{36}$/iu.test(raw.claimId) || typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid <= 0 || typeof raw.acquiredAt !== "string" || !Number.isFinite(Date.parse(raw.acquiredAt))) {
-      return { status: "invalid", detail: "daemon claim owner has invalid metadata" };
-    }
-    return {
-      status: "valid",
-      claim: { claimId: raw.claimId, pid: raw.pid, acquiredAt: raw.acquiredAt }
-    };
-  } catch (error) {
-    if (error.code === "ENOENT") return { status: "missing" };
-    return {
-      status: "invalid",
-      detail: error instanceof Error ? error.message : "daemon claim could not be read"
-    };
-  } finally {
-    if (descriptor2 !== void 0) closeSync2(descriptor2);
-  }
-}
-function restoreCapturedFile(capturedPath, canonicalPath) {
-  try {
-    linkSync2(capturedPath, canonicalPath);
-    rmSync2(capturedPath, { force: true });
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-  }
-}
-function retireCanonicalClaimIfMatches(expected) {
-  const path2 = getCanonicalDaemonClaimPath();
-  const captured = `${path2}.${expected.claimId}.${randomUUID()}.retired`;
-  try {
-    renameSync8(path2, captured);
-  } catch {
-    return false;
-  }
-  const moved = inspectCanonicalDaemonClaimPath(captured);
-  if (moved.status === "valid" && moved.claim.claimId === expected.claimId && moved.claim.pid === expected.pid) {
-    rmSync2(captured, { recursive: true, force: true });
-    return true;
-  }
-  try {
-    renameSync8(captured, path2);
-  } catch {
-  }
-  return false;
-}
-function tryAcquireCanonicalDaemonClaim() {
-  const path2 = getCanonicalDaemonClaimPath();
-  const root = dirname19(path2);
-  try {
-    prepareCanonicalDaemonRoot(root);
-  } catch (error) {
-    return {
-      status: "invalid",
-      detail: error instanceof Error ? error.message : "canonical daemon parent could not be prepared"
-    };
-  }
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const claim = {
-      claimId: randomUUID(),
-      pid: process.pid,
-      acquiredAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    const candidate = `${path2}.${claim.claimId}.candidate`;
-    mkdirSync15(candidate, { mode: 448 });
-    writeFileSync13(join21(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
-`, {
-      encoding: "utf-8",
-      mode: 384
-    });
-    try {
-      renameSync8(candidate, path2);
-      activeClaims.add(claim.claimId);
-      return { status: "acquired", claim };
-    } catch (error) {
-      rmSync2(candidate, { recursive: true, force: true });
-      const existing = inspectCanonicalDaemonClaimPath(path2);
-      if (existing.status === "missing") {
-        if (attempt < 2) continue;
-        return { status: "invalid", detail: "daemon claim changed during acquisition" };
-      }
-      if (existing.status === "invalid") return existing;
-      if (pidLiveness(existing.claim.pid) !== "dead") {
-        return { status: "busy", owner: existing.claim };
-      }
-      if (!retireCanonicalClaimIfMatches(existing.claim) && attempt === 2) {
-        return { status: "invalid", detail: "stale daemon claim changed during recovery" };
-      }
-      if (error.code !== "EEXIST" && attempt === 2) throw error;
-    }
-  }
-  return { status: "invalid", detail: "daemon claim could not be acquired" };
-}
-function assertCanonicalDaemonClaimHeld(claim) {
-  if (!activeClaims.has(claim.claimId)) throw new Error("canonical daemon claim is not active");
-  const current = inspectCanonicalDaemonClaimPath(getCanonicalDaemonClaimPath());
-  if (current.status !== "valid" || current.claim.claimId !== claim.claimId || current.claim.pid !== claim.pid) {
-    throw new Error("canonical daemon claim ownership was lost");
-  }
-}
-function releaseCanonicalDaemonClaim(claim) {
-  if (!activeClaims.has(claim.claimId)) return false;
-  try {
-    return retireCanonicalClaimIfMatches(claim);
-  } finally {
-    activeClaims.delete(claim.claimId);
-  }
-}
-function writeCanonicalDaemonInfo(info, claim) {
-  assertCanonicalDaemonClaimHeld(claim);
-  const path2 = getCanonicalDaemonInfoPath();
-  prepareCanonicalDaemonRoot(dirname19(path2));
-  const tmpPath = `${path2}.${claim.claimId}.${randomUUID()}.tmp`;
-  const persisted = {
-    pid: info.pid,
-    port: info.port,
-    protocolVersion: info.protocolVersion,
-    productVersion: info.productVersion,
-    instanceId: info.instanceId,
-    startedAt: info.startedAt,
-    ...info.environmentId !== void 0 ? { environmentId: info.environmentId } : {},
-    bindHostname: info.bindHostname,
-    authToken: info.authToken
-  };
-  writeFileSync13(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
-    encoding: "utf-8",
-    mode: 384
-  });
-  chmodSync3(tmpPath, 384);
-  try {
-    linkSync2(tmpPath, path2);
-  } finally {
-    rmSync2(tmpPath, { force: true });
-  }
-}
-function inspectCanonicalDaemonInfo() {
-  return inspectCanonicalDaemonInfoPath(getCanonicalDaemonInfoPath());
-}
-function readCanonicalDaemonInfo() {
-  const state = inspectCanonicalDaemonInfo();
-  return state.status === "valid" ? state.info : null;
-}
-function captureCanonicalDaemonInfo(claim) {
-  assertCanonicalDaemonClaimHeld(claim);
-  const path2 = getCanonicalDaemonInfoPath();
-  const captured = `${path2}.${claim.claimId}.${randomUUID()}.retired`;
-  try {
-    renameSync8(path2, captured);
-    return captured;
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-function clearCanonicalDaemonInfoIfUnchanged(state, claim) {
-  if (state.status === "missing" || !state.observation) return false;
-  const path2 = getCanonicalDaemonInfoPath();
-  const captured = captureCanonicalDaemonInfo(claim);
-  if (!captured) return false;
-  try {
-    const current = observation(lstatSync(captured));
-    if (sameObservation(state.observation, current)) {
-      rmSync2(captured, { recursive: true, force: true });
-      return true;
-    }
-    restoreCapturedFile(captured, path2);
-    return false;
-  } catch (error) {
-    restoreCapturedFile(captured, path2);
-    throw error;
-  }
-}
-function clearCanonicalDaemonInfoIfOwned(instanceId, claim) {
-  const path2 = getCanonicalDaemonInfoPath();
-  const captured = captureCanonicalDaemonInfo(claim);
-  if (!captured) return false;
-  const state = inspectCanonicalDaemonInfoPath(captured);
-  if (state.status === "valid" && state.info.instanceId === instanceId) {
-    rmSync2(captured, { recursive: true, force: true });
-    return true;
-  }
-  restoreCapturedFile(captured, path2);
-  return false;
-}
-function pidLiveness(pid) {
-  try {
-    process.kill(pid, 0);
-    return "alive";
-  } catch (error) {
-    const code = error.code;
-    if (code === "ESRCH") return "dead";
-    if (code === "EPERM") return "alive";
-    return "unknown";
-  }
-}
-function canonicalDaemonClaimAllowsStartupAttempt() {
-  const claimPath = getCanonicalDaemonClaimPath();
-  try {
-    const root = lstatSync(dirname19(claimPath));
-    if (root.isSymbolicLink() || !root.isDirectory() || typeof process.getuid === "function" && root.uid !== process.getuid() || (root.mode & 63) !== 0) {
-      return false;
-    }
-  } catch (error) {
-    if (error.code !== "ENOENT") return false;
-  }
-  const claim = inspectCanonicalDaemonClaimPath(claimPath);
-  return claim.status === "missing" || claim.status === "valid" && pidLiveness(claim.claim.pid) === "dead";
-}
-async function isCanonicalDaemonAlive(info) {
-  return pidLiveness(info.pid) !== "dead";
-}
-async function isCanonicalDaemonRecordOwnerProvenDead(state) {
-  const pid = state.status === "valid" ? state.info.pid : state.ownerPid;
-  return pid !== null && pidLiveness(pid) === "dead";
-}
-function connectHostname(bindHostname) {
-  if (bindHostname === "0.0.0.0") return "127.0.0.1";
-  if (bindHostname === "::") return "::1";
-  return bindHostname;
-}
-function urlHostname(bindHostname) {
-  const hostname3 = connectHostname(bindHostname).replace(/^\[|\]$/gu, "");
-  if (/[/?#@]/u.test(hostname3)) throw new TypeError("Invalid daemon bind hostname");
-  const escaped = hostname3.replace(/%/gu, "%25");
-  return escaped.includes(":") ? `[${escaped}]` : escaped;
-}
-function canonicalDaemonUrl(protocol, bindHostname, port, path2 = "") {
-  const suffix = path2.length === 0 ? "" : path2.startsWith("/") ? path2 : `/${path2}`;
-  return `${protocol}://${urlHostname(bindHostname)}:${port}${suffix}`;
-}
-function timeoutSignal(ms) {
-  const controller = new AbortController();
-  setTimeout(() => controller.abort(), ms).unref?.();
-  return controller.signal;
-}
-function warnOnDaemonVersionSkew(info, expectedProductVersion) {
-  if (info.productVersion === expectedProductVersion) return;
-  console.warn(
-    `[tmux-ide] canonical daemon product-version skew: daemon.json reports "${info.productVersion}" but this client expects "${expectedProductVersion}". Wire compatibility is governed independently by protocolVersion.`
-  );
-}
-async function probeCanonicalDaemonHealth(info, parentSignal) {
-  if (!await isCanonicalDaemonAlive(info)) return null;
-  try {
-    const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/health"), {
-      signal: parentSignal ?? timeoutSignal(750)
-    });
-    if (!res.ok) return null;
-    const parsed = DaemonHealthSchema.safeParse(await res.json());
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-async function probeCanonicalDaemonIdentity(info, parentSignal) {
-  if (!await isCanonicalDaemonAlive(info)) return null;
-  try {
-    const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/identity"), {
-      signal: parentSignal ?? timeoutSignal(750)
-    });
-    if (!res.ok) return null;
-    const parsed = DaemonIdentitySchema.safeParse(await res.json());
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-var DAEMON_INFO_DIR_ENV, REGISTRY_DIR_ENV2, DAEMON_INFO_FILE, DAEMON_CLAIM_DIR, DAEMON_CLAIM_OWNER_FILE, MAX_DAEMON_INFO_BYTES, MAX_DAEMON_CLAIM_BYTES, activeClaims;
-var init_canonical_daemon = __esm({
-  "packages/daemon/src/lib/canonical-daemon.ts"() {
-    "use strict";
-    init_src();
-    DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
-    REGISTRY_DIR_ENV2 = "TMUX_IDE_REGISTRY_DIR";
-    DAEMON_INFO_FILE = "daemon.json";
-    DAEMON_CLAIM_DIR = "daemon.claim";
-    DAEMON_CLAIM_OWNER_FILE = "owner.json";
-    MAX_DAEMON_INFO_BYTES = 64 * 1024;
-    MAX_DAEMON_CLAIM_BYTES = 4 * 1024;
-    activeClaims = /* @__PURE__ */ new Set();
   }
 });
 
@@ -20589,7 +20733,7 @@ var init_project_runtime_errors = __esm({
 });
 
 // packages/daemon/src/lib/project-runtime-repository.ts
-import { createHash as createHash7, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash7, randomUUID as randomUUID3 } from "node:crypto";
 import {
   closeSync as closeSync3,
   fsyncSync,
@@ -20830,7 +20974,7 @@ var init_project_runtime_repository = __esm({
     EVENT_ENVELOPE_VERSION = 1;
     SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
     PROJECT_RUNTIME_WRITER_LOCK_FILENAME = "workspace/.state.lock";
-    PROJECT_RUNTIME_PROCESS_INSTANCE_ID = randomUUID2();
+    PROJECT_RUNTIME_PROCESS_INSTANCE_ID = randomUUID3();
     InvalidRuntimePathError = class extends ProjectRuntimeRepositoryError {
       path;
       constructor(path2, reason) {
@@ -20963,7 +21107,7 @@ var init_project_runtime_repository = __esm({
         }
       },
       now: () => /* @__PURE__ */ new Date(),
-      randomId: randomUUID2
+      randomId: randomUUID3
     };
     tempCounter = 0;
     ProjectRuntimeRepository = class {
@@ -21371,7 +21515,7 @@ var init_project_runtime_repository = __esm({
         assertLockDirectory(this.runtimeRoot);
         this.io.mkdir(lockDirectory);
         assertLockDirectory(lockDirectory);
-        const token = randomUUID2();
+        const token = randomUUID3();
         const owner = `${JSON.stringify({
           version: 1,
           token,
@@ -22606,9 +22750,9 @@ var init_ws_events = __esm({
 });
 
 // packages/daemon/src/lib/auth-token.ts
-import { randomBytes } from "node:crypto";
+import { randomBytes as randomBytes2 } from "node:crypto";
 function generateAuthToken() {
-  return randomBytes(32).toString("base64url");
+  return randomBytes2(32).toString("base64url");
 }
 var init_auth_token = __esm({
   "packages/daemon/src/lib/auth-token.ts"() {
@@ -23211,7 +23355,7 @@ var init_project_readiness_probe = __esm({
 });
 
 // packages/daemon/src/lib/mission-repository.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 function replayMissionEvents(events) {
   const state = { sequence: 0, missions: {} };
   for (const runtimeEvent of events) {
@@ -23693,7 +23837,7 @@ function pushUnique(values2, value) {
   if (!values2.includes(value)) values2.push(value);
 }
 function makeId(prefix) {
-  return `${prefix}_${randomUUID3()}`;
+  return `${prefix}_${randomUUID4()}`;
 }
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -28420,40 +28564,6 @@ var init_app_window_mutation2 = __esm({
   }
 });
 
-// packages/daemon/src/lib/tmux-interaction-options.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
-function registerInternalReadOperation(runtimePaneId) {
-  const now = Date.now();
-  for (const [marker2, registration] of internalReads) {
-    if (registration.expiresAt <= now) internalReads.delete(marker2);
-  }
-  while (internalReads.size >= INTERNAL_READ_CAPACITY) {
-    internalReads.delete(internalReads.keys().next().value);
-  }
-  const marker = `${INTERNAL_READ_PREFIX}${randomUUID4()}`;
-  internalReads.set(marker, { paneId: runtimePaneId, expiresAt: now + INTERNAL_READ_TTL_MS });
-  return marker;
-}
-function consumeInternalReadOperation(marker, runtimePaneId, operationKind) {
-  if (marker === null || !marker.startsWith(INTERNAL_READ_PREFIX)) return false;
-  const registration = internalReads.get(marker);
-  if (!registration) return false;
-  internalReads.delete(marker);
-  return operationKind === "workspace.pane.read" && registration.paneId === runtimePaneId && registration.expiresAt > Date.now();
-}
-var INTERNAL_SEND_OPERATION_OPTION, INTERNAL_READ_OPERATION_OPTION, INTERNAL_READ_PREFIX, INTERNAL_READ_TTL_MS, INTERNAL_READ_CAPACITY, internalReads;
-var init_tmux_interaction_options = __esm({
-  "packages/daemon/src/lib/tmux-interaction-options.ts"() {
-    "use strict";
-    INTERNAL_SEND_OPERATION_OPTION = "@tmux_ide_send_operation";
-    INTERNAL_READ_OPERATION_OPTION = "@tmux_ide_read_operation";
-    INTERNAL_READ_PREFIX = "tmux-ide-internal-read-v2:";
-    INTERNAL_READ_TTL_MS = 1e4;
-    INTERNAL_READ_CAPACITY = 512;
-    internalReads = /* @__PURE__ */ new Map();
-  }
-});
-
 // packages/daemon/src/lib/tmux-external-interaction-observer.ts
 import { execFile as execFile5 } from "node:child_process";
 import { z as z65 } from "zod";
@@ -28547,10 +28657,15 @@ var init_tmux_external_interaction_observer = __esm({
       #loop = null;
       #hookHealthcheck = null;
       #drainSequence = 0;
+      #authenticatedInternalReads;
       constructor(options) {
         this.#daemonInstanceId = options.daemonInstanceId;
         this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
         this.#onObserved = options.onObserved;
+        this.#authenticatedInternalReads = new AuthenticatedInternalReadVerifier({
+          daemonInstanceId: options.daemonInstanceId,
+          ownerToken: options.internalReadOwnerToken
+        });
         this.#bufferName = `${HOOK_MARKER}-${options.daemonInstanceId}`;
         this.#signalChannel = `${this.#bufferName}-ready`;
         this.#io = {
@@ -28650,6 +28765,10 @@ var init_tmux_external_interaction_observer = __esm({
       }
       #project(record) {
         if (consumeInternalReadOperation(
+          record.operationMarker,
+          record.runtimePaneId,
+          record.operationKind
+        ) || this.#authenticatedInternalReads.consume(
           record.operationMarker,
           record.runtimePaneId,
           record.operationKind
@@ -30620,12 +30739,12 @@ var init_pane_feed = __esm({
 });
 
 // packages/daemon/src/terminal/mirror/session-channel.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { randomBytes as randomBytes3 } from "node:crypto";
 function defaultMirrorPaneId() {
-  return `pane.mirror.${randomBytes2(8).toString("hex")}`;
+  return `pane.mirror.${randomBytes3(8).toString("hex")}`;
 }
 function defaultMirrorWindowId() {
-  return `window.mirror.${randomBytes2(8).toString("hex")}`;
+  return `window.mirror.${randomBytes3(8).toString("hex")}`;
 }
 var STRUCTURAL_NOTIFICATIONS, DEFAULT_HISTORY_LINES, SYNC_DEBOUNCE_MS, SessionChannel;
 var init_session_channel = __esm({
@@ -42715,7 +42834,7 @@ var init_transport_binding = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/admission-util.ts
-import { createHash as createHash10, timingSafeEqual } from "node:crypto";
+import { createHash as createHash10, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 function canonicalOriginOrNull(value) {
   if (typeof value !== "string" || value.length < 4 || value.length > 2048 || value === "null" || value === "*" || /[\0\r\n\t ]/u.test(value)) {
     return null;
@@ -42766,7 +42885,7 @@ function digestSecret(secret) {
   return createHash10("sha256").update(secret, "utf8").digest();
 }
 function digestsEqual(left, right) {
-  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+  return left.byteLength === right.byteLength && timingSafeEqual2(left, right);
 }
 var WS_OPEN3;
 var init_admission_util = __esm({
@@ -42990,7 +43109,7 @@ var init_grouped_tmux = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash11, randomBytes as randomBytes3, randomUUID as randomUUID7, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash11, randomBytes as randomBytes4, randomUUID as randomUUID7, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 import { z as z72 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -43003,7 +43122,7 @@ function hashTicket(ticket) {
   return createHash11("sha256").update(ticket, "utf8").digest();
 }
 function constantTimeDigestMatch(left, right) {
-  return left.byteLength === right.byteLength && timingSafeEqual2(left, right);
+  return left.byteLength === right.byteLength && timingSafeEqual3(left, right);
 }
 function validateBinding(binding) {
   return {
@@ -43062,7 +43181,7 @@ var init_lease_manager = __esm({
         this.#catalog = options.catalog;
         this.#viewExecutor = options.viewExecutor;
         this.#now = options.now ?? Date.now;
-        this.#randomBytes = options.randomBytes ?? randomBytes3;
+        this.#randomBytes = options.randomBytes ?? randomBytes4;
         this.#createId = options.createId ?? randomUUID7;
         this.#ticketTtlMs = positiveDuration(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#leaseTtlMs = positiveDuration(options.leaseTtlMs, 6e4, "leaseTtlMs");
@@ -47029,7 +47148,7 @@ var init_terminal_attachment_upgrade = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash12, randomBytes as randomBytes4, randomUUID as randomUUID9, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+import { createHash as createHash12, randomBytes as randomBytes5, randomUUID as randomUUID9, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
 import { z as z76 } from "zod";
 function positiveDuration2(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -47042,7 +47161,7 @@ function hashTicket2(ticket) {
   return createHash12("sha256").update(ticket, "utf8").digest();
 }
 function digestsMatch(left, right) {
-  return left.byteLength === right.byteLength && timingSafeEqual3(left, right);
+  return left.byteLength === right.byteLength && timingSafeEqual4(left, right);
 }
 function validateBinding2(binding) {
   return {
@@ -47081,7 +47200,7 @@ var init_lease_manager2 = __esm({
       constructor(options) {
         this.#instanceId = BindingIdSchemaZ3.parse(options.daemonInstanceId);
         this.#now = options.now ?? Date.now;
-        this.#randomBytes = options.randomBytes ?? randomBytes4;
+        this.#randomBytes = options.randomBytes ?? randomBytes5;
         this.#createId = options.createId ?? randomUUID9;
         this.#ticketTtlMs = positiveDuration2(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#redemptionProcessingTtlMs = positiveDuration2(
@@ -48898,7 +49017,7 @@ var init_multiplexer_backend = __esm({
 });
 
 // packages/daemon/src/lib/pane-source-credentials.ts
-import { randomBytes as randomBytes5 } from "node:crypto";
+import { randomBytes as randomBytes6 } from "node:crypto";
 var PANE_SOURCE_CREDENTIAL_OPTION, PANE_SOURCE_CREDENTIAL_HEADER, PaneSourceCredentialAuthority;
 var init_pane_source_credentials = __esm({
   "packages/daemon/src/lib/pane-source-credentials.ts"() {
@@ -48942,7 +49061,7 @@ var init_pane_source_credentials = __esm({
           const existing = existingToken ? this.#grants.get(existingToken) : void 0;
           if (existing?.semanticPaneId === semanticPaneId3 && installedToken === existingToken) continue;
           if (existingToken) this.#grants.delete(existingToken);
-          const token = randomBytes5(32).toString("base64url");
+          const token = randomBytes6(32).toString("base64url");
           this.#tmux.run([
             "set-option",
             "-p",
@@ -48997,7 +49116,7 @@ var init_pane_source_credentials = __esm({
             const existing = existingToken ? this.#grants.get(existingToken) : void 0;
             if (existing?.semanticPaneId === semanticPaneId3 && installedToken === existingToken)
               continue;
-            const token = randomBytes5(32).toString("base64url");
+            const token = randomBytes6(32).toString("base64url");
             await runAsync(
               ["set-option", "-p", "-t", runtimePaneId, PANE_SOURCE_CREDENTIAL_OPTION, token],
               signal
@@ -53519,12 +53638,12 @@ var init_desktop_missions2 = __esm({
 });
 
 // packages/daemon/src/command-center/owner-authority.ts
-import { timingSafeEqual as timingSafeEqual5 } from "node:crypto";
+import { timingSafeEqual as timingSafeEqual6 } from "node:crypto";
 function ownerBearerMatches(header, ownerToken) {
   if (!header || !ownerToken) return false;
   const supplied = Buffer.from(header, "utf8");
   const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual5(supplied, expected);
+  return supplied.byteLength === expected.byteLength && timingSafeEqual6(supplied, expected);
 }
 function decideOwnerAuthority(header, ownerToken, whenOwnerless) {
   if (!ownerToken) {
@@ -56016,7 +56135,7 @@ var init_types = __esm({
 
 // packages/daemon/src/lib/daemon-embed.ts
 import { execFileSync as execFileSync15 } from "node:child_process";
-import { randomBytes as randomBytes7, randomUUID as randomUUID15 } from "node:crypto";
+import { randomBytes as randomBytes8, randomUUID as randomUUID15 } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire as createRequire2 } from "node:module";
 import { performance as performance2 } from "node:perf_hooks";
@@ -56219,7 +56338,7 @@ function delay(ms) {
   return new Promise((resolve32) => setTimeout(resolve32, ms));
 }
 function generateLocalBypassToken() {
-  return randomBytes7(32).toString("base64url");
+  return randomBytes8(32).toString("base64url");
 }
 function createTakeoverDeadline(timeoutMs) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -56681,6 +56800,7 @@ async function startEmbeddedDaemon(opts) {
     let sessionRuntimeRegistry = null;
     const externalInteractionObserver = new TmuxExternalInteractionObserver({
       daemonInstanceId: instanceId,
+      internalReadOwnerToken: localBypassToken,
       registry: workspaceRegistry,
       tmuxAuthority,
       onObserved: ({ workspaceName, semanticPaneId: semanticPaneId3, operationKind, operationId }) => {

@@ -7,7 +7,10 @@ import {
   parseTmuxInputHookRecords,
   type ExternalTmuxInteractionObserverIo,
 } from "./tmux-external-interaction-observer.ts";
-import { registerInternalReadOperation } from "./tmux-interaction-options.ts";
+import {
+  createAuthenticatedInternalReadOperation,
+  registerInternalReadOperation,
+} from "./tmux-interaction-options.ts";
 
 const DAEMON = "21f2625e-d1a5-4ad2-9068-b1426bcc6651";
 const OPERATION = "8be47b5a-43da-4632-9930-e1aba61c8da6";
@@ -32,6 +35,7 @@ function registry(): WorkspaceRegistry {
 function harness(
   raw: string,
   consumeOperationId: string | null = null,
+  internalReadOwnerToken: string | null = null,
 ): {
   observer: TmuxExternalInteractionObserver;
   calls: readonly (readonly string[])[];
@@ -74,6 +78,7 @@ function harness(
   return {
     observer: new TmuxExternalInteractionObserver({
       daemonInstanceId: DAEMON,
+      internalReadOwnerToken,
       tmuxAuthority: {
         executablePath: "/usr/bin/tmux",
         socketSelector: { kind: "name", name: "default" },
@@ -235,6 +240,25 @@ describe("tmux external interaction observer", () => {
     const replay = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`);
     expect(replay.observer.drain()).toBe(false);
     expect(replay.observed).toHaveLength(1);
+  });
+
+  it("suppresses a cross-process product read only with daemon-owner proof", () => {
+    const token = "owner-token-with-enough-entropy-for-the-test";
+    const marker = createAuthenticatedInternalReadOperation("%9", {
+      daemonInstanceId: DAEMON,
+      ownerToken: token,
+    });
+    const trusted = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`, null, token);
+    expect(trusted.observer.drain()).toBe(true);
+    expect(trusted.observed).toEqual([]);
+
+    const untrusted = harness(
+      `%9${FIELD}${marker}${FIELD}${READ}${EVENT}`,
+      null,
+      "different-owner-token",
+    );
+    expect(untrusted.observer.drain()).toBe(false);
+    expect(untrusted.observed).toHaveLength(1);
   });
 
   it("externalizes a registered marker used for the wrong pane or operation kind", () => {
