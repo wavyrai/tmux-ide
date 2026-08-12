@@ -18,6 +18,7 @@ export function publishSemanticPaneChange(
     change.kind === "closed" ||
     change.renderKeyChanged ||
     change.scrollbackChanged ||
+    change.placementsChanged ||
     change.runtimeFactsChanged
   ) {
     publication.publishStructure();

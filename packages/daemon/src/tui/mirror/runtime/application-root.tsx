@@ -427,6 +427,7 @@ import {
   type WorkspaceSurfaceStates,
 } from "../workspace-ui-state.ts";
 import { PALETTE_KEYCAPS } from "../application-keybindings.ts";
+import { DaemonAuthorityRebindCoordinator } from "./daemon-authority-rebind.ts";
 import type {
   DialogConfirmRequest,
   DialogFeatureSession,
@@ -1863,6 +1864,7 @@ const mountTuiRoot = () => {
     let daemonApplicationShellAuthority: OpenTuiApplicationShellAuthority | null = null;
     let disposeDaemonApplicationShellSubscription: (() => void) | null = null;
     let daemonApplicationShellRequest = 0;
+    const daemonAuthorityRebind = new DaemonAuthorityRebindCoordinator();
     const retireDaemonApplicationShell = () => {
       disposeDaemonApplicationShellSubscription?.();
       disposeDaemonApplicationShellSubscription = null;
@@ -1888,9 +1890,9 @@ const mountTuiRoot = () => {
         });
         if (request !== daemonApplicationShellRequest) {
           authority?.dispose();
-          return;
+          return false;
         }
-        if (!authority) return;
+        if (!authority) return false;
         daemonApplicationShellAuthority = authority;
         const daemon = readCanonicalDaemonInfo();
         if (daemon?.instanceId === authority.target.daemon.instanceId) {
@@ -1901,11 +1903,25 @@ const mountTuiRoot = () => {
           });
         }
         const applyDaemonShellState = (state: ApplicationShellSessionState) => {
+          if (
+            daemonAuthorityRebind.request(sessionName, state, {
+              retire: () => {
+                retireSessionRuntimeLane();
+                retireDaemonApplicationShell();
+                setStatus(`daemon generation changed; reconnecting ${sessionName}…`);
+              },
+              reconnect: async () => {
+                if (curTarget() !== sessionName) return true;
+                return connectDaemonApplicationShell(sessionName);
+              },
+            })
+          )
+            return;
           setDaemonApplicationShellState(state);
           const inventory = state.data?.terminalInventory;
           tuiPerfMark("application-shell-state", {
             sessionName,
-            statePhase: state.phase,
+            statePhase: state.status,
             inventoryCount: inventory?.resources.length ?? 0,
             attachableCount:
               inventory?.resources.filter(
@@ -1933,16 +1949,20 @@ const mountTuiRoot = () => {
           reconcileAuthoritativeAgents();
         };
         applyDaemonShellState(authority.session.getState());
+        if (daemonApplicationShellAuthority !== authority) return false;
         disposeDaemonApplicationShellSubscription =
           authority.session.subscribe(applyDaemonShellState);
+        return true;
       } catch {
         // Standalone OpenTUI remains a supported fallback when no daemon owns
         // this tmux session. The local semantic projection stays authoritative.
         if (request === daemonApplicationShellRequest) setDaemonApplicationShellState(null);
+        return false;
       }
     };
     onCleanup(() => {
       daemonApplicationShellRequest += 1;
+      daemonAuthorityRebind.dispose();
       retireDaemonApplicationShell();
       retireSessionRuntimeLane();
     });
@@ -3470,6 +3490,7 @@ const mountTuiRoot = () => {
     let pendingAttachTarget: string | null = null;
     let mirrorSupervisor: RuntimeConnectionSupervisor<SemanticSessionView> | null = null;
     const attach = (name: string) => {
+      daemonAuthorityRebind.cancelPending();
       const pin = terminalCanvasProjection().tmuxSize ?? lastPin;
       if (!pin) {
         pendingAttachTarget = name;

@@ -71,6 +71,7 @@ export type SemanticPaneReplicaChange =
       readonly cursorChanged: boolean;
       readonly renderKeyChanged: boolean;
       readonly scrollbackChanged: boolean;
+      readonly placementsChanged: boolean;
       readonly runtimeFactsChanged: boolean;
       readonly renderKey: string;
       readonly version: number;
@@ -85,6 +86,27 @@ export interface SemanticPaneReplicaOptions {
   readonly nack: (nack: TerminalDeliveryNack) => void;
   readonly onChange?: (change: SemanticPaneReplicaChange) => void;
   readonly onControlFailure?: (error: Error) => void;
+}
+
+function terminalPlacementsEqual(
+  previous: TerminalReplicaSnapshot["placements"] | undefined,
+  next: TerminalReplicaSnapshot["placements"],
+): boolean {
+  if (previous === next) return true;
+  if (!previous || previous.length !== next.length) return false;
+  return previous.every((left, index) => {
+    const right = next[index];
+    return (
+      right !== undefined &&
+      left.id === right.id &&
+      left.kind === right.kind &&
+      left.row === right.row &&
+      left.column === right.column &&
+      left.columns === right.columns &&
+      left.rows === right.rows &&
+      left.contentDigest === right.contentDigest
+    );
+  });
 }
 
 /** Retained canonical truth exposed to optional rich-preview presentation. */
@@ -392,6 +414,7 @@ export class SemanticPaneReplica {
       cursorChanged: previous?.cursor !== next.cursor,
       renderKeyChanged: previousKey !== this.#renderKey,
       scrollbackChanged: previous?.history.length !== next.history.length,
+      placementsChanged: !terminalPlacementsEqual(previous?.placements, next.placements),
       runtimeFactsChanged:
         previous === null || previous.modes.mouseTracking !== next.modes.mouseTracking,
       renderKey: this.#renderKey,

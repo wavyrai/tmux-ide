@@ -16,16 +16,18 @@ import {
   extractTerminalCellText,
   findTerminalCellMatches,
   projectTerminalTextRow,
+  type SemanticPaneReplicaChange,
 } from "./semantic-pane-render-source.ts";
 import { installTuiPerformanceEventSink } from "./performance-events.ts";
+import { publishSemanticPaneChange } from "./runtime/semantic-pane-publication.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 const nonce = "00000000-0000-4000-8000-000000000002";
 const pane = "pane.editor";
 
-function negotiated() {
+function negotiated(richPlacements = false) {
   const result = negotiateTerminalDelivery(
-    { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+    { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements },
     generation,
     nonce,
   );
@@ -37,6 +39,7 @@ function seedMessages(
   snapshot: TerminalReplicaSnapshot,
   txSuffix = "3",
   performanceTraceId?: string,
+  richPlacements = false,
 ) {
   const bytes = encodeSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
   const transactionId = `00000000-0000-4000-8000-${txSuffix.padStart(12, "0")}`;
@@ -60,7 +63,7 @@ function seedMessages(
     chunkCount: Math.max(1, Math.ceil(bytes.byteLength / (256 * 1024))),
     canonicalEquivalent: true,
     history: "complete",
-    richPlacements: false,
+    richPlacements,
   });
   return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes) };
 }
@@ -70,14 +73,20 @@ function patchMessages(
   revision: number,
   txSuffix: string,
   performanceTraceId?: string,
+  placements?: TerminalReplicaSnapshot["placements"],
 ) {
   const next = structuredClone(previous);
   next.cursor.x = revision % next.cols;
+  if (placements !== undefined) next.placements = structuredClone(placements);
   const payload = {
     frame: "patch" as const,
     baseRevision: revision - 1,
     revision,
-    patch: { rows: [], cursor: next.cursor },
+    patch: {
+      rows: [],
+      cursor: next.cursor,
+      ...(placements !== undefined ? { placements: next.placements } : {}),
+    },
   };
   const bytes = encodeSemanticTerminalUpdate(payload);
   const transactionId = `00000000-0000-4000-8000-${txSuffix.padStart(12, "0")}`;
@@ -101,7 +110,7 @@ function patchMessages(
     chunkCount: Math.max(1, Math.ceil(bytes.byteLength / (256 * 1024))),
     canonicalEquivalent: true,
     history: "complete",
-    richPlacements: false,
+    richPlacements: placements !== undefined || previous.placements.length > 0,
   });
   return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes), next };
 }
@@ -183,6 +192,64 @@ describe("SemanticPaneReplica", () => {
         version: 2,
       }),
     );
+  });
+
+  it("wakes structure exactly once when rich placements appear or disappear", () => {
+    const publishContentVersion = vi.fn();
+    const publishStructure = vi.fn();
+    const changes: SemanticPaneReplicaChange[] = [];
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(true),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+      onChange: (change) => {
+        changes.push(change);
+        publishSemanticPaneChange(change, { publishContentVersion, publishStructure });
+      },
+    });
+    const initial = blankTerminalReplicaSnapshot(8, 4);
+    const seed = seedMessages(initial, "405", undefined, true);
+    replica.accept(seed.envelope);
+    for (const chunk of seed.chunks) replica.accept(chunk);
+    publishContentVersion.mockClear();
+    publishStructure.mockClear();
+
+    const placement = {
+      id: "markdown",
+      kind: "markdown",
+      row: 1,
+      column: 1,
+      columns: 4,
+      rows: 2,
+      contentDigest: "sha256:markdown",
+    };
+    const added = patchMessages(initial, 1, "406", undefined, [placement]);
+    replica.accept(added.envelope);
+    for (const chunk of added.chunks) replica.accept(chunk);
+
+    expect(changes.at(-1)).toMatchObject({ kind: "applied", placementsChanged: true });
+    expect(publishContentVersion).toHaveBeenCalledOnce();
+    expect(publishStructure).toHaveBeenCalledOnce();
+
+    publishContentVersion.mockClear();
+    publishStructure.mockClear();
+    const ordinary = patchMessages(added.next, 2, "407");
+    replica.accept(ordinary.envelope);
+    for (const chunk of ordinary.chunks) replica.accept(chunk);
+    expect(changes.at(-1)).toMatchObject({ kind: "applied", placementsChanged: false });
+    expect(publishContentVersion).toHaveBeenCalledOnce();
+    expect(publishStructure).not.toHaveBeenCalled();
+
+    publishContentVersion.mockClear();
+    publishStructure.mockClear();
+    const removed = patchMessages(ordinary.next, 3, "408", undefined, []);
+    replica.accept(removed.envelope);
+    for (const chunk of removed.chunks) replica.accept(chunk);
+    expect(changes.at(-1)).toMatchObject({ kind: "applied", placementsChanged: true });
+    expect(publishContentVersion).toHaveBeenCalledOnce();
+    expect(publishStructure).toHaveBeenCalledOnce();
   });
 
   it("makes trace authority available to a synchronous paint subscriber", () => {

@@ -11,6 +11,7 @@ const applied = (
   cursorChanged: true,
   renderKeyChanged: false,
   scrollbackChanged: false,
+  placementsChanged: false,
   runtimeFactsChanged: false,
   renderKey: "pane.editor:incarnation",
   version: 7,
@@ -32,6 +33,7 @@ describe("semantic pane publication", () => {
   it.each([
     ["render identity", applied({ renderKeyChanged: true })],
     ["scrollback depth", applied({ scrollbackChanged: true })],
+    ["rich placements", applied({ placementsChanged: true })],
     ["runtime facts", applied({ runtimeFactsChanged: true })],
     ["closed replica", { kind: "closed", version: 8 } satisfies SemanticPaneReplicaChange],
   ])("publishes structure when %s changes", (_label, change) => {
