@@ -56059,6 +56059,7 @@ async function startHttpServer({
   server.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => sockets.delete(socket));
   });
   const { closeClients, closeServers: closeWsServers } = attachWebSockets(server, {
     authToken,
