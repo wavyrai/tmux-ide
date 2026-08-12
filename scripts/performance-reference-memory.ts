@@ -10,9 +10,9 @@ import { SessionRuntimeRegistry } from "../packages/daemon/src/terminal/session-
 
 const generation = "77777777-7777-4777-8777-777777777777";
 const clientCount = Number(process.env.TMUX_IDE_REFERENCE_MEMORY_CLIENTS ?? 8);
-// Reach both bounded retention ceilings before sampling. At ~8 KiB/cycle the
-// 4 MiB raw journal requires ~512 cycles; 640 leaves headroom so the measured
-// window is steady-state rather than intentional cache fill.
+// Alternate-screen overwrite reaches a stable canonical/cache shape quickly;
+// 64 cycles also warms all eight delivery lanes before post-GC sampling. The
+// separately bounded raw journal remains below its explicit hard ceiling.
 const warmupCycles = Number(process.env.TMUX_IDE_REFERENCE_MEMORY_WARMUP ?? 64);
 const sampleCycles = Number(process.env.TMUX_IDE_REFERENCE_MEMORY_SAMPLES ?? 24);
 const writesPerCycle = Number(process.env.TMUX_IDE_REFERENCE_MEMORY_WRITES ?? 4);
