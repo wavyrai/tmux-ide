@@ -25,6 +25,7 @@ const options = parseOptions(process.argv.slice(2));
 const reportPath = resolve(root, options.report);
 const lifecyclePath = resolve(root, ".tasks/tui-testdrive/performance.jsonl");
 const target = `tmux-ide-reference-${process.pid}`;
+const referenceProjectDir = resolve(root, `.tasks/performance-reference/${target}`);
 const source = gitSourceIdentity(root);
 
 if (source.dirty)
@@ -54,6 +55,8 @@ const provenance = {
 
 let measurements;
 try {
+  mkdirSync(referenceProjectDir, { recursive: true });
+  await registerReferenceProject();
   tmux([
     "new-session",
     "-d",
@@ -75,6 +78,42 @@ try {
 } finally {
   spawnSync("node", ["scripts/tui-testdrive.mjs", "stop"], { cwd: root, stdio: "ignore" });
   spawnSync("tmux", ["kill-session", "-t", `=${target}`], { stdio: "ignore" });
+  await unregisterReferenceProject().catch(() => undefined);
+}
+
+async function registerReferenceProject() {
+  const daemon = readDaemonInfo();
+  const response = await fetch(`http://${daemon.bindHostname}:${daemon.port}/api/projects`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${daemon.authToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ dir: referenceProjectDir, name: target }),
+  });
+  if (!response.ok)
+    throw new Error(
+      `Unable to register reference project (${response.status}): ${await response.text()}`,
+    );
+}
+
+async function unregisterReferenceProject() {
+  const daemon = readDaemonInfo();
+  await fetch(
+    `http://${daemon.bindHostname}:${daemon.port}/api/projects/${encodeURIComponent(target)}`,
+    {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${daemon.authToken}` },
+    },
+  );
+}
+
+function readDaemonInfo() {
+  const path = resolve(process.env.HOME ?? "", ".tmux-ide/daemon.json");
+  const daemon = JSON.parse(readFileSync(path, "utf8"));
+  if (!daemon.authToken || !daemon.port || !daemon.bindHostname)
+    throw new Error("Reference qualification requires the canonical daemon");
+  return daemon;
 }
 const report = {
   version: REFERENCE_REPORT_VERSION,
