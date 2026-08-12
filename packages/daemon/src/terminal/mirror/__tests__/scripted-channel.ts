@@ -25,7 +25,7 @@ export class ScriptedChannelDriver {
   readonly #cursorLine: string;
   readonly #maxTurns: number;
   #handledWrites = 0;
-  readonly deferredCommands = new Set<string>();
+  readonly deferredCommands: string[] = [];
 
   constructor(handlers: MirrorChannelHandlers, options: ScriptedChannelDriverOptions = {}) {
     const state = options.state ?? fixtureState();
@@ -44,12 +44,12 @@ export class ScriptedChannelDriver {
     for (let index = this.#handledWrites; index < this.channel.written.length; index += 1) {
       const command = this.channel.written[index]!;
       if (command.includes("capture-pane") || command.startsWith("display-message")) {
-        this.deferredCommands.add(command);
+        this.deferredCommands.push(command);
       }
     }
     this.#handledWrites = this.channel.written.length;
-    for (const command of [...this.deferredCommands]) {
-      this.deferredCommands.delete(command);
+    while (this.deferredCommands.length > 0) {
+      const command = this.deferredCommands.shift()!;
       if (command.includes("capture-pane")) this.channel.reply([...this.#seedLines]);
       else this.channel.reply([this.#cursorLine]);
     }

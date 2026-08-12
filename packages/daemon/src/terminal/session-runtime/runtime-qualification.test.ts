@@ -140,8 +140,19 @@ describe("real SessionRuntime qualification", () => {
     expect(evidence.sessions[0]?.delivery.representationCacheBytes).toBeLessThanOrEqual(
       16 * 1024 * 1024,
     );
+    const canonical = evidence.sessions[0]?.convergence.panes[0];
+    expect(canonical).toBeDefined();
+    expect(
+      evidence.sessions[0]?.convergence.clients.every(
+        (client) =>
+          client.baselineRevision === canonical?.revision &&
+          client.baselineHash === canonical.stateHash &&
+          client.inFlightRevision === null &&
+          client.queueDepth === 0,
+      ),
+    ).toBe(true);
     const idle = evidence.sessions[0]?.replicas["pane.alpha"]?.stats;
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(registry.qualificationSnapshot().sessions[0]?.replicas["pane.alpha"]?.stats).toEqual(
       idle,
     );
@@ -217,7 +228,7 @@ describe("real SessionRuntime qualification", () => {
     const hiddenSink: TerminalDeliveryServerMessage[] = [];
     const slowSink: TerminalDeliveryServerMessage[] = [];
     let releaseSlow!: () => void;
-    const held = new Promise<void>((resolve) => (releaseSlow = resolve));
+    let held: Promise<void> | null = null;
     const openings = [
       fast.openTerminalDelivery("delivery:fast", "pane.alpha", OFFER, (message) =>
         fastSink.push(message),
@@ -238,7 +249,9 @@ describe("real SessionRuntime qualification", () => {
     const [fastConnection, hiddenConnection, slowConnection] = await Promise.all(openings);
     fastConnection.ack(ack(latest(fastSink)));
     hiddenConnection.ack(ack(latest(hiddenSink)));
+    slowConnection.ack(ack(latest(slowSink)));
     hiddenConnection.setVisibility("hidden");
+    held = new Promise<void>((resolve) => (releaseSlow = resolve));
     drivers[0]!.output("%1", "changed");
     await drivers[0]!.settleUntil(() => latest(fastSink).canonicalRevision > 0, "healthy patch");
     const dropped = latest(fastSink);
@@ -269,10 +282,28 @@ describe("real SessionRuntime qualification", () => {
     ).toBeLessThanOrEqual(2);
     releaseSlow();
     await drivers[0]!.settleUntil(
-      () => slowSink.some((message) => message.type === "terminal.delivery.chunk"),
-      "slow drain",
+      () => latest(slowSink).canonicalRevision === dropped.canonicalRevision,
+      "slow latest pointer",
     );
     slowConnection.ack(ack(latest(slowSink)));
+    hiddenConnection.setVisibility("visible");
+    await drivers[0]!.settleUntil(
+      () => latest(hiddenSink).canonicalRevision === dropped.canonicalRevision,
+      "hidden resume",
+    );
+    hiddenConnection.ack(ack(latest(hiddenSink)));
+    const evidence = registry.qualificationSnapshot().sessions[0]!;
+    const canonical = evidence.convergence.panes[0]!;
+    expect(
+      evidence.convergence.clients.every(
+        (client) =>
+          client.baselineRevision === canonical.revision &&
+          client.baselineHash === canonical.stateHash &&
+          client.inFlightRevision === null &&
+          client.queueDepth === 0,
+      ),
+    ).toBe(true);
+    expect(evidence.delivery).toMatchObject({ inFlight: 0, queueDepth: 0 });
     await Promise.all([fastConnection.close(), hiddenConnection.close(), slowConnection.close()]);
     await Promise.all([fast.close(), hidden.close(), slow.close()]);
     await registry.dispose();
@@ -308,7 +339,7 @@ describe("real SessionRuntime qualification", () => {
     await registry.dispose();
   });
 
-  it("recovers a control exit and rolls generation without reusing authority", async () => {
+  it("recovers a control exit inside one daemon generation", async () => {
     const first = rig();
     const client = first.registry.connect("zz-sim", "web", "client:first");
     const opening = client.subscribe("pane.alpha", () => undefined);
@@ -342,6 +373,51 @@ describe("real SessionRuntime qualification", () => {
       }),
     ).rejects.toThrow();
     await first.registry.dispose();
+  });
+
+  it("retires generation A authority before generation B starts", async () => {
+    const first = rig(GENERATION);
+    const owner = first.registry.connect("zz-sim", "web", "client:generation-a");
+    const opening = owner.subscribe("pane.alpha", () => undefined);
+    await waitForDriver(first.drivers);
+    await first.drivers[0]!.settleUntil(
+      () => first.registry.activeControlChannelCount() === 1,
+      "generation A control",
+    );
+    await opening;
+    const lease = owner.acquireController();
+    const handle = first.registry.createExecutionHandle(owner, lease, ["pane.alpha"]);
+    await first.registry.dispose();
+
+    const second = rig("22222222-2222-4222-8222-222222222222");
+    const next = second.registry.connect("zz-sim", "web", "client:generation-b");
+    const nextOpening = next.subscribe("pane.alpha", () => undefined);
+    await waitForDriver(second.drivers);
+    await second.drivers[0]!.settleUntil(
+      () => second.registry.activeControlChannelCount() === 1,
+      "generation B control",
+    );
+    await nextOpening;
+    expect(next.generation).toBe("22222222-2222-4222-8222-222222222222");
+    await expect(
+      first.registry.submitAuthenticatedIntent(handle, "00000000-0000-4000-8000-000000000004", {
+        verb: "workspace.pane.resize",
+        workspaceName: "workspace",
+        semanticPaneId: "pane.alpha",
+        axis: "cols",
+        cells: 92,
+      }),
+    ).rejects.toThrow("stale");
+    await expect(
+      next.submitIntent(lease, "00000000-0000-4000-8000-000000000005", {
+        verb: "workspace.pane.resize",
+        workspaceName: "workspace",
+        semanticPaneId: "pane.alpha",
+        axis: "cols",
+        cells: 92,
+      }),
+    ).rejects.toThrow();
+    await second.registry.dispose();
   });
 });
 

@@ -37,4 +37,23 @@ describe("ScriptedChannelDriver", () => {
     );
     await driver.channel.dispose();
   });
+
+  it("preserves duplicate deferred probe order and consumes one reply per write", async () => {
+    const driver = standardScriptedChannel({
+      onOutput: () => undefined,
+      onNotify: () => undefined,
+      onExit: () => undefined,
+    });
+    await driver.channel.start();
+    const replies: string[] = [];
+    for (let index = 0; index < 2; index += 1) {
+      driver.channel.commandInline("display-message", (reply) => {
+        replies.push(reply.lines[0] ?? "missing");
+      });
+    }
+    await driver.settleUntil(() => replies.length === 2, "duplicate probes");
+    expect(replies).toEqual(["0 0 100 50", "0 0 100 50"]);
+    expect(driver.channel.core.pendingCount).toBe(0);
+    await driver.channel.dispose();
+  });
 });
