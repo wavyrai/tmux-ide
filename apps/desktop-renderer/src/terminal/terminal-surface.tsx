@@ -567,7 +567,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         }
         let timer: ReturnType<typeof setTimeout> | undefined;
         const finishParse = performanceTelemetry?.beginParse();
-        const finishPaint = performanceTelemetry?.beginPaint();
+        const paint = performanceTelemetry?.beginPaint();
+        let written = false;
         try {
           const outcome = await Promise.race([
             activeRenderer.write(payload).then(() => "written" as const),
@@ -580,11 +581,13 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
             }),
           ]);
           if (outcome === "retired") throw OUTPUT_NOT_CONSUMED;
+          written = true;
           finishParse?.();
-          finishPaint?.();
+          paint?.commit();
           performanceTelemetry?.commitDelivery();
           if (scanAfterWrite) scheduleWidgetScan();
         } finally {
+          if (!written) paint?.cancel();
           if (timer !== undefined) clearTimeout(timer);
         }
       })

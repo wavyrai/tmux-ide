@@ -2,6 +2,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
+import { GuiPerformanceProvider } from "../runtime/gui-performance-context.tsx";
+import { GuiPerformanceTelemetry } from "../runtime/gui-performance-telemetry.ts";
+import type { MirrorPaneSink } from "./pane-mirror-controller.ts";
+import type { MirrorTerminalRendererFactory } from "./mirror-xterm-renderer.ts";
 
 import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/lib/app-window-state.ts";
 import { deriveConnectionHealth } from "../runtime/connection-health.ts";
@@ -89,6 +93,67 @@ function mountNodeHarness(
 }
 
 describe("mirror pane node", () => {
+  it("records a reseed only after the renderer applies it successfully", async () => {
+    let sink: MirrorPaneSink | null = null;
+    const frames = { callback: null as ((atMs: number) => void) | null };
+    const telemetry = new GuiPerformanceTelemetry({
+      scheduleFrame: (callback) => {
+        frames.callback = callback;
+        return () => {
+          frames.callback = null;
+        };
+      },
+    });
+    telemetry.enable();
+    frames.callback?.(0);
+    const reseed = vi.spyOn(telemetry, "recordReseed");
+    const rendererFactory: MirrorTerminalRendererFactory = () => ({
+      open: () => undefined,
+      applySeedBatch: () => Promise.reject(new Error("paint rejected")),
+      write: () => Promise.resolve(),
+      applyCursor: () => undefined,
+      resizeGrid: () => undefined,
+      refreshTheme: () => undefined,
+      fitToContainer: () => undefined,
+      setReducedMotion: () => undefined,
+      getSelection: () => "",
+      onSelectionChange: () => ({ dispose: () => undefined }),
+      readCellRows: () => [],
+      gridOverlayGeometry: () => null,
+      dispose: () => undefined,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(
+      () => (
+        <GuiPerformanceProvider telemetry={telemetry}>
+          <MirrorPaneNode
+            pane={PANE_A}
+            title="Agent A"
+            state={{ kind: "live", flowPaused: false }}
+            connection={{ kind: "connected" }}
+            registerSink={(next) => {
+              sink = next;
+              return () => undefined;
+            }}
+            rendererFactory={rendererFactory}
+          />
+        </GuiPerformanceProvider>
+      ),
+      host,
+    );
+    disposers.push(() => {
+      dispose();
+      telemetry.dispose();
+    });
+    await flush();
+    const activeSink = sink as MirrorPaneSink | null;
+    if (!activeSink) throw new Error("mirror sink did not register");
+    await expect(activeSink.applySeedBatch(seedBatch("screen"))).rejects.toThrow("paint rejected");
+    expect(reseed).not.toHaveBeenCalled();
+    expect(host.querySelector(".mirror-pane-node")?.getAttribute("data-painted")).toBe("false");
+  });
+
   it("applies a seed-batch as exactly ONE render commit", async () => {
     const h = mountNodeHarness();
     await flush();

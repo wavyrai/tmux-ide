@@ -152,17 +152,23 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
         if (disposed || renderer !== next) return;
         if (batch.reset) setGrid({ cols: batch.reset.cols, rows: batch.reset.rows });
         const finishParse = performanceTelemetry?.beginParse();
-        const finishPaint = performanceTelemetry?.beginPaint();
-        const applied = Promise.resolve(next.applySeedBatch(batch)).then(() => {
-          finishParse?.();
-          finishPaint?.();
-          performanceTelemetry?.commitDelivery();
-        });
-        performanceTelemetry?.recordReseed();
-        setPainted(true);
-        // A seed REPLACES the screen, so it can both create and destroy a
-        // widget; it is always worth a scan.
-        scheduleWidgetScan();
+        const paint = performanceTelemetry?.beginPaint();
+        const applied = Promise.resolve(next.applySeedBatch(batch)).then(
+          () => {
+            finishParse?.();
+            paint?.commit();
+            performanceTelemetry?.recordReseed();
+            performanceTelemetry?.commitDelivery();
+            setPainted(true);
+            // A seed REPLACES the screen, so it can both create and destroy a
+            // widget; it is always worth a scan after the paint committed.
+            scheduleWidgetScan();
+          },
+          (error: unknown) => {
+            paint?.cancel();
+            throw error;
+          },
+        );
         return applied;
       },
       applyGeometry: (cols: number, rows: number) => {
@@ -177,12 +183,18 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
         // and this write may be the clear that takes it away.
         if (markerWatcher.observe(bytes) || widget() !== null) scheduleWidgetScan();
         const finishParse = performanceTelemetry?.beginParse();
-        const finishPaint = performanceTelemetry?.beginPaint();
-        return next.write(bytes).then(() => {
-          finishParse?.();
-          finishPaint?.();
-          performanceTelemetry?.commitDelivery();
-        });
+        const paint = performanceTelemetry?.beginPaint();
+        return next.write(bytes).then(
+          () => {
+            finishParse?.();
+            paint?.commit();
+            performanceTelemetry?.commitDelivery();
+          },
+          (error: unknown) => {
+            paint?.cancel();
+            throw error;
+          },
+        );
       },
       applyCursor: (x: number, y: number) => {
         if (disposed || renderer !== next) return;

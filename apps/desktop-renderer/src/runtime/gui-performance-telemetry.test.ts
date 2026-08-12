@@ -5,18 +5,36 @@ import {
   guiPerformanceHudRequested,
 } from "./gui-performance-telemetry.ts";
 
+class FrameHarness {
+  callback: ((atMs: number) => void) | null = null;
+  requests = 0;
+  readonly schedule = (callback: (atMs: number) => void): (() => void) => {
+    this.requests += 1;
+    this.callback = callback;
+    return () => {
+      if (this.callback === callback) this.callback = null;
+    };
+  };
+  flush(atMs: number): void {
+    const callback = this.callback;
+    this.callback = null;
+    callback?.(atMs);
+  }
+}
+
 describe("GuiPerformanceTelemetry", () => {
   it("opts in only through the explicit performance HUD query", () => {
     expect(guiPerformanceHudRequested("?performanceHud=1")).toBe(true);
     expect(guiPerformanceHudRequested("?performanceHud=0")).toBe(false);
     expect(guiPerformanceHudRequested("?other=1")).toBe(false);
   });
-  it("does no clock work or allocation-visible publication while disabled", () => {
+
+  it("does no clock or frame work while disabled", () => {
     const now = vi.fn(() => 10);
-    const telemetry = new GuiPerformanceTelemetry({ now, sampleCapacity: 2 });
+    const frames = new FrameHarness();
+    const telemetry = new GuiPerformanceTelemetry({ now, scheduleFrame: frames.schedule });
     const listener = vi.fn();
-    const unsubscribe = telemetry.subscribe(listener);
-    expect(listener).toHaveBeenCalledWith(null);
+    telemetry.subscribe(listener);
     expect(telemetry.beginParse()).toBeNull();
     expect(telemetry.beginPaint()).toBeNull();
     telemetry.recordQueueDepth(1, 2);
@@ -24,38 +42,35 @@ describe("GuiPerformanceTelemetry", () => {
     telemetry.recordReseed();
     telemetry.recordRendered(12);
     expect(now).not.toHaveBeenCalled();
-    expect(listener).toHaveBeenCalledTimes(1);
-    unsubscribe();
+    expect(frames.requests).toBe(0);
+    expect(listener).toHaveBeenCalledOnce();
   });
 
-  it("retargets authority without retaining metrics from another workspace", () => {
-    const telemetry = new GuiPerformanceTelemetry({ scheduleIdle: () => () => undefined });
+  it("coalesces multiple panes into one browser-frame FPS and publication", () => {
+    const frames = new FrameHarness();
+    const telemetry = new GuiPerformanceTelemetry({ scheduleFrame: frames.schedule });
+    const listener = vi.fn();
     telemetry.enable();
-    telemetry.recordReseed();
-    telemetry.setAuthority({
-      daemonInstanceId: "22222222-2222-4222-8222-222222222222",
-      workspaceName: "workspace-b",
-      generation: "44444444-4444-4444-8444-444444444444",
-      incarnation: null,
-    });
-    expect(telemetry.snapshot()).toMatchObject({
-      authority: {
-        daemonInstanceId: "22222222-2222-4222-8222-222222222222",
-        workspaceName: "workspace-b",
-        generation: "44444444-4444-4444-8444-444444444444",
-        incarnation: null,
-      },
-      reseeds: 0,
-      activeFps: null,
-    });
+    telemetry.subscribe(listener);
+    telemetry.recordRendered(3);
+    telemetry.recordRendered(4);
+    expect(frames.requests).toBe(1);
+    frames.flush(16);
+    expect(telemetry.snapshot()?.dirtyRows.latest).toBe(7);
+    expect(telemetry.snapshot()?.activeFps).toBeNull();
+    telemetry.recordRendered(5);
+    telemetry.recordRendered(6);
+    frames.flush(32);
+    expect(telemetry.snapshot()?.dirtyRows.latest).toBe(11);
+    expect(telemetry.snapshot()?.activeFps).toBeCloseTo(62.5);
+    expect(listener).toHaveBeenCalledTimes(3); // initial null + two browser frames
   });
 
-  it("records only settled real events in bounded exact windows", () => {
-    let now = 0;
+  it("resets the FPS baseline after idle so the first resumed frame has no stale rate", () => {
+    const frames = new FrameHarness();
     const idle: { current: (() => void) | null } = { current: null };
     const telemetry = new GuiPerformanceTelemetry({
-      now: () => now,
-      sampleCapacity: 2,
+      scheduleFrame: frames.schedule,
       scheduleIdle: (callback) => {
         idle.current = callback;
         return () => {
@@ -64,74 +79,102 @@ describe("GuiPerformanceTelemetry", () => {
       },
     });
     telemetry.enable();
-    const parse = telemetry.beginParse();
-    now = 2;
-    parse?.();
-    now = 10;
-    const firstPaint = telemetry.beginPaint();
-    now = 14;
-    firstPaint?.();
-    telemetry.commitDelivery();
-    now = 20;
-    telemetry.recordRendered(4);
-    now = 26;
-    const secondPaint = telemetry.beginPaint();
-    now = 30;
-    secondPaint?.();
-    telemetry.commitDelivery();
-    now = 36;
-    telemetry.recordRendered(8);
-    telemetry.recordQueueDepth(2, 8);
-    telemetry.recordQueueDepth(0, 8);
-    telemetry.recordRevisionLag(3);
-    telemetry.recordRevisionLag(0);
-    telemetry.recordReseed();
-    const snapshot = telemetry.snapshot()!;
-    expect(snapshot.source).toBe("web");
-    expect(snapshot.parseMs).toMatchObject({ count: 1, latest: 2, p95: 2 });
-    expect(snapshot.paintMs).toMatchObject({ count: 2, latest: 4, p95: 4 });
-    expect(snapshot.dirtyRows).toMatchObject({ count: 2, latest: 8, p95: 8 });
-    expect(snapshot.activeFps).toBeCloseTo(62.5);
-    expect(snapshot.queueDepth).toMatchObject({ current: 0, peak: 2 });
-    expect(snapshot.revisionLag).toEqual({ current: 0, peak: 3 });
-    expect(snapshot.reseeds).toBe(1);
+    telemetry.recordRendered(1);
+    frames.flush(10);
+    telemetry.recordRendered(1);
+    frames.flush(20);
+    expect(telemetry.snapshot()?.activeFps).toBe(100);
     idle.current?.();
+    frames.flush(30);
+    expect(telemetry.snapshot()?.activeFps).toBeNull();
+    telemetry.recordRendered(1);
+    frames.flush(100);
     expect(telemetry.snapshot()?.activeFps).toBeNull();
   });
 
-  it("isolates observer failures from a delivery and publishes it once", () => {
-    let now = 0;
+  it("separates parse completion from paint settlement at a real render", () => {
+    let now = 5;
+    const frames = new FrameHarness();
     const telemetry = new GuiPerformanceTelemetry({
-      now: () => now++,
+      now: () => now,
+      scheduleFrame: frames.schedule,
       scheduleIdle: () => () => undefined,
     });
     telemetry.enable();
+    frames.flush(0);
+    const parse = telemetry.beginParse();
+    const paint = telemetry.beginPaint();
+    now = 8;
+    parse?.();
+    paint?.commit();
+    frames.flush(9);
+    expect(telemetry.snapshot()?.parseMs.latest).toBe(3);
+    expect(telemetry.snapshot()?.paintMs.count).toBe(0);
+    telemetry.recordRendered(2);
+    frames.flush(17);
+    expect(telemetry.snapshot()?.paintMs.latest).toBe(12);
+  });
+
+  it("publishes one snapshot for a delivery burst and isolates listener failures", () => {
+    const frames = new FrameHarness();
+    const telemetry = new GuiPerformanceTelemetry({ scheduleFrame: frames.schedule });
+    telemetry.enable();
+    frames.flush(0);
     telemetry.subscribe(() => {
       throw new Error("observer failed");
     });
     const listener = vi.fn();
     telemetry.subscribe(listener);
-    const finishParse = telemetry.beginParse();
-    const finishPaint = telemetry.beginPaint(2);
-    finishParse?.();
-    finishPaint?.();
+    telemetry.recordQueueDepth(2, 8);
+    telemetry.recordRevisionLag(3);
+    telemetry.recordReseed();
+    telemetry.recordRendered(4);
     telemetry.commitDelivery();
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(telemetry.snapshot()?.paintMs.count).toBe(1);
+    expect(frames.requests).toBe(2);
+    frames.flush(16);
+    expect(listener).toHaveBeenCalledTimes(2); // initial null + one burst snapshot
   });
 
-  it("cleans listeners and ignores late completions after disposal", () => {
-    let now = 0;
-    const telemetry = new GuiPerformanceTelemetry({ now: () => now++ });
+  it("discards stale parse and paint completions across authority epochs", () => {
+    let now = 1;
+    const frames = new FrameHarness();
+    const telemetry = new GuiPerformanceTelemetry({
+      now: () => now,
+      scheduleFrame: frames.schedule,
+    });
     telemetry.enable();
-    const finish = telemetry.beginPaint();
+    const parse = telemetry.beginParse();
+    const paint = telemetry.beginPaint();
+    telemetry.setAuthority({
+      daemonInstanceId: "22222222-2222-4222-8222-222222222222",
+      workspaceName: "workspace-b",
+      generation: "44444444-4444-4444-8444-444444444444",
+      incarnation: null,
+    });
+    now = 10;
+    parse?.();
+    paint?.commit();
+    telemetry.recordRendered(1);
+    frames.flush(16);
+    expect(telemetry.snapshot()).toMatchObject({
+      authority: { workspaceName: "workspace-b" },
+      parseMs: { count: 0 },
+      paintMs: { count: 0 },
+    });
+  });
+
+  it("cancels pending work and listeners on disposal", () => {
+    const frames = new FrameHarness();
+    const telemetry = new GuiPerformanceTelemetry({ scheduleFrame: frames.schedule });
+    telemetry.enable();
     const listener = vi.fn();
     telemetry.subscribe(listener);
+    const paint = telemetry.beginPaint();
     telemetry.dispose();
-    finish?.();
-    telemetry.recordReseed();
-    expect(listener).toHaveBeenCalledTimes(1);
+    paint?.commit();
+    frames.flush(16);
     expect(telemetry.enabled).toBe(false);
     expect(telemetry.snapshot()).toBeNull();
+    expect(listener).toHaveBeenCalledOnce();
   });
 });
