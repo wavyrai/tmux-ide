@@ -68,6 +68,7 @@ try {
     "44",
     `/bin/zsh -f -c 'stty raw -echo; while read -rk 1 ch; do print -rn -- "$ch"; done'`,
   ]);
+  await adoptReferenceWorkspace();
   const startup = await measureStartup();
   const inputTrace = options.inputTrace ?? (await collectInputTrace());
   measurements = {
@@ -95,6 +96,42 @@ async function registerReferenceProject() {
     throw new Error(
       `Unable to register reference project (${response.status}): ${await response.text()}`,
     );
+}
+
+async function adoptReferenceWorkspace() {
+  const daemon = readDaemonInfo();
+  const response = await fetch(
+    `http://${daemon.bindHostname}:${daemon.port}/api/v2/action/project.launch`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${daemon.authToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: target }),
+    },
+  );
+  const result = await response.json();
+  if (!response.ok || result?.ok !== true)
+    throw new Error(
+      `Unable to adopt reference workspace (${response.status}): ${JSON.stringify(result)}`,
+    );
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const catalogResponse = await fetch(
+      `http://${daemon.bindHostname}:${daemon.port}/api/resources/workspace-catalog`,
+      { headers: { authorization: `Bearer ${daemon.authToken}` } },
+    );
+    const catalog = await catalogResponse.json();
+    if (
+      catalog?.workspaces?.some(
+        ({ workspaceName, sessionName }) => workspaceName === target && sessionName === target,
+      )
+    )
+      return;
+    await delay(25);
+  }
+  throw new Error("Canonical workspace catalog did not adopt the reference tmux session");
 }
 
 async function unregisterReferenceProject() {
