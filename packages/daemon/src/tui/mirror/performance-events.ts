@@ -38,20 +38,28 @@ export interface TuiTerminalDeliveryPerformanceEvent {
   readonly reseed: boolean;
 }
 
-let activeSink: TuiPerformanceEventSink | null = null;
+// The production TUI is assembled through lazy bundle boundaries. Bun may
+// materialize this tiny module more than once across those chunks, so
+// module-local state can split producers from the installed observer. A global
+// symbol preserves one process-local registry without allocating on hot reads.
+const PERFORMANCE_SINK_SLOT = Symbol.for("tmux-ide.tui.performance-event-sink");
+const performanceSinkGlobal = globalThis as typeof globalThis &
+  Record<symbol, TuiPerformanceEventSink | null | undefined>;
 
 export function currentTuiPerformanceEventSink(): TuiPerformanceEventSink | null {
-  return activeSink;
+  return performanceSinkGlobal[PERFORMANCE_SINK_SLOT] ?? null;
 }
 
 export function installTuiPerformanceEventSink(sink: TuiPerformanceEventSink): () => void {
+  const activeSink = performanceSinkGlobal[PERFORMANCE_SINK_SLOT];
   if (activeSink && activeSink !== sink)
     throw new Error("An OpenTUI performance observer is already active");
-  activeSink = sink;
+  performanceSinkGlobal[PERFORMANCE_SINK_SLOT] = sink;
   let installed = true;
   return () => {
     if (!installed) return;
     installed = false;
-    if (activeSink === sink) activeSink = null;
+    if (performanceSinkGlobal[PERFORMANCE_SINK_SLOT] === sink)
+      performanceSinkGlobal[PERFORMANCE_SINK_SLOT] = null;
   };
 }

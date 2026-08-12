@@ -13,6 +13,18 @@ const sink = (): TuiPerformanceEventSink => ({
 });
 
 describe("OpenTUI performance event bridge", () => {
+  it("shares the observer across independently evaluated lazy module copies", async () => {
+    const observer = sink();
+    const dispose = installTuiPerformanceEventSink(observer);
+    vi.resetModules();
+    const duplicate = await import("./performance-events.ts");
+
+    expect(duplicate.currentTuiPerformanceEventSink()).toBe(observer);
+    expect(() => duplicate.installTuiPerformanceEventSink(sink())).toThrow(/already active/u);
+    dispose();
+    expect(duplicate.currentTuiPerformanceEventSink()).toBeNull();
+  });
+
   it("is a null branch until installed and detaches idempotently", () => {
     expect(currentTuiPerformanceEventSink()).toBeNull();
     const observer = sink();
