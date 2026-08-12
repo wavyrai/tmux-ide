@@ -1,6 +1,6 @@
 import { OptionalFeatureRegistry } from "./optional-feature-registry.ts";
 
-export interface ApplicationOptionalFeatures extends Record<string, unknown> {
+export interface ApplicationOptionalFeatures {
   readonly files: typeof import("../files-surface.tsx");
   readonly changes: typeof import("../changes-surface.tsx");
   readonly missions: typeof import("../missions-surface.tsx");

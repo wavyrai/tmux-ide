@@ -1,6 +1,4 @@
-export type OptionalFeatureMap = Record<string, unknown>;
-
-export type OptionalFeatureLoaders<Features extends OptionalFeatureMap> = {
+export type OptionalFeatureLoaders<Features extends object> = {
   readonly [Key in keyof Features]?: () => Promise<Features[Key]>;
 };
 
@@ -9,6 +7,8 @@ export interface OptionalFeatureRegistryMetrics {
   readonly disposed: boolean;
   readonly generation: number;
   readonly requests: number;
+  readonly preloadRequests: number;
+  readonly preloadRejectionsObserved: number;
   readonly retainedIntents: number;
   readonly joinedRequests: number;
   readonly unavailableRequests: number;
@@ -63,13 +63,15 @@ function deferred<Value>(): Deferred<Value> {
  * callers immediately; an already-running loader may settle, but its result is
  * counted and discarded rather than published into a retired application.
  */
-export class OptionalFeatureRegistry<Features extends OptionalFeatureMap> {
+export class OptionalFeatureRegistry<Features extends object> {
   readonly #loaders: OptionalFeatureLoaders<Features>;
   readonly #slots = new Map<keyof Features, FeatureSlot<unknown>>();
   #admitted = false;
   #disposed = false;
   #generation = 1;
   #requests = 0;
+  #preloadRequests = 0;
+  #preloadRejectionsObserved = 0;
   #retainedIntents = 0;
   #joinedRequests = 0;
   #unavailableRequests = 0;
@@ -112,6 +114,14 @@ export class OptionalFeatureRegistry<Features extends OptionalFeatureMap> {
     return pending.promise;
   }
 
+  /** Fire-and-forget demand with an owned rejection observer. */
+  preload<Key extends keyof Features>(key: Key): void {
+    this.#preloadRequests += 1;
+    void this.request(key).catch(() => {
+      this.#preloadRejectionsObserved += 1;
+    });
+  }
+
   admit(): boolean {
     if (this.#disposed || this.#admitted) return false;
     this.#admitted = true;
@@ -145,6 +155,8 @@ export class OptionalFeatureRegistry<Features extends OptionalFeatureMap> {
       disposed: this.#disposed,
       generation: this.#generation,
       requests: this.#requests,
+      preloadRequests: this.#preloadRequests,
+      preloadRejectionsObserved: this.#preloadRejectionsObserved,
       retainedIntents: this.#retainedIntents,
       joinedRequests: this.#joinedRequests,
       unavailableRequests: this.#unavailableRequests,

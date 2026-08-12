@@ -22,7 +22,7 @@ describe("production OpenTUI entry boundary", () => {
     expect(source).not.toMatch(/from\s+["']\.\/application-root/u);
   });
 
-  it("manifests every source boundary for whole-root architecture audits", () => {
+  it("manifests every bootstrap boundary used to seed transitive architecture audits", () => {
     expect(OPENTUI_PRODUCTION_ROOT_SOURCES).toEqual([
       "packages/daemon/src/tui/mirror/app.tsx",
       "packages/daemon/src/tui/mirror/runtime/application-entry.ts",

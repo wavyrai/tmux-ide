@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -103,6 +105,60 @@ describe("OptionalFeatureRegistry", () => {
     );
     expect(registry.getMetrics()).toMatchObject({ disposed: true, generation: 2 });
   });
+
+  it("owns preload rejection observation while preserving rejecting request semantics", async () => {
+    const registry = new OptionalFeatureRegistry<Features>({
+      files: async () => {
+        throw new Error("preload failed");
+      },
+    });
+    registry.admit();
+    registry.preload("files");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(registry.getMetrics()).toMatchObject({
+      preloadRequests: 1,
+      preloadRejectionsObserved: 1,
+      loadsFailed: 1,
+    });
+
+    await expect(registry.request("files")).rejects.toThrow("preload failed");
+  });
+
+  it.each([
+    {
+      runtime: "node",
+      command: process.execPath,
+      args: ["--experimental-strip-types", "--unhandled-rejections=strict", "--input-type=module"],
+    },
+    {
+      runtime: "bun",
+      command: "bun",
+      args: ["--unhandled-rejections=strict"],
+    },
+  ])(
+    "keeps fire-and-forget preload disposal handled under strict $runtime",
+    ({ command, args }) => {
+      const moduleUrl = new URL("./optional-feature-registry.ts", import.meta.url).href;
+      const script = `
+      import { OptionalFeatureRegistry } from ${JSON.stringify(moduleUrl)};
+      let resolve;
+      const physicalLoad = new Promise((accept) => { resolve = accept; });
+      const registry = new OptionalFeatureRegistry({ files: () => physicalLoad });
+      registry.admit();
+      registry.preload("files");
+      registry.dispose();
+      resolve({ names: [] });
+      await new Promise((accept) => setTimeout(accept, 10));
+      if (registry.getMetrics().lateResultsDiscarded !== 1) process.exitCode = 2;
+    `;
+      const result = spawnSync(command, [...args, "--eval", script], {
+        cwd: fileURLToPath(new URL("../../../../../../", import.meta.url)),
+        encoding: "utf8",
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    },
+  );
 
   it("generation-fences a late successful load and never publishes it", async () => {
     const pending = deferred<Features["files"]>();

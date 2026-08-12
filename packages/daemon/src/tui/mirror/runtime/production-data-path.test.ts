@@ -2,28 +2,66 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { loadLocalSourceImportGraph } from "../../../../test-support/source-import-graph.ts";
 import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "./production-root-manifest.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
-const source = OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) =>
-  readFileSync(join(repoRoot, path), "utf8"),
-).join("\n");
+const productionGraph = await loadLocalSourceImportGraph(repoRoot, OPENTUI_PRODUCTION_ROOT_SOURCES);
+const source = productionGraph.files
+  .map(
+    (path) => productionGraph.sourceByFile.get(path) ?? readFileSync(join(repoRoot, path), "utf8"),
+  )
+  .join("\n");
 
 describe("production OpenTUI data path", () => {
   it("contains no recurring catalog work or legacy direct observation path", () => {
-    for (const forbidden of [
-      "setInterval(",
-      'team", "--json',
-      "readMissionWorkspace",
-      "MissionRepository",
-      "watchDirectory",
-      "filesStatusPoll",
-      "fleetTimer",
-      "diffTimer",
-      "fleetRefresh",
-    ]) {
-      expect(source, `production app contains ${forbidden}`).not.toContain(forbidden);
+    const forbiddenPaths: ReadonlyArray<{
+      readonly text: string;
+      readonly compatibilityDefinitions?: readonly string[];
+    }> = [
+      { text: "setInterval(" },
+      { text: 'team", "--json' },
+      {
+        text: "readMissionWorkspace",
+        compatibilityDefinitions: ["packages/daemon/src/tui/mirror/missions-workspace.ts"],
+      },
+      {
+        text: "MissionRepository",
+        compatibilityDefinitions: [
+          "packages/daemon/src/tui/mirror/missions-workspace.ts",
+          "packages/daemon/src/lib/mission-repository.ts",
+        ],
+      },
+      { text: "watchDirectory" },
+      { text: "filesStatusPoll" },
+      { text: "fleetTimer" },
+      { text: "diffTimer" },
+      { text: "fleetRefresh" },
+    ];
+    for (const { text, compatibilityDefinitions = [] } of forbiddenPaths) {
+      const offenders = productionGraph.files.filter(
+        (path) =>
+          !compatibilityDefinitions.includes(path) &&
+          productionGraph.sourceByFile.get(path)?.includes(text),
+      );
+      expect(offenders, `production graph contains executable ${text}`).toEqual([]);
     }
+  });
+
+  it("follows literal dynamic imports through optional feature roots", () => {
+    expect(productionGraph.files).toEqual(
+      expect.arrayContaining([
+        "packages/daemon/src/tui/mirror/runtime/application-entry.ts",
+        "packages/daemon/src/tui/mirror/runtime/application-root.tsx",
+        "packages/daemon/src/tui/mirror/runtime/application-optional-features.ts",
+        "packages/daemon/src/tui/mirror/files-surface.tsx",
+        "packages/daemon/src/tui/mirror/changes-surface.tsx",
+        "packages/daemon/src/tui/mirror/missions-surface.tsx",
+        "packages/daemon/src/tui/mirror/activity-surface.tsx",
+        "packages/daemon/src/tui/mirror/workspace/command-palette-surface.tsx",
+        "packages/daemon/src/tui/mirror/widget-surface.tsx",
+      ]),
+    );
   });
 
   it("publishes input readiness before admitting daemon tool demand", () => {
