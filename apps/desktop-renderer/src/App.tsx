@@ -39,6 +39,12 @@ import type {
   PaneFrameModel,
 } from "../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "./runtime-style.ts";
+import { GuiPerformanceProvider } from "./runtime/gui-performance-context.tsx";
+import { GuiPerformanceHud } from "./runtime/gui-performance-hud.tsx";
+import {
+  GuiPerformanceTelemetry,
+  guiPerformanceHudRequested,
+} from "./runtime/gui-performance-telemetry.ts";
 
 export interface AppProps {
   readonly host?: HostCapabilities;
@@ -85,6 +91,38 @@ export function App(props: AppProps = {}) {
     readonly key: string;
     readonly transport: NativeTerminalTransport;
   } | null = null;
+  const performanceTelemetry = new GuiPerformanceTelemetry();
+  const [performanceHudOpen, setPerformanceHudOpen] = createSignal(
+    typeof window !== "undefined" && guiPerformanceHudRequested(window.location.search),
+  );
+
+  createEffect(() => {
+    const daemon = bootstrap()?.daemon;
+    performanceTelemetry.setAuthority({
+      daemonInstanceId: daemon?.status === "connected" ? daemon.identity.instanceId : null,
+      workspaceName: null,
+      generation: null,
+      incarnation: null,
+    });
+  });
+
+  createEffect(() => {
+    if (performanceHudOpen()) performanceTelemetry.enable();
+    else performanceTelemetry.disable();
+  });
+
+  onMount(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "F12" || event.repeat) return;
+      event.preventDefault();
+      setPerformanceHudOpen((open) => !open);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onKeyDown);
+      performanceTelemetry.dispose();
+    });
+  });
 
   const loadBootstrap = (): void => {
     if (!host || disposed) return;
@@ -213,200 +251,211 @@ export function App(props: AppProps = {}) {
   });
 
   return (
-    <div
-      ref={(element) => {
-        appRuntimeStyle = createRuntimeStyleBinding(element);
-        appRuntimeStyle.update(experience().variables);
-        onCleanup(() => {
-          appRuntimeStyle?.dispose();
-          appRuntimeStyle = null;
-        });
-      }}
-      class="app"
-      data-theme={experience().appearance}
-      data-platform={bootstrap()?.platform}
-      data-vibrancy={vibrancyRequest()}
-      data-reduced-motion={String(experience().accessibility.reducedMotion)}
-      data-increased-contrast={String(experience().accessibility.increasedContrast)}
-      data-accessibility-conflicts={experience().accessibility.conflicts.join(" ") || undefined}
-      data-shell-source={
-        hostResolutionError
-          ? "hard-error"
-          : props.shellInput !== undefined
-            ? "injected"
-            : browserPreview
-              ? "preview"
-              : "runtime"
-      }
-    >
-      <Show
-        when={!hostResolutionError && host}
-        fallback={
-          <DesktopConnectionSurface
-            state="hard-error"
-            eyebrow="Desktop host boundary"
-            title="The desktop bridge is incompatible"
-            description="tmux-ide stopped before loading preview or live workspace data."
-            guidance="Update the desktop host and reopen tmux-ide"
-            alert
-          />
+    <GuiPerformanceProvider telemetry={performanceTelemetry}>
+      <div
+        ref={(element) => {
+          appRuntimeStyle = createRuntimeStyleBinding(element);
+          appRuntimeStyle.update(experience().variables);
+          onCleanup(() => {
+            appRuntimeStyle?.dispose();
+            appRuntimeStyle = null;
+          });
+        }}
+        class="app"
+        data-theme={experience().appearance}
+        data-platform={bootstrap()?.platform}
+        data-vibrancy={vibrancyRequest()}
+        data-reduced-motion={String(experience().accessibility.reducedMotion)}
+        data-increased-contrast={String(experience().accessibility.increasedContrast)}
+        data-accessibility-conflicts={experience().accessibility.conflicts.join(" ") || undefined}
+        data-shell-source={
+          hostResolutionError
+            ? "hard-error"
+            : props.shellInput !== undefined
+              ? "injected"
+              : browserPreview
+                ? "preview"
+                : "runtime"
         }
       >
-        {(activeHost) => (
-          <Show
-            when={props.shellInput}
-            fallback={
-              <Show
-                when={!browserPreview}
-                fallback={
-                  <DomApplicationShell
-                    host={activeHost()}
-                    daemonState={bootstrap()?.daemon}
-                    runtime={bootstrap()?.runtime}
-                    platform={bootstrap()?.platform}
-                    windowState={effectiveWindow()}
-                    dataMode="preview"
-                    terminalTransport={props.terminalTransport}
-                    reducedMotion={experience().accessibility.reducedMotion}
-                    terminalThemeKey={terminalThemeKey()}
-                    onCommand={props.onCommand}
-                    paneFrames={props.paneFrames}
-                    onPaneAction={props.onPaneAction}
-                    onPaneGrip={props.onPaneGrip}
-                  />
-                }
-              >
+        <Show
+          when={!hostResolutionError && host}
+          fallback={
+            <DesktopConnectionSurface
+              state="hard-error"
+              eyebrow="Desktop host boundary"
+              title="The desktop bridge is incompatible"
+              description="tmux-ide stopped before loading preview or live workspace data."
+              guidance="Update the desktop host and reopen tmux-ide"
+              alert
+            />
+          }
+        >
+          {(activeHost) => (
+            <Show
+              when={props.shellInput}
+              fallback={
                 <Show
-                  when={!bootstrapError()}
+                  when={!browserPreview}
                   fallback={
-                    <DesktopConnectionSurface
+                    <DomApplicationShell
                       host={activeHost()}
-                      runtime="electron"
+                      daemonState={bootstrap()?.daemon}
+                      runtime={bootstrap()?.runtime}
+                      platform={bootstrap()?.platform}
                       windowState={effectiveWindow()}
-                      state="hard-error"
-                      eyebrow="Desktop host boundary"
-                      title="The desktop host could not be verified"
-                      description="tmux-ide rejected the host bootstrap response."
-                      guidance="Reopen tmux-ide after updating the desktop host"
-                      alert
-                      onRetry={loadBootstrap}
-                      retryLabel="Retry host check"
-                      diagnostics={[
-                        "The desktop bridge returned an invalid bootstrap response.",
-                        "No preview or partial workspace data was substituted.",
-                      ]}
+                      dataMode="preview"
+                      terminalTransport={props.terminalTransport}
+                      reducedMotion={experience().accessibility.reducedMotion}
+                      terminalThemeKey={terminalThemeKey()}
+                      onCommand={props.onCommand}
+                      paneFrames={props.paneFrames}
+                      onPaneAction={props.onPaneAction}
+                      onPaneGrip={props.onPaneGrip}
                     />
                   }
                 >
                   <Show
-                    when={bootstrap()}
+                    when={!bootstrapError()}
                     fallback={
                       <DesktopConnectionSurface
                         host={activeHost()}
-                        state="pending"
-                        eyebrow="Native tmux workspace"
-                        title="Connecting to tmux-ide"
-                        description="Verifying the desktop host and daemon generation."
-                        guidance="No preview data is substituted"
+                        runtime="electron"
+                        windowState={effectiveWindow()}
+                        state="hard-error"
+                        eyebrow="Desktop host boundary"
+                        title="The desktop host could not be verified"
+                        description="tmux-ide rejected the host bootstrap response."
+                        guidance="Reopen tmux-ide after updating the desktop host"
+                        alert
+                        onRetry={loadBootstrap}
+                        retryLabel="Retry host check"
+                        diagnostics={[
+                          "The desktop bridge returned an invalid bootstrap response.",
+                          "No preview or partial workspace data was substituted.",
+                        ]}
                       />
                     }
                   >
-                    {(ready) => (
-                      <Show
-                        when={ready().daemon.status === "connected"}
-                        fallback={(() => {
-                          const daemon = ready().daemon;
-                          const recovery =
-                            daemon.status === "connected"
-                              ? null
-                              : recoveryForDaemonCapability(daemon, ready().platform);
-                          return (
-                            <DesktopConnectionSurface
-                              host={activeHost()}
-                              runtime={ready().runtime}
-                              platform={ready().platform}
-                              windowState={effectiveWindow()}
-                              state="degraded"
-                              eyebrow={recovery?.eyebrow ?? "Native tmux workspace"}
-                              title={recovery?.title ?? "The daemon is unavailable"}
-                              description={recovery?.description ?? daemonCapabilityReason(daemon)}
-                              guidance={
-                                recovery?.guidance ??
-                                "The workspace stays hidden until daemon health is verified"
-                              }
-                              command={recovery?.command ?? null}
-                              onRetry={refreshDaemonConnection}
-                              retryLabel="Recheck daemon"
-                              diagnostics={[
-                                daemonCapabilityReason(daemon),
-                                // Name the stuck startup rung, its typed reason,
-                                // and the engine child's own last words. The
-                                // ladder the host read from the engine travels
-                                // on `daemon` and is preferred over anything
-                                // re-derived here.
-                                ...startupReadinessDiagnostics(
-                                  projectDesktopStartupReadiness({
-                                    daemon,
-                                    observedAt: new Date().toISOString(),
-                                  }),
-                                ),
-                                `Recovery phase: ${daemonRecovery()}`,
-                                "No workspace resource or terminal attachment has been mounted.",
-                              ]}
-                            />
-                          );
-                        })()}
-                      >
-                        <DesktopLiveApplication
+                    <Show
+                      when={bootstrap()}
+                      fallback={
+                        <DesktopConnectionSurface
                           host={activeHost()}
-                          daemon={ready().daemon}
-                          runtime={ready().runtime}
-                          platform={ready().platform}
-                          windowState={effectiveWindow()}
-                          daemonRecovery={daemonRecovery()}
-                          terminalTransport={
-                            props.terminalTransport === undefined
-                              ? productionTerminalTransport()
-                              : props.terminalTransport
-                          }
-                          reducedMotion={experience().accessibility.reducedMotion}
-                          terminalThemeKey={terminalThemeKey()}
-                          onRetryDaemonConnection={refreshDaemonConnection}
-                          onDaemonIdentityMismatch={refreshDaemonConnection}
-                          onCommand={props.onCommand}
-                          onPaneAction={props.onPaneAction}
-                          onPaneGrip={props.onPaneGrip}
-                          introPending={introPending()}
-                          onAcknowledgeIntro={acknowledgeIntro}
+                          state="pending"
+                          eyebrow="Native tmux workspace"
+                          title="Connecting to tmux-ide"
+                          description="Verifying the desktop host and daemon generation."
+                          guidance="No preview data is substituted"
                         />
-                      </Show>
-                    )}
+                      }
+                    >
+                      {(ready) => (
+                        <Show
+                          when={ready().daemon.status === "connected"}
+                          fallback={(() => {
+                            const daemon = ready().daemon;
+                            const recovery =
+                              daemon.status === "connected"
+                                ? null
+                                : recoveryForDaemonCapability(daemon, ready().platform);
+                            return (
+                              <DesktopConnectionSurface
+                                host={activeHost()}
+                                runtime={ready().runtime}
+                                platform={ready().platform}
+                                windowState={effectiveWindow()}
+                                state="degraded"
+                                eyebrow={recovery?.eyebrow ?? "Native tmux workspace"}
+                                title={recovery?.title ?? "The daemon is unavailable"}
+                                description={
+                                  recovery?.description ?? daemonCapabilityReason(daemon)
+                                }
+                                guidance={
+                                  recovery?.guidance ??
+                                  "The workspace stays hidden until daemon health is verified"
+                                }
+                                command={recovery?.command ?? null}
+                                onRetry={refreshDaemonConnection}
+                                retryLabel="Recheck daemon"
+                                diagnostics={[
+                                  daemonCapabilityReason(daemon),
+                                  // Name the stuck startup rung, its typed reason,
+                                  // and the engine child's own last words. The
+                                  // ladder the host read from the engine travels
+                                  // on `daemon` and is preferred over anything
+                                  // re-derived here.
+                                  ...startupReadinessDiagnostics(
+                                    projectDesktopStartupReadiness({
+                                      daemon,
+                                      observedAt: new Date().toISOString(),
+                                    }),
+                                  ),
+                                  `Recovery phase: ${daemonRecovery()}`,
+                                  "No workspace resource or terminal attachment has been mounted.",
+                                ]}
+                              />
+                            );
+                          })()}
+                        >
+                          <DesktopLiveApplication
+                            host={activeHost()}
+                            daemon={ready().daemon}
+                            runtime={ready().runtime}
+                            platform={ready().platform}
+                            windowState={effectiveWindow()}
+                            daemonRecovery={daemonRecovery()}
+                            terminalTransport={
+                              props.terminalTransport === undefined
+                                ? productionTerminalTransport()
+                                : props.terminalTransport
+                            }
+                            reducedMotion={experience().accessibility.reducedMotion}
+                            terminalThemeKey={terminalThemeKey()}
+                            onRetryDaemonConnection={refreshDaemonConnection}
+                            onDaemonIdentityMismatch={refreshDaemonConnection}
+                            onCommand={props.onCommand}
+                            onPaneAction={props.onPaneAction}
+                            onPaneGrip={props.onPaneGrip}
+                            introPending={introPending()}
+                            onAcknowledgeIntro={acknowledgeIntro}
+                          />
+                        </Show>
+                      )}
+                    </Show>
                   </Show>
                 </Show>
-              </Show>
-            }
-          >
-            {(injectedInput) => (
-              <DomApplicationShell
-                host={activeHost()}
-                daemonState={bootstrap()?.daemon}
-                runtime={bootstrap()?.runtime}
-                platform={bootstrap()?.platform}
-                windowState={effectiveWindow()}
-                input={injectedInput()}
-                dataMode="runtime"
-                terminalTransport={props.terminalTransport}
-                reducedMotion={experience().accessibility.reducedMotion}
-                terminalThemeKey={terminalThemeKey()}
-                onCommand={props.onCommand}
-                paneFrames={props.paneFrames}
-                onPaneAction={props.onPaneAction}
-                onPaneGrip={props.onPaneGrip}
-              />
-            )}
-          </Show>
-        )}
-      </Show>
-    </div>
+              }
+            >
+              {(injectedInput) => (
+                <DomApplicationShell
+                  host={activeHost()}
+                  daemonState={bootstrap()?.daemon}
+                  runtime={bootstrap()?.runtime}
+                  platform={bootstrap()?.platform}
+                  windowState={effectiveWindow()}
+                  input={injectedInput()}
+                  dataMode="runtime"
+                  terminalTransport={props.terminalTransport}
+                  reducedMotion={experience().accessibility.reducedMotion}
+                  terminalThemeKey={terminalThemeKey()}
+                  onCommand={props.onCommand}
+                  paneFrames={props.paneFrames}
+                  onPaneAction={props.onPaneAction}
+                  onPaneGrip={props.onPaneGrip}
+                />
+              )}
+            </Show>
+          )}
+        </Show>
+        <Show when={performanceHudOpen()}>
+          <GuiPerformanceHud
+            telemetry={performanceTelemetry}
+            open
+            onClose={() => setPerformanceHudOpen(false)}
+          />
+        </Show>
+      </div>
+    </GuiPerformanceProvider>
   );
 }

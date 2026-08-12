@@ -1,7 +1,18 @@
 import type { CanonicalTerminalReplicaUpdate, SessionRuntimeGeneration } from "@tmux-ide/contracts";
 import type { MirrorLayoutEvent, MirrorPaneEvent } from "../mirror/events.ts";
 import type { MirrorService, MirrorSubscription } from "../mirror/mirror-service.ts";
-import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
+import {
+  TerminalReplicaInterpreter,
+  type TerminalReplicaInterpreterStats,
+} from "./terminal-replica-interpreter.ts";
+import {
+  SYSTEM_SESSION_RUNTIME_SCHEDULER,
+  type SessionRuntimeScheduler,
+} from "./runtime-scheduler.ts";
+import type {
+  SessionRuntimeObservability,
+  SessionRuntimeTraceContext,
+} from "./runtime-observability.ts";
 
 export interface TerminalReplicaSubscription {
   readonly generation: SessionRuntimeGeneration;
@@ -17,19 +28,35 @@ export interface TerminalReplicaCommittedRaw {
   readonly contiguous: boolean;
 }
 
+export interface TerminalReplicaQualificationSnapshot {
+  readonly incarnation: string | null;
+  readonly revision: number | null;
+  readonly stateHash: string | null;
+  readonly stats: TerminalReplicaInterpreterStats;
+}
+
 /** One parser/replica owner for one semantic pane inside one SessionRuntime. */
 export class SessionRuntimeTerminalReplicaOwner {
   readonly #interpreter: TerminalReplicaInterpreter;
-  readonly #listeners = new Set<(update: CanonicalTerminalReplicaUpdate) => void>();
+  readonly #listeners = new Set<
+    (update: CanonicalTerminalReplicaUpdate, trace: SessionRuntimeTraceContext | null) => void
+  >();
   readonly #rawListeners = new Set<(record: TerminalReplicaCommittedRaw) => void>();
   readonly #onClosed: (() => void) | undefined;
   readonly #onFault: ((error: unknown) => void) | undefined;
+  readonly #scheduler: SessionRuntimeScheduler;
+  #takeOutputTrace: (() => SessionRuntimeTraceContext | null) | undefined;
   readonly #start: Promise<void>;
   #upstream: MirrorSubscription | null = null;
   #disposed = false;
   #cols = 80;
   #rows = 24;
-  #reseed: { cols: number; rows: number; chunks: Uint8Array[] } | null = null;
+  #reseed: {
+    cols: number;
+    rows: number;
+    chunks: Uint8Array[];
+    trace: SessionRuntimeTraceContext | null;
+  } | null = null;
   #bootstrapped = false;
 
   constructor(
@@ -43,10 +70,15 @@ export class SessionRuntimeTerminalReplicaOwner {
       readonly onRevision?: (revision: number) => void;
       readonly onClosed?: () => void;
       readonly onFault?: (error: unknown) => void;
+      readonly scheduler?: SessionRuntimeScheduler;
+      readonly observability?: SessionRuntimeObservability;
+      readonly takeOutputTrace?: () => SessionRuntimeTraceContext | null;
     },
   ) {
     this.#onClosed = options.onClosed;
     this.#onFault = options.onFault;
+    this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
+    this.#takeOutputTrace = options.takeOutputTrace;
     this.#interpreter = new TerminalReplicaInterpreter({
       generation,
       workspaceName: session,
@@ -55,12 +87,14 @@ export class SessionRuntimeTerminalReplicaOwner {
       initialRevision: options.initialRevision,
       cols: this.#cols,
       rows: this.#rows,
-      onUpdate: (update) => {
+      scheduler: options.scheduler,
+      observability: options.observability,
+      onUpdate: (update, trace) => {
         if (update.type === "terminal.seed") this.#bootstrapped = true;
         options.onRevision?.(update.revision);
         for (const listener of this.#listeners) {
           try {
-            listener(update);
+            listener(update, trace);
           } catch {
             // A client projection cannot block sibling subscribers.
           }
@@ -69,7 +103,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       onRawCommit: (record) => {
         // Schedule observers outside the parser stack. Registration happens
         // before the matching canonical callback schedules delivery.
-        queueMicrotask(() => {
+        this.#scheduler.microtask(() => {
           const size = record.chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
           const bytes = new Uint8Array(size);
           let offset = 0;
@@ -105,8 +139,25 @@ export class SessionRuntimeTerminalReplicaOwner {
       });
   }
 
+  installOutputTraceReader(reader: () => SessionRuntimeTraceContext | null): void {
+    this.#takeOutputTrace ??= reader;
+  }
+
+  qualificationSnapshot(): TerminalReplicaQualificationSnapshot {
+    const seed = this.#interpreter.currentSeed();
+    return Object.freeze({
+      incarnation: seed?.incarnation ?? null,
+      revision: seed?.revision ?? null,
+      stateHash: seed?.stateHash ?? null,
+      stats: this.#interpreter.stats(),
+    });
+  }
+
   async subscribe(
-    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      trace: SessionRuntimeTraceContext | null,
+    ) => void,
   ): Promise<TerminalReplicaSubscription> {
     if (this.#disposed) throw new Error("Terminal replica owner is disposed");
     try {
@@ -116,7 +167,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       const seed = this.#interpreter.currentSeed();
       if (!seed) throw new Error("Terminal replica bootstrap did not produce a seed");
       try {
-        listener(seed);
+        listener(seed, null);
       } catch {
         // Bootstrap delivery has the same client-isolation rule as live frames.
       }
@@ -137,7 +188,10 @@ export class SessionRuntimeTerminalReplicaOwner {
   }
 
   async subscribeSource(
-    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      trace: SessionRuntimeTraceContext | null,
+    ) => void,
     onRaw: (record: TerminalReplicaCommittedRaw) => void,
   ): Promise<TerminalReplicaSourceSubscription> {
     const canonical = await this.subscribe(listener);
@@ -171,10 +225,25 @@ export class SessionRuntimeTerminalReplicaOwner {
     if (event.type === "reset") {
       this.#cols = event.cols;
       this.#rows = event.rows;
-      this.#reseed = { cols: event.cols, rows: event.rows, chunks: [] };
+      // Deterministic capture point: reset opens the atomic capture. A probe
+      // armed after reset belongs to the next post-capture delta, never to this
+      // already-started reseed.
+      this.#reseed = {
+        cols: event.cols,
+        rows: event.rows,
+        chunks: [],
+        trace: this.#takeOutputTrace?.() ?? null,
+      };
     } else if (event.type === "seed" || event.type === "delta") {
       if (this.#reseed) this.#reseed.chunks.push(event.data.slice());
-      else this.#supervise(this.#interpreter.enqueue({ type: "write", data: event.data }));
+      else
+        this.#supervise(
+          this.#interpreter.enqueue({
+            type: "write",
+            data: event.data,
+            trace: this.#takeOutputTrace?.() ?? null,
+          }),
+        );
     } else if (event.type === "cursor") {
       const reseed = this.#reseed;
       this.#reseed = null;

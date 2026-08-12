@@ -1,6 +1,7 @@
 import { OptionalFeatureRegistry } from "./optional-feature-registry.ts";
 
 export interface ApplicationOptionalFeatures {
+  readonly home: typeof import("../features/home/feature.tsx");
   readonly files: typeof import("../features/files/feature.tsx");
   readonly changes: typeof import("../features/changes/feature.tsx");
   readonly missionsActivity: typeof import("../features/missions-activity/feature.tsx");
@@ -8,11 +9,13 @@ export interface ApplicationOptionalFeatures {
   readonly settings: typeof import("../features/settings/feature.ts");
   readonly palette: typeof import("../features/palette/feature.ts");
   readonly richPreview: typeof import("../features/rich-preview/feature.tsx");
+  readonly performanceHud: typeof import("../features/performance-hud/feature.tsx");
 }
 
 /** Literal imports keep every optional module discoverable by Bun's compiler. */
 export function createApplicationOptionalFeatureRegistry(): OptionalFeatureRegistry<ApplicationOptionalFeatures> {
   return new OptionalFeatureRegistry<ApplicationOptionalFeatures>({
+    home: () => import("../features/home/feature.tsx"),
     files: () => import("../features/files/feature.tsx"),
     changes: () => import("../features/changes/feature.tsx"),
     missionsActivity: () => import("../features/missions-activity/feature.tsx"),
@@ -20,5 +23,6 @@ export function createApplicationOptionalFeatureRegistry(): OptionalFeatureRegis
     settings: () => import("../features/settings/feature.ts"),
     palette: () => import("../features/palette/feature.ts"),
     richPreview: () => import("../features/rich-preview/feature.tsx"),
+    performanceHud: () => import("../features/performance-hud/feature.tsx"),
   });
 }

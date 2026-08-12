@@ -10,6 +10,7 @@ describe("application optional feature loaders", () => {
       "utf8",
     );
     for (const specifier of [
+      "../features/home/feature.tsx",
       "../features/files/feature.tsx",
       "../features/changes/feature.tsx",
       "../features/missions-activity/feature.tsx",
@@ -17,6 +18,7 @@ describe("application optional feature loaders", () => {
       "../features/settings/feature.ts",
       "../features/palette/feature.ts",
       "../features/rich-preview/feature.tsx",
+      "../features/performance-hud/feature.tsx",
     ]) {
       expect(source).toContain(`() => import("${specifier}")`);
     }
@@ -91,10 +93,12 @@ describe("application optional feature loaders", () => {
   });
 
   it.each([
+    ["home", "runOpenFolderFlow"],
     ["dialogs", "createDialogFeatureSession"],
     ["settings", "createSettingsFeatureSession"],
     ["palette", "createPaletteFeatureSession"],
     ["richPreview", "createRichPreviewFeatureSession"],
+    ["performanceHud", "createPerformanceHudSession"],
   ] as const)(
     "retains and publishes the real %s feature after admission",
     async (key, exportName) => {

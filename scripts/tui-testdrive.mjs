@@ -10,7 +10,15 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -291,6 +299,30 @@ async function start(args) {
 
   await ensureStopped();
   mkdirSync(stateHome, { recursive: true });
+  // canonical-daemon.ts deliberately rejects a daemon record whose parent is
+  // accessible by group/others. The test-drive home is normally disposable,
+  // so mkdir's umask-derived mode can otherwise make a correctly copied record
+  // look absent and leave the TUI in its reconnecting state forever.
+  chmodSync(stateHome, 0o700);
+  if (process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1") {
+    const canonicalHome = join(process.env.HOME ?? "", ".tmux-ide");
+    const daemonInfoPath = join(canonicalHome, "daemon.json");
+    if (!existsSync(daemonInfoPath)) fail(`Canonical daemon info missing at ${daemonInfoPath}`);
+    const copiedDaemonInfoPath = join(stateHome, "daemon.json");
+    copyFileSync(daemonInfoPath, copiedDaemonInfoPath);
+    chmodSync(copiedDaemonInfoPath, 0o600);
+
+    // Keep the copied daemon generation and its durable environment identity
+    // coherent. Current OpenTUI routing only needs daemon.json, but carrying
+    // the authority bundle prevents future environment-aware clients from
+    // silently minting a second identity inside the isolated test home.
+    const environmentInfoPath = join(canonicalHome, "environment.json");
+    if (existsSync(environmentInfoPath)) {
+      const copiedEnvironmentInfoPath = join(stateHome, "environment.json");
+      copyFileSync(environmentInfoPath, copiedEnvironmentInfoPath);
+      chmodSync(copiedEnvironmentInfoPath, 0o600);
+    }
+  }
   rmSync(logPath, { force: true });
   rmSync(perfLogPath, { force: true });
 
@@ -305,6 +337,16 @@ async function start(args) {
     `TMUX_IDE_CLI=${shQuote(join(repoRoot, "bin", "cli.js"))}`,
     `TMUX_IDE_TUI_PERF_LOG=${shQuote(perfLogPath)}`,
     `TMUX_IDE_TUI_LAUNCH_EPOCH_MS=${launchEpochMs}`,
+    ...(process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG
+      ? [
+          `TMUX_IDE_PERFORMANCE_TRACE_LOG=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG)}`,
+          `TMUX_IDE_PERFORMANCE_TRACE_COMMIT=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_COMMIT ?? "")}`,
+          `TMUX_IDE_PERFORMANCE_TRACE_TREE=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_TREE ?? "")}`,
+        ]
+      : []),
+    ...(process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
+      ? ["TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON=1"]
+      : []),
     ...(process.env.TMUX_IDE_ZZ_LOG
       ? [`TMUX_IDE_ZZ_LOG=${shQuote(process.env.TMUX_IDE_ZZ_LOG)}`]
       : []),

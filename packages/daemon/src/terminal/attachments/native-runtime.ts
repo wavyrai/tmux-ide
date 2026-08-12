@@ -815,6 +815,10 @@ export class NativeTerminalAttachmentRuntime {
   readonly #registry: WorkspaceRegistry;
   readonly #discoverTerminalInventory: () => Promise<NativeTerminalInventorySnapshot>;
   readonly #agentStatusProbe: AgentStatusProbe | null;
+  readonly #prewarmSessionRuntime: ((sessionName: string) => void) | null;
+  readonly #observeWorkspaceSession: ((workspaceName: string, sessionName: string) => void) | null;
+  readonly #stopWorkspaceAddedObserver: (() => void) | null;
+  readonly #stopWorkspaceRemovedObserver: (() => void) | null;
   #lifecycle: "initializing" | "ready" | "failed" | "disposing" | "disposed" = "initializing";
   #disposePromise: Promise<void> | null = null;
 
@@ -951,6 +955,46 @@ export class NativeTerminalAttachmentRuntime {
             },
           })
         : null);
+    if (options.sessionRuntimeRegistry) {
+      const sessionRuntimeRegistry = options.sessionRuntimeRegistry;
+      const sessionsByWorkspace = new Map(
+        options.registry.list().map((workspace) => [workspace.name, workspace.sessionName]),
+      );
+      this.#prewarmSessionRuntime = (sessionName) => {
+        // Inventory must remain responsive even if tmux control-mode startup
+        // fails. Admission will retry through the same runtime on demand.
+        void sessionRuntimeRegistry.prewarmSession(sessionName).catch(() => undefined);
+      };
+      this.#observeWorkspaceSession = (workspaceName, sessionName) => {
+        const previousSessionName = sessionsByWorkspace.get(workspaceName);
+        sessionsByWorkspace.set(workspaceName, sessionName);
+        if (
+          previousSessionName &&
+          previousSessionName !== sessionName &&
+          ![...sessionsByWorkspace.values()].some((candidate) => candidate === previousSessionName)
+        ) {
+          void sessionRuntimeRegistry.retireSession(previousSessionName).catch(() => undefined);
+        }
+      };
+      this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
+        this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
+      });
+      this.#stopWorkspaceRemovedObserver = options.registry.on("workspace.removed", (name) => {
+        const sessionName = sessionsByWorkspace.get(name);
+        sessionsByWorkspace.delete(name);
+        if (
+          sessionName &&
+          ![...sessionsByWorkspace.values()].some((candidate) => candidate === sessionName)
+        ) {
+          void sessionRuntimeRegistry.retireSession(sessionName).catch(() => undefined);
+        }
+      });
+    } else {
+      this.#prewarmSessionRuntime = null;
+      this.#observeWorkspaceSession = null;
+      this.#stopWorkspaceAddedObserver = null;
+      this.#stopWorkspaceRemovedObserver = null;
+    }
   }
 
   /**
@@ -969,12 +1013,59 @@ export class NativeTerminalAttachmentRuntime {
       throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
     }
     const workspace = memberships[0]!;
+    // Reconcile a stable workspace name that now resolves to a replacement
+    // tmux session only after authoritative discovery is requested. This keeps
+    // an in-flight rename mutation alive through its own completion while
+    // ensuring the old prewarm cannot survive the next shell generation.
+    this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
     const inventory = await this.#discoverTerminalInventory();
     const panes = inventory.panes.filter(
       (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName,
     );
     if (panes.length === 0) return null;
     const active = panes.find((pane) => pane.active) ?? panes[0]!;
+    const sessionCatalog = analyzeTrustedSemanticPaneCatalog(
+      panes.map(
+        ({
+          sessionName: _sessionName,
+          index: _index,
+          title: _title,
+          currentCommand: _currentCommand,
+          active: _active,
+          role: _role,
+          name: _name,
+          type: _type,
+          missionStamp: _missionStamp,
+          dir: _dir,
+          ...row
+        }) => row,
+      ),
+    );
+    const windowStamps = new Map<string, string>();
+    let windowIdentityReady = true;
+    for (const pane of sessionCatalog.rows) {
+      const stamp = pane.windowStamp ?? null;
+      const previous = windowStamps.get(pane.windowId);
+      if (stamp === null || (previous !== undefined && previous !== stamp)) {
+        windowIdentityReady = false;
+        break;
+      }
+      windowStamps.set(pane.windowId, stamp);
+    }
+    if (new Set(windowStamps.values()).size !== windowStamps.size) windowIdentityReady = false;
+    if (
+      !sessionCatalog.invalidRuntimeProof &&
+      !sessionCatalog.missingSemanticStamp &&
+      !sessionCatalog.duplicateSemanticStamp &&
+      !sessionCatalog.duplicateRuntimePaneBinding &&
+      windowIdentityReady
+    ) {
+      // Only a fully stamped daemon-authored inventory may start MirrorService.
+      // Promotion owns first identity assignment; warming earlier would let the
+      // mirror race it and mint `window.mirror.*` instead of promoted identity.
+      // This remains detached so application-shell response latency is unchanged.
+      this.#prewarmSessionRuntime?.(workspace.sessionName);
+    }
     const catalogIssue: NativeTerminalInventoryCatalogIssue | null = inventory.catalog
       .invalidRuntimeProof
       ? "invalid-runtime-proof"
@@ -1069,6 +1160,8 @@ export class NativeTerminalAttachmentRuntime {
 
   async #finishDispose(): Promise<void> {
     try {
+      this.#stopWorkspaceAddedObserver?.();
+      this.#stopWorkspaceRemovedObserver?.();
       const admissionBarrier = this.admission.shutdown();
       // Cancel an attach readiness wait immediately; the coordinator barrier
       // then retires the associated lease/view before this method resolves.

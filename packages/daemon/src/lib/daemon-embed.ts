@@ -22,7 +22,14 @@ import {
   type DaemonInstanceIdentity,
   type SessionRuntimeSemanticIntent,
 } from "@tmux-ide/contracts";
-import { computeAgentStates, computePortPanes } from "./session-monitor.ts";
+import {
+  classifySessionInspectionError,
+  DaemonSessionMonitor,
+  execTmuxAsync,
+  isConfirmedMissingTmuxTarget,
+  parseDaemonMonitorPanes,
+  readPortProcessFactsAsync,
+} from "./daemon-session-monitor.ts";
 import { DaemonShutdownError, DaemonStartupError } from "./errors.ts";
 import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
 import {
@@ -85,7 +92,6 @@ import {
 const requireFromHere = createRequire(import.meta.url);
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const DEFAULT_GRACEFUL_MS = 2000;
-const MONITOR_INTERVAL_MS = 1000;
 const EMBEDDED_SESSION_NAME = "__embedded__";
 const TAKEOVER_TIMEOUT_MS = 10_000;
 const TAKEOVER_POLL_MS = 50;
@@ -146,16 +152,6 @@ export interface EmbeddedDaemonHandle {
     options?: ProjectActivationOptions,
   ): Promise<{ stop: () => Promise<void> }>;
   stop(opts?: { gracefulMs?: number }): Promise<void>;
-}
-
-interface MonitorPane {
-  id: string;
-  pid: string;
-  cmd?: string;
-  title?: string;
-  role?: string;
-  type?: string;
-  name?: string;
 }
 
 function tmux(...args: string[]): string {
@@ -264,59 +260,6 @@ async function pickFreePort(hostname: string): Promise<number> {
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
-  });
-}
-
-function sessionExists(sessionName: string): "yes" | "no" | "unknown" {
-  try {
-    tmux("has-session", "-t", sessionName);
-    return "yes";
-  } catch (err) {
-    const msg = (err as NodeJS.ErrnoException).message ?? "";
-    const code = (err as NodeJS.ErrnoException).code;
-    // Spawn-level failures (EBADF, EAGAIN, etc.) are transient OS issues,
-    // not "session is gone" signals. Same for non-zero exits without stderr
-    // — `has-session` returns 1 only when the session is genuinely missing,
-    // and tmux always writes to stderr in that case.
-    if (
-      code === "EBADF" ||
-      code === "EAGAIN" ||
-      code === "EMFILE" ||
-      code === "ENFILE" ||
-      msg.includes("EBADF") ||
-      msg.includes("EAGAIN")
-    ) {
-      console.error("[daemon] sessionExists transient spawn error:", msg);
-      return "unknown";
-    }
-    return "no";
-  }
-}
-
-function hasClients(): boolean {
-  return tmuxSilent("list-clients").length > 0;
-}
-
-function listPanes(sessionName: string): MonitorPane[] {
-  const raw = tmuxSilent(
-    "list-panes",
-    "-t",
-    sessionName,
-    "-F",
-    "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}\t#{@ide_role}\t#{@ide_type}\t#{@ide_name}",
-  );
-  if (!raw) return [];
-  return raw.split("\n").map((line) => {
-    const [id, pid, cmd, title, role, type, name] = line.split("\t");
-    return {
-      id: id!,
-      pid: pid!,
-      cmd,
-      title,
-      role: role || undefined,
-      type: type || undefined,
-      name: name || undefined,
-    };
   });
 }
 
@@ -835,6 +778,12 @@ async function startHttpServer({
   server.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
+    // `upgrade` hands the raw TCP socket to our route boundaries. A route can
+    // deliberately decline an unrelated path, leaving no protocol-specific
+    // owner to observe a later peer reset. Keep error ownership at this common
+    // accepted-socket boundary so ECONNRESET is connection-local and can never
+    // terminate the canonical daemon during client/session teardown.
+    socket.on("error", () => sockets.delete(socket));
   });
 
   const { closeClients, closeServers: closeWsServers } = attachWebSockets(server, {
@@ -993,6 +942,7 @@ export async function startEmbeddedDaemon(
     await workspaceRegistry.load();
     const paneSourceCredentials = new PaneSourceCredentialAuthority({
       run: (args) => tmuxSilent(...args),
+      runAsync: (args, signal) => execTmuxAsync(args, signal),
     });
     const legacySession = process.env.TMUX_IDE_SESSION;
     if (legacySession && !workspaceRegistry.has(legacySession)) {
@@ -1288,7 +1238,6 @@ export async function startEmbeddedDaemon(
       throw error;
     }
 
-    let lastState = "";
     let stopped = false;
     let stopping: Promise<void> | null = null;
     let stopSelf: (() => void) | null = null;
@@ -1326,60 +1275,87 @@ export async function startEmbeddedDaemon(
       },
     });
 
-    const tick = (): void => {
-      if (sessionless) return;
-      const session = sessionExists(sessionName);
-      if (session === "no") {
-        stopSelf?.();
-        return;
-      }
-      if (session === "unknown") {
-        // Transient spawn failure — skip this tick rather than self-destruct.
-        return;
-      }
-      // Credential issuance is daemon lifecycle work, not UI-client work. New
-      // panes must become attributable even while every GUI/TUI is detached.
-      for (const workspace of workspaceRegistry.list()) {
-        try {
-          paneSourceCredentials.reconcileSession(workspace.sessionName);
-        } catch {
-          // External sessions may disappear between registry and tmux reads.
-        }
-      }
-      if (!hasClients()) return;
-
-      const panes = listPanes(sessionName);
-      if (panes.length === 0) return;
-
-      const portPanes = computePortPanes(panes);
-      const agentStates = computeAgentStates(panes);
-      const stateKey = panes
-        .map((pane) => {
-          const portState = portPanes.has(pane.id) ? "1" : "0";
-          const agent = agentStates.get(pane.id) ?? "-";
-          const titleDrift = pane.name && pane.title !== pane.name ? "d" : "ok";
-          return `${pane.id}:${portState}:${agent}:${titleDrift}`;
-        })
-        .join("|");
-
-      if (stateKey === lastState) return;
-
-      for (const pane of panes) {
-        const hasPort = portPanes.has(pane.id) ? "1" : "0";
-        const agent = agentStates.get(pane.id);
-        tmuxSilent("set-option", "-pqt", pane.id, "@has_port", hasPort);
-        tmuxSilent("set-option", "-pqt", pane.id, "@agent_busy", agent === "busy" ? "1" : "0");
-        tmuxSilent("set-option", "-pqt", pane.id, "@agent_idle", agent === "idle" ? "1" : "0");
-        if (pane.name && pane.title !== pane.name) {
-          tmuxSilent("select-pane", "-t", pane.id, "-T", pane.name);
-        }
-      }
-
-      tmuxSilent("refresh-client", "-S");
-      lastState = stateKey;
-    };
-
-    const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
+    const sessionMonitor = sessionless
+      ? null
+      : new DaemonSessionMonitor({
+          sessionName,
+          backend: {
+            inspectSession: async (candidate, signal) => {
+              try {
+                await execTmuxAsync(["has-session", "-t", candidate], signal);
+                return "yes";
+              } catch (error) {
+                if (signal.aborted) return "unknown";
+                return classifySessionInspectionError(error);
+              }
+            },
+            listCredentialSessions: () =>
+              workspaceRegistry.list().map((workspace) => workspace.sessionName),
+            reconcileCredentials: async (workspaceSession, signal) => {
+              try {
+                await paneSourceCredentials.reconcileSessionAsync(workspaceSession, signal);
+              } catch (error) {
+                // Registry/session races are idempotent; transport/resource
+                // failures must escape so this state is retried next cycle.
+                if (!isConfirmedMissingTmuxTarget(error)) throw error;
+              }
+            },
+            hasClients: async (signal) => {
+              try {
+                return (await execTmuxAsync(["list-clients"], signal)).length > 0;
+              } catch {
+                return null;
+              }
+            },
+            listPanes: async (candidate, signal) => {
+              try {
+                const raw = await execTmuxAsync(
+                  [
+                    "list-panes",
+                    "-t",
+                    candidate,
+                    "-F",
+                    "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}\t#{@ide_role}\t#{@ide_type}\t#{@ide_name}",
+                  ],
+                  signal,
+                );
+                return parseDaemonMonitorPanes(raw);
+              } catch {
+                return null;
+              }
+            },
+            readPortProcessFacts: async (signal) => {
+              try {
+                return await readPortProcessFactsAsync(signal);
+              } catch {
+                return null;
+              }
+            },
+            setPaneOption: async (paneId, option, value, signal) => {
+              try {
+                await execTmuxAsync(["set-option", "-pt", paneId, option, value], signal);
+              } catch (error) {
+                if (!isConfirmedMissingTmuxTarget(error)) throw error;
+              }
+            },
+            setPaneTitle: async (paneId, title, signal) => {
+              try {
+                await execTmuxAsync(["select-pane", "-t", paneId, "-T", title], signal);
+              } catch (error) {
+                if (!isConfirmedMissingTmuxTarget(error)) throw error;
+              }
+            },
+            refreshClients: async (signal) => {
+              try {
+                await execTmuxAsync(["refresh-client", "-S"], signal);
+              } catch (error) {
+                if (!isConfirmedMissingTmuxTarget(error)) throw error;
+              }
+            },
+            onSessionGone: () => stopSelf?.(),
+          },
+        });
+    sessionMonitor?.start();
 
     const apiBaseUrl = canonicalDaemonUrl("http", bindHostname, port);
     const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
@@ -1406,7 +1382,7 @@ export async function startEmbeddedDaemon(
           try {
             stopped = true;
             await capture(() => setActivationBackend(null));
-            clearInterval(monitorInterval);
+            await capture(() => sessionMonitor?.stop());
             paneSourceCredentials.dispose();
 
             // Retire direct-ticket admission, live PTYs, and the direct upgrade
@@ -1517,7 +1493,7 @@ export async function startEmbeddedDaemon(
       return { port };
     });
     stopSelf = () => void handle.stop();
-    tick();
+    void sessionMonitor?.runOnce();
 
     return handle;
   } catch (error) {

@@ -66,6 +66,7 @@ describe("input lifecycle boundary", () => {
     ["f8 is the reliable focus-cycle key", context(), key({ name: "f8" }), "global"],
     ["f5 is global palette", context(), key({ name: "f5" }), "global"],
     ["ctrl-p is global palette", context(), key({ name: "p", ctrl: true }), "global"],
+    ["f12 is global diagnostics", context({ dialogOpen: true }), key({ name: "f12" }), "global"],
     ["configured hosted shortcut is global", context(), key({ name: "f2" }), "global"],
     [
       "ctrl-g is global home",
@@ -155,6 +156,10 @@ describe("input lifecycle boundary", () => {
   });
 
   it("resolves concrete global commands", () => {
+    expect(resolveInputLayer(context(), key({ name: "f12" }), { hosted: false })).toEqual({
+      kind: "global",
+      command: { kind: "toggle-performance-hud" },
+    });
     expect(
       resolveInputLayer(context(), key({ name: "tab", ctrl: true }), { hosted: false }),
     ).toEqual({

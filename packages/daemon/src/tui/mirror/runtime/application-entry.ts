@@ -6,6 +6,11 @@
  * startup.
  */
 export async function startApplicationEntry(): Promise<void> {
+  if (process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG) {
+    const { installReferencePerformanceTraceCollectorFromEnvironment } =
+      await import("../reference-performance-trace.ts");
+    installReferencePerformanceTraceCollectorFromEnvironment();
+  }
   const { startApplicationRoot } = await import("./application-root.tsx");
   await startApplicationRoot();
 }

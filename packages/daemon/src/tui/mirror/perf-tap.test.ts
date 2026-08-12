@@ -1,58 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InputTap, percentile, summarize } from "./perf-tap.ts";
-
-describe("InputTap", () => {
-  it("emits a sample only after echo, on the next tick", () => {
-    const tap = new InputTap();
-    tap.sent("%1", 100);
-    // A tick before the echo lands emits nothing and keeps the pane in flight.
-    expect(tap.tick(105)).toEqual([]);
-    expect(tap.size()).toBe(1);
-    tap.output("%1", 110); // t1
-    const out = tap.tick(120); // t2
-    expect(out).toEqual([{ paneId: "%1", echoMs: 10, paintMs: 20 }]);
-    expect(tap.size()).toBe(0);
-  });
-
-  it("records only the FIRST output after a sent", () => {
-    const tap = new InputTap();
-    tap.sent("%1", 0);
-    tap.output("%1", 5); // first echo → t1
-    tap.output("%1", 9); // later bytes ignored
-    expect(tap.tick(12)).toEqual([{ paneId: "%1", echoMs: 5, paintMs: 12 }]);
-  });
-
-  it("ignores output with no keystroke in flight", () => {
-    const tap = new InputTap();
-    tap.output("%1", 5); // flood byte, no sent
-    expect(tap.tick(10)).toEqual([]);
-  });
-
-  it("tracks panes independently", () => {
-    const tap = new InputTap();
-    tap.sent("%1", 0);
-    tap.sent("%2", 0);
-    tap.output("%1", 3);
-    const out = tap.tick(10);
-    expect(out).toEqual([{ paneId: "%1", echoMs: 3, paintMs: 10 }]);
-    // %2 never echoed — still in flight.
-    expect(tap.size()).toBe(1);
-  });
-
-  it("a later sent for the same pane overwrites an unfinished one", () => {
-    const tap = new InputTap();
-    tap.sent("%1", 0);
-    tap.sent("%1", 100); // superseded (no echo arrived for the first)
-    tap.output("%1", 105);
-    expect(tap.tick(110)).toEqual([{ paneId: "%1", echoMs: 5, paintMs: 10 }]);
-  });
-
-  it("ignores an empty pane id", () => {
-    const tap = new InputTap();
-    tap.sent("", 0);
-    expect(tap.size()).toBe(0);
-  });
-});
+import { percentile, summarize } from "./perf-tap.ts";
 
 describe("percentile", () => {
   it("returns 0 for an empty array", () => {

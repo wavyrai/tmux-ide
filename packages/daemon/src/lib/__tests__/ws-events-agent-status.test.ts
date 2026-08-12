@@ -3,13 +3,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DaemonEventServerFrameSchemaZ, type DaemonEventServerFrame } from "@tmux-ide/contracts";
 import {
   _detachProjectRegistryListenerForTests,
-  _stopAgentStatusWatcherForTests,
-  _stopSessionsPollerForTests,
-  _tickAgentStatusWatcherForTests,
+  _pollFleetFactsObserverForTests,
+  _setFleetFactsReadersForTests,
+  _stopFleetFactsObserverForTests,
   handleWsEventsConnection,
 } from "../../command-center/ws-events.ts";
 import { _setTmuxRunner } from "../../command-center/discovery.ts";
 import { agentIdForPaneStamp } from "../../command-center/resources/application-shell.ts";
+import { parseAgentStateFacts } from "../../command-center/daemon-fleet-facts-observer.ts";
 
 // Hermetic like ws-events-protocol.test.ts: the connection eagerly discovers
 // sessions and starts pollers that would otherwise spawn `tmux` against the
@@ -18,10 +19,15 @@ import { agentIdForPaneStamp } from "../../command-center/resources/application-
 // for everything else (empty session discovery), so no real tmux server is
 // ever touched.
 function pinAgentStates(rows: () => string): () => void {
-  return _setTmuxRunner((args) => {
-    if (args[0] === "list-panes" && args[1] === "-a") return rows();
-    return "";
+  const restore = _setTmuxRunner(() => "");
+  _setFleetFactsReadersForTests({
+    readSessions: async () => ({ sessions: [], adopted: [] }),
+    readAgents: async () => parseAgentStateFacts(rows()),
   });
+  return () => {
+    _setFleetFactsReadersForTests(null);
+    restore();
+  };
 }
 
 const daemonIdentity = {
@@ -60,26 +66,26 @@ function subscribeLegacy(socket: ProtocolWebSocket): void {
 let restoreTmuxRunner: (() => void) | null = null;
 
 afterEach(() => {
-  _stopAgentStatusWatcherForTests();
-  _stopSessionsPollerForTests();
+  _stopFleetFactsObserverForTests();
   _detachProjectRegistryListenerForTests();
   restoreTmuxRunner?.();
   restoreTmuxRunner = null;
 });
 
 describe("/ws/events agent-status invalidation", () => {
-  it("emits exactly one agent-status.changed frame when a pane state transitions", () => {
+  it("emits exactly one agent-status.changed frame when a pane state transitions", async () => {
     let agentRows = "zz-fleet\t%1\t\tworking:1000";
     restoreTmuxRunner = pinAgentStates(() => agentRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity); // primes the baseline (working)
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     // A genuine transition: working -> blocked on the same pane.
     agentRows = "zz-fleet\t%1\t\tblocked:1001";
-    _tickAgentStatusWatcherForTests();
+    await _pollFleetFactsObserverForTests();
 
     const agentFrames = frames(socket).filter((frame) => frame.type === "agent-status.changed");
     expect(agentFrames).toEqual([{ type: "agent-status.changed", sessionName: "zz-fleet" }]);
@@ -87,17 +93,18 @@ describe("/ws/events agent-status invalidation", () => {
     socket.disconnect();
   });
 
-  it("does not emit for an epoch-only re-stamp of the same state word", () => {
+  it("does not emit for an epoch-only re-stamp of the same state word", async () => {
     let agentRows = "zz-fleet\t%1\t\tworking:1000";
     restoreTmuxRunner = pinAgentStates(() => agentRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     agentRows = "zz-fleet\t%1\t\tworking:2000"; // same word, new epoch
-    _tickAgentStatusWatcherForTests();
+    await _pollFleetFactsObserverForTests();
 
     expect(frames(socket).filter((frame) => frame.type === "agent-status.changed")).toEqual([]);
     expect(frames(socket).filter((frame) => frame.type === "agent.turn-completed")).toEqual([]);
@@ -105,17 +112,18 @@ describe("/ws/events agent-status invalidation", () => {
     socket.disconnect();
   });
 
-  it("coalesces multiple panes flipping in one tick into a single frame per session", () => {
+  it("coalesces multiple panes flipping in one tick into a single frame per session", async () => {
     let agentRows = ["zz-fleet\t%1\t\tidle:1", "zz-fleet\t%2\t\tidle:1"].join("\n");
     restoreTmuxRunner = pinAgentStates(() => agentRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     agentRows = ["zz-fleet\t%1\t\tworking:2", "zz-fleet\t%2\t\tblocked:2"].join("\n");
-    _tickAgentStatusWatcherForTests();
+    await _pollFleetFactsObserverForTests();
 
     expect(frames(socket).filter((frame) => frame.type === "agent-status.changed")).toEqual([
       { type: "agent-status.changed", sessionName: "zz-fleet" },
@@ -124,23 +132,24 @@ describe("/ws/events agent-status invalidation", () => {
     socket.disconnect();
   });
 
-  it("stops the watcher after the last client disconnects", () => {
+  it("stops the watcher after the last client disconnects", async () => {
     restoreTmuxRunner = pinAgentStates(() => "zz-fleet\t%1\t\tworking:1");
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.disconnect();
 
     // With no clients, a poll cycle must be inert — no watcher, no frames.
     socket.sent.length = 0;
-    _tickAgentStatusWatcherForTests();
+    await _pollFleetFactsObserverForTests();
     expect(socket.sent).toEqual([]);
   });
 });
 
 describe("/ws/events agent.turn-completed receipts", () => {
-  it("emits a typed receipt with the minted durable agent id on working -> done", () => {
+  it("emits a typed receipt with the minted durable agent id on working -> done", async () => {
     const stamp = "pane.promoted.aaaaaaaaaaaaaaaaaaaa";
     let agentRows = `zz-fleet\t%1\t${stamp}\tworking:1000`;
     restoreTmuxRunner = pinAgentStates(() => agentRows);
@@ -148,10 +157,11 @@ describe("/ws/events agent.turn-completed receipts", () => {
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     agentRows = `zz-fleet\t%1\t${stamp}\tdone:1001`;
-    _tickAgentStatusWatcherForTests();
+    await _pollFleetFactsObserverForTests();
 
     const receipts = frames(socket).filter((frame) => frame.type === "agent.turn-completed");
     expect(receipts).toHaveLength(1);
@@ -171,17 +181,18 @@ describe("/ws/events agent.turn-completed receipts", () => {
     socket.disconnect();
   });
 
-  it("emits a receipt with a null agent id for an unstamped pane on working -> idle", () => {
+  it("emits a receipt with a null agent id for an unstamped pane on working -> idle", async () => {
     let agentRows = "zz-fleet\t%1\t\tworking:1000";
     restoreTmuxRunner = pinAgentStates(() => agentRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     agentRows = "zz-fleet\t%1\t\tidle:1001";
-    _tickAgentStatusWatcherForTests();
+    await _pollFleetFactsObserverForTests();
 
     const receipts = frames(socket).filter((frame) => frame.type === "agent.turn-completed");
     expect(receipts).toHaveLength(1);
@@ -195,24 +206,25 @@ describe("/ws/events agent.turn-completed receipts", () => {
     socket.disconnect();
   });
 
-  it("emits no receipt for a non-completing transition", () => {
+  it("emits no receipt for a non-completing transition", async () => {
     let agentRows = "zz-fleet\t%1\t\tworking:1000";
     restoreTmuxRunner = pinAgentStates(() => agentRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     agentRows = "zz-fleet\t%1\t\tblocked:1001"; // needs attention, turn not over
-    _tickAgentStatusWatcherForTests();
+    await _pollFleetFactsObserverForTests();
 
     expect(frames(socket).filter((frame) => frame.type === "agent.turn-completed")).toEqual([]);
 
     socket.disconnect();
   });
 
-  it("wire audit: a receipt never carries a raw tmux id, a raw stamp, or a path", () => {
+  it("wire audit: a receipt never carries a raw tmux id, a raw stamp, or a path", async () => {
     const stamp = "pane.promoted.bbbbbbbbbbbbbbbbbbbb";
     let agentRows = `zz-fleet\t%7\t${stamp}\tworking:1000`;
     restoreTmuxRunner = pinAgentStates(() => agentRows);
@@ -220,10 +232,11 @@ describe("/ws/events agent.turn-completed receipts", () => {
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     agentRows = `zz-fleet\t%7\t${stamp}\tdone:1001`;
-    _tickAgentStatusWatcherForTests();
+    await _pollFleetFactsObserverForTests();
 
     const receipts = socket.sent.filter((raw) => raw.includes("agent.turn-completed"));
     expect(receipts).toHaveLength(1);

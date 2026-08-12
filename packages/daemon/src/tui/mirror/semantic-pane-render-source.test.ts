@@ -12,18 +12,22 @@ import {
 import type { CellArrays } from "./blit.ts";
 import {
   SemanticPaneReplica,
+  SemanticTerminalRenderSource,
   extractTerminalCellText,
   findTerminalCellMatches,
   projectTerminalTextRow,
+  type SemanticPaneReplicaChange,
 } from "./semantic-pane-render-source.ts";
+import { installTuiPerformanceEventSink } from "./performance-events.ts";
+import { publishSemanticPaneChange } from "./runtime/semantic-pane-publication.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 const nonce = "00000000-0000-4000-8000-000000000002";
 const pane = "pane.editor";
 
-function negotiated() {
+function negotiated(richPlacements = false) {
   const result = negotiateTerminalDelivery(
-    { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+    { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements },
     generation,
     nonce,
   );
@@ -31,7 +35,12 @@ function negotiated() {
   return result.negotiated;
 }
 
-function seedMessages(snapshot: TerminalReplicaSnapshot, txSuffix = "3") {
+function seedMessages(
+  snapshot: TerminalReplicaSnapshot,
+  txSuffix = "3",
+  performanceTraceId?: string,
+  richPlacements = false,
+) {
   const bytes = encodeSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
   const transactionId = `00000000-0000-4000-8000-${txSuffix.padStart(12, "0")}`;
   const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
@@ -42,6 +51,7 @@ function seedMessages(snapshot: TerminalReplicaSnapshot, txSuffix = "3") {
     incarnation: `${generation}:7`,
     deliveryNonce: nonce,
     transactionId,
+    ...(performanceTraceId ? { performanceTraceId } : {}),
     protocolVersion: 1,
     encoding: "semantic-v1",
     frame: "seed",
@@ -53,9 +63,56 @@ function seedMessages(snapshot: TerminalReplicaSnapshot, txSuffix = "3") {
     chunkCount: Math.max(1, Math.ceil(bytes.byteLength / (256 * 1024))),
     canonicalEquivalent: true,
     history: "complete",
-    richPlacements: false,
+    richPlacements,
   });
   return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes) };
+}
+
+function patchMessages(
+  previous: TerminalReplicaSnapshot,
+  revision: number,
+  txSuffix: string,
+  performanceTraceId?: string,
+  placements?: TerminalReplicaSnapshot["placements"],
+) {
+  const next = structuredClone(previous);
+  next.cursor.x = revision % next.cols;
+  if (placements !== undefined) next.placements = structuredClone(placements);
+  const payload = {
+    frame: "patch" as const,
+    baseRevision: revision - 1,
+    revision,
+    patch: {
+      rows: [],
+      cursor: next.cursor,
+      ...(placements !== undefined ? { placements: next.placements } : {}),
+    },
+  };
+  const bytes = encodeSemanticTerminalUpdate(payload);
+  const transactionId = `00000000-0000-4000-8000-${txSuffix.padStart(12, "0")}`;
+  const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
+    type: "terminal.delivery",
+    workspaceName: "workspace.alpha",
+    semanticPaneId: pane,
+    generation,
+    incarnation: `${generation}:7`,
+    deliveryNonce: nonce,
+    transactionId,
+    ...(performanceTraceId ? { performanceTraceId } : {}),
+    protocolVersion: 1,
+    encoding: "semantic-v1",
+    frame: "patch",
+    baseRevision: revision - 1,
+    canonicalRevision: revision,
+    canonicalStateHash: hashTerminalReplicaSnapshot(next),
+    representationHash: hashTerminalDeliveryRepresentation(bytes),
+    representationBytes: bytes.byteLength,
+    chunkCount: Math.max(1, Math.ceil(bytes.byteLength / (256 * 1024))),
+    canonicalEquivalent: true,
+    history: "complete",
+    richPlacements: placements !== undefined || previous.placements.length > 0,
+  });
+  return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes), next };
 }
 
 function arrays(width: number, height: number): CellArrays {
@@ -68,6 +125,288 @@ function arrays(width: number, height: number): CellArrays {
 }
 
 describe("SemanticPaneReplica", () => {
+  it("keeps independent GUI/TUI consumers converged on one canonical revision and hash", () => {
+    const changes = [vi.fn(), vi.fn()];
+    const replicas = changes.map(
+      (onChange) =>
+        new SemanticPaneReplica({
+          negotiated: negotiated(),
+          workspaceName: "workspace.alpha",
+          semanticPaneId: pane,
+          ack: vi.fn(),
+          nack: vi.fn(),
+          onChange,
+        }),
+    );
+    const initial = blankTerminalReplicaSnapshot(4, 2);
+    const seed = seedMessages(initial, "401");
+    for (const replica of replicas) {
+      replica.accept(seed.envelope);
+      for (const chunk of seed.chunks) replica.accept(chunk);
+    }
+    const patch = patchMessages(initial, 1, "402");
+    for (const replica of replicas) {
+      replica.accept(patch.envelope);
+      for (const chunk of patch.chunks) replica.accept(chunk);
+    }
+
+    const snapshots = replicas.map((replica) => replica.canonicalSnapshot());
+    expect(snapshots.map((snapshot) => snapshot?.snapshot)).toEqual([patch.next, patch.next]);
+    expect(
+      snapshots.map((snapshot) =>
+        snapshot ? hashTerminalReplicaSnapshot(snapshot.snapshot) : null,
+      ),
+    ).toEqual([patch.envelope.canonicalStateHash, patch.envelope.canonicalStateHash]);
+    expect(replicas.map((replica) => replica.version)).toEqual([2, 2]);
+    expect(changes.map((change) => change.mock.calls.length)).toEqual([2, 2]);
+  });
+
+  it("classifies a same-incarnation cursor packet as content-only publication", () => {
+    const onChange = vi.fn();
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+      onChange,
+    });
+    const initial = blankTerminalReplicaSnapshot(4, 2);
+    const seed = seedMessages(initial, "403");
+    replica.accept(seed.envelope);
+    for (const chunk of seed.chunks) replica.accept(chunk);
+    onChange.mockClear();
+
+    const patch = patchMessages(initial, 1, "404");
+    replica.accept(patch.envelope);
+    for (const chunk of patch.chunks) replica.accept(chunk);
+
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "applied",
+        cursorChanged: true,
+        renderKeyChanged: false,
+        scrollbackChanged: false,
+        runtimeFactsChanged: false,
+        version: 2,
+      }),
+    );
+  });
+
+  it("wakes structure exactly once when rich placements appear or disappear", () => {
+    const publishContentVersion = vi.fn();
+    const publishStructure = vi.fn();
+    const changes: SemanticPaneReplicaChange[] = [];
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(true),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+      onChange: (change) => {
+        changes.push(change);
+        publishSemanticPaneChange(change, { publishContentVersion, publishStructure });
+      },
+    });
+    const initial = blankTerminalReplicaSnapshot(8, 4);
+    const seed = seedMessages(initial, "405", undefined, true);
+    replica.accept(seed.envelope);
+    for (const chunk of seed.chunks) replica.accept(chunk);
+    publishContentVersion.mockClear();
+    publishStructure.mockClear();
+
+    const placement = {
+      id: "markdown",
+      kind: "markdown",
+      row: 1,
+      column: 1,
+      columns: 4,
+      rows: 2,
+      contentDigest: "sha256:markdown",
+    };
+    const added = patchMessages(initial, 1, "406", undefined, [placement]);
+    replica.accept(added.envelope);
+    for (const chunk of added.chunks) replica.accept(chunk);
+
+    expect(changes.at(-1)).toMatchObject({ kind: "applied", placementsChanged: true });
+    expect(publishContentVersion).toHaveBeenCalledOnce();
+    expect(publishStructure).toHaveBeenCalledOnce();
+
+    publishContentVersion.mockClear();
+    publishStructure.mockClear();
+    const ordinary = patchMessages(added.next, 2, "407");
+    replica.accept(ordinary.envelope);
+    for (const chunk of ordinary.chunks) replica.accept(chunk);
+    expect(changes.at(-1)).toMatchObject({ kind: "applied", placementsChanged: false });
+    expect(publishContentVersion).toHaveBeenCalledOnce();
+    expect(publishStructure).not.toHaveBeenCalled();
+
+    publishContentVersion.mockClear();
+    publishStructure.mockClear();
+    const removed = patchMessages(ordinary.next, 3, "408", undefined, []);
+    replica.accept(removed.envelope);
+    for (const chunk of removed.chunks) replica.accept(chunk);
+    expect(changes.at(-1)).toMatchObject({ kind: "applied", placementsChanged: true });
+    expect(publishContentVersion).toHaveBeenCalledOnce();
+    expect(publishStructure).toHaveBeenCalledOnce();
+  });
+
+  it("makes trace authority available to a synchronous paint subscriber", () => {
+    const traceId = "00000000-0000-4000-8000-000000000097";
+    let paintedTrace: ReturnType<SemanticPaneReplica["takePaintTrace"]> = null;
+    let replica!: SemanticPaneReplica;
+    replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+      onChange: (change) => {
+        if (change.kind === "applied") paintedTrace = replica.takePaintTrace();
+      },
+    });
+    const delivery = seedMessages(blankTerminalReplicaSnapshot(2, 1), "97", traceId);
+    replica.accept(delivery.envelope);
+    for (const chunk of delivery.chunks) replica.accept(chunk);
+
+    expect(paintedTrace).toEqual({
+      traceId,
+      generation,
+      incarnation: `${generation}:7`,
+    });
+  });
+
+  it("publishes delivery queue, lag, and parse measurements only while the HUD sink is installed", () => {
+    const sink = {
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalDelivery: vi.fn(),
+    };
+    const remove = installTuiPerformanceEventSink(sink);
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+    });
+    const delivery = seedMessages(blankTerminalReplicaSnapshot(2, 1), "300");
+    replica.accept(delivery.envelope);
+    for (const chunk of delivery.chunks) replica.accept(chunk);
+
+    expect(sink.terminalDelivery).toHaveBeenCalledOnce();
+    expect(sink.terminalDelivery.mock.calls[0]![0]).toMatchObject({
+      queuePeak: 1,
+      queueCapacity: 1,
+      revisionLagPeak: 1,
+      reseed: false,
+    });
+    expect(sink.terminalDelivery.mock.calls[0]![0].parseMs).toBeGreaterThanOrEqual(0);
+
+    remove();
+    const second = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+    });
+    const silent = seedMessages(blankTerminalReplicaSnapshot(2, 1), "301");
+    second.accept(silent.envelope);
+    for (const chunk of silent.chunks) second.accept(chunk);
+    expect(sink.terminalDelivery).toHaveBeenCalledOnce();
+  });
+
+  it("carries daemon trace authority to exactly one real framebuffer blit", () => {
+    const traceId = "00000000-0000-4000-8000-000000000099";
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+    });
+    const source = new SemanticTerminalRenderSource();
+    source.set(replica);
+    const delivery = seedMessages(blankTerminalReplicaSnapshot(2, 1), "98", traceId);
+    replica.accept(delivery.envelope);
+    for (const chunk of delivery.chunks) replica.accept(chunk);
+    const options = { full: true, dirtyRows: [] as number[] };
+
+    expect(source.blitPane(pane, arrays(2, 1), 2, 1, 0, 0xffffff, 0, options)).toEqual({
+      traceId,
+      generation,
+      incarnation: `${generation}:7`,
+    });
+    expect(
+      source.blitPane(pane, arrays(2, 1), 2, 1, 0, 0xffffff, 0, {
+        full: true,
+        dirtyRows: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the latest traced delivery through later untraced state until paint", () => {
+    const traceA = "00000000-0000-4000-8000-000000000094";
+    const traceB = "00000000-0000-4000-8000-000000000095";
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+    });
+    const source = new SemanticTerminalRenderSource();
+    source.set(replica);
+    const initial = blankTerminalReplicaSnapshot(2, 1);
+    const seed = seedMessages(initial, "401");
+    replica.accept(seed.envelope);
+    for (const chunk of seed.chunks) replica.accept(chunk);
+    const first = patchMessages(initial, 1, "402", traceA);
+    replica.accept(first.envelope);
+    for (const chunk of first.chunks) replica.accept(chunk);
+    const latest = patchMessages(first.next, 2, "403", traceB);
+    replica.accept(latest.envelope);
+    for (const chunk of latest.chunks) replica.accept(chunk);
+    const untraced = patchMessages(latest.next, 3, "404");
+    replica.accept(untraced.envelope);
+    for (const chunk of untraced.chunks) replica.accept(chunk);
+
+    expect(
+      source.blitPane(pane, arrays(2, 1), 2, 1, 0, 0xffffff, 0, {
+        full: true,
+        dirtyRows: [],
+      }),
+    ).toMatchObject({ traceId: traceB });
+  });
+
+  it("isolates a diagnostic observer failure from terminal protocol truth", () => {
+    const remove = installTuiPerformanceEventSink({
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalDelivery: () => {
+        throw new Error("diagnostic failure");
+      },
+    });
+    const ack = vi.fn();
+    const nack = vi.fn();
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack,
+      nack,
+    });
+    const delivery = seedMessages(blankTerminalReplicaSnapshot(2, 1), "302");
+    replica.accept(delivery.envelope);
+    for (const chunk of delivery.chunks) replica.accept(chunk);
+    expect(ack).toHaveBeenCalledOnce();
+    expect(nack).not.toHaveBeenCalled();
+    expect(replica.snapshot).not.toBeNull();
+    remove();
+  });
+
   it("ACKs only after retained state applies and emits one compound change", () => {
     const ack = vi.fn();
     const change = vi.fn();

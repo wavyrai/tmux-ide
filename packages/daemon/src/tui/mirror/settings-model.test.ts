@@ -250,6 +250,7 @@ describe("PALETTE_KEYCAPS (M24.4 — the palette rows' shortcut source)", () => 
       "surface:changes": "F4",
       "surface:missions": "F6",
       "surface:activity": "F9",
+      "performance-hud": "F12",
       save: "^s",
       quit: "^q",
     });

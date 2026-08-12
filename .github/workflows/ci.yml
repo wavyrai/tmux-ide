@@ -192,6 +192,43 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  performance_qualification:
+    name: Performance qualification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run deterministic qualification gate
+        run: pnpm test:performance-qualification
+
+      - name: Publish qualification summary
+        if: always()
+        run: cat artifacts/performance-qualification-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-qualification
+          path: |
+            artifacts/performance-qualification.json
+            artifacts/performance-qualification-summary.md
+          if-no-files-found: error
+          retention-days: 30
+
   docs:
     name: Docs build
     runs-on: ubuntu-latest

@@ -4,8 +4,8 @@
  * Sidebar (live fleet, click to switch session) · window tab strip · pane
  * canvas at exact tmux geometry with full color/attribute fidelity, local
  * scrollback (wheel; ↑n/depth badge; any key snaps live), real SGR mouse
- * forwarding into panes whose app enabled mouse mode, request-driven up to 60fps
- * (8ms coalesced state publication + 30fps renderer target / 60fps burst ceiling)
+ * forwarding into panes whose app enabled mouse mode, request-driven up to 120fps
+ * (60fps structural publication + 60fps renderer target / 120fps invalidation ceiling)
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
  * untouched) — except HOSTED (M23.2): launched by `tmux-ide app --detachable`
  * inside the internal `_tmux-ide-app` session (TMUX_IDE_HOSTED=1), ^q puts the
@@ -195,9 +195,10 @@
 import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, openSync, writeSync, closeSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
+import { publishSemanticPaneChange } from "./semantic-pane-publication.ts";
+import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { homedir } from "node:os";
 import { Dynamic, render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, createCliRenderer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
@@ -234,7 +235,7 @@ import {
   withLivePaneFocus,
 } from "../pane-frame-state.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "../pane-surface.tsx";
-import { tapInputSent, tapInputTick } from "../perf-tap.ts";
+import { installTuiPerformanceEventSink } from "../performance-events.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "../host-terminal.ts";
 import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process";
 import type { AgentStatus } from "../../detect/classify.ts";
@@ -280,24 +281,6 @@ import {
   type PaletteUsageEntry,
   type Tab,
 } from "../app-state.ts";
-import {
-  expandUserPath,
-  filterDirs,
-  isPickerRoot,
-  pathKindHint,
-  pickerBreadcrumb,
-  pickerDirName,
-  pickerParent,
-  pickerRows,
-  PICKER_HIDDEN_ID,
-  PICKER_OPEN_ID,
-  PICKER_TYPE_ID,
-  PICKER_UP_ID,
-  type PathKind,
-} from "../folder-picker.ts";
-import { registerProject, ProjectAlreadyRegisteredError } from "../../../lib/project-registry.ts";
-import { resolveProjectConfigContext } from "../../../lib/config-context.ts";
-import { createProjectRuntimeRepository } from "../../../lib/project-runtime-repository.ts";
 import {
   separatorAtCanvas,
   resizedSize,
@@ -407,12 +390,7 @@ import {
   workbenchDockTabForShortcut,
 } from "../workspace/workbench-controller.ts";
 import { clipTerminal } from "../terminal-text.ts";
-import { HomeSurface, homeActionAtProjection } from "../home-surface.tsx";
-import {
-  homeItemIndexAtProjection,
-  projectHomeSurface,
-  type HomeActionId,
-} from "../home-surface.ts";
+import type { HomeActionId } from "../home-surface-model.ts";
 import type {
   MissionDeepLinkIntent,
   MissionsActivityFeatureSession,
@@ -427,7 +405,9 @@ import { observeTuiRootFailure, startTuiApplication } from "./application-bootst
 import { OpenTuiLocalViewController } from "./local-view-controller.ts";
 import { tuiEscapeFocusTarget, tuiInteractionPresentation } from "../interaction-flow.ts";
 import {
+  RENDERER_COMMAND_IDS,
   createRendererCommandExecutor,
+  rendererCommandInvocation,
   rendererInvocationForGlobal,
   rendererInvocationForView,
 } from "../renderer-commands.ts";
@@ -447,6 +427,7 @@ import {
   type WorkspaceSurfaceStates,
 } from "../workspace-ui-state.ts";
 import { PALETTE_KEYCAPS } from "../application-keybindings.ts";
+import { DaemonAuthorityRebindCoordinator } from "./daemon-authority-rebind.ts";
 import type {
   DialogConfirmRequest,
   DialogFeatureSession,
@@ -531,8 +512,6 @@ import {
   type SpawnPlacement,
   type SpawnWhere,
 } from "../agent-lifecycle.ts";
-import { executeTuiAgentProvisioning } from "../agent-provisioning-executor.ts";
-import { getManifests } from "../../detect/manifest-loader.ts";
 import { agentsByPane } from "../agent-chip.ts";
 import { scrollThumb, trackZone, pageTop, dragTop } from "../scrollbar-model.ts";
 import {
@@ -894,8 +873,7 @@ const loadTuiAppConfig = () => {
 const createTuiRenderer = async () => {
   appRenderer = await createCliRenderer({
     exitOnCtrlC: false,
-    targetFps: 30,
-    maxFps: 60,
+    ...TUI_RENDERER_CADENCE,
     autoFocus: false,
     useKittyKeyboard: KITTY_KEYS ? {} : null,
     consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
@@ -985,6 +963,37 @@ const mountTuiRoot = () => {
     });
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const optionalFeatures = createApplicationOptionalFeatureRegistry();
+    const [homeFeature, setHomeFeature] = createSignal<ApplicationOptionalFeatures["home"]>();
+    const [homeFeatureLoadState, setHomeFeatureLoadState] = createSignal<
+      "idle" | "loading" | "ready" | "failed"
+    >("idle");
+    let homeFeatureRequest: Promise<ApplicationOptionalFeatures["home"] | undefined> | null = null;
+    const ensureHomeFeature = (): Promise<ApplicationOptionalFeatures["home"] | undefined> => {
+      const loaded = homeFeature();
+      if (loaded) return Promise.resolve(loaded);
+      if (homeFeatureRequest) return homeFeatureRequest;
+      setHomeFeatureLoadState("loading");
+      const request = optionalFeatures.request("home");
+      homeFeatureRequest = request;
+      void request.then(
+        (feature) => {
+          if (homeFeatureRequest !== request) return;
+          homeFeatureRequest = null;
+          if (!feature) {
+            setHomeFeatureLoadState("failed");
+            return;
+          }
+          setHomeFeature(() => feature);
+          setHomeFeatureLoadState("ready");
+        },
+        () => {
+          if (homeFeatureRequest !== request) return;
+          homeFeatureRequest = null;
+          setHomeFeatureLoadState("failed");
+        },
+      );
+      return request;
+    };
     const [filesFeature, setFilesFeature] = createSignal<ApplicationOptionalFeatures["files"]>();
     const [filesSession, setFilesSession] = createSignal<FilesFeatureSession>();
     const [changesFeature, setChangesFeature] =
@@ -1003,6 +1012,16 @@ const mountTuiRoot = () => {
     const [paletteFeature, setPaletteFeature] =
       createSignal<ApplicationOptionalFeatures["palette"]>();
     const [paletteSession, setPaletteSession] = createSignal<PaletteFeatureSession>();
+    const [performanceHudFeature, setPerformanceHudFeature] =
+      createSignal<ApplicationOptionalFeatures["performanceHud"]>();
+    const [performanceHudSession, setPerformanceHudSession] =
+      createSignal<
+        ReturnType<ApplicationOptionalFeatures["performanceHud"]["createPerformanceHudSession"]>
+      >();
+    let performanceHudFeatureRequest: Promise<
+      ApplicationOptionalFeatures["performanceHud"] | undefined
+    > | null = null;
+    let performanceHudRequestedOpen = false;
     const [richPreviewFeature, setRichPreviewFeature] =
       createSignal<ApplicationOptionalFeatures["richPreview"]>();
     const [richPreviewSession, setRichPreviewSession] = createSignal<RichPreviewFeatureSession>();
@@ -1445,6 +1464,7 @@ const mountTuiRoot = () => {
       return request;
     };
     applicationLifecycle.registerCloser("optional-features", () => {
+      homeFeatureRequest = null;
       filesFeatureRequest = null;
       changesFeatureRequest = null;
       missionsActivityRequest = null;
@@ -1461,6 +1481,7 @@ const mountTuiRoot = () => {
       modalAdmission.dispose();
       disposeModalAdmissionSubscription();
       setFilesSession(undefined);
+      setHomeFeature(undefined);
       setChangesSession(undefined);
       setMissionsActivitySession(undefined);
       setPaletteSession(undefined);
@@ -1646,12 +1667,18 @@ const mountTuiRoot = () => {
       sessionName: string,
       candidate: SemanticSessionView,
     ): Promise<void> => {
-      const semanticPaneIds = candidate
-        .paneDescriptors()
+      const paneDescriptors = candidate.paneDescriptors();
+      const semanticPaneIds = paneDescriptors
         .map((descriptor) => descriptor.semanticPaneId)
         .filter((paneId): paneId is string => paneId !== null)
         .sort();
+      tuiPerfMark("runtime-lane-reconcile", {
+        sessionName,
+        descriptorCount: paneDescriptors.length,
+        semanticPaneCount: semanticPaneIds.length,
+      });
       if (semanticPaneIds.length === 0) {
+        tuiPerfMark("runtime-lane-empty", { sessionName });
         if (sessionRuntimeLaneKey !== null || sessionRuntimeLane()) retireSessionRuntimeLane();
         else candidate.retireRuntimeAuthority();
         return;
@@ -1670,21 +1697,39 @@ const mountTuiRoot = () => {
       runtimeLaneFitKey = null;
       setSemanticPaneVersions(new Map());
       try {
+        tuiPerfMark("runtime-lane-connecting", {
+          sessionName,
+          request,
+          semanticPaneIds,
+        });
         const connectRuntime = () =>
           connectOpenTuiSessionRuntime({
             sessionName,
             semanticPaneIds,
+            routing: daemonApplicationShellAuthority?.routing ?? null,
             onPaneChange: (paneId, change) => {
               if (request !== sessionRuntimeLaneRequest) return;
-              setSemanticPaneVersions((current) => {
-                const next = new Map(current);
-                next.set(paneId, change.version);
-                return next;
+              publishSemanticPaneChange(change, {
+                publishContentVersion: (version) => {
+                  setSemanticPaneVersions((current) => {
+                    const next = new Map(current);
+                    next.set(paneId, version);
+                    return next;
+                  });
+                },
+                publishStructure: markDirty,
               });
-              markDirty();
             },
             onLayout: (frame) => {
               if (request !== sessionRuntimeLaneRequest || semanticView !== candidate) return;
+              tuiPerfMark("runtime-lane-layout", {
+                sessionName,
+                request,
+                paneCount: frame.panes.length,
+                currentWindow: frame.currentWindow,
+                windowName: frame.windowName ?? null,
+                semanticWindowId: frame.semanticWindowId ?? null,
+              });
               const windowKey =
                 frame.semanticWindowId ?? `unverified:${frame.windowName ?? "window"}`;
               if (!semanticWindowOrder.includes(windowKey)) semanticWindowOrder.push(windowKey);
@@ -1705,8 +1750,13 @@ const mountTuiRoot = () => {
               void candidate.windows().then(setWindowTabs);
               markDirty();
             },
-            onFault: () => {
+            onFault: (error) => {
               if (request !== sessionRuntimeLaneRequest) return;
+              tuiPerfMark("runtime-lane-fault", {
+                sessionName,
+                request,
+                error: error.message,
+              });
               localDescriptorRequest += 1;
               localDescriptorSignature = null;
               localDescriptorAuthorityGeneration = null;
@@ -1734,9 +1784,21 @@ const mountTuiRoot = () => {
             : await connectRuntime();
         if (request !== sessionRuntimeLaneRequest) {
           lane?.close();
+          tuiPerfMark("runtime-lane-superseded", { sessionName, request });
           return;
         }
-        if (!lane) return;
+        if (!lane) {
+          tuiPerfMark("runtime-lane-unavailable", { sessionName, request });
+          return;
+        }
+        tuiPerfMark("runtime-lane-connected", {
+          sessionName,
+          request,
+          viewerMode: lane.viewerMode,
+          ownsInput: lane.ownsInput,
+          ownsGeometry: lane.ownsGeometry,
+          generation: lane.generation,
+        });
         localDescriptorAuthorityGeneration = authorityGeneration;
         candidate.setRuntimeAuthorityGeneration(authorityGeneration);
         refreshLocalRuntimeDescriptors(sessionName, candidate, authorityGeneration);
@@ -1750,7 +1812,12 @@ const mountTuiRoot = () => {
         ) {
           pendingSemanticFocus = null;
         }
-      } catch {
+      } catch (error) {
+        tuiPerfMark("runtime-lane-connect-failed", {
+          sessionName,
+          request,
+          error: error instanceof Error ? error.message : String(error),
+        });
         if (request === sessionRuntimeLaneRequest) {
           localDescriptorRequest += 1;
           localDescriptorSignature = null;
@@ -1797,10 +1864,11 @@ const mountTuiRoot = () => {
     let daemonApplicationShellAuthority: OpenTuiApplicationShellAuthority | null = null;
     let disposeDaemonApplicationShellSubscription: (() => void) | null = null;
     let daemonApplicationShellRequest = 0;
+    const daemonAuthorityRebind = new DaemonAuthorityRebindCoordinator();
     const retireDaemonApplicationShell = () => {
       disposeDaemonApplicationShellSubscription?.();
       disposeDaemonApplicationShellSubscription = null;
-      daemonApplicationShellAuthority?.session.dispose();
+      daemonApplicationShellAuthority?.dispose();
       daemonApplicationShellAuthority = null;
       toolResources.setTarget(null);
       setDaemonApplicationShellState(null);
@@ -1821,10 +1889,10 @@ const mountTuiRoot = () => {
           },
         });
         if (request !== daemonApplicationShellRequest) {
-          authority?.session.dispose();
-          return;
+          authority?.dispose();
+          return false;
         }
-        if (!authority) return;
+        if (!authority) return false;
         daemonApplicationShellAuthority = authority;
         const daemon = readCanonicalDaemonInfo();
         if (daemon?.instanceId === authority.target.daemon.instanceId) {
@@ -1835,10 +1903,37 @@ const mountTuiRoot = () => {
           });
         }
         const applyDaemonShellState = (state: ApplicationShellSessionState) => {
+          if (
+            daemonAuthorityRebind.request(sessionName, state, {
+              retire: () => {
+                retireSessionRuntimeLane();
+                retireDaemonApplicationShell();
+                setStatus(`daemon generation changed; reconnecting ${sessionName}…`);
+              },
+              reconnect: async () => {
+                if (curTarget() !== sessionName) return true;
+                return connectDaemonApplicationShell(sessionName);
+              },
+            })
+          )
+            return;
           setDaemonApplicationShellState(state);
           const inventory = state.data?.terminalInventory;
+          tuiPerfMark("application-shell-state", {
+            sessionName,
+            statePhase: state.status,
+            inventoryCount: inventory?.resources.length ?? 0,
+            attachableCount:
+              inventory?.resources.filter(
+                ({ attachability }) => attachability.status === "available",
+              ).length ?? 0,
+          });
           if (inventory && semanticView) {
             semanticView.setInventory(inventory);
+            tuiPerfMark("application-shell-inventory-applied", {
+              sessionName,
+              descriptorCount: semanticView.paneDescriptors().length,
+            });
             if (localDescriptorAuthorityGeneration) {
               refreshLocalRuntimeDescriptors(
                 sessionName,
@@ -1854,16 +1949,20 @@ const mountTuiRoot = () => {
           reconcileAuthoritativeAgents();
         };
         applyDaemonShellState(authority.session.getState());
+        if (daemonApplicationShellAuthority !== authority) return false;
         disposeDaemonApplicationShellSubscription =
           authority.session.subscribe(applyDaemonShellState);
+        return true;
       } catch {
         // Standalone OpenTUI remains a supported fallback when no daemon owns
         // this tmux session. The local semantic projection stays authoritative.
         if (request === daemonApplicationShellRequest) setDaemonApplicationShellState(null);
+        return false;
       }
     };
     onCleanup(() => {
       daemonApplicationShellRequest += 1;
+      daemonAuthorityRebind.dispose();
       retireDaemonApplicationShell();
       retireSessionRuntimeLane();
     });
@@ -2114,6 +2213,9 @@ const mountTuiRoot = () => {
     };
     const tab = (): Tab => legacyTabFromPanelKind(activePanel());
     const mode = (): "home" | "mirror" | "editor" | "diff" | "missions" => panelMode(activePanel());
+    createEffect(() => {
+      if (mode() === "home") void ensureHomeFeature();
+    });
     const surfaceSpans = createMemo(() => applicationShellProjection().tabs.map((tab) => tab.span));
     const [curTarget, setCurTarget] = createSignal(initialContextSession);
     // Size truth (M22.8): the actual tmux window size when a co-attached terminal
@@ -2215,11 +2317,20 @@ const mountTuiRoot = () => {
       },
     );
     let terminalFramePublicationPending = false;
+    let firstTerminalFrameMarked = false;
     const acknowledgeTerminalFramePublication = () => {
       toolResources.noteNativeRenderPass();
       if (!terminalFramePublicationPending) return;
       terminalFramePublicationPending = false;
       terminalToolReadiness.observeTerminalFrameCommitted();
+      // A target is usable only after semantic layout produced a non-empty
+      // pane projection and OpenTUI acknowledged the native frame containing
+      // it. SemanticSessionView.start() reports status before inventory,
+      // attachment, or layout and therefore cannot prove startup readiness.
+      if (!firstTerminalFrameMarked) {
+        firstTerminalFrameMarked = true;
+        tuiPerfMark("first-terminal-frame");
+      }
     };
     appRenderer.on("frame", acknowledgeTerminalFramePublication);
     onCleanup(() => appRenderer.off("frame", acknowledgeTerminalFramePublication));
@@ -2433,7 +2544,7 @@ const mountTuiRoot = () => {
     let panelHostResolved = false;
     const loadPanelHostForDir = (dir: string) => {
       const generation = panelGeneration.next();
-      let loadStage = "resolve project config";
+      let loadStage = "load project state modules";
       // Finish the old project's pending debounce against its still-live
       // repository before `beginLoad` invalidates that controller generation.
       flushWorkspaceUiState();
@@ -2448,13 +2559,23 @@ const mountTuiRoot = () => {
       hydratedWorkspaceSurfaceIds.clear();
       const uiGeneration = workspaceUiController.beginLoad();
       missionsActivitySession()?.reset(toolResourceGeneration);
-      void resolveProjectConfigContext(dir)
-        .then((context) => {
+      void Promise.all([
+        import("../../../lib/config-context.ts"),
+        import("../../../lib/project-runtime-repository.ts"),
+      ])
+        .then(async ([configContext, projectRuntimeRepository]) => {
+          loadStage = "resolve project config";
+          const context = await configContext.resolveProjectConfigContext(dir);
+          return { context, projectRuntimeRepository };
+        })
+        .then(({ context, projectRuntimeRepository }) => {
           if (!panelGeneration.isCurrent(generation)) return;
           const resolved = context.resolved;
           if (!resolved) return;
           loadStage = "open workspace state";
-          const repository = createProjectRuntimeRepository(resolved.resolution);
+          const repository = projectRuntimeRepository.createProjectRuntimeRepository(
+            resolved.resolution,
+          );
           const loadedUi = loadWorkspaceUiState(repository);
           if (!workspaceUiController.completeLoad(uiGeneration, repository, loadedUi)) return;
           loadStage = "publish workspace state";
@@ -2699,6 +2820,7 @@ const mountTuiRoot = () => {
     };
     const terminalPaneChromeMetadata = createMemo(() => {
       const metadata = new Map<string, TerminalPaneChromeMetadata>();
+      const descriptors = semanticView?.paneDescriptors() ?? [];
       const appStatus = status();
       const appStatusTone: TerminalPaneChromeMetadata["statusTone"] = appStatus.startsWith("error")
         ? "blocked"
@@ -2706,10 +2828,12 @@ const mountTuiRoot = () => {
           ? "done"
           : "working";
       for (const pane of panes()) {
-        const agent = agentByPane().get(runtimePaneIdForSemantic(pane.id));
-        const semanticPaneId = semanticView
-          ?.paneDescriptors()
-          .find((descriptor) => descriptor.runtimePaneId === pane.id)?.semanticPaneId;
+        const descriptor = descriptors.find(
+          (candidate) =>
+            candidate.runtimePaneId === pane.id || candidate.semanticPaneId === pane.id,
+        );
+        const agent = agentByPane().get(descriptor?.runtimePaneId ?? pane.id);
+        const semanticPaneId = descriptor?.semanticPaneId;
         const interaction = semanticPaneId ? interactionFeed().panes[semanticPaneId] : undefined;
         const visibleInteraction =
           interaction && activeInteractionSequences().has(interaction.sequence)
@@ -2725,10 +2849,7 @@ const mountTuiRoot = () => {
               ? "requested"
               : "none";
         metadata.set(pane.id, {
-          // SemanticSessionView may add title/currentCommand descriptors later. Null
-          // deliberately leaves that seam to the pure projection, which falls
-          // back to the always-distinct live %pane_id today.
-          title: agent?.displayName ?? agent?.kind ?? null,
+          title: agent?.displayName ?? agent?.kind ?? descriptor?.title ?? null,
           subtitle: agent
             ? `${agent.displayName ? `${agent.kind} · ` : ""}${curTarget()} · ${pane.id}`
             : `${curTarget()} · ${pane.id}`,
@@ -3142,14 +3263,22 @@ const mountTuiRoot = () => {
     const homeItems = createMemo<HomeItem[]>(() => buildHomeItems(projectsData(), recentFolders()));
     /** Whether (gy, x) hits the welcome action row (only while first-run). */
     const welcomeActionHit = (gy: number, x: number): boolean => {
-      return (
-        homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0)?.source === "welcome"
+      const feature = homeFeature();
+      const projection = homeSurfaceProjection();
+      return Boolean(
+        feature &&
+        projection &&
+        feature.homeActionAtProjection(projection, x, gy, sidebarW(), 0)?.source === "welcome",
       );
     };
     /** The home item index under content-row gy (accounting for the welcome
      *  offset), or -1 when gy is above the first row / on the welcome block. */
     const homeItemIndexAt = (gy: number): number => {
-      return homeItemIndexAtProjection(homeSurfaceProjection(), sidebarW(), gy, sidebarW(), 0);
+      const feature = homeFeature();
+      const projection = homeSurfaceProjection();
+      return feature && projection
+        ? feature.homeItemIndexAtProjection(projection, sidebarW(), gy, sidebarW(), 0)
+        : -1;
     };
     const rollup = (): FleetRollup => {
       const r: FleetRollup = {
@@ -3194,8 +3323,10 @@ const mountTuiRoot = () => {
     const [pathPrompt, setPathPrompt] = createSignal<string | null>(null);
     // A session-name input line on HOME (`n` / the [n new session] chip).
     const [sessionPrompt, setSessionPrompt] = createSignal<string | null>(null);
-    const homeSurfaceProjection = createMemo(() =>
-      projectHomeSurface({
+    const homeSurfaceProjection = createMemo(() => {
+      const feature = homeFeature();
+      if (!feature) return undefined;
+      return feature.projectHomeSurface({
         width: workbenchProjection().canvasBody.width,
         height: workbenchProjection().canvasBody.height,
         projects: projectsData(),
@@ -3221,8 +3352,8 @@ const mountTuiRoot = () => {
         welcomeLine: WELCOME_LINE,
         welcomeActionLabel: WELCOME_ACTION_LABEL,
         welcomeTip,
-      }),
-    );
+      });
+    });
     const scrollOffsets = new Map<string, number>();
     let dirty = false;
     let paneFrameCoalescer: FrameCoalescer | null = null;
@@ -3358,8 +3489,8 @@ const mountTuiRoot = () => {
     let repinInFlight: RepinState | null = null;
     let pendingAttachTarget: string | null = null;
     let mirrorSupervisor: RuntimeConnectionSupervisor<SemanticSessionView> | null = null;
-    let tuiGeometryReadyMarked = false;
     const attach = (name: string) => {
+      daemonAuthorityRebind.cancelPending();
       const pin = terminalCanvasProjection().tmuxSize ?? lastPin;
       if (!pin) {
         pendingAttachTarget = name;
@@ -3390,10 +3521,6 @@ const mountTuiRoot = () => {
         onDirty: markDirty,
         onFocusChanged: (paneId) => setFocusedPaneId(paneId),
         onStatus: () => {
-          if (!tuiGeometryReadyMarked) {
-            tuiGeometryReadyMarked = true;
-            tuiPerfMark("tmux-geometry-ready");
-          }
           markDirty();
           void workspaceAdapter.view.windows().then(setWindowTabs);
           void reconcileSessionRuntimeLane(name, workspaceAdapter.view);
@@ -3431,8 +3558,17 @@ const mountTuiRoot = () => {
         if (state.phase === "live" && state.value) {
           semanticView = state.value;
           const inventory = daemonApplicationShellState()?.data?.terminalInventory;
+          tuiPerfMark("semantic-view-live", {
+            sessionName: name,
+            hasInventory: inventory !== undefined,
+            inventoryCount: inventory?.resources.length ?? 0,
+          });
           if (inventory) {
             semanticView.setInventory(inventory);
+            tuiPerfMark("semantic-view-inventory-applied", {
+              sessionName: name,
+              descriptorCount: semanticView.paneDescriptors().length,
+            });
             if (localDescriptorAuthorityGeneration) {
               refreshLocalRuntimeDescriptors(
                 name,
@@ -3879,6 +4015,15 @@ const mountTuiRoot = () => {
     // The kind list / launch commands / exact argv are pure in
     // agent-lifecycle.ts; only the dialog flows and the io live here.
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const loadAgentManifests = async () => {
+      try {
+        const { getManifests } = await import("../../detect/manifest-loader.ts");
+        return getManifests();
+      } catch {
+        setStatusNote("agent definitions could not be loaded");
+        return null;
+      }
+    };
     /** One awaited tmux call; errors are swallowed (a dead pane target is a
      *  normal race — the fleet poll shows the truth moments later). */
     const tmuxRun = (args: string[]) =>
@@ -3950,7 +4095,8 @@ const mountTuiRoot = () => {
      *  instead (same pane id, cwd pinned explicitly). Both paths clear the
      *  authority stamps. */
     const restartAgentFlow = async (a: Pick<AgentRowInput, "paneId" | "kind">) => {
-      const manifests = getManifests();
+      const manifests = await loadAgentManifests();
+      if (!manifests) return;
       const live = await paneStartAndPath(a.paneId);
       if (!live) {
         setStatusNote("that pane is gone — refreshing");
@@ -4055,7 +4201,18 @@ const mountTuiRoot = () => {
       // semantic, daemon-owned mutation used by the GUI. A live daemon failure
       // fails closed in the executor, so we cannot duplicate an ambiguously
       // completed creation by falling through to raw tmux.
-      const sharedCreation = await executeTuiAgentProvisioning({
+      let home: ApplicationOptionalFeatures["home"] | undefined;
+      try {
+        home = homeFeature() ?? (await ensureHomeFeature());
+      } catch {
+        setStatusNote("agent creation unavailable: Home actions failed to load");
+        return;
+      }
+      if (!home) {
+        setStatusNote("agent creation unavailable: Home actions failed to load");
+        return;
+      }
+      const sharedCreation = await home.executeTuiAgentProvisioning({
         sessionName: ctx.session ?? null,
         kind,
         command,
@@ -4121,7 +4278,8 @@ const mountTuiRoot = () => {
     };
     const newAgentFlow = async (ctx: NewAgentContext) => {
       setHoverIf(null); // the overlay owns the pointer, like the palette
-      const manifests = getManifests();
+      const manifests = await loadAgentManifests();
+      if (!manifests) return;
       const shape = spawnShape(ctx);
       const fallback = defaultSpawnPlacement(shape);
       const { last } = spawnMemoryFor(ctx);
@@ -4271,101 +4429,6 @@ const mountTuiRoot = () => {
       createSession(sessionNameFor(basename(dir) || dir), dir);
     };
 
-    /** ASYNC — the subdirectory names of `dir` (dirs only; unreadable → []). */
-    const listSubdirs = async (dir: string): Promise<string[]> => {
-      try {
-        const entries = await readdir(dir, { withFileTypes: true });
-        return entries.filter((e) => e.isDirectory()).map((e) => e.name);
-      } catch {
-        return [];
-      }
-    };
-
-    /** ASYNC — classify a path: a directory, a file, or missing/unreadable. */
-    const pathKind = async (path: string): Promise<PathKind> => {
-      try {
-        return (await stat(path)).isDirectory() ? "dir" : "file";
-      } catch {
-        return "missing";
-      }
-    };
-
-    /** ASYNC — whether `dir` already has a project config (skip the layout offer). */
-    const hasProjectConfig = async (dir: string): Promise<boolean> => {
-      const { resolveProjectConfigContext } = await import("../../../lib/config-context.ts");
-      return (await resolveProjectConfigContext(dir)).configKind !== "none";
-    };
-
-    /** The "type a path…" escape hatch: a prompt that async-validates the typed
-     *  path is a real folder (sync validate can't touch fs), re-asking with a
-     *  plain-language error until it is a dir or the user backs out. Returns the
-     *  resolved dir, or null to fall back to browsing. */
-    const runTypedPath = async (base: string): Promise<string | null> => {
-      let initial = "";
-      let footerHint = "type a folder path — ~ and relative paths are ok";
-      for (;;) {
-        const typed = await DialogPrompt.show({
-          title: "Open a folder by path",
-          placeholder: "~/code/my-project",
-          initial,
-          footerHint,
-          validate: (v) => (v.trim().length > 0 ? null : "Type a path, or press esc to go back"),
-        });
-        if (typed === null) return null;
-        const resolved = expandUserPath(typed, homedir(), base);
-        const kind = await pathKind(resolved);
-        if (kind === "dir") return resolved;
-        initial = typed;
-        footerHint = pathKindHint(kind);
-      }
-    };
-
-    /** The browse loop: descend/ascend directories, toggle hidden folders with
-     *  ^h, "open this folder" commits, "type a path…" hands off to the prompt.
-     *  Returns the chosen dir, or null on cancel (esc at the browser). */
-    const runFolderPicker = async (start: string): Promise<string | null> => {
-      let dir = start;
-      let showHidden = false;
-      for (;;) {
-        const subdirs = filterDirs(await listSubdirs(dir), showHidden);
-        const choice = await DialogSelect.show({
-          title: pickerBreadcrumb(dir, homedir()),
-          items: pickerRows(dir, subdirs, showHidden),
-        });
-        if (!choice) return null;
-        const id = choice.item.id;
-        if (id === PICKER_OPEN_ID) return dir;
-        if (id === PICKER_HIDDEN_ID) {
-          showHidden = !showHidden;
-          continue;
-        }
-        if (id === PICKER_UP_ID) {
-          if (!isPickerRoot(dir)) dir = pickerParent(dir);
-          continue;
-        }
-        if (id === PICKER_TYPE_ID) {
-          const typed = await runTypedPath(dir);
-          if (typed !== null) return typed;
-          continue; // backed out of the prompt → keep browsing
-        }
-        const name = pickerDirName(id);
-        if (name) dir = join(dir, name);
-      }
-    };
-
-    /** Offer to remember a just-opened folder as a project (registry add —
-     *  honoring TMUX_IDE_REGISTRY_DIR). Already-registered is a friendly no-op. */
-    const rememberProject = async (dir: string) => {
-      try {
-        await registerProject({ dir });
-        setStatusNote(`remembered ${basename(dir) || dir}`);
-        toolResources.session.refresh("fleet");
-      } catch (e) {
-        if (e instanceof ProjectAlreadyRegisteredError) setStatusNote("already in your projects");
-        else setStatusNote("couldn't remember that project");
-      }
-    };
-
     /** Write a starter workspace config for `dir` via `tmux-ide detect --write` (async
      *  subprocess — the CLI resolves the layout from the project's stack). */
     const runDetectWrite = (dir: string) => {
@@ -4376,31 +4439,6 @@ const mountTuiRoot = () => {
       });
     };
 
-    /** The full picked-folder flow: open it, then the two skippable offers. */
-    const openFolderPicked = async (dir: string) => {
-      openFolderAt(dir);
-      const remember = await DialogConfirm.show({
-        title: "Remember this project?",
-        body:
-          "Add it to your projects so it's one click to reopen next time. " +
-          "This opens your project in a terminal workspace either way.",
-        yesLabel: "Remember it",
-        noLabel: "Not now",
-      });
-      if (remember) await rememberProject(dir);
-      if (!(await hasProjectConfig(dir))) {
-        const setup = await DialogConfirm.show({
-          title: "Set up a layout?",
-          body:
-            "Detect this project and write a starter layout so it opens with the " +
-            "right panes next time. You can change it later.",
-          yesLabel: "Set it up",
-          noLabel: "Skip",
-        });
-        if (setup) runDetectWrite(dir);
-      }
-    };
-
     /** Entry point for every "open folder" affordance (home key `f`, the footer
      *  chip, the palette command, the welcome action): browse, then open. */
     const openFolderFlow = async () => {
@@ -4408,8 +4446,27 @@ const mountTuiRoot = () => {
       // `||` (not `??`): contextDir is "" when unset, and a selected header/none
       // gives null — either falls through to the working directory.
       const start = selectedHomeDir() || contextDir() || invokeCwd;
-      const dir = await runFolderPicker(start);
-      if (dir) await openFolderPicked(dir);
+      try {
+        const feature = homeFeature() ?? (await ensureHomeFeature());
+        if (!feature) {
+          setStatusNote("Home actions unavailable · switch views to retry");
+          return;
+        }
+        await feature.runOpenFolderFlow({
+          start,
+          dialogs: {
+            select: DialogSelect.show,
+            prompt: DialogPrompt.show,
+            confirm: DialogConfirm.show,
+          },
+          openFolder: openFolderAt,
+          setStatusNote,
+          refreshFleet: () => toolResources.session.refresh("fleet"),
+          writeDetectedLayout: runDetectWrite,
+        });
+      } catch {
+        setStatusNote("Home actions unavailable · switch views to retry");
+      }
     };
 
     /** A home row's PRIMARY verb: open a session as the workspace, or launch a
@@ -4585,6 +4642,68 @@ const mountTuiRoot = () => {
       switchClientBack: (callback) => execFile("tmux", ["switch-client", "-l"], callback),
       detachClient: () => execFile("tmux", ["detach-client"], () => {}),
     });
+    const ensurePerformanceHud = async () => {
+      const existing = performanceHudSession();
+      if (existing) return existing;
+      if (performanceHudFeatureRequest) {
+        await performanceHudFeatureRequest;
+        return performanceHudSession();
+      }
+      const request = optionalFeatures.request("performanceHud");
+      performanceHudFeatureRequest = request;
+      const feature = await request;
+      if (performanceHudFeatureRequest !== request) return performanceHudSession();
+      performanceHudFeatureRequest = null;
+      if (!feature) return undefined;
+      const session = feature.createPerformanceHudSession({
+        authority: () => {
+          const daemon = readCanonicalDaemonInfo();
+          const lane = sessionRuntimeLane();
+          return {
+            daemonInstanceId: lane?.daemonInstanceId ?? daemon?.instanceId ?? null,
+            workspaceName: lane?.workspaceName ?? (contextSession() || null),
+            generation: lane?.generation ?? null,
+            incarnation: null,
+          };
+        },
+        installEventSink: installTuiPerformanceEventSink,
+        observeFrames: (listener) => {
+          let previous = performance.now();
+          const onFrame = () => {
+            const now = performance.now();
+            listener(now - previous);
+            previous = now;
+          };
+          appRenderer.on("frame", onFrame);
+          return () => appRenderer.off("frame", onFrame);
+        },
+        scheduleIdle: (listener, delayMs) => {
+          const timer = setTimeout(listener, delayMs);
+          return () => clearTimeout(timer);
+        },
+      });
+      setPerformanceHudFeature(() => feature);
+      setPerformanceHudSession(() => session);
+      if (performanceHudRequestedOpen) session.show();
+      return session;
+    };
+    const togglePerformanceHud = () => {
+      performanceHudRequestedOpen = !performanceHudRequestedOpen;
+      const session = performanceHudSession();
+      if (session) {
+        if (performanceHudRequestedOpen) session.show();
+        else session.hide();
+        return;
+      }
+      if (performanceHudRequestedOpen) void ensurePerformanceHud();
+    };
+    applicationLifecycle.registerCloser("performance-hud", () => {
+      performanceHudRequestedOpen = false;
+      performanceHudFeatureRequest = null;
+      performanceHudSession()?.dispose();
+      setPerformanceHudSession(undefined);
+      setPerformanceHudFeature(undefined);
+    });
     const rendererCommandExecutor = createRendererCommandExecutor({
       context: () => ({
         // Ctrl-Tab now walks the native workbench's semantic focus ring. The
@@ -4624,6 +4743,7 @@ const mountTuiRoot = () => {
             );
           else toggleEditor();
         },
+        togglePerformanceHud,
       },
     });
     const executeRendererCommand = rendererCommandExecutor.execute;
@@ -4779,7 +4899,6 @@ const mountTuiRoot = () => {
           if (!pane || !semanticView) return;
           clearSelection();
           snapLive(pane);
-          tapInputSent(pane);
           if (!sendSemanticTerminalKey(pane, "C-c"))
             setStatusNote("terminal runtime is reconnecting");
         },
@@ -5008,6 +5127,18 @@ const mountTuiRoot = () => {
           // Settings is requested only at execution time and runs through the
           // application-owned dialog session under modal admission.
           void runSettingsCommand(a.id);
+          break;
+        case "performance-hud":
+          executeRendererCommand(
+            rendererCommandInvocation(
+              RENDERER_COMMAND_IDS.togglePerformanceHud,
+              {},
+              {
+                kind: "palette",
+                surface: "command-palette",
+              },
+            ),
+          );
           break;
         case "quit":
           applicationRootController.quit({ hosted: HOSTED }, "palette");
@@ -5286,7 +5417,6 @@ const mountTuiRoot = () => {
         }
         if (!dirty || !semanticView) return;
         dirty = false;
-        const t0 = performance.now();
         // FB path: fetch geometry + cursor/offset + per-pane version only (no
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
@@ -5308,7 +5438,6 @@ const mountTuiRoot = () => {
         const pinned = lastPin;
         if (!pinned) {
           setPanes(raw);
-          tapInputTick();
           if (continueAutoScroll) markDirty();
           return;
         }
@@ -5328,17 +5457,6 @@ const mountTuiRoot = () => {
             ? raw.map((p) => ({ ...p, left: p.left + off.x, top: p.top + off.y }))
             : raw,
         );
-        // Under FB the real per-tick cost moved to the blit (tapped in the
-        // renderable → same zz-perf.log); this tick is now geometry-only, so
-        // don't pollute the "snapshot ms/tick" samples with its ~0ms.
-        if (process.env.TMUX_IDE_ZZ_PERF && !FB_PANES) {
-          try {
-            appendFileSync("/tmp/zz-perf.log", `${(performance.now() - t0).toFixed(2)}\n`);
-          } catch {
-            /* perf tap only */
-          }
-        }
-        tapInputTick(); // t2: this paint consumed the dirty flag — close open input samples
         if (continueAutoScroll) markDirty();
       };
       // Event-driven state publication: the first event after idle is flushed
@@ -6547,7 +6665,6 @@ const mountTuiRoot = () => {
       // Any key that reaches the pane retires a stale selection highlight.
       clearSelection();
       snapLive(semanticView.focusedPane());
-      tapInputSent(semanticView.focusedPane()); // t0: keystroke dispatched to the pane
       // The input fast path (M21.5): sendKey/sendText are fire-and-forget —
       // no reply Promise, literals coalesced (ordering preserved downstream).
       if (evt.ctrl && evt.name.length === 1) {
@@ -6853,7 +6970,12 @@ const mountTuiRoot = () => {
       }
       const m = mode();
       if (m === "home") {
-        const action = homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0);
+        const feature = homeFeature();
+        const projection = homeSurfaceProjection();
+        const action =
+          feature && projection
+            ? feature.homeActionAtProjection(projection, x, gy, sidebarW(), 0)
+            : null;
         if (action?.source === "footer") {
           setHoverIf(
             action.actionIndex !== undefined
@@ -7809,7 +7931,12 @@ const mountTuiRoot = () => {
       // (gy=0) + rule (gy=1), so a click at row gy hits home item `gy - 2`.
       if (mode() === "home") {
         if (type !== "down") return;
-        const action = homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0);
+        const feature = homeFeature();
+        const projection = homeSurfaceProjection();
+        const action =
+          feature && projection
+            ? feature.homeActionAtProjection(projection, x, gy, sidebarW(), 0)
+            : null;
         if (action?.source === "footer" || action?.source === "welcome") {
           runHomeAction(action.id, action.itemIndex);
           return;
@@ -8399,11 +8526,38 @@ const mountTuiRoot = () => {
                   />
                 }
               >
-                <HomeSurface
-                  theme={semanticTheme()}
-                  projection={homeSurfaceProjection()}
-                  rollup={rollup()}
-                />
+                <Show
+                  when={homeFeature()}
+                  fallback={
+                    <box
+                      width="100%"
+                      height="100%"
+                      flexDirection="column"
+                      justifyContent="center"
+                      alignItems="center"
+                      backgroundColor={semanticTheme().roles.surfaces.panel}
+                    >
+                      <text fg={semanticTheme().roles.text.secondary}>
+                        {homeFeatureLoadState() === "failed"
+                          ? "Home unavailable · switch views to retry"
+                          : "Loading Home…"}
+                      </text>
+                    </box>
+                  }
+                >
+                  {(feature) => (
+                    <Show when={homeSurfaceProjection()}>
+                      {(projection) => (
+                        <Dynamic
+                          component={feature().HomeSurface}
+                          theme={semanticTheme()}
+                          projection={projection()}
+                          rollup={rollup()}
+                        />
+                      )}
+                    </Show>
+                  )}
+                </Show>
               </Show>
             }
             dockBody={
@@ -8557,6 +8711,15 @@ const mountTuiRoot = () => {
           session={paletteSession()}
           theme={semanticTheme()}
         />
+        <Show when={performanceHudFeature() && performanceHudSession()?.open()}>
+          <Dynamic
+            component={performanceHudFeature()!.PerformanceHudSurface}
+            session={performanceHudSession()!}
+            width={dims().width}
+            height={dims().height}
+            theme={semanticTheme()}
+          />
+        </Show>
         {/* RIGHT-CLICK CONTEXT MENU overlay (M19.2) — opened at the pointer,
           clamped on-screen. Late-mounted inside <Show>, so it carries NO mouse
           handler: clicks route via the root box's `route`, which checks `menu()`

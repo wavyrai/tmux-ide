@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OpenTuiSessionRuntimeLane } from "../application-shell-daemon-runtime.ts";
+import { installTuiPerformanceEventSink } from "../performance-events.ts";
 import { SemanticTerminalRenderSource } from "../semantic-pane-render-source.ts";
 import { TuiApplicationLifecycle } from "./application-lifecycle.ts";
 import { OpenTuiTerminalWorkspaceAdapter } from "./terminal-workspace-adapter.ts";
@@ -14,7 +15,9 @@ function deferred<T>() {
 
 function lane(name: string): OpenTuiSessionRuntimeLane {
   return {
+    daemonInstanceId: "00000000-0000-4000-8000-000000000001",
     workspaceName: name,
+    generation: "00000000-0000-4000-8000-000000000001",
     connectionIdentity: name,
     viewerMode: "interactive",
     ownsInput: true,
@@ -112,5 +115,69 @@ describe("OpenTUI terminal workspace adapter", () => {
 
     expect(adapter.lane).toBe(connected);
     await lifecycle.shutdown("host");
+  });
+
+  it("allocates and forwards a trace only while an opt-in input observer is installed", async () => {
+    const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: vi.fn() });
+    const adapter = new OpenTuiTerminalWorkspaceAdapter({ target: "alpha", lifecycle });
+    const connected = lane("alpha");
+    adapter.connect("generation-a", async () => connected);
+    await settle();
+    const finish = vi.fn();
+    const cancel = vi.fn();
+    const remove = installTuiPerformanceEventSink({
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalDelivery: vi.fn(),
+      beginTerminalInput: () => ({
+        traceId: "00000000-0000-4000-8000-000000000001",
+        finish,
+        cancel,
+      }),
+    });
+    try {
+      expect(adapter.sendKey("pane.editor", "Enter")).toBe(true);
+      expect(connected.sendKey).toHaveBeenCalledWith(
+        "pane.editor",
+        "Enter",
+        "00000000-0000-4000-8000-000000000001",
+      );
+      expect(finish).toHaveBeenCalledOnce();
+      expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      remove();
+      await lifecycle.shutdown("host");
+    }
+  });
+
+  it("cancels an input trace when the control lane rejects the send", async () => {
+    const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: vi.fn() });
+    const adapter = new OpenTuiTerminalWorkspaceAdapter({ target: "alpha", lifecycle });
+    const connected = lane("alpha");
+    vi.mocked(connected.sendText).mockImplementation(() => {
+      throw new Error("send failed");
+    });
+    adapter.connect("generation-a", async () => connected);
+    await settle();
+    const finish = vi.fn();
+    const cancel = vi.fn();
+    const remove = installTuiPerformanceEventSink({
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalDelivery: vi.fn(),
+      beginTerminalInput: () => ({
+        traceId: "00000000-0000-4000-8000-000000000002",
+        finish,
+        cancel,
+      }),
+    });
+    try {
+      expect(() => adapter.sendText("pane.editor", "hello")).toThrow("send failed");
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(finish).not.toHaveBeenCalled();
+    } finally {
+      remove();
+      await lifecycle.shutdown("host");
+    }
   });
 });

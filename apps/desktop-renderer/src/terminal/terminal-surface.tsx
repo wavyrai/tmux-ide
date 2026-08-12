@@ -33,6 +33,7 @@ import { resolveWidget, type WidgetResolution } from "./widgets/widget-registry.
 import { WIDGET_SCAN_MAX_ROWS } from "./widgets/xterm-cell-rows.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "./xterm-renderer.ts";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
+import { useGuiPerformanceTelemetry } from "../runtime/gui-performance-context.tsx";
 
 export type TerminalSurfacePhase =
   | "unavailable"
@@ -256,6 +257,7 @@ const OUTPUT_NOT_CONSUMED = new Error("Terminal output was not consumed by the r
  * it never creates a process, resolves a tmux target, or opens a network path.
  */
 export function TerminalSurface(props: TerminalSurfaceProps) {
+  const performanceTelemetry = useGuiPerformanceTelemetry();
   // Capture the nested host getter while this component has a Solid owner.
   // Terminal connection/retry callbacks run asynchronously; reading the
   // compiler-generated getter for the first time from one of those callbacks
@@ -549,6 +551,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       return Promise.reject(OUTPUT_NOT_CONSUMED);
     }
     epoch.pending += 1;
+    performanceTelemetry?.recordQueueDepth(epoch.pending, MAX_PENDING_OUTPUT_WRITES);
     const payload = bytes.slice();
     const scanAfterWrite = widgetScanCandidate(payload);
     const operation = outputTail
@@ -563,6 +566,11 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           throw OUTPUT_NOT_CONSUMED;
         }
         let timer: ReturnType<typeof setTimeout> | undefined;
+        const finishParse = performanceTelemetry?.beginParse();
+        const paint = performanceTelemetry?.beginPaint(
+          activeRenderer.performanceChannel?.() ?? null,
+        );
+        let written = false;
         try {
           const outcome = await Promise.race([
             activeRenderer.write(payload).then(() => "written" as const),
@@ -575,8 +583,13 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
             }),
           ]);
           if (outcome === "retired") throw OUTPUT_NOT_CONSUMED;
+          written = true;
+          finishParse?.();
+          paint?.commit();
+          performanceTelemetry?.commitDelivery();
           if (scanAfterWrite) scheduleWidgetScan();
         } finally {
+          if (!written) paint?.cancel();
           if (timer !== undefined) clearTimeout(timer);
         }
       })
@@ -597,6 +610,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       })
       .finally(() => {
         epoch.pending -= 1;
+        performanceTelemetry?.recordQueueDepth(epoch.pending, MAX_PENDING_OUTPUT_WRITES);
       });
     outputTail = operation;
     return operation;
@@ -1035,6 +1049,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     const options = {
       reducedMotion: props.reducedMotion ?? false,
       label: `${props.title} terminal`,
+      performanceTelemetry,
     };
     if (props.rendererFactory) {
       activateRenderer(props.rendererFactory(options), activeLoad);

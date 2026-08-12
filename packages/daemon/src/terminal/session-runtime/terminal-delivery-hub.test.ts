@@ -14,11 +14,14 @@ import {
   SessionRuntimeTerminalDeliveryHub,
   type TerminalDeliverySourceOwner,
 } from "./terminal-delivery-hub.ts";
+import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 
 class FakeOwner implements TerminalDeliverySourceOwner {
-  listener: ((update: CanonicalTerminalReplicaUpdate) => void) | null = null;
+  listener:
+    | ((update: CanonicalTerminalReplicaUpdate, trace: SessionRuntimeTraceContext | null) => void)
+    | null = null;
   raw:
     | ((record: {
         baseRevision: number;
@@ -30,7 +33,10 @@ class FakeOwner implements TerminalDeliverySourceOwner {
   closes = 0;
   subscriptions = 0;
   async subscribeSource(
-    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      trace: SessionRuntimeTraceContext | null,
+    ) => void,
     onRaw: (record: {
       baseRevision: number;
       revision: number;
@@ -49,9 +55,20 @@ class FakeOwner implements TerminalDeliverySourceOwner {
       },
     };
   }
-  emit(update: CanonicalTerminalReplicaUpdate): void {
-    this.listener?.(update);
+  emit(
+    update: CanonicalTerminalReplicaUpdate,
+    trace: SessionRuntimeTraceContext | null = null,
+  ): void {
+    this.listener?.(update, trace);
   }
+}
+
+function trace(id: string): SessionRuntimeTraceContext {
+  return {
+    traceId: id,
+    scenario: "terminal-input-to-paint",
+    authority: { generation, incarnation: `${generation}:0` },
+  };
 }
 
 function seed(revision = 0, incarnation = `${generation}:0`): CanonicalTerminalReplicaUpdate {
@@ -266,6 +283,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await settle();
     expect(messages.every((sink) => sink[0]?.type === "terminal.delivery")).toBe(true);
     expect(hub.metrics().inFlight).toBe(8);
+    expect(hub.convergenceSnapshot().clients).toHaveLength(8);
     for (let index = 0; index < connections.length; index += 1)
       connections[index]!.ack(ack(messages[index]![0] as TerminalDeliveryEnvelope));
     expect(hub.metrics().inFlight).toBe(0);
@@ -333,6 +351,21 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
       for (let index = 0; index < count; index += 1)
         connections[index]!.ack(ack(envelopes[index]!));
       expect(hub.metrics().inFlight).toBe(0);
+      const convergence = hub.convergenceSnapshot();
+      expect(convergence.panes).toEqual([
+        expect.objectContaining({
+          semanticPaneId: "pane-a",
+          incarnation: `${generation}:0`,
+          revision: 1,
+          stateHash: envelopes[0]!.canonicalStateHash,
+        }),
+      ]);
+      expect(
+        new Set(
+          convergence.clients.map((client) => `${client.baselineRevision}:${client.baselineHash}`),
+        ).size,
+      ).toBe(1);
+      expect(convergence.clients.every((client) => client.queueDepth === 0)).toBe(true);
       await hub.close();
     },
   );
@@ -373,6 +406,12 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     fast.ack(ack(latest));
     expect(hub.metrics()).toMatchObject({ clients: 2, inFlight: 1, latestPointers: 1 });
     expect(hub.metrics().maxQueueDepth).toBeLessThanOrEqual(2);
+    expect(hub.convergenceSnapshot().clients).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ clientId: "slow", inFlightRevision: 0, latestRevision: 20 }),
+        expect.objectContaining({ clientId: "fast", baselineRevision: 20 }),
+      ]),
+    );
     expect(slowMessages.filter((message) => message.type === "terminal.delivery")).toHaveLength(1);
     releaseSlow();
     await settle();
@@ -607,6 +646,43 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     ) as TerminalDeliveryEnvelope;
     expect(resumed).toMatchObject({ frame: "seed", canonicalRevision: 20 });
     expect(hub.metrics().latestPointers).toBe(1);
+    await connection.close();
+    await hub.close();
+  });
+
+  it("preserves the latest controlled probe through coalesced untraced state", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const connection = await hub.open(
+      "trace-client",
+      "pane-a",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      (message) => messages.push(message),
+    );
+    owner.emit(seed());
+    await settle();
+    connection.ack(ack(messages[0] as TerminalDeliveryEnvelope));
+
+    const first = trace("00000000-0000-4000-8000-000000000091");
+    owner.emit(patch(1, 1), first);
+    owner.emit(patch(2, 0));
+    await settle();
+    let delivered = messages.findLast(
+      (message) => message.type === "terminal.delivery",
+    ) as TerminalDeliveryEnvelope;
+    expect(delivered).toMatchObject({ canonicalRevision: 2, performanceTraceId: first.traceId });
+    connection.ack(ack(delivered));
+
+    const traceA = trace("00000000-0000-4000-8000-000000000092");
+    const traceB = trace("00000000-0000-4000-8000-000000000093");
+    owner.emit(patch(3, 1), traceA);
+    owner.emit(patch(4, 0), traceB);
+    await settle();
+    delivered = messages.findLast(
+      (message) => message.type === "terminal.delivery",
+    ) as TerminalDeliveryEnvelope;
+    expect(delivered).toMatchObject({ canonicalRevision: 4, performanceTraceId: traceB.traceId });
     await connection.close();
     await hub.close();
   });

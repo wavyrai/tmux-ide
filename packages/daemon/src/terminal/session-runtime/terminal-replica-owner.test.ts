@@ -2,10 +2,63 @@ import { describe, expect, it, vi } from "vitest";
 import type { CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
 import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
 import { SessionRuntimeTerminalReplicaOwner } from "./terminal-replica-owner.ts";
+import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 
 describe("SessionRuntimeTerminalReplicaOwner", () => {
+  it("captures a controlled probe once at reset and leaves the following delta anonymous", async () => {
+    let request: MirrorSubscribeRequest | undefined;
+    const trace: SessionRuntimeTraceContext = {
+      traceId: "00000000-0000-4000-8000-000000000099",
+      scenario: "terminal-input-to-paint",
+      authority: { generation, incarnation: `${generation}:0` },
+    };
+    const takeOutputTrace = vi
+      .fn()
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(trace)
+      .mockReturnValue(null);
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+        request = candidate;
+        queueMicrotask(() => {
+          candidate.onEvent({ type: "reset", cols: 4, rows: 1 });
+          candidate.onEvent({ type: "seed", data: new TextEncoder().encode("BOOT") });
+          candidate.onEvent({ type: "cursor", x: 0, y: 0 });
+        });
+        return subscription(candidate);
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      {
+        incarnation: `${generation}:0`,
+        initialRevision: 0,
+        takeOutputTrace,
+      },
+    );
+    const observed: Array<SessionRuntimeTraceContext | null> = [];
+    const liveSubscription = await owner.subscribe((_update, candidate) =>
+      observed.push(candidate),
+    );
+    expect(observed).toEqual([null]);
+    request!.onEvent({ type: "reset", cols: 4, rows: 1 });
+    request!.onEvent({ type: "seed", data: new TextEncoder().encode("A") });
+    request!.onEvent({ type: "cursor", x: 1, y: 0 });
+    await vi.waitFor(() => expect(observed).toHaveLength(2));
+    expect(observed[1]).toEqual(trace);
+    request!.onEvent({ type: "delta", data: new TextEncoder().encode("B") });
+    await vi.waitFor(() => expect(observed).toHaveLength(3));
+    expect(observed[2]).toBeNull();
+    expect(takeOutputTrace).toHaveBeenCalledTimes(3);
+    await liveSubscription.close();
+    await owner.dispose();
+  });
+
   it("waits for one atomic capture seed, shares one parser after clients leave, and isolates listeners", async () => {
     let request: MirrorSubscribeRequest | undefined;
     let subscriptions = 0;

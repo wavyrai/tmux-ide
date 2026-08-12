@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "referenceHost": {
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "startup": {
+    "processColdFirstUsableP95Ms": 1500,
+    "warmFirstUsableP95Ms": 750
+  },
+  "inputToPaint": {
+    "p95Ms": 16.67,
+    "minimumSamples": 30,
+    "clockRule": "input and consumed paint share one client performance-now clock"
+  },
+  "memory": {
+    "minimumSamples": 16,
+    "rssRobustSlopeBytesPerSample": 262144,
+    "heapRobustSlopeBytesPerSample": 131072,
+    "rssGrowthCeilingBytes": 67108864,
+    "heapGrowthCeilingBytes": 33554432,
+    "representationCacheCeilingBytes": 16777216,
+    "rawJournalCeilingBytes": 4194304,
+    "settledQueueDepth": 0
+  }
+}

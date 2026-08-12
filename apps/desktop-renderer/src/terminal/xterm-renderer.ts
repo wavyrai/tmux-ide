@@ -6,6 +6,10 @@ import { XTERM_PALETTE_HEX } from "@tmux-ide/core";
 
 import type { WidgetCellRow } from "@tmux-ide/contracts";
 import { readWidgetCellRows } from "./widgets/xterm-cell-rows.ts";
+import type {
+  GuiPerformanceRenderChannel,
+  GuiPerformanceTelemetrySink,
+} from "../runtime/gui-performance-telemetry.ts";
 
 export interface TerminalRendererDisposable {
   dispose(): void;
@@ -34,12 +38,14 @@ export interface TerminalRenderer {
    * so the renderer is the only thing that can answer this.
    */
   readCellRows(maxRows: number): WidgetCellRow[];
+  performanceChannel?(): GuiPerformanceRenderChannel | null;
   dispose(): void;
 }
 
 export type TerminalRendererFactory = (options: {
   readonly reducedMotion: boolean;
   readonly label: string;
+  readonly performanceTelemetry?: GuiPerformanceTelemetrySink | null;
 }) => TerminalRenderer;
 
 /**
@@ -125,7 +131,11 @@ export function resolveTerminalFontFamily(reader: TerminalTokenReader): string {
 }
 
 /** xterm is a VT renderer only here; the desktop host remains the terminal runtime. */
-export const createXtermRenderer: TerminalRendererFactory = ({ reducedMotion, label }) => {
+export const createXtermRenderer: TerminalRendererFactory = ({
+  reducedMotion,
+  label,
+  performanceTelemetry,
+}) => {
   let container: HTMLElement | null = null;
   let fitAddon: FitAddon | null = null;
   const encoder = new TextEncoder();
@@ -150,6 +160,18 @@ export const createXtermRenderer: TerminalRendererFactory = ({ reducedMotion, la
   });
   terminal.loadAddon(new Unicode11Addon());
   terminal.unicode.activeVersion = "11";
+  let disposed = false;
+  let performanceChannel = performanceTelemetry?.createRenderChannel() ?? null;
+  const currentPerformanceChannel = (): GuiPerformanceRenderChannel | null => {
+    if (disposed || !performanceTelemetry || !performanceChannel) return null;
+    if (!performanceTelemetry.enabled) return performanceChannel;
+    performanceChannel = performanceTelemetry.refreshRenderChannel(performanceChannel);
+    return performanceChannel;
+  };
+  terminal.onRender(({ start, end }) => {
+    if (disposed) return;
+    performanceTelemetry?.recordRendered(currentPerformanceChannel(), end - start + 1);
+  });
 
   const applyTheme = (): void => {
     if (!container) return;
@@ -206,7 +228,13 @@ export const createXtermRenderer: TerminalRendererFactory = ({ reducedMotion, la
     readCellRows(maxRows) {
       return readWidgetCellRows(terminal, maxRows);
     },
+    performanceChannel() {
+      return currentPerformanceChannel();
+    },
     dispose() {
+      disposed = true;
+      if (performanceChannel) performanceTelemetry?.retireRenderChannel(performanceChannel);
+      performanceChannel = null;
       container = null;
       fitAddon = null;
       terminal.dispose();

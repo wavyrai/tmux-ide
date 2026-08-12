@@ -14,7 +14,8 @@ import { EventEmitter } from "node:events";
 import { _resetCacheForTests, projectRegistryEmitter } from "../lib/project-registry.ts";
 import {
   _detachProjectRegistryListenerForTests,
-  _stopSessionsPollerForTests,
+  _setFleetFactsReadersForTests,
+  _stopFleetFactsObserverForTests,
   handleWsEventsConnection,
 } from "./ws-events.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
@@ -98,6 +99,10 @@ beforeEach(() => {
     if (args[0] === "list-sessions") return "";
     return "";
   });
+  _setFleetFactsReadersForTests({
+    readSessions: async () => ({ sessions: [], adopted: [] }),
+    readAgents: async () => new Map(),
+  });
 });
 
 afterEach(() => {
@@ -112,7 +117,8 @@ afterEach(() => {
   _resetCacheForTests();
   restorePane?.();
   restoreTmux?.();
-  _stopSessionsPollerForTests();
+  _stopFleetFactsObserverForTests();
+  _setFleetFactsReadersForTests(null);
   _detachProjectRegistryListenerForTests();
 });
 

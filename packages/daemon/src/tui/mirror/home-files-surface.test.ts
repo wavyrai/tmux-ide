@@ -4,7 +4,7 @@ import {
   homeActionAtProjection,
   homeItemIndexAtProjection,
   projectHomeSurface,
-} from "./home-surface.ts";
+} from "./home-surface-model.ts";
 import { filesHitTest, projectFilesSurface } from "./files-surface.ts";
 import type { FileNode } from "./file-tree.ts";
 import { actionChipWidth } from "./recipes.ts";

@@ -131,7 +131,7 @@ describe("semantic pane-stream runtime client", () => {
     };
     const onTerminalDelivery = mock();
     const client = await openPaneStreamRuntimeClient(options(socket, { onTerminalDelivery }));
-    client.sendText("pane.editor", "echo hi");
+    client.sendText("pane.editor", "echo hi", "00000000-0000-4000-8000-000000000099");
     client.sendKey("pane.editor", "Enter");
     const fitted = client.fitViewport(132, 44);
     const submitted = client.submitIntent(OPERATION, {
@@ -140,7 +140,14 @@ describe("semantic pane-stream runtime client", () => {
       semanticPaneId: "pane.editor",
     });
     expect(socket.sent.slice(-4)).toEqual([
-      { type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "echo hi" },
+      {
+        type: "input",
+        kind: "text",
+        pane: "pane.editor",
+        seq: 1,
+        data: "echo hi",
+        performanceTraceId: "00000000-0000-4000-8000-000000000099",
+      },
       { type: "input", kind: "key", pane: "pane.editor", seq: 2, data: "Enter" },
       { type: "viewport", seq: 1, cols: 132, rows: 44 },
       {

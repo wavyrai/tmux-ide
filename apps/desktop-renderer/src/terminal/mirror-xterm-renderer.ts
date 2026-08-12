@@ -16,6 +16,10 @@ import {
   resolveTerminalFontFamily,
   resolveTerminalTheme,
 } from "./xterm-renderer.ts";
+import type {
+  GuiPerformanceRenderChannel,
+  GuiPerformanceTelemetrySink,
+} from "../runtime/gui-performance-telemetry.ts";
 
 /**
  * Read-only VT mirror renderer for pane nodes (m43 card 3). It differs from
@@ -57,6 +61,7 @@ export interface MirrorTerminalRenderer {
    * pixels and grid pixels are the same thing only at scale 1.
    */
   gridOverlayGeometry(): { box: GridOverlayBox; scale: number } | null;
+  performanceChannel?(): GuiPerformanceRenderChannel | null;
   dispose(): void;
 }
 
@@ -119,6 +124,7 @@ export function mirrorFitTransform(
 export type MirrorTerminalRendererFactory = (options: {
   readonly reducedMotion: boolean;
   readonly label: string;
+  readonly performanceTelemetry?: GuiPerformanceTelemetrySink | null;
 }) => MirrorTerminalRenderer;
 
 /** 1-based ANSI cursor-position sequence from the wire's 0-based cell coordinates. */
@@ -131,6 +137,7 @@ export function cursorPositionSequence(x: number, y: number): string {
 export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
   reducedMotion,
   label,
+  performanceTelemetry,
 }) => {
   let container: HTMLElement | null = null;
   let fitStyle: RuntimeStyleBinding | null = null;
@@ -156,6 +163,18 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
   });
   terminal.loadAddon(new Unicode11Addon());
   terminal.unicode.activeVersion = "11";
+  let disposed = false;
+  let performanceChannel = performanceTelemetry?.createRenderChannel() ?? null;
+  const currentPerformanceChannel = (): GuiPerformanceRenderChannel | null => {
+    if (disposed || !performanceTelemetry || !performanceChannel) return null;
+    if (!performanceTelemetry.enabled) return performanceChannel;
+    performanceChannel = performanceTelemetry.refreshRenderChannel(performanceChannel);
+    return performanceChannel;
+  };
+  terminal.onRender(({ start, end }) => {
+    if (disposed) return;
+    performanceTelemetry?.recordRendered(currentPerformanceChannel(), end - start + 1);
+  });
   void reducedMotion;
 
   const applyTheme = (): void => {
@@ -280,7 +299,13 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
         scale: appliedScale,
       };
     },
+    performanceChannel() {
+      return currentPerformanceChannel();
+    },
     dispose() {
+      disposed = true;
+      if (performanceChannel) performanceTelemetry?.retireRenderChannel(performanceChannel);
+      performanceChannel = null;
       container = null;
       fitStyle?.dispose();
       fitStyle = null;

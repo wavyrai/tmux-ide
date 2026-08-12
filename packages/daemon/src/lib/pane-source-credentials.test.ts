@@ -5,6 +5,34 @@ import {
 } from "./pane-source-credentials.ts";
 
 describe("PaneSourceCredentialAuthority", () => {
+  it("reconciles credential grants through the async monitor shell", async () => {
+    const installed = new Map<string, string>();
+    const runAsync = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "list-panes") return `%1\tsemantic-1\t${installed.get("%1") ?? ""}`;
+      if (args[0] === "set-option") {
+        installed.set(args[3]!, args[5]!);
+        return "";
+      }
+      throw new Error(`unexpected tmux call: ${args.join(" ")}`);
+    });
+    const run = vi.fn((args: readonly string[]) => {
+      if (args[0] === "list-panes") return `%1\tsemantic-1\t${installed.get("%1") ?? ""}`;
+      if (args[0] === "set-option") {
+        installed.set(args[3]!, args[5]!);
+        return "";
+      }
+      throw new Error(`unexpected tmux call: ${args.join(" ")}`);
+    });
+    const authority = new PaneSourceCredentialAuthority({ run, runAsync });
+
+    await authority.reconcileSessionAsync("alpha");
+
+    const credential = installed.get("%1");
+    expect(credential).toBeTruthy();
+    expect(runAsync).toHaveBeenCalledTimes(2);
+    expect(authority.resolve(credential, "alpha", "semantic-1")).toBe("semantic-1");
+  });
+
   it("mints exact pane grants, revokes churn, and invalidates on generation restart", () => {
     let topology: ReadonlyArray<readonly [string, string]> = [
       ["%1", "pane.editor"],

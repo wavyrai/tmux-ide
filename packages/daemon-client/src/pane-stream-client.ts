@@ -68,8 +68,8 @@ export interface PaneStreamRuntimeClient {
   readonly daemonInstanceId: string;
   readonly requestId: string;
   readonly effectiveViewerMode: PaneStreamIssueDescriptor["effectiveViewerMode"];
-  sendText(pane: string, text: string): void;
-  sendKey(pane: string, key: string): void;
+  sendText(pane: string, text: string, performanceTraceId?: string): void;
+  sendKey(pane: string, key: string, performanceTraceId?: string): void;
   fitViewport(cols: number, rows: number): Promise<void>;
   ack(ack: TerminalDeliveryAck): void;
   nack(nack: TerminalDeliveryNack): void;
@@ -199,10 +199,22 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
     pendingIntents.clear();
   };
-  const sendInput = (pane: string, kind: "text" | "key", data: string): void => {
+  const sendInput = (
+    pane: string,
+    kind: "text" | "key",
+    data: string,
+    performanceTraceId?: string,
+  ): void => {
     const sequence = (inputSequences.get(pane) ?? 0) + 1;
     inputSequences.set(pane, sequence);
-    send({ type: "input", kind, pane, seq: sequence, data });
+    send({
+      type: "input",
+      kind,
+      pane,
+      seq: sequence,
+      data,
+      ...(performanceTraceId ? { performanceTraceId } : {}),
+    });
   };
   const onOpen: SocketListener = () => {
     if (closed) return;
@@ -282,8 +294,8 @@ export async function connectIssuedPaneStreamRuntimeClient(
     daemonInstanceId: descriptor.daemonInstanceId,
     requestId: descriptor.requestId,
     effectiveViewerMode: descriptor.effectiveViewerMode,
-    sendText: (pane, text) => sendInput(pane, "text", text),
-    sendKey: (pane, key) => sendInput(pane, "key", key),
+    sendText: (pane, text, performanceTraceId) => sendInput(pane, "text", text, performanceTraceId),
+    sendKey: (pane, key, performanceTraceId) => sendInput(pane, "key", key, performanceTraceId),
     fitViewport: (cols, rows) => {
       viewportSequence += 1;
       const seq = viewportSequence;

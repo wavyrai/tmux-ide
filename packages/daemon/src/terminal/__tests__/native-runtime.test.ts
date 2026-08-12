@@ -32,6 +32,7 @@ import {
   TmuxAttachmentOperationSerializer,
   type TmuxAttachmentCommandRunner,
 } from "../attachments/tmux-view-executor.ts";
+import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
 import { MockPtyAdapter } from "./MockPtyAdapter.ts";
 
 const INSTANCE_ID = "daemon-instance-a1";
@@ -99,7 +100,14 @@ function row(overrides: Partial<TrustedSemanticPaneSnapshot> = {}): TrustedSeman
 
 function applicationShellPaneWire(
   sessionName: string,
-  options: { stamp?: string; paneId?: string; role?: string; mission?: string; cwd?: string } = {},
+  options: {
+    stamp?: string;
+    windowStamp?: string;
+    paneId?: string;
+    role?: string;
+    mission?: string;
+    cwd?: string;
+  } = {},
 ): string {
   return [
     sessionName,
@@ -119,7 +127,7 @@ function applicationShellPaneWire(
     "agent",
     options.mission ?? "",
     options.cwd ?? "/repo",
-    "",
+    options.windowStamp ?? "",
     "tmux-ide-pane-v2",
   ].join(INVENTORY_SEPARATOR);
 }
@@ -572,6 +580,103 @@ class StartupReconciliationTmuxModel {
 }
 
 describe("native terminal attachment runtime lifecycle", () => {
+  it("prewarms from authoritative inventory without blocking or failing the shell", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let discoveredSessionName = "runtime:session";
+    const prewarmSession = vi.fn(async () => {
+      throw new Error("control channel unavailable");
+    });
+    const retireSession = vi.fn(async () => undefined);
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      sessionRuntimeRegistry: {
+        prewarmSession,
+        retireSession,
+      } as unknown as SessionRuntimeRegistry,
+      tmuxAuthority: authority(root),
+      commandExecutor: (_executable, rawArgv) => {
+        const argv = rawArgv.slice(2);
+        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+          return (
+            [discoveredSessionName, "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n"
+          );
+        }
+        if (argv[0] === "list-sessions") return "";
+        if (argv[0] === "list-panes") {
+          return `${applicationShellPaneWire(discoveredSessionName, { windowStamp: "window.promoted.abc123" })}\n`;
+        }
+        return "";
+      },
+    });
+
+    await runtime.whenReady();
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).resolves.toMatchObject(
+      { name: "runtime:session" },
+    );
+    expect(prewarmSession).toHaveBeenCalledOnce();
+    expect(prewarmSession).toHaveBeenCalledWith("runtime:session");
+
+    registry.renameSession("workspace.alpha", "replacement:session");
+    discoveredSessionName = "replacement:session";
+    await expect(
+      runtime.discoverApplicationShellSession("replacement:session"),
+    ).resolves.toMatchObject({ name: "replacement:session" });
+    await vi.waitFor(() => expect(retireSession).toHaveBeenCalledWith("runtime:session"));
+    expect(prewarmSession).toHaveBeenLastCalledWith("replacement:session");
+
+    registry.remove("workspace.alpha");
+    await vi.waitFor(() => expect(retireSession).toHaveBeenCalledWith("replacement:session"));
+    await runtime.dispose();
+  });
+
+  it("defers prewarm until promotion has authored pane and window identity", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const prewarmSession = vi.fn(async () => undefined);
+    let semanticPaneId = "";
+    let semanticWindowId = "";
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      sessionRuntimeRegistry: {
+        prewarmSession,
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+      tmuxAuthority: authority(root),
+      commandExecutor: (_executable, rawArgv) => {
+        const argv = rawArgv.slice(2);
+        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+          return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+        }
+        if (argv[0] === "list-sessions") return "";
+        if (argv[0] === "list-panes") {
+          return `${applicationShellPaneWire("runtime:session", {
+            stamp: semanticPaneId,
+            windowStamp: semanticWindowId,
+          })}\n`;
+        }
+        return "";
+      },
+    });
+
+    await runtime.whenReady();
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).resolves.toMatchObject(
+      { catalogIssue: "missing-semantic-stamp" },
+    );
+    expect(prewarmSession).not.toHaveBeenCalled();
+
+    semanticPaneId = "pane.promoted.abc123";
+    semanticWindowId = "window.promoted.abc123";
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).resolves.toMatchObject(
+      { catalogIssue: null },
+    );
+    expect(prewarmSession).toHaveBeenCalledOnce();
+    expect(prewarmSession).toHaveBeenCalledWith("runtime:session");
+    await runtime.dispose();
+  });
+
   it("uses the pinned executable and custom socket for exact application-shell inventory", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     const calls: Array<{ executable: string; argv: readonly string[]; timeoutMs: number }> = [];

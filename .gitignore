@@ -80,6 +80,7 @@ dashboard/public/fonts/private/*
 test-results/
 playwright-report/
 apps/desktop-renderer/e2e/artifacts/
+/artifacts/
 
 # Vitest v8 coverage reports (per-package, written by `pnpm test --coverage`)
 coverage/

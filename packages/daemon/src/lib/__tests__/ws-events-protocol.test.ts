@@ -6,7 +6,8 @@ import {
   _resetResourceEventJournalForTests,
   _resourceObserverStateForTests,
   _setResourceObservationOverrideForTests,
-  _stopSessionsPollerForTests,
+  _setFleetFactsReadersForTests,
+  _stopFleetFactsObserverForTests,
   broadcastInteractionReceipt,
   broadcastResourceChanged,
   handleWsEventsConnection,
@@ -24,11 +25,16 @@ let restoreTmuxRunner: (() => void) | null = null;
 
 beforeAll(() => {
   restoreTmuxRunner = _setTmuxRunner(() => "");
+  _setFleetFactsReadersForTests({
+    readSessions: async () => ({ sessions: [], adopted: [] }),
+    readAgents: async () => new Map(),
+  });
 });
 
 afterAll(() => {
   restoreTmuxRunner?.();
   restoreTmuxRunner = null;
+  _setFleetFactsReadersForTests(null);
 });
 
 const daemonIdentity = {
@@ -66,7 +72,7 @@ async function flushProtocol(): Promise<void> {
 
 afterEach(() => {
   _setResourceObservationOverrideForTests(null);
-  _stopSessionsPollerForTests();
+  _stopFleetFactsObserverForTests();
   _detachProjectRegistryListenerForTests();
   _resetResourceEventJournalForTests();
 });

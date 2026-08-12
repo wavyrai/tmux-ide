@@ -7,3 +7,5 @@ export * from "./terminal-delivery.ts";
 export * from "./interaction-receipts.ts";
 export * from "./agent-provisioning.ts";
 export * from "./navigator.ts";
+export * from "./performance-qualification.ts";
+export * from "./performance-metrics.ts";

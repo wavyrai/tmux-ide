@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES,
   TerminalDeliveryEnvelopeSchemaZ,
@@ -31,12 +30,22 @@ import type {
   TerminalReplicaCommittedRaw,
   TerminalReplicaSourceSubscription,
 } from "./terminal-replica-owner.ts";
+import {
+  SYSTEM_SESSION_RUNTIME_SCHEDULER,
+  type SessionRuntimeScheduler,
+  type SessionRuntimeTimer,
+} from "./runtime-scheduler.ts";
+import {
+  DISABLED_SESSION_RUNTIME_OBSERVABILITY,
+  type SessionRuntimeObservability,
+  type SessionRuntimeTraceContext,
+} from "./runtime-observability.ts";
 
-const MAX_CANONICAL_REVISIONS = 128;
-const MAX_RAW_JOURNAL_BYTES = 4 * 1024 * 1024;
+export const MAX_CANONICAL_REVISIONS = 128;
+export const MAX_RAW_JOURNAL_BYTES = 4 * 1024 * 1024;
 const MAX_REPRESENTATION_CACHE_ENTRIES = 32;
-const MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
-const MAX_CLIENTS = 64;
+export const MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
+export const MAX_CLIENTS = 64;
 const MAX_PANES = 32;
 const MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
 const BACKGROUND_CADENCE_MS = 100;
@@ -58,6 +67,25 @@ export interface TerminalDeliveryMetrics {
   readonly inFlightBytes: number;
 }
 
+export interface TerminalDeliveryConvergenceSnapshot {
+  readonly panes: readonly {
+    readonly semanticPaneId: string;
+    readonly incarnation: string;
+    readonly revision: number;
+    readonly stateHash: string;
+  }[];
+  readonly clients: readonly {
+    readonly clientId: string;
+    readonly semanticPaneId: string;
+    readonly visibility: TerminalDeliveryVisibility;
+    readonly baselineRevision: number;
+    readonly baselineHash: string | null;
+    readonly inFlightRevision: number | null;
+    readonly latestRevision: number | null;
+    readonly queueDepth: number;
+  }[];
+}
+
 export interface TerminalDeliveryConnection {
   readonly negotiation: TerminalDeliveryNegotiationResult;
   ack(ack: TerminalDeliveryAck): void;
@@ -69,6 +97,12 @@ export interface TerminalDeliveryConnection {
 interface RevisionRecord {
   readonly update: CanonicalTerminalReplicaUpdate;
   readonly state: TerminalReplicaState;
+  readonly trace: SessionRuntimeTraceContext | null;
+}
+
+interface PendingCanonicalUpdate {
+  readonly update: CanonicalTerminalReplicaUpdate;
+  readonly trace: SessionRuntimeTraceContext | null;
 }
 
 interface PaneState {
@@ -82,13 +116,17 @@ interface PaneState {
   rawBytes: number;
   rawFloorRevision: number;
   lastRawRevision: number;
-  readonly pendingCanonical: CanonicalTerminalReplicaUpdate[];
+  readonly pendingCanonical: PendingCanonicalUpdate[];
   canonicalScheduled: boolean;
+  pendingDeliveryTrace: SessionRuntimeTraceContext | null;
 }
 
 export interface TerminalDeliverySourceOwner {
   subscribeSource(
-    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      trace: SessionRuntimeTraceContext | null,
+    ) => void,
     onRaw: (record: TerminalReplicaCommittedRaw) => void,
   ): Promise<TerminalReplicaSourceSubscription>;
 }
@@ -118,7 +156,7 @@ interface ClientState {
   lastAck: TerminalDeliveryAck | null;
   /** Delivery displaced by authoritative source close; its racing ACK is benign. */
   sourceClosedFlight: TerminalDeliveryEnvelope | null;
-  backgroundTimer: ReturnType<typeof setTimeout> | null;
+  backgroundTimer: SessionRuntimeTimer | null;
 }
 
 interface CachedRepresentation {
@@ -132,6 +170,8 @@ interface CachedRepresentation {
 /** One bounded, renderer-independent delivery coordinator per SessionRuntime. */
 export class SessionRuntimeTerminalDeliveryHub {
   readonly #ownerForPane: (semanticPaneId: string) => TerminalDeliverySourceOwner;
+  readonly #scheduler: SessionRuntimeScheduler;
+  readonly #observability: SessionRuntimeObservability;
   readonly #panes = new Map<string, PaneState>();
   readonly #clients = new Map<string, ClientState>();
   /** Synchronous reservations held while an async pane source is starting. */
@@ -149,8 +189,14 @@ export class SessionRuntimeTerminalDeliveryHub {
     readonly generation: SessionRuntimeGeneration,
     readonly workspaceName: string,
     ownerForPane: (semanticPaneId: string) => TerminalDeliverySourceOwner,
+    options: {
+      readonly scheduler?: SessionRuntimeScheduler;
+      readonly observability?: SessionRuntimeObservability;
+    } = {},
   ) {
     this.#ownerForPane = ownerForPane;
+    this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
+    this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
   }
 
   async open(
@@ -161,7 +207,11 @@ export class SessionRuntimeTerminalDeliveryHub {
   ): Promise<TerminalDeliveryConnection> {
     if (this.#closed) throw new Error("Terminal delivery hub is closed");
     const offer = TerminalDeliveryOfferSchemaZ.parse(offerInput);
-    const negotiation = negotiateTerminalDelivery(offer, this.generation, randomUUID());
+    const negotiation = negotiateTerminalDelivery(
+      offer,
+      this.generation,
+      this.#scheduler.createId(),
+    );
     if (!negotiation.accepted) return rejectedConnection(negotiation);
     const key = cacheKey([clientId, semanticPaneId]);
     if (this.#clients.has(key) || this.#pendingClients.has(key))
@@ -223,7 +273,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   }
 
   metrics(): TerminalDeliveryMetrics {
-    const now = performance.now();
+    const now = this.#scheduler.nowMs();
     const currentSlow = [...this.#clients.values()].reduce(
       (max, client) => Math.max(max, client.inFlight ? now - client.inFlight.sentAt : 0),
       0,
@@ -248,6 +298,39 @@ export class SessionRuntimeTerminalDeliveryHub {
       inFlightBytes: [...this.#clients.values()].reduce(
         (sum, client) => sum + (client.inFlight?.envelope.representationBytes ?? 0),
         0,
+      ),
+    });
+  }
+
+  convergenceSnapshot(): TerminalDeliveryConvergenceSnapshot {
+    return Object.freeze({
+      panes: Object.freeze(
+        [...this.#panes.entries()].flatMap(([semanticPaneId, pane]) =>
+          pane.latest
+            ? [
+                Object.freeze({
+                  semanticPaneId,
+                  incarnation: pane.latest.update.incarnation,
+                  revision: pane.latest.update.revision,
+                  stateHash: pane.latest.update.stateHash,
+                }),
+              ]
+            : [],
+        ),
+      ),
+      clients: Object.freeze(
+        [...this.#clients.values()].map((client) =>
+          Object.freeze({
+            clientId: client.clientId,
+            semanticPaneId: client.paneId,
+            visibility: client.visibility,
+            baselineRevision: client.baselineRevision,
+            baselineHash: client.baselineHash,
+            inFlightRevision: client.inFlight?.envelope.canonicalRevision ?? null,
+            latestRevision: client.latestRevision,
+            queueDepth: client.outgoing.length,
+          }),
+        ),
       ),
     });
   }
@@ -304,11 +387,12 @@ export class SessionRuntimeTerminalDeliveryHub {
       lastRawRevision: -1,
       pendingCanonical: [],
       canonicalScheduled: false,
+      pendingDeliveryTrace: null,
     };
     this.#panes.set(semanticPaneId, pane);
     pane.start = owner
       .subscribeSource(
-        (update) => this.#observeCanonical(semanticPaneId, update),
+        (update, trace) => this.#observeCanonical(semanticPaneId, update, trace),
         (record) => this.#observeRaw(semanticPaneId, record),
       )
       .then(async (source) => {
@@ -326,17 +410,21 @@ export class SessionRuntimeTerminalDeliveryHub {
     return pane;
   }
 
-  #observeCanonical(semanticPaneId: string, update: CanonicalTerminalReplicaUpdate): void {
+  #observeCanonical(
+    semanticPaneId: string,
+    update: CanonicalTerminalReplicaUpdate,
+    trace: SessionRuntimeTraceContext | null,
+  ): void {
     const pane = this.#panes.get(semanticPaneId);
     if (!pane) return;
-    pane.pendingCanonical.push(update);
+    pane.pendingCanonical.push({ update, trace });
     if (pane.canonicalScheduled) return;
     pane.canonicalScheduled = true;
-    queueMicrotask(() => {
+    this.#scheduler.microtask(() => {
       if (this.#panes.get(semanticPaneId) !== pane) return;
       pane.canonicalScheduled = false;
       for (const pending of pane.pendingCanonical.splice(0))
-        this.#applyCanonical(semanticPaneId, pane, pending);
+        this.#applyCanonical(semanticPaneId, pane, pending.update, pending.trace);
     });
   }
 
@@ -344,6 +432,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     semanticPaneId: string,
     pane: PaneState,
     update: CanonicalTerminalReplicaUpdate,
+    trace: SessionRuntimeTraceContext | null,
   ): void {
     if (
       update.workspaceName !== this.workspaceName ||
@@ -354,7 +443,8 @@ export class SessionRuntimeTerminalDeliveryHub {
     const result = applyTerminalReplicaUpdate(pane.current, update);
     if (result.status !== "applied" && result.status !== "idempotent") return;
     pane.current = result.state;
-    const record = { update, state: result.state };
+    if (trace) pane.pendingDeliveryTrace = trace;
+    const record = { update, state: result.state, trace: pane.pendingDeliveryTrace };
     pane.latest = record;
     pane.revisions.set(update.revision, record);
     while (pane.revisions.size > MAX_CANONICAL_REVISIONS)
@@ -374,14 +464,14 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#schedule(client);
     }
     if (update.type === "terminal.tombstone") {
-      setTimeout(() => {
+      this.#scheduler.timer(() => {
         if (this.#panes.get(semanticPaneId) !== pane) return;
         this.#panes.delete(semanticPaneId);
         pane.pendingCanonical.length = 0;
         pane.canonicalScheduled = false;
         void pane.source?.close().catch(() => undefined);
         this.#clearCache();
-      }, 0).unref?.();
+      }, 0);
     }
   }
 
@@ -431,17 +521,16 @@ export class SessionRuntimeTerminalDeliveryHub {
       return;
     if (client.visibility === "background") {
       if (client.backgroundTimer) return;
-      client.backgroundTimer = setTimeout(() => {
+      client.backgroundTimer = this.#scheduler.timer(() => {
         client.backgroundTimer = null;
         if (!client.closed && !client.inFlight && client.latestRevision !== null)
           this.#deliver(client);
       }, BACKGROUND_CADENCE_MS);
-      client.backgroundTimer.unref?.();
       return;
     }
     if (client.scheduled) return;
     client.scheduled = true;
-    queueMicrotask(() => {
+    this.#scheduler.microtask(() => {
       client.scheduled = false;
       if (!client.closed && client.visibility === "visible" && !client.inFlight)
         this.#deliver(client);
@@ -452,9 +541,10 @@ export class SessionRuntimeTerminalDeliveryHub {
     const pane = this.#panes.get(client.paneId);
     const target = pane?.latest;
     if (!pane || !target || target.update.revision !== client.latestRevision) return;
+    const traceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
     try {
       const representation = this.#representation(client, pane, target);
-      const transactionId = randomUUID();
+      const transactionId = this.#scheduler.createId();
       const chunkCount = Math.max(1, Math.ceil(representation.bytes.byteLength / (256 * 1024)));
       const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
         type: "terminal.delivery",
@@ -464,6 +554,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         incarnation: target.update.incarnation,
         deliveryNonce: client.negotiated.deliveryNonce,
         transactionId,
+        ...(target.trace ? { performanceTraceId: target.trace.traceId } : {}),
         protocolVersion: 1,
         encoding: client.negotiated.encoding,
         frame: representation.frame,
@@ -483,9 +574,11 @@ export class SessionRuntimeTerminalDeliveryHub {
         envelope,
         bytes: representation.bytes,
         nextChunk: 0,
-        sentAt: performance.now(),
+        sentAt: this.#scheduler.nowMs(),
       };
       this.#enqueue(client, envelope);
+      if (target.trace?.traceId === pane.pendingDeliveryTrace?.traceId)
+        pane.pendingDeliveryTrace = null;
     } catch (error) {
       this.#fault(
         client,
@@ -494,6 +587,15 @@ export class SessionRuntimeTerminalDeliveryHub {
           : "protocol-violation",
         error instanceof Error ? error.message : String(error),
       );
+    } finally {
+      if (this.#observability.enabled)
+        this.#observability.recordSpan(
+          "transport",
+          "terminal-delivery-encode-enqueue",
+          traceStarted,
+          this.#observability.nowMicros(),
+          target.trace,
+        );
     }
   }
 
@@ -636,7 +738,10 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#fault(client, "protocol-violation", "ACK does not identify the in-flight delivery");
       return;
     }
-    this.#maxSlowClientMs = Math.max(this.#maxSlowClientMs, performance.now() - flight.sentAt);
+    this.#maxSlowClientMs = Math.max(
+      this.#maxSlowClientMs,
+      this.#scheduler.nowMs() - flight.sentAt,
+    );
     client.baselineRevision = ack.canonicalRevision;
     client.baselineHash = ack.canonicalStateHash;
     client.reseedRequired = false;
@@ -706,7 +811,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     this.#maxQueueDepth = Math.max(this.#maxQueueDepth, client.outgoing.length);
     if (client.sending) return;
     client.sending = true;
-    queueMicrotask(async () => {
+    this.#scheduler.microtask(async () => {
       try {
         while (!client.closed) {
           const queued = client.outgoing.shift();
@@ -726,7 +831,7 @@ export class SessionRuntimeTerminalDeliveryHub {
             };
           }
           if (!next) break;
-          await withDeadline(Promise.resolve(client.accept(next)), 5_000);
+          await this.#withDeadline(Promise.resolve(client.accept(next)), 5_000);
         }
       } catch {
         client.outgoing.length = 0;
@@ -746,7 +851,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   async #closeClient(client: ClientState): Promise<void> {
     if (client.closed) return;
     client.closed = true;
-    if (client.backgroundTimer) clearTimeout(client.backgroundTimer);
+    client.backgroundTimer?.cancel();
     client.outgoing.length = 0;
     this.#clients.delete(client.key);
     if ([...this.#clients.values()].some((candidate) => candidate.paneId === client.paneId)) return;
@@ -758,6 +863,23 @@ export class SessionRuntimeTerminalDeliveryHub {
     }
     await pane?.source?.close().catch(() => undefined);
     this.#clearCache();
+  }
+
+  async #withDeadline<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
+    let timer: SessionRuntimeTimer | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = this.#scheduler.timer(
+            () => reject(new Error("Terminal delivery sink timed out")),
+            milliseconds,
+          );
+        }),
+      ]);
+    } finally {
+      timer?.cancel();
+    }
   }
 
   #cacheSet(key: string, value: CachedRepresentation): void {
@@ -828,19 +950,6 @@ function emptyTombstone(): CachedRepresentation {
 
 function cacheKey(parts: readonly (string | number)[]): string {
   return JSON.stringify(parts);
-}
-
-async function withDeadline<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("Terminal delivery sink timed out")), milliseconds);
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([operation, deadline]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 function rejectedConnection(

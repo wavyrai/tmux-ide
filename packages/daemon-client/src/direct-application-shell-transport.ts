@@ -57,6 +57,14 @@ export interface DaemonTransportDependencies {
   readonly resolveSessionName: (workspaceName: string) => string;
   /** Optional owner credential retained by the host process, never the target. */
   readonly ownerToken?: string;
+  /**
+   * Application-shell contract requested by this renderer. Native canvas
+   * hosts retain the V3 default; terminal-first hosts may select V2 so they do
+   * not pay for app-window enrichment they never consume.
+   */
+  readonly applicationShellResourceVersion?:
+    | typeof APPLICATION_SHELL_RESOURCE_V2_VERSION
+    | typeof APPLICATION_SHELL_RESOURCE_V3_VERSION;
   readonly fetch?: DaemonFetch;
   readonly createWebSocket?: DaemonWebSocketFactory;
 }
@@ -239,6 +247,8 @@ export function createDirectLoopbackDaemonTransport(
   }
   const fetchImpl = dependencies.fetch ?? defaultFetch;
   const createWebSocket = dependencies.createWebSocket ?? defaultCreateWebSocket;
+  const applicationShellResourceVersion =
+    dependencies.applicationShellResourceVersion ?? APPLICATION_SHELL_RESOURCE_V3_VERSION;
   const eventReplicas = new Map<string, ResourceReplicaState<null>>();
   const validateBoundTarget = (value: unknown): DesktopApplicationShellTarget => {
     const safeTarget = validatedTarget(value);
@@ -253,7 +263,7 @@ export function createDirectLoopbackDaemonTransport(
       const safeTarget = validateBoundTarget(target);
       const sessionName = resolvedSessionName(resolveSessionName, safeTarget.workspaceName);
       let response: Response;
-      let negotiatedVersion = APPLICATION_SHELL_RESOURCE_V3_VERSION as
+      let negotiatedVersion = applicationShellResourceVersion as
         | typeof APPLICATION_SHELL_RESOURCE_V2_VERSION
         | typeof APPLICATION_SHELL_RESOURCE_V3_VERSION;
       try {
@@ -272,7 +282,10 @@ export function createDirectLoopbackDaemonTransport(
             signal,
           });
         response = await request(negotiatedVersion);
-        if (response.status === 400) {
+        if (
+          negotiatedVersion === APPLICATION_SHELL_RESOURCE_V3_VERSION &&
+          response.status === 400
+        ) {
           negotiatedVersion = APPLICATION_SHELL_RESOURCE_V2_VERSION;
           response = await request(negotiatedVersion);
         }

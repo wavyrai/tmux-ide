@@ -210,6 +210,8 @@ export const PaneStreamInputFrameSchemaZ = z.discriminatedUnion("kind", [
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       data: InputTextSchemaZ,
+      /** Opt-in controlled next-output probe; not a general causal assertion. */
+      performanceTraceId: z.uuid().optional(),
     })
     .strict(),
   z
@@ -219,6 +221,8 @@ export const PaneStreamInputFrameSchemaZ = z.discriminatedUnion("kind", [
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       data: PaneStreamKeyNameSchemaZ,
+      /** Opt-in controlled next-output probe; not a general causal assertion. */
+      performanceTraceId: z.uuid().optional(),
     })
     .strict(),
 ]);

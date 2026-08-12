@@ -12,6 +12,32 @@ interface MonitorPane {
   name?: string;
 }
 
+export function parseListeningPids(raw: string): Set<string> {
+  const pids = new Set<string>();
+  let currentPid: string | null = null;
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("p")) {
+      currentPid = line.slice(1);
+    } else if (line.startsWith("n") && currentPid) {
+      const match = line.match(/:(\d+)$/);
+      if (match) {
+        const port = parseInt(match[1]!, 10);
+        if (port >= 1024 && port <= 20000) pids.add(currentPid);
+      }
+    }
+  }
+  return pids;
+}
+
+export function parseProcessTree(raw: string): Map<string, string> {
+  const tree = new Map<string, string>();
+  for (const line of raw.trim().split("\n")) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length === 2) tree.set(parts[0]!, parts[1]!);
+  }
+  return tree;
+}
+
 // --- Port detection (pure helpers) ---
 
 function getListeningPids(): Set<string> {
@@ -22,20 +48,7 @@ function getListeningPids(): Set<string> {
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2000,
     });
-    const pids = new Set<string>();
-    let currentPid: string | null = null;
-    for (const line of raw.split("\n")) {
-      if (line.startsWith("p")) {
-        currentPid = line.slice(1);
-      } else if (line.startsWith("n") && currentPid) {
-        const match = line.match(/:(\d+)$/);
-        if (match) {
-          const port = parseInt(match[1]!, 10);
-          if (port >= 1024 && port <= 20000) pids.add(currentPid);
-        }
-      }
-    }
-    return pids;
+    return parseListeningPids(raw);
   } catch {
     return new Set<string>();
   }
@@ -49,12 +62,7 @@ function getProcessTree(): Map<string, string> {
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2000,
     });
-    const tree = new Map<string, string>();
-    for (const line of raw.trim().split("\n")) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length === 2) tree.set(parts[0]!, parts[1]!);
-    }
-    return tree;
+    return parseProcessTree(raw);
   } catch {
     return new Map<string, string>();
   }

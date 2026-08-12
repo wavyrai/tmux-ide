@@ -28,6 +28,7 @@ import {
 } from "@tmux-ide/core";
 import { browserWebSocketHandshakeUrl } from "../runtime/browser-websocket-session.ts";
 import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
+import type { GuiPerformanceTelemetrySink } from "../runtime/gui-performance-telemetry.ts";
 
 /**
  * Renderer-direct pane-stream transport (m43 card 3): ONE WebSocket per
@@ -188,6 +189,7 @@ export interface PaneStreamTransportDependencies {
   readonly issueTimeoutMs?: number;
   /** Default is the canonical semantic lane; null is the legacy compatibility profile. */
   readonly terminalDelivery?: TerminalDeliveryOffer | null;
+  readonly performanceTelemetry?: GuiPerformanceTelemetrySink | null;
 }
 
 /**
@@ -355,6 +357,7 @@ class PaneStreamSession {
   readonly #descriptor: Omit<SafeStreamDescriptor, "redemptionFrame">;
   readonly #schedule: (callback: () => void, delayMs: number) => () => void;
   readonly #now: () => number;
+  readonly #performanceTelemetry: GuiPerformanceTelemetrySink | null;
   readonly #panes = new Map<string, PaneChannel>();
   readonly #connectPromise: Promise<PaneStreamConnectResult>;
   #resolveConnect!: (result: PaneStreamConnectResult) => void;
@@ -374,11 +377,13 @@ class PaneStreamSession {
     readonly listeners: PaneStreamSessionListeners;
     readonly schedule: (callback: () => void, delayMs: number) => () => void;
     readonly now: () => number;
+    readonly performanceTelemetry?: GuiPerformanceTelemetrySink | null;
   }) {
     this.#socket = options.socket;
     this.#listeners = options.listeners;
     this.#schedule = options.schedule;
     this.#now = options.now;
+    this.#performanceTelemetry = options.performanceTelemetry ?? null;
     this.#rateWindowStartedAt = options.now();
     const { redemptionFrame, ...descriptor } = options.descriptor;
     this.#redemptionFrame = redemptionFrame;
@@ -692,6 +697,11 @@ class PaneStreamSession {
         return;
       }
       channel.semanticDelivery = next;
+      if (this.#performanceTelemetry?.enabled) {
+        this.#performanceTelemetry.recordRevisionLag(
+          Math.max(0, frame.envelope.canonicalRevision - next.appliedRevision),
+        );
+      }
       channel.semanticAssembler = new TerminalDeliveryAssembler(frame.envelope);
       return;
     }
@@ -732,6 +742,7 @@ class PaneStreamSession {
         const previousSnapshot = channel.semanticDelivery.canonicalSnapshot;
         const committed = commitTerminalDelivery(channel.semanticDelivery, staged);
         channel.semanticDelivery = committed.state;
+        if (this.#performanceTelemetry?.enabled) this.#performanceTelemetry.recordRevisionLag(0);
         channel.semanticAssembler = null;
         const snapshot = committed.state.canonicalSnapshot;
         if (!snapshot) {
@@ -886,6 +897,7 @@ class PaneStreamSession {
       return;
     }
     channel.pendingApplies += 1;
+    this.#recordPendingApplyCount();
     channel.applyTail = channel.applyTail
       .then(async () => {
         if (this.#phase === "closed") return;
@@ -907,6 +919,7 @@ class PaneStreamSession {
       })
       .finally(() => {
         channel.pendingApplies -= 1;
+        this.#recordPendingApplyCount();
       });
   }
 
@@ -928,6 +941,7 @@ class PaneStreamSession {
       return;
     }
     channel.pendingApplies += 1;
+    this.#recordPendingApplyCount();
     channel.applyTail = channel.applyTail
       .then(async () => {
         if (this.#phase === "closed") return;
@@ -951,7 +965,16 @@ class PaneStreamSession {
       })
       .finally(() => {
         channel.pendingApplies -= 1;
+        this.#recordPendingApplyCount();
       });
+  }
+
+  #recordPendingApplyCount(): void {
+    const telemetry = this.#performanceTelemetry;
+    if (!telemetry?.enabled) return;
+    let count = 0;
+    for (const channel of this.#panes.values()) count += channel.pendingApplies;
+    telemetry.recordQueueDepth(count, PANE_STREAM_MAX_PENDING_EVENTS_PER_PANE * this.#panes.size);
   }
 
   #acknowledge(channel: PaneChannel): void {
@@ -1159,7 +1182,14 @@ export function createPaneStreamTransport(
           ),
         };
       }
-      return new PaneStreamSession({ descriptor, socket, listeners, schedule, now }).start();
+      return new PaneStreamSession({
+        descriptor,
+        socket,
+        listeners,
+        schedule,
+        now,
+        performanceTelemetry: dependencies.performanceTelemetry,
+      }).start();
     },
   });
 }

@@ -27,13 +27,13 @@ import {
   type RenderableOptions,
 } from "@opentui/core";
 import { extend } from "@opentui/solid";
-import { appendFileSync } from "node:fs";
 import type { CursorState } from "./pane-mirror.ts";
 import type { BlitOptions } from "./pane-mirror.ts";
 import { swapCells, paintBg, type CellArrays, type GraphemeOverride } from "./blit.ts";
 import { rowSelectionRange, visibleSelRows, type Cell } from "./selection.ts";
 import type { SearchMatch } from "./search-model.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
+import { currentTuiPerformanceEventSink } from "./performance-events.ts";
 
 /** The scrollback-search highlight payload for one pane: matches keyed by
  *  ABSOLUTE buffer line (mapped to a visible row via `baseY`), the query length,
@@ -90,8 +90,14 @@ export interface TerminalPaneRenderSource {
     defaultFg: number,
     defaultBg: number,
     options: BlitOptions,
-  ): void;
+  ): TerminalPaintTrace | null;
   releasePane?(paneId: string, consumerId: object): void;
+}
+
+export interface TerminalPaintTrace {
+  readonly traceId: string;
+  readonly generation: string;
+  readonly incarnation: string;
 }
 
 const hardwareCursorOwner = new WeakMap<RenderContext, PaneSurfaceRenderable>();
@@ -105,11 +111,6 @@ function packedRgba(packed: number): RGBA {
   }
   return c;
 }
-
-const PERF = !!process.env.TMUX_IDE_ZZ_PERF;
-/** Log the rows-blitted count per walk (M21.4 acceptance: flood repaints only
- *  dirty rows). Env-gated so it costs nothing in production. */
-const ROW_TAP = !!process.env.TMUX_IDE_FB_ROWS;
 
 /** Union of several row-index arrays into one deduped array (small arrays — a
  *  linear membership check is cheaper than a Set here). */
@@ -276,11 +277,11 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
    *  changed rows (content compare + scroll shift); we force-repaint the rows the
    *  selection/search touched (old ∪ new) so a vacated highlight's fg/bg swap is
    *  cleared, then re-apply the search + selection post-passes over the current
-   *  highlighted rows. Timed to /tmp/zz-perf.log under TMUX_IDE_ZZ_PERF (the blit
-   *  path's "snapshot ms/tick"); the rows-blitted count taps to a debug log. */
+   *  highlighted rows. */
   private walk(): void {
     if (!this._mirror) return;
-    const t0 = PERF ? performance.now() : 0;
+    const performanceSink = currentTuiPerformanceEventSink();
+    const paintStartedAt = performanceSink ? performance.now() : 0;
     const fb = this.frameBuffer;
     const buffers = fb.buffers;
     const w = fb.width;
@@ -325,7 +326,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
 
     this._graphemes.length = 0;
     this._dirtyRows.length = 0;
-    this._mirror.blitPane(
+    const paintTrace = this._mirror.blitPane(
       this._paneId,
       buffers,
       w,
@@ -393,21 +394,25 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
 
     this.updateHardwareCursor(cur, w, h);
 
-    if (PERF) {
+    if (performanceSink) {
       try {
-        appendFileSync("/tmp/zz-perf.log", `${(performance.now() - t0).toFixed(2)}\n`);
+        const paintEndedAt = performance.now();
+        performanceSink.terminalPaint(this._dirtyRows.length, paintEndedAt - paintStartedAt);
+        if (paintTrace && performanceSink.terminalTraceSpan)
+          performanceSink.terminalTraceSpan({
+            traceId: paintTrace.traceId,
+            scenario: "terminal-input-to-paint",
+            stage: "paint",
+            processId: `opentui:${process.pid}`,
+            clockId: "opentui-performance-now",
+            clockKind: "performance-now",
+            startedAtMicros: Math.floor(paintStartedAt * 1_000),
+            endedAtMicros: Math.floor(paintEndedAt * 1_000),
+            generation: paintTrace.generation,
+            incarnation: paintTrace.incarnation,
+          });
       } catch {
-        /* perf tap only */
-      }
-    }
-    if (ROW_TAP) {
-      try {
-        appendFileSync(
-          "/tmp/zz-fb-rows.log",
-          `${this._paneId} ${this._dirtyRows.length}/${h}${full ? " full" : ""}\n`,
-        );
-      } catch {
-        /* debug tap only */
+        // Diagnostics are observational and can never break terminal paint.
       }
     }
   }

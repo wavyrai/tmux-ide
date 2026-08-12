@@ -15,7 +15,14 @@ import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 
 import type { ProjectResolution, ResolveProjectOptions } from "./project-resolver.js";
 import { resolveProject } from "./project-resolver.js";
+import { ProjectRuntimeRepositoryError, RevisionConflictError } from "./project-runtime-errors.ts";
 import { stateHome } from "./state-home.js";
+
+export {
+  ProjectRuntimeRepositoryError,
+  RevisionConflictError,
+  type ProjectRuntimeErrorCode,
+} from "./project-runtime-errors.ts";
 
 const DOCUMENT_ENVELOPE_VERSION = 1;
 const EVENT_ENVELOPE_VERSION = 1;
@@ -25,18 +32,6 @@ const PROJECT_RUNTIME_PROCESS_INSTANCE_ID = randomUUID();
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
-
-export type ProjectRuntimeErrorCode =
-  | "INVALID_PATH"
-  | "DOCUMENT_MISSING"
-  | "DOCUMENT_CORRUPT"
-  | "UNSUPPORTED_DOCUMENT_VERSION"
-  | "INVALID_JSON_VALUE"
-  | "REVISION_CONFLICT"
-  | "EVENT_SEQUENCE_CONFLICT"
-  | "EVENT_LOG_CORRUPT"
-  | "WRITER_LOCK_TIMEOUT"
-  | "IO_ERROR";
 
 export interface ProjectRuntimeRepositoryIo {
   readFile(path: string): string;
@@ -146,16 +141,6 @@ export interface AppendEventOptions {
   expectedPreviousSequence?: number;
 }
 
-export class ProjectRuntimeRepositoryError extends Error {
-  readonly code: ProjectRuntimeErrorCode;
-
-  constructor(code: ProjectRuntimeErrorCode, message: string) {
-    super(message);
-    this.name = new.target.name;
-    this.code = code;
-  }
-}
-
 export class InvalidRuntimePathError extends ProjectRuntimeRepositoryError {
   readonly path: string;
 
@@ -217,24 +202,6 @@ export class InvalidJsonValueError extends ProjectRuntimeRepositoryError {
     super("INVALID_JSON_VALUE", `Invalid JSON value at ${valuePath}: ${reason}`);
     this.valuePath = valuePath;
     this.reason = reason;
-  }
-}
-
-export class RevisionConflictError extends ProjectRuntimeRepositoryError {
-  readonly path: string;
-  readonly expectedRevision: number | null;
-  readonly actualRevision: number | null;
-
-  constructor(path: string, expectedRevision: number | null, actualRevision: number | null) {
-    super(
-      "REVISION_CONFLICT",
-      `Revision conflict for "${path}": expected ${String(expectedRevision)}, actual ${String(
-        actualRevision,
-      )}`,
-    );
-    this.path = path;
-    this.expectedRevision = expectedRevision;
-    this.actualRevision = actualRevision;
   }
 }
 

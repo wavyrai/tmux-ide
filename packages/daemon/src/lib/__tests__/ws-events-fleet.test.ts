@@ -3,22 +3,30 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DaemonEventServerFrameSchemaZ, type DaemonEventServerFrame } from "@tmux-ide/contracts";
 import {
   _detachProjectRegistryListenerForTests,
-  _pollFleetCompositionForTests,
-  _stopAgentStatusWatcherForTests,
-  _stopFleetPollerForTests,
-  _stopSessionsPollerForTests,
+  _pollFleetFactsObserverForTests,
+  _setFleetFactsReadersForTests,
+  _stopFleetFactsObserverForTests,
   handleWsEventsConnection,
 } from "../../command-center/ws-events.ts";
 import { _setTmuxRunner } from "../../command-center/discovery.ts";
+import {
+  parseSessionCompositionFacts,
+  SESSION_COMPOSITION_TMUX_ARGS,
+} from "../../command-center/daemon-fleet-facts-observer.ts";
 
 // Hermetic like ws-events-agent-status.test.ts: answer only the adopted-session
 // listing the fleet poller issues and return "" for everything else, so no real
 // tmux server is ever touched.
 function pinAdoptedSessions(rows: () => string): () => void {
-  return _setTmuxRunner((args) => {
-    if (args[0] === "list-sessions") return rows();
-    return "";
+  const restore = _setTmuxRunner(() => "");
+  _setFleetFactsReadersForTests({
+    readSessions: async () => parseSessionCompositionFacts(rows()),
+    readAgents: async () => new Map(),
   });
+  return () => {
+    _setFleetFactsReadersForTests(null);
+    restore();
+  };
 }
 
 const daemonIdentity = {
@@ -57,27 +65,34 @@ function subscribeLegacy(socket: ProtocolWebSocket): void {
 let restoreTmuxRunner: (() => void) | null = null;
 
 afterEach(() => {
-  _stopFleetPollerForTests();
-  _stopAgentStatusWatcherForTests();
-  _stopSessionsPollerForTests();
+  _stopFleetFactsObserverForTests();
   _detachProjectRegistryListenerForTests();
   restoreTmuxRunner?.();
   restoreTmuxRunner = null;
 });
 
 describe("/ws/events fleet composition invalidation", () => {
-  it("emits fleet.changed when an adopted session appears", () => {
+  it("keeps session composition to one compact tmux query", () => {
+    expect(SESSION_COMPOSITION_TMUX_ARGS).toEqual([
+      "list-sessions",
+      "-F",
+      "#{session_name}\t#{@tmux_ide_adopted}",
+    ]);
+  });
+
+  it("emits fleet.changed when an adopted session appears", async () => {
     let sessionRows = "alpha\t1";
     restoreTmuxRunner = pinAdoptedSessions(() => sessionRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity); // primes the baseline (alpha)
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     // A newly adopted, registry-independent session appears.
     sessionRows = ["alpha\t1", "beta\t1"].join("\n");
-    _pollFleetCompositionForTests();
+    await _pollFleetFactsObserverForTests();
 
     expect(frames(socket).filter((frame) => frame.type === "fleet.changed")).toEqual([
       { type: "fleet.changed" },
@@ -86,17 +101,18 @@ describe("/ws/events fleet composition invalidation", () => {
     socket.disconnect();
   });
 
-  it("emits fleet.changed when an adopted session disappears", () => {
+  it("emits fleet.changed when an adopted session disappears", async () => {
     let sessionRows = ["alpha\t1", "beta\t1"].join("\n");
     restoreTmuxRunner = pinAdoptedSessions(() => sessionRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     sessionRows = "alpha\t1"; // beta killed
-    _pollFleetCompositionForTests();
+    await _pollFleetFactsObserverForTests();
 
     expect(frames(socket).filter((frame) => frame.type === "fleet.changed")).toEqual([
       { type: "fleet.changed" },
@@ -105,51 +121,54 @@ describe("/ws/events fleet composition invalidation", () => {
     socket.disconnect();
   });
 
-  it("does not emit when the adopted set is unchanged", () => {
+  it("does not emit when the adopted set is unchanged", async () => {
     restoreTmuxRunner = pinAdoptedSessions(() => "alpha\t1");
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
-    _pollFleetCompositionForTests();
+    await _pollFleetFactsObserverForTests();
 
     expect(frames(socket).filter((frame) => frame.type === "fleet.changed")).toEqual([]);
 
     socket.disconnect();
   });
 
-  it("ignores internal and scratch sessions in composition", () => {
+  it("ignores internal and scratch sessions in composition", async () => {
     let sessionRows = "alpha\t1";
     restoreTmuxRunner = pinAdoptedSessions(() => sessionRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.sent.length = 0;
 
     // Only filtered (`_`/`zz-`) sessions changed — the visible fleet is the same.
     sessionRows = ["alpha\t1", "_tmux-ide-chrome\t1", "zz-scratch\t1"].join("\n");
-    _pollFleetCompositionForTests();
+    await _pollFleetFactsObserverForTests();
 
     expect(frames(socket).filter((frame) => frame.type === "fleet.changed")).toEqual([]);
 
     socket.disconnect();
   });
 
-  it("stops the poller after the last client disconnects", () => {
+  it("stops the poller after the last client disconnects", async () => {
     let sessionRows = "alpha\t1";
     restoreTmuxRunner = pinAdoptedSessions(() => sessionRows);
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
     subscribeLegacy(socket);
+    await _pollFleetFactsObserverForTests();
     socket.disconnect();
 
     socket.sent.length = 0;
     sessionRows = ["alpha\t1", "beta\t1"].join("\n");
-    _pollFleetCompositionForTests();
+    await _pollFleetFactsObserverForTests();
     expect(socket.sent).toEqual([]);
   });
 });

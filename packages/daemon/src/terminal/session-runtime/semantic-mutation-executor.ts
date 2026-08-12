@@ -12,6 +12,15 @@ import {
   sessionRuntimeIntentNeedsTmuxObservation,
   sessionRuntimeObservedProof,
 } from "./interaction-receipt-facts.ts";
+import {
+  SYSTEM_SESSION_RUNTIME_SCHEDULER,
+  type SessionRuntimeScheduler,
+  type SessionRuntimeTimer,
+} from "./runtime-scheduler.ts";
+import {
+  DISABLED_SESSION_RUNTIME_OBSERVABILITY,
+  type SessionRuntimeObservability,
+} from "./runtime-observability.ts";
 
 export type SessionRuntimeIntentResult = WorkspaceMultiplexerMutationResult | void;
 export type ExecutableSessionRuntimeIntent = SessionRuntimeSemanticIntent;
@@ -42,6 +51,18 @@ export interface SessionSemanticMutationExecutorOptions {
   readonly publishReceipt: (receipt: SessionRuntimeReceiptInput) => InteractionReceipt;
   readonly observationTimeoutMs?: number;
   readonly now?: () => Date;
+  readonly scheduler?: SessionRuntimeScheduler;
+  readonly observability?: SessionRuntimeObservability;
+}
+
+export interface SessionSemanticMutationMetrics {
+  readonly accepted: number;
+  readonly observed: number;
+  readonly rejected: number;
+  readonly timedOut: number;
+  readonly pendingObservations: number;
+  readonly activeSessionLanes: number;
+  readonly ledgerEntries: number;
 }
 
 export class SessionRuntimeIntentError extends Error {
@@ -88,14 +109,37 @@ function replayedResult(result: SessionRuntimeIntentResult): SessionRuntimeInten
  */
 export class SessionSemanticMutationExecutor {
   readonly #options: SessionSemanticMutationExecutorOptions;
+  readonly #scheduler: SessionRuntimeScheduler;
+  readonly #observability: SessionRuntimeObservability;
   readonly #tails = new Map<string, Promise<void>>();
   readonly #pending = new Map<string, Map<string, PendingObservation>>();
   readonly #operations = new Map<SessionLedgerKey, Map<string, OperationRecord>>();
   readonly #listeners = new Set<(receipt: InteractionReceipt) => void>();
   #disposed = false;
+  #accepted = 0;
+  #observed = 0;
+  #rejected = 0;
+  #timedOut = 0;
 
   constructor(options: SessionSemanticMutationExecutorOptions) {
     this.#options = options;
+    this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
+    this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
+  }
+
+  metrics(): SessionSemanticMutationMetrics {
+    return Object.freeze({
+      accepted: this.#accepted,
+      observed: this.#observed,
+      rejected: this.#rejected,
+      timedOut: this.#timedOut,
+      pendingObservations: [...this.#pending.values()].reduce(
+        (sum, pending) => sum + pending.size,
+        0,
+      ),
+      activeSessionLanes: this.#tails.size,
+      ledgerEntries: [...this.#operations.values()].reduce((sum, ledger) => sum + ledger.size, 0),
+    });
   }
 
   submit(
@@ -314,6 +358,7 @@ export class SessionSemanticMutationExecutor {
     }
 
     let result: SessionRuntimeIntentResult;
+    const tmuxStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
     try {
       // Admission can wait behind prior work. Revalidate the opaque principal
       // at the last synchronous boundary before tmux receives any effect.
@@ -328,6 +373,14 @@ export class SessionSemanticMutationExecutor {
       );
       this.#publish(operationId, intent, "rejected", null, undefined, origin);
       throw error;
+    } finally {
+      if (this.#observability.enabled)
+        this.#observability.recordSpan(
+          "tmux",
+          "semantic-mutation-effect",
+          tmuxStarted,
+          this.#observability.nowMicros(),
+        );
     }
 
     try {
@@ -348,12 +401,12 @@ export class SessionSemanticMutationExecutor {
     if (needsTmuxObservation) {
       const timeoutMs =
         this.#options.observationTimeoutMs ?? SESSION_RUNTIME_OBSERVATION_TIMEOUT_MS;
-      let timeout: ReturnType<typeof setTimeout> | undefined;
+      let timeout: SessionRuntimeTimer | undefined;
       try {
         await Promise.race([
           observed!,
           new Promise<never>((_, reject) => {
-            timeout = setTimeout(
+            timeout = this.#scheduler.timer(
               () =>
                 reject(
                   new SessionRuntimeIntentError(
@@ -363,7 +416,6 @@ export class SessionSemanticMutationExecutor {
                 ),
               timeoutMs,
             );
-            timeout.unref?.();
           }),
         ]);
       } catch (cause) {
@@ -376,7 +428,7 @@ export class SessionSemanticMutationExecutor {
         this.#publish(operationId, intent, error.outcome, null, undefined, origin);
         throw error;
       } finally {
-        if (timeout) clearTimeout(timeout);
+        timeout?.cancel();
         this.#deletePending(session, operationId);
       }
     }
@@ -423,8 +475,12 @@ export class SessionSemanticMutationExecutor {
         resourceRevision: null,
       }),
     );
+    if (phase === "accepted") this.#accepted += 1;
+    else if (phase === "observed") this.#observed += 1;
+    else if (phase === "rejected") this.#rejected += 1;
+    else this.#timedOut += 1;
     for (const listener of this.#listeners) {
-      queueMicrotask(() => {
+      this.#scheduler.microtask(() => {
         try {
           listener(receipt);
         } catch {

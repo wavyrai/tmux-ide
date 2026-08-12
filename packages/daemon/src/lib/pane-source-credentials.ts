@@ -5,6 +5,7 @@ export const PANE_SOURCE_CREDENTIAL_HEADER = "X-Tmux-Ide-Pane-Source-Credential"
 
 export interface PaneSourceCredentialTmux {
   run(args: readonly string[]): string;
+  runAsync?: (args: readonly string[], signal?: AbortSignal) => Promise<string>;
 }
 
 interface CredentialGrant {
@@ -26,6 +27,7 @@ export class PaneSourceCredentialAuthority {
   readonly #tmux: PaneSourceCredentialTmux;
   readonly #grants = new Map<string, CredentialGrant>();
   readonly #tokensByPane = new Map<string, string>();
+  readonly #sessionRevisions = new Map<string, number>();
 
   constructor(tmux: PaneSourceCredentialTmux) {
     this.#tmux = tmux;
@@ -42,6 +44,7 @@ export class PaneSourceCredentialAuthority {
   }
 
   reconcileSession(session: string): void {
+    this.#sessionRevisions.set(session, (this.#sessionRevisions.get(session) ?? 0) + 1);
     const rows = this.#tmux.run([
       "list-panes",
       "-s",
@@ -79,6 +82,68 @@ export class PaneSourceCredentialAuthority {
     }
   }
 
+  /**
+   * Reconcile credentials without blocking the daemon event loop. A synchronous
+   * request-time reconciliation may race an awaited tmux child; the revision
+   * check retries from live tmux state so the installed option and grant table
+   * cannot settle on different tokens.
+   */
+  async reconcileSessionAsync(session: string, signal?: AbortSignal): Promise<void> {
+    const runAsync = this.#tmux.runAsync;
+    if (!runAsync) {
+      this.reconcileSession(session);
+      return;
+    }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const revision = this.#sessionRevisions.get(session) ?? 0;
+      const rows = await runAsync(
+        [
+          "list-panes",
+          "-s",
+          "-t",
+          `=${session}`,
+          "-F",
+          `#{pane_id}\t#{@tmux_ide_pane_id}\t#{${PANE_SOURCE_CREDENTIAL_OPTION}}`,
+        ],
+        signal,
+      );
+      if ((this.#sessionRevisions.get(session) ?? 0) !== revision) continue;
+
+      const live = new Set<string>();
+      let raced = false;
+      for (const row of rows.split("\n")) {
+        const [runtimePaneId, semanticPaneId, installedToken = ""] = row.split("\t");
+        if (!runtimePaneId || !semanticPaneId) continue;
+        const paneKey = `${session}\0${runtimePaneId}`;
+        live.add(paneKey);
+        const existingToken = this.#tokensByPane.get(paneKey);
+        const existing = existingToken ? this.#grants.get(existingToken) : undefined;
+        if (existing?.semanticPaneId === semanticPaneId && installedToken === existingToken)
+          continue;
+
+        const token = randomBytes(32).toString("base64url");
+        await runAsync(
+          ["set-option", "-p", "-t", runtimePaneId, PANE_SOURCE_CREDENTIAL_OPTION, token],
+          signal,
+        );
+        if ((this.#sessionRevisions.get(session) ?? 0) !== revision) {
+          raced = true;
+          break;
+        }
+        if (existingToken) this.#grants.delete(existingToken);
+        this.#tokensByPane.set(paneKey, token);
+        this.#grants.set(token, { session, runtimePaneId, semanticPaneId });
+      }
+      if (raced) continue;
+      for (const [paneKey, token] of this.#tokensByPane) {
+        if (!paneKey.startsWith(`${session}\0`) || live.has(paneKey)) continue;
+        this.#tokensByPane.delete(paneKey);
+        this.#grants.delete(token);
+      }
+      return;
+    }
+  }
+
   resolve(
     credential: string | undefined,
     session: string,
@@ -103,5 +168,6 @@ export class PaneSourceCredentialAuthority {
   dispose(): void {
     this.#grants.clear();
     this.#tokensByPane.clear();
+    this.#sessionRevisions.clear();
   }
 }

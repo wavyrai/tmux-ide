@@ -1,3 +1,4 @@
+/** Host-neutral projection model for the optional Home surface. */
 import type { AgentStatus } from "../detect/classify.ts";
 import type { FleetRollup } from "../team/home.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";

@@ -23,10 +23,24 @@ import {
   hashTerminalWidgetContent,
   terminalReplicaRowsEqual,
 } from "@tmux-ide/core";
+import {
+  SYSTEM_SESSION_RUNTIME_SCHEDULER,
+  type SessionRuntimeScheduler,
+  type SessionRuntimeTimer,
+} from "./runtime-scheduler.ts";
+import {
+  DISABLED_SESSION_RUNTIME_OBSERVABILITY,
+  type SessionRuntimeObservability,
+  type SessionRuntimeTraceContext,
+} from "./runtime-observability.ts";
 
 type CloseReason = "pane-closed" | "session-restarted" | "runtime-disposed";
 export type TerminalReplicaInterpreterOperation =
-  | { readonly type: "write"; readonly data: Uint8Array }
+  | {
+      readonly type: "write";
+      readonly data: Uint8Array;
+      readonly trace?: SessionRuntimeTraceContext | null;
+    }
   | { readonly type: "cursor"; readonly x: number; readonly y: number }
   | { readonly type: "resize"; readonly cols: number; readonly rows: number }
   | {
@@ -35,6 +49,7 @@ export type TerminalReplicaInterpreterOperation =
       readonly rows: number;
       readonly chunks: readonly Uint8Array[];
       readonly cursor: { readonly x: number; readonly y: number };
+      readonly trace?: SessionRuntimeTraceContext | null;
       /** capture-pane is painted truth, not proof of hidden pre-existing VT modes. */
       readonly bootstrap: "painted-capture" | "authoritative-stream";
     }
@@ -49,13 +64,18 @@ export interface TerminalReplicaInterpreterOptions {
   readonly cols: number;
   readonly rows: number;
   readonly scrollback?: number;
-  readonly onUpdate?: (update: CanonicalTerminalReplicaUpdate) => void;
+  readonly onUpdate?: (
+    update: CanonicalTerminalReplicaUpdate,
+    trace: SessionRuntimeTraceContext | null,
+  ) => void;
   readonly onRawCommit?: (record: {
     readonly baseRevision: number;
     readonly revision: number;
     readonly chunks: readonly Uint8Array[];
     readonly contiguous: boolean;
   }) => void;
+  readonly scheduler?: SessionRuntimeScheduler;
+  readonly observability?: SessionRuntimeObservability;
 }
 
 export interface TerminalReplicaInterpreterStats {
@@ -75,8 +95,12 @@ export class TerminalReplicaInterpreter {
   readonly #semanticPaneId: string;
   readonly #incarnation: string;
   readonly #scrollback: number;
-  readonly #listeners = new Set<(update: CanonicalTerminalReplicaUpdate) => void>();
+  readonly #listeners = new Set<
+    (update: CanonicalTerminalReplicaUpdate, trace: SessionRuntimeTraceContext | null) => void
+  >();
   readonly #onRawCommit: TerminalReplicaInterpreterOptions["onRawCommit"];
+  readonly #scheduler: SessionRuntimeScheduler;
+  readonly #observability: SessionRuntimeObservability;
   #terminal: Terminal;
   #tail: Promise<void> = Promise.resolve();
   #revision = 0;
@@ -86,6 +110,7 @@ export class TerminalReplicaInterpreter {
   #walkCount = 0;
   #pendingWrites: Array<{
     data: Uint8Array;
+    trace: SessionRuntimeTraceContext | null;
     resolve: () => void;
     reject: (error: unknown) => void;
   }> = [];
@@ -99,7 +124,7 @@ export class TerminalReplicaInterpreter {
   #pendingRaw: Uint8Array[] = [];
   #pendingRawBytes = 0;
   #rawContinuityLost = false;
-  #syncRecovery: ReturnType<typeof setTimeout> | null = null;
+  #syncRecovery: SessionRuntimeTimer | null = null;
   #bootstrap: TerminalReplicaSnapshot["bootstrap"] = {
     kind: "painted-capture",
     hiddenState: "unknown",
@@ -128,6 +153,8 @@ export class TerminalReplicaInterpreter {
     this.#revision = options.initialRevision ?? 0;
     this.#scrollback = options.scrollback ?? 5000;
     this.#onRawCommit = options.onRawCommit;
+    this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
+    this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#terminal = this.#createTerminal(options.cols, options.rows);
     this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
     this.#seedReady = new Promise((resolve, reject) => {
@@ -138,7 +165,12 @@ export class TerminalReplicaInterpreter {
     if (options.onUpdate) this.#listeners.add(options.onUpdate);
   }
 
-  onUpdate(listener: (update: CanonicalTerminalReplicaUpdate) => void): () => void {
+  onUpdate(
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      trace: SessionRuntimeTraceContext | null,
+    ) => void,
+  ): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }
@@ -146,12 +178,19 @@ export class TerminalReplicaInterpreter {
   enqueue(operation: TerminalReplicaInterpreterOperation): Promise<void> {
     if (operation.type === "write") {
       const data = operation.data.slice();
+      const trace = operation.trace ?? null;
+      const pendingTrace = this.#pendingWrites[0]?.trace ?? null;
+      if (
+        this.#pendingWrites.length > 0 &&
+        (pendingTrace?.traceId ?? null) !== (trace?.traceId ?? null)
+      )
+        this.#flushWrites();
       const promise = new Promise<void>((resolve, reject) => {
-        this.#pendingWrites.push({ data, resolve, reject });
+        this.#pendingWrites.push({ data, trace, resolve, reject });
       });
       if (!this.#writeFlushScheduled) {
         this.#writeFlushScheduled = true;
-        queueMicrotask(() => this.#flushWrites());
+        this.#scheduler.microtask(() => this.#flushWrites());
       }
       return promise;
     }
@@ -224,7 +263,7 @@ export class TerminalReplicaInterpreter {
           operation.bootstrap === "authoritative-stream" ? "observed-from-start" : "unknown",
       };
       setAuthoritativeCursor(this.#terminal, operation.cursor.x, operation.cursor.y);
-      this.#commit(true);
+      this.#commit(true, undefined, operation.trace ?? null);
       previous.dispose();
       return;
     }
@@ -270,12 +309,25 @@ export class TerminalReplicaInterpreter {
     this.#emit(update);
   }
 
-  async #write(data: Uint8Array): Promise<void> {
+  async #write(data: Uint8Array, continuedTrace: SessionRuntimeTraceContext | null): Promise<void> {
     if (this.#closed) return;
+    // This optional id is only a controlled next-output probe. It is not a
+    // causal assertion: unrelated external tmux output arriving first may
+    // consume the armed probe and become the measured output.
+    const trace = continuedTrace;
     this.#admitRaw(data);
     this.#stats.parseBatches += 1;
     this.#observeMarkerBytes(data);
+    const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
     await writeTerminal(this.#terminal, data);
+    if (this.#observability.enabled)
+      this.#observability.recordSpan(
+        "parse",
+        "terminal-replica-write",
+        parseStarted,
+        this.#observability.nowMicros(),
+        trace,
+      );
     // DEC synchronized-output is atomic: no intermediate frame leaks.
     if (terminalModes(this.#terminal).synchronizedOutput) {
       this.#scheduleSyncRecovery();
@@ -285,15 +337,15 @@ export class TerminalReplicaInterpreter {
     const pendingResize = this.#pendingResize;
     this.#pendingResize = null;
     if (pendingResize) {
-      this.#commit(false);
+      this.#commit(false, undefined, trace);
     } else {
-      this.#commit(false, dirtyRange(this.#terminal));
+      this.#commit(false, dirtyRange(this.#terminal), trace);
     }
   }
 
   #scheduleSyncRecovery(): void {
     if (this.#syncRecovery || this.#closed) return;
-    this.#syncRecovery = setTimeout(() => {
+    this.#syncRecovery = this.#scheduler.timer(() => {
       this.#syncRecovery = null;
       const run = this.#tail.then(async () => {
         if (this.#closed || !terminalModes(this.#terminal).synchronizedOutput) return;
@@ -303,16 +355,20 @@ export class TerminalReplicaInterpreter {
       });
       this.#tail = run.catch(() => undefined);
     }, 250);
-    this.#syncRecovery.unref?.();
   }
 
   #clearSyncRecovery(): void {
     if (!this.#syncRecovery) return;
-    clearTimeout(this.#syncRecovery);
+    this.#syncRecovery.cancel();
     this.#syncRecovery = null;
   }
 
-  #commit(forceSeed: boolean, dirty?: { start: number; end: number }): void {
+  #commit(
+    forceSeed: boolean,
+    dirty?: { start: number; end: number },
+    trace: SessionRuntimeTraceContext | null = null,
+  ): void {
+    const reduceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
     const projected = this.#project(forceSeed ? undefined : dirty);
     const previous = this.#snapshot;
     const dirtyRows: CanonicalTerminalReplicaPatch["patch"]["rows"] = [];
@@ -335,7 +391,10 @@ export class TerminalReplicaInterpreter {
     });
     const nextHash = hashTerminalReplicaSnapshot(next);
     const priorHash = hashTerminalReplicaSnapshot(previous);
-    if (!forceSeed && nextHash === priorHash) return;
+    if (!forceSeed && nextHash === priorHash) {
+      this.#recordReduceSpan(reduceStarted, trace);
+      return;
+    }
     if (forceSeed || this.#needsSeed) {
       const revision = this.#needsSeed ? this.#revision : this.#revision + 1;
       this.#revision = revision;
@@ -343,7 +402,8 @@ export class TerminalReplicaInterpreter {
       this.#needsSeed = false;
       this.#resolveSeedReady();
       this.#emitRaw(revision, revision);
-      this.#emit(this.#seed(revision, next));
+      this.#emit(this.#seed(revision, next), trace);
+      this.#recordReduceSpan(reduceStarted, trace);
       return;
     }
     const baseRevision = this.#revision;
@@ -372,7 +432,22 @@ export class TerminalReplicaInterpreter {
     this.#revision = revision;
     this.#snapshot = next;
     this.#emitRaw(baseRevision, revision);
-    this.#emit(update);
+    this.#emit(update, trace);
+    this.#recordReduceSpan(reduceStarted, trace);
+  }
+
+  #recordReduceSpan(
+    startedAtMicros: number,
+    trace: SessionRuntimeTraceContext | null = null,
+  ): void {
+    if (!this.#observability.enabled) return;
+    this.#observability.recordSpan(
+      "reduce",
+      "terminal-replica-project-commit",
+      startedAtMicros,
+      this.#observability.nowMicros(),
+      trace,
+    );
   }
 
   #emitRaw(baseRevision: number, revision: number): void {
@@ -483,10 +558,13 @@ export class TerminalReplicaInterpreter {
     } as const;
   }
 
-  #emit(update: CanonicalTerminalReplicaUpdate): void {
+  #emit(
+    update: CanonicalTerminalReplicaUpdate,
+    trace: SessionRuntimeTraceContext | null = null,
+  ): void {
     for (const listener of this.#listeners) {
       try {
-        listener(update);
+        listener(update, trace);
       } catch {
         // Renderer callbacks never poison the authoritative parser FIFO.
       }
@@ -524,7 +602,8 @@ export class TerminalReplicaInterpreter {
       data.set(entry.data, offset);
       offset += entry.data.length;
     }
-    const run = this.#tail.then(() => this.#write(data));
+    const trace = pending.find(({ trace }) => trace !== null)?.trace ?? null;
+    const run = this.#tail.then(() => this.#write(data, trace));
     this.#tail = run.catch(() => undefined);
     void run.then(
       () => pending.forEach((entry) => entry.resolve()),

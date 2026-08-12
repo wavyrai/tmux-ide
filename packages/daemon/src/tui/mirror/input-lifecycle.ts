@@ -39,7 +39,8 @@ export type TuiGlobalCommand =
   | { kind: "open-palette" }
   | { kind: "select-hosted-view"; key: string }
   | { kind: "go-home" }
-  | { kind: "toggle-editor" };
+  | { kind: "toggle-editor" }
+  | { kind: "toggle-performance-hud" };
 
 export type TuiInputLayer =
   | { kind: "lifecycle"; command: TuiLifecycleCommand }
@@ -87,6 +88,8 @@ export function resolveInputLayer(
     }
     return { kind: "kitty-super-suppressed" };
   }
+  if (!event.ctrl && !event.meta && !event.shift && event.name === "f12")
+    return { kind: "global", command: { kind: "toggle-performance-hud" } };
   if (context.dialogOpen) return { kind: "dialog" };
   if (context.menuOpen) return { kind: "menu" };
   if (context.paletteOpen) return { kind: "palette" };
@@ -120,6 +123,8 @@ export function resolveGlobalCommand(
   context: TuiInputContext,
   event: TuiKeyEvent,
 ): TuiGlobalCommand | null {
+  if (!event.ctrl && !event.meta && !event.shift && event.name === "f12")
+    return { kind: "toggle-performance-hud" };
   if (
     context.compositeCycleAvailable &&
     (event.name === "f8" || (event.ctrl && event.name === "tab"))

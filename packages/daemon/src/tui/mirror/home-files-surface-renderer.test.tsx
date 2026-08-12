@@ -5,7 +5,7 @@ import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it } from "bun:test";
 import { RGBA } from "@opentui/core";
 import { HomeSurface, homeActionAtProjection } from "./home-surface.tsx";
-import { projectHomeSurface } from "./home-surface.ts";
+import { projectHomeSurface } from "./home-surface-model.ts";
 import { FilesSurface } from "./files-surface-view.tsx";
 import { filesHitTest, projectFilesSurface } from "./files-surface.ts";
 import { createSemanticThemeSnapshot } from "./theme.ts";

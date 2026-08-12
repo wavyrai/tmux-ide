@@ -23,6 +23,7 @@ export const RENDERER_COMMAND_IDS = {
   activateDock: "workspace.dock.activate",
   openHome: "workspace.home.open",
   toggleEditor: "workspace.editor.toggle",
+  togglePerformanceHud: "app.performanceHud.toggle",
 } as const;
 
 export type RendererCommandId = (typeof RENDERER_COMMAND_IDS)[keyof typeof RENDERER_COMMAND_IDS];
@@ -50,6 +51,7 @@ export interface RendererCommandEffects {
   activateDock: (tab: WorkbenchDockTabId) => void;
   openHome: () => void;
   toggleEditor: () => void;
+  togglePerformanceHud: () => void;
 }
 
 export type RendererCommandExecution =
@@ -149,6 +151,12 @@ const metadata: readonly RendererCommandMetadata[] = [
         ? { available: true }
         : { available: false, reason: "no file is open" },
   },
+  {
+    id: RENDERER_COMMAND_IDS.togglePerformanceHud,
+    label: "Toggle performance HUD",
+    category: "application",
+    inputSchema: EmptyInputSchemaZ,
+  },
 ];
 
 function descriptor(item: RendererCommandMetadata): CommandDescriptor {
@@ -233,6 +241,8 @@ export function rendererInvocationForGlobal(command: TuiGlobalCommand): CommandI
       return rendererCommandInvocation(RENDERER_COMMAND_IDS.openHome, {}, source);
     case "toggle-editor":
       return rendererCommandInvocation(RENDERER_COMMAND_IDS.toggleEditor, {}, source);
+    case "toggle-performance-hud":
+      return rendererCommandInvocation(RENDERER_COMMAND_IDS.togglePerformanceHud, {}, source);
   }
 }
 
@@ -317,6 +327,9 @@ export function createRendererCommandExecutor(input: {
           break;
         case RENDERER_COMMAND_IDS.toggleEditor:
           input.effects.toggleEditor();
+          break;
+        case RENDERER_COMMAND_IDS.togglePerformanceHud:
+          input.effects.togglePerformanceHud();
           break;
       }
       return { ok: true, commandId };

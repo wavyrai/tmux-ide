@@ -168,18 +168,16 @@ focus is not a terminal-content mutation and must never force a full framebuffer
 
 ## Performance budgets and gates
 
-The performance harness (`scripts/perf-mirror.mjs`) drives a real tmux control client,
-real xterm parsing, real OpenTUI rendering, flood output, alternate-screen redraw, and
-keyboard round trips. The release gates are deliberately end-to-end:
+The performance qualification gate (`pnpm test:performance-qualification`) drives the
+canonical SessionRuntime, real terminal parser/delivery paths, and demand-driven
+OpenTUI/web telemetry adapters. Its JSON artifact maps every claimed scenario to the
+exact suites and files that ran. Flood output, alternate-screen redraw, resize and
+drag floods, slow and hidden clients, NACK reseeding, socket churn, authority rollover,
+interaction attribution, and terminal colors have deterministic portable coverage.
 
-| Metric                                      | p95 budget |
-| ------------------------------------------- | ---------: |
-| Control feed parse, flood                   | 1 ms/chunk |
-| Control feed parse, alternate screen        | 1 ms/chunk |
-| Framebuffer snapshot/blit, flood            | 4 ms/frame |
-| Framebuffer snapshot/blit, alternate screen | 6 ms/frame |
-| Key dispatch to first echoed output         |      15 ms |
-| Key dispatch to consumed paint publication  |      50 ms |
+| Metric                                | p95 budget |
+| ------------------------------------- | ---------: |
+| Local leading input to consumed paint |   16.67 ms |
 
 Additional invariants:
 
@@ -188,15 +186,59 @@ Additional invariants:
 - one parsed output burst produces one publication request, not enqueue plus parse;
 - communication chrome never remounts or repaints a terminal body;
 - input, resize, and focus commands never wait for fleet/discovery subprocesses;
-- all live performance runs use isolated `zz-perf-*` or test-drive sessions and leave
-  user sessions untouched.
+- portable CI publishes deterministic convergence, queue, mutation, and renderer-adapter
+  evidence, with uncovered scenarios called out explicitly;
+- portable CI does not claim production stage timings, cold/warm startup latency, process
+  memory slope, or wall-clock input-to-paint latency;
+- all live performance runs use isolated test-drive sessions and leave user sessions
+  untouched.
+
+The checked-in 16.67 ms value is a **reference budget**, not an observed result. A
+reference result is generated outside portable CI with
+`pnpm measure:performance-reference`. The runner requires a clean macOS/arm64
+checkout, builds the production TUI, records process-cold and warm-repeat lifecycle
+marks, and drives the real canonical SessionRuntime under eight-client flood in an
+explicit-GC child. The generated artifact is ignored by Git and contains the host,
+CPU, OS, Node/Bun/tmux versions, source commit and tree, timestamp, raw samples,
+percentiles, budgets, and pass/fail decisions.
+
+“Process cold” deliberately means the first new process after one production build;
+the runner does not claim to purge macOS file caches. Memory plateau uses the
+Theil–Sen median pairwise slope after warmup and two explicit full-GC passes, plus
+absolute RSS/heap growth and canonical queue/cache ceilings. This avoids treating a
+single allocator or OS RSS spike as a leak while still rejecting sustained growth.
+
+Local input-to-consumed-paint evidence is accepted only from an explicit production
+JSONL trace (`--input-trace <path>`). The artifact must carry a header bound to the
+same Git commit/tree, and each input/paint pair must share one OpenTUI
+`performance.now()` clock and trace ID. The runner never substitutes daemon clocks,
+suite durations, or invented samples. Without that trace, the result is honestly
+`incomplete`; `pnpm test:performance-reference` requires all three measurements to
+pass.
+
+Reference collection intentionally owns the single diagnostics sink, so the F12 HUD
+must remain closed during a reference run. Pending input probes use a 256-entry FIFO
+and five-second lazy expiry (no timer); a failed send cancels immediately. Missing
+terminal output can therefore never turn qualification instrumentation into a leak.
+
+To publish a measured result alongside the portable matrix without weakening CI:
+
+```bash
+TMUX_IDE_REFERENCE_REPORT=artifacts/performance-reference.json \
+  pnpm test:performance-qualification
+```
+
+The portable runner ingests a report only when explicitly requested and rejects a
+dirty, stale-commit, stale-tree, malformed, or failed artifact. Per-process input →
+tmux → parse → reduce → transport → paint spans remain separate clock-domain
+measurements; only the local input/paint endpoints form the end-to-end latency.
 
 ## Next measured frontier
 
 The remaining large first-frame cost is compiled-module loading and evaluation, not
 cell painting. Keep optional dock, mission, file, and discovery code behind the lazy
 surface dispatcher, record `module-loaded`, `renderer-created`, `first-frame`,
-`solid-mounted`, and `tmux-geometry-ready`, and only split another startup module when
+`solid-mounted`, and `first-terminal-frame`, and only split another startup module when
 those marks prove it is on the critical path. Do not add a worker between the control
 client and pane framebuffer: the worker boundary is valuable for business/discovery
 work, but harmful to the terminal pixel loop.

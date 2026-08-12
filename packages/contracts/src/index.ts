@@ -75,3 +75,5 @@ export * from "./pane-widget-marker.ts";
 export * from "./pane-widget-descriptor.ts";
 export * from "./rich-card-widget.ts";
 export * from "./widget-asset.ts";
+export * from "./performance-qualification.ts";
+export * from "./performance-metrics.ts";

@@ -157,13 +157,28 @@ export class SemanticSessionView {
         descriptor,
       ]);
     }
-    return this.#inventoryDescriptors.map((descriptor) => ({
-      ...(descriptor.semanticPaneId
-        ? runtimeBySemantic.get(descriptor.semanticPaneId)?.length === 1
-          ? runtimeBySemantic.get(descriptor.semanticPaneId)![0]!
-          : descriptor
-        : descriptor),
-    }));
+    return this.#inventoryDescriptors.map((descriptor) => {
+      const runtime = descriptor.semanticPaneId
+        ? runtimeBySemantic.get(descriptor.semanticPaneId)
+        : undefined;
+      return this.#joinRuntimeDescriptor(descriptor, runtime?.length === 1 ? runtime[0]! : null);
+    });
+  }
+
+  #joinRuntimeDescriptor(
+    descriptor: SessionPaneDescriptor,
+    runtime: SessionPaneDescriptor | null,
+  ): SessionPaneDescriptor {
+    if (!runtime) return { ...descriptor };
+    return {
+      ...runtime,
+      // ApplicationShell owns product presentation. Local tmux discovery
+      // only supplies process-local runtime/window proof; its pane_title can
+      // be a shell/program title and must not replace the configured label.
+      title: descriptor.title,
+      role: descriptor.role,
+      type: descriptor.type,
+    };
   }
 
   panes(

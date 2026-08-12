@@ -1,8 +1,9 @@
-import type {
-  CanonicalDaemonInfo,
-  DesktopApplicationShellTarget,
-  DesktopDaemonHostDescriptor,
-  InteractionReceipt,
+import {
+  APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  type CanonicalDaemonInfo,
+  type DesktopApplicationShellTarget,
+  type DesktopDaemonHostDescriptor,
+  type InteractionReceipt,
 } from "@tmux-ide/contracts";
 import {
   createApplicationShellSession,
@@ -20,11 +21,17 @@ import {
   fetchCanonicalWorkspaceCatalog,
   workspaceNameForSession,
 } from "./canonical-workspace-routing.ts";
+import {
+  createOpenTuiVerifiedRoutingContext,
+  type OpenTuiVerifiedRoutingContext,
+} from "./open-tui-verified-routing.ts";
 
 export interface OpenTuiApplicationShellAuthority {
   readonly workspaceName: string;
   readonly target: DesktopApplicationShellTarget;
   readonly session: ApplicationShellSession;
+  readonly routing: OpenTuiVerifiedRoutingContext | null;
+  dispose(): void;
 }
 
 interface OpenTuiApplicationShellAuthorityDependencies {
@@ -36,6 +43,7 @@ interface OpenTuiApplicationShellAuthorityDependencies {
     readonly workspaceName: string;
     readonly sessionName: string;
     readonly ownerToken?: string;
+    readonly applicationShellResourceVersion: typeof APPLICATION_SHELL_RESOURCE_V2_VERSION;
   }) => ApplicationShellTransport;
   readonly createSession: typeof createApplicationShellSession;
   readonly onInteractionReceipt?: (receipt: InteractionReceipt) => void;
@@ -45,10 +53,17 @@ const DEFAULT_DEPENDENCIES: OpenTuiApplicationShellAuthorityDependencies = {
   readCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   fetchCanonicalWorkspaceCatalog,
-  createTransport: ({ descriptor, workspaceName, sessionName, ownerToken }) =>
+  createTransport: ({
+    descriptor,
+    workspaceName,
+    sessionName,
+    ownerToken,
+    applicationShellResourceVersion,
+  }) =>
     createDirectLoopbackDaemonTransport({
       descriptor,
       ownerToken,
+      applicationShellResourceVersion,
       resolveSessionName: (candidate) => {
         if (candidate !== workspaceName) {
           throw new Error("application-shell transport received another workspace");
@@ -100,16 +115,30 @@ export async function connectOpenTuiApplicationShellAuthority(
     workspaceName,
     sessionName,
     ...(daemon.authToken ? { ownerToken: daemon.authToken } : {}),
+    // OpenTUI lays out terminals from the semantic runtime lane and never
+    // consumes V3 appWindows. V2 still requires the same authenticated,
+    // attachability-bearing terminal inventory used to admit that lane.
+    applicationShellResourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
   });
+  const session = dependencies.createSession({
+    target,
+    transport,
+    ...(dependencies.onInteractionReceipt
+      ? { onInteractionReceipt: dependencies.onInteractionReceipt }
+      : {}),
+  });
+  const routing = createOpenTuiVerifiedRoutingContext(daemon, workspaceName, sessionName);
+  let disposed = false;
   return {
     workspaceName,
     target,
-    session: dependencies.createSession({
-      target,
-      transport,
-      ...(dependencies.onInteractionReceipt
-        ? { onInteractionReceipt: dependencies.onInteractionReceipt }
-        : {}),
-    }),
+    session,
+    routing,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      routing?.retire();
+      session.dispose();
+    },
   };
 }

@@ -29,8 +29,9 @@ import {
   type GraphemeOverride,
 } from "./blit.ts";
 import type { BlitOptions, CursorState } from "./pane-mirror.ts";
-import type { TerminalPaneRenderSource } from "./pane-surface.tsx";
+import type { TerminalPaintTrace, TerminalPaneRenderSource } from "./pane-surface.tsx";
 import type { TerminalPaletteProjection } from "./theme.ts";
+import { currentTuiPerformanceEventSink } from "./performance-events.ts";
 
 const EMPTY_DIRTY_ROWS: readonly number[] = Object.freeze([]);
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -69,6 +70,9 @@ export type SemanticPaneReplicaChange =
       readonly rows: readonly number[];
       readonly cursorChanged: boolean;
       readonly renderKeyChanged: boolean;
+      readonly scrollbackChanged: boolean;
+      readonly placementsChanged: boolean;
+      readonly runtimeFactsChanged: boolean;
       readonly renderKey: string;
       readonly version: number;
     }
@@ -82,6 +86,27 @@ export interface SemanticPaneReplicaOptions {
   readonly nack: (nack: TerminalDeliveryNack) => void;
   readonly onChange?: (change: SemanticPaneReplicaChange) => void;
   readonly onControlFailure?: (error: Error) => void;
+}
+
+function terminalPlacementsEqual(
+  previous: TerminalReplicaSnapshot["placements"] | undefined,
+  next: TerminalReplicaSnapshot["placements"],
+): boolean {
+  if (previous === next) return true;
+  if (!previous || previous.length !== next.length) return false;
+  return previous.every((left, index) => {
+    const right = next[index];
+    return (
+      right !== undefined &&
+      left.id === right.id &&
+      left.kind === right.kind &&
+      left.row === right.row &&
+      left.column === right.column &&
+      left.columns === right.columns &&
+      left.rows === right.rows &&
+      left.contentDigest === right.contentDigest
+    );
+  });
 }
 
 /** Retained canonical truth exposed to optional rich-preview presentation. */
@@ -115,6 +140,8 @@ export class SemanticPaneReplica {
   #version = 0;
   #renderKey: string;
   #surfaceOwner: object | null = null;
+  #hasAcceptedSeed = false;
+  #pendingPaintTrace: TerminalPaintTrace | null = null;
   readonly #textRows = new WeakMap<TerminalReplicaRow, TerminalCellTextRow>();
 
   constructor(options: SemanticPaneReplicaOptions) {
@@ -164,6 +191,7 @@ export class SemanticPaneReplica {
     if (message.type === "terminal.delivery.fault") {
       this.#assembler = null;
       this.#snapshot = null;
+      this.#pendingPaintTrace = null;
       this.#version += 1;
       this.#notify({ kind: "closed", version: this.#version });
       return;
@@ -269,6 +297,12 @@ export class SemanticPaneReplica {
     if (this.#surfaceOwner === consumerId) this.#surfaceOwner = null;
   }
 
+  takePaintTrace(): TerminalPaintTrace | null {
+    const trace = this.#pendingPaintTrace;
+    this.#pendingPaintTrace = null;
+    return trace;
+  }
+
   #acceptEnvelope(envelope: TerminalDeliveryEnvelope): void {
     const next = admitTerminalDeliveryEnvelope(this.#delivery, envelope);
     if (next.failed) {
@@ -290,6 +324,8 @@ export class SemanticPaneReplica {
     let committed: ReturnType<typeof commitTerminalDelivery>;
     let payload: ReturnType<typeof decodeSemanticTerminalUpdate>;
     let envelope: TerminalDeliveryEnvelope;
+    const performanceSink = currentTuiPerformanceEventSink();
+    let parseStartedAt = 0;
     const previous = this.#snapshot;
     try {
       assembler.write(message);
@@ -298,6 +334,7 @@ export class SemanticPaneReplica {
       const admittedEnvelope = this.#delivery.inFlight;
       if (!admittedEnvelope || this.#delivery.nextChunk !== admittedEnvelope.chunkCount) return;
       envelope = admittedEnvelope;
+      if (performanceSink) parseStartedAt = performance.now();
       const staged = completeTerminalDelivery(this.#delivery, assembler);
       payload = decodeSemanticTerminalUpdate(staged.bytes);
       committed = commitTerminalDelivery(this.#delivery, staged);
@@ -307,7 +344,38 @@ export class SemanticPaneReplica {
     }
     this.#delivery = committed.state;
     this.#assembler = null;
+    if (
+      this.#pendingPaintTrace &&
+      (this.#pendingPaintTrace.generation !== envelope.generation ||
+        this.#pendingPaintTrace.incarnation !== envelope.incarnation)
+    )
+      this.#pendingPaintTrace = null;
+    if (committed.state.canonicalSnapshot && envelope.performanceTraceId)
+      this.#pendingPaintTrace = Object.freeze({
+        traceId: envelope.performanceTraceId,
+        generation: envelope.generation,
+        incarnation: envelope.incarnation,
+      });
+    if (!committed.state.canonicalSnapshot) this.#pendingPaintTrace = null;
+    // Publish trace authority before notifying the renderer. `#applySnapshot`
+    // emits the synchronous change signal that can cause the framebuffer to
+    // paint immediately; assigning afterward loses the only consumed frame.
     this.#applySnapshot(previous, committed.state.canonicalSnapshot, envelope, payload);
+    const reseed = envelope.frame === "seed" && this.#hasAcceptedSeed;
+    if (envelope.frame === "seed") this.#hasAcceptedSeed = true;
+    if (performanceSink) {
+      try {
+        performanceSink.terminalDelivery({
+          parseMs: performance.now() - parseStartedAt,
+          queuePeak: 1,
+          queueCapacity: 1,
+          revisionLagPeak: Math.max(0, envelope.canonicalRevision - (envelope.baseRevision ?? -1)),
+          reseed,
+        });
+      } catch {
+        // Diagnostics are observational and can never alter protocol truth.
+      }
+    }
     // ACK strictly follows imperative presentation-state application. A failed
     // callback/transport is a connection fault, never evidence that decode or
     // canonical commit failed (and therefore never emits a contradictory NACK).
@@ -345,6 +413,10 @@ export class SemanticPaneReplica {
       rows: dirty,
       cursorChanged: previous?.cursor !== next.cursor,
       renderKeyChanged: previousKey !== this.#renderKey,
+      scrollbackChanged: previous?.history.length !== next.history.length,
+      placementsChanged: !terminalPlacementsEqual(previous?.placements, next.placements),
+      runtimeFactsChanged:
+        previous === null || previous.modes.mouseTracking !== next.modes.mouseTracking,
       renderKey: this.#renderKey,
       version: this.#version,
     });
@@ -435,10 +507,10 @@ export class SemanticTerminalRenderSource implements TerminalPaneRenderSource {
     defaultFg: number,
     defaultBg: number,
     options: BlitOptions,
-  ): void {
-    this.#panes
-      .get(paneId)
-      ?.blit(buffers, width, height, scrollOffset, defaultFg, defaultBg, options);
+  ): TerminalPaintTrace | null {
+    const replica = this.#panes.get(paneId);
+    replica?.blit(buffers, width, height, scrollOffset, defaultFg, defaultBg, options);
+    return replica?.takePaintTrace() ?? null;
   }
 }
 

@@ -20,6 +20,7 @@ export const APPLICATION_KEYBINDING_ROWS: readonly ApplicationKeybindingRow[] = 
   { label: "Changes", keycap: "F4", paletteAction: "surface:changes" },
   { label: "Missions", keycap: "F6", paletteAction: "surface:missions" },
   { label: "Activity", keycap: "F9", paletteAction: "surface:activity" },
+  { label: "Performance HUD", keycap: "F12", paletteAction: "performance-hud" },
   { label: "Cycle workspace focus", keycap: "F8 · ^tab" },
   { label: "Save file", keycap: "^s", paletteAction: "save" },
   { label: "Back to Home", keycap: "^g" },

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { widgetMarkerAnnouncement, type CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
 import { TERMINAL_CONFORMANCE_FIXTURES } from "@tmux-ide/core";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
+import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 
@@ -18,6 +19,45 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it("does not coalesce external bytes across an authenticated trace boundary", async () => {
+    const observed: Array<SessionRuntimeTraceContext | null> = [];
+    const interpreter = new TerminalReplicaInterpreter({
+      generation,
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: `${generation}:0`,
+      cols: 12,
+      rows: 3,
+      onUpdate: (_update, trace) => observed.push(trace),
+    });
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 12,
+      rows: 3,
+      chunks: [],
+      cursor: { x: 0, y: 0 },
+      bootstrap: "painted-capture",
+    });
+    observed.length = 0;
+    const trace: SessionRuntimeTraceContext = {
+      traceId: "00000000-0000-4000-8000-000000000099",
+      scenario: "terminal-input-to-paint",
+      authority: { generation, incarnation: `${generation}:0` },
+    };
+    await Promise.all([
+      interpreter.enqueue({ type: "write", data: new TextEncoder().encode("A") }),
+      interpreter.enqueue({ type: "write", data: new TextEncoder().encode("B"), trace }),
+    ]);
+    expect(observed).toEqual([null, trace]);
+
+    observed.length = 0;
+    await Promise.all([
+      interpreter.enqueue({ type: "write", data: new TextEncoder().encode("C"), trace }),
+      interpreter.enqueue({ type: "write", data: new TextEncoder().encode("D") }),
+    ]);
+    expect(observed).toEqual([trace, null]);
+  });
+
   it("publishes one atomic painted-capture seed and orders resize after partial CSI", async () => {
     const updates: CanonicalTerminalReplicaUpdate[] = [];
     const interpreter = create(updates);

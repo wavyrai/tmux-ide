@@ -42,6 +42,7 @@ describe("staticPaletteActions", () => {
       "Settings: Crash restore",
       "Settings: Keyboard shortcuts (view)",
       "Settings: Reset to defaults",
+      "Toggle performance HUD",
       "Quit",
     ]);
   });
@@ -220,7 +221,7 @@ describe("filterPaletteActions", () => {
   it("returns every static action for an empty query, no open-file entry", () => {
     const actions = filterPaletteActions("", ["alpha"]);
     expect(actions.some((a) => a.kind === "open-file")).toBe(false);
-    expect(actions).toHaveLength(21);
+    expect(actions).toHaveLength(22);
   });
 
   it("fuzzy-ranks matches and appends an open-file action for a plain word", () => {
