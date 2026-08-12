@@ -2765,6 +2765,7 @@ const mountTuiRoot = () => {
     };
     const terminalPaneChromeMetadata = createMemo(() => {
       const metadata = new Map<string, TerminalPaneChromeMetadata>();
+      const descriptors = semanticView?.paneDescriptors() ?? [];
       const appStatus = status();
       const appStatusTone: TerminalPaneChromeMetadata["statusTone"] = appStatus.startsWith("error")
         ? "blocked"
@@ -2772,10 +2773,12 @@ const mountTuiRoot = () => {
           ? "done"
           : "working";
       for (const pane of panes()) {
-        const agent = agentByPane().get(runtimePaneIdForSemantic(pane.id));
-        const semanticPaneId = semanticView
-          ?.paneDescriptors()
-          .find((descriptor) => descriptor.runtimePaneId === pane.id)?.semanticPaneId;
+        const descriptor = descriptors.find(
+          (candidate) =>
+            candidate.runtimePaneId === pane.id || candidate.semanticPaneId === pane.id,
+        );
+        const agent = agentByPane().get(descriptor?.runtimePaneId ?? pane.id);
+        const semanticPaneId = descriptor?.semanticPaneId;
         const interaction = semanticPaneId ? interactionFeed().panes[semanticPaneId] : undefined;
         const visibleInteraction =
           interaction && activeInteractionSequences().has(interaction.sequence)
@@ -2791,10 +2794,7 @@ const mountTuiRoot = () => {
               ? "requested"
               : "none";
         metadata.set(pane.id, {
-          // SemanticSessionView may add title/currentCommand descriptors later. Null
-          // deliberately leaves that seam to the pure projection, which falls
-          // back to the always-distinct live %pane_id today.
-          title: agent?.displayName ?? agent?.kind ?? null,
+          title: agent?.displayName ?? agent?.kind ?? descriptor?.title ?? null,
           subtitle: agent
             ? `${agent.displayName ? `${agent.kind} · ` : ""}${curTarget()} · ${pane.id}`
             : `${curTarget()} · ${pane.id}`,
