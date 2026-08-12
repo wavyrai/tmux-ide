@@ -36,7 +36,7 @@ owner bearer out of browser JavaScript.
 ```bash
 pnpm test:tui-renderer
 pnpm test:tui-live -- --target <session> --source
-pnpm test:tui-perf
+pnpm test:performance-qualification
 ```
 
 The renderer suite owns and destroys every OpenTUI renderer. Cross-file listener
@@ -44,21 +44,23 @@ accumulation is a defect, not accepted test noise. The live test-drive proves a
 real attach and responsive frames at 100x30, 160x44, and 200x60; defaults are a
 10,000 ms attach budget and 1,000 ms per resize settle.
 
-The performance test measures real tmux control-feed parse, framebuffer
-snapshot, and keyboard echo-to-paint paths under idle, flood, and alternate
-screen workloads. Default p95 ceilings are:
+The performance qualification gate uses the canonical SessionRuntime and both
+renderer adapters. It proves one control connection, 2/4/8-client convergence,
+bounded slow/hidden-client delivery, NACK reseeding, generation rollover,
+authenticated mutation outcomes, and demand-only HUD lifecycle. CI writes
+`artifacts/performance-qualification.json` and uploads it as build evidence.
 
-| Path                        | p95 budget |
-| --------------------------- | ---------: |
-| flood feed parse            |       1 ms |
-| alternate-screen feed parse |       1 ms |
-| flood snapshot              |       4 ms |
-| alternate-screen snapshot   |       6 ms |
-| input echo                  |      15 ms |
-| input paint                 |      50 ms |
+Portable CI never treats test-suite duration as UI latency. The checked-in
+reference baseline at `performance/qualification-baseline.json` reserves the
+wall-clock gate for a pinned Apple-silicon macOS reference host:
 
-Each measured path also has a minimum sample count so an inactive or broken tap
-cannot pass with zeroes.
+| Path                         | p95 budget |
+| ---------------------------- | ---------: |
+| local leading input to paint |   16.67 ms |
+
+Input and paint endpoints must be measured on the same client monotonic clock.
+The stage trace still publishes input → tmux → parse → reduce → transport →
+paint durations, but cross-process timestamps are never subtracted.
 
 ## Shared-core invariant
 

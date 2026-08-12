@@ -168,18 +168,14 @@ focus is not a terminal-content mutation and must never force a full framebuffer
 
 ## Performance budgets and gates
 
-The performance harness (`scripts/perf-mirror.mjs`) drives a real tmux control client,
-real xterm parsing, real OpenTUI rendering, flood output, alternate-screen redraw, and
-keyboard round trips. The release gates are deliberately end-to-end:
+The performance qualification gate (`pnpm test:performance-qualification`) drives the
+canonical SessionRuntime, real terminal parser/delivery paths, and demand-driven
+OpenTUI/web telemetry adapters. It covers flood output, alternate-screen redraw,
+slow and hidden clients, NACK reseeding, socket churn, and authority rollover.
 
-| Metric                                      | p95 budget |
-| ------------------------------------------- | ---------: |
-| Control feed parse, flood                   | 1 ms/chunk |
-| Control feed parse, alternate screen        | 1 ms/chunk |
-| Framebuffer snapshot/blit, flood            | 4 ms/frame |
-| Framebuffer snapshot/blit, alternate screen | 6 ms/frame |
-| Key dispatch to first echoed output         |      15 ms |
-| Key dispatch to consumed paint publication  |      50 ms |
+| Metric                                | p95 budget |
+| ------------------------------------- | ---------: |
+| Local leading input to consumed paint |   16.67 ms |
 
 Additional invariants:
 
@@ -188,8 +184,10 @@ Additional invariants:
 - one parsed output burst produces one publication request, not enqueue plus parse;
 - communication chrome never remounts or repaints a terminal body;
 - input, resize, and focus commands never wait for fleet/discovery subprocesses;
-- all live performance runs use isolated `zz-perf-*` or test-drive sessions and leave
-  user sessions untouched.
+- portable CI publishes deterministic convergence, queue, mutation, and stage-coverage
+  evidence; wall-clock latency is evaluated only on the pinned reference host;
+- all live performance runs use isolated test-drive sessions and leave user sessions
+  untouched.
 
 ## Next measured frontier
 
