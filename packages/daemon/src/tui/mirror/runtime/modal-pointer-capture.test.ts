@@ -7,6 +7,7 @@ describe("modal pointer capture boundary", () => {
     let previewCells = 44;
     let dragging = true;
     const cancelBorderResize = vi.fn();
+    const releaseForwardedDown = vi.fn();
     cancelModalPointerCapture({
       dragKind: "border",
       cancelBorderResize,
@@ -16,6 +17,7 @@ describe("modal pointer capture boundary", () => {
       clearSelecting: vi.fn(),
       clearDragAutoScroll: vi.fn(),
       clearPendingPress: vi.fn(),
+      releaseForwardedDown,
       clearForwardedDown: vi.fn(),
       clearVisuals: vi.fn(),
     });
@@ -23,6 +25,7 @@ describe("modal pointer capture boundary", () => {
     // This is the underlying resize route's mutation guard after admission.
     if (dragging) previewCells = 80;
     expect(cancelBorderResize).toHaveBeenCalledOnce();
+    expect(releaseForwardedDown).toHaveBeenCalledOnce();
     expect(previewCells).toBe(44);
   });
 });

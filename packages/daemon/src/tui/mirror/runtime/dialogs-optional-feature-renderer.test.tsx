@@ -3,6 +3,7 @@ import { Dynamic } from "@opentui/solid";
 import { describe, expect, it, mock } from "bun:test";
 import { Show, createSignal, onCleanup } from "solid-js";
 
+import { DEFAULT_APP_CONFIG } from "../../../lib/app-config.ts";
 import type { DialogFeatureSession } from "../features/dialogs/contract.ts";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import {
@@ -10,36 +11,84 @@ import {
   renderForTest,
   stableFrame,
 } from "../testing/renderer-harness.test.ts";
-import { OptionalFeatureRegistry } from "./optional-feature-registry.ts";
-import { projectAgentTerminalCanvas } from "../workspace/agent-terminal-canvas.ts";
 import { AgentTerminalCanvas } from "../workspace/agent-terminal-canvas-view.tsx";
+import { projectAgentTerminalCanvas } from "../workspace/agent-terminal-canvas.ts";
+import { OptionalFeatureRegistry } from "./optional-feature-registry.ts";
 
 type DialogFeature = typeof import("../features/dialogs/feature.tsx");
 type TestFeatures = { readonly dialogs: DialogFeature };
 
 describe("deferred Dialog OpenTUI boundary", () => {
-  it("keeps assembled shell and terminal identity while admission resolves and opens", async () => {
-    let resolveLoad!: (feature: DialogFeature) => void;
-    const physicalLoad = new Promise<DialogFeature>((resolve) => {
-      resolveLoad = resolve;
+  it("keeps the real terminal resident through queued/loading/error/retry/close/settings", async () => {
+    let rejectFirst!: (error: Error) => void;
+    let resolveRetry!: (feature: DialogFeature) => void;
+    const firstLoad = new Promise<DialogFeature>((_resolve, reject) => {
+      rejectFirst = reject;
     });
-    const loader = mock(() => physicalLoad);
+    const retryLoad = new Promise<DialogFeature>((resolve) => {
+      resolveRetry = resolve;
+    });
+    const loader = mock(() => (loader.mock.calls.length === 1 ? firstLoad : retryLoad));
     const registry = new OptionalFeatureRegistry<TestFeatures>({ dialogs: loader });
+    let retry!: () => Promise<void>;
+    let dismiss!: () => void;
+    let openSettings!: () => Promise<void>;
 
     function Harness() {
       const theme = createSemanticThemeSnapshot({ mode: "dark" });
       const projection = projectAgentTerminalCanvas({ width: 48, height: 10, chromeRows: 2 });
+      const [phase, setPhase] = createSignal("queued");
       const [feature, setFeature] = createSignal<DialogFeature>();
       const [session, setSession] = createSignal<DialogFeatureSession>();
-      void registry.request("dialogs").then((loaded) => {
-        if (!loaded) return;
-        const owned = loaded.createDialogFeatureSession({
-          viewport: () => ({ width: 48, height: 10, dialogWidth: 40 }),
+      const install = async () => {
+        setPhase("loading");
+        try {
+          const loaded = await registry.request("dialogs");
+          if (!loaded) return;
+          const owned = loaded.createDialogFeatureSession({
+            viewport: () => ({ width: 48, height: 10, dialogWidth: 40 }),
+          });
+          setFeature(() => loaded);
+          setSession(() => owned);
+          setPhase("ready");
+          void owned.prompt({ title: "Deferred prompt", placeholder: "agent name" });
+        } catch {
+          setPhase("error");
+        }
+      };
+      retry = install;
+      dismiss = () => {
+        session()?.dismiss();
+        setPhase("closed");
+      };
+      openSettings = async () => {
+        const dialogs = session();
+        if (!dialogs) return;
+        const settings = await import("../features/settings/feature.ts");
+        const owned = settings.createSettingsFeatureSession({
+          dialogs,
+          readConfig: () => DEFAULT_APP_CONFIG,
+          readNotificationPrefs: () => ({
+            enabled: true,
+            toast: true,
+            macos: false,
+            terminal: true,
+            delaySeconds: 2,
+            sound: "blocked",
+            onBlocked: true,
+            onDone: true,
+            quietHours: null,
+          }),
+          writeConfig: () => undefined,
+          configureTheme: () => undefined,
+          setPreviewAccent: () => undefined,
+          setStatusNote: () => undefined,
+          kittyKeys: true,
         });
-        setFeature(() => loaded);
-        setSession(() => owned);
-        void owned.prompt({ title: "Deferred prompt", placeholder: "agent name" });
-      });
+        setPhase("settings");
+        void owned.run("settings-keys");
+      };
+      void install();
       onCleanup(() => {
         session()?.dispose();
         registry.dispose();
@@ -52,6 +101,9 @@ describe("deferred Dialog OpenTUI boundary", () => {
             chrome={<text>workspace · terminal</text>}
             framebuffer={<text id="dialog-terminal">real tmux framebuffer identity</text>}
           />
+          <text id="dialog-phase" position="absolute" right={0} top={0}>
+            {phase()}
+          </text>
           <Show when={feature() && session()?.open()}>
             <Dynamic
               component={feature()!.DialogFeatureSurface}
@@ -70,15 +122,29 @@ describe("deferred Dialog OpenTUI boundary", () => {
     expect(loader).not.toHaveBeenCalled();
 
     registry.admit();
-    const loaded = await import("../features/dialogs/feature.tsx");
-    resolveLoad(loaded);
-    await physicalLoad;
+    expect(loader).toHaveBeenCalledTimes(1);
+    rejectFirst(new Error("bundle unavailable"));
+    await firstLoad.catch(() => undefined);
     await Promise.resolve();
     await setup.renderOnce();
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    const retrying = retry();
+    const loaded = await import("../features/dialogs/feature.tsx");
+    resolveRetry(loaded);
+    await retrying;
+    await setup.renderOnce();
     expect(stableFrame(setup.captureCharFrame())).toContain("Deferred prompt");
+
+    dismiss();
+    await setup.renderOnce();
+    expect(stableFrame(setup.captureCharFrame())).not.toContain("Deferred prompt");
+    await openSettings();
+    await setup.renderOnce();
+    expect(stableFrame(setup.captureCharFrame())).toContain("Keyboard shortcuts");
     expect(setup.renderer.root.findDescendantById("dialog-shell")).toBe(shell);
     expect(setup.renderer.root.findDescendantById("dialog-terminal")).toBe(terminal);
-    expect(loader).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(2);
 
     destroyTestRenderer(setup);
   });

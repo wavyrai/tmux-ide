@@ -2982,7 +2982,7 @@ const mountTuiRoot = () => {
     // (drag-end, up, drop, up — measured live), so the release forward must be
     // debt-tracked: paid exactly ONCE, to the pane that got the down (wherever
     // the pointer is at release), and never for gestures we consumed locally.
-    let forwardedDown: string | null = null;
+    let forwardedDown: { paneId: string; x: number; gy: number } | null = null;
     cancelPointerCaptureForModal = () =>
       cancelModalPointerCapture({
         dragKind: dragging?.kind ?? null,
@@ -2998,6 +2998,13 @@ const mountTuiRoot = () => {
         },
         clearPendingPress: () => {
           pendingPress = null;
+        },
+        releaseForwardedDown: () => {
+          if (!forwardedDown) return;
+          const pane = panesById().get(forwardedDown.paneId);
+          if (pane && selectModePane() !== pane.id) {
+            forwardPress(pane, forwardedDown.x, forwardedDown.gy, true);
+          }
         },
         clearForwardedDown: () => {
           forwardedDown = null;
@@ -7042,7 +7049,7 @@ const mountTuiRoot = () => {
       dragAutoScroll = null;
       pendingPress = null;
       if (!forwardedDown) return;
-      const pane = panesById().get(forwardedDown);
+      const pane = panesById().get(forwardedDown.paneId);
       forwardedDown = null;
       if (pane && selectModePane() !== pane.id) {
         forwardPress(pane, terminalRouteX(e.x), e.y - TABBAR_H, true);
@@ -7899,7 +7906,7 @@ const mountTuiRoot = () => {
         // down — at the pointer's release cell, clamped into that pane — and
         // only once (the synthesized duplicates find no debt and stay local).
         if (forwardedDown) {
-          const pane = panesById().get(forwardedDown);
+          const pane = panesById().get(forwardedDown.paneId);
           forwardedDown = null;
           if (pane && selectModePane() !== pane.id)
             forwardPress(pane, terminalRouteX(screenX), y - TABBAR_H, true);
@@ -8090,7 +8097,7 @@ const mountTuiRoot = () => {
           paneDrag(pane.id),
         );
         if (routing === "forward") {
-          forwardedDown = pane.id;
+          forwardedDown = { paneId: pane.id, x, gy };
           forwardPress(pane, x, gy, false);
           return;
         }

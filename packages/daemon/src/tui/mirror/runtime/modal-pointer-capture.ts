@@ -5,6 +5,7 @@ export interface ModalPointerCaptureHost {
   readonly clearSelecting: () => void;
   readonly clearDragAutoScroll: () => void;
   readonly clearPendingPress: () => void;
+  readonly releaseForwardedDown: () => void;
   readonly clearForwardedDown: () => void;
   readonly clearVisuals: () => void;
 }
@@ -16,6 +17,7 @@ export function cancelModalPointerCapture(host: ModalPointerCaptureHost): void {
   host.clearSelecting();
   host.clearDragAutoScroll();
   host.clearPendingPress();
+  host.releaseForwardedDown();
   host.clearForwardedDown();
   host.clearVisuals();
 }
