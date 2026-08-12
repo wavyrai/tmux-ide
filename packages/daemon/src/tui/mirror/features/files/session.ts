@@ -302,19 +302,30 @@ export class FilesFeatureSession {
     return `${this.#host.workspaceName()}\u0000${this.#host.workspaceDir()}`;
   }
 
-  #captureEpoch(): { readonly epoch: number; readonly root: string } {
-    if (this.#disposed) return { epoch: this.#epoch, root: this.#host.workspaceDir() };
+  #captureEpoch(): { readonly epoch: number; readonly root: string; readonly identity: string } {
+    if (this.#disposed) {
+      return {
+        epoch: this.#epoch,
+        root: this.#host.workspaceDir(),
+        identity: this.#identity(),
+      };
+    }
     const identity = this.#identity();
     if (identity !== this.#workspaceIdentity) {
       this.#workspaceIdentity = identity;
       this.#epoch += 1;
       this.resetCatalog();
     }
-    return { epoch: this.#epoch, root: this.#host.workspaceDir() };
+    return { epoch: this.#epoch, root: this.#host.workspaceDir(), identity };
   }
 
-  #isCurrent(epoch: number, root: string): boolean {
-    return !this.#disposed && epoch === this.#epoch && root === this.#host.workspaceDir();
+  #isCurrent(epoch: number, root: string, identity: string): boolean {
+    return (
+      !this.#disposed &&
+      epoch === this.#epoch &&
+      root === this.#host.workspaceDir() &&
+      identity === this.#identity()
+    );
   }
 
   openEditor(rawPath: string, line?: number, origin: EditorOpenOrigin = "user"): void {
@@ -454,7 +465,7 @@ export class FilesFeatureSession {
 
   async listDir(dir: string): Promise<RawEntry[]> {
     if (this.#disposed) return [];
-    const { epoch, root } = this.#captureEpoch();
+    const { epoch, root, identity } = this.#captureEpoch();
     const matcher: Ignore = ignore();
     try {
       matcher.add(await this.#io.readFile(join(root, ".gitignore"), "utf8"));
@@ -462,7 +473,7 @@ export class FilesFeatureSession {
       // A workspace without .gitignore has no additional ignore rules.
     }
     const entries = await this.#io.readdir(dir, { withFileTypes: true });
-    if (!this.#isCurrent(epoch, root)) return [];
+    if (!this.#isCurrent(epoch, root, identity)) return [];
     return filterEntries(
       entries.map((entry) => {
         const directory = entry.isDirectory();
@@ -504,10 +515,10 @@ export class FilesFeatureSession {
       this.setFileNodes((nodes) => removeSubtreeAt(nodes, indexOfPath(nodes, row.node.path)));
       return;
     }
-    const { epoch, root } = this.#captureEpoch();
+    const { epoch, root, identity } = this.#captureEpoch();
     void this.listDir(row.node.path)
       .then((entries) => {
-        if (!this.#isCurrent(epoch, root)) return;
+        if (!this.#isCurrent(epoch, root, identity)) return;
         const children = buildNodes(row.node.path, entries, row.node.depth + 1);
         this.setFileNodes((nodes) =>
           insertChildrenAt(nodes, indexOfPath(nodes, row.node.path), children),
@@ -517,7 +528,7 @@ export class FilesFeatureSession {
   }
   async reveal(path: string): Promise<void> {
     if (this.#disposed) return;
-    const { epoch, root } = this.#captureEpoch();
+    const { epoch, root, identity } = this.#captureEpoch();
     const relative = relPath(root, path);
     if (!relative) return;
     for (const ancestor of ancestorDirs(relative)) {
@@ -526,7 +537,7 @@ export class FilesFeatureSession {
       if (!node?.isDir) return;
       if (!node.expanded) {
         const entries = await this.listDir(absolute).catch(() => null);
-        if (!entries || !this.#isCurrent(epoch, root)) return;
+        if (!entries || !this.#isCurrent(epoch, root, identity)) return;
         this.setFileNodes((nodes) =>
           insertChildrenAt(
             nodes,
@@ -536,7 +547,7 @@ export class FilesFeatureSession {
         );
       }
     }
-    if (!this.#isCurrent(epoch, root)) return;
+    if (!this.#isCurrent(epoch, root, identity)) return;
     const index = indexOfPath(this.fileNodes(), path);
     if (index < 0) return;
     this.setFileSelection(index);
@@ -646,25 +657,25 @@ export class FilesFeatureSession {
   }
   async create(parent: string, name: string): Promise<void> {
     if (this.#disposed) return;
-    const { epoch, root } = this.#captureEpoch();
+    const { epoch, root, identity } = this.#captureEpoch();
     await this.#io.writeFile(join(parent, name), "", { flag: "wx" });
-    if (!this.#isCurrent(epoch, root)) return;
+    if (!this.#isCurrent(epoch, root, identity)) return;
     this.#host.note(`created ${name}`);
     this.#host.refresh();
   }
   async rename(path: string, name: string): Promise<void> {
     if (this.#disposed) return;
-    const { epoch, root } = this.#captureEpoch();
+    const { epoch, root, identity } = this.#captureEpoch();
     await this.#io.rename(path, join(dirname(path), name));
-    if (!this.#isCurrent(epoch, root)) return;
+    if (!this.#isCurrent(epoch, root, identity)) return;
     this.#host.note(`renamed → ${name}`);
     this.#host.refresh();
   }
   async delete(path: string): Promise<void> {
     if (this.#disposed) return;
-    const { epoch, root } = this.#captureEpoch();
+    const { epoch, root, identity } = this.#captureEpoch();
     await this.#io.rm(path, { recursive: true, force: false });
-    if (!this.#isCurrent(epoch, root)) return;
+    if (!this.#isCurrent(epoch, root, identity)) return;
     this.#host.note(`deleted ${basename(path)}`);
     this.#host.refresh();
   }

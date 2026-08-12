@@ -140,10 +140,8 @@ describe("FilesFeatureSession", () => {
     session.dispose();
   });
 
-  it("discards an out-of-order directory read after the workspace changes", async () => {
+  it("discards an out-of-order read when workspace identity changes at the same directory", async () => {
     const first = await fixture();
-    const second = await fixture();
-    let root = first.directory;
     let workspaceName = "first";
     const pendingEntries = deferred<Awaited<ReturnType<FilesFeatureIO["readdir"]>>>();
     const io: FilesFeatureIO = {
@@ -158,7 +156,7 @@ describe("FilesFeatureSession", () => {
     const session = createFilesFeatureSession(
       {
         ...first.host,
-        workspaceDir: () => root,
+        workspaceDir: () => first.directory,
         workspaceName: () => workspaceName,
       },
       io,
@@ -175,7 +173,6 @@ describe("FilesFeatureSession", () => {
     ]);
     session.activate(0);
 
-    root = second.directory;
     workspaceName = "second";
     session.resetCatalog();
     pendingEntries.resolve([
