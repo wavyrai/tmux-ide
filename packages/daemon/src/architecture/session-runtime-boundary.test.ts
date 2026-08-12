@@ -2,6 +2,7 @@ import { access, readdir, readFile } from "node:fs/promises";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../tui/mirror/runtime/production-root-manifest.ts";
 
 const REPO = fileURLToPath(new URL("../../../../", import.meta.url));
 const CLIENT_ROOTS = [
@@ -10,8 +11,6 @@ const CLIENT_ROOTS = [
   "packages/sdk/src",
   "packages/daemon/src/tui",
 ] as const;
-
-const OPENTUI_PRODUCTION_ROOTS = ["packages/daemon/src/tui/mirror/app.tsx"] as const;
 
 const REQUIRED_SEMANTIC_RUNTIME_LANE = [
   "packages/daemon/src/tui/mirror/application-shell-daemon-runtime.ts",
@@ -119,7 +118,7 @@ async function resolveLocalModule(importer: string, specifier: string): Promise<
 }
 
 async function productionImportGraph(): Promise<string[]> {
-  const pending = OPENTUI_PRODUCTION_ROOTS.map((file) => join(REPO, file));
+  const pending = OPENTUI_PRODUCTION_ROOT_SOURCES.map((file) => join(REPO, file));
   const visited = new Set<string>();
 
   while (pending.length > 0) {

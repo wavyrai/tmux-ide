@@ -1,8 +1,10 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { publishTuiInputReady } from "./readiness.ts";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "./mirror/runtime/production-root-manifest.ts";
 
 const roots: string[] = [];
 
@@ -39,7 +41,10 @@ describe("TUI input readiness", () => {
   });
 
   it("publishes the app barrier after its root keyboard and paste owners mount", () => {
-    const source = readFileSync(new URL("./mirror/app.tsx", import.meta.url), "utf8");
+    const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
+    const source = OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) =>
+      readFileSync(join(repoRoot, path), "utf8"),
+    ).join("\n");
     const keyboard = source.indexOf("useKeyboard((evt) =>");
     const paste = source.indexOf("usePaste((e) =>", keyboard);
     const inputBarrier = source.indexOf("resolveInputReady()", paste);

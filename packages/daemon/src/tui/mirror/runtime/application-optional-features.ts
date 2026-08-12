@@ -1,0 +1,22 @@
+import { OptionalFeatureRegistry } from "./optional-feature-registry.ts";
+
+export interface ApplicationOptionalFeatures extends Record<string, unknown> {
+  readonly files: typeof import("../files-surface.tsx");
+  readonly changes: typeof import("../changes-surface.tsx");
+  readonly missions: typeof import("../missions-surface.tsx");
+  readonly activity: typeof import("../activity-surface.tsx");
+  readonly palette: typeof import("../workspace/command-palette-surface.tsx");
+  readonly richPreview: typeof import("../widget-surface.tsx");
+}
+
+/** Literal imports keep every optional module discoverable by Bun's compiler. */
+export function createApplicationOptionalFeatureRegistry(): OptionalFeatureRegistry<ApplicationOptionalFeatures> {
+  return new OptionalFeatureRegistry<ApplicationOptionalFeatures>({
+    files: () => import("../files-surface.tsx"),
+    changes: () => import("../changes-surface.tsx"),
+    missions: () => import("../missions-surface.tsx"),
+    activity: () => import("../activity-surface.tsx"),
+    palette: () => import("../workspace/command-palette-surface.tsx"),
+    richPreview: () => import("../widget-surface.tsx"),
+  });
+}

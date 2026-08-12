@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "./production-root-manifest.ts";
 
-const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const source = OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) =>
+  readFileSync(join(repoRoot, path), "utf8"),
+).join("\n");
 
 describe("production OpenTUI data path", () => {
   it("contains no recurring catalog work or legacy direct observation path", () => {
@@ -29,6 +35,7 @@ describe("production OpenTUI data path", () => {
 
   it("cuts production through the lifecycle bootstrap, terminal adapter, and local view owner", () => {
     expect(source).toContain("await startTuiApplication");
+    expect(source).toContain('await import("./application-root.tsx")');
     expect(source).toContain("new TuiApplicationLifecycle");
     expect(source).toContain("new OpenTuiTerminalWorkspaceAdapter");
     expect(source).toContain("new OpenTuiLocalViewController");
@@ -55,6 +62,14 @@ describe("production OpenTUI data path", () => {
     expect(source).toContain("terminalToolReadiness.observeTerminalFrameCommitted()");
     expect(source).not.toContain("terminalToolReadiness.observeTerminalRender()");
     expect(source).toContain("toolResources.markCatalogReady()");
+  });
+
+  it("owns optional feature admission and metrics inside the application lifecycle", () => {
+    expect(source).toContain("createApplicationOptionalFeatureRegistry()");
+    expect(source).toContain('applicationLifecycle.registerCloser("optional-features"');
+    expect(source).toContain('tuiPerfMark("optional-feature-metrics"');
+    expect(source).toContain("optionalFeatures.dispose()");
+    expect(source.match(/optionalFeatures\.admit\(\)/gu)).toHaveLength(2);
   });
 
   it("builds actionable agent rows from generation-bound local tmux identity proof", () => {

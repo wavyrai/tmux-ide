@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../runtime/production-root-manifest.ts";
 import type { PaneInteractionProjection } from "@tmux-ide/core";
 import { projectPaneChromeState } from "../pane-frame-state.ts";
 import { projectAgentTerminalCanvas } from "./agent-terminal-canvas.ts";
@@ -18,6 +21,11 @@ import {
 } from "./terminal-pane-chrome.ts";
 
 const canvas = projectAgentTerminalCanvas({ width: 120, height: 40, chromeRows: 2 });
+const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const productionRootSource = () =>
+  OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
+    "\n",
+  );
 
 function pane(overrides: Partial<TerminalPaneChromePane>): TerminalPaneChromePane {
   return {
@@ -518,7 +526,7 @@ describe("terminal pane chrome projection", () => {
   });
 
   it("mounts exactly two passive shared hosts and routes their semantic commands at root", () => {
-    const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+    const appSource = productionRootSource();
     const hostSource = readFileSync(
       new URL("./terminal-pane-chrome-view.tsx", import.meta.url),
       "utf8",

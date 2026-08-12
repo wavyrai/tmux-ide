@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../tui/mirror/runtime/production-root-manifest.ts";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../../..");
 
@@ -81,11 +82,7 @@ describe("legacy config access audit", () => {
   });
 
   it("does not swallow invalid config resolution in active config probes", () => {
-    const files = [
-      "bin/cli.ts",
-      "packages/daemon/src/cli.ts",
-      "packages/daemon/src/tui/mirror/app.tsx",
-    ];
+    const files = ["bin/cli.ts", "packages/daemon/src/cli.ts", ...OPENTUI_PRODUCTION_ROOT_SOURCES];
 
     const offenders = files.filter((file) => {
       const source = readFileSync(join(repoRoot, file), "utf-8");
