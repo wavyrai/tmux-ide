@@ -55,20 +55,23 @@ const provenance = {
 
 let measurements;
 try {
-  mkdirSync(referenceProjectDir, { recursive: true });
+  mkdirSync(join(referenceProjectDir, ".tmux-ide"), { recursive: true });
+  writeFileSync(
+    join(referenceProjectDir, ".tmux-ide/workspace.yml"),
+    [
+      "version: 1",
+      `name: ${target}`,
+      "terminal:",
+      "  rows:",
+      "    - panes:",
+      "        - title: Echo",
+      "          focus: true",
+      `          command: ${JSON.stringify(`/bin/zsh -f -c 'stty raw -echo; while read -rk 1 ch; do print -rn -- "$ch"; done'`)}`,
+      "",
+    ].join("\n"),
+  );
   await registerReferenceProject();
-  tmux([
-    "new-session",
-    "-d",
-    "-s",
-    target,
-    "-x",
-    "160",
-    "-y",
-    "44",
-    `/bin/zsh -f -c 'stty raw -echo; while read -rk 1 ch; do print -rn -- "$ch"; done'`,
-  ]);
-  await adoptReferenceWorkspace();
+  await launchReferenceWorkspace();
   const startup = await measureStartup();
   const inputTrace = options.inputTrace ?? (await collectInputTrace());
   measurements = {
@@ -99,7 +102,7 @@ async function registerReferenceProject() {
     );
 }
 
-async function adoptReferenceWorkspace() {
+async function launchReferenceWorkspace() {
   const daemon = readDaemonInfo();
   const response = await fetch(
     `http://${daemon.bindHostname}:${daemon.port}/api/v2/action/project.launch`,
@@ -115,7 +118,7 @@ async function adoptReferenceWorkspace() {
   const result = await response.json();
   if (!response.ok || result?.ok !== true)
     throw new Error(
-      `Unable to adopt reference workspace (${response.status}): ${JSON.stringify(result)}`,
+      `Unable to launch reference workspace (${response.status}): ${JSON.stringify(result)}`,
     );
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -124,15 +127,22 @@ async function adoptReferenceWorkspace() {
       { headers: { authorization: `Bearer ${daemon.authToken}` } },
     );
     const catalog = await catalogResponse.json();
-    if (
-      catalog?.workspaces?.some(
-        ({ workspaceName, sessionName }) => workspaceName === target && sessionName === target,
-      )
-    )
-      return;
+    const published = catalog?.workspaces?.some(
+      ({ workspaceName, sessionName }) => workspaceName === target && sessionName === target,
+    );
+    if (published) {
+      const panesResponse = await fetch(
+        `http://${daemon.bindHostname}:${daemon.port}/api/project/${encodeURIComponent(target)}/panes`,
+        { headers: { authorization: `Bearer ${daemon.authToken}` } },
+      );
+      if (panesResponse.ok) {
+        const paneResource = await panesResponse.json();
+        if (Array.isArray(paneResource.panes) && paneResource.panes.length > 0) return;
+      }
+    }
     await delay(25);
   }
-  throw new Error("Canonical workspace catalog did not adopt the reference tmux session");
+  throw new Error("Canonical reference workspace did not publish an attachable pane");
 }
 
 async function unregisterReferenceProject() {
