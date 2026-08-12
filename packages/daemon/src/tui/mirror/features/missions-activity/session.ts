@@ -1,4 +1,4 @@
-import { createMemo, createRoot, createSignal } from "solid-js";
+import { createRoot, createSignal } from "solid-js";
 
 import type { WorkspaceMissionsEnvelopeV1 } from "@tmux-ide/contracts";
 
@@ -190,7 +190,7 @@ export function createMissionsActivityFeatureSession(
       const state = missionLoadState();
       return state.status === "error" ? state.message : "";
     };
-    const missionProjection = createMemo(() =>
+    const missionProjection = () =>
       missionDashboardProjection(
         host.width(),
         Math.max(1, host.height()),
@@ -203,10 +203,9 @@ export function createMissionsActivityFeatureSession(
           quitHint: "^q quit",
           agents: host.agents(),
         },
-      ),
-    );
+      );
 
-    const activityRows = createMemo<ActivityRowDto[]>(() => {
+    const activityRows = (): ActivityRowDto[] => {
       const agentRows: ActivityRowDto[] = host.agents().map((agent, index) => ({
         kind: "agent",
         id: `agent:${agent.paneId}`,
@@ -248,8 +247,8 @@ export function createMissionsActivityFeatureSession(
         attention: event.phase === "rejected" || event.phase === "timed-out",
       }));
       return [...agentRows, ...missionRows, ...interactionRows];
-    });
-    const activityProjection = createMemo(() => {
+    };
+    const activityProjection = () => {
       const rows = activityRows();
       const load = missionLoadState();
       return projectActivitySurface({
@@ -268,7 +267,7 @@ export function createMissionsActivityFeatureSession(
         scrollOffset: activityScrollOffset(),
         message: load.status === "error" ? load.message : undefined,
       });
-    });
+    };
 
     const setWorkspaceIdentity = (next: MissionsActivityIdentity) => {
       setIdentity(next);
