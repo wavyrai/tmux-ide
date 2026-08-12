@@ -125,22 +125,9 @@ describe("OptionalFeatureRegistry", () => {
     await expect(registry.request("files")).rejects.toThrow("preload failed");
   });
 
-  it.each([
-    {
-      runtime: "node",
-      command: process.execPath,
-      args: ["--experimental-strip-types", "--unhandled-rejections=strict", "--input-type=module"],
-    },
-    {
-      runtime: "bun",
-      command: "bun",
-      args: ["--unhandled-rejections=strict"],
-    },
-  ])(
-    "keeps fire-and-forget preload disposal handled under strict $runtime",
-    ({ command, args }) => {
-      const moduleUrl = new URL("./optional-feature-registry.ts", import.meta.url).href;
-      const script = `
+  it("keeps fire-and-forget preload disposal handled under strict Node", () => {
+    const moduleUrl = new URL("./optional-feature-registry.ts", import.meta.url).href;
+    const script = `
       import { OptionalFeatureRegistry } from ${JSON.stringify(moduleUrl)};
       let resolve;
       const physicalLoad = new Promise((accept) => { resolve = accept; });
@@ -152,13 +139,25 @@ describe("OptionalFeatureRegistry", () => {
       await new Promise((accept) => setTimeout(accept, 10));
       if (registry.getMetrics().lateResultsDiscarded !== 1) process.exitCode = 2;
     `;
-      const result = spawnSync(command, [...args, "--eval", script], {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--unhandled-rejections=strict",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      {
         cwd: fileURLToPath(new URL("../../../../../../", import.meta.url)),
         encoding: "utf8",
-      });
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    },
-  );
+      },
+    );
+    expect(
+      result.status,
+      `${result.error?.message ?? "subprocess exited"}\n${result.stdout}\n${result.stderr}`,
+    ).toBe(0);
+  });
 
   it("generation-fences a late successful load and never publishes it", async () => {
     const pending = deferred<Features["files"]>();

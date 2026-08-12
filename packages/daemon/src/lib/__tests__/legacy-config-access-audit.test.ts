@@ -36,6 +36,8 @@ const COMPAT_IMPORTS = new Set([
   "legacyConfigPath",
 ]);
 const DIRECT_COMPAT_CALLS = new Set(["readConfig", "getSessionName", "hasLaunchConfig"]);
+const POTENTIAL_LEGACY_ACCESS =
+  /ide\.yml|\b(?:readConfig|getSessionName|hasLaunchConfig|hasLegacyConfigAt|legacyConfigPath)\b/u;
 
 /**
  * Locate direct compatibility access by syntax, rather than matching member
@@ -99,7 +101,13 @@ function productionSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const absolute = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "dist" || entry.name === "coverage" || entry.name === "node_modules") {
+      if (
+        entry.name === "dist" ||
+        entry.name === "coverage" ||
+        entry.name === "node_modules" ||
+        entry.name === "__tests__" ||
+        entry.name === "test-support"
+      ) {
         return [];
       }
       return productionSources(absolute);
@@ -120,6 +128,11 @@ describe("legacy config access audit", () => {
       const relativePath = relative(repoRoot, absolute);
       if (ALLOWLIST.has(relativePath)) return [];
       const source = readFileSync(absolute, "utf-8");
+      // TypeScript AST construction dominates this repository-wide audit under
+      // coverage. The boundary can only be crossed by one of these literal
+      // path/API tokens, so reject irrelevant files before parsing without
+      // weakening the syntax-aware distinction from injected host methods.
+      if (!POTENTIAL_LEGACY_ACCESS.test(source)) return [];
       return directLegacyAccessLines(source, relativePath).map(
         (lineNumber) => `${relativePath}:${lineNumber}`,
       );

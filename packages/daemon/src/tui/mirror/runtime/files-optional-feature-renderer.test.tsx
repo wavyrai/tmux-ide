@@ -8,7 +8,11 @@ import {
   renderForTest,
   stableFrame,
 } from "../testing/renderer-harness.test.ts";
+// These Bun/OpenTUI lifecycle contracts are deliberately owned by the
+// canonical renderer gate, rather than Node/Vitest coverage.
+import "../features/files/session-renderer.test.tsx";
 import { OptionalFeatureRegistry } from "./optional-feature-registry.ts";
+import "./optional-feature-registry-renderer.test.tsx";
 
 type TestFilesFeature = { readonly FilesSurface: () => ReturnType<typeof FilesSurface> };
 type TestFeatures = { readonly files: TestFilesFeature };
