@@ -34,6 +34,8 @@ interface WindowTab {
   name: string;
   active: boolean;
   sync: boolean;
+  semanticWindowId: string | null;
+  activePaneId: string | null;
 }
 
 export interface SemanticSessionViewOptions {
@@ -317,6 +319,8 @@ export class SemanticSessionView {
       name: layout.windowName ?? `Window ${index + 1}`,
       active: layout.currentWindow,
       sync: false,
+      semanticWindowId: layout.semanticWindowId,
+      activePaneId: layout.panes.find((pane) => pane.active)?.pane ?? null,
     }));
   }
 

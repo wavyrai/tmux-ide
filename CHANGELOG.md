@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Terminal window tabs and the add-window button now own their OpenTUI mouse input directly, switch through each window's canonical activation pane, and show immediate optimistic selection while daemon-owned tmux state reconciles.
 - Standalone TUI binaries now embed OpenTUI's Tree-sitter worker and WebAssembly runtime, so `tmux-ide show` renders Markdown without leaking `/$bunfs/root/parser.worker.ts` errors into terminal panes.
 - Chrome-updater pane snapshots now skip raw shells and carry short-lived, one-use daemon-owner proofs, preventing tmux-ide's own two-second status scan from producing permanent READ chrome or competing with terminal input; genuine external and agent reads remain visible.
 
