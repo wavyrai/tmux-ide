@@ -231,6 +231,28 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return this.#runtime(session).connect(surface, SessionRuntimeClientIdSchemaZ.parse(clientId));
   }
 
+  /**
+   * Start the daemon-owned tmux control channel before a renderer asks for a
+   * pane-stream ticket. This uses the exact same SessionRuntime subsequently
+   * consumed by admission, so prewarming cannot weaken pane enumeration or
+   * create a second control authority.
+   */
+  async prewarmSession(session: string): Promise<void> {
+    const runtime = this.#runtime(session);
+    await runtime.whenReady();
+    if (this.#sessions.get(session) !== runtime) {
+      throw new Error(`SessionRuntime ${session} was retired while prewarming`);
+    }
+  }
+
+  /** Retire one no-longer-registered session without disturbing siblings. */
+  async retireSession(session: string): Promise<void> {
+    const runtime = this.#sessions.get(session);
+    if (!runtime) return;
+    this.#sessions.delete(session);
+    await runtime.dispose();
+  }
+
   createExecutionHandle(
     consumer: SessionRuntimeConsumer,
     lease: SessionRuntimeControllerLease,
@@ -783,7 +805,12 @@ class SessionRuntime {
       this.#startPromise = (async () => {
         await this.#restartBarrier;
         if (this.#disposed) throw new Error(`SessionRuntime ${this.session} is disposed`);
-        this.#retention = await this.#mirror.retainSession(this.session);
+        const retention = await this.#mirror.retainSession(this.session);
+        if (this.#disposed) {
+          await retention.close();
+          throw new Error(`SessionRuntime ${this.session} is disposed`);
+        }
+        this.#retention = retention;
       })().catch((error) => {
         this.#startPromise = null;
         throw error;
@@ -951,6 +978,7 @@ class SessionRuntime {
     );
     this.#terminalReplicas.clear();
     await this.#terminalDeliveryHub.close();
+    await this.#startPromise?.catch(() => undefined);
     await this.#restartBarrier;
     await this.#retention?.close();
     this.#retention = null;

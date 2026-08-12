@@ -32,6 +32,7 @@ import {
   TmuxAttachmentOperationSerializer,
   type TmuxAttachmentCommandRunner,
 } from "../attachments/tmux-view-executor.ts";
+import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
 import { MockPtyAdapter } from "./MockPtyAdapter.ts";
 
 const INSTANCE_ID = "daemon-instance-a1";
@@ -572,6 +573,57 @@ class StartupReconciliationTmuxModel {
 }
 
 describe("native terminal attachment runtime lifecycle", () => {
+  it("prewarms from authoritative inventory without blocking or failing the shell", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let discoveredSessionName = "runtime:session";
+    const prewarmSession = vi.fn(async () => {
+      throw new Error("control channel unavailable");
+    });
+    const retireSession = vi.fn(async () => undefined);
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      sessionRuntimeRegistry: {
+        prewarmSession,
+        retireSession,
+      } as unknown as SessionRuntimeRegistry,
+      tmuxAuthority: authority(root),
+      commandExecutor: (_executable, rawArgv) => {
+        const argv = rawArgv.slice(2);
+        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+          return (
+            [discoveredSessionName, "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n"
+          );
+        }
+        if (argv[0] === "list-sessions") return "";
+        if (argv[0] === "list-panes") {
+          return `${applicationShellPaneWire(discoveredSessionName)}\n`;
+        }
+        return "";
+      },
+    });
+
+    await runtime.whenReady();
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).resolves.toMatchObject(
+      { name: "runtime:session" },
+    );
+    expect(prewarmSession).toHaveBeenCalledOnce();
+    expect(prewarmSession).toHaveBeenCalledWith("runtime:session");
+
+    registry.renameSession("workspace.alpha", "replacement:session");
+    discoveredSessionName = "replacement:session";
+    await expect(
+      runtime.discoverApplicationShellSession("replacement:session"),
+    ).resolves.toMatchObject({ name: "replacement:session" });
+    await vi.waitFor(() => expect(retireSession).toHaveBeenCalledWith("runtime:session"));
+    expect(prewarmSession).toHaveBeenLastCalledWith("replacement:session");
+
+    registry.remove("workspace.alpha");
+    await vi.waitFor(() => expect(retireSession).toHaveBeenCalledWith("replacement:session"));
+    await runtime.dispose();
+  });
+
   it("uses the pinned executable and custom socket for exact application-shell inventory", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     const calls: Array<{ executable: string; argv: readonly string[]; timeoutMs: number }> = [];

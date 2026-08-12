@@ -127,6 +127,40 @@ function finishSeed(sim: SimulatedChannel): void {
 }
 
 describe("SessionRuntimeRegistry", () => {
+  it("prewarms and reuses the authoritative runtime for later admission", async () => {
+    const { registry, sims } = rig();
+    const warming = registry.prewarmSession(FIXTURE.session);
+    await vi.waitFor(() => expect(sims).toHaveLength(1));
+    finishSeed(sims[0]!);
+    await warming;
+
+    await expect(registry.describeSession(FIXTURE.session)).resolves.toMatchObject({
+      session: FIXTURE.session,
+    });
+    expect(sims).toHaveLength(1);
+    expect(registry.activeControlChannelCount()).toBe(1);
+
+    await registry.retireSession(FIXTURE.session);
+    expect(registry.sessionCount()).toBe(0);
+    expect(registry.activeControlChannelCount()).toBe(0);
+    expect(sims[0]!.disposed).toBe(true);
+    await registry.dispose();
+  });
+
+  it("retires an in-flight prewarm without leaking its control channel", async () => {
+    const { registry, sims } = rig();
+    const warming = registry.prewarmSession(FIXTURE.session);
+    await vi.waitFor(() => expect(sims).toHaveLength(1));
+    const retirement = registry.retireSession(FIXTURE.session);
+    finishSeed(sims[0]!);
+
+    await Promise.allSettled([warming, retirement]);
+    expect(registry.sessionCount()).toBe(0);
+    expect(registry.activeControlChannelCount()).toBe(0);
+    expect(sims[0]!.disposed).toBe(true);
+    await registry.dispose();
+  });
+
   it("attributes a headless pane-credential send without borrowing a GUI controller", async () => {
     const base = rig();
     const executed: Array<{ sourceSemanticPaneId?: string }> = [];
