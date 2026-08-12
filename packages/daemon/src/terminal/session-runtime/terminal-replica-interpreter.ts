@@ -177,8 +177,15 @@ export class TerminalReplicaInterpreter {
   enqueue(operation: TerminalReplicaInterpreterOperation): Promise<void> {
     if (operation.type === "write") {
       const data = operation.data.slice();
+      const trace = operation.trace ?? null;
+      const pendingTrace = this.#pendingWrites[0]?.trace ?? null;
+      if (
+        this.#pendingWrites.length > 0 &&
+        (pendingTrace?.traceId ?? null) !== (trace?.traceId ?? null)
+      )
+        this.#flushWrites();
       const promise = new Promise<void>((resolve, reject) => {
-        this.#pendingWrites.push({ data, trace: operation.trace ?? null, resolve, reject });
+        this.#pendingWrites.push({ data, trace, resolve, reject });
       });
       if (!this.#writeFlushScheduled) {
         this.#writeFlushScheduled = true;
