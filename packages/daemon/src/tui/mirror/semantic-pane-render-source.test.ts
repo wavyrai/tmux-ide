@@ -116,6 +116,31 @@ function arrays(width: number, height: number): CellArrays {
 }
 
 describe("SemanticPaneReplica", () => {
+  it("makes trace authority available to a synchronous paint subscriber", () => {
+    const traceId = "00000000-0000-4000-8000-000000000097";
+    let paintedTrace: ReturnType<SemanticPaneReplica["takePaintTrace"]> = null;
+    let replica!: SemanticPaneReplica;
+    replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+      onChange: (change) => {
+        if (change.kind === "applied") paintedTrace = replica.takePaintTrace();
+      },
+    });
+    const delivery = seedMessages(blankTerminalReplicaSnapshot(2, 1), "97", traceId);
+    replica.accept(delivery.envelope);
+    for (const chunk of delivery.chunks) replica.accept(chunk);
+
+    expect(paintedTrace).toEqual({
+      traceId,
+      generation,
+      incarnation: `${generation}:7`,
+    });
+  });
+
   it("publishes delivery queue, lag, and parse measurements only while the HUD sink is installed", () => {
     const sink = {
       frame: vi.fn(),

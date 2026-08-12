@@ -377,7 +377,9 @@ async function collectInputTrace() {
   try {
     // `--target` starts on Terminals, but the first live pane can claim input
     // while the shell is still settling. Re-assert the workspace mode only
-    // after the semantic Echo pane is visibly ready, then focus its body.
+    // after the semantic Echo pane is visibly ready. F2 is the product-owned
+    // terminal-focus command; a pointer coordinate would couple this gate to
+    // adaptive sidebar, dock, and one-pane geometry.
     const canvasFrame = await waitForCapturedFrame(
       (frame) =>
         frame.includes(target) && frame.includes("TERMINAL INPUT") && frame.includes("Echo"),
@@ -385,10 +387,10 @@ async function collectInputTrace() {
     );
     run("node", ["scripts/tui-testdrive.mjs", "key", "F2"]);
     await waitForCapturedFrame(
-      (frame) => frame.includes(target) && frame.includes("TERMINAL INPUT") && frame.includes("Echo"),
+      (frame) =>
+        frame.includes(target) && frame.includes("TERMINAL INPUT") && frame.includes("Echo"),
       2_000,
     );
-    run("node", ["scripts/tui-testdrive.mjs", "mouse", "click", "40", "10"]);
     await delay(50);
     for (let ordinal = 0; ordinal < options.inputSamples; ordinal += 1) {
       const prior = countCompletedLocalTraces(tracePath);

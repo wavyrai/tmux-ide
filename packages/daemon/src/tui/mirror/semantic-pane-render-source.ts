@@ -326,7 +326,6 @@ export class SemanticPaneReplica {
         this.#pendingPaintTrace.incarnation !== envelope.incarnation)
     )
       this.#pendingPaintTrace = null;
-    this.#applySnapshot(previous, committed.state.canonicalSnapshot, envelope, payload);
     if (committed.state.canonicalSnapshot && envelope.performanceTraceId)
       this.#pendingPaintTrace = Object.freeze({
         traceId: envelope.performanceTraceId,
@@ -334,6 +333,10 @@ export class SemanticPaneReplica {
         incarnation: envelope.incarnation,
       });
     if (!committed.state.canonicalSnapshot) this.#pendingPaintTrace = null;
+    // Publish trace authority before notifying the renderer. `#applySnapshot`
+    // emits the synchronous change signal that can cause the framebuffer to
+    // paint immediately; assigning afterward loses the only consumed frame.
+    this.#applySnapshot(previous, committed.state.canonicalSnapshot, envelope, payload);
     const reseed = envelope.frame === "seed" && this.#hasAcceptedSeed;
     if (envelope.frame === "seed") this.#hasAcceptedSeed = true;
     if (performanceSink) {
