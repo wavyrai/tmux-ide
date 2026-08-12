@@ -1,5 +1,5 @@
-import { access, readFile } from "node:fs/promises";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import * as ts from "typescript";
 
 export type LocalSourceImportKind = "static-runtime" | "dynamic-runtime" | "type-only";
@@ -66,6 +66,13 @@ export function classifyLocalSourceImports(
       );
       return;
     }
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      add(
+        node.isTypeOnly ? "type-only" : "static-runtime",
+        localSpecifier(node.moduleReference.expression),
+      );
+      return;
+    }
     if (ts.isExportDeclaration(node)) {
       add(
         exportDeclarationIsTypeOnly(node) ? "type-only" : "static-runtime",
@@ -76,7 +83,7 @@ export function classifyLocalSourceImports(
     if (
       ts.isCallExpression(node) &&
       node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments.length === 1
+      node.arguments.length >= 1
     ) {
       add("dynamic-runtime", localSpecifier(node.arguments[0]));
       return;
@@ -99,8 +106,7 @@ export function classifyLocalSourceImports(
 async function firstExisting(candidates: readonly string[]): Promise<string | null> {
   for (const candidate of candidates) {
     try {
-      await access(candidate);
-      return candidate;
+      if ((await stat(candidate)).isFile()) return candidate;
     } catch {
       // Try the next supported TypeScript source spelling.
     }
@@ -151,7 +157,16 @@ export async function loadLocalSourceBoundaryGraph(
     for (const reference of references) {
       if (!kinds.has(reference.kind)) continue;
       const imported = await resolveLocalModule(absolute, reference.specifier);
-      if (imported && imported.startsWith(repoRoot)) pending.push(imported);
+      if (imported) {
+        const local = relative(repoRoot, imported);
+        if (
+          local !== ".." &&
+          !local.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) &&
+          !isAbsolute(local)
+        ) {
+          pending.push(imported);
+        }
+      }
     }
   }
 

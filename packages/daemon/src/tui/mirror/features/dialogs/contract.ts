@@ -7,7 +7,7 @@ import type {
   DialogSelectSpec,
   DialogSpec,
 } from "../../dialog-model.ts";
-import type { DialogEntryState, DialogKeyEvent } from "../../dialog-stack.ts";
+import type { DialogEntryState, DialogKeyEvent } from "../../dialog-stack-core.ts";
 
 export type DialogSelectRequest = Omit<DialogSelectSpec, "kind">;
 export type DialogPromptRequest = Omit<DialogPromptSpec, "kind">;

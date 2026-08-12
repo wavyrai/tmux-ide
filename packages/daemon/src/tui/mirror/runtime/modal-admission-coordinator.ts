@@ -102,7 +102,7 @@ export class ModalAdmissionCoordinator<Kind extends string> {
       (this.#snapshot.phase !== "queued" && this.#snapshot.phase !== "loading")
     )
       return false;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
     this.#publish({
       phase: "error",
       generation: token.generation,

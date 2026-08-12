@@ -72,6 +72,16 @@ describe("ModalAdmissionCoordinator", () => {
     expect(coordinator.markReady(retry)).toBe(true);
   });
 
+  it("can close during pre-readiness and fences the continuation", () => {
+    const coordinator = new ModalAdmissionCoordinator<ModalKind>();
+    const queued = coordinator.reserve("dialogs")!;
+    expect(coordinator.releaseCurrent()).toBe(true);
+    expect(coordinator.snapshot()).toMatchObject({ phase: "idle", reserved: false });
+    expect(coordinator.markLoading(queued)).toBe(false);
+    expect(coordinator.markReady(queued)).toBe(false);
+    expect(coordinator.markError(queued, "late failure")).toBe(false);
+  });
+
   it("rejects tokens belonging to another application authority", () => {
     const left = new ModalAdmissionCoordinator<ModalKind>();
     const right = new ModalAdmissionCoordinator<ModalKind>();
@@ -89,6 +99,10 @@ describe("ModalAdmissionCoordinator", () => {
     const token = coordinator.reserve("palette")!;
     coordinator.markLoading(token);
     coordinator.markError(token, null);
+    expect(coordinator.snapshot()).toMatchObject({
+      phase: "error",
+      message: "The modal feature is unavailable.",
+    });
     expect(listener.mock.calls.map(([snapshot]) => snapshot.phase)).toEqual([
       "queued",
       "loading",

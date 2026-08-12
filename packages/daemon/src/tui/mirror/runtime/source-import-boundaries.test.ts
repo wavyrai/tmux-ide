@@ -24,7 +24,9 @@ describe("source import boundary classifier", () => {
           import { type AnotherType } from "./more-types.ts";
           export { value as next } from "./exported.ts";
           export type { ExportedType } from "./exported-types.ts";
-          const deferred = import("./lazy.ts");
+          import assigned = require("./assigned.ts");
+          import type AssignedType = require("./assigned-type.ts");
+          const deferred = import("./lazy.ts", { with: { type: "json" } });
           const legacy = require("./legacy.ts");
         `,
         "root.ts",
@@ -36,6 +38,8 @@ describe("source import boundary classifier", () => {
       { kind: "type-only", specifier: "./more-types.ts" },
       { kind: "static-runtime", specifier: "./exported.ts" },
       { kind: "type-only", specifier: "./exported-types.ts" },
+      { kind: "static-runtime", specifier: "./assigned.ts" },
+      { kind: "type-only", specifier: "./assigned-type.ts" },
       { kind: "dynamic-runtime", specifier: "./lazy.ts" },
       { kind: "static-runtime", specifier: "./legacy.ts" },
     ]);
@@ -78,5 +82,15 @@ describe("source import boundary classifier", () => {
       "lazy.ts",
       "shared.ts",
     ]);
+  });
+
+  it("keeps the deferred dialog session outside the legacy singleton façade", async () => {
+    const graph = await loadLocalSourceBoundaryGraph(
+      process.cwd(),
+      ["src/tui/mirror/features/dialogs/session.ts"],
+      new Set(["static-runtime"]),
+    );
+    expect(graph.files).toContain("src/tui/mirror/dialog-stack-core.ts");
+    expect(graph.files).not.toContain("src/tui/mirror/dialog-stack.ts");
   });
 });

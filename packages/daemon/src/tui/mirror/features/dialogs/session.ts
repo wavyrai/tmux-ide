@@ -9,7 +9,7 @@ import {
   type DialogGeom,
   type DialogSpec,
 } from "../../dialog-model.ts";
-import { createDialogStack, dialogKey } from "../../dialog-stack.ts";
+import { createDialogStack, dialogKey } from "../../dialog-stack-core.ts";
 import type {
   DialogConfirmRequest,
   DialogFeatureHost,
@@ -143,7 +143,10 @@ export function createDialogFeatureSession(host: DialogFeatureHost): DialogFeatu
 
     let session!: DialogFeatureSession;
     session = {
-      open: () => !isDisposed && stack.depth() > 0,
+      open: () => {
+        revision();
+        return !isDisposed && stack.depth() > 0;
+      },
       disposed: () => isDisposed,
       snapshot,
       select,

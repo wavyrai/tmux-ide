@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createMemo, createRoot } from "solid-js";
 
 import type { DialogKeyEvent } from "../../dialog-stack.ts";
 import { createDialogFeatureSession } from "./session.ts";
@@ -17,6 +18,19 @@ const host = (onOpenChange?: (open: boolean) => void) => ({
 });
 
 describe("per-application dialog feature session", () => {
+  it("exposes open state as a reactive session value", async () => {
+    const session = createDialogFeatureSession(host());
+    const observation = createRoot((dispose) => ({ open: createMemo(session.open), dispose }));
+    expect(observation.open()).toBe(false);
+    const pending = session.confirm({ title: "Reactive" });
+    expect(observation.open()).toBe(true);
+    session.handleKey(key("escape"));
+    await expect(pending).resolves.toBe(false);
+    expect(observation.open()).toBe(false);
+    observation.dispose();
+    session.dispose();
+  });
+
   it("isolates stacks, reactive ownership, and notifications by application", async () => {
     const leftChanges: boolean[] = [];
     const rightChanges: boolean[] = [];
