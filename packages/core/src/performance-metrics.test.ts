@@ -111,6 +111,7 @@ describe("LocalPerformanceAggregator", () => {
     const metrics = aggregator();
     metrics.enable();
     expect(() => metrics.recordFrame(0)).toThrow(/positive/u);
+    expect(() => metrics.recordFrame(Number.MIN_VALUE)).toThrow(/finite frame rate/u);
     expect(() => metrics.recordDirtyRows(1.5)).toThrow(/integer/u);
     expect(() => metrics.recordParse(Number.NaN)).toThrow(/finite/u);
     expect(() => metrics.recordPaint(-1)).toThrow(/non-negative/u);

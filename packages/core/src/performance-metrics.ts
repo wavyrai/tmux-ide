@@ -89,7 +89,10 @@ export class LocalPerformanceAggregator {
   recordFrame(frameIntervalMs: number): void {
     if (!this.#enabled) return;
     assertFinitePositive(frameIntervalMs, "frame interval");
-    this.#activeFps = 1_000 / frameIntervalMs;
+    const fps = 1_000 / frameIntervalMs;
+    if (!Number.isFinite(fps))
+      throw new TypeError("frame interval is too small to derive a finite frame rate");
+    this.#activeFps = fps;
     this.#advanceSequence();
   }
 
