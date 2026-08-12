@@ -26,6 +26,7 @@ import {
   classifySessionInspectionError,
   DaemonSessionMonitor,
   execTmuxAsync,
+  isConfirmedMissingTmuxTarget,
   parseDaemonMonitorPanes,
   readPortProcessFactsAsync,
 } from "./daemon-session-monitor.ts";
@@ -1293,8 +1294,10 @@ export async function startEmbeddedDaemon(
             reconcileCredentials: async (workspaceSession, signal) => {
               try {
                 await paneSourceCredentials.reconcileSessionAsync(workspaceSession, signal);
-              } catch {
-                // External sessions may disappear between registry and tmux reads.
+              } catch (error) {
+                // Registry/session races are idempotent; transport/resource
+                // failures must escape so this state is retried next cycle.
+                if (!isConfirmedMissingTmuxTarget(error)) throw error;
               }
             },
             hasClients: async (signal) => {
@@ -1329,17 +1332,25 @@ export async function startEmbeddedDaemon(
               }
             },
             setPaneOption: async (paneId, option, value, signal) => {
-              await execTmuxAsync(["set-option", "-pqt", paneId, option, value], signal).catch(
-                () => undefined,
-              );
+              try {
+                await execTmuxAsync(["set-option", "-pt", paneId, option, value], signal);
+              } catch (error) {
+                if (!isConfirmedMissingTmuxTarget(error)) throw error;
+              }
             },
             setPaneTitle: async (paneId, title, signal) => {
-              await execTmuxAsync(["select-pane", "-t", paneId, "-T", title], signal).catch(
-                () => undefined,
-              );
+              try {
+                await execTmuxAsync(["select-pane", "-t", paneId, "-T", title], signal);
+              } catch (error) {
+                if (!isConfirmedMissingTmuxTarget(error)) throw error;
+              }
             },
             refreshClients: async (signal) => {
-              await execTmuxAsync(["refresh-client", "-S"], signal).catch(() => undefined);
+              try {
+                await execTmuxAsync(["refresh-client", "-S"], signal);
+              } catch (error) {
+                if (!isConfirmedMissingTmuxTarget(error)) throw error;
+              }
             },
             onSessionGone: () => stopSelf?.(),
           },

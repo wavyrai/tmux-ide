@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DaemonSessionMonitor,
+  isConfirmedMissingTmuxTarget,
   type DaemonSessionMonitorBackend,
 } from "./daemon-session-monitor.ts";
 
@@ -158,6 +159,33 @@ describe("DaemonSessionMonitor", () => {
     expect(setPaneTitle).toHaveBeenCalledWith("%1", "Editor", expect.any(AbortSignal));
     expect(refreshClients).toHaveBeenCalledTimes(1);
     await monitor.stop();
+  });
+
+  it("retries the same pane state after a transient mutation failure", async () => {
+    const setPaneOption = vi
+      .fn<DaemonSessionMonitorBackend["setPaneOption"]>()
+      .mockRejectedValueOnce(new Error("temporary tmux pipe failure"))
+      .mockResolvedValue(undefined);
+    const monitorBackend = backend({
+      hasClients: vi.fn(async () => true),
+      listPanes: vi.fn(async () => [{ id: "%1", pid: "401", cmd: "zsh" }]),
+      readPortProcessFacts: vi.fn(async () => ({ listeners: new Set(), tree: new Map() })),
+      setPaneOption,
+    });
+    const monitor = new DaemonSessionMonitor({ sessionName: "alpha", backend: monitorBackend });
+
+    await monitor.runOnce();
+    await monitor.runOnce();
+
+    expect(setPaneOption).toHaveBeenCalledTimes(6);
+    expect(monitorBackend.refreshClients).toHaveBeenCalledTimes(1);
+    await monitor.stop();
+  });
+
+  it("classifies only confirmed tmux target disappearance as an idempotent no-op", () => {
+    expect(isConfirmedMissingTmuxTarget(new Error("can't find pane: %9"))).toBe(true);
+    expect(isConfirmedMissingTmuxTarget(new Error("no such session: gone"))).toBe(true);
+    expect(isConfirmedMissingTmuxTarget(new Error("temporary tmux pipe failure"))).toBe(false);
   });
 
   it("keeps recurring tmux IO off synchronous child-process APIs", () => {

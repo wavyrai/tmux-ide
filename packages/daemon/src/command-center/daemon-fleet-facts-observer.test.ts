@@ -132,4 +132,39 @@ describe("DaemonFleetFactsObserver", () => {
     await observer.runOnce();
     expect(changed.onSessionsChanged).not.toHaveBeenCalled();
   });
+
+  it("does not let a released demand accept a late result after reacquisition", async () => {
+    const first = deferred<SessionCompositionFacts | null>();
+    const second = deferred<SessionCompositionFacts | null>();
+    const readSessions = vi
+      .fn<() => Promise<SessionCompositionFacts | null>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const observer = new DaemonFleetFactsObserver({
+      readSessions,
+      readAgents: async () => new Map(),
+      ...callbacks(),
+      setTimer: vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>),
+      clearTimer: vi.fn(),
+    });
+    const retained = observer.acquire(["agents"]);
+    const released = observer.acquire(["sessions"]);
+    await Promise.resolve();
+    released.release();
+    const reacquired = observer.acquire(["sessions"]);
+    first.resolve({ sessions: ["stale"], adopted: [] });
+    await Promise.resolve();
+    let ready = false;
+    void reacquired.ready.then(() => {
+      ready = true;
+    });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+
+    second.resolve({ sessions: ["current"], adopted: [] });
+    await reacquired.ready;
+    expect(readSessions).toHaveBeenCalledTimes(2);
+    reacquired.release();
+    retained.release();
+  });
 });

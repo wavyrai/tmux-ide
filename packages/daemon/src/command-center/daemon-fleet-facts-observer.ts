@@ -39,9 +39,11 @@ export class DaemonFleetFactsObserver {
   readonly #setTimer: NonNullable<DaemonFleetFactsObserverOptions["setTimer"]>;
   readonly #clearTimer: NonNullable<DaemonFleetFactsObserverOptions["clearTimer"]>;
   readonly #refs = new Map<FleetFactsDemand, number>();
+  readonly #demandEpochs = new Map<FleetFactsDemand, number>();
   readonly #baselined = new Set<FleetFactsDemand>();
   readonly #waiters = new Set<ReadyWaiter>();
-  #sessionFacts: SessionCompositionFacts | null = null;
+  #sessionNames: readonly string[] | null = null;
+  #adoptedNames: readonly string[] | null = null;
   #agentFacts: AgentStateReading | null = null;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #running: Promise<void> | null = null;
@@ -67,7 +69,10 @@ export class DaemonFleetFactsObserver {
     for (const demand of unique) {
       const previous = this.#refs.get(demand) ?? 0;
       this.#refs.set(demand, previous + 1);
-      if (previous === 0) this.#demandVersion += 1;
+      if (previous === 0) {
+        this.#bumpDemandEpoch(demand);
+        this.#demandVersion += 1;
+      }
     }
     let resolveReady!: () => void;
     const ready = new Promise<void>((resolve) => {
@@ -87,8 +92,10 @@ export class DaemonFleetFactsObserver {
         waiter.resolve();
         for (const demand of unique) {
           const next = Math.max(0, (this.#refs.get(demand) ?? 0) - 1);
-          if (next === 0) this.#refs.delete(demand);
-          else this.#refs.set(demand, next);
+          if (next === 0) {
+            this.#refs.delete(demand);
+            this.#bumpDemandEpoch(demand);
+          } else this.#refs.set(demand, next);
         }
         if (!this.#refs.has("agents")) {
           this.#baselined.delete("agents");
@@ -97,7 +104,8 @@ export class DaemonFleetFactsObserver {
         if (!this.#refs.has("sessions") && !this.#refs.has("adopted")) {
           this.#baselined.delete("sessions");
           this.#baselined.delete("adopted");
-          this.#sessionFacts = null;
+          this.#sessionNames = null;
+          this.#adoptedNames = null;
         }
         if (this.#refs.size === 0) this.stop();
       },
@@ -119,22 +127,25 @@ export class DaemonFleetFactsObserver {
     const generation = this.#generation;
     const demandVersion = this.#demandVersion;
     const wantsSessions =
-      (this.#refs.has("sessions") || this.#refs.has("adopted")) &&
-      (!onlyUnbaselined || !this.#baselined.has("sessions") || !this.#baselined.has("adopted"));
+      (this.#refs.has("sessions") && (!onlyUnbaselined || !this.#baselined.has("sessions"))) ||
+      (this.#refs.has("adopted") && (!onlyUnbaselined || !this.#baselined.has("adopted")));
     const wantsAgents =
       this.#refs.has("agents") && (!onlyUnbaselined || !this.#baselined.has("agents"));
-    this.#running = this.#cycle(generation, wantsSessions, wantsAgents).finally(() => {
-      this.#running = null;
-      if (generation !== this.#generation || this.#refs.size === 0) return;
-      if (demandVersion !== this.#demandVersion && this.#hasUnbaselinedDemand()) {
-        void this.#runOnce(true);
-        return;
-      }
-      this.#timer = this.#setTimer(() => {
-        this.#timer = null;
-        void this.runOnce();
-      }, this.#intervalMs);
-    });
+    const demandEpochs = new Map(this.#demandEpochs);
+    this.#running = this.#cycle(generation, demandEpochs, wantsSessions, wantsAgents).finally(
+      () => {
+        this.#running = null;
+        if (generation !== this.#generation || this.#refs.size === 0) return;
+        if (demandVersion !== this.#demandVersion && this.#hasUnbaselinedDemand()) {
+          void this.#runOnce(true);
+          return;
+        }
+        this.#timer = this.#setTimer(() => {
+          this.#timer = null;
+          void this.runOnce();
+        }, this.#intervalMs);
+      },
+    );
     return this.#running;
   }
 
@@ -155,7 +166,8 @@ export class DaemonFleetFactsObserver {
     this.#startQueued = false;
     this.#refs.clear();
     this.#baselined.clear();
-    this.#sessionFacts = null;
+    this.#sessionNames = null;
+    this.#adoptedNames = null;
     this.#agentFacts = null;
     for (const waiter of this.#waiters) waiter.resolve();
     this.#waiters.clear();
@@ -169,32 +181,48 @@ export class DaemonFleetFactsObserver {
     };
   }
 
-  async #cycle(generation: number, wantsSessions: boolean, wantsAgents: boolean): Promise<void> {
+  async #cycle(
+    generation: number,
+    demandEpochs: ReadonlyMap<FleetFactsDemand, number>,
+    wantsSessions: boolean,
+    wantsAgents: boolean,
+  ): Promise<void> {
     const [sessions, agents] = await Promise.all([
       wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
       wantsAgents ? this.#options.readAgents() : Promise.resolve(null),
     ]);
     if (generation !== this.#generation) return;
     if (wantsSessions && sessions) {
-      this.#baselined.add("sessions");
-      this.#baselined.add("adopted");
-      this.#acceptSessions(sessions);
+      const acceptSessions = this.#sameDemandEpoch("sessions", demandEpochs);
+      const acceptAdopted = this.#sameDemandEpoch("adopted", demandEpochs);
+      if (acceptSessions) this.#baselined.add("sessions");
+      if (acceptAdopted) this.#baselined.add("adopted");
+      this.#acceptSessions(sessions, acceptSessions, acceptAdopted);
     }
-    if (wantsAgents && agents) {
+    if (wantsAgents && agents && this.#sameDemandEpoch("agents", demandEpochs)) {
       this.#baselined.add("agents");
       this.#acceptAgents(agents);
     }
     this.#settleWaiters();
   }
 
-  #acceptSessions(next: SessionCompositionFacts): void {
-    const previous = this.#sessionFacts;
-    this.#sessionFacts = next;
-    if (!previous) return;
-    if (JSON.stringify(previous.sessions) !== JSON.stringify(next.sessions))
-      this.#options.onSessionsChanged();
-    if (JSON.stringify(previous.adopted) !== JSON.stringify(next.adopted))
-      this.#options.onAdoptedChanged();
+  #acceptSessions(
+    next: SessionCompositionFacts,
+    acceptSessions: boolean,
+    acceptAdopted: boolean,
+  ): void {
+    if (acceptSessions) {
+      const previous = this.#sessionNames;
+      this.#sessionNames = next.sessions;
+      if (previous && JSON.stringify(previous) !== JSON.stringify(next.sessions))
+        this.#options.onSessionsChanged();
+    }
+    if (acceptAdopted) {
+      const previous = this.#adoptedNames;
+      this.#adoptedNames = next.adopted;
+      if (previous && JSON.stringify(previous) !== JSON.stringify(next.adopted))
+        this.#options.onAdoptedChanged();
+    }
   }
 
   #acceptAgents(next: AgentStateReading): void {
@@ -220,6 +248,20 @@ export class DaemonFleetFactsObserver {
       if (!this.#baselined.has(demand)) return true;
     }
     return false;
+  }
+
+  #bumpDemandEpoch(demand: FleetFactsDemand): void {
+    this.#demandEpochs.set(demand, (this.#demandEpochs.get(demand) ?? 0) + 1);
+  }
+
+  #sameDemandEpoch(
+    demand: FleetFactsDemand,
+    captured: ReadonlyMap<FleetFactsDemand, number>,
+  ): boolean {
+    return (
+      this.#refs.has(demand) &&
+      (captured.get(demand) ?? 0) === (this.#demandEpochs.get(demand) ?? 0)
+    );
   }
 }
 

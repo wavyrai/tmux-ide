@@ -251,6 +251,12 @@ export function classifySessionInspectionError(error: unknown): DaemonMonitoredS
   return "no";
 }
 
+/** Only explicit tmux target disappearance is safe to treat as an idempotent no-op. */
+export function isConfirmedMissingTmuxTarget(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:can't find|no such|unknown) (?:pane|session|window|target)/iu.test(message);
+}
+
 async function mapBounded<T>(
   values: readonly T[],
   concurrency: number,
