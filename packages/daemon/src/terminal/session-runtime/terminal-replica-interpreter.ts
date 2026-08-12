@@ -49,6 +49,7 @@ export type TerminalReplicaInterpreterOperation =
       readonly rows: number;
       readonly chunks: readonly Uint8Array[];
       readonly cursor: { readonly x: number; readonly y: number };
+      readonly trace?: SessionRuntimeTraceContext | null;
       /** capture-pane is painted truth, not proof of hidden pre-existing VT modes. */
       readonly bootstrap: "painted-capture" | "authoritative-stream";
     }
@@ -262,7 +263,7 @@ export class TerminalReplicaInterpreter {
           operation.bootstrap === "authoritative-stream" ? "observed-from-start" : "unknown",
       };
       setAuthoritativeCursor(this.#terminal, operation.cursor.x, operation.cursor.y);
-      this.#commit(true);
+      this.#commit(true, undefined, operation.trace ?? null);
       previous.dispose();
       return;
     }
@@ -310,8 +311,9 @@ export class TerminalReplicaInterpreter {
 
   async #write(data: Uint8Array, continuedTrace: SessionRuntimeTraceContext | null): Promise<void> {
     if (this.#closed) return;
-    // Only an authenticated controller input may opt into causal correlation.
-    // Ordinary/external tmux output remains measured but deliberately anonymous.
+    // This optional id is only a controlled next-output probe. It is not a
+    // causal assertion: unrelated external tmux output arriving first may
+    // consume the armed probe and become the measured output.
     const trace = continuedTrace;
     this.#admitRaw(data);
     this.#stats.parseBatches += 1;

@@ -51,7 +51,12 @@ export class SessionRuntimeTerminalReplicaOwner {
   #disposed = false;
   #cols = 80;
   #rows = 24;
-  #reseed: { cols: number; rows: number; chunks: Uint8Array[] } | null = null;
+  #reseed: {
+    cols: number;
+    rows: number;
+    chunks: Uint8Array[];
+    trace: SessionRuntimeTraceContext | null;
+  } | null = null;
   #bootstrapped = false;
 
   constructor(
@@ -216,7 +221,15 @@ export class SessionRuntimeTerminalReplicaOwner {
     if (event.type === "reset") {
       this.#cols = event.cols;
       this.#rows = event.rows;
-      this.#reseed = { cols: event.cols, rows: event.rows, chunks: [] };
+      // Deterministic capture point: reset opens the atomic capture. A probe
+      // armed after reset belongs to the next post-capture delta, never to this
+      // already-started reseed.
+      this.#reseed = {
+        cols: event.cols,
+        rows: event.rows,
+        chunks: [],
+        trace: this.#takeOutputTrace?.() ?? null,
+      };
     } else if (event.type === "seed" || event.type === "delta") {
       if (this.#reseed) this.#reseed.chunks.push(event.data.slice());
       else
