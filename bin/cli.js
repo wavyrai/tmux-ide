@@ -40390,6 +40390,9 @@ var init_terminal_replica_owner = __esm({
       #rows = 24;
       #reseed = null;
       #bootstrapped = false;
+      installOutputTraceReader(reader) {
+        this.#takeOutputTrace ??= reader;
+      }
       qualificationSnapshot() {
         const seed = this.#interpreter.currentSeed();
         return Object.freeze({
@@ -41531,6 +41534,7 @@ var init_registry2 = __esm({
         this.session = session;
         this.#mirror = mirror;
         this.#scheduler = scheduler;
+        this.#createTraceCorrelator = createTraceCorrelator;
         this.#outputTraces = observability.enabled ? createTraceCorrelator(scheduler) : null;
         this.#observability = observability;
         this.#createControllerToken = createControllerToken;
@@ -41548,6 +41552,7 @@ var init_registry2 = __esm({
       #terminalReplicas = /* @__PURE__ */ new Map();
       #terminalReplicaClocks = /* @__PURE__ */ new Map();
       #outputTraces;
+      #createTraceCorrelator;
       #terminalDeliveryHub;
       #scheduler;
       #observability;
@@ -41686,16 +41691,22 @@ var init_registry2 = __esm({
       sendInput(clientId, lease, semanticPaneId3, kind, data, performanceTraceId) {
         this.assertController(lease, clientId);
         if (performanceTraceId !== void 0) performanceTraceId = z68.uuid().parse(performanceTraceId);
-        const trace = this.#observability.enabled ? this.#observability.beginTrace(
-          "terminal-input-to-paint",
-          {
-            generation: this.generation,
-            incarnation: null
-          },
-          performanceTraceId
-        ) : null;
+        const trace = performanceTraceId ? Object.freeze({
+          traceId: performanceTraceId,
+          scenario: "terminal-input-to-paint",
+          authority: { generation: this.generation, incarnation: null }
+        }) : this.#observability.enabled ? this.#observability.beginTrace("terminal-input-to-paint", {
+          generation: this.generation,
+          incarnation: null
+        }) : null;
         const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-        if (trace && performanceTraceId) this.#outputTraces?.arm(semanticPaneId3, trace);
+        if (trace && performanceTraceId) {
+          this.#outputTraces ??= this.#createTraceCorrelator(this.#scheduler);
+          this.#terminalReplicaOwner(semanticPaneId3).installOutputTraceReader(
+            () => this.#takeOutputTrace(semanticPaneId3)
+          );
+          this.#outputTraces.arm(semanticPaneId3, trace);
+        }
         try {
           if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId3, data);
           else this.#mirror.sendKey(this.session, semanticPaneId3, data);
@@ -41809,25 +41820,20 @@ var init_registry2 = __esm({
               },
               scheduler: this.#scheduler,
               observability: this.#observability,
-              ...this.#outputTraces ? {
-                takeOutputTrace: () => {
-                  const pending = this.#outputTraces?.take(semanticPaneId3) ?? null;
-                  return pending ? this.#observability.beginTrace(
-                    pending.scenario,
-                    {
-                      generation: this.generation,
-                      incarnation: `${this.generation}:${clock.epoch}`
-                    },
-                    pending.traceId
-                  ) : null;
-                }
-              } : {}
+              ...this.#outputTraces ? { takeOutputTrace: () => this.#takeOutputTrace(semanticPaneId3) } : {}
             }
           );
           owner = candidate;
           this.#terminalReplicas.set(semanticPaneId3, owner);
         }
         return owner;
+      }
+      #takeOutputTrace(semanticPaneId3) {
+        const pending = this.#outputTraces?.take(semanticPaneId3) ?? null;
+        if (!pending) return null;
+        const incarnation = this.#terminalReplicas.get(semanticPaneId3)?.qualificationSnapshot().incarnation;
+        const authority = { generation: this.generation, incarnation: incarnation ?? null };
+        return this.#observability.enabled ? this.#observability.beginTrace(pending.scenario, authority, pending.traceId) : Object.freeze({ ...pending, authority });
       }
       release(consumer) {
         this.#consumers.delete(consumer);
