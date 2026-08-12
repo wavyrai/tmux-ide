@@ -11,7 +11,7 @@ describe("application optional feature loaders", () => {
     );
     for (const specifier of [
       "../features/files/feature.tsx",
-      "../changes-surface.tsx",
+      "../features/changes/feature.tsx",
       "../missions-surface.tsx",
       "../activity-surface.tsx",
       "../workspace/command-palette-surface.tsx",
@@ -38,6 +38,26 @@ describe("application optional feature loaders", () => {
     const [left, right] = await Promise.all([first, second]);
     expect(left).toBe(right);
     expect(left?.createFilesFeatureSession).toBeTypeOf("function");
+    expect(registry.getMetrics()).toMatchObject({
+      loadsStarted: 1,
+      loadsSucceeded: 1,
+      publications: 1,
+      joinedRequests: 1,
+    });
+    registry.dispose();
+  });
+
+  it("evaluates and publishes the real Changes module exactly once after admission", async () => {
+    const registry = createApplicationOptionalFeatureRegistry();
+    const first = registry.request("changes");
+    const second = registry.request("changes");
+    expect(first).toBe(second);
+    expect(registry.getMetrics()).toMatchObject({ loadsStarted: 0, retainedIntents: 1 });
+
+    registry.admit();
+    const [left, right] = await Promise.all([first, second]);
+    expect(left).toBe(right);
+    expect(left?.createChangesFeatureController).toBeTypeOf("function");
     expect(registry.getMetrics()).toMatchObject({
       loadsStarted: 1,
       loadsSucceeded: 1,

@@ -54,6 +54,7 @@ describe("production OpenTUI data path", () => {
         "packages/daemon/src/tui/mirror/runtime/application-entry.ts",
         "packages/daemon/src/tui/mirror/runtime/application-root.tsx",
         "packages/daemon/src/tui/mirror/runtime/application-optional-features.ts",
+        "packages/daemon/src/tui/mirror/features/changes/feature.tsx",
         "packages/daemon/src/tui/mirror/files-surface.tsx",
         "packages/daemon/src/tui/mirror/changes-surface.tsx",
         "packages/daemon/src/tui/mirror/missions-surface.tsx",
@@ -89,7 +90,7 @@ describe("production OpenTUI data path", () => {
     expect(source).toContain("state.generation !== toolResourceGeneration");
     expect(source).toContain("appliedToolSnapshots.clear()");
     expect(source).toContain("filesSession()?.resetCatalog()");
-    expect(source).toContain("setDiffEntries([])");
+    expect(source).toContain("changesSession()?.reset()");
     expect(source).toContain("slot.resource.kind) !== slot.resource");
     expect(source).not.toContain("slot.resource.kind) !== slot.updatedAt");
   });

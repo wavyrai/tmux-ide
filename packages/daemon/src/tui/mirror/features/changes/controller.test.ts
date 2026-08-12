@@ -19,10 +19,13 @@ interface TestChangeEntry {
   deletions: number | null;
 }
 
-function ready(entries: readonly TestChangeEntry[]): WorkspaceChangesCatalogEnvelopeV1 {
+function ready(
+  entries: readonly TestChangeEntry[],
+  workspaceName = "alpha",
+): WorkspaceChangesCatalogEnvelopeV1 {
   return {
     resource: {
-      workspaceName: "alpha",
+      workspaceName,
       status: "ready",
       entries,
       observedAt: "2026-08-12T00:00:00.000Z",
@@ -48,7 +51,10 @@ function harness(options: { width?: number; height?: number } = {}) {
     runGit: (directory, args, callback) => git.push({ directory, args, callback }),
     readFile: vi.fn(() => Buffer.from("first\nsecond\n")),
   };
-  const session = createChangesFeatureController(host, "/repo");
+  const session = createChangesFeatureController(host, {
+    workspaceName: "alpha",
+    directory: "/repo",
+  });
   return {
     session,
     git,
@@ -116,16 +122,36 @@ describe("deferred Changes controller", () => {
       "+new selection",
     ]);
 
-    test.session.prepare("/other");
+    test.session.prepare({ workspaceName: "beta", directory: "/other" });
     expect(test.refreshes()).toBe(1);
     test.git[1]!.callback("+stale workspace\n");
     expect(test.session.projection().diffLines).toEqual([]);
 
     test.session.applyCatalog(ready(entries.slice(0, 1)));
+    expect(test.git).toHaveLength(2);
     const last = test.git.at(-1)!;
     test.session.dispose();
     last.callback("+late after dispose\n");
     expect(test.session.projection()).toBeDefined();
+  });
+
+  it("fences catalogs and reads by workspace identity even when the directory is unchanged", () => {
+    const test = harness();
+    test.session.applyCatalog(ready(entries.slice(0, 1)));
+    const alphaRead = test.git[0]!;
+
+    test.session.setWorkspaceIdentity({ workspaceName: "beta", directory: "/repo" });
+    test.session.applyCatalog(ready(entries.slice(1, 2)));
+    alphaRead.callback("+late alpha\n");
+    expect(test.session.hasEntries()).toBe(false);
+    expect(test.session.projection().diffLines).toEqual([]);
+
+    test.session.applyCatalog(ready(entries.slice(1, 2), "beta"));
+    expect(test.session.selectedPath()).toBe("src/b.ts");
+    expect(test.git.at(-1)!.directory).toBe("/repo");
+    test.git.at(-1)!.callback("+beta\n");
+    expect(test.session.projection().diffLines.map((line) => line.text)).toEqual(["+beta"]);
+    test.session.dispose();
   });
 
   it("keeps mutations demand-driven and follows a file into its new group", () => {

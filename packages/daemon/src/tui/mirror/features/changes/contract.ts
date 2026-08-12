@@ -42,6 +42,11 @@ export interface ChangesScrollState {
   readonly top: number;
 }
 
+export interface ChangesWorkspaceIdentity {
+  readonly workspaceName: string;
+  readonly directory: string;
+}
+
 export interface ChangesFeatureHost {
   readonly width: () => number;
   readonly height: () => number;
@@ -64,7 +69,8 @@ export interface ChangesFeatureSession {
   readonly hasSelection: () => boolean;
   readonly selectedPath: () => string | null;
   readonly filterOpen: () => boolean;
-  readonly prepare: (directory: string) => void;
+  readonly setWorkspaceIdentity: (identity: ChangesWorkspaceIdentity) => void;
+  readonly prepare: (identity: ChangesWorkspaceIdentity) => void;
   readonly reset: (message?: string) => void;
   readonly applyCatalog: (catalog: WorkspaceChangesCatalogEnvelopeV1) => void;
   readonly restoreSelectedPath: (path: string | null) => void;

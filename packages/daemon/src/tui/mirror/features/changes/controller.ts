@@ -32,6 +32,7 @@ import type {
   ChangesHoverTarget,
   ChangesKeyEvent,
   ChangesPointerEvent,
+  ChangesWorkspaceIdentity,
 } from "./contract.ts";
 
 const DEFAULT_SCROLL_STEP = 3;
@@ -65,10 +66,11 @@ const projectionHover = (hover: ChangesHoverTarget | null): ChangesSurfaceInput[
  */
 export function createChangesFeatureController(
   host: ChangesFeatureHost,
-  initialDirectory: string,
+  initialIdentity: ChangesWorkspaceIdentity,
 ): ChangesFeatureSession {
   return createRoot((disposeOwner) => {
-    const [directory, setDirectory] = createSignal(initialDirectory);
+    const [workspaceName, setWorkspaceName] = createSignal(initialIdentity.workspaceName);
+    const [directory, setDirectory] = createSignal(initialIdentity.directory);
     const [entries, setEntries] = createSignal<DiffEntry[]>([]);
     const [selected, setSelected] = createSignal(0);
     const [diffText, setDiffText] = createSignal("");
@@ -293,9 +295,14 @@ export function createChangesFeatureController(
       setFilter(null);
     };
 
-    const prepare = (nextDirectory: string): void => {
+    const setWorkspaceIdentity = (identity: ChangesWorkspaceIdentity): void => {
       reset();
-      setDirectory(nextDirectory);
+      setWorkspaceName(identity.workspaceName);
+      setDirectory(identity.directory);
+    };
+
+    const prepare = (identity: ChangesWorkspaceIdentity): void => {
+      setWorkspaceIdentity(identity);
       host.refreshResource();
     };
 
@@ -312,6 +319,7 @@ export function createChangesFeatureController(
     const applyCatalog = (envelope: WorkspaceChangesCatalogEnvelopeV1): void => {
       if (disposed) return;
       const resource = envelope.resource;
+      if (resource.workspaceName !== workspaceName()) return;
       if (resource.status !== "ready") {
         readToken += 1;
         setEntries([]);
@@ -435,6 +443,7 @@ export function createChangesFeatureController(
       hasSelection: () => current() !== undefined,
       selectedPath: () => current()?.path ?? null,
       filterOpen: () => filter() !== null,
+      setWorkspaceIdentity,
       prepare,
       reset,
       applyCatalog,

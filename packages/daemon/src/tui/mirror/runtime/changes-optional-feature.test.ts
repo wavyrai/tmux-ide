@@ -1,0 +1,66 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+import { createApplicationOptionalFeatureRegistry } from "./application-optional-features.ts";
+
+describe("deferred Changes feature boundary", () => {
+  it("keeps the production root free of eager Changes implementation imports", () => {
+    const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
+    for (const specifier of [
+      "../changes-surface.tsx",
+      "../changes-surface.ts",
+      "../diff-model.ts",
+      "../features/changes/controller.ts",
+    ]) {
+      expect(source).not.toContain(`from "${specifier}"`);
+    }
+    expect(source).toContain('optionalFeatures.request("changes")');
+    expect(source).toContain('activeDockTab() === "changes"');
+    expect(source).toContain("component={feature().ChangesSurface}");
+    expect(source).toContain('"Loading Changes…"');
+    expect(source).toContain("feature.createChangesFeatureController(");
+    expect(source).toContain("changesSession()?.dispose()");
+    expect(source).not.toContain("createSignal<DiffEntry");
+    expect(source).not.toContain("setDiffEntries(");
+    expect(source).not.toContain("runChangesAction");
+    expect(source).not.toContain("changesHitTest(");
+  });
+
+  it("keeps Changes state, Git IO, projection, and disposal together", () => {
+    const source = readFileSync(
+      new URL("../features/changes/controller.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("createRoot((disposeOwner)");
+    expect(source).toContain("projectChangesSurface({");
+    expect(source).toContain("host.runGit(directory()");
+    expect(source).toContain("host.readFile(join(directory(), entry.path))");
+    expect(source).toContain("disposeOwner();");
+  });
+
+  it("generation-fences deferred Changes prepare before publishing loaded state", () => {
+    const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
+    const start = source.indexOf("const prepareDiff = (");
+    const end = source.indexOf("const enterDiff =", start);
+    const prepare = source.slice(start, end);
+    expect(prepare).toContain("changesPrepareIntent.issue(scope)");
+    expect(prepare).toContain("changesPrepareIntent.isCurrent(intent, scope)");
+    expect(prepare).toContain("changesSession()?.prepare(identity)");
+  });
+
+  it("retains Changes demand without starting its literal loader before admission", () => {
+    const registry = createApplicationOptionalFeatureRegistry();
+    const first = registry.request("changes");
+    const second = registry.request("changes");
+    expect(first).toBe(second);
+    expect(registry.getMetrics()).toMatchObject({
+      requests: 2,
+      retainedIntents: 1,
+      joinedRequests: 1,
+      loadsStarted: 0,
+      publications: 0,
+    });
+    registry.dispose();
+    void first.catch(() => undefined);
+  });
+});

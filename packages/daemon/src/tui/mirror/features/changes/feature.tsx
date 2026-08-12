@@ -15,4 +15,5 @@ export type {
   ChangesKeyEvent,
   ChangesPointerEvent,
   ChangesScrollState,
+  ChangesWorkspaceIdentity,
 } from "./contract.ts";

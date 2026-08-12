@@ -260,14 +260,7 @@ import {
   createTerminalPaletteProjection,
 } from "../theme.ts";
 import { homeFooterHints, type FleetRollup } from "../../team/home.ts";
-import {
-  gutterWidth,
-  formatGutter,
-  clampTop,
-  scrollToCursor,
-  clickToCursor,
-} from "./editor-primitives.ts";
-import { isBinary } from "./file-content-primitives.ts";
+import { gutterWidth, formatGutter, clampTop, clickToCursor } from "./editor-primitives.ts";
 import type {
   EditorOpenOrigin,
   FilesActionId,
@@ -275,28 +268,7 @@ import type {
   ReadOnlyReason,
   FilesFeatureSession,
 } from "../features/files/feature.tsx";
-import {
-  classifyDiff,
-  untrackedDiffText,
-  clampSel,
-  parseStatusGroups,
-  parseStatusPorcelain,
-  // Both diff-model and file-tree export a `filterEntries`; alias the diff one
-  // (merge of M24.5 + M24.6 — the two surfaces grew them independently).
-  filterEntries as filterDiffEntries,
-  buildDiffRows,
-  rowIndexOfFile,
-  parseNumstat,
-  untrackedLineCount,
-  applyCounts,
-  totalCounts,
-  nextHunkTop,
-  hunkEditTarget,
-  type DiffEntry,
-  type DiffGroup,
-  type DiffLineKind,
-  type StatusEntry,
-} from "../diff-model.ts";
+import type { ChangesFeatureSession, ChangesHoverTarget } from "../features/changes/feature.tsx";
 import {
   loadAppState,
   saveAppState,
@@ -489,14 +461,6 @@ import {
   projectHomeSurface,
   type HomeActionId,
 } from "../home-surface.ts";
-import { ChangesSurface } from "../changes-surface.tsx";
-import {
-  changesBodyRows,
-  changesHitTest,
-  changesListWidth,
-  projectChangesSurface,
-  type ChangesActionId,
-} from "../changes-surface.ts";
 import {
   activityOrderSequence,
   activityRowHitTest,
@@ -766,19 +730,6 @@ interface FleetProject {
   sessions: FleetSession[];
 }
 
-const changeStatusLetter = (
-  status: WorkspaceChangesCatalogEnvelopeV1["resource"] extends infer _ ? string : never,
-): string =>
-  ({
-    modified: "M",
-    added: "A",
-    deleted: "D",
-    renamed: "R",
-    copied: "C",
-    "type-changed": "T",
-    conflicted: "U",
-    untracked: "?",
-  })[status] ?? "M";
 const zzlog = (m: string) => {
   if (!process.env.TMUX_IDE_ZZ_LOG) return;
   try {
@@ -905,7 +856,8 @@ const DIFF_ADD_FG = RGBA.fromInts(120, 200, 140, 255);
 const DIFF_DEL_FG = RGBA.fromInts(240, 120, 120, 255);
 const DIFF_META_FG = RGBA.fromInts(120, 120, 140, 255);
 const DIFF_CONTEXT_FG = RGBA.fromInts(170, 170, 185, 255);
-const DIFF_FG: Record<DiffLineKind, RGBA> = {
+type DiffLineTone = "add" | "del" | "hunk" | "meta" | "context";
+const DIFF_FG: Record<DiffLineTone, RGBA> = {
   add: DIFF_ADD_FG,
   del: DIFF_DEL_FG,
   hunk: ACCENT,
@@ -927,7 +879,7 @@ const STATUS_LETTER_FG: Record<string, RGBA> = {
 // move onto the theming pipeline.
 const DIFF_ADD_BG = RGBA.fromInts(20, 60, 30, 255);
 const DIFF_DEL_BG = RGBA.fromInts(60, 20, 20, 255);
-const DIFF_LINE_BG: Partial<Record<DiffLineKind, RGBA>> = { add: DIFF_ADD_BG, del: DIFF_DEL_BG };
+const DIFF_LINE_BG: Partial<Record<DiffLineTone, RGBA>> = { add: DIFF_ADD_BG, del: DIFF_DEL_BG };
 const HEADER_ROWS = 2;
 // The persistent surface-tab row is one screen row at the very top (above the
 // sidebar + main region). Its height offsets every region's global y, so the
@@ -1147,14 +1099,22 @@ const mountTuiRoot = () => {
     const [contextSession, setContextSession] = createSignal<string>(initialContextSession);
     const [contextDir, setContextDir] = createSignal<string>("");
     const editorOpenIntent = new LatestIntentFence<string>();
+    const changesPrepareIntent = new LatestIntentFence<string>();
     const editorOpenScope = () => `${contextSession()}\u0000${contextDir() || invokeCwd}`;
-    onCleanup(() => editorOpenIntent.retire());
+    onCleanup(() => {
+      editorOpenIntent.retire();
+      changesPrepareIntent.retire();
+    });
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const optionalFeatures = createApplicationOptionalFeatureRegistry();
     const [filesFeature, setFilesFeature] = createSignal<ApplicationOptionalFeatures["files"]>();
     const [filesSession, setFilesSession] = createSignal<FilesFeatureSession>();
+    const [changesFeature, setChangesFeature] =
+      createSignal<ApplicationOptionalFeatures["changes"]>();
+    const [changesSession, setChangesSession] = createSignal<ChangesFeatureSession>();
     let toolResourceGeneration = -1;
     const pendingFilesCatalog = new GenerationBoundSlot<WorkspaceFilesCatalogEnvelopeV1>();
+    const pendingChangesCatalog = new GenerationBoundSlot<WorkspaceChangesCatalogEnvelopeV1>();
     let pendingFilesSelectionPath: string | null = null;
     const [filesFeatureLoadState, setFilesFeatureLoadState] = createSignal<
       "idle" | "loading" | "ready" | "failed"
@@ -1209,10 +1169,92 @@ const mountTuiRoot = () => {
       );
       return request;
     };
+    const [changesFeatureLoadState, setChangesFeatureLoadState] = createSignal<
+      "idle" | "loading" | "ready" | "failed"
+    >("idle");
+    let changesFeatureRequest: Promise<ApplicationOptionalFeatures["changes"] | undefined> | null =
+      null;
+    let initialChangesDirectory: string | null = values.diff ?? null;
+    const changesIdentity = () => ({
+      workspaceName: contextSession() || target,
+      directory: initialChangesDirectory ?? (contextDir() || invokeCwd),
+    });
+    const changesHover = (): ChangesHoverTarget | null => {
+      const current = hover();
+      if (!current) return null;
+      if (current.region === "button") return { kind: "header-action", index: current.index };
+      if (current.region === "diffverb") return { kind: "footer-action", index: current.index };
+      if (current.region === "diff") return { kind: "list-row", index: current.index };
+      return null;
+    };
+    const ensureChangesFeature = (): Promise<
+      ApplicationOptionalFeatures["changes"] | undefined
+    > => {
+      const loaded = changesFeature();
+      if (loaded) return Promise.resolve(loaded);
+      if (changesFeatureRequest) return changesFeatureRequest;
+      setChangesFeatureLoadState("loading");
+      const request = optionalFeatures.request("changes");
+      changesFeatureRequest = request;
+      void request.then(
+        (feature) => {
+          if (changesFeatureRequest !== request) return;
+          if (!feature) {
+            setChangesFeatureLoadState("failed");
+            changesFeatureRequest = null;
+            return;
+          }
+          setChangesFeature(() => feature);
+          const session = feature.createChangesFeatureController(
+            {
+              width: () => dockSurfaceWidth(),
+              height: () => dockSurfaceHeight(),
+              hover: changesHover,
+              refreshResource: () => toolResources.session.refresh("changes"),
+              setStatusNote,
+              openEditor: (path, line) => openEditor(path, line),
+              runGit: (directory, args, callback) => {
+                execFile(
+                  "git",
+                  [
+                    "-C",
+                    directory,
+                    "-c",
+                    "core.quotepath=false",
+                    "-c",
+                    "core.fsmonitor=false",
+                    ...args,
+                  ],
+                  { timeout: 10_000, maxBuffer: 16_000_000 },
+                  (error, stdout) => callback(error ? "" : stdout),
+                );
+              },
+              readFile: (path) => readFileSync(path),
+            },
+            changesIdentity(),
+          );
+          initialChangesDirectory = null;
+          setChangesSession(() => session);
+          const retainedCatalog = pendingChangesCatalog.take(toolResourceGeneration);
+          if (retainedCatalog) session.applyCatalog(retainedCatalog);
+          setChangesFeatureLoadState("ready");
+          changesFeatureRequest = null;
+        },
+        () => {
+          if (changesFeatureRequest !== request) return;
+          setChangesFeatureLoadState("failed");
+          changesFeatureRequest = null;
+        },
+      );
+      return request;
+    };
     applicationLifecycle.registerCloser("optional-features", () => {
       filesFeatureRequest = null;
+      changesFeatureRequest = null;
       filesSession()?.dispose();
+      changesSession()?.dispose();
       setFilesSession(undefined);
+      setChangesSession(undefined);
       optionalFeatures.dispose();
       tuiPerfMark("optional-feature-metrics", { ...optionalFeatures.getMetrics() });
     });
@@ -1750,6 +1792,9 @@ const mountTuiRoot = () => {
       if (dockMode() !== "collapsed" && activeDockTab() === "files") void ensureFilesFeature();
     });
     createEffect(() => {
+      if (dockMode() !== "collapsed" && activeDockTab() === "changes") void ensureChangesFeature();
+    });
+    createEffect(() => {
       if (dockMode() === "collapsed") {
         toolResources.setOpenDock(null);
         return;
@@ -1998,7 +2043,7 @@ const mountTuiRoot = () => {
     };
     const activationState = () => ({
       filesLoaded: fileNodes().length > 0,
-      diffLoaded: diffEntries().length > 0,
+      diffLoaded: diffLoaded(),
     });
     const runPanelActivation = (panel: HostedPanelKind) => {
       runActivationEffects(hostedActivationEffects(panel, activationState()));
@@ -2059,6 +2104,7 @@ const mountTuiRoot = () => {
     };
     const activateCanvasPanelContent = (panel: "home" | "terminals"): boolean => {
       editorOpenIntent.retire();
+      changesPrepareIntent.retire();
       clearSelection();
       snapshotActiveWorkspaceView();
       const view = canvasViewForPanel(hostedViews(), panel);
@@ -2079,7 +2125,7 @@ const mountTuiRoot = () => {
     const selectView = (viewId: string) => {
       const plan = planHostedViewActivation(hostedViews(), viewId, {
         filesLoaded: fileNodes().length > 0,
-        diffLoaded: diffEntries().length > 0,
+        diffLoaded: diffLoaded(),
       });
       if (!plan.view || !plan.activeViewId) {
         setStatusNote(plan.note ?? "that view is no longer configured");
@@ -2105,6 +2151,7 @@ const mountTuiRoot = () => {
     };
     const activateDockTabContent = (tabId: WorkbenchDockTabId): boolean => {
       if (tabId !== "files") editorOpenIntent.retire();
+      if (tabId !== "changes") changesPrepareIntent.retire();
       if (tabId === "files") void ensureFilesFeature();
       if (tabId === "activity") {
         // Activity is dock-only, so it does not travel through `selectView` (the
@@ -2251,7 +2298,7 @@ const mountTuiRoot = () => {
           const nextViews = viewsFromResolvedConfig(resolved);
           const state = {
             filesLoaded: fileNodes().length > 0,
-            diffLoaded: diffEntries().length > 0,
+            diffLoaded: diffLoaded(),
           };
           const identityChanged = currentWorkspaceUiIdentity !== repository.metadata.identityKey;
           currentWorkspaceUiIdentity = repository.metadata.identityKey;
@@ -3082,251 +3129,39 @@ const mountTuiRoot = () => {
     const editorKey = (event: { name: string; ctrl: boolean; meta: boolean; shift: boolean }) =>
       filesSession()?.key(event);
 
-    // ── DIFF (M18.3; grouped + stage-aware M24.5) ───────────────────────────
-    // The working-tree diff of `diffDir`, rendered natively as a GROUPED list
-    // (Staged / Unstaged / Untracked; an MM file appears in both stage groups,
-    // each side diffing its own half of the index). Git runs via async execFile
-    // (`runGit`); the only sync io is reading a single untracked file to show it
-    // as additions. `diffText` holds the raw diff for the selected file;
-    // `diffLoadToken` discards a slow diff whose selection has since moved on,
-    // `diffStatusToken` a stale status/numstat merge (same race discipline).
-    const [diffDir, setDiffDir] = createSignal(values.diff ?? invokeCwd);
-    const [diffEntries, setDiffEntries] = createSignal<DiffEntry[]>([]);
-    const [diffSel, setDiffSel] = createSignal(0);
-    const [diffText, setDiffText] = createSignal("");
-    const [diffTop, setDiffTop] = createSignal(0); // diff-pane scroll (right)
-    const [diffFileTop, setDiffFileTop] = createSignal(0); // file-list scroll (left, in ROWS)
-    const [diffMsg, setDiffMsg] = createSignal("");
-    // The `/` filter over the grouped file list (diff surface only — Terminal's
-    // `/` scrollback search is a different mode branch). null = off; while
-    // non-null every printable key narrows live, escape/return clear + exit.
-    const [diffFilter, setDiffFilter] = createSignal<string | null>(null);
-    let diffLoadToken = 0;
-    // A diff file to re-select once `git status` repopulates the list: the
-    // persisted path on restore, or a verb's follow target — path + preferred
-    // group, so a just-staged file is re-selected in its NEW section.
-    let pendingDiffFile: string | null = null;
-    let pendingDiffGroup: DiffGroup | null = null;
-
-    // Body rows below header (1) + rule (1), above the footer (1) — shared by both
-    // columns. The left column width is a capped fraction of the canvas.
-    const diffBodyRows = () => Math.max(1, changesBodyRows(dockSurfaceHeight()));
-    const diffListW = () => changesListWidth(dockSurfaceWidth());
-    const diffLines = createMemo(() => classifyDiff(diffText()));
-    // Grouped rows (section headers + files) and the flat selectable-file order,
-    // both from ONE buildDiffRows pass over the filtered entries: the render,
-    // the mouse router, and the selection all walk the SAME rows, so the hit
-    // math cannot drift from what's drawn (the AGENTS_GAP_ROWS lesson).
-    const diffRowsData = createMemo(() =>
-      buildDiffRows(filterDiffEntries(diffEntries(), diffFilter() ?? "")),
-    );
-    const diffRows = () => diffRowsData().rows;
-    const diffVisibleFiles = () => diffRowsData().files;
-    const diffTotals = createMemo(() => totalCounts(diffVisibleFiles()));
-    const diffVisible = createMemo(() => {
-      const lines = diffLines();
-      const rows = diffBodyRows();
-      const top = clampTop(diffTop(), lines.length, rows);
-      return lines.slice(top, top + rows);
-    });
-    const fileVisible = createMemo(() => {
-      const rows = diffRows();
-      const view = diffBodyRows();
-      const top = clampTop(diffFileTop(), rows.length, view);
-      return rows.slice(top, top + view).map((row, i) => ({ row, rowIndex: top + i }));
-    });
-    const changesSurfaceProjection = createMemo(() =>
-      projectChangesSurface({
-        width: dockSurfaceWidth(),
-        height: dockSurfaceHeight(),
-        dir: diffDir(),
-        fileCount: diffVisibleFiles().length,
-        totals: diffTotals(),
-        filterQuery: diffFilter(),
-        message: diffMsg(),
-        listRows: fileVisible(),
-        selectedFileIndex: diffSel(),
-        diffLines: diffVisible(),
-        hovered:
-          hover()?.region === "diff" ||
-          hover()?.region === "diffverb" ||
-          hover()?.region === "button"
-            ? (hover() as
-                | { region: "diff"; index: number }
-                | { region: "diffverb"; index: number }
-                | { region: "button"; index: number })
-            : null,
-        footerHint: `]/[ hunk · ^e edit · / filter · r refresh · ^g home · ${QUIT_HINT}`,
-      }),
-    );
-
-    const runGit = (args: string[], cb: (out: string) => void) => {
-      execFile(
-        "git",
-        ["-C", diffDir(), "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", ...args],
-        { timeout: 10_000, maxBuffer: 16_000_000 },
-        (err, stdout) => cb(err ? "" : stdout),
-      );
+    // Changes owns its model, selected-file reads, mutations, and interaction
+    // math inside the deferred feature. These accessors are the complete eager
+    // shell contract and remain inert until explicit Changes demand resolves.
+    const changesSurfaceProjection = () => changesSession()?.projection() ?? null;
+    const diffLoaded = () => changesSession()?.hasEntries() ?? false;
+    const diffSelectedPath = () => changesSession()?.selectedPath() ?? null;
+    const diffFilterOpen = () => changesSession()?.filterOpen() ?? false;
+    const setChangesHoverTarget = (target: ChangesHoverTarget | null) => {
+      if (target?.kind === "header-action") setHoverIf({ region: "button", index: target.index });
+      else if (target?.kind === "footer-action")
+        setHoverIf({ region: "diffverb", index: target.index });
+      else if (target?.kind === "list-row") setHoverIf({ region: "diff", index: target.index });
+      else setHoverIf(null);
     };
-
-    /** Load the diff for one entry, by its GROUP: staged rows diff `--cached`,
-     *  unstaged rows the worktree, and an untracked file's contents render as
-     *  additions. Guarded by `diffLoadToken` against races. */
-    const loadDiff = (entry: DiffEntry) => {
-      const token = ++diffLoadToken;
-      setDiffMsg("");
-      if (entry.group === "untracked") {
-        try {
-          const bytes = readFileSync(join(diffDir(), entry.path));
-          if (isBinary(bytes)) {
-            setDiffText("");
-            setDiffMsg("binary file");
-          } else {
-            setDiffText(untrackedDiffText(Buffer.from(bytes).toString("utf8")));
+    const prepareDiff = (directory: string) => {
+      const identity = { workspaceName: contextSession() || target, directory };
+      const scope = `${identity.workspaceName}\u0000${identity.directory}`;
+      const intent = changesPrepareIntent.issue(scope);
+      const session = changesSession();
+      if (session) session.prepare(identity);
+      else {
+        void ensureChangesFeature().then((feature) => {
+          if (feature && changesPrepareIntent.isCurrent(intent, scope)) {
+            changesSession()?.prepare(identity);
           }
-        } catch (e) {
-          setDiffText("");
-          setDiffMsg(`cannot read: ${(e as Error).message}`);
-        }
-        return;
-      }
-      const args =
-        entry.group === "staged"
-          ? ["diff", "--no-color", "--cached", "--", entry.path]
-          : ["diff", "--no-color", "--", entry.path];
-      runGit(args, (out) => {
-        if (token !== diffLoadToken) return;
-        setDiffText((p) => (p === out ? p : out));
-      });
-    };
-
-    /** Select FILE `i` (an index into the flat selectable order — section
-     *  headers are not selectable): highlight it, reset the diff scroll, keep
-     *  its ROW in view in the file list, and (re)load its diff. */
-    const selectDiffFile = (i: number) => {
-      const files = diffVisibleFiles();
-      if (files.length === 0) return;
-      const idx = clampSel(i, files.length);
-      setDiffSel(idx);
-      setDiffTop(0);
-      const rows = diffRows();
-      const rowIdx = rowIndexOfFile(rows, idx);
-      if (rowIdx !== -1)
-        setDiffFileTop((t) => scrollToCursor(rowIdx, t, diffBodyRows(), rows.length));
-      loadDiff(files[idx]!);
-    };
-    const moveDiffSel = (delta: number) => selectDiffFile(diffSel() + delta);
-
-    /** After a filter mutation: select the first match (reloading its diff), or
-     *  clear the diff pane when nothing matches. */
-    const diffFilterReselect = () => {
-      if (diffVisibleFiles().length === 0) {
-        setDiffSel(0);
-        setDiffText("");
-      } else {
-        selectDiffFile(0);
+        });
       }
     };
-
-    // ── Stage/unstage verbs (M24.5) ─────────────────────────────────────────
-    // Reversible operations, so no confirms — each verb notes what it did,
-    // follows the file into its new group, and refreshes (git is the truth).
-    const stageEntry = (e: DiffEntry) => {
-      if (e.group === "staged") {
-        setStatusNote("already staged");
-        return;
-      }
-      runGit(["add", "--", e.path], () => {
-        pendingDiffFile = e.path;
-        pendingDiffGroup = "staged";
-        setStatusNote(`staged ${e.path}`);
-        toolResources.session.refresh("changes");
-      });
-    };
-    const unstageEntry = (e: DiffEntry) => {
-      if (e.group !== "staged") {
-        setStatusNote("not staged");
-        return;
-      }
-      runGit(["reset", "HEAD", "--", e.path], () => {
-        pendingDiffFile = e.path;
-        pendingDiffGroup = "unstaged";
-        setStatusNote(`unstaged ${e.path}`);
-        toolResources.session.refresh("changes");
-      });
-    };
-    const toggleStageEntry = (e: DiffEntry) =>
-      e.group === "staged" ? unstageEntry(e) : stageEntry(e);
-    const stageAll = () => {
-      const cur = diffVisibleFiles()[diffSel()];
-      runGit(["add", "-A"], () => {
-        if (cur) {
-          pendingDiffFile = cur.path;
-          pendingDiffGroup = "staged";
-        }
-        setStatusNote("staged all changes");
-        toolResources.session.refresh("changes");
-      });
-    };
-    const unstageAll = () => {
-      const cur = diffVisibleFiles()[diffSel()];
-      runGit(["reset", "HEAD"], () => {
-        if (cur) {
-          pendingDiffFile = cur.path;
-          pendingDiffGroup = cur.group === "staged" ? "unstaged" : cur.group;
-        }
-        setStatusNote("unstaged all");
-        toolResources.session.refresh("changes");
-      });
-    };
-
-    /** `]`/`[` — jump the diff view to the next/previous hunk header. */
-    const jumpHunk = (dir: 1 | -1) => {
-      const lines = diffLines();
-      const cur = clampTop(diffTop(), lines.length, diffBodyRows());
-      const next = nextHunkTop(lines, cur, dir);
-      if (next !== null) setDiffTop(clampTop(next, lines.length, diffBodyRows()));
-    };
-
-    /** ^e from the diff panel: open the selected file in the editor AT the
-     *  first changed line of the selected (top-visible) hunk — pure math in
-     *  hunkEditTarget; diffs without hunks (binary/untracked) open at 0. */
-    const openSelectedInEditor = () => {
-      const entry = diffVisibleFiles()[diffSel()];
-      if (!entry) return;
-      const lines = diffLines();
-      const target = hunkEditTarget(lines, clampTop(diffTop(), lines.length, diffBodyRows()));
-      openEditor(join(diffDir(), entry.path), target ?? undefined);
-    };
-
-    /** Enter the diff panel for `dir` (from home `d`, the Diff tab, or `--diff`
-     *  on boot). */
-    const prepareDiff = (dir: string) => {
-      setDiffDir(dir);
-      setDiffSel(0);
-      setDiffTop(0);
-      setDiffFileTop(0);
-      setDiffText("");
-      setDiffMsg("");
-      setDiffFilter(null);
-      toolResources.session.refresh("changes");
-    };
-    const enterDiff = (dir: string) => {
-      prepareDiff(dir);
+    const enterDiff = (directory: string) => {
+      prepareDiff(directory);
       setTab("diff");
     };
 
-    const runChangesAction = (id: ChangesActionId, fileIndex = diffSel()) => {
-      if (id === "refresh") toolResources.session.refresh("changes");
-      else if (id === "stage-all") stageAll();
-      else if (id === "unstage-all") unstageAll();
-      else {
-        const entry = diffVisibleFiles()[fileIndex];
-        if (!entry) return;
-        if (id === "stage" || id === "row-stage") stageEntry(entry);
-        else if (id === "unstage" || id === "row-unstage") unstageEntry(entry);
-      }
-    };
     // ── EVENT-DRIVEN RE-PIN (M23.5) ──────────────────────────────────────────
     // The native Workbench projection is the sole pin source. `lastPin` remains
     // null until a non-zero framebuffer exists; a hidden/maximized dock never
@@ -3553,7 +3388,7 @@ const mountTuiRoot = () => {
       } else if (activeDockTab() === "changes" && hydratedWorkspaceSurfaceIds.has("diff")) {
         next = setWorkspaceSurfaceState(next, {
           panel: "diff",
-          selectedPath: diffVisibleFiles()[diffSel()]?.path ?? null,
+          selectedPath: diffSelectedPath(),
         });
       } else if (activeDockTab() === "missions" && hydratedWorkspaceSurfaceIds.has("missions")) {
         next = workspaceStateWithMissionModel(next, missionViewId(), missionWorkspaceModel());
@@ -3665,15 +3500,11 @@ const mountTuiRoot = () => {
         if (openPath) openEditor(openPath, undefined, "workspace-hydration");
       } else if (entry.panel === "diff") {
         hydratedWorkspaceSurfaceIds.add("diff");
-        pendingDiffFile = entry.selectedPath;
-        if (entry.selectedPath && diffVisibleFiles().length > 0) {
-          const idx = diffVisibleFiles().findIndex((file) => file.path === entry.selectedPath);
-          if (idx !== -1) {
-            pendingDiffFile = null;
-            selectDiffFile(idx);
-            return;
-          }
-        }
+        if (changesSession()) changesSession()?.restoreSelectedPath(entry.selectedPath);
+        else
+          void ensureChangesFeature().then((feature) => {
+            if (feature) changesSession()?.restoreSelectedPath(entry.selectedPath);
+          });
         if (mode() === "diff") toolResources.session.refresh("changes");
       } else if (entry.panel === "missions") {
         hydratedWorkspaceSurfaceIds.add("missions");
@@ -3844,10 +3675,11 @@ const mountTuiRoot = () => {
      *  the project dir from the fleet payload (falling back to the cwd). */
     const openWorkspace = (session: string, dir: string | null) => {
       editorOpenIntent.retire();
+      changesPrepareIntent.retire();
       setContextSession(session);
       const wd = dir ?? invokeCwd;
       setContextDir(wd);
-      setDiffDir(wd);
+      changesSession()?.setWorkspaceIdentity({ workspaceName: session, directory: wd });
       toolResources.session.refresh("files");
       switchTarget(session);
     };
@@ -4682,7 +4514,7 @@ const mountTuiRoot = () => {
         compositeFocusAvailable: true,
         editorAvailable:
           (filesSession()?.hasBuffer ?? false) ||
-          (mode() === "diff" && Boolean(diffVisibleFiles()[diffSel()])),
+          (mode() === "diff" && (changesSession()?.hasSelection() ?? false)),
       }),
       effects: {
         openPalette,
@@ -4707,7 +4539,11 @@ const mountTuiRoot = () => {
           if (mode() !== "home") goHome();
         },
         toggleEditor: () => {
-          if (mode() === "diff") openSelectedInEditor();
+          if (mode() === "diff")
+            changesSession()?.handleKey(
+              { name: "e", ctrl: true, meta: false, shift: false },
+              "surface",
+            );
           else toggleEditor();
         },
       },
@@ -5488,7 +5324,7 @@ const mountTuiRoot = () => {
         lastTab: tab(),
         contextSession: contextSession() || null,
         openFile: editorPath(),
-        diffFile: diffVisibleFiles()[diffSel()]?.path ?? null,
+        diffFile: diffSelectedPath(),
         sidebarW: preferredSidebarW(),
         recentFolders: recentFolders(),
         lastSpawns: lastSpawns(),
@@ -5508,7 +5344,7 @@ const mountTuiRoot = () => {
       workbenchFocusZone();
       editorPath();
       visibleFiles()[fileSel()]?.node.path;
-      diffVisibleFiles()[diffSel()]?.path;
+      diffSelectedPath();
       workspaceUiState();
       const controllerSnapshot = workspaceUiController.snapshot();
       if (!controllerSnapshot.loaded || !controllerSnapshot.repository) return;
@@ -5553,7 +5389,10 @@ const mountTuiRoot = () => {
       const restoredDir = dirForSession(restoredSession) ?? invokeCwd;
       setContextSession(restoredSession);
       setContextDir(restoredDir);
-      setDiffDir(restoredDir);
+      changesSession()?.setWorkspaceIdentity({
+        workspaceName: restoredSession,
+        directory: restoredDir,
+      });
       setCurTarget(restoredSession);
       attach(restoredSession);
       if (persisted.lastTab === "terminal") selectPanel("terminals");
@@ -5573,40 +5412,9 @@ const mountTuiRoot = () => {
     };
 
     const applyChangesCatalog = (envelope: WorkspaceChangesCatalogEnvelopeV1) => {
-      const resource = envelope.resource;
-      if (resource.status !== "ready") {
-        setDiffEntries([]);
-        setDiffMsg(resource.message);
-        return;
-      }
-      const entries: DiffEntry[] = resource.entries.map((entry) => ({
-        group: entry.group,
-        status: changeStatusLetter(entry.status),
-        path: entry.relativePath,
-        additions: entry.additions,
-        deletions: entry.deletions,
-      }));
-      setDiffEntries(entries);
-      if (entries.length === 0) {
-        setDiffText("");
-        setDiffMsg("working tree clean");
-      } else {
-        setDiffMsg("");
-        let next = clampSel(diffSel(), entries.length);
-        if (pendingDiffFile) {
-          const exact = pendingDiffGroup
-            ? entries.findIndex(
-                (entry) => entry.path === pendingDiffFile && entry.group === pendingDiffGroup,
-              )
-            : -1;
-          const fallback = entries.findIndex((entry) => entry.path === pendingDiffFile);
-          if (exact >= 0 || fallback >= 0) next = exact >= 0 ? exact : fallback;
-          pendingDiffFile = null;
-          pendingDiffGroup = null;
-        }
-        setDiffSel(next);
-        loadDiff(entries[next]!);
-      }
+      const session = changesSession();
+      if (session) session.applyCatalog(envelope);
+      else pendingChangesCatalog.retain(toolResourceGeneration, envelope);
     };
 
     const applyMissionsCatalog = (envelope: WorkspaceMissionsEnvelopeV1) => {
@@ -5725,6 +5533,7 @@ const mountTuiRoot = () => {
         if (state.generation !== toolResourceGeneration) {
           toolResourceGeneration = state.generation;
           pendingFilesCatalog.advance(state.generation);
+          pendingChangesCatalog.advance(state.generation);
           appliedToolSnapshots.clear();
           latestFleetCatalog = null;
           latestSessionCatalog = null;
@@ -5734,8 +5543,7 @@ const mountTuiRoot = () => {
           latestApplicationShellWorkspaceName = "";
           setProjectsData([]);
           filesSession()?.resetCatalog();
-          setDiffEntries([]);
-          setDiffText("");
+          changesSession()?.reset();
           setMissionWorkspaceSnapshot(null);
           setMissionWorkspaceLoad(invalidatedMissionWorkspaceLoadState());
         }
@@ -6213,16 +6021,19 @@ const mountTuiRoot = () => {
       };
     };
     const diffScrollGeom = (): ScrollGeom => {
-      const contentLen = diffLines().length;
-      const viewH = diffBodyRows();
+      const scroll = changesSession()?.scrollState() ?? {
+        contentLength: 0,
+        viewportRows: 1,
+        top: 0,
+      };
       return {
         col: dims().width - 1,
         top0: TABBAR_H + HEADER_ROWS,
-        contentLen,
-        viewH,
-        viewportTop: clampTop(diffTop(), contentLen, viewH),
+        contentLen: scroll.contentLength,
+        viewH: scroll.viewportRows,
+        viewportTop: scroll.top,
         surface: { surface: "diff" },
-        visible: contentLen > viewH,
+        visible: scroll.contentLength > scroll.viewportRows,
       };
     };
     const mirrorScrollGeom = (pane: LivePane): ScrollGeom => {
@@ -6255,7 +6066,7 @@ const mountTuiRoot = () => {
       if (surface.surface === "editor") {
         setEditorTop(clampTop(top, editorLines().length, editorRows()));
       } else if (surface.surface === "diff") {
-        setDiffTop(clampTop(top, diffLines().length, diffBodyRows()));
+        changesSession()?.setScrollTop(top);
       } else {
         const offset = Math.max(
           0,
@@ -6385,18 +6196,13 @@ const mountTuiRoot = () => {
         };
       }
       if (m === "diff") {
-        const overList = x < sidebarW() + diffListW();
-        const contentY = gy - HEADER_ROWS;
-        if (!overList || contentY < 0) return null;
-        const rows = diffRows();
-        const top = clampTop(diffFileTop(), rows.length, diffBodyRows());
-        const row = rows[top + contentY];
-        if (!row || row.kind !== "file") return null;
+        const target = changesSession()?.contextTargetAt(x - sidebarW(), gy);
+        if (!target) return null;
         return {
           region: "difffile",
-          title: basename(row.entry.path),
+          title: target.title,
           items: MENU_ITEMS.difffile,
-          diffPath: join(diffDir(), row.entry.path),
+          diffPath: target.path,
         };
       }
       // semanticView: gy=0 is the WINDOW STRIP; gy=1 is per-pane native chrome —
@@ -6749,7 +6555,7 @@ const mountTuiRoot = () => {
           missionMode: missionWorkspaceModel().mode,
           editorFocus: filesFocus(),
           editorFilterOpen: filesQuery() !== null,
-          diffFilterOpen: diffFilter() !== null,
+          diffFilterOpen: diffFilterOpen(),
           homePromptOpen: pathPrompt() !== null || sessionPrompt() !== null,
           configuredShortcutKeys: canvasHostedViews().flatMap((view) =>
             view.shortcut ? [view.shortcut.key] : [],
@@ -6941,41 +6747,7 @@ const mountTuiRoot = () => {
         return;
       }
       if (layer.kind === "diff-filter" || layer.kind === "diff") {
-        // The `/` filter owns the keyboard while active (M24.5): printable keys
-        // narrow the grouped list live, escape/return clear + exit (widget
-        // semantics), arrows still move the (filtered) selection.
-        if (layer.kind === "diff-filter") {
-          if (evt.name === "escape" || evt.name === "return") {
-            setDiffFilter(null);
-            diffFilterReselect();
-          } else if (evt.name === "backspace") {
-            setDiffFilter((q) => (q ?? "").slice(0, -1));
-            diffFilterReselect();
-          } else if (evt.name === "up") moveDiffSel(-1);
-          else if (evt.name === "down") moveDiffSel(1);
-          else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
-            setDiffFilter((q) => (q ?? "") + (evt.shift ? evt.name.toUpperCase() : evt.name));
-            diffFilterReselect();
-          }
-          return;
-        }
-        // ^e / ^g / ^q are handled above; j/k move the file selection, s/u
-        // stage/unstage the selected file (S/U everything), ]/[ jump between
-        // hunks, `/` filters, and `r` forces a status+diff refresh.
-        if (evt.name === "j" || evt.name === "down") moveDiffSel(1);
-        else if (evt.name === "k" || evt.name === "up") moveDiffSel(-1);
-        else if (evt.name === "s" && evt.shift) stageAll();
-        else if (evt.name === "u" && evt.shift) unstageAll();
-        else if (evt.name === "s") {
-          const cur = diffVisibleFiles()[diffSel()];
-          if (cur) stageEntry(cur);
-        } else if (evt.name === "u") {
-          const cur = diffVisibleFiles()[diffSel()];
-          if (cur) unstageEntry(cur);
-        } else if (evt.name === "]") jumpHunk(1);
-        else if (evt.name === "[") jumpHunk(-1);
-        else if (evt.name === "/" && !evt.ctrl && !evt.meta) setDiffFilter("");
-        else if (evt.name === "r") toolResources.session.refresh("changes");
+        changesSession()?.handleKey(evt, layer.kind === "diff-filter" ? "filter" : "surface");
         return;
       }
       if (layer.kind === "home-prompt" || layer.kind === "home") {
@@ -7371,14 +7143,7 @@ const mountTuiRoot = () => {
             setHoverIf({ region: "files", index: hit.rowIndex });
           else setHoverIf(null);
         } else if (activeDockTab() === "changes") {
-          const hit = changesHitTest(changesSurfaceProjection(), localX, localY);
-          if (hit?.area === "header" && hit.actionIndex !== undefined)
-            setHoverIf({ region: "button", index: hit.actionIndex });
-          else if (hit?.area === "footer" && hit.actionIndex !== undefined)
-            setHoverIf({ region: "diffverb", index: hit.actionIndex });
-          else if (hit?.area === "list" && hit.rowIndex !== undefined)
-            setHoverIf({ region: "diff", index: hit.rowIndex });
-          else setHoverIf(null);
+          setChangesHoverTarget(changesSession()?.hoverTargetAt(localX, localY) ?? null);
         } else if (activeDockTab() === "missions") {
           const hit = missionDashboardHitTest(missionsDashboard(), localX, localY);
           if (hit?.kind === "card") setHoverIf({ region: "missioncard", index: hit.hoverKey });
@@ -7446,14 +7211,7 @@ const mountTuiRoot = () => {
         return;
       }
       if (m === "diff") {
-        const hit = changesHitTest(changesSurfaceProjection(), x - sidebarW(), gy);
-        if (hit?.area === "header" && hit.actionIndex !== undefined)
-          setHoverIf({ region: "button", index: hit.actionIndex });
-        else if (hit?.area === "footer" && hit.actionIndex !== undefined)
-          setHoverIf({ region: "diffverb", index: hit.actionIndex });
-        else if (hit?.area === "list" && hit.fileIndex !== undefined && hit.rowIndex !== undefined)
-          setHoverIf({ region: "diff", index: hit.rowIndex });
-        else setHoverIf(null);
+        setChangesHoverTarget(changesSession()?.hoverTargetAt(x - sidebarW(), gy) ?? null);
         return;
       }
       if (m === "missions") {
@@ -7818,32 +7576,28 @@ const mountTuiRoot = () => {
       }
 
       if (activeDockTab() === "changes") {
-        const surfaceHit = changesHitTest(changesSurfaceProjection(), localX, localY);
         if (e.type === "scroll") {
           const direction = e.scroll?.direction;
           if (direction === "up" || direction === "down") {
-            const step = direction === "up" ? -SCROLL_STEP : SCROLL_STEP;
-            if (surfaceHit?.area === "list") {
-              setDiffFileTop((top) => clampTop(top + step, diffRows().length, diffBodyRows()));
-            } else if (surfaceHit?.area === "diff") {
-              setDiffTop((top) => clampTop(top + step, diffLines().length, diffBodyRows()));
-            }
+            changesSession()?.handlePointer({
+              type: "scroll",
+              x: localX,
+              y: localY,
+              direction,
+              scrollStep: SCROLL_STEP,
+              outsideBody: "ignore",
+            });
           }
           return true;
         }
         if (e.type !== "down" || e.button === 2) return true;
         hydratedWorkspaceSurfaceIds.add("diff");
-        if (
-          (surfaceHit?.area === "header" || surfaceHit?.area === "footer") &&
-          surfaceHit.actionId
-        ) {
-          runChangesAction(surfaceHit.actionId);
-          return true;
-        }
-        if (surfaceHit?.area === "list" && surfaceHit.fileIndex !== undefined) {
-          if (surfaceHit.actionId) runChangesAction(surfaceHit.actionId, surfaceHit.fileIndex);
-          else selectDiffFile(surfaceHit.fileIndex);
-        }
+        changesSession()?.handlePointer({
+          type: "down",
+          x: localX,
+          y: localY,
+          button: e.button,
+        });
         return true;
       }
 
@@ -8621,29 +8375,26 @@ const mountTuiRoot = () => {
       // left-column click selects that file ROW (headers are inert), and the
       // row's right-anchored [s stage]/[u unstage] chip wins over selection.
       if (mode() === "diff") {
-        const hit = changesHitTest(changesSurfaceProjection(), x - sidebarW(), gy);
         if (type === "scroll") {
           const dir = e.scroll?.direction;
           if (dir !== "up" && dir !== "down") return;
-          const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
-          if (hit?.area === "list") {
-            setDiffFileTop((t) => clampTop(t + step, diffRows().length, diffBodyRows()));
-          } else {
-            setDiffTop((t) => clampTop(t + step, diffLines().length, diffBodyRows()));
-          }
+          changesSession()?.handlePointer({
+            type: "scroll",
+            x: x - sidebarW(),
+            y: gy,
+            direction: dir,
+            scrollStep: SCROLL_STEP,
+            outsideBody: "diff",
+          });
           return;
         }
         if (type !== "down") return;
-        if ((hit?.area === "header" || hit?.area === "footer") && hit.actionId) {
-          runChangesAction(hit.actionId);
-          return;
-        }
-        if (hit?.area !== "list" || hit.fileIndex === undefined) return;
-        if (hit.actionId) {
-          runChangesAction(hit.actionId, hit.fileIndex);
-          return;
-        }
-        selectDiffFile(hit.fileIndex);
+        changesSession()?.handlePointer({
+          type: "down",
+          x: x - sidebarW(),
+          y: gy,
+          button: e.button,
+        });
         return;
       }
       // The per-window strip (gy=0) — resolved by the SAME x-span math the render
@@ -8786,7 +8537,7 @@ const mountTuiRoot = () => {
         missionMode: missionWorkspaceModel().mode,
         editorFocus: filesFocus(),
         editorFilterOpen: filesQuery() !== null,
-        diffFilterOpen: diffFilter() !== null,
+        diffFilterOpen: diffFilterOpen(),
         homePromptOpen: pathPrompt() !== null || sessionPrompt() !== null,
         hosted: HOSTED,
       });
@@ -9199,17 +8950,44 @@ const mountTuiRoot = () => {
                   </Show>
                 </Show>
                 <Show when={activeDockTab() === "changes"}>
-                  <ChangesSurface
-                    theme={semanticTheme()}
-                    projection={changesSurfaceProjection()}
-                    colors={{
-                      gutterBg: GUTTER_BG,
-                      gutterFg: GUTTER_FG,
-                      statusLetterFg: STATUS_LETTER_FG,
-                      diffFg: DIFF_FG,
-                      diffLineBg: DIFF_LINE_BG,
-                    }}
-                  />
+                  <Show
+                    when={changesFeature()}
+                    fallback={
+                      <box
+                        width="100%"
+                        height="100%"
+                        flexDirection="column"
+                        justifyContent="center"
+                        alignItems="center"
+                        backgroundColor={semanticTheme().roles.surfaces.panel}
+                      >
+                        <text fg={semanticTheme().roles.text.secondary}>
+                          {changesFeatureLoadState() === "failed"
+                            ? "Changes unavailable · reopen to retry"
+                            : "Loading Changes…"}
+                        </text>
+                      </box>
+                    }
+                  >
+                    {(feature) => (
+                      <Show when={changesSurfaceProjection()}>
+                        {(projection) => (
+                          <Dynamic
+                            component={feature().ChangesSurface}
+                            theme={semanticTheme()}
+                            projection={projection()}
+                            colors={{
+                              gutterBg: GUTTER_BG,
+                              gutterFg: GUTTER_FG,
+                              statusLetterFg: STATUS_LETTER_FG,
+                              diffFg: DIFF_FG,
+                              diffLineBg: DIFF_LINE_BG,
+                            }}
+                          />
+                        )}
+                      </Show>
+                    )}
+                  </Show>
                 </Show>
                 <Show when={activeDockTab() === "missions"}>
                   <MissionsSurface
