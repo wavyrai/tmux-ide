@@ -234,10 +234,7 @@ import {
   withLivePaneFocus,
 } from "../pane-frame-state.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "../pane-surface.tsx";
-import {
-  currentTuiPerformanceDiagnosticSink,
-  installTuiPerformanceEventSink,
-} from "../performance-events.ts";
+import { installTuiPerformanceEventSink } from "../performance-events.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "../host-terminal.ts";
 import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process";
 import type { AgentStatus } from "../../detect/classify.ts";
@@ -6701,13 +6698,6 @@ const mountTuiRoot = () => {
       }
       if (evt.name.length === 1 && !evt.meta) {
         const text = evt.shift ? evt.name.toUpperCase() : evt.name;
-        currentTuiPerformanceDiagnosticSink()?.({
-          phase: "keyboard-terminal-route",
-          mode: mode(),
-          layer: layer.kind,
-          focusedPane: semanticView.focusedPane(),
-          key: evt.name,
-        });
         if (!sendSemanticTerminalText(semanticView.focusedPane(), text))
           setStatusNote("terminal runtime is reconnecting");
       }
