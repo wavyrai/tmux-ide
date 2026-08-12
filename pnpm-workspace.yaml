@@ -13,4 +13,4 @@ overrides:
   zod: ^4.3.6
 
 patchedDependencies:
-  "@opentui/solid@0.4.3": patches/@opentui__solid@0.4.3.patch
+  "@opentui/solid@0.5.1": patches/@opentui__solid@0.5.1.patch

@@ -1,5 +1,6 @@
 import type { ApplicationShellTerminalInventory, PaneStreamServerFrame } from "@tmux-ide/contracts";
 import type { SessionPaneDescriptor } from "../../terminal/protocol/session-descriptor-discovery.ts";
+import { terminalWindowResourceId } from "../../lib/semantic-resource-id.ts";
 
 import type { MirrorSnapshot } from "./pane-mirror.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
@@ -314,14 +315,33 @@ export class SemanticSessionView {
   }
 
   async windows(): Promise<WindowTab[]> {
-    return [...this.#layouts.values()].map((layout, index) => ({
-      index,
-      name: layout.windowName ?? `Window ${index + 1}`,
-      active: layout.currentWindow,
-      sync: false,
-      semanticWindowId: layout.semanticWindowId,
-      activePaneId: layout.panes.find((pane) => pane.active)?.pane ?? null,
-    }));
+    return [...this.#layouts.values()].map((layout, fallbackIndex) => {
+      const layoutPaneId = layout.panes.find((pane) => pane.active)?.pane ?? null;
+      const windowResourceId = layout.semanticWindowId
+        ? terminalWindowResourceId(layout.semanticWindowId)
+        : null;
+      const inventoryPane =
+        windowResourceId === null
+          ? null
+          : (this.#inventoryDescriptors.find(
+              (descriptor) =>
+                descriptor.windowId === windowResourceId && descriptor.semanticPaneId !== null,
+            ) ?? null);
+      const activePaneId = layoutPaneId ?? inventoryPane?.semanticPaneId ?? null;
+      const runtimePane = activePaneId
+        ? (this.#runtimeDescriptors.find(
+            (descriptor) => descriptor.semanticPaneId === activePaneId,
+          ) ?? null)
+        : null;
+      return {
+        index: runtimePane?.windowIndex ?? fallbackIndex,
+        name: layout.windowName ?? runtimePane?.windowName ?? `Window ${fallbackIndex + 1}`,
+        active: layout.currentWindow,
+        sync: false,
+        semanticWindowId: layout.semanticWindowId,
+        activePaneId,
+      };
+    });
   }
 
   dispose(): void {
