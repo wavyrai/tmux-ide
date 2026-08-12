@@ -29,3 +29,69 @@ export const WorkspaceCatalogResourceV1SchemaZ = z
 
 export type WorkspaceCatalogEntryV1 = z.infer<typeof WorkspaceCatalogEntryV1SchemaZ>;
 export type WorkspaceCatalogResourceV1 = z.infer<typeof WorkspaceCatalogResourceV1SchemaZ>;
+
+export const WORKSPACE_CATALOG_RESOURCE_V2_VERSION = 2 as const;
+
+/** Durable user intent. It remains present when no tmux server is running. */
+export const WorkspaceCatalogIntentV2SchemaZ = z
+  .object({
+    workspaceName: z.string().min(1),
+    sessionName: z.string().min(1),
+    source: z.enum(["project", "workspace"]),
+    availability: z.enum(["live", "stopped"]),
+  })
+  .strict();
+
+/** Observed tmux truth. Nothing persisted is allowed to synthesize this row. */
+export const WorkspaceCatalogLiveSessionV2SchemaZ = z
+  .object({
+    sessionName: z.string().min(1),
+    paneCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const WorkspaceCatalogResourceV2SchemaZ = z
+  .object({
+    version: z.literal(WORKSPACE_CATALOG_RESOURCE_V2_VERSION),
+    daemon: DaemonInstanceIdentitySchemaZ,
+    intents: z.array(WorkspaceCatalogIntentV2SchemaZ),
+    liveSessions: z.array(WorkspaceCatalogLiveSessionV2SchemaZ),
+  })
+  .strict();
+
+export type WorkspaceCatalogIntentV2 = z.infer<typeof WorkspaceCatalogIntentV2SchemaZ>;
+export type WorkspaceCatalogLiveSessionV2 = z.infer<typeof WorkspaceCatalogLiveSessionV2SchemaZ>;
+export type WorkspaceCatalogResourceV2 = z.infer<typeof WorkspaceCatalogResourceV2SchemaZ>;
+
+export interface WorkspaceCatalogIntentInput {
+  readonly workspaceName: string;
+  readonly sessionName: string;
+  readonly source: "project" | "workspace";
+}
+
+export interface WorkspaceCatalogLiveSessionInput {
+  readonly sessionName: string;
+  readonly paneCount: number;
+}
+
+/**
+ * Host-neutral catalog/live join. Durable intent and observed tmux state stay
+ * in separate collections; availability is only a convenience projection of
+ * an exact session-name match and never turns intent into live state.
+ */
+export function projectWorkspaceCatalogV2(
+  daemon: z.input<typeof DaemonInstanceIdentitySchemaZ>,
+  intents: readonly WorkspaceCatalogIntentInput[],
+  liveSessions: readonly WorkspaceCatalogLiveSessionInput[],
+): WorkspaceCatalogResourceV2 {
+  const observed = new Set(liveSessions.map(({ sessionName }) => sessionName));
+  return WorkspaceCatalogResourceV2SchemaZ.parse({
+    version: WORKSPACE_CATALOG_RESOURCE_V2_VERSION,
+    daemon,
+    intents: intents.map((intent) => ({
+      ...intent,
+      availability: observed.has(intent.sessionName) ? "live" : "stopped",
+    })),
+    liveSessions,
+  });
+}

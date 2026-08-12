@@ -8653,7 +8653,19 @@ var init_daemon_resource_request = __esm({
 
 // packages/contracts/src/workspace-catalog-resource.ts
 import { z as z54 } from "zod";
-var WORKSPACE_CATALOG_RESOURCE_VERSION, WorkspaceCatalogEntryV1SchemaZ, WorkspaceCatalogResourceV1SchemaZ;
+function projectWorkspaceCatalogV2(daemon, intents, liveSessions2) {
+  const observed = new Set(liveSessions2.map(({ sessionName }) => sessionName));
+  return WorkspaceCatalogResourceV2SchemaZ.parse({
+    version: WORKSPACE_CATALOG_RESOURCE_V2_VERSION,
+    daemon,
+    intents: intents.map((intent) => ({
+      ...intent,
+      availability: observed.has(intent.sessionName) ? "live" : "stopped"
+    })),
+    liveSessions: liveSessions2
+  });
+}
+var WORKSPACE_CATALOG_RESOURCE_VERSION, WorkspaceCatalogEntryV1SchemaZ, WorkspaceCatalogResourceV1SchemaZ, WORKSPACE_CATALOG_RESOURCE_V2_VERSION, WorkspaceCatalogIntentV2SchemaZ, WorkspaceCatalogLiveSessionV2SchemaZ, WorkspaceCatalogResourceV2SchemaZ;
 var init_workspace_catalog_resource = __esm({
   "packages/contracts/src/workspace-catalog-resource.ts"() {
     "use strict";
@@ -8667,6 +8679,23 @@ var init_workspace_catalog_resource = __esm({
       version: z54.literal(WORKSPACE_CATALOG_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       workspaces: z54.array(WorkspaceCatalogEntryV1SchemaZ)
+    }).strict();
+    WORKSPACE_CATALOG_RESOURCE_V2_VERSION = 2;
+    WorkspaceCatalogIntentV2SchemaZ = z54.object({
+      workspaceName: z54.string().min(1),
+      sessionName: z54.string().min(1),
+      source: z54.enum(["project", "workspace"]),
+      availability: z54.enum(["live", "stopped"])
+    }).strict();
+    WorkspaceCatalogLiveSessionV2SchemaZ = z54.object({
+      sessionName: z54.string().min(1),
+      paneCount: z54.number().int().nonnegative()
+    }).strict();
+    WorkspaceCatalogResourceV2SchemaZ = z54.object({
+      version: z54.literal(WORKSPACE_CATALOG_RESOURCE_V2_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      intents: z54.array(WorkspaceCatalogIntentV2SchemaZ),
+      liveSessions: z54.array(WorkspaceCatalogLiveSessionV2SchemaZ)
     }).strict();
   }
 });
@@ -12369,10 +12398,10 @@ __export(classify_exports, {
 });
 function parseAuthority(raw, nowSec) {
   if (!raw) return null;
-  const sep8 = raw.lastIndexOf(":");
-  if (sep8 === -1) return null;
-  const state = raw.slice(0, sep8);
-  const epoch = Number(raw.slice(sep8 + 1));
+  const sep9 = raw.lastIndexOf(":");
+  if (sep9 === -1) return null;
+  const state = raw.slice(0, sep9);
+  const epoch = Number(raw.slice(sep9 + 1));
   if (!AUTHORITY_STATES.has(state) || !Number.isFinite(epoch)) return null;
   if ((state === "working" || state === "blocked") && nowSec - epoch > AUTHORITY_STALE_SECONDS) {
     return null;
@@ -12388,9 +12417,9 @@ function sanitizeAgentText(raw) {
 }
 function parseAuthorityEpoch(raw) {
   if (!raw) return null;
-  const sep8 = raw.lastIndexOf(":");
-  if (sep8 === -1) return null;
-  const epoch = Number(raw.slice(sep8 + 1));
+  const sep9 = raw.lastIndexOf(":");
+  if (sep9 === -1) return null;
+  const epoch = Number(raw.slice(sep9 + 1));
   return Number.isFinite(epoch) ? epoch : null;
 }
 function classifyInstant(snapshot, manifest) {
@@ -12750,6 +12779,126 @@ var init_process_tree = __esm({
   }
 });
 
+// packages/daemon/src/lib/runtime-namespace.ts
+import { homedir as homedir4 } from "node:os";
+import { existsSync as existsSync7, realpathSync as realpathSync4 } from "node:fs";
+import { basename as basename5, dirname as dirname7, isAbsolute as isAbsolute2, join as join7, relative as relative2, resolve as resolve7, sep as sep2 } from "node:path";
+function nonEmpty(env, key) {
+  const value = env[key]?.trim();
+  return value ? value : void 0;
+}
+function absolutePath(value, cwd, key) {
+  const path2 = isAbsolute2(value) ? value : resolve7(cwd, value);
+  if (!isAbsolute2(path2)) throw new TypeError(`${key} must resolve to an absolute path`);
+  return path2;
+}
+function pathIdentity(path2) {
+  let cursor = resolve7(path2);
+  const suffix = [];
+  while (!existsSync7(cursor)) {
+    const parent = dirname7(cursor);
+    if (parent === cursor) break;
+    suffix.unshift(basename5(cursor));
+    cursor = parent;
+  }
+  return resolve7(existsSync7(cursor) ? realpathSync4(cursor) : cursor, ...suffix);
+}
+function isInsideOrEqual(path2, parent) {
+  const child = pathIdentity(path2);
+  const root = pathIdentity(parent);
+  const offset = relative2(root, child);
+  return offset === "" || !offset.startsWith(`..${sep2}`) && offset !== "..";
+}
+function runtimeMode(env) {
+  const raw = nonEmpty(env, RUNTIME_MODE_ENV) ?? "production";
+  if (!["production", "test", "smoke", "testdrive", "performance"].includes(raw)) {
+    throw new TypeError(`${RUNTIME_MODE_ENV} has an unsupported value`);
+  }
+  return raw;
+}
+function resolveRuntimeNamespace(options = {}) {
+  const env = options.env ?? process.env;
+  const userHome = options.userHome ?? homedir4();
+  const cwd = options.cwd ?? process.cwd();
+  const mode = runtimeMode(env);
+  const isolated = ISOLATED_MODES.has(mode);
+  const canonicalHome = join7(userHome, ".tmux-ide");
+  const configuredHome = nonEmpty(env, STATE_HOME_ENV);
+  if (isolated && !configuredHome) {
+    throw new TypeError(`${mode} runtime requires an explicit ${STATE_HOME_ENV}`);
+  }
+  const stateHome2 = absolutePath(configuredHome ?? canonicalHome, cwd, STATE_HOME_ENV);
+  const registryDir2 = absolutePath(
+    nonEmpty(env, REGISTRY_DIR_ENV) ?? stateHome2,
+    cwd,
+    REGISTRY_DIR_ENV
+  );
+  const daemonInfoDir = absolutePath(
+    nonEmpty(env, DAEMON_INFO_DIR_ENV) ?? stateHome2,
+    cwd,
+    DAEMON_INFO_DIR_ENV
+  );
+  const tmuxSocketName = nonEmpty(env, TMUX_SOCKET_NAME_ENV);
+  const tmuxSocketPath = nonEmpty(env, TMUX_SOCKET_PATH_ENV);
+  const cleanupToken = nonEmpty(env, CLEANUP_TOKEN_ENV) ?? null;
+  if (tmuxSocketName && tmuxSocketPath) {
+    throw new TypeError(
+      `configure only one of ${TMUX_SOCKET_NAME_ENV} and ${TMUX_SOCKET_PATH_ENV}`
+    );
+  }
+  if (tmuxSocketName && !SAFE_SOCKET_NAME.test(tmuxSocketName)) {
+    throw new TypeError(`${TMUX_SOCKET_NAME_ENV} is invalid`);
+  }
+  const tmuxSocket = tmuxSocketPath ? { kind: "path", path: absolutePath(tmuxSocketPath, cwd, TMUX_SOCKET_PATH_ENV) } : { kind: "name", name: tmuxSocketName ?? "default" };
+  if (isolated && tmuxSocket.kind === "name" && tmuxSocket.name === "default") {
+    throw new TypeError(`${mode} runtime requires a non-default ${TMUX_SOCKET_NAME_ENV}`);
+  }
+  if (isolated && isInsideOrEqual(stateHome2, canonicalHome)) {
+    throw new TypeError(`${mode} runtime cannot use the canonical tmux-ide state home`);
+  }
+  if (isolated && (isInsideOrEqual(registryDir2, canonicalHome) || isInsideOrEqual(daemonInfoDir, canonicalHome))) {
+    throw new TypeError(`${mode} runtime cannot use canonical registry or daemon state`);
+  }
+  if (isolated && tmuxSocket.kind === "path" && isInsideOrEqual(tmuxSocket.path, canonicalHome)) {
+    throw new TypeError(`${mode} runtime cannot use a tmux socket inside canonical state`);
+  }
+  if (isolated && cleanupToken === null) {
+    throw new TypeError(`${mode} runtime requires an explicit ${CLEANUP_TOKEN_ENV}`);
+  }
+  if (cleanupToken !== null && !SAFE_CLEANUP_TOKEN.test(cleanupToken)) {
+    throw new TypeError(`${CLEANUP_TOKEN_ENV} is invalid`);
+  }
+  return Object.freeze({
+    mode,
+    stateHome: stateHome2,
+    registryDir: registryDir2,
+    daemonInfoDir,
+    controlSocketPath: join7(stateHome2, "control.sock"),
+    eventLogPath: join7(stateHome2, "events.jsonl"),
+    tmuxSocket,
+    cleanupToken,
+    namespaceId: isolated ? cleanupToken : "canonical",
+    persistence: isolated ? "ephemeral" : "durable",
+    isolated
+  });
+}
+var RUNTIME_MODE_ENV, STATE_HOME_ENV, REGISTRY_DIR_ENV, DAEMON_INFO_DIR_ENV, TMUX_SOCKET_NAME_ENV, TMUX_SOCKET_PATH_ENV, CLEANUP_TOKEN_ENV, ISOLATED_MODES, SAFE_SOCKET_NAME, SAFE_CLEANUP_TOKEN;
+var init_runtime_namespace = __esm({
+  "packages/daemon/src/lib/runtime-namespace.ts"() {
+    "use strict";
+    RUNTIME_MODE_ENV = "TMUX_IDE_RUNTIME_MODE";
+    STATE_HOME_ENV = "TMUX_IDE_HOME";
+    REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
+    DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
+    TMUX_SOCKET_NAME_ENV = "TMUX_IDE_TMUX_SOCKET_NAME";
+    TMUX_SOCKET_PATH_ENV = "TMUX_IDE_TMUX_SOCKET_PATH";
+    CLEANUP_TOKEN_ENV = "TMUX_IDE_CLEANUP_TOKEN";
+    ISOLATED_MODES = /* @__PURE__ */ new Set(["test", "smoke", "testdrive", "performance"]);
+    SAFE_SOCKET_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u;
+    SAFE_CLEANUP_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/u;
+  }
+});
+
 // packages/daemon/src/lib/canonical-daemon.ts
 var canonical_daemon_exports = {};
 __export(canonical_daemon_exports, {
@@ -12786,18 +12935,12 @@ import {
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname7, join as join7 } from "node:path";
-function nonEmptyEnvironmentValue(name) {
-  const value = process.env[name];
-  return value !== void 0 && value.length > 0 ? value : void 0;
-}
+import { dirname as dirname8, join as join8 } from "node:path";
 function getCanonicalDaemonInfoPath() {
-  const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV) ?? join7(homedir4(), ".tmux-ide");
-  return join7(dir, DAEMON_INFO_FILE);
+  return join8(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE);
 }
 function getCanonicalDaemonClaimPath() {
-  return join7(dirname7(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
+  return join8(dirname8(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
 }
 function observation(stat) {
   return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
@@ -12860,7 +13003,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
   try {
     const pathStat = lstatSync(path2);
     const pathObservation = observation(pathStat);
-    const parentStat = lstatSync(dirname7(path2));
+    const parentStat = lstatSync(dirname8(path2));
     if (parentStat.isSymbolicLink()) {
       return invalidState(
         "parent-symlink",
@@ -12931,7 +13074,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
     descriptor2 = openSync(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const openedStat = fstatSync(descriptor2);
     const openedObservation = observation(openedStat);
-    const reopenedParentStat = lstatSync(dirname7(path2));
+    const reopenedParentStat = lstatSync(dirname8(path2));
     if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || !sameFileIdentity(parentStat, reopenedParentStat) || !reopenedParentStat.isDirectory() || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0 || typeof process.getuid === "function" && reopenedParentStat.uid !== process.getuid() || (reopenedParentStat.mode & 63) !== 0) {
       return invalidState(
         "changed-while-opening",
@@ -12984,7 +13127,7 @@ function inspectCanonicalDaemonClaimPath(path2) {
     if ((claimStat.mode & 63) !== 0) {
       return { status: "invalid", detail: "daemon claim directory is not owner-only" };
     }
-    const ownerPath = join7(path2, DAEMON_CLAIM_OWNER_FILE);
+    const ownerPath = join8(path2, DAEMON_CLAIM_OWNER_FILE);
     const ownerStat = lstatSync(ownerPath);
     if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
       return { status: "invalid", detail: "daemon claim owner must be a real file" };
@@ -13050,7 +13193,7 @@ function retireCanonicalClaimIfMatches(expected) {
 }
 function tryAcquireCanonicalDaemonClaim() {
   const path2 = getCanonicalDaemonClaimPath();
-  const root = dirname7(path2);
+  const root = dirname8(path2);
   try {
     prepareCanonicalDaemonRoot(root);
   } catch (error) {
@@ -13067,7 +13210,7 @@ function tryAcquireCanonicalDaemonClaim() {
     };
     const candidate = `${path2}.${claim.claimId}.candidate`;
     mkdirSync4(candidate, { mode: 448 });
-    writeFileSync4(join7(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
+    writeFileSync4(join8(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
 `, {
       encoding: "utf-8",
       mode: 384
@@ -13113,7 +13256,7 @@ function releaseCanonicalDaemonClaim(claim) {
 function writeCanonicalDaemonInfo(info, claim) {
   assertCanonicalDaemonClaimHeld(claim);
   const path2 = getCanonicalDaemonInfoPath();
-  prepareCanonicalDaemonRoot(dirname7(path2));
+  prepareCanonicalDaemonRoot(dirname8(path2));
   const tmpPath = `${path2}.${claim.claimId}.${randomUUID()}.tmp`;
   const persisted = {
     pid: info.pid,
@@ -13200,7 +13343,7 @@ function pidLiveness(pid) {
 function canonicalDaemonClaimAllowsStartupAttempt() {
   const claimPath = getCanonicalDaemonClaimPath();
   try {
-    const root = lstatSync(dirname7(claimPath));
+    const root = lstatSync(dirname8(claimPath));
     if (root.isSymbolicLink() || !root.isDirectory() || typeof process.getuid === "function" && root.uid !== process.getuid() || (root.mode & 63) !== 0) {
       return false;
     }
@@ -13269,13 +13412,12 @@ async function probeCanonicalDaemonIdentity(info, parentSignal) {
     return null;
   }
 }
-var DAEMON_INFO_DIR_ENV, REGISTRY_DIR_ENV, DAEMON_INFO_FILE, DAEMON_CLAIM_DIR, DAEMON_CLAIM_OWNER_FILE, MAX_DAEMON_INFO_BYTES, MAX_DAEMON_CLAIM_BYTES, activeClaims;
+var DAEMON_INFO_FILE, DAEMON_CLAIM_DIR, DAEMON_CLAIM_OWNER_FILE, MAX_DAEMON_INFO_BYTES, MAX_DAEMON_CLAIM_BYTES, activeClaims;
 var init_canonical_daemon = __esm({
   "packages/daemon/src/lib/canonical-daemon.ts"() {
     "use strict";
     init_src();
-    DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
-    REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
+    init_runtime_namespace();
     DAEMON_INFO_FILE = "daemon.json";
     DAEMON_CLAIM_DIR = "daemon.claim";
     DAEMON_CLAIM_OWNER_FILE = "owner.json";
@@ -13404,8 +13546,8 @@ function stripAnsi(input) {
 function parseSnapshot(raw, opts = {}) {
   const lines = opts.lines ?? DEFAULT_LINES;
   const text = stripAnsi(raw ?? "");
-  const nonEmpty = text.split("\n").map((line) => line.replace(/\s+$/, "")).filter((line) => line.length > 0);
-  const bottomNonEmpty = lines > 0 ? nonEmpty.slice(-lines) : [];
+  const nonEmpty2 = text.split("\n").map((line) => line.replace(/\s+$/, "")).filter((line) => line.length > 0);
+  const bottomNonEmpty = lines > 0 ? nonEmpty2.slice(-lines) : [];
   return { bottomNonEmpty, text, raw: raw ?? "" };
 }
 function readPaneSnapshot(target, opts = {}) {
@@ -13723,9 +13865,9 @@ __export(app_config_exports, {
   parseAppConfig: () => parseAppConfig,
   updateAppConfig: () => updateAppConfig
 });
-import { existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync8, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync8, mkdirSync as mkdirSync5, readFileSync as readFileSync8, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname8, join as join8 } from "node:path";
+import { dirname as dirname9, join as join9 } from "node:path";
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -13836,11 +13978,11 @@ function parseAppConfig(input) {
   };
 }
 function appConfigPath() {
-  return process.env.TMUX_IDE_CONFIG ?? join8(homedir5(), ".tmux-ide", "config.json");
+  return process.env.TMUX_IDE_CONFIG ?? join9(homedir5(), ".tmux-ide", "config.json");
 }
 function loadAppConfig() {
   const path2 = appConfigPath();
-  if (!existsSync7(path2)) return parseAppConfig(void 0);
+  if (!existsSync8(path2)) return parseAppConfig(void 0);
   try {
     return parseAppConfig(JSON.parse(readFileSync8(path2, "utf-8")));
   } catch {
@@ -13856,7 +13998,7 @@ function _resetForTests() {
 }
 function loadRawAppConfig() {
   const path2 = appConfigPath();
-  if (!existsSync7(path2)) return {};
+  if (!existsSync8(path2)) return {};
   try {
     const parsed = JSON.parse(readFileSync8(path2, "utf-8"));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
@@ -13885,7 +14027,7 @@ function mergeConfigPatch(raw, patch) {
 function updateAppConfig(patch) {
   const path2 = appConfigPath();
   const merged = mergeConfigPatch(loadRawAppConfig(), patch);
-  mkdirSync5(dirname8(path2), { recursive: true });
+  mkdirSync5(dirname9(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync5(tmp, `${JSON.stringify(merged, null, 2)}
 `, "utf-8");
@@ -13960,7 +14102,7 @@ __export(manifest_pack_exports, {
   validateManifestPack: () => validateManifestPack
 });
 import { mkdirSync as mkdirSync6, readFileSync as readFileSync9, renameSync as renameSync4, writeFileSync as writeFileSync6 } from "node:fs";
-import { dirname as dirname9, join as join9 } from "node:path";
+import { dirname as dirname10, join as join10 } from "node:path";
 import { fileURLToPath } from "node:url";
 function manifestPackUrl(version = getCurrentVersion()) {
   const v = version.startsWith("v") ? version.slice(1) : version;
@@ -14008,10 +14150,10 @@ function validateManifestPack(value) {
   };
 }
 function packDir() {
-  return join9(overrideDir(), "pack");
+  return join10(overrideDir(), "pack");
 }
 function packPath() {
-  return join9(packDir(), "manifest-pack.json");
+  return join10(packDir(), "manifest-pack.json");
 }
 async function fetchManifestPack(url, timeoutMs = 5e3) {
   if (!isAllowedPackUrl(url)) {
@@ -14050,7 +14192,7 @@ async function fetchManifestPack(url, timeoutMs = 5e3) {
   return verdict.pack;
 }
 function installManifestPack(pack, dest = packPath()) {
-  mkdirSync6(dirname9(dest), { recursive: true });
+  mkdirSync6(dirname10(dest), { recursive: true });
   const tmp = `${dest}.${process.pid}.tmp`;
   writeFileSync6(tmp, JSON.stringify(pack, null, 2));
   renameSync4(tmp, dest);
@@ -14107,9 +14249,9 @@ __export(update_check_exports, {
   updateCachePath: () => updateCachePath,
   writeUpdateCache: () => writeUpdateCache
 });
-import { existsSync as existsSync8, mkdirSync as mkdirSync7, readFileSync as readFileSync10, writeFileSync as writeFileSync7 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync7, readFileSync as readFileSync10, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname10, join as join10 } from "node:path";
+import { dirname as dirname11, join as join11 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function parseSemver(version) {
   const core = version.trim().replace(/^v/i, "").split("+")[0] ?? "";
@@ -14158,12 +14300,12 @@ function deriveStatus(latest, currentVersion) {
   };
 }
 function updateCachePath() {
-  const home = process.env.TMUX_IDE_HOME ?? join10(homedir6(), ".tmux-ide");
-  return join10(home, "update-check.json");
+  const home = process.env.TMUX_IDE_HOME ?? join11(homedir6(), ".tmux-ide");
+  return join11(home, "update-check.json");
 }
 function readUpdateCache() {
   const path2 = updateCachePath();
-  if (!existsSync8(path2)) return null;
+  if (!existsSync9(path2)) return null;
   try {
     const parsed = JSON.parse(readFileSync10(path2, "utf-8"));
     if (!parsed || typeof parsed !== "object") return null;
@@ -14179,7 +14321,7 @@ function readUpdateCache() {
 function writeUpdateCache(cache3) {
   const path2 = updateCachePath();
   try {
-    mkdirSync7(dirname10(path2), { recursive: true });
+    mkdirSync7(dirname11(path2), { recursive: true });
     writeFileSync7(path2, JSON.stringify(cache3));
   } catch {
   }
@@ -14198,11 +14340,11 @@ async function fetchLatestVersion(timeoutMs = 3e3) {
   }
 }
 function getCurrentVersion() {
-  const here = dirname10(fileURLToPath2(import.meta.url));
+  const here = dirname11(fileURLToPath2(import.meta.url));
   const candidates = [
-    join10(here, "../package.json"),
+    join11(here, "../package.json"),
     // bundled bin/cli.js → repo root
-    join10(here, "../../../../package.json")
+    join11(here, "../../../../package.json")
     // dev src/lib → repo root
   ];
   for (const candidate of candidates) {
@@ -14274,9 +14416,9 @@ __export(tui_binary_exports, {
   tuiPlatformTag: () => tuiPlatformTag,
   tuiStateHome: () => tuiStateHome
 });
-import { chmodSync as chmodSync3, existsSync as existsSync9, mkdirSync as mkdirSync8, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
+import { chmodSync as chmodSync3, existsSync as existsSync10, mkdirSync as mkdirSync8, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname11, join as join11 } from "node:path";
+import { dirname as dirname12, join as join12 } from "node:path";
 import { gunzipSync } from "node:zlib";
 function tuiPlatformTag(platform = process.platform, arch = process.arch) {
   return SUPPORTED[`${platform}-${arch}`] ?? null;
@@ -14294,16 +14436,16 @@ function releaseAssetUrl(version, tag) {
   return `https://github.com/${RELEASE_REPO}/releases/download/v${normalizeVersion(version)}/${releaseAssetName(tag)}`;
 }
 function downloadedTuiPath(home, tag, version) {
-  return join11(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
+  return join12(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
 }
 function tuiStateHome() {
-  return process.env.TMUX_IDE_HOME ?? join11(homedir7(), ".tmux-ide");
+  return process.env.TMUX_IDE_HOME ?? join12(homedir7(), ".tmux-ide");
 }
 function findDownloadedTui(version = getCurrentVersion()) {
   const tag = tuiPlatformTag();
   if (!tag) return null;
   const path2 = downloadedTuiPath(tuiStateHome(), tag, version);
-  return existsSync9(path2) ? path2 : null;
+  return existsSync10(path2) ? path2 : null;
 }
 async function downloadTuiBinary(opts = {}) {
   const log = opts.log ?? (() => {
@@ -14317,7 +14459,7 @@ async function downloadTuiBinary(opts = {}) {
   }
   const url = releaseAssetUrl(version, tag);
   const dest = downloadedTuiPath(tuiStateHome(), tag, version);
-  mkdirSync8(dirname11(dest), { recursive: true });
+  mkdirSync8(dirname12(dest), { recursive: true });
   log(`downloading ${url}`);
   const res = await fetch(url);
   if (!res.ok) {
@@ -14357,9 +14499,9 @@ var init_tui_binary = __esm({
 });
 
 // packages/daemon/src/tui/compiled.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync9 } from "node:fs";
+import { existsSync as existsSync11, mkdirSync as mkdirSync9 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
-import { dirname as dirname12, join as join12, resolve as resolve7 } from "node:path";
+import { dirname as dirname13, join as join13, resolve as resolve8 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { execFileSync as execFileSync5 } from "node:child_process";
 function resolveTuiLaunch(input) {
@@ -14388,14 +14530,14 @@ function resolveTuiLaunch(input) {
 }
 function findCompiledTui() {
   const override = process.env.TMUX_IDE_TUI_BIN;
-  if (override) return existsSync10(override) ? override : null;
+  if (override) return existsSync11(override) ? override : null;
   const anchors = [];
-  if (process.argv[1]) anchors.push(dirname12(process.argv[1]));
+  if (process.argv[1]) anchors.push(dirname13(process.argv[1]));
   anchors.push(__dirname);
   for (const anchor of anchors) {
     for (const rel of BINARY_RELS) {
-      const candidate = resolve7(anchor, rel);
-      if (existsSync10(candidate)) return candidate;
+      const candidate = resolve8(anchor, rel);
+      if (existsSync11(candidate)) return candidate;
     }
   }
   return findDownloadedTui();
@@ -14409,7 +14551,7 @@ function isBunAvailable() {
   }
 }
 function compiledTuiRuntimeDir(home = homedir8()) {
-  return join12(home, ".tmux-ide", "runtime", "compiled-tui");
+  return join13(home, ".tmux-ide", "runtime", "compiled-tui");
 }
 function ensureCompiledTuiRuntimeDir(home = homedir8()) {
   const dir = compiledTuiRuntimeDir(home);
@@ -14421,7 +14563,7 @@ var init_compiled = __esm({
   "packages/daemon/src/tui/compiled.ts"() {
     "use strict";
     init_tui_binary();
-    __dirname = dirname12(fileURLToPath3(import.meta.url));
+    __dirname = dirname13(fileURLToPath3(import.meta.url));
     BINARY_RELS = [
       "../packages/daemon/dist/tui/tmux-ide-tui",
       "../../dist/tui/tmux-ide-tui",
@@ -14449,15 +14591,15 @@ __export(sidebar_exports, {
   sidebarWidgetCommand: () => sidebarWidgetCommand,
   sidebarWidgetScript: () => sidebarWidgetScript
 });
-import { existsSync as existsSync11 } from "node:fs";
-import { dirname as dirname13, resolve as resolve8 } from "node:path";
+import { existsSync as existsSync12 } from "node:fs";
+import { dirname as dirname14, resolve as resolve9 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 function sidebarWidgetScript() {
   const candidates = [
-    resolve8(__dirname2, "../../widgets/sidebar/index.tsx"),
-    resolve8(__dirname2, "../packages/daemon/src/widgets/sidebar/index.tsx")
+    resolve9(__dirname2, "../../widgets/sidebar/index.tsx"),
+    resolve9(__dirname2, "../packages/daemon/src/widgets/sidebar/index.tsx")
   ];
-  return candidates.find((p) => existsSync11(p)) ?? candidates[0];
+  return candidates.find((p) => existsSync12(p)) ?? candidates[0];
 }
 function sidebarWidgetCommand(scriptPath, session, dir, theme) {
   const args = [`--session=${session}`, `--dir=${dir}`];
@@ -14466,7 +14608,7 @@ function sidebarWidgetCommand(scriptPath, session, dir, theme) {
     surface: "sidebar",
     scriptPath,
     args,
-    checkoutExists: existsSync11(scriptPath),
+    checkoutExists: existsSync12(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -14547,7 +14689,7 @@ var init_sidebar = __esm({
     init_shell();
     init_sessions2();
     init_compiled();
-    __dirname2 = dirname13(fileURLToPath4(import.meta.url));
+    __dirname2 = dirname14(fileURLToPath4(import.meta.url));
     SIDEBAR_KEY = "M-b";
     DEFAULT_SIDEBAR_WIDTH = 30;
   }
@@ -14560,13 +14702,13 @@ __export(resolve_exports, {
   resolveWidgetCommand: () => resolveWidgetCommand,
   resolveWidgetSpawn: () => resolveWidgetSpawn
 });
-import { resolve as resolve9, dirname as dirname14 } from "node:path";
-import { existsSync as existsSync12 } from "node:fs";
+import { resolve as resolve10, dirname as dirname15 } from "node:path";
+import { existsSync as existsSync13 } from "node:fs";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 function widgetEntryPath(entry) {
-  const sibling = resolve9(__dirname3, entry);
-  if (existsSync12(sibling)) return sibling;
-  return resolve9(__dirname3, "../packages/daemon/src/widgets", entry);
+  const sibling = resolve10(__dirname3, entry);
+  if (existsSync13(sibling)) return sibling;
+  return resolve10(__dirname3, "../packages/daemon/src/widgets", entry);
 }
 function widgetArgs(opts) {
   const args = [`--session=${opts.session}`, `--dir=${opts.dir}`];
@@ -14582,7 +14724,7 @@ function resolveWidgetCommand(type, opts) {
     surface: type,
     scriptPath,
     args: widgetArgs(opts),
-    checkoutExists: existsSync12(scriptPath),
+    checkoutExists: existsSync13(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -14604,7 +14746,7 @@ function resolveWidgetSpawn(type, opts) {
     surface: type,
     scriptPath,
     args: widgetArgs(opts),
-    checkoutExists: existsSync12(scriptPath),
+    checkoutExists: existsSync13(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -14621,7 +14763,7 @@ var init_resolve = __esm({
     "use strict";
     init_shell();
     init_compiled();
-    __dirname3 = dirname14(fileURLToPath5(import.meta.url));
+    __dirname3 = dirname15(fileURLToPath5(import.meta.url));
     WIDGET_ENTRY_POINTS = {
       explorer: "explorer/index.tsx",
       changes: "changes/index.tsx",
@@ -14630,15 +14772,15 @@ var init_resolve = __esm({
       config: "config/index.tsx",
       sidebar: "sidebar/index.tsx"
     };
-    REPO_ROOT = existsSync12(resolve9(__dirname3, "explorer/index.tsx")) ? resolve9(__dirname3, "../../../..") : resolve9(__dirname3, "..");
+    REPO_ROOT = existsSync13(resolve10(__dirname3, "explorer/index.tsx")) ? resolve10(__dirname3, "../../../..") : resolve10(__dirname3, "..");
     WIDGET_TYPES = Object.keys(WIDGET_ENTRY_POINTS);
   }
 });
 
 // packages/daemon/src/tui/team/keymap.ts
-import { existsSync as existsSync13, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync14, readFileSync as readFileSync11 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 var ACTION_ORDER, DEFAULT_KEYMAP;
 var init_keymap = __esm({
   "packages/daemon/src/tui/team/keymap.ts"() {
@@ -15067,23 +15209,23 @@ __export(welcome_exports, {
   welcomeMarkerPath: () => welcomeMarkerPath
 });
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync14, mkdirSync as mkdirSync10, writeFileSync as writeFileSync9 } from "node:fs";
+import { existsSync as existsSync15, mkdirSync as mkdirSync10, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { dirname as dirname15, join as join14 } from "node:path";
+import { dirname as dirname16, join as join15 } from "node:path";
 function renderKey2(tmuxKey) {
   return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
 }
 function welcomeMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join14(homedir10(), ".tmux-ide");
-  return join14(home, "welcomed");
+  const home = process.env.TMUX_IDE_HOME ?? join15(homedir10(), ".tmux-ide");
+  return join15(home, "welcomed");
 }
 function shouldShowWelcome() {
-  return !existsSync14(welcomeMarkerPath()) && getAppConfig().welcome.show;
+  return !existsSync15(welcomeMarkerPath()) && getAppConfig().welcome.show;
 }
 function markWelcomed() {
   const path2 = welcomeMarkerPath();
   try {
-    mkdirSync10(dirname15(path2), { recursive: true });
+    mkdirSync10(dirname16(path2), { recursive: true });
     writeFileSync9(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
@@ -15138,12 +15280,12 @@ __export(offer_exports, {
   shouldOfferIntegration: () => shouldOfferIntegration
 });
 import { execFileSync as execFileSync6, spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync15, mkdirSync as mkdirSync11, writeFileSync as writeFileSync10 } from "node:fs";
+import { existsSync as existsSync16, mkdirSync as mkdirSync11, writeFileSync as writeFileSync10 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
-import { dirname as dirname16, join as join15 } from "node:path";
+import { dirname as dirname17, join as join16 } from "node:path";
 function integrationOfferMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join15(homedir11(), ".tmux-ide");
-  return join15(home, "integration-offered");
+  const home = process.env.TMUX_IDE_HOME ?? join16(homedir11(), ".tmux-ide");
+  return join16(home, "integration-offered");
 }
 function shouldOfferIntegration(input) {
   return input.claudeOnPath && !input.integrationInstalled && !input.markerPresent && input.offerEnabled;
@@ -15151,7 +15293,7 @@ function shouldOfferIntegration(input) {
 function markIntegrationOffered() {
   const path2 = integrationOfferMarkerPath();
   try {
-    mkdirSync11(dirname16(path2), { recursive: true });
+    mkdirSync11(dirname17(path2), { recursive: true });
     writeFileSync10(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
@@ -15177,7 +15319,7 @@ function maybeOfferIntegrationPopup() {
     offer = shouldOfferIntegration({
       claudeOnPath: claudeOnPath(),
       integrationInstalled: status2.installed,
-      markerPresent: existsSync15(integrationOfferMarkerPath()),
+      markerPresent: existsSync16(integrationOfferMarkerPath()),
       offerEnabled: getAppConfig().integrations.offer
     });
   } catch {
@@ -15255,7 +15397,7 @@ import { execFileSync as execFileSync7 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
 import { readdirSync as readdirSync2, readFileSync as readFileSync12, readlinkSync, statSync } from "node:fs";
 import { homedir as homedir12 } from "node:os";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 function codexIdFromOpenFiles(paths) {
   for (const path2 of paths) {
     const match = CODEX_ROLLOUT_RE.exec(path2);
@@ -15311,7 +15453,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   for (let offset = 0; offset <= MAX_SCAN_DAYS; offset++) {
     const day = new Date(nowMs - offset * 864e5);
     if (day.getTime() < cutoff - 864e5) break;
-    const dir = join16(
+    const dir = join17(
       root,
       String(day.getFullYear()),
       String(day.getMonth() + 1).padStart(2, "0"),
@@ -15320,7 +15462,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
     for (const name of io.listDir(dir)) {
       const parsed = parseCodexRolloutName(name);
       if (parsed && parsed.tsMs >= cutoff && parsed.tsMs <= nowMs + START_SLACK_MS) {
-        candidates.push({ tsMs: parsed.tsMs, path: join16(dir, name), id: parsed.id });
+        candidates.push({ tsMs: parsed.tsMs, path: join17(dir, name), id: parsed.id });
       }
     }
   }
@@ -15344,12 +15486,12 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   return null;
 }
 function cursorIdFromStateDir(chatsRoot, paneCwd, startMs, io) {
-  const hashed = join16(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
+  const hashed = join17(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
   const cutoff = startMs - START_SLACK_MS;
   let best = null;
   for (const name of io.listDir(hashed)) {
     if (!SAFE_SESSION_ID.test(name)) continue;
-    const mtime = io.mtimeMs(join16(hashed, name));
+    const mtime = io.mtimeMs(join17(hashed, name));
     if (mtime === null || mtime < cutoff) continue;
     if (!best || mtime > best.mtime) best = { name, mtime };
   }
@@ -15404,7 +15546,7 @@ function readOpenFiles(pid) {
     const paths = [];
     for (const name of names) {
       try {
-        const target = readlinkSync(join16(fdDir, name));
+        const target = readlinkSync(join17(fdDir, name));
         if (target.startsWith("/")) paths.push(target);
       } catch {
       }
@@ -15442,8 +15584,8 @@ function liveProbeIo() {
     openFiles: readOpenFiles,
     processStartMs: (pid) => processStartMs(pid),
     stateDir: liveStateDirIo,
-    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join16(homedir12(), ".codex", "sessions"),
-    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join16(homedir12(), ".cursor", "chats"),
+    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join17(homedir12(), ".codex", "sessions"),
+    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join17(homedir12(), ".cursor", "chats"),
     now: () => Date.now()
   };
 }
@@ -15509,7 +15651,8 @@ var init_registry = __esm({
     RegisteredProjectSchemaZ = DaemonRegisteredProjectSchemaZ;
     RegisterProjectRequestSchemaZ = z60.object({
       dir: z60.string().min(1),
-      name: z60.string().min(1).optional()
+      name: z60.string().min(1).optional(),
+      persistence: z60.enum(["durable", "volatile"]).optional()
     });
     InitProjectRequestSchemaZ = z60.object({
       dir: z60.string().min(1),
@@ -15519,19 +15662,19 @@ var init_registry = __esm({
 });
 
 // packages/daemon/src/lib/project-probe.ts
-import { basename as basename5, isAbsolute as isAbsolute2, resolve as resolve10 } from "node:path";
+import { basename as basename6, isAbsolute as isAbsolute3, resolve as resolve11 } from "node:path";
 function sanitizeName(raw) {
   return raw.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._-]/g, "").replace(/^-+|-+$/g, "");
 }
 async function probeProject(dir, io = realIo) {
-  const absoluteDir = isAbsolute2(dir) ? dir : resolve10(dir);
+  const absoluteDir = isAbsolute3(dir) ? dir : resolve11(dir);
   const resolution = await resolveProject(dir, {
     // Existing injected ProbeIo values predate canonicalization. Treat their
     // paths as canonical unless they explicitly provide a realpath operation,
     // so the probe remains a fully injected seam rather than touching real fs.
     io: { ...io, realpath: io.realpath ?? ((path2) => path2) }
   });
-  const rawName = basename5(absoluteDir);
+  const rawName = basename6(absoluteDir);
   const sanitized = sanitizeName(rawName);
   const name = sanitized.length > 0 ? sanitized : "project";
   const [gitOrigin, gitBranch] = await Promise.all([
@@ -15572,9 +15715,8 @@ var init_project_probe = __esm({
 
 // packages/daemon/src/lib/project-registry.ts
 import { EventEmitter } from "node:events";
-import { existsSync as existsSync16, mkdirSync as mkdirSync12, readFileSync as readFileSync13, renameSync as renameSync6, writeFileSync as writeFileSync11 } from "node:fs";
-import { homedir as homedir13 } from "node:os";
-import { dirname as dirname17, isAbsolute as isAbsolute3, join as join17, resolve as resolve11 } from "node:path";
+import { existsSync as existsSync17, mkdirSync as mkdirSync12, readFileSync as readFileSync13, renameSync as renameSync6, writeFileSync as writeFileSync11 } from "node:fs";
+import { dirname as dirname18, isAbsolute as isAbsolute4, join as join18, resolve as resolve12 } from "node:path";
 import { z as z61 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
@@ -15608,16 +15750,14 @@ function buildRegisteredProject(probe, name, registeredAt) {
   };
 }
 function registryDir() {
-  const override = process.env[REGISTRY_DIR_ENV2];
-  if (override && override.length > 0) return override;
-  return join17(homedir13(), ".tmux-ide");
+  return resolveRuntimeNamespace().registryDir;
 }
 function registryPath() {
-  return join17(registryDir(), "projects.json");
+  return join18(registryDir(), "projects.json");
 }
 function readDisk() {
   const path2 = registryPath();
-  if (!existsSync16(path2)) return [];
+  if (!existsSync17(path2)) return [];
   const raw = readFileSync13(path2, "utf-8");
   if (raw.trim().length === 0) return [];
   let parsed;
@@ -15640,7 +15780,7 @@ function readDisk() {
 }
 function writeDisk(projects) {
   const path2 = registryPath();
-  const dir = dirname17(path2);
+  const dir = dirname18(path2);
   mkdirSync12(dir, { recursive: true });
   const file = { version: 1, projects };
   const tmpPath = `${path2}.tmp`;
@@ -15648,13 +15788,19 @@ function writeDisk(projects) {
   renameSync6(tmpPath, path2);
 }
 function ensureCache() {
+  const activePath = registryPath();
+  if (cacheRegistryPath !== activePath) {
+    cache2 = null;
+    cacheRegistryPath = activePath;
+    volatileProjectNames.clear();
+  }
   if (cache2 !== null) return cache2;
   cache2 = readDisk();
   return cache2;
 }
 function commit(next) {
   cache2 = next;
-  writeDisk(next);
+  writeDisk(next.filter(({ name }) => !volatileProjectNames.has(name)));
   projectRegistryEmitter.emit("change");
 }
 function listProjects() {
@@ -15663,9 +15809,13 @@ function listProjects() {
 function getProject(name) {
   return ensureCache().find((p) => p.name === name) ?? null;
 }
+function isProjectVolatile(name) {
+  ensureCache();
+  return volatileProjectNames.has(name);
+}
 async function registerProject(input) {
-  const exists = input.exists ?? existsSync16;
-  const absoluteDir = isAbsolute3(input.dir) ? input.dir : resolve11(input.dir);
+  const exists = input.exists ?? existsSync17;
+  const absoluteDir = isAbsolute4(input.dir) ? input.dir : resolve12(input.dir);
   if (!exists(absoluteDir)) {
     throw new ProjectDirNotFoundError(absoluteDir);
   }
@@ -15688,7 +15838,13 @@ async function registerProject(input) {
   }
   const now = (input.now ?? (() => /* @__PURE__ */ new Date()))();
   const project = buildRegisteredProject(probe, resolvedName, now.toISOString());
-  commit(applyAction(state, { type: "register", project }));
+  if (input.persistence === "volatile") volatileProjectNames.add(project.name);
+  try {
+    commit(applyAction(state, { type: "register", project }));
+  } catch (error) {
+    volatileProjectNames.delete(project.name);
+    throw error;
+  }
   return project;
 }
 function unregisterProject(name) {
@@ -15696,7 +15852,13 @@ function unregisterProject(name) {
   if (!state.some((p) => p.name === name)) {
     throw new ProjectNotFoundError(name);
   }
-  commit(applyAction(state, { type: "unregister", name }));
+  const wasVolatile = volatileProjectNames.delete(name);
+  try {
+    commit(applyAction(state, { type: "unregister", name }));
+  } catch (error) {
+    if (wasVolatile) volatileProjectNames.add(name);
+    throw error;
+  }
 }
 async function refreshProject(name, options = {}) {
   const state = ensureCache();
@@ -15707,13 +15869,13 @@ async function refreshProject(name, options = {}) {
   commit(applyAction(state, { type: "replace", project: refreshed }));
   return refreshed;
 }
-var REGISTRY_DIR_ENV2, RegistryFileSchemaZ, ProjectRegistryError, ProjectAlreadyRegisteredError, ProjectNotFoundError, ProjectDirNotFoundError, projectRegistryEmitter, cache2;
+var RegistryFileSchemaZ, ProjectRegistryError, ProjectAlreadyRegisteredError, ProjectNotFoundError, ProjectDirNotFoundError, projectRegistryEmitter, cache2, cacheRegistryPath, volatileProjectNames;
 var init_project_registry = __esm({
   "packages/daemon/src/lib/project-registry.ts"() {
     "use strict";
     init_registry();
     init_project_probe();
-    REGISTRY_DIR_ENV2 = "TMUX_IDE_REGISTRY_DIR";
+    init_runtime_namespace();
     RegistryFileSchemaZ = z61.object({
       version: z61.literal(1),
       projects: z61.array(RegisteredProjectSchemaZ)
@@ -15749,6 +15911,8 @@ var init_project_registry = __esm({
     projectRegistryEmitter = new EventEmitter();
     projectRegistryEmitter.setMaxListeners(0);
     cache2 = null;
+    cacheRegistryPath = null;
+    volatileProjectNames = /* @__PURE__ */ new Set();
   }
 });
 
@@ -15871,14 +16035,13 @@ var init_chip = __esm({
 });
 
 // packages/daemon/src/lib/state-home.ts
-import { homedir as homedir14 } from "node:os";
-import { join as join18 } from "node:path";
 function stateHome() {
-  return process.env.TMUX_IDE_HOME ?? join18(homedir14(), ".tmux-ide");
+  return resolveRuntimeNamespace().stateHome;
 }
 var init_state_home = __esm({
   "packages/daemon/src/lib/state-home.ts"() {
     "use strict";
+    init_runtime_namespace();
   }
 });
 
@@ -15892,7 +16055,7 @@ __export(events_exports, {
   formatEventLine: () => formatEventLine,
   shouldRotate: () => shouldRotate
 });
-import { appendFileSync, existsSync as existsSync17, mkdirSync as mkdirSync13, renameSync as renameSync7, statSync as statSync2 } from "node:fs";
+import { appendFileSync, existsSync as existsSync18, mkdirSync as mkdirSync13, renameSync as renameSync7, statSync as statSync2 } from "node:fs";
 import { join as join19 } from "node:path";
 function diffFleet(prev, next) {
   const state = /* @__PURE__ */ new Map();
@@ -15927,7 +16090,7 @@ function appendEvents(events, now = () => (/* @__PURE__ */ new Date()).toISOStri
   const path2 = eventsPath();
   try {
     mkdirSync13(stateHome(), { recursive: true });
-    if (existsSync17(path2) && shouldRotate(statSync2(path2).size)) {
+    if (existsSync18(path2) && shouldRotate(statSync2(path2).size)) {
       renameSync7(path2, `${path2}.1`);
     }
     const ts = now();
@@ -16031,12 +16194,12 @@ var init_notify_prefs = __esm({
 
 // packages/daemon/src/tui/chrome/notify.ts
 import { execFileSync as execFileSync8, spawn as spawn4 } from "node:child_process";
-import { dirname as dirname18, resolve as resolve12 } from "node:path";
+import { dirname as dirname19, resolve as resolve13 } from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 import {
   closeSync as closeSync2,
   constants as fsConstants,
-  existsSync as existsSync18,
+  existsSync as existsSync19,
   openSync as openSync2,
   readFileSync as readFileSync14,
   writeSync
@@ -16220,7 +16383,7 @@ function soundArgv(platform) {
 }
 function playPingSound(platform = process.platform) {
   const argv = soundArgv(platform);
-  if (!argv || !existsSync18(argv[1])) return;
+  if (!argv || !existsSync19(argv[1])) return;
   try {
     const child = spawn4(argv[0], argv.slice(1), { stdio: "ignore", detached: true });
     child.on("error", () => {
@@ -16249,18 +16412,18 @@ function notifierExecuteCommand(session) {
   return `if tmux has-session -t ${host} 2>/dev/null; then tmux set-option -t ${shellSingleQuote(APP_HOST_SESSION)} ${APP_JUMP_OPTION} ${target}; tmux switch-client -t ${host}; else tmux switch-client -t ${target}; fi`;
 }
 function resolveNativeMacosNotifierPath(io = {}) {
-  const exists = io.exists ?? existsSync18;
+  const exists = io.exists ?? existsSync19;
   const cliPath = io.cliPath === void 0 ? process.env.TMUX_IDE_CLI : io.cliPath;
   const modulePath = io.modulePath ?? fileURLToPath6(import.meta.url);
-  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname18(resolve12(path2)));
+  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname19(resolve13(path2)));
   const visited = /* @__PURE__ */ new Set();
   for (const anchor of anchors) {
     let directory = anchor;
     while (!visited.has(directory)) {
       visited.add(directory);
-      const candidate = resolve12(directory, NATIVE_MACOS_NOTIFIER_RELATIVE_PATH);
-      if (exists(resolve12(candidate, NATIVE_MACOS_NOTIFIER_EXECUTABLE))) return candidate;
-      const parent = dirname18(directory);
+      const candidate = resolve13(directory, NATIVE_MACOS_NOTIFIER_RELATIVE_PATH);
+      if (exists(resolve13(candidate, NATIVE_MACOS_NOTIFIER_EXECUTABLE))) return candidate;
+      const parent = dirname19(directory);
       if (parent === directory) break;
       directory = parent;
     }
@@ -16388,7 +16551,7 @@ function applyKillSwitch(prefs, envValue) {
 }
 function readRawConfig() {
   const path2 = appConfigPath();
-  if (!existsSync18(path2)) return void 0;
+  if (!existsSync19(path2)) return void 0;
   try {
     return JSON.parse(readFileSync14(path2, "utf-8"));
   } catch {
@@ -16432,7 +16595,7 @@ var init_notify = __esm({
 });
 
 // packages/daemon/src/tui/chrome/notify-state.ts
-import { existsSync as existsSync19, mkdirSync as mkdirSync14, readFileSync as readFileSync15, writeFileSync as writeFileSync12 } from "node:fs";
+import { existsSync as existsSync20, mkdirSync as mkdirSync14, readFileSync as readFileSync15, writeFileSync as writeFileSync12 } from "node:fs";
 import { join as join20 } from "node:path";
 function notifyStatePath() {
   return join20(stateHome(), "notify-state.json");
@@ -16462,7 +16625,7 @@ function parseLastNotified(json2, nowMs) {
 }
 function loadLastNotified(nowMs = Date.now()) {
   const path2 = notifyStatePath();
-  if (!existsSync19(path2)) return /* @__PURE__ */ new Map();
+  if (!existsSync20(path2)) return /* @__PURE__ */ new Map();
   try {
     return parseLastNotified(readFileSync15(path2, "utf-8"), nowMs);
   } catch {
@@ -16485,9 +16648,9 @@ var init_notify_state = __esm({
 });
 
 // packages/daemon/src/tui/chrome/snapshot.ts
-import { existsSync as existsSync20, mkdirSync as mkdirSync15, readFileSync as readFileSync16, renameSync as renameSync8, writeFileSync as writeFileSync13 } from "node:fs";
-import { homedir as homedir15 } from "node:os";
-import { dirname as dirname19, join as join21 } from "node:path";
+import { existsSync as existsSync21, mkdirSync as mkdirSync15, readFileSync as readFileSync16, renameSync as renameSync8, writeFileSync as writeFileSync13 } from "node:fs";
+import { homedir as homedir13 } from "node:os";
+import { dirname as dirname20, join as join21 } from "node:path";
 import { z as z62 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
@@ -16602,15 +16765,15 @@ function collectFleetSnapshot(io = defaultIo) {
   return buildSnapshot(rawPanes, rawSessions, io.processTable());
 }
 function snapshotPath() {
-  return join21(homedir15(), ".tmux-ide", "snapshot.json");
+  return join21(homedir13(), ".tmux-ide", "snapshot.json");
 }
 function writeSnapshot(snapshot) {
   const path2 = snapshotPath();
   try {
-    mkdirSync15(dirname19(path2), { recursive: true });
+    mkdirSync15(dirname20(path2), { recursive: true });
     const tmp = `${path2}.tmp`;
     writeFileSync13(tmp, JSON.stringify(snapshot, null, 2) + "\n");
-    if (existsSync20(path2)) {
+    if (existsSync21(path2)) {
       try {
         renameSync8(path2, `${path2}.1`);
       } catch {
@@ -16623,7 +16786,7 @@ function writeSnapshot(snapshot) {
 function readSnapshot() {
   const path2 = snapshotPath();
   try {
-    if (!existsSync20(path2)) return null;
+    if (!existsSync21(path2)) return null;
     const raw = readFileSync16(path2, "utf-8");
     if (raw.trim().length === 0) return null;
     const result = FleetSnapshotSchemaZ.safeParse(JSON.parse(raw));
@@ -17416,7 +17579,7 @@ __export(launch_exports, {
   launchRuntimeDir: () => launchRuntimeDir,
   waitForPaneCommand: () => waitForPaneCommand
 });
-import { resolve as resolve13 } from "node:path";
+import { resolve as resolve14 } from "node:path";
 import { execSync } from "node:child_process";
 import { createHash as createHash4 } from "node:crypto";
 function stripWidgetPanes(rows) {
@@ -17476,7 +17639,7 @@ function buildPaneMap(rows, dir, rootPaneId, splitPaneFn) {
     for (let paneIdx = 1; paneIdx < panes.length; paneIdx++) {
       const pane = panes[paneIdx];
       const targetPane = rowPanes[paneIdx - 1];
-      const paneDir = pane.dir ? resolve13(dir, pane.dir) : dir;
+      const paneDir = pane.dir ? resolve14(dir, pane.dir) : dir;
       const newPaneId = splitPaneFn({
         targetPane,
         direction: "horizontal",
@@ -17534,7 +17697,7 @@ async function launch(targetDir, {
   attach: attach2 = true,
   sessionName
 } = {}) {
-  const inputDir = resolve13(targetDir ?? ".");
+  const inputDir = resolve14(targetDir ?? ".");
   const context = await resolveProjectConfigContext(inputDir);
   const dir = launchRuntimeDir(context);
   const config2 = await loadLaunchConfig(context, json2);
@@ -17677,14 +17840,14 @@ var init_yaml_io = __esm({
 });
 
 // packages/daemon/src/detect.ts
-import { resolve as resolve14, basename as basename6 } from "node:path";
-import { readFileSync as readFileSync17, existsSync as existsSync21 } from "node:fs";
+import { resolve as resolve15, basename as basename7 } from "node:path";
+import { readFileSync as readFileSync17, existsSync as existsSync22 } from "node:fs";
 function fileExists(dir, name) {
-  return existsSync21(resolve14(dir, name));
+  return existsSync22(resolve15(dir, name));
 }
 function readJson(dir, name) {
   try {
-    return JSON.parse(readFileSync17(resolve14(dir, name), "utf-8"));
+    return JSON.parse(readFileSync17(resolve15(dir, name), "utf-8"));
   } catch {
     return null;
   }
@@ -17746,7 +17909,7 @@ function detectStack(dir) {
     detected.language = detected.language ?? "python";
     detected.reasons.push('Detected Python from "pyproject.toml" or "requirements.txt".');
     try {
-      const pyproject = readFileSync17(resolve14(dir, "pyproject.toml"), "utf-8");
+      const pyproject = readFileSync17(resolve15(dir, "pyproject.toml"), "utf-8");
       if (pyproject.includes("fastapi"))
         pushFramework(detected, "fastapi", 'Found "fastapi" in pyproject.toml.');
       else if (pyproject.includes("django"))
@@ -17779,7 +17942,7 @@ function detectStack(dir) {
   return detected;
 }
 function suggestConfig(dir, detected) {
-  const name = basename6(dir);
+  const name = basename7(dir);
   const pm = detected.packageManager ?? "npm";
   const run = pm === "npm" ? "npm run" : pm;
   const config2 = {
@@ -17834,7 +17997,7 @@ function suggestConfig(dir, detected) {
   return config2;
 }
 async function detect(targetDir, { json: json2, write } = {}) {
-  const inputDir = resolve14(targetDir ?? ".");
+  const inputDir = resolve15(targetDir ?? ".");
   const context = write ? await resolveProjectConfigContext(inputDir) : null;
   const dir = context?.configWriteRoot ?? inputDir;
   const detected = detectStack(dir);
@@ -17898,12 +18061,12 @@ __export(skill_sync_exports, {
   syncSkill: () => syncSkill,
   versionMarker: () => versionMarker
 });
-import { existsSync as existsSync23, mkdirSync as mkdirSync17, readFileSync as readFileSync19, writeFileSync as writeFileSync15 } from "node:fs";
-import { homedir as homedir16 } from "node:os";
-import { dirname as dirname21, join as join23 } from "node:path";
+import { existsSync as existsSync24, mkdirSync as mkdirSync17, readFileSync as readFileSync19, writeFileSync as writeFileSync15 } from "node:fs";
+import { homedir as homedir14 } from "node:os";
+import { dirname as dirname22, join as join23 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 function claudeDir() {
-  return process.env.TMUX_IDE_CLAUDE_DIR ?? join23(homedir16(), ".claude");
+  return process.env.TMUX_IDE_CLAUDE_DIR ?? join23(homedir14(), ".claude");
 }
 function skillTargetDir() {
   return join23(claudeDir(), "skills", "tmux-ide");
@@ -17912,14 +18075,14 @@ function skillTargetFile() {
   return join23(skillTargetDir(), "SKILL.md");
 }
 function defaultSkillSource() {
-  const here = dirname21(fileURLToPath8(import.meta.url));
+  const here = dirname22(fileURLToPath8(import.meta.url));
   const candidates = [
     join23(here, "../skill/SKILL.md"),
     // bundled bin/cli.js → repo root
     join23(here, "../../../../skill/SKILL.md")
     // dev src/lib → repo root
   ];
-  return candidates.find((c) => existsSync23(c)) ?? candidates[0];
+  return candidates.find((c) => existsSync24(c)) ?? candidates[0];
 }
 function versionMarker(version) {
   return `<!-- tmux-ide-skill-version: ${version} -->`;
@@ -17934,7 +18097,7 @@ function rewriteVersionMarker(content, version) {
 }
 function installedSkillVersion(dir = skillTargetDir()) {
   const file = join23(dir, "SKILL.md");
-  if (!existsSync23(file)) return null;
+  if (!existsSync24(file)) return null;
   try {
     return parseSkillVersion(readFileSync19(file, "utf-8"));
   } catch {
@@ -17948,7 +18111,7 @@ function syncSkill({
   const rendered = rewriteVersionMarker(readFileSync19(source, "utf-8"), version);
   const dir = skillTargetDir();
   const target = join23(dir, "SKILL.md");
-  const existing = existsSync23(target) ? readFileSync19(target, "utf-8") : null;
+  const existing = existsSync24(target) ? readFileSync19(target, "utf-8") : null;
   if (existing === rendered) {
     return { action: "unchanged", path: target, to: version };
   }
@@ -18107,14 +18270,14 @@ function execTmuxAsync(args, signal) {
   return execMonitorCommandAsync("tmux", args, signal);
 }
 function execMonitorCommandAsync(executable, args, signal) {
-  return new Promise((resolve32, reject) => {
+  return new Promise((resolve34, reject) => {
     execFile2(
       executable,
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024, signal },
       (error, stdout) => {
         if (error) reject(error);
-        else resolve32(stdout.trim());
+        else resolve34(stdout.trim());
       }
     );
   });
@@ -18414,8 +18577,8 @@ var init_MonotonicPtyInput = __esm({
 });
 
 // packages/daemon/src/terminal/NodePtyAdapter.ts
-import { chmodSync as chmodSync4, existsSync as existsSync25, statSync as statSync3 } from "node:fs";
-import { dirname as dirname23, join as join24 } from "node:path";
+import { chmodSync as chmodSync4, existsSync as existsSync26, statSync as statSync3 } from "node:fs";
+import { dirname as dirname24, join as join24 } from "node:path";
 import { createRequire } from "node:module";
 import * as pty from "node-pty";
 function candidateSpawnHelperPaths() {
@@ -18426,7 +18589,7 @@ function candidateSpawnHelperPaths() {
   } catch {
     return [];
   }
-  const pkgDir = dirname23(pkgJsonPath);
+  const pkgDir = dirname24(pkgJsonPath);
   return [
     join24(pkgDir, "build", "Release", "spawn-helper"),
     join24(pkgDir, "build", "Debug", "spawn-helper"),
@@ -18438,7 +18601,7 @@ function ensureNodePtySpawnHelperExecutable(options = {}) {
   if (!options.force && !options.explicitPath && helperEnsured) return;
   const candidates = options.explicitPath ? [options.explicitPath] : candidateSpawnHelperPaths();
   for (const candidate of candidates) {
-    if (!existsSync25(candidate)) continue;
+    if (!existsSync26(candidate)) continue;
     try {
       chmodSync4(candidate, 493);
     } catch {
@@ -19450,12 +19613,15 @@ var init_pane_comms = __esm({
 
 // packages/daemon/src/lib/workspace-registry.ts
 import { EventEmitter as EventEmitter3 } from "node:events";
-import { existsSync as existsSync26, mkdirSync as mkdirSync18, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
-import { homedir as homedir17 } from "node:os";
-import { dirname as dirname24, join as join25 } from "node:path";
+import { existsSync as existsSync27, mkdirSync as mkdirSync18, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
+import { dirname as dirname25, join as join25 } from "node:path";
 import { z as z63 } from "zod";
 function getDefaultWorkspaceRegistry() {
-  if (!_default) _default = new WorkspaceRegistry();
+  const namespaceKey = resolveRuntimeNamespace().registryDir;
+  if (!_default || _defaultNamespaceKey !== namespaceKey) {
+    _default = new WorkspaceRegistry({ dir: namespaceKey });
+    _defaultNamespaceKey = namespaceKey;
+  }
   return _default;
 }
 function defaultListSessions() {
@@ -19470,12 +19636,12 @@ function defaultListSessions() {
     return [];
   }
 }
-var REGISTRY_DIR_ENV3, RegistryFileSchemaZ2, WorkspaceAlreadyExistsError, WorkspaceNotFoundError, WorkspaceRegistry, _default;
+var RegistryFileSchemaZ2, WorkspaceAlreadyExistsError, WorkspaceNotFoundError, WorkspaceRegistry, _default, _defaultNamespaceKey;
 var init_workspace_registry = __esm({
   "packages/daemon/src/lib/workspace-registry.ts"() {
     "use strict";
     init_src();
-    REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
+    init_runtime_namespace();
     RegistryFileSchemaZ2 = z63.object({
       version: z63.literal(1),
       workspaces: z63.array(WorkspaceSchemaZ)
@@ -19499,9 +19665,10 @@ var init_workspace_registry = __esm({
       listSessions;
       emitter = new EventEmitter3();
       workspaces = [];
+      volatileNames = /* @__PURE__ */ new Set();
       loaded = false;
       constructor(options = {}) {
-        this.dir = options.dir ?? process.env[REGISTRY_DIR_ENV3] ?? join25(homedir17(), ".tmux-ide");
+        this.dir = options.dir ?? resolveRuntimeNamespace().registryDir;
         this.listSessions = options.listSessions ?? defaultListSessions;
         this.emitter.setMaxListeners(0);
       }
@@ -19553,10 +19720,12 @@ var init_workspace_registry = __esm({
         };
         const previous = this.workspaces;
         this.workspaces = [...previous, workspace];
+        if (input.persistence === "volatile") this.volatileNames.add(workspace.name);
         try {
           this.writeDisk();
         } catch (error) {
           this.workspaces = previous;
+          this.volatileNames.delete(workspace.name);
           throw error;
         }
         this.emitter.emit("workspace.added", workspace);
@@ -19592,6 +19761,7 @@ var init_workspace_registry = __esm({
           throw new WorkspaceNotFoundError(name);
         }
         this.workspaces = this.workspaces.filter((w) => w.name !== name);
+        this.volatileNames.delete(name);
         this.writeDisk();
         this.emitter.emit("workspace.removed", name);
       }
@@ -19606,7 +19776,7 @@ var init_workspace_registry = __esm({
       }
       readDisk() {
         const path2 = this.filePath();
-        if (!existsSync26(path2)) return [];
+        if (!existsSync27(path2)) return [];
         let parsed;
         try {
           parsed = JSON.parse(readFileSync20(path2, "utf-8"));
@@ -19619,8 +19789,11 @@ var init_workspace_registry = __esm({
       }
       writeDisk() {
         const path2 = this.filePath();
-        mkdirSync18(dirname24(path2), { recursive: true });
-        const file = { version: 1, workspaces: this.workspaces };
+        mkdirSync18(dirname25(path2), { recursive: true });
+        const file = {
+          version: 1,
+          workspaces: this.workspaces.filter(({ name }) => !this.volatileNames.has(name))
+        };
         const tmp = `${path2}.tmp`;
         writeFileSync16(tmp, JSON.stringify(file, null, 2) + "\n");
         renameSync9(tmp, path2);
@@ -19631,6 +19804,7 @@ var init_workspace_registry = __esm({
       }
     };
     _default = null;
+    _defaultNamespaceKey = null;
   }
 });
 
@@ -19883,12 +20057,12 @@ function parseAgentStateFacts(raw) {
   return result;
 }
 function execTmux(args) {
-  return new Promise((resolve32) => {
+  return new Promise((resolve34) => {
     execFile3(
       "tmux",
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024 },
-      (error, stdout) => resolve32(error ? null : stdout.trim())
+      (error, stdout) => resolve34(error ? null : stdout.trim())
     );
   });
 }
@@ -19949,8 +20123,8 @@ var init_daemon_fleet_facts_observer = __esm({
           }
         }
         let resolveReady;
-        const ready = new Promise((resolve32) => {
-          resolveReady = resolve32;
+        const ready = new Promise((resolve34) => {
+          resolveReady = resolve34;
         });
         const waiter = { demands: unique, resolve: resolveReady };
         this.#waiters.add(waiter);
@@ -20126,7 +20300,7 @@ var init_semantic_resource_id = __esm({
 
 // packages/daemon/src/command-center/resources/fleet-catalog.ts
 import { createHash as createHash6 } from "node:crypto";
-import { basename as basename8 } from "node:path";
+import { basename as basename9 } from "node:path";
 function digest(value) {
   return createHash6("sha256").update(value).digest("hex").slice(0, 20);
 }
@@ -20142,7 +20316,7 @@ function fleetLabel(value, fallback) {
   return normalized || fallback;
 }
 function fleetProjectLabel(cwd, fallback) {
-  const base = basename8(cwd).replace(/[/\\]/gu, "");
+  const base = basename9(cwd).replace(/[/\\]/gu, "");
   return fleetLabel(base, fallback);
 }
 function toPresentationPane(pane, index) {
@@ -20217,7 +20391,7 @@ var init_fleet_catalog2 = __esm({
 
 // packages/daemon/src/command-center/resources/application-shell.ts
 import { hostname } from "node:os";
-import { basename as basename9 } from "node:path";
+import { basename as basename10 } from "node:path";
 function agentIdForPaneStamp(stamp) {
   return semanticResourceId("agent", stamp);
 }
@@ -20479,7 +20653,7 @@ function deepFreeze5(value) {
 }
 function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
   const sessionName = label(session.name, "tmux session");
-  const rootLabel = label(basename9(session.dir), sessionName);
+  const rootLabel = label(basename10(session.dir), sessionName);
   const projectId = semanticResourceId("project", session.dir);
   const sessionId = semanticResourceId("session", session.name);
   const focusedIndex = session.panes.findIndex((pane) => pane.active);
@@ -20754,7 +20928,7 @@ import {
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync17
 } from "node:fs";
-import { isAbsolute as isAbsolute4, join as join26, relative as relative2, resolve as resolve21, sep as sep2, win32 } from "node:path";
+import { isAbsolute as isAbsolute5, join as join26, relative as relative3, resolve as resolve22, sep as sep3, win32 } from "node:path";
 function createProjectRuntimeRepository(resolution, options = {}) {
   return new ProjectRuntimeRepository(resolution, options);
 }
@@ -20954,8 +21128,8 @@ function validateSafeStreamId(value) {
   }
 }
 function isWithinDirectory(path2, root) {
-  const fromRoot = relative2(root, path2);
-  return fromRoot === "" || fromRoot !== ".." && !fromRoot.startsWith(`..${sep2}`) && !isAbsolute4(fromRoot);
+  const fromRoot = relative3(root, path2);
+  return fromRoot === "" || fromRoot !== ".." && !fromRoot.startsWith(`..${sep3}`) && !isAbsolute5(fromRoot);
 }
 function safeTempId(value) {
   return value.replace(/[^A-Za-z0-9_-]/g, "_");
@@ -21128,7 +21302,7 @@ var init_project_runtime_repository = __esm({
         this.resolution = resolution;
         this.io = { ...defaultIo2, ...options.io };
         this.runtimeRoot = join26(
-          resolve21(options.home ?? options.stateHome ?? stateHome()),
+          resolve22(options.home ?? options.stateHome ?? stateHome()),
           "projects",
           resolution.identityKey
         );
@@ -21334,7 +21508,7 @@ var init_project_runtime_repository = __esm({
         } catch (error) {
           try {
             rmdirSync(recovery.target);
-            this.io.fsyncDirectory(resolve21(recovery.target, ".."));
+            this.io.fsyncDirectory(resolve22(recovery.target, ".."));
           } catch {
           }
           throw error;
@@ -21424,7 +21598,7 @@ var init_project_runtime_repository = __esm({
         if (path2.includes("\\")) {
           throw new InvalidRuntimePathError(path2, "path must use forward slashes");
         }
-        if (isAbsolute4(path2) || win32.isAbsolute(path2)) {
+        if (isAbsolute5(path2) || win32.isAbsolute(path2)) {
           throw new InvalidRuntimePathError(path2, "path must be relative");
         }
         const parts = path2.split("/");
@@ -21434,7 +21608,7 @@ var init_project_runtime_repository = __esm({
         if (!allowEventNamespace && parts[0] === "events") {
           throw new InvalidRuntimePathError(path2, "the events namespace is reserved for event streams");
         }
-        const target = resolve21(this.runtimeRoot, ...parts);
+        const target = resolve22(this.runtimeRoot, ...parts);
         if (!isWithinDirectory(target, this.runtimeRoot)) {
           throw new InvalidRuntimePathError(path2, "path escapes the runtime root");
         }
@@ -21468,7 +21642,7 @@ var init_project_runtime_repository = __esm({
         }
       }
       atomicWrite(target, data, displayPath) {
-        const destinationDir = resolve21(target, "..");
+        const destinationDir = resolve22(target, "..");
         this.io.mkdir(destinationDir);
         const tempPath = join26(
           destinationDir,
@@ -21490,7 +21664,7 @@ var init_project_runtime_repository = __esm({
         }
       }
       atomicWriteBytes(target, data, displayPath, durable) {
-        const destinationDir = resolve21(target, "..");
+        const destinationDir = resolve22(target, "..");
         this.io.mkdir(destinationDir);
         const tempPath = join26(
           destinationDir,
@@ -21518,7 +21692,7 @@ var init_project_runtime_repository = __esm({
         const timeoutMs = normalizeLockDuration(options?.timeoutMs, 2e3, 0, 6e4, "timeoutMs");
         const pollMs = normalizeLockDuration(options?.pollMs, 10, 1, 250, "pollMs");
         const lockPath = join26(this.runtimeRoot, PROJECT_RUNTIME_WRITER_LOCK_FILENAME);
-        const lockDirectory = resolve21(lockPath, "..");
+        const lockDirectory = resolve22(lockPath, "..");
         this.io.mkdir(this.runtimeRoot);
         assertLockDirectory(this.runtimeRoot);
         this.io.mkdir(lockDirectory);
@@ -21599,7 +21773,7 @@ var init_project_runtime_repository = __esm({
       reserveRecoveryOperation(path2, rawToken) {
         const recoveryRoot = this.resolveRuntimePath("recovery");
         this.io.mkdir(recoveryRoot);
-        this.io.fsyncDirectory(resolve21(recoveryRoot, ".."));
+        this.io.fsyncDirectory(resolve22(recoveryRoot, ".."));
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const operationId = safeTempId(this.io.randomId());
           const relativePath = `recovery/${sha256(path2)}-${rawToken}-${operationId}`;
@@ -21625,7 +21799,7 @@ var init_project_runtime_repository = __esm({
 
 // packages/daemon/src/lib/directory-watcher.ts
 import { watch as fsWatch } from "node:fs";
-import { join as join27, sep as sep3 } from "node:path";
+import { join as join27, sep as sep4 } from "node:path";
 async function loadParcel() {
   if (parcel !== void 0) return parcel;
   try {
@@ -21652,7 +21826,7 @@ function fsWatchDirectory(dir, onChange, ignore2, debounceMs, requireInstalled, 
     handle = fsWatch(dir, { recursive: true }, (_event, filename) => {
       if (!filename) return;
       const rel = filename.toString();
-      if (rel.split(sep3).some((part) => ignoreSet.has(part))) return;
+      if (rel.split(sep4).some((part) => ignoreSet.has(part))) return;
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => onChange([{ type: "update", path: join27(dir, rel) }]), debounceMs);
     });
@@ -21719,7 +21893,7 @@ var init_directory_watcher = __esm({
 
 // packages/daemon/src/command-center/workspace-resource-observer.ts
 import { execFileSync as execFileSync12 } from "node:child_process";
-import { isAbsolute as isAbsolute5, resolve as resolve22 } from "node:path";
+import { isAbsolute as isAbsolute6, resolve as resolve23 } from "node:path";
 function slot() {
   return {
     epoch: 0,
@@ -21742,7 +21916,7 @@ function resolveGitDirectory(projectDir) {
       env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" }
     }).trim();
     if (!value) return null;
-    return isAbsolute5(value) ? value : resolve22(projectDir, value);
+    return isAbsolute6(value) ? value : resolve23(projectDir, value);
   } catch {
     return null;
   }
@@ -22769,11 +22943,11 @@ var init_auth_token = __esm({
 });
 
 // packages/daemon/src/lib/app-settings.ts
-import { existsSync as existsSync27, mkdirSync as mkdirSync20, readFileSync as readFileSync22, renameSync as renameSync11, writeFileSync as writeFileSync18 } from "node:fs";
-import { dirname as dirname25, join as join28 } from "node:path";
-import { homedir as homedir18 } from "node:os";
+import { existsSync as existsSync28, mkdirSync as mkdirSync20, readFileSync as readFileSync22, renameSync as renameSync11, writeFileSync as writeFileSync18 } from "node:fs";
+import { dirname as dirname26, join as join28 } from "node:path";
+import { homedir as homedir15 } from "node:os";
 function settingsDir() {
-  return process.env.TMUX_IDE_SETTINGS_DIR ?? join28(homedir18(), ".tmux-ide");
+  return process.env.TMUX_IDE_SETTINGS_DIR ?? join28(homedir15(), ".tmux-ide");
 }
 function appSettingsPath() {
   return join28(settingsDir(), "app-settings.json");
@@ -22789,7 +22963,7 @@ function normalizeSettings(value) {
 }
 function readAppSettings() {
   const path2 = appSettingsPath();
-  if (!existsSync27(path2)) return structuredClone(DEFAULT_SETTINGS);
+  if (!existsSync28(path2)) return structuredClone(DEFAULT_SETTINGS);
   try {
     return normalizeSettings(JSON.parse(readFileSync22(path2, "utf-8")));
   } catch {
@@ -22798,7 +22972,7 @@ function readAppSettings() {
 }
 function writeAppSettings(next) {
   const path2 = appSettingsPath();
-  mkdirSync20(dirname25(path2), { recursive: true });
+  mkdirSync20(dirname26(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync18(tmp, `${JSON.stringify(normalizeSettings(next), null, 2)}
 `, "utf-8");
@@ -22985,8 +23159,8 @@ var init_project_readiness = __esm({
 
 // packages/daemon/src/lib/project-readiness-probe.ts
 import { execFile as execFile4 } from "node:child_process";
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync28, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
-import { delimiter, isAbsolute as isAbsolute6, basename as basename10, resolve as resolve23, sep as sep4 } from "node:path";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync29, realpathSync as realpathSync5, statSync as statSync5 } from "node:fs";
+import { delimiter, isAbsolute as isAbsolute7, basename as basename11, resolve as resolve24, sep as sep5 } from "node:path";
 function errorCode(error) {
   if (!error || typeof error !== "object" || !("code" in error)) return void 0;
   const code = error.code;
@@ -23006,7 +23180,7 @@ function safeCall(operation, fallback) {
   }
 }
 function isValidAbsolutePath(path2) {
-  return isAbsolute6(path2) && path2.trim().length > 0 && !path2.includes("\0") && !/[\r\n]/u.test(path2);
+  return isAbsolute7(path2) && path2.trim().length > 0 && !path2.includes("\0") && !/[\r\n]/u.test(path2);
 }
 function normalizeCommandResult(value) {
   if (!value || typeof value !== "object" || !("status" in value)) {
@@ -23057,8 +23231,8 @@ function locateExecutable(executable, cwd, environment, io) {
   if (!hasValidExecutableToken(executable)) {
     return { availability: "missing", path: null };
   }
-  if (isAbsolute6(executable) || executable.includes(sep4) || executable.includes("/") || executable.includes("\\")) {
-    const candidate = isAbsolute6(executable) ? executable : resolve23(cwd, executable);
+  if (isAbsolute7(executable) || executable.includes(sep5) || executable.includes("/") || executable.includes("\\")) {
+    const candidate = isAbsolute7(executable) ? executable : resolve24(cwd, executable);
     const availability = inspectExecutableCandidate(candidate, io);
     return {
       availability,
@@ -23070,8 +23244,8 @@ function locateExecutable(executable, cwd, environment, io) {
   let sawUnknown = false;
   for (const entry of pathValue.split(delimiter)) {
     if (entry.length === 0) continue;
-    const directory = isAbsolute6(entry) ? entry : resolve23(cwd, entry);
-    const candidate = resolve23(directory, executable);
+    const directory = isAbsolute7(entry) ? entry : resolve24(cwd, entry);
+    const candidate = resolve24(directory, executable);
     const availability = inspectExecutableCandidate(candidate, io);
     if (availability === "available") {
       return { availability, path: canonicalExecutable(candidate, io) };
@@ -23149,7 +23323,7 @@ async function probeProjectReadiness(requestedPath, options = {}) {
     arch: process.arch
   });
   const baseCwd = safeCall(() => io.cwd(), process.cwd());
-  const absoluteRequestedPath = isAbsolute6(requestedPath) ? requestedPath : resolve23(baseCwd, requestedPath);
+  const absoluteRequestedPath = isAbsolute7(requestedPath) ? requestedPath : resolve24(baseCwd, requestedPath);
   const pathKind = safeCall(() => io.inspectPath(absoluteRequestedPath), "unknown");
   const exists = pathKind === "directory" || pathKind === "other";
   const isDirectory = pathKind === "directory";
@@ -23202,7 +23376,7 @@ async function probeProjectReadiness(requestedPath, options = {}) {
   const identityKey = validResolution?.identityKey ?? null;
   const identitySource = validResolution?.identitySource ?? null;
   const projectNameSource = projectRoot ?? validCanonicalInput ?? absoluteRequestedPath;
-  const sanitizedName = sanitizeName(basename10(projectNameSource));
+  const sanitizedName = sanitizeName(basename11(projectNameSource));
   const [gitVersion, tmuxVersion, repositoryResult, ...harnesses] = await Promise.all([
     probeVersion(io, gitLocated, ["--version"], commandOptions),
     probeVersion(io, tmuxLocated, ["-V"], commandOptions),
@@ -23304,8 +23478,8 @@ var init_project_readiness_probe = __esm({
           return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
         }
       },
-      exists: existsSync28,
-      realpath: realpathSync4,
+      exists: existsSync29,
+      realpath: realpathSync5,
       inspectExecutable: (path2) => {
         try {
           return statSync5(path2).isFile() ? "file" : "other";
@@ -24326,17 +24500,17 @@ var init_mission_repository = __esm({
 });
 
 // packages/daemon/src/lib/workspace-pane-creation.ts
-import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync5, statSync as statSync6 } from "node:fs";
-import { delimiter as delimiter2, isAbsolute as isAbsolute7, join as join29, relative as relative3, sep as sep5 } from "node:path";
+import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync6, statSync as statSync6 } from "node:fs";
+import { delimiter as delimiter2, isAbsolute as isAbsolute8, join as join29, relative as relative4, sep as sep6 } from "node:path";
 function canonicalProjectDir(path2) {
-  const canonical = realpathSync5(path2);
+  const canonical = realpathSync6(path2);
   if (!statSync6(canonical).isDirectory()) throw new Error("project root is not a directory");
   return canonical;
 }
 function canonicalWorkspaceFile(workspace, canonicalRoot, candidate, source) {
   let canonicalConfig;
   try {
-    canonicalConfig = realpathSync5(candidate);
+    canonicalConfig = realpathSync6(candidate);
     if (!statSync6(canonicalConfig).isFile()) throw new Error("config is not a file");
   } catch (cause) {
     throw new WorkspacePaneCreationError(
@@ -24348,8 +24522,8 @@ function canonicalWorkspaceFile(workspace, canonicalRoot, candidate, source) {
       cause
     );
   }
-  const ownedRelativePath = relative3(canonicalRoot, canonicalConfig);
-  if (ownedRelativePath === "" || ownedRelativePath === ".." || ownedRelativePath.startsWith(`..${sep5}`) || isAbsolute7(ownedRelativePath)) {
+  const ownedRelativePath = relative4(canonicalRoot, canonicalConfig);
+  if (ownedRelativePath === "" || ownedRelativePath === ".." || ownedRelativePath.startsWith(`..${sep6}`) || isAbsolute8(ownedRelativePath)) {
     throw new WorkspacePaneCreationError("workspace_unavailable", {
       workspaceName: workspace.name,
       reason: `${source}_config_outside_workspace`
@@ -24377,12 +24551,12 @@ function assertEffectiveConfigProvenance(workspace, canonicalRoot, source) {
 }
 function resolveTmuxExecutable() {
   const configured = process.env.TMUX_IDE_TMUX_BIN;
-  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter((entry) => entry.length > 0 && isAbsolute7(entry)).map((entry) => join29(entry, "tmux"));
+  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter((entry) => entry.length > 0 && isAbsolute8(entry)).map((entry) => join29(entry, "tmux"));
   for (const candidate of candidates) {
     try {
-      if (!isAbsolute7(candidate)) continue;
+      if (!isAbsolute8(candidate)) continue;
       accessSync3(candidate, constants4.X_OK);
-      const canonical = realpathSync5(candidate);
+      const canonical = realpathSync6(candidate);
       if (statSync6(canonical).isFile()) return canonical;
     } catch {
     }
@@ -24412,7 +24586,7 @@ function resolveWorkspacePaneTmuxAuthority() {
   const executablePath = resolveTmuxExecutable();
   const environmentSocket = tmuxSocketFromEnvironment();
   if (environmentSocket) {
-    const path2 = realpathSync5(environmentSocket);
+    const path2 = realpathSync6(environmentSocket);
     if (!statSync6(path2).isSocket()) {
       throw new WorkspacePaneCreationError("workspace_unavailable", {
         reason: "tmux_socket_unavailable"
@@ -24423,24 +24597,21 @@ function resolveWorkspacePaneTmuxAuthority() {
       socketSelector: { kind: "path", path: path2 }
     });
   }
-  return Object.freeze({
-    executablePath,
-    socketSelector: { kind: "name", name: "default" }
-  });
+  return Object.freeze({ executablePath, socketSelector: resolveRuntimeNamespace().tmuxSocket });
 }
 function createPinnedWorkspaceTmuxRunner(authority) {
-  const executablePath = realpathSync5(authority.executablePath);
+  const executablePath = realpathSync6(authority.executablePath);
   accessSync3(executablePath, constants4.X_OK);
-  if (!isAbsolute7(executablePath) || !statSync6(executablePath).isFile()) {
+  if (!isAbsolute8(executablePath) || !statSync6(executablePath).isFile()) {
     throw new TypeError("Pinned tmux executable is invalid.");
   }
   const socketArgv = authority.socketSelector.kind === "path" ? (() => {
-    const path2 = realpathSync5(authority.socketSelector.path);
-    if (!isAbsolute7(path2) || !statSync6(path2).isSocket()) {
+    const path2 = realpathSync6(authority.socketSelector.path);
+    if (!isAbsolute8(path2) || !statSync6(path2).isSocket()) {
       throw new TypeError("Pinned tmux socket is invalid.");
     }
     return ["-S", path2];
-  })() : authority.socketSelector.name === "default" ? ["-L", "default"] : (() => {
+  })() : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name) ? ["-L", authority.socketSelector.name] : (() => {
     throw new TypeError("Pinned tmux socket is invalid.");
   })();
   const environment = Object.freeze(tmuxClientEnvironment(process.env));
@@ -24674,6 +24845,7 @@ var init_workspace_pane_creation2 = __esm({
     init_workspace_registry();
     init_shell();
     init_mission_repository();
+    init_runtime_namespace();
     MAX_LIVE_OR_UNSAFE_OPERATIONS = 128;
     MAX_REPLAYABLE_FAILURES = 64;
     MAX_COMMAND_ARGUMENTS = 64;
@@ -25546,8 +25718,8 @@ var init_semantic_pane_catalog = __esm({
 
 // packages/daemon/src/lib/workspace-open.ts
 import { createHash as createHash8 } from "node:crypto";
-import { realpathSync as realpathSync6, statSync as statSync7 } from "node:fs";
-import { basename as basename11, isAbsolute as isAbsolute8 } from "node:path";
+import { realpathSync as realpathSync7, statSync as statSync7 } from "node:fs";
+import { basename as basename12, isAbsolute as isAbsolute9 } from "node:path";
 function boundedAuthorityLimit2(value, fallback) {
   if (value === void 0) return fallback;
   if (!Number.isInteger(value) || value < 1 || value > MAX_OPERATIONS) {
@@ -25562,7 +25734,7 @@ function boundedTmuxOutput(value) {
   return value.replace(/(?:\r?\n)+$/u, "");
 }
 function safeBaseName(projectDir) {
-  const value = basename11(projectDir).normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/-+/gu, "-").replace(/^[-_]+|[-_]+$/gu, "").slice(0, 72);
+  const value = basename12(projectDir).normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/-+/gu, "-").replace(/^[-_]+|[-_]+$/gu, "").slice(0, 72);
   return value || "workspace";
 }
 function deriveWorkspaceOpenIdentity(canonicalProjectDir3) {
@@ -25577,14 +25749,14 @@ function deriveWorkspaceOpenIdentity(canonicalProjectDir3) {
   });
 }
 async function resolveConfigFreeProjectDir(projectDir) {
-  if (!isAbsolute8(projectDir)) {
+  if (!isAbsolute9(projectDir)) {
     throw new WorkspaceOpenError("workspace_unavailable", {
       reason: "project_directory_not_absolute"
     });
   }
   let selected;
   try {
-    selected = realpathSync6(projectDir);
+    selected = realpathSync7(projectDir);
     if (!statSync7(selected).isDirectory()) throw new Error("not a directory");
   } catch (cause) {
     throw new WorkspaceOpenError(
@@ -25609,7 +25781,7 @@ async function resolveConfigFreeProjectDir(projectDir) {
     });
   }
   try {
-    const canonicalRoot = realpathSync6(context.projectRoot);
+    const canonicalRoot = realpathSync7(context.projectRoot);
     if (!statSync7(canonicalRoot).isDirectory()) throw new Error("not a directory");
     return canonicalRoot;
   } catch (cause) {
@@ -25767,7 +25939,7 @@ var init_workspace_open2 = __esm({
     };
     DEFAULT_IO2 = {
       resolveConfigFreeProjectDir,
-      canonicalRegisteredProjectDir: (projectDir) => realpathSync6(projectDir),
+      canonicalRegisteredProjectDir: (projectDir) => realpathSync7(projectDir),
       isMissingTmuxTarget: (error) => error instanceof TmuxError && error.code === "SESSION_NOT_FOUND",
       isTmuxUnavailable: (error) => error instanceof TmuxError && error.code === "TMUX_UNAVAILABLE"
     };
@@ -26276,7 +26448,7 @@ var init_workspace_open2 = __esm({
 
 // packages/daemon/src/lib/workspace-promotion.ts
 import { createHash as createHash9 } from "node:crypto";
-import { realpathSync as realpathSync7, statSync as statSync8 } from "node:fs";
+import { realpathSync as realpathSync8, statSync as statSync8 } from "node:fs";
 function boundedAuthorityLimit3(value, fallback) {
   if (value === void 0) return fallback;
   if (!Number.isInteger(value) || value < 1 || value > MAX_OPERATIONS2) {
@@ -26491,7 +26663,7 @@ var init_workspace_promotion2 = __esm({
     RESERVED_DISCOVERED_PREFIX = "terminal.discovered.";
     DEFAULT_IO3 = {
       canonicalProjectDir: (path2) => {
-        const canonical = realpathSync7(path2);
+        const canonical = realpathSync8(path2);
         if (!statSync8(canonical).isDirectory()) throw new Error("project root is not a directory");
         return canonical;
       },
@@ -28580,14 +28752,14 @@ function socketArguments(authority) {
 }
 function defaultWaiter(authority) {
   const prefix = socketArguments(authority);
-  return (channel, signal) => new Promise((resolve32, reject) => {
+  return (channel, signal) => new Promise((resolve34, reject) => {
     execFile5(
       authority.executablePath,
       [...prefix, "wait-for", channel],
       { signal, encoding: "utf8", windowsHide: true },
       (error) => {
-        if (!error) resolve32();
-        else if (signal.aborted) resolve32();
+        if (!error) resolve34();
+        else if (signal.aborted) resolve34();
         else reject(error);
       }
     );
@@ -28595,12 +28767,12 @@ function defaultWaiter(authority) {
 }
 function abortableDelay(milliseconds, signal) {
   if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve32) => {
+  return new Promise((resolve34) => {
     const timer = setTimeout(done, milliseconds);
     function done() {
       signal.removeEventListener("abort", done);
       clearTimeout(timer);
-      resolve32();
+      resolve34();
     }
     signal.addEventListener("abort", done, { once: true });
   });
@@ -28863,7 +29035,7 @@ var init_tmux_external_interaction_observer = __esm({
 });
 
 // packages/daemon/src/lib/workspace-multiplexer-verbs.ts
-import { realpathSync as realpathSync8, statSync as statSync9 } from "node:fs";
+import { realpathSync as realpathSync9, statSync as statSync9 } from "node:fs";
 function parseMultiplexerPaneRows(output) {
   if (output === "") return [];
   const rows = [];
@@ -28947,7 +29119,7 @@ function tmuxFormatLiteral2(value) {
   return value.replaceAll("#", "##");
 }
 function canonicalProjectDir2(path2) {
-  const canonical = realpathSync8(path2);
+  const canonical = realpathSync9(path2);
   if (!statSync9(canonical).isDirectory()) throw new Error("project root is not a directory");
   return canonical;
 }
@@ -29759,9 +29931,9 @@ function parseControlLine(line, insideReply) {
     const space = rest.indexOf(" ");
     const pane = space === -1 ? rest : rest.slice(0, space);
     const tail = space === -1 ? "" : rest.slice(space + 1);
-    const sep8 = tail.indexOf(" : ");
-    const meta = sep8 === -1 ? tail : tail.slice(0, sep8);
-    const payload = sep8 === -1 ? "" : tail.slice(sep8 + 3);
+    const sep9 = tail.indexOf(" : ");
+    const meta = sep9 === -1 ? tail : tail.slice(0, sep9);
+    const payload = sep9 === -1 ? "" : tail.slice(sep9 + 3);
     const age = Number(meta.trim().split(/\s+/)[0]);
     return {
       kind: "extended-output",
@@ -29797,15 +29969,15 @@ var init_control2 = __esm({
 import { spawn as spawn6 } from "node:child_process";
 function waitForExit(proc, timeoutMs) {
   if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
-  return new Promise((resolve32) => {
+  return new Promise((resolve34) => {
     const timer = setTimeout(() => {
       proc.off("exit", onExit);
-      resolve32(false);
+      resolve34(false);
     }, timeoutMs);
     timer.unref?.();
     const onExit = () => {
       clearTimeout(timer);
-      resolve32(true);
+      resolve34(true);
     };
     proc.once("exit", onExit);
   });
@@ -29953,8 +30125,8 @@ var init_control_channel = __esm({
           this.core.fail("control channel exited");
           this.noteExit(null);
         });
-        return new Promise((resolve32, reject) => {
-          this.core.push({ kind: "promise", resolve: () => resolve32(), reject, lines: [] });
+        return new Promise((resolve34, reject) => {
+          this.core.push({ kind: "promise", resolve: () => resolve34(), reject, lines: [] });
           proc.on("error", (err) => {
             this.core.fail(String(err));
             reject(err);
@@ -29964,8 +30136,8 @@ var init_control_channel = __esm({
       request(cmd) {
         const proc = this.proc;
         if (!proc?.stdin?.writable) return Promise.reject(new Error("control channel not running"));
-        return new Promise((resolve32, reject) => {
-          this.core.push({ kind: "promise", resolve: resolve32, reject, lines: [] });
+        return new Promise((resolve34, reject) => {
+          this.core.push({ kind: "promise", resolve: resolve34, reject, lines: [] });
           proc.stdin.write(`${cmd}
 `);
         });
@@ -30798,8 +30970,8 @@ var init_session_channel = __esm({
       /** Settles once the FIRST identity join lands (or is proven impossible), so
        *  `start()` returns a channel whose semantic ids are subscribable. */
       resolveFirstJoin = null;
-      firstJoin = new Promise((resolve32) => {
-        this.resolveFirstJoin = resolve32;
+      firstJoin = new Promise((resolve34) => {
+        this.resolveFirstJoin = resolve34;
       });
       input = new InputCoalescer(
         (action) => {
@@ -32126,8 +32298,8 @@ var init_semantic_mutation_executor = __esm({
         if (needsTmuxObservation) {
           let settleObservation;
           let rejectObservation;
-          observed = new Promise((resolve32, reject) => {
-            settleObservation = resolve32;
+          observed = new Promise((resolve34, reject) => {
+            settleObservation = resolve34;
             rejectObservation = reject;
           });
           let sessionPending = this.#pending.get(session);
@@ -40158,7 +40330,7 @@ var init_src3 = __esm({
 
 // packages/daemon/src/terminal/session-runtime/terminal-replica-interpreter.ts
 function writeTerminal(terminal, data) {
-  return new Promise((resolve32) => terminal.write(data, resolve32));
+  return new Promise((resolve34) => terminal.write(data, resolve34));
 }
 function projectRowCached(cache3, buffer, index, cols) {
   const line = buffer.getLine(index);
@@ -40347,8 +40519,8 @@ var init_terminal_replica_interpreter = __esm({
         this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
         this.#terminal = this.#createTerminal(options.cols, options.rows);
         this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
-        this.#seedReady = new Promise((resolve32, reject) => {
-          this.#resolveSeedReady = resolve32;
+        this.#seedReady = new Promise((resolve34, reject) => {
+          this.#resolveSeedReady = resolve34;
           this.#rejectSeedReady = reject;
         });
         void this.#seedReady.catch(() => void 0);
@@ -40365,8 +40537,8 @@ var init_terminal_replica_interpreter = __esm({
           const pendingTrace = this.#pendingWrites[0]?.trace ?? null;
           if (this.#pendingWrites.length > 0 && (pendingTrace?.traceId ?? null) !== (trace?.traceId ?? null))
             this.#flushWrites();
-          const promise = new Promise((resolve32, reject) => {
-            this.#pendingWrites.push({ data, trace, resolve: resolve32, reject });
+          const promise = new Promise((resolve34, reject) => {
+            this.#pendingWrites.push({ data, trace, resolve: resolve34, reject });
           });
           if (!this.#writeFlushScheduled) {
             this.#writeFlushScheduled = true;
@@ -45567,8 +45739,8 @@ var init_tmux_view_executor = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/pty-tmux-attachment-launcher.ts
-import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync9, statSync as statSync10 } from "node:fs";
-import { delimiter as delimiter3, isAbsolute as isAbsolute9, join as join30 } from "node:path";
+import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync10, statSync as statSync10 } from "node:fs";
+import { delimiter as delimiter3, isAbsolute as isAbsolute10, join as join30 } from "node:path";
 import { randomUUID as randomUUID8 } from "node:crypto";
 import { execFileSync as execFileSync13 } from "node:child_process";
 function defaultSchedule2(callback, delayMs) {
@@ -45589,26 +45761,26 @@ function selectorArgv(selector) {
     }
     return ["-L", selector.name];
   }
-  if (selector.kind !== "path" || !isAbsolute9(selector.path) || selector.path.length > 4096 || /[\0\r\n]/u.test(selector.path)) {
+  if (selector.kind !== "path" || !isAbsolute10(selector.path) || selector.path.length > 4096 || /[\0\r\n]/u.test(selector.path)) {
     throw new TypeError("tmux socket path is invalid");
   }
   return ["-S", selector.path];
 }
 function resolveTmuxExecutable2(pathValue = process.env.PATH) {
   for (const directory of (pathValue ?? "").split(delimiter3)) {
-    if (!directory || !isAbsolute9(directory)) continue;
+    if (!directory || !isAbsolute10(directory)) continue;
     const candidate = join30(directory, "tmux");
     try {
       accessSync4(candidate, constants5.X_OK);
       if (!statSync10(candidate).isFile()) continue;
-      return realpathSync9(candidate);
+      return realpathSync10(candidate);
     } catch {
     }
   }
   throw new TypeError("tmux executable could not be resolved");
 }
 function validateTmuxExecutable(value) {
-  if (!isAbsolute9(value) || value.length > 4096 || /[\0\r\n]/u.test(value)) {
+  if (!isAbsolute10(value) || value.length > 4096 || /[\0\r\n]/u.test(value)) {
     throw new TypeError("tmux executable must be an absolute daemon-owned path");
   }
   return value;
@@ -45711,7 +45883,7 @@ var init_pty_tmux_attachment_launcher = __esm({
           options.tmuxExecutable ?? resolveTmuxExecutable2(options.environment?.PATH)
         );
         this.#socketArgv = selectorArgv(options.socketSelector);
-        if (!isAbsolute9(options.trustedCwd) || /[\0\r\n]/u.test(options.trustedCwd)) {
+        if (!isAbsolute10(options.trustedCwd) || /[\0\r\n]/u.test(options.trustedCwd)) {
           throw new TypeError("trusted cwd must be an absolute daemon-owned path");
         }
         this.#trustedCwd = options.trustedCwd;
@@ -45761,8 +45933,8 @@ var init_pty_tmux_attachment_launcher = __esm({
         const lifecycleEpoch = this.#lifecycleEpoch;
         const attemptId = randomUUID8();
         let resolveOutcome;
-        const outcome = new Promise((resolve32) => {
-          resolveOutcome = resolve32;
+        const outcome = new Promise((resolve34) => {
+          resolveOutcome = resolve34;
         });
         const earlyFrames = [];
         let earlyBytes = 0;
@@ -46120,8 +46292,8 @@ var init_pty_tmux_attachment_launcher = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/native-runtime.ts
-import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync10, statSync as statSync11 } from "node:fs";
-import { isAbsolute as isAbsolute10 } from "node:path";
+import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync11, statSync as statSync11 } from "node:fs";
+import { isAbsolute as isAbsolute11 } from "node:path";
 import { z as z75 } from "zod";
 function presentationEnvironment(source) {
   const environment = {
@@ -46138,17 +46310,17 @@ function presentationEnvironment(source) {
 }
 function canonicalAuthority(input) {
   try {
-    if (!isAbsolute10(input.executablePath) || !isAbsolute10(input.trustedCwd)) throw new Error();
-    const executablePath = realpathSync10(input.executablePath);
-    const trustedCwd = realpathSync10(input.trustedCwd);
+    if (!isAbsolute11(input.executablePath) || !isAbsolute11(input.trustedCwd)) throw new Error();
+    const executablePath = realpathSync11(input.executablePath);
+    const trustedCwd = realpathSync11(input.trustedCwd);
     accessSync5(executablePath, constants6.X_OK);
     if (!statSync11(executablePath).isFile() || !statSync11(trustedCwd).isDirectory())
       throw new Error();
     let socketSelector;
     let socketArgv;
     if (input.socketSelector.kind === "path") {
-      if (!isAbsolute10(input.socketSelector.path)) throw new Error();
-      const path2 = realpathSync10(input.socketSelector.path);
+      if (!isAbsolute11(input.socketSelector.path)) throw new Error();
+      const path2 = realpathSync11(input.socketSelector.path);
       if (!statSync11(path2).isSocket()) throw new Error();
       socketSelector = { kind: "path", path: path2 };
       socketArgv = ["-S", path2];
@@ -46592,7 +46764,7 @@ var init_native_runtime = __esm({
         const authority = canonicalAuthority(options.tmuxAuthority);
         const execute = options.commandExecutor ?? defaultCommandExecutor;
         const startupPolicy = {
-          allowUnavailableDefaultEnumeration: authority.socketSelector.kind === "name" && authority.socketSelector.name === "default" && options.registry.list().length === 0
+          allowUnavailableDefaultEnumeration: authority.socketSelector.kind === "name" && authority.socketSelector.name === "default"
         };
         const runner = pinnedRunner(authority, execute, startupPolicy);
         const discoverTerminalInventory = () => discoverWorkspaceRegistryTerminalInventory(options.registry, runner);
@@ -47146,7 +47318,7 @@ function attachTerminalAttachmentWebSocket(server, coordinator) {
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator.shutdown();
-      await new Promise((resolve32) => wss.close(() => resolve32()));
+      await new Promise((resolve34) => wss.close(() => resolve34()));
     }
   };
 }
@@ -48120,7 +48292,7 @@ var init_pane_stream_websocket = __esm({
         this.#ledger.forceReturnClient(this.#clientId);
         this.#sendQueue.length = 0;
         for (const waiters of this.#semanticDrainWaiters.values())
-          for (const resolve32 of waiters) resolve32();
+          for (const resolve34 of waiters) resolve34();
         this.#semanticDrainWaiters.clear();
         this.#socket.off("message", this.#onMessage);
         this.#socket.off("close", this.#onSocketClose);
@@ -48321,9 +48493,9 @@ var init_pane_stream_websocket = __esm({
       }
       #awaitSemanticCredit(pane) {
         if (!this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
-        return new Promise((resolve32) => {
+        return new Promise((resolve34) => {
           const waiters = this.#semanticDrainWaiters.get(pane) ?? [];
-          waiters.push(resolve32);
+          waiters.push(resolve34);
           this.#semanticDrainWaiters.set(pane, waiters);
           this.#ensureDrainTick();
         });
@@ -48555,7 +48727,7 @@ var init_pane_stream_websocket = __esm({
           const waiters = this.#semanticDrainWaiters.get(pane);
           if (waiters && this.#ledger.shouldResume(this.#clientId, pane)) {
             this.#semanticDrainWaiters.delete(pane);
-            for (const resolve32 of waiters) resolve32();
+            for (const resolve34 of waiters) resolve34();
           }
         }
       }
@@ -48841,7 +49013,7 @@ function attachPaneStreamWebSocket(server, coordinator) {
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator.shutdown();
-      await new Promise((resolve32) => wss.close(() => resolve32()));
+      await new Promise((resolve34) => wss.close(() => resolve34()));
     }
   };
 }
@@ -49198,7 +49370,7 @@ var init_active_projects = __esm({
 // packages/daemon/src/lib/environment-identity.ts
 import { randomUUID as randomUUID10 } from "node:crypto";
 import { linkSync as linkSync3, mkdirSync as mkdirSync21, readFileSync as readFileSync23, rmSync as rmSync3, writeFileSync as writeFileSync19 } from "node:fs";
-import { dirname as dirname26, join as join31 } from "node:path";
+import { dirname as dirname27, join as join31 } from "node:path";
 function environmentIdentityPath() {
   return join31(stateHome(), "environment.json");
 }
@@ -49215,7 +49387,7 @@ function readPersistedEnvironmentId(path2) {
 function persistEnvironmentId(path2, environmentId) {
   const temporary = `${path2}.${process.pid}.${randomUUID10()}.tmp`;
   try {
-    mkdirSync21(dirname26(path2), { recursive: true });
+    mkdirSync21(dirname27(path2), { recursive: true });
     writeFileSync19(
       temporary,
       `${JSON.stringify({ environmentId, mintedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
@@ -49255,12 +49427,12 @@ var init_environment_identity = __esm({
 // packages/daemon/src/send.ts
 import { randomUUID as randomUUID11 } from "node:crypto";
 import { execFileSync as execFileSync14 } from "node:child_process";
-import { resolve as resolve24, join as join32 } from "node:path";
-import { existsSync as existsSync29, mkdirSync as mkdirSync22, writeFileSync as writeFileSync20 } from "node:fs";
+import { resolve as resolve25, join as join32 } from "node:path";
+import { existsSync as existsSync30, mkdirSync as mkdirSync22, writeFileSync as writeFileSync20 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
   const dispatchDir = join32(dir, ".tasks", "dispatch");
-  if (!existsSync29(dispatchDir)) mkdirSync22(dispatchDir, { recursive: true });
+  if (!existsSync30(dispatchDir)) mkdirSync22(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
   const filename = `send-${paneSlug}-${Date.now()}-${randomUUID11().slice(0, 8)}.md`;
   const filePath = join32(dispatchDir, filename);
@@ -49437,7 +49609,7 @@ async function deliverMessageThroughDaemon(opts) {
   };
 }
 async function send(targetDir, opts) {
-  const dir = resolve24(targetDir ?? ".");
+  const dir = resolve25(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const { json: json2, to: target, message: rawMessage, noEnter } = opts;
   if (!target) {
@@ -49638,17 +49810,17 @@ var init_schemas = __esm({
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { existsSync as existsSync30, mkdirSync as mkdirSync23, readFileSync as readFileSync24, renameSync as renameSync12, writeFileSync as writeFileSync21 } from "node:fs";
-import { dirname as dirname27, join as join33 } from "node:path";
+import { existsSync as existsSync31, mkdirSync as mkdirSync23, readFileSync as readFileSync24, renameSync as renameSync12, writeFileSync as writeFileSync21 } from "node:fs";
+import { dirname as dirname28, join as join33 } from "node:path";
 function path(dir) {
   return join33(dir, TERMINALS_FILE);
 }
 function ensureDir(dir) {
-  mkdirSync23(dirname27(path(dir)), { recursive: true });
+  mkdirSync23(dirname28(path(dir)), { recursive: true });
 }
 function loadTerminals(dir) {
   const file = path(dir);
-  if (!existsSync30(file)) return [];
+  if (!existsSync31(file)) return [];
   try {
     const body = readFileSync24(file, "utf-8");
     const parsed = JSON.parse(body);
@@ -49729,9 +49901,9 @@ __export(auth_service_exports, {
   AuthService: () => AuthService
 });
 import * as crypto2 from "node:crypto";
-import { readFileSync as readFileSync25, existsSync as existsSync31 } from "node:fs";
+import { readFileSync as readFileSync25, existsSync as existsSync32 } from "node:fs";
 import { join as join34 } from "node:path";
-import { homedir as homedir19 } from "node:os";
+import { homedir as homedir16 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
   return b.toString("base64url");
@@ -49873,9 +50045,9 @@ var init_auth_service = __esm({
       }
       checkSSHKeyAuthorization(userId, publicKey) {
         try {
-          const home = userId === process.env.USER ? homedir19() : `/home/${userId}`;
+          const home = userId === process.env.USER ? homedir16() : `/home/${userId}`;
           const authKeysPath = join34(home, ".ssh", "authorized_keys");
-          if (!existsSync31(authKeysPath)) return false;
+          if (!existsSync32(authKeysPath)) return false;
           const authorizedKeys = readFileSync25(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
           const keyData = parts.length > 1 ? parts[1] : parts[0];
@@ -50086,7 +50258,8 @@ async function ensureWorkspaceRegistered(name, sessionName, dir) {
       ideConfigPath: facts.ideConfigPath,
       configKind: facts.configKind,
       configPath: facts.configPath,
-      hasWorkspaceConfig: facts.hasWorkspaceConfig
+      hasWorkspaceConfig: facts.hasWorkspaceConfig,
+      persistence: isProjectVolatile(name) ? "volatile" : "durable"
     });
   } catch {
   }
@@ -50121,6 +50294,7 @@ var init_project_launch = __esm({
     init_resolve_project();
     init_workspace_registry();
     init_config_context();
+    init_project_registry();
   }
 });
 
@@ -50160,9 +50334,9 @@ var init_project_stop = __esm({
 });
 
 // packages/daemon/src/restart.ts
-import { resolve as resolve25 } from "node:path";
+import { resolve as resolve26 } from "node:path";
 async function restart(targetDir, { json: json2, attach: attach2 } = {}) {
-  const dir = resolve25(targetDir ?? ".");
+  const dir = resolve26(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result = killSession(session);
@@ -51415,12 +51589,12 @@ var init_inspect = __esm({
 });
 
 // packages/daemon/src/lib/filesystem-browser.ts
-import { realpathSync as realpathSync11, readdirSync as readdirSync4, statSync as statSync12 } from "node:fs";
-import { homedir as homedir20 } from "node:os";
-import { isAbsolute as isAbsolute11, join as join35, resolve as resolve26, sep as sep6 } from "node:path";
+import { realpathSync as realpathSync12, readdirSync as readdirSync4, statSync as statSync12 } from "node:fs";
+import { homedir as homedir17 } from "node:os";
+import { isAbsolute as isAbsolute12, join as join35, resolve as resolve27, sep as sep7 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
-  const prefix = root.endsWith(sep6) ? root : root + sep6;
+  const prefix = root.endsWith(sep7) ? root : root + sep7;
   return canonical.startsWith(prefix);
 }
 function assertInsideSandbox(canonical, home) {
@@ -51446,8 +51620,8 @@ var init_filesystem_browser = __esm({
 });
 
 // packages/daemon/src/lib/project-inspect.ts
-import { existsSync as existsSync32 } from "node:fs";
-import { isAbsolute as isAbsolute12, resolve as resolve27 } from "node:path";
+import { existsSync as existsSync33 } from "node:fs";
+import { isAbsolute as isAbsolute13, resolve as resolve28 } from "node:path";
 function narrowPackageManager(raw) {
   if (!raw) return null;
   return KNOWN_PACKAGE_MANAGERS.has(raw) ? raw : null;
@@ -51457,8 +51631,8 @@ function inferTestCommand(packageManager) {
   return packageManager === "npm" ? "npm test" : `${packageManager} test`;
 }
 async function inspectProject(dir, io = {}) {
-  const exists = io.exists ?? existsSync32;
-  const absoluteDir = isAbsolute12(dir) ? dir : resolve27(dir);
+  const exists = io.exists ?? existsSync33;
+  const absoluteDir = isAbsolute13(dir) ? dir : resolve28(dir);
   if (!exists(absoluteDir)) {
     throw new InspectDirNotFoundError(absoluteDir);
   }
@@ -51643,8 +51817,8 @@ var init_workspace_resource_ids = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-files-authority.ts
-import { lstatSync as lstatSync3, readdirSync as readdirSync5, readFileSync as readFileSync26, realpathSync as realpathSync12 } from "node:fs";
-import { basename as basename12, dirname as dirname28, resolve as resolvePath, sep as sep7 } from "node:path";
+import { lstatSync as lstatSync3, readdirSync as readdirSync5, readFileSync as readFileSync26, realpathSync as realpathSync13 } from "node:fs";
+import { basename as basename13, dirname as dirname29, resolve as resolvePath, sep as sep8 } from "node:path";
 import ignore from "ignore";
 function extensionOf(name) {
   const dot = name.lastIndexOf(".");
@@ -51728,7 +51902,7 @@ function safeName(value, fallback) {
 }
 function isWithin2(root, candidate) {
   if (candidate === root) return true;
-  const prefix = root.endsWith(sep7) ? root : `${root}${sep7}`;
+  const prefix = root.endsWith(sep8) ? root : `${root}${sep8}`;
   return candidate.startsWith(prefix);
 }
 var ALWAYS_IGNORED_NAMES, LANGUAGE_BY_EXTENSION, MEDIA_TYPE_BY_EXTENSION, FilesAuthority;
@@ -51810,7 +51984,7 @@ var init_workspace_files_authority = __esm({
       catalog(directoryId) {
         let realRoot;
         try {
-          realRoot = realpathSync12(this.root);
+          realRoot = realpathSync13(this.root);
         } catch {
           return this.catalogUnavailable(
             "workspace-unavailable",
@@ -51836,7 +52010,7 @@ var init_workspace_files_authority = __esm({
         const absCandidate = relPath === "" ? realRoot : resolvePath(realRoot, relPath);
         let absReal;
         try {
-          absReal = realpathSync12(absCandidate);
+          absReal = realpathSync13(absCandidate);
         } catch (error) {
           const code = error.code;
           if (code === "EACCES" || code === "EPERM") {
@@ -51895,7 +52069,7 @@ var init_workspace_files_authority = __esm({
           if (WorkspaceFileEntrySafe(entry)) entries.push(entry);
         }
         const truncated = totalEntries > entries.length;
-        const rootLabel = safeName(basename12(realRoot), "workspace");
+        const rootLabel = safeName(basename13(realRoot), "workspace");
         const revision = filesRevision(
           JSON.stringify({ dir: relPath, entries: entries.map((e) => `${e.name}:${e.kind}`) })
         );
@@ -51905,7 +52079,7 @@ var init_workspace_files_authority = __esm({
         }
         const directory = relPath === "" ? { id: rootId, name: rootLabel, relativePath: null, parentId: null } : {
           id: targetId,
-          name: safeName(basename12(relPath), rootLabel),
+          name: safeName(basename13(relPath), rootLabel),
           relativePath: relPath,
           parentId: this.parentId(rootId, relPath)
         };
@@ -51935,7 +52109,7 @@ var init_workspace_files_authority = __esm({
       rootEntryCount() {
         let realRoot;
         try {
-          realRoot = realpathSync12(this.root);
+          realRoot = realpathSync13(this.root);
         } catch {
           return null;
         }
@@ -51958,7 +52132,7 @@ var init_workspace_files_authority = __esm({
       preview(fileId) {
         let realRoot;
         try {
-          realRoot = realpathSync12(this.root);
+          realRoot = realpathSync13(this.root);
         } catch {
           return this.previewWorkspaceUnavailable(fileId);
         }
@@ -51990,7 +52164,7 @@ var init_workspace_files_authority = __esm({
         }
         let realParent;
         try {
-          realParent = realpathSync12(dirname28(abs));
+          realParent = realpathSync13(dirname29(abs));
         } catch {
           return this.previewUnavailable(
             fileId,
@@ -51998,7 +52172,7 @@ var init_workspace_files_authority = __esm({
             "The requested file is unavailable."
           );
         }
-        if (!isWithin2(realRoot, resolvePath(realParent, basename12(abs)))) {
+        if (!isWithin2(realRoot, resolvePath(realParent, basename13(abs)))) {
           return this.previewUnavailable(
             fileId,
             "outside-workspace",
@@ -52008,7 +52182,7 @@ var init_workspace_files_authority = __esm({
         if (stat.isDirectory() || !stat.isFile()) {
           return this.previewUnavailable(fileId, "not-a-file", "The resource is not a regular file.");
         }
-        const name = basename12(relPath);
+        const name = basename13(relPath);
         const catalogRevision = filesRevision(`${relPath}:${stat.size}:${stat.mtimeMs}`);
         const totalBytes = stat.size;
         if (totalBytes > WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS) {
@@ -52315,8 +52489,8 @@ var init_workspace_changes_git = __esm({
 
 // packages/daemon/src/command-center/resources/workspace-changes-authority.ts
 import { spawnSync } from "node:child_process";
-import { readFileSync as readFileSync27, realpathSync as realpathSync13, statSync as statSync13 } from "node:fs";
-import { basename as basename13, isAbsolute as isAbsolute13, relative as relative4, resolve as resolvePath2 } from "node:path";
+import { readFileSync as readFileSync27, realpathSync as realpathSync14, statSync as statSync13 } from "node:fs";
+import { basename as basename14, isAbsolute as isAbsolute14, relative as relative5, resolve as resolvePath2 } from "node:path";
 function runGit(args, cwd) {
   const result = spawnSync("git", args, {
     cwd,
@@ -52359,8 +52533,8 @@ function mapCatalogReasonToDiff(reason) {
 function confineToWorkspace(realRoot, repoRoot, gitPath) {
   if (gitPath.length === 0 || gitPath.includes("\0")) return null;
   const abs = resolvePath2(repoRoot, gitPath);
-  const rel = relative4(realRoot, abs);
-  if (rel.length === 0 || rel.startsWith("..") || isAbsolute13(rel)) return null;
+  const rel = relative5(realRoot, abs);
+  if (rel.length === 0 || rel.startsWith("..") || isAbsolute14(rel)) return null;
   const display = rel.split(/[\\/]+/u).join("/");
   return WorkspaceRelativeDisplayPathSchemaZ.safeParse(display).success ? display : null;
 }
@@ -52370,7 +52544,7 @@ function buildChangeEntry(raw, displayPath, originPath, counts) {
     id: changeResourceId(raw.group, displayPath),
     group: raw.group,
     status: raw.status,
-    name: basename13(displayPath),
+    name: basename14(displayPath),
     relativePath: displayPath,
     originPath: carriesOrigin ? originPath ?? null : null,
     binary: counts.binary,
@@ -52620,7 +52794,7 @@ var init_workspace_changes_authority = __esm({
       resolveRepo() {
         let realRoot;
         try {
-          realRoot = realpathSync13(this.root);
+          realRoot = realpathSync14(this.root);
         } catch {
           return {
             reason: "workspace-unavailable",
@@ -54712,7 +54886,7 @@ __export(widget_asset_store_exports, {
 import { createHash as createHash15, randomUUID as randomUUID13 } from "node:crypto";
 import {
   chmodSync as chmodSync5,
-  existsSync as existsSync33,
+  existsSync as existsSync34,
   lstatSync as lstatSync4,
   mkdirSync as mkdirSync24,
   readFileSync as readFileSync28,
@@ -54809,7 +54983,7 @@ function publishWidgetAsset(bytes, options) {
     byteLength: bytes.byteLength,
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  if (!existsSync33(paths.data)) {
+  if (!existsSync34(paths.data)) {
     const temporary = join36(root, `.${assetId}.${randomUUID13()}.bin`);
     writeFileSync22(temporary, bytes, { mode: 384, flag: "wx" });
     renameSync13(temporary, paths.data);
@@ -54872,17 +55046,17 @@ __export(server_exports, {
 });
 import { execFile as execFile6 } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync as existsSync34, readdirSync as readdirSync7 } from "node:fs";
-import { join as join37, dirname as dirname29, basename as basename14 } from "node:path";
+import { existsSync as existsSync35, readdirSync as readdirSync7 } from "node:fs";
+import { join as join37, dirname as dirname30, basename as basename15 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
 import { z as z80 } from "zod";
-import { realpathSync as realpathSync14 } from "node:fs";
-import { homedir as homedir21 } from "node:os";
-import { isAbsolute as isAbsolute14, resolve as pathResolve } from "node:path";
+import { realpathSync as realpathSync15 } from "node:fs";
+import { homedir as homedir18 } from "node:os";
+import { isAbsolute as isAbsolute15, resolve as pathResolve } from "node:path";
 import { randomUUID as randomUUID14 } from "node:crypto";
 import { WebSocketServer as WebSocketServer3 } from "ws";
 function bearerToken(authHeader) {
@@ -54978,20 +55152,20 @@ function sandboxResolveDir(rawDir) {
   if (trimmed.includes("\0")) {
     return { error: "invalid-path", message: "Path contains a null byte", status: 400 };
   }
-  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir21();
+  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir18();
   let candidate = trimmed;
   if (candidate === "~") {
     candidate = home;
   } else if (candidate.startsWith("~/")) {
     candidate = `${home.replace(/\/+$/, "")}/${candidate.slice(2)}`;
   }
-  if (!isAbsolute14(candidate)) {
+  if (!isAbsolute15(candidate)) {
     return { error: "invalid-path", message: "Path must be absolute", status: 400 };
   }
   const resolved2 = pathResolve(candidate);
   let canonical;
   try {
-    canonical = realpathSync14(resolved2);
+    canonical = realpathSync15(resolved2);
   } catch (err) {
     const code = err.code;
     if (code === "ENOENT" || code === "ENOTDIR") {
@@ -55185,6 +55359,34 @@ function createApp(options = {}) {
   });
   app.get("/api/resources/workspace-catalog", (c) => {
     const registry = getDefaultWorkspaceRegistry();
+    if (c.req.query("version") === String(WORKSPACE_CATALOG_RESOURCE_V2_VERSION)) {
+      const workspaceIntents = registry.list().map(({ name, sessionName }) => ({
+        workspaceName: name,
+        sessionName,
+        source: "workspace"
+      }));
+      const knownWorkspaceNames = new Set(workspaceIntents.map(({ workspaceName }) => workspaceName));
+      const projectIntents = listProjects().flatMap(
+        (project) => knownWorkspaceNames.has(project.name) ? [] : [
+          {
+            workspaceName: project.name,
+            sessionName: project.name,
+            source: "project"
+          }
+        ]
+      );
+      const liveSessions2 = options.catalogLiveSessions?.() ?? discoverSessions().map((session) => ({
+        sessionName: session.name,
+        paneCount: session.panes.length
+      }));
+      return c.json(
+        projectWorkspaceCatalogV2(
+          daemonInstanceIdentity,
+          [...workspaceIntents, ...projectIntents],
+          liveSessions2
+        )
+      );
+    }
     return c.json({
       version: WORKSPACE_CATALOG_RESOURCE_VERSION,
       daemon: daemonInstanceIdentity,
@@ -55201,7 +55403,7 @@ function createApp(options = {}) {
   app.post("/api/workspaces", zValidator("json", AddWorkspaceRequestSchemaZ), async (c) => {
     const body = c.req.valid("json");
     const registry = getDefaultWorkspaceRegistry();
-    const name = body.name ?? basename14(body.projectDir);
+    const name = body.name ?? basename15(body.projectDir);
     if (!name || name.length === 0) {
       return c.json({ error: "Cannot derive workspace name from projectDir" }, 400);
     }
@@ -55813,7 +56015,8 @@ function createApp(options = {}) {
     try {
       const project = await registerProject({
         dir: parsed.data.dir,
-        name: parsed.data.name
+        name: parsed.data.name,
+        persistence: parsed.data.persistence
       });
       return c.json({ project }, 201);
     } catch (err) {
@@ -55864,7 +56067,7 @@ function createApp(options = {}) {
     if (!parsed.success) {
       return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
     }
-    if (!existsSync34(parsed.data.dir)) {
+    if (!existsSync35(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
     const jobId = randomUUID14();
@@ -55970,10 +56173,10 @@ function createApp(options = {}) {
 }
 function listAvailableTemplates() {
   const __filename = fileURLToPath10(import.meta.url);
-  const __dir = dirname29(__filename);
+  const __dir = dirname30(__filename);
   const configuredTemplatesDir = process.env.TMUX_IDE_TEMPLATES_DIR;
-  const templatesDir = configuredTemplatesDir && isAbsolute14(configuredTemplatesDir) ? configuredTemplatesDir : join37(__dir, "..", "..", "..", "..", "templates");
-  if (!existsSync34(templatesDir)) return [];
+  const templatesDir = configuredTemplatesDir && isAbsolute15(configuredTemplatesDir) ? configuredTemplatesDir : join37(__dir, "..", "..", "..", "..", "templates");
+  if (!existsSync35(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
     nextjs: {
@@ -56237,13 +56440,13 @@ async function retireTerminalAttachmentTransport(runtime, boundary) {
 }
 async function pickFreePort(hostname3) {
   const probe = createServer();
-  return await new Promise((resolve32, reject) => {
+  return await new Promise((resolve34, reject) => {
     probe.once("error", reject);
     probe.listen(0, hostname3, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve32(port);
+        if (port) resolve34(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -56333,21 +56536,21 @@ function attachWebSockets(server, opts) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve32) => wss.close(() => resolve32())), delay(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve34) => wss.close(() => resolve34())), delay(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve32, reject) => {
+  return new Promise((resolve34, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve32();
+      else resolve34();
     });
   });
 }
 function delay(ms) {
-  return new Promise((resolve32) => setTimeout(resolve32, ms));
+  return new Promise((resolve34) => setTimeout(resolve34, ms));
 }
 function generateLocalBypassToken() {
   return randomBytes8(32).toString("base64url");
@@ -56380,13 +56583,13 @@ function assertTakeoverDeadline(deadline, message) {
 async function waitForTakeoverPoll(deadline) {
   assertTakeoverDeadline(deadline, "Canonical daemon did not quiesce before the takeover deadline");
   const waitMs = Math.min(TAKEOVER_POLL_MS, deadline.remainingMs());
-  await new Promise((resolve32) => {
+  await new Promise((resolve34) => {
     const timer = setTimeout(finish, waitMs);
     const onAbort = () => finish();
     function finish() {
       clearTimeout(timer);
       deadline.signal.removeEventListener("abort", onAbort);
-      resolve32();
+      resolve34();
     }
     deadline.signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -56636,7 +56839,7 @@ async function startHttpServer({
   );
   const paneStreamBoundary = attachPaneStreamWebSocket(server, paneStreamRuntime.coordinator);
   try {
-    await new Promise((resolve32, reject) => {
+    await new Promise((resolve34, reject) => {
       const onError = (err) => {
         server.off("listening", onListening);
         if (err.code === "EADDRINUSE") {
@@ -56662,7 +56865,7 @@ async function startHttpServer({
             `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
           );
         }
-        resolve32();
+        resolve34();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -56888,7 +57091,7 @@ async function startEmbeddedDaemon(opts) {
         // fallback. Option/capture IO rides the runtime's own pinned runner.
         agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run })
       });
-      await terminalAttachmentRuntime.whenReady();
+      void terminalAttachmentRuntime.whenReady().catch(() => void 0);
       paneStreamRuntime = createPaneStreamRuntime({
         daemonInstanceId: instanceId,
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
@@ -57468,7 +57671,7 @@ var init_cli_action_bridge = __esm({
 });
 
 // packages/daemon/src/config.ts
-import { resolve as resolve28 } from "node:path";
+import { resolve as resolve29 } from "node:path";
 function readConfigSafe(dir) {
   let cfg;
   try {
@@ -57602,7 +57805,7 @@ function configDisableTeam(dir) {
   }).config;
 }
 async function config(targetDir, { json: json2, action, args } = {}) {
-  const dir = resolve28(targetDir ?? ".");
+  const dir = resolve29(targetDir ?? ".");
   if (await tryDispatchConfigAction(dir, { json: json2, action, args: args ?? [] })) return;
   const configContext = await resolveProjectConfigContext(dir);
   if (!configContext.configExists) {
@@ -58275,10 +58478,10 @@ function buildReport(target) {
   let ageSeconds = null;
   let stale = false;
   if (authRaw) {
-    const sep8 = authRaw.lastIndexOf(":");
-    if (sep8 !== -1) {
-      authState = authRaw.slice(0, sep8);
-      const epoch = Number(authRaw.slice(sep8 + 1));
+    const sep9 = authRaw.lastIndexOf(":");
+    if (sep9 !== -1) {
+      authState = authRaw.slice(0, sep9);
+      const epoch = Number(authRaw.slice(sep9 + 1));
       if (Number.isFinite(epoch)) {
         authEpoch = epoch;
         ageSeconds = nowSec - epoch;
@@ -58617,8 +58820,8 @@ var init_agent_lifecycle = __esm({
 // packages/daemon/src/control/lifecycle.ts
 import { execFile as execFile7 } from "node:child_process";
 function tmuxRun(args) {
-  return new Promise((resolve32, reject) => {
-    execFile7("tmux", args, (err, stdout) => err ? reject(err) : resolve32(stdout.trimEnd()));
+  return new Promise((resolve34, reject) => {
+    execFile7("tmux", args, (err, stdout) => err ? reject(err) : resolve34(stdout.trimEnd()));
   });
 }
 async function tmuxTry(args) {
@@ -58790,25 +58993,25 @@ __export(server_exports2, {
   defaultControlSocketPath: () => defaultControlSocketPath,
   startControlServer: () => startControlServer
 });
-import { chmodSync as chmodSync6, existsSync as existsSync35, mkdirSync as mkdirSync25, statSync as statSync14, unlinkSync as unlinkSync3 } from "node:fs";
+import { chmodSync as chmodSync6, existsSync as existsSync36, mkdirSync as mkdirSync25, statSync as statSync14, unlinkSync as unlinkSync3 } from "node:fs";
 import { createServer as createServer2, connect } from "node:net";
-import { dirname as dirname31, join as join38 } from "node:path";
+import { dirname as dirname32 } from "node:path";
 function defaultControlSocketPath() {
-  return join38(tuiStateHome(), "control.sock");
+  return resolveRuntimeNamespace().controlSocketPath;
 }
 async function claimSocketPath(path2) {
-  if (!existsSync35(path2)) return;
+  if (!existsSync36(path2)) return;
   if (!statSync14(path2).isSocket()) {
     throw new IdeError(
       `${path2} exists and is not a socket \u2014 refusing to remove it. Pass a different --socket path.`,
       { code: "USAGE", exitCode: 1 }
     );
   }
-  const alive = await new Promise((resolve32) => {
+  const alive = await new Promise((resolve34) => {
     const probe = connect(path2);
     const done = (result) => {
       probe.destroy();
-      resolve32(result);
+      resolve34(result);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -58827,7 +59030,7 @@ async function startControlServer(opts = {}) {
   const log = opts.log ?? (() => {
   });
   const tickMs = opts.tickMs ?? TICK_MS;
-  mkdirSync25(dirname31(socketPath), { recursive: true });
+  mkdirSync25(dirname32(socketPath), { recursive: true });
   await claimSocketPath(socketPath);
   const tracker = createStatusTracker();
   const handlers = createVerbHandlers({ tracker });
@@ -58890,7 +59093,7 @@ async function startControlServer(opts = {}) {
     conn.on("error", () => {
     });
   });
-  await new Promise((resolve32, reject) => {
+  await new Promise((resolve34, reject) => {
     server.once("error", (err) => {
       if ((err.code === "EINVAL" || err.code === "ENAMETOOLONG") && socketPath.length > 100) {
         reject(
@@ -58906,14 +59109,14 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
     });
     server.listen(socketPath, () => {
       server.removeAllListeners("error");
-      resolve32();
+      resolve34();
     });
   });
   chmodSync6(socketPath, 384);
   log(`listening on ${socketPath}`);
   return {
     socketPath,
-    close: () => new Promise((resolve32) => {
+    close: () => new Promise((resolve34) => {
       if (timer) clearInterval(timer);
       timer = null;
       for (const conn of connections) conn.destroy();
@@ -58922,7 +59125,7 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
           unlinkSync3(socketPath);
         } catch {
         }
-        resolve32();
+        resolve34();
       });
     })
   };
@@ -58932,7 +59135,7 @@ var init_server2 = __esm({
     "use strict";
     init_src();
     init_errors2();
-    init_tui_binary();
+    init_runtime_namespace();
     init_classify();
     init_events();
     init_updater();
@@ -58953,12 +59156,12 @@ __export(client_exports, {
 import { connect as connect2 } from "node:net";
 function connectControl(opts = {}) {
   const path2 = opts.socketPath ?? defaultControlSocketPath();
-  return new Promise((resolve32, reject) => {
+  return new Promise((resolve34, reject) => {
     const socket = connect2(path2);
     socket.once("error", reject);
     socket.once("connect", () => {
       socket.removeListener("error", reject);
-      resolve32(wrap(socket));
+      resolve34(wrap(socket));
     });
   });
 }
@@ -59010,12 +59213,12 @@ function wrap(socket) {
   });
   const request = (verb, params) => {
     const id = nextId++;
-    return new Promise((resolve32, reject) => {
+    return new Promise((resolve34, reject) => {
       if (socket.destroyed) {
         reject(new ControlRequestError("disconnected", "control socket closed"));
         return;
       }
-      pending.set(id, { resolve: resolve32, reject });
+      pending.set(id, { resolve: resolve34, reject });
       socket.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, id, verb, params }));
     });
   };
@@ -59091,7 +59294,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
   } catch {
     return null;
   }
-  return new Promise((resolve32) => {
+  return new Promise((resolve34) => {
     let settled = false;
     let lastStatus = null;
     let deadlineTimer = null;
@@ -59105,7 +59308,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
         socket.close();
       } catch {
       }
-      resolve32(result);
+      resolve34(result);
     };
     connectTimer = setTimeout(() => settle(null), connectTimeoutMs);
     connectTimer.unref?.();
@@ -59176,7 +59379,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync18 } from "node:child_process";
-import { basename as basename15, dirname as dirname32, isAbsolute as isAbsolute15, join as join39, resolve as resolve30 } from "node:path";
+import { basename as basename16, dirname as dirname33, isAbsolute as isAbsolute16, join as join38, resolve as resolve32 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -59184,12 +59387,12 @@ function worktreeSessionName(project, branch) {
   return `${sanitizeForTmux(project)}@${sanitizeForTmux(branch)}`;
 }
 function defaultWorktreeBaseDir(repoDir) {
-  const abs = resolve30(repoDir);
-  return join39(dirname32(abs), `${basename15(abs)}-worktrees`);
+  const abs = resolve32(repoDir);
+  return join38(dirname33(abs), `${basename16(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
-  const base = configuredDir && configuredDir.length > 0 ? isAbsolute15(configuredDir) ? configuredDir : resolve30(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
-  return join39(base, branch);
+  const base = configuredDir && configuredDir.length > 0 ? isAbsolute16(configuredDir) ? configuredDir : resolve32(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
+  return join38(base, branch);
 }
 function parseWorktreeList(porcelain) {
   const entries = [];
@@ -59333,8 +59536,8 @@ __export(update_exports, {
   runUpdate: () => runUpdate
 });
 import { execSync as execSync4 } from "node:child_process";
-import { existsSync as existsSync36 } from "node:fs";
-import { dirname as dirname33, join as join40 } from "node:path";
+import { existsSync as existsSync37 } from "node:fs";
+import { dirname as dirname34, join as join39 } from "node:path";
 function detectPackageManager(cliPath) {
   const p = cliPath.toLowerCase();
   if (/(^|\/)\.?bun(\/|$)/.test(p)) return "bun";
@@ -59380,8 +59583,8 @@ function renderPlan(plan, { current, latest, dryRun }) {
 function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
-    if (existsSync36(join40(dir, ".git"))) return dir;
-    const parent = dirname33(dir);
+    if (existsSync37(join39(dir, ".git"))) return dir;
+    const parent = dirname34(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -59427,7 +59630,7 @@ __export(pane_widget_exports, {
   paneWidgetId: () => paneWidgetId,
   paneWidgetIdForFile: () => paneWidgetIdForFile
 });
-import { basename as basename16, extname } from "node:path";
+import { basename as basename17, extname } from "node:path";
 function imageMediaTypeFor(fileName) {
   return IMAGE_MEDIA_BY_EXTENSION.get(extname(fileName).toLowerCase()) ?? null;
 }
@@ -59445,7 +59648,7 @@ function buildMarkdownAnnouncement(text, title) {
   }
 }
 function buildImageAnnouncement(bytes, filePath) {
-  const name = basename16(filePath);
+  const name = basename17(filePath);
   const media = imageMediaTypeFor(name);
   if (media === null) {
     throw new PaneWidgetRefusal(
@@ -59499,7 +59702,7 @@ function paneWidgetIdForFile(fileName) {
   if ([".md", ".markdown"].includes(extension)) return "markdown";
   if (IMAGE_MEDIA_BY_EXTENSION.has(extension)) return "image";
   if (extension === ".json") return "card";
-  const name = basename16(fileName) || fileName || "input";
+  const name = basename17(fileName) || fileName || "input";
   throw new PaneWidgetRefusal(
     "unsupported-source",
     `tmux-ide cannot infer how to show "${name}". Supported: Markdown (.md, .markdown), raster images (${[...IMAGE_MEDIA_BY_EXTENSION.keys()].join(", ")}), and declarative cards (.json).`
@@ -59549,10 +59752,10 @@ async function startCommandCenter(options = {}) {
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
   const server = createServer3(listener);
-  return new Promise((resolve32) => {
+  return new Promise((resolve34) => {
     server.listen(port, hostname3, () => {
       console.log(`Command Center API on http://${hostname3}:${port}`);
-      resolve32(server);
+      resolve34(server);
     });
   });
 }
@@ -59605,21 +59808,21 @@ async function start(port) {
       handlePtyWebSocket(ws, id);
     });
   });
-  await new Promise((resolve32, reject) => {
+  await new Promise((resolve34, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, "0.0.0.0", () => {
       server.off("error", reject);
-      resolve32();
+      resolve34();
     });
   });
   console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve32, reject) => {
+    close: () => new Promise((resolve34, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve32());
+      server.close((err) => err ? reject(err) : resolve34());
     })
   };
 }
@@ -59635,9 +59838,9 @@ var init_server3 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve31, dirname as dirname34 } from "node:path";
+import { resolve as resolve33, dirname as dirname35 } from "node:path";
 import { execFileSync as execFileSync19 } from "node:child_process";
-import { existsSync as existsSync37 } from "node:fs";
+import { existsSync as existsSync38 } from "node:fs";
 import { fileURLToPath as fileURLToPath11 } from "node:url";
 
 // packages/daemon/src/tui/team/entry.ts
@@ -59662,20 +59865,20 @@ init_legacy_config_migration();
 init_config_context();
 init_src();
 import {
-  existsSync as existsSync22,
+  existsSync as existsSync23,
   readFileSync as readFileSync18,
   writeFileSync as writeFileSync14,
   mkdirSync as mkdirSync16,
   readdirSync as readdirSync3,
   copyFileSync as copyFileSync2
 } from "node:fs";
-import { resolve as resolve15, join as join22, basename as basename7, dirname as dirname20 } from "node:path";
+import { resolve as resolve16, join as join22, basename as basename8, dirname as dirname21 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
-var __dirname4 = dirname20(fileURLToPath7(import.meta.url));
+var __dirname4 = dirname21(fileURLToPath7(import.meta.url));
 function copyTemplateSkills(targetDir) {
   const created = [];
-  const templateSkillsDir = resolve15(__dirname4, "..", "..", "..", "templates", "skills");
-  if (!existsSync22(templateSkillsDir)) return created;
+  const templateSkillsDir = resolve16(__dirname4, "..", "..", "..", "templates", "skills");
+  if (!existsSync23(templateSkillsDir)) return created;
   mkdirSync16(targetDir, { recursive: true });
   for (const file of readdirSync3(templateSkillsDir)) {
     if (!file.endsWith(".md")) continue;
@@ -59688,12 +59891,12 @@ function copyTemplateSkills(targetDir) {
 function scaffoldLibraryStubs(dir) {
   const created = [];
   const libraryDir = join22(dir, ".tmux-ide", "library");
-  if (!existsSync22(libraryDir)) {
+  if (!existsSync23(libraryDir)) {
     mkdirSync16(libraryDir, { recursive: true });
     created.push(libraryDir);
   }
   const archPath = join22(libraryDir, "architecture.md");
-  if (!existsSync22(archPath)) {
+  if (!existsSync23(archPath)) {
     writeFileSync14(
       archPath,
       "# Architecture\n\n<!-- Describe your project's architecture here. This context is injected into agent dispatch prompts. -->\n"
@@ -59701,7 +59904,7 @@ function scaffoldLibraryStubs(dir) {
     created.push(archPath);
   }
   const learningsPath = join22(libraryDir, "learnings.md");
-  if (!existsSync22(learningsPath)) {
+  if (!existsSync23(learningsPath)) {
     writeFileSync14(
       learningsPath,
       "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n"
@@ -59713,11 +59916,11 @@ function scaffoldLibraryStubs(dir) {
 function scaffoldValidationContract(dir) {
   const created = [];
   const tasksDir = join22(dir, ".tasks");
-  if (!existsSync22(tasksDir)) {
+  if (!existsSync23(tasksDir)) {
     mkdirSync16(tasksDir, { recursive: true });
   }
   const contractPath = join22(tasksDir, "validation-contract.md");
-  if (!existsSync22(contractPath)) {
+  if (!existsSync23(contractPath)) {
     writeFileSync14(
       contractPath,
       "# Validation Contract\n\n<!-- Define assertions that the validator agent will verify. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n<!-- - VAL-003: Lint passes with zero warnings -->\n"
@@ -59728,10 +59931,10 @@ function scaffoldValidationContract(dir) {
 }
 function scaffoldAgentsMd(dir, name) {
   const created = [];
-  const agentsTemplatePath = resolve15(__dirname4, "..", "..", "..", "templates", "AGENTS.md");
-  if (existsSync22(agentsTemplatePath)) {
+  const agentsTemplatePath = resolve16(__dirname4, "..", "..", "..", "templates", "AGENTS.md");
+  if (existsSync23(agentsTemplatePath)) {
     const agentsPath = join22(dir, "AGENTS.md");
-    if (!existsSync22(agentsPath)) {
+    if (!existsSync23(agentsPath)) {
       const content = readFileSync18(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
       writeFileSync14(agentsPath, content);
       created.push(agentsPath);
@@ -59767,12 +59970,12 @@ async function init({
     outputError(`workspace config already exists at ${context.configPath}`, "EXISTS");
   }
   if (template) {
-    const templatePath = resolve15(__dirname4, "..", "..", "..", "templates", `${template}.yml`);
-    if (!existsSync22(templatePath)) {
+    const templatePath = resolve16(__dirname4, "..", "..", "..", "templates", `${template}.yml`);
+    if (!existsSync23(templatePath)) {
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
     let content = readFileSync18(templatePath, "utf-8");
-    const name2 = basename7(dir);
+    const name2 = basename8(dir);
     content = content.replace(/^name: .+/m, `name: ${name2}`);
     const yaml6 = (await import("js-yaml")).default;
     const workspace = WorkspaceConfigV1SchemaZ.parse(yaml6.load(content));
@@ -59801,7 +60004,7 @@ async function init({
     return;
   }
   const detected = detectStack(dir);
-  const name = basename7(dir);
+  const name = basename8(dir);
   if (detected.frameworks.length > 0) {
     const config2 = suggestConfig(dir, detected);
     writeConfig(dir, config2);
@@ -59814,7 +60017,7 @@ async function init({
       console.log("Edit it to customize, then run: tmux-ide");
     }
   } else {
-    const templatePath = resolve15(__dirname4, "..", "..", "..", "templates", "default.yml");
+    const templatePath = resolve16(__dirname4, "..", "..", "..", "templates", "default.yml");
     let content = readFileSync18(templatePath, "utf-8");
     content = content.replace(/^name: .+/m, `name: ${name}`);
     const yaml6 = (await import("js-yaml")).default;
@@ -59830,7 +60033,7 @@ async function init({
     }
   }
   const skillsDir = join22(dir, ".tmux-ide", "skills");
-  if (!existsSync22(skillsDir)) {
+  if (!existsSync23(skillsDir)) {
     const created = copyTemplateSkills(skillsDir);
     if (created.length > 0 && !json2) {
       console.log("Copied built-in skill templates to .tmux-ide/skills/");
@@ -59842,9 +60045,9 @@ async function init({
 init_output();
 init_src2();
 init_config_context();
-import { resolve as resolve16 } from "node:path";
+import { resolve as resolve17 } from "node:path";
 async function stop(targetDir, { json: json2 } = {}) {
-  const dir = resolve16(targetDir ?? ".");
+  const dir = resolve17(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result = killSession(session);
@@ -59863,9 +60066,9 @@ async function stop(targetDir, { json: json2 } = {}) {
 init_output();
 init_src2();
 init_config_context();
-import { resolve as resolve17 } from "node:path";
+import { resolve as resolve18 } from "node:path";
 async function attach(targetDir, { json: _json } = {}) {
-  const dir = resolve17(targetDir ?? ".");
+  const dir = resolve18(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const state = getSessionState(session);
   if (!state.running) {
@@ -59921,8 +60124,8 @@ init_claude();
 init_notify();
 init_resolved_config();
 import { execSync as execSync3 } from "node:child_process";
-import { accessSync, constants as constants2, existsSync as existsSync24 } from "node:fs";
-import { resolve as resolve18, dirname as dirname22 } from "node:path";
+import { accessSync, constants as constants2, existsSync as existsSync25 } from "node:fs";
+import { resolve as resolve19, dirname as dirname23 } from "node:path";
 import { fileURLToPath as fileURLToPath9 } from "node:url";
 function agentIntegrationRows(agents) {
   return presentAgents(agents).map((agent) => {
@@ -60033,7 +60236,7 @@ async function doctor({
   checks.push(
     await (async () => {
       try {
-        const resolved2 = await resolveConfig(resolve18("."));
+        const resolved2 = await resolveConfig(resolve19("."));
         if (resolved2.kind === "none") throw new Error("not found in current directory");
         return {
           label: "workspace config exists",
@@ -60055,11 +60258,11 @@ async function doctor({
     check(
       "TUI surfaces (cockpit / widgets)",
       () => {
-        const here = dirname22(fileURLToPath9(import.meta.url));
+        const here = dirname23(fileURLToPath9(import.meta.url));
         const checkoutEntry = [
-          resolve18(here, "../packages/daemon/src/tui/team/index.tsx"),
-          resolve18(here, "tui/team/index.tsx")
-        ].find(existsSync24);
+          resolve19(here, "../packages/daemon/src/tui/team/index.tsx"),
+          resolve19(here, "tui/team/index.tsx")
+        ].find(existsSync25);
         const binary = findCompiledTui();
         if (checkoutEntry && isBunAvailable()) return "dev checkout (bun)";
         if (binary) return `compiled binary (${binary})`;
@@ -60099,10 +60302,10 @@ async function doctor({
   checks.push(
     (() => {
       const settingsPath = claudeSettingsPath();
-      const fileExists2 = existsSync24(settingsPath);
-      let probe = fileExists2 ? settingsPath : dirname22(settingsPath);
-      while (!existsSync24(probe)) {
-        const parent = dirname22(probe);
+      const fileExists2 = existsSync25(settingsPath);
+      let probe = fileExists2 ? settingsPath : dirname23(settingsPath);
+      while (!existsSync25(probe)) {
+        const parent = dirname23(probe);
         if (parent === probe) break;
         probe = parent;
       }
@@ -60167,9 +60370,9 @@ async function doctor({
 init_src2();
 init_canonical_daemon();
 init_config_context();
-import { resolve as resolve19 } from "node:path";
+import { resolve as resolve20 } from "node:path";
 async function status(targetDir, { json: json2 } = {}) {
-  const dir = resolve19(targetDir ?? ".");
+  const dir = resolve20(targetDir ?? ".");
   const context = await resolveProjectConfigContext(dir);
   const session = context.sessionName;
   const state = getSessionState(session);
@@ -60224,7 +60427,7 @@ init_output();
 init_errors2();
 init_src2();
 init_config_context();
-import { resolve as resolve20 } from "node:path";
+import { resolve as resolve21 } from "node:path";
 function buildInspection(dir, {
   config: config2,
   configPath,
@@ -60282,7 +60485,7 @@ function buildInspection(dir, {
   };
 }
 async function inspect(targetDir, { json: json2 } = {}) {
-  const dir = resolve20(targetDir ?? ".");
+  const dir = resolve21(targetDir ?? ".");
   let config2;
   let configPath;
   let configKind;
@@ -60376,7 +60579,7 @@ init_legacy_config_adapter();
 init_project_resolver();
 init_errors2();
 import { execFileSync as execFileSync16 } from "node:child_process";
-import { dirname as dirname30, resolve as resolve29 } from "node:path";
+import { dirname as dirname31, resolve as resolve30 } from "node:path";
 function gitIgnoresWorkspace(dir) {
   try {
     execFileSync16("git", ["-C", dir, "check-ignore", "-q", ".tmux-ide/workspace.yml"], {
@@ -60422,7 +60625,7 @@ async function migrate(targetDir, {
   write,
   onAfterRead
 } = {}) {
-  const dir = resolve29(targetDir ?? ".");
+  const dir = resolve30(targetDir ?? ".");
   if (!dryRun && !write) dryRun = true;
   if (dryRun && write) outputError("Use either --dry-run or --write, not both", "USAGE");
   try {
@@ -60434,7 +60637,7 @@ async function migrate(targetDir, {
       outputError("No resolved legacy ide.yml found to migrate", "CONFIG_NOT_FOUND");
     }
     const legacyPath = resolution.config.path;
-    const writeRoot = dirname30(legacyPath);
+    const writeRoot = dirname31(legacyPath);
     const workspacePath = workspaceConfigPath(writeRoot);
     const { raw, config: config2 } = readLegacyForMigration(legacyPath);
     await onAfterRead?.();
@@ -60889,7 +61092,7 @@ async function findLiveCanonicalDaemon(deps2, options) {
   return existing.info;
 }
 function delay2(ms) {
-  return new Promise((resolve32) => setTimeout(resolve32, ms));
+  return new Promise((resolve34) => setTimeout(resolve34, ms));
 }
 var DAEMON_ATTACHABILITY_TIMEOUT_MS = 15e3;
 var DAEMON_ATTACHABILITY_POLL_MS = 25;
@@ -60987,8 +61190,8 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
       });
     }
     let resolveStopped;
-    const stopped = new Promise((resolve32) => {
-      resolveStopped = resolve32;
+    const stopped = new Promise((resolve34) => {
+      resolveStopped = resolve34;
     });
     let stopFailure;
     const originalStop = handle.stop.bind(handle);
@@ -61050,11 +61253,254 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
   }
 }
 
+// packages/daemon/src/lib/canonical-daemon-bootstrap.ts
+import { spawn as spawn8 } from "node:child_process";
+import { resolve as resolve31 } from "node:path";
+
+// packages/daemon-client/src/bootstrap-coordinator.ts
+var DaemonBootstrapError = class extends Error {
+  code;
+  reason;
+  cause;
+  constructor(code, message, options = {}) {
+    super(message, options.cause === void 0 ? void 0 : { cause: options.cause });
+    this.name = "DaemonBootstrapError";
+    this.code = code;
+    this.reason = options.reason ?? null;
+    this.cause = options.cause;
+  }
+};
+var defaultSleep = (milliseconds) => new Promise((resolve34) => setTimeout(resolve34, milliseconds));
+var defaultPollMs = (poll) => Math.min(25 * 2 ** poll, 200);
+var DaemonBootstrapCoordinator = class {
+  #options;
+  #flight = null;
+  #attempt = 0;
+  #snapshot;
+  constructor(options) {
+    this.#options = options;
+    this.#snapshot = Object.freeze({
+      phase: "idle",
+      attempt: 0,
+      candidate: null,
+      inventory: null,
+      source: null,
+      reason: null,
+      timings: this.#timings(0)
+    });
+  }
+  snapshot() {
+    return this.#snapshot;
+  }
+  ensure() {
+    if (this.#flight) return this.#flight;
+    const attempt = ++this.#attempt;
+    const operation = this.#run(attempt);
+    this.#flight = operation;
+    void operation.finally(() => {
+      if (this.#flight === operation) this.#flight = null;
+    }).catch(() => void 0);
+    return operation;
+  }
+  async #run(attempt) {
+    const timeoutMs = this.#options.timeoutMs ?? 15e3;
+    const now = this.#options.now ?? Date.now;
+    const sleep2 = this.#options.sleep ?? defaultSleep;
+    const pollMs = this.#options.pollMs ?? defaultPollMs;
+    let timings = this.#timings(now());
+    this.#publish("probing", attempt, null, null, null, null, timings);
+    try {
+      let source = "existing";
+      let probe = await this.#options.probe();
+      timings = { ...timings, probedAt: now() };
+      if (probe.status === "incompatible") this.#throwIncompatible(probe.reason);
+      if (probe.status === "absent-or-stale") {
+        source = "started";
+        this.#publish("spawning", attempt, null, null, null, null, timings);
+        try {
+          await this.#options.spawn();
+          timings = { ...timings, spawnedAt: now() };
+        } catch (error) {
+          probe = await this.#options.probe();
+          if (probe.status === "incompatible") this.#throwIncompatible(probe.reason);
+          if (probe.status !== "compatible" && probe.status !== "control-pending") {
+            throw new DaemonBootstrapError(
+              "spawn-failed",
+              "The canonical daemon could not start.",
+              {
+                cause: error
+              }
+            );
+          }
+          source = "existing";
+        }
+      }
+      const controlDeadline = now() + timeoutMs;
+      let poll = 0;
+      while (probe.status !== "compatible") {
+        if (now() >= controlDeadline) {
+          throw new DaemonBootstrapError(
+            "control-timeout",
+            `The canonical daemon control plane did not become ready within ${timeoutMs}ms.`
+          );
+        }
+        await sleep2(Math.max(0, pollMs(poll++)));
+        probe = await this.#options.probe();
+        if (probe.status === "incompatible") this.#throwIncompatible(probe.reason);
+      }
+      const candidate = probe.candidate;
+      timings = { ...timings, controlReadyAt: now() };
+      this.#publish("control-ready", attempt, candidate, null, source, null, timings);
+      if (!this.#options.reconcileInventory) {
+        timings = { ...timings, inventoryReadyAt: now(), firstClientReadyAt: now() };
+        return this.#ready(attempt, candidate, null, source, timings);
+      }
+      this.#publish("inventory-reconciling", attempt, candidate, null, source, null, timings);
+      const inventoryDeadline = now() + timeoutMs;
+      poll = 0;
+      while (true) {
+        const inventory = await this.#options.reconcileInventory(candidate);
+        if (inventory.status === "ready" || inventory.status === "empty") {
+          timings = { ...timings, inventoryReadyAt: now(), firstClientReadyAt: now() };
+          return this.#ready(attempt, candidate, inventory.inventory, source, timings);
+        }
+        if (inventory.status === "unavailable") {
+          throw new DaemonBootstrapError(
+            "inventory-timeout",
+            "The daemon is ready but tmux inventory is unavailable.",
+            { reason: inventory.reason }
+          );
+        }
+        if (now() >= inventoryDeadline) {
+          throw new DaemonBootstrapError(
+            "inventory-timeout",
+            `The tmux inventory did not reconcile within ${timeoutMs}ms.`
+          );
+        }
+        await sleep2(Math.max(0, pollMs(poll++)));
+      }
+    } catch (error) {
+      const incompatible = error instanceof DaemonBootstrapError && error.code === "incompatible";
+      const reason = error instanceof DaemonBootstrapError ? error.reason : null;
+      this.#publish(
+        incompatible ? "incompatible" : "failed",
+        attempt,
+        null,
+        null,
+        null,
+        reason,
+        timings
+      );
+      throw error;
+    }
+  }
+  #throwIncompatible(reason) {
+    throw new DaemonBootstrapError("incompatible", "The canonical daemon is incompatible.", {
+      reason
+    });
+  }
+  #ready(attempt, candidate, inventory, source, timings) {
+    this.#publish("ready", attempt, candidate, inventory, source, null, timings);
+    return { candidate, inventory, source, timings };
+  }
+  #timings(startedAt) {
+    return {
+      startedAt,
+      probedAt: null,
+      spawnedAt: null,
+      controlReadyAt: null,
+      inventoryReadyAt: null,
+      firstClientReadyAt: null
+    };
+  }
+  #publish(phase, attempt, candidate, inventory, source, reason, timings) {
+    this.#snapshot = Object.freeze({
+      phase,
+      attempt,
+      candidate,
+      inventory,
+      source,
+      reason,
+      timings: Object.freeze(timings)
+    });
+    try {
+      this.#options.onPhaseChanged?.(this.#snapshot);
+    } catch {
+    }
+  }
+};
+
+// packages/daemon/src/lib/canonical-daemon-bootstrap.ts
+init_src();
+init_canonical_daemon();
+function spawnOwner(entryPath, cwd) {
+  return new Promise((resolveSpawn, reject) => {
+    let child;
+    try {
+      child = spawn8(process.execPath, [entryPath, "--headless", "--json"], {
+        cwd,
+        env: process.env,
+        detached: true,
+        stdio: "ignore"
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.removeListener("error", reject);
+      child.unref();
+      resolveSpawn();
+    });
+  });
+}
+var defaultDependencies2 = {
+  inspect: inspectCanonicalDaemonInfo,
+  ownerProvenDead: isCanonicalDaemonRecordOwnerProvenDead,
+  alive: isCanonicalDaemonAlive,
+  identity: probeCanonicalDaemonIdentity,
+  health: probeCanonicalDaemonHealth,
+  spawnOwner
+};
+async function probeCanonical(deps2) {
+  const state = deps2.inspect();
+  if (state.status === "missing") return { status: "absent-or-stale" };
+  if (state.status === "invalid") {
+    return await deps2.ownerProvenDead(state) ? { status: "absent-or-stale" } : { status: "incompatible", reason: "canonical-record-invalid" };
+  }
+  if (!await deps2.alive(state.info)) return { status: "absent-or-stale" };
+  const [identity, health] = await Promise.all([
+    deps2.identity(state.info),
+    deps2.health(state.info)
+  ]);
+  if (!identity || !health) return { status: "control-pending", candidate: state.info };
+  if (identity.instanceId !== state.info.instanceId || identity.pid !== state.info.pid || identity.startedAt !== state.info.startedAt) {
+    return { status: "incompatible", reason: "identity-mismatch" };
+  }
+  if (state.info.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION || identity.protocolVersion !== state.info.protocolVersion || health.protocolVersion !== state.info.protocolVersion) {
+    return { status: "incompatible", reason: "protocol-mismatch" };
+  }
+  return { status: "compatible", candidate: state.info };
+}
+function createCanonicalDaemonBootstrapCoordinator(options, dependencies = {}) {
+  const deps2 = { ...defaultDependencies2, ...dependencies };
+  return new DaemonBootstrapCoordinator({
+    probe: () => probeCanonical(deps2),
+    spawn: () => deps2.spawnOwner(resolve31(options.entryPath), resolve31(options.cwd ?? process.cwd())),
+    timeoutMs: options.timeoutMs,
+    onPhaseChanged: options.onPhaseChanged
+  });
+}
+function ensureCanonicalDaemon(options, dependencies = {}) {
+  return createCanonicalDaemonBootstrapCoordinator(options, dependencies).ensure();
+}
+
 // bin/cli.ts
 init_hosted();
-var __dirname5 = dirname34(fileURLToPath11(import.meta.url));
+var __dirname5 = dirname35(fileURLToPath11(import.meta.url));
 var selfPath = fileURLToPath11(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve31(__dirname5, "cli.js");
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve33(__dirname5, "cli.js");
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -61280,7 +61726,7 @@ function execBunWidget(surface, scriptPath, args, commandLabel, extraEnv = {}) {
     surface,
     scriptPath,
     args,
-    checkoutExists: existsSync37(scriptPath),
+    checkoutExists: existsSync38(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -61301,7 +61747,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   if (launch2.mode === "bun") {
     execFileSync19(launch2.bin, launch2.argv, {
       stdio: "inherit",
-      cwd: resolve31(__dirname5, ".."),
+      cwd: resolve33(__dirname5, ".."),
       env
     });
     return;
@@ -61317,7 +61763,7 @@ function launchHostedApp(scriptPath, appArgs) {
     surface: "app",
     scriptPath,
     args: appArgs,
-    checkoutExists: existsSync37(scriptPath),
+    checkoutExists: existsSync38(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -61336,7 +61782,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve31(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
+    const cwd = launch2.mode === "bun" ? resolve33(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -61382,12 +61828,13 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve31(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve31(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve33(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve33(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
-function runApp(appArgs) {
+async function runApp(appArgs) {
+  await ensureCanonicalDaemon({ entryPath: nodeCliPath });
   const hosted = wantsHostedApp({
     flagDetachable: values.detachable === true,
     flagHosted: values.hosted === true,
@@ -61398,7 +61845,7 @@ function runApp(appArgs) {
   else execBunWidget("app", appScriptPath, appArgs, "app");
 }
 function launchApp() {
-  runApp([]);
+  return runApp([]);
 }
 try {
   if (values.headless) {
@@ -61432,8 +61879,8 @@ try {
         } catch {
         }
       }
-      const targetDir = resolve31(startTargetDir || ".");
-      if (startTargetDir && !existsSync37(targetDir)) {
+      const targetDir = resolve33(startTargetDir || ".");
+      if (startTargetDir && !existsSync38(targetDir)) {
         throw new IdeError(
           `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
           { code: "CONFIG_NOT_FOUND", exitCode: 1 }
@@ -61452,7 +61899,7 @@ try {
           await printFleetJson();
           break;
         }
-        if (entry === "app") launchApp();
+        if (entry === "app") await launchApp();
         else launchTeamCockpit();
         break;
       }
@@ -61531,11 +61978,11 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           "setup",
           scriptPath,
-          ["--dir=" + resolve31(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve33(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
@@ -61544,8 +61991,8 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve31(startTargetDir || ".")];
+      const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve33(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       execBunWidget("setup", scriptPath, setupArgs, "setup");
@@ -61563,8 +62010,8 @@ try {
       break;
     }
     case "settings": {
-      const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget("config", scriptPath, ["--dir=" + resolve31(startTargetDir || ".")], "settings");
+      const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      execBunWidget("config", scriptPath, ["--dir=" + resolve33(startTargetDir || ".")], "settings");
       break;
     }
     case "team": {
@@ -61585,7 +62032,7 @@ try {
     case "app": {
       const session = positionals[1];
       const appArgs = session ? [`--target=${session}`] : [];
-      runApp(appArgs);
+      await runApp(appArgs);
       break;
     }
     case "switcher": {
@@ -61711,7 +62158,7 @@ try {
       break;
     }
     case "events": {
-      const { readFileSync: readFileSync29, existsSync: existsSync38, statSync: statSync15, openSync: openSync4, readSync, closeSync: closeSync4 } = await import("node:fs");
+      const { readFileSync: readFileSync29, existsSync: existsSync39, statSync: statSync15, openSync: openSync4, readSync, closeSync: closeSync4 } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
       const paintStatus = (status2, text) => {
@@ -61736,7 +62183,7 @@ try {
           socketPath: typeof socketFlag === "string" ? socketFlag : void 0
         }).catch(() => null);
         if (client) {
-          if (existsSync38(path2)) {
+          if (existsSync39(path2)) {
             const backlog = readFileSync29(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
             for (const line of backlog.slice(-50)) printLine(line);
           }
@@ -61751,7 +62198,7 @@ try {
           break;
         }
       }
-      if (!existsSync38(path2)) {
+      if (!existsSync39(path2)) {
         console.log("no events yet \u2014 is a session adopted? (the chrome updater writes events)");
         break;
       }
@@ -61913,13 +62360,13 @@ try {
             console.log(forcedKey);
             act(forcedKey);
           } else {
-            const key = await new Promise((resolve32) => {
+            const key = await new Promise((resolve34) => {
               try {
                 process.stdin.setRawMode?.(true);
                 process.stdin.resume();
-                process.stdin.once("data", (data) => resolve32(data.toString()));
+                process.stdin.once("data", (data) => resolve34(data.toString()));
               } catch {
-                resolve32("");
+                resolve34("");
               }
             });
             try {
@@ -62118,7 +62565,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync19("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -62434,7 +62881,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       } = await Promise.resolve().then(() => (init_pane_widget(), pane_widget_exports));
       const { publishWidgetAsset: publishWidgetAsset2, WidgetAssetStoreError: WidgetAssetStoreError2 } = await Promise.resolve().then(() => (init_widget_asset_store(), widget_asset_store_exports));
       const { readFileSync: readFileSync29, watchFile, unwatchFile } = await import("node:fs");
-      const { basename: basename17 } = await import("node:path");
+      const { basename: basename18 } = await import("node:path");
       const readStdin = async () => {
         const chunks = [];
         for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
@@ -62455,9 +62902,9 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             const publish = () => {
               const asset = publishWidgetAsset2(readFileSync29(file), {
                 media: "text/markdown",
-                name: basename17(file)
+                name: basename18(file)
               });
-              return buildMarkdownAssetAnnouncement2(asset.assetId, basename17(file));
+              return buildMarkdownAssetAnnouncement2(asset.assetId, basename18(file));
             };
             announcement = publish();
             watchedFile = file;
@@ -62472,14 +62919,14 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             if (!media) {
               throw new PaneWidgetRefusal2(
                 "unsupported-media",
-                `"${basename17(file)}" is not a supported raster image.`
+                `"${basename18(file)}" is not a supported raster image.`
               );
             }
             const asset = publishWidgetAsset2(readFileSync29(file), {
               media,
-              name: basename17(file)
+              name: basename18(file)
             });
-            return buildImageAssetAnnouncement2(asset.assetId, { name: basename17(file) });
+            return buildImageAssetAnnouncement2(asset.assetId, { name: basename18(file) });
           };
           announcement = publish();
           watchedFile = file;
@@ -62554,7 +63001,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve31(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve33(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync19("node", serverArgs, { stdio: "inherit" });

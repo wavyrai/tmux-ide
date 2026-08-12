@@ -45,6 +45,7 @@ import { send } from "../packages/daemon/src/send.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 import { runHeadlessDaemon } from "../packages/daemon/src/lib/headless-daemon.ts";
+import { ensureCanonicalDaemon } from "../packages/daemon/src/lib/canonical-daemon-bootstrap.ts";
 import {
   wantsHostedApp,
   hostedEnvVars,
@@ -463,7 +464,10 @@ function launchTeamCockpit(): void {
 // `app.detachable` in config) route through the hosted launcher, everything
 // else runs the app in this terminal as before. The HOSTED_ENV guard keeps the
 // app INSIDE the host session from re-hosting itself.
-function runApp(appArgs: string[]): void {
+async function runApp(appArgs: string[]): Promise<void> {
+  // The app is a thin client. Establish the one persistent daemon generation
+  // before OpenTUI mounts so its first frame never races manual daemon startup.
+  await ensureCanonicalDaemon({ entryPath: nodeCliPath });
   const hosted = wantsHostedApp({
     flagDetachable: values.detachable === true,
     flagHosted: values.hosted === true,
@@ -478,8 +482,8 @@ function runApp(appArgs: string[]): void {
 // app`'s HOME panel when `app.frontDoor` is on and there's nothing else to
 // launch. Same entry as the explicit `app` command with no session positional
 // — including the hosted flip when `app.detachable` is set (M23.2).
-function launchApp(): void {
-  runApp([]);
+function launchApp(): Promise<void> {
+  return runApp([]);
 }
 
 try {
@@ -547,7 +551,7 @@ try {
           await printFleetJson();
           break;
         }
-        if (entry === "app") launchApp();
+        if (entry === "app") await launchApp();
         else launchTeamCockpit();
         break;
       }
@@ -715,7 +719,7 @@ try {
       // cockpit at CREATE time; a reattach finds the app exactly as left.
       const session = positionals[1];
       const appArgs = session ? [`--target=${session}`] : [];
-      runApp(appArgs);
+      await runApp(appArgs);
       break;
     }
 

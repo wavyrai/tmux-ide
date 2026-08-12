@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./bootstrap-coordinator": "./src/bootstrap-coordinator.ts",
     "./connection-supervisor": "./src/connection-supervisor.ts",
     "./resource-replica": "./src/resource-replica.ts",
     "./push-resource-session": "./src/push-resource-session.ts",

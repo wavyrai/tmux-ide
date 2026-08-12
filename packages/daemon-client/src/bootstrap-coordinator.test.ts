@@ -78,6 +78,27 @@ describe("DaemonBootstrapCoordinator", () => {
     });
   });
 
+  it("waits on a living published generation without spawning a contender", async () => {
+    const candidate = { generation: "elected" };
+    let probes = 0;
+    let starts = 0;
+    const coordinator = new DaemonBootstrapCoordinator<Candidate>({
+      probe: () =>
+        ++probes === 1
+          ? { status: "control-pending", candidate }
+          : { status: "compatible", candidate },
+      spawn: () => {
+        starts += 1;
+      },
+      sleep: async () => undefined,
+    });
+    await expect(coordinator.ensure()).resolves.toMatchObject({
+      source: "existing",
+      candidate,
+    });
+    expect(starts).toBe(0);
+  });
+
   it("times out deterministically and permits a later retry", async () => {
     let clock = 0;
     let starts = 0;

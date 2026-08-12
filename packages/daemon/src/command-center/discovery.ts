@@ -287,9 +287,12 @@ export function discoverSessions(): SessionInfo[] {
   // fall through to the legacy "any tmux session with a cwd" behavior.
   const registry = getDefaultWorkspaceRegistry();
   const enforceRegistry = registry._isLoaded();
+  const registeredSessionNames = enforceRegistry
+    ? new Set(registry.list().map(({ sessionName }) => sessionName))
+    : null;
 
   for (const name of sessionNames) {
-    if (enforceRegistry && !registry.has(name)) continue;
+    if (registeredSessionNames && !registeredSessionNames.has(name)) continue;
     const dir = getSessionCwd(name);
     if (!dir) continue;
 

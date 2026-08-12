@@ -41,6 +41,8 @@ import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   WORKSPACE_CATALOG_RESOURCE_VERSION,
+  WORKSPACE_CATALOG_RESOURCE_V2_VERSION,
+  projectWorkspaceCatalogV2,
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
   type ApplicationShellResourceV1,
@@ -49,6 +51,7 @@ import {
   type AppWindowDocumentV1,
   type DesktopMissionWorkspaceResource,
   type WorkspaceCatalogResourceV1,
+  type WorkspaceCatalogResourceV2,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
   type DaemonProjectResponse,
@@ -175,6 +178,11 @@ export interface CreateAppOptions {
       requestedSessionName: string,
     ): Promise<ApplicationShellSessionFacts | null>;
   } | null;
+  /** Injectable live tmux projection for catalog tests and alternate hosts. */
+  catalogLiveSessions?: () => readonly {
+    readonly sessionName: string;
+    readonly paneCount: number;
+  }[];
   applicationShellAppWindowBackend?: {
     load(
       projectDir: string,
@@ -693,6 +701,40 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // protect.
   app.get("/api/resources/workspace-catalog", (c) => {
     const registry = getDefaultWorkspaceRegistry();
+    if (c.req.query("version") === String(WORKSPACE_CATALOG_RESOURCE_V2_VERSION)) {
+      const workspaceIntents = registry.list().map(({ name, sessionName }) => ({
+        workspaceName: name,
+        sessionName,
+        source: "workspace" as const,
+      }));
+      const knownWorkspaceNames = new Set(
+        workspaceIntents.map(({ workspaceName }) => workspaceName),
+      );
+      const projectIntents = listProjects().flatMap((project) =>
+        knownWorkspaceNames.has(project.name)
+          ? []
+          : [
+              {
+                workspaceName: project.name,
+                sessionName: project.name,
+                source: "project" as const,
+              },
+            ],
+      );
+      const liveSessions =
+        options.catalogLiveSessions?.() ??
+        discoverSessions().map((session) => ({
+          sessionName: session.name,
+          paneCount: session.panes.length,
+        }));
+      return c.json(
+        projectWorkspaceCatalogV2(
+          daemonInstanceIdentity,
+          [...workspaceIntents, ...projectIntents],
+          liveSessions,
+        ) satisfies WorkspaceCatalogResourceV2,
+      );
+    }
     return c.json({
       version: WORKSPACE_CATALOG_RESOURCE_VERSION,
       daemon: daemonInstanceIdentity,
