@@ -47,10 +47,6 @@ function socketArguments(authority: WorkspacePaneTmuxAuthority): readonly string
     : ["-L", authority.socketSelector.name];
 }
 
-function shellArgument(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
 function defaultWaiter(
   authority: WorkspacePaneTmuxAuthority,
 ): ExternalTmuxInteractionObserverIo["waitForSignal"] {
@@ -144,7 +140,6 @@ export class TmuxExternalInteractionObserver {
   readonly #onObserved: (interaction: ExternalTmuxInteraction) => boolean;
   readonly #bufferName: string;
   readonly #signalChannel: string;
-  readonly #tmuxCommandPrefix: readonly string[];
   readonly #abort = new AbortController();
   #active = false;
   #installed = false;
@@ -169,10 +164,6 @@ export class TmuxExternalInteractionObserver {
     this.#onObserved = options.onObserved;
     this.#bufferName = `${HOOK_MARKER}-${options.daemonInstanceId}`;
     this.#signalChannel = `${this.#bufferName}-ready`;
-    this.#tmuxCommandPrefix = [
-      options.tmuxAuthority.executablePath,
-      ...socketArguments(options.tmuxAuthority),
-    ];
     this.#io = {
       runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxRunner(options.tmuxAuthority),
       waitForSignal: options.io?.waitForSignal ?? defaultWaiter(options.tmuxAuthority),
@@ -210,26 +201,18 @@ export class TmuxExternalInteractionObserver {
       consumeMarker: boolean,
     ) => {
       const data = `#{pane_id}${FIELD_SEPARATOR}#{q:${markerOption}}${FIELD_SEPARATOR}${operationKind}${EVENT_SEPARATOR}`;
-      const command = [
-        ...this.#tmuxCommandPrefix,
-        "set-buffer",
-        "-a",
-        "-b",
-        this.#bufferName,
-        data,
-        ...(consumeMarker ? [";", "set-option", "-pu", "-t", "#{pane_id}", markerOption] : []),
-        ";",
-        "wait-for",
-        "-S",
-        this.#signalChannel,
-      ]
-        .map(shellArgument)
-        .join(" ");
-      // `run-shell -C` executes the inner commands on the invoking control
-      // client's queue and emits extra reply blocks, corrupting its FIFO. A
-      // synchronous, pinned child client keeps the hook out-of-band while the
-      // after-hook still completes before tmux advances that command queue.
-      return `run-shell "${command}"`;
+      // Expand pane/marker identity at hook invocation, then schedule the
+      // append+signal as a background tmux-native command list. No shell and
+      // no second tmux client sit on the invoking command queue. The tiny
+      // synchronous native cleanup runs only after the record string has been
+      // captured, so a marker is single-use without racing the async drain.
+      const publish =
+        `run-shell -b -C "set-buffer -a -b '${this.#bufferName}' '${data}'` +
+        ` ; wait-for -S '${this.#signalChannel}'"`;
+      const consume = consumeMarker
+        ? ` ; run-shell -C "set-option -pu -t '#{pane_id}' '${markerOption}'"`
+        : "";
+      return `${publish}${consume}`;
     };
     this.#io.runTmux([
       "set-hook",
