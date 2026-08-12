@@ -209,9 +209,9 @@ export class TmuxExternalInteractionObserver {
       const publish =
         `run-shell -b -C "set-buffer -a -b '${this.#bufferName}' '${data}'` +
         ` ; wait-for -S '${this.#signalChannel}'"`;
-      const consume = consumeMarker
-        ? ` ; run-shell -C "set-option -pu -t '#{pane_id}' '${markerOption}'"`
-        : "";
+      // Hook commands inherit the triggering pane as their target, so cleanup
+      // needs neither format expansion nor a nested command queue.
+      const consume = consumeMarker ? ` ; set-option -pu '${markerOption}'` : "";
       return `${publish}${consume}`;
     };
     this.#io.runTmux([

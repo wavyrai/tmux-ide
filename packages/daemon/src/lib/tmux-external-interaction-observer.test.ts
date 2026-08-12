@@ -153,7 +153,7 @@ describe("tmux external interaction observer", () => {
     expect(installs).toHaveLength(2);
     expect(installs[0]?.[3]).toContain("#{q:@tmux_ide_send_operation}");
     expect(installs[1]?.[3]).toContain("#{q:@tmux_ide_read_operation}");
-    expect(installs[1]?.[3]).toContain("set-option -pu -t '#{pane_id}'");
+    expect(installs[1]?.[3]).toContain("set-option -pu '@tmux_ide_read_operation'");
     expect(installs[1]?.[3]).toContain("'@tmux_ide_read_operation'");
     expect(installs.every((install) => install[3]?.includes("run-shell -b -C"))).toBe(true);
     expect(installs.every((install) => !install[3]?.includes("/usr/bin/tmux"))).toBe(true);
