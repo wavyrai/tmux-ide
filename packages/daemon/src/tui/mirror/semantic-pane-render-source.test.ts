@@ -16,6 +16,7 @@ import {
   findTerminalCellMatches,
   projectTerminalTextRow,
 } from "./semantic-pane-render-source.ts";
+import { installTuiPerformanceEventSink } from "./performance-events.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 const nonce = "00000000-0000-4000-8000-000000000002";
@@ -68,6 +69,50 @@ function arrays(width: number, height: number): CellArrays {
 }
 
 describe("SemanticPaneReplica", () => {
+  it("publishes delivery queue, lag, and parse measurements only while the HUD sink is installed", () => {
+    const sink = {
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalParse: vi.fn(),
+      queueDepth: vi.fn(),
+      revisionLag: vi.fn(),
+      reseed: vi.fn(),
+    };
+    const remove = installTuiPerformanceEventSink(sink);
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+    });
+    const delivery = seedMessages(blankTerminalReplicaSnapshot(2, 1), "300");
+    replica.accept(delivery.envelope);
+    for (const chunk of delivery.chunks) replica.accept(chunk);
+
+    expect(sink.queueDepth.mock.calls).toEqual([
+      [1, 1],
+      [0, 1],
+    ]);
+    expect(sink.revisionLag.mock.calls).toEqual([[1], [0]]);
+    expect(sink.terminalParse).toHaveBeenCalledOnce();
+    expect(sink.terminalParse.mock.calls[0]![0]).toBeGreaterThanOrEqual(0);
+    expect(sink.reseed).not.toHaveBeenCalled();
+
+    remove();
+    const second = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+    });
+    const silent = seedMessages(blankTerminalReplicaSnapshot(2, 1), "301");
+    second.accept(silent.envelope);
+    for (const chunk of silent.chunks) second.accept(chunk);
+    expect(sink.terminalParse).toHaveBeenCalledOnce();
+  });
+
   it("ACKs only after retained state applies and emits one compound change", () => {
     const ack = vi.fn();
     const change = vi.fn();

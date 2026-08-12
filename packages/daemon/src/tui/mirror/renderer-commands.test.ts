@@ -35,6 +35,7 @@ const effects = (): RendererCommandEffects => ({
   activateDock: vi.fn(),
   openHome: vi.fn(),
   toggleEditor: vi.fn(),
+  togglePerformanceHud: vi.fn(),
 });
 
 const available: RendererCommandContext = {
@@ -141,6 +142,7 @@ describe("renderer command boundary", () => {
     executor.execute(rendererInvocationForGlobal({ kind: "cycle-composite-focus" }));
     executor.execute(rendererInvocationForGlobal({ kind: "go-home" }));
     executor.execute(rendererInvocationForGlobal({ kind: "toggle-editor" }));
+    executor.execute(rendererInvocationForGlobal({ kind: "toggle-performance-hud" }));
     executor.execute(rendererInvocationForCanvas("terminals", { kind: "mouse" }));
     executor.execute(rendererInvocationForDock("changes", { kind: "keyboard" }));
     executor.execute(rendererInvocationForView("focus", { kind: "palette" }));
@@ -149,6 +151,7 @@ describe("renderer command boundary", () => {
     expect(calls.cycleCompositeFocus).toHaveBeenCalledTimes(1);
     expect(calls.openHome).toHaveBeenCalledTimes(1);
     expect(calls.toggleEditor).toHaveBeenCalledTimes(1);
+    expect(calls.togglePerformanceHud).toHaveBeenCalledTimes(1);
     expect(calls.activateCanvas).toHaveBeenCalledWith("terminals");
     expect(calls.activateDock).toHaveBeenCalledWith("changes");
     expect(calls.activateView).toHaveBeenCalledWith("focus");

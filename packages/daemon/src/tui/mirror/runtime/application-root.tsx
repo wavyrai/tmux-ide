@@ -234,7 +234,7 @@ import {
   withLivePaneFocus,
 } from "../pane-frame-state.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "../pane-surface.tsx";
-import { tapInputSent, tapInputTick } from "../perf-tap.ts";
+import { installTuiPerformanceEventSink } from "../performance-events.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "../host-terminal.ts";
 import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process";
 import type { AgentStatus } from "../../detect/classify.ts";
@@ -427,7 +427,9 @@ import { observeTuiRootFailure, startTuiApplication } from "./application-bootst
 import { OpenTuiLocalViewController } from "./local-view-controller.ts";
 import { tuiEscapeFocusTarget, tuiInteractionPresentation } from "../interaction-flow.ts";
 import {
+  RENDERER_COMMAND_IDS,
   createRendererCommandExecutor,
+  rendererCommandInvocation,
   rendererInvocationForGlobal,
   rendererInvocationForView,
 } from "../renderer-commands.ts";
@@ -1003,6 +1005,16 @@ const mountTuiRoot = () => {
     const [paletteFeature, setPaletteFeature] =
       createSignal<ApplicationOptionalFeatures["palette"]>();
     const [paletteSession, setPaletteSession] = createSignal<PaletteFeatureSession>();
+    const [performanceHudFeature, setPerformanceHudFeature] =
+      createSignal<ApplicationOptionalFeatures["performanceHud"]>();
+    const [performanceHudSession, setPerformanceHudSession] =
+      createSignal<
+        ReturnType<ApplicationOptionalFeatures["performanceHud"]["createPerformanceHudSession"]>
+      >();
+    let performanceHudFeatureRequest: Promise<
+      ApplicationOptionalFeatures["performanceHud"] | undefined
+    > | null = null;
+    let performanceHudRequestedOpen = false;
     const [richPreviewFeature, setRichPreviewFeature] =
       createSignal<ApplicationOptionalFeatures["richPreview"]>();
     const [richPreviewSession, setRichPreviewSession] = createSignal<RichPreviewFeatureSession>();
@@ -4585,6 +4597,64 @@ const mountTuiRoot = () => {
       switchClientBack: (callback) => execFile("tmux", ["switch-client", "-l"], callback),
       detachClient: () => execFile("tmux", ["detach-client"], () => {}),
     });
+    const ensurePerformanceHud = async () => {
+      const existing = performanceHudSession();
+      if (existing) return existing;
+      if (performanceHudFeatureRequest) {
+        await performanceHudFeatureRequest;
+        return performanceHudSession();
+      }
+      const request = optionalFeatures.request("performanceHud");
+      performanceHudFeatureRequest = request;
+      const feature = await request;
+      if (performanceHudFeatureRequest !== request) return performanceHudSession();
+      performanceHudFeatureRequest = null;
+      if (!feature) return undefined;
+      const session = feature.createPerformanceHudSession({
+        authority: () => {
+          const daemon = readCanonicalDaemonInfo();
+          const lane = sessionRuntimeLane();
+          return {
+            daemonInstanceId: daemon?.instanceId ?? null,
+            workspaceName: lane?.workspaceName ?? (contextSession() || null),
+            generation: null,
+            incarnation: lane?.connectionIdentity ?? null,
+          };
+        },
+        installEventSink: installTuiPerformanceEventSink,
+        observeFrames: (listener) => {
+          let previous = performance.now();
+          const onFrame = () => {
+            const now = performance.now();
+            listener(now - previous);
+            previous = now;
+          };
+          appRenderer.on("frame", onFrame);
+          return () => appRenderer.off("frame", onFrame);
+        },
+      });
+      setPerformanceHudFeature(() => feature);
+      setPerformanceHudSession(() => session);
+      if (performanceHudRequestedOpen) session.show();
+      return session;
+    };
+    const togglePerformanceHud = () => {
+      performanceHudRequestedOpen = !performanceHudRequestedOpen;
+      const session = performanceHudSession();
+      if (session) {
+        if (performanceHudRequestedOpen) session.show();
+        else session.hide();
+        return;
+      }
+      if (performanceHudRequestedOpen) void ensurePerformanceHud();
+    };
+    applicationLifecycle.registerCloser("performance-hud", () => {
+      performanceHudRequestedOpen = false;
+      performanceHudFeatureRequest = null;
+      performanceHudSession()?.dispose();
+      setPerformanceHudSession(undefined);
+      setPerformanceHudFeature(undefined);
+    });
     const rendererCommandExecutor = createRendererCommandExecutor({
       context: () => ({
         // Ctrl-Tab now walks the native workbench's semantic focus ring. The
@@ -4624,6 +4694,7 @@ const mountTuiRoot = () => {
             );
           else toggleEditor();
         },
+        togglePerformanceHud,
       },
     });
     const executeRendererCommand = rendererCommandExecutor.execute;
@@ -4779,7 +4850,6 @@ const mountTuiRoot = () => {
           if (!pane || !semanticView) return;
           clearSelection();
           snapLive(pane);
-          tapInputSent(pane);
           if (!sendSemanticTerminalKey(pane, "C-c"))
             setStatusNote("terminal runtime is reconnecting");
         },
@@ -5008,6 +5078,18 @@ const mountTuiRoot = () => {
           // Settings is requested only at execution time and runs through the
           // application-owned dialog session under modal admission.
           void runSettingsCommand(a.id);
+          break;
+        case "performance-hud":
+          executeRendererCommand(
+            rendererCommandInvocation(
+              RENDERER_COMMAND_IDS.togglePerformanceHud,
+              {},
+              {
+                kind: "palette",
+                surface: "command-palette",
+              },
+            ),
+          );
           break;
         case "quit":
           applicationRootController.quit({ hosted: HOSTED }, "palette");
@@ -5286,7 +5368,6 @@ const mountTuiRoot = () => {
         }
         if (!dirty || !semanticView) return;
         dirty = false;
-        const t0 = performance.now();
         // FB path: fetch geometry + cursor/offset + per-pane version only (no
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
@@ -5308,7 +5389,6 @@ const mountTuiRoot = () => {
         const pinned = lastPin;
         if (!pinned) {
           setPanes(raw);
-          tapInputTick();
           if (continueAutoScroll) markDirty();
           return;
         }
@@ -5328,17 +5408,6 @@ const mountTuiRoot = () => {
             ? raw.map((p) => ({ ...p, left: p.left + off.x, top: p.top + off.y }))
             : raw,
         );
-        // Under FB the real per-tick cost moved to the blit (tapped in the
-        // renderable → same zz-perf.log); this tick is now geometry-only, so
-        // don't pollute the "snapshot ms/tick" samples with its ~0ms.
-        if (process.env.TMUX_IDE_ZZ_PERF && !FB_PANES) {
-          try {
-            appendFileSync("/tmp/zz-perf.log", `${(performance.now() - t0).toFixed(2)}\n`);
-          } catch {
-            /* perf tap only */
-          }
-        }
-        tapInputTick(); // t2: this paint consumed the dirty flag — close open input samples
         if (continueAutoScroll) markDirty();
       };
       // Event-driven state publication: the first event after idle is flushed
@@ -6547,7 +6616,6 @@ const mountTuiRoot = () => {
       // Any key that reaches the pane retires a stale selection highlight.
       clearSelection();
       snapLive(semanticView.focusedPane());
-      tapInputSent(semanticView.focusedPane()); // t0: keystroke dispatched to the pane
       // The input fast path (M21.5): sendKey/sendText are fire-and-forget —
       // no reply Promise, literals coalesced (ordering preserved downstream).
       if (evt.ctrl && evt.name.length === 1) {
@@ -8557,6 +8625,15 @@ const mountTuiRoot = () => {
           session={paletteSession()}
           theme={semanticTheme()}
         />
+        <Show when={performanceHudFeature() && performanceHudSession()?.open()}>
+          <Dynamic
+            component={performanceHudFeature()!.PerformanceHudSurface}
+            session={performanceHudSession()!}
+            width={dims().width}
+            height={dims().height}
+            theme={semanticTheme()}
+          />
+        </Show>
         {/* RIGHT-CLICK CONTEXT MENU overlay (M19.2) — opened at the pointer,
           clamped on-screen. Late-mounted inside <Show>, so it carries NO mouse
           handler: clicks route via the root box's `route`, which checks `menu()`

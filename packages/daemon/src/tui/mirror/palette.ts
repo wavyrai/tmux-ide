@@ -81,6 +81,7 @@ export type PaletteAction =
   | { kind: "select-text"; label: string }
   | { kind: "resize-window"; label: string }
   | { kind: "settings"; id: SettingsCommandId; label: string }
+  | { kind: "performance-hud"; label: string }
   | { kind: "quit"; label: string };
 
 /**
@@ -270,6 +271,7 @@ export function staticPaletteActions(
   for (const c of SETTINGS_PALETTE_COMMANDS) {
     actions.push({ kind: "settings", id: c.id, label: c.label });
   }
+  actions.push({ kind: "performance-hud", label: "Toggle performance HUD" });
   if (ctx.terminal) {
     // `/` only opens search while scrolled into history (at the live prompt it
     // belongs to the pane — agents' slash commands); this is the always-there

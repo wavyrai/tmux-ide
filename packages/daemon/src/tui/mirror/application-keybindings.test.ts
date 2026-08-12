@@ -11,6 +11,7 @@ describe("application keybinding catalog", () => {
       "surface:changes": "F4",
       "surface:missions": "F6",
       "surface:activity": "F9",
+      "performance-hud": "F12",
       save: "^s",
       quit: "^q",
     });

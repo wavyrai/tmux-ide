@@ -171,6 +171,8 @@ function iconForAction(action: PaletteAction): WorkspaceIconId {
       return "refresh";
     case "settings":
       return "native";
+    case "performance-hud":
+      return "activity";
   }
 }
 
@@ -223,6 +225,8 @@ function categoryForAction(action: PaletteAction): string {
       return "Layout";
     case "settings":
       return "Settings";
+    case "performance-hud":
+      return "Application";
     case "quit":
       return "Application";
   }
@@ -295,6 +299,8 @@ function detailForAction(action: PaletteAction): string {
       return "Reclaim the tmux window at this app's canvas size";
     case "settings":
       return "Configure tmux-ide";
+    case "performance-hud":
+      return "Inspect local terminal rendering without background polling";
     case "quit":
       return "Close this app without sending Ctrl-C to a pane";
   }

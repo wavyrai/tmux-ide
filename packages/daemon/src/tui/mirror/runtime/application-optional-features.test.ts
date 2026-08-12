@@ -17,6 +17,7 @@ describe("application optional feature loaders", () => {
       "../features/settings/feature.ts",
       "../features/palette/feature.ts",
       "../features/rich-preview/feature.tsx",
+      "../features/performance-hud/feature.tsx",
     ]) {
       expect(source).toContain(`() => import("${specifier}")`);
     }
@@ -95,6 +96,7 @@ describe("application optional feature loaders", () => {
     ["settings", "createSettingsFeatureSession"],
     ["palette", "createPaletteFeatureSession"],
     ["richPreview", "createRichPreviewFeatureSession"],
+    ["performanceHud", "createPerformanceHudSession"],
   ] as const)(
     "retains and publishes the real %s feature after admission",
     async (key, exportName) => {
