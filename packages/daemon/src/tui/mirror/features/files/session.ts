@@ -50,6 +50,7 @@ import {
 
 export interface FilesFeatureHost {
   readonly workspaceDir: () => string;
+  readonly workspaceName: () => string;
   readonly width: () => number;
   readonly height: () => number;
   readonly hover: () => { region: string; index: number } | null;
@@ -71,6 +72,16 @@ export interface FilesKeyEvent {
   readonly shift: boolean;
 }
 
+export interface FilesFeatureIO {
+  readonly readFile: typeof readFile;
+  readonly readdir: typeof readdir;
+  readonly writeFile: typeof writeFile;
+  readonly rename: typeof rename;
+  readonly rm: typeof rm;
+}
+
+const defaultFilesFeatureIO: FilesFeatureIO = { readFile, readdir, writeFile, rename, rm };
+
 const statusLetter = (status: string): string =>
   ({
     modified: "M",
@@ -85,9 +96,11 @@ const statusLetter = (status: string): string =>
 
 export class FilesFeatureSession {
   readonly #host: FilesFeatureHost;
+  readonly #io: FilesFeatureIO;
   #buffer: EditBuffer | null = null;
-  #ignore: Ignore = ignore();
-  #ignoreDir = "";
+  #epoch = 0;
+  #workspaceIdentity = "";
+  #disposed = false;
   #preFilterPath: string | null = null;
   #pendingSelectionPath: string | null = null;
   #previousMode: "home" | "mirror" = "home";
@@ -128,8 +141,10 @@ export class FilesFeatureSession {
   projection!: Accessor<FilesSurfaceProjection>;
   readonly #disposeReactiveOwner: () => void;
 
-  constructor(host: FilesFeatureHost) {
+  constructor(host: FilesFeatureHost, io: FilesFeatureIO = defaultFilesFeatureIO) {
     this.#host = host;
+    this.#io = io;
+    this.#workspaceIdentity = this.#identity();
     this.#disposeReactiveOwner = createRoot((dispose) => {
       const [fileNodes, setFileNodes] = createSignal<FileNode[]>([]);
       const [fileSelection, setFileSelection] = createSignal(0);
@@ -283,7 +298,27 @@ export class FilesFeatureSession {
     return Boolean(this.#buffer && !this.editorReadOnly());
   }
 
+  #identity(): string {
+    return `${this.#host.workspaceName()}\u0000${this.#host.workspaceDir()}`;
+  }
+
+  #captureEpoch(): { readonly epoch: number; readonly root: string } {
+    if (this.#disposed) return { epoch: this.#epoch, root: this.#host.workspaceDir() };
+    const identity = this.#identity();
+    if (identity !== this.#workspaceIdentity) {
+      this.#workspaceIdentity = identity;
+      this.#epoch += 1;
+      this.resetCatalog();
+    }
+    return { epoch: this.#epoch, root: this.#host.workspaceDir() };
+  }
+
+  #isCurrent(epoch: number, root: string): boolean {
+    return !this.#disposed && epoch === this.#epoch && root === this.#host.workspaceDir();
+  }
+
   openEditor(rawPath: string, line?: number, origin: EditorOpenOrigin = "user"): void {
+    if (this.#disposed) return;
     const path = rawPath.startsWith("~/")
       ? `${process.env.HOME ?? ""}${rawPath.slice(1)}`
       : rawPath;
@@ -418,27 +453,23 @@ export class FilesFeatureSession {
   }
 
   async listDir(dir: string): Promise<RawEntry[]> {
-    const root = this.#host.workspaceDir();
-    if (this.#ignoreDir !== root) {
-      const matcher = ignore();
-      try {
-        matcher.add(await readFile(join(root, ".gitignore"), "utf8"));
-      } catch {
-        // A workspace without .gitignore has no additional ignore rules.
-      }
-      this.#ignore = matcher;
-      this.#ignoreDir = root;
+    if (this.#disposed) return [];
+    const { epoch, root } = this.#captureEpoch();
+    const matcher: Ignore = ignore();
+    try {
+      matcher.add(await this.#io.readFile(join(root, ".gitignore"), "utf8"));
+    } catch {
+      // A workspace without .gitignore has no additional ignore rules.
     }
-    const entries = await readdir(dir, { withFileTypes: true });
+    const entries = await this.#io.readdir(dir, { withFileTypes: true });
+    if (!this.#isCurrent(epoch, root)) return [];
     return filterEntries(
       entries.map((entry) => {
         const directory = entry.isDirectory();
         const relative = relPath(root, join(dir, entry.name));
         let ignored = false;
         try {
-          ignored = Boolean(
-            relative && this.#ignore.ignores(directory ? `${relative}/` : relative),
-          );
+          ignored = Boolean(relative && matcher.ignores(directory ? `${relative}/` : relative));
         } catch {
           // Invalid ignore input is treated as visible, matching the prior root behavior.
         }
@@ -464,6 +495,7 @@ export class FilesFeatureSession {
     this.setFileTop((top) => scrollToCursor(index, top, this.editorRows(), rows.length));
   }
   activate(index: number): void {
+    if (this.#disposed) return;
     const row = this.visibleFiles()[index];
     if (!row) return;
     this.setFileSelection(index);
@@ -472,8 +504,10 @@ export class FilesFeatureSession {
       this.setFileNodes((nodes) => removeSubtreeAt(nodes, indexOfPath(nodes, row.node.path)));
       return;
     }
+    const { epoch, root } = this.#captureEpoch();
     void this.listDir(row.node.path)
       .then((entries) => {
+        if (!this.#isCurrent(epoch, root)) return;
         const children = buildNodes(row.node.path, entries, row.node.depth + 1);
         this.setFileNodes((nodes) =>
           insertChildrenAt(nodes, indexOfPath(nodes, row.node.path), children),
@@ -482,7 +516,8 @@ export class FilesFeatureSession {
       .catch(() => undefined);
   }
   async reveal(path: string): Promise<void> {
-    const root = this.#host.workspaceDir();
+    if (this.#disposed) return;
+    const { epoch, root } = this.#captureEpoch();
     const relative = relPath(root, path);
     if (!relative) return;
     for (const ancestor of ancestorDirs(relative)) {
@@ -491,7 +526,7 @@ export class FilesFeatureSession {
       if (!node?.isDir) return;
       if (!node.expanded) {
         const entries = await this.listDir(absolute).catch(() => null);
-        if (!entries) return;
+        if (!entries || !this.#isCurrent(epoch, root)) return;
         this.setFileNodes((nodes) =>
           insertChildrenAt(
             nodes,
@@ -501,6 +536,7 @@ export class FilesFeatureSession {
         );
       }
     }
+    if (!this.#isCurrent(epoch, root)) return;
     const index = indexOfPath(this.fileNodes(), path);
     if (index < 0) return;
     this.setFileSelection(index);
@@ -554,12 +590,13 @@ export class FilesFeatureSession {
 
   applyCatalog(envelope: WorkspaceFilesCatalogEnvelopeV1): void {
     const resource = envelope.resource;
+    const { root } = this.#captureEpoch();
+    if (this.#disposed || resource.workspaceName !== this.#host.workspaceName()) return;
     if (resource.status !== "ready") {
       this.setFileNodes([]);
       this.setEditorMessage(resource.message);
       return;
     }
-    const root = this.#host.workspaceDir();
     const entries = resource.entries.filter(
       (entry) => (this.showHidden() || !entry.hidden) && (this.showIgnored() || !entry.ignored),
     );
@@ -608,26 +645,39 @@ export class FilesFeatureSession {
     else if (id === "refresh") this.#host.refresh();
   }
   async create(parent: string, name: string): Promise<void> {
-    await writeFile(join(parent, name), "", { flag: "wx" });
+    if (this.#disposed) return;
+    const { epoch, root } = this.#captureEpoch();
+    await this.#io.writeFile(join(parent, name), "", { flag: "wx" });
+    if (!this.#isCurrent(epoch, root)) return;
     this.#host.note(`created ${name}`);
     this.#host.refresh();
   }
   async rename(path: string, name: string): Promise<void> {
-    await rename(path, join(dirname(path), name));
+    if (this.#disposed) return;
+    const { epoch, root } = this.#captureEpoch();
+    await this.#io.rename(path, join(dirname(path), name));
+    if (!this.#isCurrent(epoch, root)) return;
     this.#host.note(`renamed → ${name}`);
     this.#host.refresh();
   }
   async delete(path: string): Promise<void> {
-    await rm(path, { recursive: true, force: false });
+    if (this.#disposed) return;
+    const { epoch, root } = this.#captureEpoch();
+    await this.#io.rm(path, { recursive: true, force: false });
+    if (!this.#isCurrent(epoch, root)) return;
     this.#host.note(`deleted ${basename(path)}`);
     this.#host.refresh();
   }
   dispose(): void {
+    this.#disposed = true;
+    this.#epoch += 1;
     this.#buffer?.destroy();
     this.#buffer = null;
     this.#disposeReactiveOwner();
   }
 }
 
-export const createFilesFeatureSession = (host: FilesFeatureHost): FilesFeatureSession =>
-  new FilesFeatureSession(host);
+export const createFilesFeatureSession = (
+  host: FilesFeatureHost,
+  io?: FilesFeatureIO,
+): FilesFeatureSession => new FilesFeatureSession(host, io);

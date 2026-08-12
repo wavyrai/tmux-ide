@@ -726,6 +726,7 @@ import {
 import { TerminalToolReadinessGate } from "./terminal-tool-readiness.ts";
 import { OpenTuiTerminalWorkspaceAdapter } from "./terminal-workspace-adapter.ts";
 import { LatestIntentFence } from "./latest-intent-fence.ts";
+import { GenerationBoundSlot } from "./generation-bound-slot.ts";
 import {
   createApplicationOptionalFeatureRegistry,
   type ApplicationOptionalFeatures,
@@ -1152,7 +1153,8 @@ const mountTuiRoot = () => {
     const optionalFeatures = createApplicationOptionalFeatureRegistry();
     const [filesFeature, setFilesFeature] = createSignal<ApplicationOptionalFeatures["files"]>();
     const [filesSession, setFilesSession] = createSignal<FilesFeatureSession>();
-    let pendingFilesCatalog: WorkspaceFilesCatalogEnvelopeV1 | null = null;
+    let toolResourceGeneration = -1;
+    const pendingFilesCatalog = new GenerationBoundSlot<WorkspaceFilesCatalogEnvelopeV1>();
     let pendingFilesSelectionPath: string | null = null;
     const [filesFeatureLoadState, setFilesFeatureLoadState] = createSignal<
       "idle" | "loading" | "ready" | "failed"
@@ -1177,6 +1179,7 @@ const mountTuiRoot = () => {
           setFilesFeature(() => feature);
           const session = feature.createFilesFeatureSession({
             workspaceDir: () => contextDir() || invokeCwd,
+            workspaceName: contextSession,
             width: () => dockSurfaceWidth(),
             height: () => dockSurfaceHeight(),
             hover,
@@ -1193,10 +1196,8 @@ const mountTuiRoot = () => {
           setFilesSession(() => session);
           session.pendingSelectionPath = pendingFilesSelectionPath;
           pendingFilesSelectionPath = null;
-          if (pendingFilesCatalog) {
-            session.applyCatalog(pendingFilesCatalog);
-            pendingFilesCatalog = null;
-          }
+          const retainedCatalog = pendingFilesCatalog.take(toolResourceGeneration);
+          if (retainedCatalog) session.applyCatalog(retainedCatalog);
           setFilesFeatureLoadState("ready");
           filesFeatureRequest = null;
         },
@@ -5568,7 +5569,7 @@ const mountTuiRoot = () => {
     const applyFilesCatalog = (envelope: WorkspaceFilesCatalogEnvelopeV1) => {
       const session = filesSession();
       if (session) session.applyCatalog(envelope);
-      else pendingFilesCatalog = envelope;
+      else pendingFilesCatalog.retain(toolResourceGeneration, envelope);
     };
 
     const applyChangesCatalog = (envelope: WorkspaceChangesCatalogEnvelopeV1) => {
@@ -5720,10 +5721,10 @@ const mountTuiRoot = () => {
       // de-duplication key. Two daemon updates may complete within one
       // millisecond and must both reach the projection.
       const appliedToolSnapshots = new Map<TuiToolResource["kind"], TuiToolResource>();
-      let appliedToolGeneration = -1;
       const disposeTools = toolResources.subscribe((state) => {
-        if (state.generation !== appliedToolGeneration) {
-          appliedToolGeneration = state.generation;
+        if (state.generation !== toolResourceGeneration) {
+          toolResourceGeneration = state.generation;
+          pendingFilesCatalog.advance(state.generation);
           appliedToolSnapshots.clear();
           latestFleetCatalog = null;
           latestSessionCatalog = null;

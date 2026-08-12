@@ -50,4 +50,5 @@ export {
   createFilesFeatureSession,
   FilesFeatureSession,
   type FilesFeatureHost,
+  type FilesFeatureIO,
 } from "./session.ts";
