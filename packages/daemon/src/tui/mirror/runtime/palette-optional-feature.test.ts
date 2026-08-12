@@ -5,6 +5,10 @@ import { loadLocalSourceBoundaryGraph } from "../../../../test-support/source-im
 
 describe("production palette optional feature cutover", () => {
   const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
+  const controllerSource = readFileSync(
+    new URL("./palette-production-controller.ts", import.meta.url),
+    "utf8",
+  );
 
   it("keeps the whole palette graph outside the root first-frame closure", async () => {
     const graph = await loadLocalSourceBoundaryGraph(
@@ -44,18 +48,20 @@ describe("production palette optional feature cutover", () => {
   });
 
   it("reserves admission before requesting and delegates state/input/render", () => {
-    const opener = source.slice(
-      source.indexOf("const openPalette ="),
-      source.indexOf("const retryPalette ="),
+    const opener = controllerSource.slice(
+      controllerSource.indexOf("const open ="),
+      controllerSource.indexOf("const close ="),
     );
-    expect(opener.indexOf('reserveModal("palette")')).toBeLessThan(
-      opener.indexOf("ensurePaletteFeature()"),
+    expect(opener.indexOf("options.reserveAdmission()")).toBeLessThan(
+      opener.indexOf("void ensure()"),
     );
+    expect(source).toContain('reserveAdmission: () => reserveModal("palette")');
+    expect(controllerSource).toContain('options.registry.request("palette")');
     expect(source).toContain("paletteSession()?.handleKey(evt)");
     expect(source).toContain("paletteSession()?.handlePaste(text)");
     expect(source).toContain("paletteSession()?.handlePointer({");
-    expect(source).toContain("component={paletteFeature()!.PaletteFeatureSurface}");
-    expect(source).toContain("paletteSession()?.switchWorkspace(identity)");
+    expect(source).toContain("<PaletteProductionOverlay");
+    expect(source).toContain("paletteController.switchWorkspace(identity)");
   });
 
   it("reacts the exact palette identity to daemon resource generation changes", () => {
@@ -64,17 +70,14 @@ describe("production palette optional feature cutover", () => {
     );
     expect(source).toContain("generation: paletteResourceGeneration()");
     expect(source).toContain("setPaletteResourceGeneration(state.generation)");
-    expect(source).toContain("paletteSession()?.switchWorkspace(identity)");
+    expect(source).toContain("paletteController.switchWorkspace(identity)");
   });
 
   it("releases palette admission before semantic settings transfer and records usage once", () => {
-    const execute = source.slice(
-      source.indexOf("executePaletteHostIntent ="),
-      source.indexOf("const paletteKey ="),
-    );
-    expect(execute.indexOf("closePalette(intent.reason)")).toBeLessThan(
-      execute.indexOf("runSettingsCommand(intent.command)"),
-    );
-    expect(execute.match(/recordPaletteUse\(/gu)).toHaveLength(1);
+    expect(controllerSource).toContain('if (intent.kind === "close")');
+    expect(controllerSource).toContain("release();");
+    expect(controllerSource).toContain("options.execute.recordUsage(intent.usageKey)");
+    expect(controllerSource).toContain("options.execute.settings(intent)");
+    expect(source.match(/recordPaletteUse\(/gu)).toHaveLength(1);
   });
 });

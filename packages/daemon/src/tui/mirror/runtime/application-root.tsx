@@ -596,6 +596,8 @@ import {
   createApplicationOptionalFeatureRegistry,
   type ApplicationOptionalFeatures,
 } from "./application-optional-features.ts";
+import { createPaletteProductionController } from "./palette-production-controller.ts";
+import { PaletteProductionOverlay } from "./palette-production-overlay.tsx";
 
 type TuiAppArgs = { target?: string; edit?: string; diff?: string };
 type RichPreviewFeatureSession = ReturnType<
@@ -1444,14 +1446,13 @@ const mountTuiRoot = () => {
       filesFeatureRequest = null;
       changesFeatureRequest = null;
       missionsActivityRequest = null;
-      paletteFeatureRequest = null;
       richPreviewFeatureRequest = null;
       dialogsFeatureRequest.clear();
       settingsFeatureRequest.clear();
       filesSession()?.dispose();
       changesSession()?.dispose();
       missionsActivitySession()?.dispose();
-      paletteSession()?.dispose();
+      paletteController.dispose();
       richPreviewSession()?.dispose();
       settingsSession()?.dispose();
       dialogsSession()?.dispose();
@@ -4452,10 +4453,6 @@ const mountTuiRoot = () => {
     };
 
     // ── COMMAND PALETTE (deferred feature; shell-owned admission) ─────────────
-    let executePaletteHostIntent = (_intent: PaletteHostIntent): void => undefined;
-    let paletteAdmissionToken: ReturnType<typeof reserveModal> = null;
-    let paletteFeatureRequest: Promise<ApplicationOptionalFeatures["palette"] | undefined> | null =
-      null;
     const [paletteLoadState, setPaletteLoadState] = createSignal<
       "idle" | "loading" | "ready" | "error"
     >("idle");
@@ -4473,142 +4470,107 @@ const mountTuiRoot = () => {
         generation: paletteResourceGeneration(),
       };
     };
-    const closePalette = (reason: "escape" | "outside" | "action" = "escape") => {
-      paletteSession()?.close(reason);
-      setPaletteOpen(false);
-      if (paletteAdmissionToken && modalAdmission.isCurrent(paletteAdmissionToken)) {
-        modalAdmission.release(paletteAdmissionToken);
-      }
-      paletteAdmissionToken = null;
-    };
-    const ensurePaletteFeature = async (): Promise<PaletteFeatureSession | undefined> => {
-      const existing = paletteSession();
-      if (existing) {
-        const token = paletteAdmissionToken;
-        if (token && modalAdmission.isCurrent(token)) {
-          modalAdmission.markReady(token);
-          setPaletteLoadState("ready");
-        }
-        return existing;
-      }
-      const token = paletteAdmissionToken;
-      if (!token || !modalAdmission.isCurrent(token)) return undefined;
-      setPaletteLoadState("loading");
-      modalAdmission.markLoading(token);
-      const request = paletteFeatureRequest ?? optionalFeatures.request("palette");
-      paletteFeatureRequest = request;
-      try {
-        const feature = await request;
-        if (!feature || !modalAdmission.isCurrent(token)) return undefined;
-        setPaletteFeature(() => feature);
-        const session = feature.createPaletteFeatureSession({
-          width: () => dims().width,
-          height: () => dims().height,
-          identity: paletteWorkspaceIdentity,
-          facts: () => {
-            editorRev();
-            return {
-              terminal: mode() === "mirror",
-              surface: tab(),
-              currentSurface: workbenchFocusZone() === "canvas" ? canvasPanel() : activeDockTab(),
-              currentViewId: activeViewId(),
-              currentSession: contextSession(),
-              sessions: fleet().map((item) => item.name),
-              agents: fleetAgents(),
-              panes: panes().map((pane) => {
-                const descriptor = semanticView
-                  ?.paneDescriptors()
-                  .find(({ runtimePaneId }) => runtimePaneId === pane.id);
-                return {
-                  paneId: pane.id,
-                  session: contextSession(),
-                  active: paneIsFocused(pane.id),
-                  title:
-                    descriptor?.title ?? descriptor?.role ?? descriptor?.currentCommand ?? pane.id,
-                };
-              }),
-              sizeMismatch: windowMismatch() !== null,
-              appMousePane: panes().find((pane) => paneIsFocused(pane.id))?.appMouse === true,
-              againName: currentAgainName(),
-              usage: paletteUsage(),
-              keycaps: PALETTE_ROW_KEYCAPS,
-              views: hostedViews(),
-              syncOn: syncOn(),
-              saveState: {
-                hasBuffer: filesSession()?.hasBuffer ?? false,
-                hasPath: Boolean(editorPath()),
-                readOnlyReason: editorReadOnly(),
-              },
-              multiplexerFacts: {
-                workspaceConnected: mode() === "mirror" && semanticView !== null,
-                sessionWindowCount: windowTabs().length,
-                windowPaneCount: panes().length,
-                windowZoomed: panes().some((pane) => pane.zoomed),
-                targetIsActivePane: true,
-                targetIsDockedStackMember: false,
-              },
-            };
-          },
-          loadRepoFiles: async (identity, signal) => {
-            const feature = filesFeature() ?? (await ensureFilesFeature().catch(() => undefined));
-            if (!feature || signal.aborted) return [];
-            const out: string[] = [];
-            const queue: string[] = [identity.directory];
-            while (queue.length > 0 && out.length < 2000 && !signal.aborted) {
-              const directory = queue.shift()!;
-              for (const entry of await listDir(directory).catch(() => [])) {
-                const absolute = join(directory, entry.name);
-                if (entry.isDir) queue.push(absolute);
-                else {
-                  const relative = feature.relPath(identity.directory, absolute);
-                  if (relative) out.push(relative);
-                }
+    const paletteController = createPaletteProductionController({
+      registry: optionalFeatures,
+      admission: modalAdmission,
+      reserveAdmission: () => reserveModal("palette"),
+      sources: {
+        width: () => dims().width,
+        height: () => dims().height,
+        identity: paletteWorkspaceIdentity,
+        facts: () => {
+          editorRev();
+          return {
+            terminal: mode() === "mirror",
+            surface: tab(),
+            currentSurface: workbenchFocusZone() === "canvas" ? canvasPanel() : activeDockTab(),
+            currentViewId: activeViewId(),
+            currentSession: contextSession(),
+            sessions: fleet().map((item) => item.name),
+            agents: fleetAgents(),
+            panes: panes().map((pane) => {
+              const descriptor = semanticView
+                ?.paneDescriptors()
+                .find(({ runtimePaneId }) => runtimePaneId === pane.id);
+              return {
+                paneId: pane.id,
+                session: contextSession(),
+                active: paneIsFocused(pane.id),
+                title:
+                  descriptor?.title ?? descriptor?.role ?? descriptor?.currentCommand ?? pane.id,
+              };
+            }),
+            sizeMismatch: windowMismatch() !== null,
+            appMousePane: panes().find((pane) => paneIsFocused(pane.id))?.appMouse === true,
+            againName: currentAgainName(),
+            usage: paletteUsage(),
+            keycaps: PALETTE_ROW_KEYCAPS,
+            views: hostedViews(),
+            syncOn: syncOn(),
+            saveState: {
+              hasBuffer: filesSession()?.hasBuffer ?? false,
+              hasPath: Boolean(editorPath()),
+              readOnlyReason: editorReadOnly(),
+            },
+            multiplexerFacts: {
+              workspaceConnected: mode() === "mirror" && semanticView !== null,
+              sessionWindowCount: windowTabs().length,
+              windowPaneCount: panes().length,
+              windowZoomed: panes().some((pane) => pane.zoomed),
+              targetIsActivePane: true,
+              targetIsDockedStackMember: false,
+            },
+          };
+        },
+        loadRepoFiles: async (identity, signal) => {
+          const feature = filesFeature() ?? (await ensureFilesFeature().catch(() => undefined));
+          if (!feature || signal.aborted) return [];
+          const out: string[] = [];
+          const queue: string[] = [identity.directory];
+          while (queue.length > 0 && out.length < 2000 && !signal.aborted) {
+            const directory = queue.shift()!;
+            for (const entry of await listDir(directory).catch(() => [])) {
+              const absolute = join(directory, entry.name);
+              if (entry.isDir) queue.push(absolute);
+              else {
+                const relative = feature.relPath(identity.directory, absolute);
+                if (relative) out.push(relative);
               }
             }
-            return out;
-          },
-          loadBuffers: async (_identity, signal) => {
-            if (signal.aborted) return [];
-            throw new Error("tmux paste buffers are unavailable until their semantic query lands");
-          },
-          dispatch: (intent) => executePaletteHostIntent(intent),
-        });
-        if (!modalAdmission.isCurrent(token)) {
-          session.dispose();
-          return undefined;
-        }
-        setPaletteSession(() => session);
-        setPaletteLoadState("ready");
-        setPaletteLoadError("");
-        modalAdmission.markReady(token);
-        return session;
-      } catch (error) {
-        if (paletteFeatureRequest === request) paletteFeatureRequest = null;
-        const message =
-          error instanceof Error ? error.message : "The command palette is unavailable.";
-        setPaletteLoadState("error");
-        setPaletteLoadError(message);
-        if (modalAdmission.isCurrent(token)) modalAdmission.markError(token, error);
-        return undefined;
-      }
-    };
-    const openPalette = () => {
-      if (paletteOpen()) return;
-      const token = reserveModal("palette");
-      if (!token) return;
-      paletteAdmissionToken = token;
-      setHoverIf(null);
-      setPaletteOpen(true);
-      void ensurePaletteFeature().then((session) => session?.openPalette());
-    };
-    const retryPalette = () => {
-      closePalette("escape");
-      paletteFeatureRequest = null;
-      openPalette();
-    };
+          }
+          return out;
+        },
+        loadBuffers: async (_identity, signal) => {
+          if (signal.aborted) return [];
+          throw new Error("tmux paste buffers are unavailable until their semantic query lands");
+        },
+      },
+      publish: {
+        open: setPaletteOpen,
+        loadState: setPaletteLoadState,
+        loadError: setPaletteLoadError,
+        feature: (feature) => setPaletteFeature(() => feature),
+        session: (session) => setPaletteSession(() => session),
+        clearHover: () => setHoverIf(null),
+      },
+      execute: {
+        recordUsage: (usageKey) =>
+          setPaletteUsage((usage) =>
+            recordPaletteUse(usage, usageKey, Math.floor(Date.now() / 1e3)),
+          ),
+        action: (intent) => void runPaletteAction(intent.action),
+        settings: (intent) => void runSettingsCommand(intent.command),
+        pasteBuffer: (bufferName) =>
+          setStatusNote(`tmux paste buffer ${bufferName} is unavailable in the semantic runtime`),
+      },
+    });
+    const openPalette = () => paletteController.open();
+    const closePalette = (reason: "escape" | "outside" | "action" = "escape") =>
+      paletteController.close(reason);
+    const retryPalette = () => paletteController.retry();
     createEffect(() => {
       const identity = paletteWorkspaceIdentity();
-      paletteSession()?.switchWorkspace(identity);
+      paletteController.switchWorkspace(identity);
     });
     const lifecycleExecutor = createApplicationLifecycleInputExecutor(applicationLifecycle, {
       // Renderer destruction disposes the Solid root first, so the shared
@@ -5049,28 +5011,6 @@ const mountTuiRoot = () => {
           applicationRootController.quit({ hosted: HOSTED }, "palette");
           break;
       }
-    };
-    executePaletteHostIntent = (intent) => {
-      if (intent.kind === "close") {
-        closePalette(intent.reason);
-        return;
-      }
-      if (intent.kind === "paste-buffer") {
-        setStatusNote(
-          `tmux paste buffer ${intent.bufferName} is unavailable in the semantic runtime`,
-        );
-        return;
-      }
-      setPaletteUsage((usage) =>
-        recordPaletteUse(usage, intent.usageKey, Math.floor(Date.now() / 1e3)),
-      );
-      if (intent.kind === "settings") {
-        // Palette close/admission release was dispatched synchronously before
-        // this semantic transfer. Settings can now reserve its own modal.
-        void runSettingsCommand(intent.command);
-        return;
-      }
-      void runPaletteAction(intent.action);
     };
     /** Feed one key to the palette overlay. Returns true when the key was consumed
      *  (so the global handler stops). */
@@ -8605,47 +8545,17 @@ const mountTuiRoot = () => {
         {/* Native COMMAND PALETTE overlay. Presentation stays handler-free;
           the root uses the same projection for render and pointer hit-testing.
           The original tmux paste-buffer picker remains the second level. */}
-        <Show when={paletteOpen()}>
-          <Show
-            when={paletteFeature() && paletteSession()}
-            fallback={
-              <box
-                position="absolute"
-                left={Math.max(0, Math.floor((dims().width - paletteW()) / 2))}
-                top={Math.max(1, Math.floor(dims().height / 6))}
-                width={paletteW()}
-                flexDirection="column"
-                backgroundColor={semanticTheme().roles.surfaces.command}
-                border
-                borderColor={
-                  paletteLoadState() === "error"
-                    ? semanticTheme().roles.statusTone.danger
-                    : semanticTheme().roles.borders.focused
-                }
-                paddingLeft={1}
-                paddingRight={1}
-              >
-                <text fg={semanticTheme().roles.text.link} attributes={1}>
-                  {paletteLoadState() === "error"
-                    ? "Unable to open Navigator"
-                    : "Opening Navigator…"}
-                </text>
-                <text fg={semanticTheme().roles.text.secondary}>
-                  {paletteLoadState() === "error" ? paletteLoadError() : "Loading command catalog"}
-                </text>
-                <text fg={semanticTheme().roles.text.muted}>
-                  {paletteLoadState() === "error" ? "r retry · esc cancel" : "esc cancel"}
-                </text>
-              </box>
-            }
-          >
-            <Dynamic
-              component={paletteFeature()!.PaletteFeatureSurface}
-              session={paletteSession()!}
-              theme={semanticTheme()}
-            />
-          </Show>
-        </Show>
+        <PaletteProductionOverlay
+          open={paletteOpen()}
+          width={dims().width}
+          height={dims().height}
+          overlayWidth={paletteW()}
+          loadState={paletteLoadState()}
+          loadError={paletteLoadError()}
+          feature={paletteFeature()}
+          session={paletteSession()}
+          theme={semanticTheme()}
+        />
         {/* RIGHT-CLICK CONTEXT MENU overlay (M19.2) — opened at the pointer,
           clamped on-screen. Late-mounted inside <Show>, so it carries NO mouse
           handler: clicks route via the root box's `route`, which checks `menu()`
