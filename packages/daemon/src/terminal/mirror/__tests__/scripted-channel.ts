@@ -42,11 +42,12 @@ export class ScriptedChannelDriver {
 
   /** Complete every scripted probe written since the prior turn. */
   pump(): void {
-    while (this.#handledWrites < this.channel.written.length) {
-      const command = this.channel.written[this.#handledWrites++]!;
+    for (let index = this.#handledWrites; index < this.channel.written.length; index += 1) {
+      const command = this.channel.written[index]!;
       if (command.includes("capture-pane")) this.channel.reply([...this.#seedLines]);
       else if (command.startsWith("display-message")) this.channel.reply([this.#cursorLine]);
     }
+    this.#handledWrites = this.channel.written.length;
   }
 
   output(runtimePaneId: string, escapedControlBytes: string): void {
