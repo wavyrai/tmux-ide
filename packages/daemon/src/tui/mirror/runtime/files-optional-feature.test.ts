@@ -40,9 +40,27 @@ describe("deferred Files feature boundary", () => {
     const start = source.indexOf("const openEditor = (");
     const end = source.indexOf("const toggleEditor =", start);
     const openEditor = source.slice(start, end);
-    expect(openEditor).toContain("intent = editorOpenIntent.issue()");
-    expect(openEditor.match(/editorOpenIntent\.isCurrent\(intent\)/gu)).toHaveLength(2);
+    expect(openEditor).toContain("intent = editorOpenIntent.issue(editorOpenScope())");
+    expect(
+      openEditor.match(/editorOpenIntent\.isCurrent\(intent, editorOpenScope\(\)\)/gu),
+    ).toHaveLength(2);
     expect(openEditor).toContain("openEditor(rawPath, line, origin, intent)");
+  });
+
+  it("treats hydration as passive retained intent canceled by navigation or workspace change", () => {
+    const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
+    expect(source).toContain('openEditor(openPath, undefined, "workspace-hydration")');
+    expect(source).toContain("const editorOpenScope = () => `${contextSession()}\\u0000${");
+    const canvasActivation = source.slice(
+      source.indexOf("const activateCanvasPanelContent"),
+      source.indexOf("const activateCanvasPanel ="),
+    );
+    expect(canvasActivation).toContain("editorOpenIntent.retire()");
+    const workspaceActivation = source.slice(
+      source.indexOf("const openWorkspace ="),
+      source.indexOf("const jumpToAgent ="),
+    );
+    expect(workspaceActivation).toContain("editorOpenIntent.retire()");
   });
 
   it("retains Files demand without starting its literal loader before admission", () => {

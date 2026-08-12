@@ -1155,6 +1155,9 @@ const mountTuiRoot = () => {
     let startupWorkspaceReconciled = !bareHome;
     const [contextSession, setContextSession] = createSignal<string>(initialContextSession);
     const [contextDir, setContextDir] = createSignal<string>("");
+    const editorOpenIntent = new LatestIntentFence<string>();
+    const editorOpenScope = () => `${contextSession()}\u0000${contextDir() || invokeCwd}`;
+    onCleanup(() => editorOpenIntent.retire());
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const optionalFeatures = createApplicationOptionalFeatureRegistry();
     const [filesFeature, setFilesFeature] = createSignal<ApplicationOptionalFeatures["files"]>();
@@ -2037,6 +2040,7 @@ const mountTuiRoot = () => {
       loadMissionsWorkspace("activation");
     };
     const activateCanvasPanelContent = (panel: "home" | "terminals"): boolean => {
+      editorOpenIntent.retire();
       clearSelection();
       snapshotActiveWorkspaceView();
       const view = canvasViewForPanel(hostedViews(), panel);
@@ -2082,6 +2086,7 @@ const mountTuiRoot = () => {
       return true;
     };
     const activateDockTabContent = (tabId: WorkbenchDockTabId): boolean => {
+      if (tabId !== "files") editorOpenIntent.retire();
       if (tabId === "files") void ensureFilesFeature();
       if (tabId === "activity") {
         // Activity is dock-only, so it does not travel through `selectView` (the
@@ -3025,8 +3030,6 @@ const mountTuiRoot = () => {
     // The native EditBuffer holds text + cursor; Solid can't see its mutations,
     // so `editorRev` is bumped after every edit to re-derive `editorLines`.
     let editBuffer: EditBuffer | null = null;
-    const editorOpenIntent = new LatestIntentFence();
-    onCleanup(() => editorOpenIntent.retire());
     let prevMode: "home" | "mirror" = "home";
     const [editorPath, setEditorPath] = createSignal<string | null>(null);
     const [editorRev, setEditorRev] = createSignal(0);
@@ -3073,14 +3076,14 @@ const mountTuiRoot = () => {
       rawPath: string,
       line?: number,
       origin: EditorOpenOrigin = "user",
-      intent = editorOpenIntent.issue(),
+      intent = editorOpenIntent.issue(editorOpenScope()),
     ) => {
-      if (!editorOpenIntent.isCurrent(intent)) return;
+      if (!editorOpenIntent.isCurrent(intent, editorOpenScope())) return;
       const feature = filesFeature();
       if (!feature) {
         void ensureFilesFeature().then(
           (loaded) => {
-            if (loaded && editorOpenIntent.isCurrent(intent)) {
+            if (loaded && editorOpenIntent.isCurrent(intent, editorOpenScope())) {
               openEditor(rawPath, line, origin, intent);
             }
           },
@@ -4164,6 +4167,7 @@ const mountTuiRoot = () => {
      *  file list, and the diff panel at it, then show the Terminal tab. The dir is
      *  the project dir from the fleet payload (falling back to the cwd). */
     const openWorkspace = (session: string, dir: string | null) => {
+      editorOpenIntent.retire();
       setContextSession(session);
       const wd = dir ?? invokeCwd;
       setContextDir(wd);

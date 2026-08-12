@@ -1,14 +1,19 @@
+export interface LatestIntentToken<Scope> {
+  readonly generation: number;
+  readonly scope: Scope;
+}
+
 /** Monotonic ownership fence for async, latest-intent-wins interactions. */
-export class LatestIntentFence {
+export class LatestIntentFence<Scope = undefined> {
   #generation = 0;
 
-  issue(): number {
+  issue(scope: Scope): LatestIntentToken<Scope> {
     this.#generation += 1;
-    return this.#generation;
+    return { generation: this.#generation, scope };
   }
 
-  isCurrent(generation: number): boolean {
-    return generation === this.#generation;
+  isCurrent(intent: LatestIntentToken<Scope>, scope: Scope): boolean {
+    return intent.generation === this.#generation && Object.is(intent.scope, scope);
   }
 
   retire(): void {
