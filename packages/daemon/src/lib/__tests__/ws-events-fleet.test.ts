@@ -36,6 +36,10 @@ class ProtocolWebSocket extends EventEmitter {
     this.sent.push(data);
   }
 
+  receive(data: string): void {
+    this.emit("message", data, false);
+  }
+
   disconnect(): void {
     this.readyState = 3;
     this.emit("close");
@@ -44,6 +48,10 @@ class ProtocolWebSocket extends EventEmitter {
 
 function frames(socket: ProtocolWebSocket): DaemonEventServerFrame[] {
   return socket.sent.map((value) => DaemonEventServerFrameSchemaZ.parse(JSON.parse(value)));
+}
+
+function subscribeLegacy(socket: ProtocolWebSocket): void {
+  socket.receive(JSON.stringify({ type: "subscribe", sessions: [] }));
 }
 
 let restoreTmuxRunner: (() => void) | null = null;
@@ -64,6 +72,7 @@ describe("/ws/events fleet composition invalidation", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity); // primes the baseline (alpha)
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     // A newly adopted, registry-independent session appears.
@@ -83,6 +92,7 @@ describe("/ws/events fleet composition invalidation", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     sessionRows = "alpha\t1"; // beta killed
@@ -100,6 +110,7 @@ describe("/ws/events fleet composition invalidation", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     _pollFleetCompositionForTests();
@@ -115,6 +126,7 @@ describe("/ws/events fleet composition invalidation", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     // Only filtered (`_`/`zz-`) sessions changed — the visible fleet is the same.
@@ -132,6 +144,7 @@ describe("/ws/events fleet composition invalidation", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.disconnect();
 
     socket.sent.length = 0;

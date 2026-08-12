@@ -35,6 +35,8 @@ import {
   DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ,
   DesktopDaemonFetchWorkspaceFilesRequestSchemaZ,
   DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
+  DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceMissionsResultSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonStartupReadinessResultSchemaZ,
@@ -45,6 +47,7 @@ import {
   type DesktopDaemonFetchWorkspaceChangesResult,
   type DesktopDaemonFetchWorkspaceFilePreviewResult,
   type DesktopDaemonFetchWorkspaceFilesResult,
+  type DesktopDaemonFetchWorkspaceMissionsResult,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonRefreshConnectionResult,
   type DesktopDaemonStartupReadinessResult,
@@ -126,6 +129,12 @@ export const DaemonResourceRequestSchemaZ = z.discriminatedUnion("resource", [
     .strict(),
   z
     .object({
+      resource: z.literal("fetchWorkspaceMissions"),
+      request: DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ,
+    })
+    .strict(),
+  z
+    .object({
       resource: z.literal("fetchWorkspaceChangeDiff"),
       request: DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ,
     })
@@ -184,6 +193,7 @@ export interface DaemonResourceResultMap extends Record<DaemonResourceKind, unkn
   fetchWorkspaceFiles: DesktopDaemonFetchWorkspaceFilesResult;
   fetchWorkspaceFilePreview: DesktopDaemonFetchWorkspaceFilePreviewResult;
   fetchWorkspaceChanges: DesktopDaemonFetchWorkspaceChangesResult;
+  fetchWorkspaceMissions: DesktopDaemonFetchWorkspaceMissionsResult;
   fetchWorkspaceChangeDiff: DesktopDaemonFetchWorkspaceChangeDiffResult;
   promoteWorkspace: WorkspacePromoteHostResult;
   createWorkspacePane: WorkspacePaneCreateHostResult;
@@ -213,6 +223,7 @@ export const DAEMON_RESOURCE_RESULT_SCHEMAS: {
   fetchWorkspaceFiles: DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
   fetchWorkspaceFilePreview: DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ,
   fetchWorkspaceChanges: DesktopDaemonFetchWorkspaceChangesResultSchemaZ,
+  fetchWorkspaceMissions: DesktopDaemonFetchWorkspaceMissionsResultSchemaZ,
   fetchWorkspaceChangeDiff: DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ,
   promoteWorkspace: WorkspacePromoteHostResultSchemaZ,
   createWorkspacePane: WorkspacePaneCreateHostResultSchemaZ,
@@ -245,6 +256,36 @@ export function isDaemonResourceKind(value: unknown): value is DaemonResourceKin
 }
 
 /**
+ * Resources whose work is observational and can therefore be retired without
+ * creating an ambiguous "cancelled" result after a side effect committed.
+ */
+export const CANCELLABLE_DAEMON_RESOURCE_KINDS = [
+  "capabilities",
+  "listWorkspaces",
+  "fetchFleetCatalog",
+  "startupReadiness",
+  "fetchApplicationShell",
+  "fetchWorkspaceFiles",
+  "fetchWorkspaceFilePreview",
+  "fetchWorkspaceChanges",
+  "fetchWorkspaceMissions",
+  "fetchWorkspaceChangeDiff",
+  "fetchWidgetAsset",
+] as const satisfies readonly DaemonResourceKind[];
+
+export type CancellableDaemonResourceKind = (typeof CANCELLABLE_DAEMON_RESOURCE_KINDS)[number];
+
+const CANCELLABLE_DAEMON_RESOURCE_KIND_SET: ReadonlySet<string> = new Set(
+  CANCELLABLE_DAEMON_RESOURCE_KINDS,
+);
+
+export function isCancellableDaemonResourceKind(
+  value: DaemonResourceKind,
+): value is CancellableDaemonResourceKind {
+  return CANCELLABLE_DAEMON_RESOURCE_KIND_SET.has(value);
+}
+
+/**
  * Which catalog field the daemon's route for a workspace resource is keyed on.
  *
  * This is the session-versus-workspace hazard, declared once. The daemon is not
@@ -265,6 +306,7 @@ export const DAEMON_WORKSPACE_ROUTE_KEYS = {
   fetchWorkspaceFiles: "workspaceName",
   fetchWorkspaceFilePreview: "workspaceName",
   fetchWorkspaceChanges: "workspaceName",
+  fetchWorkspaceMissions: "workspaceName",
   fetchWorkspaceChangeDiff: "workspaceName",
 } as const;
 
@@ -296,14 +338,27 @@ export function daemonWorkspaceRouteName(
  */
 export type DaemonResourceMethods = {
   readonly [K in DaemonResourceKind]: DaemonResourceRequestFor<K> extends { request: infer R }
-    ? (request: R) => Promise<DaemonResourceResult<K>>
-    : () => Promise<DaemonResourceResult<K>>;
+    ? K extends CancellableDaemonResourceKind
+      ? (request: R, signal?: AbortSignal) => Promise<DaemonResourceResult<K>>
+      : (request: R) => Promise<DaemonResourceResult<K>>
+    : K extends CancellableDaemonResourceKind
+      ? (signal?: AbortSignal) => Promise<DaemonResourceResult<K>>
+      : () => Promise<DaemonResourceResult<K>>;
 };
 
 /** One dispatcher over the union: what a host implements once instead of fifteen times. */
 export type DaemonResourceDispatcher = <K extends DaemonResourceKind>(
   request: DaemonResourceRequestFor<K>,
+  signal?: AbortSignal,
 ) => Promise<DaemonResourceResult<K>>;
+
+const REQUESTLESS_DAEMON_RESOURCES: ReadonlySet<DaemonResourceKind> = new Set([
+  "capabilities",
+  "refreshConnection",
+  "listWorkspaces",
+  "fetchFleetCatalog",
+  "startupReadiness",
+]);
 
 /**
  * Build the named methods over one dispatcher.
@@ -312,14 +367,24 @@ export type DaemonResourceDispatcher = <K extends DaemonResourceKind>(
  * host) so none of them re-lists the resources.
  */
 export function createDaemonResourceMethods(
-  dispatch: (request: DaemonResourceRequest) => Promise<unknown>,
+  dispatch: (request: DaemonResourceRequest, signal?: AbortSignal) => Promise<unknown>,
 ): DaemonResourceMethods {
-  const methods: Record<string, (request?: unknown) => Promise<unknown>> = {};
+  const methods: Record<string, (request?: unknown, signal?: AbortSignal) => Promise<unknown>> = {};
   for (const resource of DAEMON_RESOURCE_KINDS) {
-    methods[resource] = (request?: unknown) =>
-      dispatch(
-        (request === undefined ? { resource } : { resource, request }) as DaemonResourceRequest,
-      );
+    methods[resource] = (request?: unknown, signal?: AbortSignal) => {
+      if (REQUESTLESS_DAEMON_RESOURCES.has(resource)) {
+        const requestSignal = isCancellableDaemonResourceKind(resource)
+          ? (request as AbortSignal | undefined)
+          : undefined;
+        return requestSignal === undefined
+          ? dispatch({ resource } as DaemonResourceRequest)
+          : dispatch({ resource } as DaemonResourceRequest, requestSignal);
+      }
+      const requestSignal = isCancellableDaemonResourceKind(resource) ? signal : undefined;
+      return requestSignal === undefined
+        ? dispatch({ resource, request } as DaemonResourceRequest)
+        : dispatch({ resource, request } as DaemonResourceRequest, requestSignal);
+    };
   }
   return methods as unknown as DaemonResourceMethods;
 }

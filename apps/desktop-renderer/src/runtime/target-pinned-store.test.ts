@@ -143,6 +143,23 @@ describe("target-pinned store engine", () => {
     expect([...store.getState().slots.keys()]).toEqual(["file-b"]);
   });
 
+  it("does not resurrect retired single-selection interests after reactivation", async () => {
+    const fake = fakeHost();
+    const read = vi.fn(async (_target: unknown, key: string) => ok(`read-${key}`));
+    const store = createTargetPinnedStore(
+      adapterFor(read, fake.host, { singleSlot: true }),
+      TARGET,
+      { active: false, clock: new FakeClock() },
+    );
+    store.load("file-a");
+    store.load("file-b");
+    expect(read).not.toHaveBeenCalled();
+    store.setActive(true);
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+    expect(read).toHaveBeenCalledWith(expect.anything(), "file-b", expect.any(AbortSignal));
+    expect([...store.getState().slots.keys()]).toEqual(["file-b"]);
+  });
+
   it("keeps the previous read on screen while a refresh is in flight", async () => {
     const fake = fakeHost();
     let release: ((value: TargetPinnedFetchResult<string>) => void) | null = null;

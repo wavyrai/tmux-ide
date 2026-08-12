@@ -3,14 +3,14 @@ import { For, Show } from "solid-js";
 import { rollupChips, type FleetRollup } from "../team/home.ts";
 import { STATUS_GLYPH } from "./status-grammar.ts";
 import type { SemanticThemeSnapshot } from "./theme.ts";
-import { ActionChip, EmptyState, SectionHeader, SelectableRow } from "./recipes.tsx";
+import { ActionChip, EmptyState, SectionHeader, SelectableRow } from "./recipe-components.tsx";
 import {
   homeActionAtProjection,
   type HomeActionId,
   type HomeSurfaceProjection,
 } from "./home-surface.ts";
 import { actionChipWidth, recipePalette } from "./recipes.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 
 export interface HomeSurfaceProps {
   theme: SemanticThemeSnapshot;

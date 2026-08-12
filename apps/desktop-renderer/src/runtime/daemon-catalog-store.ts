@@ -5,6 +5,7 @@ import {
   type DesktopDaemonCapabilityError,
   type DesktopDaemonEvent,
   type DesktopDaemonTransportState,
+  type DaemonEventResourceInterest,
   type HostCapabilities,
 } from "@tmux-ide/contracts";
 
@@ -55,6 +56,7 @@ export interface DaemonCatalogAdapterOptions<TResource, TState> {
   readonly host: Pick<HostCapabilities, "daemon">;
   /** Event types that invalidate this catalog and force a refetch. */
   readonly invalidatesOn: readonly DesktopDaemonEvent["type"][];
+  readonly resourceInterest: Extract<DaemonEventResourceInterest, { workspaceName: null }>;
   readonly wording: DaemonCatalogWording;
   fetch(
     daemon: DaemonInstanceIdentity,
@@ -193,7 +195,7 @@ export function createDaemonCatalogAdapter<TResource, TState>(
       // The empty workspace set is the only subscription that receives the
       // workspace-agnostic invalidations.
       return host.daemon
-        .subscribe({ workspaceNames: [] }, listener)
+        .subscribe({ workspaceNames: [], resourceInterests: [options.resourceInterest] }, listener)
         .then((result) =>
           result.status === "subscribed"
             ? ({ status: "connected", close: result.unsubscribe } as const)

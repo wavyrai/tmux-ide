@@ -50,6 +50,7 @@ export class FrameCoalescer {
     private readonly flush: () => void,
     private readonly frameIntervalMs = 1000 / 60,
     private readonly clock: FrameCoalescerClock = SYSTEM_CLOCK,
+    private readonly onWakeup?: () => void,
   ) {}
 
   request(): void {
@@ -71,6 +72,7 @@ export class FrameCoalescer {
   private run(): void {
     this.scheduled = null;
     if (this.disposed || !this.pending) return;
+    this.onWakeup?.();
     this.pending = false;
     this.lastFlushAt = this.clock.now();
     this.flush();

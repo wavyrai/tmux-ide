@@ -198,11 +198,26 @@ export interface GenerationBoundStoreOptions {
   readonly retry?: Partial<GenerationBoundRetryPolicy>;
 }
 
+export interface GenerationBoundStoreMetrics {
+  readonly idleWakeups: 0;
+  readonly activeInterests: number;
+  readonly fetchesStarted: number;
+  readonly fetchesSettled: number;
+  readonly fetchesAborted: number;
+  readonly lateResultsIgnored: number;
+  readonly invalidationsObserved: number;
+  readonly invalidationsCoalesced: number;
+  readonly subscriptionsOpened: number;
+  readonly subscriptionsClosed: number;
+  readonly publications: number;
+}
+
 export interface GenerationBoundStore<TState> {
   getState(): TState;
   subscribe(listener: (state: TState) => void): () => void;
   setTarget(target: unknown): void;
   refresh(): void;
+  getMetrics(): GenerationBoundStoreMetrics;
   /**
    * Re-project and re-publish the current phase. A wrapper that owns policy on
    * top of the resource (the workspace catalog's selection) uses this when its
@@ -298,6 +313,16 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
   const retry = normalizedGenerationBoundRetry(options.retry);
   const reassert = adapter.reassert ?? "ignore";
   const listeners = new Set<(state: TState) => void>();
+  const metrics = {
+    fetchesStarted: 0,
+    fetchesSettled: 0,
+    fetchesAborted: 0,
+    lateResultsIgnored: 0,
+    invalidationsObserved: 0,
+    subscriptionsOpened: 0,
+    subscriptionsClosed: 0,
+    publications: 0,
+  };
 
   let disposed = false;
   let generation = 0;
@@ -345,6 +370,7 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
   };
 
   const publish = (): void => {
+    metrics.publications += 1;
     state = adapter.project(view());
     const next = state;
     for (const listener of [...listeners]) {
@@ -390,6 +416,7 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
     requestId += 1;
     const controller = requestController;
     requestController = null;
+    if (controller && !controller.signal.aborted) metrics.fetchesAborted += 1;
     try {
       controller?.abort();
     } catch {
@@ -398,6 +425,7 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
   };
 
   const retireSubscription = (forgetPending = false): void => {
+    const hadSubscription = closeSubscription !== null;
     subscriptionId += 1;
     if (forgetPending) pendingSubscriptionId = null;
     eventLive = false;
@@ -405,6 +433,7 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
     clearStability();
     const close = closeSubscription;
     closeSubscription = null;
+    if (hadSubscription) metrics.subscriptionsClosed += 1;
     try {
       close?.();
     } catch {
@@ -513,7 +542,9 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
     retireRequest();
     const activeRequestId = requestId;
     const controller = new AbortController();
+    let accepted = false;
     requestController = controller;
+    metrics.fetchesStarted += 1;
     void adapter
       .fetch(requestTarget, controller.signal)
       .then((result) => {
@@ -525,6 +556,7 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
         ) {
           return;
         }
+        accepted = true;
         requestController = null;
         if (result.status === "ok") {
           clearRequestRetry();
@@ -560,11 +592,18 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
         ) {
           return;
         }
+        accepted = true;
         requestController = null;
         const failure = adapter.rejectionFailure("request");
         const exhausted = requestRetryAttempts >= retry.maximumAttempts;
         failWith(failure, "request", exhausted, false);
         if (!exhausted) scheduleRequestRetry(expectedGeneration, expectedKey);
+      })
+      .finally(() => {
+        metrics.fetchesSettled += 1;
+        if (!accepted) {
+          metrics.lateResultsIgnored += 1;
+        }
       });
   }
 
@@ -626,6 +665,7 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
         ) {
           return;
         }
+        metrics.invalidationsObserved += 1;
         fetchResource(expectedGeneration, expectedKey);
       },
       live,
@@ -696,6 +736,7 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
       }
       if (result.status === "connected") {
         closeSubscription = result.close;
+        metrics.subscriptionsOpened += 1;
         return;
       }
       handleEventFailure(result.failure, expectedGeneration, expectedKey);
@@ -799,6 +840,12 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
     refresh() {
       refreshCurrent();
     },
+    getMetrics: () => ({
+      idleWakeups: 0,
+      activeInterests: targetIsValid && !disposed ? 1 : 0,
+      invalidationsCoalesced: 0,
+      ...metrics,
+    }),
     republish() {
       if (disposed) return;
       publish();

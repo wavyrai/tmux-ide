@@ -10,6 +10,7 @@ import {
   applyTerminalReplicaUpdate,
   blankTerminalReplicaSnapshot,
   hashTerminalReplicaSnapshot,
+  hashTerminalWidgetContent,
 } from "./terminal-replica.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
@@ -228,5 +229,12 @@ describe("terminal replica reducer", () => {
     });
     const reconstructed = { ...next, history: [...next.history] };
     expect(hashTerminalReplicaSnapshot(next)).toBe(hashTerminalReplicaSnapshot(reconstructed));
+  });
+
+  it("shares the canonical widget-content digest used by rich placements", () => {
+    expect(hashTerminalWidgetContent("markdown", { text: "# Plan" })).toMatch(/^[0-9a-f]{16}$/u);
+    expect(hashTerminalWidgetContent("markdown", { text: "# Plan" })).not.toBe(
+      hashTerminalWidgetContent("markdown", { text: "# Other" }),
+    );
   });
 });

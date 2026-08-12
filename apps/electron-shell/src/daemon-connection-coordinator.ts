@@ -17,6 +17,9 @@ import {
   type DesktopDaemonFetchWorkspaceFilePreviewResult,
   type DesktopDaemonFetchWorkspaceFilesRequest,
   type DesktopDaemonFetchWorkspaceFilesResult,
+  type DesktopDaemonFetchWorkspaceMissionsRequest,
+  type DesktopDaemonFetchWorkspaceMissionsResult,
+  type DesktopDaemonEventSubscriptionRequest,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonFetchFleetCatalogResult,
@@ -77,28 +80,38 @@ export interface DaemonResourceAuthority {
     rendererOrigin: string,
     hostClientId?: string,
   ): Promise<PaneStreamIssueResult>;
-  listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
-  fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult>;
-  fetchWidgetAsset(request: WidgetAssetRequest): Promise<WidgetAssetResult>;
+  listWorkspaces(signal?: AbortSignal): Promise<DesktopDaemonListWorkspacesResult>;
+  fetchFleetCatalog(signal?: AbortSignal): Promise<DesktopDaemonFetchFleetCatalogResult>;
+  fetchWidgetAsset(request: WidgetAssetRequest, signal?: AbortSignal): Promise<WidgetAssetResult>;
   fetchApplicationShell(
     workspaceName: string,
     resourceVersion?: DesktopDaemonFetchApplicationShellRequest["resourceVersion"],
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchApplicationShellResult>;
   fetchWorkspaceFiles(
     request: DesktopDaemonFetchWorkspaceFilesRequest,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceFilesResult>;
   fetchWorkspaceFilePreview(
     request: DesktopDaemonFetchWorkspaceFilePreviewRequest,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult>;
   fetchWorkspaceChanges(
     request: DesktopDaemonFetchWorkspaceChangesRequest,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceChangesResult>;
   fetchWorkspaceChangeDiff(
     request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult>;
+  fetchWorkspaceMissions(
+    request: DesktopDaemonFetchWorkspaceMissionsRequest,
+    signal?: AbortSignal,
+  ): Promise<DesktopDaemonFetchWorkspaceMissionsResult>;
   subscribe(
-    workspaceNames: readonly string[],
+    request: DesktopDaemonEventSubscriptionRequest | readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
+    signal?: AbortSignal,
   ): Promise<BrokerSubscriptionResult>;
   /**
    * Explicit transport wakeup: interrupts a scheduled event-socket backoff and
@@ -463,15 +476,17 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     return result;
   }
 
-  async listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult> {
+  async listWorkspaces(signal?: AbortSignal): Promise<DesktopDaemonListWorkspacesResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.listWorkspaces();
+    const result = await broker.listWorkspaces(signal);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
-      this.#disposed
+      this.#disposed ||
+      signal?.aborted
     ) {
       return {
         status: "error",
@@ -483,15 +498,17 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     return result;
   }
 
-  async fetchFleetCatalog(): Promise<DesktopDaemonFetchFleetCatalogResult> {
+  async fetchFleetCatalog(signal?: AbortSignal): Promise<DesktopDaemonFetchFleetCatalogResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.fetchFleetCatalog();
+    const result = await broker.fetchFleetCatalog(signal);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
-      this.#disposed
+      this.#disposed ||
+      signal?.aborted
     ) {
       return {
         status: "error",
@@ -503,15 +520,20 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     return result;
   }
 
-  async fetchWidgetAsset(request: WidgetAssetRequest): Promise<WidgetAssetResult> {
+  async fetchWidgetAsset(
+    request: WidgetAssetRequest,
+    signal?: AbortSignal,
+  ): Promise<WidgetAssetResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.fetchWidgetAsset(request);
+    const result = await broker.fetchWidgetAsset(request, signal);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
-      this.#disposed
+      this.#disposed ||
+      signal?.aborted
     ) {
       return {
         status: "error",
@@ -526,15 +548,18 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   async fetchApplicationShell(
     workspaceName: string,
     resourceVersion?: DesktopDaemonFetchApplicationShellRequest["resourceVersion"],
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchApplicationShellResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.fetchApplicationShell(workspaceName, resourceVersion);
+    const result = await broker.fetchApplicationShell(workspaceName, resourceVersion, signal);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
-      this.#disposed
+      this.#disposed ||
+      signal?.aborted
     ) {
       return {
         status: "error",
@@ -548,15 +573,18 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
   async fetchWorkspaceFiles(
     request: DesktopDaemonFetchWorkspaceFilesRequest,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceFilesResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.fetchWorkspaceFiles(request);
+    const result = await broker.fetchWorkspaceFiles(request, signal);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
-      this.#disposed
+      this.#disposed ||
+      signal?.aborted
     ) {
       return {
         status: "error",
@@ -570,15 +598,18 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
   async fetchWorkspaceFilePreview(
     request: DesktopDaemonFetchWorkspaceFilePreviewRequest,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceFilePreviewResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.fetchWorkspaceFilePreview(request);
+    const result = await broker.fetchWorkspaceFilePreview(request, signal);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
-      this.#disposed
+      this.#disposed ||
+      signal?.aborted
     ) {
       return {
         status: "error",
@@ -592,15 +623,18 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
   async fetchWorkspaceChanges(
     request: DesktopDaemonFetchWorkspaceChangesRequest,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceChangesResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.fetchWorkspaceChanges(request);
+    const result = await broker.fetchWorkspaceChanges(request, signal);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
-      this.#disposed
+      this.#disposed ||
+      signal?.aborted
     ) {
       return {
         status: "error",
@@ -614,15 +648,43 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
   async fetchWorkspaceChangeDiff(
     request: DesktopDaemonFetchWorkspaceChangeDiffRequest,
+    signal?: AbortSignal,
   ): Promise<DesktopDaemonFetchWorkspaceChangeDiffResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.fetchWorkspaceChangeDiff(request);
+    const result = await broker.fetchWorkspaceChangeDiff(request, signal);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
-      this.#disposed
+      this.#disposed ||
+      signal?.aborted
+    ) {
+      return {
+        status: "error",
+        error: daemonCapabilityError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceMissions(
+    request: DesktopDaemonFetchWorkspaceMissionsRequest,
+    signal?: AbortSignal,
+  ): Promise<DesktopDaemonFetchWorkspaceMissionsResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceMissions(request, signal);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed ||
+      signal?.aborted
     ) {
       return {
         status: "error",
@@ -635,35 +697,43 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   }
 
   async subscribe(
-    workspaceNames: readonly string[],
+    request: DesktopDaemonEventSubscriptionRequest | readonly string[],
     listener: (event: DesktopDaemonEvent) => void,
+    signal?: AbortSignal,
   ): Promise<BrokerSubscriptionResult> {
+    if (signal?.aborted) {
+      return { status: "error", error: daemonCapabilityError("disposed") };
+    }
     const broker = this.#broker;
     if (!broker) return this.#disconnectedResult();
     const rendererGeneration = this.#rendererGeneration;
     const id = ++this.#nextSubscription;
     const earlyEvents: DesktopDaemonEvent[] = [];
-    const result = await broker.subscribe(workspaceNames, (event) => {
-      const subscription = this.#subscriptions.get(id);
-      if (
-        broker !== this.#broker ||
-        rendererGeneration !== this.#rendererGeneration ||
-        this.#disposed
-      ) {
-        return;
-      }
-      if (!subscription) {
-        // A verified socket can emit its live handoff before subscribe()
-        // resolves. Preserve only this tiny, bounded local race window.
-        if (earlyEvents.length < 8) earlyEvents.push(event);
-        return;
-      }
-      try {
-        subscription.listener(event);
-      } catch {
-        // One renderer listener cannot destabilize connection ownership.
-      }
-    });
+    const result = await broker.subscribe(
+      request,
+      (event) => {
+        const subscription = this.#subscriptions.get(id);
+        if (
+          broker !== this.#broker ||
+          rendererGeneration !== this.#rendererGeneration ||
+          this.#disposed
+        ) {
+          return;
+        }
+        if (!subscription) {
+          // A verified socket can emit its live handoff before subscribe()
+          // resolves. Preserve only this tiny, bounded local race window.
+          if (earlyEvents.length < 8) earlyEvents.push(event);
+          return;
+        }
+        try {
+          subscription.listener(event);
+        } catch {
+          // One renderer listener cannot destabilize connection ownership.
+        }
+      },
+      signal,
+    );
     if (result.status === "error") return result;
     if (
       this.#broker !== broker ||

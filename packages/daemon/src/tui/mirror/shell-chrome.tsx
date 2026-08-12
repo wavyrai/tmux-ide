@@ -11,7 +11,7 @@ import {
   type ShellSidebarHint,
 } from "./shell-chrome.ts";
 import type { SemanticThemeSnapshot } from "./theme.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 
 export interface ShellTabBarProps {
   theme: SemanticThemeSnapshot;

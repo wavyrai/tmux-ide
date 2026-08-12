@@ -335,6 +335,10 @@ function createHostHarness() {
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "not used by terminal tests" },
       })),
+      fetchWorkspaceMissions: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "not used by terminal tests" },
+      })),
       subscribe: vi.fn(async (_request, listener) => {
         subscriptions.push(listener);
         return { status: "subscribed" as const, unsubscribe: () => undefined };

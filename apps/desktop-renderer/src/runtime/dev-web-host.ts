@@ -27,7 +27,6 @@ import {
   ApplicationShellResourceV3SchemaZ,
   AppWindowMutationResultSchemaZ,
   WorkspaceMultiplexerMutationResultSchemaZ,
-  DaemonEventClientFrameSchemaZ,
   DaemonEventServerFrameSchemaZ,
   DESKTOP_HOST_API_VERSION,
   DesktopDaemonCapabilitiesResultSchemaZ,
@@ -45,6 +44,7 @@ import {
   WorkspaceChangesCatalogEnvelopeV1SchemaZ,
   WorkspaceFilePreviewEnvelopeV1SchemaZ,
   WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+  WorkspaceMissionsEnvelopeV1SchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
   WorkspacePromotionFailureSchemaZ,
@@ -52,6 +52,7 @@ import {
   createDaemonResourceMethods,
   daemonWorkspaceRouteName,
   type DaemonEventServerFrame,
+  type DaemonEventResourceInterest,
   type DaemonInstanceIdentity,
   type DaemonResourceRequest,
   type DaemonWorkspaceResourceKind,
@@ -89,6 +90,7 @@ import { browserInitiatedWebSocketCloseCode } from "../browser-websocket.ts";
 const REQUEST_TIMEOUT_MS = 5_000;
 const PROMOTE_TIMEOUT_MS = 15_000;
 const EVENTS_PATH = "/ws/events";
+const MAX_EVENT_FRAME_BYTES = 512 * 1024;
 
 function capabilityError(
   code: DesktopDaemonCapabilityErrorCode,
@@ -136,7 +138,7 @@ function browserWindowState(): DesktopWindowState {
 function browserWebSocketUrl(config: DevWebHostConfig, daemonUrl: string): string {
   if (config.transport === "direct") return daemonUrl;
   const parsed = new URL(daemonUrl);
-  return `${config.daemonWebSocketOrigin}${parsed.pathname}`;
+  return `${config.daemonWebSocketOrigin}${parsed.pathname}${parsed.search}`;
 }
 
 function subscribeMedia(listener: (state: DesktopThemeState) => void): () => void {
@@ -235,7 +237,37 @@ export function projectDaemonServerFrame(
             : [];
       }
       if (frame.resource === "fleet-catalog") return [{ type: "fleet.changed" }];
+      if (
+        frame.resource === "workspace-files" ||
+        frame.resource === "workspace-changes" ||
+        frame.resource === "workspace-missions"
+      ) {
+        if (!daemonInstanceId) return [{ type: "workspaces.changed" }];
+        const changed = (workspaceName: string): DesktopDaemonEvent => {
+          const metadata = {
+            workspaceName,
+            daemonInstanceId,
+            sequence: frame.sequence,
+            revision: frame.revision,
+            causeOperationId: frame.causeOperationId,
+          };
+          if (frame.resource === "workspace-files") {
+            return { type: "workspace-files.changed", ...metadata };
+          }
+          if (frame.resource === "workspace-changes") {
+            return { type: "workspace-changes.changed", ...metadata };
+          }
+          return { type: "workspace-missions.changed", ...metadata };
+        };
+        return frame.workspaceName === null
+          ? catalog.map((entry) => changed(entry.workspaceName))
+          : catalog.some((entry) => entry.workspaceName === frame.workspaceName)
+            ? [changed(frame.workspaceName)]
+            : [];
+      }
       return [{ type: "workspaces.changed" }];
+    case "resource.observed":
+      return [];
     case "interaction.receipt":
       return catalog.some((entry) => entry.workspaceName === frame.workspaceName) ? [frame] : [];
     case "snapshot-required":
@@ -267,13 +299,35 @@ interface DevWebHost extends HostCapabilities {
 
 export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHost {
   const controllers = new Set<AbortController>();
-  const listeners = new Set<(event: DesktopDaemonEvent) => void>();
+  const subscriptions = new Map<
+    number,
+    {
+      readonly request: DesktopDaemonEventSubscriptionRequest;
+      readonly listener: (event: DesktopDaemonEvent) => void;
+      readyRevision: number | null;
+      readySettled: boolean;
+      readySuccess: DesktopDaemonHostSubscriptionResult | null;
+      readonly resolveReady: ((result: DesktopDaemonHostSubscriptionResult) => void) | null;
+    }
+  >();
+  let nextSubscriptionId = 0;
   let identity: DaemonInstanceIdentity | null = null;
   // The session-name → workspace-name map the event projection needs. Refreshed
   // by every catalog read; an empty cache simply projects fewer shell events
   // until the first read lands.
   let catalogCache: readonly DevWorkspaceCatalogEntry[] = [];
   let socketVerified = false;
+  let eventSocket: WebSocket | null = null;
+  let sentSessions = new Set<string>();
+  let sentInterests = new Map<string, DaemonEventResourceInterest>();
+  let sentInterestMode: "unsent" | "legacy" | "explicit" = "unsent";
+  let eventCursorSent = false;
+  let eventSocketSemantic = false;
+  let nextInterestRevision = 0;
+  let lastSentInterestRevision = 0;
+  let lastAckedInterestRevision = 0;
+  const unavailableInterestKeys = new Set<string>();
+  let eventSocketEpoch = 0;
   let eventReplica: ResourceReplicaState<null> = initialResourceReplica();
   let socketSupervisor: RuntimeConnectionSupervisor<true> | null = null;
   let stopSocketStateSubscription: (() => void) | null = null;
@@ -283,7 +337,8 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   // action routes never fall back to anonymous SDK authority.
   const directHostClientId =
     config.transport === "direct" ? `dev-web-direct:${crypto.randomUUID()}` : null;
-  let resolvedDevHostSession: string | null = null;
+  type DevHostSessionLease = { readonly generation: number; readonly token: string };
+  let resolvedDevHostSession: DevHostSessionLease | null = null;
   const uninstallWebSocketSession = installBrowserWebSocketUrlRewriter((rawUrl) => {
     if (config.transport !== "same-origin-gateway") return rawUrl;
     const parsed = new URL(rawUrl);
@@ -294,35 +349,118 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         parsed.pathname === "/v1/terminal/pane-streams/redeem");
     if (!privileged) return rawUrl;
     if (!resolvedDevHostSession) throw new DevHostFailure(REQUEST_FAILED);
-    return developmentWebSocketUrl(rawUrl, resolvedDevHostSession);
+    return developmentWebSocketUrl(rawUrl, resolvedDevHostSession.token);
   });
-  let devHostSession: Promise<string | null> | null = null;
-  const loadDevHostSession = (force = false): Promise<string | null> => {
+  type DevHostSessionBootstrap = {
+    readonly generation: number;
+    readonly controller: AbortController;
+    promise: Promise<DevHostSessionLease> | null;
+    waiters: number;
+    settled: boolean;
+  };
+  let nextDevHostSessionGeneration = 0;
+  let devHostSession: DevHostSessionBootstrap | null = null;
+  const loadDevHostSession = (
+    staleGeneration: number | null = null,
+    signal?: AbortSignal,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  ): Promise<DevHostSessionLease | null> => {
     if (config.transport !== "same-origin-gateway") return Promise.resolve(null);
-    if (force) devHostSession = null;
-    if (devHostSession) return devHostSession;
-    const pending = (async () => {
-      const response = await fetch("/__tmux_ide_host_session", {
-        method: "POST",
-        cache: "no-store",
-        credentials: "omit",
+    if (signal?.aborted) return Promise.reject(new DevHostFailure(DISPOSED));
+    let bootstrap = devHostSession;
+    // A stale caller replaces only the generation it actually used. If a
+    // concurrent HTTP or WebSocket caller has already begun a newer refresh,
+    // join that refresh instead of aborting it or minting another capability.
+    if (staleGeneration !== null && bootstrap && bootstrap.generation <= staleGeneration) {
+      bootstrap = null;
+    }
+    if (!bootstrap) {
+      const controller = new AbortController();
+      const generation = ++nextDevHostSessionGeneration;
+      const record: DevHostSessionBootstrap = {
+        generation,
+        controller,
+        promise: null,
+        waiters: 0,
+        settled: false,
+      };
+      if (
+        staleGeneration !== null &&
+        resolvedDevHostSession !== null &&
+        resolvedDevHostSession.generation <= staleGeneration
+      ) {
+        resolvedDevHostSession = null;
+      }
+      devHostSession = record;
+      const pending = (async () => {
+        try {
+          const response = await fetch("/__tmux_ide_host_session", {
+            method: "POST",
+            cache: "no-store",
+            credentials: "omit",
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new DevHostFailure(REQUEST_FAILED);
+          const token = z
+            .object({ token: z.uuid() })
+            .strict()
+            .parse(await response.json()).token;
+          if (controller.signal.aborted) throw new DevHostFailure(DISPOSED);
+          const lease = { generation, token };
+          if (devHostSession !== record || disposed) throw new DevHostFailure(DISPOSED);
+          resolvedDevHostSession = lease;
+          return lease;
+        } finally {
+          record.settled = true;
+        }
+      })();
+      record.promise = pending;
+      bootstrap = record;
+      // A failed bootstrap is not a permanent poison pill for this document.
+      void pending.catch(() => {
+        if (devHostSession === record) devHostSession = null;
       });
-      if (!response.ok) throw new DevHostFailure(REQUEST_FAILED);
-      const token = z
-        .object({ token: z.uuid() })
-        .strict()
-        .parse(await response.json()).token;
-      resolvedDevHostSession = token;
-      return token;
-    })();
-    devHostSession = pending;
-    // A failed bootstrap is not a permanent poison pill for this document.
-    // Clear only the promise that failed so a newer forced rebootstrap cannot
-    // be erased by an older rejection racing it.
-    void pending.catch(() => {
-      if (devHostSession === pending) devHostSession = null;
+    }
+    const current = bootstrap;
+    const currentPromise = current.promise;
+    if (currentPromise === null) return Promise.reject(new DevHostFailure(REQUEST_FAILED));
+    current.waiters += 1;
+    return new Promise<DevHostSessionLease | null>((resolve, reject) => {
+      let active = true;
+      const timer = setTimeout(() => timeout(), timeoutMs);
+      const finish = (): boolean => {
+        if (!active) return false;
+        active = false;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", cancel);
+        current.waiters = Math.max(0, current.waiters - 1);
+        return true;
+      };
+      const abortPhysicalIfLast = (): void => {
+        if (!current.settled && current.waiters === 0 && devHostSession === current) {
+          current.controller.abort();
+        }
+      };
+      const cancel = (): void => {
+        if (!finish()) return;
+        abortPhysicalIfLast();
+        reject(new DevHostFailure(DISPOSED));
+      };
+      const timeout = (): void => {
+        if (!finish()) return;
+        abortPhysicalIfLast();
+        reject(new DevHostFailure(REQUEST_FAILED));
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      void currentPromise.then(
+        (value) => {
+          if (finish()) resolve(value);
+        },
+        (error) => {
+          if (finish()) reject(error);
+        },
+      );
     });
-    return pending;
   };
 
   const url = (pathname: string): string => `${config.daemonOrigin}${pathname}`;
@@ -332,19 +470,30 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     init: { readonly method: "GET" | "POST"; readonly body?: unknown },
     extraHeaders: Readonly<Record<string, string>> = {},
     timeoutMs = REQUEST_TIMEOUT_MS,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     if (disposed) throw new DevHostFailure(DISPOSED);
+    if (signal?.aborted) throw new DevHostFailure(DISPOSED);
     const controller = new AbortController();
+    let abortCause: "caller" | "deadline" | null = null;
+    const cancel = () => {
+      if (abortCause === null) abortCause = "caller";
+      controller.abort();
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
     controllers.add(controller);
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => {
+      if (abortCause === null) abortCause = "deadline";
+      controller.abort();
+    }, timeoutMs);
     try {
-      let hostSession = await loadDevHostSession();
+      let hostSession = await loadDevHostSession(null, controller.signal, timeoutMs);
       const gatewayLogicalGet = config.transport === "same-origin-gateway" && init.method === "GET";
       const wireMethod = gatewayLogicalGet ? "POST" : init.method;
       const wireHeaders = {
         ...extraHeaders,
         ...(gatewayLogicalGet ? { "X-Tmux-Ide-Dev-Original-Method": "GET" } : {}),
-        ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession } : {}),
+        ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession.token } : {}),
         ...(directHostClientId ? { "X-Tmux-Ide-Host-Client-Id": directHostClientId } : {}),
         accept: "application/json",
         ...(config.ownerToken ? { Authorization: `Bearer ${config.ownerToken}` } : {}),
@@ -373,13 +522,17 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
               .catch(() => null),
           ).success;
       if (staleGatewaySession) {
-        hostSession = await loadDevHostSession(true);
+        hostSession = await loadDevHostSession(
+          hostSession?.generation ?? null,
+          controller.signal,
+          timeoutMs,
+        );
         response = await fetch(url(pathname), {
           method: wireMethod,
           headers: {
             ...extraHeaders,
             ...(gatewayLogicalGet ? { "X-Tmux-Ide-Dev-Original-Method": "GET" } : {}),
-            ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession } : {}),
+            ...(hostSession ? { "X-Tmux-Ide-Dev-Host-Session": hostSession.token } : {}),
             ...(directHostClientId ? { "X-Tmux-Ide-Host-Client-Id": directHostClientId } : {}),
             accept: "application/json",
             ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -403,10 +556,16 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       }
       return await response.json();
     } catch (error) {
-      if (error instanceof DevHostFailure) throw error;
-      throw new DevHostFailure(disposed ? DISPOSED : REQUEST_FAILED);
+      if (error instanceof DevHostFailure) {
+        if (error.error.code === "disposed" && abortCause === "deadline" && !disposed) {
+          throw new DevHostFailure(REQUEST_FAILED);
+        }
+        throw error;
+      }
+      throw new DevHostFailure(disposed || abortCause === "caller" ? DISPOSED : REQUEST_FAILED);
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
       controllers.delete(controller);
     }
   }
@@ -418,13 +577,22 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * timeout, every failure answers null, and a null simply leaves the renderer
    * with what it could observe for itself.
    */
-  async function readStartupReadinessLadder(): Promise<StartupReadinessLadder | null> {
+  async function readStartupReadinessLadder(
+    signal?: AbortSignal,
+  ): Promise<StartupReadinessLadder | null> {
     try {
       const parsed = StartupReadinessResourceSchemaZ.safeParse(
-        await request("/api/resources/startup-readiness", { method: "GET" }),
+        await request(
+          "/api/resources/startup-readiness",
+          { method: "GET" },
+          {},
+          REQUEST_TIMEOUT_MS,
+          signal,
+        ),
       );
       return parsed.success ? parsed.data.ladder : null;
-    } catch {
+    } catch (error) {
+      if (failureOf(error).code === "disposed") throw error;
       return null;
     }
   }
@@ -440,10 +608,16 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * the production broker does, so a daemon restart mid-session surfaces as a
    * generation mismatch instead of silently mixing two generations.
    */
-  async function loadIdentity(): Promise<DaemonInstanceIdentity> {
+  async function loadIdentity(signal?: AbortSignal): Promise<DaemonInstanceIdentity> {
     if (identity) return identity;
     const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
-      await request("/api/v2/capabilities", { method: "POST", body: {} }),
+      await request(
+        "/api/v2/capabilities",
+        { method: "POST", body: {} },
+        {},
+        REQUEST_TIMEOUT_MS,
+        signal,
+      ),
     );
     if (result.status !== "ok") throw new DevHostFailure(result.error);
     identity = result.daemon;
@@ -459,9 +633,17 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     return identity;
   }
 
-  async function workspaceCatalog(): Promise<readonly DevWorkspaceCatalogEntry[]> {
+  async function workspaceCatalog(
+    signal?: AbortSignal,
+  ): Promise<readonly DevWorkspaceCatalogEntry[]> {
     const parsed = WorkspaceCatalogResourceV1SchemaZ.safeParse(
-      await request("/api/resources/workspace-catalog", { method: "GET" }),
+      await request(
+        "/api/resources/workspace-catalog",
+        { method: "GET" },
+        {},
+        REQUEST_TIMEOUT_MS,
+        signal,
+      ),
     );
     if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
     if (!sameIdentity(parsed.data.daemon, requireIdentity())) {
@@ -473,11 +655,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       workspaceName,
       sessionName,
     }));
+    sendEventSubscriptionDelta();
     return catalogCache;
   }
 
-  async function catalogEntryFor(workspaceName: string): Promise<DevWorkspaceCatalogEntry> {
-    const entry = (await workspaceCatalog()).find(
+  async function catalogEntryFor(
+    workspaceName: string,
+    signal?: AbortSignal,
+  ): Promise<DevWorkspaceCatalogEntry> {
+    const entry = (await workspaceCatalog(signal)).find(
       (candidate) => candidate.workspaceName === workspaceName,
     );
     if (!entry) {
@@ -502,16 +688,23 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     workspaceName: string,
     pathname: (encodedName: string) => string,
     schema: Schema,
+    signal?: AbortSignal,
   ): Promise<
     | { status: "ok"; envelope: z.infer<Schema> }
     | { status: "error"; error: DesktopDaemonCapabilityError }
   > {
     try {
-      await loadIdentity();
-      const entry = await catalogEntryFor(workspaceName);
+      await loadIdentity(signal);
+      const entry = await catalogEntryFor(workspaceName, signal);
       const routeName = daemonWorkspaceRouteName(resource, entry);
       const parsed = schema.safeParse(
-        await request(pathname(encodeURIComponent(routeName)), { method: "GET" }),
+        await request(
+          pathname(encodeURIComponent(routeName)),
+          { method: "GET" },
+          {},
+          REQUEST_TIMEOUT_MS,
+          signal,
+        ),
       );
       if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
       return { status: "ok", envelope: parsed.data };
@@ -538,8 +731,69 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     );
   }
 
+  const interestKey = (interest: DaemonEventResourceInterest): string =>
+    `${interest.resource}\0${interest.workspaceName ?? "global"}`;
+
+  function requiredEventSessions(): Set<string> {
+    const workspaces = new Set(
+      [...subscriptions.values()].flatMap(({ request }) => request.workspaceNames),
+    );
+    return new Set(
+      catalogCache
+        .filter(({ workspaceName }) => workspaces.has(workspaceName))
+        .map(({ sessionName }) => sessionName),
+    );
+  }
+
+  function requiredEventInterests(): Map<string, DaemonEventResourceInterest> {
+    const required = new Map<string, DaemonEventResourceInterest>();
+    for (const { request } of subscriptions.values()) {
+      if (request.resourceInterests === undefined) continue;
+      for (const interest of request.resourceInterests)
+        required.set(interestKey(interest), interest);
+    }
+    return required;
+  }
+
+  const requiresSemanticEvents = (): boolean =>
+    [...subscriptions.values()].some(({ request }) => request.resourceInterests !== undefined);
+  const requiresLegacyEvents = (): boolean =>
+    [...subscriptions.values()].some(({ request }) => request.resourceInterests === undefined);
+  const desiredSemanticMode = (): boolean => requiresSemanticEvents() && !requiresLegacyEvents();
+
+  function eventInterest(event: DesktopDaemonEvent): DaemonEventResourceInterest | null {
+    if (event.type === "workspaces.changed")
+      return { resource: "workspace-catalog", workspaceName: null };
+    if (event.type === "fleet.changed") return { resource: "fleet-catalog", workspaceName: null };
+    if (event.type === "application-shell.changed" || event.type === "interaction.receipt") {
+      return { resource: "application-shell", workspaceName: event.workspaceName };
+    }
+    if (event.type === "workspace-files.changed")
+      return { resource: "workspace-files", workspaceName: event.workspaceName };
+    if (event.type === "workspace-changes.changed")
+      return { resource: "workspace-changes", workspaceName: event.workspaceName };
+    if (event.type === "workspace-missions.changed")
+      return { resource: "workspace-missions", workspaceName: event.workspaceName };
+    return null;
+  }
+
   function emit(event: DesktopDaemonEvent): void {
-    for (const listener of [...listeners]) {
+    for (const { request, listener } of [...subscriptions.values()]) {
+      const interest = eventInterest(event);
+      if (request.resourceInterests === undefined) {
+        if (
+          interest?.workspaceName !== null &&
+          interest?.workspaceName !== undefined &&
+          !request.workspaceNames.includes(interest.workspaceName)
+        )
+          continue;
+      } else if (
+        interest !== null &&
+        !request.resourceInterests.some(
+          (candidate) => interestKey(candidate) === interestKey(interest),
+        )
+      )
+        continue;
       try {
         listener(event);
       } catch {
@@ -568,8 +822,93 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * authenticates the peer by daemon generation in its `hello` frame, and the
    * daemon publishes only non-secret invalidations over it.
    */
+  function sendEventSubscriptionDelta(): void {
+    if (!eventSocket) return;
+    const requiredSessions = requiredEventSessions();
+    const requiredInterests = requiredEventInterests();
+    if (eventSocketSemantic !== desiredSemanticMode()) {
+      releaseSocket();
+      ensureSocket();
+      return;
+    }
+    const removedSessions = [...sentSessions].filter((name) => !requiredSessions.has(name));
+    const addedSessions = [...requiredSessions].filter((name) => !sentSessions.has(name));
+    const removedInterests = [...sentInterests]
+      .filter(([key]) => !requiredInterests.has(key))
+      .map(([, interest]) => interest);
+    for (const interest of removedInterests) unavailableInterestKeys.delete(interestKey(interest));
+    const addedInterests = [...requiredInterests]
+      .filter(([key]) => !sentInterests.has(key))
+      .map(([, interest]) => interest);
+    if (!eventSocketSemantic && !requiresSemanticEvents()) {
+      if (removedSessions.length > 0) {
+        eventSocket.send(JSON.stringify({ type: "unsubscribe", sessions: removedSessions }));
+      }
+      if (addedSessions.length > 0 || !eventCursorSent) {
+        eventSocket.send(
+          JSON.stringify({
+            type: "subscribe",
+            sessions: addedSessions,
+            ...(!eventCursorSent ? { afterSequence: eventReplica.sequence ?? 0 } : {}),
+          }),
+        );
+        eventCursorSent = true;
+      }
+      sentSessions = requiredSessions;
+      return;
+    }
+    const legacyEvents = requiresLegacyEvents();
+    const legacyChanged =
+      sentInterestMode === "unsent" ||
+      (legacyEvents ? sentInterestMode !== "legacy" : sentInterestMode !== "explicit");
+    let emittedRevision = 0;
+    if (removedSessions.length > 0 || removedInterests.length > 0) {
+      emittedRevision = ++nextInterestRevision;
+      eventSocket.send(
+        JSON.stringify({
+          type: "unsubscribe",
+          sessions: removedSessions,
+          interests: removedInterests,
+          legacyEvents,
+          interestRevision: emittedRevision,
+        }),
+      );
+    }
+    if (
+      addedSessions.length > 0 ||
+      addedInterests.length > 0 ||
+      !eventCursorSent ||
+      legacyChanged
+    ) {
+      emittedRevision = ++nextInterestRevision;
+      eventSocket.send(
+        JSON.stringify({
+          type: "subscribe",
+          sessions: addedSessions,
+          interests: addedInterests,
+          legacyEvents,
+          interestRevision: emittedRevision,
+          ...(!eventCursorSent ? { afterSequence: eventReplica.sequence ?? 0 } : {}),
+        }),
+      );
+      eventCursorSent = true;
+    }
+    sentSessions = requiredSessions;
+    sentInterests = new Map(requiredInterests);
+    sentInterestMode = legacyEvents ? "legacy" : "explicit";
+    if (emittedRevision > 0) lastSentInterestRevision = emittedRevision;
+    for (const subscription of subscriptions.values()) {
+      if (subscription.readySettled || subscription.resolveReady === null) continue;
+      subscription.readyRevision ??= lastSentInterestRevision;
+      if (lastAckedInterestRevision >= subscription.readyRevision && subscription.readySuccess) {
+        subscription.readySettled = true;
+        subscription.resolveReady(subscription.readySuccess);
+      }
+    }
+  }
+
   function ensureSocket(): void {
-    if (disposed || socketSupervisor || listeners.size === 0) return;
+    if (disposed || socketSupervisor || subscriptions.size === 0) return;
     const supervisor = createRuntimeConnectionSupervisor<true>({
       connect: ({ signal }) => connectEventSocket(signal),
     });
@@ -600,13 +939,18 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   }
 
   async function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
-    await loadDevHostSession();
+    const eventHostSession = await loadDevHostSession(null, signal);
+    if (signal.aborted || disposed) throw new DevHostFailure(DISPOSED);
     return new Promise((resolve, reject) => {
+      const attemptEpoch = ++eventSocketEpoch;
+      eventSocketSemantic = desiredSemanticMode();
+      const eventsPath = eventSocketSemantic ? `${EVENTS_PATH}?mode=semantic` : EVENTS_PATH;
       const next = new WebSocket(
         browserWebSocketHandshakeUrl(
-          browserWebSocketUrl(config, `${config.daemonWebSocketOrigin}${EVENTS_PATH}`),
+          browserWebSocketUrl(config, `${config.daemonWebSocketOrigin}${eventsPath}`),
         ),
       );
+      let helloVerified = false;
       let connected = false;
       let resourceEventsSupported = false;
       let closedResolve!: (reason: unknown) => void;
@@ -614,18 +958,35 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         closedResolve = settle;
       });
       const dispose = () => next.close(1000, "connection supervisor stopped");
+      const finishConnected = (): void => {
+        if (connected) return;
+        connected = true;
+        socketVerified = true;
+        resolve({ value: true, closed, dispose });
+      };
       signal.addEventListener("abort", dispose, { once: true });
       next.addEventListener("message", (event) => {
-        if (typeof event.data !== "string") return;
+        if (attemptEpoch !== eventSocketEpoch) return;
+        if (
+          typeof event.data !== "string" ||
+          new TextEncoder().encode(event.data).byteLength > MAX_EVENT_FRAME_BYTES
+        ) {
+          next.close(browserInitiatedWebSocketCloseCode(1009), "event frame is too large");
+          return;
+        }
         let raw: unknown;
         try {
           raw = JSON.parse(event.data);
         } catch {
+          next.close(browserInitiatedWebSocketCloseCode(1002), "malformed event frame");
           return;
         }
         const frame = DaemonEventServerFrameSchemaZ.safeParse(raw);
-        if (!frame.success) return;
-        if (!connected) {
+        if (!frame.success) {
+          next.close(browserInitiatedWebSocketCloseCode(1002), "invalid event frame");
+          return;
+        }
+        if (!helloVerified) {
           if (frame.data.type !== "hello" || !sameIdentity(frame.data.daemon, identity)) {
             next.close(browserInitiatedWebSocketCloseCode(1008), "daemon generation mismatch");
             return;
@@ -636,20 +997,88 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
               : 0;
           establishEventCursor(frame.data.daemon.instanceId, resumeSequence);
           resourceEventsSupported = frame.data.eventSequence !== undefined;
-          next.send(
-            JSON.stringify(
-              DaemonEventClientFrameSchemaZ.parse({
-                type: "subscribe",
-                sessions: catalogCache.map(({ sessionName }) => sessionName),
-                afterSequence: resumeSequence,
-              }),
-            ),
-          );
-          connected = true;
-          resolve({ value: true, closed, dispose });
+          eventSocket = next;
+          sentSessions = new Set();
+          sentInterests = new Map();
+          sentInterestMode = "unsent";
+          eventCursorSent = false;
+          lastSentInterestRevision = 0;
+          lastAckedInterestRevision = 0;
+          unavailableInterestKeys.clear();
+          helloVerified = true;
+          sendEventSubscriptionDelta();
+          if (lastSentInterestRevision === 0) finishConnected();
           return;
         }
-        if (frame.data.type === "hello") return;
+        if (frame.data.type === "hello") {
+          next.close(browserInitiatedWebSocketCloseCode(1002), "duplicate daemon hello");
+          return;
+        }
+        if (frame.data.type === "resource.interests-ack") {
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "observed",
+            daemonInstanceId: requireIdentity().instanceId,
+            sequence: frame.data.sequence,
+          });
+          eventReplica = transition.state;
+          if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+            for (const mapped of projectDaemonServerFrame(
+              {
+                type: "snapshot-required",
+                afterSequence: Math.max(0, frame.data.sequence - 1),
+                oldestAvailableSequence: null,
+                currentSequence: frame.data.sequence,
+                reason: "journal-gap",
+              },
+              catalogCache,
+            ))
+              emit(mapped);
+            establishEventCursor(requireIdentity().instanceId, frame.data.sequence);
+          }
+          lastAckedInterestRevision = Math.max(
+            lastAckedInterestRevision,
+            frame.data.interestRevision,
+          );
+          const unavailable = new Set(frame.data.unavailableInterests.map(interestKey));
+          for (const key of unavailable) unavailableInterestKeys.add(key);
+          for (const subscription of subscriptions.values()) {
+            if (
+              subscription.readySettled ||
+              subscription.readyRevision === null ||
+              subscription.readyRevision > frame.data.interestRevision
+            )
+              continue;
+            subscription.readySettled = true;
+            const failed = (subscription.request.resourceInterests ?? []).some((interest) =>
+              unavailableInterestKeys.has(interestKey(interest)),
+            );
+            subscription.resolveReady?.(
+              failed
+                ? {
+                    status: "error",
+                    error: capabilityError(
+                      "event-unavailable",
+                      "The daemon resource observer is unavailable.",
+                    ),
+                  }
+                : (subscription.readySuccess ?? { status: "error", error: DISPOSED }),
+            );
+          }
+          if (frame.data.interestRevision >= lastSentInterestRevision) {
+            const unavailableRequired = [...requiredEventInterests().keys()].some((key) =>
+              unavailableInterestKeys.has(key),
+            );
+            if (unavailableRequired) {
+              next.close(
+                browserInitiatedWebSocketCloseCode(1011),
+                "daemon resource observer unavailable",
+              );
+            } else {
+              finishConnected();
+            }
+          }
+          return;
+        }
         if (frame.data.type === "snapshot-required") {
           eventReplica = advanceResourceReplica(eventReplica, {
             type: "gap",
@@ -666,7 +1095,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
             type: "changed",
             daemonInstanceId: requireIdentity().instanceId,
             sequence: frame.data.sequence,
-            revision: frame.data.sequence,
+            revision: frame.data.revision,
             ...(frame.data.causeOperationId
               ? { causeOperationId: frame.data.causeOperationId }
               : {}),
@@ -688,6 +1117,29 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
             return;
           }
           if (frame.data.sequence <= (previousSequence ?? -1)) return;
+        }
+        if (frame.data.type === "resource.observed") {
+          const transition = advanceResourceReplica(eventReplica, {
+            type: "observed",
+            daemonInstanceId: requireIdentity().instanceId,
+            sequence: frame.data.sequence,
+          });
+          eventReplica = transition.state;
+          if (transition.effects.some((effect) => effect.type === "request-snapshot")) {
+            for (const mapped of projectDaemonServerFrame(
+              {
+                type: "snapshot-required",
+                afterSequence: Math.max(0, frame.data.sequence - 1),
+                oldestAvailableSequence: null,
+                currentSequence: frame.data.sequence,
+                reason: "journal-gap",
+              },
+              catalogCache,
+            ))
+              emit(mapped);
+            establishEventCursor(requireIdentity().instanceId, frame.data.sequence);
+          }
+          return;
         }
         if (frame.data.type === "interaction.receipt") {
           const transition = advanceResourceReplica(eventReplica, {
@@ -727,6 +1179,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           emit(mapped);
       });
       next.addEventListener("close", (event) => {
+        if (attemptEpoch !== eventSocketEpoch) return;
+        eventSocketEpoch += 1;
+        if (eventSocket === next) {
+          eventSocket = null;
+          sentSessions.clear();
+          sentInterests.clear();
+          sentInterestMode = "unsent";
+          eventCursorSent = false;
+        }
         signal.removeEventListener("abort", dispose);
         const reason = new Error(event.reason || `daemon event socket closed (${event.code})`);
         if (connected) closedResolve(reason);
@@ -734,19 +1195,30 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           if (config.transport === "same-origin-gateway" && !signal.aborted) {
             // A gateway handshake cannot expose its HTTP 401 to browser JS.
             // Replace the document capability before the supervisor retries.
-            void loadDevHostSession(true).catch(() => undefined);
+            void loadDevHostSession(eventHostSession?.generation ?? null).catch(() => undefined);
           }
           reject(reason);
         }
       });
-      next.addEventListener("error", () => next.close());
+      next.addEventListener("error", () => {
+        if (attemptEpoch === eventSocketEpoch) next.close();
+      });
     });
   }
 
   function releaseSocket(): void {
+    eventSocketEpoch += 1;
     const current = socketSupervisor;
     socketSupervisor = null;
     socketVerified = false;
+    eventSocket = null;
+    sentSessions.clear();
+    sentInterests.clear();
+    sentInterestMode = "unsent";
+    eventCursorSent = false;
+    lastSentInterestRevision = 0;
+    lastAckedInterestRevision = 0;
+    unavailableInterestKeys.clear();
     stopSocketStateSubscription?.();
     stopSocketStateSubscription = null;
     void current?.stop();
@@ -761,12 +1233,21 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    * transport and credential custody, which is the honest difference, rather
    * than in how many resources each of them remembered to implement.
    */
-  async function dispatchDaemonResource(daemonRequest: DaemonResourceRequest): Promise<unknown> {
+  async function dispatchDaemonResource(
+    daemonRequest: DaemonResourceRequest,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     switch (daemonRequest.resource) {
       case "capabilities":
         try {
           const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
-            await request("/api/v2/capabilities", { method: "POST", body: {} }),
+            await request(
+              "/api/v2/capabilities",
+              { method: "POST", body: {} },
+              {},
+              REQUEST_TIMEOUT_MS,
+              signal,
+            ),
           );
           if (result.status === "ok") identity = result.daemon;
           return result;
@@ -777,7 +1258,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         const previous = identity;
         identity = null;
         try {
-          const next = await loadIdentity();
+          const next = await loadIdentity(signal);
           if (previous && !sameIdentity(previous, next)) {
             return {
               outcome: "generation-replaced",
@@ -799,18 +1280,22 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         }
       }
       case "startupReadiness": {
-        const ladder = await readStartupReadinessLadder();
-        return ladder === null
-          ? {
-              status: "error",
-              error: capabilityError("daemon-unavailable", "No readiness ladder was readable."),
-            }
-          : { status: "ok", ladder };
+        try {
+          const ladder = await readStartupReadinessLadder(signal);
+          return ladder === null
+            ? {
+                status: "error",
+                error: capabilityError("daemon-unavailable", "No readiness ladder was readable."),
+              }
+            : { status: "ok", ladder };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
       }
       case "listWorkspaces":
         try {
-          await loadIdentity();
-          const workspaces = (await workspaceCatalog()).map(({ workspaceName }) => ({
+          await loadIdentity(signal);
+          const workspaces = (await workspaceCatalog(signal)).map(({ workspaceName }) => ({
             workspaceName,
           }));
           return { status: "ok", daemon: requireIdentity(), workspaces };
@@ -819,9 +1304,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         }
       case "fetchFleetCatalog":
         try {
-          await loadIdentity();
+          await loadIdentity(signal);
           const parsed = FleetCatalogResourceV1SchemaZ.safeParse(
-            await request("/api/resources/fleet-catalog", { method: "GET" }),
+            await request(
+              "/api/resources/fleet-catalog",
+              { method: "GET" },
+              {},
+              REQUEST_TIMEOUT_MS,
+              signal,
+            ),
           );
           if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
           if (!sameIdentity(parsed.data.daemon, requireIdentity())) {
@@ -835,13 +1326,16 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         }
       case "fetchWidgetAsset":
         try {
-          await loadIdentity();
+          await loadIdentity(signal);
           const asset = WidgetAssetSchemaZ.parse(
             await request(
               `/api/widget-assets/${encodeURIComponent(daemonRequest.request.assetId)}`,
               {
                 method: "GET",
               },
+              {},
+              REQUEST_TIMEOUT_MS,
+              signal,
             ),
           );
           return { status: "ok", asset };
@@ -850,7 +1344,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         }
       case "fetchApplicationShell": {
         try {
-          await loadIdentity();
+          await loadIdentity(signal);
         } catch (error) {
           return { status: "error", error: failureOf(error) };
         }
@@ -861,6 +1355,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/application-shell?version=${version}`,
           ApplicationShellResourceV3SchemaZ,
+          signal,
         );
       }
       case "fetchWorkspaceFiles": {
@@ -872,6 +1367,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/files${query}`,
           WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+          signal,
         );
       }
       case "fetchWorkspaceFilePreview": {
@@ -881,6 +1377,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/file-preview?fileId=${fileId}`,
           WorkspaceFilePreviewEnvelopeV1SchemaZ,
+          signal,
         );
       }
       case "fetchWorkspaceChanges":
@@ -889,6 +1386,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/changes`,
           WorkspaceChangesCatalogEnvelopeV1SchemaZ,
+          signal,
         );
       case "fetchWorkspaceChangeDiff": {
         const changeId = encodeURIComponent(daemonRequest.request.changeId);
@@ -897,8 +1395,17 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           daemonRequest.request.workspaceName,
           (name) => `/api/project/${name}/change-diff?changeId=${changeId}`,
           WorkspaceChangeDiffEnvelopeV1SchemaZ,
+          signal,
         );
       }
+      case "fetchWorkspaceMissions":
+        return workspaceResource(
+          "fetchWorkspaceMissions",
+          daemonRequest.request.workspaceName,
+          (name) => `/api/project/${name}/missions`,
+          WorkspaceMissionsEnvelopeV1SchemaZ,
+          signal,
+        );
       case "promoteWorkspace":
         try {
           const raw = await action("workspace.promote", daemonRequest.request, PROMOTE_TIMEOUT_MS);
@@ -1108,18 +1615,49 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       subscribe: async (
         subscriptionRequest: DesktopDaemonEventSubscriptionRequest,
         listener: (event: DesktopDaemonEvent) => void,
+        signal?: AbortSignal,
       ): Promise<DesktopDaemonHostSubscriptionResult> => {
         if (disposed) return { status: "error", error: DISPOSED };
+        if (signal?.aborted) return { status: "error", error: DISPOSED };
         if (!DesktopDaemonEventSubscriptionRequestSchemaZ.safeParse(subscriptionRequest).success) {
           return { status: "error", error: INVALID_REQUEST };
         }
         try {
-          await loadIdentity();
+          await loadIdentity(signal);
         } catch (error) {
           return { status: "error", error: failureOf(error) };
         }
-        listeners.add(listener);
+        if (disposed || signal?.aborted) return { status: "error", error: DISPOSED };
+        const subscriptionId = ++nextSubscriptionId;
+        let resolveReady: ((result: DesktopDaemonHostSubscriptionResult) => void) | null = null;
+        const ready =
+          subscriptionRequest.resourceInterests === undefined
+            ? null
+            : new Promise<DesktopDaemonHostSubscriptionResult>((resolve) => {
+                resolveReady = resolve;
+              });
+        subscriptions.set(subscriptionId, {
+          request: subscriptionRequest,
+          listener,
+          readyRevision: null,
+          readySettled: ready === null,
+          readySuccess: null,
+          resolveReady,
+        });
+        const cancelPending = (): void => {
+          const pending = subscriptions.get(subscriptionId);
+          if (!pending) return;
+          subscriptions.delete(subscriptionId);
+          if (!pending.readySettled) {
+            pending.readySettled = true;
+            pending.resolveReady?.({ status: "error", error: DISPOSED });
+          }
+          if (subscriptions.size === 0) releaseSocket();
+          else sendEventSubscriptionDelta();
+        };
+        signal?.addEventListener("abort", cancelPending, { once: true });
         ensureSocket();
+        sendEventSubscriptionDelta();
         // A subscriber joining an ALREADY-verified socket would otherwise never
         // hear that the connection is live — `connection.changed` fires once,
         // at handshake — and its surface would sit in the "event socket is not
@@ -1127,18 +1665,62 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         // listener only, after the caller holds its unsubscribe handle.
         if (socketVerified) {
           queueMicrotask(() => {
-            if (listeners.has(listener)) {
+            if (subscriptions.has(subscriptionId)) {
               listener({ type: "connection.changed", state: "live", error: null });
             }
           });
         }
-        return {
+        const subscribed: DesktopDaemonHostSubscriptionResult = {
           status: "subscribed",
           unsubscribe: () => {
-            listeners.delete(listener);
-            if (listeners.size === 0) releaseSocket();
+            signal?.removeEventListener("abort", cancelPending);
+            subscriptions.delete(subscriptionId);
+            if (subscriptions.size === 0) releaseSocket();
+            else sendEventSubscriptionDelta();
           },
         };
+        const subscription = subscriptions.get(subscriptionId);
+        if (subscription) subscription.readySuccess = subscribed;
+        if (ready === null) {
+          signal?.removeEventListener("abort", cancelPending);
+          return signal?.aborted ? { status: "error", error: DISPOSED } : subscribed;
+        }
+        if (
+          subscription &&
+          socketVerified &&
+          lastSentInterestRevision > 0 &&
+          lastAckedInterestRevision >= lastSentInterestRevision
+        ) {
+          subscription.readySettled = true;
+          subscription.resolveReady?.(subscribed);
+        }
+        let timeout: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+          const pending = subscriptions.get(subscriptionId);
+          if (!pending || pending.readySettled) return;
+          pending.readySettled = true;
+          pending.resolveReady?.({
+            status: "error",
+            error: capabilityError(
+              "event-unavailable",
+              "The daemon resource observer did not become ready in time.",
+            ),
+          });
+        }, REQUEST_TIMEOUT_MS);
+        const settled = await ready.finally(() => {
+          signal?.removeEventListener("abort", cancelPending);
+          if (timeout !== null) clearTimeout(timeout);
+          timeout = null;
+        });
+        if (settled.status === "error") {
+          subscriptions.delete(subscriptionId);
+          if (subscriptions.size === 0) releaseSocket();
+          else sendEventSubscriptionDelta();
+        }
+        if (signal?.aborted && settled.status === "subscribed") {
+          settled.unsubscribe();
+          return { status: "error", error: DISPOSED };
+        }
+        return settled;
       },
     },
     dispose: () => {
@@ -1146,7 +1728,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       disposed = true;
       uninstallWebSocketSession();
       resolvedDevHostSession = null;
-      listeners.clear();
+      devHostSession?.controller.abort();
+      devHostSession = null;
+      for (const subscription of subscriptions.values()) {
+        if (!subscription.readySettled) {
+          subscription.readySettled = true;
+          subscription.resolveReady?.({ status: "error", error: DISPOSED });
+        }
+      }
+      subscriptions.clear();
       releaseSocket();
       for (const controller of controllers) controller.abort();
       controllers.clear();

@@ -39,6 +39,10 @@ class ProtocolWebSocket extends EventEmitter {
     this.sent.push(data);
   }
 
+  receive(data: string): void {
+    this.emit("message", data, false);
+  }
+
   disconnect(): void {
     this.readyState = 3;
     this.emit("close");
@@ -47,6 +51,10 @@ class ProtocolWebSocket extends EventEmitter {
 
 function frames(socket: ProtocolWebSocket): DaemonEventServerFrame[] {
   return socket.sent.map((value) => DaemonEventServerFrameSchemaZ.parse(JSON.parse(value)));
+}
+
+function subscribeLegacy(socket: ProtocolWebSocket): void {
+  socket.receive(JSON.stringify({ type: "subscribe", sessions: [] }));
 }
 
 let restoreTmuxRunner: (() => void) | null = null;
@@ -66,6 +74,7 @@ describe("/ws/events agent-status invalidation", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity); // primes the baseline (working)
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     // A genuine transition: working -> blocked on the same pane.
@@ -84,6 +93,7 @@ describe("/ws/events agent-status invalidation", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     agentRows = "zz-fleet\t%1\t\tworking:2000"; // same word, new epoch
@@ -101,6 +111,7 @@ describe("/ws/events agent-status invalidation", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     agentRows = ["zz-fleet\t%1\t\tworking:2", "zz-fleet\t%2\t\tblocked:2"].join("\n");
@@ -118,6 +129,7 @@ describe("/ws/events agent-status invalidation", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.disconnect();
 
     // With no clients, a poll cycle must be inert — no watcher, no frames.
@@ -135,6 +147,7 @@ describe("/ws/events agent.turn-completed receipts", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     agentRows = `zz-fleet\t%1\t${stamp}\tdone:1001`;
@@ -164,6 +177,7 @@ describe("/ws/events agent.turn-completed receipts", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     agentRows = "zz-fleet\t%1\t\tidle:1001";
@@ -187,6 +201,7 @@ describe("/ws/events agent.turn-completed receipts", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     agentRows = "zz-fleet\t%1\t\tblocked:1001"; // needs attention, turn not over
@@ -204,6 +219,7 @@ describe("/ws/events agent.turn-completed receipts", () => {
 
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
+    subscribeLegacy(socket);
     socket.sent.length = 0;
 
     agentRows = `zz-fleet\t%7\t${stamp}\tdone:1001`;

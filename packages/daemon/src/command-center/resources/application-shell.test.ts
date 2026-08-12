@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
   ApplicationShellProjectionInputV1SchemaZ,
   ApplicationShellResourceV1SchemaZ,
@@ -860,7 +860,10 @@ describe("GET /api/project/:name/application-shell", () => {
     expect(requests).toEqual(["product", "product", "product"]);
   });
 
-  it("degrades only mission history when its repository fails and preserves terminal truth", async () => {
+  it("never opens mission history while serving the terminal-first V3 shell", async () => {
+    const loadMission = mock(async () => {
+      throw new Error("repository unavailable at /private/secret/project");
+    });
     const app = createApp({
       applicationShellInventoryBackend: {
         discoverApplicationShellSession: async () => ({ ...liveSession(), name: "product" }),
@@ -881,9 +884,7 @@ describe("GET /api/project/:name/application-shell", () => {
           }),
       },
       applicationShellMissionBackend: {
-        load: async () => {
-          throw new Error("repository unavailable at /private/secret/project");
-        },
+        load: loadMission,
       },
     });
 
@@ -892,18 +893,16 @@ describe("GET /api/project/:name/application-shell", () => {
     const body = ApplicationShellResourceV3SchemaZ.parse(await response.json());
     expect(body.resource.terminalInventory.resources).toHaveLength(2);
     expect(body.resource.appWindows.revision).toBe(0);
-    expect(body.resource.missionWorkspace).toEqual({
-      status: "degraded",
-      reason: "Mission history could not be verified. The terminal workspace remains available.",
-    });
-    expect(body.resource.dock.tools.find(({ id }) => id === "missions")?.disabledReason).toBeNull();
+    expect(body.resource.missionWorkspace).toBeUndefined();
+    expect(loadMission).not.toHaveBeenCalled();
     expect(body.resource.dock.tools.find(({ id }) => id === "files")?.disabledReason).toBeNull();
     expect(body.resource.dock.tools.find(({ id }) => id === "changes")?.disabledReason).toBeNull();
     expect(JSON.stringify(body)).not.toMatch(/\/private\/secret|repository unavailable/u);
   });
 
-  it("assembles a path-free agent-graph overlay into the V3 route response", async () => {
+  it("defers agent-graph assembly with mission history", async () => {
     const snapshot = await missionSnapshotWithSpawn();
+    const loadSnapshot = mock(async () => snapshot);
     const app = createApp({
       applicationShellInventoryBackend: {
         discoverApplicationShellSession: async () => ({ ...liveSession(), name: "product" }),
@@ -925,25 +924,21 @@ describe("GET /api/project/:name/application-shell", () => {
           activity: [],
           truncated: false,
         }),
-        loadSnapshot: async () => snapshot,
+        loadSnapshot,
       },
     });
 
     const response = await app.request("/api/project/product/application-shell?version=3");
     expect(response.status).toBe(200);
     const body = ApplicationShellResourceV3SchemaZ.parse(await response.json());
-    const overlay = body.resource.agentGraphOverlay;
-    expect(overlay).toBeDefined();
-    expect(Object.keys(overlay!.nodes)).toHaveLength(2);
-    expect(overlay!.groups).toHaveLength(1);
-    expect(overlay!.groups[0]!.label).toBe("Ship overlay");
-    expect(overlay!.edges).toHaveLength(1);
-    expect(overlay!.edges[0]!.kind).toBe("spawned");
-    // The overlay correlated raw %pane targets to durable window ids only.
-    expect(JSON.stringify(overlay)).not.toMatch(/%1[12]/u);
+    expect(body.resource.agentGraphOverlay).toBeUndefined();
+    expect(loadSnapshot).not.toHaveBeenCalled();
   });
 
-  it("omits the overlay but still serves V3 when the mission snapshot fails", async () => {
+  it("does not invoke a failing mission snapshot from V3", async () => {
+    const loadSnapshot = mock(async () => {
+      throw new Error("snapshot unavailable at /private/secret/project");
+    });
     const app = createApp({
       applicationShellInventoryBackend: {
         discoverApplicationShellSession: async () => ({ ...liveSession(), name: "product" }),
@@ -961,19 +956,15 @@ describe("GET /api/project/:name/application-shell", () => {
           status: "degraded",
           reason: "Mission history is unavailable from this daemon.",
         }),
-        loadSnapshot: async () => {
-          throw new Error("snapshot unavailable at /private/secret/project");
-        },
+        loadSnapshot,
       },
     });
 
     const response = await app.request("/api/project/product/application-shell?version=3");
     expect(response.status).toBe(200);
     const body = ApplicationShellResourceV3SchemaZ.parse(await response.json());
-    // Nodes exist but no mission edges/groups; the overlay may still project the
-    // fleet nodes, and the shell read never fails on a mission-snapshot error.
-    expect(body.resource.agentGraphOverlay?.edges ?? []).toEqual([]);
-    expect(body.resource.agentGraphOverlay?.groups ?? []).toEqual([]);
+    expect(body.resource.agentGraphOverlay).toBeUndefined();
+    expect(loadSnapshot).not.toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toMatch(/\/private\/secret|snapshot unavailable/u);
   });
 

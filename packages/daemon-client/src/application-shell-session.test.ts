@@ -133,12 +133,21 @@ describe("shared application-shell session", () => {
       revision: 3,
     });
     await settle();
+    await settle();
 
     expect(alpha.getState()).toMatchObject({ data: { project: { name: "alpha-2" } } });
     expect(beta.getState()).toMatchObject({ data: { project: { name: "beta-1" } } });
     expect(runtime.fetches).toEqual(["alpha", "beta", "alpha"]);
     expect(alphaReceipts).toEqual(["op-alpha"]);
     expect(betaReceipts).toEqual([]);
+    expect(alpha.getMetrics()).toMatchObject({
+      idleWakeups: 0,
+      activeInterests: 1,
+      fetchesStarted: 2,
+      fetchesSettled: 2,
+      invalidationsObserved: 1,
+      subscriptionsOpened: 1,
+    });
     alpha.dispose();
     beta.dispose();
   });

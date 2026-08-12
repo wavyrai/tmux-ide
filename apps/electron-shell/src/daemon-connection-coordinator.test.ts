@@ -185,6 +185,10 @@ function brokerHarness(
         status: "error",
         error: { code: "workspace-not-found", reason: "not part of this test" },
       }),
+      fetchWorkspaceMissions: async () => ({
+        status: "error",
+        error: { code: "workspace-not-found", reason: "not part of this test" },
+      }),
       subscribe: async (_workspaceNames, nextListener) => {
         listener = nextListener;
         if (options.earlyEvent) nextListener(options.earlyEvent);

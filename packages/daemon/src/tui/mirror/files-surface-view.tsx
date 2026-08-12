@@ -2,14 +2,14 @@
 import { For, Show } from "solid-js";
 import type { RGBA } from "@opentui/core";
 import type { SemanticThemeSnapshot } from "./theme.ts";
-import { ActionChip, EmptyState, InputShell, SelectableRow } from "./recipes.tsx";
+import { ActionChip, EmptyState, InputShell, SelectableRow } from "./recipe-components.tsx";
 import { recipePalette } from "./recipes.ts";
 import {
   filesHitTest,
   type FilesProjectedRow,
   type FilesSurfaceProjection,
 } from "./files-surface.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 
 export interface FilesSurfaceTheme {
   gutterBg: RGBA;

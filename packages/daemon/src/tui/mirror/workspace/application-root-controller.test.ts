@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { SemanticFocusTarget } from "@tmux-ide/contracts";
@@ -13,6 +14,13 @@ import {
   projectOpenTuiApplicationShell,
   type OpenTuiApplicationShellEffect,
 } from "./application-shell-controller.ts";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
+
+const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const productionRootSource = () =>
+  OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
+    "\n",
+  );
 
 describe("production application root controller", () => {
   it("captures the exact pane at palette open and never redirects a stale return", () => {
@@ -217,7 +225,7 @@ describe("production application root controller", () => {
   });
 
   it("keeps active resize ownership before status and inactive starts after it in app.tsx", () => {
-    const app = readFileSync(fileURLToPath(new URL("../app.tsx", import.meta.url)), "utf8");
+    const app = productionRootSource();
     const active = app.indexOf(
       'if (dragging?.kind === "sidebar" && routeSidebarResizePointer(e, true)) return;',
     );

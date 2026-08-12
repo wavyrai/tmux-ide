@@ -284,6 +284,7 @@ describe("WS broadcast — projects.changed", () => {
     const app = createApp();
     const ws = new MockWebSocket();
     handleWsEventsConnection(ws, TEST_DAEMON_IDENTITY);
+    ws.receive(JSON.stringify({ type: "subscribe", sessions: [] }));
     ws.sent.length = 0;
 
     const res = await app.request("/api/projects", {
@@ -305,6 +306,7 @@ describe("WS broadcast — projects.changed", () => {
 
     const ws = new MockWebSocket();
     handleWsEventsConnection(ws, TEST_DAEMON_IDENTITY);
+    ws.receive(JSON.stringify({ type: "subscribe", sessions: [] }));
     expect(projectRegistryEmitter.listenerCount("change")).toBe(before + 1);
 
     ws.clientClose();

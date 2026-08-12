@@ -1228,6 +1228,63 @@ describe("visible DOM application shell", () => {
     expect(input.dock).toEqual(sharedDock);
   });
 
+  it("publishes resource demand only while the selected dock tool is open", async () => {
+    const input = createDefaultDomShellInput();
+    const base = createClientViewStateV1({
+      clientId: "client.browser",
+      viewId: "view.resource-demand",
+      workspaceId: input.workspace.id,
+    });
+    const [clientView, setClientView] = createSignal<ClientViewStateV1>({
+      ...base,
+      dock: { ...base.dock, mode: "collapsed", activeTabId: "files" },
+    });
+    const demand = vi.fn();
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            input={input}
+            dataMode="runtime"
+            clientViewState={clientView()}
+            onActiveDockToolChange={demand}
+          />
+        ),
+        root,
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(demand).toHaveBeenLastCalledWith({ tool: "files", active: false }),
+    );
+
+    setClientView((current) => ({
+      ...current,
+      dock: { ...current.dock, mode: "open", activeTabId: "files" },
+    }));
+    await vi.waitFor(() =>
+      expect(demand).toHaveBeenLastCalledWith({ tool: "files", active: true }),
+    );
+
+    setClientView((current) => ({
+      ...current,
+      dock: { ...current.dock, activeTabId: "changes" },
+    }));
+    await vi.waitFor(() =>
+      expect(demand).toHaveBeenLastCalledWith({ tool: "changes", active: true }),
+    );
+
+    setClientView((current) => ({
+      ...current,
+      dock: { ...current.dock, mode: "collapsed" },
+    }));
+    await vi.waitFor(() =>
+      expect(demand).toHaveBeenLastCalledWith({ tool: "changes", active: false }),
+    );
+  });
+
   it("selects session and agent rows visibly while emitting canonical resource commands", () => {
     const invocations: ApplicationShellCommandInvocation[] = [];
     const root = renderShell(createDefaultDomShellInput(), (invocation) =>

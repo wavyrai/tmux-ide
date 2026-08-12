@@ -78,6 +78,19 @@ describe("development WebSocket document capability", () => {
     });
   });
 
+  it("preserves the daemon semantic-events selector without forwarding browser authority", () => {
+    const browserUrl = developmentWebSocketUrl(
+      "ws://127.0.0.1:5173/ws/events?mode=semantic",
+      token,
+    );
+    expect(
+      consumeDevelopmentWebSocketSession(new URL(browserUrl).pathname + new URL(browserUrl).search),
+    ).toEqual({
+      token,
+      forwardPath: "/ws/events?mode=semantic",
+    });
+  });
+
   it("refuses missing, stale-shaped, duplicated, and mixed query authority", () => {
     expect(consumeDevelopmentWebSocketSession("/ws/events")).toBeNull();
     expect(

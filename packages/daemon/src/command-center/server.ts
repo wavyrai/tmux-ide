@@ -46,7 +46,6 @@ import {
   type ApplicationShellResourceV1,
   type ApplicationShellResourceV2,
   type ApplicationShellResourceV3,
-  type AgentGraphOverlay,
   type AppWindowDocumentV1,
   type DesktopMissionWorkspaceResource,
   type WorkspaceCatalogResourceV1,
@@ -130,7 +129,6 @@ import { loadApplicationShellAppWindows } from "../lib/application-shell-app-win
 import { daemonActionCommandRegistry } from "./actions/command-definitions.ts";
 import { MissionRepository, type MissionRepositorySnapshot } from "../lib/mission-repository.ts";
 import { projectDesktopMissionWorkspace } from "./resources/desktop-missions.ts";
-import { projectApplicationShellAgentGraphOverlay } from "./resources/agent-graph-overlay.ts";
 import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
@@ -138,6 +136,7 @@ import {
 import { mountPaneStreamIssueRoute, type PaneStreamIssueBackend } from "./pane-stream-issue.ts";
 import { mountWorkspaceResourceRoutes } from "./resources/workspace-resource-routes.ts";
 import { mountFleetResourceRoute } from "./resources/fleet-resource-route.ts";
+import { mountWorkspaceMissionsRoute } from "./resources/workspace-missions-route.ts";
 import { ownerAuthorityGate, requireOwnerAuthority } from "./owner-authority.ts";
 import {
   mountStartupReadinessRoute,
@@ -807,56 +806,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         } catch {
           return c.json({ error: "App window state unavailable" }, 503);
         }
-        const missionBackend =
-          options.applicationShellMissionBackend === undefined
-            ? defaultApplicationShellMissionBackend
-            : options.applicationShellMissionBackend;
-        let missionWorkspace: DesktopMissionWorkspaceResource;
-        if (!missionBackend) {
-          missionWorkspace = {
-            status: "degraded",
-            reason: "Mission history is unavailable from this daemon.",
-          };
-        } else {
-          try {
-            missionWorkspace = await missionBackend.load(session.dir);
-          } catch {
-            missionWorkspace = {
-              status: "degraded",
-              reason:
-                "Mission history could not be verified. The terminal workspace remains available.",
-            };
-          }
-        }
-        // Best-effort runtime agent-graph overlay. Correlating the raw mission
-        // snapshot (attempt terminal/session targets) to durable window ids
-        // happens entirely here; any failure degrades to omitting the overlay
-        // and never fails the shell read (mirroring mission verification above).
-        let agentGraphOverlay: AgentGraphOverlay | undefined;
-        try {
-          let missionSnapshot: MissionRepositorySnapshot | null = null;
-          if (missionBackend?.loadSnapshot) {
-            missionSnapshot = await missionBackend.loadSnapshot(session.dir);
-          }
-          const overlay = projectApplicationShellAgentGraphOverlay({
-            session,
-            appWindows,
-            missionSnapshot,
-            nowSec: Math.floor(Date.now() / 1000),
-          });
-          if (Object.keys(overlay.nodes).length > 0) agentGraphOverlay = overlay;
-        } catch {
-          agentGraphOverlay = undefined;
-        }
         return c.json({
           version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
           daemon: daemonInstanceIdentity,
           resource: projectApplicationShellResourceV3(
             session,
             appWindows,
-            missionWorkspace,
+            undefined,
             workspaceDockSummary(session.dir, name),
-            agentGraphOverlay,
           ),
         } satisfies ApplicationShellResourceV3);
       }
@@ -907,6 +864,24 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
     registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+  });
+
+  // Missions/Activity is intentionally lazy: the terminal-first V3 shell
+  // never opens mission history or assembles a graph. Only an interested,
+  // owner-authenticated consumer pays for this projection.
+  mountWorkspaceMissionsRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+    inventoryBackend: options.applicationShellInventoryBackend ?? null,
+    appWindowBackend:
+      options.applicationShellAppWindowBackend === undefined
+        ? defaultApplicationShellAppWindowBackend
+        : options.applicationShellAppWindowBackend,
+    missionBackend:
+      options.applicationShellMissionBackend === undefined
+        ? defaultApplicationShellMissionBackend
+        : options.applicationShellMissionBackend,
   });
 
   // Owner-only, generation-stamped fleet catalog: every ADOPTED tmux session
@@ -1766,7 +1741,10 @@ export function attachWsEvents(
     const pathname = url.split("?")[0];
     if (pathname !== "/ws/events") return;
     wss.handleUpgrade(req, socket, head, (ws) => {
-      handleWsEventsConnection(ws, daemonIdentity);
+      const requestUrl = new URL(req.url ?? "/ws/events", "http://daemon.local");
+      handleWsEventsConnection(ws, daemonIdentity, {
+        mode: requestUrl.searchParams.get("mode") === "semantic" ? "semantic" : "legacy",
+      });
     });
   };
 

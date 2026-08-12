@@ -12,6 +12,7 @@ import {
   type GenerationBoundAdapter,
   type GenerationBoundClock,
   type GenerationBoundRetryPolicy,
+  type GenerationBoundStoreMetrics,
   type GenerationBoundView,
 } from "./generation-bound-store.ts";
 
@@ -139,6 +140,7 @@ export interface ApplicationShellSession {
   subscribe(listener: (state: ApplicationShellSessionState) => void): () => void;
   setTarget(target: unknown): void;
   refresh(): void;
+  getMetrics(): GenerationBoundStoreMetrics;
   dispose(): void;
 }
 
@@ -409,6 +411,7 @@ export function createApplicationShellSession(
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (target) => store.setTarget(target),
     refresh: () => store.refresh(),
+    getMetrics: () => store.getMetrics(),
     dispose: () => store.dispose(),
   };
 }

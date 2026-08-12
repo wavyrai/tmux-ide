@@ -7,6 +7,7 @@ import {
 import type {
   GenerationBoundClock,
   GenerationBoundRetryPolicy,
+  GenerationBoundStoreMetrics,
 } from "@tmux-ide/daemon-client/generation-bound-store";
 
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
@@ -33,6 +34,7 @@ export interface DesktopApplicationShellResourceStore {
   subscribe(listener: DesktopResourceStateListener): () => void;
   setTarget(target: unknown): void;
   refresh(): void;
+  getMetrics(): GenerationBoundStoreMetrics;
   dispose(): void;
 }
 
@@ -40,6 +42,7 @@ export interface SolidDesktopApplicationShellResourceStore {
   readonly state: Accessor<DesktopApplicationShellResourceState>;
   setTarget(target: unknown): void;
   refresh(): void;
+  getMetrics(): GenerationBoundStoreMetrics;
   dispose(): void;
 }
 
@@ -70,6 +73,7 @@ export function createSolidDesktopApplicationShellResourceStore(
     state,
     setTarget: (target) => store.setTarget(target),
     refresh: () => store.refresh(),
+    getMetrics: () => store.getMetrics(),
     dispose,
   };
 }

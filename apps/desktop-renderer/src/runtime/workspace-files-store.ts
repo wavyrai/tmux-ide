@@ -14,6 +14,7 @@ import {
   createTargetPinnedStore,
   sameDaemonGeneration,
   type TargetPinnedFetchResult,
+  type TargetPinnedStoreMetrics,
   type WorkspaceResourceClock,
   type WorkspaceResourceSlot,
   type WorkspaceResourceSnapshot,
@@ -31,6 +32,7 @@ interface WorkspaceFilesStoreOptionsBase {
   readonly host: Pick<HostCapabilities, "daemon">;
   readonly target: unknown;
   readonly clock?: WorkspaceResourceClock;
+  readonly active?: boolean;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -52,8 +54,10 @@ export interface WorkspaceFilesCatalogState {
 
 export interface WorkspaceFilesCatalogStore {
   getState(): WorkspaceFilesCatalogState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: WorkspaceFilesCatalogState) => void): () => void;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   /** Load the workspace root catalog (also triggered automatically on a new target). */
   loadRoot(): void;
   /** Load a child directory's catalog for tree expansion. */
@@ -67,7 +71,9 @@ export interface WorkspaceFilesCatalogStore {
 
 export interface SolidWorkspaceFilesCatalogStore {
   readonly state: Accessor<WorkspaceFilesCatalogState>;
+  getMetrics(): TargetPinnedStoreMetrics;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   loadRoot(): void;
   loadDirectory(directoryId: string): void;
   dropDirectory(directoryId: string): void;
@@ -105,12 +111,18 @@ export function createWorkspaceFilesCatalogStore(
     {
       host: options.host,
       eagerKey: ROOT_KEY,
-      invalidatesOn: ["workspaces.changed"],
-      async fetch(target, key): Promise<TargetPinnedFetchResult<WorkspaceFilesCatalogResourceV1>> {
+      invalidatesOn: ["workspace-files.changed"],
+      resourceInterest: "workspace-files",
+      async fetch(
+        target,
+        key,
+        signal,
+      ): Promise<TargetPinnedFetchResult<WorkspaceFilesCatalogResourceV1>> {
         const result = await options.host.daemon.fetchWorkspaceFiles(
           key === ROOT_KEY
             ? { workspaceName: target.workspaceName }
             : { workspaceName: target.workspaceName, directoryId: key },
+          signal,
         );
         if (result.status === "error") {
           return { status: "failed", code: result.error.code, reason: result.error.reason };
@@ -168,12 +180,14 @@ export function createWorkspaceFilesCatalogStore(
       },
     },
     options.target,
-    { clock: options.clock },
+    { clock: options.clock, active: options.active },
   );
   return {
     getState: () => store.getState(),
+    getMetrics: () => store.getMetrics(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     loadRoot: () => store.load(ROOT_KEY),
     loadDirectory: (directoryId) => store.load(directoryId),
     dropDirectory: (directoryId) => {
@@ -201,7 +215,9 @@ export function createSolidWorkspaceFilesCatalogStore(
   onCleanup(dispose);
   return {
     state,
+    getMetrics: () => store.getMetrics(),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     loadRoot: () => store.loadRoot(),
     loadDirectory: (directoryId) => store.loadDirectory(directoryId),
     dropDirectory: (directoryId) => store.dropDirectory(directoryId),
@@ -239,8 +255,10 @@ export type WorkspaceFilePreviewState = {
 
 export interface WorkspaceFilePreviewStore {
   getState(): WorkspaceFilePreviewState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: WorkspaceFilePreviewState) => void): () => void;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   load(fileId: string): void;
   clear(): void;
   dispose(): void;
@@ -248,7 +266,9 @@ export interface WorkspaceFilePreviewStore {
 
 export interface SolidWorkspaceFilePreviewStore {
   readonly state: Accessor<WorkspaceFilePreviewState>;
+  getMetrics(): TargetPinnedStoreMetrics;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   load(fileId: string): void;
   clear(): void;
   dispose(): void;
@@ -261,14 +281,20 @@ export function createWorkspaceFilePreviewStore(
     {
       host: options.host,
       singleSlot: true,
+      invalidatesOn: ["workspace-files.changed"],
+      resourceInterest: "workspace-files",
       async fetch(
         target,
         fileId,
+        signal,
       ): Promise<TargetPinnedFetchResult<WorkspaceFilePreviewResourceV1>> {
-        const result = await options.host.daemon.fetchWorkspaceFilePreview({
-          workspaceName: target.workspaceName,
-          fileId: fileId as WorkspaceFileResourceId,
-        });
+        const result = await options.host.daemon.fetchWorkspaceFilePreview(
+          {
+            workspaceName: target.workspaceName,
+            fileId: fileId as WorkspaceFileResourceId,
+          },
+          signal,
+        );
         if (result.status === "error") {
           return { status: "failed", code: result.error.code, reason: result.error.reason };
         }
@@ -334,12 +360,14 @@ export function createWorkspaceFilePreviewStore(
       },
     },
     options.target,
-    { clock: options.clock },
+    { clock: options.clock, active: options.active },
   );
   return {
     getState: () => store.getState(),
+    getMetrics: () => store.getMetrics(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     load: (fileId) => store.load(fileId),
     clear: () => {
       const fileId = store.getState().fileId;
@@ -365,7 +393,9 @@ export function createSolidWorkspaceFilePreviewStore(
   onCleanup(dispose);
   return {
     state,
+    getMetrics: () => store.getMetrics(),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     load: (fileId) => store.load(fileId),
     clear: () => store.clear(),
     dispose,

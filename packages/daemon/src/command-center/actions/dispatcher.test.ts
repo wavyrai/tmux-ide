@@ -14,17 +14,18 @@ const actionApp = (
   workspaceOpenBackend?: WorkspaceOpenBackend,
 ) => {
   const app = new Hono();
+  const resourceBroadcast = vi.fn();
   app.post(
     "/api/v2/action/:name",
     createActionDispatcher({
       broadcast,
-      broadcastResourceChanged: vi.fn(),
+      broadcastResourceChanged: resourceBroadcast,
       daemonInstanceId: "20000000-0000-4000-8000-000000000002",
       workspacePaneCreationBackend,
       workspaceOpenBackend,
     }),
   );
-  return { app, broadcast };
+  return { app, broadcast, resourceBroadcast };
 };
 
 afterEach(() => {
@@ -147,6 +148,98 @@ describe("command-backed action dispatcher compatibility", () => {
       false,
     );
     expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it("publishes killed-session catalog changes on the global interest key", async () => {
+    const mutate = vi.fn(async (input) => ({
+      verb: "workspace.session.kill" as const,
+      outcome: "applied" as const,
+      operationId: input.operationId,
+      daemonInstanceId: input.expectedDaemonInstanceId,
+      workspaceName: input.intent.workspaceName,
+    }));
+    const resourceBroadcast = vi.fn();
+    const app = new Hono();
+    app.post(
+      "/api/v2/action/:name",
+      createActionDispatcher({
+        broadcast: vi.fn(),
+        broadcastResourceChanged: resourceBroadcast,
+        daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+        workspaceMultiplexerBackend: { mutate },
+      }),
+    );
+    const response = await app.request("http://localhost/api/v2/action/workspace.session.kill", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": "10000000-0000-4000-8000-000000000001",
+      },
+      body: JSON.stringify({ workspaceName: "workspace.alpha" }),
+    });
+    expect(response.status).toBe(200);
+    expect(resourceBroadcast).toHaveBeenCalledWith(
+      {
+        workspaceName: null,
+        resource: "workspace-catalog",
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      "20000000-0000-4000-8000-000000000002",
+    );
+    expect(resourceBroadcast).toHaveBeenCalledWith(
+      {
+        workspaceName: "workspace.alpha",
+        resource: "workspace-missions",
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      "20000000-0000-4000-8000-000000000002",
+    );
+  });
+
+  it("invalidates mission overlays after a pane layout mutation", async () => {
+    const mutate = vi.fn(async (input) => ({
+      verb: "workspace.pane.resize" as const,
+      outcome: "applied" as const,
+      operationId: input.operationId,
+      daemonInstanceId: input.expectedDaemonInstanceId,
+      workspaceName: input.intent.workspaceName,
+      semanticPaneId: "pane.target",
+      axis: "cols" as const,
+      cells: 96,
+    }));
+    const resourceBroadcast = vi.fn();
+    const app = new Hono();
+    app.post(
+      "/api/v2/action/:name",
+      createActionDispatcher({
+        broadcast: vi.fn(),
+        broadcastResourceChanged: resourceBroadcast,
+        daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+        workspaceMultiplexerBackend: { mutate },
+      }),
+    );
+    const response = await app.request("http://localhost/api/v2/action/workspace.pane.resize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": "10000000-0000-4000-8000-000000000001",
+      },
+      body: JSON.stringify({
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.target",
+        axis: "cols",
+        cells: 96,
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(resourceBroadcast).toHaveBeenCalledWith(
+      {
+        workspaceName: "workspace.alpha",
+        resource: "workspace-missions",
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      "20000000-0000-4000-8000-000000000002",
+    );
   });
   it("keeps unknown action transport behavior unchanged", async () => {
     const { app } = actionApp();
@@ -331,6 +424,14 @@ describe("command-backed action dispatcher compatibility", () => {
       },
       "20000000-0000-4000-8000-000000000002",
     );
+    expect(resourceBroadcast).toHaveBeenCalledWith(
+      {
+        workspaceName: "workspace.alpha",
+        resource: "workspace-missions",
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      "20000000-0000-4000-8000-000000000002",
+    );
   });
 
   it("rejects renderer-authored runtime fields before pane creation", async () => {
@@ -367,7 +468,7 @@ describe("command-backed action dispatcher compatibility", () => {
         initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
       },
     }));
-    const { app, broadcast } = actionApp(vi.fn(), undefined, { open });
+    const { app, broadcast, resourceBroadcast } = actionApp(vi.fn(), undefined, { open });
     const response = await app.request("http://localhost/api/v2/action/workspace.open", {
       method: "POST",
       headers: {
@@ -397,6 +498,14 @@ describe("command-backed action dispatcher compatibility", () => {
       "workspace.open",
       expect.objectContaining({ operationId: "10000000-0000-4000-8000-000000000001" }),
     );
+    expect(resourceBroadcast).toHaveBeenCalledWith(
+      {
+        workspaceName: null,
+        resource: "workspace-catalog",
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      "20000000-0000-4000-8000-000000000002",
+    );
   });
 
   it("rejects renderer-authored tmux identities before workspace admission", async () => {
@@ -425,19 +534,20 @@ describe("workspace.promote completion receipt", () => {
     receipts: Array<{ workspaceName: string; outcome: string }>,
   ) => {
     const broadcast = vi.fn();
+    const resourceBroadcast = vi.fn();
     const app = new Hono();
     app.post(
       "/api/v2/action/:name",
       createActionDispatcher({
         broadcast,
-        broadcastResourceChanged: vi.fn(),
+        broadcastResourceChanged: resourceBroadcast,
         broadcastPromotionCompleted: (workspaceName, outcome) =>
           receipts.push({ workspaceName, outcome }),
         daemonInstanceId: "20000000-0000-4000-8000-000000000002",
         workspacePromotionBackend: { promote },
       }),
     );
-    return { app, broadcast };
+    return { app, broadcast, resourceBroadcast };
   };
   const dispatchPromote = (app: Hono) =>
     app.request("http://localhost/api/v2/action/workspace.promote", {
@@ -467,6 +577,29 @@ describe("workspace.promote completion receipt", () => {
     expect(broadcast).toHaveBeenCalledWith(
       "workspace.promote",
       expect.objectContaining({ outcome: "replayed" }),
+    );
+  });
+
+  it("publishes promoted workspace-catalog changes on the global interest key", async () => {
+    const receipts: Array<{ workspaceName: string; outcome: string }> = [];
+    const { app, resourceBroadcast } = promoteApp(
+      async (input) => ({
+        operationId: input.operationId,
+        daemonInstanceId: input.expectedDaemonInstanceId,
+        outcome: "promoted" as const,
+        resource: { resourceVersion: 1 as const, workspaceName: "fleet-alpha" },
+      }),
+      receipts,
+    );
+    const response = await dispatchPromote(app);
+    expect(response.status).toBe(200);
+    expect(resourceBroadcast).toHaveBeenCalledWith(
+      {
+        workspaceName: null,
+        resource: "workspace-catalog",
+        causeOperationId: "10000000-0000-4000-8000-000000000001",
+      },
+      "20000000-0000-4000-8000-000000000002",
     );
   });
 

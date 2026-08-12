@@ -7,7 +7,7 @@ import {
   type ActivityRowDto,
   type ActivitySurfaceVariant,
 } from "./activity-surface.ts";
-import { ActivitySurface } from "./activity-surface.tsx";
+import { ActivitySurface } from "./activity-surface-view.tsx";
 
 const ROWS: readonly ActivityRowDto[] = [
   {

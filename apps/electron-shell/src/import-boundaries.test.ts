@@ -58,7 +58,9 @@ describe("desktop process boundaries", () => {
       HOST_IPC.onboardingAcknowledgeIntro,
       HOST_IPC.updateGetStatus,
       HOST_IPC.daemonRequest,
+      HOST_IPC.daemonCancelRequest,
       HOST_IPC.daemonSubscribe,
+      HOST_IPC.daemonCancelSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/send");
@@ -75,13 +77,15 @@ describe("desktop process boundaries", () => {
     const daemonChannels = HOST_INVOKE_CHANNELS.filter((channel) => channel.includes("/daemon/"));
     expect(daemonChannels).toEqual([
       HOST_IPC.daemonRequest,
+      HOST_IPC.daemonCancelRequest,
       HOST_IPC.daemonSubscribe,
+      HOST_IPC.daemonCancelSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);
     // Seventeen after the content-addressed widget asset read joined the same
     // closed request union. `invokeVerb` still carries all seven multiplexer
     // verbs, so this remains one reviewed capability per semantic resource.
-    expect(DAEMON_RESOURCE_KINDS.length).toBe(17);
+    expect(DAEMON_RESOURCE_KINDS.length).toBe(18);
     expect(new Set(DAEMON_RESOURCE_KINDS).size).toBe(DAEMON_RESOURCE_KINDS.length);
   });
 

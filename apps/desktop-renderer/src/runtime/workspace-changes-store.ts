@@ -13,6 +13,7 @@ import {
   createTargetPinnedStore,
   sameDaemonGeneration,
   type TargetPinnedFetchResult,
+  type TargetPinnedStoreMetrics,
   type TargetPinnedView,
   type WorkspaceResourceClock,
   type WorkspaceResourceSnapshot,
@@ -29,6 +30,7 @@ interface WorkspaceChangesStoreOptionsBase {
   readonly host: Pick<HostCapabilities, "daemon">;
   readonly target: unknown;
   readonly clock?: WorkspaceResourceClock;
+  readonly active?: boolean;
 }
 
 const CATALOG_KEY = "__changes__";
@@ -60,15 +62,19 @@ export type WorkspaceChangesCatalogState = {
 
 export interface WorkspaceChangesCatalogStore {
   getState(): WorkspaceChangesCatalogState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: WorkspaceChangesCatalogState) => void): () => void;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   refresh(): void;
   dispose(): void;
 }
 
 export interface SolidWorkspaceChangesCatalogStore {
   readonly state: Accessor<WorkspaceChangesCatalogState>;
+  getMetrics(): TargetPinnedStoreMetrics;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   refresh(): void;
   dispose(): void;
 }
@@ -83,11 +89,17 @@ export function createWorkspaceChangesCatalogStore(
     {
       host: options.host,
       eagerKey: CATALOG_KEY,
-      invalidatesOn: ["workspaces.changed"],
-      async fetch(target): Promise<TargetPinnedFetchResult<WorkspaceChangesCatalogResourceV1>> {
-        const result = await options.host.daemon.fetchWorkspaceChanges({
-          workspaceName: target.workspaceName,
-        });
+      invalidatesOn: ["workspace-changes.changed"],
+      resourceInterest: "workspace-changes",
+      async fetch(
+        target,
+        _key,
+        signal,
+      ): Promise<TargetPinnedFetchResult<WorkspaceChangesCatalogResourceV1>> {
+        const result = await options.host.daemon.fetchWorkspaceChanges(
+          { workspaceName: target.workspaceName },
+          signal,
+        );
         if (result.status === "error") {
           return { status: "failed", code: result.error.code, reason: result.error.reason };
         }
@@ -155,12 +167,14 @@ export function createWorkspaceChangesCatalogStore(
       },
     },
     options.target,
-    { clock: options.clock },
+    { clock: options.clock, active: options.active },
   );
   return {
     getState: () => store.getState(),
+    getMetrics: () => store.getMetrics(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     refresh: () => store.refresh(),
     dispose: () => store.dispose(),
   };
@@ -182,7 +196,9 @@ export function createSolidWorkspaceChangesCatalogStore(
   onCleanup(dispose);
   return {
     state,
+    getMetrics: () => store.getMetrics(),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     refresh: () => store.refresh(),
     dispose,
   };
@@ -217,8 +233,10 @@ export type WorkspaceChangeDiffState = {
 
 export interface WorkspaceChangeDiffStore {
   getState(): WorkspaceChangeDiffState;
+  getMetrics(): TargetPinnedStoreMetrics;
   subscribe(listener: (state: WorkspaceChangeDiffState) => void): () => void;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   load(changeId: string): void;
   clear(): void;
   dispose(): void;
@@ -226,7 +244,9 @@ export interface WorkspaceChangeDiffStore {
 
 export interface SolidWorkspaceChangeDiffStore {
   readonly state: Accessor<WorkspaceChangeDiffState>;
+  getMetrics(): TargetPinnedStoreMetrics;
   setTarget(target: unknown): void;
+  setActive(active: boolean): void;
   load(changeId: string): void;
   clear(): void;
   dispose(): void;
@@ -294,14 +314,20 @@ export function createWorkspaceChangeDiffStore(
     {
       host: options.host,
       singleSlot: true,
+      invalidatesOn: ["workspace-changes.changed"],
+      resourceInterest: "workspace-changes",
       async fetch(
         target,
         changeId,
+        signal,
       ): Promise<TargetPinnedFetchResult<WorkspaceChangeDiffResourceV1>> {
-        const result = await options.host.daemon.fetchWorkspaceChangeDiff({
-          workspaceName: target.workspaceName,
-          changeId: changeId as WorkspaceChangeResourceId,
-        });
+        const result = await options.host.daemon.fetchWorkspaceChangeDiff(
+          {
+            workspaceName: target.workspaceName,
+            changeId: changeId as WorkspaceChangeResourceId,
+          },
+          signal,
+        );
         if (result.status === "error") {
           return { status: "failed", code: result.error.code, reason: result.error.reason };
         }
@@ -372,12 +398,14 @@ export function createWorkspaceChangeDiffStore(
       },
     },
     options.target,
-    { clock: options.clock },
+    { clock: options.clock, active: options.active },
   );
   return {
     getState: () => store.getState(),
+    getMetrics: () => store.getMetrics(),
     subscribe: (listener) => store.subscribe(listener),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     load: (changeId) => store.load(changeId),
     clear: () => {
       const changeId = store.getState().changeId;
@@ -403,7 +431,9 @@ export function createSolidWorkspaceChangeDiffStore(
   onCleanup(dispose);
   return {
     state,
+    getMetrics: () => store.getMetrics(),
     setTarget: (next) => store.setTarget(next),
+    setActive: (active) => store.setActive(active),
     load: (changeId) => store.load(changeId),
     clear: () => store.clear(),
     dispose,

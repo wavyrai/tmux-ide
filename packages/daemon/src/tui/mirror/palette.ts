@@ -21,7 +21,7 @@ import {
 import type { PaletteUsageEntry, Tab } from "./app-state.ts";
 import type { AgentRowInput } from "./agent-rows.ts";
 import type { HostedPanelView } from "./panel-host.ts";
-import { SETTINGS_PALETTE_COMMANDS, type SettingsCommandId } from "./settings-model.ts";
+import { SETTINGS_PALETTE_COMMANDS, type SettingsCommandId } from "./features/settings/catalog.ts";
 import {
   navigatorEntryMatches,
   parseNavigatorQuery,

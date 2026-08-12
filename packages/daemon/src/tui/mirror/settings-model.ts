@@ -15,35 +15,9 @@ import type { AppConfig, AppConfigPatch, AppKeys } from "../../lib/app-config.ts
 import type { ThemeModeSetting } from "./theme.ts";
 import { parseHHMM, type NotificationPrefs } from "../chrome/notify-prefs.ts";
 import type { DialogSelectItem } from "./dialog-model.ts";
+import { APPLICATION_KEYBINDING_ROWS, prefixTwinFor } from "./application-keybindings.ts";
 
-// ── Command registry (what the palette offers) ───────────────────────────────
-
-export type SettingsCommandId =
-  | "settings"
-  | "settings-theme"
-  | "settings-notifications"
-  | "settings-quiet-hours"
-  | "settings-updates"
-  | "settings-restore"
-  | "settings-keys"
-  | "settings-reset";
-
-/** The palette entries, one per settings command (+ the umbrella first). The
- *  "Settings" category prefix is how the palette's flat fuzzy list reads as a
- *  category — typing "set" narrows to all of them. */
-export const SETTINGS_PALETTE_COMMANDS: ReadonlyArray<{
-  id: SettingsCommandId;
-  label: string;
-}> = [
-  { id: "settings", label: "Settings…" },
-  { id: "settings-theme", label: "Settings: Accent color" },
-  { id: "settings-notifications", label: "Settings: Notifications" },
-  { id: "settings-quiet-hours", label: "Settings: Quiet hours" },
-  { id: "settings-updates", label: "Settings: Updates & background refresh" },
-  { id: "settings-restore", label: "Settings: Crash restore" },
-  { id: "settings-keys", label: "Settings: Keyboard shortcuts (view)" },
-  { id: "settings-reset", label: "Settings: Reset to defaults" },
-];
+export { prefixTwinFor } from "./application-keybindings.ts";
 
 // ── Where changes land (footer copy) ─────────────────────────────────────────
 
@@ -324,49 +298,10 @@ export function restorePatch(id: string): AppConfigPatch {
 /** Mirrors {@link ../chrome/statusline.ts}'s prefix-twin derivation — the
  *  letters tmux binds by default (never clobbered) and the documented remaps.
  *  A drift test asserts agreement with `prefixKeyBinds` for the defaults. */
-const PREFIX_TAKEN = new Set([..."cdfilmnopqrstwxz"]);
-const PREFIX_REMAP: Record<string, string> = { "M-m": "u", "M-p": "j", "M-,": "v" };
-
-/** PURE — the reliable `prefix <letter>` twin for an Alt key, or null when the
- *  letter is taken by a stock tmux bind and has no documented remap. */
-export function prefixTwinFor(altKey: string): string | null {
-  const remapped = PREFIX_REMAP[altKey];
-  if (remapped) return remapped;
-  const letter = /^M-([a-z])$/.exec(altKey)?.[1];
-  if (!letter || PREFIX_TAKEN.has(letter)) return null;
-  return letter;
-}
-
-/** THE app-key enumeration — the ONE place the unified app's fixed keys are
- *  listed (M24.4). The keybind viewer's app rows AND the palette's right-aligned
- *  row shortcuts both read this; `paletteAction` is the stable palette action
- *  key ({@link ./palette.ts}'s paletteActionKey) a keycap attaches to. */
-const APP_KEY_ROWS: ReadonlyArray<{ label: string; keycap: string; paletteAction?: string }> = [
-  { label: "Command palette", keycap: "F5 · ^p" },
-  { label: "Home", keycap: "F1", paletteAction: "surface:home" },
-  { label: "Terminals", keycap: "F2", paletteAction: "surface:terminals" },
-  { label: "Files", keycap: "F3", paletteAction: "surface:files" },
-  { label: "Changes", keycap: "F4", paletteAction: "surface:changes" },
-  { label: "Missions", keycap: "F6", paletteAction: "surface:missions" },
-  { label: "Activity", keycap: "F9", paletteAction: "surface:activity" },
-  { label: "Cycle workspace focus", keycap: "F8 · ^tab" },
-  { label: "Save file", keycap: "^s", paletteAction: "save" },
-  { label: "Back to Home", keycap: "^g" },
-  { label: "Toggle editor", keycap: "^e" },
-  { label: "Quit / detach", keycap: "^q", paletteAction: "quit" },
-];
-
-/** PURE — palette action key → keycap, derived from {@link APP_KEY_ROWS}. The
- *  palette right-aligns these on rows that have one; app.tsx drops `quit` in
- *  HOSTED mode, where ^q detaches instead. */
-export const PALETTE_KEYCAPS: Readonly<Record<string, string>> = Object.fromEntries(
-  APP_KEY_ROWS.filter((r) => r.paletteAction).map((r) => [r.paletteAction!, r.keycap]),
-);
-
 /** PURE — the read-only shortcut rows: the chrome actions from the LIVE config
  *  (prefix-first, the Alt fast path second — the prefix form is the one that
  *  survives every keyboard protocol) and then the app's fixed keys
- *  ({@link APP_KEY_ROWS}). `superK` appends the kitty-protocol ⌘K fast path to
+ *  ({@link APPLICATION_KEYBINDING_ROWS}). `superK` appends the kitty-protocol ⌘K fast path to
  *  the palette row — shown only when the renderer actually enables it. */
 export function keybindingItems(keys: AppKeys, superK = false): DialogSelectItem[] {
   const chrome: Array<{ label: string; altKey: string }> = [
@@ -387,7 +322,7 @@ export function keybindingItems(keys: AppKeys, superK = false): DialogSelectItem
       detail: twin ? `prefix ${twin} · ${altKey}` : altKey,
     };
   });
-  for (const { label, keycap } of APP_KEY_ROWS) {
+  for (const { label, keycap } of APPLICATION_KEYBINDING_ROWS) {
     const detail = superK && label === "Command palette" ? `${keycap} · ⌘K` : keycap;
     rows.push({ id: `app:${label}`, label, detail });
   }

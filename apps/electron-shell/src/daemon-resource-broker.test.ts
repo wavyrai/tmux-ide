@@ -1120,6 +1120,134 @@ describe("Electron main daemon resource broker", () => {
     expect(socket.close).toHaveBeenCalledWith(1000, "renderer released");
   });
 
+  it("opens semantic mode and barriers explicit demand on the observer ack", async () => {
+    const socket = new FakeSocket();
+    const createWebSocket = vi.fn(() => socket);
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async () => json(WORKSPACE_CATALOG),
+      createWebSocket,
+    });
+    let settled = false;
+    const pending = broker
+      .subscribe(
+        {
+          workspaceNames: [],
+          resourceInterests: [{ resource: "workspace-files", workspaceName: "product workspace" }],
+        },
+        vi.fn(),
+      )
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    await vi.waitFor(() => expect(createWebSocket).toHaveBeenCalledOnce());
+    expect(createWebSocket).toHaveBeenCalledWith("ws://127.0.0.1:6060/ws/events?mode=semantic");
+    socket.emit("open");
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 }),
+    );
+    const frame = JSON.parse(socket.sent[0]!);
+    expect(frame).toMatchObject({
+      type: "subscribe",
+      sessions: [],
+      legacyEvents: false,
+      interests: [{ resource: "workspace-files", workspaceName: "product workspace" }],
+      afterSequence: 0,
+    });
+    expect(settled).toBe(false);
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "resource.interests-ack",
+        interestRevision: frame.interestRevision,
+        sequence: 0,
+        unavailableInterests: [],
+      }),
+    );
+    expect((await pending).status).toBe("subscribed");
+
+    const sentBefore = socket.sent.length;
+    const duplicate = await broker.subscribe(
+      {
+        workspaceNames: [],
+        resourceInterests: [{ resource: "workspace-files", workspaceName: "product workspace" }],
+      },
+      vi.fn(),
+    );
+    expect(duplicate.status).toBe("subscribed");
+    expect(socket.sent).toHaveLength(sentBefore);
+  });
+
+  it("keeps one mixed-mode socket with broad legacy delivery and explicit observers", async () => {
+    const sockets: FakeSocket[] = [];
+    const urls: string[] = [];
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch: async () => json(WORKSPACE_CATALOG),
+      createWebSocket: (url) => {
+        urls.push(url);
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const explicitPending = broker.subscribe(
+      {
+        workspaceNames: [],
+        resourceInterests: [{ resource: "workspace-files", workspaceName: "product workspace" }],
+      },
+      vi.fn(),
+    );
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    sockets[0]!.emit("open");
+    sockets[0]!.emit(
+      "message",
+      JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 }),
+    );
+    const firstFrame = JSON.parse(sockets[0]!.sent[0]!);
+    sockets[0]!.emit(
+      "message",
+      JSON.stringify({
+        type: "resource.interests-ack",
+        interestRevision: firstFrame.interestRevision,
+        sequence: 0,
+        unavailableInterests: [],
+      }),
+    );
+    expect((await explicitPending).status).toBe("subscribed");
+
+    const legacyEvents: DesktopDaemonEvent[] = [];
+    expect((await broker.subscribe(["docs"], (event) => legacyEvents.push(event))).status).toBe(
+      "subscribed",
+    );
+    expect(sockets[0]!.close).toHaveBeenCalledWith(1000, "event delivery mode changed");
+    expect(urls).toEqual([
+      "ws://127.0.0.1:6060/ws/events?mode=semantic",
+      "ws://127.0.0.1:6060/ws/events",
+    ]);
+    sockets[1]!.emit("open");
+    sockets[1]!.emit(
+      "message",
+      JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 }),
+    );
+    const mixedFrame = JSON.parse(sockets[1]!.sent[0]!);
+    expect(mixedFrame).toMatchObject({
+      type: "subscribe",
+      legacyEvents: true,
+      interests: [{ resource: "workspace-files", workspaceName: "product workspace" }],
+    });
+    sockets[1]!.emit(
+      "message",
+      JSON.stringify({ type: "terminals.changed", sessionName: "durable-docs" }),
+    );
+    expect(legacyEvents).toContainEqual({
+      type: "application-shell.changed",
+      workspaceName: "docs",
+    });
+  });
+
   it("targets an immediate verified live event to a subscriber joining an open socket", async () => {
     const socket = new FakeSocket();
     const first: DesktopDaemonEvent[] = [];
@@ -1510,6 +1638,42 @@ describe("Electron main daemon resource broker", () => {
     }
   });
 
+  it("settles an unacknowledged explicit subscription at the fatal retry ceiling", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () => json(WORKSPACE_CATALOG),
+        createWebSocket: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+        eventReconnectInitialDelayMs: 10,
+        eventReconnectMaximumDelayMs: 10,
+        eventReconnectMaximumAttempts: 1,
+      });
+      const pending = broker.subscribe(
+        {
+          workspaceNames: [],
+          resourceInterests: [{ resource: "workspace-files", workspaceName: "product workspace" }],
+        },
+        vi.fn(),
+      );
+      await vi.waitFor(() => expect(sockets).toHaveLength(1));
+      sockets[0]!.emit("close");
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[1]!.emit("close");
+      await expect(pending).resolves.toMatchObject({
+        status: "error",
+        error: { code: "event-unavailable" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("wakes a stopped transport on an explicit retry and reconnects immediately", async () => {
     vi.useFakeTimers();
     try {
@@ -1828,6 +1992,34 @@ describe("Electron main daemon workspace read resources", () => {
     expect(new Headers(filesRequest?.init?.headers).get("authorization")).toBe(
       "Bearer owner-only-token",
     );
+  });
+
+  it("aborts the underlying HTTP read when renderer demand closes", async () => {
+    let resourceSignal: AbortSignal | undefined;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        if (input.toString().endsWith("/api/resources/workspace-catalog")) {
+          return json(WORKSPACE_CATALOG);
+        }
+        resourceSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          resourceSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      },
+    });
+    const controller = new AbortController();
+    const pending = broker.fetchWorkspaceFiles(
+      { workspaceName: "product workspace" },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(resourceSignal).toBeDefined());
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({ status: "error", error: { code: "disposed" } });
+    expect(resourceSignal?.aborted).toBe(true);
   });
 
   it("passes a directory id as a query for incremental tree expansion", async () => {

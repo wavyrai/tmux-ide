@@ -204,4 +204,53 @@ describe("PaneSurface OpenTUI renderer", () => {
     await setup.renderOnce();
     expect(blits).toEqual([{ full: false, forceRows: [2] }]);
   });
+
+  it("forces a full blit when a retained source epoch changes at the same content version", async () => {
+    registerPaneSurface();
+    const fullBlits: boolean[] = [];
+    const mirror = {
+      scrollbackDepth: () => 0,
+      cursorState: () => null,
+      blitPane: (
+        _id: string,
+        _buffers: unknown,
+        _width: number,
+        _height: number,
+        _scrollOffset: number,
+        _defaultFg: number,
+        _defaultBg: number,
+        options: BlitOptions,
+      ) => fullBlits.push(options.full),
+    } as unknown as TerminalPaneRenderSource;
+    const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+    let replaceSource!: () => void;
+    const setup = await renderForTest(
+      () => {
+        const [sourceEpoch, setSourceEpoch] = createSignal(1);
+        replaceSource = () => setSourceEpoch((epoch) => epoch + 1);
+        return (
+          <pane_surface
+            width={4}
+            height={2}
+            mirror={mirror}
+            paneId="pane.editor"
+            defaultFg={palette.foreground}
+            defaultBg={palette.background}
+            terminalPalette={palette}
+            searchHl={palette.searchHighlight}
+            searchCur={palette.searchCurrent}
+            contentVersion={1}
+            sourceEpoch={sourceEpoch()}
+          />
+        );
+      },
+      { width: 4, height: 2 },
+    );
+
+    await setup.renderOnce();
+    fullBlits.length = 0;
+    replaceSource();
+    await setup.renderOnce();
+    expect(fullBlits).toEqual([true]);
+  });
 });

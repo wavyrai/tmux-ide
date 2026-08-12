@@ -20,7 +20,9 @@ export const HOST_IPC = {
   updateGetStatus: "tmux-ide:host/update/get-status",
   updateStatusChanged: "tmux-ide:host/update/status-changed",
   daemonRequest: "tmux-ide:host/daemon/request",
+  daemonCancelRequest: "tmux-ide:host/daemon/cancel-request",
   daemonSubscribe: "tmux-ide:host/daemon/subscribe",
+  daemonCancelSubscribe: "tmux-ide:host/daemon/cancel-subscribe",
   daemonUnsubscribe: "tmux-ide:host/daemon/unsubscribe",
   daemonEvent: "tmux-ide:host/daemon/event",
 } as const;
@@ -34,6 +36,8 @@ export const HOST_INVOKE_CHANNELS = [
   HOST_IPC.onboardingAcknowledgeIntro,
   HOST_IPC.updateGetStatus,
   HOST_IPC.daemonRequest,
+  HOST_IPC.daemonCancelRequest,
   HOST_IPC.daemonSubscribe,
+  HOST_IPC.daemonCancelSubscribe,
   HOST_IPC.daemonUnsubscribe,
 ] as const;

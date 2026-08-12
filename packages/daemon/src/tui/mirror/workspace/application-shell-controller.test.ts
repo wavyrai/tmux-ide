@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createMemo, createRoot, createSignal } from "solid-js";
@@ -21,6 +22,13 @@ import {
   reduceOpenTuiApplicationShellCommands,
   sameOpenTuiApplicationShellInput,
 } from "./application-shell-controller.ts";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
+
+const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const productionRootSource = () =>
+  OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
+    "\n",
+  );
 
 function projection(
   overrides: {
@@ -323,7 +331,7 @@ describe("OpenTUI canonical application-shell controller", () => {
       fileURLToPath(new URL("./workbench-shell.ts", import.meta.url)),
       "utf8",
     );
-    const app = readFileSync(fileURLToPath(new URL("../app.tsx", import.meta.url)), "utf8");
+    const app = productionRootSource();
     expect(workbench).not.toContain("const DOCK_TABS");
     expect(app).not.toContain("<ShellTabBar");
     expect(app).not.toContain("RENDERER_COMMAND_IDS.openPalette");
@@ -331,7 +339,7 @@ describe("OpenTUI canonical application-shell controller", () => {
     expect(app).not.toContain("rendererInvocationForDock(");
     expect(app).toContain("submitSemanticPaneFocus(runtimePaneId)");
     expect(app).toContain('verb: "workspace.pane.select"');
-    expect(app).toContain("mirror={semanticReplica()!.lane.source}");
+    expect(app).toContain("mirror={semanticReplica()!.adapter.renderSource}");
     expect(app).not.toContain("semanticView={semanticReplica()?.lane.source");
     expect(app).toContain("semanticViewportAcknowledged()");
     expect(app).not.toMatch(

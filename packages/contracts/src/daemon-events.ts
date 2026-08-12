@@ -5,17 +5,56 @@ import {
   DaemonWorkspaceSchemaZ,
 } from "./daemon-resources.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
-import { DesktopWorkspaceNameSchemaZ } from "./desktop-host.ts";
+import { DesktopWorkspaceNameSchemaZ } from "./desktop-workspace-name.ts";
 import { InteractionReceiptSchemaZ } from "./interaction-receipts.ts";
 
 /** Shared, browser-safe protocol for the daemon's unified /ws/events socket. */
 
 const SessionNamesSchemaZ = z.array(z.string());
 
+/**
+ * A semantic resource projection a client wants to keep live. Interests are
+ * deliberately expressed in public workspace identities, never tmux runtime
+ * ids or filesystem paths. Global catalog projections use `workspaceName:
+ * null`; workspace projections require the durable catalog name.
+ */
+export const DaemonEventResourceInterestSchemaZ = z.discriminatedUnion("resource", [
+  z
+    .object({
+      resource: z.enum(["workspace-catalog", "fleet-catalog"]),
+      workspaceName: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      resource: z.enum([
+        "application-shell",
+        "workspace-files",
+        "workspace-changes",
+        "workspace-missions",
+      ]),
+      workspaceName: DesktopWorkspaceNameSchemaZ,
+    })
+    .strict(),
+]);
+export type DaemonEventResourceInterest = z.infer<typeof DaemonEventResourceInterestSchemaZ>;
+
+const DaemonEventResourceInterestsSchemaZ = z.array(DaemonEventResourceInterestSchemaZ).max(128);
+
 export const DaemonEventSubscribeFrameSchemaZ = z
   .object({
     type: z.literal("subscribe"),
     sessions: SessionNamesSchemaZ,
+    /**
+     * Explicit push/observation demand. Omitted by legacy clients, which keep
+     * the historical broad event stream. An explicit (including empty) list
+     * enables interest-filtered delivery and daemon-owned observer lifetimes.
+     */
+    interests: DaemonEventResourceInterestsSchemaZ.optional(),
+    /** Independently selects broad legacy frame delivery. Omission preserves legacy behaviour. */
+    legacyEvents: z.boolean().optional(),
+    /** Client-owned ordering token for an observer-installation barrier. */
+    interestRevision: z.number().int().positive().optional(),
     /**
      * Last resource-event sequence the client applied for this daemon
      * generation. Omitted by legacy clients. The daemon either replays every
@@ -30,6 +69,9 @@ export const DaemonEventUnsubscribeFrameSchemaZ = z
   .object({
     type: z.literal("unsubscribe"),
     sessions: SessionNamesSchemaZ,
+    interests: DaemonEventResourceInterestsSchemaZ.optional(),
+    legacyEvents: z.boolean().optional(),
+    interestRevision: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -123,6 +165,7 @@ export const DaemonEventResourceKindSchemaZ = z.enum([
   "application-shell",
   "workspace-files",
   "workspace-changes",
+  "workspace-missions",
 ]);
 export type DaemonEventResourceKind = z.infer<typeof DaemonEventResourceKindSchemaZ>;
 
@@ -143,6 +186,39 @@ export const DaemonEventResourceChangedFrameSchemaZ = z
   .strict();
 export type DaemonEventResourceChangedFrame = z.infer<
   typeof DaemonEventResourceChangedFrameSchemaZ
+>;
+
+/**
+ * Advances the generation journal cursor when an explicitly interested client
+ * intentionally did not receive another resource's invalidation. This keeps
+ * replay/gap detection contiguous without exposing the unrelated resource or
+ * workspace identity.
+ */
+export const DaemonEventResourceObservedFrameSchemaZ = z
+  .object({
+    type: z.literal("resource.observed"),
+    sequence: z.number().int().positive(),
+  })
+  .strict();
+export type DaemonEventResourceObservedFrame = z.infer<
+  typeof DaemonEventResourceObservedFrameSchemaZ
+>;
+
+/**
+ * Confirms that a serialized interest mutation has settled. Any interest in
+ * `unavailableInterests` did not install a physical observer; clients must
+ * remain degraded and may retry instead of trusting a stale snapshot.
+ */
+export const DaemonEventResourceInterestsAckFrameSchemaZ = z
+  .object({
+    type: z.literal("resource.interests-ack"),
+    interestRevision: z.number().int().positive(),
+    sequence: z.number().int().nonnegative(),
+    unavailableInterests: DaemonEventResourceInterestsSchemaZ,
+  })
+  .strict();
+export type DaemonEventResourceInterestsAckFrame = z.infer<
+  typeof DaemonEventResourceInterestsAckFrameSchemaZ
 >;
 
 /** The requested replay cursor fell outside the bounded generation journal. */
@@ -281,6 +357,8 @@ export const DaemonEventServerFrameSchemaZ = z.discriminatedUnion("type", [
   DaemonEventConfigChangedFrameSchemaZ,
   DaemonEventTerminalsChangedFrameSchemaZ,
   DaemonEventResourceChangedFrameSchemaZ,
+  DaemonEventResourceObservedFrameSchemaZ,
+  DaemonEventResourceInterestsAckFrameSchemaZ,
   InteractionReceiptSchemaZ,
   DaemonEventSnapshotRequiredFrameSchemaZ,
   DaemonEventAgentStatusChangedFrameSchemaZ,

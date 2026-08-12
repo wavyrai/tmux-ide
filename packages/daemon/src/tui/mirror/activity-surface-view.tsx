@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { For, Show } from "solid-js";
 import { recipePalette } from "./recipes.ts";
-import { SelectableRow } from "./recipes.tsx";
+import { SelectableRow } from "./recipe-components.tsx";
 import type { SemanticThemeSnapshot } from "./theme.ts";
 import type {
   ActivityProjectedRow,

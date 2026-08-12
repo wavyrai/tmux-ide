@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { For, Show } from "solid-js";
 import type { SemanticThemeSnapshot } from "./theme.ts";
-import { ActionChip } from "./recipes.tsx";
+import { ActionChip } from "./recipe-components.tsx";
 import { recipePalette } from "./recipes.ts";
 import { terminalChromeHitTest, type TerminalPaneChromeProjection } from "./terminal-surface.ts";
 

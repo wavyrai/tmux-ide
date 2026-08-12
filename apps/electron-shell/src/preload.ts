@@ -5,6 +5,8 @@ import {
   DaemonResourceRequestSchemaZ,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
+  DesktopDaemonRequestIdSchemaZ,
+  DesktopDaemonSubscriptionRequestIdSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
   DesktopThemeStateSchemaZ,
@@ -12,6 +14,7 @@ import {
   DesktopWindowStateSchemaZ,
   WorkspaceOpenHostResultSchemaZ,
   createDaemonResourceMethods,
+  isCancellableDaemonResourceKind,
   type DaemonResourceRequest,
   type DesktopDaemonEvent,
   type DesktopDaemonEventSubscriptionRequest,
@@ -24,7 +27,11 @@ import {
 import { HOST_IPC } from "./ipc-channels.ts";
 
 const daemonListeners = new Map<string, (event: DesktopDaemonEvent) => void>();
-const earlyDaemonEvents = new Map<string, DesktopDaemonEvent[]>();
+type PendingDaemonSubscription = {
+  readonly events: DesktopDaemonEvent[];
+  subscriptionId: string | null;
+};
+const pendingDaemonSubscriptions = new Map<string, PendingDaemonSubscription>();
 
 function deliverDaemonEvent(
   listener: (event: DesktopDaemonEvent) => void,
@@ -44,12 +51,14 @@ ipcRenderer.on(HOST_IPC.daemonEvent, (_event, value: unknown) => {
     deliverDaemonEvent(listener, envelope.event);
     return;
   }
-  // The socket can open while the subscribe invoke response is in flight.
-  // Keep only a tiny bounded handoff buffer for that single IPC race.
-  if (earlyDaemonEvents.size >= 64 && !earlyDaemonEvents.has(envelope.subscriptionId)) return;
-  const queued = earlyDaemonEvents.get(envelope.subscriptionId) ?? [];
-  if (queued.length < 8) queued.push(envelope.event);
-  earlyDaemonEvents.set(envelope.subscriptionId, queued);
+  // Main names the exact invoke attempt that owns an early event. Unknown or
+  // retired attempts are dropped, so failed churn cannot consume handoff
+  // capacity belonging to a concurrent successful subscription.
+  const pending = pendingDaemonSubscriptions.get(envelope.subscriptionRequestId);
+  if (!pending) return;
+  if (pending.subscriptionId !== null && pending.subscriptionId !== envelope.subscriptionId) return;
+  pending.subscriptionId = envelope.subscriptionId;
+  if (pending.events.length < 8) pending.events.push(envelope.event);
 });
 
 function onValidatedEvent<T>(
@@ -68,9 +77,27 @@ function onValidatedEvent<T>(
  * the schema its own variant declares — so a malformed request never reaches
  * main and a malformed answer never reaches application code.
  */
-async function requestDaemonResource(request: DaemonResourceRequest): Promise<unknown> {
+async function requestDaemonResource(
+  request: DaemonResourceRequest,
+  signal?: AbortSignal,
+): Promise<unknown> {
   const parsed = DaemonResourceRequestSchemaZ.parse(request);
-  const result = await ipcRenderer.invoke(HOST_IPC.daemonRequest, parsed);
+  const cancellable = isCancellableDaemonResourceKind(parsed.resource);
+  if (cancellable && signal?.aborted)
+    throw Object.assign(new Error("Daemon resource read was cancelled."), { name: "AbortError" });
+  const requestId = DesktopDaemonRequestIdSchemaZ.parse(crypto.randomUUID());
+  const cancel = () => {
+    void ipcRenderer.invoke(HOST_IPC.daemonCancelRequest, requestId).catch(() => undefined);
+  };
+  if (cancellable) signal?.addEventListener("abort", cancel, { once: true });
+  let result: unknown;
+  try {
+    result = await ipcRenderer.invoke(HOST_IPC.daemonRequest, parsed, requestId);
+  } finally {
+    if (cancellable) signal?.removeEventListener("abort", cancel);
+  }
+  if (cancellable && signal?.aborted)
+    throw Object.assign(new Error("Daemon resource read was cancelled."), { name: "AbortError" });
   return DAEMON_RESOURCE_RESULT_SCHEMAS[parsed.resource].parse(result);
 }
 
@@ -127,17 +154,66 @@ const capabilities: HostCapabilities = Object.freeze({
     subscribe: async (
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,
+      signal?: AbortSignal,
     ) => {
       const parsed = DesktopDaemonEventSubscriptionRequestSchemaZ.parse(request);
-      const result = DesktopDaemonSubscribeWireResultSchemaZ.parse(
-        await ipcRenderer.invoke(HOST_IPC.daemonSubscribe, parsed),
-      );
-      if (result.status === "error") return result;
+      if (signal?.aborted) {
+        return {
+          status: "error" as const,
+          error: { code: "disposed" as const, reason: "The daemon subscription was cancelled." },
+        };
+      }
+      const requestId = DesktopDaemonSubscriptionRequestIdSchemaZ.parse(crypto.randomUUID());
+      const pending: PendingDaemonSubscription = { events: [], subscriptionId: null };
+      pendingDaemonSubscriptions.set(requestId, pending);
+      const cancel = () => {
+        pendingDaemonSubscriptions.delete(requestId);
+        void ipcRenderer.invoke(HOST_IPC.daemonCancelSubscribe, requestId).catch(() => undefined);
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      let result: ReturnType<typeof DesktopDaemonSubscribeWireResultSchemaZ.parse>;
+      try {
+        result = DesktopDaemonSubscribeWireResultSchemaZ.parse(
+          await ipcRenderer.invoke(HOST_IPC.daemonSubscribe, parsed, requestId),
+        );
+      } catch (error) {
+        pendingDaemonSubscriptions.delete(requestId);
+        throw error;
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+      }
+      if (result.status === "error") {
+        pendingDaemonSubscriptions.delete(requestId);
+        return result;
+      }
+      if (signal?.aborted) {
+        pendingDaemonSubscriptions.delete(requestId);
+        void ipcRenderer
+          .invoke(HOST_IPC.daemonUnsubscribe, result.subscriptionId)
+          .catch(() => undefined);
+        return {
+          status: "error" as const,
+          error: { code: "disposed" as const, reason: "The daemon subscription was cancelled." },
+        };
+      }
+      if (pending.subscriptionId !== null && pending.subscriptionId !== result.subscriptionId) {
+        pendingDaemonSubscriptions.delete(requestId);
+        void ipcRenderer
+          .invoke(HOST_IPC.daemonUnsubscribe, result.subscriptionId)
+          .catch(() => undefined);
+        return {
+          status: "error" as const,
+          error: {
+            code: "event-unavailable" as const,
+            reason: "The daemon subscription handoff did not match its invoke attempt.",
+          },
+        };
+      }
       daemonListeners.set(result.subscriptionId, listener);
-      for (const event of earlyDaemonEvents.get(result.subscriptionId) ?? []) {
+      for (const event of pending.events) {
         deliverDaemonEvent(listener, event);
       }
-      earlyDaemonEvents.delete(result.subscriptionId);
+      pendingDaemonSubscriptions.delete(requestId);
       let active = true;
       return {
         status: "subscribed" as const,
@@ -145,7 +221,6 @@ const capabilities: HostCapabilities = Object.freeze({
           if (!active) return;
           active = false;
           daemonListeners.delete(result.subscriptionId);
-          earlyDaemonEvents.delete(result.subscriptionId);
           void ipcRenderer.invoke(HOST_IPC.daemonUnsubscribe, result.subscriptionId).catch(() => {
             // Main also clears subscriptions when the renderer/window is released.
           });

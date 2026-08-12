@@ -6,7 +6,7 @@ import { describe, expect, it } from "bun:test";
 import type { SemanticFocusTarget } from "@tmux-ide/contracts";
 import type { CommandSource, ProductSurfaceId } from "@tmux-ide/contracts";
 import { TuiCleanupRegistry } from "../input-lifecycle.ts";
-import { SelectableRow } from "../recipes.tsx";
+import { SelectableRow } from "../recipe-components.tsx";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import {
   destroyTestRenderer,

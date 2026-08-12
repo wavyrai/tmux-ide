@@ -51,6 +51,7 @@ export * from "./workspace-files-resource.ts";
 export * from "./workspace-files-tree.ts";
 export * from "./workspace-changes-resource.ts";
 export * from "./workspace-changes-view.ts";
+export * from "./workspace-missions-resource.ts";
 export * from "./workspace-pane-creation.ts";
 export * from "./workspace-open.ts";
 export * from "./workspace-promotion.ts";

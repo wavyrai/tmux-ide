@@ -1,9 +1,11 @@
 import { EventEmitter } from "node:events";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { DaemonEventServerFrameSchemaZ, type DaemonEventServerFrame } from "@tmux-ide/contracts";
 import {
   _detachProjectRegistryListenerForTests,
   _resetResourceEventJournalForTests,
+  _resourceObserverStateForTests,
+  _setResourceObservationOverrideForTests,
   _stopSessionsPollerForTests,
   broadcastInteractionReceipt,
   broadcastResourceChanged,
@@ -58,18 +60,319 @@ function frames(socket: ProtocolWebSocket): DaemonEventServerFrame[] {
   return socket.sent.map((value) => DaemonEventServerFrameSchemaZ.parse(JSON.parse(value)));
 }
 
+async function flushProtocol(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
 afterEach(() => {
+  _setResourceObservationOverrideForTests(null);
   _stopSessionsPollerForTests();
   _detachProjectRegistryListenerForTests();
   _resetResourceEventJournalForTests();
 });
 
 describe("/ws/events client frame protocol", () => {
+  it("waits for observer installation and acknowledges the post-install sequence", async () => {
+    let install!: (value: { status: "installed" }) => void;
+    _setResourceObservationOverrideForTests(() => ({
+      release: vi.fn(),
+      ready: new Promise((resolve) => {
+        install = resolve;
+      }),
+    }));
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.sent.length = 0;
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interestRevision: 1,
+        interests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+        afterSequence: 0,
+      }),
+    );
+    broadcastResourceChanged(
+      { workspaceName: "alpha", resource: "workspace-files" },
+      daemonIdentity.instanceId,
+    );
+    expect(frames(socket).map(({ type }) => type)).toEqual(["resource.changed"]);
+    install({ status: "installed" });
+    await flushProtocol();
+    expect(frames(socket).at(-1)).toEqual({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 1,
+      unavailableInterests: [],
+    });
+    socket.disconnect();
+  });
+
+  it("serializes add then remove while installation is pending", async () => {
+    let install!: (value: { status: "installed" }) => void;
+    const release = vi.fn();
+    _setResourceObservationOverrideForTests(() => ({
+      release,
+      ready: new Promise((resolve) => {
+        install = resolve;
+      }),
+    }));
+    const interest = { resource: "workspace-files", workspaceName: "alpha" } as const;
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.sent.length = 0;
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interests: [interest],
+        interestRevision: 1,
+      }),
+    );
+    socket.receive(
+      JSON.stringify({
+        type: "unsubscribe",
+        sessions: [],
+        interests: [interest],
+        interestRevision: 2,
+      }),
+    );
+    expect(frames(socket)).toEqual([]);
+    install({ status: "installed" });
+    await flushProtocol();
+    expect(frames(socket).filter(({ type }) => type === "resource.interests-ack")).toEqual([
+      {
+        type: "resource.interests-ack",
+        interestRevision: 1,
+        sequence: 0,
+        unavailableInterests: [],
+      },
+      {
+        type: "resource.interests-ack",
+        interestRevision: 2,
+        sequence: 0,
+        unavailableInterests: [],
+      },
+    ]);
+    expect(release).toHaveBeenCalledOnce();
+    socket.disconnect();
+  });
+
+  it("serializes an unversioned removal behind a pending acknowledged install", async () => {
+    let install!: (value: { status: "installed" }) => void;
+    const release = vi.fn();
+    _setResourceObservationOverrideForTests(() => ({
+      release,
+      ready: new Promise((resolve) => {
+        install = resolve;
+      }),
+    }));
+    const interest = { resource: "workspace-files", workspaceName: "alpha" } as const;
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.sent.length = 0;
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interests: [interest],
+        interestRevision: 1,
+      }),
+    );
+    socket.receive(JSON.stringify({ type: "unsubscribe", sessions: [], interests: [interest] }));
+    expect(release).not.toHaveBeenCalled();
+    install({ status: "installed" });
+    await flushProtocol();
+    expect(frames(socket).filter(({ type }) => type === "resource.interests-ack")).toEqual([
+      {
+        type: "resource.interests-ack",
+        interestRevision: 1,
+        sequence: 0,
+        unavailableInterests: [],
+      },
+    ]);
+    expect(release).toHaveBeenCalledOnce();
+    socket.disconnect();
+  });
+
+  it("reports an unavailable observer in the ack and retries the same key", async () => {
+    const release = vi.fn();
+    let attempt = 0;
+    _setResourceObservationOverrideForTests(() => ({
+      release,
+      ready: Promise.resolve({ status: ++attempt === 1 ? "unavailable" : "installed" }),
+    }));
+    const interest = { resource: "workspace-files", workspaceName: "alpha" } as const;
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.sent.length = 0;
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interests: [interest],
+        interestRevision: 1,
+      }),
+    );
+    await flushProtocol();
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interests: [interest],
+        interestRevision: 2,
+      }),
+    );
+    await flushProtocol();
+    expect(frames(socket).filter(({ type }) => type === "resource.interests-ack")).toEqual([
+      {
+        type: "resource.interests-ack",
+        interestRevision: 1,
+        sequence: 0,
+        unavailableInterests: [interest],
+      },
+      {
+        type: "resource.interests-ack",
+        interestRevision: 2,
+        sequence: 0,
+        unavailableInterests: [],
+      },
+    ]);
+    expect(release).toHaveBeenCalledOnce();
+    socket.disconnect();
+  });
+
+  it("keeps semantic hello and delivery free of real path-bearing session facts", () => {
+    const restore = _setTmuxRunner((args) => {
+      if (args[0] === "list-sessions") return "secret";
+      if (args[0] === "display-message") return "/Users/private/secret-project";
+      return "";
+    });
+    try {
+      const socket = new ProtocolWebSocket();
+      handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+      expect(frames(socket)[0]).toMatchObject({ type: "hello", sessions: [] });
+      socket.receive(
+        JSON.stringify({ type: "subscribe", sessions: ["secret"], legacyEvents: true }),
+      );
+      expect(JSON.stringify(frames(socket))).not.toContain("/Users/private/secret-project");
+      expect(JSON.stringify(frames(socket))).not.toContain("projectDir");
+      expect(frames(socket).some(({ type }) => type === "snapshot")).toBe(false);
+      socket.disconnect();
+    } finally {
+      restore();
+    }
+  });
+
   it("binds the initial hello to the supplied daemon generation", () => {
     const socket = new ProtocolWebSocket();
     handleWsEventsConnection(socket, daemonIdentity);
 
     expect(frames(socket)[0]).toMatchObject({ type: "hello", daemon: daemonIdentity });
+    socket.disconnect();
+  });
+
+  it("does no observation work before demand and never starts legacy observers for explicit demand", () => {
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    expect(_resourceObserverStateForTests()).toMatchObject({
+      sessions: 0,
+      projects: 0,
+      agents: 0,
+      fleet: 0,
+    });
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+      }),
+    );
+    expect(_resourceObserverStateForTests()).toMatchObject({
+      sessions: 0,
+      projects: 0,
+      agents: 0,
+      fleet: 0,
+    });
+    socket.disconnect();
+
+    const legacy = new ProtocolWebSocket();
+    handleWsEventsConnection(legacy, daemonIdentity);
+    legacy.receive(JSON.stringify({ type: "subscribe", sessions: [] }));
+    expect(_resourceObserverStateForTests()).toMatchObject({
+      sessions: 1,
+      projects: 1,
+      agents: 1,
+      fleet: 1,
+    });
+    legacy.disconnect();
+  });
+
+  it("keeps broad legacy observation and explicit workspace demand on one socket", () => {
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: true,
+        interests: [{ resource: "workspace-files", workspaceName: "mixed" }],
+      }),
+    );
+    expect(_resourceObserverStateForTests()).toMatchObject({
+      sessions: 1,
+      projects: 1,
+      agents: 1,
+      fleet: 1,
+      workspaces: [{ workspaceName: "mixed", references: 1 }],
+    });
+    socket.sent.length = 0;
+    broadcastResourceChanged(
+      { workspaceName: "other", resource: "workspace-files" },
+      daemonIdentity.instanceId,
+    );
+    expect(frames(socket)[0]).toMatchObject({ type: "resource.changed", workspaceName: "other" });
+    socket.disconnect();
+  });
+
+  it("hides unmatched interaction receipt identity behind an observed cursor", () => {
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.sent.length = 0;
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interests: [{ resource: "application-shell", workspaceName: "beta" }],
+      }),
+    );
+    socket.sent.length = 0;
+    broadcastInteractionReceipt(
+      {
+        operationId: "10000000-0000-4000-8000-000000000001",
+        origin: "external",
+        workspaceName: "alpha",
+        target: { kind: "pane", semanticPaneId: "pane.editor" },
+        operationKind: "workspace.pane.read",
+        phase: "observed",
+        summary: { operationKind: "workspace.pane.read", observedOnly: true },
+        proof: {
+          operationKind: "workspace.pane.read",
+          observed: true,
+          semanticPaneId: "pane.editor",
+        },
+      },
+      daemonIdentity.instanceId,
+    );
+    expect(frames(socket)).toEqual([{ type: "resource.observed", sequence: 1 }]);
+    expect(JSON.stringify(frames(socket))).not.toContain("alpha");
     socket.disconnect();
   });
 
@@ -164,6 +467,89 @@ describe("/ws/events client frame protocol", () => {
       expect.objectContaining({ type: "resource.changed", sequence: 3, revision: 9 }),
     ]);
     socket.disconnect();
+  });
+
+  it("delivers scoped invalidations only to explicit interests while preserving cursors", () => {
+    const shell = new ProtocolWebSocket();
+    const files = new ProtocolWebSocket();
+    handleWsEventsConnection(shell, daemonIdentity);
+    handleWsEventsConnection(files, daemonIdentity);
+    shell.sent.length = 0;
+    files.sent.length = 0;
+    shell.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        afterSequence: 0,
+        interests: [{ resource: "application-shell", workspaceName: "alpha" }],
+      }),
+    );
+    files.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        afterSequence: 0,
+        interests: [{ resource: "workspace-files", workspaceName: "beta" }],
+      }),
+    );
+    shell.sent.length = 0;
+    files.sent.length = 0;
+
+    broadcastResourceChanged(
+      { workspaceName: "alpha", resource: "application-shell" },
+      daemonIdentity.instanceId,
+    );
+    broadcastResourceChanged(
+      { workspaceName: "beta", resource: "workspace-files" },
+      daemonIdentity.instanceId,
+    );
+
+    expect(frames(shell)).toEqual([
+      expect.objectContaining({ type: "resource.changed", sequence: 1 }),
+      { type: "resource.observed", sequence: 2 },
+    ]);
+    expect(frames(files)).toEqual([
+      { type: "resource.observed", sequence: 1 },
+      expect.objectContaining({ type: "resource.changed", sequence: 2 }),
+    ]);
+    shell.disconnect();
+    files.disconnect();
+  });
+
+  it("refcounts shared observation demand and releases it after the last client", () => {
+    const one = new ProtocolWebSocket();
+    const two = new ProtocolWebSocket();
+    handleWsEventsConnection(one, daemonIdentity);
+    handleWsEventsConnection(two, daemonIdentity);
+    one.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interests: [{ resource: "workspace-files", workspaceName: "late-workspace" }],
+      }),
+    );
+    two.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interests: [{ resource: "workspace-files", workspaceName: "late-workspace" }],
+      }),
+    );
+    expect(_resourceObserverStateForTests()).toMatchObject({
+      sessions: 0,
+      projects: 0,
+      agents: 0,
+      fleet: 0,
+      workspaces: [{ workspaceName: "late-workspace", references: 2 }],
+    });
+    one.disconnect();
+    expect(_resourceObserverStateForTests().workspaces[0]?.references).toBe(1);
+    two.disconnect();
+    expect(_resourceObserverStateForTests().workspaces).toEqual([]);
   });
 
   it("orders privacy-safe interaction receipts with resources for every client and replay", () => {

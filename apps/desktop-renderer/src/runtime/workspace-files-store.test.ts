@@ -141,7 +141,10 @@ describe("workspace files catalog store", () => {
     const state = store.getState();
     expect(state.rootId).toBe("file.rootrootrootroot01");
     expect(state.root).toMatchObject({ status: "loaded", resource: { status: "ready" } });
-    expect(fetchWorkspaceFiles).toHaveBeenCalledWith({ workspaceName: "product workspace" });
+    expect(fetchWorkspaceFiles).toHaveBeenCalledWith(
+      { workspaceName: "product workspace" },
+      expect.any(AbortSignal),
+    );
     store.dispose();
   });
 
@@ -243,6 +246,38 @@ describe("workspace files catalog store", () => {
     store.dispose();
   });
 
+  it("propagates close cancellation into the production host read", async () => {
+    let readSignal: AbortSignal | undefined;
+    const fetchWorkspaceFiles = vi.fn(
+      async (
+        _request: unknown,
+        signal?: AbortSignal,
+      ): Promise<DesktopDaemonFetchWorkspaceFilesResult> => {
+        readSignal = signal;
+        return new Promise((resolve) => {
+          signal?.addEventListener(
+            "abort",
+            () =>
+              resolve({
+                status: "error",
+                error: { code: "disposed", reason: "cancelled" },
+              }),
+            { once: true },
+          );
+        });
+      },
+    );
+    const store = createWorkspaceFilesCatalogStore({
+      host: makeHost({ fetchWorkspaceFiles }),
+      target: TARGET,
+    });
+    await vi.waitFor(() => expect(readSignal).toBeDefined());
+    store.dispose();
+    expect(readSignal?.aborted).toBe(true);
+    await flush();
+    expect(store.getMetrics()).toMatchObject({ fetchesAborted: 1, activeInterests: 0 });
+  });
+
   it("reports an invalid target as an invalid-request slot", () => {
     const store = createWorkspaceFilesCatalogStore({
       host: makeHost({ fetchWorkspaceFiles: vi.fn() }),
@@ -297,10 +332,13 @@ describe("workspace file preview store", () => {
       fileId: "file.fillfillfillfill01",
       resource: { status: "ready" },
     });
-    expect(fetchWorkspaceFilePreview).toHaveBeenCalledWith({
-      workspaceName: "product workspace",
-      fileId: "file.fillfillfillfill01",
-    });
+    expect(fetchWorkspaceFilePreview).toHaveBeenCalledWith(
+      {
+        workspaceName: "product workspace",
+        fileId: "file.fillfillfillfill01",
+      },
+      expect.any(AbortSignal),
+    );
     store.dispose();
   });
 

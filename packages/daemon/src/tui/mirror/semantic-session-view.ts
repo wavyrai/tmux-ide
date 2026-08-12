@@ -4,6 +4,7 @@ import type { SessionPaneDescriptor } from "../../terminal/protocol/session-desc
 import type { MirrorSnapshot } from "./pane-mirror.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
 import type {
+  SemanticPaneCanonicalSnapshot,
   SemanticTerminalRenderSource,
   TerminalCellSearchMatch,
   TerminalCellTextRow,
@@ -54,7 +55,9 @@ export interface SemanticSessionViewOptions {
 export class SemanticSessionView {
   readonly #options: SemanticSessionViewOptions;
   #source: SemanticTerminalRenderSource | null = null;
-  #descriptors: SessionPaneDescriptor[] = [];
+  #inventoryDescriptors: SessionPaneDescriptor[] = [];
+  #runtimeDescriptors: SessionPaneDescriptor[] = [];
+  #runtimeAuthorityGeneration: string | null = null;
   #layouts = new Map<string, Extract<PaneStreamServerFrame, { type: "layout" }>>();
   #focused = "";
   #richPlacementCache = new Map<
@@ -76,7 +79,7 @@ export class SemanticSessionView {
   }
 
   setInventory(inventory: ApplicationShellTerminalInventory): void {
-    this.#descriptors = inventory.resources
+    this.#inventoryDescriptors = inventory.resources
       .filter((resource) => resource.attachability.status === "available")
       .map((resource) => ({
         runtimePaneId: resource.id,
@@ -93,9 +96,45 @@ export class SemanticSessionView {
         windowName: null,
         windowId: resource.windowResourceId ?? null,
       }));
+    if (this.#inventoryDescriptors.length === 0) {
+      this.#runtimeAuthorityGeneration = null;
+      this.#runtimeDescriptors = [];
+    }
     const active = inventory.activeResourceId ?? "";
-    if (active) this.#focused = active;
+    this.#focused = active;
     this.#options.onDirty?.();
+  }
+
+  /** Begin one physical semantic-lane authority generation, retiring every old raw join. */
+  setRuntimeAuthorityGeneration(generation: string): void {
+    if (generation === this.#runtimeAuthorityGeneration) return;
+    this.#runtimeAuthorityGeneration = generation;
+    this.#runtimeDescriptors = [];
+    this.#options.onDirty?.();
+  }
+
+  /** Retire local raw identity before an empty inventory, disconnect, or reconnect. */
+  retireRuntimeAuthority(): void {
+    if (this.#runtimeAuthorityGeneration === null && this.#runtimeDescriptors.length === 0) return;
+    this.#runtimeAuthorityGeneration = null;
+    this.#runtimeDescriptors = [];
+    this.#options.onDirty?.();
+  }
+
+  /** Accept process-local tmux identity proof only for the live physical authority. */
+  setRuntimeDescriptors(
+    authorityGeneration: string,
+    descriptors: readonly SessionPaneDescriptor[],
+  ): boolean {
+    if (authorityGeneration !== this.#runtimeAuthorityGeneration) return false;
+    this.#runtimeDescriptors = descriptors
+      .filter(
+        (descriptor) =>
+          /^%[0-9]+$/u.test(descriptor.runtimePaneId) && descriptor.semanticPaneId !== null,
+      )
+      .map((descriptor) => ({ ...descriptor }));
+    this.#options.onDirty?.();
+    return true;
   }
 
   acceptLayout(frame: Extract<PaneStreamServerFrame, { type: "layout" }>): void {
@@ -110,7 +149,21 @@ export class SemanticSessionView {
   }
 
   paneDescriptors(): SessionPaneDescriptor[] {
-    return this.#descriptors.map((descriptor) => ({ ...descriptor }));
+    const runtimeBySemantic = new Map<string, SessionPaneDescriptor[]>();
+    for (const descriptor of this.#runtimeDescriptors) {
+      const semanticPaneId = descriptor.semanticPaneId!;
+      runtimeBySemantic.set(semanticPaneId, [
+        ...(runtimeBySemantic.get(semanticPaneId) ?? []),
+        descriptor,
+      ]);
+    }
+    return this.#inventoryDescriptors.map((descriptor) => ({
+      ...(descriptor.semanticPaneId
+        ? runtimeBySemantic.get(descriptor.semanticPaneId)?.length === 1
+          ? runtimeBySemantic.get(descriptor.semanticPaneId)![0]!
+          : descriptor
+        : descriptor),
+    }));
   }
 
   panes(
@@ -233,6 +286,11 @@ export class SemanticSessionView {
     return placements;
   }
 
+  /** Retained canonical input for the deferred rich-preview feature. */
+  canonicalSnapshot(paneId: string): SemanticPaneCanonicalSnapshot | null {
+    return this.#source?.canonicalSnapshot(paneId) ?? null;
+  }
+
   windowSize(): { cols: number; rows: number } | null {
     const layout = [...this.#layouts.values()].find((candidate) => candidate.currentWindow);
     return layout ? { cols: layout.cols, rows: layout.rows } : null;
@@ -250,6 +308,9 @@ export class SemanticSessionView {
   dispose(): void {
     this.#layouts.clear();
     this.#source = null;
+    this.#inventoryDescriptors = [];
+    this.#runtimeDescriptors = [];
+    this.#runtimeAuthorityGeneration = null;
     this.#richPlacementCache.clear();
   }
 }

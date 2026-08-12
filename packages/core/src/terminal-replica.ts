@@ -432,6 +432,11 @@ export function hashTerminalReplicaTombstone(reason: string): string {
   return hashStable(["tombstone", reason]);
 }
 
+/** Canonical digest authenticated by a terminal rich-placement descriptor. */
+export function hashTerminalWidgetContent(id: string, args: unknown): string {
+  return hashTerminalReplicaTombstone(`${id}:${JSON.stringify(args)}`);
+}
+
 export function resolveTerminalReplicaColor(
   color: TerminalReplicaColor,
   defaults: { readonly foreground: number; readonly background: number },

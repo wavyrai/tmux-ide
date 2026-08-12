@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   DAEMON_RESOURCE_KINDS,
@@ -30,6 +30,7 @@ const REQUESTS: readonly DaemonResourceRequest[] = [
     request: { workspaceName: WORKSPACE, fileId: FILE_ID },
   },
   { resource: "fetchWorkspaceChanges", request: { workspaceName: WORKSPACE } },
+  { resource: "fetchWorkspaceMissions", request: { workspaceName: WORKSPACE } },
   {
     resource: "fetchWorkspaceChangeDiff",
     request: { workspaceName: WORKSPACE, changeId: CHANGE_ID },
@@ -149,6 +150,7 @@ describe("daemon resource request union", () => {
       "fetchWorkspaceChanges",
       "fetchWorkspaceFilePreview",
       "fetchWorkspaceFiles",
+      "fetchWorkspaceMissions",
     ]);
   });
 
@@ -166,6 +168,20 @@ describe("daemon resource request union", () => {
     expect(seen).toEqual([
       { resource: "listWorkspaces" },
       { resource: "fetchWorkspaceChanges", request: { workspaceName: WORKSPACE } },
+    ]);
+  });
+
+  it("preserves the one-argument dispatcher contract when no signal is supplied", async () => {
+    const dispatch = vi.fn(async () => ({
+      status: "error",
+      error: { code: "disposed", reason: "test" },
+    }));
+    const methods = createDaemonResourceMethods(dispatch);
+    await methods.capabilities();
+    await methods.fetchWorkspaceFiles({ workspaceName: WORKSPACE });
+    expect(dispatch.mock.calls[0]).toEqual([{ resource: "capabilities" }]);
+    expect(dispatch.mock.calls[1]).toEqual([
+      { resource: "fetchWorkspaceFiles", request: { workspaceName: WORKSPACE } },
     ]);
   });
 });

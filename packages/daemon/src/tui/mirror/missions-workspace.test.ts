@@ -19,9 +19,7 @@ import {
   MISSION_COLUMN_LABELS,
   MISSION_FOOTER_ROWS,
   MISSION_HEADER_ROWS,
-  MissionWorkspaceLoader,
   applyMissionWorkspaceHit,
-  clipTerminal,
   cycleMissionDensity,
   closeMissionDetail,
   defaultMissionWorkspaceModel,
@@ -41,7 +39,6 @@ import {
   pinnedPrimaryLine,
   moveMissionSelection,
   openMissionDetail,
-  readMissionWorkspace,
   reconcileMissionWorkspaceModel,
   resolveMissionDeepLink,
   scrollMissionWorkspace,
@@ -52,6 +49,11 @@ import {
   workspaceStateWithMissionModel,
   workspaceStateWithMissionSelection,
 } from "./missions-workspace.ts";
+import {
+  MissionWorkspaceLoader,
+  readMissionWorkspace,
+} from "./legacy/missions-workspace-loader.ts";
+import { clipTerminal } from "./terminal-text.ts";
 import {
   absoluteProjectPath,
   defaultWorkspaceUiState,

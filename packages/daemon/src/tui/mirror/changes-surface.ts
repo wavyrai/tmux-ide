@@ -1,6 +1,6 @@
 import type { RGBA } from "@opentui/core";
 import type { DiffEntry, DiffGroup, DiffLine, DiffLineKind, DiffRow } from "./diff-model.ts";
-import { clipTerminal } from "./missions-workspace.ts";
+import { clipTerminal } from "./terminal-text.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
 import { actionChipSpansFromRight, actionChipWidth, type Rect } from "./recipes.ts";
 

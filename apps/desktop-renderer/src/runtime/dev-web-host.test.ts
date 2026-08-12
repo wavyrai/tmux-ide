@@ -7,6 +7,7 @@ import {
   sameIdentity,
   type DevWorkspaceCatalogEntry,
 } from "./dev-web-host.ts";
+import { storeErrorRetryable } from "./workspace-surface-model.ts";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -97,6 +98,35 @@ describe("projectDaemonServerFrame", () => {
         CATALOG,
       ),
     ).toEqual([{ type: "application-shell.changed", workspaceName: "beta" }]);
+  });
+
+  it("projects typed workspace resources only with a verified daemon identity", () => {
+    const changed = frame({
+      type: "resource.changed",
+      sequence: 13,
+      workspaceName: "alpha",
+      resource: "workspace-files",
+      revision: 7,
+      causeOperationId: null,
+    });
+    expect(projectDaemonServerFrame(changed, CATALOG, IDENTITY.instanceId)).toEqual([
+      {
+        type: "workspace-files.changed",
+        workspaceName: "alpha",
+        daemonInstanceId: IDENTITY.instanceId,
+        sequence: 13,
+        revision: 7,
+        causeOperationId: null,
+      },
+    ]);
+    expect(projectDaemonServerFrame(changed, CATALOG)).toEqual([{ type: "workspaces.changed" }]);
+    expect(
+      projectDaemonServerFrame(
+        frame({ type: "resource.observed", sequence: 14, revision: 7 }),
+        CATALOG,
+        IDENTITY.instanceId,
+      ),
+    ).toEqual([]);
   });
 
   it("falls back to a full refresh when the replay journal reports a gap", () => {
@@ -211,6 +241,46 @@ describe("development web host route keying", () => {
       expect(paths).toContain(`/api/project/alpha${suffix}`);
     }
     expect(paths.some((path) => path.includes("alpha-session"))).toBe(false);
+    host.dispose();
+  });
+
+  it("aborts a browser-host HTTP resource read when demand closes", async () => {
+    let resourceSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/v2/capabilities") {
+          return new Response(
+            JSON.stringify({
+              status: "ok",
+              daemon: IDENTITY,
+              capabilities: { appWindowMutation: { available: true } },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.pathname === "/api/resources/workspace-catalog") {
+          return new Response(
+            JSON.stringify({ version: 1, daemon: IDENTITY, workspaces: [...CATALOG] }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        resourceSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          resourceSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const controller = new AbortController();
+    const pending = host.daemon.fetchWorkspaceFiles({ workspaceName: "alpha" }, controller.signal);
+    await vi.waitFor(() => expect(resourceSignal).toBeDefined());
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({ status: "error", error: { code: "disposed" } });
+    expect(resourceSignal?.aborted).toBe(true);
     host.dispose();
   });
 
@@ -339,6 +409,48 @@ describe("development gateway host sessions", () => {
     daemon: IDENTITY,
     capabilities: { appWindowMutation: { available: true } },
   };
+
+  it("retires an event subscribe aborted during host-session bootstrap", async () => {
+    let bootstrapSignal: AbortSignal | undefined;
+    const sockets: unknown[] = [];
+    vi.stubGlobal(
+      "WebSocket",
+      class {
+        constructor() {
+          sockets.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        expect(pathname).toBe("/__tmux_ide_host_session");
+        bootstrapSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          bootstrapSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const controller = new AbortController();
+    const pending = host.daemon.subscribe(
+      { workspaceNames: ["alpha"] },
+      vi.fn(),
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(bootstrapSignal).toBeDefined());
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({
+      status: "error",
+      error: { code: "disposed" },
+    });
+    expect(bootstrapSignal?.aborted).toBe(true);
+    expect(sockets).toHaveLength(0);
+    host.dispose();
+  });
 
   it("keeps a host session in one document generation and never revives sessionStorage", async () => {
     const readRetainedSession = vi.fn(() => "99999999-9999-4999-8999-999999999999");
@@ -492,6 +604,137 @@ describe("development gateway host sessions", () => {
     host.dispose();
   });
 
+  it("joins one newer refresh when concurrent callers reject the same stale generation", async () => {
+    const tokens = ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"];
+    let bootstrapCount = 0;
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const apiSessions: Array<string | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          const index = bootstrapCount++;
+          if (index === 1) await refreshGate;
+          return jsonResponse(200, { token: tokens[index] });
+        }
+        const session = (init?.headers as Record<string, string>)["X-Tmux-Ide-Dev-Host-Session"];
+        apiSessions.push(session);
+        return session === tokens[0]
+          ? jsonResponse(401, { code: "dev_host_session_invalid" })
+          : jsonResponse(200, capabilities);
+      }),
+    );
+
+    const host = createDevWebHostCapabilities(CONFIG);
+    const first = host.daemon.capabilities();
+    const second = host.daemon.capabilities();
+    await vi.waitFor(() => expect(bootstrapCount).toBe(2));
+    releaseRefresh();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ status: "ok" }),
+      expect.objectContaining({ status: "ok" }),
+    ]);
+    expect(bootstrapCount).toBe(2);
+    expect(apiSessions.filter((session) => session === tokens[1])).toHaveLength(2);
+    host.dispose();
+  });
+
+  it("keeps the physical bootstrap alive for a longer-lived waiter", async () => {
+    vi.useFakeTimers();
+    let bootstrapSignal: AbortSignal | undefined;
+    let releaseBootstrap!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          bootstrapSignal = init?.signal ?? undefined;
+          return new Promise<Response>((resolve) => {
+            releaseBootstrap = resolve;
+          });
+        }
+        return jsonResponse(200, capabilities);
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const shorter = host.daemon.capabilities();
+    await vi.advanceTimersByTimeAsync(1_000);
+    const longer = host.daemon.capabilities();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(bootstrapSignal?.aborted).toBe(false);
+    releaseBootstrap(jsonResponse(200, { token: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }));
+    const timedOut = await shorter;
+    expect(timedOut).toMatchObject({ status: "error", error: { code: "request-failed" } });
+    expect(timedOut.status === "error" && storeErrorRetryable(timedOut.error.code)).toBe(true);
+    await expect(longer).resolves.toMatchObject({ status: "ok" });
+    host.dispose();
+    vi.useRealTimers();
+  });
+
+  it("classifies caller cancellation as disposed without retiring a shared bootstrap", async () => {
+    let bootstrapSignal: AbortSignal | undefined;
+    let releaseBootstrap!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          bootstrapSignal = init?.signal ?? undefined;
+          return new Promise<Response>((resolve) => {
+            releaseBootstrap = resolve;
+          });
+        }
+        return jsonResponse(200, capabilities);
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const controller = new AbortController();
+    const cancelled = host.daemon.capabilities(controller.signal);
+    const survivor = host.daemon.capabilities();
+    controller.abort();
+    await expect(cancelled).resolves.toMatchObject({
+      status: "error",
+      error: { code: "disposed" },
+    });
+    expect(bootstrapSignal?.aborted).toBe(false);
+    releaseBootstrap(jsonResponse(200, { token: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }));
+    await expect(survivor).resolves.toMatchObject({ status: "ok" });
+    host.dispose();
+  });
+
+  it("propagates startup-readiness cancellation as disposed", async () => {
+    let readinessSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          return jsonResponse(200, { token: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" });
+        }
+        readinessSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          readinessSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const controller = new AbortController();
+    const pending = host.daemon.startupReadiness(controller.signal);
+    await vi.waitFor(() => expect(readinessSignal).toBeDefined());
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({
+      status: "error",
+      error: { code: "disposed" },
+    });
+    host.dispose();
+  });
+
   it("does not retry or mint a new host session for a business 409", async () => {
     const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let bootstrapCount = 0;
@@ -523,6 +766,179 @@ describe("development gateway host sessions", () => {
     expect(bootstrapCount).toBe(1);
     expect(actionCount).toBe(1);
     warned.mockRestore();
+    host.dispose();
+  });
+});
+
+class FakeEventSocket {
+  readonly sent: string[] = [];
+  readonly close = vi.fn();
+  readonly listeners = new Map<string, Array<(event: unknown) => void>>();
+  constructor(readonly url: string) {}
+  addEventListener(type: string, listener: (event: unknown) => void): void {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+  send(value: string): void {
+    this.sent.push(value);
+  }
+  emit(type: string, event: unknown = {}): void {
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+  message(value: unknown): void {
+    this.emit("message", { data: JSON.stringify(value) });
+  }
+}
+
+describe("development event authority barriers", () => {
+  const CONFIG = {
+    daemonOrigin: "http://127.0.0.1:6060",
+    daemonWebSocketOrigin: "ws://127.0.0.1:6060",
+    ownerToken: "owner-token",
+    transport: "direct" as const,
+  };
+
+  function eventHost() {
+    const sockets: FakeEventSocket[] = [];
+    vi.stubGlobal(
+      "WebSocket",
+      class extends FakeEventSocket {
+        constructor(url: string) {
+          super(url);
+          sockets.push(this);
+        }
+      },
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              status: "ok",
+              daemon: IDENTITY,
+              capabilities: { appWindowMutation: { available: true } },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+      ),
+    );
+    return { sockets, host: createDevWebHostCapabilities(CONFIG) };
+  }
+
+  it("ignores an ACK from a retired physical attempt", async () => {
+    const { sockets, host } = eventHost();
+    let explicitSettled = false;
+    const explicit = host.daemon
+      .subscribe(
+        {
+          workspaceNames: [],
+          resourceInterests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+        },
+        vi.fn(),
+      )
+      .then((result) => {
+        explicitSettled = true;
+        return result;
+      });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const retired = sockets[0]!;
+    retired.emit("open");
+    retired.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    const retiredRevision = JSON.parse(retired.sent[0]!).interestRevision as number;
+
+    const legacy = await host.daemon.subscribe({ workspaceNames: ["alpha"] }, vi.fn());
+    expect(legacy.status).toBe("subscribed");
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    retired.message({
+      type: "resource.interests-ack",
+      interestRevision: retiredRevision,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await Promise.resolve();
+    expect(explicitSettled).toBe(false);
+
+    const current = sockets[1]!;
+    current.emit("open");
+    current.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    const currentRevision = JSON.parse(current.sent[0]!).interestRevision as number;
+    current.message({
+      type: "resource.interests-ack",
+      interestRevision: currentRevision,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    expect((await explicit).status).toBe("subscribed");
+    host.dispose();
+  });
+
+  it("does not forget an unavailable required interest across later revisions", async () => {
+    const { sockets, host } = eventHost();
+    const first = host.daemon.subscribe(
+      {
+        workspaceNames: [],
+        resourceInterests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+      },
+      vi.fn(),
+    );
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit("open");
+    socket.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    const revisionOne = JSON.parse(socket.sent[0]!).interestRevision as number;
+    const secondEvents: unknown[] = [];
+    const second = host.daemon.subscribe(
+      {
+        workspaceNames: [],
+        resourceInterests: [{ resource: "workspace-changes", workspaceName: "alpha" }],
+      },
+      (event) => secondEvents.push(event),
+    );
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
+    const revisionTwo = JSON.parse(socket.sent[1]!).interestRevision as number;
+    socket.message({
+      type: "resource.interests-ack",
+      interestRevision: revisionOne,
+      sequence: 0,
+      unavailableInterests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+    });
+    socket.message({
+      type: "resource.interests-ack",
+      interestRevision: revisionTwo,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    expect(socket.close).toHaveBeenCalledWith(4011, "daemon resource observer unavailable");
+    expect(secondEvents).not.toContainEqual({
+      type: "connection.changed",
+      state: "live",
+      error: null,
+    });
+    await expect(first).resolves.toMatchObject({ status: "error" });
+    host.dispose();
+    await expect(second).resolves.toMatchObject({ status: "subscribed" });
+  });
+
+  it("retires an explicit interest immediately when its ACK barrier is cancelled", async () => {
+    const { sockets, host } = eventHost();
+    const controller = new AbortController();
+    const pending = host.daemon.subscribe(
+      {
+        workspaceNames: [],
+        resourceInterests: [{ resource: "workspace-files", workspaceName: "alpha" }],
+      },
+      vi.fn(),
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit("open");
+    socket.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({ status: "error", error: { code: "disposed" } });
+    expect(socket.close).toHaveBeenCalledWith(1000, "connection supervisor stopped");
     host.dispose();
   });
 });

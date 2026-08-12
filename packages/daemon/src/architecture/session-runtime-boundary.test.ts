@@ -1,7 +1,9 @@
 import { access, readdir, readFile } from "node:fs/promises";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../test-support/opentui-production-root-manifest.ts";
+import { loadLocalSourceImportGraph } from "../../test-support/source-import-graph.ts";
 
 const REPO = fileURLToPath(new URL("../../../../", import.meta.url));
 const CLIENT_ROOTS = [
@@ -10,8 +12,6 @@ const CLIENT_ROOTS = [
   "packages/sdk/src",
   "packages/daemon/src/tui",
 ] as const;
-
-const OPENTUI_PRODUCTION_ROOTS = ["packages/daemon/src/tui/mirror/app.tsx"] as const;
 
 const REQUIRED_SEMANTIC_RUNTIME_LANE = [
   "packages/daemon/src/tui/mirror/application-shell-daemon-runtime.ts",
@@ -85,55 +85,8 @@ async function matchesUnder(root: string, pattern: RegExp): Promise<string[]> {
   return findings.sort();
 }
 
-const LOCAL_MODULE_REFERENCE = /(?:from\s*|import\s*\(\s*|import\s*)["'](\.{1,2}\/[^"']+)["']/gu;
-
-async function firstExisting(candidates: readonly string[]): Promise<string | null> {
-  for (const candidate of candidates) {
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      // Try the next TypeScript source spelling.
-    }
-  }
-  return null;
-}
-
-async function resolveLocalModule(importer: string, specifier: string): Promise<string | null> {
-  const absolute = resolve(dirname(importer), specifier);
-  const extension = extname(absolute);
-  const withoutJs =
-    extension === ".js" || extension === ".jsx" ? absolute.slice(0, -extension.length) : null;
-  return firstExisting([
-    absolute,
-    ...(extension
-      ? []
-      : [
-          `${absolute}.ts`,
-          `${absolute}.tsx`,
-          join(absolute, "index.ts"),
-          join(absolute, "index.tsx"),
-        ]),
-    ...(withoutJs ? [`${withoutJs}.ts`, `${withoutJs}.tsx`] : []),
-  ]);
-}
-
 async function productionImportGraph(): Promise<string[]> {
-  const pending = OPENTUI_PRODUCTION_ROOTS.map((file) => join(REPO, file));
-  const visited = new Set<string>();
-
-  while (pending.length > 0) {
-    const file = pending.pop()!;
-    if (visited.has(file)) continue;
-    visited.add(file);
-    const source = await readFile(file, "utf8");
-    for (const match of source.matchAll(LOCAL_MODULE_REFERENCE)) {
-      const imported = await resolveLocalModule(file, match[1]!);
-      if (imported && imported.startsWith(REPO)) pending.push(imported);
-    }
-  }
-
-  return [...visited].map((file) => relative(REPO, file)).sort();
+  return (await loadLocalSourceImportGraph(REPO, OPENTUI_PRODUCTION_ROOT_SOURCES)).files.slice();
 }
 
 async function productionMatches(pattern: RegExp): Promise<string[]> {

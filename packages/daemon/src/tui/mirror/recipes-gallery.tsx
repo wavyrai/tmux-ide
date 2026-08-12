@@ -22,8 +22,8 @@ import {
   SegmentedControl,
   SelectableRow,
   Surface,
-} from "./recipes.tsx";
-import { clipTerminal } from "./missions-workspace.ts";
+} from "./recipe-components.tsx";
+import { clipTerminal } from "./terminal-text.ts";
 
 export interface RecipesGalleryProps {
   width: number;

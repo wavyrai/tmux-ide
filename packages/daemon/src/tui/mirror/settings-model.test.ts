@@ -17,9 +17,9 @@ import {
   type NotificationPrefs,
 } from "../chrome/notify.ts";
 import { prefixKeyBinds } from "../chrome/statusline.ts";
+import { PALETTE_KEYCAPS } from "./application-keybindings.ts";
+import { SETTINGS_PALETTE_COMMANDS } from "./features/settings/catalog.ts";
 import {
-  PALETTE_KEYCAPS,
-  SETTINGS_PALETTE_COMMANDS,
   THEME_PRESETS,
   delaySecondsPatch,
   delaySummary,

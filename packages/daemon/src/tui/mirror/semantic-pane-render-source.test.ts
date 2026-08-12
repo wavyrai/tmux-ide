@@ -87,6 +87,13 @@ describe("SemanticPaneReplica", () => {
     for (const chunk of delivery.chunks) replica.accept(chunk);
 
     expect(replica.snapshot?.grid[0]!.cells[0]!.grapheme).toBe("A");
+    expect(replica.canonicalSnapshot()).toMatchObject({
+      workspaceId: "workspace.alpha",
+      workspaceGeneration: generation,
+      paneId: pane,
+      paneGeneration: `${pane}:${delivery.envelope.incarnation}`,
+    });
+    expect(replica.canonicalSnapshot()?.snapshot).toBe(replica.snapshot);
     expect(ack).toHaveBeenCalledOnce();
     expect(change).toHaveBeenCalledOnce();
     expect(change.mock.calls[0]![0]).toMatchObject({

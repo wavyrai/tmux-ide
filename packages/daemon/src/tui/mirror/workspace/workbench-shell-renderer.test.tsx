@@ -4,7 +4,7 @@ import { useKeyboard } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { describe, expect, it } from "bun:test";
 import { COHESION_FIXTURE_V1, projectApplicationShellV1 } from "@tmux-ide/contracts";
-import { SelectableRow } from "../recipes.tsx";
+import { SelectableRow } from "../recipe-components.tsx";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
 import {

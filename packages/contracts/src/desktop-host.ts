@@ -38,6 +38,8 @@ import {
   WorkspaceFileResourceIdSchemaZ,
 } from "./workspace-resource-identity.ts";
 import { FleetCatalogResourceV1SchemaZ } from "./fleet-catalog.ts";
+import { WorkspaceMissionsEnvelopeV1SchemaZ } from "./workspace-missions-resource.ts";
+import { DaemonEventResourceInterestSchemaZ } from "./daemon-events.ts";
 import type { WorkspaceOpenHostResult } from "./workspace-open.ts";
 // Type-only, and deliberately so: `daemon-resource-request.ts` imports the
 // result schemas declared below, so a value import here would close a module
@@ -291,6 +293,15 @@ export const DesktopDaemonFetchWorkspaceChangesResultSchemaZ = z.discriminatedUn
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
+export const DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ = z
+  .object({ workspaceName: DesktopWorkspaceNameSchemaZ })
+  .strict();
+
+export const DesktopDaemonFetchWorkspaceMissionsResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), envelope: WorkspaceMissionsEnvelopeV1SchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
 export const DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ = z
   .object({
     workspaceName: DesktopWorkspaceNameSchemaZ,
@@ -336,17 +347,35 @@ export const DesktopDaemonEventSubscriptionRequestSchemaZ = z
      * subscriptions additionally receive events for the named workspaces.
      */
     workspaceNames: z.array(DesktopWorkspaceNameSchemaZ).max(64),
+    /** Optional explicit demand; omission preserves the legacy broad stream. */
+    resourceInterests: z.array(DaemonEventResourceInterestSchemaZ).max(128).optional(),
   })
   .strict()
-  .superRefine(({ workspaceNames }, ctx) => {
+  .superRefine(({ workspaceNames, resourceInterests }, ctx) => {
     if (new Set(workspaceNames).size !== workspaceNames.length) {
       ctx.addIssue({ code: "custom", message: "workspace names must be unique" });
+    }
+    if (
+      resourceInterests &&
+      new Set(
+        resourceInterests.map(
+          ({ resource, workspaceName }) => `${resource}\0${workspaceName ?? "global"}`,
+        ),
+      ).size !== resourceInterests.length
+    ) {
+      ctx.addIssue({ code: "custom", message: "resource interests must be unique" });
     }
   });
 
 export const DesktopDaemonSubscriptionIdSchemaZ = z
   .string()
   .regex(/^desktop-subscription-[1-9][0-9]{0,9}$/u);
+
+/** Renderer-minted correlation id used only to cancel an in-flight subscribe IPC. */
+export const DesktopDaemonSubscriptionRequestIdSchemaZ = z.uuid();
+
+/** Renderer-minted correlation id used only to cancel one in-flight resource read IPC. */
+export const DesktopDaemonRequestIdSchemaZ = z.uuid();
 
 /**
  * Derived transport health of the single daemon event connection, published by
@@ -401,6 +430,20 @@ export const DesktopDaemonEventSchemaZ = z.discriminatedUnion("type", [
       sequence: z.number().int().nonnegative().optional(),
       revision: z.number().int().nonnegative().optional(),
       causeOperationId: z.uuid().nullable().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.enum([
+        "workspace-files.changed",
+        "workspace-changes.changed",
+        "workspace-missions.changed",
+      ]),
+      workspaceName: DesktopWorkspaceNameSchemaZ,
+      daemonInstanceId: z.uuid(),
+      sequence: z.number().int().nonnegative(),
+      revision: z.number().int().nonnegative(),
+      causeOperationId: z.uuid().nullable(),
     })
     .strict(),
   InteractionReceiptSchemaZ,
@@ -496,6 +539,7 @@ export const DesktopDaemonSubscribeWireResultSchemaZ = z.discriminatedUnion("sta
 export const DesktopDaemonEventWireEnvelopeSchemaZ = z
   .object({
     subscriptionId: DesktopDaemonSubscriptionIdSchemaZ,
+    subscriptionRequestId: DesktopDaemonSubscriptionRequestIdSchemaZ,
     event: DesktopDaemonEventSchemaZ,
   })
   .strict();
@@ -567,6 +611,12 @@ export type DesktopDaemonFetchWorkspaceChangesRequest = z.infer<
 >;
 export type DesktopDaemonFetchWorkspaceChangesResult = z.infer<
   typeof DesktopDaemonFetchWorkspaceChangesResultSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceMissionsRequest = z.infer<
+  typeof DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ
+>;
+export type DesktopDaemonFetchWorkspaceMissionsResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceMissionsResultSchemaZ
 >;
 export type DesktopDaemonFetchWorkspaceChangeDiffRequest = z.infer<
   typeof DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ
@@ -648,6 +698,7 @@ export interface HostCapabilities {
     subscribe(
       request: DesktopDaemonEventSubscriptionRequest,
       listener: (event: DesktopDaemonEvent) => void,
+      signal?: AbortSignal,
     ): Promise<DesktopDaemonHostSubscriptionResult>;
   };
 }

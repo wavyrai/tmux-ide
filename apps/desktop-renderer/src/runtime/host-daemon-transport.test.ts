@@ -158,7 +158,10 @@ describe("HostCapabilities-backed daemon transport", () => {
       handlers,
     );
     await vi.waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
-    expect(subscribe.mock.calls[0]?.[0]).toEqual({ workspaceNames: ["product"] });
+    expect(subscribe.mock.calls[0]?.[0]).toEqual({
+      workspaceNames: [],
+      resourceInterests: [{ resource: "application-shell", workspaceName: "product" }],
+    });
 
     publish?.({ type: "connection.changed", state: "live", error: null });
     publish?.({ type: "application-shell.changed", workspaceName: "another-workspace" });

@@ -1,7 +1,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../test-support/opentui-production-root-manifest.ts";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../../..");
 
@@ -17,17 +19,95 @@ const ALLOWLIST = new Set([
   "packages/daemon/src/config.ts",
 ]);
 
-const DIRECT_LEGACY_PROBE =
-  /\b(?:existsSync|readFileSync|writeFileSync|stat|pathKind|join|resolve)\s*\([^;\n]*(["'])ide\.yml\1/u;
-const DIRECT_COMPAT_IMPORT =
-  /import\s*\{[^}]*\b(?:readConfig|getSessionName|hasLaunchConfig|hasLegacyConfigAt|legacyConfigPath)\b[^}]*\}\s*from\s*(["']).*?\1/u;
-const DIRECT_COMPAT_CALL = /\b(?:readConfig|getSessionName|hasLaunchConfig)\s*\(/u;
+const LEGACY_PROBE_CALLS = new Set([
+  "existsSync",
+  "readFileSync",
+  "writeFileSync",
+  "stat",
+  "pathKind",
+  "join",
+  "resolve",
+]);
+const COMPAT_IMPORTS = new Set([
+  "readConfig",
+  "getSessionName",
+  "hasLaunchConfig",
+  "hasLegacyConfigAt",
+  "legacyConfigPath",
+]);
+const DIRECT_COMPAT_CALLS = new Set(["readConfig", "getSessionName", "hasLaunchConfig"]);
+const POTENTIAL_LEGACY_ACCESS =
+  /ide\.yml|\b(?:readConfig|getSessionName|hasLaunchConfig|hasLegacyConfigAt|legacyConfigPath)\b/u;
+
+/**
+ * Locate direct compatibility access by syntax, rather than matching member
+ * calls such as an injected `host.readConfig()`. The latter is an ordinary
+ * capability port and must remain usable by deferred settings features.
+ */
+function directLegacyAccessLines(source: string, fileName: string): number[] {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const lines = new Set<number>();
+  const add = (node: ts.Node) => {
+    lines.add(sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1);
+  };
+  const containsLegacyPath = (node: ts.Node): boolean => {
+    let found = false;
+    const visit = (child: ts.Node): void => {
+      if (
+        (ts.isStringLiteralLike(child) || ts.isNoSubstitutionTemplateLiteral(child)) &&
+        child.text === "ide.yml"
+      ) {
+        found = true;
+        return;
+      }
+      if (!found) ts.forEachChild(child, visit);
+    };
+    visit(node);
+    return found;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && node.importClause?.namedBindings) {
+      const bindings = node.importClause.namedBindings;
+      if (ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          if (COMPAT_IMPORTS.has((element.propertyName ?? element.name).text)) add(element);
+        }
+      }
+    }
+    if (ts.isCallExpression(node)) {
+      if (ts.isIdentifier(node.expression) && DIRECT_COMPAT_CALLS.has(node.expression.text)) {
+        add(node.expression);
+      }
+      const callName = ts.isIdentifier(node.expression)
+        ? node.expression.text
+        : ts.isPropertyAccessExpression(node.expression)
+          ? node.expression.name.text
+          : null;
+      if (callName && LEGACY_PROBE_CALLS.has(callName) && containsLegacyPath(node)) add(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...lines].sort((left, right) => left - right);
+}
 
 function productionSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const absolute = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "dist" || entry.name === "coverage" || entry.name === "node_modules") {
+      if (
+        entry.name === "dist" ||
+        entry.name === "coverage" ||
+        entry.name === "node_modules" ||
+        entry.name === "__tests__" ||
+        entry.name === "test-support"
+      ) {
         return [];
       }
       return productionSources(absolute);
@@ -48,16 +128,14 @@ describe("legacy config access audit", () => {
       const relativePath = relative(repoRoot, absolute);
       if (ALLOWLIST.has(relativePath)) return [];
       const source = readFileSync(absolute, "utf-8");
-      return source
-        .split("\n")
-        .map((line, index) => ({ line, index: index + 1 }))
-        .filter(
-          ({ line }) =>
-            DIRECT_LEGACY_PROBE.test(line) ||
-            DIRECT_COMPAT_IMPORT.test(line) ||
-            DIRECT_COMPAT_CALL.test(line),
-        )
-        .map(({ index }) => `${relativePath}:${index}`);
+      // TypeScript AST construction dominates this repository-wide audit under
+      // coverage. The boundary can only be crossed by one of these literal
+      // path/API tokens, so reject irrelevant files before parsing without
+      // weakening the syntax-aware distinction from injected host methods.
+      if (!POTENTIAL_LEGACY_ACCESS.test(source)) return [];
+      return directLegacyAccessLines(source, relativePath).map(
+        (lineNumber) => `${relativePath}:${lineNumber}`,
+      );
     });
 
     expect(offenders).toEqual([]);
@@ -81,11 +159,7 @@ describe("legacy config access audit", () => {
   });
 
   it("does not swallow invalid config resolution in active config probes", () => {
-    const files = [
-      "bin/cli.ts",
-      "packages/daemon/src/cli.ts",
-      "packages/daemon/src/tui/mirror/app.tsx",
-    ];
+    const files = ["bin/cli.ts", "packages/daemon/src/cli.ts", ...OPENTUI_PRODUCTION_ROOT_SOURCES];
 
     const offenders = files.filter((file) => {
       const source = readFileSync(join(repoRoot, file), "utf-8");
