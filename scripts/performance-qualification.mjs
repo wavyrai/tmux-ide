@@ -16,6 +16,7 @@ const summaryPath = resolve(
   process.env.TMUX_IDE_QUALIFICATION_SUMMARY ?? "artifacts/performance-qualification-summary.md",
 );
 const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+const commit = currentCommit();
 
 validateReferenceBudget(baseline.referenceLatencyBudget);
 validateReferenceResult(baseline.referenceResult);
@@ -261,7 +262,7 @@ const stageTimings = Object.fromEntries(
 const report = {
   version: 2,
   generatedAt: new Date().toISOString(),
-  commit: currentCommit(),
+  commit,
   portableGate: {
     status: failed ? "failed" : "passed",
     suites: results,
@@ -274,9 +275,11 @@ const report = {
     status:
       baseline.referenceResult === null
         ? "not-measured"
-        : baseline.referenceResult.observedP95Ms <= baseline.referenceLatencyBudget.p95Ms
-          ? "passed"
-          : "failed",
+        : baseline.referenceResult.commit !== commit
+          ? "stale-commit"
+          : baseline.referenceResult.observedP95Ms <= baseline.referenceLatencyBudget.p95Ms
+            ? "passed"
+            : "failed",
   },
   limitations: [
     "Suite wall durations are runner diagnostics, not UI latency measurements.",

@@ -66,7 +66,8 @@ baseline at `performance/qualification-baseline.json` declares only this budget:
 
 The separate reference result is nullable. It may be populated only with a host,
 commit, ISO-8601 measurement time, positive sample count, and observed p95 from a real
-reference run. Input and paint endpoints must use the same client monotonic clock.
+reference run. A result from any commit other than the report commit is marked stale.
+Input and paint endpoints must use the same client monotonic clock.
 Portable CI currently reports input → tmux → parse → reduce → transport → paint stage
 timings as `not-measured`; cross-process timestamps and suite durations are never
 subtracted or relabeled as UI latency.

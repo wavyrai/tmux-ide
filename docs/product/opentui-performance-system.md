@@ -196,7 +196,8 @@ Additional invariants:
 The checked-in 16.67 ms value is a **reference budget**, not an observed result. A
 reference result remains `null` until a separate run records its host, commit,
 measurement timestamp, sample count, and observed p95. Input and paint endpoints in
-that run must share one client monotonic clock. Per-process input → tmux → parse →
+that run must share one client monotonic clock, and a result for another commit is
+reported as stale. Per-process input → tmux → parse →
 reduce → transport → paint spans likewise remain `not-measured` in the portable report
 until production-path collection exists; suite wall time is never substituted.
 
