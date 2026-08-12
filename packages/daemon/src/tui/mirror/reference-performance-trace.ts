@@ -29,7 +29,6 @@ export function installReferencePerformanceTraceCollectorFromEnvironment(): void
     commit: SOURCE_COMMIT,
     tree: SOURCE_TREE,
     append,
-    diagnostics: true,
   });
   installTuiPerformanceEventSink(sink);
 }
@@ -42,7 +41,6 @@ export function createReferencePerformanceTraceSink(options: {
   readonly createTraceId?: () => string;
   readonly processId?: string;
   readonly startedAt?: string;
-  readonly diagnostics?: boolean;
 }): TuiPerformanceEventSink {
   const nowMicros = options.nowMicros ?? (() => Math.floor(performance.now() * 1_000));
   const createTraceId = options.createTraceId ?? randomUUID;
@@ -79,14 +77,6 @@ export function createReferencePerformanceTraceSink(options: {
         expiresAtMicros: startedAtMicros + INPUT_EXPIRY_MICROS,
         endedAtMicros: null,
       });
-      if (options.diagnostics)
-        options.append({
-          version: 1,
-          type: "performance.trace.diagnostic",
-          phase: "input-begin",
-          traceId,
-          atMicros: startedAtMicros,
-        });
       let finished = false;
       return Object.freeze({
         traceId,
@@ -99,17 +89,8 @@ export function createReferencePerformanceTraceSink(options: {
         cancel: () => inputs.delete(traceId),
       });
     },
-    terminalTraceSpan: (paint: TuiTerminalTraceSpanEvent) => {
-      if (options.diagnostics)
-        options.append({
-          version: 1,
-          type: "performance.trace.diagnostic",
-          phase: "paint-span",
-          traceId: paint.traceId,
-          atMicros: paint.endedAtMicros,
-        });
-      recordCompletedTrace(inputs, paint, options.append);
-    },
+    terminalTraceSpan: (paint: TuiTerminalTraceSpanEvent) =>
+      recordCompletedTrace(inputs, paint, options.append),
   });
 }
 
