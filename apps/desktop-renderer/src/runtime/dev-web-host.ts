@@ -475,10 +475,17 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     if (disposed) throw new DevHostFailure(DISPOSED);
     if (signal?.aborted) throw new DevHostFailure(DISPOSED);
     const controller = new AbortController();
-    const cancel = () => controller.abort();
+    let abortCause: "caller" | "deadline" | null = null;
+    const cancel = () => {
+      if (abortCause === null) abortCause = "caller";
+      controller.abort();
+    };
     signal?.addEventListener("abort", cancel, { once: true });
     controllers.add(controller);
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => {
+      if (abortCause === null) abortCause = "deadline";
+      controller.abort();
+    }, timeoutMs);
     try {
       let hostSession = await loadDevHostSession(null, controller.signal, timeoutMs);
       const gatewayLogicalGet = config.transport === "same-origin-gateway" && init.method === "GET";
@@ -549,8 +556,13 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       }
       return await response.json();
     } catch (error) {
-      if (error instanceof DevHostFailure) throw error;
-      throw new DevHostFailure(disposed || signal?.aborted ? DISPOSED : REQUEST_FAILED);
+      if (error instanceof DevHostFailure) {
+        if (error.error.code === "disposed" && abortCause === "deadline" && !disposed) {
+          throw new DevHostFailure(REQUEST_FAILED);
+        }
+        throw error;
+      }
+      throw new DevHostFailure(disposed || abortCause === "caller" ? DISPOSED : REQUEST_FAILED);
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", cancel);

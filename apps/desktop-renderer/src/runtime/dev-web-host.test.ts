@@ -7,6 +7,7 @@ import {
   sameIdentity,
   type DevWorkspaceCatalogEntry,
 } from "./dev-web-host.ts";
+import { storeErrorRetryable } from "./workspace-surface-model.ts";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -666,10 +667,43 @@ describe("development gateway host sessions", () => {
     await vi.advanceTimersByTimeAsync(4_000);
     expect(bootstrapSignal?.aborted).toBe(false);
     releaseBootstrap(jsonResponse(200, { token: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }));
-    await expect(shorter).resolves.toMatchObject({ status: "error" });
+    const timedOut = await shorter;
+    expect(timedOut).toMatchObject({ status: "error", error: { code: "request-failed" } });
+    expect(timedOut.status === "error" && storeErrorRetryable(timedOut.error.code)).toBe(true);
     await expect(longer).resolves.toMatchObject({ status: "ok" });
     host.dispose();
     vi.useRealTimers();
+  });
+
+  it("classifies caller cancellation as disposed without retiring a shared bootstrap", async () => {
+    let bootstrapSignal: AbortSignal | undefined;
+    let releaseBootstrap!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
+        if (pathname === "/__tmux_ide_host_session") {
+          bootstrapSignal = init?.signal ?? undefined;
+          return new Promise<Response>((resolve) => {
+            releaseBootstrap = resolve;
+          });
+        }
+        return jsonResponse(200, capabilities);
+      }),
+    );
+    const host = createDevWebHostCapabilities(CONFIG);
+    const controller = new AbortController();
+    const cancelled = host.daemon.capabilities(controller.signal);
+    const survivor = host.daemon.capabilities();
+    controller.abort();
+    await expect(cancelled).resolves.toMatchObject({
+      status: "error",
+      error: { code: "disposed" },
+    });
+    expect(bootstrapSignal?.aborted).toBe(false);
+    releaseBootstrap(jsonResponse(200, { token: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }));
+    await expect(survivor).resolves.toMatchObject({ status: "ok" });
+    host.dispose();
   });
 
   it("propagates startup-readiness cancellation as disposed", async () => {
