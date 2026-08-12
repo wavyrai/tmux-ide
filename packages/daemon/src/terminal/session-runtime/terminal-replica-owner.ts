@@ -45,7 +45,7 @@ export class SessionRuntimeTerminalReplicaOwner {
   readonly #onClosed: (() => void) | undefined;
   readonly #onFault: ((error: unknown) => void) | undefined;
   readonly #scheduler: SessionRuntimeScheduler;
-  readonly #takeOutputTrace: (() => SessionRuntimeTraceContext | null) | undefined;
+  #takeOutputTrace: (() => SessionRuntimeTraceContext | null) | undefined;
   readonly #start: Promise<void>;
   #upstream: MirrorSubscription | null = null;
   #disposed = false;
@@ -137,6 +137,10 @@ export class SessionRuntimeTerminalReplicaOwner {
         if (this.#disposed) return subscription.close();
         this.#upstream = subscription;
       });
+  }
+
+  installOutputTraceReader(reader: () => SessionRuntimeTraceContext | null): void {
+    this.#takeOutputTrace ??= reader;
   }
 
   qualificationSnapshot(): TerminalReplicaQualificationSnapshot {

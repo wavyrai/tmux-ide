@@ -8,7 +8,7 @@ import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.t
 import { ScriptedChannelDriver } from "../mirror/__tests__/scripted-channel.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
 import { createSessionRuntimeObservability } from "./runtime-observability.ts";
-import type { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
+import { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
 
 const GENERATION = "11111111-1111-4111-8111-111111111111";
 const OFFER = {
@@ -233,10 +233,8 @@ describe("real SessionRuntime qualification", () => {
     await registry.dispose();
   });
 
-  it("does not construct or consult trace correlation while observability is disabled", async () => {
-    const createTraceCorrelator = vi.fn(() => {
-      throw new Error("disabled trace correlator must stay untouched");
-    });
+  it("keeps correlation dormant without probes and propagates explicit probes when observability is disabled", async () => {
+    const createTraceCorrelator = vi.fn((scheduler) => new RuntimeTraceCorrelator(scheduler));
     const { registry, drivers } = rig(GENERATION, {
       observability: null,
       createTraceCorrelator,
@@ -263,6 +261,19 @@ describe("real SessionRuntime qualification", () => {
       "disabled trace output",
     );
     expect(createTraceCorrelator).not.toHaveBeenCalled();
+    expect(registry.qualificationSnapshot().observability).toEqual({ spans: [], droppedSpans: 0 });
+    connection.ack(ack(latest(messages)));
+    const traceId = "00000000-0000-4000-8000-000000000098";
+    const lease = client.acquireController();
+    const priorRevision = latest(messages).canonicalRevision;
+    client.sendInput(lease, "pane.alpha", "text", "trace", traceId);
+    drivers[0]!.output("%1", "TRACE");
+    await drivers[0]!.settleUntil(
+      () => latest(messages).canonicalRevision > priorRevision,
+      "explicit trace with disabled observability",
+    );
+    expect(latest(messages).performanceTraceId).toBe(traceId);
+    expect(createTraceCorrelator).toHaveBeenCalledOnce();
     expect(registry.qualificationSnapshot().observability).toEqual({ spans: [], droppedSpans: 0 });
     await connection.close();
     await client.close();

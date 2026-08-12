@@ -57,6 +57,7 @@ import {
   DISABLED_SESSION_RUNTIME_OBSERVABILITY,
   type SessionRuntimeObservability,
   type SessionRuntimeObservabilitySnapshot,
+  type SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
 import { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
 
@@ -515,7 +516,8 @@ class SessionRuntime {
   readonly #consumersByClientId = new Map<string, SessionRuntimeConsumerImpl>();
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
-  readonly #outputTraces: RuntimeTraceCorrelator | null;
+  #outputTraces: RuntimeTraceCorrelator | null;
+  readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #terminalDeliveryHub: SessionRuntimeTerminalDeliveryHub;
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
@@ -557,6 +559,7 @@ class SessionRuntime {
   ) {
     this.#mirror = mirror;
     this.#scheduler = scheduler;
+    this.#createTraceCorrelator = createTraceCorrelator;
     this.#outputTraces = observability.enabled ? createTraceCorrelator(scheduler) : null;
     this.#observability = observability;
     this.#createControllerToken = createControllerToken;
@@ -727,18 +730,26 @@ class SessionRuntime {
   ): void {
     this.assertController(lease, clientId);
     if (performanceTraceId !== undefined) performanceTraceId = z.uuid().parse(performanceTraceId);
-    const trace = this.#observability.enabled
-      ? this.#observability.beginTrace(
-          "terminal-input-to-paint",
-          {
+    const trace: SessionRuntimeTraceContext | null = performanceTraceId
+      ? Object.freeze({
+          traceId: performanceTraceId,
+          scenario: "terminal-input-to-paint",
+          authority: { generation: this.generation, incarnation: null },
+        })
+      : this.#observability.enabled
+        ? this.#observability.beginTrace("terminal-input-to-paint", {
             generation: this.generation,
             incarnation: null,
-          },
-          performanceTraceId,
-        )
-      : null;
+          })
+        : null;
     const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-    if (trace && performanceTraceId) this.#outputTraces?.arm(semanticPaneId, trace);
+    if (trace && performanceTraceId) {
+      this.#outputTraces ??= this.#createTraceCorrelator(this.#scheduler);
+      this.#terminalReplicaOwner(semanticPaneId).installOutputTraceReader(() =>
+        this.#takeOutputTrace(semanticPaneId),
+      );
+      this.#outputTraces.arm(semanticPaneId, trace);
+    }
     try {
       if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId, data);
       else this.#mirror.sendKey(this.session, semanticPaneId, data);
@@ -881,21 +892,7 @@ class SessionRuntime {
           scheduler: this.#scheduler,
           observability: this.#observability,
           ...(this.#outputTraces
-            ? {
-                takeOutputTrace: () => {
-                  const pending = this.#outputTraces?.take(semanticPaneId) ?? null;
-                  return pending
-                    ? this.#observability.beginTrace(
-                        pending.scenario,
-                        {
-                          generation: this.generation,
-                          incarnation: `${this.generation}:${clock.epoch}`,
-                        },
-                        pending.traceId,
-                      )
-                    : null;
-                },
-              }
+            ? { takeOutputTrace: () => this.#takeOutputTrace(semanticPaneId) }
             : {}),
         },
       );
@@ -903,6 +900,18 @@ class SessionRuntime {
       this.#terminalReplicas.set(semanticPaneId, owner);
     }
     return owner;
+  }
+
+  #takeOutputTrace(semanticPaneId: string): SessionRuntimeTraceContext | null {
+    const pending = this.#outputTraces?.take(semanticPaneId) ?? null;
+    if (!pending) return null;
+    const incarnation = this.#terminalReplicas
+      .get(semanticPaneId)
+      ?.qualificationSnapshot().incarnation;
+    const authority = { generation: this.generation, incarnation: incarnation ?? null };
+    return this.#observability.enabled
+      ? this.#observability.beginTrace(pending.scenario, authority, pending.traceId)
+      : Object.freeze({ ...pending, authority });
   }
 
   release(consumer: SessionRuntimeConsumerImpl): void {
