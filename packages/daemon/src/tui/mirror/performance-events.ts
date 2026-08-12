@@ -8,6 +8,13 @@ export interface TuiPerformanceEventSink {
   readonly terminalPaint: (dirtyRows: number, durationMs: number) => void;
   readonly terminalDelivery: (event: TuiTerminalDeliveryPerformanceEvent) => void;
   readonly terminalTraceSpan?: (event: TuiTerminalTraceSpanEvent) => void;
+  readonly beginTerminalInput?: () => TuiTerminalInputTrace;
+}
+
+export interface TuiTerminalInputTrace {
+  readonly traceId: string;
+  readonly finish: () => void;
+  readonly cancel: () => void;
 }
 
 export interface TuiTerminalTraceSpanEvent {

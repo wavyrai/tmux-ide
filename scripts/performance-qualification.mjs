@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { gitSourceIdentity, validateReferenceReport } from "./lib/performance-reference-report.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const baselinePath = resolve(root, "performance/qualification-baseline.json");
@@ -16,7 +17,16 @@ const summaryPath = resolve(
   process.env.TMUX_IDE_QUALIFICATION_SUMMARY ?? "artifacts/performance-qualification-summary.md",
 );
 const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
-const commit = currentCommit();
+const source = gitSourceIdentity(root);
+const commit = source.commit;
+const referenceReport = process.env.TMUX_IDE_REFERENCE_REPORT
+  ? validateReferenceReport(
+      JSON.parse(readFileSync(resolve(root, process.env.TMUX_IDE_REFERENCE_REPORT), "utf8")),
+      source,
+    )
+  : null;
+if (referenceReport && referenceReport.status !== "passed")
+  throw new Error(`Explicit reference qualification is ${referenceReport.status}, not passed`);
 
 validateReferenceBudget(baseline.referenceLatencyBudget);
 validateReferenceResult(baseline.referenceResult);
@@ -175,29 +185,36 @@ const scenarioDefinitions = [
   ),
   {
     id: "cold-and-warm-startup",
-    coverage: "not-covered",
+    coverage: referenceReport ? "measured-reference-only" : "not-covered",
     suites: [],
     assertions: [],
-    reason:
-      "No deterministic portable test currently measures cold and warm startup through first paint.",
+    reason: referenceReport
+      ? `Reference startup measurement is ${referenceReport.measurements.startup.status}; portable CI does not infer it.`
+      : "No deterministic portable test currently measures cold and warm startup through first paint.",
   },
   {
     id: "reference-input-to-paint-latency",
-    coverage: baseline.referenceResult === null ? "not-measured" : "measured-reference-only",
+    coverage:
+      referenceReport?.measurements.inputToPaint.status === "passed"
+        ? "measured-reference-only"
+        : "not-measured",
     suites: [],
     assertions: [],
-    reason:
-      baseline.referenceResult === null
-        ? "The portable gate validates the budget evaluator but does not measure wall-clock UI latency."
-        : "The result was measured on the separately recorded reference host; portable CI does not infer it.",
+    reason: referenceReport
+      ? `Reference input-to-paint measurement is ${referenceReport.measurements.inputToPaint.status}; portable CI does not infer it.`
+      : "The portable gate validates the budget evaluator but does not measure wall-clock UI latency.",
   },
   {
     id: "process-memory-slope",
-    coverage: "not-measured",
+    coverage:
+      referenceReport?.measurements.memory.status === "passed"
+        ? "measured-reference-only"
+        : "not-measured",
     suites: [],
     assertions: [],
-    reason:
-      "Portable tests prove bounded queues and caches, but do not claim deterministic RSS or heap slope.",
+    reason: referenceReport
+      ? `Reference memory measurement is ${referenceReport.measurements.memory.status}; portable CI does not infer it.`
+      : "Portable tests prove bounded queues and caches, but do not claim deterministic RSS or heap slope.",
   },
 ];
 
@@ -248,14 +265,17 @@ const scenarioEvidence = scenarioDefinitions.map((definition) => {
   };
 });
 
+const measuredStages = referenceReport?.measurements.inputToPaint.summary?.stages ?? {};
 const stageTimings = Object.fromEntries(
   ["input", "tmux", "parse", "reduce", "transport", "paint"].map((stage) => [
     stage,
-    {
-      status: "not-measured",
-      reason:
-        "Portable CI validates trace contracts but does not yet collect production-path stage samples.",
-    },
+    measuredStages[stage]
+      ? { status: "measured-reference-only", summary: measuredStages[stage] }
+      : {
+          status: "not-measured",
+          reason:
+            "Portable CI validates trace contracts but does not collect production-path stage samples.",
+        },
   ]),
 );
 
@@ -281,9 +301,12 @@ const report = {
             ? "passed"
             : "failed",
   },
+  referenceQualification: referenceReport,
   limitations: [
     "Suite wall durations are runner diagnostics, not UI latency measurements.",
-    "Cold/warm startup, production stage timings, and process-memory slope remain explicitly unmeasured.",
+    referenceReport
+      ? "Reference-host measurements remain distinct from portable CI and are never generalized to other hosts."
+      : "Cold/warm startup, production stage timings, and process-memory slope remain explicitly unmeasured.",
     "Whether this workflow is required by repository branch protection is external to this artifact.",
   ],
 };
@@ -330,15 +353,6 @@ function validateReferenceResult(result) {
     throw new TypeError("referenceResult.observedP95Ms must be finite and non-negative");
 }
 
-function currentCommit() {
-  const result = spawnSync("git", ["rev-parse", "HEAD"], {
-    cwd: root,
-    encoding: "utf8",
-    stdio: "pipe",
-  });
-  return result.status === 0 ? result.stdout.trim() : null;
-}
-
 function markdownSummary(value) {
   const lines = [
     "## Performance qualification",
@@ -362,6 +376,9 @@ function markdownSummary(value) {
     value.referenceLatency.result === null
       ? "Reference measurement: **not recorded**."
       : `Reference measurement: **${value.referenceLatency.result.observedP95Ms} ms p95** (${value.referenceLatency.result.samples} samples, ${value.referenceLatency.status}).`,
+    value.referenceQualification
+      ? `Explicit reference artifact: **${value.referenceQualification.status}** (${value.referenceQualification.provenance.cpuModel}).`
+      : "Explicit reference artifact: **not provided**.",
     "",
   ];
   return `${lines.join("\n")}\n`;

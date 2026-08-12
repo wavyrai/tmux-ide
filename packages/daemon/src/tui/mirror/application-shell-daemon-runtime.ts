@@ -39,8 +39,8 @@ export interface OpenTuiSessionRuntimeLane {
   readonly ownsInput: boolean;
   readonly ownsGeometry: boolean;
   readonly source: SemanticTerminalRenderSource;
-  sendText(semanticPaneId: string, text: string): void;
-  sendKey(semanticPaneId: string, key: string): void;
+  sendText(semanticPaneId: string, text: string, performanceTraceId?: string): void;
+  sendKey(semanticPaneId: string, key: string, performanceTraceId?: string): void;
   fitViewport(cols: number, rows: number): Promise<void>;
   submit(
     intent: SessionRuntimeSemanticIntent,
@@ -183,13 +183,13 @@ export async function connectOpenTuiSessionRuntime(
     ownsInput: viewerMode === "interactive",
     ownsGeometry: viewerMode === "interactive",
     source,
-    sendText: (semanticPaneId, text) => {
+    sendText: (semanticPaneId, text, performanceTraceId) => {
       requireInteractive();
-      activeClient.sendText(semanticPaneId, text);
+      activeClient.sendText(semanticPaneId, text, performanceTraceId);
     },
-    sendKey: (semanticPaneId, key) => {
+    sendKey: (semanticPaneId, key, performanceTraceId) => {
       requireInteractive();
-      activeClient.sendKey(semanticPaneId, key);
+      activeClient.sendKey(semanticPaneId, key, performanceTraceId);
     },
     fitViewport: (cols, rows) => {
       requireInteractive();

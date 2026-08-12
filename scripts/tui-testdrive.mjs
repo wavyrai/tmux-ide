@@ -305,6 +305,13 @@ async function start(args) {
     `TMUX_IDE_CLI=${shQuote(join(repoRoot, "bin", "cli.js"))}`,
     `TMUX_IDE_TUI_PERF_LOG=${shQuote(perfLogPath)}`,
     `TMUX_IDE_TUI_LAUNCH_EPOCH_MS=${launchEpochMs}`,
+    ...(process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG
+      ? [
+          `TMUX_IDE_PERFORMANCE_TRACE_LOG=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG)}`,
+          `TMUX_IDE_PERFORMANCE_TRACE_COMMIT=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_COMMIT ?? "")}`,
+          `TMUX_IDE_PERFORMANCE_TRACE_TREE=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_TREE ?? "")}`,
+        ]
+      : []),
     ...(process.env.TMUX_IDE_ZZ_LOG
       ? [`TMUX_IDE_ZZ_LOG=${shQuote(process.env.TMUX_IDE_ZZ_LOG)}`]
       : []),

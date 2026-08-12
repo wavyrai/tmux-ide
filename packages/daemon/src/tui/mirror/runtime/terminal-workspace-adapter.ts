@@ -11,6 +11,7 @@ import { SemanticSessionView } from "../semantic-session-view.ts";
 import { SemanticTerminalRenderSource } from "../semantic-pane-render-source.ts";
 import type { TerminalPaletteProjection } from "../theme.ts";
 import type { OpenTuiSessionRuntimeLane } from "../application-shell-daemon-runtime.ts";
+import { currentTuiPerformanceEventSink } from "../performance-events.ts";
 import type { TuiApplicationLifecycle } from "./application-lifecycle.ts";
 
 export type OpenTuiTerminalRuntimeFactory = () => Promise<OpenTuiSessionRuntimeLane | null>;
@@ -148,14 +149,30 @@ export class OpenTuiTerminalWorkspaceAdapter {
   sendText(paneId: string, text: string): boolean {
     const lane = this.#lane;
     if (!this.#lifecycle.accepting || !lane?.ownsInput) return false;
-    lane.sendText(paneId, text);
+    const trace = currentTuiPerformanceEventSink()?.beginTerminalInput?.();
+    try {
+      if (trace) lane.sendText(paneId, text, trace.traceId);
+      else lane.sendText(paneId, text);
+      trace?.finish();
+    } catch (error) {
+      trace?.cancel();
+      throw error;
+    }
     return true;
   }
 
   sendKey(paneId: string, key: string): boolean {
     const lane = this.#lane;
     if (!this.#lifecycle.accepting || !lane?.ownsInput) return false;
-    lane.sendKey(paneId, key);
+    const trace = currentTuiPerformanceEventSink()?.beginTerminalInput?.();
+    try {
+      if (trace) lane.sendKey(paneId, key, trace.traceId);
+      else lane.sendKey(paneId, key);
+      trace?.finish();
+    } catch (error) {
+      trace?.cancel();
+      throw error;
+    }
     return true;
   }
 
