@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { hostname, arch, cpus, platform, release, version as osVersion } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname, arch, cpus, platform, release, tmpdir, version as osVersion } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -25,7 +25,7 @@ const options = parseOptions(process.argv.slice(2));
 const reportPath = resolve(root, options.report);
 const lifecyclePath = resolve(root, ".tasks/tui-testdrive/performance.jsonl");
 const target = `tmux-ide-reference-${process.pid}`;
-const referenceProjectDir = resolve(root, `.tasks/performance-reference/${target}`);
+const referenceProjectDir = mkdtempSync(join(tmpdir(), `${target}-`));
 const source = gitSourceIdentity(root);
 
 if (source.dirty)
@@ -80,6 +80,7 @@ try {
   spawnSync("node", ["scripts/tui-testdrive.mjs", "stop"], { cwd: root, stdio: "ignore" });
   spawnSync("tmux", ["kill-session", "-t", `=${target}`], { stdio: "ignore" });
   await unregisterReferenceProject().catch(() => undefined);
+  rmSync(referenceProjectDir, { recursive: true, force: true });
 }
 
 async function registerReferenceProject() {
