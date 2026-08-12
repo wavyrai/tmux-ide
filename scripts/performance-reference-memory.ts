@@ -1,7 +1,6 @@
 import type {
   TerminalDeliveryAck,
   TerminalDeliveryEnvelope,
-  TerminalDeliveryServerMessage,
 } from "@tmux-ide/contracts";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -11,7 +10,10 @@ import { SessionRuntimeRegistry } from "../packages/daemon/src/terminal/session-
 
 const generation = "77777777-7777-4777-8777-777777777777";
 const clientCount = Number(process.env.TMUX_IDE_REFERENCE_MEMORY_CLIENTS ?? 8);
-const warmupCycles = Number(process.env.TMUX_IDE_REFERENCE_MEMORY_WARMUP ?? 48);
+// Reach both bounded retention ceilings before sampling. At ~8 KiB/cycle the
+// 4 MiB raw journal requires ~512 cycles; 640 leaves headroom so the measured
+// window is steady-state rather than intentional cache fill.
+const warmupCycles = Number(process.env.TMUX_IDE_REFERENCE_MEMORY_WARMUP ?? 64);
 const sampleCycles = Number(process.env.TMUX_IDE_REFERENCE_MEMORY_SAMPLES ?? 24);
 const writesPerCycle = Number(process.env.TMUX_IDE_REFERENCE_MEMORY_WRITES ?? 4);
 
@@ -43,22 +45,28 @@ const registry = new SessionRuntimeRegistry({
 const clients = Array.from({ length: clientCount }, (_, index) =>
   registry.connect("reference-memory", "opentui", `reference:${index}`),
 );
-const sinks = clients.map(() => [] as TerminalDeliveryServerMessage[]);
+const latestEnvelopes: Array<TerminalDeliveryEnvelope | null> = clients.map(() => null);
+const messageCounts = clients.map(() => 0);
 const openings = clients.map((client, index) =>
   client.openTerminalDelivery(
     `delivery:${index}`,
     "pane.alpha",
     { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
-    (message) => sinks[index]!.push(message),
+    (message) => {
+      messageCounts[index]! += 1;
+      if (message.type === "terminal.delivery") latestEnvelopes[index] = message;
+    },
   ),
 );
 await waitForDriver();
 await drivers[0]!.settleUntil(
-  () => sinks.every((sink) => latest(sink) !== null),
+  () => latestEnvelopes.every((envelope) => envelope !== null),
   "reference memory seed",
 );
 const connections = await Promise.all(openings);
-connections.forEach((connection, index) => connection.ack(ack(latestRequired(sinks[index]!))));
+connections.forEach((connection, index) =>
+  connection.ack(ack(requiredEnvelope(latestEnvelopes[index]))),
+);
 
 const samples: Array<{
   ordinal: number;
@@ -73,30 +81,33 @@ const samples: Array<{
 
 try {
   for (let cycle = 0; cycle < warmupCycles + sampleCycles; cycle += 1) {
-    const priorRevision = latestRequired(sinks[0]!).canonicalRevision;
+    const priorRevision = requiredEnvelope(latestEnvelopes[0]).canonicalRevision;
     const cell = cycle % 2 === 0 ? "x" : "y";
-    const screen = `\\033[H${Array.from({ length: 50 }, () => `${cell.repeat(100)}\\015\\012`).join(
-      "",
+    const screen = `\x1b[?1049h\x1b[H${Array.from({ length: 20 }, () => cell.repeat(100)).join(
+      "\r\n",
     )}`;
     for (let write = 0; write < writesPerCycle; write += 1) {
-      // A changing line exercises the real parser, canonical replica, patch,
-      // representation cache, and all eight delivery lanes without retaining
-      // unbounded terminal history.
+      // Alternate-screen cursor overwrite exercises the real parser, canonical
+      // replica, patch, representation cache, and all eight delivery lanes at
+      // constant terminal-history cardinality.
       drivers[0]!.output("%1", screen);
     }
     await delay(20);
     await drivers[0]!.settleUntil(
-      () => latestRequired(sinks[0]!).canonicalRevision > priorRevision,
+      () => requiredEnvelope(latestEnvelopes[0]).canonicalRevision > priorRevision,
       `reference memory cycle ${cycle}`,
     );
-    const revision = latestRequired(sinks[0]!).canonicalRevision;
+    const revision = requiredEnvelope(latestEnvelopes[0]).canonicalRevision;
     await drivers[0]!.settleUntil(
       () =>
-        sinks.every((sink) => latestRequired(sink).canonicalRevision === revision) &&
-        registry.qualificationSnapshot().sessions[0]?.delivery.inFlight === clientCount,
+        latestEnvelopes.every(
+          (envelope) => requiredEnvelope(envelope).canonicalRevision === revision,
+        ) && registry.qualificationSnapshot().sessions[0]?.delivery.inFlight === clientCount,
       `reference memory fanout ${cycle}`,
     );
-    connections.forEach((connection, index) => connection.ack(ack(latestRequired(sinks[index]!))));
+    connections.forEach((connection, index) =>
+      connection.ack(ack(requiredEnvelope(latestEnvelopes[index]))),
+    );
     await drivers[0]!.settleUntil(
       () => registry.qualificationSnapshot().sessions[0]?.delivery.inFlight === 0,
       `reference memory ack ${cycle}`,
@@ -133,20 +144,14 @@ process.stdout.write(
     warmupCycles,
     sampleCycles,
     writesPerCycle,
+    messageCounts,
     samples,
   })}\n`,
 );
 
-function latest(messages: TerminalDeliveryServerMessage[]): TerminalDeliveryEnvelope | null {
-  return (
-    (messages.findLast((message) => message.type === "terminal.delivery") as
-      | TerminalDeliveryEnvelope
-      | undefined) ?? null
-  );
-}
-
-function latestRequired(messages: TerminalDeliveryServerMessage[]): TerminalDeliveryEnvelope {
-  const envelope = latest(messages);
+function requiredEnvelope(
+  envelope: TerminalDeliveryEnvelope | null | undefined,
+): TerminalDeliveryEnvelope {
   if (!envelope) throw new Error("Expected a terminal delivery envelope");
   return envelope;
 }
