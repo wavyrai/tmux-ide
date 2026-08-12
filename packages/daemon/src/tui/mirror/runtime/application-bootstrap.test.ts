@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { startTuiApplication } from "./application-bootstrap.ts";
+import { observeTuiRootFailure, startTuiApplication } from "./application-bootstrap.ts";
 import { TuiApplicationLifecycle } from "./application-lifecycle.ts";
 
 function deferred() {
@@ -9,6 +9,16 @@ function deferred() {
     resolve = accept;
   });
   return { promise, resolve };
+}
+
+function rejectableDeferred() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("thin OpenTUI bootstrap", () => {
@@ -80,5 +90,38 @@ describe("thin OpenTUI bootstrap", () => {
     ).rejects.toBe(startupFailure);
 
     expect(calls).toEqual(["close", "destroy"]);
+  });
+
+  it("turns an asynchronous production-root failure into an honest bootstrap rejection", async () => {
+    const calls: string[] = [];
+    const root = rejectableDeferred();
+    const readiness = rejectableDeferred();
+    const failure = new Error("production Solid root failed");
+
+    const startup = startTuiApplication({
+      argv: [],
+      parseArgs: () => ({}),
+      loadConfig: () => ({}),
+      createRenderer: () => ({ destroy: () => calls.push("destroy") }),
+      createLifecycle: (renderer) =>
+        new TuiApplicationLifecycle({ destroyRenderer: renderer.destroy }),
+      mountRoot: ({ lifecycle }) => {
+        observeTuiRootFailure(root.promise, {
+          rejectReadiness: readiness.reject,
+          reportFailure: (error) => calls.push(`report:${(error as Error).message}`),
+          shutdown: () => lifecycle.shutdown("bootstrap-error"),
+        });
+        return {
+          root: root.promise,
+          ready: readiness.promise,
+          close: () => calls.push("close"),
+        };
+      },
+      publishReady: vi.fn(),
+    });
+
+    root.reject(failure);
+    await expect(startup).rejects.toBe(failure);
+    expect(calls).toEqual(["report:production Solid root failed", "close", "destroy"]);
   });
 });

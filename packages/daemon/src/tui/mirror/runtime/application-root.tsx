@@ -423,7 +423,7 @@ import {
   TuiApplicationLifecycle,
   createApplicationLifecycleInputExecutor,
 } from "./application-lifecycle.ts";
-import { startTuiApplication } from "./application-bootstrap.ts";
+import { observeTuiRootFailure, startTuiApplication } from "./application-bootstrap.ts";
 import { OpenTuiLocalViewController } from "./local-view-controller.ts";
 import { tuiEscapeFocusTarget, tuiInteractionPresentation } from "../interaction-flow.ts";
 import {
@@ -862,8 +862,10 @@ const cleanupRegistry = new TuiCleanupRegistry();
 let appRenderer!: Awaited<ReturnType<typeof createCliRenderer>>;
 let applicationLifecycle!: TuiApplicationLifecycle;
 let resolveInputReady!: () => void;
-const inputReady = new Promise<void>((resolve) => {
+let rejectInputReady!: (error: unknown) => void;
+const inputReady = new Promise<void>((resolve, reject) => {
   resolveInputReady = resolve;
+  rejectInputReady = reject;
 });
 let publishToolReadiness = (): void => undefined;
 
@@ -8021,7 +8023,6 @@ const mountTuiRoot = () => {
       />
     );
     const interaction = createMemo(() => {
-      dialogRev();
       return tuiInteractionPresentation({
         dialogOpen:
           modalAdmissionSnapshot().reserved && modalAdmissionSnapshot().kind !== "palette",
@@ -8725,7 +8726,15 @@ const mountTuiRoot = () => {
   // Native render lifetime ends only after lifecycle retirement. Observe a
   // spontaneous root failure without registering the root promise as a
   // closer (that would deadlock renderer-last shutdown).
-  void root.catch(() => applicationLifecycle.shutdown("bootstrap-error"));
+  observeTuiRootFailure(root, {
+    rejectReadiness: rejectInputReady,
+    reportFailure(error) {
+      tuiPerfMark("root-failed", {
+        error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+      });
+    },
+    shutdown: () => applicationLifecycle.shutdown("bootstrap-error"),
+  });
   return { root, ready: inputReady };
 };
 

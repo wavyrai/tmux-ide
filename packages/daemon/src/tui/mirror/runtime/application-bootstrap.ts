@@ -47,6 +47,34 @@ export interface TuiApplicationHandle<Args, Config, Renderer, Root> {
   shutdown(): Promise<TuiShutdownReport>;
 }
 
+export interface TuiRootFailureObserverOptions {
+  /** Break the bootstrap readiness wait with the original render failure. */
+  readonly rejectReadiness: (error: unknown) => void;
+  /** Record the failure before renderer teardown can remove diagnostics. */
+  readonly reportFailure?: (error: unknown) => void;
+  /** Retire application resources and the native renderer. */
+  readonly shutdown: () => void | Promise<unknown>;
+}
+
+/**
+ * Join a framework root's asynchronous failure to the bootstrap lifecycle.
+ *
+ * OpenTUI's Solid `render()` returns a root Promise independently from the
+ * readiness Promise awaited below. A rejected root must therefore reject that
+ * gate explicitly; merely shutting the renderer down strands bootstrap on a
+ * never-settling readiness wait and leaves the host process alive.
+ */
+export function observeTuiRootFailure(
+  root: PromiseLike<unknown>,
+  options: TuiRootFailureObserverOptions,
+): void {
+  void Promise.resolve(root).catch(async (error: unknown) => {
+    options.reportFailure?.(error);
+    options.rejectReadiness(error);
+    await options.shutdown();
+  });
+}
+
 /**
  * Thin, dependency-injected boot sequence. No config, daemon, Solid, or native
  * renderer work occurs at module evaluation time; each boundary is testable.

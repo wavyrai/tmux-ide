@@ -18,6 +18,8 @@ describe("production dialogs and settings cutover", () => {
     expect(source).not.toMatch(/from\s+["']\.\.\/dialog-stack/u);
     expect(source).not.toContain("dialogStack");
     expect(source).not.toMatch(/from\s+["']\.\.\/settings-model/u);
+    expect(source).not.toContain("dialogRev()");
+    expect(source).toContain("dialogsSession()?.open()");
   });
 
   it("reserves modal admission before every optional dialog/settings request", () => {
