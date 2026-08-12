@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../runtime/production-root-manifest.ts";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
 import type { PaneInteractionProjection } from "@tmux-ide/core";
 import { projectPaneChromeState } from "../pane-frame-state.ts";
 import { projectAgentTerminalCanvas } from "./agent-terminal-canvas.ts";

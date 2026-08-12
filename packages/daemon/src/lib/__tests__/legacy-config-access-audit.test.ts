@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../tui/mirror/runtime/production-root-manifest.ts";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../test-support/opentui-production-root-manifest.ts";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../../..");
 

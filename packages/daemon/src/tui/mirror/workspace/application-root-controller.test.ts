@@ -14,7 +14,7 @@ import {
   projectOpenTuiApplicationShell,
   type OpenTuiApplicationShellEffect,
 } from "./application-shell-controller.ts";
-import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../runtime/production-root-manifest.ts";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const productionRootSource = () =>

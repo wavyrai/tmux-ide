@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { publishTuiInputReady } from "./readiness.ts";
-import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "./mirror/runtime/production-root-manifest.ts";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../test-support/opentui-production-root-manifest.ts";
 
 const roots: string[] = [];
 

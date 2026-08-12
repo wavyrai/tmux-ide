@@ -2,6 +2,8 @@
  * Bootstrap roots for the production OpenTUI application. Architecture audits
  * start here and follow the transitive local import graph, including literal
  * dynamic feature imports; this list is not itself the complete source graph.
+ *
+ * This manifest is test support, not an engine dependency on the TUI adapter.
  */
 export const OPENTUI_PRODUCTION_ROOT_SOURCES = [
   "packages/daemon/src/tui/mirror/app.tsx",

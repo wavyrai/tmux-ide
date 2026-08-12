@@ -2,7 +2,7 @@ import { access, readdir, readFile } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../tui/mirror/runtime/production-root-manifest.ts";
+import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../test-support/opentui-production-root-manifest.ts";
 import { loadLocalSourceImportGraph } from "../../test-support/source-import-graph.ts";
 
 const REPO = fileURLToPath(new URL("../../../../", import.meta.url));
