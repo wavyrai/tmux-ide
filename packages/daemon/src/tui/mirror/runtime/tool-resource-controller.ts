@@ -22,6 +22,10 @@ import {
   type PushResourceSessionOptions,
   type PushResourceSessionState,
 } from "@tmux-ide/daemon-client/push-resource-session";
+import {
+  decodeWorkspaceCatalogV2,
+  type WorkspaceCatalogV2State,
+} from "@tmux-ide/daemon-client/workspace-catalog-v2";
 import { createRuntimeConnectionSupervisor } from "@tmux-ide/daemon-client/connection-supervisor";
 import WebSocket from "ws";
 
@@ -29,6 +33,7 @@ import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 
 export type TuiToolResourceKey =
   | "fleet"
+  | "catalog"
   | "sessions"
   | "projects"
   | "files"
@@ -38,6 +43,7 @@ export type TuiDockResourceKey = "files" | "changes" | "missions";
 
 export type TuiToolResource =
   | { readonly kind: "fleet"; readonly value: FleetCatalogResourceV1 }
+  | { readonly kind: "catalog"; readonly value: WorkspaceCatalogV2State }
   | { readonly kind: "sessions"; readonly value: DaemonSessionsResponse }
   | { readonly kind: "projects"; readonly value: DaemonProjectsResponse }
   | { readonly kind: "files"; readonly value: WorkspaceFilesCatalogEnvelopeV1 }
@@ -108,6 +114,7 @@ export interface TuiToolResourceAdapterDependencies {
 
 const INTEREST_BY_KEY = {
   fleet: "fleet-catalog",
+  catalog: "workspace-catalog",
   sessions: "workspace-catalog",
   projects: "workspace-catalog",
   files: "workspace-files",
@@ -116,7 +123,7 @@ const INTEREST_BY_KEY = {
 } as const;
 
 const keysForInterest = (interest: string): readonly TuiToolResourceKey[] => {
-  if (interest === "workspace-catalog") return ["sessions", "projects"];
+  if (interest === "workspace-catalog") return ["catalog", "sessions", "projects"];
   const match = Object.entries(INTEREST_BY_KEY).find(([, value]) => value === interest);
   return match ? [match[0] as TuiToolResourceKey] : [];
 };
@@ -140,6 +147,7 @@ function sameDaemon(left: CanonicalDaemonInfo, right: FleetCatalogResourceV1["da
 function resourceUrl(target: TuiToolResourceTarget, key: TuiToolResourceKey): string {
   const base = canonicalDaemonUrl("http", target.daemon.bindHostname, target.daemon.port);
   if (key === "fleet") return `${base}/api/resources/fleet-catalog`;
+  if (key === "catalog") return `${base}/api/resources/workspace-catalog?version=2`;
   if (key === "sessions") return `${base}/api/sessions`;
   if (key === "projects") return `${base}/api/projects`;
   const workspace = encodeURIComponent(target.workspaceName);
@@ -251,25 +259,36 @@ export function createTuiToolResourceAdapter(
           failure: failure("schema", "The daemon resource was not valid JSON.", false),
         };
       }
-      const parsed =
-        key === "fleet"
-          ? FleetCatalogResourceV1SchemaZ.safeParse(body)
-          : key === "sessions"
-            ? DaemonSessionsResponseSchemaZ.safeParse(body)
-            : key === "projects"
-              ? DaemonProjectsResponseSchemaZ.safeParse(body)
-              : key === "files"
-                ? WorkspaceFilesCatalogEnvelopeV1SchemaZ.safeParse(body)
-                : key === "changes"
-                  ? WorkspaceChangesCatalogEnvelopeV1SchemaZ.safeParse(body)
-                  : WorkspaceMissionsEnvelopeV1SchemaZ.safeParse(body);
+      let parsed: { readonly success: true; readonly data: unknown } | { readonly success: false };
+      if (key === "catalog") {
+        try {
+          parsed = { success: true, data: decodeWorkspaceCatalogV2(body) };
+        } catch {
+          parsed = { success: false };
+        }
+      } else {
+        parsed =
+          key === "fleet"
+            ? FleetCatalogResourceV1SchemaZ.safeParse(body)
+            : key === "sessions"
+              ? DaemonSessionsResponseSchemaZ.safeParse(body)
+              : key === "projects"
+                ? DaemonProjectsResponseSchemaZ.safeParse(body)
+                : key === "files"
+                  ? WorkspaceFilesCatalogEnvelopeV1SchemaZ.safeParse(body)
+                  : key === "changes"
+                    ? WorkspaceChangesCatalogEnvelopeV1SchemaZ.safeParse(body)
+                    : WorkspaceMissionsEnvelopeV1SchemaZ.safeParse(body);
+      }
       if (
         !parsed.success ||
         ((key === "fleet" || key === "files" || key === "changes" || key === "missions") &&
           !sameDaemon(
             target.daemon,
             (parsed.data as { readonly daemon: FleetCatalogResourceV1["daemon"] }).daemon,
-          ))
+          )) ||
+        (key === "catalog" &&
+          (parsed.data as WorkspaceCatalogV2State).daemonInstanceId !== target.daemon.instanceId)
       ) {
         return {
           status: "failed",
@@ -656,6 +675,7 @@ export function createTuiToolResourceController(
   let terminalReady = false;
   let openDock: TuiDockResourceKey | null = null;
   let releaseFleet: (() => void) | null = null;
+  let releaseCatalog: (() => void) | null = null;
   let releaseSessions: (() => void) | null = null;
   let releaseProjects: (() => void) | null = null;
   let releaseDock: (() => void) | null = null;
@@ -669,6 +689,7 @@ export function createTuiToolResourceController(
   const reconcile = (): void => {
     if (catalogReady) {
       releaseFleet ??= session.activate("fleet");
+      releaseCatalog ??= session.activate("catalog");
       releaseSessions ??= session.activate("sessions");
       releaseProjects ??= session.activate("projects");
     }
@@ -737,10 +758,12 @@ export function createTuiToolResourceController(
     dispose() {
       releaseDock?.();
       releaseFleet?.();
+      releaseCatalog?.();
       releaseSessions?.();
       releaseProjects?.();
       releaseDock = null;
       releaseFleet = null;
+      releaseCatalog = null;
       releaseSessions = null;
       releaseProjects = null;
       session.dispose();

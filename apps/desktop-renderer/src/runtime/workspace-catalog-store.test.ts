@@ -66,6 +66,29 @@ function catalog(
   };
 }
 
+function catalogWithStoppedIntent(): DesktopDaemonListWorkspacesResult {
+  return {
+    status: "ok",
+    daemon: DAEMON,
+    workspaces: [
+      {
+        workspaceName: "running",
+        sessionName: "running-session",
+        source: "workspace",
+        availability: "live",
+        paneCount: 2,
+      },
+      {
+        workspaceName: "parked",
+        sessionName: "parked-session",
+        source: "project",
+        availability: "stopped",
+        paneCount: 0,
+      },
+    ],
+  };
+}
+
 interface FakeDaemonHost {
   readonly host: Pick<HostCapabilities, "daemon">;
   readonly listWorkspaces: ReturnType<typeof vi.fn<() => Promise<unknown>>>;
@@ -123,6 +146,23 @@ function liveSnapshot(state: DesktopWorkspaceCatalogState) {
 }
 
 describe("desktop live workspace catalog and selection store", () => {
+  it("keeps stopped intent visible but excludes it from selection and attach", async () => {
+    const fake = fakeDaemonHost(async () => catalogWithStoppedIntent());
+    const store = createDesktopWorkspaceCatalogStore({ host: fake.host, daemon: CONNECTED });
+    await publishLive(fake);
+    await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+
+    const snapshot = liveSnapshot(store.getState());
+    expect(snapshot.workspaces).toMatchObject([
+      { workspaceName: "parked", availability: "stopped", paneCount: 0 },
+      { workspaceName: "running", availability: "live", paneCount: 2 },
+    ]);
+    expect(snapshot.selection).toMatchObject({ view: "workspace", workspaceName: "running" });
+    expect(store.select("parked")).toBe(false);
+    expect(store.select("running")).toBe(true);
+    store.dispose();
+  });
+
   it.each([
     {
       label: "zero",

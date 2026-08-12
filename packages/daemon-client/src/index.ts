@@ -23,3 +23,4 @@ export * from "./direct-application-shell-transport.ts";
 export * from "./owner-action-client.ts";
 export * from "./workspace-pane-client.ts";
 export * from "./pane-stream-client.ts";
+export * from "./workspace-catalog-v2.ts";

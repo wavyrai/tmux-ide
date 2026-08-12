@@ -1,5 +1,7 @@
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
+import { basename, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   ActionContractsZ,
@@ -16,10 +18,9 @@ import {
   type CanonicalDaemonInfo,
 } from "./canonical-daemon.ts";
 import {
-  startEmbeddedDaemon,
-  type EmbeddedDaemonHandle,
-  type EmbeddedDaemonOptions,
-} from "./daemon-embed.ts";
+  ensureCanonicalDaemon,
+  type CanonicalDaemonBootstrapOptions,
+} from "./canonical-daemon-bootstrap.ts";
 import { PANE_SOURCE_CREDENTIAL_HEADER } from "./pane-source-credentials.ts";
 
 interface ActionFailure {
@@ -64,7 +65,19 @@ interface CliActionBridgeDeps {
   cwd: () => string;
   readCanonicalDaemonInfo: () => CanonicalDaemonInfo | null;
   isCanonicalDaemonAlive: (info: CanonicalDaemonInfo) => Promise<boolean>;
-  startEmbeddedDaemon: (opts: EmbeddedDaemonOptions) => Promise<EmbeddedDaemonHandle>;
+  ensureCanonicalDaemon: (
+    options: CanonicalDaemonBootstrapOptions,
+  ) => Promise<{ candidate: CanonicalDaemonInfo }>;
+  cliEntryPath: () => string;
+}
+
+function defaultCliEntryPath(): string {
+  if (process.env.TMUX_IDE_CLI) return resolve(process.env.TMUX_IDE_CLI);
+  const current = fileURLToPath(import.meta.url);
+  // esbuild collapses import.meta.url to bin/cli.js for this bundled module.
+  if (basename(current) === "cli.js" && basename(dirname(current)) === "bin") return current;
+  // Source and tsc output both live at packages/daemon/{src,dist}/lib.
+  return resolve(dirname(current), "../../../../bin/cli.js");
 }
 
 let deps: CliActionBridgeDeps = {
@@ -72,7 +85,8 @@ let deps: CliActionBridgeDeps = {
   cwd: () => process.cwd(),
   readCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
-  startEmbeddedDaemon,
+  ensureCanonicalDaemon,
+  cliEntryPath: defaultCliEntryPath,
 };
 
 export class CliActionInvocationError extends Error {
@@ -103,17 +117,6 @@ function timeoutSignal(ms: number): AbortSignal {
   return controller.signal;
 }
 
-async function isDaemonAlive(port: number): Promise<boolean> {
-  try {
-    const res = await deps.fetch(`http://127.0.0.1:${port}/health`, {
-      signal: timeoutSignal(500),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
 function daemonBaseUrl(info: CanonicalDaemonInfo): string {
   return canonicalDaemonUrl("http", info.bindHostname, info.port);
 }
@@ -131,28 +134,27 @@ function expectedDaemonVersion(): string {
   }
 }
 
-async function resolveCanonicalDaemon(options: { autostart: boolean }): Promise<{
+async function resolveCanonicalDaemon(
+  bridgeDeps: CliActionBridgeDeps,
+  options: { autostart: boolean; cwd: string },
+): Promise<{
   baseUrl: string;
   ownerToken: string | null;
-  transientHandle: EmbeddedDaemonHandle | null;
-  restoreCwd: string | null;
 } | null> {
-  const existing = deps.readCanonicalDaemonInfo();
+  const existing = bridgeDeps.readCanonicalDaemonInfo();
   if (existing) {
-    if (await deps.isCanonicalDaemonAlive(existing)) {
+    if (await bridgeDeps.isCanonicalDaemonAlive(existing)) {
       warnOnDaemonVersionSkew(existing, expectedDaemonVersion());
       return {
         baseUrl: daemonBaseUrl(existing),
         ownerToken: existing.authToken,
-        transientHandle: null,
-        restoreCwd: null,
       };
     }
-    // Stale canonical state is removed only after startEmbeddedDaemon wins the
-    // atomic process-lifetime claim.
+    // Stale canonical state is removed only after the persistent owner wins
+    // the daemon's atomic process-lifetime claim.
   }
 
-  // Test / short-lived-CLI escape: skip the transient daemon spawn when
+  // Test / short-lived-CLI escape: skip persistent daemon bootstrap when
   // TMUX_IDE_CLI_NO_AUTOSTART is set. Callers (e.g. config-cli.test.ts)
   // exercise the local-mutation fallback path; without this guard a
   // single `tmux-ide config enable-team` in a fixture dir would start a
@@ -161,38 +163,19 @@ async function resolveCanonicalDaemon(options: { autostart: boolean }): Promise<
     return null;
   }
 
-  const dir = deps.cwd();
-  const previousCwd = process.cwd();
   try {
-    process.chdir(dir);
-    const handle = await deps.startEmbeddedDaemon({
-      sessionName: undefined,
-      bindHostname: "127.0.0.1",
-      silent: true,
+    const { candidate } = await bridgeDeps.ensureCanonicalDaemon({
+      entryPath: bridgeDeps.cliEntryPath(),
+      cwd: options.cwd,
     });
-    if (!(await isDaemonAlive(handle.port))) {
-      await handle.stop();
-      process.chdir(previousCwd);
-      return null;
-    }
+    warnOnDaemonVersionSkew(candidate, expectedDaemonVersion());
     return {
-      baseUrl: handle.apiBaseUrl,
-      ownerToken: handle.localBypassToken,
-      transientHandle: handle,
-      restoreCwd: previousCwd,
+      baseUrl: daemonBaseUrl(candidate),
+      ownerToken: candidate.authToken,
     };
   } catch {
-    process.chdir(previousCwd);
     return null;
   }
-}
-
-async function stopTransientDaemon(daemon: {
-  transientHandle: EmbeddedDaemonHandle | null;
-  restoreCwd: string | null;
-}): Promise<void> {
-  if (daemon.transientHandle) await daemon.transientHandle.stop().catch(() => undefined);
-  if (daemon.restoreCwd) process.chdir(daemon.restoreCwd);
 }
 
 export async function tryDispatchAction<Name extends ActionName>(
@@ -205,11 +188,12 @@ export async function tryDispatchAction<Name extends ActionName>(
     sourcePaneCredential?: string;
   } = {},
 ): Promise<ActionResult<Name> | null> {
-  const dir = options.cwd ?? deps.cwd();
-  const previousDeps = deps;
-  deps = { ...deps, cwd: () => dir };
-  const daemon = await resolveCanonicalDaemon({ autostart: options.autostart ?? true });
-  deps = previousDeps;
+  const bridgeDeps = deps;
+  const dir = options.cwd ?? bridgeDeps.cwd();
+  const daemon = await resolveCanonicalDaemon(bridgeDeps, {
+    autostart: options.autostart ?? true,
+    cwd: dir,
+  });
   if (!daemon) return null;
 
   const contract = ActionContractsZ[name];
@@ -218,14 +202,13 @@ export async function tryDispatchAction<Name extends ActionName>(
     ? (options.operationId ?? randomUUID())
     : null;
   if (operationId && !daemon.ownerToken) {
-    await stopTransientDaemon(daemon);
     return null;
   }
   // One deadline covers both attempts. A retry never receives a fresh time
   // budget and always retains the exact same operation id.
   const operationSignal = timeoutSignal(ACTION_OPERATION_TIMEOUT_MS);
   const request = (): Promise<Response> =>
-    deps.fetch(`${daemon.baseUrl}/api/v2/action/${encodeURIComponent(name)}`, {
+    bridgeDeps.fetch(`${daemon.baseUrl}/api/v2/action/${encodeURIComponent(name)}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -238,36 +221,32 @@ export async function tryDispatchAction<Name extends ActionName>(
       body: JSON.stringify(parsedInput),
       signal: operationSignal,
     });
-  try {
-    const maximumAttempts = operationId ? 2 : 1;
-    for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
-      let body: unknown;
-      try {
-        const response = await request();
-        body = await response.json();
-      } catch {
-        // A timeout or truncated body may occur after the daemon committed.
-        // The next attempt retains the exact same host operation id.
-        if (operationSignal.aborted) break;
-        continue;
-      }
-
-      const failure = FailureEnvelopeZ.safeParse(body);
-      if (failure.success) {
-        throw new CliActionInvocationError({
-          code: failure.data.error.code as ActionErrorCode,
-          message: failure.data.error.message,
-          details: failure.data.error.details,
-        });
-      }
-
-      const success = z.object({ ok: z.literal(true), result: contract.result }).safeParse(body);
-      if (success.success) return success.data.result as ActionResult<Name>;
-      // A JSON body that does not satisfy either strict envelope may be a
-      // truncated proxy response. Retry only the idempotent semantic mutation.
+  const maximumAttempts = operationId ? 2 : 1;
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    let body: unknown;
+    try {
+      const response = await request();
+      body = await response.json();
+    } catch {
+      // A timeout or truncated body may occur after the daemon committed.
+      // The next attempt retains the exact same host operation id.
+      if (operationSignal.aborted) break;
+      continue;
     }
-    return null;
-  } finally {
-    await stopTransientDaemon(daemon);
+
+    const failure = FailureEnvelopeZ.safeParse(body);
+    if (failure.success) {
+      throw new CliActionInvocationError({
+        code: failure.data.error.code as ActionErrorCode,
+        message: failure.data.error.message,
+        details: failure.data.error.details,
+      });
+    }
+
+    const success = z.object({ ok: z.literal(true), result: contract.result }).safeParse(body);
+    if (success.success) return success.data.result as ActionResult<Name>;
+    // A JSON body that does not satisfy either strict envelope may be a
+    // truncated proxy response. Retry only the idempotent semantic mutation.
   }
+  return null;
 }

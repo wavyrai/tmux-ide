@@ -3,6 +3,7 @@ import type {
   DaemonSessionsResponse,
   FleetCatalogResourceV1,
 } from "@tmux-ide/contracts";
+import type { WorkspaceCatalogV2State } from "@tmux-ide/daemon-client/workspace-catalog-v2";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,6 +12,96 @@ import {
 } from "./tool-resource-projection.ts";
 
 describe("TUI fleet resource projection", () => {
+  it("renders durable no-tmux intent as stopped without synthesizing a live pane", () => {
+    const catalog = {
+      daemonInstanceId: "11111111-1111-4111-8111-111111111111",
+      intents: [
+        {
+          workspaceName: "saved-workspace",
+          sessionName: "saved-session",
+          source: "workspace",
+          availability: "stopped",
+        },
+      ],
+      liveSessions: [],
+    } satisfies WorkspaceCatalogV2State;
+    const result = projectTuiFleetResources({
+      sessions: { sessions: [] },
+      projects: { projects: [] },
+      catalog,
+      fleet: {
+        version: 1,
+        daemon: {
+          protocolVersion: 1,
+          productVersion: "test",
+          instanceId: catalog.daemonInstanceId,
+          startedAt: "2026-08-12T00:00:00.000Z",
+        },
+        sessions: [],
+      },
+    });
+
+    expect(result).toEqual([
+      {
+        name: "saved-workspace",
+        dir: null,
+        registered: true,
+        running: false,
+        status: "idle",
+        sessions: [],
+      },
+    ]);
+  });
+
+  it("attaches a live catalog intent only when an actionable tmux session also exists", () => {
+    const catalog = {
+      daemonInstanceId: "11111111-1111-4111-8111-111111111111",
+      intents: [
+        {
+          workspaceName: "workspace-alpha",
+          sessionName: "runtime-alpha",
+          source: "workspace",
+          availability: "live",
+        },
+      ],
+      liveSessions: [{ sessionName: "runtime-alpha", paneCount: 2 }],
+    } satisfies WorkspaceCatalogV2State;
+    const fleet = {
+      version: 1,
+      daemon: {
+        protocolVersion: 1,
+        productVersion: "test",
+        instanceId: catalog.daemonInstanceId,
+        startedAt: "2026-08-12T00:00:00.000Z",
+      },
+      sessions: [],
+    } satisfies FleetCatalogResourceV1;
+
+    expect(
+      projectTuiFleetResources({
+        sessions: { sessions: [{ name: "runtime-alpha", dir: "/work/alpha" }] },
+        projects: { projects: [] },
+        catalog,
+        fleet,
+      }),
+    ).toMatchObject([
+      {
+        name: "workspace-alpha",
+        running: true,
+        sessions: [{ name: "runtime-alpha" }],
+      },
+    ]);
+
+    expect(
+      projectTuiFleetResources({
+        sessions: { sessions: [] },
+        projects: { projects: [] },
+        catalog,
+        fleet,
+      })[0],
+    ).toMatchObject({ name: "workspace-alpha", running: false, sessions: [] });
+  });
+
   it("joins semantic agent identities only to unique local raw tmux pane targets", () => {
     const descriptor = (runtimePaneId: string, semanticPaneId: string | null) => ({
       runtimePaneId,

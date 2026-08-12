@@ -52,7 +52,7 @@ import {
   type PaneStreamIssueMutationRequest,
   type PaneStreamIssueResult,
   type DesktopDaemonFetchApplicationShellRequest,
-  WorkspaceCatalogResourceV1SchemaZ,
+  WorkspaceCatalogResourceV2SchemaZ,
   WorkspaceOpenArgumentsSchemaZ,
   WorkspaceOpenMutationRequestSchemaZ,
   WorkspaceOpenMutationResultSchemaZ,
@@ -190,6 +190,9 @@ export type BrokerSubscriptionResult =
 interface WorkspaceCatalogEntry {
   readonly workspaceName: string;
   readonly sessionName: string;
+  readonly source: "project" | "workspace";
+  readonly availability: "live" | "stopped";
+  readonly paneCount: number;
 }
 
 interface BrokerSubscription {
@@ -1079,7 +1082,15 @@ export class DaemonResourceBroker {
       const result: DesktopDaemonListWorkspacesResult = {
         status: "ok",
         daemon: daemonIdentity(this.#daemon),
-        workspaces: workspaces.map(({ workspaceName }) => ({ workspaceName })),
+        workspaces: workspaces.map(
+          ({ workspaceName, sessionName, source, availability, paneCount }) => ({
+            workspaceName,
+            sessionName,
+            source,
+            availability,
+            paneCount,
+          }),
+        ),
       };
       return DesktopDaemonListWorkspacesResultSchemaZ.parse(result);
     } catch (error) {
@@ -1103,7 +1114,9 @@ export class DaemonResourceBroker {
       const workspace = workspaces.find(
         (candidate) => candidate.workspaceName === request.data.workspaceName,
       );
-      if (!workspace) throw new BrokerFailure(daemonCapabilityError("workspace-not-found"));
+      if (!workspace || workspace.availability !== "live") {
+        throw new BrokerFailure(daemonCapabilityError("workspace-not-found"));
+      }
       let negotiatedVersion = request.data.resourceVersion ?? APPLICATION_SHELL_RESOURCE_V3_VERSION;
       let raw: unknown;
       try {
@@ -1519,17 +1532,25 @@ export class DaemonResourceBroker {
     }
     const expectedDaemon = daemonIdentity(this.#daemon);
     const raw = await this.#requestJson(
-      "/api/resources/workspace-catalog",
+      "/api/resources/workspace-catalog?version=2",
       this.#maxResponseBytes,
       false,
       signal,
     );
-    const parsed = WorkspaceCatalogResourceV1SchemaZ.safeParse(raw);
+    const parsed = WorkspaceCatalogResourceV2SchemaZ.safeParse(raw);
     if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
     if (!sameIdentity(parsed.data.daemon, expectedDaemon)) {
       throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
     }
-    const catalog = parsed.data.workspaces.map((entry) => this.#normalizeCatalogEntry(entry));
+    const liveByName = new Map(
+      parsed.data.liveSessions.map((session) => [session.sessionName, session] as const),
+    );
+    const catalog = parsed.data.intents.map((entry) =>
+      this.#normalizeCatalogEntry({
+        ...entry,
+        paneCount: liveByName.get(entry.sessionName)?.paneCount ?? 0,
+      }),
+    );
     const canonicalNames = catalog.map(({ workspaceName }) => workspaceName);
     if (new Set(canonicalNames).size !== canonicalNames.length) {
       throw new BrokerFailure(daemonCapabilityError("invalid-response"));
@@ -1541,6 +1562,9 @@ export class DaemonResourceBroker {
   #normalizeCatalogEntry(entry: {
     readonly workspaceName: string;
     readonly sessionName: string;
+    readonly source: "project" | "workspace";
+    readonly availability: "live" | "stopped";
+    readonly paneCount: number;
   }): WorkspaceCatalogEntry {
     const workspaceName = DesktopWorkspaceNameSchemaZ.safeParse(entry.workspaceName);
     const validSessionName =
@@ -1552,7 +1576,13 @@ export class DaemonResourceBroker {
     if (!workspaceName.success || workspaceName.data !== entry.workspaceName || !validSessionName) {
       throw new BrokerFailure(daemonCapabilityError("invalid-response"));
     }
-    return { workspaceName: workspaceName.data, sessionName: entry.sessionName };
+    return {
+      workspaceName: workspaceName.data,
+      sessionName: entry.sessionName,
+      source: entry.source,
+      availability: entry.availability,
+      paneCount: entry.paneCount,
+    };
   }
 
   async #requestJson(
@@ -2091,6 +2121,11 @@ export class DaemonResourceBroker {
           const entry = this.#normalizeCatalogEntry({
             workspaceName: frame.workspace.name,
             sessionName: frame.workspace.sessionName,
+            source: "workspace",
+            // This event is emitted by a workspace mutation, not by the tmux
+            // observer. Keep it non-attachable until the V2 catalog confirms it.
+            availability: "stopped",
+            paneCount: 0,
           });
           if (this.#workspaceCatalog.has(entry.workspaceName)) {
             this.#rejectWorkspaceUpdate("workspace identity collision");

@@ -157,7 +157,11 @@ interface DesktopConnectionSurfaceProps {
   readonly retryLabel?: string;
   readonly onRestartConnection?: () => void;
   readonly diagnostics?: readonly string[];
-  readonly workspaces?: readonly string[];
+  readonly workspaces?: readonly {
+    readonly workspaceName: string;
+    readonly availability: "live" | "stopped";
+    readonly paneCount: number;
+  }[];
   readonly onSelectWorkspace?: (workspaceName: string) => void;
   readonly onOpenProject?: () => void;
   readonly openProjectPhase?: "idle" | "selecting" | "opening" | "waiting" | "error";
@@ -255,16 +259,20 @@ function focusWorkspaceOption(
 /** Product-native non-workspace state. It never displays host paths or runtime ids. */
 export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
   const [activeWorkspace, setActiveWorkspace] = createSignal<string | null>(
-    props.workspaces?.[0] ?? null,
+    props.workspaces?.find(({ availability }) => availability === "live")?.workspaceName ?? null,
   );
   createEffect(() => {
     const workspaces = props.workspaces ?? [];
-    if (workspaces.length === 0) {
+    const live = workspaces.filter(({ availability }) => availability === "live");
+    if (live.length === 0) {
       setActiveWorkspace(null);
       return;
     }
-    if (!activeWorkspace() || !workspaces.includes(activeWorkspace()!)) {
-      setActiveWorkspace(workspaces[0]!);
+    if (
+      !activeWorkspace() ||
+      !live.some(({ workspaceName }) => workspaceName === activeWorkspace())
+    ) {
+      setActiveWorkspace(live[0]!.workspaceName);
     }
   });
 
@@ -362,7 +370,13 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
                 <Show when={props.workspaces && props.workspaces.length > 0}>
                   <div class="workspace-chooser__heading">
                     <span>Available now</span>
-                    <small>{props.workspaces?.length} workspaces</small>
+                    <small>
+                      {
+                        props.workspaces?.filter(({ availability }) => availability === "live")
+                          .length
+                      }{" "}
+                      live
+                    </small>
                   </div>
                   <div
                     class="workspace-chooser"
@@ -371,21 +385,27 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
                     onKeyDown={handleChooserKeyDown}
                   >
                     <For each={props.workspaces}>
-                      {(workspaceName) => (
+                      {(workspace) => (
                         <button
                           type="button"
                           role="option"
-                          aria-selected={workspaceName === activeWorkspace()}
-                          tabIndex={workspaceName === activeWorkspace() ? 0 : -1}
-                          onFocus={() => setActiveWorkspace(workspaceName)}
-                          onClick={() => props.onSelectWorkspace?.(workspaceName)}
+                          aria-selected={workspace.workspaceName === activeWorkspace()}
+                          aria-disabled={workspace.availability === "stopped"}
+                          disabled={workspace.availability === "stopped"}
+                          tabIndex={workspace.workspaceName === activeWorkspace() ? 0 : -1}
+                          onFocus={() => setActiveWorkspace(workspace.workspaceName)}
+                          onClick={() => props.onSelectWorkspace?.(workspace.workspaceName)}
                         >
                           <span class="workspace-chooser__mark" aria-hidden="true">
-                            {workspaceName.slice(0, 2)}
+                            {workspace.workspaceName.slice(0, 2)}
                           </span>
                           <span>
-                            <strong>{workspaceName}</strong>
-                            <small>Live tmux workspace</small>
+                            <strong>{workspace.workspaceName}</strong>
+                            <small>
+                              {workspace.availability === "live"
+                                ? `Live tmux workspace · ${workspace.paneCount} panes`
+                                : "Stopped · not attachable"}
+                            </small>
                           </span>
                           <DomIcon id="terminals" usage="action" />
                         </button>
@@ -1461,7 +1481,10 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     const snapshot = catalog.state().snapshot;
     if (
       !workspaceName ||
-      !snapshot?.workspaces.some((workspace) => workspace.workspaceName === workspaceName)
+      !snapshot?.workspaces.some(
+        (workspace) =>
+          workspace.workspaceName === workspaceName && workspace.availability !== "stopped",
+      )
     ) {
       return;
     }
@@ -1509,7 +1532,11 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           title="Choose a workspace"
           description="Multiple workspaces are available. tmux-ide never picks one arbitrarily."
           guidance="Arrow keys move · Enter opens"
-          workspaces={state.snapshot.workspaces.map(({ workspaceName }) => workspaceName)}
+          workspaces={state.snapshot.workspaces.map((workspace) => ({
+            workspaceName: workspace.workspaceName,
+            availability: workspace.availability ?? "live",
+            paneCount: workspace.paneCount ?? 0,
+          }))}
           onSelectWorkspace={(workspaceName) => catalog.select(workspaceName)}
           onOpenProject={() => void openProject()}
           openProjectPhase={openProjectPhase()}

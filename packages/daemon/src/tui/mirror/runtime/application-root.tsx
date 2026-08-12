@@ -5265,12 +5265,21 @@ const mountTuiRoot = () => {
     });
 
     let latestFleetCatalog: FleetCatalogResourceV1 | null = null;
+    let latestWorkspaceCatalog: Extract<TuiToolResource, { kind: "catalog" }>["value"] | null =
+      null;
     let latestSessionCatalog: Extract<TuiToolResource, { kind: "sessions" }>["value"] | null = null;
     let latestProjectCatalog: Extract<TuiToolResource, { kind: "projects" }>["value"] | null = null;
     reconcileFleetResources = () => {
-      if (!latestFleetCatalog || !latestSessionCatalog || !latestProjectCatalog) return;
+      if (
+        !latestFleetCatalog ||
+        !latestWorkspaceCatalog ||
+        !latestSessionCatalog ||
+        !latestProjectCatalog
+      )
+        return;
       const projects = projectTuiFleetResources({
         fleet: latestFleetCatalog,
+        catalog: latestWorkspaceCatalog,
         sessions: latestSessionCatalog,
         projects: latestProjectCatalog,
         authoritativeAgents: latestAuthoritativeAgents,
@@ -5335,7 +5344,10 @@ const mountTuiRoot = () => {
 
     const applyToolResource = (resource: TuiToolResource, identityScope: string): void => {
       if (resource.kind === "fleet") applyFleetCatalog(resource.value);
-      else if (resource.kind === "sessions") {
+      else if (resource.kind === "catalog") {
+        latestWorkspaceCatalog = resource.value;
+        reconcileFleetResources();
+      } else if (resource.kind === "sessions") {
         latestSessionCatalog = resource.value;
         reconcileFleetResources();
       } else if (resource.kind === "projects") {
@@ -5360,6 +5372,7 @@ const mountTuiRoot = () => {
           pendingMissionsCatalog.advance(state.generation);
           appliedToolSnapshots.clear();
           latestFleetCatalog = null;
+          latestWorkspaceCatalog = null;
           latestSessionCatalog = null;
           latestProjectCatalog = null;
           latestAuthoritativeAgents = [];

@@ -199,7 +199,15 @@ export const DesktopDaemonCapabilityErrorSchemaZ = z
   .strict();
 
 export const DesktopDaemonWorkspaceSummarySchemaZ = z
-  .object({ workspaceName: DesktopWorkspaceNameSchemaZ })
+  .object({
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    /** Durable routing intent; absent only for older host fixtures. */
+    sessionName: z.string().min(1).optional(),
+    source: z.enum(["project", "workspace"]).optional(),
+    /** Observed tmux truth. A stopped intent is visible but never attachable. */
+    availability: z.enum(["live", "stopped"]).optional(),
+    paneCount: z.number().int().nonnegative().optional(),
+  })
   .strict();
 
 export const DesktopDaemonListWorkspacesResultSchemaZ = z.discriminatedUnion("status", [
