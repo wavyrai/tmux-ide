@@ -8890,26 +8890,19 @@ function decodeWidgetMarkerLine(line) {
     return null;
   }
 }
-function widgetLogicalLines(rows) {
-  const lines = [];
-  for (const row of rows) {
-    let end = row.cells.length;
-    while (end > 0 && isBlankCell(row.cells[end - 1])) end -= 1;
-    let text = "";
-    for (let index = 0; index < end; index += 1) text += row.cells[index] ?? "";
-    if (row.wrapped && lines.length > 0) {
-      lines[lines.length - 1] += text;
-    } else {
-      lines.push(text);
-    }
-  }
-  return lines;
-}
 function isBlankCell(cell) {
   return cell === void 0 || cell === "" || cell === " ";
 }
-function detectWidgetMarker(rows) {
-  const lines = widgetLogicalLines(rows);
+function detectWidgetMarkerFromReplicaRows(rows) {
+  const lines = [];
+  for (const row of rows) {
+    let end = row.cells.length;
+    while (end > 0 && isBlankCell(row.cells[end - 1]?.grapheme)) end -= 1;
+    let text = "";
+    for (let index = 0; index < end; index += 1) text += row.cells[index]?.grapheme ?? "";
+    if (row.wrapped && lines.length > 0) lines[lines.length - 1] += text;
+    else lines.push(text);
+  }
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const decoded = decodeWidgetMarkerLine(lines[index]);
     if (decoded) return { id: decoded.id, args: decoded.args, lineIndex: index };
@@ -38985,6 +38978,9 @@ function hashTerminalReplicaSnapshot(snapshot) {
 function hashTerminalReplicaTombstone(reason) {
   return hashStable(["tombstone", reason]);
 }
+function hashTerminalWidgetContent(id, args) {
+  return hashTerminalReplicaTombstone(`${id}:${JSON.stringify(args)}`);
+}
 function blankRow(cols) {
   return Object.freeze({
     cells: Object.freeze(
@@ -39453,9 +39449,7 @@ function terminalModes(terminal) {
   };
 }
 function projectPlacements(rows, viewportRows, cols, historyRows) {
-  const marker = detectWidgetMarker(
-    rows.map((row) => ({ cells: row.cells.map((cell) => cell.grapheme), wrapped: row.wrapped }))
-  );
+  const marker = detectWidgetMarkerFromReplicaRows(rows);
   if (!marker) return [];
   return [
     {
@@ -39465,7 +39459,7 @@ function projectPlacements(rows, viewportRows, cols, historyRows) {
       column: 0,
       columns: Math.max(1, cols),
       rows: 1,
-      contentDigest: hashTerminalReplicaTombstone(`${marker.id}:${JSON.stringify(marker.args)}`)
+      contentDigest: hashTerminalWidgetContent(marker.id, marker.args)
     }
   ];
 }
@@ -53447,6 +53441,16 @@ var init_startup_readiness_route = __esm({
   }
 });
 
+// packages/daemon/src/lib/widget-asset-policy.ts
+var WIDGET_ASSET_MAX_BYTES, WIDGET_ASSET_RETENTION_MS;
+var init_widget_asset_policy = __esm({
+  "packages/daemon/src/lib/widget-asset-policy.ts"() {
+    "use strict";
+    WIDGET_ASSET_MAX_BYTES = 16 * 1024 * 1024;
+    WIDGET_ASSET_RETENTION_MS = 24 * 60 * 60 * 1e3;
+  }
+});
+
 // packages/daemon/src/lib/widget-asset-store.ts
 var widget_asset_store_exports = {};
 __export(widget_asset_store_exports, {
@@ -53590,14 +53594,14 @@ function readWidgetAsset(assetIdInput) {
     return null;
   }
 }
-var WIDGET_ASSET_MAX_BYTES, WIDGET_ASSET_RETENTION_MS, MAX_ASSET_FILES, ASSET_DIRECTORY, WidgetAssetStoreError;
+var MAX_ASSET_FILES, ASSET_DIRECTORY, WidgetAssetStoreError;
 var init_widget_asset_store = __esm({
   "packages/daemon/src/lib/widget-asset-store.ts"() {
     "use strict";
     init_src();
     init_state_home();
-    WIDGET_ASSET_MAX_BYTES = 16 * 1024 * 1024;
-    WIDGET_ASSET_RETENTION_MS = 24 * 60 * 60 * 1e3;
+    init_widget_asset_policy();
+    init_widget_asset_policy();
     MAX_ASSET_FILES = 256;
     ASSET_DIRECTORY = "widget-assets";
     WidgetAssetStoreError = class extends Error {
@@ -56741,7 +56745,7 @@ var require_package = __commonJS({
         check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
-        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
+        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
         "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
         "test:tui-perf": "bun scripts/perf-mirror.mjs",
