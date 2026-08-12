@@ -262,6 +262,11 @@ export interface ListTeamSessionsOpts {
   onPane?: (pane: PaneDetail) => void;
 }
 
+/** Raw shells are not agents and never need a periodic screen scrape. */
+export function agentManifestNeedsSnapshot(manifest: AgentManifest | undefined): boolean {
+  return manifest !== undefined && manifest.id !== "shell";
+}
+
 /**
  * List every live tmux session with a rolled-up agent status.
  *
@@ -319,9 +324,15 @@ export function listTeamSessions(
           authorityRaw: pane.authority,
           nowSec,
           scrape: () => {
-            const instant = manifest
-              ? classifyInstant({ ...readPaneSnapshot(pane.id), title: pane.title }, manifest)
-              : "unknown";
+            const snapshotManifest = agentManifestNeedsSnapshot(manifest) ? manifest : undefined;
+            const instant = snapshotManifest
+              ? classifyInstant(
+                  { ...readPaneSnapshot(pane.id), title: pane.title },
+                  snapshotManifest,
+                )
+              : manifest?.id === "shell"
+                ? "idle"
+                : "unknown";
             return tracker.update(pane.id, instant, { seen });
           },
         });

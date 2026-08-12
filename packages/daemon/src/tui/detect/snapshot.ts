@@ -7,6 +7,11 @@
  * unit-tested; `readPaneSnapshot` is the thin tmux I/O wrapper.
  */
 import { runTmux } from "@tmux-ide/tmux-bridge";
+import { readCanonicalDaemonInfo } from "../../lib/canonical-daemon.ts";
+import {
+  createAuthenticatedInternalReadOperation,
+  INTERNAL_READ_OPERATION_OPTION,
+} from "../../lib/tmux-interaction-options.ts";
 
 export interface PaneSnapshot {
   /** Last N non-empty lines, ANSI-stripped, trailing whitespace trimmed. */
@@ -61,15 +66,40 @@ export function parseSnapshot(raw: string, opts: { lines?: number } = {}): PaneS
  */
 export function readPaneSnapshot(target: string, opts: { lines?: number } = {}): PaneSnapshot {
   const lines = opts.lines ?? DEFAULT_LINES;
+  const daemon = /^%(?:0|[1-9][0-9]*)$/u.test(target) ? readCanonicalDaemonInfo() : null;
+  const marker =
+    daemon?.authToken !== null && daemon?.authToken !== undefined
+      ? createAuthenticatedInternalReadOperation(target, {
+          daemonInstanceId: daemon.instanceId,
+          ownerToken: daemon.authToken,
+        })
+      : null;
   try {
-    // OpenTUI is a separate process from the daemon observer. Do not mint an
-    // in-memory "internal" registration it cannot redeem; this read remains
-    // honestly observable as external until the TUI transport cutover.
-    const raw = runTmux(["capture-pane", "-t", target, "-p", "-J", "-S", `-${lines}`], {
-      encoding: "utf-8",
-    }) as string;
+    const captureArgs = ["capture-pane", "-t", target, "-p", "-J", "-S", `-${lines}`];
+    const raw = runTmux(
+      marker
+        ? [
+            "set-option",
+            "-p",
+            "-t",
+            target,
+            INTERNAL_READ_OPERATION_OPTION,
+            marker,
+            ";",
+            ...captureArgs,
+          ]
+        : captureArgs,
+      { encoding: "utf-8" },
+    ) as string;
     return parseSnapshot(raw, { lines });
   } catch {
+    if (marker) {
+      try {
+        runTmux(["set-option", "-pu", "-t", target, INTERNAL_READ_OPERATION_OPTION]);
+      } catch {
+        // The pane or tmux server disappeared with the failed capture.
+      }
+    }
     return { bottomNonEmpty: [], text: "", raw: "" };
   }
 }

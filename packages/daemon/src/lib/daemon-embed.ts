@@ -1014,6 +1014,7 @@ export async function startEmbeddedDaemon(
     let sessionRuntimeRegistry: SessionRuntimeRegistry | null = null;
     const externalInteractionObserver = new TmuxExternalInteractionObserver({
       daemonInstanceId: instanceId,
+      internalReadOwnerToken: localBypassToken,
       registry: workspaceRegistry,
       tmuxAuthority,
       onObserved: ({ workspaceName, semanticPaneId, operationKind, operationId }) => {

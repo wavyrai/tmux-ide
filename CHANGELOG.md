@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Standalone TUI binaries now embed OpenTUI's Tree-sitter worker and WebAssembly runtime, so `tmux-ide show` renders Markdown without leaking `/$bunfs/root/parser.worker.ts` errors into terminal panes.
+- Chrome-updater pane snapshots now skip raw shells and carry short-lived, one-use daemon-owner proofs, preventing tmux-ide's own two-second status scan from producing permanent READ chrome or competing with terminal input; genuine external and agent reads remain visible.
 
 ## 2.7.0
 
