@@ -22,8 +22,9 @@
  */
 
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin";
-import { mkdirSync, existsSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -48,17 +49,73 @@ const outfile =
 mkdirSync(dirname(outfile), { recursive: true });
 
 const start = Date.now();
-const result = await Bun.build({
-  entrypoints: [entry],
-  target: "bun",
-  compile: { outfile, target },
-  // This executable is the production runtime; source-mode development keeps
-  // readable symbols. Minifying the embedded JS cuts cold-start IO and module
-  // evaluation (the dominant first-frame cost) without changing OpenTUI's
-  // native asset or the lazy surface dispatcher.
-  minify: true,
-  plugins: [createSolidTransformPlugin()],
-});
+const workerBuildDir = mkdtempSync(join(tmpdir(), "tmux-ide-opentui-worker-"));
+let result;
+
+try {
+  // Bun does not discover a Worker whose URL is selected inside a dependency,
+  // and an unbundled parser.worker.js cannot resolve web-tree-sitter from the
+  // standalone executable's /$bunfs root. Bundle the worker first, including
+  // its JS dependencies, then embed both that bundle and its emitted wasm as
+  // file assets in the production executable.
+  const workerBuild = await Bun.build({
+    entrypoints: [fileURLToPath(import.meta.resolve("@opentui/core/parser.worker"))],
+    outdir: workerBuildDir,
+    target: "bun",
+    naming: "parser.worker.js",
+    minify: true,
+  });
+  if (!workerBuild.success) {
+    for (const log of workerBuild.logs) console.error(log);
+    throw new Error("[build-tui] Tree-sitter worker bundle failed");
+  }
+
+  const workerBundle = workerBuild.outputs.find((output) => output.path.endsWith(".js"))?.path;
+  const treeSitterWasm = workerBuild.outputs.find((output) => output.path.endsWith(".wasm"))?.path;
+  if (!workerBundle || !treeSitterWasm) {
+    throw new Error("[build-tui] Tree-sitter worker bundle did not emit JS and wasm assets");
+  }
+
+  const workerAssetPlugin = {
+    name: "tmux-ide-opentui-worker-assets",
+    setup(build) {
+      build.onResolve({ filter: /^tmux-ide:opentui-parser-worker$/ }, () => ({
+        path: workerBundle,
+        namespace: "tmux-ide-opentui-worker-asset",
+      }));
+      build.onResolve({ filter: /^tmux-ide:opentui-tree-sitter-wasm$/ }, () => ({
+        // Strip the worker build's content hash from its input name. Bun adds
+        // the same content hash while embedding it in the executable, yielding
+        // exactly the basename referenced by the bundled worker.
+        path: "tree-sitter.wasm",
+        namespace: "tmux-ide-opentui-worker-asset",
+      }));
+      build.onLoad(
+        { filter: /.*/, namespace: "tmux-ide-opentui-worker-asset" },
+        async ({ path }) => ({
+          contents: new Uint8Array(
+            await Bun.file(path === "tree-sitter.wasm" ? treeSitterWasm : path).arrayBuffer(),
+          ),
+          loader: "file",
+        }),
+      );
+    },
+  };
+
+  result = await Bun.build({
+    entrypoints: [entry],
+    target: "bun",
+    compile: { outfile, target },
+    // This executable is the production runtime; source-mode development keeps
+    // readable symbols. Minifying the embedded JS cuts cold-start IO and module
+    // evaluation (the dominant first-frame cost) without changing OpenTUI's
+    // native asset or the lazy surface dispatcher.
+    minify: true,
+    plugins: [workerAssetPlugin, createSolidTransformPlugin()],
+  });
+} finally {
+  rmSync(workerBuildDir, { recursive: true, force: true });
+}
 
 if (!result.success) {
   for (const log of result.logs) console.error(log);
