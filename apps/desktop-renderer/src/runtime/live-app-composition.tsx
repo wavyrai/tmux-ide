@@ -92,6 +92,7 @@ import {
 } from "./workspace-files-store.ts";
 import { createSolidWorkspaceMissionsStore } from "./workspace-missions-store.ts";
 import { createGuiResourceTelemetry } from "./gui-resource-telemetry.ts";
+import { useGuiPerformanceTelemetry } from "./gui-performance-context.tsx";
 import {
   changeDiffSurfaceModel,
   changeEntriesById,
@@ -654,6 +655,24 @@ function recoveryPresentation(phase: DesktopDaemonRecoveryPhase): {
 }
 
 function LiveWorkspace(props: LiveWorkspaceProps) {
+  const performanceTelemetry = useGuiPerformanceTelemetry();
+  createEffect(() => {
+    const daemonInstanceId = props.target.daemon.instanceId;
+    performanceTelemetry?.setAuthority({
+      daemonInstanceId,
+      workspaceName: props.target.workspaceName,
+      generation: null,
+      incarnation: null,
+    });
+    onCleanup(() =>
+      performanceTelemetry?.setAuthority({
+        daemonInstanceId,
+        workspaceName: null,
+        generation: null,
+        incarnation: null,
+      }),
+    );
+  });
   const [acknowledgedOperationIds, setAcknowledgedOperationIds] = createSignal<readonly string[]>(
     [],
   );

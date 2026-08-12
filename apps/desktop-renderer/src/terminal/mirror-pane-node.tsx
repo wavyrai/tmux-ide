@@ -12,6 +12,7 @@ import { createWidgetMarkerByteWatcher, detectWidgetMarker } from "@tmux-ide/con
 import { resolveWidget, type WidgetResolution } from "./widgets/widget-registry.ts";
 import { WIDGET_SCAN_MAX_ROWS } from "./widgets/xterm-cell-rows.ts";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
+import { useGuiPerformanceTelemetry } from "../runtime/gui-performance-context.tsx";
 
 export interface MirrorPaneNodeProps {
   /** Semantic pane identity; never a runtime tmux id. */
@@ -41,6 +42,7 @@ export interface MirrorPaneNodeProps {
 const WIDGET_SCAN_DEBOUNCE_MS = 40;
 
 export function MirrorPaneNode(props: MirrorPaneNodeProps) {
+  const performanceTelemetry = useGuiPerformanceTelemetry();
   const [grid, setGrid] = createSignal<{ cols: number; rows: number } | null>(null);
   const [painted, setPainted] = createSignal(false);
   const [widget, setWidget] = createSignal<WidgetResolution | null>(null);
@@ -149,7 +151,14 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
       applySeedBatch: (batch: PaneMirrorSeedBatch) => {
         if (disposed || renderer !== next) return;
         if (batch.reset) setGrid({ cols: batch.reset.cols, rows: batch.reset.rows });
-        const applied = next.applySeedBatch(batch);
+        const finishParse = performanceTelemetry?.beginParse();
+        const finishPaint = performanceTelemetry?.beginPaint();
+        const applied = Promise.resolve(next.applySeedBatch(batch)).then(() => {
+          finishParse?.();
+          finishPaint?.();
+          performanceTelemetry?.commitDelivery();
+        });
+        performanceTelemetry?.recordReseed();
         setPainted(true);
         // A seed REPLACES the screen, so it can both create and destroy a
         // widget; it is always worth a scan.
@@ -167,7 +176,13 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
         // Either the bytes carry the sentinel, or a widget is already showing
         // and this write may be the clear that takes it away.
         if (markerWatcher.observe(bytes) || widget() !== null) scheduleWidgetScan();
-        return next.write(bytes);
+        const finishParse = performanceTelemetry?.beginParse();
+        const finishPaint = performanceTelemetry?.beginPaint();
+        return next.write(bytes).then(() => {
+          finishParse?.();
+          finishPaint?.();
+          performanceTelemetry?.commitDelivery();
+        });
       },
       applyCursor: (x: number, y: number) => {
         if (disposed || renderer !== next) return;
@@ -181,6 +196,7 @@ export function MirrorPaneNode(props: MirrorPaneNodeProps) {
     const options = {
       reducedMotion: props.reducedMotion ?? false,
       label: `${props.title} mirror`,
+      performanceTelemetry,
     };
     if (props.rendererFactory) {
       activateRenderer(props.rendererFactory(options), load);

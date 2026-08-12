@@ -6,6 +6,7 @@ import { XTERM_PALETTE_HEX } from "@tmux-ide/core";
 
 import type { WidgetCellRow } from "@tmux-ide/contracts";
 import { readWidgetCellRows } from "./widgets/xterm-cell-rows.ts";
+import type { GuiPerformanceTelemetrySink } from "../runtime/gui-performance-telemetry.ts";
 
 export interface TerminalRendererDisposable {
   dispose(): void;
@@ -40,6 +41,7 @@ export interface TerminalRenderer {
 export type TerminalRendererFactory = (options: {
   readonly reducedMotion: boolean;
   readonly label: string;
+  readonly performanceTelemetry?: GuiPerformanceTelemetrySink | null;
 }) => TerminalRenderer;
 
 /**
@@ -125,7 +127,11 @@ export function resolveTerminalFontFamily(reader: TerminalTokenReader): string {
 }
 
 /** xterm is a VT renderer only here; the desktop host remains the terminal runtime. */
-export const createXtermRenderer: TerminalRendererFactory = ({ reducedMotion, label }) => {
+export const createXtermRenderer: TerminalRendererFactory = ({
+  reducedMotion,
+  label,
+  performanceTelemetry,
+}) => {
   let container: HTMLElement | null = null;
   let fitAddon: FitAddon | null = null;
   const encoder = new TextEncoder();
@@ -150,6 +156,7 @@ export const createXtermRenderer: TerminalRendererFactory = ({ reducedMotion, la
   });
   terminal.loadAddon(new Unicode11Addon());
   terminal.unicode.activeVersion = "11";
+  terminal.onRender(({ start, end }) => performanceTelemetry?.recordRendered(end - start + 1));
 
   const applyTheme = (): void => {
     if (!container) return;

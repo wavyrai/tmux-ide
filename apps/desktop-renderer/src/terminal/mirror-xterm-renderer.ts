@@ -16,6 +16,7 @@ import {
   resolveTerminalFontFamily,
   resolveTerminalTheme,
 } from "./xterm-renderer.ts";
+import type { GuiPerformanceTelemetrySink } from "../runtime/gui-performance-telemetry.ts";
 
 /**
  * Read-only VT mirror renderer for pane nodes (m43 card 3). It differs from
@@ -119,6 +120,7 @@ export function mirrorFitTransform(
 export type MirrorTerminalRendererFactory = (options: {
   readonly reducedMotion: boolean;
   readonly label: string;
+  readonly performanceTelemetry?: GuiPerformanceTelemetrySink | null;
 }) => MirrorTerminalRenderer;
 
 /** 1-based ANSI cursor-position sequence from the wire's 0-based cell coordinates. */
@@ -131,6 +133,7 @@ export function cursorPositionSequence(x: number, y: number): string {
 export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
   reducedMotion,
   label,
+  performanceTelemetry,
 }) => {
   let container: HTMLElement | null = null;
   let fitStyle: RuntimeStyleBinding | null = null;
@@ -156,6 +159,7 @@ export const createMirrorXtermRenderer: MirrorTerminalRendererFactory = ({
   });
   terminal.loadAddon(new Unicode11Addon());
   terminal.unicode.activeVersion = "11";
+  terminal.onRender(({ start, end }) => performanceTelemetry?.recordRendered(end - start + 1));
   void reducedMotion;
 
   const applyTheme = (): void => {

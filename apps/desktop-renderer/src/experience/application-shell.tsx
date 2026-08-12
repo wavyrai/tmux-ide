@@ -134,6 +134,7 @@ import {
 import { experimentalSurfacesEnabled, hiddenDockTools } from "./experimental-surfaces.ts";
 import { WorkspaceTiledSurface } from "./workspace-tiled-surface.tsx";
 import { statusStripWithAttachment } from "./terminal-attachment-status.ts";
+import { useGuiPerformanceTelemetry } from "../runtime/gui-performance-context.tsx";
 
 const PALETTE_OVERLAY_ID = "overlay.palette.trace";
 
@@ -316,6 +317,7 @@ function activityTone(activity: string): string {
 }
 
 export function DomApplicationShell(props: DomApplicationShellProps) {
+  const performanceTelemetry = useGuiPerformanceTelemetry();
   const fallbackInput = createDefaultDomShellInput();
   const input = createMemo<ApplicationShellProjectionInputV1 | ApplicationShellProjectionInputV3>(
     () => {
@@ -797,7 +799,11 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const mirrorTransport = createMemo<PaneStreamTransport | null>(() => {
     if (props.paneStreamTransport !== undefined) return props.paneStreamTransport;
     if (dataMode() !== "runtime" || props.daemonState?.status !== "connected") return null;
-    return createHostPaneStreamTransport(props.host, props.daemonState.identity);
+    return createHostPaneStreamTransport(
+      props.host,
+      props.daemonState.identity,
+      performanceTelemetry,
+    );
   });
   /*
    * The layout-faithful terminal surface composes each pane from its pane
