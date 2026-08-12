@@ -15,12 +15,10 @@
 
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { WorkspaceSchemaZ, type Workspace } from "@tmux-ide/contracts";
-
-const REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 
 const RegistryFileSchemaZ = z.object({
   version: z.literal(1),
@@ -48,6 +46,8 @@ export interface AddWorkspaceInput {
   hasWorkspaceConfig?: boolean;
   /** Override Date.now() for deterministic tests. */
   now?: () => Date;
+  /** Live-only workspace; never serialized to workspaces.json. */
+  persistence?: "durable" | "volatile";
 }
 
 export class WorkspaceAlreadyExistsError extends Error {
@@ -79,10 +79,11 @@ export class WorkspaceRegistry {
   private readonly listSessions: ListSessionsFn;
   private readonly emitter = new EventEmitter();
   private workspaces: Workspace[] = [];
+  private readonly volatileNames = new Set<string>();
   private loaded = false;
 
   constructor(options: WorkspaceRegistryOptions = {}) {
-    this.dir = options.dir ?? process.env[REGISTRY_DIR_ENV] ?? join(homedir(), ".tmux-ide");
+    this.dir = options.dir ?? resolveRuntimeNamespace().registryDir;
     this.listSessions = options.listSessions ?? defaultListSessions;
     this.emitter.setMaxListeners(0);
   }
@@ -140,10 +141,12 @@ export class WorkspaceRegistry {
     };
     const previous = this.workspaces;
     this.workspaces = [...previous, workspace];
+    if (input.persistence === "volatile") this.volatileNames.add(workspace.name);
     try {
       this.writeDisk();
     } catch (error) {
       this.workspaces = previous;
+      this.volatileNames.delete(workspace.name);
       throw error;
     }
     this.emitter.emit("workspace.added", workspace);
@@ -181,6 +184,7 @@ export class WorkspaceRegistry {
       throw new WorkspaceNotFoundError(name);
     }
     this.workspaces = this.workspaces.filter((w) => w.name !== name);
+    this.volatileNames.delete(name);
     this.writeDisk();
     this.emitter.emit("workspace.removed", name);
   }
@@ -221,7 +225,10 @@ export class WorkspaceRegistry {
   private writeDisk(): void {
     const path = this.filePath();
     mkdirSync(dirname(path), { recursive: true });
-    const file: RegistryFile = { version: 1, workspaces: this.workspaces };
+    const file: RegistryFile = {
+      version: 1,
+      workspaces: this.workspaces.filter(({ name }) => !this.volatileNames.has(name)),
+    };
     const tmp = `${path}.tmp`;
     writeFileSync(tmp, JSON.stringify(file, null, 2) + "\n");
     renameSync(tmp, path);
@@ -239,15 +246,21 @@ export class WorkspaceRegistry {
 // ---------------------------------------------------------------------------
 
 let _default: WorkspaceRegistry | null = null;
+let _defaultNamespaceKey: string | null = null;
 
 export function getDefaultWorkspaceRegistry(): WorkspaceRegistry {
-  if (!_default) _default = new WorkspaceRegistry();
+  const namespaceKey = resolveRuntimeNamespace().registryDir;
+  if (!_default || _defaultNamespaceKey !== namespaceKey) {
+    _default = new WorkspaceRegistry({ dir: namespaceKey });
+    _defaultNamespaceKey = namespaceKey;
+  }
   return _default;
 }
 
 /** @internal Test hook: replace the singleton. */
 export function _setDefaultWorkspaceRegistryForTests(registry: WorkspaceRegistry | null): void {
   _default = registry;
+  _defaultNamespaceKey = registry ? resolveRuntimeNamespace().registryDir : null;
 }
 
 function defaultListSessions(): string[] {

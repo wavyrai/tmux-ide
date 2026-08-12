@@ -31,6 +31,8 @@ const launcherPath = join(runtimeDir, "launch.sh");
 const logPath = join(runtimeDir, "stderr.log");
 const perfLogPath = join(runtimeDir, "performance.jsonl");
 const metadataPath = join(runtimeDir, "state.json");
+const namespaceSocketName = `tmux-ide-testdrive-${process.getuid?.() ?? process.pid}`;
+const cleanupToken = `testdrive:cleanup:${process.getuid?.() ?? process.pid}`;
 const compiledTui = join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui");
 const sourceTui = join(repoRoot, "packages", "daemon", "src", "tui", "mirror", "app.tsx");
 
@@ -232,7 +234,7 @@ function liveHostSize() {
 
 function daemonStatus() {
   try {
-    const path = join(process.env.HOME ?? "", ".tmux-ide", "daemon.json");
+    const path = join(stateHome, "daemon.json");
     const daemon = JSON.parse(readFileSync(path, "utf8"));
     process.kill(daemon.pid, 0);
     return { running: true, pid: daemon.pid, port: daemon.port, instanceId: daemon.instanceId };
@@ -334,6 +336,15 @@ async function start(args) {
   const environment = [
     `TMUX_IDE_CWD=${shQuote(repoRoot)}`,
     `TMUX_IDE_HOME=${shQuote(stateHome)}`,
+    ...(process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
+      ? []
+      : [
+          "TMUX_IDE_RUNTIME_MODE=testdrive",
+          `TMUX_IDE_REGISTRY_DIR=${shQuote(join(runtimeDir, "registry"))}`,
+          `TMUX_IDE_DAEMON_INFO_DIR=${shQuote(stateHome)}`,
+          `TMUX_IDE_TMUX_SOCKET_NAME=${shQuote(namespaceSocketName)}`,
+          `TMUX_IDE_CLEANUP_TOKEN=${shQuote(cleanupToken)}`,
+        ]),
     `TMUX_IDE_CLI=${shQuote(join(repoRoot, "bin", "cli.js"))}`,
     `TMUX_IDE_TUI_PERF_LOG=${shQuote(perfLogPath)}`,
     `TMUX_IDE_TUI_LAUNCH_EPOCH_MS=${launchEpochMs}`,

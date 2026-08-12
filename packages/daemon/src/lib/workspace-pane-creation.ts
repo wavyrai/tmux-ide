@@ -22,6 +22,7 @@ import {
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
 import { shellEscape } from "./shell.ts";
 import { MissionRepository } from "./mission-repository.ts";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 
 const MAX_LIVE_OR_UNSAFE_OPERATIONS = 128;
 const MAX_REPLAYABLE_FAILURES = 64;
@@ -141,7 +142,7 @@ export interface WorkspacePaneTmuxAuthority {
   readonly executablePath: string;
   readonly socketSelector:
     | { readonly kind: "path"; readonly path: string }
-    | { readonly kind: "name"; readonly name: "default" };
+    | { readonly kind: "name"; readonly name: string };
 }
 
 function canonicalProjectDir(path: string): string {
@@ -281,10 +282,7 @@ export function resolveWorkspacePaneTmuxAuthority(): WorkspacePaneTmuxAuthority 
   // A sessionless daemon may start before the default tmux server exists. Pin
   // the daemon's default socket *name* and captured environment rather than
   // consulting a later request's TMUX/PATH.
-  return Object.freeze({
-    executablePath,
-    socketSelector: { kind: "name" as const, name: "default" as const },
-  });
+  return Object.freeze({ executablePath, socketSelector: resolveRuntimeNamespace().tmuxSocket });
 }
 
 /** Execute mutations only through the daemon-generation-pinned tmux authority. */
@@ -305,8 +303,8 @@ export function createPinnedWorkspaceTmuxRunner(
           }
           return ["-S", path];
         })()
-      : authority.socketSelector.name === "default"
-        ? ["-L", "default"]
+      : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name)
+        ? ["-L", authority.socketSelector.name]
         : (() => {
             throw new TypeError("Pinned tmux socket is invalid.");
           })();

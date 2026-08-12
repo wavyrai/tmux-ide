@@ -27,6 +27,7 @@ export type RegisteredProject = DaemonRegisteredProject;
 export const RegisterProjectRequestSchemaZ = z.object({
   dir: z.string().min(1),
   name: z.string().min(1).optional(),
+  persistence: z.enum(["durable", "volatile"]).optional(),
 });
 export type RegisterProjectRequest = z.infer<typeof RegisterProjectRequestSchemaZ>;
 

@@ -59,6 +59,26 @@ describe("WorkspaceRegistry — add/list/get/remove round-trip", () => {
     expect(reg2.get("alpha")?.projectDir).toBe("/tmp/alpha");
   });
 
+  it("keeps volatile workspaces live without serializing them", async () => {
+    const reg = new WorkspaceRegistry({ dir, listSessions: () => ["benchmark"] });
+    await reg.load();
+    reg.add({
+      name: "benchmark",
+      projectDir: "/tmp/benchmark",
+      persistence: "volatile",
+      now,
+    });
+    expect(reg.has("benchmark")).toBe(true);
+    const file = JSON.parse(readFileSync(join(dir, "workspaces.json"), "utf8")) as {
+      workspaces: unknown[];
+    };
+    expect(file.workspaces).toEqual([]);
+
+    const fresh = new WorkspaceRegistry({ dir, listSessions: () => ["benchmark"] });
+    await fresh.load();
+    expect(fresh.has("benchmark")).toBe(false);
+  });
+
   it("add() rejects duplicates", async () => {
     const reg = new WorkspaceRegistry({ dir, listSessions: () => ["alpha"] });
     await reg.load();

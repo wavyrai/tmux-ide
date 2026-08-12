@@ -1097,9 +1097,13 @@ export async function startEmbeddedDaemon(
         // fallback. Option/capture IO rides the runtime's own pinned runner.
         agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
       });
-      // Orphan reconciliation is a hard startup barrier: neither the HTTP
-      // mutation nor direct WebSocket redemption is exposed before it passes.
-      await terminalAttachmentRuntime.whenReady();
+      // Daemon readiness deliberately precedes tmux readiness. The attachment
+      // coordinator keeps its own startup barrier, so lease issue/redemption
+      // still fail closed until orphan reconciliation passes, while /health,
+      // /identity and the typed startup-readiness ladder remain available when
+      // tmux has no server yet. A persisted catalog is intent, not proof that a
+      // tmux server must already exist during process bootstrap.
+      void terminalAttachmentRuntime.whenReady().catch(() => undefined);
       paneStreamRuntime = createPaneStreamRuntime({
         daemonInstanceId: instanceId,
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),

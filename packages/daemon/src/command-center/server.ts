@@ -1471,6 +1471,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       const project = await registerProject({
         dir: parsed.data.dir,
         name: parsed.data.name,
+        persistence: parsed.data.persistence,
       });
       return c.json({ project } satisfies DaemonRegisteredProjectResponse, 201);
     } catch (err) {

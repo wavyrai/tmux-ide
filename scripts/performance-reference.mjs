@@ -110,7 +110,14 @@ async function registerReferenceProject() {
       authorization: `Bearer ${daemon.authToken}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ dir: referenceProjectDir, name: target }),
+    body: JSON.stringify({
+      dir: referenceProjectDir,
+      name: target,
+      // The canonical daemon must see the fixture so this measures the real
+      // product path, but a benchmark crash must never bookmark it for the
+      // user. Volatile registrations are live-only daemon state.
+      persistence: "volatile",
+    }),
   });
   if (!response.ok)
     throw new Error(

@@ -229,9 +229,10 @@ function pinnedRunner(
           command.argv[1] === "-F" &&
           command.argv[2] === "#{session_name}|tmux-ide-view-field-v1|#{session_id}"
         ) {
-          // A first-run project may have no default tmux server yet. This
-          // one construction-time orphan enumeration is equivalent to zero
-          // sessions; every other command/socket/registry state stays strict.
+          // The daemon may cold-start before the default tmux server even when
+          // durable workspace intent exists. This one construction-time orphan
+          // enumeration means zero LIVE sessions; every other command and
+          // every explicit socket remains strict.
           return { status: "not-found" };
         }
         if (error instanceof TmuxError && error.code === "ENVIRONMENT_VARIABLE_NOT_FOUND") {
@@ -827,9 +828,7 @@ export class NativeTerminalAttachmentRuntime {
     const execute = options.commandExecutor ?? defaultCommandExecutor;
     const startupPolicy = {
       allowUnavailableDefaultEnumeration:
-        authority.socketSelector.kind === "name" &&
-        authority.socketSelector.name === "default" &&
-        options.registry.list().length === 0,
+        authority.socketSelector.kind === "name" && authority.socketSelector.name === "default",
     };
     const runner = pinnedRunner(authority, execute, startupPolicy);
     const discoverTerminalInventory = () =>

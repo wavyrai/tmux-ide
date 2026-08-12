@@ -15,7 +15,6 @@ import {
   type Stats,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   CanonicalDaemonInfoSchema,
@@ -25,11 +24,10 @@ import {
   DaemonIdentitySchema,
   type DaemonIdentity,
 } from "@tmux-ide/contracts";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 
 export type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
 
-const DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
-const REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
 const DAEMON_INFO_FILE = "daemon.json";
 const DAEMON_CLAIM_DIR = "daemon.claim";
 const DAEMON_CLAIM_OWNER_FILE = "owner.json";
@@ -97,17 +95,8 @@ export type CanonicalDaemonInfoState =
       observation: CanonicalDaemonInfoObservation | null;
     };
 
-function nonEmptyEnvironmentValue(name: string): string | undefined {
-  const value = process.env[name];
-  return value !== undefined && value.length > 0 ? value : undefined;
-}
-
 export function getCanonicalDaemonInfoPath(): string {
-  const dir =
-    nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ??
-    nonEmptyEnvironmentValue(REGISTRY_DIR_ENV) ??
-    join(homedir(), ".tmux-ide");
-  return join(dir, DAEMON_INFO_FILE);
+  return join(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE);
 }
 
 export function getCanonicalDaemonClaimPath(): string {

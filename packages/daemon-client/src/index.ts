@@ -13,6 +13,7 @@
 export * from "./lock.ts";
 export * from "./health.ts";
 export * from "./ensure.ts";
+export * from "./bootstrap-coordinator.ts";
 export * from "./connection-supervisor.ts";
 export * from "./resource-replica.ts";
 export * from "./push-resource-session.ts";

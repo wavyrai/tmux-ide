@@ -827,18 +827,34 @@ describe("native terminal attachment runtime lifecycle", () => {
     await runtime.dispose();
   });
 
-  it.each([
-    ["a nonempty registry on the default socket", true, "default"],
-    ["an empty registry on a non-default named socket", false, "explicit-runtime"],
-  ])("fails startup closed for %s", async (_label, nonempty, socketName) => {
-    const { registry, root } = nonempty ? createRegistry() : createEmptyRegistry();
+  it("accepts no default tmux server with a nonempty durable registry", async () => {
+    const { registry, root } = createRegistry();
     const runtime = createNativeTerminalAttachmentRuntime({
       daemonInstanceId: INSTANCE_ID,
       webSocketUrl: WS_URL,
       registry,
       tmuxAuthority: {
         ...authority(root),
-        socketSelector: { kind: "name", name: socketName },
+        socketSelector: { kind: "name", name: "default" },
+      },
+      commandExecutor: () => {
+        throw new TmuxError("raw unavailable default socket detail", "TMUX_UNAVAILABLE");
+      },
+    });
+
+    await expect(runtime.whenReady()).resolves.toBeUndefined();
+    await runtime.dispose();
+  });
+
+  it("fails startup closed for an unavailable explicit named socket", async () => {
+    const { registry, root } = createEmptyRegistry();
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: {
+        ...authority(root),
+        socketSelector: { kind: "name", name: "explicit-runtime" },
       },
       commandExecutor: () => {
         throw new TmuxError("raw inaccessible named socket detail", "TMUX_UNAVAILABLE");
