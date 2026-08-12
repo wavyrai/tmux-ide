@@ -58,6 +58,7 @@ const provenance = {
 };
 
 let measurements;
+let succeeded = false;
 try {
   mkdirSync(join(referenceProjectDir, ".tmux-ide"), { recursive: true });
   writeFileSync(
@@ -83,11 +84,21 @@ try {
     inputToPaint: measureInputToPaint(inputTrace),
     memory: measureMemory(),
   };
+  succeeded = true;
 } finally {
-  spawnSync("node", ["scripts/tui-testdrive.mjs", "stop"], { cwd: root, stdio: "ignore" });
-  spawnSync("tmux", ["kill-session", "-t", `=${target}`], { stdio: "ignore" });
-  await unregisterReferenceProject().catch(() => undefined);
-  rmSync(referenceProjectDir, { recursive: true, force: true });
+  if (!options.keepOnFailure || succeeded) {
+    spawnSync("node", ["scripts/tui-testdrive.mjs", "stop"], { cwd: root, stdio: "ignore" });
+    spawnSync("tmux", ["kill-session", "-t", `=${target}`], { stdio: "ignore" });
+    await unregisterReferenceProject().catch(() => undefined);
+    rmSync(referenceProjectDir, { recursive: true, force: true });
+  } else {
+    process.stderr.write(
+      `Reference fixture retained after failure:\n` +
+        `  project: ${referenceProjectDir}\n` +
+        `  session: ${target}\n` +
+        `  TUI: tmux attach -t _tmux-ide-testdrive\n`,
+    );
+  }
 }
 
 async function registerReferenceProject() {
@@ -124,13 +135,17 @@ async function launchReferenceWorkspace() {
     throw new Error(
       `Unable to launch reference workspace (${response.status}): ${JSON.stringify(result)}`,
     );
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + 10_000;
+  let lastCatalog = null;
+  let lastPanes = null;
+  let lastApplicationShell = null;
   while (Date.now() < deadline) {
     const catalogResponse = await fetch(
       `http://${daemon.bindHostname}:${daemon.port}/api/resources/workspace-catalog`,
       { headers: { authorization: `Bearer ${daemon.authToken}` } },
     );
-    const catalog = await catalogResponse.json();
+    const catalog = await responseJson(catalogResponse);
+    lastCatalog = { status: catalogResponse.status, body: catalog };
     const published = catalog?.workspaces?.some(
       ({ workspaceName, sessionName }) => workspaceName === target && sessionName === target,
     );
@@ -139,14 +154,68 @@ async function launchReferenceWorkspace() {
         `http://${daemon.bindHostname}:${daemon.port}/api/project/${encodeURIComponent(target)}/panes`,
         { headers: { authorization: `Bearer ${daemon.authToken}` } },
       );
+      const paneResource = await responseJson(panesResponse);
+      lastPanes = { status: panesResponse.status, body: paneResource };
       if (panesResponse.ok) {
-        const paneResource = await panesResponse.json();
-        if (Array.isArray(paneResource.panes) && paneResource.panes.length > 0) return;
+        const applicationShellResponse = await fetch(
+          `http://${daemon.bindHostname}:${daemon.port}/api/project/${encodeURIComponent(target)}/application-shell?version=3`,
+          { headers: { authorization: `Bearer ${daemon.authToken}` } },
+        );
+        const applicationShell = await responseJson(applicationShellResponse);
+        lastApplicationShell = {
+          status: applicationShellResponse.status,
+          body: applicationShell,
+        };
+        const resources = applicationShell?.resource?.terminalInventory?.resources;
+        const attachable = Array.isArray(resources)
+          ? resources.filter(
+              ({ attachability }) =>
+                attachability?.status === "available" &&
+                typeof attachability.semanticPaneId === "string" &&
+                attachability.semanticPaneId.length > 0,
+            )
+          : [];
+        if (
+          Array.isArray(paneResource.panes) &&
+          paneResource.panes.length > 0 &&
+          applicationShellResponse.ok &&
+          attachable.length > 0
+        ) {
+          return {
+            catalogWorkspace: catalog.workspaces.find(
+              ({ workspaceName, sessionName }) =>
+                workspaceName === target && sessionName === target,
+            ),
+            panes: paneResource.panes,
+            terminalResources: attachable,
+          };
+        }
       }
     }
     await delay(25);
   }
-  throw new Error("Canonical reference workspace did not publish an attachable pane");
+  throw new Error(
+    `Canonical reference workspace did not publish an attachable application-shell terminal.\n` +
+      diagnosticJson({
+        catalog: lastCatalog,
+        panes: lastPanes,
+        applicationShell: lastApplicationShell,
+      }),
+  );
+}
+
+async function responseJson(response) {
+  const text = await response.text();
+  if (text.length === 0) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { invalidJson: text };
+  }
+}
+
+function diagnosticJson(value) {
+  return JSON.stringify(value, null, 2);
 }
 
 async function unregisterReferenceProject() {
@@ -271,7 +340,17 @@ async function collectInputTrace() {
   };
   run(
     "node",
-    ["scripts/tui-testdrive.mjs", "start", "--target", target, "--cols", "160", "--rows", "44"],
+    [
+      "scripts/tui-testdrive.mjs",
+      "start",
+      "--target",
+      target,
+      "--cols",
+      "160",
+      "--rows",
+      "44",
+      "--debug",
+    ],
     traceEnvironment,
   );
   try {
@@ -279,8 +358,9 @@ async function collectInputTrace() {
     // then focus its body explicitly; sending F2 here can be routed through to
     // the target as soon as the terminal input owner is live.
     const canvasFrame = await waitForCapturedFrame(
-      (frame) => frame.includes(target) && frame.includes("TERMINAL INPUT"),
-      5_000,
+      (frame) =>
+        frame.includes(target) && frame.includes("TERMINAL INPUT") && frame.includes("Echo"),
+      10_000,
     );
     run("node", ["scripts/tui-testdrive.mjs", "mouse", "click", "40", "10"]);
     await delay(50);
@@ -510,6 +590,7 @@ function parseOptions(args) {
     inputTrace: null,
     build: true,
     requireComplete: false,
+    keepOnFailure: false,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -520,6 +601,7 @@ function parseOptions(args) {
     else if (arg === "--input-trace") parsed.inputTrace = args[++index];
     else if (arg === "--no-build") parsed.build = false;
     else if (arg === "--require-complete") parsed.requireComplete = true;
+    else if (arg === "--keep-on-failure") parsed.keepOnFailure = true;
     else throw new Error(`Unknown option ${arg}`);
   }
   for (const field of ["startupSamples", "memorySamples", "inputSamples"])
