@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationShellSessionState } from "@tmux-ide/daemon-client/application-shell-session";
 
-import { DaemonAuthorityRebindCoordinator } from "./daemon-authority-rebind.ts";
+import {
+  DaemonAuthorityRebindCoordinator,
+  type DaemonAuthorityRebindActions,
+} from "./daemon-authority-rebind.ts";
 
 function identityMismatch(instanceId: string): ApplicationShellSessionState {
   return {
@@ -153,5 +156,41 @@ describe("daemon authority rebind coordinator", () => {
 
     expect(callbacks).toHaveLength(0);
     expect(reconnect).toHaveBeenCalledOnce();
+  });
+
+  it("keeps recursive identity mismatch recovery single-flight", async () => {
+    const callbacks: Array<() => void> = [];
+    let activeReconnects = 0;
+    let peakReconnects = 0;
+    const coordinator = new DaemonAuthorityRebindCoordinator({
+      maxAttempts: 3,
+      schedule: (callback) => {
+        callbacks.push(callback);
+        return callbacks.length as unknown as ReturnType<typeof setTimeout>;
+      },
+      cancel: vi.fn(),
+    });
+    const actions: DaemonAuthorityRebindActions = {
+      retire: vi.fn(),
+      reconnect: vi.fn(async () => {
+        activeReconnects += 1;
+        peakReconnects = Math.max(peakReconnects, activeReconnects);
+        coordinator.request("alpha", identityMismatch("old-daemon"), actions);
+        activeReconnects -= 1;
+        return false;
+      }),
+    };
+
+    coordinator.request("alpha", identityMismatch("old-daemon"), actions);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(callbacks).toHaveLength(1);
+      callbacks.shift()?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    expect(actions.reconnect).toHaveBeenCalledTimes(3);
+    expect(peakReconnects).toBe(1);
+    expect(callbacks).toHaveLength(0);
   });
 });

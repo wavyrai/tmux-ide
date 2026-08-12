@@ -14,6 +14,11 @@ interface DaemonAuthorityRebindOptions {
   readonly cancel?: (timer: ReturnType<typeof setTimeout>) => void;
 }
 
+interface QueuedRebind {
+  readonly key: string;
+  readonly actions: DaemonAuthorityRebindActions;
+}
+
 export function daemonAuthorityRebindKey(
   sessionName: string,
   state: ApplicationShellSessionState,
@@ -38,6 +43,8 @@ export class DaemonAuthorityRebindCoordinator {
   readonly #attempts = new Map<string, number>();
   #pending: ReturnType<typeof setTimeout> | null = null;
   #pendingKey: string | null = null;
+  #inFlight: { readonly key: string; readonly epoch: number } | null = null;
+  #queued: QueuedRebind | null = null;
   #epoch = 0;
 
   constructor(options: DaemonAuthorityRebindOptions = {}) {
@@ -57,11 +64,27 @@ export class DaemonAuthorityRebindCoordinator {
     // Even a repeated frame must leave no stale child capability live. Only
     // the canonical discovery attempt is deduplicated.
     actions.retire();
-    if (this.#pendingKey === key || (this.#attempts.get(key) ?? 0) >= this.#maxAttempts)
+    if (
+      this.#pendingKey === key ||
+      this.#inFlight?.key === key ||
+      this.#queued?.key === key ||
+      (this.#attempts.get(key) ?? 0) >= this.#maxAttempts
+    )
       return true;
     if (!this.#attempts.has(key) && this.#attempts.size >= 32) {
       const oldest = this.#attempts.keys().next().value as string | undefined;
       if (oldest) this.#attempts.delete(oldest);
+    }
+    if (this.#inFlight) {
+      // Discovery cannot be aborted, so invalidate its result and retain only
+      // the latest replacement. It will be scheduled after the current call
+      // settles, preserving one physical reconnect at a time.
+      this.#epoch += 1;
+      if (this.#pending !== null) this.#cancel(this.#pending);
+      this.#pending = null;
+      this.#pendingKey = null;
+      this.#queued = { key, actions };
+      return true;
     }
     this.cancelPending();
     this.#scheduleAttempt(key, actions, this.#epoch);
@@ -77,20 +100,39 @@ export class DaemonAuthorityRebindCoordinator {
         if (epoch !== this.#epoch) return;
         this.#pending = null;
         this.#pendingKey = null;
+        const flight = { key, epoch };
+        this.#inFlight = flight;
         void Promise.resolve(actions.reconnect())
           .then((connected) => {
-            if (epoch !== this.#epoch) return;
-            if (connected || (this.#attempts.get(key) ?? 0) >= this.#maxAttempts) return;
-            this.#scheduleAttempt(key, actions, epoch);
+            this.#finishAttempt(flight, actions, connected);
           })
           .catch(() => {
-            if (epoch !== this.#epoch) return;
-            if ((this.#attempts.get(key) ?? 0) < this.#maxAttempts)
-              this.#scheduleAttempt(key, actions, epoch);
+            this.#finishAttempt(flight, actions, false);
           });
       },
       Math.min(1_000, this.#delayMs * 2 ** (attempt - 1)),
     );
+  }
+
+  #finishAttempt(
+    flight: { readonly key: string; readonly epoch: number },
+    actions: DaemonAuthorityRebindActions,
+    connected: boolean,
+  ): void {
+    if (this.#inFlight !== flight) return;
+    this.#inFlight = null;
+    const queued = this.#queued;
+    if (queued) {
+      this.#queued = null;
+      if ((this.#attempts.get(queued.key) ?? 0) < this.#maxAttempts) {
+        this.#scheduleAttempt(queued.key, queued.actions, this.#epoch);
+      }
+      return;
+    }
+    if (flight.epoch !== this.#epoch || connected) return;
+    if ((this.#attempts.get(flight.key) ?? 0) < this.#maxAttempts) {
+      this.#scheduleAttempt(flight.key, actions, flight.epoch);
+    }
   }
 
   cancelPending(): void {
@@ -98,6 +140,7 @@ export class DaemonAuthorityRebindCoordinator {
     if (this.#pending !== null) this.#cancel(this.#pending);
     this.#pending = null;
     this.#pendingKey = null;
+    this.#queued = null;
   }
 
   dispose(): void {

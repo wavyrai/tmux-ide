@@ -167,4 +167,41 @@ describe("DaemonFleetFactsObserver", () => {
     reacquired.release();
     retained.release();
   });
+
+  it.each([
+    ["sessions", "adopted"],
+    ["adopted", "sessions"],
+  ] as const)(
+    "expires the %s baseline independently while %s demand remains",
+    async (releasedDemand, retainedDemand) => {
+      const reads = [
+        { sessions: ["first"], adopted: ["first"] },
+        { sessions: ["second"], adopted: ["second"] },
+      ];
+      const observer = new DaemonFleetFactsObserver({
+        readSessions: vi.fn(async () => reads.shift() ?? null),
+        readAgents: async () => new Map(),
+        ...callbacks(),
+        setTimer: vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>),
+        clearTimer: vi.fn(),
+      });
+      const retained = observer.acquire([retainedDemand]);
+      const released = observer.acquire([releasedDemand]);
+      await Promise.all([retained.ready, released.ready]);
+      released.release();
+
+      const reacquired = observer.acquire([releasedDemand]);
+      let ready = false;
+      void reacquired.ready.then(() => {
+        ready = true;
+      });
+      await Promise.resolve();
+      expect(ready).toBe(false);
+      await reacquired.ready;
+      expect(ready).toBe(true);
+
+      reacquired.release();
+      retained.release();
+    },
+  );
 });

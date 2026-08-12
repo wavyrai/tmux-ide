@@ -95,17 +95,11 @@ export class DaemonFleetFactsObserver {
           if (next === 0) {
             this.#refs.delete(demand);
             this.#bumpDemandEpoch(demand);
+            this.#baselined.delete(demand);
+            if (demand === "sessions") this.#sessionNames = null;
+            else if (demand === "adopted") this.#adoptedNames = null;
+            else this.#agentFacts = null;
           } else this.#refs.set(demand, next);
-        }
-        if (!this.#refs.has("agents")) {
-          this.#baselined.delete("agents");
-          this.#agentFacts = null;
-        }
-        if (!this.#refs.has("sessions") && !this.#refs.has("adopted")) {
-          this.#baselined.delete("sessions");
-          this.#baselined.delete("adopted");
-          this.#sessionNames = null;
-          this.#adoptedNames = null;
         }
         if (this.#refs.size === 0) this.stop();
       },
