@@ -8,6 +8,7 @@ import {
   PERFORMANCE_STAGE_ORDER,
   PerformanceTraceV1SchemaZ,
   StateConvergenceIdentityV1SchemaZ,
+  TERMINAL_REPLICA_HASH_ALGORITHM,
   type ClientConvergenceObservationV1,
   type ClientQueueMetricV1,
   type ClientQueueSeriesV1,
@@ -18,8 +19,6 @@ import {
   type ProcessMonotonicSpanV1,
   type StateConvergenceIdentityV1,
 } from "@tmux-ide/contracts";
-
-import { hashTerminalDeliveryRepresentation } from "./terminal-delivery.ts";
 
 export interface PercentileSummary {
   readonly count: number;
@@ -77,6 +76,10 @@ export interface MutationOutcomeEvaluation {
   readonly limboMutationIds: readonly string[];
   readonly duplicateMutationIds: readonly string[];
   readonly unknownMutationIds: readonly string[];
+  readonly clockDomainMismatchMutationIds: readonly string[];
+  readonly earlyMutationIds: readonly string[];
+  readonly lateMutationIds: readonly string[];
+  readonly prematureTimeoutMutationIds: readonly string[];
 }
 
 /** Duration of one span only. No helper accepts endpoints from two clocks. */
@@ -130,24 +133,20 @@ export function evaluatePerformanceBudget(
   });
 }
 
-/**
- * Creates the same fnv1a64-v1 fingerprint used by terminal delivery. Object
- * keys are canonicalized so equivalent reducer truth yields one identity.
- */
+/** Wraps canonical runtime truth without recomputing or relabeling its hash. */
 export function createStateConvergenceIdentity(
   generation: string,
   incarnation: string,
   revision: number,
-  state: unknown,
+  canonicalStateHash: string,
 ): StateConvergenceIdentityV1 {
-  const bytes = new TextEncoder().encode(canonicalJson(state));
   return StateConvergenceIdentityV1SchemaZ.parse({
     version: 1,
     generation,
     incarnation,
     revision,
-    stateHash: hashTerminalDeliveryRepresentation(bytes),
-    hashAlgorithm: "fnv1a64-v1",
+    stateHash: canonicalStateHash,
+    hashAlgorithm: TERMINAL_REPLICA_HASH_ALGORITHM,
   });
 }
 
@@ -269,11 +268,13 @@ export function evaluateMutationOutcomes(
     parsedAcceptances.map(({ mutationId }) => mutationId),
     "accepted mutation",
   );
-  const accepted = new Set(parsedAcceptances.map(({ mutationId }) => mutationId));
+  const accepted = new Map(parsedAcceptances.map((value) => [value.mutationId, value]));
   const counts = new Map<string, number>();
   for (const { mutationId } of parsedOutcomes)
     counts.set(mutationId, (counts.get(mutationId) ?? 0) + 1);
-  const limboMutationIds = [...accepted].filter((mutationId) => !counts.has(mutationId)).sort();
+  const limboMutationIds = [...accepted.keys()]
+    .filter((mutationId) => !counts.has(mutationId))
+    .sort();
   const duplicateMutationIds = [...counts]
     .filter(([, count]) => count > 1)
     .map(([mutationId]) => mutationId)
@@ -281,16 +282,50 @@ export function evaluateMutationOutcomes(
   const unknownMutationIds = [...counts.keys()]
     .filter((mutationId) => !accepted.has(mutationId))
     .sort();
+  const clockDomainMismatchMutationIds = new Set<string>();
+  const earlyMutationIds = new Set<string>();
+  const lateMutationIds = new Set<string>();
+  const prematureTimeoutMutationIds = new Set<string>();
+  for (const outcome of parsedOutcomes) {
+    const acceptance = accepted.get(outcome.mutationId);
+    if (!acceptance) continue;
+    if (
+      outcome.processId !== acceptance.processId ||
+      outcome.clockId !== acceptance.clockId ||
+      outcome.clockKind !== acceptance.clockKind
+    ) {
+      clockDomainMismatchMutationIds.add(outcome.mutationId);
+      continue;
+    }
+    if (outcome.occurredAtMicros < acceptance.acceptedAtMicros)
+      earlyMutationIds.add(outcome.mutationId);
+    if (outcome.status !== "timed-out" && outcome.occurredAtMicros > acceptance.deadlineAtMicros)
+      lateMutationIds.add(outcome.mutationId);
+    if (outcome.status === "timed-out" && outcome.occurredAtMicros < acceptance.deadlineAtMicros)
+      prematureTimeoutMutationIds.add(outcome.mutationId);
+  }
+  const clockDomainMismatches = [...clockDomainMismatchMutationIds].sort();
+  const early = [...earlyMutationIds].sort();
+  const late = [...lateMutationIds].sort();
+  const prematureTimeouts = [...prematureTimeoutMutationIds].sort();
   return Object.freeze({
     complete:
       limboMutationIds.length === 0 &&
       duplicateMutationIds.length === 0 &&
-      unknownMutationIds.length === 0,
+      unknownMutationIds.length === 0 &&
+      clockDomainMismatches.length === 0 &&
+      early.length === 0 &&
+      late.length === 0 &&
+      prematureTimeouts.length === 0,
     acceptedCount: parsedAcceptances.length,
     terminalCount: parsedOutcomes.length,
     limboMutationIds: Object.freeze(limboMutationIds),
     duplicateMutationIds: Object.freeze(duplicateMutationIds),
     unknownMutationIds: Object.freeze(unknownMutationIds),
+    clockDomainMismatchMutationIds: Object.freeze(clockDomainMismatches),
+    earlyMutationIds: Object.freeze(early),
+    lateMutationIds: Object.freeze(late),
+    prematureTimeoutMutationIds: Object.freeze(prematureTimeouts),
   });
 }
 
@@ -310,39 +345,6 @@ function identitiesEqual(
 function assertUnique(values: readonly string[], label: string): void {
   if (new Set(values).size !== values.length)
     throw new TypeError(`${label} identities must be unique`);
-}
-
-function canonicalJson(value: unknown, ancestors = new Set<object>()): string {
-  if (typeof value === "number" && !Number.isFinite(value))
-    throw new TypeError("convergence state numbers must be finite");
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    const encoded = JSON.stringify(value);
-    return encoded;
-  }
-  if (typeof value !== "object") throw new TypeError("convergence state must be JSON-serializable");
-  if (ancestors.has(value)) throw new TypeError("convergence state must not contain cycles");
-  ancestors.add(value);
-  if (Array.isArray(value)) {
-    const encoded = `[${value.map((item) => canonicalJson(item, ancestors)).join(",")}]`;
-    ancestors.delete(value);
-    return encoded;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null)
-    throw new TypeError("convergence state must contain only plain JSON objects");
-  const record = value as Record<string, unknown>;
-  const encoded = `{${Object.keys(record)
-    .sort()
-    .filter((key) => record[key] !== undefined)
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key], ancestors)}`)
-    .join(",")}}`;
-  ancestors.delete(value);
-  return encoded;
 }
 
 function leastSquaresSlope(x: readonly number[], y: readonly number[]): number {

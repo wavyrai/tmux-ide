@@ -117,9 +117,16 @@ export const PerformanceTraceV1SchemaZ = z
     }
     const input = value.stages[0]!;
     const paint = value.stages[PERFORMANCE_STAGE_ORDER.length - 1]!;
+    if (input.endedAtMicros > paint.startedAtMicros)
+      context.addIssue({
+        code: "custom",
+        path: ["stages"],
+        message: "local input must complete before local paint begins",
+      });
     if (
-      value.localInputToPaint.startedAtMicros > input.startedAtMicros ||
-      value.localInputToPaint.endedAtMicros < paint.endedAtMicros
+      value.localInputToPaint.startedAtMicros >
+        Math.min(input.startedAtMicros, paint.startedAtMicros) ||
+      value.localInputToPaint.endedAtMicros < Math.max(input.endedAtMicros, paint.endedAtMicros)
     )
       context.addIssue({
         code: "custom",
@@ -219,6 +226,9 @@ export const MutationQualificationAcceptanceV1SchemaZ = z
   .object({
     version: z.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
     mutationId: z.uuid(),
+    processId: BoundedIdentitySchemaZ,
+    clockId: BoundedIdentitySchemaZ,
+    clockKind: MonotonicClockKindSchemaZ,
     acceptedAtMicros: MonotonicMicrosSchemaZ,
     deadlineAtMicros: MonotonicMicrosSchemaZ,
   })
@@ -239,6 +249,10 @@ export const MutationTerminalOutcomeV1SchemaZ = z
   .object({
     version: z.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
     mutationId: z.uuid(),
+    processId: BoundedIdentitySchemaZ,
+    clockId: BoundedIdentitySchemaZ,
+    clockKind: MonotonicClockKindSchemaZ,
+    occurredAtMicros: MonotonicMicrosSchemaZ,
     status: MutationTerminalStatusSchemaZ,
     reason: z.string().min(1).max(512).optional(),
     identity: StateConvergenceIdentityV1SchemaZ.optional(),

@@ -72,6 +72,29 @@ describe("performance qualification contracts", () => {
         },
       }),
     ).toThrow(/share one client clock domain/u);
+    expect(() =>
+      PerformanceTraceV1SchemaZ.parse({
+        ...base,
+        localInputToPaint: {
+          ...base.localInputToPaint,
+          startedAtMicros: 1,
+          endedAtMicros: 60_000,
+        },
+      }),
+    ).toThrow(/contain the local input and paint/u);
+    const causal = PERFORMANCE_STAGE_ORDER.map(span);
+    causal[0] = { ...causal[0]!, endedAtMicros: causal[5]!.startedAtMicros + 1 };
+    expect(() =>
+      PerformanceTraceV1SchemaZ.parse({
+        ...base,
+        stages: causal,
+        localInputToPaint: {
+          ...base.localInputToPaint,
+          startedAtMicros: 0,
+          endedAtMicros: 60_000,
+        },
+      }),
+    ).toThrow(/input must complete before local paint/u);
   });
 
   it("bounds queue dimensions and controlled vocabularies", () => {
@@ -103,6 +126,10 @@ describe("performance qualification contracts", () => {
       MutationTerminalOutcomeV1SchemaZ.parse({
         version: 1,
         mutationId: "00000000-0000-4000-8000-000000000003",
+        processId: "daemon-a",
+        clockId: "node-hrtime",
+        clockKind: "hrtime",
+        occurredAtMicros: 10,
         status: "observed",
       }),
     ).toThrow(/observed requires identity/u);

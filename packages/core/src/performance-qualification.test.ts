@@ -18,6 +18,7 @@ import {
   evaluateSlowClientIsolation,
   evaluateStateConvergence,
 } from "./performance-qualification.ts";
+import { blankTerminalReplicaSnapshot, hashTerminalReplicaSnapshot } from "./terminal-replica.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 
@@ -92,17 +93,15 @@ describe("performance qualification", () => {
     expect(evaluatePerformanceBudget(forward).stages.paint.p95Ms).toBe(0.1);
   });
 
-  it("creates canonical delivery-compatible hashes and converges 2/4/8 clients", () => {
-    const expected = createStateConvergenceIdentity(generation, "pane-a:1", 42, {
-      panes: [{ id: "a", title: "Editor" }],
-      focused: "a",
-    });
-    expect(expected).toEqual(
-      createStateConvergenceIdentity(generation, "pane-a:1", 42, {
-        focused: "a",
-        panes: [{ title: "Editor", id: "a" }],
-      }),
-    );
+  it("preserves the canonical terminal hash and converges 2/4/8 clients", () => {
+    const snapshot = blankTerminalReplicaSnapshot(4, 2);
+    const canonicalStateHash = hashTerminalReplicaSnapshot(snapshot);
+    const expected = createStateConvergenceIdentity(generation, "pane-a:1", 42, canonicalStateHash);
+    expect(expected.stateHash).toBe(canonicalStateHash);
+    expect(expected.hashAlgorithm).toBe("fnv1a64-v1");
+    expect(() =>
+      createStateConvergenceIdentity(generation, "pane-a:1", 42, "not-a-hash"),
+    ).toThrow();
     for (const count of [2, 4, 8]) {
       const observations: ClientConvergenceObservationV1[] = Array.from(
         { length: count },
@@ -120,25 +119,24 @@ describe("performance qualification", () => {
       );
     }
 
-    const divergent = createStateConvergenceIdentity(generation, "pane-a:1", 43, {
-      focused: "b",
-    });
+    const divergent = createStateConvergenceIdentity(
+      generation,
+      "pane-a:1",
+      43,
+      hashTerminalReplicaSnapshot(blankTerminalReplicaSnapshot(5, 2)),
+    );
     expect(
       evaluateStateConvergence(expected, [
         { version: 1, clientId: "slow", disposition: "slow", identity: divergent },
         { version: 1, clientId: "healthy", disposition: "healthy", identity: expected },
       ]),
     ).toMatchObject({ converged: true, excludedClientIds: ["slow"] });
-    expect(() => createStateConvergenceIdentity(generation, "pane-a:1", 1, undefined)).toThrow(
-      /JSON-serializable/u,
+    const newerIncarnation = createStateConvergenceIdentity(
+      generation,
+      "pane-a:2",
+      42,
+      canonicalStateHash,
     );
-    expect(() => createStateConvergenceIdentity(generation, "pane-a:1", 1, Number.NaN)).toThrow(
-      /finite/u,
-    );
-    const newerIncarnation = createStateConvergenceIdentity(generation, "pane-a:2", 42, {
-      panes: [{ id: "a", title: "Editor" }],
-      focused: "a",
-    });
     expect(
       evaluateStateConvergence(expected, [
         { version: 1, clientId: "healthy", disposition: "healthy", identity: newerIncarnation },
@@ -219,6 +217,9 @@ describe("performance qualification", () => {
     const accepted = (index: number): MutationQualificationAcceptanceV1 => ({
       version: 1,
       mutationId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      processId: "daemon-a",
+      clockId: "node-hrtime",
+      clockKind: "hrtime",
       acceptedAtMicros: index * 100,
       deadlineAtMicros: index * 100 + 1_000,
     });
@@ -228,9 +229,21 @@ describe("performance qualification", () => {
     ): MutationTerminalOutcomeV1 => ({
       version: 1,
       mutationId: acceptance.mutationId,
+      processId: acceptance.processId,
+      clockId: acceptance.clockId,
+      clockKind: acceptance.clockKind,
+      occurredAtMicros:
+        status === "timed-out" ? acceptance.deadlineAtMicros : acceptance.acceptedAtMicros + 1,
       status,
       ...(status === "observed"
-        ? { identity: createStateConvergenceIdentity(generation, "pane-a:1", 1, { ok: true }) }
+        ? {
+            identity: createStateConvergenceIdentity(
+              generation,
+              "pane-a:1",
+              1,
+              hashTerminalReplicaSnapshot(blankTerminalReplicaSnapshot(1, 1)),
+            ),
+          }
         : { reason: status }),
     });
     const a = accepted(1);
@@ -251,5 +264,20 @@ describe("performance qualification", () => {
       limboMutationIds: [a.mutationId],
       unknownMutationIds: [unknown.mutationId],
     });
+    expect(
+      evaluateMutationOutcomes(
+        [a],
+        [{ ...outcome(a, "observed"), occurredAtMicros: a.deadlineAtMicros + 1 }],
+      ),
+    ).toMatchObject({ complete: false, lateMutationIds: [a.mutationId] });
+    expect(
+      evaluateMutationOutcomes([a], [{ ...outcome(a, "rejected"), clockId: "other-clock" }]),
+    ).toMatchObject({ complete: false, clockDomainMismatchMutationIds: [a.mutationId] });
+    expect(
+      evaluateMutationOutcomes(
+        [a],
+        [{ ...outcome(a, "timed-out"), occurredAtMicros: a.deadlineAtMicros - 1 }],
+      ),
+    ).toMatchObject({ complete: false, prematureTimeoutMutationIds: [a.mutationId] });
   });
 });
