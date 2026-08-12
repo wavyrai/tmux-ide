@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../test-support/opentui-production-root-manifest.ts";
 
@@ -18,11 +19,81 @@ const ALLOWLIST = new Set([
   "packages/daemon/src/config.ts",
 ]);
 
-const DIRECT_LEGACY_PROBE =
-  /\b(?:existsSync|readFileSync|writeFileSync|stat|pathKind|join|resolve)\s*\([^;\n]*(["'])ide\.yml\1/u;
-const DIRECT_COMPAT_IMPORT =
-  /import\s*\{[^}]*\b(?:readConfig|getSessionName|hasLaunchConfig|hasLegacyConfigAt|legacyConfigPath)\b[^}]*\}\s*from\s*(["']).*?\1/u;
-const DIRECT_COMPAT_CALL = /\b(?:readConfig|getSessionName|hasLaunchConfig)\s*\(/u;
+const LEGACY_PROBE_CALLS = new Set([
+  "existsSync",
+  "readFileSync",
+  "writeFileSync",
+  "stat",
+  "pathKind",
+  "join",
+  "resolve",
+]);
+const COMPAT_IMPORTS = new Set([
+  "readConfig",
+  "getSessionName",
+  "hasLaunchConfig",
+  "hasLegacyConfigAt",
+  "legacyConfigPath",
+]);
+const DIRECT_COMPAT_CALLS = new Set(["readConfig", "getSessionName", "hasLaunchConfig"]);
+
+/**
+ * Locate direct compatibility access by syntax, rather than matching member
+ * calls such as an injected `host.readConfig()`. The latter is an ordinary
+ * capability port and must remain usable by deferred settings features.
+ */
+function directLegacyAccessLines(source: string, fileName: string): number[] {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const lines = new Set<number>();
+  const add = (node: ts.Node) => {
+    lines.add(sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1);
+  };
+  const containsLegacyPath = (node: ts.Node): boolean => {
+    let found = false;
+    const visit = (child: ts.Node): void => {
+      if (
+        (ts.isStringLiteralLike(child) || ts.isNoSubstitutionTemplateLiteral(child)) &&
+        child.text === "ide.yml"
+      ) {
+        found = true;
+        return;
+      }
+      if (!found) ts.forEachChild(child, visit);
+    };
+    visit(node);
+    return found;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && node.importClause?.namedBindings) {
+      const bindings = node.importClause.namedBindings;
+      if (ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          if (COMPAT_IMPORTS.has((element.propertyName ?? element.name).text)) add(element);
+        }
+      }
+    }
+    if (ts.isCallExpression(node)) {
+      if (ts.isIdentifier(node.expression) && DIRECT_COMPAT_CALLS.has(node.expression.text)) {
+        add(node.expression);
+      }
+      const callName = ts.isIdentifier(node.expression)
+        ? node.expression.text
+        : ts.isPropertyAccessExpression(node.expression)
+          ? node.expression.name.text
+          : null;
+      if (callName && LEGACY_PROBE_CALLS.has(callName) && containsLegacyPath(node)) add(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...lines].sort((left, right) => left - right);
+}
 
 function productionSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -49,16 +120,9 @@ describe("legacy config access audit", () => {
       const relativePath = relative(repoRoot, absolute);
       if (ALLOWLIST.has(relativePath)) return [];
       const source = readFileSync(absolute, "utf-8");
-      return source
-        .split("\n")
-        .map((line, index) => ({ line, index: index + 1 }))
-        .filter(
-          ({ line }) =>
-            DIRECT_LEGACY_PROBE.test(line) ||
-            DIRECT_COMPAT_IMPORT.test(line) ||
-            DIRECT_COMPAT_CALL.test(line),
-        )
-        .map(({ index }) => `${relativePath}:${index}`);
+      return directLegacyAccessLines(source, relativePath).map(
+        (lineNumber) => `${relativePath}:${lineNumber}`,
+      );
     });
 
     expect(offenders).toEqual([]);

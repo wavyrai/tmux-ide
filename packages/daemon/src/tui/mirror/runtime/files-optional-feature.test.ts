@@ -42,14 +42,14 @@ describe("deferred Files feature boundary", () => {
 
   it("keeps the non-git palette fallback on the ignore-aware Files directory port", () => {
     const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
-    const start = source.indexOf("const walkRepoFiles = async");
-    const end = source.indexOf("const loadRepoFiles =", start);
+    const start = source.indexOf("loadRepoFiles: async");
+    const end = source.indexOf("loadBuffers: async", start);
     const fallback = source.slice(start, end);
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     expect(fallback).toContain("await ensureFilesFeature()");
-    expect(fallback).toContain("await listDir(dir)");
-    expect(fallback).toContain("feature.relPath(root, abs)");
+    expect(fallback).toMatch(/await\s+listDir\([^)]*\)/u);
+    expect(fallback).toMatch(/feature\.relPath\(identity\.directory,\s*absolute\)/u);
     expect(fallback).not.toContain("readdir(");
     expect(fallback).not.toContain("alwaysIgnore");
   });

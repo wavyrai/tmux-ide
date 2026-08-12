@@ -25,13 +25,20 @@ describe("production dialogs and settings cutover", () => {
     expect(source).toContain('reserveModal("settings")');
     expect(source).toContain("if (token) cancelPointerCaptureForModal()");
     expect(source).toContain("if (!token || !modalAdmission.isCurrent(token)) return undefined");
-    expect(source).toContain("dialogOpen: modalAdmissionSnapshot().reserved");
-    expect(source).toContain("if (modalAdmissionSnapshot().reserved) return;");
+    expect(source).toMatch(
+      /dialogOpen:\s*modalAdmissionSnapshot\(\)\.reserved\s*&&\s*modalAdmissionSnapshot\(\)\.kind\s*!==\s*["']palette["']/u,
+    );
+    expect(source).toMatch(
+      /if\s*\(\s*modalAdmissionSnapshot\(\)\.reserved\s*&&\s*modalAdmissionSnapshot\(\)\.kind\s*!==\s*["']palette["']\s*\)\s*return;/u,
+    );
   });
 
   it("gates pointer routing before every captured drag path", () => {
     const routeStart = source.indexOf("const route = (e: RouteEvent) =>");
-    const modalGate = source.indexOf("if (modalAdmissionSnapshot().reserved)", routeStart);
+    const modalGate = source.indexOf(
+      'if (modalAdmissionSnapshot().reserved && modalAdmissionSnapshot().kind !== "palette")',
+      routeStart,
+    );
     const sidebarCapture = source.indexOf("routeSidebarResizePointer(e, true)", routeStart);
     const paneCapture = source.indexOf("routeCapturedDragPointer(e)", routeStart);
     expect(modalGate).toBeGreaterThan(routeStart);
